@@ -962,20 +962,31 @@ def test_0040_adds_staged_package_intakes_with_its_checks_and_its_downgrade_drop
     migrated_engine,
 ) -> None:
     """ADR-0006 amendment 1. The CHECKs are what the service relies on at the database: a state
-    outside the three, or a registered row naming no revision, never reaches a row."""
+    outside the three, a registered row naming no revision, or a withdrawn row without its full
+    stamp, never reaches a row."""
     config = alembic_config()
     insert = text(
         "INSERT INTO staged_package_intakes (id, payload, idempotency_key, staged_by, state, "
-        "registered_revision_id) VALUES (gen_random_uuid(), '{}', :key, 'system', :state, NULL)"
+        "registered_revision_id, withdrawn_by, withdrawn_at, withdrawal_reason) VALUES "
+        "(gen_random_uuid(), '{}', :key, 'system', :state, NULL, :by, :at, :why)"
     )
+    stamp = {"by": "devon", "at": "2026-10-06T12:00:00Z", "why": "stale"}
+    unstamped = {"by": None, "at": None, "why": None}
     with migrated_engine.begin() as connection:
-        connection.execute(insert, {"key": "k-staged", "state": "staged"})
-        connection.execute(insert, {"key": "k-withdrawn", "state": "withdrawn"})
-    for key, state in (("k-bad-state", "pending"), ("k-unlinked", "registered")):
+        connection.execute(insert, {"key": "k-staged", "state": "staged", **unstamped})
+        connection.execute(insert, {"key": "k-withdrawn", "state": "withdrawn", **stamp})
+    for key, state, withdrawal in (
+        ("k-bad-state", "pending", unstamped),
+        ("k-unlinked", "registered", unstamped),
+        ("k-unstamped", "withdrawn", unstamped),
+        ("k-half-stamped", "withdrawn", {**stamp, "why": None}),
+        ("k-blank-reason", "withdrawn", {**stamp, "why": ""}),
+        ("k-stamped-staged", "staged", stamp),
+    ):
         with pytest.raises(IntegrityError), migrated_engine.begin() as connection:
-            connection.execute(insert, {"key": key, "state": state})
+            connection.execute(insert, {"key": key, "state": state, **withdrawal})
     with pytest.raises(IntegrityError), migrated_engine.begin() as connection:
-        connection.execute(insert, {"key": "k-staged", "state": "staged"})
+        connection.execute(insert, {"key": "k-staged", "state": "staged", **unstamped})
 
     command.downgrade(config, "0039_live_unit_key_unique")
     assert "staged_package_intakes" not in inspect(migrated_engine).get_table_names()

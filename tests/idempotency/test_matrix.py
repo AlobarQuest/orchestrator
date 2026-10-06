@@ -42,6 +42,10 @@ NON_INGRESS_POST_ROUTES = frozenset(
         # staging ingress itself has its own /api/v1/staged-intakes row. Asserted in
         # tests/web/test_staged_intake.py by test_a_second_press_lands_on_the_same_revision.
         "/review/staged-intakes/{staged_id}/confirm",
+        # Writes no event of its own: it stamps the staged row under its row lock, and a second
+        # submission finds the row withdrawn and returns it unchanged. Asserted in
+        # tests/services/test_staged_intake.py by test_a_second_withdraw_changes_nothing.
+        "/review/staged-intakes/{staged_id}/withdraw",
         # Derives a context snapshot; carries no independent ingress key.
         "/api/v1/work-units/{unit_id}/preflight",
     }

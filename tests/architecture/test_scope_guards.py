@@ -111,6 +111,7 @@ def test_production_post_route_inventory_is_explicit() -> None:
         # a /review form. The /api route it delegates to is human-only and machine-only-routed.
         "/review/intakes",
         "/review/staged-intakes/{staged_id}/confirm",
+        "/review/staged-intakes/{staged_id}/withdraw",
         "/review/units/{unit_id}/approval",
         "/review/units/{unit_id}/authority-approval",
         "/review/units/{unit_id}/review",

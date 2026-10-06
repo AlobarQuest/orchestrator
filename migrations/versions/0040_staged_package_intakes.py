@@ -2,7 +2,8 @@
 
 ADR-0006 amendment 1. The CLI stages an intake as SYSTEM and a live human session confirms it
 from `/review`. The table only holds the payload and its state; registering still goes through
-`register_package_intake`, so nothing about what a registered revision is changes.
+`register_package_intake`, so nothing about what a registered revision is changes. A withdrawn
+row records who withdrew it, when and why.
 
 The downgrade drops the table. A staged row that was never confirmed did nothing, and a confirmed
 one's revision and intake event are kept, so what is lost is only the link from the revision back
@@ -46,6 +47,9 @@ def upgrade() -> None:
             sa.ForeignKey("work_package_revisions.id"),
             nullable=True,
         ),
+        sa.Column("withdrawn_by", sa.String(), nullable=True),
+        sa.Column("withdrawn_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("withdrawal_reason", sa.Text(), nullable=True),
         sa.UniqueConstraint("idempotency_key", name="uq_staged_package_intakes_idempotency"),
         sa.CheckConstraint(
             "state IN ({})".format(", ".join(f"'{state}'" for state in _STATES)),
@@ -58,6 +62,15 @@ def upgrade() -> None:
         sa.CheckConstraint(
             "idempotency_key <> '' AND staged_by <> ''",
             name="ck_staged_package_intakes_required_text",
+        ),
+        sa.CheckConstraint(
+            "(state = 'withdrawn') = (withdrawn_by IS NOT NULL AND withdrawn_at IS NOT NULL "
+            "AND withdrawal_reason IS NOT NULL)",
+            name="ck_staged_package_intakes_withdrawal",
+        ),
+        sa.CheckConstraint(
+            "withdrawn_by <> '' AND withdrawal_reason <> ''",
+            name="ck_staged_package_intakes_withdrawal_text",
         ),
     )
 

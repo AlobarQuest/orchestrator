@@ -135,9 +135,15 @@ def create_staged_intake(
 
     The body is validated by the same model `POST /package-intakes` uses, and stored as dumped
     with unset fields left out, so the confirm rebuilds that model exactly. Staging registers
-    nothing. `stage_package_intake` refuses every role but SYSTEM.
+    nothing, but it refuses what registering would refuse, with the same code.
+    `stage_package_intake` refuses every role but SYSTEM.
     """
-    staged = stage_package_intake(session, body.model_dump(mode="json", exclude_unset=True), actor)
+    staged = stage_package_intake(
+        session,
+        body.model_dump(mode="json", exclude_unset=True),
+        package_intake_command(body),
+        actor,
+    )
     session.commit()
     return _staged_intake_payload(staged)
 

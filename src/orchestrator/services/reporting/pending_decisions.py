@@ -167,7 +167,7 @@ def _staged_intakes(session: Session) -> list[dict[str, Any]]:
         _entry(
             "staged_intake",
             f"{row.payload.get('package_id')} revision {row.payload.get('revision')}",
-            "Confirm this intake to register it",
+            "Confirm this intake to register it, or withdraw it",
             f"Staged by {row.staged_by}. Nothing is registered until you confirm it.",
             f"/review/staged-intakes/{row.id}",
         )

@@ -1588,9 +1588,8 @@ class UnitTrackerBinding(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
-# What a staged intake can be. `withdrawn` has no writer yet: it is reserved so a row that should
-# never be registered can be retired without a migration, and until a verb exists a staged row
-# that should go no further simply stays staged.
+# What a staged intake can be. A person moves a staged row to `registered` (confirm) or to
+# `withdrawn` (withdraw, with a reason); both are terminal.
 STAGED_INTAKE_STATES = ("staged", "registered", "withdrawn")
 
 
@@ -1621,6 +1620,16 @@ class StagedPackageIntake(UUIDPrimaryKey, Base):
             "idempotency_key <> '' AND staged_by <> ''",
             name="ck_staged_package_intakes_required_text",
         ),
+        # A withdrawn row says who withdrew it, when and why, and only a withdrawn row does.
+        CheckConstraint(
+            "(state = 'withdrawn') = (withdrawn_by IS NOT NULL AND withdrawn_at IS NOT NULL "
+            "AND withdrawal_reason IS NOT NULL)",
+            name="ck_staged_package_intakes_withdrawal",
+        ),
+        CheckConstraint(
+            "withdrawn_by <> '' AND withdrawal_reason <> ''",
+            name="ck_staged_package_intakes_withdrawal_text",
+        ),
     )
 
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB)
@@ -1631,3 +1640,6 @@ class StagedPackageIntake(UUIDPrimaryKey, Base):
     registered_revision_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("work_package_revisions.id")
     )
+    withdrawn_by: Mapped[str | None] = mapped_column(String)
+    withdrawn_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    withdrawal_reason: Mapped[str | None] = mapped_column(Text)

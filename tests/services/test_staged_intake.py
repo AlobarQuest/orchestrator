@@ -14,11 +14,15 @@ from orchestrator.api.schemas.intake import PackageIntakeRegistration
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import Event, StagedPackageIntake, WorkPackageRevision
-from orchestrator.services.intake.package_intake import PackageIntakeCommand
+from orchestrator.services.intake.package_intake import (
+    PackageIntakeCommand,
+    register_package_intake,
+)
 from orchestrator.services.intake.staged_intake import (
     confirm_staged_intake,
     stage_package_intake,
     staged_intake,
+    withdraw_staged_intake,
 )
 from tests.api.test_package_intake_api import intake_payload
 
@@ -39,7 +43,7 @@ def command_for(payload: dict[str, Any]) -> PackageIntakeCommand:
 
 def _stage(engine: Engine, payload: dict[str, Any]) -> uuid.UUID:
     with Session(engine) as session:
-        staged = stage_package_intake(session, payload, SYSTEM)
+        staged = stage_package_intake(session, payload, command_for(payload), SYSTEM)
         session.commit()
         return staged.id
 
@@ -75,7 +79,8 @@ def test_staging_holds_the_payload_verbatim_and_registers_nothing(
 )
 def test_only_the_system_actor_may_stage(migrated_session: Session, actor: ActorContext) -> None:
     with pytest.raises(DomainError) as refused:
-        stage_package_intake(migrated_session, staged_payload(), actor)
+        payload = staged_payload()
+        stage_package_intake(migrated_session, payload, command_for(payload), actor)
 
     assert refused.value.code == "role_forbidden"
 
@@ -106,7 +111,7 @@ def test_a_concurrent_duplicate_staging_writes_one_row(migrated_engine: Engine) 
     def submit() -> uuid.UUID:
         with Session(migrated_engine) as session:
             barrier.wait(timeout=15)
-            staged = stage_package_intake(session, payload, SYSTEM)
+            staged = stage_package_intake(session, payload, command_for(payload), SYSTEM)
             session.commit()
             return staged.id
 
@@ -235,9 +240,7 @@ def test_a_withdrawn_row_cannot_be_confirmed(migrated_engine: Engine) -> None:
     payload = staged_payload()
     staged_id = _stage(migrated_engine, payload)
     with Session(migrated_engine) as session:
-        row = session.get(StagedPackageIntake, staged_id)
-        assert row is not None
-        row.state = "withdrawn"
+        withdraw_staged_intake(session, staged_id, "superseded by revision 2", HUMAN)
         session.commit()
 
     with Session(migrated_engine) as session, pytest.raises(DomainError) as refused:
@@ -258,17 +261,202 @@ def test_an_unknown_row_is_not_found(migrated_session: Session) -> None:
         assert refused.value.code == "staged_intake_not_found"
 
 
-def test_a_registration_the_service_refuses_leaves_the_row_staged(
+# --- staging refuses what the confirm would refuse, with the same code -----------------------
+
+
+@pytest.mark.parametrize(
+    ("overrides", "code"),
+    [
+        ({"status_at_intake": "draft"}, "package_intake_status_invalid"),
+        ({"verification_mode": "trust_me"}, "package_intake_verification_invalid"),
+        ({"expected_version": 1}, "version_conflict"),
+        (
+            {
+                "acceptance_criteria": [
+                    {
+                        "ac_id": "AC-001",
+                        "condition": "c",
+                        "evidence_type": "vibes",
+                        "evidence": "e",
+                        "approver": "policy",
+                    }
+                ]
+            },
+            "unknown_evidence_type",
+        ),
+        (
+            {"enforcement_snapshot": {"outcome": "o", "reach": ["the_moon"]}},
+            "reach_invalid",
+        ),
+        (
+            {"originating_observation_id": str(uuid.uuid4())},
+            "intake_originating_observation_unknown",
+        ),
+    ],
+)
+def test_staging_refuses_with_the_code_the_confirm_would_have(
+    migrated_engine: Engine, overrides: dict[str, Any], code: str
+) -> None:
+    payload = staged_payload(**overrides)
+    with Session(migrated_engine) as session, pytest.raises(DomainError) as at_confirm:
+        register_package_intake(session, command_for(payload), HUMAN)
+
+    with pytest.raises(DomainError) as at_stage:
+        _stage(migrated_engine, payload)
+
+    assert at_stage.value.code == at_confirm.value.code == code
+    with Session(migrated_engine) as session:
+        assert session.scalars(select(StagedPackageIntake)).all() == []
+
+
+def _register(engine: Engine, payload: dict[str, Any]) -> uuid.UUID:
+    with Session(engine) as session:
+        revision = register_package_intake(session, command_for(payload), HUMAN)
+        session.commit()
+        return revision.id
+
+
+def test_staging_refuses_a_key_an_intake_already_used(migrated_engine: Engine) -> None:
+    payload = staged_payload()
+    _register(migrated_engine, {**payload, "content_hash": "sha256:other", "revision": 2})
+
+    with pytest.raises(DomainError) as refused:
+        _stage(migrated_engine, payload)
+
+    assert refused.value.code == "idempotency_conflict"
+
+
+@pytest.mark.parametrize(
+    "registered",
+    [
+        {"content_hash": "sha256:different"},
+        {},  # the identical revision: confirming it would register nothing new
+    ],
+)
+def test_staging_refuses_a_package_revision_already_registered(
+    migrated_engine: Engine, registered: dict[str, Any]
+) -> None:
+    payload = staged_payload()
+    _register(migrated_engine, {**payload, "idempotency_key": "elsewhere", **registered})
+
+    with pytest.raises(DomainError) as refused:
+        _stage(migrated_engine, payload)
+
+    assert refused.value.code == "package_intake_conflict"
+
+
+def test_staging_refuses_a_package_registered_from_another_repository(
     migrated_engine: Engine,
 ) -> None:
-    # Staging validates the model only; the service's own checks run at the confirm.
-    payload = staged_payload(status_at_intake="draft")
+    payload = staged_payload()
+    _register(
+        migrated_engine,
+        {
+            **payload,
+            "idempotency_key": "elsewhere",
+            "revision": 2,
+            "content_hash": "sha256:two",
+            "source_repository": "someone/else",
+        },
+    )
+
+    with pytest.raises(DomainError) as refused:
+        _stage(migrated_engine, payload)
+
+    assert refused.value.code == "package_intake_conflict"
+
+
+def test_a_row_that_went_stale_is_refused_at_confirm_and_can_be_withdrawn(
+    migrated_engine: Engine,
+) -> None:
+    # Staging passed; then the same package revision was registered with other content. The
+    # confirm re-runs everything and refuses, and the row stays staged until a person withdraws it.
+    payload = staged_payload()
     staged_id = _stage(migrated_engine, payload)
+    _register(
+        migrated_engine, {**payload, "idempotency_key": "elsewhere", "content_hash": "sha256:x"}
+    )
 
     with Session(migrated_engine) as session, pytest.raises(DomainError) as refused:
         confirm_staged_intake(session, staged_id, command_for(payload), HUMAN)
+    assert refused.value.code == "package_intake_conflict"
 
-    assert refused.value.code == "package_intake_status_invalid"
+    with Session(migrated_engine) as session:
+        withdraw_staged_intake(session, staged_id, "registered by hand with a fix", HUMAN)
+        session.commit()
     with Session(migrated_engine) as session:
         staged = session.get(StagedPackageIntake, staged_id)
-        assert staged is not None and staged.state == "staged"
+        assert staged is not None and staged.state == "withdrawn"
+
+
+# --- withdraw --------------------------------------------------------------------------------
+
+
+def test_withdrawing_stamps_who_when_and_why(migrated_engine: Engine) -> None:
+    staged_id = _stage(migrated_engine, staged_payload())
+
+    with Session(migrated_engine) as session:
+        withdraw_staged_intake(session, staged_id, "  stale bump  ", HUMAN)
+        session.commit()
+
+    with Session(migrated_engine) as session:
+        staged = session.get(StagedPackageIntake, staged_id)
+        assert staged is not None
+        assert staged.state == "withdrawn"
+        assert staged.withdrawn_by == "devon"
+        assert staged.withdrawn_at is not None
+        assert staged.withdrawal_reason == "stale bump"
+        assert staged.registered_revision_id is None
+
+
+def test_a_second_withdraw_changes_nothing(migrated_engine: Engine) -> None:
+    staged_id = _stage(migrated_engine, staged_payload())
+    with Session(migrated_engine) as session:
+        withdraw_staged_intake(session, staged_id, "first", HUMAN)
+        session.commit()
+
+    with Session(migrated_engine) as session:
+        again = withdraw_staged_intake(
+            session, staged_id, "second", ActorContext("someone-else", ActorRole.HUMAN)
+        )
+        session.commit()
+        assert (again.withdrawn_by, again.withdrawal_reason) == ("devon", "first")
+
+
+@pytest.mark.parametrize("actor", [SYSTEM, ActorContext("worker", ActorRole.WORKER)])
+def test_no_machine_may_withdraw(migrated_engine: Engine, actor: ActorContext) -> None:
+    staged_id = _stage(migrated_engine, staged_payload())
+
+    with Session(migrated_engine) as session, pytest.raises(DomainError) as refused:
+        withdraw_staged_intake(session, staged_id, "reason", actor)
+
+    assert refused.value.code == "human_actor_required"
+
+
+def test_a_blank_reason_is_refused(migrated_engine: Engine) -> None:
+    staged_id = _stage(migrated_engine, staged_payload())
+
+    with Session(migrated_engine) as session, pytest.raises(DomainError) as refused:
+        withdraw_staged_intake(session, staged_id, "   ", HUMAN)
+
+    assert refused.value.code == "staged_intake_withdrawal_reason_required"
+
+
+def test_a_registered_row_cannot_be_withdrawn(migrated_engine: Engine) -> None:
+    payload = staged_payload()
+    staged_id = _stage(migrated_engine, payload)
+    with Session(migrated_engine) as session:
+        confirm_staged_intake(session, staged_id, command_for(payload), HUMAN)
+        session.commit()
+
+    with Session(migrated_engine) as session, pytest.raises(DomainError) as refused:
+        withdraw_staged_intake(session, staged_id, "too late", HUMAN)
+
+    assert refused.value.code == "staged_intake_not_withdrawable"
+
+
+def test_withdrawing_an_unknown_row_is_not_found(migrated_session: Session) -> None:
+    with pytest.raises(DomainError) as refused:
+        withdraw_staged_intake(migrated_session, uuid.uuid4(), "reason", HUMAN)
+
+    assert refused.value.code == "staged_intake_not_found"

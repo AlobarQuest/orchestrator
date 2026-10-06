@@ -235,3 +235,96 @@ def test_a_staged_intake_is_the_first_thing_on_the_queue(db_client: TestClient) 
     assert queue.index("Staged intakes awaiting your confirmation") < queue.index(
         "Packages with no breakdown in progress"
     )
+
+
+# --- withdraw --------------------------------------------------------------------------------
+
+
+def _withdraw_fields(page: str, staged_id: str) -> dict[str, str]:
+    form = re.search(
+        rf'action="/review/staged-intakes/{staged_id}/withdraw">(.*?)</form>', page, re.DOTALL
+    )
+    assert form is not None, "the staged page renders no withdraw form"
+    return dict(re.findall(r'name="(csrf_token|idempotency_key)" value="([^"]+)"', form.group(1)))
+
+
+def _withdraw(client: TestClient, staged_id: str, fields: dict[str, str], **overrides: str):
+    return client.post(
+        f"/review/staged-intakes/{staged_id}/withdraw",
+        data={**fields, "reason": "the bump is superseded", "confirm": "yes", **overrides},
+        headers=HUMAN,
+        follow_redirects=False,
+    )
+
+
+def test_withdrawing_stamps_the_row_and_takes_it_off_the_queue(
+    db_client: TestClient, migrated_engine: Engine
+) -> None:
+    staged_id = _stage(db_client)
+    page = db_client.get(f"/review/staged-intakes/{staged_id}", headers=HUMAN)
+
+    response = _withdraw(db_client, staged_id, _withdraw_fields(page.text, staged_id))
+
+    assert response.status_code == 303
+    assert response.headers["location"] == f"/review/staged-intakes/{staged_id}"
+    with Session(migrated_engine) as session:
+        staged = session.get(StagedPackageIntake, uuid.UUID(staged_id))
+        assert staged is not None and staged.state == "withdrawn"
+        assert (staged.withdrawn_by, staged.withdrawal_reason) == (
+            "devon",
+            "the bump is superseded",
+        )
+    after = db_client.get(f"/review/staged-intakes/{staged_id}", headers=HUMAN).text
+    assert "Withdrawn by <code>devon</code>" in after
+    assert "the bump is superseded" in after
+    assert "Register this intake" not in after and "Withdraw this intake" not in after
+    assert f"/review/staged-intakes/{staged_id}" not in db_client.get("/review", headers=HUMAN).text
+
+
+def test_a_withdrawn_row_refuses_the_confirm(db_client: TestClient) -> None:
+    staged_id = _stage(db_client)
+    page = db_client.get(f"/review/staged-intakes/{staged_id}", headers=HUMAN).text
+    _withdraw(db_client, staged_id, _withdraw_fields(page, staged_id))
+
+    response = _press(db_client, staged_id, _confirm_fields(page, staged_id))
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "staged_intake_not_confirmable"
+
+
+def test_each_token_does_only_its_own_action(db_client: TestClient) -> None:
+    staged_id = _stage(db_client)
+    page = db_client.get(f"/review/staged-intakes/{staged_id}", headers=HUMAN).text
+
+    assert _withdraw(db_client, staged_id, _confirm_fields(page, staged_id)).status_code == 403
+    assert _press(db_client, staged_id, _withdraw_fields(page, staged_id)).status_code == 403
+
+
+def test_a_withdraw_token_for_one_row_cannot_withdraw_another(db_client: TestClient) -> None:
+    first, second = _stage(db_client), _stage(db_client)
+    page = db_client.get(f"/review/staged-intakes/{first}", headers=HUMAN).text
+
+    assert _withdraw(db_client, second, _withdraw_fields(page, first)).status_code == 403
+
+
+def test_a_withdraw_needs_a_reason_and_a_confirmation(db_client: TestClient) -> None:
+    staged_id = _stage(db_client)
+    fields = _withdraw_fields(
+        db_client.get(f"/review/staged-intakes/{staged_id}", headers=HUMAN).text, staged_id
+    )
+
+    assert _withdraw(db_client, staged_id, fields, reason="").status_code == 422
+    assert _withdraw(db_client, staged_id, fields, confirm="").status_code == 403
+
+
+def test_a_machine_cannot_withdraw(db_client: TestClient) -> None:
+    staged_id = _stage(db_client)
+
+    for headers in (SYSTEM, WORKER):
+        response = db_client.post(
+            f"/review/staged-intakes/{staged_id}/withdraw",
+            data={"reason": "r", "confirm": "yes"},
+            headers=headers,
+            follow_redirects=False,
+        )
+        assert response.status_code == 403

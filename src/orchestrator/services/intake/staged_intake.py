@@ -24,11 +24,13 @@ from typing import Any, Final
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
+from orchestrator.clock import TransactionClock
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import StagedPackageIntake, WorkPackageRevision
 from orchestrator.services.intake.package_intake import (
     PackageIntakeCommand,
+    preflight_package_intake,
     register_package_intake,
 )
 
@@ -38,10 +40,14 @@ STAGING_LOCK_NAMESPACE: Final = 0x53544731
 
 STAGED: Final = "staged"
 REGISTERED: Final = "registered"
+WITHDRAWN: Final = "withdrawn"
 
 
 def stage_package_intake(
-    session: Session, payload: dict[str, Any], actor: ActorContext
+    session: Session,
+    payload: dict[str, Any],
+    command: PackageIntakeCommand,
+    actor: ActorContext,
 ) -> StagedPackageIntake:
     """Hold a validated intake payload for a person to confirm. SYSTEM only.
 
@@ -49,6 +55,10 @@ def stage_package_intake(
     with unset fields left out, so a confirm rebuilds exactly the model the caller sent. Its
     `idempotency_key` keys the staging AND the eventual registration. Staging the same key again
     with the same payload replays the row; with a different payload it is a conflict.
+
+    `command` is the same payload projected the way the confirm will project it. A new row is
+    staged only if `preflight_package_intake` passes it, so a payload the registration would
+    refuse is refused here, with the registration's own code, instead of after the click.
 
     HUMAN is refused too. A person has the paste form and the confirm button; letting a browser
     session stage would make a second, unattributed way in rather than a better one.
@@ -76,6 +86,7 @@ def stage_package_intake(
                 "use a new idempotency key",
             )
         return existing
+    preflight_package_intake(session, command)
     staged = StagedPackageIntake(
         payload=payload,
         idempotency_key=idempotency_key,
@@ -118,17 +129,7 @@ def confirm_staged_intake(
             "a staged intake is confirmed by a person",
             "confirm it from /review/staged-intakes/{id}",
         )
-    # `populate_existing`: the caller has usually loaded this row already to build the command,
-    # and a FOR UPDATE select does not overwrite a loaded object, so without it a press that
-    # waited on the lock would still read `staged` and register a second time.
-    staged = session.scalar(
-        select(StagedPackageIntake)
-        .where(StagedPackageIntake.id == staged_id)
-        .with_for_update()
-        .execution_options(populate_existing=True)
-    )
-    if staged is None:
-        raise DomainError("staged_intake_not_found", "staged intake does not exist", None)
+    staged = _locked(session, staged_id)
     if command.idempotency_key != staged.idempotency_key:
         raise DomainError(
             "idempotency_conflict",
@@ -151,3 +152,61 @@ def confirm_staged_intake(
     staged.registered_revision_id = revision.id
     session.flush()
     return revision
+
+
+def withdraw_staged_intake(
+    session: Session, staged_id: uuid.UUID, reason: str, actor: ActorContext
+) -> StagedPackageIntake:
+    """Retire a staged row a person has decided not to register, with their reason.
+
+    For a row that went stale between staging and the confirm, or should never have been staged.
+    A withdrawn row leaves the review queue and refuses the confirm. Withdrawing a withdrawn row
+    returns it unchanged, so a second press is harmless; a registered row cannot be withdrawn,
+    since its revision exists.
+    """
+    if actor.role is not ActorRole.HUMAN:
+        raise DomainError(
+            "human_actor_required",
+            "a staged intake is withdrawn by a person",
+            "withdraw it from /review/staged-intakes/{id}",
+        )
+    reason = reason.strip()
+    if not reason:
+        raise DomainError(
+            "staged_intake_withdrawal_reason_required",
+            "withdrawing a staged intake needs a reason",
+            "say why it should not be registered",
+        )
+    staged = _locked(session, staged_id)
+    if staged.state == WITHDRAWN:
+        return staged
+    if staged.state != STAGED:
+        raise DomainError(
+            "staged_intake_not_withdrawable",
+            f"a {staged.state} staged intake cannot be withdrawn",
+            None,
+        )
+    staged.state = WITHDRAWN
+    staged.withdrawn_by = actor.actor_id
+    staged.withdrawn_at = TransactionClock().now(session)
+    staged.withdrawal_reason = reason
+    session.flush()
+    return staged
+
+
+def _locked(session: Session, staged_id: uuid.UUID) -> StagedPackageIntake:
+    """The row under FOR UPDATE, re-read even if the session already holds it.
+
+    `populate_existing`: the caller has usually loaded this row already, and a FOR UPDATE select
+    does not overwrite a loaded object, so without it a press that waited on the lock would still
+    read `staged` and act a second time.
+    """
+    staged = session.scalar(
+        select(StagedPackageIntake)
+        .where(StagedPackageIntake.id == staged_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if staged is None:
+        raise DomainError("staged_intake_not_found", "staged intake does not exist", None)
+    return staged

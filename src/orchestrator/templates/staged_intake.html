@@ -9,16 +9,28 @@
 
 {% include "_decision.html" %}
 
-{% if csrf_token %}
+{% if csrf_tokens %}
 <form method="post" action="/review/staged-intakes/{{ staged.id }}/confirm">
-  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_tokens.confirm_staged_intake }}">
   <input type="hidden" name="idempotency_key" value="{{ idempotency_key }}">
   <button type="submit" name="confirm" value="yes">Register this intake</button>
 </form>
+<details>
+  <summary>Withdraw instead</summary>
+  <p class="meta">Withdrawing retires this staged intake for good: it leaves the review queue and
+    can no longer be registered. Stage it again if it should come back.</p>
+  <form method="post" action="/review/staged-intakes/{{ staged.id }}/withdraw">
+    <input type="hidden" name="csrf_token" value="{{ csrf_tokens.withdraw_staged_intake }}">
+    <input type="hidden" name="idempotency_key" value="{{ idempotency_key }}">
+    <label for="withdraw-reason">Reason</label>
+    <textarea id="withdraw-reason" name="reason" required></textarea>
+    <button class="danger" type="submit" name="confirm" value="yes">Withdraw this intake</button>
+  </form>
+</details>
 {% elif staged.registered_revision_id %}
 <p>Registered. <a href="/review/intakes/{{ staged.registered_revision_id }}">View the package intake →</a></p>
-{% else %}
-<p class="empty">This staged intake is {{ staged.state }} and cannot be registered.</p>
+{% elif staged.withdrawn_by %}
+<p class="status">Withdrawn by <code>{{ staged.withdrawn_by }}</code> at {{ staged.withdrawn_at }}: {{ staged.withdrawal_reason }}</p>
 {% endif %}
 
 {% include "_intake_content.html" %}

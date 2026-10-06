@@ -51,6 +51,7 @@ from orchestrator.services.intake.staged_intake import (
     STAGED,
     confirm_staged_intake,
     staged_intake,
+    withdraw_staged_intake,
 )
 from orchestrator.services.landing.estate_landing import EstateAnswer, EstateLandingSource
 from orchestrator.services.lifecycle.claims import REQUEUE_SOURCE_STATES, authorize_retry
@@ -652,6 +653,10 @@ def intake_detail(
     )
 
 
+_CONFIRM_STAGED = "confirm_staged_intake"
+_WITHDRAW_STAGED = "withdraw_staged_intake"
+
+
 def _staged_intake_content(payload: dict[str, Any]) -> dict[str, Any]:
     """The staged payload in the shape `_intake_content.html` reads, before any revision exists.
 
@@ -696,8 +701,9 @@ def staged_intake_detail(
 ) -> HTMLResponse:
     """The decision surface for a staged intake: the three facts, one button, then the content.
 
-    The confirm token binds the staged row and its own idempotency key, so the button can only
-    register this row, under the key the machine staged it with.
+    Each token binds the staged row, its own idempotency key and one action, so the confirm button
+    can only register this row, under the key the machine staged it with, and the withdraw form
+    can only withdraw it. Neither is offered once the row is registered or withdrawn.
     """
     _human(actor)
     staged = staged_intake(session, staged_id)
@@ -714,13 +720,12 @@ def staged_intake_detail(
                 profile, snapshot, _landing_reading(landing_source, profile, snapshot)
             ),
             "idempotency_key": staged.idempotency_key,
-            "csrf_token": (
-                _issue_token(
-                    request, actor, staged.id, "confirm_staged_intake", staged.idempotency_key
-                )
-                if confirmable
-                else None
-            ),
+            "csrf_tokens": {
+                action: _issue_token(request, actor, staged.id, action, staged.idempotency_key)
+                for action in (_CONFIRM_STAGED, _WITHDRAW_STAGED)
+            }
+            if confirmable
+            else {},
         },
     )
 
@@ -742,15 +747,7 @@ def confirm_staged_intake_route(
     and lands on the same revision.
     """
     _human(actor)
-    _require_form(
-        request,
-        actor,
-        staged_id,
-        "confirm_staged_intake",
-        csrf_token,
-        idempotency_key,
-        confirm,
-    )
+    _require_form(request, actor, staged_id, _CONFIRM_STAGED, csrf_token, idempotency_key, confirm)
     staged = staged_intake(session, staged_id)
     registration = _registration(dict(staged.payload), staged.idempotency_key)
     revision = confirm_staged_intake(
@@ -758,6 +755,25 @@ def confirm_staged_intake_route(
     )
     session.commit()
     return RedirectResponse(f"/review/intakes/{revision.id}", status_code=303)
+
+
+@router.post("/staged-intakes/{staged_id}/withdraw")
+def withdraw_staged_intake_route(
+    request: Request,
+    staged_id: uuid.UUID,
+    actor: ActorDep,
+    session: SessionDep,
+    reason: Annotated[str, Form(min_length=1)],
+    idempotency_key: Annotated[str, Form()] = "",
+    csrf_token: Annotated[str, Form()] = "",
+    confirm: Annotated[str | None, Form()] = None,
+) -> RedirectResponse:
+    """Withdraw a staged intake, with the person's reason. It leaves the queue for good."""
+    _human(actor)
+    _require_form(request, actor, staged_id, _WITHDRAW_STAGED, csrf_token, idempotency_key, confirm)
+    withdraw_staged_intake(session, staged_id, reason, actor)
+    session.commit()
+    return RedirectResponse(f"/review/staged-intakes/{staged_id}", status_code=303)
 
 
 @router.get("/decomposition-proposals/{proposal_id}", response_class=HTMLResponse)
