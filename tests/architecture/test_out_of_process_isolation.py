@@ -175,6 +175,27 @@ TABLE: dict[str, Row] = {
         "sys",
         "typing",
     ),
+    # SDS 1.1 item 5a: the deploy-time image binder, the one program ADR-0039's amendment lets
+    # mint a post-deploy unit. It borrows from no other lane -- its git reads and its three
+    # confined clients are its own -- so the exception cannot travel through an import.
+    "image_release": _row(
+        "__future__",
+        "collections",
+        "dataclasses",
+        "datetime",
+        "estate_clients",
+        "httpx",
+        "json",
+        "os",
+        "pathlib",
+        "re",
+        "subprocess",
+        # `time.sleep` alone, between production probe attempts; injectable, so tests never wait.
+        "time",
+        "typer",
+        "typing",
+        no_sibling_lanes=True,
+    ),
     # Two already-confined readers reused rather than re-implemented: the producer's
     # landing-policy client (one path, a READ-scoped credential) and the deploy watcher's
     # read-only GitHub reader (every verb a GET, enforced before the transport). `lander` is the

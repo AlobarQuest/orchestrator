@@ -74,6 +74,10 @@ activation-sweep = "activation_sweep.cli:app"
 # so it is a local scheduled pass, and it acts only with `--install` inside the operator
 # machine's change window.
 tool-installer = "tool_installer.cli:app"
+# SDS 1.1 item 5a, ADR-0039 amendment 2026-10-05. The orchestrator's deploy step: bind every
+# completed factory unit the deployed image carries, file the container-image deployment
+# observation, and verify the post-deploy unit it mints. Operator-run, never scheduled.
+image-release = "image_release.cli:app"
 
 [dependency-groups]
 dev = [

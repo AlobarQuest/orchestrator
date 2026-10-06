@@ -459,6 +459,13 @@ OUTBOUND_ALLOWLIST = {
     # acquiring the other's reach. Two paths, one GET and one POST, enforced in code by
     # `is_allowed_read` / `is_allowed_write`. Its egress is not the orchestrator's.
     Path("src/activation_sweep/binding_client.py"),
+    # SDS 1.1 item 5a, ADR-0039 amendment 2026-10-05. The deploy-time image binder is a SEPARATE
+    # program, run by a person in the deploy session. Three confined surfaces in one module, one
+    # per identity: SYSTEM binds and observes, VERIFIER verifies, and an unauthenticated client
+    # reads only health, the OpenAPI document and the dead-letter status for the auth probe.
+    # Enforced by `system_permits` / `verifier_permits` / `anonymous_permits` and pinned by
+    # tests/image_release/test_client_surface.py. Its egress is not the orchestrator's.
+    Path("src/image_release/client.py"),
     # The pin watcher READS GitHub, and that is the point rather than an incidental dependency:
     # a caller's pin is a fact about a remote repository's workflow file, so no local surface can
     # answer it. Read-only by construction -- the client's single entry point refuses anything but

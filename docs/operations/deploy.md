@@ -142,6 +142,59 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   misdiagnose a defect that is not there. Making the derivable tag refuse to overwrite is an open
   follow-up, not something GHCR enforces.
 
+### Binding the release (SDS 1.1 item 5a)
+
+- **`--previous-commit` is the pre-swap revision recorded at the swap step (#305 above).**
+  **Every re-run of a deploy's binder must reuse that same recorded value, never a fresh read.** A
+  read after the swap returns the built commit, which turns every unbound unit into a silent
+  `shipped_earlier`. Each run prints `previous_commit` and `built_commit` in its JSON output, so a
+  re-run can copy both from the first run's output. After the
+  swap, and only after the running container's `RepoDigest` equals the pushed digest and
+  `/health/live` reports the built commit, run `image-release bind`. **A unit is bound to the first
+  deployed image that carries it, from this program's first run onward**: it binds a
+  `container_image` release artifact for every completed factory unit whose landing the built
+  commit carries and the previous commit does not. Units an earlier image shipped stay unbound and
+  are reported `shipped_earlier`. It then files the deployment observation, which mints one
+  post-deploy unit per binding, and verifies that unit.
+  **The observation is final**: one per binding per environment, and the minted unit has one
+  attempt. So the command retries the whole production probe up to 6 times, 10 s apart, until
+  every probe is 2xx, the revision matches, every required route is served and auth answers
+  401/200. It writes nothing until the revision matches. A production still degraded after the
+  retries is filed as it is, and verification then asks for revision.
+  Run it from a worktree's venv (`uv run --directory <worktree>`), never the main tree's `.venv`,
+  which the scheduled lanes own. Run `--dry-run` first: it reads and probes, writes nothing, and
+  needs only the SYSTEM bearer. The two bearers are separate identities in separate variables. Fetch
+  them in a subshell so neither they nor `BWS_ACCESS_TOKEN` outlive the command, and never echo them:
+
+  ```bash
+  (
+    source ~/Projects/orchestrator/scripts/sds-token.sh
+    bws_value() { env -u FORCE_COLOR -u CLICOLOR_FORCE bws secret get "$1" --output json --color no \
+      | python3 -c 'import json,sys; print(json.load(sys.stdin)["value"])'; }
+    ACTIVATION_BIND_TOKEN="$(bws_value 221a48d5-3f29-4898-b300-b4820140c880)" \
+    IMAGE_VERIFY_TOKEN="$(bws_value 660d5846-abcb-4751-be86-b483012899eb)" \
+      uv run --directory <worktree> image-release bind \
+        --repository AlobarQuest/orchestrator --checkout <worktree> \
+        --previous-commit <the pre-swap revision recorded at the swap, reused on every re-run> \
+        --built-commit <full-40-char-sha> --digest <pushed sha256:…> \
+        --observed-digest <running container's sha256:…> \
+        --image-name orchestrator --tag <short-sha>[-<label>]-amd64 \
+        --workflow-run-url <Release image run URL> \
+        --base-url https://sds.alobar.net --deployer hq-session
+  )
+  ```
+
+  Exit 0: done, or nothing to do. Exit 2: a condition, with the reason in the JSON output:
+  - the two digests differ (nothing is read or written);
+  - production still does not serve the built commit, or an unauthenticated read is not refused
+    (nothing is written);
+  - a binding to another digest was never observed (orphaned);
+  - a merge commit is missing from the checkout (fetch and re-run);
+  - verification asked for revision or review.
+
+  Exit 3: a refusal or an unreadable state, including a `--previous-commit` the checkout does not
+  hold. A re-run over the same deploy re-files nothing.
+
 ### #61
 
 - **Migrating before the image swap puts the STILL-RUNNING old image into `/health/ready` 503
@@ -347,3 +400,7 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   Coolify's own check (`health_check_enabled: false`) and the Dockerfile `HEALTHCHECK`
   (`/health/live`) both ignore. Keep it short; do the tag write BEFORE the migration so the swap is
   one call afterwards.
+  **Immediately before the swap call, record the `revision` that
+  `curl -s https://sds.alobar.net/health/live` reports, and keep it with the deploy's notes.** It is
+  the outgoing image's revision and the binder's `--previous-commit` (see "Binding the release").
+  After the swap it can never be read again: `/health/live` then reports the new build.

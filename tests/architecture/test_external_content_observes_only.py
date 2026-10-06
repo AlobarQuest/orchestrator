@@ -19,7 +19,12 @@ WHAT IS ASSERTED
    constructs a work unit.
 
 3. **No program may send a `container_image` release binding or deployment observation**, the one
-   observation shape ADR-0039 names as minting a work unit.
+   observation shape ADR-0039 names as minting a work unit -- **except the one program whose row
+   carries `mints_post_deploy_units`**, and exactly one row may (ADR-0039's amendment of
+   2026-10-05: the orchestrator's operator-run deploy step, `image_release`). The exception lives
+   in that program's row rather than as a free-floating allowlist entry, and it inverts the rule
+   rather than lifting it: every binding or observation payload that program builds must name
+   `container_image` explicitly. Every other program is held to `machine_local` as before.
 
 4. **The ADR's own measurement is pinned**: exactly three orchestrator modules construct a
    `WorkUnit`, and the observations service is not one of them and imports none of them.
@@ -166,6 +171,7 @@ CLI_MODULE = ORCHESTRATOR / "cli.py"
 OBSERVATIONS = "/api/v1/observations"
 RELEASE_BINDING = "/api/v1/work-units/{unit_id}/release-artifacts"
 DEPLOYMENT_OBSERVATION = "/api/v1/release-artifacts/{binding_id}/deployment-observations"
+VERIFY = "/api/v1/work-units/{unit_id}/verify"
 WRITE_METHODS = frozenset({"post", "put", "patch", "delete"})
 PAYLOAD_DIGEST_KEYS = frozenset({"artifact_digest", "observed_artifact_digest"})
 
@@ -192,6 +198,9 @@ class Row:
     writes: frozenset[str] = frozenset()
     cli: frozenset[str] = frozenset()
     foreign: Mapping[str, str] = field(default_factory=dict)
+    # ADR-0039's amendment of 2026-10-05, and the only way to carry it: this program's binding and
+    # observation payloads must be `container_image`, the kind that mints a post-deploy unit.
+    mints_post_deploy_units: bool = False
 
 
 OBSERVE = frozenset({OBSERVATIONS})
@@ -251,6 +260,16 @@ CLASSIFICATION: dict[str, Row] = {
         "emit-intake-payload command builds",
         frozenset({"/api/v1/package-intakes"}),
         cli=frozenset({"emit-intake-payload"}),
+    ),
+    "image_release": Row(
+        Role.INTERNAL_LANE_ACTOR,
+        "ADR-0039 amendment 2026-10-05: the orchestrator's operator-run deploy step binds a "
+        "container_image artifact for each completed unit its image carries, files the "
+        "deployment observation that mints one post-deploy unit per binding, and verifies it as "
+        "VERIFIER. Reads only the orchestrator's own production endpoints and the operator's "
+        "verified digest",
+        frozenset({RELEASE_BINDING, DEPLOYMENT_OBSERVATION, VERIFY}),
+        mints_post_deploy_units=True,
     ),
     "activation_sweep": Row(
         Role.INTERNAL_LANE_ACTOR,
@@ -845,14 +864,23 @@ def cli_command_writes(name: str) -> bool | None:
 # ------------------------------------------------------------------------------------------------
 
 
-def container_image_violations(src: Path, units: list[Reached]) -> list[str]:
+def container_image_violations(
+    src: Path, units: list[Reached], *, mints_post_deploy_units: bool = False
+) -> list[str]:
+    """Every payload's kind resolves to the one kind the row permits, named explicitly.
+
+    `machine_local` for every program but the row carrying the amendment, for which it is
+    `container_image` -- inverted rather than lifted, so a payload that omits the key or names the
+    other kind still fails there too.
+    """
+    expected = CONTAINER_IMAGE_KIND if mints_post_deploy_units else MACHINE_LOCAL_KIND
     problems: list[str] = []
     payloads = 0
     for unit in units:
         path = unit.path
         constants = _resolved_constants(src, path)
         for line, text in _code_strings(unit):
-            if text == CONTAINER_IMAGE_KIND:
+            if text == CONTAINER_IMAGE_KIND and not mints_post_deploy_units:
                 problems.append(f"{path.relative_to(src)}:{line}: names {CONTAINER_IMAGE_KIND!r}")
         for node in unit.nodes():
             if not isinstance(node, ast.Dict):
@@ -871,10 +899,8 @@ def container_image_violations(src: Path, units: list[Reached]) -> list[str]:
                     f"{where}: a release binding or deployment observation payload omits 'kind', "
                     f"which the wire model defaults to {CONTAINER_IMAGE_KIND!r} -- a unit is minted"
                 )
-            elif _value(keys["kind"], constants) != MACHINE_LOCAL_KIND:
-                problems.append(
-                    f"{where}: payload 'kind' does not resolve to {MACHINE_LOCAL_KIND!r}"
-                )
+            elif _value(keys["kind"], constants) != expected:
+                problems.append(f"{where}: payload 'kind' does not resolve to {expected!r}")
     if payloads == 0:
         problems.append(
             "can write a release-artifact route but no binding or observation payload was found "
@@ -949,7 +975,14 @@ def detect(
         elif writes:
             surface.writes.add(f"cli:{subcommand}")
     if surface.writes & {RELEASE_BINDING, DEPLOYMENT_OBSERVATION}:
-        surface.problems += container_image_violations(src, units)
+        surface.problems += container_image_violations(
+            src, units, mints_post_deploy_units=row.mints_post_deploy_units
+        )
+    elif row.mints_post_deploy_units:
+        surface.problems.append(
+            "its row carries the post-deploy-unit exception but it writes no release-artifact "
+            "route -- an exception with nothing to except is an unused grant"
+        )
     return surface
 
 
@@ -1024,6 +1057,14 @@ def test_each_role_fixes_the_shape_of_its_write_surface() -> None:
             assert row.writes == frozenset(), package
         else:
             assert row.writes, package
+
+
+def test_exactly_one_program_carries_the_post_deploy_unit_exception() -> None:
+    """ADR-0039's amendment names ONE program. A second row carrying it is a second producer
+    minting units, which is the ruling needing re-checking -- this failure's whole message."""
+    carriers = {name for name, row in CLASSIFICATION.items() if row.mints_post_deploy_units}
+    assert carriers == {"image_release"}
+    assert CLASSIFICATION["image_release"].role is Role.INTERNAL_LANE_ACTOR
 
 
 def test_the_observe_only_surface_is_the_observer_roles_whole_surface() -> None:
@@ -1436,6 +1477,47 @@ def test_control_a_container_image_binding_fails_even_with_a_machine_local_obser
     assert any("payload 'kind' does not resolve to 'machine_local'" in m for m in found)
 
 
+MINTER_ROW = Row(
+    Role.INTERNAL_LANE_ACTOR,
+    "ADR-0039 amendment fixture",
+    frozenset({RELEASE_BINDING, DEPLOYMENT_OBSERVATION}),
+    mints_post_deploy_units=True,
+)
+IMAGE = 'IMAGE = "container_image"\n'
+
+
+def test_control_the_exception_row_passes_container_image_payloads(tmp_path: Path) -> None:
+    src = _tree(tmp_path, binder=IMAGE + _payload("IMAGE", '"kind": IMAGE, '))
+    assert _run(src, {"binder": MINTER_ROW}) == []
+
+
+def test_control_the_exception_row_still_fails_an_omitted_kind(tmp_path: Path) -> None:
+    src = _tree(tmp_path, binder=IMAGE + _payload("IMAGE", ""))
+    [message] = _run(src, {"binder": MINTER_ROW})
+    assert "omits 'kind'" in message
+
+
+def test_control_the_exception_row_fails_a_machine_local_payload(tmp_path: Path) -> None:
+    src = _tree(tmp_path, binder=IMAGE + _payload("IMAGE", '"kind": MACHINE, '))
+    [message] = _run(src, {"binder": MINTER_ROW})
+    assert "payload 'kind' does not resolve to 'container_image'" in message
+
+
+def test_control_the_exception_does_not_reach_a_row_without_it(tmp_path: Path) -> None:
+    src = _tree(tmp_path, binder=IMAGE + _payload("IMAGE", '"kind": IMAGE, '))
+    found = _run(src, {"binder": BINDER_ROW})
+    assert any("names 'container_image'" in m for m in found)
+
+
+def test_control_an_exception_on_a_row_that_writes_no_release_route_fails(
+    tmp_path: Path,
+) -> None:
+    row = Row(Role.OBSERVE_ONLY, "ADR-0039 fixture", OBSERVE, mints_post_deploy_units=True)
+    src = _tree(tmp_path, producer=CLEAN_OBSERVER)
+    [message] = _run(src, {"producer": row})
+    assert "an exception with nothing to except" in message
+
+
 def test_control_a_release_writer_with_no_payload_to_inspect_fails(tmp_path: Path) -> None:
     src = _tree(tmp_path, binder=BIND_PAYLOAD.split("MACHINE =")[0])
     [message] = _run(src, {"binder": BINDER_ROW})
@@ -1446,6 +1528,20 @@ def test_the_real_tree_really_has_machine_local_payloads_to_inspect() -> None:
     """The kind rule is not vacuous on the program it exists for."""
     units = closure(SRC, "activation_sweep", out_of_process_packages(SRC))
     assert container_image_violations(SRC, units) == []
+    inspected = [
+        node
+        for unit in units
+        for node in unit.nodes()
+        if isinstance(node, ast.Dict)
+        and PAYLOAD_DIGEST_KEYS & {k.value for k in node.keys if isinstance(k, ast.Constant)}
+    ]
+    assert len(inspected) >= 2
+
+
+def test_the_real_tree_really_has_container_image_payloads_to_inspect() -> None:
+    """The inverted rule is not vacuous on the one program that carries it."""
+    units = closure(SRC, "image_release", out_of_process_packages(SRC))
+    assert container_image_violations(SRC, units, mints_post_deploy_units=True) == []
     inspected = [
         node
         for unit in units
