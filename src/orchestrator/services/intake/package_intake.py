@@ -88,7 +88,16 @@ def register_package_intake(
     session: Session,
     command: PackageIntakeCommand,
     actor: ActorContext,
+    *,
+    staged_intake_id: uuid.UUID | None = None,
 ) -> WorkPackageRevision:
+    """Register a package intake, or replay the one already registered under its key.
+
+    `staged_intake_id` names the staged row a person confirmed (ADR-0006 amendment 1). It is
+    provenance, not identity: it lands on the intake event BESIDE the command, so the replay,
+    which compares the command alone, treats a confirmed staging and the same payload pasted by
+    hand as the same registration.
+    """
     _require_intake_registrar(actor, command.change_record_id)
     if command.expected_version != 0:
         raise DomainError(
@@ -166,7 +175,7 @@ def register_package_intake(
         raise
 
     _sync_acceptance_criteria(session, revision.id, acceptance_criteria)
-    _record_intake_event(session, revision.id, command, actor)
+    _record_intake_event(session, revision.id, command, actor, staged_intake_id)
     return revision
 
 
@@ -503,7 +512,11 @@ def _record_intake_event(
     revision_id: uuid.UUID,
     command: PackageIntakeCommand,
     actor: ActorContext,
+    staged_intake_id: uuid.UUID | None,
 ) -> None:
+    payload: dict[str, Any] = {"command": _command_identity(command, actor)}
+    if staged_intake_id is not None:
+        payload["staged_intake_id"] = str(staged_intake_id)
     session.add(
         Event(
             occurred_at=TransactionClock().now(session),
@@ -513,7 +526,7 @@ def _record_intake_event(
             subject_id=revision_id,
             from_state=None,
             to_state=None,
-            payload={"command": _command_identity(command, actor)},
+            payload=payload,
             correlation_id=uuid.uuid4(),
             idempotency_key=command.idempotency_key,
         )

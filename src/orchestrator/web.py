@@ -47,6 +47,11 @@ from orchestrator.services.intake.intake_reads import (
 )
 from orchestrator.services.intake.package_intake import register_package_intake
 from orchestrator.services.intake.packages import record_approval
+from orchestrator.services.intake.staged_intake import (
+    STAGED,
+    confirm_staged_intake,
+    staged_intake,
+)
 from orchestrator.services.landing.estate_landing import EstateAnswer, EstateLandingSource
 from orchestrator.services.lifecycle.claims import REQUEUE_SOURCE_STATES, authorize_retry
 from orchestrator.services.lifecycle.lifecycle import (
@@ -61,6 +66,7 @@ from orchestrator.services.reconciliation.reconciliation import (
 )
 from orchestrator.services.release.release_evidence_pack import release_evidence_pack_response
 from orchestrator.services.reporting.decision_facts import (
+    decision_facts_for_intake,
     decision_facts_for_revision,
     decision_facts_for_unit,
     declared_repository,
@@ -334,12 +340,31 @@ def _package_intake_projection(
             "package intake does not exist for this revision",
             None,
         )
-    acceptance_criteria = revision_acceptance_criteria(session, revision.id)
+    package = revision.work_package
     return {
         "revision": revision,
-        "package": revision.work_package,
-        "acceptance_criteria": acceptance_criteria,
-        "authority": intake_authority(session, revision.id),
+        "package": package,
+        "intake": {
+            "package_id": package.package_id,
+            "revision": revision.revision,
+            "source_repository": package.source_repository,
+            "source_path": revision.source_path,
+            "source_commit": revision.source_commit,
+            "content_hash": revision.content_hash,
+            "status_at_intake": revision.status_at_intake,
+            "verification_mode": revision.verification_mode,
+            "verification_limitations": revision.verification_limitations,
+            "approved_by": revision.approved_by,
+            "approved_at": revision.approved_at,
+            "approval_ledger_commit": revision.approval_ledger_commit,
+            "registered": f"{revision.registered_by} at {revision.registered_at}",
+            "profile": revision.profile,
+            "authority_fingerprint": revision.authority_fingerprint,
+            "registry_version": revision.registry_version,
+            "authority": intake_authority(session, revision.id),
+            "enforcement_snapshot": revision.enforcement_snapshot,
+            "acceptance_criteria": revision_acceptance_criteria(session, revision.id),
+        },
         "decision_facts": decision_facts_for_revision(
             revision,
             _landing_reading(landing_source, revision.profile, revision.enforcement_snapshot),
@@ -591,6 +616,11 @@ def _parse_intake_payload(payload: str, idempotency_key: str) -> PackageIntakeRe
             "the intake payload must be a JSON object",
             "paste the exact output of `orchestrator emit-intake-payload`",
         )
+    return _registration(document, idempotency_key)
+
+
+def _registration(document: dict[str, Any], idempotency_key: str) -> PackageIntakeRegistration:
+    """Validate an intake document under the given key, as a DomainError on failure."""
     document["idempotency_key"] = idempotency_key
     try:
         return PackageIntakeRegistration.model_validate(document)
@@ -620,6 +650,114 @@ def intake_detail(
         "intake.html",
         _package_intake_projection(session, revision_id, landing_source),
     )
+
+
+def _staged_intake_content(payload: dict[str, Any]) -> dict[str, Any]:
+    """The staged payload in the shape `_intake_content.html` reads, before any revision exists.
+
+    Read with `.get` throughout: the payload passed the registration model when it was staged,
+    but a page that 500s on a key it expected is a gate nobody can open.
+    """
+    return {
+        **{
+            name: payload.get(name)
+            for name in (
+                "package_id",
+                "revision",
+                "source_repository",
+                "source_path",
+                "source_commit",
+                "content_hash",
+                "status_at_intake",
+                "verification_mode",
+                "verification_limitations",
+                "approved_by",
+                "approved_at",
+                "approval_ledger_commit",
+                "profile",
+                "registry_version",
+                "authority",
+                "enforcement_snapshot",
+            )
+        },
+        "registered": None,
+        "authority_fingerprint": None,
+        "acceptance_criteria": payload.get("acceptance_criteria") or (),
+    }
+
+
+@router.get("/staged-intakes/{staged_id}", response_class=HTMLResponse)
+def staged_intake_detail(
+    request: Request,
+    staged_id: uuid.UUID,
+    actor: ActorDep,
+    session: SessionDep,
+    landing_source: LandingSourceDep,
+) -> HTMLResponse:
+    """The decision surface for a staged intake: the three facts, one button, then the content.
+
+    The confirm token binds the staged row and its own idempotency key, so the button can only
+    register this row, under the key the machine staged it with.
+    """
+    _human(actor)
+    staged = staged_intake(session, staged_id)
+    payload = staged.payload
+    profile, snapshot = payload.get("profile"), payload.get("enforcement_snapshot")
+    confirmable = staged.state == STAGED
+    return _render(
+        request,
+        "staged_intake.html",
+        {
+            "staged": staged,
+            "intake": _staged_intake_content(payload),
+            "decision_facts": decision_facts_for_intake(
+                profile, snapshot, _landing_reading(landing_source, profile, snapshot)
+            ),
+            "idempotency_key": staged.idempotency_key,
+            "csrf_token": (
+                _issue_token(
+                    request, actor, staged.id, "confirm_staged_intake", staged.idempotency_key
+                )
+                if confirmable
+                else None
+            ),
+        },
+    )
+
+
+@router.post("/staged-intakes/{staged_id}/confirm")
+def confirm_staged_intake_route(
+    request: Request,
+    staged_id: uuid.UUID,
+    actor: ActorDep,
+    session: SessionDep,
+    idempotency_key: Annotated[str, Form()] = "",
+    csrf_token: Annotated[str, Form()] = "",
+    confirm: Annotated[str | None, Form()] = None,
+) -> RedirectResponse:
+    """Register a staged intake as the person pressing the button (ADR-0006 amendment 1).
+
+    The command is built from the stored payload through the same model and projection as the
+    paste form and the API route, under the staged key. A second press finds the row registered
+    and lands on the same revision.
+    """
+    _human(actor)
+    _require_form(
+        request,
+        actor,
+        staged_id,
+        "confirm_staged_intake",
+        csrf_token,
+        idempotency_key,
+        confirm,
+    )
+    staged = staged_intake(session, staged_id)
+    registration = _registration(dict(staged.payload), staged.idempotency_key)
+    revision = confirm_staged_intake(
+        session, staged_id, package_intake_command(registration), actor
+    )
+    session.commit()
+    return RedirectResponse(f"/review/intakes/{revision.id}", status_code=303)
 
 
 @router.get("/decomposition-proposals/{proposal_id}", response_class=HTMLResponse)

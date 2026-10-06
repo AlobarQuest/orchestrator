@@ -29,12 +29,14 @@ from orchestrator.api.schemas.intake import (
     ProposedUnitCommand,
     ReadinessResponse,
     RunnerBriefResponse,
+    StagedIntakeResponse,
 )
 from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import normalize_authority
 from orchestrator.persistence.models import (
     DecompositionProposal,
     DecompositionProposalUnit,
+    StagedPackageIntake,
     WorkPackageRevision,
 )
 from orchestrator.services.intake.change_record_work import work_for_change_record
@@ -66,6 +68,7 @@ from orchestrator.services.intake.packages import (
     resolve_dependency_command,
 )
 from orchestrator.services.intake.runner_brief import runner_brief
+from orchestrator.services.intake.staged_intake import stage_package_intake
 from orchestrator.services.lifecycle.readiness import evaluate_readiness
 
 router = APIRouter(prefix="/api/v1", responses=ERROR_RESPONSES)
@@ -120,6 +123,37 @@ def create_package_intake(
     revision = register_package_intake(session, package_intake_command(body), actor)
     session.commit()
     return _package_intake_payload(session, revision)
+
+
+@router.post("/staged-intakes", response_model=StagedIntakeResponse, status_code=201)
+def create_staged_intake(
+    body: PackageIntakeRegistration,
+    actor: ActorDep,
+    session: SessionDep,
+) -> dict[str, object]:
+    """Stage an intake for a person to confirm at `/review/staged-intakes/{id}`. SYSTEM only.
+
+    The body is validated by the same model `POST /package-intakes` uses, and stored as dumped
+    with unset fields left out, so the confirm rebuilds that model exactly. Staging registers
+    nothing. `stage_package_intake` refuses every role but SYSTEM.
+    """
+    staged = stage_package_intake(session, body.model_dump(mode="json", exclude_unset=True), actor)
+    session.commit()
+    return _staged_intake_payload(staged)
+
+
+def _staged_intake_payload(staged: StagedPackageIntake) -> dict[str, object]:
+    return {
+        "id": staged.id,
+        "state": staged.state,
+        "idempotency_key": staged.idempotency_key,
+        "package_id": staged.payload["package_id"],
+        "revision": staged.payload["revision"],
+        "staged_by": staged.staged_by,
+        "staged_at": staged.staged_at,
+        "registered_revision_id": staged.registered_revision_id,
+        "review_path": f"/review/staged-intakes/{staged.id}",
+    }
 
 
 @router.get("/package-intakes/{revision_id}", response_model=PackageIntakeResponse)

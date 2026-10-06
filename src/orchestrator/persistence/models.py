@@ -1586,3 +1586,48 @@ class UnitTrackerBinding(Base):
     external_url: Mapped[str | None] = mapped_column(String)
     projected_state: Mapped[str] = mapped_column(String)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# What a staged intake can be. `withdrawn` has no writer yet: it is reserved so a row that should
+# never be registered can be retired without a migration, and until a verb exists a staged row
+# that should go no further simply stays staged.
+STAGED_INTAKE_STATES = ("staged", "registered", "withdrawn")
+
+
+class StagedPackageIntake(UUIDPrimaryKey, Base):
+    """An intake payload a machine has staged for a person to confirm (ADR-0006 amendment 1).
+
+    The CLI stages the payload as SYSTEM, and nothing happens until a live human session presses
+    confirm on `/review/staged-intakes/{id}`, which registers it as that HUMAN. The payload is
+    held verbatim -- as validated, unset fields left out -- so the confirm builds exactly the
+    command the API route would have built from the same body.
+    """
+
+    __tablename__ = "staged_package_intakes"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_staged_package_intakes_idempotency"),
+        # Built via join, not `{STAGED_INTAKE_STATES!r}`, so the CHECK stays valid SQL whatever
+        # the tuple's length.
+        CheckConstraint(
+            "state IN ({})".format(", ".join(f"'{state}'" for state in STAGED_INTAKE_STATES)),
+            name="ck_staged_package_intakes_state",
+        ),
+        # A registered row names its revision, and only a registered row does.
+        CheckConstraint(
+            "(state = 'registered') = (registered_revision_id IS NOT NULL)",
+            name="ck_staged_package_intakes_registered_revision",
+        ),
+        CheckConstraint(
+            "idempotency_key <> '' AND staged_by <> ''",
+            name="ck_staged_package_intakes_required_text",
+        ),
+    )
+
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    idempotency_key: Mapped[str] = mapped_column(String)
+    staged_by: Mapped[str] = mapped_column(String)
+    staged_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    state: Mapped[str] = mapped_column(String)
+    registered_revision_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("work_package_revisions.id")
+    )

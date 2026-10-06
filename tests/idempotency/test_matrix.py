@@ -37,6 +37,11 @@ NON_INGRESS_POST_ROUTES = frozenset(
         # instead of registering twice -- asserted in tests/web/test_intake_form.py by
         # test_the_forms_idempotency_key_wins_over_the_pasted_payload.
         "/review/intakes",
+        # Delegates to register_package_intake under the STAGED row's idempotency key, after
+        # locking that row: a second press finds it registered and replays its revision. The
+        # staging ingress itself has its own /api/v1/staged-intakes row. Asserted in
+        # tests/web/test_staged_intake.py by test_a_second_press_lands_on_the_same_revision.
+        "/review/staged-intakes/{staged_id}/confirm",
         # Derives a context snapshot; carries no independent ingress key.
         "/api/v1/work-units/{unit_id}/preflight",
     }
