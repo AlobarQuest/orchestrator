@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
 from orchestrator.persistence.models import (
+    CONTAINER_IMAGE_KIND,
     DeploymentObservation,
     Observation,
     ReconciliationCondition,
@@ -40,6 +41,15 @@ from orchestrator.services.release.machine_activation import (
 from orchestrator.services.release.observations import ObservationFilters, list_observations
 from orchestrator.services.release.release_artifacts import list_release_artifacts
 from orchestrator.services.reporting.evidence_pack import evidence_pack_projection
+
+# The revision watcher's row shape, as `revision_watcher/record.py` writes it. Transcribed because
+# `src/orchestrator` cannot import that program; `tests/contract/test_served_revision_contract.py`
+# holds the two equal, since a renamed key would empty this hop in silence.
+SERVED_SOURCE_SYSTEM = "revision_watcher"
+SERVED_SUBJECT_TYPE = "service"
+SERVED_OBSERVATION_TYPE = "production_revision"
+SERVED_REPOSITORY = "repository"
+SERVED_COMMIT = "serving"
 
 
 class TraceabilityAnchorResponse(BaseModel):
@@ -398,12 +408,19 @@ def build_chain(session: Session, unit_id: uuid.UUID) -> TraceabilityChainRespon
     # Several bindings can name one commit (an image and a machine-local activation of the same
     # merge), so one landing is listed once.
     landed = {landing.id: landing for _, landing in landings}
-    observations = list(
-        list_observations(
-            session,
-            ObservationFilters(subject_type="work_unit", subject_reference=str(unit_id)),
+    # What production said it served once the release was deployed (SDS 1.1 item 5c). Keyed on the
+    # image's built commit, so several bindings of one image list each reading once.
+    served = {row.id: row for binding in artifacts for row in _served_revisions(session, binding)}
+    observations = (
+        list(
+            list_observations(
+                session,
+                ObservationFilters(subject_type="work_unit", subject_reference=str(unit_id)),
+            )
         )
-    ) + list(landed.values())
+        + list(landed.values())
+        + list(served.values())
+    )
 
     return TraceabilityChainResponse(
         intent=TraceabilityIntentHop(
@@ -479,6 +496,36 @@ def build_chain(session: Session, unit_id: uuid.UUID) -> TraceabilityChainRespon
             )
             for o in observations
         ],
+    )
+
+
+def _served_revisions(session: Session, binding: ReleaseArtifactBinding) -> list[Observation]:
+    """The revision watcher's readings of production serving this binding's image.
+
+    Only a container image has a served commit to match: a machine-local activation is a working
+    copy, which the watcher's `orchestrator` subject -- the hosted container -- never describes, and
+    joining across the two is the mix-up ADR-0030 forbids. The commit is the image's BUILT commit,
+    which the binder records, not the unit's merge commit: an image usually carries several merges.
+    """
+    if binding.kind != CONTAINER_IMAGE_KIND or not isinstance(binding.summary, dict):
+        return []
+    image = binding.summary.get("image")
+    built = image.get("built_commit") if isinstance(image, dict) else None
+    if not isinstance(built, str) or not built:
+        return []
+    return list(
+        session.scalars(
+            select(Observation)
+            .where(
+                Observation.source_system == SERVED_SOURCE_SYSTEM,
+                Observation.subject_type == SERVED_SUBJECT_TYPE,
+                Observation.observation_type == SERVED_OBSERVATION_TYPE,
+                func.lower(Observation.facts[SERVED_REPOSITORY].astext)
+                == binding.source_repository.lower(),
+                Observation.facts[SERVED_COMMIT].astext == built,
+            )
+            .order_by(Observation.observed_at, Observation.id)
+        )
     )
 
 
