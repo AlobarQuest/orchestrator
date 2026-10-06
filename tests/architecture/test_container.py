@@ -6,6 +6,7 @@ import yaml
 
 from orchestrator.identity.registry import RegistryAdapter
 from orchestrator.main import load_auth_config
+from scripts.deploy_orchestrator import HEALTH_CHECK_FILES, READINESS_PATH, readiness_consumers
 from tests.architecture.test_interpreter_agreement import pinned_version
 
 RUNTIME_STAGE = f"FROM python:{pinned_version()}-slim AS runtime"
@@ -219,3 +220,22 @@ def test_runtime_auth_rejects_invalid_human_actor_mapping(
 
     with pytest.raises(RuntimeError, match="runtime authentication configuration"):
         load_auth_config()
+
+
+def test_no_health_check_consults_readiness() -> None:
+    """Migrate-before-swap is safe only because no health check reads `/health/ready` (#61).
+
+    The deploy command refuses a build that breaks this. This test makes the same edit fail the
+    build first, with the same predicate, so "improving" a health check costs a red PR and not
+    a refused deploy. The direct asserts keep a hollowed predicate from passing on its own.
+    """
+    files = {name: Path(name).read_text() for name in HEALTH_CHECK_FILES}
+
+    assert readiness_consumers(files) == []
+    healthcheck = next(line for line in files["Dockerfile"].splitlines() if "HEALTHCHECK" in line)
+    assert "/health/live" in healthcheck
+    assert READINESS_PATH not in healthcheck
+    compose = yaml.safe_load(files["docker-compose.yml"])
+    assert READINESS_PATH not in " ".join(
+        compose["services"]["orchestrator"]["healthcheck"]["test"]
+    )
