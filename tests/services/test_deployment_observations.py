@@ -291,14 +291,12 @@ def test_observation_records_bounded_evidence_and_events(migrated_session: Sessi
     assert [row.ac_id for row in evidence] == [
         "post-deploy-artifact",
         "post-deploy-auth",
-        "post-deploy-dispatch",
         "post-deploy-health",
         "post-deploy-routes",
     ]
     assert {row.evidence_type for row in evidence} == {
         "release.deployment_observed",
         "production.auth_behavior",
-        "production.dispatch_posture",
         "production.health",
         "production.route_presence",
     }
@@ -330,7 +328,6 @@ def test_generated_post_deploy_unit_verifies_through_ws51(migrated_session: Sess
     assert {evaluation.ac_id for evaluation in result.evaluations} == {
         "post-deploy-artifact",
         "post-deploy-auth",
-        "post-deploy-dispatch",
         "post-deploy-health",
         "post-deploy-routes",
     }
@@ -396,7 +393,7 @@ def test_generated_post_deploy_unit_fails_closed_for_bad_route_fact(
     )
 
 
-def test_generated_post_deploy_unit_fails_closed_for_dispatch_enabled(
+def test_dispatch_posture_no_longer_decides_post_deploy_verification(
     migrated_session: Session,
 ) -> None:
     _unit, binding = release_binding(migrated_session, key="dispatch-enabled")
@@ -419,12 +416,22 @@ def test_generated_post_deploy_unit_fails_closed_for_dispatch_enabled(
         ),
     )
 
-    assert result.result == "revision_required"
-    assert result.state is WorkUnitState.REVISION_REQUIRED
-    assert any(
-        evaluation.ac_id == "post-deploy-dispatch" and evaluation.outcome == "failed"
-        for evaluation in result.evaluations
+    # Dispatch posture is a standing setting, not a release property (SDS 1.1), so a deploy with
+    # dispatch on verifies like any other.
+    assert result.result == "completed"
+    assert result.state is WorkUnitState.COMPLETED
+    assert not any(evaluation.ac_id == "post-deploy-dispatch" for evaluation in result.evaluations)
+
+
+def test_a_hosted_observation_needs_no_dispatch_summary(migrated_session: Session) -> None:
+    _unit, binding = release_binding(migrated_session, key="no-dispatch")
+    command = replace(
+        observation_command(binding, key="no-dispatch-observation"), dispatch_summary={}
     )
+
+    observation = record_deployment_observation(migrated_session, command)
+
+    assert isinstance(observation, DeploymentObservation)
 
 
 def test_rejects_unbounded_raw_observation_fields(migrated_session: Session) -> None:

@@ -49,6 +49,12 @@ POST_DEPLOY_AC_IDS = (
     "post-deploy-health",
     "post-deploy-routes",
 )
+# What a post-deploy unit minted now must satisfy. `post-deploy-dispatch` is retired (SDS 1.1:
+# dispatch posture is a standing setting, not a release property) but stays in POST_DEPLOY_AC_IDS,
+# because units minted before carry the criterion and public adjudication must still refuse it.
+REQUIRED_POST_DEPLOY_AC_IDS = tuple(
+    ac_id for ac_id in POST_DEPLOY_AC_IDS if ac_id != "post-deploy-dispatch"
+)
 
 # The capability a generated follow-up review unit carries -- the same string
 # `services.intake.follow_ups` mints units with and `is_generated_follow_up_unit` /
@@ -578,7 +584,7 @@ def required_ac_ids(
     unit: WorkUnit,
 ) -> tuple[str, ...] | None:
     if _is_generated_post_deploy_unit(session, revision, unit):
-        return POST_DEPLOY_AC_IDS
+        return REQUIRED_POST_DEPLOY_AC_IDS
     if is_generated_follow_up_unit(unit):
         return (FOLLOW_UP_AC_ID,)
 

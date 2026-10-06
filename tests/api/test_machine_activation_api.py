@@ -153,3 +153,25 @@ def test_the_route_requires_a_repository(db_client: TestClient) -> None:
 
 def test_the_route_requires_authentication(db_client: TestClient) -> None:
     assert db_client.get(CANDIDATES, params={"repository": REPOSITORY}).status_code == 401
+
+
+def test_the_route_refuses_a_kind_that_is_not_a_release_artifact_kind(
+    db_client: TestClient,
+) -> None:
+    response = db_client.get(
+        CANDIDATES, params={"repository": REPOSITORY, "kind": "tarball"}, headers=SYSTEM
+    )
+
+    assert response.status_code in {400, 409, 422}
+    assert response.json()["error"]["code"] == "release_artifact_kind_invalid"
+
+
+def test_the_route_serves_the_container_image_kind(db_client: TestClient) -> None:
+    response = db_client.get(
+        CANDIDATES,
+        params={"repository": REPOSITORY, "kind": "container_image"},
+        headers=SYSTEM,
+    )
+
+    assert response.status_code == 200
+    assert response.json() == []

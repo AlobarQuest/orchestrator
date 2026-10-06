@@ -305,6 +305,34 @@ def test_a_container_image_binding_does_not_stand_in_for_a_machine_local_one(
     assert candidates[0].binding_id is None
 
 
+def test_the_container_image_kind_reports_its_own_binding_and_not_the_other_kind(
+    migrated_session: Session,
+) -> None:
+    """The hosted deploy asks with `kind="container_image"` (SDS 1.1 item 5a), and the scoping
+    holds in that direction too: a machine-local row does not mark a unit as already imaged."""
+    unit = landed_unit(migrated_session)
+    record_landing(migrated_session)
+    record_release_artifact(migrated_session, _machine_local_command(unit))
+    unimaged = machine_activation_candidates(migrated_session, REPOSITORY, "container_image")
+    container = record_release_artifact(
+        migrated_session,
+        replace(
+            _machine_local_command(unit),
+            kind="container_image",
+            artifact_registry="ghcr.io",
+            artifact_repository="alobarquest/infraops-mcp-server",
+            artifact_name="infraops-mcp-server",
+            idempotency_key="container-binding-2",
+        ),
+    )
+    assert isinstance(container, ReleaseArtifactBinding)
+
+    imaged = machine_activation_candidates(migrated_session, REPOSITORY, "container_image")
+
+    assert [candidate.binding_id for candidate in unimaged] == [None]
+    assert [candidate.binding_id for candidate in imaged] == [container.id]
+
+
 def test_a_push_with_no_pull_request_is_skipped_rather_than_raised_on(
     migrated_session: Session,
 ) -> None:
