@@ -11,7 +11,7 @@ worktree's own venv, and keep the state file in the session scratchpad, never a 
 it under `rtk proxy`, because rtk swallows the stdout of `python -m`, and the result JSON goes to
 stdout.
 
-It runs in two phases, because **five steps stay infraops calls the deploying session makes
+It runs in two phases, with a `recheck` between them, because **five steps stay infraops calls the deploying session makes
 itself**. The workspace rule (`~/Projects/CLAUDE.md`) routes every Coolify change through the
 infraops MCP tools, and reading the host means `vps_exec`. A local program can call neither, so
 `prepare` prints those calls exactly and `finish` takes their result:
@@ -24,7 +24,9 @@ infraops MCP tools, and reading the host means `vps_exec`. A local program can c
 5. the container → image → `RepoDigest` read, through `vps_exec`.
 
 Steps 2 to 4 are printed in #305's order: the tag write comes before the migration, so the
-migration-to-swap window is one call long.
+migration-to-swap window is one call long. Immediately before step 4, the printed steps run
+`recheck`. It repeats the nothing-live check and confirms that production still serves the
+recorded pre-swap revision, because the first check is as old as the build (up to 45 minutes).
 
 ```bash
 cd <worktree at the commit>   # uv sync --frozen first
@@ -32,7 +34,8 @@ rtk proxy uv run python -m scripts.deploy_orchestrator prepare --ref origin/main
   --state <scratchpad>/deploy.json \
   --coolify-health-check-enabled false --coolify-health-check-path <from step 1> \
   [--label <suffix>] [--expect-schema <ResponseModel>[.<field>] ...]
-# ... the infraops calls it prints ...
+# ... the infraops calls it prints, with this immediately before coolify_deploy:
+rtk proxy uv run python -m scripts.deploy_orchestrator recheck --state <scratchpad>/deploy.json
 rtk proxy uv run python -m scripts.deploy_orchestrator finish --state <scratchpad>/deploy.json \
   --observed-digest sha256:<from the RepoDigest read>
 ```
@@ -42,7 +45,9 @@ checks these, in order:
 
 - **Safe by construction.** It refuses if the built commit's `Dockerfile` or `docker-compose.yml`
   names `/health/ready`, or if Coolify's check is enabled on it. In any of those cases,
-  migrate-first is an outage (#61). It reads `git show <sha>:<file>`, not the working tree.
+  migrate-first is an outage (#61). It checks the pre-swap commit's files the same way, because
+  the migration runs while the OUTGOING image is serving, so that image's health check is the
+  one that would fire. It reads `git show <sha>:<file>`, not the working tree.
   `tests/architecture/test_container.py::test_no_health_check_consults_readiness` uses the same
   predicate, so the edit fails its pull request before it can reach a deploy.
 - **Nothing live (#82).** It reads `/api/v1/status-ledger?include_inactive=true` with the SYSTEM

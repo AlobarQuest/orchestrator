@@ -71,6 +71,7 @@ class Repo:
     plain: str  # changes no migration on top of migrated
     side: str  # never pushed to main
     readiness: str  # on main, Dockerfile health check reads readiness
+    fixed: str  # on main after readiness, puts the health check back on liveness
 
 
 @pytest.fixture
@@ -98,11 +99,12 @@ def repo(tmp_path: Path) -> Repo:
     readiness = _commit(
         work, {"Dockerfile": GOOD_DOCKERFILE.replace("/health/live", "/health/ready")}, "ready"
     )
+    fixed = _commit(work, {"Dockerfile": GOOD_DOCKERFILE}, "fixed")
     _git(work, "push", "-q", "origin", "main")
     _git(work, "checkout", "-q", "-b", "side", plain)
     side = _commit(work, {"SIDE.md": "x\n"}, "side")
     _git(work, "checkout", "-q", migrated)
-    return Repo(work, base, migrated, plain, side, readiness)
+    return Repo(work, base, migrated, plain, side, readiness, fixed)
 
 
 # --------------------------------------------------------------------------------------------
@@ -320,6 +322,8 @@ def test_prepare_records_the_pre_swap_revision_builds_and_prints_the_steps(
     assert steps.index("coolify_update_application") < steps.index("alembic upgrade head")
     assert steps.index("alembic upgrade head") < steps.index("coolify_deploy")
     assert f"orchestrator@{DIGEST}" in steps
+    assert f"recheck --state {h.state_path}" in steps
+    assert steps.index("recheck --state") < steps.index("coolify_deploy")
     assert SYSTEM_TOKEN not in steps + json.dumps(out)
     ledger = next(r for r in h.production.requests if r.url.path == "/api/v1/status-ledger")
     assert ledger.headers["Authorization"] == f"Bearer {SYSTEM_TOKEN}"
@@ -378,6 +382,27 @@ def test_prepare_refuses_an_enabled_coolify_health_check_on_readiness(
     assert h.prepare(h.repo.migrated, enabled="true", path="/health/ready") == EXIT_REFUSED
 
     assert "Coolify" in _output(capsys)[0]["reason"]
+    assert h.gh.calls == []
+
+
+def test_prepare_refuses_while_the_outgoing_image_health_check_reads_readiness(
+    h: Harness, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The migration runs under the OUTGOING image, so its health check is the one that fires."""
+    h.production.live = [h.repo.readiness]
+
+    assert h.prepare(h.repo.fixed) == EXIT_REFUSED
+
+    assert h.repo.readiness[:7] in _output(capsys)[0]["reason"]
+    assert h.gh.dispatched == []
+
+
+def test_prepare_refuses_a_malformed_boolean_as_usage(
+    h: Harness, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert h.prepare(h.repo.migrated, enabled="yes") == EXIT_USAGE
+
+    assert _output(capsys)[0]["result"] == "usage"
     assert h.gh.calls == []
 
 
@@ -545,6 +570,47 @@ def test_a_second_prepare_for_another_commit_refuses(h: Harness) -> None:
 
     assert h.prepare(h.repo.plain) == EXIT_REFUSED
     assert len(h.gh.dispatched) == 1
+
+
+# --------------------------------------------------------------------------------------------
+# recheck: the prepare-time checks that age, run again immediately before the swap
+# --------------------------------------------------------------------------------------------
+
+
+def _recheck(h: Harness) -> int:
+    return deploy.main(["recheck", "--state", str(h.state_path)], h.world())
+
+
+def test_recheck_is_clear_when_nothing_changed(h: Harness) -> None:
+    _state(h.repo).save(h.state_path)
+
+    assert _recheck(h) == EXIT_OK
+
+
+def test_recheck_stops_on_a_unit_that_went_live_during_the_build(h: Harness) -> None:
+    _state(h.repo).save(h.state_path)
+    h.production.ledger = [_ledger_row("claimed", "late")]
+
+    assert _recheck(h) == EXIT_CONDITION
+
+
+def test_recheck_stops_on_a_dispatch_made_during_the_build(h: Harness) -> None:
+    _state(h.repo).save(h.state_path)
+    h.production.ledger = [_ledger_row("ready", "late")]
+    h.production.histories[UNIT] = _history(("dispatch.dispatched", "ready"))
+
+    assert _recheck(h) == EXIT_CONDITION
+
+
+def test_recheck_stops_when_somebody_else_deployed(h: Harness) -> None:
+    _state(h.repo).save(h.state_path)
+    h.production.live = [h.repo.plain]
+
+    assert _recheck(h) == EXIT_CONDITION
+
+
+def test_recheck_refuses_without_a_state(h: Harness) -> None:
+    assert _recheck(h) == EXIT_REFUSED
 
 
 # --------------------------------------------------------------------------------------------

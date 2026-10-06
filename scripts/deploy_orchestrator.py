@@ -11,19 +11,22 @@ calls, which `prepare` prints exactly.
     uv run python -m scripts.deploy_orchestrator prepare --ref <sha|origin/main> --state <path>
         --coolify-health-check-enabled <bool> --coolify-health-check-path <path>
         [--label <label>] [--expect-schema <Model[.field]>]
+    uv run python -m scripts.deploy_orchestrator recheck --state <path>
     uv run python -m scripts.deploy_orchestrator finish --state <path>
         --observed-digest sha256:<64 hex>
 
 `prepare` refuses a build whose health checks read `/health/ready` (migrate-first would become
 an outage), refuses while a unit is live or a dispatched run has not been claimed yet, records
 the pre-swap revision, builds the image with the `Release image` workflow, reads the pushed
-digest from that run, and decides whether a migration is needed. `finish` refuses unless the
+digest from that run, and decides whether a migration is needed. `recheck`, run immediately
+before the swap, repeats the nothing-live check and confirms production still serves the recorded
+pre-swap revision, because the first check is as old as the build. `finish` refuses unless the
 running container's digest is the pushed one. It then waits for `/health/live` to serve the
 built commit, requires `/health/ready` and the OpenAPI document, and runs `image-release bind`
-with the pre-swap revision `prepare` recorded. That value is never read again.
+with the pre-swap revision `prepare` recorded, never a fresh read.
 
 Exit codes: 0 done; 2 a condition (a live unit, a digest mismatch, a revision not served, a
-binder condition); 3 unreadable or refused; 1 usage. Both phases print one JSON object on stdout.
+binder condition); 3 unreadable or refused; 1 usage. Every command prints one JSON object on stdout.
 `prepare` also prints the next steps on stderr.
 
 Bearers are fetched in-process from BWS and passed to the binder in its environment, never in
@@ -42,7 +45,7 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 import httpx
 
@@ -284,9 +287,9 @@ def refuse_readiness_health_checks(world: World, sha: str, enabled: bool, path: 
         consumers.append("Coolify health check")
     if consumers:
         raise Refused(
-            f"{', '.join(consumers)} reads {READINESS_PATH}: migrating before the swap would make "
-            "the running container unhealthy and kill it. Re-decide the migration order first "
-            "(deploy.md #61)."
+            f"{', '.join(consumers)} at {sha[:7]} reads {READINESS_PATH}: migrating before the "
+            "swap would make the running container unhealthy and kill it. Re-decide the "
+            "migration order first (deploy.md #61)."
         )
 
 
@@ -464,6 +467,10 @@ def _prepare(args: argparse.Namespace, world: World) -> dict[str, Any]:
     if previous == sha:
         raise Condition(f"production already serves {sha}")
     migrations = migrations_between(world, previous, sha)
+    # The migration runs under the OUTGOING image, so its health check is the one that would fire.
+    refuse_readiness_health_checks(
+        world, previous, args.coolify_health_check_enabled, args.coolify_health_check_path
+    )
     run_id, run_url = build_image(world, sha, args.label)
     tag = readable_tag(sha, args.label)
     state = State(
@@ -549,7 +556,10 @@ def next_steps(state: State, state_path: Path) -> str:
             f"{state.previous_commit[:7]}."
         )
     lines += [
-        f'3. coolify_deploy(uuid="{APPLICATION_UUID}", instance="prod")',
+        "3. Immediately before the swap, re-check that nothing is live and that production still",
+        f"   serves {state.previous_commit}. The first check is as old as the build:",
+        f"   uv run python -m scripts.deploy_orchestrator recheck --state {state_path}",
+        f'   Only if it exits 0: coolify_deploy(uuid="{APPLICATION_UUID}", instance="prod")',
         "4. Once the deployment has finished, read the running container's digest with",
         '   vps_exec(instance="prod") and this command:',
         "",
@@ -560,6 +570,19 @@ def next_steps(state: State, state_path: Path) -> str:
         "--observed-digest <the sha256:... after '@' in step 4>",
     ]
     return "\n".join(lines)
+
+
+def _recheck(args: argparse.Namespace, world: World) -> dict[str, Any]:
+    """The prepare-time checks that age: run again immediately before the swap (#82)."""
+    state = State.load(Path(args.state))
+    seen = precheck(world, world.bearer(SYSTEM_BEARER_UUID))
+    serving = pre_swap_revision(world)
+    if serving != state.previous_commit:
+        raise Condition(
+            f"production serves {serving}, not the recorded pre-swap {state.previous_commit}: "
+            "somebody else deployed"
+        )
+    return {"result": "clear", "previous_commit": serving, "draft_units": seen["reported"]}
 
 
 # --------------------------------------------------------------------------------------------
@@ -705,10 +728,21 @@ def _finish(args: argparse.Namespace, world: World) -> dict[str, Any]:
 # --------------------------------------------------------------------------------------------
 
 
+def _boolean(value: str) -> bool:
+    if value.lower() not in {"true", "false"}:
+        raise argparse.ArgumentTypeError(f"expected true or false, got {value!r}")
+    return value.lower() == "true"
+
+
+class _Parser(argparse.ArgumentParser):
+    """argparse exits 2 on a bad command line, which is this program's CONDITION code."""
+
+    def error(self, message: str) -> NoReturn:
+        raise Usage(message)
+
+
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Deploy the orchestrator by its recorded procedure."
-    )
+    parser = _Parser(description="Deploy the orchestrator by its recorded procedure.")
     phases = parser.add_subparsers(dest="phase", required=True)
     prepare = phases.add_parser("prepare", help="precheck, record, build, print the next steps")
     prepare.add_argument("--ref", required=True, help="a commit or origin/main")
@@ -717,7 +751,7 @@ def _parser() -> argparse.ArgumentParser:
     prepare.add_argument(
         "--coolify-health-check-enabled",
         required=True,
-        type=lambda v: {"true": True, "false": False}[v.lower()],
+        type=_boolean,
         help="health_check_enabled from coolify_get_application",
     )
     prepare.add_argument(
@@ -731,6 +765,8 @@ def _parser() -> argparse.ArgumentParser:
         default=[],
         help="Model or Model.field the served schema must carry",
     )
+    recheck = phases.add_parser("recheck", help="nothing live, still pre-swap; before the swap")
+    recheck.add_argument("--state", required=True)
     finish = phases.add_parser("finish", help="verify the swap, then bind the release")
     finish.add_argument("--state", required=True)
     finish.add_argument("--observed-digest", required=True)
@@ -744,15 +780,18 @@ def _validate(args: argparse.Namespace) -> None:
             readable_tag("0" * 40, args.label)
         except ValueError as error:
             raise Usage(str(error)) from error
-    elif not DIGEST.match(args.observed_digest):
+    elif args.phase == "finish" and not DIGEST.match(args.observed_digest):
         raise Usage("--observed-digest must be sha256:<64 lowercase hex>")
 
 
 def main(argv: Sequence[str] | None = None, world: World | None = None) -> int:
-    parser = _parser()
-    args = parser.parse_args(argv)
+    try:
+        args = _parser().parse_args(argv)
+    except Usage as error:
+        print(json.dumps({"result": "usage", "reason": str(error)}, indent=2, sort_keys=True))
+        return EXIT_USAGE
     world = world or World()
-    phase = _prepare if args.phase == "prepare" else _finish
+    phase = {"prepare": _prepare, "recheck": _recheck, "finish": _finish}[args.phase]
     try:
         _validate(args)
         result, code = phase(args, world), EXIT_OK
