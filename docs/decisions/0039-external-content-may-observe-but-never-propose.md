@@ -49,12 +49,34 @@ and a `/review` URL *out* to Todoist, and the only thing it reads back is a `boo
 
 - **A `container_image` deployment observation DOES mint a work unit**
   (`services/deployment_observations.py`), and its `status_summary.summary` is free text while the
-  summaries' *keys* are exactly bounded. **No producer in this repository posts that kind** —
-  verified by grep across `src/`, `scripts/` and `.github/`. This is the one path where the ruling
-  above would need re-checking, and the check belongs to whoever writes that producer.
+  summaries' *keys* are exactly bounded. **One producer posts that kind, `image_release`**, and
+  the re-check it needed is recorded in Amendment 1 below.
 - The ingested commit subjects include **factory-runner's own LLM-written commit messages**, so
   "outside this estate" is doing looser work than it looks. Confined to observations either way.
 
 **Nothing enforces this ADR.** The properties it describes are real and in code; no test asserts
 that no producer carries outside prose onto the intent path. Naming that stops its absence being
 mistaken for coverage.
+
+## Amendment 1 (2026-10-05): the orchestrator's deploy step mints post-deploy units
+
+Devon chose on 2026-10-05 (SDS 1.1 item 5a) that the orchestrator's deploy binds every completed
+factory unit its image carries and files the `container_image` deployment observation. That
+observation mints one verifier-owned post-deploy unit per binding, and the same deploy session
+verifies it. The producer is `src/image_release` (`image-release bind`). A person runs it in the
+deploy session after the running container's digest has been checked against the pushed digest.
+It is not scheduled, and no external content triggers it.
+
+**The boundary.** This program alone may send a `container_image` binding or observation. The
+exception is carried in its own row of `tests/architecture/test_external_content_observes_only.py`
+(`mints_post_deploy_units`). Exactly one row may carry it, and that row's payloads must name
+`container_image` explicitly. Every other program, including the activation sweep's machine-local
+`bind`, is held to `machine_local` as before.
+
+**The re-check the first residual asked for.** Everything the program reads is either one of the
+orchestrator's own production endpoints (`/health/live`, `/health/ready`, `/openapi.json`, the
+dead-letter status with and without a credential, the candidate read) or the operator's verified
+digest and build identity. The minted unit's title and outcome are composed by the server from the
+binding's digest and the base URL. The observation's one free-text field, `status_summary.summary`,
+is composed by the program from status codes and counts. No text authored outside this estate
+reaches the work path, so the ruling holds.

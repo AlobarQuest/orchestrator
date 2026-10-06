@@ -142,6 +142,39 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   misdiagnose a defect that is not there. Making the derivable tag refuse to overwrite is an open
   follow-up, not something GHCR enforces.
 
+### Binding the release (SDS 1.1 item 5a)
+
+- **After the swap, and only after the running container's `RepoDigest` equals the pushed digest
+  and `/health/live` reports the built commit, run `image-release bind`.** It binds a
+  `container_image` release artifact for every completed factory unit whose landing the built
+  commit carries, files the deployment observation (which mints one post-deploy unit per binding),
+  and verifies that unit. Run `--dry-run` first: it reads and probes and writes nothing, and needs
+  only the SYSTEM bearer. The two bearers are separate identities in separate variables, fetched
+  in a subshell so neither they nor `BWS_ACCESS_TOKEN` outlive the command, and never echoed:
+
+  ```bash
+  (
+    source scripts/sds-token.sh
+    bws_value() { env -u FORCE_COLOR -u CLICOLOR_FORCE bws secret get "$1" --output json --color no \
+      | python3 -c 'import json,sys; print(json.load(sys.stdin)["value"])'; }
+    ACTIVATION_BIND_TOKEN="$(bws_value 221a48d5-3f29-4898-b300-b4820140c880)" \
+    IMAGE_VERIFY_TOKEN="$(bws_value 660d5846-abcb-4751-be86-b483012899eb)" \
+      .venv/bin/image-release bind \
+        --repository AlobarQuest/orchestrator --checkout <clone-holding-the-built-commit> \
+        --built-commit <full-40-char-sha> --digest <pushed sha256:…> \
+        --observed-digest <running container's sha256:…> \
+        --image-name orchestrator --tag <short-sha>[-<label>]-amd64 \
+        --workflow-run-url <Release image run URL> \
+        --base-url https://sds.alobar.net --deployer hq-session
+  )
+  ```
+
+  Exit 0: done or nothing to do. Exit 2: a condition — the two digests differ (nothing is read or
+  written), production does not serve the built commit (bindings are written, observations are
+  not), or verification asked for revision or review. Exit 3: a refusal or an unreadable state;
+  the JSON output names which unit and why. A re-run over the same deploy re-files nothing. A unit
+  bound to an earlier image's digest is skipped, because bindings are write-once.
+
 ### #61
 
 - **Migrating before the image swap puts the STILL-RUNNING old image into `/health/ready` 503
