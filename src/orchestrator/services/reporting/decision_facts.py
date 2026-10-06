@@ -9,9 +9,11 @@ Every fact carries an explicit `known` flag. An unknown is a fact, not an absenc
 simply omitted reads as "nothing to worry about", where the truth is "nobody knows yet". The
 partial therefore always renders three rows.
 
-This module is a pure projection over rows already loaded by the caller -- no session, no query.
-Both entry points take the package revision, because the enforcement snapshot is where the
-package's author-written answers live.
+This module is a pure projection over rows already loaded by the caller -- no session, no query,
+no network. The intake facts read the package's profile and enforcement snapshot, because that is
+where the author-written answers live, and they work the same on a staged payload as on a
+registered revision. The one estate fact they use, what landing the repository's default branch
+does, is read by the caller at render time and passed in.
 """
 
 from __future__ import annotations
@@ -21,6 +23,11 @@ from typing import Any
 from orchestrator.kernel.authority import AuthorityEnvelope, normalize_authority
 from orchestrator.persistence.models import WorkPackageRevision, WorkUnit
 from orchestrator.reach_vocabulary import reach_from_snapshot, reach_statement
+from orchestrator.services.landing.estate_landing import (
+    LANDING_INERT,
+    LANDING_REDEPLOYS,
+    EstateAnswer,
+)
 
 # What a change of each class costs to undo. Editorial prose, keyed by the `change_class` an
 # authority envelope declares; a class with no entry resolves to the explicit unknown rather than
@@ -57,8 +64,24 @@ _UNKNOWN_REVERSIBILITY = (
 _DECLARED_PLAN_PREFIX = "The package's author declared this rollback plan: "
 _CLASS_STATEMENT_PREFIX = "No rollback plan is declared for this package; for a "
 _UNKNOWN_AFFECTS_AT_INTAKE = (
-    "The package has not been broken into work units, so no target repository and no mutating "
-    "command have been chosen yet."
+    "No repository is named in a profile field this surface reads, and the package has not been "
+    "broken into work units, so no target repository and no mutating command have been chosen yet."
+)
+
+# Where each profile's author names the repository the work happens in. Keyed by profile name,
+# which is also the change class that profile's envelopes declare. Only the machine-originated
+# profiles are read so far; any other profile keeps the explicit unknown above.
+#
+# not-a-vocabulary: a lookup whose keys need not agree with any producer. An unlisted profile is a
+# supported answer ("this surface reads no repository for it"), not a mismatch, so there is no
+# other side for these members to agree with -- the same reasoning as REVERSIBILITY_BY_CHANGE_CLASS.
+_REPOSITORY_FIELD_BY_PROFILE: dict[str, str] = {
+    "dependency-update": "target_repo",
+    "maintenance-remediation": "repo",
+}
+_NO_REPOSITORY_LANDING = (
+    "No target repository is declared, so whether landing this work redeploys anything is not "
+    "known."
 )
 _UNKNOWN_AFFECTS_FOR_UNIT = (
     "The authority envelope declares no constraint at all, so what this work touches has not been "
@@ -91,31 +114,100 @@ def decision_facts_for_unit(
     envelope = normalize_authority(unit.authority)
     return {
         "does": _fact(_DOES_LABEL, True, unit.outcome),
-        "affects": _affects(_declared_reach(revision), _affects_from_envelope(envelope)),
-        "reversibility": _reversibility(envelope.change_class, _declared_rollback_plan(revision)),
+        "affects": _affects(
+            _declared_reach(revision.enforcement_snapshot), _affects_from_envelope(envelope)
+        ),
+        "reversibility": _reversibility(
+            envelope.change_class, _declared_rollback_plan(revision.enforcement_snapshot)
+        ),
     }
 
 
-def decision_facts_for_revision(revision: WorkPackageRevision) -> dict[str, dict[str, Any]]:
-    """The three facts for a package revision at intake.
+def decision_facts_for_revision(
+    revision: WorkPackageRevision, landing: EstateAnswer | None
+) -> dict[str, dict[str, Any]]:
+    """The three facts for a registered package revision. See `decision_facts_for_intake`."""
+    return decision_facts_for_intake(revision.profile, revision.enforcement_snapshot, landing)
 
-    The envelope's half of "what it affects" is genuinely unanswerable here and says so: the
-    package-level authority block is a capability declaration
-    (`allowed`/`requires_approval`/`prohibited`), and the target repository is chosen per unit
-    when the package is broken up. The DECLARED half is answerable, and this is the gate it
-    matters most at -- the reach a package author declared is known before a single unit exists.
+
+def decision_facts_for_intake(
+    profile: str | None, snapshot: object, landing: EstateAnswer | None
+) -> dict[str, dict[str, Any]]:
+    """The three facts for a package at intake, staged or registered.
+
+    The envelope's half of "what it affects" is unanswerable here: the package-level authority
+    block is a capability declaration, and the target repository is chosen per unit when the
+    package is broken up. Two other answers are on file before a single unit exists. The reach
+    the author declared, and, for a profile whose fields name the repository, that repository.
+
+    The profile also names the change class, because a profile's units declare the profile's name
+    as theirs. So a profile with a recorded way to back out answers reversibility here, below a
+    declared rollback plan.
+
+    `landing` is the estate's answer for `declared_repository(profile, snapshot)`, or `None` when
+    there was no repository to ask about. It qualifies the back-out sentence and never changes
+    whether that fact is known: the route back is stated by the plan or the class, and an
+    unreadable estate is said in words rather than guessed at.
     """
-    outcome = _package_outcome(revision)
+    outcome = _package_outcome(snapshot)
+    repository = declared_repository(profile, snapshot)
+    reversibility = _reversibility(profile, _declared_rollback_plan(snapshot))
+    reversibility["detail"] += " " + _landing_statement(repository, landing)
     return {
         "does": _fact(_DOES_LABEL, outcome is not None, outcome or _UNKNOWN_OUTCOME),
-        "affects": _affects(
-            _declared_reach(revision),
-            _fact(_AFFECTS_LABEL, False, _UNKNOWN_AFFECTS_AT_INTAKE),
-        ),
-        # No change class exists here -- the package-level authority block is a capability
-        # declaration, not an envelope -- so intake is answerable only from the declared plan.
-        "reversibility": _reversibility(None, _declared_rollback_plan(revision)),
+        "affects": _affects(_declared_reach(snapshot), _affects_from_profile(snapshot, repository)),
+        "reversibility": reversibility,
     }
+
+
+def declared_repository(profile: str | None, snapshot: object) -> str | None:
+    """The repository a package's profile fields name, or `None` when there is none to read.
+
+    `None` covers a profile this surface reads no repository for, and a known profile whose field
+    is missing, mistyped or blank: the snapshot is data from another repository and nothing here
+    validates its shape.
+    """
+    field = _REPOSITORY_FIELD_BY_PROFILE.get(profile) if isinstance(profile, str) else None
+    value = _profile_fields(snapshot).get(field) if field is not None else None
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _affects_from_profile(snapshot: object, repository: str | None) -> dict[str, Any]:
+    if repository is None:
+        return _fact(_AFFECTS_LABEL, False, _UNKNOWN_AFFECTS_AT_INTAKE)
+    # Only the dependency-update profile declares these three fields.
+    fields = _profile_fields(snapshot)
+    package, old, new = (fields.get(name) for name in ("package", "from_version", "to_version"))
+    detail = f"Repository {repository}"
+    if all(isinstance(value, str) and value.strip() for value in (package, old, new)):
+        detail += f"; updates {package} from {old} to {new}"
+    return _fact(_AFFECTS_LABEL, True, detail + ".")
+
+
+def _landing_statement(repository: str | None, landing: EstateAnswer | None) -> str:
+    """What the estate records about landing the repository's default branch, in one sentence.
+
+    Only App Brain's two definite answers are stated as facts. Its own `unknown`, an unconfigured
+    source and an unreadable one are all said to be not known, each with its reason, because an
+    absent answer that read as "inert" would tell the person a merge is safe when nobody knows.
+    """
+    if repository is None:
+        return _NO_REPOSITORY_LANDING
+    branch = f"landing on {repository}'s default branch"
+    if landing is not None and landing.landing == LANDING_REDEPLOYS:
+        return (
+            f"The estate records that {branch} redeploys a running service, so the change is live "
+            "once it lands, and a revert is a second redeploy."
+        )
+    if landing is not None and landing.landing == LANDING_INERT:
+        return f"The estate records that {branch} changes nothing already running."
+    reason = landing.reason if landing is not None and landing.reason else "no reason given"
+    if landing is not None and landing.landing is not None:
+        return f"Whether {branch} redeploys anything is not known: App Brain answered {reason}."
+    return (
+        f"Whether {branch} redeploys anything is not known: the estate's record could not be "
+        f"read ({reason})."
+    )
 
 
 def _affects(reach: str | None, from_envelope: dict[str, Any]) -> dict[str, Any]:
@@ -136,11 +228,16 @@ def _affects(reach: str | None, from_envelope: dict[str, Any]) -> dict[str, Any]
     return _fact(_AFFECTS_LABEL, True, detail)
 
 
-def _declared_reach(revision: WorkPackageRevision) -> str | None:
-    return reach_statement(reach_from_snapshot(revision.enforcement_snapshot))
+def _declared_reach(snapshot: object) -> str | None:
+    return reach_statement(reach_from_snapshot(snapshot))
 
 
-def _declared_rollback_plan(revision: WorkPackageRevision) -> str | None:
+def _profile_fields(snapshot: object) -> dict[str, Any]:
+    fields = snapshot.get("profile_fields") if isinstance(snapshot, dict) else None
+    return fields if isinstance(fields, dict) else {}
+
+
+def _declared_rollback_plan(snapshot: object) -> str | None:
     """`profile_fields.rollback_plan` from the enforcement snapshot, or `None`.
 
     Three of the five intent-package profiles require this field as a non-empty string, and
@@ -149,13 +246,11 @@ def _declared_rollback_plan(revision: WorkPackageRevision) -> str | None:
     The snapshot is data from another repository and nothing here validates its shape, so a
     missing, mistyped or blank plan falls back rather than rendering an empty commitment.
     """
-    snapshot = revision.enforcement_snapshot
-    fields = snapshot.get("profile_fields") if isinstance(snapshot, dict) else None
-    plan = fields.get("rollback_plan") if isinstance(fields, dict) else None
+    plan = _profile_fields(snapshot).get("rollback_plan")
     return plan.strip() if isinstance(plan, str) and plan.strip() else None
 
 
-def _package_outcome(revision: WorkPackageRevision) -> str | None:
+def _package_outcome(snapshot: object) -> str | None:
     """`outcome.what` from the enforcement snapshot, tolerating a bare string.
 
     `package_sources.py` copies the intent package's whole `outcome` block, so production
@@ -163,7 +258,6 @@ def _package_outcome(revision: WorkPackageRevision) -> str | None:
     revisions registered by other callers carry `outcome` as a plain string -- read both rather
     than reporting a recorded outcome as absent.
     """
-    snapshot = revision.enforcement_snapshot
     outcome = snapshot.get("outcome") if isinstance(snapshot, dict) else None
     if isinstance(outcome, str):
         return outcome or None

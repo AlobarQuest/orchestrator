@@ -17,6 +17,7 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from orchestrator.api.dependencies import AuthConfig, SettingsDep, get_actor, get_session
+from orchestrator.api.routes.common import LandingSourceDep
 from orchestrator.api.routes.intake import package_intake_command
 from orchestrator.api.schemas.intake import PackageIntakeRegistration
 from orchestrator.errors import DomainError
@@ -46,6 +47,7 @@ from orchestrator.services.intake.intake_reads import (
 )
 from orchestrator.services.intake.package_intake import register_package_intake
 from orchestrator.services.intake.packages import record_approval
+from orchestrator.services.landing.estate_landing import EstateAnswer, EstateLandingSource
 from orchestrator.services.lifecycle.claims import REQUEUE_SOURCE_STATES, authorize_retry
 from orchestrator.services.lifecycle.lifecycle import (
     TransitionCommand,
@@ -61,6 +63,7 @@ from orchestrator.services.release.release_evidence_pack import release_evidence
 from orchestrator.services.reporting.decision_facts import (
     decision_facts_for_revision,
     decision_facts_for_unit,
+    declared_repository,
 )
 from orchestrator.services.reporting.evidence_pack import evidence_pack_projection
 from orchestrator.services.reporting.pending_decisions import (
@@ -308,7 +311,22 @@ def _available_actions(unit: WorkUnit, authority_violation: object | None) -> di
     return actions
 
 
-def _package_intake_projection(session: Session, revision_id: uuid.UUID) -> dict[str, Any]:
+def _landing_reading(
+    source: EstateLandingSource, profile: str | None, snapshot: object
+) -> EstateAnswer | None:
+    """The estate's answer for the repository the package names, asked once per render.
+
+    `None` when the package names no repository, so there is nothing to ask. Read at render time
+    rather than stored: what landing a repository does is the estate's current answer, and a copy
+    taken at staging would go stale while it waited for a person.
+    """
+    repository = declared_repository(profile, snapshot)
+    return source.landing_for(repository) if repository is not None else None
+
+
+def _package_intake_projection(
+    session: Session, revision_id: uuid.UUID, landing_source: EstateLandingSource
+) -> dict[str, Any]:
     revision = session.get(WorkPackageRevision, revision_id)
     if revision is None or revision.intake_source != "package_cli":
         raise DomainError(
@@ -322,7 +340,10 @@ def _package_intake_projection(session: Session, revision_id: uuid.UUID) -> dict
         "package": revision.work_package,
         "acceptance_criteria": acceptance_criteria,
         "authority": intake_authority(session, revision.id),
-        "decision_facts": decision_facts_for_revision(revision),
+        "decision_facts": decision_facts_for_revision(
+            revision,
+            _landing_reading(landing_source, revision.profile, revision.enforcement_snapshot),
+        ),
     }
 
 
@@ -587,10 +608,18 @@ def _parse_intake_payload(payload: str, idempotency_key: str) -> PackageIntakeRe
 
 @router.get("/intakes/{revision_id}", response_class=HTMLResponse)
 def intake_detail(
-    request: Request, revision_id: uuid.UUID, actor: ActorDep, session: SessionDep
+    request: Request,
+    revision_id: uuid.UUID,
+    actor: ActorDep,
+    session: SessionDep,
+    landing_source: LandingSourceDep,
 ) -> HTMLResponse:
     _human(actor)
-    return _render(request, "intake.html", _package_intake_projection(session, revision_id))
+    return _render(
+        request,
+        "intake.html",
+        _package_intake_projection(session, revision_id, landing_source),
+    )
 
 
 @router.get("/decomposition-proposals/{proposal_id}", response_class=HTMLResponse)

@@ -1,11 +1,22 @@
+import pytest
 from sqlalchemy.orm import Session
 
 from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope
 from orchestrator.reach_vocabulary import REACH_VOCABULARY
+from orchestrator.services.landing.estate_landing import (
+    LANDING_INERT,
+    LANDING_REDEPLOYS,
+    LANDING_UNKNOWN,
+    SOURCE_UNCONFIGURED,
+    SOURCE_UNREADABLE,
+    EstateAnswer,
+)
 from orchestrator.services.reporting.decision_facts import (
     REVERSIBILITY_BY_CHANGE_CLASS,
+    decision_facts_for_intake,
     decision_facts_for_revision,
     decision_facts_for_unit,
+    declared_repository,
 )
 from tests.services.test_slo_report import _build_unit
 
@@ -41,7 +52,7 @@ def test_an_undecomposed_revision_reports_affects_as_unknown(migrated_session: S
     # worry about"; an explicit unknown reads as "nobody knows yet", which is the truth.
     revision, _unit = _build_unit(migrated_session, "facts-undecomposed")
 
-    facts = decision_facts_for_revision(revision)
+    facts = decision_facts_for_revision(revision, None)
 
     assert facts["affects"]["known"] is False
     assert facts["affects"]["detail"]
@@ -293,7 +304,7 @@ def test_a_declared_plan_answers_reversibility_at_intake_too(
         },
     )
 
-    facts = decision_facts_for_revision(revision)
+    facts = decision_facts_for_revision(revision, None)
 
     assert facts["reversibility"]["known"] is True
     assert "Restore the previous compose file." in facts["reversibility"]["detail"]
@@ -320,7 +331,7 @@ def test_a_revision_states_what_it_does_from_the_package_outcome(
         },
     )
 
-    facts = decision_facts_for_revision(revision)
+    facts = decision_facts_for_revision(revision, None)
 
     assert facts["does"]["known"] is True
     assert "The tracker projection stops drifting." in facts["does"]["detail"]
@@ -334,7 +345,7 @@ def test_a_revision_without_a_recorded_outcome_says_so_rather_than_omitting_it(
     # surface must still render a row.
     revision, _unit = _build_unit(migrated_session, "facts-revision-no-outcome")
 
-    facts = decision_facts_for_revision(revision)
+    facts = decision_facts_for_revision(revision, None)
 
     assert facts["does"]["known"] is False
     assert facts["does"]["detail"]
@@ -345,7 +356,10 @@ def test_every_fact_is_rendered_with_the_same_shape(migrated_session: Session) -
     # surface and a mapping on the other cannot be rendered by one component.
     revision, unit = _build_unit(migrated_session, "facts-shape")
 
-    for facts in (decision_facts_for_unit(unit, revision), decision_facts_for_revision(revision)):
+    for facts in (
+        decision_facts_for_unit(unit, revision),
+        decision_facts_for_revision(revision, None),
+    ):
         assert list(facts) == ["does", "affects", "reversibility"]
         for fact in facts.values():
             assert set(fact) == {"label", "known", "detail"}
@@ -364,7 +378,7 @@ def test_a_declared_reach_answers_what_it_affects_before_any_unit_exists(
         enforcement={"acceptance_criteria": ["ac-1"], "reach": ["live_estate"]},
     )
 
-    facts = decision_facts_for_revision(revision)
+    facts = decision_facts_for_revision(revision, None)
 
     assert facts["affects"]["known"] is True
     assert REACH_VOCABULARY["live_estate"] in facts["affects"]["detail"]
@@ -400,5 +414,187 @@ def test_a_package_that_declared_no_reach_reads_exactly_as_it_did_before(
     revision, unit = _build_unit(migrated_session, "facts-reach-absent")
     unit.authority = OPERATIONAL_AUTHORITY.normalized()
 
-    assert decision_facts_for_revision(revision)["affects"]["known"] is False
+    assert decision_facts_for_revision(revision, None)["affects"]["known"] is False
     assert "This work reaches" not in decision_facts_for_unit(unit, revision)["affects"]["detail"]
+
+
+# --- SDS 1.1 2a/L1a: the intake panel answers from the profile ----------------------------------
+
+DEPENDENCY_UPDATE_SNAPSHOT = {
+    "outcome": {"what": "httpx is current in change-manager."},
+    "profile_fields": {
+        "target_repo": "AlobarQuest/change-manager",
+        "package": "httpx",
+        "from_version": "0.27.0",
+        "to_version": "0.28.1",
+    },
+}
+MAINTENANCE_SNAPSHOT = {
+    "outcome": {"what": "The stale lockfile is regenerated."},
+    "profile_fields": {
+        "repo": "AlobarQuest/brain",
+        "remediation_source": "drift digest",
+        "rollback_plan": "Revert the lockfile commit.",
+    },
+}
+REDEPLOYS = EstateAnswer(LANDING_REDEPLOYS)
+
+
+def test_a_dependency_update_names_its_repository_and_the_bump_it_makes() -> None:
+    affects = decision_facts_for_intake("dependency-update", DEPENDENCY_UPDATE_SNAPSHOT, REDEPLOYS)[
+        "affects"
+    ]
+
+    assert affects["known"] is True
+    assert affects["detail"] == (
+        "Repository AlobarQuest/change-manager; updates httpx from 0.27.0 to 0.28.1."
+    )
+
+
+def test_a_maintenance_remediation_names_its_repository() -> None:
+    affects = decision_facts_for_intake("maintenance-remediation", MAINTENANCE_SNAPSHOT, REDEPLOYS)[
+        "affects"
+    ]
+
+    assert affects["known"] is True
+    assert affects["detail"] == "Repository AlobarQuest/brain."
+
+
+def test_a_declared_reach_still_leads_the_profile_specifics() -> None:
+    snapshot = {**DEPENDENCY_UPDATE_SNAPSHOT, "reach": ["source_repository"]}
+
+    detail = decision_facts_for_intake("dependency-update", snapshot, REDEPLOYS)["affects"][
+        "detail"
+    ]
+
+    assert detail.startswith(
+        REACH_VOCABULARY["source_repository"].join(("This work reaches ", "."))
+    )
+    assert "AlobarQuest/change-manager" in detail
+
+
+def test_a_profile_this_surface_does_not_read_stays_unknown() -> None:
+    # The field is named `repo`, as maintenance-remediation's is, but the profile is not one this
+    # surface reads -- so the unknown stands rather than a guess about which key means what.
+    snapshot = {"profile_fields": {"repo": "AlobarQuest/brain", "target_repo": "AlobarQuest/brain"}}
+
+    facts = decision_facts_for_intake("software-delivery", snapshot, None)
+
+    assert declared_repository("software-delivery", snapshot) is None
+    assert facts["affects"]["known"] is False
+
+
+def test_a_known_profile_with_a_blank_repository_stays_unknown() -> None:
+    snapshot = {"profile_fields": {"target_repo": "  ", "package": "httpx"}}
+
+    assert declared_repository("dependency-update", snapshot) is None
+    assert (
+        decision_facts_for_intake("dependency-update", snapshot, None)["affects"]["known"] is False
+    )
+
+
+def test_a_dependency_update_missing_its_versions_still_names_the_repository() -> None:
+    snapshot = {"profile_fields": {"target_repo": "AlobarQuest/brain", "package": "httpx"}}
+
+    detail = decision_facts_for_intake("dependency-update", snapshot, None)["affects"]["detail"]
+
+    assert detail == "Repository AlobarQuest/brain."
+
+
+def test_the_profile_names_the_change_class_so_reversibility_applies_at_intake() -> None:
+    reversibility = decision_facts_for_intake(
+        "dependency-update", DEPENDENCY_UPDATE_SNAPSHOT, REDEPLOYS
+    )["reversibility"]
+
+    assert reversibility["known"] is True
+    assert REVERSIBILITY_BY_CHANGE_CLASS["dependency-update"] in reversibility["detail"]
+
+
+def test_a_declared_plan_still_wins_over_the_profiles_class_at_intake() -> None:
+    reversibility = decision_facts_for_intake(
+        "maintenance-remediation", MAINTENANCE_SNAPSHOT, REDEPLOYS
+    )["reversibility"]
+
+    assert "Revert the lockfile commit." in reversibility["detail"]
+    assert REVERSIBILITY_BY_CHANGE_CLASS["maintenance-remediation"] not in reversibility["detail"]
+
+
+def test_a_landing_that_redeploys_is_stated_in_the_back_out_sentence() -> None:
+    detail = decision_facts_for_intake("dependency-update", DEPENDENCY_UPDATE_SNAPSHOT, REDEPLOYS)[
+        "reversibility"
+    ]["detail"]
+
+    assert detail.endswith(
+        "The estate records that landing on AlobarQuest/change-manager's default branch "
+        "redeploys a running service, so the change is live once it lands, and a revert is a "
+        "second redeploy."
+    )
+
+
+def test_an_inert_landing_is_stated_in_the_back_out_sentence() -> None:
+    detail = decision_facts_for_intake(
+        "dependency-update", DEPENDENCY_UPDATE_SNAPSHOT, EstateAnswer(LANDING_INERT)
+    )["reversibility"]["detail"]
+
+    assert detail.endswith(
+        "The estate records that landing on AlobarQuest/change-manager's default branch "
+        "changes nothing already running."
+    )
+
+
+@pytest.mark.parametrize(
+    ("answer", "says"),
+    [
+        (EstateAnswer(None, SOURCE_UNREADABLE), "could not be read (source_unreadable)"),
+        (EstateAnswer(None, SOURCE_UNCONFIGURED), "could not be read (source_unconfigured)"),
+        (EstateAnswer(LANDING_UNKNOWN, "not_assessed"), "App Brain answered not_assessed"),
+        (EstateAnswer(LANDING_UNKNOWN), "App Brain answered no reason given"),
+    ],
+)
+def test_an_absent_landing_answer_is_said_to_be_not_known_never_inert(
+    answer: EstateAnswer, says: str
+) -> None:
+    detail = decision_facts_for_intake("dependency-update", DEPENDENCY_UPDATE_SNAPSHOT, answer)[
+        "reversibility"
+    ]["detail"]
+
+    assert "redeploys anything is not known" in detail
+    assert says in detail
+    assert "changes nothing already running" not in detail
+    assert "redeploys a running service" not in detail
+
+
+def test_the_landing_qualifies_the_back_out_fact_but_never_decides_whether_it_is_known() -> None:
+    # Known comes from the plan or the class. An unreadable estate is said in words; it does not
+    # turn a stated route back into "not known", nor an unstated one into a known one.
+    unreadable = EstateAnswer(None, SOURCE_UNREADABLE)
+    stated = decision_facts_for_intake("dependency-update", DEPENDENCY_UPDATE_SNAPSHOT, unreadable)
+    unstated = decision_facts_for_intake("software", DEPENDENCY_UPDATE_SNAPSHOT, REDEPLOYS)
+
+    assert stated["reversibility"]["known"] is True
+    assert unstated["reversibility"]["known"] is False
+
+
+def test_no_repository_means_the_landing_is_not_asked_and_says_so() -> None:
+    detail = decision_facts_for_intake("software", {}, None)["reversibility"]["detail"]
+
+    assert detail.endswith(
+        "No target repository is declared, so whether landing this work redeploys anything is "
+        "not known."
+    )
+
+
+def test_a_registered_revision_reads_the_same_facts_as_its_snapshot(
+    migrated_session: Session,
+) -> None:
+    revision, _unit = _build_unit(
+        migrated_session,
+        "facts-registered-profile",
+        enforcement={"acceptance_criteria": ["ac-1"], **DEPENDENCY_UPDATE_SNAPSHOT},
+    )
+    revision.profile = "dependency-update"
+
+    assert decision_facts_for_revision(revision, REDEPLOYS) == decision_facts_for_intake(
+        "dependency-update", revision.enforcement_snapshot, REDEPLOYS
+    )
+    assert decision_facts_for_revision(revision, REDEPLOYS)["affects"]["known"] is True

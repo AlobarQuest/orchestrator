@@ -2,14 +2,18 @@
 
 import re
 import uuid
+from typing import cast
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
+from orchestrator.api.routes.common import get_landing_source
 from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope
 from orchestrator.persistence.models import WorkPackageRevision, WorkUnit
 from orchestrator.services.intake.package_intake import register_package_intake
+from orchestrator.services.landing.estate_landing import LANDING_REDEPLOYS, EstateAnswer
 from tests.api.test_lifecycle_api import HUMAN
 from tests.services.test_package_intake import acceptance_criterion, human_actor, intake_command
 
@@ -163,4 +167,92 @@ def test_a_declared_reach_reaches_the_gate_a_human_actually_reads(
     # And the affects row specifically stops being an unknown -- the reversibility row is
     # legitimately still one for this package, so a surface-wide "Not known" check would not
     # discriminate.
-    assert "Not known.</strong> The package has not been broken into work units" not in surface
+    assert "Not known.</strong> No repository is named in a profile field" not in surface
+
+
+class _Landing:
+    """A landing source that answers one way and records what it was asked."""
+
+    def __init__(self, answer: EstateAnswer) -> None:
+        self.answer = answer
+        self.asked: list[str] = []
+
+    def landing_for(self, github_repo: str) -> EstateAnswer:
+        self.asked.append(github_repo)
+        return self.answer
+
+
+def _dependency_update_revision(migrated_engine: Engine) -> WorkPackageRevision:
+    suffix = uuid.uuid4().hex
+    with Session(migrated_engine) as session:
+        revision = register_package_intake(
+            session,
+            intake_command(
+                package_id=f"pkg-bump-{suffix}",
+                content_hash=f"sha256:{suffix}",
+                idempotency_key=f"package-intake-bump-{suffix}",
+                profile="dependency-update",
+                acceptance_criteria=(acceptance_criterion("AC-001"),),
+                enforcement_snapshot={
+                    "title": "Bump httpx",
+                    "outcome": {"what": "httpx is current."},
+                    "scope": {"in": ["lockfile"]},
+                    "dependencies": [],
+                    "applicable_standards": ["STD-1"],
+                    "profile_fields": {
+                        "target_repo": "AlobarQuest/change-manager",
+                        "package": "httpx",
+                        "from_version": "0.27.0",
+                        "to_version": "0.28.1",
+                    },
+                },
+            ),
+            human_actor(),
+        )
+        session.commit()
+        session.refresh(revision)
+        session.expunge(revision)
+        return revision
+
+
+def test_the_intake_page_asks_the_estate_about_the_profiles_repository_at_render_time(
+    db_client: TestClient, migrated_engine: Engine
+) -> None:
+    revision = _dependency_update_revision(migrated_engine)
+    landing = _Landing(EstateAnswer(LANDING_REDEPLOYS))
+    cast(FastAPI, db_client.app).dependency_overrides[get_landing_source] = lambda: landing
+
+    page = db_client.get(f"/review/intakes/{revision.id}", headers=HUMAN)
+
+    assert page.status_code == 200
+    surface = _decision_section(page.text)
+    assert landing.asked == ["AlobarQuest/change-manager"]
+    assert "updates httpx from 0.27.0 to 0.28.1" in surface
+    assert "redeploys a running service" in surface
+    assert "for a dependency-update change in general" in surface
+
+
+def test_an_unconfigured_estate_renders_the_landing_as_not_known(
+    db_client: TestClient, migrated_engine: Engine
+) -> None:
+    # The test settings carry no App Brain URL, so the real source answers `source_unconfigured`.
+    revision = _dependency_update_revision(migrated_engine)
+
+    page = db_client.get(f"/review/intakes/{revision.id}", headers=HUMAN)
+
+    surface = _decision_section(page.text)
+    assert "redeploys anything is not known" in surface
+    assert "could not be read (source_unconfigured)" in surface
+
+
+def test_a_package_naming_no_repository_does_not_ask_the_estate(
+    db_client: TestClient, migrated_engine: Engine
+) -> None:
+    revision = _intake_revision(migrated_engine)
+    landing = _Landing(EstateAnswer(LANDING_REDEPLOYS))
+    cast(FastAPI, db_client.app).dependency_overrides[get_landing_source] = lambda: landing
+
+    page = db_client.get(f"/review/intakes/{revision.id}", headers=HUMAN)
+
+    assert landing.asked == []
+    assert "No target repository is declared" in _decision_section(page.text)
