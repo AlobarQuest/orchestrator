@@ -462,15 +462,7 @@ def test_rejects_unbounded_raw_observation_fields(migrated_session: Session) -> 
         migrated_session,
         replace(
             observation_command(binding, key="large-probe-list"),
-            probe_summary={
-                "probes": [
-                    {
-                        "endpoint": f"/health/{index}",
-                        "status_code": 200,
-                    }
-                    for index in range(11)
-                ]
-            },
+            probe_summary={"probes": [_probe(endpoint=f"/health/{index}") for index in range(11)]},
         ),
     )
 
@@ -1006,3 +998,66 @@ def test_a_refusal_names_where_the_summary_is_wrong_and_never_the_value(
     assert isinstance(result, DomainError)
     assert "configured_m2m_status" in result.message
     assert "418" not in result.message
+
+
+def _probe(**overrides: object) -> dict[str, object]:
+    return {
+        "name": "live",
+        "endpoint": "/health/live",
+        "method": "GET",
+        "observed_at": "2026-10-06T09:00:00+00:00",
+        "status_code": 200,
+        **overrides,
+    }
+
+
+def _route(index: int = 0) -> dict[str, object]:
+    return {"path": f"/r/{index}", "present": True}
+
+
+@pytest.mark.parametrize(
+    ("field", "summary", "admitted"),
+    [
+        ("probe_summary", {"probes": []}, False),
+        ("probe_summary", {"probes": [_probe() for _ in range(10)]}, True),
+        ("probe_summary", {"probes": [_probe() for _ in range(11)]}, False),
+        ("probe_summary", {"probes": [_probe(status_code=100)]}, True),
+        ("probe_summary", {"probes": [_probe(status_code=99)]}, False),
+        ("probe_summary", {"probes": [_probe(status_code=599)]}, True),
+        ("probe_summary", {"probes": [_probe(status_code=600)]}, False),
+        ("probe_summary", {"probes": [_probe(endpoint=" ")]}, False),
+        ("route_summary", {"routes": []}, False),
+        ("route_summary", {"routes": [_route(index) for index in range(30)]}, True),
+        ("route_summary", {"routes": [_route(index) for index in range(31)]}, False),
+    ],
+    ids=[
+        "no-probes",
+        "ten-probes",
+        "eleven-probes",
+        "status-100",
+        "status-99",
+        "status-599",
+        "status-600",
+        "blank-endpoint",
+        "no-routes",
+        "thirty-routes",
+        "thirty-one-routes",
+    ],
+)
+def test_the_summary_bounds_admit_their_edge_and_refuse_one_past_it(
+    migrated_session: Session, field: str, summary: dict[str, object], admitted: bool
+) -> None:
+    """Each bound is shown from both sides, so a widened bound cannot pass as the same test."""
+    _unit, binding = release_binding(migrated_session, key=f"bounds-{field}")
+
+    result = record_deployment_observation(
+        migrated_session,
+        replace(observation_command(binding, key=f"bounds-{field}"), **{field: summary}),
+    )
+
+    if admitted:
+        assert isinstance(result, DeploymentObservation)
+    else:
+        assert isinstance(result, DomainError)
+        assert result.code == "deployment_observation_invalid"
+        assert result.message.startswith(field.replace("_", " "))
