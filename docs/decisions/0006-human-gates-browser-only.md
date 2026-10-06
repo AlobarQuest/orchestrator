@@ -69,6 +69,7 @@ pretends to. A CLI that could satisfy `_require_human` would defeat this ADR by 
 | gate | human surface |
 |---|---|
 | package intake | ✅ `GET /review/intakes/new` → `POST /review/intakes` (**this ADR**) |
+| staged package intake | ✅ `GET /review/staged-intakes/{id}` → `POST /review/staged-intakes/{id}/confirm` (amendment 1) |
 | authority approval | ✅ `POST /review/units/{id}/authority-approval` (WS-6.3) |
 | decomposition decision | ✅ `POST /review/decomposition-proposals/{id}/approve` |
 
@@ -107,3 +108,30 @@ fingerprint. Both are unchanged.
   which commands are GUI-only.
 - `docs/superpowers/plans/2026-07-12-remediation-order.md` — Phase 3, and the 2026-07-28 Phases 1–6
   reconciliation block that records this decision.
+
+## Amendment 1, 2026-10-06 — intake is staged by the CLI and confirmed in the browser
+
+**Decided by Devon, 2026-10-06** (SDS 1.1 items 2a and L1a, option A). Intake stops being a payload
+paste and becomes a decision surface.
+
+- **The CLI stages.** `POST /api/v1/staged-intakes` takes the same `PackageIntakeRegistration` body
+  as `POST /api/v1/package-intakes` and stores it in `staged_package_intakes`. Only the SYSTEM actor
+  may call it (`orchestrator-system`, which the intent-packages CLI already holds); every other
+  role, HUMAN included, draws `role_forbidden`.
+- **A staged row does nothing.** It is not a revision, nothing reads it but the review queue and
+  its own page, and no machine can move it on. `confirm_staged_intake` admits only a HUMAN actor,
+  so a SYSTEM credential that names a change record still cannot register through it, and the
+  decision stays bound to a live Authentik session as this ADR requires.
+- **A person presses one button.** `/review/staged-intakes/{id}` renders the three decision facts
+  first, computed at the surface from the payload's profile and enforcement snapshot with no
+  package schema change, then the package content. The button posts to
+  `/review/staged-intakes/{id}/confirm` with a CSRF token bound to the staged row and its key,
+  which registers the intake as that person through `register_package_intake`, under the staged
+  idempotency key, and records the staged row's id on the intake event beside the command.
+- **The paste survives** as the escape hatch: `/review/intakes/new` still registers a payload that
+  was never staged.
+
+**Not decided here.** `withdrawn` is a reserved state with no writer. A staged row that should go
+no further stays staged, and on the queue, until a verb for it is decided. The service's own
+refusals (status, verification mode, evidence types, reach) run at the confirm rather than at
+staging, so a payload that passes the model but fails one of them is refused after the click.
