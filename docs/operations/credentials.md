@@ -209,17 +209,20 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   they disagree in both directions** — repos holding a `FACTORY_PR_TOKEN` Actions secret
   (`orchestrator`, `intent-packages`, `infraops-mcp-server`, `security-standards`, `change-manager`,
   `brain`, `project-standards`) versus repos the PAT can reach (the same list minus
-  `project-standards`, plus `factory-runner`, which holds no secret because it is not a target).
+  `project-standards`, plus `factory-runner`). As measured 2026-08-07; factory-runner has since been
+  given its own copy (2026-08-29), so the holding set is now eight — see the #153 bullet.
   Neither set is derivable from the other.
 
 ### #153
 
 - **`FACTORY_PR_TOKEN` has a BWS record and a rotation trail** — `a3240c2e-92d7-4b32-a726-b49b0135565a`,
   `SDS Operator` project, documented in **factory-runner's** `.bws-secrets.toml` (not this repo's).
-  **SEVEN repos hold copies as write-only Actions secrets** as of 2026-08-07 — `orchestrator`,
-  `intent-packages`, `infraops-mcp-server`, `security-standards`, `change-manager`, `brain`,
-  `project-standards`. (This bullet said "four" until 2026-08-07; the count had drifted twice.)
-  A rotation means re-setting all seven; a copy left behind is
+  **EIGHT repos hold copies as write-only Actions secrets** as of the 2026-10-06 census (`gh secret
+  list` over every non-archived AlobarQuest repository) — `orchestrator`, `intent-packages`,
+  `infraops-mcp-server`, `security-standards`, `change-manager`, `brain`, `project-standards`, and
+  `factory-runner` (set 2026-08-29). (This bullet said "four" until 2026-08-07 and "seven" until
+  2026-10-06; the count has drifted three times. factory-runner's `.cred-consumers.toml` is now the
+  per-copy list the rotation lane reads.) A rotation means re-setting all eight; a copy left behind is
   dead on the next push with no signal until a run fails at auth. Verify any rotation with the
   discriminating probe, never with a green `gh secret set`: a throwaway branch workflow triggered
   on `push:` that checks out with the secret and pushes a commit **touching

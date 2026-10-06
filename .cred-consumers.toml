@@ -1,0 +1,277 @@
+# .cred-consumers.toml — WS-0.7 rotation-lane consumer inventory for the credentials
+# this repository OWNS: the M2M bearers the orchestrator authenticates, and the
+# read-only sds-operator BWS machine token its launchers bootstrap with.
+#
+# Read by infraops-mcp-server's nightly security-drift run (src/security-drift/
+# cred-rotation.ts) once this file's absolute path is listed in
+# ~/.config/infra-drift/cred-consumers.list. Schema, consumer kinds and the strict
+# subset-TOML rules are documented in infraops-mcp-server/.cred-consumers.toml.
+# Complements .bws-secrets.toml: that file says which secrets this repo consumes;
+# this one says, per credential, what must be updated and verified on rotation.
+#
+# NO entry here carries consumers_verified: none has been fingerprint-swept, so every
+# rotation falls to the manual checklist (deny-by-default). Both classes are
+# executor:false anyway. Values NEVER appear here.
+#
+# Dates are BWS creationDate. The three secrets moved into the SDS Operator project on
+# 2026-07-30 show that day as revisionDate; the move did not change their values
+# (2026-07-30 migration-plan closure: sha prefixes identical), so it is not a rotation.
+
+version = 1
+
+# ── sds-operator BWS machine token ───────────────────────────────────────────────
+# Read-only machine account sds-operator, scoped to the SDS Operator project
+# (b09acc9d-87af-4830-9361-b49700d2bc8a). Minted 2026-07-30 (Keychain item created
+# that day). sha256[:8] computed in-process 2026-10-06.
+[[credential]]
+id = "bws-sds-operator-token"
+class = "bws-machine-token"
+fingerprint_sha256_8 = "e906c40f"
+provider = "bitwarden-sm"
+provider_identity = "Bitwarden SM machine account sds-operator (read-only, SDS Operator project), access-key 5d401526-…"
+created = "2026-07-30"
+disposition = "reissue"
+
+  [[credential.consumer]]
+  kind = "keychain"
+  service = "Claude"
+  account = "BWS_ACCESS_TOKEN_SDS"
+  note = "read by scripts/sds-token.sh and the run-*.sh launchers; also infraops-mcp-server scripts/drift-audit.sh (mint-follow-ups step)"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "factory-validation-kit-restart-recovery"
+  ref = "inherits the ambient bootstrap token when operator-invoked (no schedule)"
+
+# ── Orchestrator M2M bearers ─────────────────────────────────────────────────────
+# Each is one key id in Coolify ORCHESTRATOR_M2M_CREDENTIALS on the orchestrator app,
+# which stores only sha256(token): kind coolify-env-hash is declarative, so the
+# executor can never write a raw value there.
+
+[[credential]]
+id = "orchestrator-system-bearer"
+class = "orchestrator-m2m-bearer"
+provider = "orchestrator"
+provider_identity = "key id orchestrator-system, ActorRole.SYSTEM"
+bws_uuid = "221a48d5-3f29-4898-b300-b4820140c880"
+created = "2026-07-09"
+disposition = "reissue"
+
+  [[credential.consumer]]
+  kind = "bws-secret"
+  uuid = "221a48d5-3f29-4898-b300-b4820140c880"
+  note = "ORCHESTRATOR_M2M_CREDENTIALS (SDS Operator) — keeper; consumers fetch by UUID"
+
+  [[credential.consumer]]
+  kind = "coolify-env-hash"
+  instance = "prod"
+  resource_type = "application"
+  uuid = "eqj5l7k705fhi12x9i74fqf0"
+  key = "ORCHESTRATOR_M2M_CREDENTIALS"
+  note = "orchestrator-system entry (sha256 only)"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
+  ref = "scripts/run-activation-sweep.sh, run-estate-landing.sh, run-inert-landing.sh, run-tool-installer.sh, run-work-carrier.sh, exit_probe.py"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "infraops-mcp-server"
+  ref = "scripts/drift-audit.sh mint-follow-ups (03:00)"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "intent-packages"
+  ref = "factory CLI (operator-invoked)"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "factory-validation-kit-restart-recovery"
+  ref = "src/factory_validation_kit/credentials.py"
+
+[[credential]]
+id = "orchestrator-verifier-bearer"
+class = "orchestrator-m2m-bearer"
+provider = "orchestrator"
+provider_identity = "key id orchestrator-verifier, ActorRole.VERIFIER"
+bws_uuid = "660d5846-abcb-4751-be86-b483012899eb"
+created = "2026-07-10"
+disposition = "reissue"
+
+  [[credential.consumer]]
+  kind = "bws-secret"
+  uuid = "660d5846-abcb-4751-be86-b483012899eb"
+  note = "orchestrator-verifier-bearer (SDS Operator) — keeper"
+
+  [[credential.consumer]]
+  kind = "coolify-env-hash"
+  instance = "prod"
+  resource_type = "application"
+  uuid = "eqj5l7k705fhi12x9i74fqf0"
+  key = "ORCHESTRATOR_M2M_CREDENTIALS"
+  note = "orchestrator-verifier entry (sha256 only); role mapped in ORCHESTRATOR_M2M_ROLES"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "intent-packages"
+  ref = "factory CLI verifier commands (operator-invoked)"
+
+[[credential]]
+id = "orchestrator-operator-bearer"
+class = "orchestrator-m2m-bearer"
+provider = "orchestrator"
+provider_identity = "key id orchestrator-operator, ActorRole.WORKER, agent_id claude-code-interactive"
+bws_uuid = "bd71bed1-4aac-4af8-9094-b4970180bc59"
+created = "2026-07-30"
+disposition = "reissue"
+
+  [[credential.consumer]]
+  kind = "bws-secret"
+  uuid = "bd71bed1-4aac-4af8-9094-b4970180bc59"
+  note = "orchestrator-operator-bearer (SDS Operator) — keeper; operator sessions fetch by UUID"
+
+  [[credential.consumer]]
+  kind = "coolify-env-hash"
+  instance = "prod"
+  resource_type = "application"
+  uuid = "eqj5l7k705fhi12x9i74fqf0"
+  key = "ORCHESTRATOR_M2M_CREDENTIALS"
+  note = "orchestrator-operator entry (sha256 only); no ROLES entry, WORKER is the default"
+
+# The observer and drift-reporter bearers are two credentials that currently share
+# ONE value (identical sha256, verified 2026-08-08). Rotation is independent (each key
+# id has its own hash entry) but EXPOSURE is shared: an exposure recorded on one must
+# be recorded on both, or one stays live on a compromised value. Both are aged from
+# 2026-07-28, when the shared value was created (drift-reporter BWS record); the
+# observer's own BWS record was created 2026-08-08.
+
+[[credential]]
+id = "orchestrator-observer-bearer"
+class = "orchestrator-m2m-bearer"
+provider = "orchestrator"
+provider_identity = "key id orchestrator-observer, ActorRole.OBSERVER (same value as orchestrator-drift-reporter-bearer)"
+bws_uuid = "f793576f-e9aa-4f9d-8089-b4a000b9e2d5"
+created = "2026-07-28"
+disposition = "reissue"
+
+  [[credential.consumer]]
+  kind = "bws-secret"
+  uuid = "f793576f-e9aa-4f9d-8089-b4a000b9e2d5"
+  note = "orchestrator-observer (SDS Operator) — keeper"
+
+  [[credential.consumer]]
+  kind = "coolify-env-hash"
+  instance = "prod"
+  resource_type = "application"
+  uuid = "eqj5l7k705fhi12x9i74fqf0"
+  key = "ORCHESTRATOR_M2M_CREDENTIALS"
+  note = "orchestrator-observer entry (sha256 only); OBSERVER role in ORCHESTRATOR_M2M_ROLES"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
+  ref = "scripts/run-activation-sweep.sh, run-bump-proposer.sh, run-deploy-watcher.sh, run-landing-ledger.sh, run-pin-watcher.sh, run-revision-watcher.sh, run-tool-installer.sh"
+
+[[credential]]
+id = "orchestrator-drift-reporter-bearer"
+class = "orchestrator-m2m-bearer"
+provider = "orchestrator"
+provider_identity = "drift-reporter key id, agent_id drift-reconciler, OBSERVER (same value as orchestrator-observer-bearer)"
+bws_uuid = "8998c4ea-453c-4ae1-9b5c-b49500b8dacc"
+created = "2026-07-28"
+disposition = "reissue"
+
+  [[credential.consumer]]
+  kind = "bws-secret"
+  uuid = "8998c4ea-453c-4ae1-9b5c-b49500b8dacc"
+  note = "ORCHESTRATOR_DRIFT_REPORTER_TOKEN (Ops / Platform) — keeper"
+
+  [[credential.consumer]]
+  kind = "coolify-env-hash"
+  instance = "prod"
+  resource_type = "application"
+  uuid = "eqj5l7k705fhi12x9i74fqf0"
+  key = "ORCHESTRATOR_M2M_CREDENTIALS"
+  note = "drift-reporter entry (sha256 only)"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "infraops-mcp-server"
+  ref = "scripts/drift-audit.sh observation post (03:00)"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "security-standards"
+  ref = "scripts/observe-run.sh"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "vps-backup"
+  ref = "observe-run.sh"
+
+# The factory-runner WORKER bearer. Seven repositories hold it as the write-only
+# Actions secret FACTORY_RUNNER_TOKEN (census 2026-10-06 via gh secret list over every
+# non-archived AlobarQuest repo; set dates 2026-07-08/09, project-standards 2026-08-07).
+# A rotation re-sets all seven; a copy left behind fails at claim time.
+[[credential]]
+id = "orchestrator-factory-runner-bearer"
+class = "orchestrator-m2m-bearer"
+provider = "orchestrator"
+provider_identity = "factory-runner worker key id (FACTORY_RUNNER_CREDENTIAL_KEY_ID), agent_id factory-runner"
+bws_uuid = "d2a4c0fc-128b-4bf5-8e25-b481010e1be0"
+created = "2026-07-08"
+disposition = "reissue"
+
+  [[credential.consumer]]
+  kind = "bws-secret"
+  uuid = "d2a4c0fc-128b-4bf5-8e25-b481010e1be0"
+  note = "orchestrator-factory-runner-github-M2M_TOKEN (Ops / Platform) — keeper"
+
+  [[credential.consumer]]
+  kind = "coolify-env-hash"
+  instance = "prod"
+  resource_type = "application"
+  uuid = "eqj5l7k705fhi12x9i74fqf0"
+  key = "ORCHESTRATOR_M2M_CREDENTIALS"
+  note = "factory-runner entry (sha256 only)"
+
+  [[credential.consumer]]
+  kind = "gh-actions-secret"
+  repo = "AlobarQuest/orchestrator"
+  name = "FACTORY_RUNNER_TOKEN"
+
+  [[credential.consumer]]
+  kind = "gh-actions-secret"
+  repo = "AlobarQuest/intent-packages"
+  name = "FACTORY_RUNNER_TOKEN"
+
+  [[credential.consumer]]
+  kind = "gh-actions-secret"
+  repo = "AlobarQuest/infraops-mcp-server"
+  name = "FACTORY_RUNNER_TOKEN"
+
+  [[credential.consumer]]
+  kind = "gh-actions-secret"
+  repo = "AlobarQuest/security-standards"
+  name = "FACTORY_RUNNER_TOKEN"
+
+  [[credential.consumer]]
+  kind = "gh-actions-secret"
+  repo = "AlobarQuest/change-manager"
+  name = "FACTORY_RUNNER_TOKEN"
+
+  [[credential.consumer]]
+  kind = "gh-actions-secret"
+  repo = "AlobarQuest/brain"
+  name = "FACTORY_RUNNER_TOKEN"
+
+  [[credential.consumer]]
+  kind = "gh-actions-secret"
+  repo = "AlobarQuest/project-standards"
+  name = "FACTORY_RUNNER_TOKEN"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "factory-validation-kit-restart-recovery"
+  ref = "src/factory_validation_kit/credentials.py"
