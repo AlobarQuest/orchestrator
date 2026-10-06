@@ -148,8 +148,9 @@ _PATTERN_FIELDS = frozenset(
 # The one envelope shape schema 2 can describe: a unit that runs an ordered command list against
 # one repository. Every stored envelope of that shape carries exactly these constraint keys --
 # three from the authoring side and `work_unit_id`, which the orchestrator stamps. The set is
-# EXACT, so a constraint nobody declared is an envelope no pattern recognises. A different shape
-# (a unit that runs no commands, say) is a different schema version, not a looser check here.
+# EXACT, apart from the one optional key below, so a constraint nobody declared is an envelope no
+# pattern recognises. A different shape (a unit that runs no commands, say) is a different schema
+# version, not a looser check here.
 _CONSTRAINT_FIELDS = frozenset(
     {"allowed_commands", "mutation_commands", "target_repository", "work_unit_id"}
 )
