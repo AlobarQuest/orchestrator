@@ -114,10 +114,10 @@ MALFORMED: tuple[tuple[str, str], ...] = (
         "an admission table with an extra field",
         VALID.replace(ADMISSION, ADMISSION + 'note = "x"\n'),
     ),
-    (
-        "an admission list that is a string",
-        VALID.replace('["dependency-update"]', '"dependency-update"'),
-    ),
+    # A string is iterable, so it must be refused as a string -- "software" has no repeated letter,
+    # so read as a list it would load as eight one-letter change classes.
+    ("an admission list that is a string", VALID.replace('["dependency-update"]', '"software"')),
+    ("an admission decided value that is not a date", VALID.replace('"2026-10-06"', '"soon"')),
     ("an admission entry that is not a string", VALID.replace('["repo.edit"]', "[7]")),
     ("an empty admission entry", VALID.replace('["dependency-update"]', '[" "]')),
     ("a padded admission entry", VALID.replace('["dependency-update"]', '["dependency-update "]')),
