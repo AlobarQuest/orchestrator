@@ -116,8 +116,9 @@ observation:
   when supplied.
 
 `post-deploy-dispatch` (dispatch automation remains disabled) was retired in SDS 1.1: dispatch
-posture is a standing setting, not a release property, and production runs with it enabled. Units
-minted before carry the criterion, and public adjudication still refuses its id.
+posture is a standing setting, not a release property, and production runs with it enabled.
+Generated criteria are rebuilt on every read, so the retirement applies to every post-deploy unit,
+including those minted before it; their old dispatch evidence rows are inert.
 
 The verifier evaluates only evidence already recorded in the orchestrator. It
 does not call production, GitHub, Coolify, trackers, brains, or deployment tools.

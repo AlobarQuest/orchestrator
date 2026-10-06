@@ -32,6 +32,7 @@ DETERMINISTIC_TYPES = frozenset(
         "release.deployment_observed",
         "production.route_presence",
         "production.auth_behavior",
+        "production.dispatch_posture",
         "infra_lane.final",
         # A package evidence type. Deterministic, but special-cased above the EVALUATORS lookup
         # (it is deterministic only when the evidence is verifier-owned named-check evidence), so
@@ -382,6 +383,15 @@ def _auth_behavior_result(payload: dict[str, Any]) -> tuple[EvaluationStatus, st
     return ("passed", "passed", "M2M behavior matches expected posture")
 
 
+def _dispatch_posture_result(payload: dict[str, Any]) -> tuple[EvaluationStatus, str, str]:
+    dispatch_enabled = payload.get("dispatch_enabled")
+    if not isinstance(dispatch_enabled, bool):
+        return ("failed_closed", "failed", "dispatch posture is missing")
+    if dispatch_enabled:
+        return ("failed", "failed", "dispatch automation is enabled")
+    return ("passed", "passed", "dispatch automation is disabled")
+
+
 # not-a-vocabulary: the consumer-side resolver map, keyed by DETERMINISTIC_TYPES members (which
 # ARE a registered vocabulary). Assertion D pins its keys to DETERMINISTIC_TYPES; it is not a
 # second, independent vocabulary.
@@ -400,6 +410,7 @@ EVALUATORS = {
     "release.deployment_observed": _deployment_observed_result,
     "production.route_presence": _route_presence_result,
     "production.auth_behavior": _auth_behavior_result,
+    "production.dispatch_posture": _dispatch_posture_result,
 }
 
 

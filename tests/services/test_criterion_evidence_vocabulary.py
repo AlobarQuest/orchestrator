@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from orchestrator.errors import DomainError
 from orchestrator.persistence.models import Evidence, PackageAcceptanceCriterion
 from orchestrator.services.intake.package_intake import register_package_intake
-from orchestrator.services.lifecycle.lifecycle import REQUIRED_POST_DEPLOY_AC_IDS
+from orchestrator.services.lifecycle.lifecycle import POST_DEPLOY_AC_IDS
 from orchestrator.services.verifier.verifier_evaluators import (
     DETERMINISTIC_PERMITTED_TYPES,
     DETERMINISTIC_TYPES,
@@ -138,9 +138,7 @@ def test_generated_post_deploy_criteria_still_evaluate_deterministically(
 def test_generated_post_deploy_ac_ids_are_the_ones_lifecycle_declares() -> None:
     # If a sixth generated post-deploy criterion is ever added, this pin's table is incomplete and
     # the new criterion's evidence pairing would go unexercised.
-    assert tuple(sorted(pair[0] for pair in POST_DEPLOY_PAIRS)) == tuple(
-        sorted(REQUIRED_POST_DEPLOY_AC_IDS)
-    )
+    assert tuple(sorted(pair[0] for pair in POST_DEPLOY_PAIRS)) == tuple(sorted(POST_DEPLOY_AC_IDS))
 
 
 def test_evaluator_is_selected_by_the_arriving_evidence_type() -> None:

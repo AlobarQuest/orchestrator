@@ -71,10 +71,10 @@ LANDING_COMMIT = "commit"
 class MachineActivationCandidate:
     """One completed unit whose landing is confirmed, and what a binding for it must carry.
 
-    `binding_id` is the machine-local binding that already exists, when one does. It is reported
-    rather than filtered out so the producer can say it skipped a unit and why -- and it is scoped
-    to `machine_local` deliberately: a container-image binding on the same unit describes the other
-    model entirely and must neither suppress this one nor stand in for it.
+    `binding_id` is the binding of the asked-for kind that already exists, when one does. It is
+    reported rather than filtered out so the producer can say it skipped a unit and why -- and it is
+    scoped to that kind deliberately: a binding of the other kind on the same unit describes the
+    other model entirely and must neither suppress this one nor stand in for it.
 
     `binding_artifact_digest` and `observation_id` exist for the activation check that follows the
     binding. The digest is what the producer compares its working copy against: the artifact is

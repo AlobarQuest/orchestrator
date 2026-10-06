@@ -303,7 +303,7 @@ rows, so adjudicate through the `/review` GUI as the criterion's floor allows.
 (terminal). The **post-deploy unit ends `submitted`**, and if left there it stays permanently
 `> 900s` old and will raise `deploy_split_brain` on **every future detect pass** — a standing false
 alarm created by the drill. It must be driven terminal: VERIFIER `commands/fail` → HUMAN cancel.
-Do not try to complete it — `required_ac_ids` returns `REQUIRED_POST_DEPLOY_AC_IDS` for generated post-deploy
+Do not try to complete it — `required_ac_ids` returns `POST_DEPLOY_AC_IDS` for generated post-deploy
 units and public adjudication rejects those ids by design.
 
 ### Drill 5 — stalled approval gate

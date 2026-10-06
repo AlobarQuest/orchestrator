@@ -914,3 +914,29 @@ def test_the_database_refuses_a_machine_local_row_naming_a_url(
         )
     assert "ck_deployment_observations_by_kind" in str(refusal.value)
     migrated_session.rollback()
+
+
+def test_the_retired_dispatch_criterion_cannot_be_adjudicated_publicly(
+    migrated_session: Session,
+) -> None:
+    """Retired from the generated set, so no gate names it, and it is still refused."""
+    _unit, binding = release_binding(migrated_session, key="retired-dispatch")
+    observation = record_deployment_observation(
+        migrated_session,
+        observation_command(binding, key="retired-dispatch-observation"),
+    )
+    assert isinstance(observation, DeploymentObservation)
+    assert observation.post_deploy_work_unit_id is not None
+
+    result = record_adjudication(
+        migrated_session,
+        work_package_revision_id=observation.work_package_revision_id,
+        work_unit_id=observation.post_deploy_work_unit_id,
+        ac_id="post-deploy-dispatch",
+        outcome="passed",
+        actor=VERIFIER,
+        rationale="attempt to decide the retired criterion",
+        idempotency_key="retired-dispatch-adjudication",
+    )
+
+    assert isinstance(result, DomainError)
