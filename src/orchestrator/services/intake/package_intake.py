@@ -88,35 +88,24 @@ def register_package_intake(
     session: Session,
     command: PackageIntakeCommand,
     actor: ActorContext,
+    *,
+    staged_intake_id: uuid.UUID | None = None,
 ) -> WorkPackageRevision:
+    """Register a package intake, or replay the one already registered under its key.
+
+    `staged_intake_id` names the staged row a person confirmed (ADR-0006 amendment 1). It is
+    provenance, not identity: it lands on the intake event BESIDE the command, so the replay,
+    which compares the command alone, treats a confirmed staging and the same payload pasted by
+    hand as the same registration.
+    """
     _require_intake_registrar(actor, command.change_record_id)
-    if command.expected_version != 0:
-        raise DomainError(
-            "version_conflict",
-            "package intake requires expected version 0",
-            "reload",
-            current_version=0,
-        )
-    intake_source = _intake_source(command)
-    if isinstance(intake_source, DomainError):
-        raise intake_source
-    status_error = _status_error(command)
-    if status_error is not None:
-        raise status_error
-    if command.intake_purpose == "protocol_fixture":
-        fixture_error = _protocol_fixture_error(command)
-        if fixture_error is not None:
-            raise fixture_error
-    if command.verification_mode != _VERIFICATION_MODE:
-        raise DomainError(
-            "package_intake_verification_invalid",
-            "package intake requires caller_attested_cli_verified verification",
-            None,
-        )
-    follow_up = validate_follow_up(command.follow_up)
-    reach = validate_reach(command.enforcement_snapshot.get("reach"))
-    acceptance_criteria = _validated_acceptance_criteria(command.acceptance_criteria)
-    _require_known_originating_observation(session, command.originating_observation_id)
+    admitted = _admitted(session, command)
+    intake_source, follow_up, reach, acceptance_criteria = (
+        admitted.intake_source,
+        admitted.follow_up,
+        admitted.reach,
+        admitted.acceptance_criteria,
+    )
     PackageRepository(session).lock_package_intake(command.package_id)
     replay = _intake_replay(session, command, actor)
     if replay is not None:
@@ -166,8 +155,83 @@ def register_package_intake(
         raise
 
     _sync_acceptance_criteria(session, revision.id, acceptance_criteria)
-    _record_intake_event(session, revision.id, command, actor)
+    _record_intake_event(session, revision.id, command, actor, staged_intake_id)
     return revision
+
+
+@dataclass(frozen=True)
+class _AdmittedIntake:
+    intake_source: str
+    follow_up: dict[str, Any] | None
+    reach: tuple[str, ...] | None
+    acceptance_criteria: tuple[AcceptanceCriterionProjection, ...]
+
+
+def _admitted(session: Session, command: PackageIntakeCommand) -> _AdmittedIntake:
+    """Every refusal of the command itself, before any lock or write. Shared with staging.
+
+    Who registers is not part of it: the registrar rule is about the actor, and staging happens
+    before the person who will confirm is known.
+    """
+    if command.expected_version != 0:
+        raise DomainError(
+            "version_conflict",
+            "package intake requires expected version 0",
+            "reload",
+            current_version=0,
+        )
+    intake_source = _intake_source(command)
+    if isinstance(intake_source, DomainError):
+        raise intake_source
+    status_error = _status_error(command)
+    if status_error is not None:
+        raise status_error
+    if command.intake_purpose == "protocol_fixture":
+        fixture_error = _protocol_fixture_error(command)
+        if fixture_error is not None:
+            raise fixture_error
+    if command.verification_mode != _VERIFICATION_MODE:
+        raise DomainError(
+            "package_intake_verification_invalid",
+            "package intake requires caller_attested_cli_verified verification",
+            None,
+        )
+    follow_up = validate_follow_up(command.follow_up)
+    reach = validate_reach(command.enforcement_snapshot.get("reach"))
+    acceptance_criteria = _validated_acceptance_criteria(command.acceptance_criteria)
+    _require_known_originating_observation(session, command.originating_observation_id)
+    return _AdmittedIntake(intake_source, follow_up, reach, acceptance_criteria)
+
+
+def preflight_package_intake(session: Session, command: PackageIntakeCommand) -> None:
+    """Refuse, now, a command that registering would refuse later (ADR-0006 amendment 1).
+
+    Staging calls this so a payload that would 409 at the confirm 409s at staging instead, with
+    the same code. It runs `_admitted`, the very checks registration runs, then two read-only
+    checks for the conflicts registration finds under its locks:
+
+    - the idempotency key already names an intake event, which `_intake_replay` refuses (the
+      confirming person's identity is not yet known, so no event can be this staging's replay);
+    - the package revision is already registered, or the package is registered from another
+      source repository, which `register_revision` refuses as a conflict. An identical revision
+      is refused too: confirming it would register nothing new.
+
+    It writes nothing and takes no lock. The estate can still change between staging and the
+    confirm, which is what withdrawing a staged row is for; the confirm re-runs everything.
+    """
+    _admitted(session, command)
+    if session.scalar(select(Event.id).where(Event.idempotency_key == command.idempotency_key)):
+        raise _idempotency_conflict()
+    package = PackageRepository(session).package(command.package_id)
+    if package is None:
+        return
+    if package.source_repository != command.source_repository or session.scalar(
+        select(WorkPackageRevision.id).where(
+            WorkPackageRevision.work_package_id == package.id,
+            WorkPackageRevision.revision == command.revision,
+        )
+    ):
+        raise _package_intake_conflict()
 
 
 def _status_error(command: PackageIntakeCommand) -> DomainError | None:
@@ -503,7 +567,11 @@ def _record_intake_event(
     revision_id: uuid.UUID,
     command: PackageIntakeCommand,
     actor: ActorContext,
+    staged_intake_id: uuid.UUID | None,
 ) -> None:
+    payload: dict[str, Any] = {"command": _command_identity(command, actor)}
+    if staged_intake_id is not None:
+        payload["staged_intake_id"] = str(staged_intake_id)
     session.add(
         Event(
             occurred_at=TransactionClock().now(session),
@@ -513,7 +581,7 @@ def _record_intake_event(
             subject_id=revision_id,
             from_state=None,
             to_state=None,
-            payload={"command": _command_identity(command, actor)},
+            payload=payload,
             correlation_id=uuid.uuid4(),
             idempotency_key=command.idempotency_key,
         )

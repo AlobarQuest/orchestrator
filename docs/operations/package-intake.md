@@ -1,5 +1,9 @@
 # Package intake in production
 
+There are three ways in. A machine that names the change record behind the work registers
+directly (the lane). A machine that does not stages the intake for a person to confirm (staged).
+And a person can still paste a payload (by hand), which is the escape hatch.
+
 `POST /api/v1/package-intakes` admits **a human or the SYSTEM actor** (ADR-0027), and a
 machine-registered intake must name the approved change record that caused it. The guard it
 replaced was protecting a transcription: every intake in production was authored by an AI and
@@ -25,6 +29,47 @@ exists (ADR-0006).
 > for the machine lane to work; the browser path is unaffected, because the form posts to
 > `/review/intakes`. Until it is removed, only the by-hand path below functions.
 
+## Staged: the CLI stages, a person confirms
+
+ADR-0006 amendment 1. The CLI posts the emitted payload as `orchestrator-system`:
+
+```
+POST /api/v1/staged-intakes        (SYSTEM only; the same body as /api/v1/package-intakes)
+```
+
+The response's `review_path` is the page a person opens, `/review/staged-intakes/{id}`, and every
+staged row is also first on `/review`. The page shows the three decision facts before anything
+else: what it does (the package outcome), what it affects (the declared reach, then the repository
+from the profile fields, and the bump for a dependency-update), and whether it can be backed out
+(the declared rollback plan or the profile's change class, plus what App Brain says landing that
+repository's default branch does, read when the page renders). The change class's statement is
+shown as an answer only for work confined to its repository: a package whose declared reach goes
+further (`live_estate`, say) shows it as not known, with the class's claim beside the reason. The
+App Brain read is made with no database transaction open, and each phase of it (connect, write,
+each read) is cut off after one second, so a page waits a few seconds at most. It is a per-phase
+cap rather than a whole-request deadline, which would need a worker thread the orchestrator does
+not start. A slow or failed read shows as "not known", never as an error page. Under them is one button, then the
+package content.
+
+The button registers the intake as the person who pressed it, under the idempotency key the
+payload was staged with, so a second press or a resubmitted page lands on the same revision. The
+intake event records the staged row's id beside the command. A staged row registers nothing until
+then, and no machine credential can confirm it.
+
+Staging refuses whatever registering would refuse, with the same error code: approved status,
+`caller_attested_cli_verified`, evidence types, reach, an unknown originating observation, an
+idempotency key an intake already used, and a package revision that is already registered. Staging
+the same key with the same body replays the row; with a different body it is
+`idempotency_conflict`.
+
+The confirm re-runs every check, because things can change after staging. If a staged row can no
+longer be registered (the confirm returns 409), or should not be, open "Withdraw instead" on its
+page, give a reason, and withdraw it. The row records who withdrew it, when and why, leaves
+`/review`, and can never be confirmed. To bring it back, stage it again under a new key.
+
+The intent-packages CLI still copies the payload for the paste form. Moving it to staging is a
+separate change, after this route is deployed.
+
 ## The lane: `work-carrier`
 
 Nothing needs doing per record. The scheduled pass reads every approved work proposal, emits and
@@ -44,7 +89,8 @@ carried, so a record stays in the approved queue until a person resolves it in c
 
 ## By hand
 
-For an intake with no change record behind it, or when the lane is unavailable.
+The escape hatch: for an intake with no change record behind it that was not staged, or when
+neither the lane nor staging is available.
 
 1. Emit the verified body (offline — no API token, runs the hash / verify-approval
    / factory-chain checks; requires the local package sources at

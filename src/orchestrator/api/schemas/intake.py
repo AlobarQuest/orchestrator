@@ -149,6 +149,20 @@ class PackageAcceptanceCriterionResponse(BaseModel):
     approver: str
 
 
+class StagedIntakeResponse(BaseModel):
+    """What staging returns. `review_path` is the page a person confirms it on (ADR-0006)."""
+
+    id: UUID
+    state: str
+    idempotency_key: str
+    package_id: str
+    revision: int
+    staged_by: str
+    staged_at: datetime
+    registered_revision_id: UUID | None
+    review_path: str
+
+
 class PackageIntakeResponse(BaseModel):
     id: UUID
     change_record_id: int | None = None

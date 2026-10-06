@@ -1,0 +1,63 @@
+{# The package content both intake pages show: the staged page before registration, the intake
+   page after it. Fed by one `intake` mapping each page builds, so the two cannot drift apart in
+   what they show a person about the same payload. #}
+<h2>What was verified, and by whom</h2>
+<p>{{ "The registration was accepted" if intake.registered else "The payload was staged" }} in mode <code>{{ intake.verification_mode or "not recorded" }}</code>: the
+  <code>orchestrator</code> CLI verified the facts below on the operator's machine, and the server
+  <strong>did not re-verify</strong> any of them. Registering this intake attests to the CLI's checks.</p>
+{# The column is typed `dict | list | None`, so a list must not reach `.items()` -- an unhandled
+   template error here is a bare HTTP 500, not a message the operator can act on. #}
+{% if intake.verification_limitations is mapping %}
+<ul>{% for name, value in intake.verification_limitations.items() %}<li><code>{{ name }}</code>: {{ value }}</li>{% endfor %}</ul>
+{% elif intake.verification_limitations %}
+<ul>{% for item in intake.verification_limitations %}<li><code>{{ item }}</code></li>{% endfor %}</ul>
+{% else %}<p class="empty">No verification facts were recorded for this intake.</p>{% endif %}
+
+<h2>Immutable source facts</h2>
+<dl>
+  <dt>Source repository</dt><dd>{{ intake.source_repository }}</dd>
+  <dt>Source path</dt><dd>{{ intake.source_path }}</dd>
+  <dt>Source commit</dt><dd>{{ intake.source_commit }}</dd>
+  <dt>Content hash</dt><dd>{{ intake.content_hash }}</dd>
+  <dt>Status at intake</dt><dd>{{ intake.status_at_intake }}</dd>
+  <dt>Verification mode</dt><dd>{{ intake.verification_mode }}</dd>
+  <dt>Approved by</dt><dd>{{ intake.approved_by }} at {{ intake.approved_at }}</dd>
+  <dt>Registered by</dt><dd>{{ intake.registered or "Not yet registered" }}</dd>
+  <dt>Approval ledger commit</dt><dd>{{ intake.approval_ledger_commit or "Not recorded" }}</dd>
+</dl>
+
+<h2>Authority facts</h2>
+<dl>
+  <dt>Profile</dt><dd>{{ intake.profile or "Not recorded" }}</dd>
+  <dt>Authority fingerprint</dt><dd>{% if intake.authority_fingerprint %}<code>{{ intake.authority_fingerprint }}</code>{% else %}Assigned when the intake is registered{% endif %}</dd>
+  <dt>Registry version</dt><dd>{{ intake.registry_version }}</dd>
+</dl>
+<h3>Authority envelope</h3>
+{% if intake.authority %}<pre>{{ intake.authority }}</pre>{% else %}<p class="empty">Authority envelope was not recorded in the intake event payload.</p>{% endif %}
+<h3>Enforcement snapshot</h3>
+<pre>{{ intake.enforcement_snapshot }}</pre>
+
+<h2>Acceptance criteria</h2>
+<table>
+  <caption>Package-level acceptance criteria {{ "recorded at intake" if intake.registered else "the intake will record" }}</caption>
+  <thead>
+    <tr>
+      <th scope="col">AC</th>
+      <th scope="col">Condition</th>
+      <th scope="col">Evidence</th>
+      <th scope="col">Approver</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for criterion in intake.acceptance_criteria %}
+    <tr>
+      <td>{{ criterion.ac_id }}</td>
+      <td>{{ criterion.condition }}</td>
+      <td>{{ criterion.evidence_type }} · {{ criterion.evidence }}</td>
+      <td>{{ criterion.approver }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="4">No acceptance criteria were recorded.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>

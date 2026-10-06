@@ -31,10 +31,12 @@ from orchestrator.persistence.models import (
     DecompositionProposal,
     Evidence,
     PackageAcceptanceCriterion,
+    StagedPackageIntake,
     WorkPackageRevision,
     WorkUnit,
 )
 from orchestrator.services.intake.authority_gate import human_authority_gate
+from orchestrator.services.intake.staged_intake import STAGED
 from orchestrator.services.lifecycle.execution_stall import stalled_executions
 from orchestrator.services.lifecycle.lifecycle import POST_DEPLOY_AC_IDS
 from orchestrator.services.reconciliation.reconciliation import open_conditions
@@ -49,6 +51,7 @@ SETTLED_STATES = frozenset({WorkUnitState.COMPLETED, WorkUnitState.CANCELLED})
 
 # Ordered so the entries that block everything downstream come first.
 KIND_ORDER = (
+    "staged_intake",
     "package_breakdown",
     "decomposition_proposal",
     "authority_approval",
@@ -59,6 +62,7 @@ KIND_ORDER = (
     "reconciliation_condition",
 )
 KIND_LABELS: dict[str, str] = {
+    "staged_intake": "Staged intakes awaiting your confirmation",
     "package_breakdown": "Packages with no breakdown in progress",
     "decomposition_proposal": "Proposed breakdowns awaiting your decision",
     "authority_approval": "Authority envelopes awaiting your approval",
@@ -80,6 +84,7 @@ def pending_decisions(
     place for the configured one to disagree with.
     """
     entries: list[dict[str, Any]] = [
+        *_staged_intakes(session),
         *_package_breakdowns(session),
         *_proposed_breakdowns(session),
         *_unit_decisions(session),
@@ -147,13 +152,36 @@ def _entry(kind: str, subject: str, decision: str, detail: str, href: str) -> di
     }
 
 
+def _staged_intakes(session: Session) -> list[dict[str, Any]]:
+    """Intakes a machine staged and nobody has confirmed (ADR-0006 amendment 1).
+
+    First, because nothing downstream of intake can begin until a person registers it, and the
+    staged row does nothing on its own.
+    """
+    rows = session.scalars(
+        select(StagedPackageIntake)
+        .where(StagedPackageIntake.state == STAGED)
+        .order_by(StagedPackageIntake.staged_at, StagedPackageIntake.id)
+    )
+    return [
+        _entry(
+            "staged_intake",
+            f"{row.payload.get('package_id')} revision {row.payload.get('revision')}",
+            "Confirm this intake to register it, or withdraw it",
+            f"Staged by {row.staged_by}. Nothing is registered until you confirm it.",
+            f"/review/staged-intakes/{row.id}",
+        )
+        for row in rows
+    ]
+
+
 def _package_breakdowns(session: Session) -> list[dict[str, Any]]:
     """Packages registered through the CLI intake with nothing in flight.
 
-    There is no server-side record of an intake "awaiting registration" -- `emit-intake-payload`
-    writes to the operator's terminal, and the first row that exists is the registered revision.
-    So the pending decision a registered package can carry is the next one: have it broken into
-    work units.
+    An intake awaiting registration is a staged row and is listed by `_staged_intakes`; one emitted
+    to the operator's terminal for the paste form has no server-side record until it is
+    registered. So the pending decision a registered package can carry is the next one: have it
+    broken into work units.
 
     **THERE IS NO VERB THAT RETIRES A REVISION, and the queue text says so rather than promising
     one** (Devon, 2026-09-27, ruling B2 -- fixed in text, not by a new verb). A breakdown proposal

@@ -232,6 +232,12 @@ COVERAGE_MATRIX: tuple[MatrixRow, ...] = (
         "tests/services/test_package_intake.py::test_package_intake_is_idempotent",
     ),
     MatrixRow(
+        "staged package intake",
+        "/api/v1/staged-intakes",
+        ADVISORY_LOCK,
+        "tests/services/test_staged_intake.py::test_a_concurrent_duplicate_staging_writes_one_row",
+    ),
+    MatrixRow(
         "decomposition proposal",
         "/api/v1/package-intakes/{revision_id}/decomposition-proposals",
         ROW_LOCK,

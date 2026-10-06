@@ -49,6 +49,8 @@ def test_production_post_route_inventory_is_explicit() -> None:
     )
     assert observed == {
         "/api/v1/package-intakes",
+        # ADR-0006 amendment 1: SYSTEM stages, and only the /review confirm below registers.
+        "/api/v1/staged-intakes",
         "/api/v1/package-intakes/{revision_id}/decomposition-proposals",
         "/api/v1/decomposition-proposals/{proposal_id}/require-revision",
         "/api/v1/work-units/{unit_id}/claim",
@@ -108,6 +110,8 @@ def test_production_post_route_inventory_is_explicit() -> None:
         # ADR-0006: package intake is a human gate, so its only production-reachable surface is
         # a /review form. The /api route it delegates to is human-only and machine-only-routed.
         "/review/intakes",
+        "/review/staged-intakes/{staged_id}/confirm",
+        "/review/staged-intakes/{staged_id}/withdraw",
         "/review/units/{unit_id}/approval",
         "/review/units/{unit_id}/authority-approval",
         "/review/units/{unit_id}/review",

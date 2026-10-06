@@ -17,6 +17,7 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from orchestrator.api.dependencies import AuthConfig, SettingsDep, get_actor, get_session
+from orchestrator.api.routes.common import PageLandingSourceDep
 from orchestrator.api.routes.intake import package_intake_command
 from orchestrator.api.schemas.intake import PackageIntakeRegistration
 from orchestrator.errors import DomainError
@@ -46,6 +47,13 @@ from orchestrator.services.intake.intake_reads import (
 )
 from orchestrator.services.intake.package_intake import register_package_intake
 from orchestrator.services.intake.packages import record_approval
+from orchestrator.services.intake.staged_intake import (
+    STAGED,
+    confirm_staged_intake,
+    staged_intake,
+    withdraw_staged_intake,
+)
+from orchestrator.services.landing.estate_landing import EstateAnswer, EstateLandingSource
 from orchestrator.services.lifecycle.claims import REQUEUE_SOURCE_STATES, authorize_retry
 from orchestrator.services.lifecycle.lifecycle import (
     TransitionCommand,
@@ -59,8 +67,10 @@ from orchestrator.services.reconciliation.reconciliation import (
 )
 from orchestrator.services.release.release_evidence_pack import release_evidence_pack_response
 from orchestrator.services.reporting.decision_facts import (
+    decision_facts_for_intake,
     decision_facts_for_revision,
     decision_facts_for_unit,
+    declared_repository,
 )
 from orchestrator.services.reporting.evidence_pack import evidence_pack_projection
 from orchestrator.services.reporting.pending_decisions import (
@@ -308,7 +318,27 @@ def _available_actions(unit: WorkUnit, authority_violation: object | None) -> di
     return actions
 
 
-def _package_intake_projection(session: Session, revision_id: uuid.UUID) -> dict[str, Any]:
+def _landing_reading(
+    session: Session, source: EstateLandingSource, profile: str | None, snapshot: object
+) -> EstateAnswer | None:
+    """The estate's answer for the repository the package names, asked once per render.
+
+    `None` when the package names no repository, so there is nothing to ask. Read at render time
+    rather than stored: what landing a repository does is the estate's current answer, and a copy
+    taken at staging would go stale while it waited for a person.
+
+    The read transaction is ended first, so no pooled connection sits idle in a transaction while
+    App Brain answers; the caller's later reads open a fresh one. A GET writes nothing, so the
+    rollback discards nothing. The source is the page one, with a short per-phase timeout.
+    """
+    repository = declared_repository(profile, snapshot)
+    if repository is None:
+        return None
+    session.rollback()
+    return source.landing_for(repository)
+
+
+def _package_intake_revision(session: Session, revision_id: uuid.UUID) -> WorkPackageRevision:
     revision = session.get(WorkPackageRevision, revision_id)
     if revision is None or revision.intake_source != "package_cli":
         raise DomainError(
@@ -316,13 +346,39 @@ def _package_intake_projection(session: Session, revision_id: uuid.UUID) -> dict
             "package intake does not exist for this revision",
             None,
         )
-    acceptance_criteria = revision_acceptance_criteria(session, revision.id)
+    return revision
+
+
+def _package_intake_projection(
+    session: Session, revision_id: uuid.UUID, landing: EstateAnswer | None
+) -> dict[str, Any]:
+    revision = _package_intake_revision(session, revision_id)
+    package = revision.work_package
     return {
         "revision": revision,
-        "package": revision.work_package,
-        "acceptance_criteria": acceptance_criteria,
-        "authority": intake_authority(session, revision.id),
-        "decision_facts": decision_facts_for_revision(revision),
+        "package": package,
+        "intake": {
+            "package_id": package.package_id,
+            "revision": revision.revision,
+            "source_repository": package.source_repository,
+            "source_path": revision.source_path,
+            "source_commit": revision.source_commit,
+            "content_hash": revision.content_hash,
+            "status_at_intake": revision.status_at_intake,
+            "verification_mode": revision.verification_mode,
+            "verification_limitations": revision.verification_limitations,
+            "approved_by": revision.approved_by,
+            "approved_at": revision.approved_at,
+            "approval_ledger_commit": revision.approval_ledger_commit,
+            "registered": f"{revision.registered_by} at {revision.registered_at}",
+            "profile": revision.profile,
+            "authority_fingerprint": revision.authority_fingerprint,
+            "registry_version": revision.registry_version,
+            "authority": intake_authority(session, revision.id),
+            "enforcement_snapshot": revision.enforcement_snapshot,
+            "acceptance_criteria": revision_acceptance_criteria(session, revision.id),
+        },
+        "decision_facts": decision_facts_for_revision(revision, landing),
     }
 
 
@@ -570,6 +626,15 @@ def _parse_intake_payload(payload: str, idempotency_key: str) -> PackageIntakeRe
             "the intake payload must be a JSON object",
             "paste the exact output of `orchestrator emit-intake-payload`",
         )
+    return _registration(document, idempotency_key)
+
+
+def _registration(
+    document: dict[str, Any],
+    idempotency_key: str,
+    remedy: str = "regenerate the payload with `orchestrator emit-intake-payload`",
+) -> PackageIntakeRegistration:
+    """Validate an intake document under the given key, as a DomainError on failure."""
     document["idempotency_key"] = idempotency_key
     try:
         return PackageIntakeRegistration.model_validate(document)
@@ -581,16 +646,154 @@ def _parse_intake_payload(payload: str, idempotency_key: str) -> PackageIntakeRe
                 f"{'.'.join(str(part) for part in item['loc'])}: {item['msg']}"
                 for item in error.errors()[:5]
             ),
-            "regenerate the payload with `orchestrator emit-intake-payload`",
+            remedy,
         ) from error
 
 
 @router.get("/intakes/{revision_id}", response_class=HTMLResponse)
 def intake_detail(
-    request: Request, revision_id: uuid.UUID, actor: ActorDep, session: SessionDep
+    request: Request,
+    revision_id: uuid.UUID,
+    actor: ActorDep,
+    session: SessionDep,
+    landing_source: PageLandingSourceDep,
 ) -> HTMLResponse:
     _human(actor)
-    return _render(request, "intake.html", _package_intake_projection(session, revision_id))
+    revision = _package_intake_revision(session, revision_id)
+    landing = _landing_reading(
+        session, landing_source, revision.profile, revision.enforcement_snapshot
+    )
+    return _render(
+        request, "intake.html", _package_intake_projection(session, revision_id, landing)
+    )
+
+
+_CONFIRM_STAGED = "confirm_staged_intake"
+_WITHDRAW_STAGED = "withdraw_staged_intake"
+
+
+def _staged_intake_content(payload: dict[str, Any]) -> dict[str, Any]:
+    """The staged payload in the shape `_intake_content.html` reads, before any revision exists.
+
+    Read with `.get` throughout: the payload passed the registration model when it was staged,
+    but a page that 500s on a key it expected is a gate nobody can open.
+    """
+    return {
+        **{
+            name: payload.get(name)
+            for name in (
+                "package_id",
+                "revision",
+                "source_repository",
+                "source_path",
+                "source_commit",
+                "content_hash",
+                "status_at_intake",
+                "verification_mode",
+                "verification_limitations",
+                "approved_by",
+                "approved_at",
+                "approval_ledger_commit",
+                "profile",
+                "registry_version",
+                "authority",
+                "enforcement_snapshot",
+            )
+        },
+        "registered": None,
+        "authority_fingerprint": None,
+        "acceptance_criteria": payload.get("acceptance_criteria") or (),
+    }
+
+
+@router.get("/staged-intakes/{staged_id}", response_class=HTMLResponse)
+def staged_intake_detail(
+    request: Request,
+    staged_id: uuid.UUID,
+    actor: ActorDep,
+    session: SessionDep,
+    landing_source: PageLandingSourceDep,
+) -> HTMLResponse:
+    """The decision surface for a staged intake: the three facts, one button, then the content.
+
+    Each token binds the staged row, its own idempotency key and one action, so the confirm button
+    can only register this row, under the key the machine staged it with, and the withdraw form
+    can only withdraw it. Neither is offered once the row is registered or withdrawn.
+    """
+    _human(actor)
+    payload = staged_intake(session, staged_id).payload
+    profile, snapshot = payload.get("profile"), payload.get("enforcement_snapshot")
+    landing = _landing_reading(session, landing_source, profile, snapshot)
+    staged = staged_intake(session, staged_id)
+    confirmable = staged.state == STAGED
+    return _render(
+        request,
+        "staged_intake.html",
+        {
+            "staged": staged,
+            "intake": _staged_intake_content(payload),
+            "decision_facts": decision_facts_for_intake(profile, snapshot, landing),
+            "idempotency_key": staged.idempotency_key,
+            "csrf_tokens": {
+                action: _issue_token(request, actor, staged.id, action, staged.idempotency_key)
+                for action in (_CONFIRM_STAGED, _WITHDRAW_STAGED)
+            }
+            if confirmable
+            else {},
+        },
+    )
+
+
+@router.post("/staged-intakes/{staged_id}/confirm")
+def confirm_staged_intake_route(
+    request: Request,
+    staged_id: uuid.UUID,
+    actor: ActorDep,
+    session: SessionDep,
+    idempotency_key: Annotated[str, Form()] = "",
+    csrf_token: Annotated[str, Form()] = "",
+    confirm: Annotated[str | None, Form()] = None,
+) -> RedirectResponse:
+    """Register a staged intake as the person pressing the button (ADR-0006 amendment 1).
+
+    The command is built from the stored payload through the same model and projection as the
+    paste form and the API route, under the staged key. A second press finds the row registered
+    and lands on the same revision.
+    """
+    _human(actor)
+    _require_form(request, actor, staged_id, _CONFIRM_STAGED, csrf_token, idempotency_key, confirm)
+    staged = staged_intake(session, staged_id)
+    # A stored payload that no longer validates (the model moved on after it was staged) cannot be
+    # fixed in place: the remedy is to retire it and stage a fresh one.
+    registration = _registration(
+        dict(staged.payload),
+        staged.idempotency_key,
+        "withdraw this staged intake and re-stage the package",
+    )
+    revision = confirm_staged_intake(
+        session, staged_id, package_intake_command(registration), actor
+    )
+    session.commit()
+    return RedirectResponse(f"/review/intakes/{revision.id}", status_code=303)
+
+
+@router.post("/staged-intakes/{staged_id}/withdraw")
+def withdraw_staged_intake_route(
+    request: Request,
+    staged_id: uuid.UUID,
+    actor: ActorDep,
+    session: SessionDep,
+    reason: Annotated[str, Form(min_length=1)],
+    idempotency_key: Annotated[str, Form()] = "",
+    csrf_token: Annotated[str, Form()] = "",
+    confirm: Annotated[str | None, Form()] = None,
+) -> RedirectResponse:
+    """Withdraw a staged intake, with the person's reason. It leaves the queue for good."""
+    _human(actor)
+    _require_form(request, actor, staged_id, _WITHDRAW_STAGED, csrf_token, idempotency_key, confirm)
+    withdraw_staged_intake(session, staged_id, reason, actor)
+    session.commit()
+    return RedirectResponse(f"/review/staged-intakes/{staged_id}", status_code=303)
 
 
 @router.get("/decomposition-proposals/{proposal_id}", response_class=HTMLResponse)
