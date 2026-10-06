@@ -399,23 +399,42 @@ def _budget_breach(session, since, until, now) -> MetricValue:
 # The approval subject types counted as gate load, each under its own key; an approval of any other
 # subject type is not counted.
 _GATE_LOAD_APPROVAL_SUBJECTS = ("action", "authority", "retry")
+# The event actions `services/intake/decomposition.py` writes for a decision on a proposal. Its
+# submission event is not one; a test holds this to the writer's literals.
+_DECOMPOSITION_DECISIONS = (
+    "decomposition.approved",
+    "decomposition.rejected",
+    "decomposition.revision_required",
+    "decomposition.superseded",
+)
 
 
 def _gate_load(session, since, until) -> GateLoadMetric:
-    """Human decisions per unit completed in the window, with the count of each kind of decision.
+    """Decisions made through a human credential per unit completed in the window, by kind.
 
-    Three kinds of record count as a human decision. An approval of an action, an authority
-    envelope or a retry is read from the `approvals` table: both places that write one refuse any
-    actor that is not human, so every row is a human's. An adjudication counts when its recorded
-    `decided_by_role` is human; a row from before that column existed has no role and is not
-    counted, and when one falls in the window the metric is partial. A lifecycle transition counts
-    when its event records a human actor role and its edge is one a human may take. The role is
-    what separates a human's completion from a verifier's, since both may take the same edge.
+    What is measured is credential load, not human attention: the `human` role comes from a
+    forward-auth login, and build sessions also decide gates on the review page with it, so a
+    decision counted here was made through that credential and not necessarily by a person.
 
-    The kinds are counted independently, so one action at a gate can be two decisions: approving
-    an `awaiting_approval` unit records an approval, and resuming it is a human transition.
-    Decisions and completions are counted separately over the window, so a decision about a unit
-    that has not completed, or completed outside the window, still counts.
+    Four kinds of record count. An approval of an action, an authority envelope or a retry is read
+    from the `approvals` table: both places that write one refuse any actor without the human
+    role. A decision on a decomposition proposal (approve, reject, require revision, supersede) is
+    read from its event, which only a human-role actor can cause. An adjudication counts when its
+    recorded `decided_by_role` is human; a row from before that column existed has no role and is
+    not counted, and when one falls in the window the basis says so and a computed ratio is
+    partial. A lifecycle transition counts when its event records the human role and its edge is
+    one a human may take; the role is what separates a human completion from a verifier's, since
+    both may take the same edge.
+
+    Registering a work unit is not counted. Its only production caller is the decomposition
+    approval, already counted once, and the `legacy_manual` activation it otherwise allows has no
+    production caller.
+
+    The kinds are counted independently, so one action can be several decisions: approving an
+    `awaiting_approval` unit records an approval and resuming it is a human transition, and
+    superseding a decomposition also cancels each of its units by a human transition. Decisions
+    and completions are counted separately over the window, so a decision about a unit that has
+    not completed, or completed outside the window, still counts.
     """
     approvals = dict(
         session.execute(
@@ -453,11 +472,22 @@ def _gate_load(session, since, until) -> GateLoadMetric:
         )
     ).all()
     transitions = sum(1 for edge in human_transitions if tuple(edge) in HUMAN_EDGES)
+    decomposition_decisions = (
+        session.scalar(
+            select(func.count(Event.id)).where(
+                Event.action.in_(_DECOMPOSITION_DECISIONS),
+                Event.occurred_at >= since,
+                Event.occurred_at < until,
+            )
+        )
+        or 0
+    )
     by_kind = {
         **{
             f"{subject}_approval": approvals.get(subject, 0)
             for subject in _GATE_LOAD_APPROVAL_SUBJECTS
         },
+        "decomposition_decision": decomposition_decisions,
         "human_adjudication": adjudications,
         "human_transition": transitions,
     }
@@ -475,13 +505,20 @@ def _gate_load(session, since, until) -> GateLoadMetric:
     )
     if completed == 0:
         status, value = STATUS_NO_DATA, None
-        basis = f"no work units completed in the window ({decisions} human decisions recorded)"
+        basis = (
+            "no work units completed in the window "
+            f"({decisions} decisions made through a human credential recorded)"
+        )
     else:
         status, value = STATUS_COMPUTED, decisions / completed
-        basis = f"{decisions} human decisions over {completed} completed units in the window"
+        basis = (
+            f"{decisions} decisions made through a human credential over {completed} completed "
+            "units in the window"
+        )
         if unattributed:
             status = STATUS_PARTIAL
-            basis += f"; {unattributed} adjudications have no recorded role (not counted)"
+    if unattributed:
+        basis += f"; {unattributed} adjudications have no recorded role (not counted)"
     return GateLoadMetric(status, value, basis, decisions, completed, by_kind)
 
 

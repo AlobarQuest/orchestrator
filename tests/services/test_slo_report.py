@@ -1,3 +1,5 @@
+import inspect
+import re
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -5,23 +7,45 @@ from sqlalchemy import select
 
 from orchestrator.clock import TransactionClock
 from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope
-from orchestrator.kernel.states import ActorRole
+from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import (
     Adjudication,
     Approval,
     Claim,
     Event,
     Evidence,
+    PackageAcceptanceCriterion,
     WorkUnit,
 )
-from orchestrator.services.intake.packages import register_approved_unit, register_revision
+from orchestrator.services.intake import decomposition as decomposition_module
+from orchestrator.services.intake.decomposition import (
+    approve_decomposition_proposal,
+    submit_decomposition_proposal,
+)
+from orchestrator.services.intake.package_intake import register_package_intake
+from orchestrator.services.intake.packages import (
+    record_approval,
+    register_approved_unit,
+    register_revision,
+)
 from orchestrator.services.lifecycle.budget import BREACH_ACTION
+from orchestrator.services.lifecycle.claims import authorize_retry
+from orchestrator.services.lifecycle.lifecycle import TransitionCommand, transition_unit
 from orchestrator.services.reporting.slo_report import (
+    _DECOMPOSITION_DECISIONS,
     STATUS_COMPUTED,
     STATUS_NO_DATA,
     STATUS_PARTIAL,
     SloReportFilters,
     slo_report,
+)
+from orchestrator.services.verifier.evidence import record_adjudication
+from tests._support.seeding import register_unit
+from tests.services.test_decomposition import package_ac_ids, proposal_command, worker_actor
+from tests.services.test_package_intake import (
+    acceptance_criterion,
+    human_actor,
+    intake_command,
 )
 
 AUTHORITY = AuthorityEnvelope(
@@ -795,6 +819,24 @@ def _complete(session, unit_id, *, occurred_at, from_state="verifying", actor_ro
     )
 
 
+def _add_decomposition_event(session, *, action, at):
+    session.add(
+        Event(
+            occurred_at=at,
+            actor_id="human-1",
+            action=action,
+            subject_type="decomposition_proposal",
+            subject_id=uuid.uuid4(),
+            from_state="proposed",
+            to_state="approved",
+            payload={},
+            correlation_id=uuid.uuid4(),
+            idempotency_key=f"decomposition-{uuid.uuid4()}",
+        )
+    )
+    session.flush()
+
+
 def _gate_load_window(session, since, until):
     return slo_report(session, SloReportFilters(since=since, until=until)).gate_load
 
@@ -838,6 +880,9 @@ def test_gate_load_counts_each_kind_of_human_decision_per_completed_unit(migrate
         occurred_at=_GL_INSIDE,
     )
     _complete(migrated_session, second.id, occurred_at=_GL_INSIDE)
+    _add_decomposition_event(migrated_session, action="decomposition.approved", at=_GL_INSIDE)
+    # A submission is not a decision.
+    _add_decomposition_event(migrated_session, action="decomposition.proposed", at=_GL_INSIDE)
 
     metric = _gate_load_window(migrated_session, _GL_SINCE, _GL_UNTIL)
 
@@ -846,12 +891,13 @@ def test_gate_load_counts_each_kind_of_human_decision_per_completed_unit(migrate
         "action_approval": 1,
         "authority_approval": 2,
         "retry_approval": 1,
+        "decomposition_decision": 1,
         "human_adjudication": 1,
         "human_transition": 2,
     }
-    assert metric.decisions == 7
+    assert metric.decisions == 8
     assert metric.completed_units == 2
-    assert metric.value == 3.5
+    assert metric.value == 4.0
 
 
 def test_gate_load_counts_no_verifier_system_or_worker_decision(migrated_session):
@@ -930,6 +976,7 @@ def test_gate_load_ignores_decisions_and_completions_outside_the_window(migrated
         actor_role="human",
     )
     _complete(migrated_session, late.id, occurred_at=_GL_BEFORE)
+    _add_decomposition_event(migrated_session, action="decomposition.rejected", at=_GL_BEFORE)
     _add_approval(migrated_session, unit.id, subject_type="retry", created_at=_GL_INSIDE)
     _complete(migrated_session, unit.id, occurred_at=_GL_INSIDE)
 
@@ -963,6 +1010,26 @@ def test_gate_load_with_no_completed_unit_is_no_data_and_still_reports_the_count
     assert metric.completed_units == 0
 
 
+def test_gate_load_with_no_completed_unit_still_names_unattributed_adjudications(
+    migrated_session,
+):
+    revision, unit = _build_unit(migrated_session, "gl-nodata-unknown")
+    _add_adjudication(
+        migrated_session,
+        revision.id,
+        unit.id,
+        ac_id="ac-1",
+        outcome="passed",
+        decided_at=_GL_INSIDE,
+        decided_by_role=None,
+    )
+
+    metric = _gate_load_window(migrated_session, _GL_SINCE, _GL_UNTIL)
+
+    assert metric.status == STATUS_NO_DATA
+    assert "1 adjudications have no recorded role" in metric.basis
+
+
 def test_gate_load_is_partial_when_an_adjudication_has_no_recorded_role(migrated_session):
     revision, unit = _build_unit(migrated_session, "gl-unknown")
     _add_adjudication(
@@ -989,3 +1056,120 @@ def test_a_unit_completed_twice_in_the_window_is_one_completed_unit(migrated_ses
     _complete(migrated_session, unit.id, occurred_at=_GL_INSIDE + timedelta(hours=1))
 
     assert _gate_load_window(migrated_session, _GL_SINCE, _GL_UNTIL).completed_units == 1
+
+
+def test_the_decomposition_decisions_are_the_actions_the_writer_records():
+    source = inspect.getsource(decomposition_module)
+    written = set(re.findall(r'action="(decomposition\.[a-z_]+)"', source))
+
+    assert written == set(_DECOMPOSITION_DECISIONS)
+
+
+def test_gate_load_reads_what_the_real_services_write(migrated_session):
+    """Each decision is made through its service, so the metric reads the rows those services
+    really write: the retry's own transition is a system one and is not counted again, and a
+    human completion carries the role the metric keys on."""
+    package = register_package_intake(
+        migrated_session,
+        intake_command(
+            package_id="pkg-gate-load",
+            content_hash="sha256:gate-load",
+            idempotency_key="package-intake-gate-load",
+            acceptance_criteria=(acceptance_criterion("AC-001"), acceptance_criterion("AC-002")),
+        ),
+        human_actor(),
+    )
+    proposal = submit_decomposition_proposal(
+        migrated_session,
+        proposal_command(
+            package.id,
+            package_ac_ids(migrated_session, package.id),
+            idempotency_key="proposal-gate-load",
+        ),
+        worker_actor(),
+    )
+    approve_decomposition_proposal(
+        migrated_session,
+        proposal_id=proposal.id,
+        actor=human_actor(),
+        reason="approved",
+        idempotency_key="approve-gate-load",
+    )
+    migrated_session.commit()
+
+    approved = register_unit(migrated_session, "gate-load-authority")
+    record_approval(
+        migrated_session,
+        unit_id=approved.id,
+        subject_type="authority",
+        actor_id="human-1",
+        actor_role=ActorRole.HUMAN,
+        reason="authority approved",
+        idempotency_key="authority-gate-load",
+        expected_version=approved.version,
+    )
+    migrated_session.commit()
+
+    retried = register_unit(migrated_session, "gate-load-retry")
+    retried.state = WorkUnitState.FAILED
+    retried.attempt_count = retried.max_attempts
+    migrated_session.commit()
+    retry = authorize_retry(
+        migrated_session,
+        retried.id,
+        ActorContext("human-1", ActorRole.HUMAN),
+        new_max_attempts=retried.max_attempts + 1,
+        reason="the runner environment was at fault",
+        idempotency_key="retry-gate-load",
+    )
+    assert isinstance(retry, Approval)
+
+    reviewed = register_unit(migrated_session, "gate-load-review")
+    reviewed.state = WorkUnitState.SUBMITTED
+    migrated_session.add(
+        PackageAcceptanceCriterion(
+            work_package_revision_id=reviewed.work_package_revision_id,
+            ac_id="ac-1",
+            condition="condition",
+            evidence_type="human.review",
+            evidence="evidence",
+            approver="human-1",
+        )
+    )
+    migrated_session.commit()
+    adjudication = record_adjudication(
+        migrated_session,
+        work_package_revision_id=reviewed.work_package_revision_id,
+        work_unit_id=reviewed.id,
+        ac_id="ac-1",
+        outcome="passed",
+        actor=ActorContext("human-1", ActorRole.HUMAN),
+        rationale="reviewed and met",
+        idempotency_key="human-pass-gate-load",
+    )
+    assert isinstance(adjudication, Adjudication)
+    migrated_session.refresh(reviewed)
+    transition_unit(
+        migrated_session,
+        TransitionCommand(
+            unit_id=reviewed.id,
+            target=WorkUnitState.COMPLETED,
+            actor=ActorContext("human-1", ActorRole.HUMAN),
+            expected_version=reviewed.version,
+            idempotency_key="complete-gate-load",
+        ),
+    )
+    migrated_session.commit()
+
+    metric = slo_report(migrated_session).gate_load
+
+    assert metric.by_kind == {
+        "action_approval": 0,
+        "authority_approval": 1,
+        "retry_approval": 1,
+        "decomposition_decision": 1,
+        "human_adjudication": 1,
+        "human_transition": 1,
+    }
+    assert metric.completed_units == 1
+    assert metric.value == 5.0

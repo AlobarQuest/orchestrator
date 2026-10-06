@@ -1,13 +1,6 @@
-from dataclasses import fields
-
 from fastapi.testclient import TestClient
 
-from orchestrator.api.schemas.reporting import (
-    GateLoadMetricResponse,
-    MetricValueResponse,
-    SloReportResponse,
-)
-from orchestrator.services.reporting.slo_report import GateLoadMetric, MetricValue, SloReport
+from orchestrator.api.schemas.reporting import GateLoadMetricResponse, SloReportResponse
 from tests.api.test_lifecycle_api import HUMAN
 
 
@@ -27,15 +20,35 @@ def test_slo_report_route_returns_status_typed_metrics(db_client: TestClient) ->
         "action_approval",
         "authority_approval",
         "retry_approval",
+        "decomposition_decision",
         "human_adjudication",
         "human_transition",
     }
 
 
-def test_the_response_models_declare_every_field_the_report_carries() -> None:
-    """A response model drops a key it does not declare, without an error."""
-    assert set(SloReportResponse.model_fields) == {field.name for field in fields(SloReport)}
-    assert set(MetricValueResponse.model_fields) == {field.name for field in fields(MetricValue)}
+def test_the_response_models_declare_exactly_the_fields_the_route_serves() -> None:
+    """A literal pin, not a derived one: `response_model` drops an undeclared key silently, and a
+    set built from the code would shrink along with it."""
+    assert set(SloReportResponse.model_fields) == {
+        "since",
+        "until",
+        "intake_to_first_work",
+        "queue_age",
+        "claim_expiry_rate",
+        "waiver_frequency",
+        "revert_rate",
+        "evidence_completeness",
+        "cost_per_unit",
+        "token_consumption",
+        "improvisation",
+        "budget_breach",
+        "gate_load",
+    }
     assert set(GateLoadMetricResponse.model_fields) == {
-        field.name for field in fields(GateLoadMetric)
+        "status",
+        "value",
+        "basis",
+        "decisions",
+        "completed_units",
+        "by_kind",
     }
