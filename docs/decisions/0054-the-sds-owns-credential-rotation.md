@@ -124,15 +124,15 @@ engine. Its 04:00 window retires once the SDS path covers its classes.
   last, and only after the new one verifies everywhere. The worker reports and stops. It never
   revokes on a partial deploy.
 
-## Open questions
+## Settled questions
 
-1. **Record source.** Use the generic `work` source, or revive change-manager's `rotation` source
-   for these records? Recommendation: `work`. It is the source the carrier and work watcher already
-   read, and a second source would need its own retirement path.
-2. **Where the worker lives.** A new package in the orchestrator repo (`src/rotation_worker/`, like
-   the activation sweep), or inside infraops-mcp-server next to the executor it reuses?
-   Recommendation: the orchestrator repo. The executor's TypeScript steps are ported or wrapped,
-   because the worker's guard rows, M2M identity and contract tests all live here.
-3. **Expiry.** Track credential age only, as today, or read provider expiry dates too?
-   Recommendation: age only for now, and add expiry as a per-class field later (GitHub fine-grained
-   PATs carry one).
+Devon agreed to all three on 2026-10-06:
+
+1. **Record source: `work`.** Rotation records use change-manager's generic `work` source, which
+   the carrier and the work watcher already read. The unused `rotation` source is deleted in
+   increment 5.
+2. **Where the worker lives: the orchestrator repo**, as `src/rotation_worker/`, like the
+   activation sweep. The executor's steps are ported or wrapped there, beside the worker's guard
+   rows, M2M identity and contract tests.
+3. **Expiry: age only for now.** Provider expiry dates (GitHub fine-grained PATs carry one) come
+   later as a per-class field.
