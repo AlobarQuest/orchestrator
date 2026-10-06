@@ -547,8 +547,8 @@ def test_an_inert_landing_is_stated_in_the_back_out_sentence() -> None:
     [
         (EstateAnswer(None, SOURCE_UNREADABLE), "could not be read (source_unreadable)"),
         (EstateAnswer(None, SOURCE_UNCONFIGURED), "could not be read (source_unconfigured)"),
-        (EstateAnswer(LANDING_UNKNOWN, "not_assessed"), "App Brain answered not_assessed"),
-        (EstateAnswer(LANDING_UNKNOWN), "App Brain answered no reason given"),
+        (EstateAnswer(LANDING_UNKNOWN, "not_assessed"), "no determination for it (not_assessed)."),
+        (EstateAnswer(LANDING_UNKNOWN), "App Brain has no determination for it."),
     ],
 )
 def test_an_absent_landing_answer_is_said_to_be_not_known_never_inert(
@@ -598,3 +598,55 @@ def test_a_registered_revision_reads_the_same_facts_as_its_snapshot(
         "dependency-update", revision.enforcement_snapshot, REDEPLOYS
     )
     assert decision_facts_for_revision(revision, REDEPLOYS)["affects"]["known"] is True
+
+
+@pytest.mark.parametrize("reach", [["live_estate"], ["source_repository", "external_system"]])
+def test_a_class_statement_is_not_known_to_hold_for_work_that_reaches_beyond_its_repository(
+    reach: list[str],
+) -> None:
+    # The dependency-update statement says nothing outside the repository is written. A package
+    # that declares it reaches further has contradicted that, so it is not an answer for it.
+    snapshot = {**DEPENDENCY_UPDATE_SNAPSHOT, "reach": reach}
+
+    reversibility = decision_facts_for_intake("dependency-update", snapshot, REDEPLOYS)[
+        "reversibility"
+    ]
+
+    assert reversibility["known"] is False
+    beyond = ", ".join(member for member in reach if member != "source_repository")
+    assert f"reaches beyond its repository ({beyond})" in reversibility["detail"]
+    assert REVERSIBILITY_BY_CHANGE_CLASS["dependency-update"] in reversibility["detail"]
+
+
+def test_a_repository_only_reach_keeps_the_class_statement() -> None:
+    snapshot = {**DEPENDENCY_UPDATE_SNAPSHOT, "reach": ["source_repository"]}
+
+    reversibility = decision_facts_for_intake("dependency-update", snapshot, REDEPLOYS)[
+        "reversibility"
+    ]
+
+    assert reversibility["known"] is True
+
+
+def test_a_declared_plan_still_answers_work_that_reaches_beyond_its_repository() -> None:
+    snapshot = {**MAINTENANCE_SNAPSHOT, "reach": ["live_estate"]}
+
+    reversibility = decision_facts_for_intake("maintenance-remediation", snapshot, REDEPLOYS)[
+        "reversibility"
+    ]
+
+    assert reversibility["known"] is True
+    assert "Revert the lockfile commit." in reversibility["detail"]
+
+
+def test_a_unit_whose_package_reaches_the_live_estate_does_not_claim_the_class_statement(
+    migrated_session: Session,
+) -> None:
+    revision, unit = _build_unit(
+        migrated_session,
+        "facts-unit-live-estate",
+        enforcement={"acceptance_criteria": ["ac-1"], "reach": ["live_estate"]},
+    )
+    unit.authority = TARGETED_AUTHORITY.normalized()
+
+    assert decision_facts_for_unit(unit, revision)["reversibility"]["known"] is False

@@ -231,12 +231,7 @@ def preflight_package_intake(session: Session, command: PackageIntakeCommand) ->
             WorkPackageRevision.revision == command.revision,
         )
     ):
-        raise DomainError(
-            "package_intake_conflict",
-            "this package revision is already registered, or its package is registered from "
-            "another source repository",
-            None,
-        )
+        raise _package_intake_conflict()
 
 
 def _status_error(command: PackageIntakeCommand) -> DomainError | None:

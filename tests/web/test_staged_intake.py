@@ -11,10 +11,10 @@ from typing import Any, cast
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import Engine, func, select
+from sqlalchemy import Engine, func, select, text
 from sqlalchemy.orm import Session
 
-from orchestrator.api.routes.common import get_landing_source
+from orchestrator.api.routes.common import get_page_landing_source
 from orchestrator.persistence.models import Event, StagedPackageIntake, WorkPackageRevision
 from orchestrator.services.landing.estate_landing import LANDING_REDEPLOYS, EstateAnswer
 from tests.api.test_lifecycle_api import HUMAN, SYSTEM, WORKER
@@ -76,6 +76,10 @@ def _press(client: TestClient, staged_id: str, fields: dict[str, str], **overrid
     )
 
 
+def _code(response: Any) -> str:
+    return response.json()["error"]["code"]
+
+
 def _decision_section(page: str) -> str:
     match = re.search(r'<section class="decision"[\s\S]*?</section>', page)
     assert match is not None, "no decision surface was rendered"
@@ -86,7 +90,7 @@ def test_the_page_puts_the_decision_before_the_button_and_the_button_before_the_
     db_client: TestClient,
 ) -> None:
     landing = _Landing()
-    cast(FastAPI, db_client.app).dependency_overrides[get_landing_source] = lambda: landing
+    cast(FastAPI, db_client.app).dependency_overrides[get_page_landing_source] = lambda: landing
     staged_id = _stage(db_client)
 
     page = db_client.get(f"/review/staged-intakes/{staged_id}", headers=HUMAN)
@@ -192,6 +196,7 @@ def test_a_tampered_idempotency_key_is_refused(db_client: TestClient) -> None:
     )
 
     assert response.status_code == 403
+    assert _code(response) == "csrf_rejected"
 
 
 def test_an_unconfirmed_press_is_refused(db_client: TestClient) -> None:
@@ -201,15 +206,16 @@ def test_an_unconfirmed_press_is_refused(db_client: TestClient) -> None:
     response = _press(db_client, staged_id, _confirm_fields(page.text, staged_id), confirm="")
 
     assert response.status_code == 403
+    assert _code(response) == "csrf_rejected"
 
 
 def test_a_machine_can_neither_read_nor_confirm_the_page(db_client: TestClient) -> None:
     staged_id = _stage(db_client)
 
     for headers in (SYSTEM, WORKER):
-        assert (
-            db_client.get(f"/review/staged-intakes/{staged_id}", headers=headers).status_code == 403
-        )
+        page = db_client.get(f"/review/staged-intakes/{staged_id}", headers=headers)
+        assert page.status_code == 403
+        assert _code(page) == "human_actor_required"
         response = db_client.post(
             f"/review/staged-intakes/{staged_id}/confirm",
             data={"confirm": "yes"},
@@ -217,6 +223,8 @@ def test_a_machine_can_neither_read_nor_confirm_the_page(db_client: TestClient) 
             follow_redirects=False,
         )
         assert response.status_code == 403
+        # Refused for being a machine, before any token is looked at.
+        assert _code(response) == "human_actor_required"
 
 
 def test_an_unknown_staged_row_is_not_found(db_client: TestClient) -> None:
@@ -296,15 +304,22 @@ def test_each_token_does_only_its_own_action(db_client: TestClient) -> None:
     staged_id = _stage(db_client)
     page = db_client.get(f"/review/staged-intakes/{staged_id}", headers=HUMAN).text
 
-    assert _withdraw(db_client, staged_id, _confirm_fields(page, staged_id)).status_code == 403
-    assert _press(db_client, staged_id, _withdraw_fields(page, staged_id)).status_code == 403
+    for response in (
+        _withdraw(db_client, staged_id, _confirm_fields(page, staged_id)),
+        _press(db_client, staged_id, _withdraw_fields(page, staged_id)),
+    ):
+        assert response.status_code == 403
+        assert _code(response) == "csrf_rejected"
 
 
 def test_a_withdraw_token_for_one_row_cannot_withdraw_another(db_client: TestClient) -> None:
     first, second = _stage(db_client), _stage(db_client)
     page = db_client.get(f"/review/staged-intakes/{first}", headers=HUMAN).text
 
-    assert _withdraw(db_client, second, _withdraw_fields(page, first)).status_code == 403
+    response = _withdraw(db_client, second, _withdraw_fields(page, first))
+
+    assert response.status_code == 403
+    assert _code(response) == "csrf_rejected"
 
 
 def test_a_withdraw_needs_a_reason_and_a_confirmation(db_client: TestClient) -> None:
@@ -314,7 +329,9 @@ def test_a_withdraw_needs_a_reason_and_a_confirmation(db_client: TestClient) -> 
     )
 
     assert _withdraw(db_client, staged_id, fields, reason="").status_code == 422
-    assert _withdraw(db_client, staged_id, fields, confirm="").status_code == 403
+    unconfirmed = _withdraw(db_client, staged_id, fields, confirm="")
+    assert unconfirmed.status_code == 403
+    assert _code(unconfirmed) == "csrf_rejected"
 
 
 def test_a_machine_cannot_withdraw(db_client: TestClient) -> None:
@@ -328,3 +345,77 @@ def test_a_machine_cannot_withdraw(db_client: TestClient) -> None:
             follow_redirects=False,
         )
         assert response.status_code == 403
+        assert _code(response) == "human_actor_required"
+
+
+def test_payload_text_is_rendered_escaped(db_client: TestClient) -> None:
+    # The payload is authored upstream and stored verbatim; the page must never run it.
+    script = "<script>alert('staged')</script>"
+    staged_id = _stage(
+        db_client,
+        enforcement_snapshot={**BUMP_SNAPSHOT, "outcome": {"what": script}, "title": script},
+    )
+
+    page = db_client.get(f"/review/staged-intakes/{staged_id}", headers=HUMAN).text
+
+    assert "<script>alert" not in page
+    assert "&lt;script&gt;alert(" in _decision_section(page)
+
+
+# --- the App Brain read --------------------------------------------------------------------------
+
+
+class _InspectingLanding:
+    """Counts this database's connections idle in a transaction while it is being asked."""
+
+    def __init__(self, engine: Engine) -> None:
+        self.engine = engine
+        self.idle_in_transaction: list[int] = []
+
+    def landing_for(self, github_repo: str) -> EstateAnswer:
+        with self.engine.connect() as connection:
+            self.idle_in_transaction.append(
+                connection.execute(
+                    text(
+                        "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() "
+                        "AND state = 'idle in transaction'"
+                    )
+                ).scalar_one()
+            )
+        return EstateAnswer(LANDING_REDEPLOYS)
+
+
+def test_no_connection_idles_in_a_transaction_while_app_brain_answers(
+    db_client: TestClient, migrated_engine: Engine
+) -> None:
+    staged_id = _stage(db_client)
+    page = db_client.get(f"/review/staged-intakes/{staged_id}", headers=HUMAN)
+    location = _press(db_client, staged_id, _confirm_fields(page.text, staged_id)).headers[
+        "location"
+    ]
+    landing = _InspectingLanding(migrated_engine)
+    cast(FastAPI, db_client.app).dependency_overrides[get_page_landing_source] = lambda: landing
+
+    for path in (f"/review/staged-intakes/{staged_id}", location):
+        assert db_client.get(path, headers=HUMAN).status_code == 200
+
+    assert landing.idle_in_transaction == [0, 0]
+
+
+def test_a_stored_payload_that_no_longer_validates_says_to_withdraw_and_restage(
+    db_client: TestClient, migrated_engine: Engine
+) -> None:
+    staged_id = _stage(db_client)
+    page = db_client.get(f"/review/staged-intakes/{staged_id}", headers=HUMAN)
+    with Session(migrated_engine) as session:
+        row = session.get(StagedPackageIntake, uuid.UUID(staged_id))
+        assert row is not None
+        row.payload = {key: value for key, value in row.payload.items() if key != "source_commit"}
+        session.commit()
+
+    response = _press(db_client, staged_id, _confirm_fields(page.text, staged_id))
+
+    assert response.status_code == 409
+    error = response.json()["error"]
+    assert error["code"] == "intake_payload_invalid"
+    assert "withdraw this staged intake and re-stage" in str(error)

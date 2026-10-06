@@ -42,7 +42,13 @@ staged row is also first on `/review`. The page shows the three decision facts b
 else: what it does (the package outcome), what it affects (the declared reach, then the repository
 from the profile fields, and the bump for a dependency-update), and whether it can be backed out
 (the declared rollback plan or the profile's change class, plus what App Brain says landing that
-repository's default branch does, read when the page renders). Under them is one button, then the
+repository's default branch does, read when the page renders). The change class's statement is
+shown as an answer only for work confined to its repository: a package whose declared reach goes
+further (`live_estate`, say) shows it as not known, with the class's claim beside the reason. The
+App Brain read is made with no database transaction open, and each phase of it (connect, write,
+each read) is cut off after one second, so a page waits a few seconds at most. It is a per-phase
+cap rather than a whole-request deadline, which would need a worker thread the orchestrator does
+not start. A slow or failed read shows as "not known", never as an error page. Under them is one button, then the
 package content.
 
 The button registers the intake as the person who pressed it, under the idempotency key the

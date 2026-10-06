@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
-from orchestrator.api.routes.common import get_landing_source
+from orchestrator.api.routes.common import get_page_landing_source
 from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope
 from orchestrator.persistence.models import WorkPackageRevision, WorkUnit
 from orchestrator.services.intake.package_intake import register_package_intake
@@ -220,7 +220,7 @@ def test_the_intake_page_asks_the_estate_about_the_profiles_repository_at_render
 ) -> None:
     revision = _dependency_update_revision(migrated_engine)
     landing = _Landing(EstateAnswer(LANDING_REDEPLOYS))
-    cast(FastAPI, db_client.app).dependency_overrides[get_landing_source] = lambda: landing
+    cast(FastAPI, db_client.app).dependency_overrides[get_page_landing_source] = lambda: landing
 
     page = db_client.get(f"/review/intakes/{revision.id}", headers=HUMAN)
 
@@ -250,7 +250,7 @@ def test_a_package_naming_no_repository_does_not_ask_the_estate(
 ) -> None:
     revision = _intake_revision(migrated_engine)
     landing = _Landing(EstateAnswer(LANDING_REDEPLOYS))
-    cast(FastAPI, db_client.app).dependency_overrides[get_landing_source] = lambda: landing
+    cast(FastAPI, db_client.app).dependency_overrides[get_page_landing_source] = lambda: landing
 
     page = db_client.get(f"/review/intakes/{revision.id}", headers=HUMAN)
 

@@ -1,12 +1,14 @@
 """Staged intakes: SYSTEM stages, a HUMAN confirms, and the confirm is the ordinary registration."""
 
+import threading
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 from typing import Any
 
 import pytest
-from sqlalchemy import Engine, func, select
+from sqlalchemy import Engine, func, select, text
 from sqlalchemy.orm import Session
 
 from orchestrator.api.routes.intake import package_intake_command
@@ -460,3 +462,74 @@ def test_withdrawing_an_unknown_row_is_not_found(migrated_session: Session) -> N
         withdraw_staged_intake(migrated_session, uuid.uuid4(), "reason", HUMAN)
 
     assert refused.value.code == "staged_intake_not_found"
+
+
+def _lock_waiters(engine: Engine) -> int:
+    with engine.connect() as connection:
+        return connection.execute(
+            text(
+                "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() "
+                "AND wait_event_type = 'Lock'"
+            )
+        ).scalar_one()
+
+
+def test_a_confirm_racing_a_withdraw_ends_in_one_outcome_and_a_clean_409(
+    migrated_engine: Engine,
+) -> None:
+    """A press and a withdraw arrive together. Each must wait on the row lock, so the second to
+    get it reads what the first did and is refused by name -- never both acting on a `staged`
+    row they each read, which would combine a registration and a withdrawal in one row and
+    reach the wire as an IntegrityError (a bare 500).
+
+    A third session holds the row lock until both are provably waiting on a lock in Postgres,
+    so the race is real rather than a hope about thread scheduling."""
+    payload = staged_payload()
+    staged_id = _stage(migrated_engine, payload)
+    outcomes: dict[str, object] = {}
+
+    def act(name: str) -> None:
+        with Session(migrated_engine) as session:
+            try:
+                if name == "confirm":
+                    confirm_staged_intake(session, staged_id, command_for(payload), HUMAN)
+                else:
+                    withdraw_staged_intake(session, staged_id, "racing the confirm", HUMAN)
+                session.commit()
+                outcomes[name] = "done"
+            except Exception as error:  # the assertion below names what arrived
+                session.rollback()
+                outcomes[name] = error
+
+    with Session(migrated_engine) as holder:
+        holder.scalar(
+            select(StagedPackageIntake).where(StagedPackageIntake.id == staged_id).with_for_update()
+        )
+        threads = [threading.Thread(target=act, args=(name,)) for name in ("confirm", "withdraw")]
+        for thread in threads:
+            thread.start()
+        deadline = time.monotonic() + 10
+        while _lock_waiters(migrated_engine) < 2:
+            assert time.monotonic() < deadline, "both requests should be waiting on a lock"
+            time.sleep(0.02)
+        holder.rollback()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    done = [name for name, outcome in outcomes.items() if outcome == "done"]
+    refused = [outcome for outcome in outcomes.values() if outcome != "done"]
+    assert len(done) == 1 and len(refused) == 1, outcomes
+    assert isinstance(refused[0], DomainError), repr(refused[0])
+    assert (
+        refused[0].code
+        == {
+            "confirm": "staged_intake_not_withdrawable",
+            "withdraw": "staged_intake_not_confirmable",
+        }[done[0]]
+    )
+    with Session(migrated_engine) as session:
+        row = session.get(StagedPackageIntake, staged_id)
+        assert row is not None
+        assert row.state == {"confirm": "registered", "withdraw": "withdrawn"}[done[0]]
+        revisions = session.scalar(select(func.count()).select_from(WorkPackageRevision))
+        assert revisions == (1 if done[0] == "confirm" else 0)

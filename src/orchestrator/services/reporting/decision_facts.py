@@ -79,6 +79,8 @@ _REPOSITORY_FIELD_BY_PROFILE: dict[str, str] = {
     "dependency-update": "target_repo",
     "maintenance-remediation": "repo",
 }
+# The one reach member every class statement is compatible with: work confined to its repository.
+_REPOSITORY_ONLY_REACH = "source_repository"
 _NO_REPOSITORY_LANDING = (
     "No target repository is declared, so whether landing this work redeploys anything is not "
     "known."
@@ -118,7 +120,9 @@ def decision_facts_for_unit(
             _declared_reach(revision.enforcement_snapshot), _affects_from_envelope(envelope)
         ),
         "reversibility": _reversibility(
-            envelope.change_class, _declared_rollback_plan(revision.enforcement_snapshot)
+            envelope.change_class,
+            _declared_rollback_plan(revision.enforcement_snapshot),
+            revision.enforcement_snapshot,
         ),
     }
 
@@ -151,7 +155,7 @@ def decision_facts_for_intake(
     """
     outcome = _package_outcome(snapshot)
     repository = declared_repository(profile, snapshot)
-    reversibility = _reversibility(profile, _declared_rollback_plan(snapshot))
+    reversibility = _reversibility(profile, _declared_rollback_plan(snapshot), snapshot)
     reversibility["detail"] += " " + _landing_statement(repository, landing)
     return {
         "does": _fact(_DOES_LABEL, outcome is not None, outcome or _UNKNOWN_OUTCOME),
@@ -201,12 +205,15 @@ def _landing_statement(repository: str | None, landing: EstateAnswer | None) -> 
         )
     if landing is not None and landing.landing == LANDING_INERT:
         return f"The estate records that {branch} changes nothing already running."
-    reason = landing.reason if landing is not None and landing.reason else "no reason given"
+    reason = f" ({landing.reason})" if landing is not None and landing.reason else ""
     if landing is not None and landing.landing is not None:
-        return f"Whether {branch} redeploys anything is not known: App Brain answered {reason}."
+        return (
+            f"Whether {branch} redeploys anything is not known: App Brain has no determination "
+            f"for it{reason}."
+        )
     return (
         f"Whether {branch} redeploys anything is not known: the estate's record could not be "
-        f"read ({reason})."
+        f"read{reason}."
     )
 
 
@@ -335,12 +342,19 @@ def _constraint_statement(name: str, value: Any) -> str | None:
     return f"{name} {value}"
 
 
-def _reversibility(change_class: str | None, declared_plan: str | None) -> dict[str, Any]:
+def _reversibility(
+    change_class: str | None, declared_plan: str | None, snapshot: object
+) -> dict[str, Any]:
     """Declared plan, then class statement, then the explicit unknown.
 
     The order is the point. A plan the package's author wrote is a per-package commitment; the
     class statement is prose about a category that happens to contain this package. Rendering the
     second while holding the first is strictly worse information.
+
+    Every class statement assumes the work stays in its repository, so that reverting the pull
+    request undoes it. A package whose declared reach goes beyond its source repository has said
+    otherwise, and the class statement is then not known to hold for it: it is shown, as the
+    class's claim, beside the explicit unknown rather than as an answer.
     """
     if declared_plan is not None:
         return _fact(_REVERSIBILITY_LABEL, True, f"{_DECLARED_PLAN_PREFIX}{declared_plan}")
@@ -349,6 +363,17 @@ def _reversibility(change_class: str | None, declared_plan: str | None) -> dict[
     )
     if statement is None:
         return _fact(_REVERSIBILITY_LABEL, False, _UNKNOWN_REVERSIBILITY)
+    beyond = [
+        member for member in reach_from_snapshot(snapshot) or () if member != _REPOSITORY_ONLY_REACH
+    ]
+    if beyond:
+        return _fact(
+            _REVERSIBILITY_LABEL,
+            False,
+            f"No rollback plan is declared, and the package declares that it reaches beyond its "
+            f"repository ({', '.join(beyond)}), so what a {change_class} change usually allows "
+            f"does not establish how to back this one out. The class says: {statement}",
+        )
     return _fact(
         _REVERSIBILITY_LABEL,
         True,

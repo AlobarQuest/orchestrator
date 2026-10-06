@@ -37,16 +37,36 @@ def get_landing_source(settings: SettingsDep) -> EstateLandingSource:
     as a source that silently answers. One definition, because two routes now ask the same
     question and a second copy is a second place for that empty-string property to be forgotten.
     """
+    return _landing_source(settings, settings.app_brain_timeout_seconds)
+
+
+# What a page render gives each phase of the App Brain request (connect, write, each read). It
+# is per phase because httpx has no whole-request timeout, and a whole-request deadline would need
+# a worker thread, which the orchestrator does not start (test_wsp21_invariant_scan). App Brain's
+# answer is one small JSON body, so a page waits a few seconds at most rather than the admission
+# paths' `app_brain_timeout_seconds` per phase.
+PAGE_APP_BRAIN_TIMEOUT_SECONDS = 1.0
+
+
+def get_page_landing_source(settings: SettingsDep) -> EstateLandingSource:
+    """The same source for a page render, with the short per-phase cap above."""
+    return _landing_source(
+        settings, min(settings.app_brain_timeout_seconds, PAGE_APP_BRAIN_TIMEOUT_SECONDS)
+    )
+
+
+def _landing_source(settings: Settings, timeout_seconds: float) -> EstateLandingSource:
     return HttpEstateLandingSource(
         base_url=settings.app_brain_url,
         read_key=(
             settings.app_brain_read_key.get_secret_value() if settings.app_brain_read_key else ""
         ),
-        timeout_seconds=settings.app_brain_timeout_seconds,
+        timeout_seconds=timeout_seconds,
     )
 
 
 LandingSourceDep = Annotated[EstateLandingSource, Depends(get_landing_source)]
+PageLandingSourceDep = Annotated[EstateLandingSource, Depends(get_page_landing_source)]
 
 
 ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
