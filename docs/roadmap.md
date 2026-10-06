@@ -63,7 +63,13 @@ page's approval takes an `awaiting_approval` unit back to `ready` (#352). The pa
 vocabulary is one contract pinned in both repositories (4a-2, #353 with intent-packages #109). All
 three deployed as `433cd36-sds11approve-amd64`.
 The unit page puts its forms directly under the decision facts and collapses the audit sections
-below them, linking the Evidence Pack as the audit view (4c-3, #358); not yet deployed.
+below them, linking the Evidence Pack as the audit view (4c-3, #358). Gate load is measured in the
+SLO report (R9, #359), the deployment-observation summaries are one typed schema published in
+OpenAPI (5b, #360), and admission's capability and change-class lists live in the policy artifact
+(3a-1, #361, ADR-0053); all four deployed as `a1205f1-sds11batch-amd64`. The runner's finalize
+script is declared apart from its command vocabulary (3c-1: factory-runner #89, #362, intent-packages
+#110), deployed as `c88fba9-sds11verify-amd64`; every caller moved to runner pin `f6f0508`
+(factory-runner #90) on 2026-10-06.
 
 Four decisions aren't carried forward:
 
@@ -112,10 +118,9 @@ These are in no fixed order.
 
 | Review id | Item | State today |
 |---|---|---|
-| 3c-1 | Separate the runner's permitted commands from its ordered verify script. | Built (#89, #362, #110); takes effect when callers move to the new runner pin. |
-| 2a, L1a | A human intake without pasting, and a simpler authoring interface above intent packages. | Machines can register intakes (ADR-0027); the human paste survives, and packages are LLM-authored through `factory create`. |
-| L1b | Machine-originated inputs first: the rotation lane (WS-P3.5). | Four producers exist; where WS-P3.5 belongs is open decision 1. |
-| R9 | Net gate load is a target set per wave. | Measured in the SLO report (#359); per-wave target not yet set. |
+| 2a, L1a | A human intake without pasting, and a simpler authoring interface above intent packages. | Devon chose on 2026-10-06: the CLI stages, the review page shows what it does, what it affects and whether it can be backed out, computed rather than added to the package, starting with machine-originated profiles. Not yet built. |
+| L1b | Machine-originated inputs first: the rotation lane (WS-P3.5). | Devon chose on 2026-10-06 (open decision 1): a separate lane, in which a producer detects and reports, and work is minted only from an approved change record. Not yet built. |
+| R9 | Net gate load is a target set per wave. | Measured in the SLO report (#359). Devon chose on 2026-10-06 to set the target after about two weeks of readings, around 2026-10-20. |
 | 7a | Deploy is automated like the build, and migrate/swap ordering is safe by construction. | Deferred by Devon on 2026-08-02. Migrate-before-swap is safe only because no health check reads readiness. Re-decide before building. |
 
 ## After 1.0
@@ -128,7 +133,8 @@ These are in no fixed order.
 Each entry is carried from §7 of the archived programme plan, where its full history is recorded.
 The numbers are that plan's, kept so its history can be found.
 
-1. **Where WS-P3.5 belongs.** It is a rotation lane rather than an input layer.
+1. **Where WS-P3.5 belongs.** Decided 2026-10-06: a separate rotation lane, not an input layer (see L1b
+   above).
 2. **Whether every automated signal posts a tier-1 observation**, including signals handled
    entirely outside the SDS. It's cheap; the cost is rows nobody reads.
 3. **Which existing signals have no tier-1 producer.** The 2026-08-27 enumeration is out of date:
