@@ -136,3 +136,44 @@ Devon agreed to all three on 2026-10-06:
    rows, M2M identity and contract tests.
 3. **Expiry: age only for now.** Provider expiry dates (GitHub fine-grained PATs carry one) come
    later as a per-class field.
+
+## Amendment 1 — increment 2's shape (2026-10-07)
+
+Measuring increment 2 against today's code changed three parts of the plan. Devon decided all four
+questions below on 2026-10-07.
+
+**What measurement found.** A rotation that ran the way dependency updates do would take about
+eleven human acts, not the one this ADR aims for:
+
+- the change record;
+- the package revision (no approval policy grants this profile);
+- the decomposition (`factory decompose` only knows dependency updates);
+- three authority approvals (no known-good pattern covers `operational_action`);
+- five criterion adjudications (every evidence type this profile allows has a human floor);
+- the console mint and revoke.
+
+Reaching one gate means graduating four of those gates, each deliberately: a policy grant for
+rotation revisions, policy-recognised decompositions, a known-good pattern for `operational_action`,
+and a deterministic evaluator for rotation probe evidence. Increment 2 proves the flow with every
+gate in place. The graduations are decided after one rotation has run.
+
+**Decisions:**
+
+1. **Who proposes: a new `src/rotation_proposer/` in this repository.** It reuses
+   `bump_proposer`'s audited revise, publish and propose path, its confined client and its
+   observation. The infraops scan only detects. This replaces "the security-drift scan proposes" in
+   step 1 of the flow.
+2. **One standing package per credential**, not per class, on the existing
+   `non-software-operational` profile with optional `standing` and `credential_id` fields. With one
+   package per class, two due credentials of the same class would supersede each other's records.
+3. **Devon clicks every gate on the first rotations**: revision, decomposition, authority and
+   adjudication. The construction-mode pre-authorization does not cover acts that reach a live
+   credential.
+4. **Rotation can be requested on demand.** An optional `rotate_requested` date on a registry entry
+   raises a finding, so the first rotation does not wait for the first natural due date
+   (2026-12-29). The first credential is the generic OpenRouter key: its consumers are a BWS secret
+   and a Keychain item, so rotating it redeploys nothing.
+
+**A correction to the flow.** The change record's id cannot go into the package revision: the
+revision is created first, and the record names it. The carrier puts the record id on the intake
+(ADR-0027).
