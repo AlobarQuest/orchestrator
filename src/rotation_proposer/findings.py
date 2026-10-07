@@ -46,7 +46,7 @@ TIMEOUT_SECONDS: Final = 60.0
 # The same trap `uv` is resolved around (CLAUDE.md): which first, then where installs put it.
 NODE_FALLBACKS: Final = (Path("/opt/homebrew/bin/node"), Path("/usr/local/bin/node"))
 
-# infraops' check -> this program's trigger word, which is the first half of the occurrence.
+# infraops' check -> this program's trigger word, which is the last part of the occurrence.
 TRIGGERS: Final = {
     "cred.exposure-rotate": "exposure",
     "cred.rotation-requested": "requested",
@@ -89,7 +89,7 @@ class Due:
     @property
     def occurrence(self) -> str:
         """What a standing rotation package's revision carries in `profile_fields.occurrence`."""
-        return f"{self.trigger}-{self.basis}"
+        return f"{self.basis}-{self.trigger}"
 
 
 @dataclass(frozen=True)

@@ -28,9 +28,9 @@ credential, the precedence is exposure, then request, then age. The trigger deci
 
 | Trigger | infraops check | occurrence |
 | --- | --- | --- |
-| exposure | `cred.exposure-rotate` | `exposure-<exposure id>` |
-| request | `cred.rotation-requested` | `requested-<rotate_requested date>` |
-| age | `cred.rotation-age` | `age-<date it last rotated>` |
+| exposure | `cred.exposure-rotate` | `<exposure id>-exposure` |
+| request | `cred.rotation-requested` | `<rotate_requested date>-requested` |
+| age | `cred.rotation-age` | `<date it last rotated>-age` |
 
 The occurrence never contains today's date. If it did, every daily pass would see a new rotation
 and revise the package again. `cred.unknown-class` is skipped. Any other check this program does
@@ -73,7 +73,9 @@ same pass.
 
 Use the `non-software-operational` profile, name the package `rotation-<credential_id>`, and set
 these `profile_fields`: `standing: true`, `credential_id: <infraops registry id>`, and
-`occurrence: 'unassigned'` (quoted). A package whose name and `credential_id` disagree stops the
+`occurrence` (quoted). To have Devon approve the first rotation at authoring time, set it to that
+rotation's occurrence from the preceding table (for example `'2026-10-07-requested'`); the first
+pass then proposes rev 1 without revising it. `'unassigned'` instead makes the first pass revise. A package whose name and `credential_id` disagree stops the
 pass with exit 2.
 
 ## Before the first `--submit`

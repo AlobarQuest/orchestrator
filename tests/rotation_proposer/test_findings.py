@@ -57,12 +57,12 @@ def test_the_contract_fixture_reads_as_one_due_per_credential() -> None:
 @pytest.mark.parametrize(
     ("entries", "occurrence"),
     [
-        ((AGE,), "age-2025-01-02"),
-        ((REQUESTED,), "requested-2026-10-07"),
-        ((EXPOSURE,), "exposure-transcript-1"),
-        ((AGE, REQUESTED), "requested-2026-10-07"),
-        ((REQUESTED, AGE), "requested-2026-10-07"),
-        ((AGE, EXPOSURE, REQUESTED), "exposure-transcript-1"),
+        ((AGE,), "2025-01-02-age"),
+        ((REQUESTED,), "2026-10-07-requested"),
+        ((EXPOSURE,), "transcript-1-exposure"),
+        ((AGE, REQUESTED), "2026-10-07-requested"),
+        ((REQUESTED, AGE), "2026-10-07-requested"),
+        ((AGE, EXPOSURE, REQUESTED), "transcript-1-exposure"),
     ],
 )
 def test_one_rotation_answers_every_trigger_and_the_precedence_names_it(
@@ -78,7 +78,7 @@ def test_an_age_occurrence_is_dated_by_the_last_rotation_never_by_the_pass() -> 
     """Kills: a time-of-day or a clock in the occurrence. A value that moved between passes would
     make every daily pass see a new rotation and revise the package again."""
     due, _ = parse(_document(dict(AGE, anchor="2025-01-02T13:14:15.000Z")))
-    assert due[0].occurrence == "age-2025-01-02"
+    assert due[0].occurrence == "2025-01-02-age"
     assert due[0].dated == "2025-01-02"
 
 

@@ -46,7 +46,7 @@ def test_the_same_rotation_is_the_same_row_on_every_pass() -> None:
     assert first == rotation_observation(replace(DUE))
     assert first["observed_at"] == "2026-10-07T00:00:00+00:00"
     assert (
-        first["source_reference"] == "credential-rotation:openrouter-generic:requested-2026-10-07"
+        first["source_reference"] == "credential-rotation:openrouter-generic:2026-10-07-requested"
     )
 
 
@@ -72,3 +72,31 @@ def test_a_key_over_the_routes_limit_is_a_named_refusal() -> None:
     long = replace(DUE, credential_id="k" * 64, trigger="exposure", basis="e" * 64)
     with pytest.raises(ObservationUncomposable, match="over the 200"):
         rotation_observation(long)
+
+
+def test_the_row_a_pass_files_is_frozen() -> None:
+    """Every field the orchestrator compares on replay, pinned. A rotation is observed on one
+    pass and proposed on a later one, days apart: any change to the summary's wording or the
+    `observed_at` shape in between makes the later pass an idempotency conflict, and the pending
+    rotation is never proposed. Changing this expected row is a migration decision, not a test
+    update."""
+    row = rotation_observation(DUE)
+    assert row["summary"] == (
+        "infraops' registry reports openrouter-generic due for rotation: a rotation was requested "
+        "(2026-10-07)"
+    )
+    assert row["observed_at"] == "2026-10-07T00:00:00+00:00"
+    assert row["source_reference"] == "credential-rotation:openrouter-generic:2026-10-07-requested"
+    assert row["facts"] == {
+        "registry_entry": "openrouter-generic",
+        "trigger": "requested",
+        "basis": "2026-10-07",
+        "occurrence": "2026-10-07-requested",
+    }
+
+
+def test_the_occurrence_matches_the_approved_package() -> None:
+    """intent-packages' `rotation-openrouter-generic` rev 1 was authored and approved carrying
+    `'2026-10-07-requested'` (date first, trigger last, the profile's own documented order). A
+    proposer that wrote any other spelling would revise past that approval on its first pass."""
+    assert DUE.occurrence == "2026-10-07-requested"

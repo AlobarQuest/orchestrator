@@ -100,7 +100,7 @@ def lifecycle(tmp_path, monkeypatch):
 
 
 def test_a_standing_rotation_package_is_keyed_on_its_credential(tmp_path) -> None:
-    write_package(tmp_path, occurrence="'age-2025-01-02'")
+    write_package(tmp_path, occurrence="'2025-01-02-age'")
     found = discover(tmp_path)
     assert list(found) == ["openrouter-generic"]
     package = found["openrouter-generic"]
@@ -109,7 +109,7 @@ def test_a_standing_rotation_package_is_keyed_on_its_credential(tmp_path) -> Non
         1,
         "approved",
     )
-    assert package.occurrence == "age-2025-01-02"
+    assert package.occurrence == "2025-01-02-age"
 
 
 def test_a_package_not_declared_standing_is_invisible(tmp_path) -> None:
@@ -145,10 +145,10 @@ def test_the_occurrence_is_written_quoted_and_nothing_else_moves(tmp_path) -> No
     write_package(tmp_path)
     package = discover(tmp_path)["openrouter-generic"]
     before = (package.path / "package.yaml").read_text()
-    write_occurrence(package, "requested-2026-10-07")
+    write_occurrence(package, "2026-10-07-requested")
     after = (package.path / "package.yaml").read_text()
-    assert "  occurrence: 'requested-2026-10-07'\n" in after
-    assert before.replace("'unassigned'", "'requested-2026-10-07'") == after
+    assert "  occurrence: '2026-10-07-requested'\n" in after
+    assert before.replace("'unassigned'", "'2026-10-07-requested'") == after
 
 
 def test_a_package_without_exactly_one_occurrence_line_is_refused(tmp_path) -> None:
@@ -157,7 +157,7 @@ def test_a_package_without_exactly_one_occurrence_line_is_refused(tmp_path) -> N
     path = directory / "package.yaml"
     path.write_text(path.read_text().replace("  occurrence: 'unassigned'\n", ""))
     with pytest.raises(StandingError, match="expected one occurrence line, found 0"):
-        write_occurrence(package, "age-2025-01-02")
+        write_occurrence(package, "2025-01-02-age")
 
 
 # --- the ladder --------------------------------------------------------------------------------
@@ -168,31 +168,31 @@ def test_an_approved_tip_is_revised_written_and_taken_to_review_and_no_further(
 ) -> None:
     """Kills: approving (the fake refuses any command but revise and transition), skipping the
     revise (it would rewrite an APPROVED revision in place), and skipping the transition."""
-    write_package(tmp_path, occurrence="'age-2025-01-02'")
+    write_package(tmp_path, occurrence="'2025-01-02-age'")
     package = discover(tmp_path)["openrouter-generic"]
-    result = to_review(package, "requested-2026-10-07", tmp_path)
+    result = to_review(package, "2026-10-07-requested", tmp_path)
     assert [call[0] for call in lifecycle.calls] == ["revise", "transition"]
     assert lifecycle.calls[1][2:] == ("--to", "ready_for_review")
     assert (result.revision, result.state, result.occurrence) == (
         2,
         "ready_for_review",
-        "requested-2026-10-07",
+        "2026-10-07-requested",
     )
 
 
 def test_a_draft_is_written_over_without_spending_a_revision(tmp_path, lifecycle) -> None:
     write_package(tmp_path, status="draft")
     package = discover(tmp_path)["openrouter-generic"]
-    result = to_review(package, "age-2025-01-02", tmp_path)
+    result = to_review(package, "2025-01-02-age", tmp_path)
     assert [call[0] for call in lifecycle.calls] == ["transition"]
-    assert (result.revision, result.occurrence) == (1, "age-2025-01-02")
+    assert (result.revision, result.occurrence) == (1, "2025-01-02-age")
 
 
 def test_a_draft_already_carrying_the_occurrence_is_only_transitioned(tmp_path, lifecycle) -> None:
     """The crash between the write and the transition: resumed, not revised again."""
-    write_package(tmp_path, status="draft", occurrence="'age-2025-01-02'")
+    write_package(tmp_path, status="draft", occurrence="'2025-01-02-age'")
     package = discover(tmp_path)["openrouter-generic"]
-    to_review(package, "age-2025-01-02", tmp_path)
+    to_review(package, "2025-01-02-age", tmp_path)
     assert [call[0] for call in lifecycle.calls] == ["transition"]
 
 
@@ -208,6 +208,10 @@ def test_no_call_in_the_package_passes_the_approve_command() -> None:
             if not isinstance(node, ast.Call):
                 continue
             calls += 1
+            # bump_proposer's `advance` runs the approve verb with the policy flag on the caller's
+            # behalf, so naming it is as much an approval as passing the verb.
+            called = node.func.attr if isinstance(node.func, ast.Attribute) else node.func
+            assert getattr(called, "id", called) != "advance", path
             for argument in node.args:
                 if isinstance(argument, ast.Constant) and isinstance(argument.value, str):
                     assert argument.value not in {"approve", "--by-policy"}, path
@@ -253,16 +257,16 @@ def test_a_revision_reaches_the_origin_and_the_checkout_stays_publishable(
     origin, checkout = published_checkout
     shared.require_clean(checkout)
     shared.require_publishable(checkout)
-    package = to_review(discover(checkout)["openrouter-generic"], "requested-2026-10-07", checkout)
+    package = to_review(discover(checkout)["openrouter-generic"], "2026-10-07-requested", checkout)
     shared.snapshot_hash(package, checkout)
     sha = commit(package, checkout)
 
     assert _git(origin, "rev-parse", "main").strip() == sha
     shown = _git(origin, "show", f"{sha}:packages/rotation-openrouter-generic/package.yaml")
-    assert "occurrence: 'requested-2026-10-07'" in shown
+    assert "occurrence: '2026-10-07-requested'" in shown
     assert "status: ready_for_review" in shown
     message = _git(origin, "log", "-1", "--format=%B", sha)
-    assert message.startswith("rotation-openrouter-generic rev 2: rotate for requested-2026-10-07")
+    assert message.startswith("rotation-openrouter-generic rev 2: rotate for 2026-10-07-requested")
     assert "NOT approved" in message
     # Nothing left behind: the next pass may start here.
     shared.require_clean(checkout)
@@ -280,7 +284,7 @@ def test_a_refused_publish_names_the_commit_it_stranded(published_checkout, life
     _git(other, "commit", "-q", "-m", "elsewhere")
     _git(other, "push", "-q", "origin", "main")
 
-    package = to_review(discover(checkout)["openrouter-generic"], "age-2025-01-02", checkout)
+    package = to_review(discover(checkout)["openrouter-generic"], "2025-01-02-age", checkout)
     shared.snapshot_hash(package, checkout)
     with pytest.raises(StandingError, match="is committed as [0-9a-f]{12} and unpublished"):
         commit(package, checkout)

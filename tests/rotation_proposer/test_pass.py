@@ -61,7 +61,7 @@ class _Rig:
 
 @pytest.fixture
 def rig(tmp_path, monkeypatch):
-    write_package(tmp_path, occurrence="'age-2025-01-02'")
+    write_package(tmp_path, occurrence="'2025-01-02-age'")
     fixture = tmp_path / "tests" / "fixtures"
     fixture.mkdir(parents=True)
     (fixture / "package_hashes.json").write_text("{}\n")
@@ -121,7 +121,7 @@ def test_the_first_pass_revises_to_review_publishes_and_proposes_nothing(rig, ca
     assert run(["--submit"]) == EXIT_OK
     assert rig.acts() == (["revise", "transition", "hash"], 1, 0, 1)
     assert "status: ready_for_review" in rig.package_yaml.read_text()
-    assert "occurrence: 'requested-2026-10-07'" in rig.package_yaml.read_text()
+    assert "occurrence: '2026-10-07-requested'" in rig.package_yaml.read_text()
     assert "revised" in capsys.readouterr().out
 
 
@@ -153,7 +153,7 @@ def test_the_pass_after_devon_approves_proposes_naming_the_first_observation(rig
     )
     assert proposal["originating_observation_id"] in first_observation.values()
     assert rig.spine.rows == first_observation
-    assert "requested-2026-10-07" in proposal["reasoning"]
+    assert "2026-10-07-requested" in proposal["reasoning"]
     assert "proposed" in capsys.readouterr().out
 
 
@@ -200,7 +200,7 @@ def test_a_different_rotation_arriving_while_one_awaits_review_is_stacked_not_re
     assert run(["--submit"]) == EXIT_FINDINGS
     assert rig.acts() == before
     assert "stacked" in capsys.readouterr().out
-    assert "occurrence: 'requested-2026-10-07'" in rig.package_yaml.read_text()
+    assert "occurrence: '2026-10-07-requested'" in rig.package_yaml.read_text()
 
 
 def test_a_rejected_revision_is_declined_not_revised_again(rig, capsys) -> None:
