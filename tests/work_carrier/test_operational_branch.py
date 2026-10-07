@@ -115,7 +115,13 @@ def _judge(payload: dict) -> tuple[str, str, _Declares]:
 
 
 def test_the_operational_branch_asks_github_nothing_and_says_no_runner() -> None:
-    decision, text, source = _judge(operational())
+    """A `target_repo` is planted (the profile's closed schema forbids one) so that a branch
+    which still read the declaration would be seen asking; with none, nothing would be asked
+    either way and the assertion could not discriminate."""
+    payload = operational()
+    payload["enforcement_snapshot"]["profile_fields"]["target_repo"] = "AlobarQuest/somewhere"
+
+    decision, text, source = _judge(payload)
 
     assert decision == OPERATIONAL
     assert source.asked == [], "an operational package has no repository to read a declaration of"
