@@ -82,9 +82,12 @@ engine. Its 04:00 window retires once the SDS path covers its classes.
   lifecycle transitions for rotation units only, and only units whose package is a standing
   rotation package. It reads nothing but the registries, the orchestrator and the consumer
   surfaces it deploys to. No external content can mint work through it.
-- **Change window.** Rotation units declare `live_estate` reach. The worker's claim checks the
-  `live_estate` change window (02:00–06:00) before it acts, so machine-run rotations happen at
-  night. Devon's console steps are not bound to the window.
+- **Change window.** A rotation package declares the reach its consumers actually have, like any
+  other package. It includes `live_estate` only when a consumer is a hosted service; then the
+  worker's claim checks the `live_estate` change window (02:00–06:00) before it acts, so
+  machine-run rotations of hosted credentials happen at night. A credential held only in BWS and
+  the Keychain declares `external_system` and `operator_machine` and has no window. Devon's console
+  steps are not bound to the window.
 - **Secret handling.** No value appears in a log, an evidence payload, a tool argument or an
   observation. Evidence records fingerprints (sha256 prefixes) and probe outcomes only. Every probe
   must be proven to tell a good value from a bad one before its answer counts (the WS-P2.13
@@ -177,3 +180,9 @@ gate in place. The graduations are decided after one rotation has run.
 **A correction to the flow.** The change record's id cannot go into the package revision: the
 revision is created first, and the record names it. The carrier puts the record id on the intake
 (ADR-0027).
+
+**A correction to the change window (2026-10-07).** The original text had every rotation unit
+declare `live_estate`. Reach is never inferred and members only narrow, so a package claiming a
+reach its consumers lack would put a needless window on rotations that touch no hosted service.
+The change-window bullet now has each package declare its true reach. The first package,
+`rotation-openrouter-generic`, declares `external_system` and `operator_machine`.
