@@ -60,6 +60,23 @@ repository, so the permission constraint is answered EXCEPT for a change whose
 diff touches a workflow file, and the line that authorises a carry says so in
 words. That exception is not hypothetical; it killed two work units on
 2026-08-03, at the final push, after coding and verification had both succeeded.
+
+**A STANDING OPERATIONAL PACKAGE HAS NO REPOSITORY, AND IS ASKED THREE OTHER
+QUESTIONS (ADR-0054 increment 2).** A `non-software-operational` package -- a
+credential rotation, one standing package per credential -- names no repository,
+because there is none: an HQ session works its units, and no runner ever does.
+The three repository questions have nothing to be asked of, so for this profile
+they are replaced, and each answers YES or NO, never UNKNOWN: the package
+declares itself STANDING (`profile_fields.standing is True`), its id is on
+`STANDING_OPERATIONAL_PACKAGES` (the opt-in, held here because there is no
+repository to hold a `factory-target.toml`), and its declared `reach` lies
+wholly within `OPERATIONAL_REACH`. All three YES is `OPERATIONAL`, which is
+carried; any NO is `NOT WORKABLE`, a finding. The branch keys on the PROFILE,
+never on the missing repository: a `dependency-update` package that names no
+`target_repo` is still held, because for that profile the absence is a defect
+rather than the shape of the work. Nothing here makes such a unit runnable --
+dispatch refuses `operational_action`, which is outside the runner vocabulary
+and the admission capabilities.
 """
 
 from __future__ import annotations
@@ -85,11 +102,28 @@ PORTFOLIO_ENV = "WORK_CARRIER_PORTFOLIO"
 CAPABILITY_CHECKS = ("runner.caller", "factory.secrets", "factory.landing_known")
 PERMISSION_CHECKS = ("factory.pat_access",)
 
+OPERATIONAL_PROFILE = "non-software-operational"
+
+# THE OPT-IN FOR WORK THAT HAS NO REPOSITORY. A repository opts in with its own
+# `factory-target.toml` (ADR-0015); a standing operational package has no repository
+# to hold that file, so its opt-in is declared HERE, beside the other literals this
+# program holds, and widening it is a reviewed diff to the lane that acts on it --
+# which is what a standing-authority change should cost. Not in intent-packages,
+# because a package that could opt itself in would be no opt-in at all.
+STANDING_OPERATIONAL_PACKAGES = frozenset({"rotation-openrouter-generic"})
+
+# Mirrored from `orchestrator.reach_vocabulary` (this program imports nothing from the
+# orchestrator); `tests/work_carrier` pins it as a subset of that vocabulary. Every
+# member but `source_repository`: work that reaches a repository is a runner's.
+OPERATIONAL_REACH = frozenset({"external_system", "operator_machine", "live_estate"})
+
 YES = "yes"
 NO = "no"
 UNKNOWN = "unknown"
 
 WORKABLE = "WORKABLE"
+# Carried like WORKABLE, but no runner will ever take it: an HQ session works it.
+OPERATIONAL = "OPERATIONAL"
 NOT_WORKABLE = "NOT WORKABLE"
 UNDECIDED = "CANNOT DECIDE"
 # A FOURTH ANSWER THAT NO CONSTRAINT PRODUCES: the judgment itself failed. It
@@ -101,7 +135,10 @@ UNJUDGED = "NOT JUDGED"
 # lines out of line with the rest. Padding to the widest keeps one column for a reader scanning
 # a queue, which is the whole point of a report nobody can act on otherwise.
 _HEADER = "WORKABILITY"
-_WIDTH = max(len(word) for word in (WORKABLE, NOT_WORKABLE, UNDECIDED, UNJUDGED, _HEADER)) + 2
+_WIDTH = (
+    max(len(word) for word in (WORKABLE, OPERATIONAL, NOT_WORKABLE, UNDECIDED, UNJUDGED, _HEADER))
+    + 2
+)
 _INDENT = " " * (_WIDTH + 1)
 
 
@@ -114,6 +151,8 @@ PAT_SCOPE_RESIDUAL = (
     "repository and NOT that it may push a commit touching .github/workflows/**; that is the "
     "case that killed two work units on 2026-08-03, at the final push"
 )
+
+OPERATIONAL_RESIDUAL = "no runner; worked by HQ"
 
 _STALE_SOURCE = (
     "it is written by one nightly job that measures working trees it does not update, so a "
@@ -136,6 +175,7 @@ class Workability:
 
     repository: str | None
     constraints: tuple[Constraint, ...]
+    operational: bool = False
 
     @property
     def decision(self) -> str:
@@ -153,7 +193,7 @@ class Workability:
             return NOT_WORKABLE
         if UNKNOWN in verdicts:
             return UNDECIDED
-        return WORKABLE
+        return OPERATIONAL if self.operational else WORKABLE
 
 
 @dataclass(frozen=True)
@@ -332,9 +372,9 @@ def assess(
         # their repository differently or not at all, and a package's schema is
         # closed, so it cannot simply be added. So this line says what is true and
         # stops: nobody can answer the three questions about a repository nothing
-        # named. Whether such work should be carried at all is a decision about
-        # the profiles, and holding it is the fail-closed side of that decision
-        # rather than an answer to it.
+        # named. The one profile whose work has no repository by design is asked
+        # its own questions in `assess_operational` before this is reached; for
+        # every other profile, holding is the fail-closed answer.
         unknown = (
             "the approved package's profile names no target repository under `target_repo`, so "
             "there is nothing to ask the three questions about; this is a fact about the "
@@ -363,6 +403,66 @@ def assess(
             _from_checks("capable", project, CAPABILITY_CHECKS),
             _from_checks("permissions", project, PERMISSION_CHECKS),
         ),
+    )
+
+
+def is_operational(payload: dict[str, Any]) -> bool:
+    """Whether the approved package declares the non-software-operational profile.
+
+    `profile` is a top-level field of the intake payload, not of its enforcement
+    snapshot -- `package_sources.py` emits it beside the snapshot -- so it is read there.
+    """
+    return payload.get("profile") == OPERATIONAL_PROFILE
+
+
+def _standing(fields: object) -> Constraint:
+    standing = fields.get("standing") if isinstance(fields, dict) else None
+    if standing is True:
+        return Constraint("standing", YES, "profile_fields.standing is true")
+    return Constraint(
+        "standing",
+        NO,
+        f"profile_fields.standing is {standing!r}, not true; only a standing package is "
+        "carried without a repository",
+    )
+
+
+def _allowlisted(package_id: object) -> Constraint:
+    if isinstance(package_id, str) and package_id in STANDING_OPERATIONAL_PACKAGES:
+        return Constraint("opts in", YES, f"{package_id} is a declared standing package")
+    return Constraint(
+        "opts in",
+        NO,
+        f"{package_id!r} is not in work_carrier.workability.STANDING_OPERATIONAL_PACKAGES, "
+        "which is where a package with no repository opts in",
+    )
+
+
+def _reach(snapshot: object) -> Constraint:
+    """All or nothing, like `orchestrator.reach_vocabulary.reach_from_snapshot`.
+
+    Absent, empty, or carrying any member outside the set is a NO: a reach this
+    program cannot place is not one it may carry work into.
+    """
+    reach = snapshot.get("reach") if isinstance(snapshot, dict) else None
+    if not isinstance(reach, list) or not reach:
+        return Constraint("reach", NO, "the package declares no reach")
+    # `isinstance` first: an unhashable member would make the membership test raise.
+    outside = [m for m in reach if not isinstance(m, str) or m not in OPERATIONAL_REACH]
+    if outside:
+        allowed = ", ".join(sorted(OPERATIONAL_REACH))
+        return Constraint("reach", NO, f"{outside!r} lies outside {allowed}")
+    return Constraint("reach", YES, ", ".join(sorted(set(reach))))
+
+
+def assess_operational(payload: dict[str, Any]) -> Workability:
+    """The three operational checks for a standing package. Total, and asks no network."""
+    snapshot = payload.get("enforcement_snapshot")
+    fields = snapshot.get("profile_fields") if isinstance(snapshot, dict) else None
+    return Workability(
+        None,
+        (_standing(fields), _allowlisted(payload.get("package_id")), _reach(snapshot)),
+        operational=True,
     )
 
 
@@ -413,7 +513,10 @@ _CONSEQUENCE = {
 
 
 def _print_one(label: str, verdict: Workability, out) -> None:
-    subject = verdict.repository or "no target repository"
+    if verdict.operational:
+        subject = "standing operational package"
+    else:
+        subject = verdict.repository or "no target repository"
     print(f"{_tag(verdict.decision)} {label} -> {subject}", file=out)
     for constraint in verdict.constraints:
         print(
@@ -426,6 +529,9 @@ def _print_one(label: str, verdict: Workability, out) -> None:
         # constraint is answered EXCEPT for a change whose diff touches a
         # workflow file, and a reader must see that on the line that says yes.
         print(f"{_INDENT}residual    {PAT_SCOPE_RESIDUAL}", file=out)
+        return
+    if verdict.decision == OPERATIONAL:
+        print(f"{_INDENT}residual    {OPERATIONAL_RESIDUAL}", file=out)
         return
     print(f"{_INDENT}{_CONSEQUENCE[verdict.decision]}", file=out)
 
@@ -495,7 +601,8 @@ def _judge(
 ) -> None:
     loaded = portfolio if portfolio is not None else load_portfolio()
     print(
-        f"\n{_tag(_HEADER)} a record is carried only when all three answer yes.",
+        f"\n{_tag(_HEADER)} a record is carried only when all three answer yes "
+        "(for a standing operational package, its own three).",
         file=out,
     )
     print(f"{_INDENT}capability source: {loaded.detail}", file=out)
@@ -512,8 +619,11 @@ def _judge(
         # this one -- it is what covers the header and the capability source, and
         # it is what the exit-code argument rests on.
         try:
-            repository = target_repository(payload)
-            verdict = assess(repository, _declaration_for(repository, source), loaded)
+            if is_operational(payload):
+                verdict = assess_operational(payload)
+            else:
+                repository = target_repository(payload)
+                verdict = assess(repository, _declaration_for(repository, source), loaded)
             # PRINTED BEFORE IT IS RECORDED, and the order is fail-closed rather
             # than tidy. Writing the line is part of answering: a record carried
             # under a reason that never finished printing is a carry nobody can

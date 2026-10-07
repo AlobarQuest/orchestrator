@@ -47,7 +47,9 @@ carried only when all three of Devon's constraints answer yes -- the repository 
 conformance kit says it is capable, the permissions are sufficient -- and anything else is not
 carried, with the reason on the line. The check landed reporting only, so the estate could see
 what it would refuse before it refused anything; it refused nothing across an empty queue and all
-eight factory repositories, and this is the flip.
+eight factory repositories, and this is the flip. A standing `non-software-operational` package
+names no repository and is asked its own three questions instead (ADR-0054); when all answer yes
+it is carried as OPERATIONAL -- no runner, worked by HQ -- and registered like any other.
 
 EXIT CODES: 0 clean, 1 tool failure, 2 unusable input, 3 findings, and the WORST of them wins by
 `run-work-carrier.sh`'s ranking rather than by number -- see `_RANK`. A record that could not be
@@ -87,6 +89,7 @@ from work_carrier.orchestrator_client import (
 from work_carrier.prepare import Prepared, Refused, prepare
 from work_carrier.workability import (
     NOT_WORKABLE,
+    OPERATIONAL,
     UNDECIDED,
     UNJUDGED,
     WORKABLE,
@@ -111,6 +114,11 @@ _UNRECOGNISED = 4
 # record that can never be carried while the repository says what it says, which needs a person. An
 # UNKNOWN is an input this pass could not use -- nothing is wrong with the record, and a later pass
 # may answer. A judgment that RAISED is the tool itself failing, which is its own code again.
+# What is carried. OPERATIONAL is a standing package with no repository (ADR-0054): it is carried
+# exactly as WORKABLE is and exits 0, and only the line authorising it differs -- no runner; HQ
+# works it.
+_CARRIED = (WORKABLE, OPERATIONAL)
+
 _HELD_EXIT = {
     NOT_WORKABLE: EXIT_FINDINGS,
     UNDECIDED: EXIT_UNUSABLE,
@@ -406,9 +414,9 @@ def run(
         out,
     )
     workable = [
-        item for item, decision in zip(prepared, decisions, strict=True) if decision == WORKABLE
+        item for item, decision in zip(prepared, decisions, strict=True) if decision in _CARRIED
     ]
-    held = [decision for decision in decisions if decision != WORKABLE]
+    held = [decision for decision in decisions if decision not in _CARRIED]
 
     carried, unregistered = _carry_all(workable, writer, out)
     for item in refused:
