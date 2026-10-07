@@ -736,8 +736,12 @@ def _post_deploy_verifications(pack: dict) -> int:
     records was made after the release deployed. No clock is compared: the order is causal.
 
     A deployment counts when its post-deploy unit completed and the verifier decided every
-    criterion. A revision watcher reading cannot stand in: it is stamped with the served commit's
-    own date to stay content-addressed, which always precedes the deploy.
+    criterion: the pack's `decided_by_verifier`, NOT its `satisfied`. `satisfied` also requires
+    `evidence_observed`, whose set holds only GitHub named-check evidence, so every post-deploy
+    criterion (`release.deployment_observed`, `production.*`) refuses it by construction and a
+    probe reading `satisfied` counts zero, always. A revision watcher reading cannot stand in: it
+    is stamped with the served commit's own date to stay content-addressed, which always precedes
+    the deploy.
     """
     units = {}
     for unit in pack["units"]:
@@ -754,12 +758,14 @@ def _post_deploy_verifications(pack: dict) -> int:
         if unit is None:
             continue
         decided = unit.get("verifier_decided_completion")
-        if not isinstance(decided, dict) or not isinstance(decided.get("satisfied"), bool):
+        verdict = decided.get("decided_by_verifier") if isinstance(decided, dict) else None
+        if not isinstance(verdict, bool):
             raise Unavailable(
-                "a post-deploy unit's pack carries no readable `verifier_decided_completion`, so "
-                "whether the verifier confirmed the release cannot be told"
+                "a post-deploy unit's pack carries no readable "
+                "`verifier_decided_completion.decided_by_verifier`, so whether the verifier "
+                "confirmed the release cannot be told"
             )
-        if unit["work_unit"].get("state") == "completed" and decided["satisfied"]:
+        if unit["work_unit"].get("state") == "completed" and verdict:
             verified += 1
     return verified
 
