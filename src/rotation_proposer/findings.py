@@ -55,7 +55,7 @@ TRIGGERS: Final = {
 # Checks infraops reports about a credential that are NOT a reason to rotate it. Named rather than
 # ignored by default: a check this program has never heard of is a finding, because the day
 # infraops adds a new trigger, silently skipping it would leave that rotation unproposed.
-NOT_ROTATIONS: Final = frozenset({"cred.unknown-class"})
+NOT_ROTATIONS: Final = frozenset({"cred.unknown-class", "cred.invalid-rotate-requested"})
 PRECEDENCE: Final = ("exposure", "requested", "age")
 
 # Every value written into a package or a reference. Narrow on purpose: the occurrence is written

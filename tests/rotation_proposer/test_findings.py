@@ -82,8 +82,10 @@ def test_an_age_occurrence_is_dated_by_the_last_rotation_never_by_the_pass() -> 
     assert due[0].dated == "2025-01-02"
 
 
-def test_a_check_that_is_not_a_rotation_is_skipped_without_a_finding() -> None:
-    due, unrecognised = parse(_document({"check": "cred.unknown-class", "id": "k", "class": "x"}))
+@pytest.mark.parametrize("check", ["cred.unknown-class", "cred.invalid-rotate-requested"])
+def test_a_check_that_is_not_a_rotation_is_skipped_without_a_finding(check) -> None:
+    """Both are registry errors infraops' own scan reports; neither names a rotation."""
+    due, unrecognised = parse(_document({"check": check, "id": "k", "class": "x"}))
     assert (due, unrecognised) == ([], [])
 
 

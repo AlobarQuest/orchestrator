@@ -1,4 +1,4 @@
-"""The whole pass, over a fake infraops, a fake lifecycle, and stubbed change-manager and orchestrator.
+"""The whole pass, over a fake infraops and lifecycle and stubbed change-manager and orchestrator.
 
 **THE TWO-PASS ORDER IS THE SUBJECT.** A pass that finds a credential due revises its standing
 package to review, publishes it and proposes NOTHING; passes while the revision waits for Devon
