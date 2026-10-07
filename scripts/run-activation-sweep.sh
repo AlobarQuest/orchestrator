@@ -77,15 +77,11 @@ SYSTEM_BEARER_UUID="221a48d5-3f29-4898-b300-b4820140c880"     # orchestrator-sys
 # ends both the sweep and the machine-local release binding for the repository the lane was
 # built for.
 #
-# `orchestrator` IS ON THIS LIST AND IS NOT A FACTORY TARGET. This comment used to say it was
-# off the dispatch allowlist "only because it IS the system and cannot be dispatched to" -- a
-# capability claim, and false.
-# It could be and was: its caller fired 22 times, four of them successfully, and unit
-# 7a81c2c2-0835-5bba-a308-36e868719b62 opened and landed #135 on 2026-08-03. ADR-0015's
-# amendment of 2026-09-11 declares `factory_target = false` here on the ground Devon gave --
-# the SDS maintaining itself is DEFERRED to a purpose-built mechanism -- and the caller was
-# removed with it. What this sweep measures is the state of a working copy against its upstream,
-# which is true and useful for a repository whatever its dispatch scope.
+# `orchestrator` IS ON THIS LIST, and it is on it for the working copy, not for its dispatch scope.
+# It was a factory target until 2026-09-11, not one until ADR-0015's amendment of 2026-10-07, and is
+# one again; this list stayed the same through all three, because what this sweep measures is the
+# state of a working copy against its upstream, which is true and useful for a repository whatever
+# its dispatch scope.
 #
 # An earlier draft of this list added a SECOND condition -- "something on this machine executes
 # from the working copy" -- and dropped `change-manager` and `brain` on it. That condition was

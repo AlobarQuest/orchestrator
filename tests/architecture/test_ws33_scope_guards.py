@@ -174,14 +174,15 @@ DISPATCH_VOCABULARY = ("workflow_dispatch", "factory-runner", "factory_runner")
 # scorecard guard can be re-run on demand after a production image swap. attest-wave-exit.yml
 # (WS-P2.39) is a third of exactly that kind: same read, same reason, for the wave exit bars.
 #
-# `factory-runner-pilot.yml` was the fourth until 2026-09-11, when ADR-0015's amendment
-# declared this repository `factory_target = false` and deleted the caller. Its entry came
-# out in the same commit: this allowlist filters by name, so a stale entry never reddens by
-# itself -- `test_dispatch_exemptions_name_only_files_that_exist_and_still_need_them` is what
-# reddens it now. Note the twin allowlist in tests/architecture/test_no_automatic_merge.py,
-# which scans the same directory with a different vocabulary — an edit to one that misses the
-# other leaves that one wrong.
+# `factory-runner-pilot.yml` is the fourth: the factory caller (ADR-0015, amendment of
+# 2026-10-07), whose `uses:` line names the reusable workflow and whose trigger is
+# `workflow_dispatch`. This allowlist filters by name, so a stale entry never reddens by itself --
+# `test_dispatch_exemptions_name_only_files_that_exist_and_still_need_them` is what reddens it.
+# Note the twin allowlist in tests/architecture/test_no_automatic_merge.py, which scans the same
+# directory with a different vocabulary — an edit to one that misses the other leaves that one
+# wrong.
 MANUAL_DISPATCH_WORKFLOWS = {
+    "factory-runner-pilot.yml",
     "attest-exit-criteria.yml",
     "attest-wave-exit.yml",
     "release-image.yml",

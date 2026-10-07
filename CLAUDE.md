@@ -100,7 +100,8 @@ Placement rule: global CLAUDE.md §7.
   units has been claimed or dispatched (ADR-0052): dry-run every unit's commands against the real
   target repo (twice, clean clone) before work starts. Detail: `docs/operations/driving-a-unit.md`.
 - `make check` here needs Postgres, `SECURITY_STANDARDS_DIR` and a migrated DB, so it must never
-  appear in this repo's authority envelope; the envelope verifies `uv sync` + `uv lock --check`.
+  appear in this repo's authority envelope; the dependency-update profile's verifier is
+  `uv lock --check`, and CI's `Quality` job runs the tests.
   Detail: `docs/operations/driving-a-unit.md`.
 - Request entry points own their transaction and must `session.commit()`; functions called inside
   another transaction must never commit. A persistence test must re-read through a different

@@ -60,7 +60,7 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   — *unmodified*, so this is never evidence a dependency update broke anything.
   Consequently **`make check` must never appear in this repo's authority envelope**: with
   no `.venv` it exits 0 having verified nothing, and with one it hard-fails at finalize.
-  Its envelope verifies `uv sync` + `uv lock --check`; its tests are gated by its own
+  The dependency-update profile's verifier is `uv lock --check`; its tests are gated by its own
   named check on the pull-request head, which is where AC-001..006 already place that
   evidence. **Exit 0 from `make check` is never proof tests ran — read the collected count.**
 
