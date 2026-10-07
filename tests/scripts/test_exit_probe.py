@@ -30,6 +30,10 @@ from pathlib import Path
 
 import pytest
 
+from orchestrator.services.reporting.evidence_pack import (
+    EvidencePackCriterionRefusalResponse,
+    EvidencePackVerifierDecidedResponse,
+)
 from scripts import exit_probe
 from scripts.exit_probe import FAIL, PASS, UNAVAILABLE, Unavailable
 
@@ -1457,9 +1461,29 @@ def test_an_observation_with_no_time_is_unavailable_not_counted(monkeypatch):
         exit_probe.release_chain_answers_every_hop("rev-1")
 
 
+def _post_deploy_decision(decided_by_verifier: object) -> dict:
+    """The decision exactly as the evidence pack serves it for a post-deploy unit, built from the
+    route's own response model rather than a hand-written dict. A post-deploy unit's evidence is
+    never in the observed set, so `evidence_observed` and therefore `satisfied` are false even
+    when the verifier decided every criterion: that is the real shape the probe must count."""
+    if not isinstance(decided_by_verifier, bool):
+        return {"satisfied": False, "decided_by_verifier": decided_by_verifier, "refusals": []}
+    return EvidencePackVerifierDecidedResponse(
+        satisfied=False,
+        decided_by_verifier=decided_by_verifier,
+        evidence_observed=False,
+        refusals=[
+            EvidencePackCriterionRefusalResponse(
+                ac_id="post-deploy-health", code="criterion_evidence_not_observed"
+            )
+        ],
+    ).model_dump(mode="json")
+
+
 def _verified_release(*, state: str = "completed", satisfied: object = True) -> dict:
     """A release whose chain observations all predate the deploy, and whose deployment minted a
-    post-deploy unit in `state`, with the verifier's decision `satisfied`."""
+    post-deploy unit in `state`, whose criteria the verifier did (`satisfied=True`) or did not
+    decide."""
     chain = _chain("release")
     chain["observations"][0]["observed_at"] = "2026-08-01T11:00:00+00:00"
     routes = _release_routes("rev-1", [chain])
@@ -1468,7 +1492,7 @@ def _verified_release(*, state: str = "completed", satisfied: object = True) -> 
     pack["units"].append(
         {
             "work_unit": {"id": "pd-1", "state": state},
-            "verifier_decided_completion": {"satisfied": satisfied, "refusals": []},
+            "verifier_decided_completion": _post_deploy_decision(satisfied),
         }
     )
     return routes
