@@ -82,6 +82,28 @@ scripts/run-work-carrier.sh --register   # registers
 Exit codes: 0 clean, 1 tool failure, 2 unusable input, 3 a record needs a person. A record it
 carried is not a finding; one it could not prepare, or one the orchestrator refused, is.
 
+Before carrying, the pass judges each record (`src/work_carrier/workability.py`). A package with a
+target repository is carried only when the repository opts in, is capable, and the permissions
+suffice. A package that names no repository is held under exit 2, with one exception:
+
+**Standing operational packages (ADR-0054).** A package whose `profile` is
+`non-software-operational` (for example, one rotation package per credential) is asked three other
+questions, and each answers yes or no:
+
+- `profile_fields.standing` is `true`;
+- its id is in `STANDING_OPERATIONAL_PACKAGES` in `workability.py`. This is the opt-in, because
+  there is no repository to hold a `factory-target.toml`. Adding a package is a reviewed change to
+  the carrier;
+- its declared `reach` is non-empty and lies within `external_system`, `operator_machine` and
+  `live_estate`.
+
+All three yes prints `[OPERATIONAL] … residual no runner; worked by HQ`, and the record is
+registered naming its change record, like any other (exit 0). Any no prints `[NOT WORKABLE]` with
+the reason and is a finding (exit 3). The branch keys on the profile, so a `dependency-update`
+package with no `target_repo` is still held. Dispatch never sends these units to a runner:
+`operational_action` is outside both policy's `[admission].capabilities` and the runner vocabulary.
+An HQ session works them.
+
 A second pass over an unchanged queue is a **replay**, not a second intake — the payload's
 idempotency key is derived from the record and its revision. Nothing marks a change record
 carried, so a record stays in the approved queue until a person resolves it in change-manager.

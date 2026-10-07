@@ -359,6 +359,40 @@ def test_dispatch_blocks_a_legacy_capability_outside_the_runner_vocabulary(
     assert github.calls == []
 
 
+def test_dispatch_never_hands_an_operational_unit_to_a_runner(
+    migrated_session: Session,
+) -> None:
+    """ADR-0054: the carrier now registers standing operational packages, and nothing after
+    registration was added, because admission already refuses their units.
+
+    `operational_action` is not in policy's `[admission].capabilities`, which is the term that
+    fires; it is also outside the runner vocabulary, the term behind it. An HQ session works
+    these units -- no runner may ever be dispatched one.
+    """
+    unit = ready_unit(migrated_session, key="operational-unit")
+    unit.required_capability = "operational_action"
+    unit.authority = {
+        "capabilities": {"operational_action": "allowed"},
+        "budgets": {"max_attempts": 3, "max_llm_calls": 4},
+        "constraints": {},
+    }
+    migrated_session.flush()
+    github = FakeGitHubDispatcher([])
+
+    record = dispatch_work_unit(
+        migrated_session,
+        dispatch_command(unit.id),
+        settings(),
+        github,
+        inert_source(),
+        target_source=declared_source(),
+    )
+
+    assert record.status == "blocked"
+    assert record.reason_code == "capability_not_enabled"
+    assert github.calls == []
+
+
 def test_dispatch_uses_one_normalized_authority_snapshot(
     migrated_session: Session,
     monkeypatch: pytest.MonkeyPatch,
