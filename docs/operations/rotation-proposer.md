@@ -66,8 +66,18 @@ same pass.
   another. The pass does not replace a revision Devon is reviewing.
 - **`declined`**: Devon rejected the revision that carries this occurrence.
 - **`unexpected-state`** (a finding): any lifecycle state this lane never writes.
-- **`unlaned`**: no standing package exists for the credential. This program never authors one.
-  Authoring `rotation-<credential_id>` brings the credential into the lane.
+- **`legacy`**: the registry has not marked the credential `rotated_by_sds`, and no package
+  exists. infraops' 04:00 window rotates it; this lane does nothing.
+- **`not-handed-over`** (a finding): a standing package exists, but the registry has not marked the
+  credential `rotated_by_sds`. The pass never acts on it, because infraops' window still could.
+  Set the flag in the credential's `.cred-consumers.toml`, and only when no legacy rotation of it is
+  in flight.
+- **`unlaned`** (a finding): the registry hands the credential to the SDS, so infraops' window
+  refuses it, but no standing package exists, so nothing rotates it. This program never authors
+  one. Authoring `rotation-<credential_id>` brings the credential into the lane.
+
+Every finding carries `rotated_by_sds` from infraops' `cred-findings`. A finding without it (an
+infraops older than the handover) stops the whole pass with exit 2.
 
 ## Authoring a standing rotation package
 
@@ -75,8 +85,10 @@ Use the `non-software-operational` profile, name the package `rotation-<credenti
 these `profile_fields`: `standing: true`, `credential_id: <infraops registry id>`, and
 `occurrence` (quoted). To have Devon approve the first rotation at authoring time, set it to that
 rotation's occurrence from the preceding table (for example `'2026-10-07-requested'`); the first
-pass then proposes rev 1 without revising it. `'unassigned'` instead makes the first pass revise. A package whose name and `credential_id` disagree stops the
-pass with exit 2.
+pass then proposes rev 1 without revising it. `'unassigned'` instead makes the first pass
+revise. A package whose name and `credential_id` disagree stops the pass with exit 2. Then mark
+the credential `rotated_by_sds = true` in its registry entry, or the pass reports
+`not-handed-over` and does nothing.
 
 ## Before the first `--submit`
 

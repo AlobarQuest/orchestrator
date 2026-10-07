@@ -85,6 +85,10 @@ class Due:
     basis: str
     # The date the trigger is dated by, for the observation's `observed_at`.
     dated: str
+    # infraops' `rotated_by_sds`: the registry handed this credential's rotation to the SDS, and
+    # infraops' own 04:00 window refuses it. Only then may this program act: a standing package
+    # for a credential infraops still rotates would put two executors on one credential.
+    handed_over: bool
 
     @property
     def occurrence(self) -> str:
@@ -125,7 +129,11 @@ def _due(entry: dict[str, Any], trigger: str) -> Due:
         basis = dated = _date(entry, "rotate_requested")
     else:
         basis = dated = _date(entry, "anchor")
-    return Due(credential_id, credential_class, trigger, basis, dated)
+    handed_over = entry.get("rotated_by_sds")
+    if not isinstance(handed_over, bool):
+        # An infraops older than the handover cannot say who owns the credential; never guess.
+        raise FindingsError("a finding's 'rotated_by_sds' is missing or not a boolean")
+    return Due(credential_id, credential_class, trigger, basis, dated, handed_over)
 
 
 def parse(text: str) -> tuple[list[Due], list[Unrecognised]]:

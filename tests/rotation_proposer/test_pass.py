@@ -11,6 +11,7 @@ the right thing once and one that did it twice.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 
 import httpx
 import pytest
@@ -26,8 +27,8 @@ from tests.bump_proposer.test_pass import _Estate, _Spine
 from tests.rotation_proposer.test_standing import FakeLifecycle, write_package
 
 CREDENTIAL = "openrouter-generic"
-REQUESTED = Due(CREDENTIAL, "openrouter-key", "requested", "2026-10-07", "2026-10-07")
-AGE = Due(CREDENTIAL, "openrouter-key", "age", "2026-10-08", "2026-10-08")
+REQUESTED = Due(CREDENTIAL, "openrouter-key", "requested", "2026-10-07", "2026-10-07", True)
+AGE = Due(CREDENTIAL, "openrouter-key", "age", "2026-10-08", "2026-10-08", True)
 
 
 class _Rig:
@@ -240,10 +241,31 @@ def test_a_state_this_lane_never_writes_is_a_finding(rig, capsys) -> None:
     assert "unexpected-state" in capsys.readouterr().out
 
 
-def test_a_credential_with_no_standing_package_is_reported_and_skipped(rig, capsys) -> None:
-    """Never authored here; and not a finding, because only authoring a package clears it."""
-    rig.due = [Due("openai-project", "openai-key", "age", "2025-01-01", "2025-01-01")]
+LEGACY = Due("openai-project", "openai-key", "age", "2025-01-01", "2025-01-01", False)
+
+
+def test_a_credential_infraops_still_rotates_is_left_to_it(rig, capsys) -> None:
+    """Not handed over and no package: infraops' window owns it. Not a finding."""
+    rig.due = [LEGACY]
     assert run(["--submit"]) == EXIT_OK
+    assert rig.acts() == ([], 0, 0, 0)
+    assert "legacy" in capsys.readouterr().out
+
+
+def test_a_package_for_a_credential_never_handed_over_is_never_acted_on(rig, capsys) -> None:
+    """Kills: acting on a package alone. infraops' window would rotate the same credential."""
+    write_package(rig.root, "openai-project")
+    rig.due = [LEGACY]
+    assert run(["--submit"]) == EXIT_FINDINGS
+    assert rig.acts() == ([], 0, 0, 0)
+    assert rig.spine.rows == {}
+    assert "not-handed-over" in capsys.readouterr().out
+
+
+def test_a_handed_over_credential_with_no_package_is_a_finding(rig, capsys) -> None:
+    """Handed over, so infraops refuses it; with no package nothing rotates it at all."""
+    rig.due = [replace(LEGACY, handed_over=True)]
+    assert run(["--submit"]) == EXIT_FINDINGS
     assert rig.acts() == ([], 0, 0, 0)
     assert not (rig.root / "packages" / "rotation-openai-project").exists()
     assert "unlaned" in capsys.readouterr().out
@@ -383,7 +405,7 @@ def test_a_refused_publish_stops_the_next_credential_from_stacking_on_it(
     leaves a local commit; the second credential must be refused rather than build a further
     revision on top of it and commit again."""
     write_package(rig.root, "openai-project")
-    rig.due = [REQUESTED, Due("openai-project", "openai-key", "age", "2025-01-01", "2025-01-01")]
+    rig.due = [REQUESTED, replace(LEGACY, handed_over=True)]
     residue: list[str] = []
 
     def refused(package, root):

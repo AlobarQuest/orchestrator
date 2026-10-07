@@ -89,10 +89,10 @@ RISK: Final = "caution"
 USER_AGENT: Final = "rotation-proposer/1 (+AlobarQuest/orchestrator)"
 OBSERVER_KEY_ID: Final = "orchestrator-observer"
 
-# What makes a pass a FINDING rather than a clean run. `unlaned` is deliberately absent, as it is
-# from `bump_proposer`'s: a credential nobody authored a package for is outside the lane by
-# construction, and with 21 registry entries and a handful of packages it would otherwise be a
-# finding on every pass that nothing but authoring can clear. `awaiting-approval` and `revised`
+# What makes a pass a FINDING rather than a clean run. `legacy` is absent: a credential the
+# registry has not handed to the SDS is infraops' to rotate. `unlaned` and `not-handed-over` are
+# findings, because each is a credential the two lanes disagree about -- handed over with no package
+# (nothing rotates it) or a package with no handover (both could). `awaiting-approval` and `revised`
 # are absent because waiting on Devon is the lane working, not failing.
 FINDING_STATUSES: Final = frozenset(
     {
@@ -103,6 +103,8 @@ FINDING_STATUSES: Final = frozenset(
         "stacked",
         "unexpected-state",
         "unrecognised",
+        "unlaned",
+        "not-handed-over",
     }
 )
 
@@ -259,13 +261,30 @@ def _pass(
     outcomes: list[Outcome] = []
     for item in due:
         package = packages.get(item.credential_id)
+        if not item.handed_over:
+            # infraops still rotates it. A package for it is a misconfiguration: acting would put
+            # two executors on one credential (ADR-0054), so it is reported and never acted on.
+            if package is None:
+                outcomes.append(
+                    Outcome(item.credential_id, "legacy", f"{item.occurrence}: infraops rotates it")
+                )
+            else:
+                outcomes.append(
+                    Outcome(
+                        item.credential_id,
+                        "not-handed-over",
+                        f"{package.package_id} exists but the registry does not mark "
+                        f"{item.credential_id} rotated_by_sds; infraops' window still owns it",
+                    )
+                )
+            continue
         if package is None:
             outcomes.append(
                 Outcome(
                     item.credential_id,
                     "unlaned",
-                    f"{item.occurrence} is due and no standing package rotation-"
-                    f"{item.credential_id} exists; authoring one brings it into this lane",
+                    f"{item.occurrence} is due, the registry hands it to the SDS, and no standing "
+                    f"package rotation-{item.credential_id} exists: nothing rotates it",
                 )
             )
             continue
