@@ -47,8 +47,10 @@ For a due credential whose package is `rotation-<credential_id>`:
    proposed. The line reads `revised`.
 2. **Passes while it waits.** The pass writes nothing and reports `awaiting-approval`.
 3. **Devon approves the revision by name**, in the packages checkout, and publishes that commit.
-   No approval policy grants this profile, and this program never runs `approve`. The checkout
-   must be clean and level with `origin/main` again before the next pass, or the pass exits 2.
+   No approval policy grants this profile, and this program never runs `approve`. The approval
+   does not move the hash fixture (`package_hash` drops `status`), so the commit holds the
+   package and its lineage only. The checkout must be clean and level with `origin/main` again
+   before the next pass, or the pass exits 2.
 4. **The next pass.** File the observation again. It replays and returns the same id. Then propose
    the `work` record with the propose-scoped bearer. The record names the approved revision and
    that observation, with `bump_proposer`'s asserted fields (`PROPOSAL_FIELDS`). Later passes
@@ -75,6 +77,12 @@ these `profile_fields`: `standing: true`, `credential_id: <infraops registry id>
 pass with exit 2.
 
 ## Before the first `--submit`
+
+The intent-packages checkout must be on `main`, level with `origin/main`, and its own `.venv`
+synced. The lifecycle commands run that checkout's interpreter, and an `intent_packages` older
+than intent-packages #113 does not know `standing`, `credential_id` or `occurrence` on this
+profile, so it refuses the package. The checkout is the bump lane's too, so bring it current
+between passes, never during one.
 
 The observation vocabulary (migration `0041_rotation_proposer_obs`) must be live: build the image,
 migrate, swap (`deploy.md`). Without it every pass reports `unobserved` and exits 3. The work
