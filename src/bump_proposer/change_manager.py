@@ -91,11 +91,15 @@ class ChangeManagerClient:
         *,
         base_url: str = DEFAULT_BASE_URL,
         transport: httpx.BaseTransport | None = None,
+        user_agent: str = USER_AGENT,
     ) -> None:
+        # `user_agent` is the one thing a second producer reusing this client changes: the
+        # rotation proposer (ADR-0054) sends the same two paths under its own name, so a request
+        # change-manager logs is attributed to the program that sent it.
         try:
             self._client = ConfinedClient(
                 base_url=base_url,
-                user_agent=USER_AGENT,
+                user_agent=user_agent,
                 timeout=TIMEOUT_SECONDS,
                 transport=transport,
                 headers={

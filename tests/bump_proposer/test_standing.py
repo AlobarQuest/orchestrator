@@ -102,7 +102,7 @@ def test_a_package_with_no_standing_key_at_all_is_invisible(tmp_path) -> None:
 
 
 def test_quoted_versions_are_read_without_their_quotes(tmp_path) -> None:
-    """Kills: `_yaml_scalar` returning the quotes.
+    """Kills: `yaml_scalar` returning the quotes.
 
     `1.13` is a YAML FLOAT and `7` is an INT, so every version that could be read as a number
     is written quoted. A reader keeping the quotes compares `'1.13'` against `1.13`, concludes
@@ -183,7 +183,7 @@ def ladder(tmp_path, monkeypatch):
     _write(tmp_path, "p")
     package = discover(tmp_path)[("alobarquest/infraops-mcp-server", "zod")]
     rig = _Ladder(tmp_path, package)
-    monkeypatch.setattr(standing, "_lifecycle", rig.lifecycle)
+    monkeypatch.setattr(standing, "lifecycle", rig.lifecycle)
     monkeypatch.setattr(
         standing,
         "reread",
@@ -215,7 +215,7 @@ def test_an_approved_package_carrying_another_bump_is_revised(tmp_path, monkeypa
     _write(tmp_path, "p", status="approved", from_version="'1.0.0'", to_version="'2.0.0'")
     package = discover(tmp_path)[("alobarquest/infraops-mcp-server", "zod")]
     rig = _Ladder(tmp_path, package)
-    monkeypatch.setattr(standing, "_lifecycle", rig.lifecycle)
+    monkeypatch.setattr(standing, "lifecycle", rig.lifecycle)
     monkeypatch.setattr(
         standing,
         "reread",
@@ -232,7 +232,7 @@ def test_a_pass_that_crashed_after_transition_only_approves(tmp_path, monkeypatc
     _write(tmp_path, "p", status="ready_for_review", from_version="'3.25.76'", to_version="'4.4.3'")
     package = discover(tmp_path)[("alobarquest/infraops-mcp-server", "zod")]
     rig = _Ladder(tmp_path, package)
-    monkeypatch.setattr(standing, "_lifecycle", rig.lifecycle)
+    monkeypatch.setattr(standing, "lifecycle", rig.lifecycle)
     monkeypatch.setattr(
         standing,
         "reread",
@@ -269,7 +269,7 @@ def test_the_hash_fixture_moves_with_the_revision(tmp_path, monkeypatch) -> None
     fixture.mkdir(parents=True)
     (fixture / "package_hashes.json").write_text(json.dumps({"other": "b" * 64}) + "\n")
     package = discover(tmp_path)[("alobarquest/infraops-mcp-server", "zod")]
-    monkeypatch.setattr(standing, "_lifecycle", lambda root, *args: "a" * 64 + "\n")
+    monkeypatch.setattr(standing, "lifecycle", lambda root, *args: "a" * 64 + "\n")
 
     standing.snapshot_hash(package, tmp_path)
 
@@ -280,7 +280,7 @@ def test_the_hash_fixture_moves_with_the_revision(tmp_path, monkeypatch) -> None
 def test_an_unreadable_hash_is_refused(tmp_path, monkeypatch) -> None:
     _write(tmp_path, "p")
     package = discover(tmp_path)[("alobarquest/infraops-mcp-server", "zod")]
-    monkeypatch.setattr(standing, "_lifecycle", lambda root, *args: "not-a-hash\n")
+    monkeypatch.setattr(standing, "lifecycle", lambda root, *args: "not-a-hash\n")
     with pytest.raises(StandingError, match="package hash was unreadable"):
         standing.snapshot_hash(package, tmp_path)
 
@@ -303,7 +303,7 @@ def test_the_interpreter_comes_from_the_checkout(tmp_path) -> None:
     """Which copy of the lifecycle code runs decides what is written into that checkout's
     ledger, so an absent one is a named refusal rather than whatever is on PATH."""
     with pytest.raises(StandingError, match="no interpreter at"):
-        standing._lifecycle(tmp_path, "hash", "packages/p")
+        standing.lifecycle(tmp_path, "hash", "packages/p")
 
 
 def test_a_standing_package_reports_what_it_carries() -> None:

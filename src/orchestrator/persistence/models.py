@@ -110,6 +110,13 @@ OBSERVATION_SOURCE_SYSTEMS = (
     # whose subject is a hosted estate rather than a repository's dependencies. Reusing either
     # would write false provenance into a table with no supersession model and no delete route.
     "bump_proposer",
+    # The rotation proposer (ADR-0054 amendment 1): a registry credential is due for rotation,
+    # and this is the trigger that makes it so. The SECOND member whose lane also proposes, and
+    # it is its own member for the reason `bump_proposer` is: the row is the fact and the change
+    # record is a decision about it. `drift_digest` is the near miss and is wrong -- the
+    # infrastructure scan that computes "due" is the SOURCE this producer reads, but this
+    # producer is the one that files the row, and every member here names the producer.
+    "rotation_proposer",
 )
 OBSERVATION_TRUST_CLASSIFICATIONS = ("orchestrator", "delivery_system", "monitor", "external")
 OBSERVATION_SUBJECT_TYPES = (
@@ -123,6 +130,10 @@ OBSERVATION_SUBJECT_TYPES = (
     "endpoint",
     "monitor",
     "external_run",
+    # One credential in infraops' registry (`.cred-consumers.toml`), named by its registry id.
+    # `service` is the near miss and is wrong: a credential is held by several services at once,
+    # and naming any one of them would make the others' rotation a fact about a different subject.
+    "credential",
 )
 OBSERVATION_TYPES = (
     "deployment",
@@ -191,6 +202,11 @@ OBSERVATION_TYPES = (
     # `inventory` asserts only that something was enumerated, where this states two specific
     # falsifiable versions.
     "dependency_update",
+    # A registry credential is due for rotation, and why: its age passed its class's maximum, a
+    # rotation was requested on a date, or an exposure is recorded against it. It asserts the
+    # TRIGGER and nothing about the rotation itself, which is work a person approves. `drift` is
+    # the infrastructure digest's, and `alert` is a monitor's word for a running thing.
+    "rotation_due",
 )
 OBSERVATION_STATUSES = (
     "passed",

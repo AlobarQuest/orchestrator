@@ -48,7 +48,7 @@ import subprocess
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, Protocol
 
 from landing_ledger.titles import Bump
 
@@ -116,7 +116,7 @@ def _interpreter(root: Path) -> Path:
     return Path(override) if override else root / ".venv" / "bin" / "python"
 
 
-def _yaml_scalar(text: str, key: str) -> str | None:
+def yaml_scalar(text: str, key: str) -> str | None:
     """One top-level-ish scalar, read without a YAML parser.
 
     This program's third-party surface is `httpx` and nothing else -- the isolation test says
@@ -152,12 +152,12 @@ def discover(root: Path | None = None) -> dict[tuple[str, str], StandingPackage]
     found: dict[tuple[str, str], StandingPackage] = {}
     for package_yaml in sorted(base.glob("*/package.yaml")):
         text = package_yaml.read_text(encoding="utf-8")
-        if _yaml_scalar(text, "profile") != PROFILE:
+        if yaml_scalar(text, "profile") != PROFILE:
             continue
-        target = _yaml_scalar(text, "target_repo")
-        dependency = _yaml_scalar(text, "package")
-        revision = _yaml_scalar(text, "revision")
-        if _yaml_scalar(text, "standing") != "true":
+        target = yaml_scalar(text, "target_repo")
+        dependency = yaml_scalar(text, "package")
+        revision = yaml_scalar(text, "revision")
+        if yaml_scalar(text, "standing") != "true":
             # ADR-0028: only a package whose AUTHOR declared it standing is a lane. Every
             # dependency-update package in that repository declares this same profile and a
             # target repository, so without this the eight historical packages -- each naming
@@ -172,9 +172,9 @@ def discover(root: Path | None = None) -> dict[tuple[str, str], StandingPackage]
             target_repository=target,
             dependency=dependency,
             revision=int(revision),
-            state=_yaml_scalar(text, "status") or "",
-            from_version=_yaml_scalar(text, "from_version") or "",
-            to_version=_yaml_scalar(text, "to_version") or "",
+            state=yaml_scalar(text, "status") or "",
+            from_version=yaml_scalar(text, "from_version") or "",
+            to_version=yaml_scalar(text, "to_version") or "",
         )
         if key in found:
             # Two packages claiming one bump is a question about the checkout, not an answer
@@ -211,7 +211,7 @@ def _run(root: Path, command: Sequence[str]) -> str:
     return completed.stdout
 
 
-def _lifecycle(root: Path, *args: str) -> str:
+def lifecycle(root: Path, *args: str) -> str:
     python = _interpreter(root)
     if not python.is_file():
         raise StandingError(f"the packages checkout has no interpreter at {python}")
@@ -325,27 +325,41 @@ def advance(package: StandingPackage, bump: Bump, root: Path) -> StandingPackage
             # `revise` is the only way back to an unapproved revision, and it is legal from
             # every pre-execution state. A draft revision has never been approved, so its
             # number is still free and reusing it is correct rather than thrifty.
-            _lifecycle(root, "revise", str(current.path))
+            lifecycle(root, "revise", str(current.path))
             current = reread(current, root)
         write_versions(current, bump)
         current = reread(current, root)
     if current.state == _DRAFT:
         # `transition` re-snapshots the revision hash, which is what makes the edit above part
         # of the revision rather than drift against it.
-        _lifecycle(root, "transition", str(current.path), "--to", "ready_for_review")
+        lifecycle(root, "transition", str(current.path), "--to", "ready_for_review")
         current = reread(current, root)
-    _lifecycle(root, "approve", str(current.path), "--by-policy")
+    lifecycle(root, "approve", str(current.path), "--by-policy")
     return reread(current, root)
 
 
-def snapshot_hash(package: StandingPackage, root: Path) -> None:
+class _Revisable(Protocol):
+    """What re-pinning a hash needs of a package: its name and its directory. Nothing else.
+
+    A Protocol rather than `StandingPackage` because the rotation proposer (ADR-0054) revises a
+    standing package of another profile and re-pins it through this same function.
+    """
+
+    @property
+    def package_id(self) -> str: ...
+
+    @property
+    def path(self) -> Path: ...
+
+
+def snapshot_hash(package: _Revisable, root: Path) -> None:
     """Re-pin the authoring repository's own hash fixture for this package.
 
     A revision moves the package hash by design, and that repository asserts every package's
     hash in a test. Leaving it stale would red its gate on a change this program made, so the
     fixture moves in the same commit -- which is exactly what a person doing this by hand does.
     """
-    digest = _lifecycle(root, "hash", str(package.path)).strip()
+    digest = lifecycle(root, "hash", str(package.path)).strip()
     if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
         raise StandingError(f"{package.package_id}: the package hash was unreadable")
     fixture = root / HASH_FIXTURE
@@ -371,12 +385,6 @@ def commit(package: StandingPackage, bump: Bump, root: Path) -> str:
     thing `git` will not say afterwards. `require_publishable` is what stops that finding going
     quiet on the following pass.
     """
-    paths = [
-        str((package.path / "package.yaml").relative_to(root)),
-        str((package.path / "lineage.yaml").relative_to(root)),
-        str(HASH_FIXTURE),
-    ]
-    _run(root, ["git", "add", *paths])
     message = (
         f"{package.package_id} rev {package.revision}: "
         f"{package.dependency} {bump.from_version} to {bump.to_version}\n\n"
@@ -387,13 +395,30 @@ def commit(package: StandingPackage, bump: Bump, root: Path) -> str:
         "writes in change-manager, and the decomposition and the authority envelope after\n"
         "that.\n"
     )
+    return publish(package, package.revision, message, root)
+
+
+def publish(package: _Revisable, revision: int, message: str, root: Path) -> str:
+    """Commit one revision's three files and publish them (ADR-0033). Answers the commit's sha.
+
+    **THE ONE PLACE THIS ESTATE PUBLISHES A PACKAGE REVISION**, shared with the rotation proposer
+    (ADR-0054 amendment 1) rather than copied into it, so the push literal the merge guard scans
+    for lives in this file alone and its exemption names every caller. The paths are fixed: a
+    revision's package, its lineage and the hash fixture, and nothing else in the checkout.
+    """
+    paths = [
+        str((package.path / "package.yaml").relative_to(root)),
+        str((package.path / "lineage.yaml").relative_to(root)),
+        str(HASH_FIXTURE),
+    ]
+    _run(root, ["git", "add", *paths])
     _run(root, ["git", "commit", "-m", message])
     head = _run(root, ["git", "rev-parse", "HEAD"]).strip()
     try:
         _run(root, PUBLISH_COMMAND.split())
     except StandingError as error:
         raise StandingError(
-            f"{package.package_id} rev {package.revision} is committed as {head[:12]} "
+            f"{package.package_id} rev {revision} is committed as {head[:12]} "
             f"and unpublished: {error}"
         ) from None
     return head

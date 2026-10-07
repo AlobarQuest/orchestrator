@@ -59,6 +59,9 @@ work-watcher = "work_watcher.cli:main"
 # orchestrator. A SEPARATE program from `estate-landing` because four of that lane's five
 # classifications cannot fire on an answer from this one.
 inert-landing = "inert_lander.cli:main"
+# ADR-0054 amendment 1. A credential infraops reports due for rotation becomes a revision of its
+# standing package (to review, never approved) and, once a named human approves that, a work record.
+rotation-proposer = "rotation_proposer.cli:main"
 # Is every deployed application serving the commit its branch names? Three surfaces report a
 # rollout that went WRONG and every one reports a moment; on 2026-09-06 all three fired and
 # app-brain served a build behind main for a day and a half anyway. This one reports the

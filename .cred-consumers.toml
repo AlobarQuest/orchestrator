@@ -171,7 +171,7 @@ disposition = "reissue"
   [[credential.consumer]]
   kind = "runtime-fetch"
   repo = "orchestrator"
-  ref = "scripts/run-activation-sweep.sh, run-bump-proposer.sh, run-deploy-watcher.sh, run-landing-ledger.sh, run-pin-watcher.sh, run-revision-watcher.sh, run-tool-installer.sh"
+  ref = "scripts/run-activation-sweep.sh, run-bump-proposer.sh, run-deploy-watcher.sh, run-landing-ledger.sh, run-pin-watcher.sh, run-revision-watcher.sh, run-rotation-proposer.sh, run-tool-installer.sh"
 
 [[credential]]
 id = "orchestrator-drift-reporter-bearer"

@@ -348,8 +348,8 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   `run-landing-ledger.sh`, `run-deploy-watcher.sh` and `run-activation-sweep.sh`: **2 = something
   was FOUND**, 3 = it could not be read or measured ("3 outranks 2: an incomplete pass cannot claim
   it found everything there was to find").
-  `run-estate-landing.sh`, `run-change-proposer.sh`, `run-work-carrier.sh` and
-  `run-bump-proposer.sh`: **2 = could not use its INPUTS**, 3 = something was found.
+  `run-estate-landing.sh`, `run-change-proposer.sh`, `run-work-carrier.sh`, `run-bump-proposer.sh`
+  and `run-rotation-proposer.sh`: **2 = could not use its INPUTS**, 3 = something was found.
   0 and 1 agree everywhere (nothing found; the tool itself failed). So a consumer that treats
   non-zero as failure collapses "the tool broke" with "the lane found something" — which is exactly
   the collision each header exists to prevent, and which the first dead-man switch shipped with.
