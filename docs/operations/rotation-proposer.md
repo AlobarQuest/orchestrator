@@ -16,8 +16,9 @@ built and not scheduled: no LaunchAgent installer and no Healthchecks check exis
 - **The packages: the intent-packages checkout** that `bump-proposer` uses, from the same variable
   (`BUMP_PROPOSER_PACKAGES_CHECKOUT`).
 
-An infraops checkout without the `cred-findings` subcommand answers `unknown command`. The pass
-then exits 2. Land the infraops change and pull that checkout before any pass is expected to work.
+An infraops checkout without the `cred-findings` subcommand (infraops-mcp-server #109) answers
+`unknown command`. The pass then exits 2. Land #109 and pull that checkout before any pass is
+expected to work.
 
 ## Which rotation, and its name
 
