@@ -210,7 +210,9 @@ def _act(
     action, detail = _decide(package, due)
     subject = due.credential_id
     if action not in {_PROPOSE, _ADVANCE}:
-        return [Outcome(subject, action, detail)]
+        # Reported on every path, not only when proposing: while a newer revision waits for
+        # approval, an open record for an older one is still stranded, and still approvable.
+        return [Outcome(subject, action, detail), *_superseded(records, package)]
     if client is None or observer is None:
         return [Outcome(subject, f"would-{action}", f"{detail} -> {due.occurrence}")]
 
@@ -230,7 +232,8 @@ def _act(
                 "revised",
                 f"{package.package_id} rev {package.revision} carries {due.occurrence}, "
                 f"published {published[:12]}; awaiting a named human's approval",
-            )
+            ),
+            *_superseded(records, package),
         ]
 
     record, created = client.propose(_proposal(package, observation_id))

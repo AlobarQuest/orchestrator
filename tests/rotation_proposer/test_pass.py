@@ -188,6 +188,23 @@ def test_the_next_rotation_revises_again_and_strands_nothing_it_should_report(ri
     assert run(["--submit"]) == EXIT_OK
 
 
+def test_an_open_record_is_reported_while_the_next_revision_awaits_approval(rig, capsys) -> None:
+    """Kills: reporting a stranded record only on the proposing path. Between the revision for the
+    next rotation and Devon approving it, the earlier record is open and still approvable."""
+    run(["--submit"])
+    rig.approve_by_name()
+    run(["--submit"])
+    rig.due = [AGE]
+    capsys.readouterr()
+
+    assert run(["--submit"]) == EXIT_FINDINGS
+    assert "revised" in (out := capsys.readouterr().out) and "superseded" in out
+    assert run(["--submit"]) == EXIT_FINDINGS
+    assert "awaiting-approval" in (out := capsys.readouterr().out) and "superseded" in out
+    rig.estate.records[0]["status"] = "resolved"
+    assert run(["--submit"]) == EXIT_OK
+
+
 def test_a_different_rotation_arriving_while_one_awaits_review_is_stacked_not_revised(
     rig, capsys
 ) -> None:
