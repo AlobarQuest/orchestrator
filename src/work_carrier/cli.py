@@ -10,8 +10,9 @@ the old design, it is the mode in which the lane is inspected: a person can read
 registered without anything being. **A HELD RECORD PRINTS ITS REASON AND NOT ITS PAYLOAD**, in
 this mode as in the other -- "not carried" means not carried whichever flag was given, and a
 payload printed under a heading saying it would be registered would be false. On a machine with
-no GitHub credential and no capability file that is EVERY record, which is the honest reading of
-"this pass cannot tell whether any of this work belongs where it is going".
+no GitHub credential and no capability file that is EVERY record with a target repository, which
+is the honest reading of "this pass cannot tell whether any of this work belongs where it is
+going"; a standing operational package asks neither, so it is judged the same anywhere.
 
 **WITH `--register`, THE LAST STEP IS NO LONGER A HUMAN PASTE.** ADR-0027 removed the
 `ActorRole.HUMAN` requirement from intake registration, having found that the gate was

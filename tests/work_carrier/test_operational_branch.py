@@ -140,7 +140,11 @@ def test_the_branch_keys_on_the_profile_not_on_the_missing_repository() -> None:
 
 
 def test_the_profile_is_read_beside_the_snapshot_not_inside_it() -> None:
-    """`profile` inside the snapshot is not where the emitter puts it, and must not count."""
+    """`profile` inside the snapshot is not where the emitter puts it, and must not count.
+
+    Deliberately a pin on the emitter's current shape (`package_sources.py` writes `profile`
+    beside `enforcement_snapshot`); if the emitter ever moves it, this test moves with it.
+    """
     payload = operational()
     payload["enforcement_snapshot"]["profile"] = payload.pop("profile")
 

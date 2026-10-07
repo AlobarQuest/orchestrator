@@ -514,7 +514,7 @@ _CONSEQUENCE = {
 
 def _print_one(label: str, verdict: Workability, out) -> None:
     if verdict.operational:
-        subject = "standing operational package"
+        subject = "operational package, no repository"
     else:
         subject = verdict.repository or "no target repository"
     print(f"{_tag(verdict.decision)} {label} -> {subject}", file=out)
