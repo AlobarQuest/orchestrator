@@ -338,3 +338,50 @@ def test_the_proposal_and_observation_never_carry_a_value_the_registry_does_not(
     sent = json.dumps([rig.spine.posted, rig.estate.proposals])
     for credential_value in ("cm-propose", "observer"):
         assert f'"{credential_value}"' not in sent
+
+
+def test_a_change_manager_failure_on_one_proposal_is_that_credentials_error(
+    rig, capsys, monkeypatch
+) -> None:
+    """A 5xx on the proposal is one credential's failure, reported and counted as a finding --
+    not a whole-pass "could not use its inputs", which would hide which record failed."""
+    run(["--submit"])
+    rig.approve_by_name()
+    listing = rig.estate.handler
+
+    def failing(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return listing(request)
+        return httpx.Response(500, json={"detail": "boom"})
+
+    monkeypatch.setattr(rig.estate, "handler", failing)
+    assert run(["--submit"]) == EXIT_FINDINGS
+    assert "error" in capsys.readouterr().out
+
+
+def test_a_refused_publish_stops_the_next_credential_from_stacking_on_it(
+    rig, capsys, monkeypatch
+) -> None:
+    """Kills: checking the checkout only once per pass. A publish refused for the first credential
+    leaves a local commit; the second credential must be refused rather than build a further
+    revision on top of it and commit again."""
+    write_package(rig.root, "openai-project")
+    rig.due = [REQUESTED, Due("openai-project", "openai-key", "age", "2025-01-01", "2025-01-01")]
+    residue: list[str] = []
+
+    def refused(package, root):
+        residue.append(package.package_id)
+        raise shared.StandingError(f"{package.package_id} rev 2 is committed and unpublished")
+
+    def publishable(root):
+        if residue:
+            raise shared.StandingError("the packages checkout carries 1 commit(s) origin does not")
+
+    monkeypatch.setattr(cli, "commit", refused)
+    monkeypatch.setattr(cli, "require_publishable", publishable)
+
+    assert run(["--submit"]) == EXIT_FINDINGS
+    assert residue == ["rotation-openrouter-generic"]
+    revised = [call[1] for call in rig.lifecycle.calls if call[0] == "revise"]
+    assert len(revised) == 1
+    assert capsys.readouterr().out.count("error") == 2
