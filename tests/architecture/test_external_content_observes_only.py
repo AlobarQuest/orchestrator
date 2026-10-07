@@ -213,6 +213,13 @@ CLASSIFICATION: dict[str, Row] = {
         "to change-manager (ADR-0028), and to the orchestrator it only observes",
         OBSERVE,
     ),
+    "rotation_proposer": Row(
+        Role.OBSERVE_ONLY,
+        "ADR-0054 amendment 1: reads infraops' structured rotation findings (registry names and "
+        "dates, never prose) to choose a standing package's occurrence; its work record goes to "
+        "change-manager, and to the orchestrator it only observes, through bump_proposer's client",
+        OBSERVE,
+    ),
     "deploy_watcher": Row(
         Role.OBSERVE_ONLY,
         "ADR-0022: the watcher owns outcomes by observing them; reads unit history",

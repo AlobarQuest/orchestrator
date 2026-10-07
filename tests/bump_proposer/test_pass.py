@@ -211,7 +211,7 @@ def rig(checkout, monkeypatch, spine):
         path.write_text(text, encoding="utf-8")
         return ""
 
-    monkeypatch.setattr(standing, "_lifecycle", lifecycle)
+    monkeypatch.setattr(standing, "lifecycle", lifecycle)
     # Patched on `cli` as well as on `standing`: the CLI imports these by NAME, so a patch on
     # the defining module alone leaves the caller holding the original.
     for module in (standing, cli):

@@ -285,6 +285,31 @@ TABLE: dict[str, Row] = {
         no_sibling_lanes=True,
     ),
     # Its window predicate is the orchestrator's, deliberately COPIED -- see `window.py`.
+    # ADR-0054 amendment 1: "it reuses bump_proposer's audited revise, publish and propose path,
+    # its confined client and its observation". So `bump_proposer` is reused rather than copied --
+    # the lifecycle call, the hash re-pin, the one publishing act and both confined clients -- and
+    # this program imports no HTTP client of its own. It reaches infraops only by running its CLI.
+    "rotation_proposer": _row(
+        "__future__",
+        "argparse",
+        "bump_proposer",
+        # `collections.abc.Callable`, for the injectable runner that asks infraops.
+        "collections",
+        "dataclasses",
+        # The observation's facts are content-addressed, so an unchanged re-run replays.
+        "hashlib",
+        "json",
+        "os",
+        "pathlib",
+        "re",
+        # `shutil.which("node")`: launchd's PATH does not carry a Homebrew node.
+        "shutil",
+        # Runs infraops' `security-drift-cli cred-findings`; every git and lifecycle act is
+        # `bump_proposer`'s.
+        "subprocess",
+        "sys",
+        "typing",
+    ),
     "tool_installer": _row(
         "__future__",
         "dataclasses",

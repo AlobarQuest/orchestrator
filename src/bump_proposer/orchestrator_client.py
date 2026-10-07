@@ -122,6 +122,7 @@ def open_client(
     credential_key_id: str,
     token: str,
     transport: httpx.BaseTransport | None = None,
+    user_agent: str = USER_AGENT,
 ) -> OrchestratorClient:
     """Construct the client, translating an unusable base URL into this module's own error.
 
@@ -135,6 +136,7 @@ def open_client(
             credential_key_id=credential_key_id,
             token=token,
             transport=transport,
+            user_agent=user_agent,
         )
     except TransportFailure as failure:
         raise UnusableEndpointError(
@@ -150,10 +152,13 @@ class OrchestratorClient:
         credential_key_id: str,
         token: str,
         transport: httpx.BaseTransport | None = None,
+        user_agent: str = USER_AGENT,
     ) -> None:
+        # Overridden by the rotation proposer (ADR-0054), which reuses this one-route client
+        # under its own name rather than a copy of it.
         self._client = ConfinedClient(
             base_url=base_url,
-            user_agent=USER_AGENT,
+            user_agent=user_agent,
             timeout=TIMEOUT_SECONDS,
             transport=transport,
             headers={

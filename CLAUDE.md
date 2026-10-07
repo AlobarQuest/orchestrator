@@ -356,6 +356,11 @@ Placement rule: global CLAUDE.md §7.
 - A `work`-source change record's status moves only by a human click: `bump_proposer` is
   propose-and-read and change-manager refuses status routes for the `propose` scope (ADR-0028).
   Detail: `docs/operations/landing-lanes.md`.
+- `rotation_proposer` never approves a package revision. A pass that revises a standing rotation
+  package to `ready_for_review` proposes nothing, and the first pass after a named human approves
+  it proposes. "Due" is infraops' rule, read from `security-drift-cli cred-findings` and never
+  re-implemented here. The occurrence comes from that answer's structured fields and never
+  contains today's date. Detail: `docs/operations/rotation-proposer.md`.
 - change-manager's `resolved` is terminal by design and will not be made recoverable; `reactivate`
   applies only to `wontfix`. Do not re-propose recoverability. History:
   `docs/history/claude-md-invariants-archive.md` #209.

@@ -113,6 +113,17 @@ MERGE_EXEMPT_PATHS: set[Path] = {
     # The producer refuses to begin on a checkout carrying a commit it could not publish, which
     # is what keeps this entry to the one act it names rather than to whatever else has
     # accumulated on that branch.
+    #
+    # A SECOND CALLER, NAMED HERE BECAUSE A CALLER IS THE ONE THING THIS TEXT SCAN CANNOT SEE.
+    # ADR-0054 amendment 1 (2026-10-07) has `src/rotation_proposer/` reuse this module's
+    # `publish` rather than carry its own copy of the push, so this exemption covers its act too.
+    # Two clauses above do not carry over and are replaced, not waived: the revision it publishes
+    # is NOT approved -- it is left in `ready_for_review`, because no approval policy grants the
+    # `non-software-operational` profile and a named human approves each rotation revision -- and
+    # it targets no repository at all. What still holds: it can only ever be a revision of a
+    # package whose author declared it standing (`standing: true`, named `rotation-<credential>`),
+    # in the same authoring repository whose default branch is inert, after the same two refusals.
+    # `tests/rotation_proposer/test_standing.py` holds the push literal out of that package.
     Path("src/bump_proposer/standing.py"),
     # ADR-0038 part 2, the FOURTH entry, and it is the second that lands a pull request into a
     # repository where landing changes nothing already serving -- so the first entry's last clause
