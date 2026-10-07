@@ -18,7 +18,7 @@ from rotation_proposer.findings import Due
 from rotation_proposer.observation import rotation_observation
 from tests.api.test_observer_role_confinement import OBSERVER
 
-DUE = Due("openrouter-generic", "openrouter-key", "requested", "2026-10-07", "2026-10-07")
+DUE = Due("openrouter-generic", "openrouter-key", "requested", "2026-10-07", "2026-10-07", True)
 
 
 def _stored(engine: Engine) -> int | None:

@@ -18,7 +18,7 @@ from orchestrator.persistence.models import (
 from rotation_proposer.findings import Due
 from rotation_proposer.observation import ObservationUncomposable, rotation_observation
 
-DUE = Due("openrouter-generic", "openrouter-key", "requested", "2026-10-07", "2026-10-07")
+DUE = Due("openrouter-generic", "openrouter-key", "requested", "2026-10-07", "2026-10-07", True)
 
 
 def test_every_vocabulary_member_is_one_the_orchestrator_declares() -> None:

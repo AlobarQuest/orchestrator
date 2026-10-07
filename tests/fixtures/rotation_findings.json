@@ -5,25 +5,29 @@
       "check": "cred.rotation-age",
       "id": "openrouter-generic",
       "class": "openrouter-key",
-      "anchor": "2025-07-02T00:00:00.000Z"
+      "anchor": "2025-07-02T00:00:00.000Z",
+      "rotated_by_sds": true
     },
     {
       "check": "cred.rotation-requested",
       "id": "openrouter-generic",
       "class": "openrouter-key",
-      "rotate_requested": "2026-10-07"
+      "rotate_requested": "2026-10-07",
+      "rotated_by_sds": true
     },
     {
       "check": "cred.exposure-rotate",
       "id": "github-classic-aihelper",
       "class": "github-pat-classic",
       "exposure_id": "codex-2026-07-02",
-      "exposure_date": "2026-07-02"
+      "exposure_date": "2026-07-02",
+      "rotated_by_sds": false
     },
     {
       "check": "cred.unknown-class",
       "id": "mystery-key",
-      "class": "mystery"
+      "class": "mystery",
+      "rotated_by_sds": false
     }
   ]
 }

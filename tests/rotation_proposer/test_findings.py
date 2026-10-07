@@ -23,12 +23,19 @@ def _document(*entries: dict) -> str:
     return json.dumps({"schema_version": 1, "findings": list(entries)})
 
 
-AGE = {"check": "cred.rotation-age", "id": "k", "class": "openai-key", "anchor": "2025-01-02"}
+AGE = {
+    "check": "cred.rotation-age",
+    "id": "k",
+    "class": "openai-key",
+    "anchor": "2025-01-02",
+    "rotated_by_sds": True,
+}
 REQUESTED = {
     "check": "cred.rotation-requested",
     "id": "k",
     "class": "openai-key",
     "rotate_requested": "2026-10-07",
+    "rotated_by_sds": True,
 }
 EXPOSURE = {
     "check": "cred.exposure-rotate",
@@ -36,6 +43,7 @@ EXPOSURE = {
     "class": "openai-key",
     "exposure_id": "transcript-1",
     "exposure_date": "2026-07-09",
+    "rotated_by_sds": True,
 }
 
 
@@ -48,8 +56,9 @@ def test_the_contract_fixture_reads_as_one_due_per_credential() -> None:
             "exposure",
             "codex-2026-07-02",
             "2026-07-02",
+            False,
         ),
-        Due("openrouter-generic", "openrouter-key", "requested", "2026-10-07", "2026-10-07"),
+        Due("openrouter-generic", "openrouter-key", "requested", "2026-10-07", "2026-10-07", True),
     ]
     assert unrecognised == []
 
@@ -175,3 +184,16 @@ def test_node_is_found_where_launchd_cannot_see_it(monkeypatch, tmp_path) -> Non
     monkeypatch.setattr(findings, "NODE_FALLBACKS", (tmp_path / "absent",))
     with pytest.raises(FindingsError, match="node is not on this machine"):
         findings.node_binary()
+
+
+@pytest.mark.parametrize("value", [None, "true", 1])
+def test_a_finding_that_cannot_say_who_owns_the_credential_refuses_the_pass(value) -> None:
+    """Kills: defaulting the handover. An infraops older than it, or a malformed answer, must stop
+    the pass rather than let a package alone decide who rotates a credential."""
+    entry = dict(REQUESTED)
+    if value is None:
+        del entry["rotated_by_sds"]
+    else:
+        entry["rotated_by_sds"] = value
+    with pytest.raises(FindingsError, match="rotated_by_sds"):
+        parse(_document(entry))
