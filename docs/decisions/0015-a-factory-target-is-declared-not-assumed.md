@@ -387,3 +387,33 @@ leftover environment variable is ignored rather than breaking startup.
   minting between the two calls still takes the old path.
 - **The activation sweep's checkout list and the kit's `delivery_profile` scoping are still separate
   answers.** Neither reads the declaration yet.
+
+## Amendment, 2026-10-07 — `orchestrator` is a factory target again
+
+**Decided.** Devon re-enabled the SDS maintaining itself on 2026-10-07: "I have been hesitant to
+let Orchestrator be self updating, but this seems to be the best course of action." The
+2026-09-11 amendment named the reversal trigger as somebody building the automation for the SDS's
+own updates and Devon deciding it is ready. That automation now exists: `scripts/deploy_orchestrator.py`
+(#366) runs the deploy, and its `image-release` step (#355, #356) binds each factory unit the image
+ships to the release and verifies it after deploy. Wave-2 exit clause 2 cannot close without it:
+`image-release` is the only program that binds a release with post-deploy verification, and it
+binds only orchestrator releases.
+
+**What re-enabling changes, and what it does not.**
+
+- `factory-target.toml` declares `true`, and the caller workflow
+  `.github/workflows/factory-runner-pilot.yml` is restored at the estate's recommended pin, in the
+  same change, so the conformance kit's `runner.caller` never sees one without the other.
+- **A landing here deploys nothing.** App Brain answers `inert` for this repository, so a merged
+  factory change reaches production only when `deploy_orchestrator.py` runs, with its
+  migrate-before-swap and nothing-live checks and its post-deploy verification.
+- **Every gate stays.** A factory change to the orchestrator passes the same package approval,
+  change record, decomposition, authority approval and adjudication as any other target.
+- **The deploy command refuses while a unit is live**, including one dispatched and not yet
+  claimed. Nothing refuses a dispatch made between `prepare` and `finish`; `recheck` catches only
+  a run that started before it. Do not dispatch to this repository during a deploy.
+- **A merge here advances the working copy eleven scheduled lanes run.** The activation sweep
+  fast-forwards it. The first unit declares `source_repository` reach only, as the 2026-08-03
+  precedent did (Devon, 2026-10-07): the merge changes the repository, and the sweep that moves the
+  working copy is a separate lane with its own timing.
+- **Caller-pin remediation units can now target this repository too.** That is in scope.

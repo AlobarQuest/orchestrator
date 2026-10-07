@@ -86,13 +86,14 @@ Four decisions aren't carried forward:
 
 - **Wave-2 exit clause 2: a post-deployment observation of a release.** Devon ruled on 2026-10-06
   that the release's post-deploy verification answers it: the exit probe counts a post-deploy unit
-  the verifier completed, which the deployment observation minted and so post-dates the deploy. A
-  revision watcher reading can't, because it carries the served commit's own date. Each
-  orchestrator deploy now binds the factory units its image ships and verifies them (5a, #355 and
-  #356; first run 2026-10-06 on `ffdd70f-sds11binder-amd64` bound nothing, because the three
-  completed factory units had shipped in earlier images). The clause waits on two things: a deploy
-  that ships a factory unit, and that release's revision added to the clause's arguments in
-  `docs/operations/wave-exit-manifest.toml`, which names its releases explicitly.
+  the verifier completed, which the deployment observation minted and so post-dates the deploy. Two
+  things blocked it, both found on 2026-10-07. The probe read `satisfied`, which no post-deploy
+  criterion can reach, so it counted zero for every release; it now reads `decided_by_verifier`
+  (#376). And `image-release`, the only program that binds a release with post-deploy verification,
+  binds only orchestrator releases, while the orchestrator was not a factory target. Devon
+  re-enabled it on 2026-10-07 (ADR-0015 amendment). The clause now needs one factory unit landed
+  here and shipped by `deploy_orchestrator.py`, and that release's revision added to the clause's
+  arguments in `docs/operations/wave-exit-manifest.toml`.
 
 ### Deferred, with the evidence
 

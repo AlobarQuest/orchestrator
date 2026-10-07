@@ -53,10 +53,10 @@ jobs:
   # rather than behind the full gate. A red here is unambiguous: merge the consumer first.
   #
   # THE REVISION IS READ FROM the consumer repository's own RECOMMENDED_CALLER_PIN, not
-  # from a caller workflow here. This repository hosted one until 2026-09-11, when
-  # ADR-0015's amendment declared it `factory_target = false` and deleted it; the pin it
-  # carried was a copy of that recommendation, so the three steps below lost a hop rather
-  # than an answer. (The consumer is named in each script, not here: a workflow file in
+  # from the caller workflow here. The caller's pin is a copy of that recommendation, so
+  # reading the source removes a hop rather than an answer, and the gates stay correct even
+  # while the caller lags a pin advance. (The consumer is named in each script, not here: a
+  # workflow file in
   # this repository may not carry that repository's name -- see
   # tests/architecture/test_ws33_scope_guards.py, which scans this directory for it.)
   consumer-compatibility:

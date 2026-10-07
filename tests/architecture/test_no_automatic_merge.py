@@ -22,13 +22,13 @@ FORBIDDEN = (
 # attest-wave-exit.yml (WS-P2.39) is the same weakest kind for the same reason: read-only,
 # one unauthenticated GET, workflow_dispatch so a wave bar can be re-attested on demand.
 #
-# `factory-runner-pilot.yml` was a fourth until 2026-09-11. ADR-0015's amendment declared this
-# repository `factory_target = false` and deleted the caller, so the exemption named a file
-# that no longer exists. It came out in the same commit rather than being left to rot: this
-# allowlist is a `continue`, so a stale entry is SILENT by itself — a later reader would have
-# taken it as evidence the repository is still dispatchable.
-# `test_the_exemptions_name_only_workflows_that_exist_and_still_need_them` now reddens one.
+# `factory-runner-pilot.yml` is the fourth: the factory caller, dispatched by the orchestrator for
+# one approved work unit at a time (ADR-0015, amendment of 2026-10-07). It is exempt because its
+# `uses:` line names the reusable workflow; `test_factory_runner_pilot_scope.py` holds it to no
+# schedule, no merge and no deploy. This allowlist is a `continue`, so a stale entry is SILENT by
+# itself; `test_the_exemptions_name_only_workflows_that_exist_and_still_need_them` reddens one.
 MANUAL_DISPATCH_WORKFLOWS = {
+    "factory-runner-pilot.yml",
     "attest-exit-criteria.yml",
     "attest-wave-exit.yml",
     "release-image.yml",
