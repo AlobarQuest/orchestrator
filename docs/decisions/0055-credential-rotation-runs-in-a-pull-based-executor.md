@@ -146,11 +146,24 @@ further than one change window away. change-manager gets the equivalent change f
 The executor never rotates the bearer it is using in that run (R12). Its own WORKER bearer is
 rotated through the same contract with every step `human`.
 
-### 8. Change windows apply where the executor acts
+### 8. Change windows apply at the orchestrator's claim
 
-The executor's claim refuses outside the window of the package's declared reach, using
-`window_refusal`. The check runs at claim and at reclaim, both of which start work, and not at
-renew, which continues it. A rotation that starts inside the window runs to completion (R17).
+**Devon decided (2026-10-08):** the window check lives in the orchestrator's claim path, so it holds
+whoever claims, and resuming a paused rotation counts as continuing, not starting.
+
+- **Where.** A claim refuses `outside_change_window` when the unit's package declares a reach whose
+  window is closed, using `window_refusal`. It applies to every claimant, including HQ working an
+  operational unit by hand, which is what ADR-0054 already said was meant to happen.
+- **Starting versus continuing.** A first claim of a unit is a start and is windowed. A claim of a
+  unit that already has evidence from an earlier attempt is a continuation and isn't windowed, so a
+  rotation paused for a human step resumes when the human acts, at any hour. Renewing a claim
+  continues and is never windowed.
+- **The first hosted step is still windowed.** Continuing must not let a rotation that has touched
+  nothing hosted begin touching it at midday. So the executor refuses to take the first step that
+  writes to a hosted consumer (a Coolify env, an orchestrator or change-manager restart) outside the
+  window, and waits for the next one. Steps after it continue at any hour, because finishing a
+  started change is safer than leaving it half done.
+- A rotation that starts inside the window runs to completion (R17).
 
 ### 9. State and recovery
 
