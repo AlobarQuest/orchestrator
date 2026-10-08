@@ -69,8 +69,9 @@ Rules that apply to all seven:
 
 - Measure on the **dev Coolify** in the OrbStack `ubuntu` machine (`ssh orb`), never production,
   against a throwaway application with a throwaway placeholder variable. Record both instances'
-  Coolify versions; if they differ, say whether the permission code differs between them, or mark
-  the answer as dev-only.
+  Coolify versions. If they differ, the dev answer is a hypothesis: say so when putting the decision
+  to Devon, and make confirming it on production the first step of the increment that first uses
+  the token.
 - Devon creates a dev token with `write` and without `read:sensitive`. Read the permission names
   from that Coolify version's UI or source, not from this handoff.
 - Measure three things: whether PATCH of the placeholder variable succeeds (read it back in-process
@@ -98,8 +99,10 @@ Rules that apply to all seven:
 ### 4. Revoked BWS machine token
 
 - Devon creates a throwaway machine account with read on one throwaway project, and its token.
-- Run `bws project list --color no` with that token (expect success), Devon revokes the token, then
-  run it again and record the exit code and the message's shape. The control is the same token
+- Run `bws project list --color no` with that token (expect success). Pass the token through the
+  script's environment from the Keychain read, never as an `--access-token` flag, which would put
+  it in `ps` and in the tool call's arguments. Then Devon revokes the token. Run
+  it again and record the exit code and the message's shape. The control is the same token
   with its secret part altered in-process, which shows how a malformed token fails differently, if
   it does.
 
@@ -116,7 +119,12 @@ Rules that apply to all seven:
   read the `permissions` from the mint response (never from `/app`). If `secrets: write` is absent,
   the answer is "not without a permission change", and the session stops there. Granting the App
   a permission is a standing-authority change that's Devon's, not part of this increment.
-- If it's present, write one throwaway Actions secret to a throwaway repository and delete it.
+- If it's present, write one throwaway Actions secret to a repository the installation response
+  already lists, and delete it. Don't install the App on a new repository: widening its installation
+  is a standing-authority change that's Devon's.
+- This is the one stated exception to "no live credential": the mint uses the App's live private
+  key through the documented path, and the token is used only to read its permissions and, if
+  allowed, write one throwaway secret.
 
 ### 7. Root access to an isolated OrbStack machine
 
@@ -147,7 +155,7 @@ update the table in the same change.
 
 - **Don't build rotation machinery,** don't change `factory-policy.toml`, and don't create the
   `Rotation /` projects. Those are increments 3 and 4.
-- **Don't touch a live credential,** and don't read one. A probe that needs a real credential is out
+- **Don't touch a live credential,** and don't read one, except question 6's stated exception. A probe that needs a real credential is out
   of scope; record the question as unmeasured.
 - **Edit only in a worktree** (`.worktrees/rotation-inc2`); the scheduled lanes run from the main
   tree.
