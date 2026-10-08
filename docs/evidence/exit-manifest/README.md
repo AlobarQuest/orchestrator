@@ -30,8 +30,14 @@ not the rule reads as a demonstration of the rule.
 ## Producing one
 
 ```bash
-python3 scripts/attest_wave_exit.py --record docs/evidence/exit-manifest/$(date -u +%F).json
+source scripts/sds-token.sh
+PATH="$PWD/.venv/bin:$PATH" .venv/bin/python scripts/attest_wave_exit.py \
+  --record docs/evidence/exit-manifest/$(date -u +%F).json
 ```
+
+The manifest's checks run `python3 scripts/exit_probe.py …`, so the repository's `.venv/bin` must
+come first on `PATH`. With the system `python3` every probe fails at import and every clause reads
+`fail`, which looks like a measured result and is not one.
 
 Run it from a machine that can read the authoritative plan under `~/docs` and holds the SDS
 operator credential; a CI runner can reach neither, so the workflow's own runs are structurally

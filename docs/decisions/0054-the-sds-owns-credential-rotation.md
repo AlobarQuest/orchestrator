@@ -186,3 +186,42 @@ declare `live_estate`. Reach is never inferred and members only narrow, so a pac
 reach its consumers lack would put a needless window on rotations that touch no hosted service.
 The change-window bullet now has each package declare its true reach. The first package,
 `rotation-openrouter-generic`, declares `external_system` and `operator_machine`.
+
+## Amendment 2 — increment 2 shipped, the interlock is named, and the rotation design is reopened (2026-10-08)
+
+**Shipped.** Increment 2's machinery is in production:
+
+- `src/rotation_proposer/` (#372, #374) reads what is due from infraops' `security-drift-cli
+  cred-findings` (infraops-mcp-server #109), revises a credential's standing package to
+  `ready_for_review`, and proposes the `work` record only after a named human approves it.
+- The work carrier's operational branch (#371) carries an approved rotation record as an intake
+  with no target repository, worked by HQ.
+- Migration 0041 admits the proposer to the observation spine.
+
+**The interlock, named in increment 2 rather than increment 3.** The Consequences section asked
+increment 3 to name how the SDS and the infraops window avoid acting on one credential. It is a
+per-credential registry flag, `rotated_by_sds = true` (infraops-mcp-server #110):
+
+- the 03:00 scan posts none of that credential's rotation triggers to change-manager;
+- the 04:00 window refuses any rotation plan for it, and for any credential the live registry does
+  not hold, reading the registry at window time rather than from the approved plan;
+- `cred-findings` reports the flag on every finding, and the proposer acts only on flagged
+  credentials. A standing package for an unflagged credential is a finding and is never acted on;
+  a flagged credential with no package is a finding too.
+
+Flag a credential only when no legacy rotation of it is in flight: the next 03:00 sync resolves
+its open security item.
+
+**The first rotation is parked, by Devon's choice on 2026-10-07.** `openrouter-generic` reached an
+approved change record (122) and an approved two-unit decomposition, and stopped before any unit
+was claimed, so the decomposition can still be superseded (ADR-0052). Working it showed every
+credential class heading toward its own procedure. Devon reopened the design: a dedicated session
+plans the overall rotation position and architecture before increment 3. The handoff is
+`docs/superpowers/plans/2026-10-08-credential-rotation-design-handoff.md`; the parked state is
+backlog item `37bb0f906c7b`.
+
+**Decided for OpenRouter, pending that session.** Devon accepted on 2026-10-07 that the SDS mints
+and revokes OpenRouter keys itself through a management key (`/api/v1/keys`), removing the console
+steps and the Keychain staging this ADR's flow assumed. That changes "What stays human" for that
+class, and the management key is account-wide and unscoped. How it is contained is the session's
+to decide.

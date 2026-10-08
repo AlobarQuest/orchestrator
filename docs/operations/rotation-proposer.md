@@ -98,7 +98,7 @@ than intent-packages #113 does not know `standing`, `credential_id` or `occurren
 profile, so it refuses the package. The checkout is the bump lane's too, so bring it current
 between passes, never during one.
 
-The observation vocabulary (migration `0041_rotation_proposer_obs`) must be live: build the image,
-migrate, swap (`deploy.md`). Without it every pass reports `unobserved` and exits 3. The work
-carrier also holds packages with no target repository (ADR-0054 increment 2 gives it an
-operational branch), so an approved rotation record is not carried until that change lands.
+The observation vocabulary (migration `0041_rotation_proposer_obs`) must be applied in
+production; without it every pass reports `unobserved` and exits 3. An approved rotation record is
+carried by the work carrier's operational branch, which registers an intake with no target
+repository, worked by HQ rather than dispatched to a runner.
