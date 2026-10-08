@@ -361,7 +361,9 @@ Placement rule: global CLAUDE.md §7.
   package to `ready_for_review` proposes nothing, and the first pass after a named human approves
   it proposes. "Due" is infraops' rule, read from `security-drift-cli cred-findings` and never
   re-implemented here. The occurrence comes from that answer's structured fields and never
-  contains today's date. Detail: `docs/operations/rotation-proposer.md`.
+  contains today's date. It acts only on a credential its registry entry marks `rotated_by_sds`,
+  which infraops' 04:00 window then refuses; a package without that flag is a finding and is never
+  acted on. Detail: `docs/operations/rotation-proposer.md`.
 - change-manager's `resolved` is terminal by design and will not be made recoverable; `reactivate`
   applies only to `wontfix`. Do not re-propose recoverability. History:
   `docs/history/claude-md-invariants-archive.md` #209.

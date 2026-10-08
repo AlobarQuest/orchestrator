@@ -79,7 +79,10 @@ checks these, in order:
   answer 200 before building. A 503 `migration_drift` here means the database is already ahead of
   the running image (a migration applied without its swap, or a hand change). `recheck` would then
   read that drift as this deploy's migration, so `prepare` refuses and says why.
-- **Build.** It saves the state file first, then runs
+- **Build.** Never run `release-image.yml` by hand for a commit you will deploy with this command:
+  every build pushes the commit's `sha-<full sha>` tag, the workflow refuses to overwrite a tag, and
+  `prepare`'s own build then fails for that commit whatever `--label` it is given. Deploy a later
+  commit instead. It saves the state file first, then runs
   `gh workflow run release-image.yml --ref main -f ref=<sha> -f label=<label>`. The workflow's
   `run-name` is `Release image <ref>`, and `gh workflow run` returns no run id, so `prepare`
   takes the first run newer than any it saw before dispatching whose title names this commit. It

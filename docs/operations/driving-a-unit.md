@@ -138,7 +138,10 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   (2) `ORCHESTRATOR_API_URL=https://sds.alobar.net` + `ORCHESTRATOR_API_TOKEN=<SYSTEM>` +
   `ORCHESTRATOR_API_CREDENTIAL_KEY_ID=orchestrator-system`; (3)
   `PYTHONPATH=~/Projects/project-standards/src:~/Projects/security-standards/src` or
-  `conformance-claim` fails `scanner_unavailable: portfolio.compliance is not importable`. Run
+  `conformance-claim` fails `scanner_unavailable: portfolio.compliance is not importable`.
+  `factory submit` reads the same `ORCHESTRATOR_API_URL`, and unset it defaults to
+  `http://127.0.0.1:8000`, where any local service answers. The enrichment step's brain keys need a
+  second BWS identity (`credentials.md` #202). Run
   once without `--submit` (dry — clones the target, runs the mutator twice, all four fail-closed
   validations) and review the proposal before re-running with `--submit`. (Verified 2026-07-22.)
 
