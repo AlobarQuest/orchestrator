@@ -84,16 +84,13 @@ Four decisions aren't carried forward:
 
 ### Blocked
 
-- **Wave-2 exit clause 2: a post-deployment observation of a release.** Devon ruled on 2026-10-06
-  that the release's post-deploy verification answers it: the exit probe counts a post-deploy unit
-  the verifier completed, which the deployment observation minted and so post-dates the deploy. Two
-  things blocked it, both found on 2026-10-07. The probe read `satisfied`, which no post-deploy
-  criterion can reach, so it counted zero for every release; it now reads `decided_by_verifier`
-  (#376). And `image-release`, the only program that binds a release with post-deploy verification,
-  binds only orchestrator releases, while the orchestrator was not a factory target. Devon
-  re-enabled it on 2026-10-07 (ADR-0015 amendment). The clause now needs one factory unit landed
-  here and shipped by `deploy_orchestrator.py`, and that release's revision added to the clause's
-  arguments in `docs/operations/wave-exit-manifest.toml`.
+Nothing is blocked. Wave-2 exit clause 2, a post-deployment observation of a release, closed on
+2026-10-08. The probe now counts a post-deploy unit the verifier decided (#376), the orchestrator
+is a factory target again (#377, ADR-0015 amendment of 2026-10-07), and the factory landed
+`orchestrator-tzdata-bump` (PR #378, merged by the orchestrator). `deploy_orchestrator.py` shipped
+it as `f90fd83-tzdata-amd64`, and its image-release step bound the unit and completed its post-deploy
+verification. With that release declared in the exit manifest, Wave 2 attests 4 of 4 clauses
+(`docs/evidence/exit-manifest/2026-10-08-wave2.json`).
 
 ### Deferred, with the evidence
 

@@ -1,0 +1,213 @@
+{
+  "measured_at": "2026-10-08T14:16:34.382645+00:00",
+  "verdict": "attested",
+  "exit_code": 0,
+  "manifest": "/Users/devon/Projects/orchestrator/.worktrees/clause2/docs/operations/wave-exit-manifest.toml",
+  "manifest_sha256": "04bc12b083676b4de4db8403368c5b593b1d96189496bd5a3a8fd6fdb276baac",
+  "authoritative_source": "/Users/devon/docs/software-delivery-system/2026-07-09-program-phase2-post-mvp-plan.md",
+  "authoritative_source_readable": true,
+  "openapi_url": "https://sds.alobar.net/openapi.json",
+  "pin_only": false,
+  "bars": [
+    {
+      "wave": 2,
+      "anchor": "**Wave 2 exit:**",
+      "body": "a merged PR carries its Evidence Pack; the traceability query answers the C question-list end-to-end for a real release; the pilot queue is orchestrator-canonical with the tracker as pure projection (Inc 1 established this model + closed the D8 interim documentarily; Inc 2's inbound path completes the two-way discipline). **Precondition (✅ MET 2026-07-23): WS-P2.16 has landed and is deployed, so every PR-producing unit is bound to its PR and the chain has no silent hole at its first joint.**",
+      "body_sha256": "e16d4a2dd3db7db6f936777cee8546ba13b844a50a5a8403a728f3bfd8821a8a",
+      "closeout": "~/docs/software-delivery-system/2026-07-28-wave2-closeout-and-wsp28-deploy-evidence.md",
+      "pin": "verified",
+      "pin_reason": null,
+      "clauses": [
+        {
+          "number": 1,
+          "text": "a merged PR carries its Evidence Pack",
+          "annotation": "",
+          "result": "pass",
+          "detail": "",
+          "note": "",
+          "checks": [
+            {
+              "kind": "command",
+              "basis": "live",
+              "result": "pass",
+              "detail": "at least one Evidence Pack marker comment exists in the target repositories, counted by REST enumeration (never `gh search`, which is blind to comments here and reports zero either way). Merged-ness is NOT established by this check -- comment enumeration cannot see it.",
+              "evidence": {
+                "argv": [
+                  "python3",
+                  "scripts/exit_probe.py",
+                  "evidence-pack-reached-a-merged-pr",
+                  "AlobarQuest/change-manager",
+                  "AlobarQuest/intent-packages",
+                  "AlobarQuest/orchestrator",
+                  "AlobarQuest/brain"
+                ],
+                "exit_code": 0,
+                "stdout": "PASS 13 'sds-evidence-pack' marker comment(s) across 4 repositories\n{\n  \"measured_against\": \"https://sds.alobar.net\",\n  \"method\": \"REST comment enumeration\",\n  \"per_repository\": {\n    \"AlobarQuest/brain\": 0,\n    \"AlobarQuest/change-manager\": 5,\n    \"AlobarQuest/intent-packages\": 5,\n    \"AlobarQuest/orchestrator\": 3\n  }\n}\n",
+                "stderr": "",
+                "duration_seconds": 2.096
+              }
+            },
+            {
+              "kind": "retained_evidence",
+              "basis": "retained",
+              "result": "pass",
+              "detail": "the merged half: GAP-4's record that change-manager PR #34 carried the marker and was merged (3d47088) is retained and unaltered",
+              "evidence": {
+                "path": "/Users/devon/docs/software-delivery-system/2026-07-29-gap4-closeout-evidence.md",
+                "sha256": "ee73bc0980e5cf7f5ae550a60d2483a88636a3cef48c12c72952c7ba31b951a5",
+                "declared_sha256": "ee73bc0980e5cf7f5ae550a60d2483a88636a3cef48c12c72952c7ba31b951a5"
+              }
+            }
+          ]
+        },
+        {
+          "number": 2,
+          "text": "the traceability query answers the C question-list end-to-end for a real release",
+          "annotation": "",
+          "result": "pass",
+          "detail": "",
+          "note": "THE RULING (Devon, 2026-08-05), recorded so a future session inherits a decision rather than re-litigating the phrase. \"End-to-end for a real release\" means the RELEASE's chain, assembled across its units -- not one unit's chain spanning every hop. Requiring a single chain would require the system to violate its own design: `record_release_artifact` refuses until a unit is COMPLETED, so a release binding necessarily lands on a later unit than the one that opened the pull request, and no unit can ever carry both. The hop list is the plan's own enumeration of the C question-list from exit criterion #6: intent -> unit -> PR -> commit -> artifact -> deployment -> observation, \"including the observation tail (reconciliation conditions + observations)\". A ruling that makes a clause measurable is not a ruling that it passes; the run's own result below is the authority on whether it does. THE SECOND RULING (Devon, 2026-08-06), on a question WS-P2.40's adversarial review raised and left open: `conditions` is the reconciliation-divergence hop, so requiring it non-empty made this clause satisfiable only by a release that went wrong. A hop that can only be populated by something going wrong is NOT required of a healthy release -- the chain must be ABLE to carry conditions, and their absence on a clean release is the correct answer rather than a missing hop. Deleting the hop from the list would have been the loosening this tool exists to refuse, so the hop stays required of every release and may instead resolve INAPPLICABLE. That is earned, never declared: nothing in this manifest can excuse a hop, and the probe grants it only where it has READ that the release's chain set covers every unit the release holds and that the conditions join is demonstrably still carrying conditions somewhere in production. A release whose chain set omits a divergence-bearing unit is refused, and so is a release that resolves to no chain at all. The same treatment is deliberately NOT extended to `observations`: when this was ruled, nothing produced a post-deployment observation of a release, which was a gap in the system rather than a condition of the world, and marking it inapplicable would have converted an absence into a shrug. THE THIRD RULING (Devon, 2026-10-04, SDS 1.1 item 5c): the chain now carries the landing ledger's record of each release commit, joined on the exact commit, and derives a pull request made outside the factory from it -- but a landing is recorded at merge, before deployment, so it does NOT answer the `observations` hop. Only an observation made at or after the release first deployed does; the probe reports the earlier ones as `observations_before_deployment`. THE FOURTH RULING (Devon, 2026-10-06): a release's post-deploy verification IS its post-deployment observation. The deployment observation mints the post-deploy unit, so everything that unit records post-dates the deploy; the probe counts a deployment whose post-deploy unit completed with every criterion decided by the verifier (`decided_by_verifier`, not `satisfied`, which also asks for named-check evidence no post-deploy criterion carries).",
+          "checks": [
+            {
+              "kind": "routes_served",
+              "basis": "live",
+              "result": "pass",
+              "detail": "production serves the query",
+              "evidence": {
+                "openapi_url": "https://sds.alobar.net/openapi.json",
+                "routes": [
+                  "/api/v1/traceability"
+                ],
+                "missing": []
+              }
+            },
+            {
+              "kind": "command",
+              "basis": "live",
+              "result": "pass",
+              "detail": "a production-anchored chain resolves intent -> unit -> commit -> artifact -> deployment, and the full hop census is reported rather than passed over",
+              "evidence": {
+                "argv": [
+                  "python3",
+                  "scripts/exit_probe.py",
+                  "traceability-answers-for-a-real-release",
+                  "intent",
+                  "unit",
+                  "commit",
+                  "artifact",
+                  "deployment"
+                ],
+                "exit_code": 0,
+                "stdout": "PASS 3/3 production chains resolve intent -> unit -> commit -> artifact -> deployment; hops empty on every chain: ['conditions']\n{\n  \"complete_chains\": [\n    \"update-orchestrator-tzdata\",\n    \"wsp28-production-deploy-verification\",\n    \"phase5-production-closeout\"\n  ],\n  \"empty_on_every_chain\": [\n    \"conditions\"\n  ],\n  \"hop_census\": [\n    {\n      \"hops\": {\n        \"artifact\": 1,\n        \"commit\": 1,\n        \"conditions\": 0,\n        \"deployment\": 1,\n        \"intent\": 1,\n        \"observations\": 1,\n        \"pr\": 1,\n        \"unit\": 1\n      },\n      \"unit_key\": \"update-orchestrator-tzdata\"\n    },\n    {\n      \"hops\": {\n        \"artifact\": 1,\n        \"commit\": 1,\n        \"conditions\": 0,\n        \"deployment\": 1,\n        \"intent\": 1,\n        \"observations\": 1,\n        \"pr\": 1,\n        \"unit\": 1\n      },\n      \"unit_key\": \"wsp28-production-deploy-verification\"\n    },\n    {\n      \"hops\": {\n        \"artifact\": 1,\n        \"commit\": 1,\n        \"conditions\": 0,\n        \"deployment\": 1,\n        \"intent\": 1,\n        \"observations\": 0,\n        \"pr\": 0,\n        \"unit\": 1\n      },\n      \"unit_key\": \"phase5-production-closeout\"\n    }\n  ],\n  \"measured_against\": \"https://sds.alobar.net\",\n  \"required_hops\": [\n    \"intent\",\n    \"unit\",\n    \"commit\",\n    \"artifact\",\n    \"deployment\"\n  ]\n}\n",
+                "stderr": "",
+                "duration_seconds": 0.508
+              }
+            },
+            {
+              "kind": "command",
+              "basis": "live",
+              "result": "pass",
+              "detail": "at least one declared release's chain, composed across its units, answers every hop of the C question-list -- counting a hop the probe MEASURED to be inapplicable as answered, and recording which hops those were and the reading that established each. The per-release hop census is recorded either way. It does NOT establish that a declared revision is a genuine production release rather than a fixture -- that is the manifest's declaration above, and the probe checks only that the revision shipped at all.",
+              "evidence": {
+                "argv": [
+                  "python3",
+                  "scripts/exit_probe.py",
+                  "release-chain-answers-every-hop",
+                  "538e4228-7da2-46d4-9b66-31df7fe93747",
+                  "705bdc8c-60e3-4d1c-b7fe-246030e9434f",
+                  "a94362a7-9993-4f92-b2c4-01ae21a5ab02"
+                ],
+                "exit_code": 0,
+                "stdout": "PASS 1/3 declared real release(s) answer intent -> unit -> pr -> commit -> artifact -> deployment -> conditions -> observations composed across their units; inapplicable on measurement: ['conditions']\n{\n  \"complete_releases\": [\n    \"a94362a7-9993-4f92-b2c4-01ae21a5ab02\"\n  ],\n  \"measured_against\": \"https://sds.alobar.net\",\n  \"release_census\": [\n    {\n      \"chains\": 3,\n      \"composed_hops\": {\n        \"artifact\": 1,\n        \"commit\": 1,\n        \"conditions\": 0,\n        \"deployment\": 1,\n        \"intent\": 3,\n        \"observations\": 0,\n        \"pr\": 1,\n        \"unit\": 3\n      },\n      \"deployments\": 1,\n      \"inapplicability_measured\": {\n        \"conditions\": {\n          \"carrier_unit_key\": \"post-deploy:bbd29984-5fe8-4b60-8a2a-4245bb379be8:drill\",\n          \"chains\": 3,\n          \"refused_at\": null,\n          \"release_units\": 3,\n          \"release_units_carrying_a_divergence\": [],\n          \"scanned\": 65,\n          \"units_not_covered_by_a_chain\": [],\n          \"unread\": 0\n        }\n      },\n      \"inapplicable_hops\": {\n        \"conditions\": \"the release's chain set covers every unit of the release, no unit of the release carries a divergence its composed chain did not, and the conditions join is demonstrably still carrying them outside this release (unit post-deploy:bbd29984-5fe8-4b60-8a2a-4245bb379be8:drill) -- so a divergence exists to be recorded and this release has none\"\n      },\n      \"observations_before_deployment\": 1,\n      \"pack_units\": 3,\n      \"post_deploy_verifications\": 0,\n      \"release_artifacts\": 1,\n      \"revision_id\": \"538e4228-7da2-46d4-9b66-31df7fe93747\",\n      \"unanswered_hops\": [\n        \"observations\"\n      ]\n    },\n    {\n      \"chains\": 2,\n      \"composed_hops\": {\n        \"artifact\": 1,\n        \"commit\": 1,\n        \"conditions\": 0,\n        \"deployment\": 1,\n        \"intent\": 2,\n        \"observations\": 0,\n        \"pr\": 0,\n        \"unit\": 2\n      },\n      \"deployments\": 1,\n      \"inapplicability_measured\": {\n        \"conditions\": {\n          \"carrier_unit_key\": \"post-deploy:bbd29984-5fe8-4b60-8a2a-4245bb379be8:drill\",\n          \"chains\": 2,\n          \"refused_at\": null,\n          \"release_units\": 2,\n          \"release_units_carrying_a_divergence\": [],\n          \"scanned\": 65,\n          \"units_not_covered_by_a_chain\": [],\n          \"unread\": 0\n        }\n      },\n      \"inapplicable_hops\": {\n        \"conditions\": \"the release's chain set covers every unit of the release, no unit of the release carries a divergence its composed chain did not, and the conditions join is demonstrably still carrying them outside this release (unit post-deploy:bbd29984-5fe8-4b60-8a2a-4245bb379be8:drill) -- so a divergence exists to be recorded and this release has none\"\n      },\n      \"observations_before_deployment\": 0,\n      \"pack_units\": 2,\n      \"post_deploy_verifications\": 0,\n      \"release_artifacts\": 1,\n      \"revision_id\": \"705bdc8c-60e3-4d1c-b7fe-246030e9434f\",\n      \"unanswered_hops\": [\n        \"observations\",\n        \"pr\"\n      ]\n    },\n    {\n      \"chains\": 2,\n      \"composed_hops\": {\n        \"artifact\": 1,\n        \"commit\": 1,\n        \"conditions\": 0,\n        \"deployment\": 1,\n        \"intent\": 2,\n        \"observations\": 1,\n        \"pr\": 1,\n        \"unit\": 2\n      },\n      \"deployments\": 1,\n      \"inapplicability_measured\": {\n        \"conditions\": {\n          \"carrier_unit_key\": \"post-deploy:bbd29984-5fe8-4b60-8a2a-4245bb379be8:drill\",\n          \"chains\": 2,\n          \"refused_at\": null,\n          \"release_units\": 2,\n          \"release_units_carrying_a_divergence\": [],\n          \"scanned\": 65,\n          \"units_not_covered_by_a_chain\": [],\n          \"unread\": 0\n        }\n      },\n      \"inapplicable_hops\": {\n        \"conditions\": \"the release's chain set covers every unit of the release, no unit of the release carries a divergence its composed chain did not, and the conditions join is demonstrably still carrying them outside this release (unit post-deploy:bbd29984-5fe8-4b60-8a2a-4245bb379be8:drill) -- so a divergence exists to be recorded and this release has none\"\n      },\n      \"observations_before_deployment\": 1,\n      \"pack_units\": 2,\n      \"post_deploy_verifications\": 1,\n      \"release_artifacts\": 1,\n      \"revision_id\": \"a94362a7-9993-4f92-b2c4-01ae21a5ab02\",\n      \"unanswered_hops\": []\n    }\n  ],\n  \"required_hops\": [\n    \"intent\",\n    \"unit\",\n    \"pr\",\n    \"commit\",\n    \"artifact\",\n    \"deployment\",\n    \"conditions\",\n    \"observations\"\n  ]\n}\n",
+                "stderr": "",
+                "duration_seconds": 30.54
+              }
+            }
+          ]
+        },
+        {
+          "number": 3,
+          "text": "the pilot queue is orchestrator-canonical with the tracker as pure projection",
+          "annotation": " (Inc 1 established this model + closed the D8 interim documentarily; Inc 2's inbound path completes the two-way discipline).",
+          "result": "pass",
+          "detail": "",
+          "note": "",
+          "checks": [
+            {
+              "kind": "routes_served",
+              "basis": "live",
+              "result": "pass",
+              "detail": "the canonical-side projection surfaces are served",
+              "evidence": {
+                "openapi_url": "https://sds.alobar.net/openapi.json",
+                "routes": [
+                  "/api/v1/tracker-bindings",
+                  "/api/v1/work-units/{unit_id}/tracker-binding",
+                  "/api/v1/reconciliation/tracker-detect"
+                ],
+                "missing": []
+              }
+            },
+            {
+              "kind": "command",
+              "basis": "live",
+              "result": "pass",
+              "detail": "two necessary conditions: canonical-side bindings exist, and the adapter's isolation suite passes so it imports nothing from the orchestrator. Neither establishes write-direction, so 'orchestrator-canonical' is evidenced, not proven.",
+              "evidence": {
+                "argv": [
+                  "python3",
+                  "scripts/exit_probe.py",
+                  "tracker-is-a-projection"
+                ],
+                "exit_code": 0,
+                "stdout": "PASS 4 canonical tracker binding(s); adapter isolation suite exit 0\n{\n  \"bindings\": 4,\n  \"isolation_exit_code\": 0,\n  \"measured_against\": \"https://sds.alobar.net\"\n}\n",
+                "stderr": "",
+                "duration_seconds": 1.069
+              }
+            }
+          ]
+        },
+        {
+          "number": 4,
+          "text": "**Precondition (✅ MET 2026-07-23): WS-P2.16 has landed and is deployed, so every PR-producing unit is bound to its PR and the chain has no silent hole at its first joint.**",
+          "annotation": "",
+          "result": "pass",
+          "detail": "",
+          "note": "Counted as a clause because the plan states it inside the exit paragraph and the programme's own 'four of four' needs four members. Treating it as decoration would be the summarising move this file exists to prevent.",
+          "checks": [
+            {
+              "kind": "routes_served",
+              "basis": "live",
+              "result": "pass",
+              "detail": "the binding route is deployed -- the WS-P2.1 failure was a route that existed in main and not in production",
+              "evidence": {
+                "openapi_url": "https://sds.alobar.net/openapi.json",
+                "routes": [
+                  "/api/v1/work-units/{unit_id}/pr-binding"
+                ],
+                "missing": []
+              }
+            },
+            {
+              "kind": "command",
+              "basis": "live",
+              "result": "pass",
+              "detail": "a NECESSARY condition for the precondition's head, that WS-P2.16 has landed and is deployed: the route is served and PR-capable units have completed through the submit guard. It does NOT establish the trailing 'every PR-producing unit is bound' over the whole population -- the binding table has no GET, and most completed units predate the guard's 2026-07-23 deploy.",
+              "evidence": {
+                "argv": [
+                  "python3",
+                  "scripts/exit_probe.py",
+                  "every-pr-producing-unit-is-bound"
+                ],
+                "exit_code": 0,
+                "stdout": "PASS /api/v1/work-units/{unit_id}/pr-binding is served and 32 completed PR-capable unit(s) passed the submit guard that requires a binding\n{\n  \"measured_against\": \"https://sds.alobar.net\",\n  \"pr_capable_completed_units\": 32\n}\n",
+                "stderr": "",
+                "duration_seconds": 7.4
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
