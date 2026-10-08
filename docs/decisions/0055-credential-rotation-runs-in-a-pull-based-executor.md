@@ -1,9 +1,9 @@
 # ADR-0055 — Credential rotation runs in a pull-based executor through one contract
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-08
 - **Decided by:** Devon, decisions recorded 2026-10-08 in
-  `docs/superpowers/specs/2026-10-08-credential-rotation-requirements.md`. Acceptance pending.
+  `docs/superpowers/specs/2026-10-08-credential-rotation-requirements.md`. Accepted 2026-10-08 ("Yes, I accept ADR-0055").
 - **Supersedes:** the parts of ADR-0054 named in "What this changes in ADR-0054".
 - **Relates to:** ADR-0054 (the SDS owns credential rotation), ADR-0052 (superseding an unworked
   decomposition), ADR-0039 (out-of-process producers), ADR-0011 (known-good patterns)

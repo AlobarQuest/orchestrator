@@ -225,3 +225,10 @@ and revokes OpenRouter keys itself through a management key (`/api/v1/keys`), re
 steps and the Keychain staging this ADR's flow assumed. That changes "What stays human" for that
 class, and the management key is account-wide and unscoped. How it is contained is the session's
 to decide.
+
+## Amendment 3 — the rotation design is ADR-0055 (2026-10-08)
+
+Devon accepted ADR-0055 on 2026-10-08. It replaces the parts of this ADR it names in "What this
+changes in ADR-0054": where the rotation worker runs and what it can reach, what stays human, how
+the change window is enforced, and increments 3 and 4. The parked `openrouter-generic` rotation is
+retired and redone under ADR-0055's increments.
