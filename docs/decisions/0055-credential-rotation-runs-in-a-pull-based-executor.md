@@ -7,6 +7,8 @@
 - **Supersedes:** the parts of ADR-0054 named in "What this changes in ADR-0054".
 - **Relates to:** ADR-0054 (the SDS owns credential rotation), ADR-0052 (superseding an unworked
   decomposition), ADR-0039 (out-of-process producers), ADR-0011 (known-good patterns)
+- **Review:** revised after an independent adversarial review on 2026-10-08, which found fourteen
+  defects in the first draft. "Review findings and how they're resolved" maps each one.
 
 ## Context
 
@@ -20,28 +22,37 @@ goal for this design:
 
 The facts this ADR rests on are in `docs/superpowers/specs/2026-10-08-credential-rotation-research.md`.
 The requirements (R1–R18), the options considered, and Devon's decisions are in
-`docs/superpowers/specs/2026-10-08-credential-rotation-requirements.md`. This ADR doesn't repeat
-them; it records the design they produce.
+`docs/superpowers/specs/2026-10-08-credential-rotation-requirements.md`. This ADR records the design
+they produce.
 
 ### Facts measured for this ADR (2026-10-08)
 
 - **One hash per machine identity.** `identity/auth.py::_validate_m2m_credentials` refuses two key
-  ids for one `agent_id`, and each key id holds one `token_hash`. An orchestrator bearer can't
-  overlap two values without a code change.
-- **Change windows compose by intersection.** `factory_policy.py::window_refusal` returns
-  `outside_change_window` if any declared reach member's window is closed. A package declaring
-  `external_system` and `operator_machine` is bound by `operator_machine`'s 02:00–06:00 window.
-- **Windows are checked only at dispatch admission**, and rotation units are never dispatched, so
-  nothing windows them today (`reach_admission.py::change_window_refusal`, "Asked once, at
-  admission, and nowhere else").
-- **Keychain items are readable by any process running as Devon's user.** `scripts/sds-token.sh`
-  creates its item with `-T /usr/bin/security`, which trusts that binary for every caller.
-- **OrbStack (2.2.3) machines are reachable from the Mac.** With default settings, Devon's user
-  gets root in a machine with no password, the machine sees `/Users/devon`, and it can run commands
-  on the Mac. An isolated machine (`orb create --isolated`) blocks the machine-to-Mac direction but
+  ids for one `agent_id`, and each key id holds one `token_hash`. It runs on every request.
+- **The boot parser refuses any extra field.** `main.py::_m2m_credentials` requires each entry's
+  keys to equal exactly `{"agent_id", "token_hash"}`, or the orchestrator doesn't start.
+- **Change windows compose by intersection** (`factory_policy.py::window_refusal`), and return no
+  objection for an undeclared reach, relying on admission to refuse that case.
+- **Windows are checked only at dispatch admission** (`reach_admission.py::change_window_refusal`),
+  and `services/lifecycle/claims.py` has no window check. Rotation units are claimed, never
+  dispatched, so nothing windows them today.
+- **`claim_unit` checks role, state, attempts and budget only.** Any WORKER can claim any ready unit;
+  the `operational_action` guard applies only at dispatch.
+- **Evidence isn't secret-scanned.** The secret detector (`kernel/secret_metadata.py`) is used by
+  observations and release artifacts, not by `services/verifier/evidence.py`. Evidence rows are
+  append-only, so a value written there can't be removed.
+- **Reclaiming a lapsed claim is SYSTEM-only** and runs nowhere on its own.
+- **The keeper projects hold the estate's largest secrets.** `Ops / Platform` holds the production
+  Coolify API token, GitHub and Anthropic keys and the Namecheap keys
+  (`infraops-mcp-server/.bws-secrets.toml`) beside several rotation keepers. `SDS Operator` holds the
+  SYSTEM and VERIFIER bearers.
+- **No registry repository requires a review to merge** (`reviews: null` on all four, by design).
+- **Keychain items are readable by any process running as Devon's user** (`scripts/sds-token.sh`
+  trusts `/usr/bin/security` with `-T`).
+- **OrbStack (2.2.3) machines are reachable from the Mac.** With default settings, Devon's user gets
+  root in a machine with no password. An isolated machine blocks the machine-to-Mac direction but
   keeps "SSH and `orb` access" from the Mac (https://docs.orbstack.dev/machines/isolated). Every
-  machine's disk is one file, `data.img.raw`, mode 644. OrbStack excludes it from Time Machine
-  (`data_allow_backup: false`) and exposes machine ports to the LAN by default.
+  machine's disk is one file, `data.img.raw`, mode 644, excluded from Time Machine.
 
 ## Decision
 
@@ -51,26 +62,38 @@ A deterministic program, the **rotation executor**, does every step that moves a
 It has no LLM. It lives in this repository as `src/rotation_worker/` (ADR-0054's settled location).
 
 - **It pulls; nothing pushes to it.** It claims approved rotation units from the orchestrator with
-  its own WORKER M2M identity, the way factory-runner takes dispatched work. It listens on no port.
+  its own WORKER M2M identity, as HQ claims operational units today. It listens on no port.
 - **The orchestrator is the control plane; the executor is the only place values exist.** The
   orchestrator holds the change record, the package, the approvals, the units and the evidence. The
-  executor holds the admin credentials and the values in flight. No value ever flows back.
-- **Its authority comes from the claim, not from who starts it.** Started by hand, it still acts
-  only on a unit it claimed after a human approval.
-- **Everything it acts on comes from the registry, never from the unit.** A unit names a credential
-  id and an occurrence. The provider, the endpoints, the consumers and their destinations are read
-  from the credential registries at a git revision the executor pins. Unit data can't name a
-  destination, so a compromised orchestrator can trigger a rotation but can't redirect a value.
+  executor holds the admin credentials and the values in flight. No value flows back.
+- **Claims are confined both ways, at the server.** A unit whose package is a standing rotation
+  package can be claimed only by the executor's `agent_id`, and the executor's identity can claim
+  only such units. This is enforced in the orchestrator's claim path, beside `_confine_observer`'s
+  pattern, not by the executor's own restraint.
+- **What it acts on is fixed by the human approval, not by the unit.** The approved package
+  revision carries a fingerprint of the credential's registry entry: provider, endpoints, consumer
+  kinds and destinations. The executor reads the registry at a revision that must be an ancestor of
+  the repository's `main`, recomputes the fingerprint, and refuses on any difference. A changed
+  consumer set therefore needs a new package revision and a new human approval, whoever merged the
+  registry change.
+- **It re-probes rather than trusts.** Evidence tells the executor where a rotation stopped. Before
+  it acts on a step evidence marks done, it re-probes that step's result wherever a probe exists. It
+  never takes a provider key id from evidence: the id of a key to revoke is derived at revoke time
+  from the quarantined value itself, through the provider.
+- **It checks the hand-over at act time.** Before any step, it confirms the credential is still
+  `rotated_by_sds = true` in the registry (R6).
 
 ### 2. Where it runs
 
 **A dedicated, isolated OrbStack VM on the operator machine** (`orb create --isolated` with
 `--isolate-network`), built so it moves unchanged to a VPS if the SDS becomes a SaaS offering. In
 that case each customer runs the executor beside their own credentials, as self-hosted CI runners
-work, and the provider never holds customer admin credentials.
+work.
 
-The VM holds nothing that can't be rebuilt: no rotation state lives only on its disk (see
-decision 9).
+- It runs as a service in the VM, started by the VM's init system. The root token is in a file
+  readable only by the service's user. Its start path is proven with only `PATH` and `HOME` set
+  (R16).
+- The VM holds nothing that can't be rebuilt (decision 9).
 
 **Accepted residual risk.** Any process running as Devon's user, including an agent session, can
 reach the VM and read what it holds. Devon accepted this on 2026-10-08: the Mac already holds the
@@ -78,46 +101,56 @@ keys to every other host, so moving the executor elsewhere wouldn't stop a deter
 Mac either. What the placement does prevent is an agent reaching the values *by accident*: no value
 is in the Mac's Keychain, environment, shell or files, and none passes through a tool.
 
-### 3. One contract with per-provider adapters
+### 3. One contract, with an order each adapter declares
 
-Every rotation runs the same ordered steps:
+Every rotation is made of the same kinds of step: **mint**, **stage**, **verify-new**, **store**,
+**deploy**, **verify-consumers**, **retire-old** (revoke, or end an overlap) and **confirm-dead**.
+Each adapter declares its order and, per step, `machine` or `human`. A self-issued bearer, for
+example, deploys before it can verify, because the orchestrator must know the new hash first.
 
-1. **mint** — create the new value
-2. **verify-new** — probe the new value is live
-3. **store** — write it to its BWS keeper, quarantining the old value first
-4. **deploy** — write it to each consumer
-5. **verify-consumers** — probe each consumer path with the new value
-6. **revoke** — invalidate the old value
-7. **confirm-dead** — probe the old value is refused
-8. **record** — file fingerprint evidence and close the unit
+The contract enforces these invariants for every adapter:
 
-An adapter declares, per step, one of `machine` or `human`. A `human` step becomes a step in the
-standing package: the executor stops, files what it has, and resumes when the human's act is
-attested. The contract, not the adapter, enforces the order: revoke is unreachable until
-verify-consumers has passed for every registered consumer (R10).
+- **Retire-old is reachable only after every registered consumer has passed verify-consumers**
+  (R10), and it is the last step that changes what any consumer accepts.
+- **New is never old.** Every step after mint refuses if the new value's fingerprint equals the
+  old one's. A missed human stage can't turn into revoking the live value.
+- **The old value is quarantined in a named BWS secret before the keeper changes**, and the
+  executor refuses if the keeper already holds a new value with no quarantine ("never guess", as the
+  legacy executor does).
+- **Every probe is shown to refuse a known-bad value in the same run** before its answer counts,
+  and both results are evidence (R14). Live is exactly 200; dead is exactly 401 or the provider's
+  documented equivalent; anything else stops the rotation.
+- **A human step is its own unit.** The decomposition for a rotation is fixed per adapter, with a
+  readiness dependency between units, so no claim ever waits on a human. A human-minted value is
+  staged in a per-credential **staging secret** in the credential's keeper project, never in the
+  keeper itself and never on the Mac.
+- **After confirm-dead, the quarantine and staging secrets are deleted**, and the deletion is
+  recorded.
+- **Values never enter a process argument list** (R1). The executor talks to BWS through its API
+  in-process, not the `bws` CLI, whose `secret edit` takes the value as an argument. That adds one
+  dependency, accepted for R1.
 
-Every probe is shown to refuse a known-bad value in the same run before its answer counts, and the
-evidence carries both results (R14). Live is exactly 200; dead is exactly 401 or the provider's
-documented equivalent; anything else is indeterminate and the executor stops.
+### 4. Where credentials live, and what the root can reach
 
-### 4. Where the admin credentials live
-
-- **Each provider's admin credential lives in its own BWS project** (for example
-  `Rotation / OpenRouter`). The executor fetches only the one secret the claimed unit's adapter
-  needs, by UUID, at the moment it needs it.
-- **One BWS machine account, the executor's, reads those projects.** Its access token is the
-  **root**: it lives only in the VM, Devon mints and rotates it by hand at the Bitwarden web app,
-  and it is never rotated by the executor.
-
-  This reconciles two recommendations Devon agreed to: separate projects per provider (Q2) and a
-  single hand-rotated root (R8). Separate machine accounts per project would add tokens without
-  adding containment, because all of them would sit on the same VM. The per-unit fetch is what
-  limits a code defect to one provider.
-- **The Coolify API token is not given to the executor** until a scope narrower than `write` +
-  `deploy` + `read:sensitive` is measured. Until then, every step that writes a Coolify env or
-  restarts a hosted app is a `human` step.
+- **Rotated credentials move to dedicated keeper projects** (`Rotation / Keepers`), which hold
+  nothing but the keepers, quarantines and staging secrets of `rotated_by_sds` credentials. A
+  credential is moved there when it is handed to the SDS. Every machine account that reads the
+  keeper is granted read on that project.
+- **Each provider's admin credential lives in its own project** (for example
+  `Rotation / OpenRouter`). The executor fetches only the one admin secret the claimed unit's
+  adapter needs, by UUID, when it needs it.
+- **The executor's BWS machine account is the root.** It has write on `Rotation / Keepers` and read
+  on the `Rotation / <provider>` projects, and nothing else: not `Ops / Platform`, not
+  `SDS Operator`. Its token lives only in the VM.
+- **The hand-rotated set** is the root token, every admin credential, and the executor's own WORKER
+  bearer. Devon rotates these by hand; the executor never rotates them (R8, R12).
+- **The SYSTEM and VERIFIER bearers stay in `SDS Operator` and stay hand-rotated.** Rotating them
+  by machine would give the root standing write over identities that outrank the executor, which
+  the "never borrow another identity" rule forbids. They can join later by a separate decision.
+- **The Coolify API token stays out of the executor** until a narrower scope is measured and Devon
+  decides it (increment 2). Until then every Coolify write and hosted restart is a `human` step.
 - **Minted keys are as weak as the provider allows:** an `expires_at` and a credit `limit` on every
-  OpenRouter key; the executor revokes only a key whose provider id it pinned when it minted it.
+  OpenRouter key.
 
 ### 5. What may trigger a rotation
 
@@ -128,88 +161,119 @@ issues, commits or tasks never triggers anything, directly or through an agent's
 ### 6. Exposure response is a human decision
 
 **No automatic disable or revoke** (Devon, 2026-10-08). An exposure finding is one input; whether
-and how fast to contain depends on factors the finding doesn't carry. An exposure rotation follows
-the same flow as any other. When Devon approves it, the record shows, at minimum: where the value
-was exposed (the scanner's exposure record), every consumer and whether it is hosted, and whether
-the provider can disable reversibly. Devon names any further factors before increment 3.
+and how fast to contain depends on factors the finding doesn't carry. When Devon approves an
+exposure rotation, the record shows, at minimum: where the value was exposed (the scanner's exposure
+record), every consumer and whether it is hosted, whether the provider can disable reversibly, and
+any credential that shares the value. Devon names further factors before increment 5.
 
-An exposure rotation of a self-issued bearer may skip the overlap in decision 7, taking the short
-outage so the exposed value stops working at once. Devon chooses at approval.
+Credentials that share one value (the observer and drift-reporter bearers) are rotated together.
+An exposure of either is an exposure of both.
 
-### 7. Self-issued bearers overlap for a bounded time
+### 7. Self-issued bearers overlap until every consumer has switched
 
-The orchestrator accepts, per identity, an optional previous hash with an expiry:
+The orchestrator accepts, per identity, an optional previous hash:
 `"previous": {"token_hash": "<sha256>", "until": "<UTC instant>"}`. The current hash is always
-accepted; the previous hash only before `until`. Boot refuses a previous hash whose `until` is
-further than one change window away. change-manager gets the equivalent change for its bearers.
+accepted; the previous hash only before `until`. change-manager gets the equivalent change.
 
-The executor never rotates the bearer it is using in that run (R12). Its own WORKER bearer is
-rotated through the same contract with every step `human`.
+- **The overlap ends by an explicit retire-old step**, after every consumer has passed
+  verify-consumers: the executor (or a human step, while Coolify writes are human) removes
+  `previous` and restarts, inside a change window. `until` is a backstop, set to seven days, not the
+  schedule.
+- **If `until` is near and consumers haven't all switched**, the executor stops and reports; it
+  never lets the backstop end the overlap on unverified consumers.
+- **An exposure rotation may skip the overlap**, taking a short outage so the exposed value stops
+  working at once. Devon chooses at approval.
+- **The parser change ships, deploys and is verified on production before any rotation writes
+  `previous`.** An image older than that change refuses to start with `previous` present, so
+  rolling back past it requires removing `previous` first. The deploy runbook states this.
+- Before any orchestrator restart, the executor confirms no dispatched run is live, records the
+  previous credentials setting's hash, and validates the new setting.
 
 ### 8. Change windows apply at the orchestrator's claim
 
 **Devon decided (2026-10-08):** the window check lives in the orchestrator's claim path, so it holds
 whoever claims, and resuming a paused rotation counts as continuing, not starting.
 
-- **Where.** A claim refuses `outside_change_window` when the unit's package declares a reach whose
-  window is closed, using `window_refusal`. It applies to every claimant, including HQ working an
-  operational unit by hand, which is what ADR-0054 already said was meant to happen.
-- **Starting versus continuing.** A first claim of a unit is a start and is windowed. A claim of a
-  unit that already has evidence from an earlier attempt is a continuation and isn't windowed, so a
-  rotation paused for a human step resumes when the human acts, at any hour. Renewing a claim
-  continues and is never windowed.
-- **The first hosted step is still windowed.** Continuing must not let a rotation that has touched
-  nothing hosted begin touching it at midday. So the executor refuses to take the first step that
+- **Where.** For operational units only, a claim refuses `outside_change_window` when the unit's
+  package declares a reach whose window is closed. Unlike `window_refusal` at admission, it fails
+  closed on an undeclared or unreadable reach, because no admission check stands behind it. It
+  applies to every claimant of an operational unit, including HQ working one by hand.
+- **Starting versus continuing.** A first claim is a start and is windowed. A reclaim of a unit with
+  evidence from an earlier attempt is a continuation and isn't. Renewal continues and is never
+  windowed. This departs deliberately from the rule that a per-claim rule covers all three lease
+  writers: the window gates starts, and renewal never starts work.
+- **The first hosted step is still windowed.** The executor refuses to take the first step that
   writes to a hosted consumer (a Coolify env, an orchestrator or change-manager restart) outside the
-  window, and waits for the next one. Steps after it continue at any hour, because finishing a
-  started change is safer than leaving it half done.
-- A rotation that starts inside the window runs to completion (R17).
+  window. Steps after it continue at any hour, because finishing a started change is safer than
+  leaving it half done.
+- **Only the window applies at claim.** The other admission terms (posture, known-good patterns)
+  aren't asked: an operational unit's authority is already human-approved.
 
-### 9. State and recovery
+### 9. State, leases and recovery
 
-- **Rotation state lives in the orchestrator**, as evidence on the unit: per step, the fingerprints
-  (sha256 prefix and length) of the values involved and the probe results. Never a value.
-- **A new value goes into BWS before anything depends on it.** The old value is quarantined in a
-  named BWS secret before the keeper changes, as the legacy executor does.
-- **Every step is idempotent and resumes from evidence.** On restart the executor reads the unit's
-  evidence, re-probes the current state, and either continues or stops with a named reason. It
-  never guesses (R11). If the VM is lost mid-rotation, both values are still live (the old one is
-  revoked last), and the rotation resumes from a rebuilt VM.
-- **Orchestrator bearer rotation records the previous hash before writing**, and validates the
-  credentials setting before the restart, because a malformed setting stops the orchestrator from
-  starting at all.
+- **Rotation state lives in the orchestrator**, as evidence on the units: fingerprints (sha256
+  prefix and length) and probe results per step. Never a value.
+- **Rotation evidence has a strict schema and is secret-scanned at ingest** with the observation
+  detector. Field names avoid the detector's key-name parts.
+- **A new value is stored in BWS (staging or keeper) before anything depends on it.** If the VM is
+  lost, the rotation resumes from a rebuilt VM with both values still accepted, because retire-old
+  runs only after every consumer verified.
+- **Leases:** the executor renews while a step runs, and each step is bounded to fit the lease
+  ceiling (2 hours). No claim waits on a human, because human steps are separate units. A step that
+  can't fit (for example confirming a BWS token dead, which can read live for up to an hour after
+  revoke) is split into its own unit that starts after the wait.
+- **A lapsed claim** (a crash, a sleeping Mac) is reclaimed by the existing SYSTEM recovery path on
+  request; that is rare enough to stay a human-initiated act. Rotation units carry at least three
+  attempts.
 
 ### 10. Human gates
 
 Devon clicks every gate on the first rotation of each class (ADR-0054 amendment 1). Which gates
-graduate, and on what evidence, is decided after that rotation has run (Devon, 2026-10-08).
+graduate, and on what evidence, is decided after that rotation has run.
+
+## How each consumer kind is verified
+
+R15 says a green write isn't proof. Two kinds can't be probed by the executor; each is a stated
+exception, and Devon accepts these with this ADR.
+
+| Consumer kind | Verified by | Exception to R15? |
+|---|---|---|
+| `bws-secret` (keeper) | Reading the keeper back and comparing fingerprints | No |
+| `coolify-env-hash` (orchestrator bearers) | Authenticating to `sds.alobar.net` with the new value | No |
+| `coolify-env` (change-manager bearers) | Authenticating to `change-mgr.alobar.net` with the new value, with a named User-Agent | No |
+| `coolify-env` (a third-party key a hosted app uses) | A human attestation that the app works after restart, until an app-level probe exists | **Yes** |
+| `runtime-fetch` | The keeper check (these consumers read the keeper by UUID at each run), plus the consumer's next scheduled run succeeding | No |
+| `gh-actions-secret` | A human attestation until a probe workflow exists (increment 7 decides it; it needs both workflow-guard allowlists) | **Yes** |
+| `keychain` | Not a machine kind. `openrouter-generic`'s Keychain copy is dropped (below); BWS machine tokens' Keychain consumers are human-rotated | — |
 
 ## Threat model
 
 ### Assets
 
-| Asset | Where it lives | Who can read it | Scope | Expiry | Rotated by |
-|---|---|---|---|---|---|
-| Executor BWS token (**root**) | The VM only | The executor; anything with root in the VM | Read on the rotation projects; write on the keeper projects for registered credentials | Set at mint | Devon, by hand |
-| OpenRouter management key | `Rotation / OpenRouter` BWS project | The root | Account-wide, unscoped (provider limit) | Unverified whether it can carry one | Devon, by hand |
-| GitHub secret-writer PAT (increment 5) | Its own BWS project | The root | Secrets: write on the repositories that hold a registered copy | 180 days or less | Devon, by hand |
-| Executor WORKER bearer | `SDS Operator` keeper, the VM | The root | Claim and file evidence on rotation units | Registry age | Executor contract, all steps human |
-| Values in flight | The executor's memory; BWS keeper and quarantine | The root | The rotated credential's scope | Until revoked | — |
+| Asset | Where it lives | Who can read it | Scope | Rotated by |
+|---|---|---|---|---|
+| Executor BWS token (**root**) | The VM only | The executor; anything with root in the VM | Write on `Rotation / Keepers`; read on `Rotation / <provider>` | Devon, by hand |
+| OpenRouter management key | `Rotation / OpenRouter` | The root | Account-wide, unscoped (provider limit) | Devon, by hand |
+| GitHub secret-writer PAT (increment 7) | `Rotation / GitHub` | The root | Secrets: write on the repositories holding a registered copy | Devon, by hand |
+| Executor WORKER bearer | Its own BWS project, readable by the root | The root | Claim and file evidence on rotation units only (decision 1) | Devon, by hand |
+| Rotated credentials and values in flight | `Rotation / Keepers`; the executor's memory | The root, and each credential's consumers' accounts | That credential's scope | The executor |
 
 ### Threats
 
 | # | Threat | What it gains | Containment |
 |---|---|---|---|
-| T1 | An agent session on the Mac reads the VM | Every asset above | **Accepted residual** (decision 2). No value is in the Mac's Keychain, files or environment, so it takes a deliberate act. |
-| T2 | A forged trigger from fetched content | Unwanted rotations; churn or outage | Triggers are the registry and `cred-findings` only (decision 5); every rotation needs a human-approved record. |
-| T3 | The orchestrator is compromised | It can mark units approved and make the executor rotate | Rotations are make-before-break, so the result is churn, not exposure. Destinations come from the pinned registry, never the unit, so no value can be redirected (decision 1). |
-| T4 | A registry change adds a hostile consumer | The new value is written somewhere an attacker reads | Registries change only through reviewed merges. The executor accepts only known consumer kinds and destinations inside the estate (AlobarQuest repositories, the Coolify team, the rotation and keeper BWS projects), and pins the registry revision it read. |
-| T5 | The root writes a keeper with an attacker's value | Consumers run on an attacker's account (for example, an OpenRouter key whose usage the attacker reads) | Only through T1, which is accepted. The fingerprint evidence for every write makes a substitution visible after the fact. |
-| T6 | A compromised executor dependency | The same as T1, from inside | Few dependencies, pinned by hash. |
-| T7 | The management key revokes the wrong key | An outage of another service (for example the brains' separate OpenRouter key) | The executor revokes only a provider id it pinned at mint. A key it didn't mint, including today's `openrouter-generic`, is revoked by a human step. |
-| T8 | A value leaks into a log, evidence row or observation | The value | R1; the observation secret detector; evidence carries fingerprints only; the executor's output passes through a scrubber of every value it touched. |
-| T9 | An executor defect causes an outage | Availability | Make-before-break; probes with known-bad controls; stop on indeterminate; change window on claim; bounded bearer overlap. |
-| T10 | The Mac is stolen | Every asset | FileVault; the root and every admin credential are rotated by hand. |
+| T1 | An agent session on the Mac reads the VM | Every asset above | **Accepted residual** (decision 2). No value is in the Mac's Keychain, files or environment, so it takes a deliberate act. The Coolify token, SYSTEM and VERIFIER bearers are outside the root's reach. |
+| T2 | A forged trigger from fetched content | Unwanted rotations | Triggers are the registry and `cred-findings` only; every rotation needs a human-approved record. |
+| T3 | The orchestrator is compromised | It can mark units approved and supply evidence | The approved registry fingerprint fixes destinations; the executor re-probes rather than trusts evidence and derives revoke ids from the quarantined value; registry revisions must be ancestors of `main`. Result: churn, not exposure. |
+| T4 | A registry change adds a hostile consumer (no review is required to merge) | A value written where an attacker reads it | The consumer set is fingerprinted into the human-approved package revision; any change refuses until a human approves a new revision that shows it. |
+| T5 | Another WORKER claims a rotation unit, or the executor claims other work | Forged step evidence, or the executor acting outside rotation | Claims are confined both ways at the server (decision 1). |
+| T6 | The root writes a keeper with an attacker's value | Consumers run on an attacker's account | Only through T1. Fingerprint evidence for every write makes a substitution visible after the fact. |
+| T7 | A compromised executor dependency | The same as T1, from inside | Few dependencies, pinned by hash. |
+| T8 | The management key revokes the wrong key | An outage elsewhere (for example the brains' separate OpenRouter key) | The revoke id is derived from the quarantined value at revoke time, never taken from evidence or matched by label. |
+| T9 | A value leaks into a log, evidence row or observation | The value, permanently in append-only evidence | R1; values never in argv; evidence has a strict schema and is secret-scanned at ingest; output passes through a scrubber of every value touched. |
+| T10 | An executor defect causes an outage | Availability | Adapter-declared order with contract invariants; probes with known-bad controls; stop on indeterminate; windowed starts; overlap ended only after every consumer verified. |
+| T11 | An orchestrator image rollback after a bearer rotation | Every program down (boot refuses `previous`) | `previous` is removed at retire-old; the runbook removes it before any rollback past the parser change. |
+| T12 | The Mac is stolen | Every asset | FileVault; the hand-rotated set is rotated by hand. |
 
 ### What the baseline risk was
 
@@ -219,65 +283,74 @@ mechanics where a provider has an API.
 
 ## Per-class disposition
 
-| Class | Live | Mint | Deploy | Revoke | Notes |
+| Class | Live | Mint | Deploy | Retire-old | Notes |
 |---|---|---|---|---|---|
-| OpenRouter key | 1 | machine | machine (BWS); see Keychain below | machine for keys the executor minted; human for the existing key | |
-| GitHub PAT (fine-grained) | 2 | human | machine (Actions secrets, BWS); human for Coolify | machine (`POST /credentials/revoke`) | |
-| Atlassian API token | 1 | human | machine (BWS); human for Coolify | human | Revoke API unverified |
-| BWS machine token | 4 | human | human (Keychain consumers are on the Mac) | human | Executor records evidence only |
-| change-manager bearer | 4 | machine | human until the Coolify token decision | machine (overlap expires) | Needs decision 7 in change-manager |
-| orchestrator bearer | 6 | machine | human until the Coolify token decision | machine (overlap expires) | Never the executor's own bearer in its own run |
+| OpenRouter key | 1 | machine | machine (BWS) | machine for keys the executor minted; human for today's key | |
+| GitHub PAT (fine-grained) | 2 | human | machine for BWS and (increment 7) Actions secrets; human for Coolify | machine (`POST /credentials/revoke`) | |
+| Atlassian API token | 1 | human | machine for BWS; human for Coolify | human | Revoke API unverified |
+| BWS machine token | 4 | human | human (Keychain consumers on the Mac) | human | Executor records evidence only |
+| change-manager bearer | 4 | machine | human until the Coolify decision | ends the overlap | Plaintext env: while deploy is human, the value passes through the Coolify UI on the Mac, a stated exception to "no value on the Mac" |
+| orchestrator bearer | 4 of 6 | machine | human until the Coolify decision | ends the overlap | SYSTEM and VERIFIER stay hand-rotated (decision 4); observer and drift-reporter rotate together; factory-runner's bearer waits for increment 7's Actions-secret writer |
 
-**Keychain consumers.** An isolated VM can't write the Mac's Keychain. `openrouter-generic` has one
-Keychain consumer: the shell exports `OPENROUTER_API_KEY` from Keychain item `openrouter-api` at
-init (infraops registry, lines 182–212). Until that consumer reads BWS itself, refreshing it is a
-`human` step: Devon runs a sync script on the Mac that reads the keeper from BWS into the Keychain
-item, and the executor's verify-consumers step waits for its attestation. **Devon decided (2026-10-08): drop the Keychain copy.** Whatever needs the key fetches it from
-BWS, so the credential's only stored copy is its BWS keeper. This is done in increment 3, before
-`openrouter-generic` is requested again, and its registry entry loses the `keychain` consumer.
+**The Keychain copy is dropped.** Devon decided on 2026-10-08 that whatever needs
+`OPENROUTER_API_KEY` fetches it from BWS, so the credential's only stored copy is its keeper. The
+shell export from Keychain item `openrouter-api` (infraops registry, lines 182–212) is replaced in
+increment 5, and the registry entry loses its `keychain` consumer.
 
 ## What this changes in ADR-0054
 
 - **"Execute" in the flow, and "The rotation worker's authority and boundaries":** the worker runs
-  in an isolated OrbStack VM, not as a Keychain-bound program on the operator machine, and holds
-  the executor root token, not `BWS_ACCESS_TOKEN_CRED_ROTATION`.
+  in an isolated OrbStack VM, holds its own root token over dedicated rotation projects, not
+  `BWS_ACCESS_TOKEN_CRED_ROTATION`, and its claims are confined at the server.
 - **"What stays human":** minting is machine work wherever the provider has an API the executor's
-  credentials can use; containment of an exposure is human.
+  credentials can use; containment of an exposure is human; the hand-rotated set (decision 4) stays
+  human.
+- **"Change window":** enforced at the orchestrator's claim (decision 8).
 - **Increments 3 and 4** are replaced by the increment plan below.
-- **"Change window":** enforced at the executor's claim (decision 8), not only stated.
 
 Everything else in ADR-0054 and its amendments stands.
 
 ## The parked rotation
 
-**Retire it** (Devon, 2026-10-08, "likely retire it, and redo it under whatever we end up
-building"). On acceptance of this ADR: supersede decomposition `ff08aeed` (ADR-0052; no unit was
-claimed), remove `rotate_requested` from `openrouter-generic` in infraops' registry, and resolve
-backlog item `37bb0f906c7b`. `openrouter-generic` stays flagged `rotated_by_sds`, so the legacy
-window keeps refusing it. The rotation is requested again in increment 3.
+**Retire it** (Devon, 2026-10-08). On acceptance: supersede decomposition `ff08aeed` (ADR-0052; no
+unit was claimed), remove `rotate_requested` from `openrouter-generic` in infraops' registry, and
+resolve backlog item `37bb0f906c7b`. `openrouter-generic` stays flagged `rotated_by_sds`, so the
+legacy window keeps refusing it.
+
+Until increment 5, that credential has no machine path. Its next age-due date is 2027-07-02, after
+the plan completes. An exposure in the gap is rotated by hand, as before ADR-0054. The proposer
+isn't scheduled, so it can't re-propose against the stale rev-1 package meanwhile.
 
 ## Increments
 
-1. **Accept and retire.** Accept this ADR; retire the parked rotation as above.
-2. **The executor, with no live credentials.** The contract and its state machine in
-   `src/rotation_worker/`, a fake adapter, the claim-time window check, the registry pin and
-   destination allowlist, the executor's WORKER identity (security-standards commit and image
-   rebuild) and its classification row. Built and tested in an isolated OrbStack VM. Measure here:
+1. **Accept and retire.** Accept this ADR; retire the parked rotation.
+2. **Measure, then decide.** Measure, with throwaway keys and no live secret:
    - whether a Coolify token with `write` but not `read:sensitive` can PATCH application envs;
-   - whether an OpenRouter management key can carry an expiry;
-   - whether a disabled or deleted OpenRouter key probes 401 on `/api/v1/key` (throwaway key);
-   - whether `orb -u root` from the Mac works on an isolated machine without a password.
-3. **OpenRouter.** The adapter; the management key in its own BWS project; the executor's root
-   token minted by Devon; the Keychain consumer resolved. Then request `openrouter-generic` again
-   and run it with every gate clicked.
-4. **Self-issued bearers.** The bounded overlap in the orchestrator and in change-manager, reviewed
-   by mutation; the bearer adapters with Coolify steps `human`.
-5. **GitHub PATs and the Atlassian token.** Human mint; the GitHub secret-writer PAT; machine
-   deploy, verify and (for GitHub) revoke. Measure first: whether a GitHub App installation token
-   can write Actions secrets, which decides whether `FACTORY_PR_TOKEN` is replaced rather than
-   rotated.
-6. **BWS machine tokens.** All steps human; the executor records the evidence.
-7. **Retire the infraops window** (ADR-0054 increment 5).
+   - whether an OpenRouter management key can carry an expiry, and whether the key-info endpoint
+     returns the id needed to revoke a key from its value;
+   - whether a disabled or deleted OpenRouter key probes 401;
+   - the `bws` (or SDK) result for a revoked machine token;
+   - whether moving a BWS secret between projects keeps its UUID;
+   - whether a GitHub App installation token can write Actions secrets;
+   - whether `orb -u root` works without a password on an isolated machine.
+
+   Then Devon decides the Coolify token's scope and holder, a standing-authority change.
+3. **Orchestrator changes, shipped and deployed before any rotation uses them:** claim confinement
+   both ways; the operational claim window check; the rotation evidence schema and its secret scan;
+   the bearer `previous` parser, verified on production; the executor's WORKER identity
+   (security-standards commit and image rebuild). Each guard reviewed by mutation.
+4. **The executor, with no live credentials.** The contract, its invariants, the registry
+   fingerprint and ancestry checks, a fake adapter, built and tested in an isolated OrbStack VM. The
+   rotation BWS projects and the root token.
+5. **OpenRouter.** Drop the Keychain copy; move the keeper to `Rotation / Keepers`; the adapter and
+   the management key. Request `openrouter-generic` again and run it with every gate clicked.
+6. **Self-issued bearers** (change-manager, and the orchestrator bearers named in the per-class
+   table, except factory-runner's), with Coolify steps per Devon's increment 2 decision.
+7. **GitHub PATs, the Atlassian token, and factory-runner's bearer.** The Actions-secret writer, or
+   GitHub App installation tokens if increment 2's measurement allows it; the Actions-secret probe
+   workflow, or its stated exception.
+8. **BWS machine tokens.** All steps human; the executor records the evidence.
+9. **Retire the infraops window** (ADR-0054 increment 5).
 
 Gate graduations (decision 10) are decided per class after that class's first rotation.
 
@@ -286,10 +359,29 @@ Gate graduations (decision 10) are decided per class after that class's first ro
 - One contract replaces per-class procedures; a provider without an API is the same contract with
   human steps.
 - Admin credentials no longer touch the Mac's Keychain, environment or tools. A deliberate act
-  inside the VM can still reach them; that risk is accepted and stated.
-- Until the Coolify token question is answered, every hosted consumer deploy is a human step, which
-  is ten of the eighteen live credentials. Measuring the Coolify scope early decides how automatic
-  most rotations become.
-- The orchestrator's authentication path changes (decision 7). That change ships with mutation
-  review and a test that an expired previous hash is refused.
+  inside the VM can still reach them; that risk is accepted and stated. The Coolify token and the
+  SYSTEM and VERIFIER bearers are outside the executor's reach.
+- Until Devon decides the Coolify token, every hosted consumer deploy is a human step, which is ten
+  of the eighteen live credentials.
+- The orchestrator's claim path and authentication path both change (decisions 1, 7 and 8), and
+  each ships with mutation review.
 - Moving to a VPS, or to customer-run executors, changes where the VM runs, not the design.
+
+## Review findings and how they're resolved
+
+| # | Finding | Resolved by |
+|---|---|---|
+| 1 | The root's keeper-project write reached the Coolify token and SYSTEM/VERIFIER bearers | Decision 4: dedicated `Rotation / Keepers`; SYSTEM and VERIFIER stay hand-rotated |
+| 2 | A fixed step order broke bearers; `until` revoked before consumers switched | Decision 3 (adapter-declared order); decision 7 (explicit retire-old, `until` a backstop) |
+| 3 | `previous` bricks boot on an older image | Decision 7: parser ships first; `previous` removed at retire-old; rollback runbook |
+| 4 | Human steps and lapsed leases had no mechanism | Decision 3 (human steps are units); decision 9 (leases, reclaim) |
+| 5 | Registries merge without review; the allowlist didn't contain | Decision 1: registry fingerprint in the approved revision |
+| 6 | Resume trusted orchestrator data | Decision 1: ancestry check, re-probe, revoke id derived from the value |
+| 7 | Claims weren't confined | Decision 1: confined both ways at the server |
+| 8 | Claim window check underspecified | Decision 8: operational units only, fail closed, renewal exemption stated |
+| 9 | Evidence isn't secret-scanned | Decision 9: strict schema, scanned at ingest |
+| 10 | verify-consumers undefined for unreachable consumers | "How each consumer kind is verified", with two stated exceptions |
+| 11 | No new-equals-old guard; human-mint handoff undefined | Decision 3: fingerprint guard, staging secret |
+| 12 | R1, R4, R6, R13, R16 and the dispatched-run check missing | Decisions 1, 2, 3, 7 and 9 |
+| 13 | Increment ordering defects | Increments 2 (measure and decide first), 3 (orchestrator first), 7 (factory-runner bearer with its writer); the gap is stated |
+| 14 | Minor: analogy, cleanup, shared value, own bearer | Decisions 1, 3, 6 and 4 |
