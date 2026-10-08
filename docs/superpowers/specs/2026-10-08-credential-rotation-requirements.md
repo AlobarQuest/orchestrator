@@ -199,6 +199,18 @@ kernel, so isolation "isn't a full security boundary". So an isolated machine pr
 the VM, not the VM from the Mac. Whether `orb -u root` works without a password on an isolated
 machine is documented by implication only, not measured.
 
+**Devon, 2026-10-08: no budget for a second server; asked whether a Claude Code deny rule on
+`orb -m <machine> -u root` could close the gap.** A deny rule stops the obvious command, but not the
+access: `ssh` to the machine, a script that runs `orb`, a subprocess from another language, and the
+VM's disk image all reach the same data. Measured the same day: every machine's disk lives in
+`~/Library/Group Containers/HUAQ24HBR6.dev.orbstack/data/data.img.raw`, mode 644, readable by
+Devon's user. A deny rule also binds only Claude Code, not Codex or any other agent. It's a useful
+guardrail against an accident, not a boundary against an injected session.
+
+A separate macOS user (option B) costs nothing and gives an OS boundary: its files and keychain
+are unreadable to Devon's user without `sudo`, and `sudo` needs the account password and is in the
+Claude Code deny list. Devon's user is an admin (measured), so the boundary is the password prompt.
+
 The executor's design doesn't depend on where it runs, so the OrbStack VM is a good place to build
 and test it with throwaway credentials. I recommend it holds no live admin credential, and that the
 first live rotation runs on the separate Hetzner server.
