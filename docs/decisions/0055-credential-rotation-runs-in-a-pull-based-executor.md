@@ -219,8 +219,9 @@ mechanics where a provider has an API.
 Keychain consumer: the shell exports `OPENROUTER_API_KEY` from Keychain item `openrouter-api` at
 init (infraops registry, lines 182–212). Until that consumer reads BWS itself, refreshing it is a
 `human` step: Devon runs a sync script on the Mac that reads the keeper from BWS into the Keychain
-item, and the executor's verify-consumers step waits for its attestation. I recommend dropping the
-Keychain copy and having the shell, or the tools that need the key, fetch from BWS.
+item, and the executor's verify-consumers step waits for its attestation. **Devon decided (2026-10-08): drop the Keychain copy.** Whatever needs the key fetches it from
+BWS, so the credential's only stored copy is its BWS keeper. This is done in increment 3, before
+`openrouter-generic` is requested again, and its registry entry loses the `keychain` consumer.
 
 ## What this changes in ADR-0054
 
