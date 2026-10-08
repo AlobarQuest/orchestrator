@@ -160,17 +160,18 @@ The contract enforces these invariants for every adapter:
   keeper project would give every consumer account every rotated credential, undoing the
   narrowing `sds-operator` has today. Credentials that share consumer accounts may share a project.
 - **Quarantine and staging secrets live in `Rotation / Work`**, which no consumer account can read.
-- **Each provider's admin credential lives in its own project** (`Rotation / <provider>`), and the
-  executor's WORKER bearer in `Rotation / Executor`. The executor fetches only the one admin secret
+- **Each provider's admin credential lives in its own project** (`Rotation / <provider>`), the
+  executor's WORKER bearer in `Rotation / Executor`, and the read-only Healthchecks API key in
+  `Rotation / Healthchecks`. The executor fetches only the one admin secret
   the claimed unit's adapter needs, by UUID, when it needs it.
 - **The executor's BWS machine account is the root.** It has write on the keeper projects and
-  `Rotation / Work`, and read on `Rotation / <provider>` and `Rotation / Executor`, and nothing
-  else: not `Ops / Platform`, not `SDS Operator`. Its token lives only in the VM.
+  `Rotation / Work`, and read on `Rotation / <provider>`, `Rotation / Executor` and
+  `Rotation / Healthchecks`, and nothing else: not `Ops / Platform`, not `SDS Operator`. Its token lives only in the VM.
 - **Before a keeper moves, each consumer account is proven to read it in its new project** with only
   `PATH` and `HOME` set, and every repository's `.bws-secrets.toml` that names the secret is updated
   in the same change.
-- **The hand-rotated set** is the root token, every admin credential, and the executor's own WORKER
-  bearer. Devon rotates these by hand; the executor never rotates them (R8, R12).
+- **The hand-rotated set** is the root token, every admin credential, the executor's own WORKER
+  bearer, and the Healthchecks key. Devon rotates these by hand; the executor never rotates them (R8, R12).
 - **The SYSTEM and VERIFIER bearers stay in `SDS Operator` and stay hand-rotated.** Rotating them
   by machine would give the root standing write over identities that outrank the executor, which
   the "never borrow another identity" rule forbids. They can join later by a separate decision.
@@ -237,12 +238,12 @@ whoever claims, and resuming a paused rotation counts as continuing, not startin
   unit with evidence from an earlier attempt is a continuation of that unit and isn't. Renewal
   continues and is never windowed. This departs deliberately from the rule that a per-claim rule
   covers all three lease writers: the window gates starts, and renewal never starts work.
-- **Hosted steps are windowed by the server.** Because each step that writes to a hosted consumer
-  is its own unit (decision 3), its first claim is a start, so a rotation paused for a human act
-  resumes its non-hosted work at any hour and waits for the window only at its first hosted unit.
-  Later units of a rotation that has already made a hosted change are continuations of the
-  rotation, not of a unit, so they are windowed too; the window is short enough that this costs at
-  most a day.
+- **Hosted steps are windowed by the server.** Each step that writes to a hosted consumer is its own
+  unit (decision 3), and every hosted unit's first claim is windowed. A rotation paused for a human
+  act resumes its non-hosted work at any hour. A rotation whose next hosted unit becomes ready
+  after the window closes waits for the next night, leaving both values live for up to a day. That
+  is safe, because the old value is retired only after every consumer verifies, and it is accepted
+  as the price of the server enforcing the window.
 - **Only the window applies at claim.** The other admission terms (posture, known-good patterns)
   aren't asked: an operational unit's authority is already human-approved.
 
@@ -292,9 +293,10 @@ exception, and Devon accepts these with this ADR.
 
 | Asset | Where it lives | Who can read it | Scope | Rotated by |
 |---|---|---|---|---|
-| Executor BWS token (**root**) | The VM only | The executor; anything with root in the VM | Write on the keeper projects and `Rotation / Work`; read on `Rotation / <provider>` and `Rotation / Executor` | Devon, by hand |
+| Executor BWS token (**root**) | The VM only | The executor; anything with root in the VM | Write on the keeper projects and `Rotation / Work`; read on `Rotation / <provider>`, `Rotation / Executor` and `Rotation / Healthchecks` | Devon, by hand |
 | OpenRouter management key | `Rotation / OpenRouter` | The root | Account-wide, unscoped (provider limit) | Devon, by hand |
 | GitHub secret-writer PAT (increment 7) | `Rotation / GitHub` | The root | Secrets: write on the repositories holding a registered copy | Devon, by hand |
+| Read-only Healthchecks API key | `Rotation / Healthchecks` | The root | Read check status only | Devon, by hand |
 | Executor WORKER bearer | `Rotation / Executor`, readable by the root | The root | Claim and file evidence on rotation units only (decision 1) | Devon, by hand |
 | Rotated credentials and values in flight | Per-credential keeper projects; `Rotation / Work`; the executor's memory | The root, and each credential's consumers' accounts | That credential's scope | The executor |
 
@@ -380,6 +382,9 @@ isn't scheduled, so it can't re-propose against the stale rev-1 package meanwhil
    - claim and reclaim confinement both ways, with the rotation-unit predicate;
    - the operational claim window check;
    - a unit's completion resolving the `work_unit` dependencies that name it;
+   - a `/review` form for Devon to resolve a human-act dependency (production `/api` accepts only
+     machine bearers, so no human route exists today), added to the `test_scope_guards.py`
+     inventories, with the resolution `detail` given a strict schema and the evidence secret scan;
    - the rotation evidence schema and its secret scan;
    - the bearer `previous` parser with its eight-day cap, verified on production;
    - the destination-list profile field (intent-packages schema), the proposer writing it, and
