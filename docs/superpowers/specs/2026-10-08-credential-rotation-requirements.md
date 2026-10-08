@@ -215,7 +215,32 @@ The executor's design doesn't depend on where it runs, so the OrbStack VM is a g
 and test it with throwaway credentials. I recommend it holds no live admin credential, and that the
 first live rotation runs on the separate Hetzner server.
 
-Devon decides: open, under discussion (2026-10-08).
+Devon decided (2026-10-08): **a dedicated OrbStack VM** (isolated, with network isolation) runs
+the executor, built so it moves unchanged to a VPS if the SDS becomes a SaaS offering. No separate
+macOS user. **Accepted residual risk:** an agent running as Devon's user can reach the VM. Devon's
+reasoning: the Mac already holds the keys to every other host, so a determined agent on it isn't
+stopped by moving the rotator elsewhere either.
+
+Risks of this placement other than a hostile agent, and the requirement each one adds:
+
+- **The Mac is asleep or off.** Rotations wait. A rotation interrupted by sleep resumes (R11). For
+  an orchestrator bearer, an interruption between restarting with the new hash and writing BWS
+  becomes an outage when the previous hash's `until` passes; resuming finishes it.
+- **The VM is deleted or reset by accident** (an `orb delete`, an OrbStack reset). State that only
+  lives on the VM is lost, including a new value not yet stored. So rotation state lives in the
+  orchestrator (evidence, fingerprints) and the new value is stored in BWS before anything depends
+  on it; the VM holds nothing that can't be rebuilt. The VM is excluded from Time Machine
+  (`data_allow_backup: false`, measured), so no secret lands in a backup, and nothing on it can be
+  restored from one either.
+- **Someone runs the executor by hand.** The executor acts only on a unit it claimed after a human
+  approval, so a hand run can't skip the approval. Its authority comes from the orchestrator, not
+  from whoever starts it.
+- **A compromised dependency.** The executor's Python dependencies run beside the admin
+  credentials. Dependencies are pinned with hashes, and the executor has as few as possible.
+- **Ports exposed to the LAN.** OrbStack exposes machine ports to the LAN by default
+  (`machines.expose_ports_to_lan: true`, measured). The executor listens on nothing.
+- **A shared kernel** with the `ubuntu` dev machine and the Docker engine. A container escape on the
+  same Mac reaches the VM. Low likelihood, and accepted with the residual risk above.
 
 ### Q2. Who holds mint and revoke power, and how is it contained?
 
@@ -435,7 +460,7 @@ Each of these can be probed without a live secret, or with a throwaway key.
 
 ## Decisions from Devon (2026-10-08)
 
-1. Where the rotator runs (Q1): **open, under discussion.**
+1. Where the rotator runs (Q1): **a dedicated, isolated OrbStack VM**, portable to a VPS.
 2. How jewels are split (Q2): **agreed** as recommended.
 3. Contract or procedures (Q3): **one contract with adapters.**
 4. Exposure response (Q5): **no automatic disable**; containment is a human decision.
