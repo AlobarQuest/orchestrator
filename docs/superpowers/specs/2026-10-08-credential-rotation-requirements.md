@@ -176,6 +176,23 @@ each customer runs the executor next to their own credentials, the way self-host
 
 I recommend F on a separate server in its own Hetzner project.
 
+**Devon asked, 2026-10-08: could F run in an OrbStack VM on the Mac, moving to a Hetzner server
+when there are clients?** Measured the same day against the existing `ubuntu` machine, with
+OrbStack's default settings:
+
+- `orb -m ubuntu sudo -n true` succeeds: Devon's macOS user gets root in the VM with no password.
+- `/Users/devon/Projects` is visible inside the VM.
+- `orb -m ubuntu mac uname -s` returns `Darwin`: the VM can run commands on the Mac.
+
+So the VM separates processes but not authority. Anything running as Devon's user, including every
+Claude session in bypass mode, can become root in the VM and read the executor's credentials. That
+is a weaker boundary than a separate macOS user (option B). Whether a new machine can be created
+with these integrations turned off is **unverified**.
+
+The executor's design doesn't depend on where it runs, so the OrbStack VM is a good place to build
+and test it with throwaway credentials. I recommend it holds no live admin credential, and that the
+first live rotation runs on the separate Hetzner server.
+
 Devon decides: open, under discussion (2026-10-08).
 
 ### Q2. Who holds mint and revoke power, and how is it contained?
@@ -274,8 +291,8 @@ Clients pick the key id with the `X-Credential-Key-Id` header.
 | **A. Rotate with a brief outage** | No code change. | Every client of that bearer fails until it reloads. Self-lockout for the worker's own bearer. | Neutral on security; costs availability. |
 | **B. Accept two hashes per key id during a rotation** (W8) | Make-before-break. | A code change to an authentication path, reviewed by mutation. | A second valid value exists for the overlap; bounded by the rotation's lease. |
 
-Devon decided (2026-10-08): a short outage is acceptable in principle, pending the walkthrough in
-"What the bearer outage is" in the following section.
+Devon decided (2026-10-08): **option B, the code change**, with the time-boxed previous hash
+described in "The code-change alternative". An exposure-driven rotation may still skip the overlap.
 
 ### What the bearer outage is
 
@@ -400,8 +417,7 @@ Each of these can be probed without a live secret, or with a throwaway key.
 2. How jewels are split (Q2): **agreed** as recommended.
 3. Contract or procedures (Q3): **one contract with adapters.**
 4. Exposure response (Q5): **no automatic disable**; containment is a human decision.
-5. Self-issued bearer overlap (Q7): **a short outage is acceptable in principle**, pending the
-   walkthrough in "What the bearer outage is".
+5. Self-issued bearer overlap (Q7): **the code change**, a time-boxed previous hash.
 6. The hand-rotated root (R8): **agreed**: the BWS machine token that can read the rotator's
    projects.
 7. Gate graduation (Q6): **open.**
