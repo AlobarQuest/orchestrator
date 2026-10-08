@@ -110,7 +110,7 @@ A design that misses any of these is rejected. Each one names where it comes fro
 
 These make the system better. A design can defer any of them with a stated reason.
 
-- **W1. Reversible automatic containment for exposures.** When an exposure finding arrives, the
+- **W1. (Rejected by Devon, 2026-10-08; see Q5.) Reversible automatic containment for exposures.** When an exposure finding arrives, the
   machine disables the exposed key at once (OpenRouter `PATCH {disabled: true}`), then replaces it
   on approval. Disable and delete are different authorities: disable is reversible, delete isn't.
   Only providers with a reversible disable qualify.
@@ -156,7 +156,7 @@ Each section leads with the option that adds the least machinery, then the alter
 I recommend B now, with the adapters written so the same code can move to C later if W6 becomes
 pressing. B is the only option that makes R2 enforceable without a new host.
 
-Devon decides:
+Devon decides: open, under discussion (2026-10-08).
 
 ### Q2. Who holds mint and revoke power, and how is it contained?
 
@@ -186,7 +186,8 @@ Per-jewel containment, independent of the option above:
 
 I recommend C, with the Coolify token kept out of the worker until a narrower scope is measured.
 
-Devon decides:
+Devon decided (2026-10-08): agreed. One BWS project per provider, fetched per unit; the Coolify
+token stays out of the worker until a narrower scope is measured.
 
 ### Q3. One contract or one procedure per class?
 
@@ -197,7 +198,7 @@ Devon decides:
 
 I recommend B.
 
-Devon decides:
+Devon decided (2026-10-08): one contract with adapters.
 
 ### Q4. Remove credentials instead of rotating them?
 
@@ -222,7 +223,9 @@ Devon decides:
 
 I recommend B for providers with a reversible disable; A for the rest.
 
-Devon decides:
+Devon decided (2026-10-08): **no automatic disable.** An exposure finding is one input among
+several; whether and how fast to contain depends on factors the finding doesn't carry. Exposure
+response goes through a human decision. Option A, with the factors to be named in the design.
 
 ### Q6. Which human gates graduate?
 
@@ -237,7 +240,7 @@ Amendment 1 names four graduations. The question is which, for which classes, an
 
 The change record approval stays human (ADR-0054). Devon picks N.
 
-Devon decides:
+Devon decides: open. Amendment 1 already defers graduations until one rotation has run.
 
 ### Q7. Self-issued bearers
 
@@ -251,7 +254,66 @@ Clients pick the key id with the `X-Credential-Key-Id` header.
 | **A. Rotate with a brief outage** | No code change. | Every client of that bearer fails until it reloads. Self-lockout for the worker's own bearer. | Neutral on security; costs availability. |
 | **B. Accept two hashes per key id during a rotation** (W8) | Make-before-break. | A code change to an authentication path, reviewed by mutation. | A second valid value exists for the overlap; bounded by the rotation's lease. |
 
-Devon decides:
+Devon decided (2026-10-08): a short outage is acceptable in principle, pending the walkthrough in
+"What the bearer outage is" in the following section.
+
+### What the bearer outage is
+
+This section explains Q7's option A. It describes an orchestrator bearer; change-manager bearers
+differ (noted at the end).
+
+**What a bearer is.** Each machine program (the verifier, the observer, factory-runner's workflows)
+proves who it is to the orchestrator with a bearer token. The value lives in BWS. The orchestrator
+holds only its sha256, in the Coolify env variable `ORCHESTRATOR_M2M_CREDENTIALS`, and reads that
+variable only at boot.
+
+**Why there's an outage.** The orchestrator accepts exactly one hash per identity (verified
+2026-10-08, `identity/auth.py::_validate_m2m_credentials`). A rotation has two halves that can't
+happen at the same instant:
+
+1. The orchestrator restarts with the new hash. From then on the old value gets 401.
+2. Every client switches to the new value. Clients that fetch from BWS on each run switch on their
+   next run. Copies held elsewhere (factory-runner's bearer has seven Actions-secret copies) switch
+   only when each copy is re-set.
+
+Between those two moments, any client still holding the old value gets 401. That gap is the outage.
+It affects only the programs using the rotated bearer, not the orchestrator as a whole.
+
+**What fails during the gap.** A scheduled lane using that bearer fails its pass and pings its
+Healthchecks check as failed. A factory-runner workflow using a stale Actions secret fails its run.
+Nothing is lost: lanes re-run on schedule and failed passes write nothing.
+
+**The order that keeps the gap short:**
+
+1. Generate the new value and keep it in the rotating process.
+2. Confirm no dispatched run is live (the orchestrator must never restart during one).
+3. Write the new hash into `ORCHESTRATOR_M2M_CREDENTIALS` and restart the orchestrator.
+4. Write the new value to BWS, then re-set every Actions-secret copy.
+5. Probe: the new value gets 200, the old value gets 401.
+
+The gap is from step 3 to the end of step 4, typically a few minutes. Inside the 02:00-06:00
+window, most lanes don't run in it at all.
+
+**Recovering from a failed rotation:**
+
+- **The orchestrator doesn't boot after step 3.** A malformed credentials variable fails boot
+  closed, and then every program is down, not just one. Recovery is to write the previous hash back
+  and restart. So the rotating process records the previous hash (a hash is safe to keep) before it
+  writes, and the variable is validated before the restart. This is the riskiest step.
+- **The process stops between steps 3 and 4.** The orchestrator accepts only the new value, and BWS
+  still holds the old one. Recovery is to finish step 4 from the value the process persisted, or to
+  restore the previous hash. This is why R11 requires persisted state, and why the new value is
+  persisted (0600, outside the transcript) before step 3.
+- **An Actions-secret copy is missed.** That workflow fails with 401 on its next run. Recovery is to
+  re-set the copy; the registry lists every copy.
+
+**change-manager bearers differ.** change-manager stores the plaintext value in its env and
+redeploys with a rolling update, so the old and new containers overlap briefly. The gap and the
+recovery are otherwise the same.
+
+**The code-change alternative (Q7 option B)** lets the orchestrator accept both hashes for a while,
+so clients switch first and the old hash is removed afterwards. No gap, but it changes an
+authentication path, and the boot-failure risk above remains on both writes.
 
 ## Per-class summary
 
@@ -281,16 +343,15 @@ Each of these can be probed without a live secret, or with a throwaway key.
 7. Whether the rotator's Keychain items are readable without a prompt by Devon's user. Inferred
    from the scheduled lanes; confirm by item ACL, not by reading a value.
 
-## Decisions needed from Devon
+## Decisions from Devon (2026-10-08)
 
-1. Where the rotator runs (Q1). I recommend a separate macOS user on the operator machine.
-2. How jewels are split (Q2). I recommend one BWS project per provider, fetched per unit, and the
-   Coolify token kept out of the worker for now.
-3. Contract or procedures (Q3). I recommend one contract with adapters.
-4. Exposure response (Q5). I recommend automatic reversible disable where a provider supports it.
-5. Self-issued bearer overlap (Q7). Outage or a code change.
-6. Which credential is the hand-rotated root (R8). I'd expect the BWS machine token that can read
-   the rotator's projects.
-7. Gate graduation threshold N (Q6).
-8. The parked OpenRouter rotation: continue under a revised package once the design lands, or
-   retire it now.
+1. Where the rotator runs (Q1): **open, under discussion.**
+2. How jewels are split (Q2): **agreed** as recommended.
+3. Contract or procedures (Q3): **one contract with adapters.**
+4. Exposure response (Q5): **no automatic disable**; containment is a human decision.
+5. Self-issued bearer overlap (Q7): **a short outage is acceptable in principle**, pending the
+   walkthrough in "What the bearer outage is".
+6. The hand-rotated root (R8): **agreed**: the BWS machine token that can read the rotator's
+   projects.
+7. Gate graduation (Q6): **open.**
+8. The parked OpenRouter rotation: **likely retire**, and redo it under the new design.
