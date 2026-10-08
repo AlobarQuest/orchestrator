@@ -186,8 +186,18 @@ OrbStack's default settings:
 
 So the VM separates processes but not authority. Anything running as Devon's user, including every
 Claude session in bypass mode, can become root in the VM and read the executor's credentials. That
-is a weaker boundary than a separate macOS user (option B). Whether a new machine can be created
-with these integrations turned off is **unverified**.
+is a weaker boundary than a separate macOS user (option B).
+
+OrbStack's isolated machines (`orb create --isolated`, OrbStack 2.2.3) close only the other
+direction. Per https://docs.orbstack.dev/machines/isolated, an isolated machine has no Mac file
+system, can't reach the Mac over the network or run `mac` commands, and gets no SSH agent; with
+`--isolate-network` it can't reach other machines either. The same page says the Mac keeps "SSH and
+`orb` access", and `orb --help` documents `orb -m <machine> -u root` as the way to log in as root.
+`--set-password` sets a password for the default user and root, which governs `sudo` inside the
+machine, not `orb -u root` from the Mac. The page also states that every machine shares one Linux
+kernel, so isolation "isn't a full security boundary". So an isolated machine protects the Mac from
+the VM, not the VM from the Mac. Whether `orb -u root` works without a password on an isolated
+machine is documented by implication only, not measured.
 
 The executor's design doesn't depend on where it runs, so the OrbStack VM is a good place to build
 and test it with throwaway credentials. I recommend it holds no live admin credential, and that the
