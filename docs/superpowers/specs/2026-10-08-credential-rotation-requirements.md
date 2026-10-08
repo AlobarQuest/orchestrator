@@ -156,6 +156,26 @@ Each section leads with the option that adds the least machinery, then the alter
 I recommend B now, with the adapters written so the same code can move to C later if W6 becomes
 pressing. B is the only option that makes R2 enforceable without a new host.
 
+**Devon, 2026-10-08:** a rotator on the personal Mac is fragile and won't carry over to a SaaS
+offering. That rules out A and B as the long-term home.
+
+| Option | Pros | Cons | Security impact |
+|---|---|---|---|
+| **F. A dedicated rotation executor that pulls work from the orchestrator** | Connected to the SDS the same way factory-runner is: the orchestrator holds approvals, units and evidence; the executor claims approved rotation units with its own WORKER identity, does the provider calls, and files fingerprint evidence. Always on. The same program can later run inside a customer's environment, so a SaaS customer keeps their own provider credentials. | A new host to run and patch. The executor's bootstrap BWS token sits on that host and is the root (R8). | Needs no inbound ports (it only calls out). No LLM, no Claude session, no infraops SSH key or `vps_exec` path reaches it. Its admin credentials are separated from the apps they protect, unlike C. |
+
+Where F runs today, in order of preference:
+
+- **A small separate server, in its own Hetzner project.** Hetzner API tokens are scoped to a
+  project (**unverified**; to measure), so the infraops Hetzner token couldn't snapshot, rebuild or
+  read the executor's server. Devon's own SSH key is the only way in.
+- **A container on the existing VPS.** Cheaper, but it inherits C's problem: Coolify and anything
+  that can reach that host can reach the executor.
+
+For a SaaS offering, F is the shape that carries over: the provider runs the orchestrator, and
+each customer runs the executor next to their own credentials, the way self-hosted CI runners work.
+
+I recommend F on a separate server in its own Hetzner project.
+
 Devon decides: open, under discussion (2026-10-08).
 
 ### Q2. Who holds mint and revoke power, and how is it contained?
@@ -311,9 +331,40 @@ window, most lanes don't run in it at all.
 redeploys with a rolling update, so the old and new containers overlap briefly. The gap and the
 recovery are otherwise the same.
 
-**The code-change alternative (Q7 option B)** lets the orchestrator accept both hashes for a while,
-so clients switch first and the old hash is removed afterwards. No gap, but it changes an
-authentication path, and the boot-failure risk above remains on both writes.
+### The code-change alternative (Q7 option B)
+
+**The change.** Each identity in `ORCHESTRATOR_M2M_CREDENTIALS` may carry one optional previous hash
+with an expiry time, for example `"previous": {"token_hash": "<sha256>", "until": "<UTC time>"}`.
+`authenticate_m2m` accepts the current hash always, and the previous hash only before `until`.
+Boot refuses a previous hash whose `until` is more than one change window away.
+
+**The process becomes:**
+
+1. Generate the new token and save it securely.
+2. Confirm no dispatched run is in progress.
+3. Write the new hash as current, the old hash as previous with `until` at the end of the window,
+   and restart. Both tokens now work.
+4. Store the new token in BWS and update every Actions-secret copy.
+5. Probe that the new token works at the orchestrator and through each client path.
+6. At `until`, the old token stops working with no second restart. Probe that it's refused.
+
+No program sees a 401 at any point. A missed Actions-secret copy fails only after `until`, and the
+step 5 probes are there to catch it first.
+
+**Drawbacks:**
+
+- **It changes the authentication path.** It's a small change, but it's in the most
+  security-sensitive code in the orchestrator, so it needs review by mutation and a test that a
+  previous hash past `until` is refused.
+- **Two tokens are valid during the overlap.** For a routine rotation that's harmless. For an
+  exposure, the leaked token stays valid until `until`. The rotator can skip the previous hash for
+  an exposure and take the short outage instead; you decide which when you approve.
+- **Restart risk is unchanged.** A malformed setting still stops the orchestrator from starting.
+  The setting has one more field to get wrong, and the validation before restart covers it.
+- **change-manager needs its own version** of the change for its bearers, in its own repository.
+
+Without `until`, someone has to remember to remove the old hash later. That is the usual way an
+overlap scheme leaves an old token valid forever, and is why the expiry is part of the change.
 
 ## Per-class summary
 
