@@ -23,7 +23,7 @@ dependencies = [
   # change windows name IANA zones, so a runtime without one cannot load the artifact -- and a
   # document that does not load permits nothing, which is fail-closed and also a halt. The runtime
   # base image ships a system zone database today; this makes that true of any image.
-  "tzdata>=2025.1",
+  "tzdata>=2026.5",
   "typer>=0.27.1",
   "uvicorn[standard]>=0.52.1",
 ]
