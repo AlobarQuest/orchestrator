@@ -237,9 +237,10 @@ accepted; the previous hash only before `until`. change-manager gets the equival
 whoever claims, and resuming a paused rotation counts as continuing, not starting.
 
 - **Where.** For operational units only, a claim refuses `outside_change_window` when the unit's
-  package declares a reach whose window is closed. (Amendment 2 narrows this to the `live_estate`
-  window, for units that touch a hosted service, and defines start and continuation for every
-  claim grant.) Unlike `window_refusal` at admission, it fails
+  package declares a reach whose window is closed. (Amendment 2 supersedes this bullet and the
+  next: the check applies to rotation units only, asks the `live_estate` window whatever reach is
+  declared, skips units marked non-hosted, and redefines start and continuation; reclaim no longer
+  grants a rotation unit, and only the executor claims one.) Unlike `window_refusal` at admission, it fails
   closed on an undeclared or unreadable reach, because no admission check stands behind it. It
   applies to every claimant of an operational unit, including HQ working one by hand.
 - **Starting versus continuing.** A unit's first claim is a start and is windowed. A reclaim of a
@@ -318,7 +319,7 @@ exception, and Devon accepts these with this ADR.
 | T1a | A consumer account is compromised | The credentials it consumes, plus nothing else | One keeper project per credential (decision 4); quarantined and staged values are in a project no consumer reads. |
 | T2 | A forged trigger from fetched content | Unwanted rotations | Triggers are the registry and `cred-findings` only; every rotation needs a human-approved record. |
 | T3 | The orchestrator is compromised | It can mark units approved and supply evidence | The executor checks the approved revision against intent-packages' git and the registry against its repository's `main`, compares destinations in full, re-probes rather than trusts evidence, and derives revoke ids from the quarantined value. Result: churn, not exposure. |
-| T4 | A registry change adds a hostile consumer (no review is required to merge) | A value written where an attacker reads it | The revision carries the full destination list, and its change is in the diff Devon approves (amendment 2); the executor refuses any registry that differs from the approved list. |
+| T4 | A registry change adds a hostile consumer (no review is required to merge) | A value written where an attacker reads it | The revision carries the full destination list, and its change is in the diff Devon approves; the list is also in each unit's authority, shown at `/review` (amendment 2, which states the residual); the executor refuses any registry that differs from the approved list. |
 | T5 | Another WORKER claims a rotation unit, or the executor claims other work | Forged step evidence, or the executor acting outside rotation | Claims and reclaims are confined both ways at the server (decision 1). |
 | T6 | The root writes a keeper with an attacker's value | Consumers run on an attacker's account | Only through T1. Fingerprint evidence for every write makes a substitution visible after the fact. |
 | T7 | A compromised executor dependency | The same as T1, from inside | Few dependencies, pinned by hash. |
@@ -668,9 +669,10 @@ The three forks were put with the least machinery first. Devon answered "1,1,1".
   hostile list with a forged approval line and make the registry match. So the operator who writes a
   rotation's decomposition (HQ, by hand, as for every operational decomposition) puts the full
   destination list in each rotation unit's envelope `constraints`. `/review` already shows every
-  non-repository constraint on the decomposition and authority pages (`decision_facts.py`), so Devon
-  reads the list on the screen where his approval is authenticated, with no new `/review` code. The
-  executor refuses unless the envelope's list, the package revision's list and the registry are
+  non-repository constraint on the decomposition proposal and unit pages, so Devon reads the list
+  on the screen where his approval is authenticated, with no new `/review` code. Each destination is
+  one flat string (consumer kind and destination), and the list is sorted, so the page renders it
+  readably. The executor refuses unless the envelope's list, the package revision's list and the registry are
   equal.
 - **Destination drift is found before approval, not at act time.** A registry change that adds a
   legitimate consumer would otherwise surface only when the executor refuses at its first claim,
@@ -680,7 +682,13 @@ The three forks were put with the least machinery first. Devon answered "1,1,1".
   command for it.
 - **T4.** A hostile registry consumer is caught by the executor's refusal, because the approved list
   doesn't contain it. Getting it into the list takes a package edit, which is in the diff Devon reads,
-  and an envelope edit, which is on the authenticated `/review` page he approves.
+  and an envelope edit, which is on the authenticated `/review` page he approves. **Residual:** the
+  diff's baseline comes from `lineage.yaml`, which anyone who can push to intent-packages can
+  rewrite, and HQ writes the envelope, so an actor holding both can make the diff empty. The
+  remaining defence is Devon reading the whole list on `/review` and recognising every entry; the
+  lists are short. That actor is an agent on the Mac, already T1's accepted residual. Showing the
+  list's difference from the last completed rotation of the same credential on `/review` would close
+  it, and is left to the gate-graduation decision.
 - **Decision 8, which window.** At a claim on a rotation unit (decision 1's predicate, not every
   `operational_action` unit), the server asks only the `live_estate` row's window, and asks it
   whatever reach the package declares. It is skipped only for a unit whose approved envelope
@@ -704,17 +712,24 @@ These needed no decision.
 
 - **A lapsed rotation claim is released, not reclaimed to a new owner.** For a rotation unit, the
   SYSTEM recovery path releases the lapsed claim and returns the unit to `READY` with no grant; the
-  executor then claims it through `claim_unit`, where confinement and the window apply. A reclaim
-  that would grant a rotation unit, or grant any unit to the executor's `agent_id`, is refused.
+  executor then claims it through `claim_unit`, where confinement and the window apply. This is
+  new code: `_perform_reclaim` without the grant (release, `FAILED`, the shared
+  `_readiness_eligibility_error`, then `READY`). A unit that fails the eligibility check stays
+  `FAILED`, committed, and the error is returned. The path needs its own replay predicate, because
+  the existing claim and reclaim replays look for a grant. A reclaim that would grant a rotation
+  unit, or grant any unit to the executor's `agent_id`, is refused.
   This replaces decision 9's "reclaimed by the existing SYSTEM recovery path".
 - **Claim confinement compares a configured identity.** `claim_unit` compares the authenticated
   WORKER's `agent_id` with a configured executor `agent_id`, both ways. When that setting is unset,
   every claim on a rotation unit is refused.
 - **Start and continuation.** A claim on a rotation unit is a continuation, and isn't windowed,
-  exactly when the unit's previous attempt ended because its lease lapsed and that attempt's claim
-  holder filed evidence on it. Every other claim is a start and is windowed, including a claim after
-  a worker-reported failure and a requeue or retry: those follow a stop condition, and Devon's
-  2026-10-08 ruling covered resuming a paused rotation, not retrying a failed one. Renewal is never
+  exactly when the unit's previous claim was released because its lease lapsed (`terminal_reason`
+  `lease_expired`) and that claim's holder filed evidence on that attempt (rows `recorded_by` the
+  holder, which excludes rows recovered by SYSTEM or a human). That holds however the unit got
+  back to `READY`, including through a requeue after a lapse. Every other claim is a start and is
+  windowed, including a claim after a worker-reported failure (`work_unit_failed`) and its requeue
+  or retry: a failure is a stop condition, and Devon's 2026-10-08 ruling covered resuming a paused
+  rotation, not retrying a failed one. Renewal is never
   windowed. A refusal is raised before the transaction commits, so it leaves no partial state.
   CLAUDE.md's rule that a per-claim rule covers all three lease writers is amended in increment 3 to
   name the window as the deliberate exception for renewal.
