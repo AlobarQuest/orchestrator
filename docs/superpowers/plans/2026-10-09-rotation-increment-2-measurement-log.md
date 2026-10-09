@@ -159,7 +159,8 @@
 - OpenRouter throwaway keys (three): deleted; `GET /keys/{hash}` 404 for the first and third, DELETE
   200 for the second. The management key `probe-inc2-mgmt` was created with a one-hour expiry; its
   Keychain item was deleted at 16:24Z before a post-expiry probe ran, so its expiry is **not
-  probe-confirmed**. Devon can confirm in the console that it shows as expired.
+  probe-confirmed**. Devon checked the console about two hours after creation: it shows **Expired**
+  (observation, 2026-10-09).
 - Coolify app `probe-inc2-app` and project `probe-inc2`: deleted **with the candidate token**
   (`DELETE /applications/{uuid}` 200 queued, `DELETE /projects/{uuid}` 200 `Project deleted.`), which
   measures that `write` deletes both; app `GET` 404, project gone from the
