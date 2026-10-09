@@ -153,3 +153,4 @@
 - Observed on GitHub's App list page (not measured): a banner says installation tokens will move to
   a stateless format (`ghs_…`, up to about 520 characters). Anything that stores or validates
   installation-token length needs to allow for it.
+- Repository `AlobarQuest/probe-inc2-secrets`: deleted by the session in Chrome at Devon's go-ahead; `gh api repos/AlobarQuest/probe-inc2-secrets` 404 (it answered before).
