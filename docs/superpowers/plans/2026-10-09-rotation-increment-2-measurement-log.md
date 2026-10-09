@@ -47,6 +47,12 @@
   (started 15:22:45Z) holds the patched value (sha256 prefix `c08e4dda` inside the container, read
   through `ssh orb sudo -n docker inspect`, hashed on the VM). The variable was created after the
   first start, so only the restart can have put it there.
+- **Source reading, not measured** (beta.473 `routes/api.php`): `api.ability:write` guards 73 routes,
+  including deleting servers, databases and services and changing or deleting SSH keys
+  (`/security/keys`) and GitHub App connections; `api.ability:deploy` guards 11 (start, stop, restart
+  for applications, databases and services; `/deploy`; deployment cancel). Abilities name actions,
+  not resources: no route or token field scopes a token to particular applications. A token belongs
+  to a team.
 - Answer: **`read`+`write`+`deploy` without `read:sensitive` can write, restart and apply a value it
   can never read.** Production runs beta.473 with byte-identical permission code; confirm on
   production in the increment that first uses the token.
@@ -65,6 +71,12 @@
   and **no `hash`**; no field equals the create response's hash. But the hash is **sha256 of the key
   value** (checked on a second throwaway key), so revoke needs only the value. A list of keys
   matched on `label` also finds exactly that hash.
+- **Live baseline** (15:35:37Z, before any disable): the minted key answers 200 on `/key`, on
+  `/auth/key`, and on a chat completion with `max_tokens: 1` on `apodex/apodex-1.1-mini:free` (the
+  first of 15 `:free` models listed). So the later inference 401s are a change, not a refusal of
+  that model or limit.
+- **Key-info `label`.** `/key`'s `data.label` equals the create response's `label` (second key),
+  and exactly one row of `GET /keys` carries that label: the key's own hash.
 - **`/auth/key` vs `/key`:** same status, same fields, same values for the same key.
 - **Disabled** (`PATCH disabled: true`, 200): 5 s later `/key` and `/auth/key` still answer **200**;
   a chat completion on a `:free` model answers **401** `User not found.`
@@ -103,7 +115,7 @@
   and the altered secret never reached the server. With an empty `HOME` per call, the same altered
   token gets rc 1 `[400 Bad Request] {"error":"invalid_client"}`. Every probe therefore runs cached and
   fresh.
-- The Bitwarden Python SDK (`bitwarden-sdk` from PyPI, Python 3.12) installs and works. Probes run
+- The Bitwarden Python SDK (`bitwarden-sdk` 2.1.0 from PyPI, Python 3.12) installs and works. Probes run
   through it too: one client logged in before the revoke and reused (`sdk-held`), and a new client
   each round (`sdk-fresh`). `projects().list` takes the organization id.
 - Baseline 15:49:08Z: cli-cached, cli-fresh, sdk-held and sdk-fresh all read; both controls 400
@@ -148,7 +160,9 @@
   200 for the second. The management key `probe-inc2-mgmt` was created with a one-hour expiry; its
   Keychain item was deleted at 16:24Z before a post-expiry probe ran, so its expiry is **not
   probe-confirmed**. Devon can confirm in the console that it shows as expired.
-- Coolify app `probe-inc2-app` and project `probe-inc2`: deleted; app `GET` 404, project gone from the
+- Coolify app `probe-inc2-app` and project `probe-inc2`: deleted **with the candidate token**
+  (`DELETE /applications/{uuid}` 200 queued, `DELETE /projects/{uuid}` 200 `Project deleted.`), which
+  measures that `write` deletes both; app `GET` 404, project gone from the
   list, no container on the VM (16:17Z). The three dev tokens: deleted by Devon; each gets 401
   `Unauthenticated.` on `GET /version` (16:23Z). Their Keychain items deleted and confirmed absent.
 - BWS secret `PROBE_INC2_MOVE`: deleted; readback rc 1.

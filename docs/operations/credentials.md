@@ -12,7 +12,8 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   in-process and print only whitelisted fields, never through ad-hoc shell
   pipelines.
 - **Measured 2026-10-09 (dev beta.470; permission code identical at beta.473):** `value` and
-  `real_value` are present only for a token with `read:sensitive` (or `root`); a token without it
+  `real_value` are present only for a token with `read:sensitive` (and, from the source, `root`); a
+  token without it
   gets the rows with both fields absent, not masked. Each variable is stored as **two rows**,
   `is_preview` false and true. A PATCH without `is_preview` changes only the first; changing a value
   everywhere takes a second PATCH with `is_preview: true`, or the old value stays in the preview row.
