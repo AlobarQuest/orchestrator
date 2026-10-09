@@ -11,6 +11,12 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   `real_value` for every variable (DB URLs with passwords) — parse them
   in-process and print only whitelisted fields, never through ad-hoc shell
   pipelines.
+- **Measured 2026-10-09 (dev beta.470; permission code identical at beta.473):** `value` and
+  `real_value` are present only for a token with `read:sensitive` (or `root`); a token without it
+  gets the rows with both fields absent, not masked. Each variable is stored as **two rows**,
+  `is_preview` false and true. A PATCH without `is_preview` changes only the first; changing a value
+  everywhere takes a second PATCH with `is_preview: true`, or the old value stays in the preview row.
+  That run's PATCHes returned 201, not 500. Detail: ADR-0055 amendment 1.
 
 ### #20
 
@@ -328,3 +334,6 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   authenticates as a **different** App — its pull requests are authored by `app/octo-upstream-sync`,
   not `alobar-sds-dispatch`. Evidence:
   `~/docs/software-delivery-system/2026-09-02-permission-and-interpreter-audit.md`.
+- **A GitHub App's private keys are on its Credentials page, Key pairs tab** (`/settings/apps/<app>/
+  key_pairs`, **New key**), not on the General page, as of 2026-10-09. The install screen defaults to
+  **All repositories**; choose **Only select repositories** before clicking Install.

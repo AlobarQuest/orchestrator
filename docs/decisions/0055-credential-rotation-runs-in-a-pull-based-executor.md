@@ -295,7 +295,7 @@ exception, and Devon accepts these with this ADR.
 |---|---|---|---|---|
 | Executor BWS token (**root**) | The VM only | The executor; anything with root in the VM | Write on the keeper projects and `Rotation / Work`; read on `Rotation / <provider>`, `Rotation / Executor` and `Rotation / Healthchecks` | Devon, by hand |
 | OpenRouter management key | `Rotation / OpenRouter` | The root | Account-wide, unscoped (provider limit) | Devon, by hand |
-| GitHub secret-writer PAT (increment 7) | `Rotation / GitHub` | The root | Secrets: write on the repositories holding a registered copy | Devon, by hand |
+| Rotation GitHub App private key (increment 7; amendment 1) | `Rotation / GitHub` | The root | Mints installation tokens with Secrets: write (and Metadata: read) on only the repositories where the App is installed: those holding a registered Actions-secret copy | Devon, by hand |
 | Read-only Healthchecks API key | `Rotation / Healthchecks` | The root | Read check status only | Devon, by hand |
 | Executor WORKER bearer | `Rotation / Executor`, readable by the root | The root | Claim and file evidence on rotation units only (decision 1) | Devon, by hand |
 | Rotated credentials and values in flight | Per-credential keeper projects; `Rotation / Work`; the executor's memory | The root, and each credential's consumers' accounts | That credential's scope | The executor |
@@ -329,7 +329,7 @@ mechanics where a provider has an API.
 | Class | Live | Mint | Deploy | Retire-old | Notes |
 |---|---|---|---|---|---|
 | OpenRouter key | 1 | machine | machine (BWS) | machine for keys the executor minted; human for today's key | |
-| GitHub PAT (fine-grained) | 2 | human | machine for BWS and (increment 7) Actions secrets; human for Coolify | machine (`POST /credentials/revoke`) | |
+| GitHub PAT (fine-grained) | 2 | human | machine for BWS and (increment 7) Actions secrets, through the rotation App's installation tokens; human for Coolify | machine (`POST /credentials/revoke`) | |
 | Atlassian API token | 1 | human | machine for BWS; human for Coolify | human | Revoke API unverified |
 | BWS machine token | 4 | human | human (Keychain consumers on the Mac) | human | Executor records evidence only |
 | change-manager bearer | 4 | machine | human until the Coolify decision | ends the overlap | Plaintext env: while deploy is human, the value passes through the Coolify UI on the Mac, a stated exception to "no value on the Mac" |
@@ -403,8 +403,9 @@ isn't scheduled, so it can't re-propose against the stale rev-1 package meanwhil
    account, including the shared account behind the vps-backup and infra-drift tokens that reads
    the drift-reporter bearer. Coolify steps per Devon's increment 2 decision.
 7. **GitHub PATs, the Atlassian token, and factory-runner's bearer.** Keeper moves as above; the
-   Actions-secret writer, or GitHub App installation tokens if increment 2's measurement allows it;
-   the Actions-secret probe workflow, or its stated exception.
+   Actions-secret writer is a dedicated rotation GitHub App (amendment 1), installed only on the
+   repositories holding a registered copy, with installation tokens minted per repository; the
+   Actions-secret probe workflow, or its stated exception.
 8. **BWS machine tokens.** All steps human; the executor records the evidence.
 9. **Retire the infraops window** (ADR-0054 increment 5).
 
@@ -454,3 +455,68 @@ Gate graduations (decision 10) are decided per class after that class's first ro
 | F (2nd) | `runtime-fetch` verification was an undeclared exception | Verification table: Healthchecks read directly; invoked-only consumers a stated exception |
 | G (2nd) | The first-hosted-step window lived only in the executor | Decisions 3 and 8: each hosted step is its own unit, windowed at its first claim |
 | H (2nd) | The increment plan was missing work | Increments 3, 5, 6 and 7; `max_attempts` column (decision 9) |
+
+## Amendment 1 — Increment 2 measurements (2026-10-09)
+
+Increment 2 measured the seven facts in the increment plan with throwaway resources named
+`probe-inc2-…` and no live credential. Every answer comes from a probe with a known-bad control
+that answered differently under the same conditions. The full record, with timestamps, is
+`docs/superpowers/plans/2026-10-09-rotation-increment-2-measurement-log.md`. Values stayed in one
+process; the record holds status codes, field names, sha256 prefixes and lengths only.
+
+### Answers
+
+| # | Question | Answer | Command shape | Changes |
+|---|---|---|---|---|
+| 1 | Can a Coolify token with `write` and `deploy` but not `read:sensitive` change an env var and restart, and does it see `real_value`? | **Yes, it writes and restarts; it never sees the value.** Its envs response has no `value` or `real_value` field at all. Each variable is stored twice (`is_preview` false and true), and a PATCH changes one row. | Dev Coolify beta.470, three tokens (`read`+`write`+`deploy`; `read`; `read`+`read:sensitive`). `POST`/`PATCH /applications/{uuid}/envs`, `GET …/envs`, `POST …/restart`; the restarted container's value hashed on the VM. Controls: both tokens without `write` get 403 `Missing required permissions: write`; without `deploy`, 403 `…: deploy`. | The Coolify decision (following section); decision 7's retire-old; increment 6 |
+| 2 | Can an OpenRouter management key carry an expiry? Does key-info return the revoke id? | **Expiry: yes** (the console set one hour; a minted key accepts `expires_at` as `…Z`, not `…+00:00`, which is 400). **Revoke id: no.** `GET /api/v1/key` returns 23 fields and no `hash`. The hash equals sha256 of the key value, which is undocumented. `/api/v1/auth/key` answers identically to `/api/v1/key`. | `POST /api/v1/keys` with `limit: 0.01`, then key-info with the minted value. Control: a malformed key gets 401 `User not found.` | Decision 1 and T8 (revoke id); decision 4's "as weak as the provider allows"; increment 5 |
+| 3 | Does a disabled or deleted OpenRouter key probe 401? | **Yes, after up to a minute on key-info; at once on inference.** Disabled and deleted keys answer 200 on `/key` and `/auth/key` at +5 s and 401 by +60 s; a zero-cost chat completion answers 401 immediately. | `PATCH /keys/{hash} {disabled: true}`, `DELETE /keys/{hash}`, then `/key`, `/auth/key` and a `:free`-model completion each minute. Control: the malformed key, at the start and end. | Increment 5's confirm-dead step |
+| 4 | What does a revoked BWS machine token return, and how long after the revoke? | **A new login fails at once** with exit 1 and `[400 Bad Request] {"error":"invalid_client"}`, which is the same answer a malformed token gets. **A session logged in before the revoke keeps reading** — the `bws` CLI's cached state and a held SDK client — for SESSION_EXPIRY_PLACEHOLDER. | `bws project list --color no` with the token in the environment, with the real `HOME` (cached state) and with an empty `HOME`; the Python SDK (`bitwarden-sdk` 2.1.0) with a held client and a new client. Probed at once, every minute to +5 min, then every 5 min. Control: the same token with its secret part altered in-process. | Decision 9's split confirm-dead unit; decision 3's "dead is exactly 401"; increments 4 and 8 |
+| 5 | Does moving a BWS secret to another project keep its UUID? | **Yes.** Access follows the project: an account without read on the target project gets the same 404 as for a UUID that doesn't exist. | `bws secret edit --project-id <b> <id>` as a writer on both projects; list both projects; read by id as a reader of the first project only, beside a random-UUID control. | Decision 4's keeper moves; increments 5 to 7 |
+| 6 | Can a GitHub App installation token write Actions secrets when the App has `secrets`? | **Yes.** The dispatch App can't: its installation had no `secrets` permission when measured on 2026-09-02 (`credentials.md` #274). | Throwaway App (Secrets: read and write; Metadata: read) installed on one throwaway repository. Mint for that repository, read `permissions` from the mint response, seal with the repository's public key (PyNaCl), `PUT …/actions/secrets/{name}` (201), list shows a fresh `updated_at`. Control: a token minted with `permissions: {metadata: read}` gets 403 `Resource not accessible by integration` on the same PUT. | Threat-model asset row; per-class GitHub row; increment 7 |
+| 7 | Does `orb -m <machine> -u root` work without a password on an isolated machine? | **Yes.** | `orb create --isolated --isolate-network ubuntu:noble`, then `orb -m <machine> -u root id -u` with stdin closed: rc 0, `0`. Control: the default user prints `501`. | None: decision 2's residual-risk statement stands |
+
+### What the answers change
+
+- **Coolify writes are blind, so verification stays with the consumer** (question 1). A token
+  without `read:sensitive` can't read back what it wrote. That fits "How each consumer kind is
+  verified", which already verifies a `coolify-env-hash` or `coolify-env` consumer by
+  authenticating to the service, not by reading Coolify. A second Coolify token with
+  `read:sensitive` is not needed for verification.
+- **A Coolify deploy step writes both rows of a variable** (question 1): one PATCH without
+  `is_preview` and one with `is_preview: true`, or the retired value stays stored in the preview row.
+  This applies to every Coolify write in decision 7, whoever makes it, human or machine.
+- **The OpenRouter revoke id is derived, then confirmed by the provider** (question 2). Decision 1's
+  "derived at revoke time from the quarantined value itself, through the provider" and T8's
+  containment become: compute sha256 of the quarantined value; `GET /api/v1/keys/{that hash}` with
+  the management key must return 200 with the same `label` that key-info returns for the value; only
+  then revoke. Store the hash from the create response as well, as the expected answer. Matching
+  by label alone stays forbidden.
+- **OpenRouter confirm-dead probes inference or waits** (question 3). Key-info can report a revoked key
+  as live for up to a minute. The increment 5 adapter's dead probe is a zero-cost inference call, or
+  key-info polled until 401 with a deadline of a few minutes. Either way the malformed-key control
+  runs in the same step (decision 3).
+- **BWS confirm-dead must authenticate fresh** (question 4). The `bws` CLI caches a session per
+  access-token id under `~/.config/bws/state/`, and an SDK client keeps the session it logged in with.
+  A probe that reuses either reports a revoked token as live. The confirm-dead probe uses a new SDK
+  client with no state, and it reads `invalid_client` as dead only after the same run has shown the
+  token was live before the revoke, because a malformed token returns the same answer. Decision 3's
+  "dead is exactly 401" becomes, for BWS, "a fresh login fails with `invalid_client`".
+  SESSION_CONSEQUENCE_PLACEHOLDER
+- **Keeper moves keep UUIDs, and the move is the cut-over** (question 5). The `uuid` in every
+  `.bws-secrets.toml` stays; its `project` field changes. A consumer account loses read the moment the
+  secret moves unless it already has read on the target project, so decision 4's order is: grant
+  every consumer account read on the keeper project, move the secret, then prove each consumer's read
+  with only `PATH` and `HOME` set. A failed read is undone by moving the secret back, which keeps the
+  UUID too.
+- **The GitHub secret writer is a dedicated rotation App** (question 6). Devon chose this on
+  2026-10-09 — "I think 1 +3, and we create a dedicated rotation app" — conditional on this
+  measurement, which holds. The asset table, the per-class GitHub row and increment 7 are updated to
+  match. The App holds Secrets: write (and the mandatory Metadata: read) and is installed only on the
+  repositories that hold a registered Actions-secret copy. The executor mints each installation token
+  for one repository at a time and narrows its `permissions` to `secrets: write`. Writes appear as the
+  App's bot, not as `AlobarQuest`.
+
+### The Coolify decision
+
+COOLIFY_DECISION_PLACEHOLDER

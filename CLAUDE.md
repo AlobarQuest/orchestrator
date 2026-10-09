@@ -71,9 +71,10 @@ Placement rule: global CLAUDE.md §7.
 - Production `/api` is M2M-only at the Traefik proxy (identity headers stripped); a human API route
   needs a dedicated forward-auth router. A browser 401 on `/api` means M2M-only, never a retry
   quirk. Detail: `docs/operations/driving-a-unit.md`.
-- Coolify `/envs` responses carry `real_value` for every variable (DB passwords): parse in-process,
-  print whitelisted fields only; PATCH may 500, fall back to delete + recreate. Detail:
-  `docs/operations/credentials.md`.
+- Coolify `/envs` responses carry `value` and `real_value` (DB passwords) for any token with
+  `read:sensitive`: parse in-process, print whitelisted fields only. Each variable is two rows
+  (`is_preview` false and true) and a PATCH changes one; PATCH may 500, fall back to delete +
+  recreate. Detail: `docs/operations/credentials.md`.
 - The authority envelope is a cross-repo contract with factory-runner, pinned by byte-identical
   `tests/fixtures/runner_authority_envelope.json` and the same `CONTRACT_SHA256` in both repos;
   change both repos together. History: `docs/history/claude-md-invariants-archive.md` #13.
