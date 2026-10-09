@@ -135,3 +135,21 @@
 - Both tokens revoked (`DELETE /installation/token` 204).
 - Answer: **yes: an App with `secrets: write` writes Actions secrets through an installation token**,
   and narrowing `permissions` at mint removes it. Increment 7's dedicated rotation App holds.
+
+## Cleanup (confirmed)
+
+- OrbStack machine `probe-inc2-root`: deleted; `orb list` has no row (13:12Z).
+- OpenRouter throwaway keys (three): deleted; `GET /keys/{hash}` 404 for the first and third, DELETE
+  200 for the second. The management key `probe-inc2-mgmt` was created with a one-hour expiry; its
+  Keychain item was deleted at 16:24Z before a post-expiry probe ran, so its expiry is **not
+  probe-confirmed**. Devon can confirm in the console that it shows as expired.
+- Coolify app `probe-inc2-app` and project `probe-inc2`: deleted; app `GET` 404, project gone from the
+  list, no container on the VM (16:17Z). The three dev tokens: deleted by Devon; each gets 401
+  `Unauthenticated.` on `GET /version` (16:23Z). Their Keychain items deleted and confirmed absent.
+- BWS secret `PROBE_INC2_MOVE`: deleted; readback rc 1.
+- GitHub App `probe-inc2-app`: deleted by the session in Chrome at Devon's go-ahead (16:25Z).
+  `GET /app` with a JWT signed by its key: 404 `Integration not found` (the same key minted tokens at
+  16:14Z). Key file and `~/.probe-inc2/` removed.
+- Observed on GitHub's App list page (not measured): a banner says installation tokens will move to
+  a stateless format (`ghs_…`, up to about 520 characters). Anything that stores or validates
+  installation-token length needs to allow for it.
