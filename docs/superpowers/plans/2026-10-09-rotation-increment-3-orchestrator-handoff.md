@@ -17,25 +17,45 @@ session says so in its report.
 
 1. **Claim confinement both ways**, on `claim_unit`, against a configured executor `agent_id`, using
    decision 1's rotation-unit predicate. With the setting unset, every claim on a rotation unit is
-   refused.
+   refused. The setting stays unset in production in this increment, because the executor's bearer
+   arrives in increment 4. Validating at boot that a configured id resolves in the bundled registry
+   and isn't a human identity is optional, matching `_m2m_credentials`.
 2. **Recovery of a lapsed rotation claim** by release without a grant, and reclaim refusing to grant
    a rotation unit or to grant any unit to the executor. Amendment 2's correction names the shape,
    the eligibility behavior and the replay requirement.
 3. **The claim-time `live_estate` window** for rotation units not marked non-hosted, with amendment
    2's start and continuation rule.
 4. **A unit's completion resolving the `work_unit` dependencies that name it**, in the same
-   transaction.
+   transaction. `resolve_dependency_command` commits, so completion calls a non-committing core
+   inside `_perform_transition`'s transaction (invariant: request entry points own their
+   transaction).
 5. **A `/review` form for resolving a human-act dependency**, with a strict `detail` schema and the
    evidence secret scan.
-6. **The rotation evidence schema and its secret scan.**
+6. **The rotation evidence schema and its secret scan, on rotation units only.** A scan of every
+   unit's evidence would refuse other producers' existing keys (factory-runner sends `body`, for
+   example), so the schema and scan apply where the rotation-unit predicate holds. A session that
+   wants a wider scan first runs it over the stored evidence and reports what it would refuse.
+   The executor that files this evidence is increment 4, and the ADR gives only "fingerprints
+   (sha256 prefix and length) and probe results per step" (decision 9). The session chooses the
+   field names, pins the schema as a contract fixture increment 4 must conform to, and lists the
+   names in its report as amendment 3 input. If the schema names step kinds, the word guards under
+   `src/orchestrator/` refuse some of them (`deploy` among them): reword, never allowlist.
 7. **The bearer `previous` parser** with its eight-day boot cap (decision 7), verified on
-   production.
-8. **The destination-list profile field** in intent-packages' `non-software-operational` schema,
+   production, and the line decision 7 requires in `docs/operations/deploy.md`: rolling back past
+   this image requires removing `previous` first.
+8. **The destination-list profile field**, optional as `standing` is, in intent-packages'
+   `non-software-operational` schema (required would fail validation of the approved
+   `rotation-openrouter-generic` revision 1),
    and the two rotation-proposer runbook steps amendment 2 names: read the field's change against
    the last approved revision, and compare it with the registry before approving. The comparison
    command arrives in increment 4; until then the step is a manual comparison.
 9. **The executor's identity**: an agent file and an authority profile in security-standards, the
-   pin advanced here, and the image rebuilt so the bundle carries them.
+   pin advanced here (merge security-standards first; `revision` and `artifact_sha256` change
+   together), and the image rebuilt so the bundle carries them. Its `environment` is the VM, not
+   `mini`. Derive the profile's capabilities from `registry/capabilities.yaml` and the ADR (the
+   asset table and decisions 1, 3, 4 and 9): each capability cites the ADR line that grants it.
+   ADR-0055's acceptance covers what it states; a capability the session can't trace to a line
+   goes to Devon. The report lists the capabilities with their citations.
 10. **The two CLAUDE.md corrections** amendment 2 names (#90's renewal exception, and the
     `deployment_observation` rule pointing at `SECRET_KEY_PARTS`), plus a new invariant for each new
     rule a later session could break.
@@ -97,8 +117,13 @@ A new design fork found during the build goes to Devon, least machinery first
 - **Each guard ships with tests that fail when the guard is removed.** Run the mutations, don't argue
   them.
 - **The `previous` parser ships, deploys and is verified on production before any rotation writes
-  `previous`.** Verify that production boots with and without the field using a scratch instance,
-  not by writing `previous` to production's settings.
+  `previous`.** Verify boot behavior with a scratch container of the exact image tag production
+  serves, never by writing `previous` to production's settings. Use throwaway values for every
+  setting, never production's (its proxy marker and CSRF secret are live). Run three cases: no
+  `previous`; a valid `previous`; and an `until` more than eight days ahead, which must refuse to
+  boot. Whether `previous` authenticates before and after `until` is proven by tests.
+- **Before the deploy,** confirm production has no ready or in-flight unit matching the
+  rotation-unit predicate; with the executor setting unset, such a unit becomes unclaimable.
 - **The orchestrator image doesn't migrate itself.** Follow `docs/operations/deploy.md`: build with
   the release workflow, migrate from the new image, swap, and check `alembic current` equals
   `heads` and the served OpenAPI schema.
