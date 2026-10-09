@@ -333,7 +333,7 @@ mechanics where a provider has an API.
 | OpenRouter key | 1 | machine | machine (BWS) | machine for keys the executor minted; human for today's key | |
 | GitHub PAT (fine-grained) | 2 | human | machine for BWS and (increment 7) Actions secrets, through the rotation App's installation tokens; human for Coolify | machine (`POST /credentials/revoke`) | |
 | Atlassian API token | 1 | human | machine for BWS; human for Coolify | human | Revoke API unverified |
-| BWS machine token | 4 | human | human (Keychain consumers on the Mac) | human | Executor records evidence only |
+| BWS machine token | 4 | human | human (Keychain consumers on the Mac) | human | Executor records evidence and runs confirm-dead (amendment 1) |
 | change-manager bearer | 4 | machine | human until the Coolify decision | ends the overlap | Plaintext env: while deploy is human, the value passes through the Coolify UI on the Mac, a stated exception to "no value on the Mac" |
 | orchestrator bearer | 4 of 6 | machine | human until the Coolify decision | ends the overlap | SYSTEM and VERIFIER stay hand-rotated (decision 4); observer and drift-reporter rotate together; factory-runner's bearer waits for increment 7's Actions-secret writer |
 
@@ -408,7 +408,8 @@ isn't scheduled, so it can't re-propose against the stale rev-1 package meanwhil
    Actions-secret writer is a dedicated rotation GitHub App (amendment 1), installed only on the
    repositories holding a registered copy, with installation tokens minted per repository; the
    Actions-secret probe workflow, or its stated exception.
-8. **BWS machine tokens.** All steps human; the executor records the evidence.
+8. **BWS machine tokens.** Mint, deploy and revoke are human; the executor records the evidence and
+   runs confirm-dead as a machine unit (amendment 1).
 9. **Retire the infraops window** (ADR-0054 increment 5).
 
 Gate graduations (decision 10) are decided per class after that class's first rotation.
@@ -500,28 +501,36 @@ measurement.
   isn't trusted, so it's never the revoke id; deriving it from the value is. Matching by label alone
   stays forbidden.
 - **OpenRouter confirm-dead uses inference** (question 3). The dead probe is a zero-cost completion
-  with the quarantined value, beside the same completion with the new value (must answer 200) and a
+  (a `:free` model chosen at probe time from the model list) with the quarantined value, beside the same completion with the new value (must answer 200) and a
   malformed key (must answer 401), all in one step. Key-info polled until 401 is the fallback, with a
   deadline of a few minutes.
 - **BWS confirm-dead logs in fresh, and its control is a live token, not a malformed one** (question
   4). A probe that reuses the `bws` CLI's state (`~/.config/bws/state/`) or a held SDK client reports a
   revoked token as live, so the probe uses a new SDK client with no state. A malformed token returns
-  the same `invalid_client` as a revoked one, so the discriminating control is a fresh login, in the
-  same step, with a token known to be live (the replacement); and the probed value is the quarantined
-  one, checked by fingerprint. Decision 3's "dead is exactly 401" becomes, for BWS, "a fresh login
-  fails with `invalid_client` while a fresh login with the replacement succeeds".
+  the same `invalid_client` as a revoked one, so a failure proves nothing unless the same value was
+  shown to work. Two halves, both fingerprinted: **before** the human revoke, a fresh login with the
+  quarantined value succeeds (recorded by the unit that quarantines it); **after**, a fresh login with
+  the same fingerprint fails with `invalid_client` while a fresh login with the replacement succeeds
+  in the same step. Decision 3's "dead is exactly 401" becomes, for BWS, that pair. The same holds
+  for OpenRouter, where malformed and revoked both answer `401 User not found.`: the revoke step's
+  key-info 200 on the quarantined value is the live-before half, and increment 5 must keep it.
 - **Confirm-dead for BWS needn't wait an hour, but the exposure lasts one** (question 4). New logins
   failed at the first probe, so increment 8's confirm-dead can run straight after the human revoke,
   as an ordinary machine unit that depends on it. Sessions already open kept working for about 55
   minutes, and nothing in this increment shortened that. Decision 9's split confirm-dead unit isn't
-  needed for confirm-dead; an hour after the revoke the executor records the exposure window as
-  closed, with no probe.
+  needed for confirm-dead. At +75 minutes the executor records the exposure window as closed; that
+  record is time-based, not an observation, and whether a held SDK client renews its session wasn't
+  measured.
 - **Keeper moves keep UUIDs, and consumers are proven before the move with a canary** (question 5).
   The `uuid` in every `.bws-secrets.toml` stays; its `project` field changes. A consumer account loses
   read the moment the secret moves unless it can already read the target project. So: grant every
   consumer account read on the keeper project, create a canary secret there and prove each consumer
   reads it with only `PATH` and `HOME` set (decision 4's "proven before a keeper moves"), delete the
-  canary, then move the secret. Moving a secret back was not measured; don't rely on it as the undo.
+  canary, then move the secret. The canary proves only the registry's consumer list, so the consumer
+  set is first checked by grepping the portfolio for the secret's UUID and name. The move needs write
+  on both projects, and the root has none on `Ops / Platform` or `SDS Operator`, so moving a keeper out
+  of them is a human act (Devon's account), a dependency like any other. Moving a secret back was not
+  measured; don't rely on it as the undo.
 - **The GitHub secret writer is a dedicated rotation App** (question 6). On 2026-10-09 Devon chose,
   of the options for question 6, to record the dispatch App's earlier measurement and measure with a
   throwaway App (options 1 and 3), and to build a dedicated App for increment 7: "I think 1 +3, and we
@@ -554,7 +563,7 @@ token can be limited to particular applications. The options, least machinery fi
    credentials' rotations. It doesn't remove the human attestation for a third-party key used by a
    hosted app ("How each consumer kind is verified"). Decision 7's check that no dispatched run is
    live before an orchestrator restart is an orchestrator read, not a Coolify one, and increment 6
-   names it. What the token can do, team-wide, on production:
+   must name it. What the token can do, team-wide, on production:
    - **Measured on dev:** create a project; create an application from any public image and start
      it; write any application's env vars; restart; delete an application and a project.
    - **From the source (beta.473):** `write` guards 73 routes, including deleting servers, databases
