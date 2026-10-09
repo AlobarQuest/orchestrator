@@ -471,7 +471,7 @@ process; the record holds status codes, field names, sha256 prefixes and lengths
 | 1 | Can a Coolify token with `write` and `deploy` but not `read:sensitive` change an env var and restart, and does it see `real_value`? | **Yes, it writes and restarts; it never sees the value.** Its envs response has no `value` or `real_value` field at all. Each variable is stored twice (`is_preview` false and true), and a PATCH changes one row. | Dev Coolify beta.470, three tokens (`read`+`write`+`deploy`; `read`; `read`+`read:sensitive`). `POST`/`PATCH /applications/{uuid}/envs`, `GET …/envs`, `POST …/restart`; the restarted container's value hashed on the VM. Controls: both tokens without `write` get 403 `Missing required permissions: write`; without `deploy`, 403 `…: deploy`. | The Coolify decision (following section); decision 7's retire-old; increment 6 |
 | 2 | Can an OpenRouter management key carry an expiry? Does key-info return the revoke id? | **Expiry: yes** (the console set one hour; a minted key accepts `expires_at` as `…Z`, not `…+00:00`, which is 400). **Revoke id: no.** `GET /api/v1/key` returns 23 fields and no `hash`. The hash equals sha256 of the key value, which is undocumented. `/api/v1/auth/key` answers identically to `/api/v1/key`. | `POST /api/v1/keys` with `limit: 0.01`, then key-info with the minted value. Control: a malformed key gets 401 `User not found.` | Decision 1 and T8 (revoke id); decision 4's "as weak as the provider allows"; increment 5 |
 | 3 | Does a disabled or deleted OpenRouter key probe 401? | **Yes, after up to a minute on key-info; at once on inference.** Disabled and deleted keys answer 200 on `/key` and `/auth/key` at +5 s and 401 by +60 s; a zero-cost chat completion answers 401 immediately. | `PATCH /keys/{hash} {disabled: true}`, `DELETE /keys/{hash}`, then `/key`, `/auth/key` and a `:free`-model completion each minute. Control: the malformed key, at the start and end. | Increment 5's confirm-dead step |
-| 4 | What does a revoked BWS machine token return, and how long after the revoke? | **A new login fails at once** with exit 1 and `[400 Bad Request] {"error":"invalid_client"}`, which is the same answer a malformed token gets. **A session logged in before the revoke keeps reading** — the `bws` CLI's cached state and a held SDK client — for SESSION_EXPIRY_PLACEHOLDER. | `bws project list --color no` with the token in the environment, with the real `HOME` (cached state) and with an empty `HOME`; the Python SDK (`bitwarden-sdk` 2.1.0) with a held client and a new client. Probed at once, every minute to +5 min, then every 5 min. Control: the same token with its secret part altered in-process. | Decision 9's split confirm-dead unit; decision 3's "dead is exactly 401"; increments 4 and 8 |
+| 4 | What does a revoked BWS machine token return, and how long after the revoke? | **A new login fails at once** with exit 1 and `[400 Bad Request] {"error":"invalid_client"}`, which is the same answer a malformed token gets. **A session logged in before the revoke keeps reading** — the `bws` CLI's cached state and a held SDK client — until that session expires: both still read at +50 min and both failed at +55 min (16:46:43Z), about an hour after each logged in (15:48 to 15:49Z). The held SDK client then got 401 `Unauthorized`, not `invalid_client`. | `bws project list --color no` with the token in the environment, with the real `HOME` (cached state) and with an empty `HOME`; the Python SDK (`bitwarden-sdk` 2.1.0) with a held client and a new client. Probed at once, every minute to +5 min, then every 5 min. Control: the same token with its secret part altered in-process. | Decision 9's split confirm-dead unit; decision 3's "dead is exactly 401"; increments 4 and 8 |
 | 5 | Does moving a BWS secret to another project keep its UUID? | **Yes.** Access follows the project: an account without read on the target project gets the same 404 as for a UUID that doesn't exist. | `bws secret edit --project-id <b> <id>` as a writer on both projects; list both projects; read by id as a reader of the first project only, beside a random-UUID control. | Decision 4's keeper moves; increments 5 to 7 |
 | 6 | Can a GitHub App installation token write Actions secrets when the App has `secrets`? | **Yes.** The dispatch App can't: its installation had no `secrets` permission when measured on 2026-09-02 (`credentials.md` #274). | Throwaway App (Secrets: read and write; Metadata: read) installed on one throwaway repository. Mint for that repository, read `permissions` from the mint response, seal with the repository's public key (PyNaCl), `PUT …/actions/secrets/{name}` (201), list shows a fresh `updated_at`. Control: a token minted with `permissions: {metadata: read}` gets 403 `Resource not accessible by integration` on the same PUT. | Threat-model asset row; per-class GitHub row; increment 7 |
 | 7 | Does `orb -m <machine> -u root` work without a password on an isolated machine? | **Yes.** | `orb create --isolated --isolate-network ubuntu:noble`, then `orb -m <machine> -u root id -u` with stdin closed: rc 0, `0`. Control: the default user prints `501`. | None: decision 2's residual-risk statement stands |
@@ -502,7 +502,13 @@ process; the record holds status codes, field names, sha256 prefixes and lengths
   client with no state, and it reads `invalid_client` as dead only after the same run has shown the
   token was live before the revoke, because a malformed token returns the same answer. Decision 3's
   "dead is exactly 401" becomes, for BWS, "a fresh login fails with `invalid_client`".
-  SESSION_CONSEQUENCE_PLACEHOLDER
+  Decision 9's "can read live for up to an hour" is confirmed, and it is the *session* that lives,
+  not the token: a revoke stops new logins at once, and any session already open runs out its
+  hour. So confirm-dead can run straight after the revoke (a fresh login was refused in the first probe after the revoke), and
+  doesn't need to be a split unit. What the hour still bounds is exposure: a holder of the old
+  token who logged in before the revoke reads for up to an hour, and no step can shorten that.
+  Decision 9's split confirm-dead unit becomes, optionally, an `exposure_window_closed` record
+  an hour after the revoke, with no probe.
 - **Keeper moves keep UUIDs, and the move is the cut-over** (question 5). The `uuid` in every
   `.bws-secrets.toml` stays; its `project` field changes. A consumer account loses read the moment the
   secret moves unless it already has read on the target project, so decision 4's order is: grant
@@ -519,4 +525,30 @@ process; the record holds status codes, field names, sha256 prefixes and lengths
 
 ### The Coolify decision
 
-COOLIFY_DECISION_PLACEHOLDER
+Put to Devon on 2026-10-09 as a standing-authority decision, with the measurements above. Coolify
+API tokens belong to a team and carry abilities, not resources, in beta.470 and beta.473: there is no
+per-application token, so no narrower holder was found. The options, least machinery first:
+
+1. **No Coolify token in the executor** (the current design). Every hosted deploy, restart and
+   retire-old stays a human act: ten of the eighteen live credentials (the change-manager and
+   orchestrator bearer rows, plus the Coolify consumers of the PAT and Atlassian rows). Nothing new
+   is exposed.
+2. **A `read` + `write` + `deploy` token without `read:sensitive`**, in its own `Rotation / Coolify`
+   project that only the root reads, and in the hand-rotated set. It removes those human acts: the
+   executor writes both rows of each variable, restarts, verifies by authenticating to the service,
+   and ends the overlap. It never sees a stored value. What it can still do, team-wide on production:
+   - **Measured on dev:** create a project; create an application from any public image and start
+     it; write any application's env vars; restart; delete an application and a project.
+   - **From the source (beta.473):** `write` reaches 73 routes, including deleting servers,
+     databases and services, and changing or deleting SSH private keys and GitHub App connections;
+     `deploy` reaches 11 (start, stop, restart, deploy and cancel any resource).
+
+   That is close to full control of the production Coolify instance short of reading secrets. It
+   moves T1's accepted residual from "every asset in the VM" to "every asset in the VM, plus the
+   ability to run any image on production". The production Coolify token in `Ops / Platform`
+   already carries more than this, but it is outside the root's reach today (T1).
+3. **A narrower holder** would need a separate Coolify team holding only the rotated
+   applications, so a team-bound token reaches nothing else. That wasn't measured, and moving
+   production applications between teams is its own change.
+
+Devon's answer: ANSWER_PLACEHOLDER

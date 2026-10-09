@@ -96,7 +96,7 @@
 - Answer: **a move keeps the secret's UUID, and access follows the project**: an account without the
   target project gets the same 404 as for a secret that doesn't exist.
 
-## Question 4: revoked BWS machine token (revoke 2026-10-09T15:51:22Z; poller in progress)
+## Question 4: revoked BWS machine token (revoke 2026-10-09T15:51:22Z)
 
 - `bws` 2.0.0 **caches a session per access-token id** in `~/.config/bws/state/`. With the real `HOME`, a
   token whose secret part was altered in-process still succeeded (rc 0): the cached session was used
@@ -112,7 +112,12 @@
   **a new login fails at once** (cli-fresh and sdk-fresh: 400 `invalid_client`, identical to the
   malformed control, so revoked and malformed can't be told apart). **An existing session keeps
   reading**: cli-cached and sdk-held still rc 0 / ok at +20 min.
-- (Expiry of the existing sessions: recorded when the poller finishes.)
+- Last rounds: at +50 min (16:41:42Z) cli-cached rc 0 and sdk-held ok; at +55 min (16:46:43Z)
+  cli-cached rc 1 `[400 Bad Request] invalid_client` and sdk-held `[401 Unauthorized]`. The poller
+  stopped there with nothing still working. The cached state dated from about 15:45 to 15:48Z and
+  the held SDK login from 15:49Z, so each session lasted about an hour from its login.
+- Answer: **a revoke stops new logins at once (exit 1, `invalid_client`, indistinguishable from a
+  malformed token); sessions opened before it keep reading for the rest of their hour.**
 
 ## Question 6: GitHub App installation token writes an Actions secret (measured 2026-10-09T16:14:35Z)
 
