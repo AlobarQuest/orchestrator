@@ -515,14 +515,15 @@ measurement.
   window counts from it. **This is Devon's procedure in increment 8, which stays all human:** running
   it as a machine unit would put live consumer BWS tokens, the old one and its replacement, inside
   the executor's reach, which decision 4 rules out. Decision 3's "dead is exactly 401" becomes, for
-  BWS, that pair. The same holds
+  BWS, Devon's attestation of that pair. The same holds
   for OpenRouter, where malformed and revoked both answer `401 User not found.`: the revoke step's
   key-info 200 on the quarantined value is the live-before half, and increment 5 must keep it.
 - **Confirm-dead for BWS needn't wait an hour, but the exposure lasts one** (question 4). New logins
   failed at the first probe, so Devon's confirm-dead check can run straight after the revoke.
   Sessions already open kept working for about 55 minutes, and nothing in this increment shortened
-  that. Decision 9's split confirm-dead unit isn't needed for confirm-dead. The exposure window is
-  recorded as closed at +75 minutes; that record is time-based, not an observation, and whether a held
+  that. Decision 9's split confirm-dead unit isn't needed for confirm-dead. Devon attests the exposure
+  window closed 75 minutes after the revoke, later than the before-half session's hour; the
+  executor files that attestation as evidence. It is time-based, not an observation, and whether a held
   SDK client renews its session wasn't measured.
 - **Keeper moves keep UUIDs, and consumers are proven before the move with a canary** (question 5).
   The `uuid` in every `.bws-secrets.toml` stays; its `project` field changes. A consumer account loses
