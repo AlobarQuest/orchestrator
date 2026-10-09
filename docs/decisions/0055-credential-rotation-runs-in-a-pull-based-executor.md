@@ -176,8 +176,11 @@ The contract enforces these invariants for every adapter:
 - **The SYSTEM and VERIFIER bearers stay in `SDS Operator` and stay hand-rotated.** Rotating them
   by machine would give the root standing write over identities that outrank the executor, which
   the "never borrow another identity" rule forbids. They can join later by a separate decision.
-- **The Coolify API token stays out of the executor** until a narrower scope is measured and Devon
-  decides it (increment 2). Until then every Coolify write and hosted restart is a human act.
+- **The executor holds a production Coolify token with `read`, `write` and `deploy`, without
+  `read:sensitive`** (Devon, 2026-10-09; amendment 1), in its own `Rotation / Coolify` project that only
+  the root reads. It is in the hand-rotated set. It is created in the increment that first uses it,
+  after question 1's probes are repeated on production. Until then every Coolify write and hosted
+  restart is a human act.
 - **Minted keys are as weak as the provider allows:** an `expires_at` and a credit `limit` on every
   OpenRouter key.
 
@@ -298,6 +301,7 @@ exception, and Devon accepts these with this ADR.
 | Executor BWS token (**root**) | The VM only | The executor; anything with root in the VM | Write on the keeper projects and `Rotation / Work`; read on `Rotation / <provider>`, `Rotation / Executor` and `Rotation / Healthchecks` | Devon, by hand |
 | OpenRouter management key | `Rotation / OpenRouter` | The root | Account-wide, unscoped (provider limit) | Devon, by hand |
 | Rotation GitHub App private key (increment 7; amendment 1) | `Rotation / GitHub` | The root | Mints installation tokens with Secrets: write (and Metadata: read) on only the repositories where the App is installed: those holding a registered Actions-secret copy | Devon, by hand |
+| Production Coolify token (amendment 1) | `Rotation / Coolify` | The root | Team-wide `read`, `write` and `deploy`, no `read:sensitive`: env writes, restarts, creating and deleting applications, projects, servers, databases and SSH keys; can run any image, so probably reaches secrets from a container | Devon, by hand |
 | Read-only Healthchecks API key | `Rotation / Healthchecks` | The root | Read check status only | Devon, by hand |
 | Executor WORKER bearer | `Rotation / Executor`, readable by the root | The root | Claim and file evidence on rotation units only (decision 1) | Devon, by hand |
 | Rotated credentials and values in flight | Per-credential keeper projects; `Rotation / Work`; the executor's memory | The root, and each credential's consumers' accounts | That credential's scope | The executor |
@@ -306,7 +310,7 @@ exception, and Devon accepts these with this ADR.
 
 | # | Threat | What it gains | Containment |
 |---|---|---|---|
-| T1 | An agent session on the Mac reads the VM | Every asset above | **Accepted residual** (decision 2). No value is in the Mac's Keychain, files or environment, so it takes a deliberate act. The Coolify token, SYSTEM and VERIFIER bearers are outside the root's reach. |
+| T1 | An agent session on the Mac reads the VM | Every asset above | **Accepted residual** (decision 2). No value is in the Mac's Keychain, files or environment, so it takes a deliberate act. SYSTEM and VERIFIER bearers are outside the root's reach. The rotation Coolify token is inside it (amendment 1); an agent on the Mac already controls production Coolify through infraops, so this doesn't widen what such an agent can do. |
 | T1a | A consumer account is compromised | The credentials it consumes, plus nothing else | One keeper project per credential (decision 4); quarantined and staged values are in a project no consumer reads. |
 | T2 | A forged trigger from fetched content | Unwanted rotations | Triggers are the registry and `cred-findings` only; every rotation needs a human-approved record. |
 | T3 | The orchestrator is compromised | It can mark units approved and supply evidence | The executor checks the approved revision against intent-packages' git and the registry against its repository's `main`, compares destinations in full, re-probes rather than trusts evidence, and derives revoke ids from the quarantined value. Result: churn, not exposure. |
@@ -334,8 +338,8 @@ mechanics where a provider has an API.
 | GitHub PAT (fine-grained) | 2 | human | machine for BWS and (increment 7) Actions secrets, through the rotation App's installation tokens; human for Coolify | machine (`POST /credentials/revoke`) | |
 | Atlassian API token | 1 | human | machine for BWS; human for Coolify | human | Revoke API unverified |
 | BWS machine token | 4 | human | human (Keychain consumers on the Mac) | human | Executor records evidence only; confirm-dead is Devon's fresh-login check (amendment 1) |
-| change-manager bearer | 4 | machine | human until the Coolify decision | ends the overlap | Plaintext env: while deploy is human, the value passes through the Coolify UI on the Mac, a stated exception to "no value on the Mac" |
-| orchestrator bearer | 4 of 6 | machine | human until the Coolify decision | ends the overlap | SYSTEM and VERIFIER stay hand-rotated (decision 4); observer and drift-reporter rotate together; factory-runner's bearer waits for increment 7's Actions-secret writer |
+| change-manager bearer | 4 | machine | machine through the Coolify token, from increment 6 (amendment 1) | ends the overlap | Plaintext env: while deploy is human, the value passes through the Coolify UI on the Mac, a stated exception to "no value on the Mac" |
+| orchestrator bearer | 4 of 6 | machine | machine through the Coolify token, from increment 6 (amendment 1) | ends the overlap | SYSTEM and VERIFIER stay hand-rotated (decision 4); observer and drift-reporter rotate together; factory-runner's bearer waits for increment 7's Actions-secret writer |
 
 **The Keychain copy is dropped.** Devon decided on 2026-10-08 that whatever needs
 `OPENROUTER_API_KEY` fetches it from BWS, so the credential's only stored copy is its keeper. The
@@ -403,7 +407,10 @@ isn't scheduled, so it can't re-propose against the stale rev-1 package meanwhil
 6. **Self-issued bearers** (change-manager, and the orchestrator bearers named in the per-class
    table, except factory-runner's). Move each keeper to its project, proving every consumer
    account, including the shared account behind the vps-backup and infra-drift tokens that reads
-   the drift-reporter bearer. Coolify steps per Devon's increment 2 decision.
+   the drift-reporter bearer. First, repeat increment 2's question 1 probes on production with a
+   throwaway application, then create the `Rotation / Coolify` token (amendment 1). The executor
+   writes both rows of each variable, restarts, and ends the overlap; this increment names the
+   orchestrator read that confirms no dispatched run is live before an orchestrator restart.
 7. **GitHub PATs, the Atlassian token, and factory-runner's bearer.** Keeper moves as above; the
    Actions-secret writer is a dedicated rotation GitHub App (amendment 1), installed only on the
    repositories holding a registered copy, with installation tokens minted per repository; the
@@ -419,13 +426,14 @@ Gate graduations (decision 10) are decided per class after that class's first ro
 - One contract replaces per-class procedures; a provider without an API is the same contract with
   human steps.
 - Admin credentials no longer touch the Mac's Keychain, environment or tools. A deliberate act
-  inside the VM can still reach them; that risk is accepted and stated. The Coolify token and the
-  SYSTEM and VERIFIER bearers are outside the executor's reach.
-- Until Devon decides the Coolify token, every hosted consumer deploy is a human step, which is ten
-  of the eighteen live credentials.
+  inside the VM can still reach them; that risk is accepted and stated. The SYSTEM and VERIFIER
+  bearers are outside the executor's reach; from increment 6 a team-wide production Coolify token is
+  inside it (amendment 1).
+- Until increment 6 creates the Coolify token, every hosted consumer deploy is a human step, which
+  is ten of the eighteen live credentials. After it, those deploys and restarts are machine work.
 - The orchestrator's claim path and authentication path both change (decisions 1, 7 and 8), and
   each ships with mutation review.
-- Every human act is a dependency Devon resolves at `/review`. Until the Coolify decision and the
+- Every human act is a dependency Devon resolves at `/review`. Until the Coolify token exists and the
   gate graduations, a hosted rotation still has several of them; the design removes the human
   mechanics where a provider has an API, not the human decisions.
 - About a dozen BWS projects replace one shared keeper project. That is configuration, not code,
@@ -588,4 +596,5 @@ If Devon chooses option 2, the same change updates: the asset table (a `Rotation
 T1's "The Coolify token… outside the root's reach"; decision 4's Coolify bullet; the per-class rows
 that say "human until the Coolify decision"; Consequences bullets 2, 3 and 5; and increment 6.
 
-Devon's answer: ANSWER_PLACEHOLDER
+**Devon's answer (2026-10-09): option 2.** "I agree with Option 2 as the best option." The edits
+listed in the preceding paragraph are made in the same change.
