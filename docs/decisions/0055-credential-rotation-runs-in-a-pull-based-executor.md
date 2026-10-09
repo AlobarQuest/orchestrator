@@ -82,7 +82,8 @@ It has no LLM. It lives in this repository as `src/rotation_worker/` (ADR-0054's
   `required_capability` is `operational_action` and whose package revision has profile
   `non-software-operational` with `standing` and `credential_id` set. Only the executor's
   `agent_id` may hold a claim on a rotation unit, and the executor may hold a claim on nothing else.
-  Both `claim_unit` and the reclaim path (`_acquire_reclaimed_claim`) enforce it; renewal is already
+  Both `claim_unit` and the reclaim path (`_acquire_reclaimed_claim`) enforce it (amendment 2:
+  reclaim never grants a rotation unit); renewal is already
   bound to the claim's owner. Each check ships with a mutation test.
 - **What it acts on is fixed by the human approval, not by the unit.** The package revision carries
   the credential's destinations in full: provider, endpoints, and every consumer's kind and
@@ -269,8 +270,8 @@ whoever claims, and resuming a paused rotation counts as continuing, not startin
   can't fit (for example confirming a BWS token dead, which can read live for up to an hour after
   revoke) is split into its own unit that starts after the wait. (Amendment 1: a fresh login fails at
   once, so BWS confirm-dead needs no wait; only the exposure window lasts the hour.)
-- **A lapsed claim** (a crash, a sleeping Mac) is reclaimed by the existing SYSTEM recovery path on
-  request; that is rare enough to stay a human-initiated act. Rotation units are created with
+- **A lapsed claim** (a crash, a sleeping Mac) is recovered by the SYSTEM recovery path on
+  request (amendment 2: released without a grant, then claimed again by the executor); that is rare enough to stay a human-initiated act. Rotation units are created with
   `work_units.max_attempts` of at least three (the column is what's enforced, not
   `authority.budgets.max_attempts`).
 
@@ -398,7 +399,8 @@ isn't scheduled, so it can't re-propose against the stale rev-1 package meanwhil
    - the rotation evidence schema and its secret scan;
    - the bearer `previous` parser with its eight-day cap, verified on production;
    - the destination-list profile field (intent-packages schema), the proposer writing it, and
-     `/review` showing its difference from the last approved revision;
+     `/review` showing its difference from the last approved revision (amendment 2 drops the
+     proposer change and the `/review` diff);
    - the executor's WORKER identity (security-standards commit and image rebuild).
 
    Each guard is reviewed by mutation.
@@ -463,7 +465,7 @@ Gate graduations (decision 10) are decided per class after that class's first ro
 | 13 | Increment ordering defects | Increments 2 (measure and decide first), 3 (orchestrator first), 7 (factory-runner bearer with its writer); the gap is stated |
 | 14 | Minor: analogy, cleanup, shared value, own bearer | Decisions 1, 3, 6 and 4 |
 | A (2nd) | Human-step units couldn't be worked | Decision 3: human acts are dependencies Devon resolves; completion resolves `work_unit` dependencies |
-| B (2nd) | The registry fingerprint had no author and didn't catch an earlier hostile edit | Decision 1: full destination list in the revision, shown as a diff at `/review`, revision checked against git |
+| B (2nd) | The registry fingerprint had no author and didn't catch an earlier hostile edit | Decision 1: full destination list in the revision, revision checked against git; amendment 2 moves the diff to the package checkout and binds the list into the unit's authority, shown at `/review` |
 | C (2nd) | A shared keeper project spread read access across consumer accounts | Decision 4: one keeper project per credential; `Rotation / Work` for quarantine and staging; consumer reads proven before a move |
 | D (2nd) | The rotation-unit predicate was undefined; reclaim wasn't confined | Decision 1: named predicate, enforced in claim and reclaim |
 | E (2nd) | The `until` backstop wasn't enforceable by stopping; no cap | Decision 7: eight-day boot cap; extension is a defined step |
@@ -606,16 +608,20 @@ listed in the preceding paragraph are made in the same change.
 ## Amendment 2 — Increment 3 code read (2026-10-09)
 
 Before writing increment 3's build handoff, the orchestrator and intent-packages code its items
-touch was read. Three of the ADR's assumptions don't hold, and each needed a decision. The other
-findings are corrections that follow from the code.
+touch was read. Three of the ADR's assumptions don't hold, and each needed a decision. An
+independent review of the first draft of this amendment confirmed every factual claim and found two
+design defects (where the destination list is authenticated, and how a lapsed rotation claim is
+recovered) plus gaps; the following sections include the fixes.
 
 ### What the code shows
 
-- **Approval happens before `/review`.** A rotation package revision is approved by name in the
-  intent-packages checkout, and that commit is published before the orchestrator sees it
-  (`docs/operations/rotation-proposer.md`, step 3). Decision 1's "`/review` shows the destination
-  list's difference from the last approved revision" has no approval screen to appear on. The
-  rotation proposer rewrites only the `occurrence` line of a standing package
+- **Approval happens before `/review`, and it isn't authenticated.** A rotation package revision is
+  approved by name in the intent-packages checkout, and that commit is published before the
+  orchestrator sees it (`docs/operations/rotation-proposer.md`, step 3). The approval is a line in
+  `lineage.yaml` written by the CLI's `approve`; nothing authenticates it, and intent-packages'
+  `main` requires status checks but no review. Decision 1's "`/review` shows the destination list's
+  difference from the last approved revision" has no approval screen to appear on. The rotation
+  proposer rewrites only the `occurrence` line of a standing package and its status
   (`src/rotation_proposer/standing.py`), so every other field is carried forward unchanged.
 - **Every rotation unit ends at a human click.** Rotation criteria are `human_review`,
   `external_attestation` or `observation`, all judgment types (`verifier_evaluators.py`), so a unit
@@ -628,87 +634,122 @@ findings are corrections that follow from the code.
   `operator_machine`, and `operator_machine` has a change window in `factory-policy.toml`, so
   decision 8's "a claim refuses when the unit's package declares a reach whose window is closed"
   would window every unit of that package, including steps that touch nothing hosted.
+- **A reclaimed claim can't reach a pulling executor.** The reclaim route is called by SYSTEM, takes
+  the new owner from the request body, and returns the new lease token to the SYSTEM caller
+  (`api/routes/lifecycle.py`); a replay returns an empty token. The executor pulls and never
+  receives that token, so a claim reclaimed to it can't be renewed or have evidence filed. Decision
+  9's recovery path doesn't work for the executor as written.
 
 ### Devon's answers (2026-10-09)
 
 The three forks were put with the least machinery first. Devon answered "1,1,1".
 
 - **A. The destination list is reviewed in the package diff, and its author writes it.** Devon
-  reviews the destination list as part of the revision's git diff in the intent-packages checkout,
-  where he already approves by name. The package author writes the list; the proposer doesn't read
-  the registry and needs no change, because it carries the field forward. The executor's act-time
-  refusal of any registry that differs from the approved list stands. Nothing is added to
-  `/review` for this.
+  reviews the destination list in the revision's diff in the intent-packages checkout, where he
+  already approves by name. The package author writes the list; the proposer doesn't read the
+  registry and needs no change, because it carries the field forward. The executor's act-time
+  refusal of any registry that differs from the approved list stands. No `/review` code is added
+  for this.
 - **B. Only the `live_estate` window applies at claim, and only to units that touch a hosted
   service.** Other reach rows' windows aren't asked at claim. Non-hosted steps run at any hour.
 - **C. Per-unit completion clicks are accepted for now.** Decision 10 already has Devon click every
   gate on each class's first rotation. A deterministic rotation evidence type, which would let a
   rotation unit complete without him, is part of the later gate-graduation decision; adding a type
-  to `DETERMINISTIC_TYPES` is a change to when judgment evidence reaches a human, so it's his.
+  to `DETERMINISTIC_TYPES` changes when judgment evidence reaches a human, so it's his.
 
 ### What the answers change
 
 - **Decision 1, destinations.** The package revision carries the destination list as a new
-  `non-software-operational` profile field, written by the package author. Devon reads its change
-  in the revision's diff before approving by name; the rotation proposer runbook says so. The
-  executor's checks (revision against intent-packages' git, registry at an ancestor of `main`,
-  exact equality with the approved list) are unchanged. The proposer change and the `/review` diff
-  are dropped from increment 3.
+  `non-software-operational` profile field, written by the package author. Before approving, Devon
+  reads that field's change against the **last approved** revision (the commit named by the latest
+  approval in `lineage.yaml`), not against the proposer's latest commit.
+- **The list is also bound into each rotation unit's authority, which is authenticated.** Because
+  the intent-packages approval is unauthenticated, an actor that can push there could publish a
+  hostile list with a forged approval line and make the registry match. So the operator who writes a
+  rotation's decomposition (HQ, by hand, as for every operational decomposition) puts the full
+  destination list in each rotation unit's envelope `constraints`. `/review` already shows every
+  non-repository constraint on the decomposition and authority pages (`decision_facts.py`), so Devon
+  reads the list on the screen where his approval is authenticated, with no new `/review` code. The
+  executor refuses unless the envelope's list, the package revision's list and the registry are
+  equal.
+- **Destination drift is found before approval, not at act time.** A registry change that adds a
+  legitimate consumer would otherwise surface only when the executor refuses at its first claim,
+  after a unit has been claimed and ADR-0052's supersede is closed, leaving fail-then-cancel and a
+  re-approval. So the approval runbook compares the registry with the list before Devon approves:
+  increment 3 adds the step, and increment 4 exposes the executor's own comparison as a read-only
+  command for it.
 - **T4.** A hostile registry consumer is caught by the executor's refusal, because the approved list
-  doesn't contain it. Putting it in the list takes a package edit, which is in the diff Devon
-  approves.
-- **Decision 8, which window.** At a claim grant on an operational unit, the server asks only the
-  `live_estate` row's window, and only when the unit touches a hosted service. A unit touches a
-  hosted service unless its approved authority envelope says it doesn't, so the default is
-  windowed. The marker lives in the envelope's `constraints`, which are write-once and covered by
-  the authority approval, so no schema changes. The check fails closed on an undeclared or
-  unreadable package reach, as decision 8 already says. It is a new claim-side function: the
-  admission check (`reach_admission.change_window_refusal`) is asked once, at admission, and stays
-  as it is.
+  doesn't contain it. Getting it into the list takes a package edit, which is in the diff Devon reads,
+  and an envelope edit, which is on the authenticated `/review` page he approves.
+- **Decision 8, which window.** At a claim on a rotation unit (decision 1's predicate, not every
+  `operational_action` unit), the server asks only the `live_estate` row's window, and asks it
+  whatever reach the package declares. It is skipped only for a unit whose approved envelope
+  `constraints` mark it as touching no hosted service, so the default is windowed. The marker needs
+  no schema change: `constraints` is an open, known envelope field, enters the authority fingerprint
+  by value, is write-once and is covered by the authority approval; rotation units are never
+  dispatched, so no runner contract sees it. If the policy file can't be read, the claim refuses
+  (unlike `lease_policy.py`, which falls back to a default lease). This is a new claim-side function:
+  the admission check (`reach_admission.change_window_refusal`) is asked once, at admission, and
+  stays as it is. Operational units that aren't rotation units keep today's behavior.
+- **The marker must agree with the step.** The server can't see what a step writes, so the executor
+  refuses a unit marked non-hosted whose step writes a hosted consumer kind (`coolify-env`,
+  `coolify-env-hash`) in the approved destination list.
 - **Decision 3, hand-offs.** A unit's completion still resolves the `work_unit` dependencies that
-  name it, in the same transaction, which removes the separate resolution act. The completion
-  click remains until gates graduate.
+  name it, in the same transaction, which removes the separate resolution act. The completion click
+  remains until gates graduate.
 
 ### Corrections from the code read
 
 These needed no decision.
 
-- **Reclaim confinement checks the granted owner, not the caller.** The reclaim route takes the new
-  owner from the request body (`body.next_owner_id`) and the caller is SYSTEM, so confinement on
-  reclaim compares the granted owner with the configured executor `agent_id`, both ways. On
-  `claim_unit` it compares the authenticated WORKER's `agent_id`.
-- **One definition of start and continuation.** A claim grant (`claim_unit`, including after a
-  requeue, or `reclaim_expired_claim`) is a continuation exactly when the unit has evidence from an
-  earlier attempt, and is otherwise a start. Starts are windowed; continuations and renewals
-  aren't. This follows Devon's 2026-10-08 ruling that resuming counts as continuing, and applies it
-  the same way to every path that grants a claim. CLAUDE.md's rule that a per-claim rule covers all
-  three lease writers is amended to name the window as the deliberate exception for renewal.
-- **Evidence field names.** Rotation evidence fields must pass `secret_metadata_path`, whose key
-  parts include `credential`, `token`, `log`, `body` and `response`. Names such as `credential_id`,
-  `fresh_login`, `token_fingerprint` and `response_status` would be refused; the schema uses names
-  that avoid every part. CLAUDE.md's `deployment_observation` rule, which names only
-  credential/token/key, is corrected to point at `SECRET_KEY_PARTS`.
+- **A lapsed rotation claim is released, not reclaimed to a new owner.** For a rotation unit, the
+  SYSTEM recovery path releases the lapsed claim and returns the unit to `READY` with no grant; the
+  executor then claims it through `claim_unit`, where confinement and the window apply. A reclaim
+  that would grant a rotation unit, or grant any unit to the executor's `agent_id`, is refused.
+  This replaces decision 9's "reclaimed by the existing SYSTEM recovery path".
+- **Claim confinement compares a configured identity.** `claim_unit` compares the authenticated
+  WORKER's `agent_id` with a configured executor `agent_id`, both ways. When that setting is unset,
+  every claim on a rotation unit is refused.
+- **Start and continuation.** A claim on a rotation unit is a continuation, and isn't windowed,
+  exactly when the unit's previous attempt ended because its lease lapsed and that attempt's claim
+  holder filed evidence on it. Every other claim is a start and is windowed, including a claim after
+  a worker-reported failure and a requeue or retry: those follow a stop condition, and Devon's
+  2026-10-08 ruling covered resuming a paused rotation, not retrying a failed one. Renewal is never
+  windowed. A refusal is raised before the transaction commits, so it leaves no partial state.
+  CLAUDE.md's rule that a per-claim rule covers all three lease writers is amended in increment 3 to
+  name the window as the deliberate exception for renewal.
+- **Evidence field names.** Rotation evidence fields must pass `secret_metadata_path`, which refuses
+  any key containing one of `SECRET_KEY_PARTS`: `api_key`, `authorization`, `bearer`, `body`,
+  `credential`, `instruction`, `log`, `password`, `response`, `secret` and `token`. Names such as
+  `credential_id`, `fresh_login`, `token_fingerprint`, `response_status` and `quarantine_secret_id`
+  would be refused; the schema uses names that avoid every part. CLAUDE.md's
+  `deployment_observation` rule, which names only credential/token/key, is corrected in increment 3
+  to point at `SECRET_KEY_PARTS`.
 - **The executor needs its own identity and authority profile.** No executor identity exists in
   security-standards' registry, and `security-executor`'s profile prohibits creating and revoking
   credentials, so it can't be reused. Increment 3 adds an agent file and a profile, then rebuilds
-  the image so the bundle carries them.
+  the image so the bundle carries them. The executor's bearer is added to the orchestrator's M2M
+  settings with credentials written before roles, when increment 4 creates it.
 - **Mutation review is manual.** The repository has no mutation-testing tool. Each guard's
   mutations are made by hand and run against its tests, and the count and survivors are reported.
 
 ### Increment 3, as amended
 
-- Claim and reclaim confinement both ways, with the rotation-unit predicate, checking the granted
-  owner on reclaim.
-- The claim-time `live_estate` window for hosted operational units, with the start and
+- Claim confinement both ways on `claim_unit` against a configured executor `agent_id`, with the
+  rotation-unit predicate; refusal of every rotation claim when the setting is unset.
+- Recovery of a lapsed rotation claim by release without a grant; reclaim refuses to grant a
+  rotation unit or to grant to the executor.
+- The claim-time `live_estate` window for rotation units not marked non-hosted, with the start and
   continuation definition above.
 - A unit's completion resolving the `work_unit` dependencies that name it.
 - A `/review` form for Devon to resolve a human-act dependency, with a strict `detail` schema and
   the evidence secret scan, added to the route inventories.
 - The rotation evidence schema and its secret scan.
 - The bearer `previous` parser with its eight-day cap, verified on production.
-- The destination-list profile field in intent-packages' schema, and the runbook line for reading
-  its diff at approval.
+- The destination-list profile field in intent-packages' schema; the runbook steps for reading its
+  change against the last approved revision and for comparing it with the registry before approval.
 - The executor's WORKER identity and authority profile (security-standards commit and image
   rebuild).
+- The two CLAUDE.md corrections named above.
 
 Each guard is reviewed by mutation, by hand.
