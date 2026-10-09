@@ -4,6 +4,7 @@
 - **Date:** 2026-10-08
 - **Decided by:** Devon, decisions recorded 2026-10-08 in
   `docs/superpowers/specs/2026-10-08-credential-rotation-requirements.md`. Accepted 2026-10-08 ("Yes, I accept ADR-0055").
+- **Amended:** 2026-10-09, amendment 1 (increment 2's measurements; the Coolify token decision).
 - **Supersedes:** the parts of ADR-0054 named in "What this changes in ADR-0054".
 - **Relates to:** ADR-0054 (the SDS owns credential rotation), ADR-0052 (superseding an unworked
   decomposition), ADR-0039 (out-of-process producers), ADR-0011 (known-good patterns)

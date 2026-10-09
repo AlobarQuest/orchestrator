@@ -173,3 +173,10 @@
   a stateless format (`ghs_…`, up to about 520 characters). Anything that stores or validates
   installation-token length needs to allow for it.
 - Repository `AlobarQuest/probe-inc2-secrets`: deleted by the session in Chrome at Devon's go-ahead; `gh api repos/AlobarQuest/probe-inc2-secrets` 404 (it answered before).
+- BWS machine accounts `probe-inc2-reader` and `probe-inc2-writer` and projects `probe-inc2-a` and
+  `probe-inc2-b`: deleted by Devon (17:2xZ). Both tokens now fail a fresh login with
+  `invalid_client`; the writer's logged in successfully at 16:17Z. The projects can't be listed with
+  no identity left that could read them, so their deletion rests on Devon's report. The two `bws`
+  state files for these tokens were removed, and no state file from the probe window remains.
+- Keychain: all six `probe-inc2-` items deleted; `security dump-keychain` lists no `probe-inc2`
+  service. `orb list` has no `probe-inc2` machine.
