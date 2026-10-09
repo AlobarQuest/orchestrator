@@ -4,7 +4,9 @@
 - **Date:** 2026-10-08
 - **Decided by:** Devon, decisions recorded 2026-10-08 in
   `docs/superpowers/specs/2026-10-08-credential-rotation-requirements.md`. Accepted 2026-10-08 ("Yes, I accept ADR-0055").
-- **Amended:** 2026-10-09, amendment 1 (increment 2's measurements; the Coolify token decision).
+- **Amended:** 2026-10-09, amendment 1 (increment 2's measurements; the Coolify token decision);
+  2026-10-09, amendment 2 (increment 3's code read; where destinations are reviewed, which window
+  applies at claim, and per-unit completion).
 - **Supersedes:** the parts of ADR-0054 named in "What this changes in ADR-0054".
 - **Relates to:** ADR-0054 (the SDS owns credential rotation), ADR-0052 (superseding an unworked
   decomposition), ADR-0039 (out-of-process producers), ADR-0011 (known-good patterns)
@@ -84,11 +86,9 @@ It has no LLM. It lives in this repository as `src/rotation_worker/` (ADR-0054's
   bound to the claim's owner. Each check ships with a mutation test.
 - **What it acts on is fixed by the human approval, not by the unit.** The package revision carries
   the credential's destinations in full: provider, endpoints, and every consumer's kind and
-  destination, as a new `non-software-operational` profile field. The rotation proposer writes it
-  from the registry when it revises the package. When Devon reviews a revision, `/review` shows the
-  destination list's difference from the last approved revision, with new destinations marked, so a
-  hostile registry edit merged earlier without review is in front of him at approval. The executor
-  then:
+  destination, as a new `non-software-operational` profile field that the package author writes.
+  Devon reads the list's change in the revision's diff before approving it by name (amendment 2).
+  The executor then:
   - checks the revision against intent-packages' git: its `source_commit` is an ancestor of
     `main`, and its `content_hash` recomputes;
   - reads the registry at a revision that is an ancestor of the registry repository's `main`;
@@ -145,8 +145,8 @@ The contract enforces these invariants for every adapter:
   waits on a human. A human-minted value is staged in a per-credential **staging secret**, never in
   the keeper and never on the Mac.
 - **A unit's completion resolves the `work_unit` dependencies that name it**, in the same
-  transaction. This is a general orchestrator change (increment 3); without it every hand-off
-  between units is another human act.
+  transaction. This is a general orchestrator change (increment 3). Completion itself stays a
+  human click until gates graduate (amendment 2).
 - **Each step that writes to a hosted consumer is its own unit**, so its first claim is windowed at
   the server (decision 8).
 - **After confirm-dead, the quarantine and staging secrets are deleted**, and the deletion is
@@ -236,7 +236,9 @@ accepted; the previous hash only before `until`. change-manager gets the equival
 whoever claims, and resuming a paused rotation counts as continuing, not starting.
 
 - **Where.** For operational units only, a claim refuses `outside_change_window` when the unit's
-  package declares a reach whose window is closed. Unlike `window_refusal` at admission, it fails
+  package declares a reach whose window is closed. (Amendment 2 narrows this to the `live_estate`
+  window, for units that touch a hosted service, and defines start and continuation for every
+  claim grant.) Unlike `window_refusal` at admission, it fails
   closed on an undeclared or unreadable reach, because no admission check stands behind it. It
   applies to every claimant of an operational unit, including HQ working one by hand.
 - **Starting versus continuing.** A unit's first claim is a start and is windowed. A reclaim of a
@@ -315,7 +317,7 @@ exception, and Devon accepts these with this ADR.
 | T1a | A consumer account is compromised | The credentials it consumes, plus nothing else | One keeper project per credential (decision 4); quarantined and staged values are in a project no consumer reads. |
 | T2 | A forged trigger from fetched content | Unwanted rotations | Triggers are the registry and `cred-findings` only; every rotation needs a human-approved record. |
 | T3 | The orchestrator is compromised | It can mark units approved and supply evidence | The executor checks the approved revision against intent-packages' git and the registry against its repository's `main`, compares destinations in full, re-probes rather than trusts evidence, and derives revoke ids from the quarantined value. Result: churn, not exposure. |
-| T4 | A registry change adds a hostile consumer (no review is required to merge) | A value written where an attacker reads it | The revision carries the full destination list and `/review` shows its difference from the last approved revision, so a new destination is in front of Devon before any value goes there; the executor refuses any registry that differs from the approved list. |
+| T4 | A registry change adds a hostile consumer (no review is required to merge) | A value written where an attacker reads it | The revision carries the full destination list, and its change is in the diff Devon approves (amendment 2); the executor refuses any registry that differs from the approved list. |
 | T5 | Another WORKER claims a rotation unit, or the executor claims other work | Forged step evidence, or the executor acting outside rotation | Claims and reclaims are confined both ways at the server (decision 1). |
 | T6 | The root writes a keeper with an attacker's value | Consumers run on an attacker's account | Only through T1. Fingerprint evidence for every write makes a substitution visible after the fact. |
 | T7 | A compromised executor dependency | The same as T1, from inside | Few dependencies, pinned by hash. |
@@ -385,7 +387,8 @@ isn't scheduled, so it can't re-propose against the stale rev-1 package meanwhil
    - whether `orb -u root` works without a password on an isolated machine.
 
    Then Devon decides the Coolify token's scope and holder, a standing-authority change.
-3. **Orchestrator and package changes, shipped and deployed before any rotation uses them:**
+3. **Orchestrator and package changes, shipped and deployed before any rotation uses them**
+   (amendment 2 revises this list):
    - claim and reclaim confinement both ways, with the rotation-unit predicate;
    - the operational claim window check;
    - a unit's completion resolving the `work_unit` dependencies that name it;
@@ -599,3 +602,113 @@ that say "human until the Coolify decision"; Consequences bullets 2, 3 and 5; an
 
 **Devon's answer (2026-10-09): option 2.** "I agree with Option 2 as the best option." The edits
 listed in the preceding paragraph are made in the same change.
+
+## Amendment 2 — Increment 3 code read (2026-10-09)
+
+Before writing increment 3's build handoff, the orchestrator and intent-packages code its items
+touch was read. Three of the ADR's assumptions don't hold, and each needed a decision. The other
+findings are corrections that follow from the code.
+
+### What the code shows
+
+- **Approval happens before `/review`.** A rotation package revision is approved by name in the
+  intent-packages checkout, and that commit is published before the orchestrator sees it
+  (`docs/operations/rotation-proposer.md`, step 3). Decision 1's "`/review` shows the destination
+  list's difference from the last approved revision" has no approval screen to appear on. The
+  rotation proposer rewrites only the `occurrence` line of a standing package
+  (`src/rotation_proposer/standing.py`), so every other field is carried forward unchanged.
+- **Every rotation unit ends at a human click.** Rotation criteria are `human_review`,
+  `external_attestation` or `observation`, all judgment types (`verifier_evaluators.py`), so a unit
+  stops in `AWAITING_REVIEW`, and `AWAITING_REVIEW -> COMPLETED` is a separate human gate. Decision
+  3's "without it every hand-off between units is another human act" overclaimed: with completion
+  resolving dependencies, each hand-off is still the human's completion click, though no longer a
+  separate dependency resolution as well.
+- **Reach is declared per package, not per unit.** `reach_from_snapshot()` reads the revision's
+  enforcement snapshot. `rotation-openrouter-generic` declares `external_system` and
+  `operator_machine`, and `operator_machine` has a change window in `factory-policy.toml`, so
+  decision 8's "a claim refuses when the unit's package declares a reach whose window is closed"
+  would window every unit of that package, including steps that touch nothing hosted.
+
+### Devon's answers (2026-10-09)
+
+The three forks were put with the least machinery first. Devon answered "1,1,1".
+
+- **A. The destination list is reviewed in the package diff, and its author writes it.** Devon
+  reviews the destination list as part of the revision's git diff in the intent-packages checkout,
+  where he already approves by name. The package author writes the list; the proposer doesn't read
+  the registry and needs no change, because it carries the field forward. The executor's act-time
+  refusal of any registry that differs from the approved list stands. Nothing is added to
+  `/review` for this.
+- **B. Only the `live_estate` window applies at claim, and only to units that touch a hosted
+  service.** Other reach rows' windows aren't asked at claim. Non-hosted steps run at any hour.
+- **C. Per-unit completion clicks are accepted for now.** Decision 10 already has Devon click every
+  gate on each class's first rotation. A deterministic rotation evidence type, which would let a
+  rotation unit complete without him, is part of the later gate-graduation decision; adding a type
+  to `DETERMINISTIC_TYPES` is a change to when judgment evidence reaches a human, so it's his.
+
+### What the answers change
+
+- **Decision 1, destinations.** The package revision carries the destination list as a new
+  `non-software-operational` profile field, written by the package author. Devon reads its change
+  in the revision's diff before approving by name; the rotation proposer runbook says so. The
+  executor's checks (revision against intent-packages' git, registry at an ancestor of `main`,
+  exact equality with the approved list) are unchanged. The proposer change and the `/review` diff
+  are dropped from increment 3.
+- **T4.** A hostile registry consumer is caught by the executor's refusal, because the approved list
+  doesn't contain it. Putting it in the list takes a package edit, which is in the diff Devon
+  approves.
+- **Decision 8, which window.** At a claim grant on an operational unit, the server asks only the
+  `live_estate` row's window, and only when the unit touches a hosted service. A unit touches a
+  hosted service unless its approved authority envelope says it doesn't, so the default is
+  windowed. The marker lives in the envelope's `constraints`, which are write-once and covered by
+  the authority approval, so no schema changes. The check fails closed on an undeclared or
+  unreadable package reach, as decision 8 already says. It is a new claim-side function: the
+  admission check (`reach_admission.change_window_refusal`) is asked once, at admission, and stays
+  as it is.
+- **Decision 3, hand-offs.** A unit's completion still resolves the `work_unit` dependencies that
+  name it, in the same transaction, which removes the separate resolution act. The completion
+  click remains until gates graduate.
+
+### Corrections from the code read
+
+These needed no decision.
+
+- **Reclaim confinement checks the granted owner, not the caller.** The reclaim route takes the new
+  owner from the request body (`body.next_owner_id`) and the caller is SYSTEM, so confinement on
+  reclaim compares the granted owner with the configured executor `agent_id`, both ways. On
+  `claim_unit` it compares the authenticated WORKER's `agent_id`.
+- **One definition of start and continuation.** A claim grant (`claim_unit`, including after a
+  requeue, or `reclaim_expired_claim`) is a continuation exactly when the unit has evidence from an
+  earlier attempt, and is otherwise a start. Starts are windowed; continuations and renewals
+  aren't. This follows Devon's 2026-10-08 ruling that resuming counts as continuing, and applies it
+  the same way to every path that grants a claim. CLAUDE.md's rule that a per-claim rule covers all
+  three lease writers is amended to name the window as the deliberate exception for renewal.
+- **Evidence field names.** Rotation evidence fields must pass `secret_metadata_path`, whose key
+  parts include `credential`, `token`, `log`, `body` and `response`. Names such as `credential_id`,
+  `fresh_login`, `token_fingerprint` and `response_status` would be refused; the schema uses names
+  that avoid every part. CLAUDE.md's `deployment_observation` rule, which names only
+  credential/token/key, is corrected to point at `SECRET_KEY_PARTS`.
+- **The executor needs its own identity and authority profile.** No executor identity exists in
+  security-standards' registry, and `security-executor`'s profile prohibits creating and revoking
+  credentials, so it can't be reused. Increment 3 adds an agent file and a profile, then rebuilds
+  the image so the bundle carries them.
+- **Mutation review is manual.** The repository has no mutation-testing tool. Each guard's
+  mutations are made by hand and run against its tests, and the count and survivors are reported.
+
+### Increment 3, as amended
+
+- Claim and reclaim confinement both ways, with the rotation-unit predicate, checking the granted
+  owner on reclaim.
+- The claim-time `live_estate` window for hosted operational units, with the start and
+  continuation definition above.
+- A unit's completion resolving the `work_unit` dependencies that name it.
+- A `/review` form for Devon to resolve a human-act dependency, with a strict `detail` schema and
+  the evidence secret scan, added to the route inventories.
+- The rotation evidence schema and its secret scan.
+- The bearer `previous` parser with its eight-day cap, verified on production.
+- The destination-list profile field in intent-packages' schema, and the runbook line for reading
+  its diff at approval.
+- The executor's WORKER identity and authority profile (security-standards commit and image
+  rebuild).
+
+Each guard is reviewed by mutation, by hand.
