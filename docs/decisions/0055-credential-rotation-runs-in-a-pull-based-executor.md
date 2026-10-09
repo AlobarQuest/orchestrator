@@ -333,7 +333,7 @@ mechanics where a provider has an API.
 | OpenRouter key | 1 | machine | machine (BWS) | machine for keys the executor minted; human for today's key | |
 | GitHub PAT (fine-grained) | 2 | human | machine for BWS and (increment 7) Actions secrets, through the rotation App's installation tokens; human for Coolify | machine (`POST /credentials/revoke`) | |
 | Atlassian API token | 1 | human | machine for BWS; human for Coolify | human | Revoke API unverified |
-| BWS machine token | 4 | human | human (Keychain consumers on the Mac) | human | Executor records evidence and runs confirm-dead (amendment 1) |
+| BWS machine token | 4 | human | human (Keychain consumers on the Mac) | human | Executor records evidence only; confirm-dead is Devon's fresh-login check (amendment 1) |
 | change-manager bearer | 4 | machine | human until the Coolify decision | ends the overlap | Plaintext env: while deploy is human, the value passes through the Coolify UI on the Mac, a stated exception to "no value on the Mac" |
 | orchestrator bearer | 4 of 6 | machine | human until the Coolify decision | ends the overlap | SYSTEM and VERIFIER stay hand-rotated (decision 4); observer and drift-reporter rotate together; factory-runner's bearer waits for increment 7's Actions-secret writer |
 
@@ -408,8 +408,8 @@ isn't scheduled, so it can't re-propose against the stale rev-1 package meanwhil
    Actions-secret writer is a dedicated rotation GitHub App (amendment 1), installed only on the
    repositories holding a registered copy, with installation tokens minted per repository; the
    Actions-secret probe workflow, or its stated exception.
-8. **BWS machine tokens.** Mint, deploy and revoke are human; the executor records the evidence and
-   runs confirm-dead as a machine unit (amendment 1).
+8. **BWS machine tokens.** All steps human, including amendment 1's fresh-login confirm-dead check;
+   the executor records the evidence.
 9. **Retire the infraops window** (ADR-0054 increment 5).
 
 Gate graduations (decision 10) are decided per class after that class's first rotation.
@@ -478,7 +478,7 @@ measurement.
 | 1 | Can a Coolify token with `write` and `deploy` but not `read:sensitive` change an env var and restart, and does it see `real_value`? | **Yes, it writes and restarts, and it never sees the value**: its envs response has no `value` or `real_value` field at all. Measured with `read` + `write` + `deploy`; a token without `read` wasn't tried. Each variable is stored twice (`is_preview` false and true), and a PATCH changes one row. **Dev only** (beta.470); production runs beta.473, whose permission and sensitive-data code is byte-identical (source). | `POST`/`PATCH /applications/{uuid}/envs`, `GET …/envs`, `POST …/restart`; the restarted container's value hashed on the VM. Tokens without `write` get 403 `Missing required permissions: write`; without `deploy`, 403 `…: deploy`. A `read` + `read:sensitive` token sees both fields; the candidate sees neither. | The Coolify decision (following section); decision 7's retire-old; increment 6 |
 | 2 | Can an OpenRouter management key carry an expiry? Does key-info return the revoke id? | **Expiry: the console offers one** (set to one hour; enforcement not probed). **A minted key accepts `expires_at`** as `…Z` (stored and returned) and rejects `…+00:00` with 400. **Revoke id: no.** `GET /api/v1/key` returns 23 fields, `label` among them, and no `hash`. The hash equals sha256 of the key value (undocumented; two keys). `/api/v1/auth/key` answers identically to `/api/v1/key`. | `POST /api/v1/keys` with `limit: 0.01`, then key-info with the minted value. A malformed key gets 401 `User not found.` | Decision 1 and T8 (revoke id); confirms decision 4's `expires_at` and `limit`; increment 5 |
 | 3 | Does a disabled or deleted OpenRouter key probe 401? | **Yes. Key-info lags; inference doesn't.** `/key` and `/auth/key`: 200 at +5 s after delete and at +0 s after disable; 401 at +66 s (deleted) and +60 s (disabled). Those are the only probe times, so the lag is somewhere under about a minute. A chat completion on a `:free` model answers 401 at the first probe after each. | Live baseline in the same run: the key answers 200 on `/key`, `/auth/key` and the completion. Then `PATCH /keys/{hash} {disabled: true}` or `DELETE /keys/{hash}`. A malformed key gets 401 on all three, at the start and end. | Increment 5's confirm-dead step; decision 3 |
-| 4 | What does a revoked BWS machine token return, and how long after the revoke? | **A new login fails at the first probe after the revoke**, with exit 1 and `[400 Bad Request] {"error":"invalid_client"}`, the same answer a malformed token gets. **Sessions logged in before the revoke kept working until +50 min and failed by +55 min** (the `bws` CLI's cached state: then `invalid_client`; a held SDK client: then 401). Both had logged in 2 to 6 minutes before the revoke, so this doesn't separate "a session lives an hour from login" from "a revoke reaches open sessions after about 55 minutes". The probe was `project list`; secret reads weren't probed. | `bws project list --color no`, token in the environment, with the real `HOME` (cached state) and with an empty `HOME`; Python SDK `bitwarden-sdk` 2.1.0 with a held client and a new client. Every path read at the baseline and failed after. The control, the same token with its secret part altered, got `invalid_client` on every fresh path and **succeeded** through the cached state, which is how the cache was found. | Decision 3 ("dead is exactly 401"); decision 9 (split confirm-dead unit); increments 4 and 8 |
+| 4 | What does a revoked BWS machine token return, and how long after the revoke? | **A new login failed at the first probe after the revoke**, with exit 1 and `[400 Bad Request] {"error":"invalid_client"}`, the same answer a malformed token gets. **Sessions logged in before the revoke kept working until +50 min and failed by +55 min** (the `bws` CLI's cached state: then `invalid_client`; a held SDK client: then 401). Both had logged in 2 to 6 minutes before the revoke, so this doesn't separate "a session lives an hour from login" from "a revoke reaches open sessions after about 55 minutes". The probe was `project list`; secret reads weren't probed. | `bws project list --color no`, token in the environment, with the real `HOME` (cached state) and with an empty `HOME`; Python SDK `bitwarden-sdk` 2.1.0 with a held client and a new client. Every path read at the baseline and failed after. The control, the same token with its secret part altered, got `invalid_client` on every fresh path and **succeeded** through the cached state, which is how the cache was found. | Decision 3 ("dead is exactly 401"); decision 9 (split confirm-dead unit); increments 4 and 8 |
 | 5 | Does moving a BWS secret to another project keep its UUID? | **Yes.** Access follows the project: after the move, an account with read only on the old project gets the same 404 as for a UUID that doesn't exist. Moving it back wasn't tried. | `bws secret edit --project-id <b> <id>` as a writer on both projects; list both projects; read by id as a reader of the first project only, before and after, beside a random-UUID control. | Decision 4's keeper moves; increments 5 to 7 |
 | 6 | Can a GitHub App installation token write Actions secrets when the App has `secrets`? | **Yes.** The dispatch App can't: its installation had no `secrets` permission when measured on 2026-09-02 (`credentials.md` #274). | Throwaway App (Secrets: read and write; Metadata: read) installed on one throwaway repository. Mint for that repository with `{secrets: write, metadata: read}`; the mint response's `permissions` match. Seal with the repository's public key (PyNaCl); `PUT …/actions/secrets/{name}` 201; the list shows a fresh `updated_at`. A token minted with `{metadata: read}` gets 403 `Resource not accessible by integration` on the same PUT. | Threat-model asset row; per-class GitHub row; increment 7 |
 | 7 | Does `orb -m <machine> -u root` work without a password on an isolated machine? | **Yes.** | `orb create --isolated --isolate-network ubuntu:noble`, then `orb -m <machine> -u root id -u` with stdin closed: rc 0, `0`. The default user prints `501`. | None: decision 2's residual-risk statement stands |
@@ -508,19 +508,22 @@ measurement.
   4). A probe that reuses the `bws` CLI's state (`~/.config/bws/state/`) or a held SDK client reports a
   revoked token as live, so the probe uses a new SDK client with no state. A malformed token returns
   the same `invalid_client` as a revoked one, so a failure proves nothing unless the same value was
-  shown to work. Two halves, both fingerprinted: **before** the human revoke, a fresh login with the
-  quarantined value succeeds (recorded by the unit that quarantines it); **after**, a fresh login with
-  the same fingerprint fails with `invalid_client` while a fresh login with the replacement succeeds
-  in the same step. Decision 3's "dead is exactly 401" becomes, for BWS, that pair. The same holds
+  shown to work. Two halves, both fingerprinted: **before** the revoke, a fresh login with the old
+  value succeeds; **after**, a fresh login with the same fingerprint fails with `invalid_client` while
+  a fresh login with the replacement succeeds. Each login uses an empty, throwaway `HOME` that is
+  deleted afterwards; the before-half's session stays usable for up to about an hour, so the exposure
+  window counts from it. **This is Devon's procedure in increment 8, which stays all human:** running
+  it as a machine unit would put live consumer BWS tokens, the old one and its replacement, inside
+  the executor's reach, which decision 4 rules out. Decision 3's "dead is exactly 401" becomes, for
+  BWS, that pair. The same holds
   for OpenRouter, where malformed and revoked both answer `401 User not found.`: the revoke step's
   key-info 200 on the quarantined value is the live-before half, and increment 5 must keep it.
 - **Confirm-dead for BWS needn't wait an hour, but the exposure lasts one** (question 4). New logins
-  failed at the first probe, so increment 8's confirm-dead can run straight after the human revoke,
-  as an ordinary machine unit that depends on it. Sessions already open kept working for about 55
-  minutes, and nothing in this increment shortened that. Decision 9's split confirm-dead unit isn't
-  needed for confirm-dead. At +75 minutes the executor records the exposure window as closed; that
-  record is time-based, not an observation, and whether a held SDK client renews its session wasn't
-  measured.
+  failed at the first probe, so Devon's confirm-dead check can run straight after the revoke.
+  Sessions already open kept working for about 55 minutes, and nothing in this increment shortened
+  that. Decision 9's split confirm-dead unit isn't needed for confirm-dead. The exposure window is
+  recorded as closed at +75 minutes; that record is time-based, not an observation, and whether a held
+  SDK client renews its session wasn't measured.
 - **Keeper moves keep UUIDs, and consumers are proven before the move with a canary** (question 5).
   The `uuid` in every `.bws-secrets.toml` stays; its `project` field changes. A consumer account loses
   read the moment the secret moves unless it can already read the target project. So: grant every
