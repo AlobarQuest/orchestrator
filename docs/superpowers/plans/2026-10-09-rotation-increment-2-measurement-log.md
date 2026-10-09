@@ -70,11 +70,15 @@
   a chat completion on a `:free` model answers **401** `User not found.`
 - **Deleted** (`DELETE /keys/{hash}` 200, then `GET /keys/{hash}` 404 `API key not found`): 5 s later
   `/key` and `/auth/key` still **200**, chat **401**. At +66 s all three are 401.
-- Answer: a revoke verified through the key-info endpoint can report a dead key as live (indefinitely
-  for a disabled key as far as measured; about a minute for a deleted one). **Verify a revoke with a
-  zero-cost inference call, or wait for `/key` to 401 after a delete.** Disable alone was not followed
-  past 5 s on `/key`, since the inference probe had already flipped.
-- Both throwaway keys deleted (404 on readback for the first; 200 DELETE for the second). The
+- **Disabled, followed further** (third throwaway, 16:18:35Z): `/key` and `/auth/key` 200 at +0 s,
+  401 at +60 s. So disable flips the key-info endpoint on the same timescale as delete.
+- Answer: **the key-info endpoint lags a disable or delete by up to about a minute** (200 at +5 s,
+  401 by +60 to +66 s); inference refuses at once. Verify a revoke with a zero-cost inference call, or
+  poll `/key` until 401 with a deadline of a few minutes.
+- The hash-equals-sha256(value) relation is undocumented and was measured on two keys in one
+  account: store the hash from the create response, and use derivation (or a `label` match on the
+  key list) only for keys created before the executor existed.
+- All three throwaway keys deleted (404 on readback for the first and third; 200 DELETE for the second). The
   management key expires on its own an hour after creation.
 
 ## Question 5: moving a BWS secret between projects (measured 2026-10-09T15:47:59Z)
