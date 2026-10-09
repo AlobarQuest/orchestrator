@@ -530,9 +530,8 @@ API tokens belong to a team and carry abilities, not resources, in beta.470 and 
 per-application token, so no narrower holder was found. The options, least machinery first:
 
 1. **No Coolify token in the executor** (the current design). Every hosted deploy, restart and
-   retire-old stays a human act: ten of the eighteen live credentials (the change-manager and
-   orchestrator bearer rows, plus the Coolify consumers of the PAT and Atlassian rows). Nothing new
-   is exposed.
+   retire-old stays a human act, for ten of the eighteen live credentials (Consequences). Nothing
+   new is exposed.
 2. **A `read` + `write` + `deploy` token without `read:sensitive`**, in its own `Rotation / Coolify`
    project that only the root reads, and in the hand-rotated set. It removes those human acts: the
    executor writes both rows of each variable, restarts, verifies by authenticating to the service,
@@ -545,8 +544,8 @@ per-application token, so no narrower holder was found. The options, least machi
 
    That is close to full control of the production Coolify instance short of reading secrets. It
    moves T1's accepted residual from "every asset in the VM" to "every asset in the VM, plus the
-   ability to run any image on production". The production Coolify token in `Ops / Platform`
-   already carries more than this, but it is outside the root's reach today (T1).
+   ability to run any image on production". Today no Coolify credential is within the root's
+   reach (T1).
 3. **A narrower holder** would need a separate Coolify team holding only the rotated
    applications, so a team-bound token reaches nothing else. That wasn't measured, and moving
    production applications between teams is its own change.
