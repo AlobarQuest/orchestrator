@@ -76,3 +76,58 @@
   past 5 s on `/key`, since the inference probe had already flipped.
 - Both throwaway keys deleted (404 on readback for the first; 200 DELETE for the second). The
   management key expires on its own an hour after creation.
+
+## Question 5: moving a BWS secret between projects (measured 2026-10-09T15:47:59Z)
+
+- Throwaway projects `probe-inc2-a` (`ed169638-…`) and `probe-inc2-b` (`1940ab55-…`). Machine
+  accounts `probe-inc2-writer` (read/write on both) and `probe-inc2-reader` (read on `a` only;
+  `project list` shows only `a`).
+- Writer creates `PROBE_INC2_MOVE` (a random placeholder, not a credential) in `a`: id `955b7434-…`.
+  Reader reads it by id: rc 0, value matches. Reader reads a random UUID: rc 1, `[404 Not Found]
+  Resource not found.`
+- `bws secret edit --project-id <b> <id>` as the writer: rc 0, **same id**, `projectId` is `b`.
+  `secret list a` no longer contains it; `secret list b` does. The writer reads it by id: value intact.
+- Reader reads it by id after the move: rc 1 with the same 404 message as the nonexistent-UUID control,
+  which differs from its rc 0 before the move.
+- Answer: **a move keeps the secret's UUID, and access follows the project**: an account without the
+  target project gets the same 404 as for a secret that doesn't exist.
+
+## Question 4: revoked BWS machine token (revoke 2026-10-09T15:51:22Z; poller in progress)
+
+- `bws` 2.0.0 **caches a session per access-token id** in `~/.config/bws/state/`. With the real `HOME`, a
+  token whose secret part was altered in-process still succeeded (rc 0): the cached session was used
+  and the altered secret never reached the server. With an empty `HOME` per call, the same altered
+  token gets rc 1 `[400 Bad Request] {"error":"invalid_client"}`. Every probe therefore runs cached and
+  fresh.
+- The Bitwarden Python SDK (`bitwarden-sdk` from PyPI, Python 3.12) installs and works. Probes run
+  through it too: one client logged in before the revoke and reused (`sdk-held`), and a new client
+  each round (`sdk-fresh`). `projects().list` takes the organization id.
+- Baseline 15:49:08Z: cli-cached, cli-fresh, sdk-held and sdk-fresh all read; both controls 400
+  `invalid_client`.
+- After the revoke (first round 15:51:24Z, then every minute to +5 min, then every 5 min):
+  **a new login fails at once** (cli-fresh and sdk-fresh: 400 `invalid_client`, identical to the
+  malformed control, so revoked and malformed can't be told apart). **An existing session keeps
+  reading**: cli-cached and sdk-held still rc 0 / ok at +20 min.
+- (Expiry of the existing sessions: recorded when the poller finishes.)
+
+## Question 6: GitHub App installation token writes an Actions secret (measured 2026-10-09T16:14:35Z)
+
+- **Dispatch App, recorded not re-measured:** at 2026-09-02, from a mint response in the running
+  container, installation `145535298` of App `4259746` held `actions:write, contents:write,
+  metadata:read, pull_requests:write, workflows:write` and **no `secrets`** (`credentials.md` #274).
+- Throwaway App `probe-inc2-app` (App ID `5252714`), repository permission Secrets: read and write
+  (Metadata read added by GitHub), webhook off, owner-only. Private key generated under the App's
+  **Credentials → Key pairs** tab (GitHub moved it off the General page), stored at
+  `~/.probe-inc2/app.pem` mode 600. Installed as installation `169664325` on **only**
+  `probe-inc2-secrets` (the install screen defaults to *All repositories*; changed before installing).
+- Mint with `{"secrets": "write", "metadata": "read"}` for that repo: 201, response `permissions`
+  `{metadata: read, secrets: write}`, `repository_selection: selected`, one-hour expiry.
+- With it: `GET …/actions/secrets/public-key` 200; PyNaCl sealed box; `PUT …/actions/secrets/
+  PROBE_INC2_PLACEHOLDER` **201**; list shows the name with `updated_at` 16:14:36Z (fresh).
+- **Control:** a token minted with `{"metadata": "read"}` (response `permissions` `{metadata: read}`)
+  gets 403 `Resource not accessible by integration` on the public key and on a PUT carrying a validly
+  sealed payload; the secret's `updated_at` is unchanged.
+- The full token on another repository (`orchestrator`) gets 403 on the public key.
+- Both tokens revoked (`DELETE /installation/token` 204).
+- Answer: **yes: an App with `secrets: write` writes Actions secrets through an installation token**,
+  and narrowing `permissions` at mint removes it. Increment 7's dedicated rotation App holds.
