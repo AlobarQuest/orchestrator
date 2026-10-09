@@ -50,3 +50,29 @@
 - Answer: **`read`+`write`+`deploy` without `read:sensitive` can write, restart and apply a value it
   can never read.** Production runs beta.473 with byte-identical permission code; confirm on
   production in the increment that first uses the token.
+
+## Questions 2 and 3: OpenRouter keys (measured 2026-10-09T15:35:31Z to 15:36:50Z)
+
+- Devon created management key `probe-inc2-mgmt` in the console, which gave it a **one-hour expiry**.
+  So a management key can carry an expiry (console observation).
+- The probe refused any PATCH or DELETE on a hash other than its own create response's.
+- Control: a malformed key (`sk-or-v1-` + 64 zeros) gets 401 `User not found.` on `/key`,
+  `/auth/key` and a chat completion, at the start and at the end.
+- **Expiry on a minted key.** `POST /api/v1/keys` with `expires_at` as `…+00:00` returns 400
+  `Invalid request field: expires_at`. The same field as `2026-10-09T17:36:18Z` returns 201 and the
+  stored `expires_at` matches. Without it, `expires_at` is null. `limit: 0.01` is accepted.
+- **Key-info identifier.** `GET /api/v1/key` with the minted key's value returns 200 with 23 fields
+  and **no `hash`**; no field equals the create response's hash. But the hash is **sha256 of the key
+  value** (checked on a second throwaway key), so revoke needs only the value. A list of keys
+  matched on `label` also finds exactly that hash.
+- **`/auth/key` vs `/key`:** same status, same fields, same values for the same key.
+- **Disabled** (`PATCH disabled: true`, 200): 5 s later `/key` and `/auth/key` still answer **200**;
+  a chat completion on a `:free` model answers **401** `User not found.`
+- **Deleted** (`DELETE /keys/{hash}` 200, then `GET /keys/{hash}` 404 `API key not found`): 5 s later
+  `/key` and `/auth/key` still **200**, chat **401**. At +66 s all three are 401.
+- Answer: a revoke verified through the key-info endpoint can report a dead key as live (indefinitely
+  for a disabled key as far as measured; about a minute for a deleted one). **Verify a revoke with a
+  zero-cost inference call, or wait for `/key` to 401 after a delete.** Disable alone was not followed
+  past 5 s on `/key`, since the inference probe had already flipped.
+- Both throwaway keys deleted (404 on readback for the first; 200 DELETE for the second). The
+  management key expires on its own an hour after creation.
