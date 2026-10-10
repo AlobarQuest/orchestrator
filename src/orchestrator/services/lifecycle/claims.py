@@ -27,6 +27,11 @@ from orchestrator.services.lifecycle.claim_release import release_claim
 from orchestrator.services.lifecycle.context import PreflightCommand, require_claim_context
 from orchestrator.services.lifecycle.lease_policy import claim_lease
 from orchestrator.services.lifecycle.readiness import evaluate_readiness
+from orchestrator.services.lifecycle.rotation_claims import (
+    claim_window_refusal,
+    confinement_refusal,
+    is_rotation_unit,
+)
 
 # The states in which a unit still holds the claim it was granted. One definition, because the
 # three functions below and the stall report (`services.lifecycle.execution_stall`) all have to
@@ -51,7 +56,14 @@ def claim_unit(
     idempotency_key: str,
     expected_version: int | None = None,
     standing_context: dict[str, Any] | None = None,
+    *,
+    rotation_executor: str | None = None,
 ) -> LeaseGrant | DomainError:
+    """Grant a claim on a READY unit to a WORKER.
+
+    `rotation_executor` is the configured executor identity (ADR-0055): only it may claim a
+    rotation unit, and it may claim nothing else. `None` refuses every rotation claim.
+    """
     try:
         unit = _locked_unit(session, unit_id)
         replay = _claim_replay(
@@ -67,12 +79,13 @@ def claim_unit(
             return replay
         if expected_version is not None:
             _require_version(unit, expected_version)
-        if actor.role is not ActorRole.WORKER:
-            raise DomainError("role_forbidden", "only a worker may acquire a claim", None)
-        if WorkUnitState(unit.state) is not WorkUnitState.READY:
-            raise DomainError("claim_conflict", "work unit is not available to claim", "retry")
-        if unit.attempt_count >= unit.max_attempts:
-            raise DomainError("attempts_exhausted", "attempt budget is exhausted", "approve_retry")
+        _require_claimable(unit, actor)
+        revision = _revision(session, unit)
+        # Before the budget halt, which commits a write: a claimant that may not touch this unit
+        # must not cause one.
+        confinement = confinement_refusal(unit, revision, actor.actor_id, rotation_executor)
+        if confinement is not None:
+            raise confinement
         if is_over_budget(session, unit):
             # Halt at the cap and record the breach, then refuse. Driving the failure through
             # the private _transition keeps it inside this function's transaction (the public
@@ -92,6 +105,10 @@ def claim_unit(
             return DomainError("budget_exceeded", "llm-call budget is exhausted", "approve_retry")
 
         now = TransactionClock().now(session)
+        # After the budget halt: a spent budget is the standing refusal, the window clears itself.
+        window = claim_window_refusal(session, unit, revision, now)
+        if window is not None:
+            raise window
         context_snapshot = _claim_context_snapshot(
             session, unit, actor, idempotency_key, standing_context
         )
@@ -219,6 +236,7 @@ def reclaim_expired_claim(
     *,
     expected_version: int | None = None,
     standing_context: dict[str, Any] | None = None,
+    rotation_executor: str | None = None,
 ) -> LeaseGrant | DomainError:
     try:
         grant = _perform_reclaim(
@@ -229,6 +247,7 @@ def reclaim_expired_claim(
             idempotency_key,
             expected_version=expected_version,
             standing_context=standing_context,
+            rotation_executor=rotation_executor,
         )
         session.commit()
         return grant
@@ -249,6 +268,7 @@ def _perform_reclaim(
     *,
     expected_version: int | None = None,
     standing_context: dict[str, Any] | None = None,
+    rotation_executor: str | None = None,
 ) -> LeaseGrant | DomainError:
     unit = _locked_unit(session, unit_id)
     replay = _claim_replay(
@@ -269,6 +289,19 @@ def _perform_reclaim(
     if expected_version is not None:
         _require_version(unit, expected_version)
     _validate_reclaim_roles(actor, next_owner)
+    # Both refusals precede the release, so a refused reclaim leaves nothing behind (ADR-0055).
+    if is_rotation_unit(unit, _revision(session, unit)):
+        raise DomainError(
+            "rotation_reclaim_refused",
+            "a lapsed rotation claim is released, never reclaimed to a new owner",
+            "release_expired_claim",
+        )
+    if rotation_executor is not None and next_owner.actor_id == rotation_executor:
+        raise DomainError(
+            "rotation_executor_confined",
+            "the rotation executor may claim only rotation units",
+            None,
+        )
     claim = _current_claim(session, unit.id)
     if claim is None:
         raise DomainError("claim_not_found", "work unit has no claim", None)
@@ -319,6 +352,130 @@ def _perform_reclaim(
         expected_version=expected_version,
         standing_context=standing_context,
     )
+
+
+def release_expired_claim(
+    session: Session,
+    unit_id: uuid.UUID,
+    actor: ActorContext,
+    idempotency_key: str,
+    *,
+    expected_version: int | None = None,
+) -> WorkUnit | DomainError:
+    """Recover a lapsed claim WITHOUT granting a new one: release, `FAILED`, then `READY`.
+
+    ADR-0055 amendment 2. A pulling executor never receives a lease token the reclaim route hands
+    its SYSTEM caller, so a lapsed rotation claim is released here and claimed again through
+    `claim_unit`, where confinement and the change window apply. It is `_perform_reclaim` without
+    the grant, and shares its eligibility check: a unit that fails it stays `FAILED`, committed,
+    and the error is returned. Any unit may be released this way; only reclaim is refused for
+    rotation units.
+    """
+    try:
+        unit = _locked_unit(session, unit_id)
+        replay = _release_replay(session, unit, actor, idempotency_key, expected_version)
+        if replay is not None:
+            session.commit()
+            return replay
+        if expected_version is not None:
+            _require_version(unit, expected_version)
+        if actor.role is not ActorRole.SYSTEM:
+            raise DomainError("role_forbidden", "only the system may release lapsed leases", None)
+        claim = _current_claim(session, unit.id)
+        if claim is None:
+            raise DomainError("claim_not_found", "work unit has no claim", None)
+        now = TransactionClock().now(session)
+        _validate_expired_active_claim(unit, claim, now)
+
+        release_claim(claim, terminal_reason="lease_expired", released_at=now)
+        correlation_id = uuid.uuid4()
+        eligibility_error = _readiness_eligibility_error(session, unit)
+        failed_payload: dict[str, object] = {
+            "expired_claim_id": str(claim.id),
+            "attempt": claim.attempt,
+            "release_actor_id": actor.actor_id,
+            "reason": "lease_expired",
+            "expected_version": expected_version,
+        }
+        if eligibility_error is not None:
+            failed_payload["result_error_code"] = eligibility_error.code
+        _transition(
+            session,
+            unit,
+            WorkUnitState.FAILED,
+            actor=actor,
+            idempotency_key=f"{idempotency_key}:failed",
+            occurred_at=now,
+            correlation_id=correlation_id,
+            payload=failed_payload,
+        )
+        if eligibility_error is None:
+            _transition(
+                session,
+                unit,
+                WorkUnitState.READY,
+                actor=actor,
+                idempotency_key=f"{idempotency_key}:ready",
+                occurred_at=now,
+                correlation_id=correlation_id,
+            )
+        session.commit()
+        return unit if eligibility_error is None else eligibility_error
+    except DomainError as error:
+        session.rollback()
+        return error
+    except Exception:
+        session.rollback()
+        raise
+
+
+def _release_replay(
+    session: Session,
+    unit: WorkUnit,
+    actor: ActorContext,
+    idempotency_key: str,
+    expected_version: int | None,
+) -> WorkUnit | DomainError | None:
+    """The release's own replay: it writes no event under the bare key, and grants no claim.
+
+    `release_actor_id` is a key only a release writes, so a reclaim's `{key}:failed` event never
+    matches here, and a release's never matches the reclaim's replay, which wants `next_owner_id`.
+    """
+    if session.scalar(select(Event.id).where(Event.idempotency_key == idempotency_key)):
+        raise _idempotency_conflict()
+    event = session.scalar(
+        select(Event).where(Event.idempotency_key == f"{idempotency_key}:failed")
+    )
+    if event is None:
+        return None
+    error_code = event.payload.get("result_error_code")
+    expected = (
+        event.action == "work_unit.transitioned"
+        and event.subject_id == unit.id
+        and event.from_state in CLAIM_HOLDING_STATES
+        and event.to_state == WorkUnitState.FAILED
+        and event.payload.get("release_actor_id") == actor.actor_id
+        and actor.role is ActorRole.SYSTEM
+        and event.payload.get("expected_version") == expected_version
+        and (error_code is None or error_code in _ELIGIBILITY_CODES)
+    )
+    if not expected:
+        raise _idempotency_conflict()
+    return unit if error_code is None else _eligibility_error(error_code)
+
+
+# Every code `_readiness_eligibility_error` returns; both recovery replays rebuild the error.
+# not-a-vocabulary: codes this module itself writes into its own events and reads back.
+_ELIGIBILITY_CODES = frozenset({"attempts_exhausted", "budget_exceeded", "readiness_not_satisfied"})
+
+
+def _eligibility_error(code: str) -> DomainError:
+    """The error `_readiness_eligibility_error` returned, rebuilt from its recorded code."""
+    if code == "attempts_exhausted":
+        return DomainError(code, "attempt budget is exhausted", "approve_retry")
+    if code == "budget_exceeded":
+        return DomainError(code, "llm-call budget is exhausted", "approve_retry")
+    return DomainError(code, "work unit's readiness no longer holds", "resolve_readiness")
 
 
 def authorize_retry(
@@ -404,6 +561,22 @@ def _locked_unit(session: Session, unit_id: uuid.UUID) -> WorkUnit:
     return unit
 
 
+def _require_claimable(unit: WorkUnit, actor: ActorContext) -> None:
+    if actor.role is not ActorRole.WORKER:
+        raise DomainError("role_forbidden", "only a worker may acquire a claim", None)
+    if WorkUnitState(unit.state) is not WorkUnitState.READY:
+        raise DomainError("claim_conflict", "work unit is not available to claim", "retry")
+    if unit.attempt_count >= unit.max_attempts:
+        raise DomainError("attempts_exhausted", "attempt budget is exhausted", "approve_retry")
+
+
+def _revision(session: Session, unit: WorkUnit) -> WorkPackageRevision:
+    revision = session.get(WorkPackageRevision, unit.work_package_revision_id)
+    if revision is None:
+        raise DomainError("revision_not_found", "package revision does not exist", None)
+    return revision
+
+
 def _claim_context_snapshot(
     session: Session,
     unit: WorkUnit,
@@ -411,9 +584,7 @@ def _claim_context_snapshot(
     idempotency_key: str,
     standing_context: dict[str, Any] | None,
 ) -> ContextSnapshot | None:
-    revision = session.get(WorkPackageRevision, unit.work_package_revision_id)
-    if revision is None:
-        raise DomainError("revision_not_found", "package revision does not exist", None)
+    revision = _revision(session, unit)
     # An empty standing context means "none supplied", not "one supplied that is missing
     # everything". `runner_brief` serves `{}` when the revision requires no context, and a
     # worker passes that value straight back — so treating `{}` as a real context made the
@@ -631,17 +802,11 @@ def _reclaim_error_replay(
         and event.payload.get("next_owner_id") == next_owner.actor_id
         and next_owner.role is ActorRole.WORKER
         and event.payload.get("expected_version") == expected_version
-        and error_code in {"attempts_exhausted", "readiness_not_satisfied"}
+        and error_code in _ELIGIBILITY_CODES
     )
-    if not expected:
+    if not expected or not isinstance(error_code, str):
         raise _idempotency_conflict()
-    if error_code == "attempts_exhausted":
-        return DomainError(error_code, "attempt budget is exhausted", "approve_retry")
-    return DomainError(
-        "readiness_not_satisfied",
-        "work unit's readiness no longer holds",
-        "resolve_readiness",
-    )
+    return _eligibility_error(error_code)
 
 
 def _claim_owned_by(claim: Claim, actor: ActorContext, attempt: int, lease_token: str) -> bool:

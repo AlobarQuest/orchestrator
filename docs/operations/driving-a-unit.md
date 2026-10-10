@@ -698,3 +698,34 @@ an exact match, so the order only shortens the window in which the two disagree.
 
 Measured on 2026-10-01 moving to `fec677b` (Python 3.14): the probe, run 36951954378, installed the
 runner on CPython 3.14.8 and stopped at `404 work_unit_not_found`.
+
+### Claim a rotation unit
+
+A **rotation unit** is one whose required capability is `operational_action` and whose package
+revision has profile `non-software-operational` with `standing: true` and a non-blank
+`credential_id` (`services/lifecycle/rotation_claims.py::is_rotation_unit`). ADR-0055 confines its
+claims to the credential-rotation executor, so it is driven differently from other operational
+units:
+
+- **Only the configured executor claims one.** `ORCHESTRATOR_ROTATION_EXECUTOR_AGENT_ID` names the
+  executor's `agent_id`; only that identity may claim a rotation unit, and it may claim nothing
+  else. Unset, every claim on a rotation unit is refused `rotation_claim_confined`, including one
+  by HQ. The orchestrator refuses to boot when a credential's identity holds the
+  `rotation-executor-v1` profile and the setting doesn't name it, or when the setting names an
+  identity without that profile.
+- **A lapsed claim is released, never reclaimed.** `reclaim-expired-claim` refuses a rotation
+  unit (`rotation_reclaim_refused`), because the pulling executor never receives the lease token
+  the reclaim route returns to its SYSTEM caller. Run
+  `orchestrator release-expired-claim <unit> --idempotency-key <k> --expected-version <v>` as
+  SYSTEM instead: it releases the claim, records `FAILED`, and returns the unit to `READY` with no
+  new grant, so the executor claims it again. A unit that fails the readiness check stays
+  `FAILED`.
+- **A start waits for the `live_estate` change window.** A claim on a rotation unit asks the
+  `live_estate` row's window, whatever reach the package declares, and is refused
+  `outside_change_window` when it is shut. A unit whose approved envelope `constraints` set
+  `touches_no_hosted_service: true` starts at any hour; only the literal `true` exempts. A claim
+  after a lapse is a continuation, and isn't windowed, when the previous claim was released for
+  `lease_expired` and its holder filed evidence on that attempt. Renewal is never windowed.
+- **Decomposition.** Write the full destination list into each rotation unit's envelope
+  `constraints` (ADR-0055 amendment 2), and set `touches_no_hosted_service: true` only on a unit
+  whose step writes no hosted consumer. Give rotation units `max_attempts` of at least three.

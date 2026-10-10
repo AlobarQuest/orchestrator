@@ -41,6 +41,7 @@ FORBIDDEN_CALLS = frozenset(
         "claim_unit",
         "renew_claim",
         "reclaim_expired_claim",
+        "release_expired_claim",
         "authorize_retry",
         "dispatch_work_unit",
     }

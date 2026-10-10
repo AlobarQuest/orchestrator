@@ -136,7 +136,7 @@ Placement rule: global CLAUDE.md §7.
   parsing must raise `DomainError`, and a service must reject every value a DB CHECK would before
   the write. History: `docs/history/claude-md-invariants-archive.md` #44.
 - `reclaim_expired_claim` grants attempts without `claim_unit`; any "may this unit run again" rule
-  belongs in `claims._readiness_eligibility_error`, shared by reclaim and requeue. History:
+  belongs in `claims._readiness_eligibility_error`, shared by reclaim, release and requeue. History:
   `docs/history/claude-md-invariants-archive.md` #45.
 - The evidence-pack markdown is redacted for public PR comments (no approver ids, rationale, actor
   ids); new sections must redact by hand. A `text/markdown` route needs a `NON_JSON_SUCCESS_PATHS`
@@ -220,12 +220,14 @@ Placement rule: global CLAUDE.md §7.
   (`claim_not_active`). History: `docs/history/claude-md-invariants-archive.md` #89.
 - The lease has three writers, all via `lease_policy.py::claim_lease`: `claim_unit`, `renew_claim`
   and `reclaim_expired_claim` (which never calls `claim_unit`). Any per-claim rule must cover all
-  three. History: `docs/history/claude-md-invariants-archive.md` #90.
+  three, with one deliberate exception: the rotation-unit change window gates starts only, so
+  renewal is never windowed and reclaim refuses a rotation unit outright (ADR-0055 amendment 2).
+  History: `docs/history/claude-md-invariants-archive.md` #90.
 - `test_factory_policy.py` requires exactly one module in `src/orchestrator/` to name the policy
   artifact's filename, docstrings included, and forbids its row rationales in source. Reword; never
   allowlist. Detail: `docs/operations/architecture-guards.md`.
-- `release_claim` runs only on failure, cancel, reclaim and expiry recovery, so a completed unit
-  keeps an unreleased lapsed claim. Claim predicates must gate on unit state
+- `release_claim` runs only on failure, cancel, reclaim, release and expiry recovery, so a completed
+  unit keeps an unreleased lapsed claim. Claim predicates must gate on unit state
   (`claims.CLAIM_HOLDING_STATES`) and the newest attempt, never on `released_at IS NULL`. History:
   `docs/history/claude-md-invariants-archive.md` #96.
 - Build sessions work in `.worktrees/<ws>` with their own venv and their own
@@ -455,3 +457,10 @@ Placement rule: global CLAUDE.md §7.
 - A holding Dependabot branch whose checks never finish stalls its repository by design (ADR-0045);
   do not test that every holding refusal clears on its own. Detail:
   `docs/operations/landing-lanes.md`.
+- Only `ORCHESTRATOR_ROTATION_EXECUTOR_AGENT_ID` may claim a rotation unit
+  (`rotation_claims.is_rotation_unit`), and it may claim nothing else; unset refuses every rotation
+  claim, and boot refuses a credential holding `rotation-executor-v1` that the setting doesn't
+  name. A lapsed rotation claim is released (`release_expired_claim`), never reclaimed. A rotation
+  claim asks the `live_estate` window unless its envelope sets `touches_no_hosted_service: true`,
+  except a continuation after a lapse with the holder's evidence. Detail:
+  `docs/operations/driving-a-unit.md`.

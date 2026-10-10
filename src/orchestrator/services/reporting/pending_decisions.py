@@ -39,6 +39,7 @@ from orchestrator.services.intake.authority_gate import human_authority_gate
 from orchestrator.services.intake.staged_intake import STAGED
 from orchestrator.services.lifecycle.execution_stall import stalled_executions
 from orchestrator.services.lifecycle.lifecycle import POST_DEPLOY_AC_IDS
+from orchestrator.services.lifecycle.rotation_claims import is_rotation_unit
 from orchestrator.services.reconciliation.reconciliation import open_conditions
 from orchestrator.services.reporting.dead_letter import recovery_action
 from orchestrator.services.verifier.evidence import current_adjudication, current_evidence
@@ -345,9 +346,10 @@ def _stalled_units(session: Session, grace_seconds: int) -> list[dict[str, Any]]
 
     The decision names only what this person can actually do. Cancelling is theirs, from the
     control on the unit page; reclaiming the expired claim (`reclaim-expired-claim`) is the
-    system's, on request, and starts a new attempt. Requeue is deliberately not named -- it targets
-    failed and blocked units, so offering it here would send someone to an action that refuses
-    them, which is the mistake `_failed_disposition` already avoids in the other direction.
+    system's, on request, and starts a new attempt; for a rotation unit it is releasing the claim
+    (`release-expired-claim`), because reclaim refuses one. Requeue is deliberately not named --
+    it targets failed and blocked units, so offering it here would send someone to an action that
+    refuses them, which is the mistake `_failed_disposition` already avoids in the other direction.
 
     The detail says outright that the orchestrator cannot tell a dead worker from a live one,
     because a reader who assumed it could would over-read the entry. What it CAN say is the part
@@ -357,7 +359,7 @@ def _stalled_units(session: Session, grace_seconds: int) -> list[dict[str, Any]]
         _entry(
             "stalled_execution",
             stalled.title,
-            "Cancel this unit, or have the system reclaim its expired claim for a new attempt",
+            _stalled_action(session, stalled.work_unit_id),
             (
                 f"Attempt {stalled.attempt} has held it in {stalled.state} since its hold ended "
                 f"at {stalled.hold_ended_at.isoformat()}, {stalled.stalled_seconds}s ago. That "
@@ -369,6 +371,22 @@ def _stalled_units(session: Session, grace_seconds: int) -> list[dict[str, Any]]
         )
         for stalled in stalled_executions(session, grace_seconds=grace_seconds)
     ]
+
+
+def _stalled_action(session: Session, unit_id: uuid.UUID) -> str:
+    """Reclaim for most units; a rotation unit is never reclaimed, only released (ADR-0055)."""
+    unit = session.get(WorkUnit, unit_id)
+    revision = (
+        session.get(WorkPackageRevision, unit.work_package_revision_id)
+        if unit is not None
+        else None
+    )
+    if unit is not None and revision is not None and is_rotation_unit(unit, revision):
+        return (
+            "Cancel this unit, or have the system release its expired claim so the rotation "
+            "executor can claim it again"
+        )
+    return "Cancel this unit, or have the system reclaim its expired claim for a new attempt"
 
 
 def _open_divergences(session: Session) -> list[dict[str, Any]]:
