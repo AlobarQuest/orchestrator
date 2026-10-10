@@ -38,7 +38,11 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   therefore requires a merged security-standards commit plus an image rebuild —
   never borrow an unrelated identity for a durable credential. `token_hash` is
   `sha256(bearer_token)`; Coolify stores only the hash, so the hash is safe to
-  handle and the token must never leave BWS.
+  handle and the token must never leave BWS. During a credential rotation an entry may also
+  carry `"previous": {"token_hash": "<sha256>", "until": "<UTC instant>"}` (ADR-0055 decision
+  7): the previous hash authenticates only before `until`, and boot refuses an `until` more than
+  eight days ahead. Rolling back past the image that parses it needs `previous` removed first
+  (`deploy.md`, "Rolling back past the bearer overlap parser").
 
 ### #41
 
