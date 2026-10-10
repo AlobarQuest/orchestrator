@@ -50,7 +50,17 @@ For a due credential whose package is `rotation-<credential_id>`:
    No approval policy grants this profile, and this program never runs `approve`. The approval
    does not move the hash fixture (`package_hash` drops `status`), so the commit holds the
    package and its lineage only. The checkout must be clean and level with `origin/main` again
-   before the next pass, or the pass exits 2.
+   before the next pass, or the pass exits 2. Before approving, Devon does two reads of
+   `profile_fields.destinations` (ADR-0055 amendment 2):
+   - **Read its change against the last approved revision**, not the proposer's latest commit:
+     the baseline is the `commit` of the latest entry under `approvals:` in the package's
+     `lineage.yaml` (`git diff <that commit> -- packages/rotation-<credential_id>/package.yaml`).
+     The proposer carries the list forward unchanged, so any change in it was written by an author.
+   - **Compare it with the registry.** Every destination in the credential's infraops
+     `.cred-consumers.toml` entry must be in the list, and nothing else. A difference found now is
+     fixed in the package before approval; found later, it makes the executor refuse at its first
+     claim, after ADR-0052's supersede has closed. Until increment 4 ships the executor's
+     read-only comparison command, this is a manual comparison.
 4. **The next pass.** File the observation again. It replays and returns the same id. Then propose
    the `work` record with the propose-scoped bearer. The record names the approved revision and
    that observation, with `bump_proposer`'s asserted fields (`PROPOSAL_FIELDS`). Later passes
@@ -82,10 +92,12 @@ infraops older than the handover) stops the whole pass with exit 2.
 ## Authoring a standing rotation package
 
 Use the `non-software-operational` profile, name the package `rotation-<credential_id>`, and set
-these `profile_fields`: `standing: true`, `credential_id: <infraops registry id>`, and
-`occurrence` (quoted). To have Devon approve the first rotation at authoring time, set it to that
-rotation's occurrence from the preceding table (for example `'2026-10-07-requested'`); the first
-pass then proposes rev 1 without revising it. `'unassigned'` instead makes the first pass
+these `profile_fields`: `standing: true`, `credential_id: <infraops registry id>`, `occurrence`
+(quoted), and `destinations`, the credential's full destination list, one flat string per
+destination (consumer kind and destination), sorted and unique. To have Devon approve the first
+rotation at authoring time, set `occurrence` to that rotation's occurrence from the preceding
+table (for example `'2026-10-07-requested'`); the first pass then proposes rev 1 without revising
+it. `'unassigned'` instead makes the first pass
 revise. A package whose name and `credential_id` disagree stops the pass with exit 2. Then mark
 the credential `rotated_by_sds = true` in its registry entry, or the pass reports
 `not-handed-over` and does nothing.

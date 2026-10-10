@@ -1,0 +1,169 @@
+{
+  "$defs": {
+    "ProbeResult": {
+      "additionalProperties": false,
+      "description": "One probe and its answer. A probe counts only beside its known-bad control (decision 3).",
+      "properties": {
+        "expected": {
+          "enum": [
+            "live",
+            "dead"
+          ],
+          "title": "Expected",
+          "type": "string"
+        },
+        "http_status": {
+          "anyOf": [
+            {
+              "maximum": 599,
+              "minimum": 100,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Http Status"
+        },
+        "outcome": {
+          "enum": [
+            "live",
+            "dead",
+            "indeterminate"
+          ],
+          "title": "Outcome",
+          "type": "string"
+        },
+        "subject": {
+          "enum": [
+            "old",
+            "new",
+            "known_bad"
+          ],
+          "title": "Subject",
+          "type": "string"
+        },
+        "target": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Target",
+          "type": "string"
+        }
+      },
+      "required": [
+        "target",
+        "subject",
+        "expected",
+        "outcome"
+      ],
+      "title": "ProbeResult",
+      "type": "object"
+    },
+    "StepFingerprint": {
+      "additionalProperties": false,
+      "description": "Which value a fingerprint is of: the one being replaced, or its replacement.",
+      "properties": {
+        "length": {
+          "maximum": 4096,
+          "minimum": 1,
+          "title": "Length",
+          "type": "integer"
+        },
+        "sha256_prefix": {
+          "pattern": "^[0-9a-f]{8,16}$",
+          "title": "Sha256 Prefix",
+          "type": "string"
+        },
+        "which": {
+          "enum": [
+            "old",
+            "new"
+          ],
+          "title": "Which",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sha256_prefix",
+        "length",
+        "which"
+      ],
+      "title": "StepFingerprint",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "The payload of one rotation step's evidence.\n\nA row recovered by SYSTEM after a lapsed lease is validated before the orchestrator adds its\nown `recovery` key, so a reader validates a stored payload without that key.",
+  "properties": {
+    "destination": {
+      "anyOf": [
+        {
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Destination"
+    },
+    "fingerprints": {
+      "items": {
+        "$ref": "#/$defs/StepFingerprint"
+      },
+      "maxItems": 4,
+      "title": "Fingerprints",
+      "type": "array"
+    },
+    "format": {
+      "const": "rotation-step/1",
+      "title": "Format",
+      "type": "string"
+    },
+    "note": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Note"
+    },
+    "probes": {
+      "items": {
+        "$ref": "#/$defs/ProbeResult"
+      },
+      "maxItems": 16,
+      "title": "Probes",
+      "type": "array"
+    },
+    "step": {
+      "enum": [
+        "mint",
+        "stage",
+        "verify_new",
+        "store",
+        "distribute",
+        "verify_consumers",
+        "retire_old",
+        "confirm_dead"
+      ],
+      "title": "Step",
+      "type": "string"
+    }
+  },
+  "required": [
+    "format",
+    "step"
+  ],
+  "title": "RotationStepEvidence",
+  "type": "object"
+}

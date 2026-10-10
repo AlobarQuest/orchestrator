@@ -39,6 +39,7 @@ from orchestrator.services.lifecycle.lifecycle import (
     POST_DEPLOY_AC_IDS,
     is_generated_follow_up_unit,
 )
+from orchestrator.services.verifier.rotation_evidence import check_rotation_evidence
 from orchestrator.services.verifier.verifier_evaluators import human_may_adjudicate
 
 # not-a-vocabulary: internal policy subset of adjudication outcomes (which outcomes are not
@@ -637,6 +638,7 @@ def _store_evidence(
             )
         _validate_evidence_fields(stable_ref, payload, evidence_type, source_revision)
         claim = validate_active_claim(session, unit, actor, attempt, lease_token)
+        check_rotation_evidence(unit, revision, stable_ref, payload, evidence_type, source_revision)
         bound_context_snapshot_id = _resolve_context_snapshot_id(
             session,
             unit,
@@ -1340,7 +1342,7 @@ def recover_evidence(
         # writes the second head.
         _lock_evidence_head(session, work_unit_id, ac_id)
         lock_evidence_idempotency_key(session, idempotency_key)
-        unit, _revision = _validated_subject(session, work_package_revision_id, work_unit_id, ac_id)
+        unit, revision = _validated_subject(session, work_package_revision_id, work_unit_id, ac_id)
         replay = _evidence_replay(session, idempotency_key, command, action="evidence.recovered")
         if replay is not None:
             session.commit()
@@ -1360,6 +1362,8 @@ def recover_evidence(
                 "completed and cancelled work units may not receive recovered evidence",
                 None,
             )
+        # Before the `recovery` key is merged in: the schema holds what the worker produced.
+        check_rotation_evidence(unit, revision, stable_ref, payload, evidence_type, source_revision)
 
         now = TransactionClock().now(session)
         claim = _recoverable_claim(session, unit, attempt, now)
