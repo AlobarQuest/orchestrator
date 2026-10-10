@@ -46,6 +46,11 @@ NON_INGRESS_POST_ROUTES = frozenset(
         # submission finds the row withdrawn and returns it unchanged. Asserted in
         # tests/services/test_staged_intake.py by test_a_second_withdraw_changes_nothing.
         "/review/staged-intakes/{staged_id}/withdraw",
+        # Delegates to resolve_dependency_command, whose replay is covered by the
+        # /api/v1/dependencies/{dependency_id}/resolve row. The key is minted per page render and
+        # bound into the CSRF token, so a double-submitted form replays one key. Asserted in
+        # tests/web/test_human_act_form.py by test_a_double_submitted_form_resolves_once.
+        "/review/dependencies/{dependency_id}/resolution",
         # Derives a context snapshot; carries no independent ingress key.
         "/api/v1/work-units/{unit_id}/preflight",
     }
