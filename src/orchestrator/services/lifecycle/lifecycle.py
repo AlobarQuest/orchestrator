@@ -27,6 +27,7 @@ from orchestrator.persistence.models import (
     ApprovedDecomposition,
     Claim,
     DecompositionProposalAcMapping,
+    Dependency,
     DeploymentObservation,
     Event,
     Evidence,
@@ -36,6 +37,7 @@ from orchestrator.persistence.models import (
     WorkUnit,
 )
 from orchestrator.services.lifecycle.claim_release import release_claim
+from orchestrator.services.lifecycle.dependency_resolution import apply_resolution
 from orchestrator.services.lifecycle.readiness import evaluate_readiness
 
 # The single source of truth for the generated post-deploy AC ids: this module PRODUCES them
@@ -280,10 +282,75 @@ def _perform_transition(
     event = _transition_event(command, unit, source, revision.registry_version, occurred_at)
     session.add(event)
     session.flush()
+    if command.target is WorkUnitState.COMPLETED:
+        _resolve_dependents(session, unit, command, occurred_at)
     if after is not None:
         after(session, unit)
         session.flush()
     return TransitionResult(unit.id, command.target, next_version, event.id)
+
+
+def _resolve_dependents(
+    session: Session, unit: WorkUnit, command: TransitionCommand, occurred_at: datetime
+) -> None:
+    """Satisfy the pending `work_unit` dependencies that require this unit `completed`.
+
+    ADR-0055 decision 3: a unit's completion resolves the dependencies that name it, in the same
+    transaction, so a hand-off between units is not a second human act. Only a dependency whose
+    condition is `completed` is resolved; one naming another state or condition is left for whoever
+    resolves it today. Each resolution writes its own `dependency.resolved` event, attributed to the
+    completing actor, and readies its dependent through `ready_if_satisfied`. Never commits.
+    """
+    dependencies = session.scalars(
+        select(Dependency)
+        .where(
+            Dependency.kind == "work_unit",
+            Dependency.depends_on_work_unit_id == unit.id,
+            Dependency.status == "pending",
+            Dependency.required_state_or_condition == WorkUnitState.COMPLETED.value,
+        )
+        .order_by(Dependency.id)
+        .with_for_update()
+    ).all()
+    dependents: list[uuid.UUID] = []
+    for dependency in dependencies:
+        key = f"{command.idempotency_key}:dependency:{dependency.id}"
+        dependent = session.get(WorkUnit, dependency.work_unit_id)
+        assert dependent is not None
+        apply_resolution(
+            dependency,
+            status="satisfied",
+            resolved_by=command.actor.actor_id,
+            resolved_at=occurred_at,
+            resolution_event_id=uuid.uuid4(),
+            detail={"completed_unit_id": str(unit.id)},
+        )
+        session.add(
+            Event(
+                id=dependency.resolution_event_id,
+                occurred_at=occurred_at,
+                actor_id=command.actor.actor_id,
+                action="dependency.resolved",
+                subject_type="work_unit",
+                subject_id=dependent.id,
+                from_state=dependent.state,
+                to_state=dependent.state,
+                payload={
+                    "dependency_id": str(dependency.id),
+                    "status": "satisfied",
+                    "reason": "dependency_completed",
+                    "completed_unit_id": str(unit.id),
+                },
+                correlation_id=uuid.uuid4(),
+                idempotency_key=key,
+            )
+        )
+        if dependent.id not in dependents:
+            dependents.append(dependent.id)
+    session.flush()
+    for dependent_id in dependents:
+        cause = f"{command.idempotency_key}:dependent:{dependent_id}"
+        ready_if_satisfied(session, dependent_id, trigger=command.actor, cause=cause)
 
 
 def _transition_event(

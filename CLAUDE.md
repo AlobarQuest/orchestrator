@@ -464,3 +464,7 @@ Placement rule: global CLAUDE.md §7.
   claim asks the `live_estate` window unless its envelope sets `touches_no_hosted_service: true`,
   except a continuation after a lapse with the holder's evidence. Detail:
   `docs/operations/driving-a-unit.md`.
+- A unit's completion satisfies, in `_perform_transition`'s transaction, the pending `work_unit`
+  dependencies that require it `completed` (exact match); no other condition or kind. A human-act
+  dependency is resolved only at `/review/dependencies/{id}/resolution`, whose detail is
+  `HumanActDetail` plus the secret scan. Detail: `docs/operations/driving-a-unit.md`.

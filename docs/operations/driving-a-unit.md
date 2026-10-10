@@ -729,3 +729,24 @@ units:
 - **Decomposition.** Write the full destination list into each rotation unit's envelope
   `constraints` (ADR-0055 amendment 2), and set `touches_no_hosted_service: true` only on a unit
   whose step writes no hosted consumer. Give rotation units `max_attempts` of at least three.
+
+### Resolve dependencies
+
+Two kinds of dependency hold a unit in `DRAFT`, and each is resolved in one place (ADR-0055
+decision 3):
+
+- **A `work_unit` dependency whose condition is `completed`** is resolved by its predecessor's
+  completion, in the same transaction (`lifecycle._resolve_dependents`). The resolution is
+  attributed to whoever completed the predecessor, writes its own `dependency.resolved` event, and
+  readies the dependent if nothing else holds it. A `work_unit` dependency naming any other
+  condition is left for a SYSTEM or human call to `POST /api/v1/dependencies/{id}/resolve`. The
+  condition is matched exactly, so a decomposition that wants completion to hand off writes
+  `completed`.
+- **A human act** (any other kind: `external_system`, `decision`, `pull_request`) is resolved at
+  `/review` on the dependent unit's page, under "Human acts". Record the outcome, a note, and the
+  fingerprint the act produced (a sha256 prefix of 8 to 16 lowercase hex characters, and a
+  length), never a value. The detail is held to a strict schema
+  (`services/lifecycle/human_acts.py`) and the secret scan, which refuses an `Authorization:
+  Bearer` header or the BWS token shape before anything is written; it can't recognise every token
+  format, so record fingerprints only. A resolved dependency can't be resolved again from the
+  form, and a settled unit offers none.

@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from orchestrator.api.dependencies import AuthConfig, SettingsDep, get_actor, get_session
@@ -27,6 +28,7 @@ from orchestrator.kernel.states import WAIVER_RISK_CLASSES, ActorContext, ActorR
 from orchestrator.kernel.transitions import TransitionGuards, authorize_transition
 from orchestrator.persistence.models import (
     DecompositionProposal,
+    Dependency,
     ReconciliationCondition,
     WorkPackageRevision,
     WorkUnit,
@@ -46,7 +48,7 @@ from orchestrator.services.intake.intake_reads import (
     revision_acceptance_criteria,
 )
 from orchestrator.services.intake.package_intake import register_package_intake
-from orchestrator.services.intake.packages import record_approval
+from orchestrator.services.intake.packages import record_approval, resolve_dependency_command
 from orchestrator.services.intake.staged_intake import (
     STAGED,
     confirm_staged_intake,
@@ -55,6 +57,7 @@ from orchestrator.services.intake.staged_intake import (
 )
 from orchestrator.services.landing.estate_landing import EstateAnswer, EstateLandingSource
 from orchestrator.services.lifecycle.claims import REQUEUE_SOURCE_STATES, authorize_retry
+from orchestrator.services.lifecycle.human_acts import human_act_detail
 from orchestrator.services.lifecycle.lifecycle import (
     TransitionCommand,
     transition_in_transaction,
@@ -514,6 +517,18 @@ def detail(
         str(row.id): _issue_token(request, actor, row.id, "resolve", condition_keys[str(row.id)])
         for row in conditions
     }
+    # Pending human-act dependencies (ADR-0055 decision 3), each form with a token bound to it.
+    # A `work_unit` dependency is resolved by its predecessor's completion, never by hand here.
+    human_acts = _pending_human_acts(session, context["unit"])
+    act_keys = {str(row.id): str(uuid.uuid4()) for row in human_acts}
+    context["pending_human_acts"] = human_acts
+    context["human_act_idempotency_keys"] = act_keys
+    context["human_act_csrf_tokens"] = {
+        str(row.id): _issue_token(
+            request, actor, row.id, "resolve_dependency", act_keys[str(row.id)]
+        )
+        for row in human_acts
+    }
     context["adjudicatable_criteria"] = _adjudicatable_criteria(
         session, context["unit"], context["revision"]
     )
@@ -521,7 +536,10 @@ def detail(
     # An empty "Human actions" heading reads as a bug rather than as an answer, and a settled unit
     # legitimately has none. Computed here, over every control the section can carry.
     context["no_action_available"] = not (
-        any(available.values()) or context["adjudicatable_criteria"] or context["open_conditions"]
+        any(available.values())
+        or context["adjudicatable_criteria"]
+        or context["open_conditions"]
+        or human_acts
     )
     context["decision_facts"] = decision_facts_for_unit(context["unit"], context["revision"])
     # Graduation evidence, computed only when the authority-approval control is actually rendered.
@@ -1205,6 +1223,86 @@ def resolve_reconciliation_condition(
     if isinstance(result, DomainError):
         raise result
     return _redirect(unit_id)
+
+
+def _pending_human_acts(session: Session, unit: WorkUnit) -> tuple[Dependency, ...]:
+    """A settled unit offers none: resolving its dependency would move nothing."""
+    if WorkUnitState(unit.state) in SETTLED_STATES:
+        return ()
+    return tuple(
+        session.scalars(
+            select(Dependency)
+            .where(
+                Dependency.work_unit_id == unit.id,
+                Dependency.status == "pending",
+                Dependency.kind != "work_unit",
+            )
+            .order_by(Dependency.id)
+        )
+    )
+
+
+def _parse_length(value: str) -> int | None:
+    stripped = _blank_to_none(value)
+    if stripped is None:
+        return None
+    # ASCII digits and a bounded width: `isdigit` admits characters `int` refuses, and a very long
+    # digit string exceeds `int`'s conversion limit. Either would escape as a bare 500.
+    if len(stripped) > 6 or not (stripped.isascii() and stripped.isdigit()):
+        raise DomainError("human_act_detail_invalid", "length must be a whole number", None)
+    return int(stripped)
+
+
+@router.post("/dependencies/{dependency_id}/resolution")
+def resolve_human_act(
+    request: Request,
+    dependency_id: uuid.UUID,
+    actor: ActorDep,
+    session: SessionDep,
+    expected_version: Annotated[int, Form()],
+    outcome: Annotated[str, Form()],
+    note: Annotated[str, Form(min_length=1)],
+    sha256_prefix: Annotated[str, Form()] = "",
+    length: Annotated[str, Form()] = "",
+    idempotency_key: Annotated[str, Form()] = "",
+    csrf_token: Annotated[str, Form()] = "",
+    confirm: Annotated[str | None, Form()] = None,
+) -> RedirectResponse:
+    """Resolve a human-act dependency: HUMAN-only, and on /review because /api is M2M-only.
+
+    The detail is held to `HumanActDetail` and the secret scan before anything is written. A
+    `work_unit` dependency is refused: its predecessor's completion resolves it.
+    """
+    _human(actor)
+    _require_form(
+        request, actor, dependency_id, "resolve_dependency", csrf_token, idempotency_key, confirm
+    )
+    dependency = session.get(Dependency, dependency_id)
+    if dependency is None:
+        raise DomainError("dependency_not_found", "dependency does not exist", None)
+    if dependency.kind == "work_unit":
+        raise DomainError(
+            "dependency_not_a_human_act",
+            "a work-unit dependency is resolved by its predecessor's completion",
+            None,
+        )
+    unit = session.get(WorkUnit, dependency.work_unit_id)
+    if unit is None or WorkUnitState(unit.state) in SETTLED_STATES:
+        raise DomainError("dependency_unit_settled", "the unit is already settled", None)
+    detail = human_act_detail(note, _blank_to_none(sha256_prefix), _parse_length(length))
+    resolve_dependency_command(
+        session,
+        dependency_id=dependency_id,
+        status=outcome,
+        detail=detail,
+        actor_id=actor.actor_id,
+        actor_role=actor.role,
+        expected_version=expected_version,
+        idempotency_key=idempotency_key,
+        require_pending=True,
+    )
+    session.commit()
+    return _redirect(dependency.work_unit_id)
 
 
 @router.post("/decomposition-proposals/{proposal_id}/approve")

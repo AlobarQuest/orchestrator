@@ -36,6 +36,7 @@ from orchestrator.persistence.models import (
     WorkUnit,
 )
 from orchestrator.persistence.repositories import PackageRepository
+from orchestrator.services.lifecycle.dependency_resolution import apply_resolution, normalize_json
 from orchestrator.services.lifecycle.lifecycle import ready_if_satisfied
 from orchestrator.services.verifier.verifier_evaluators import SUPPORTED_CRITERION_EVIDENCE_TYPES
 
@@ -234,7 +235,7 @@ def register_revision(
         raise _revision_conflict()
 
     fingerprint = authority_fingerprint(authority)
-    normalized_snapshot = _normalize_json(
+    normalized_snapshot = normalize_json(
         {**enforcement_snapshot, "authority": authority.normalized()}
     )
     existing = repository.revision_for_update(package.id, revision)
@@ -253,7 +254,7 @@ def register_revision(
         "intake_source": intake_source,
         "approval_ledger_commit": approval_ledger_commit,
         "verification_mode": verification_mode,
-        "verification_limitations": _normalize_json(verification_limitations),
+        "verification_limitations": normalize_json(verification_limitations),
         # WS-P2.8: follow_up joins the `revision.registered` event identity below (via `command`)
         # with no legacy exemption -- unlike package_intake.py's `_legacy_identity_matches`. That
         # is deliberate, not an oversight, for two independent reasons:
@@ -272,7 +273,7 @@ def register_revision(
         # If a caller that passes `idempotency_key` is ever wired to reachable production
         # traffic, it needs the same exemption treatment `_legacy_identity_matches` gives the
         # intake path, or its replays will conflict on `follow_up`.
-        "follow_up": _normalize_json(follow_up),
+        "follow_up": normalize_json(follow_up),
         # ADR-0026. In `candidate`, so it joins both the stored row and the
         # `revision.registered` event identity. That means a re-registration of one revision
         # naming a DIFFERENT change record is a `revision_conflict` rather than a silent
@@ -527,7 +528,7 @@ def register_approved_unit(
         "title": title,
         "outcome": outcome,
         "required_capability": required_capability,
-        "authority": _normalize_json(
+        "authority": normalize_json(
             authority_payload if authority_payload is not None else runner_payload(authority)
         ),
         "max_attempts": max_attempts,
@@ -559,7 +560,7 @@ def register_approved_unit(
         "title": title,
         "outcome": outcome,
         "required_capability": required_capability,
-        "authority": _normalize_json(
+        "authority": normalize_json(
             authority_payload if authority_payload is not None else runner_payload(authority)
         ),
         "authority_fingerprint": authority_fingerprint(authority),
@@ -860,20 +861,17 @@ def resolve_dependency(
     resolution_event_id: uuid.UUID,
     detail: Mapping[str, Any],
 ) -> Dependency:
-    if status not in {"satisfied", "failed"}:
-        raise DomainError(
-            "invalid_dependency_status",
-            "resolution must be satisfied or failed",
-            None,
-        )
     dependency = PackageRepository(session).dependency_for_update(dependency_id)
     if dependency is None:
         raise DomainError("dependency_not_found", "dependency does not exist", None)
-    dependency.status = status
-    dependency.resolved_by = resolved_by
-    dependency.resolved_at = datetime.now(UTC)
-    dependency.resolution_event_id = resolution_event_id
-    dependency.detail = _normalize_json(detail)
+    apply_resolution(
+        dependency,
+        status=status,
+        resolved_by=resolved_by,
+        resolved_at=datetime.now(UTC),
+        resolution_event_id=resolution_event_id,
+        detail=detail,
+    )
     session.flush()
     return dependency
 
@@ -888,7 +886,14 @@ def resolve_dependency_command(
     actor_role: ActorRole,
     expected_version: int,
     idempotency_key: str,
+    require_pending: bool = False,
 ) -> Dependency:
+    """Resolve a dependency, or replay the resolution made under `idempotency_key`.
+
+    `require_pending` refuses a dependency already resolved, after the replay check so a double
+    submission still replays. The /review human-act form sets it: a stale page must not overwrite
+    an outcome already recorded.
+    """
     if actor_role not in {ActorRole.HUMAN, ActorRole.SYSTEM}:
         raise DomainError("role_forbidden", "actor may not resolve dependencies", None)
     dependency = PackageRepository(session).dependency_for_update(dependency_id)
@@ -913,6 +918,8 @@ def resolve_dependency_command(
                 "use a new idempotency key",
             )
         return dependency
+    if require_pending and dependency.status != "pending":
+        raise DomainError("dependency_not_pending", "dependency is already resolved", "reload")
     if unit.version != expected_version:
         raise DomainError(
             "version_conflict",
@@ -991,14 +998,6 @@ def _revision_conflict() -> DomainError:
         "package revision is already registered with different content",
         None,
     )
-
-
-def _normalize_json(value: Any) -> Any:
-    if isinstance(value, Mapping):
-        return {key: _normalize_json(value[key]) for key in sorted(value)}
-    if isinstance(value, (list, tuple)):
-        return [_normalize_json(item) for item in value]
-    return value
 
 
 def _validate_dependency_spec(spec: DependencySpec) -> None:
