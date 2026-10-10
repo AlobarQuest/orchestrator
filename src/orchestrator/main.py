@@ -1,5 +1,4 @@
 import json
-from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -20,12 +19,7 @@ from orchestrator.api.routes import (
 )
 from orchestrator.config import Settings
 from orchestrator.errors import DomainError
-from orchestrator.identity.auth import (
-    TOKEN_HASH_PATTERN,
-    M2MCredential,
-    PreviousHash,
-    previous_hash_valid,
-)
+from orchestrator.identity.auth import TOKEN_HASH_PATTERN, M2MCredential
 from orchestrator.identity.registry import RegistryAdapter
 from orchestrator.kernel.states import ActorRole
 from orchestrator.web import router as web_router
@@ -134,6 +128,7 @@ def load_auth_config(settings: Settings | None = None) -> AuthConfig | None:
             role is ActorRole.HUMAN for role in roles.values()
         ):
             raise RuntimeError("invalid runtime authentication configuration")
+        _require_rotation_executor(registry, credentials, settings.rotation_executor_agent_id)
         marker = _required_secret(settings.proxy_marker)
         csrf_secret = _required_secret(settings.csrf_secret).encode()
         return AuthConfig(
@@ -186,12 +181,11 @@ def _json_list(raw: str | None) -> list[str]:
 
 def _m2m_credentials(registry: RegistryAdapter, document: str | None) -> dict[str, M2MCredential]:
     credentials: dict[str, M2MCredential] = {}
-    now = datetime.now(UTC)
     for key, raw in _json_object(document).items():
         if (
             not key
             or not isinstance(raw, dict)
-            or set(raw) - {"previous"} != {"agent_id", "token_hash"}
+            or set(raw) != {"agent_id", "token_hash"}
             or not isinstance(raw.get("agent_id"), str)
             or not isinstance(raw.get("token_hash"), str)
             or TOKEN_HASH_PATTERN.fullmatch(raw["token_hash"]) is None
@@ -203,37 +197,34 @@ def _m2m_credentials(registry: RegistryAdapter, document: str | None) -> dict[st
         credentials[str(key)] = M2MCredential(
             agent_id=raw["agent_id"],
             token_hash=raw["token_hash"],
-            previous=_previous_hash(raw),
         )
     if not credentials:
-        raise RuntimeError("invalid runtime authentication configuration")
-    current_hashes = {credential.token_hash for credential in credentials.values()}
-    if not all(
-        previous_hash_valid(credential, current_hashes, now) for credential in credentials.values()
-    ):
         raise RuntimeError("invalid runtime authentication configuration")
     return credentials
 
 
-def _previous_hash(raw: dict[str, object]) -> PreviousHash | None:
-    """An entry's optional `previous`: `{"token_hash": <sha256>, "until": <UTC instant>}`.
+# The authority profile security-standards gives the credential-rotation executor (ADR-0055).
+ROTATION_EXECUTOR_PROFILE = "rotation-executor-v1"
 
-    ADR-0055 decision 7. A rotation keeps the old bearer valid until every consumer has switched,
-    and `until` is the backstop. This reads the shape; `previous_hash_valid` holds the rules,
-    including that boot refuses an `until` more than eight days ahead, so a mistyped expiry cannot
-    keep a retired bearer valid indefinitely. One already past is accepted and authenticates
-    nothing. An image older than this parser refuses to start with `previous` present, which is
-    why `docs/operations/deploy.md` says to remove it before rolling back.
+
+def _require_rotation_executor(
+    registry: RegistryAdapter, credentials: dict[str, M2MCredential], configured: str | None
+) -> None:
+    """Refuse to boot unless the executor setting and the credentials agree (ADR-0055 decision 1).
+
+    A configured executor must resolve to a machine identity holding the executor's profile. And a
+    credential whose identity holds that profile must be the configured executor: otherwise the
+    executor would authenticate while claim confinement, keyed on the setting, did not know it,
+    and it could claim any unit that is not a rotation unit.
     """
-    if "previous" not in raw:
-        return None
-    previous = raw["previous"]
-    if not isinstance(previous, dict) or set(previous) != {"token_hash", "until"}:
-        raise RuntimeError("invalid runtime authentication configuration")
-    # A non-string field raises TypeError here, which `load_auth_config` refuses like the rest.
-    return PreviousHash(
-        token_hash=previous["token_hash"], until=datetime.fromisoformat(previous["until"])
-    )
+    if configured is not None:
+        actor = registry.resolve(configured)
+        if actor.authority_profile != ROTATION_EXECUTOR_PROFILE:
+            raise RuntimeError("invalid runtime authentication configuration")
+    for credential in credentials.values():
+        profile = registry.resolve(credential.agent_id).authority_profile
+        if profile == ROTATION_EXECUTOR_PROFILE and credential.agent_id != configured:
+            raise RuntimeError("invalid runtime authentication configuration")
 
 
 def _email_actor_mapping(registry: RegistryAdapter, raw: str | None) -> dict[str, str]:

@@ -3,7 +3,7 @@ from uuid import UUID
 from fastapi import APIRouter
 from sqlalchemy import select
 
-from orchestrator.api.dependencies import ActorDep, SessionDep
+from orchestrator.api.dependencies import ActorDep, SessionDep, SettingsDep
 from orchestrator.api.routes.common import (
     ERROR_RESPONSES,
     raise_error,
@@ -21,6 +21,7 @@ from orchestrator.api.schemas.lifecycle import (
     PrBindingResponse,
     PreflightCommandModel,
     ReclaimCommand,
+    ReleaseCommand,
     RenewCommand,
     RequeueCommand,
     RetryCommand,
@@ -33,6 +34,7 @@ from orchestrator.services.lifecycle.claims import (
     authorize_retry,
     claim_unit,
     reclaim_expired_claim,
+    release_expired_claim,
     renew_claim,
     requeue_unit,
 )
@@ -158,6 +160,7 @@ def claim(
     body: ClaimCommand,
     actor: ActorDep,
     session: SessionDep,
+    settings: SettingsDep,
 ) -> object:
     return raise_error(
         claim_unit(
@@ -167,6 +170,7 @@ def claim(
             body.idempotency_key,
             expected_version=body.expected_version,
             standing_context=body.standing_context,
+            rotation_executor=settings.rotation_executor_agent_id,
         )
     )
 
@@ -197,6 +201,7 @@ def reclaim_expired(
     body: ReclaimCommand,
     actor: ActorDep,
     session: SessionDep,
+    settings: SettingsDep,
 ) -> object:
     return raise_error(
         reclaim_expired_claim(
@@ -207,6 +212,26 @@ def reclaim_expired(
             body.idempotency_key,
             expected_version=body.expected_version,
             standing_context=body.standing_context,
+            rotation_executor=settings.rotation_executor_agent_id,
+        )
+    )
+
+
+@router.post("/work-units/{unit_id}/release-expired-claim", response_model=UnitResponse)
+def release_expired(
+    unit_id: UUID,
+    body: ReleaseCommand,
+    actor: ActorDep,
+    session: SessionDep,
+) -> object:
+    """SYSTEM recovery of a lapsed claim with no new grant; the unit returns to READY."""
+    return raise_error(
+        release_expired_claim(
+            session,
+            unit_id,
+            actor,
+            body.idempotency_key,
+            expected_version=body.expected_version,
         )
     )
 

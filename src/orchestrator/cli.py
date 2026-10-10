@@ -477,6 +477,24 @@ def reclaim_expired_claim(
     )
 
 
+@app.command("release-expired-claim")
+def release_expired_claim(
+    unit_id: str,
+    idempotency_key: Annotated[str, typer.Option("--idempotency-key")],
+    expected_version: Annotated[int, typer.Option("--expected-version", min=0)],
+    json_output: JsonOption = False,
+) -> None:
+    """Release a lapsed claim without a new grant; the unit returns to ready (ADR-0055)."""
+    _run(
+        lambda: request(
+            "POST",
+            f"/api/v1/work-units/{unit_id}/release-expired-claim",
+            {"idempotency_key": idempotency_key, "expected_version": expected_version},
+        ),
+        json_output,
+    )
+
+
 @app.command()
 def preflight(
     unit_id: str,

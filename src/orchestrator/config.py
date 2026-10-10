@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -128,6 +128,12 @@ class Settings(BaseSettings):
     execution_stall_grace_seconds: int = Field(
         default=900, ge=0, le=86_400
     )  # 15 minutes; capped at a day
+    # ADR-0055. The agent_id of the credential-rotation executor. Only it may claim a rotation
+    # unit, and it may claim nothing else. Unset (or blank) refuses every claim on a rotation unit,
+    # which is the state until the executor's bearer exists. `main.load_auth_config` refuses to
+    # boot when a credential carries the executor's profile and this does not name its identity,
+    # so the other direction cannot fail open.
+    rotation_executor_agent_id: str | None = None
     # Runtime authentication, read once at boot by `main.load_auth_config`. Every one of these is
     # a RAW STRING on purpose, including the three that hold JSON. A `dict` or `list` annotation
     # would have pydantic-settings decode them itself, so a malformed value would fail while
@@ -144,6 +150,11 @@ class Settings(BaseSettings):
     email_to_actor: str | None = None
     credential_key_header: str = "X-Credential-Key-Id"
     csrf_secret: SecretStr | None = None
+
+    @field_validator("rotation_executor_agent_id")
+    @classmethod
+    def _blank_is_unset(cls, value: str | None) -> str | None:
+        return value.strip() or None if value is not None else None
 
 
 @lru_cache

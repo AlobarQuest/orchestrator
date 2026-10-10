@@ -123,21 +123,6 @@ condition. Exit 3 means a state it cannot read or will not deploy from. Exit 1 m
 The numbered entries below remain the procedure's record, and the manual fallback when the command
 cannot run. The command adds no step they do not describe.
 
-## Rolling back past the bearer overlap parser
-
-**Rolling back past the image that parses `previous` requires removing `previous` first.** From
-that image on, an entry in `ORCHESTRATOR_M2M_CREDENTIALS` may carry
-`"previous": {"token_hash": "<sha256>", "until": "<UTC instant>"}` while a credential rotation
-overlaps the old and new bearers (ADR-0055 decision 7). An older image accepts only `agent_id`
-and `token_hash` in an entry, so it refuses to start while any entry has `previous`, and every
-program that authenticates to the orchestrator goes down with it. Before rolling back to such an
-image, remove every `previous` from the setting (both rows of the variable), then roll back.
-Removing `previous` early ends the overlap: a consumer still on the old bearer stops
-authenticating, so check which consumers have switched first.
-
-The parser refuses to start with an `until` more than eight days after boot, or one that isn't
-UTC, so a rotation sets it about seven days out.
-
 ## The record
 
 The entries below moved verbatim from the CLAUDE.md invariants section on 2026-10-01 (Tier 3 item 17). Each keeps its original number. Their dated corrections are the record of what was measured when; read the last correction in an entry as its current state.

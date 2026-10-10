@@ -26,6 +26,10 @@ class ReclaimCommand(CommandBase):
     standing_context: dict[str, Any] | None = None
 
 
+class ReleaseCommand(CommandBase):
+    """Release a lapsed claim without granting a new one (ADR-0055 amendment 2)."""
+
+
 class RetryCommand(CommandBase):
     new_max_attempts: int = Field(gt=0)
     reason: str = Field(min_length=1)

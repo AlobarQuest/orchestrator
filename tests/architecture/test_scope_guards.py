@@ -56,6 +56,8 @@ def test_production_post_route_inventory_is_explicit() -> None:
         "/api/v1/work-units/{unit_id}/claim",
         "/api/v1/work-units/{unit_id}/renew",
         "/api/v1/work-units/{unit_id}/reclaim-expired-claim",
+        # ADR-0055 amendment 2: SYSTEM releases a lapsed claim with no new grant.
+        "/api/v1/work-units/{unit_id}/release-expired-claim",
         "/api/v1/work-units/{unit_id}/preflight",
         "/api/v1/work-units/{unit_id}/dispatch",
         # ADR-0020: the factory lands its own pull request. SYSTEM-only, one caller (whoever
