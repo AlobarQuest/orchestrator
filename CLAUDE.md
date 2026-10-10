@@ -469,3 +469,10 @@ Placement rule: global CLAUDE.md §7.
   dependencies that require it `completed` (exact match); no other condition or kind. A human-act
   dependency is resolved only at `/review/dependencies/{id}/resolution`, whose detail is
   `HumanActDetail` plus the secret scan. Detail: `docs/operations/driving-a-unit.md`.
+- Worker-filed or SYSTEM-recovered evidence on a rotation unit must be a `RotationStepEvidence`
+  payload with no `stable_ref`, pass the secret scan, and hold no 32-character unbroken run
+  (`rotation_evidence.check_rotation_evidence`); a recovered row also carries the orchestrator's
+  `recovery` key. Verifier-owned evidence isn't checked. The schema is a contract with the
+  rotation executor, pinned by `tests/fixtures/rotation_evidence_schema.json`. Never extend the
+  check to every unit without first running it over stored evidence. Detail:
+  `docs/operations/driving-a-unit.md`.

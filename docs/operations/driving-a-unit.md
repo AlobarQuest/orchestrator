@@ -726,6 +726,14 @@ units:
   `touches_no_hosted_service: true` starts at any hour; only the literal `true` exempts. A claim
   after a lapse is a continuation, and isn't windowed, when the previous claim was released for
   `lease_expired` and its holder filed evidence on that attempt. Renewal is never windowed.
+- **Evidence is a `rotation-step/1` payload.** Evidence on a rotation unit, filed by its claimant
+  or recovered by SYSTEM, must be a structured payload matching
+  `services/verifier/rotation_evidence.py::RotationStepEvidence` (pinned by
+  `tests/fixtures/rotation_evidence_schema.json`), pass the secret scan, and hold no unbroken run
+  of 32 or more token characters (a UUID's hyphens break it up); a `stable_ref` is refused.
+  Fingerprints are a sha256 prefix and a length, never a value. A recovered row also carries the
+  orchestrator's own `recovery` key, so a reader validates the payload without it. Other units'
+  evidence, and verifier-owned evidence, aren't checked this way.
 - **Decomposition.** Write the full destination list into each rotation unit's envelope
   `constraints` (ADR-0055 amendment 2), and set `touches_no_hosted_service: true` only on a unit
   whose step writes no hosted consumer. Give rotation units `max_attempts` of at least three.
