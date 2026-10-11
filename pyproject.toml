@@ -81,6 +81,9 @@ tool-installer = "tool_installer.cli:app"
 # completed factory unit the deployed image carries, file the container-image deployment
 # observation, and verify the post-deploy unit it mints. Operator-run, never scheduled.
 image-release = "image_release.cli:app"
+# ADR-0055. The credential-rotation executor. Its one command so far is read-only: the approval
+# runbook's comparison of a credential's registry destinations with its standing package's.
+rotation-worker = "rotation_worker.cli:main"
 
 [dependency-groups]
 dev = [

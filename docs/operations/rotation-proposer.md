@@ -56,11 +56,16 @@ For a due credential whose package is `rotation-<credential_id>`:
      the baseline is the `commit` of the latest entry under `approvals:` in the package's
      `lineage.yaml` (`git diff <that commit> -- packages/rotation-<credential_id>/package.yaml`).
      The proposer carries the list forward unchanged, so any change in it was written by an author.
-   - **Compare it with the registry.** Every destination in the credential's infraops
-     `.cred-consumers.toml` entry must be in the list, and nothing else. A difference found now is
-     fixed in the package before approval; found later, it makes the executor refuse at its first
-     claim, after ADR-0052's supersede has closed. Until increment 4 ships the executor's
-     read-only comparison command, this is a manual comparison.
+   - **Compare it with the registry.** Run
+     `.venv/bin/rotation-worker compare-destinations <credential_id>`. It fetches intent-packages
+     and the four registry repositories into its own mirrors (`~/.cache/rotation-worker/mirrors`),
+     and prints the registry's destinations as a package lists them, then compares them with the
+     package's, both at `main`: `both`, `registry` (missing from the package) or `package` (not in
+     the registry) on each line, then the verdict. Exit 0 means equal; 1 means different, so fix
+     the package before approving; 2 means it couldn't read one of them, including a package with
+     no destinations yet (the registry's list is still printed, to copy in). A difference found later makes the executor refuse at
+     its first claim, after ADR-0052's supersede has closed. The command is the executor's own
+     comparison (`src/rotation_worker/compare.py`).
 4. **The next pass.** File the observation again. It replays and returns the same id. Then propose
    the `work` record with the propose-scoped bearer. The record names the approved revision and
    that observation, with `bump_proposer`'s asserted fields (`PROPOSAL_FIELDS`). Later passes
@@ -92,9 +97,12 @@ infraops older than the handover) stops the whole pass with exit 2.
 ## Authoring a standing rotation package
 
 Use the `non-software-operational` profile, name the package `rotation-<credential_id>`, and set
-these `profile_fields`: `standing: true`, `credential_id: <infraops registry id>`, `occurrence`
-(quoted), and `destinations`, the credential's full destination list, one flat string per
-destination (consumer kind and destination), sorted and unique. To have Devon approve the first
+these `profile_fields`: `standing: true`, `credential_id: <registry id>`, `occurrence`
+(quoted), and `destinations`, the credential's full destination list. Copy the list from
+`rotation-worker compare-destinations <credential_id>`, which prints each registry destination in
+the one format the package, the unit envelope and the executor share
+(`src/rotation_worker/destinations.py`): the credential's `provider name="…"`, then one string per
+consumer, its kind and its identity fields as `name=<JSON value>`, sorted. To have Devon approve the first
 rotation at authoring time, set `occurrence` to that rotation's occurrence from the preceding
 table (for example `'2026-10-07-requested'`); the first pass then proposes rev 1 without revising
 it. `'unassigned'` instead makes the first pass
