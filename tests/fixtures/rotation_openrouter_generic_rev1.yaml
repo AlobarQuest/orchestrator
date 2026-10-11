@@ -1,0 +1,338 @@
+schema_version: 1
+package_id: rotation-openrouter-generic
+title: Standing rotation of the generic OpenRouter API key (openrouter-generic)
+revision: 1
+status: approved
+created_by: factory-create
+owner: devon
+created_at: '2026-10-07T12:42:59Z'
+supersedes: null
+reach:
+- external_system
+- operator_machine
+profile: non-software-operational
+profile_fields:
+  owner: devon
+  operating_procedure: >-
+    Make-before-break reissue, in the order infraops' rotation executor enforces for the
+    reissue path (src/security-drift/rotation-executor.ts): verify the new value, store it,
+    deploy it to every consumer, and only then revoke and confirm the old value dead. Devon
+    holds the OpenRouter console: he mints the replacement under a distinct name and stages it
+    at his own terminal in the Keychain item the executor reads (service cred-rotation, account
+    openrouter-generic), and he revokes the old key. HQ does everything between those two acts
+    without ever handling a value in a transcript: it probes the staged value, copies the
+    current BWS value into a quarantine secret (openrouter-generic-pre-rotation-quarantine, Ops /
+    Platform) so the old key stays probeable without being printed, updates BWS secret
+    9661da8f-ac66-4e97-a31f-b42500bb849c in place, writes the Keychain item openrouter-api /
+    devon, proves each consumer carries the new value by sha256 prefix, and after Devon's revoke
+    proves the old key dead, retires the quarantine and staging copies, and records the
+    rotation with `security-drift-cli record-rotation --cred openrouter-generic --date now`.
+    Every value moves Keychain or BWS into memory and into a subprocess; evidence carries sha256
+    prefixes, lengths and probe status codes only. A probe counts only after it has been shown
+    to refuse a known-bad key (the WS-P2.13 lesson). The old key stays live until the new one
+    is verified everywhere, and the revoke is always the last act.
+  external_systems:
+  - OpenRouter — the console that issues and revokes the key, and the probe endpoint
+  - Bitwarden Secrets Manager — BWS secret OPENROUTER_API_KEY in Ops / Platform
+  - macOS login Keychain — item openrouter-api / devon, and the staging item cred-rotation /
+    openrouter-generic
+  standing: true
+  credential_id: openrouter-generic
+  occurrence: '2026-10-07-requested'
+outcome:
+  what: >-
+    The generic OpenRouter API key (registry id openrouter-generic, class openrouter-key) is
+    replaced. Devon mints a new key at the OpenRouter console and stages it; HQ stores it in BWS
+    and in the Keychain, verifies the new key authenticates and that the probe discriminates;
+    Devon revokes the old key; HQ verifies the old key is dead and records the rotation in the
+    security-drift rotation state.
+  why: >-
+    ADR-0054 makes the SDS the one place credentials are rotated, and its increment 2 proves the
+    flow with HQ working the units and every gate in place before any machine acts. Amendment 1
+    chose this credential to go first because its only consumers are a BWS secret and a Keychain
+    item, so rotating it redeploys nothing, and it allows a rotation to be requested on demand
+    rather than waiting for the first natural due date. This package is the standing package for
+    this one credential; each later rotation of it is a new revision with a new occurrence.
+  beneficiary: >-
+    Devon, whose OpenRouter spend stops resting on a key older than the rotation policy wants;
+    and the delivery system, which carries its first standing rotation package end to end before
+    the rotation worker is built.
+  success_signal: >-
+    The probe answers 200 for the new key and 401 for the old one, a deliberately wrong key is
+    refused by the same probe, both consumers carry the new key's sha256 prefix, and the next
+    security-drift run reports no rotation finding for openrouter-generic.
+scope:
+  included:
+  - >-
+    Re-confirm the consumer inventory by search before any write, starting from the registry's
+    2026-07-02 sweep (a BWS secret and a Keychain item, with the shell exporting
+    OPENROUTER_API_KEY from the Keychain item at init), and record what was searched and the
+    positive exclusions, including that the brains' BRAIN_OPENROUTER_API_KEY is a different key.
+  - >-
+    Devon mints and stages the replacement; HQ verifies it, quarantines the old value in BWS,
+    updates the BWS secret in place, and writes the Keychain item.
+  - >-
+    Devon revokes the old key; HQ proves it dead with a discriminating control, retires the
+    quarantine and staging copies, and records the rotation.
+  excluded:
+  - >-
+    BRAIN_OPENROUTER_API_KEY, the brains' separate OpenRouter key, which the registry records as
+    a different value. Rotating it would redeploy hosted services and is its own credential.
+  - >-
+    Editing infraops' .cred-consumers.toml. The rotation is recorded in the operator machine's
+    rotation state, not in the registry. Removing a rotate_requested key from the registry
+    afterwards is optional tidying and lands as ordinary repository work outside this package.
+  - Building the rotation worker or the rotation proposer (ADR-0054 increments 2 and 3).
+  non_goals:
+  - >-
+    Changing the key's scope, credit limit or label scheme at OpenRouter beyond giving the
+    replacement a distinct name.
+  assumptions:
+  - >-
+    OpenRouter lets an account hold more than one live API key at once, which is what makes the
+    make-before-break order possible.
+  - >-
+    GET https://openrouter.ai/api/v1/auth/key with the key as a bearer returns 200 for a live key
+    and 401 for a revoked or wrong one. The executor relies on this; AC-002 and AC-003 test it
+    rather than trust it.
+  open_questions: []
+sources:
+- location: >-
+    orchestrator docs/decisions/0054-the-sds-owns-credential-rotation.md, including amendment 1
+    of 2026-10-07 (one standing package per credential on this profile, Devon clicks every gate on
+    the first rotations, and openrouter-generic goes first).
+  authority_level: authoritative
+  required_version: '2026-10-07'
+  trust: trusted_instruction
+  sensitivity: internal
+- location: >-
+    infraops-mcp-server .cred-consumers.toml, credential openrouter-generic: its two consumers,
+    its BWS UUID, and the note that the brains use a separate key. Its fingerprint_sha256_8 names
+    the key exposed and revoked on 2026-07-02, not the key this rotation retires.
+  authority_level: authoritative
+  required_version: '2026-10-07'
+  trust: trusted_instruction
+  sensitivity: internal
+- location: >-
+    infraops-mcp-server src/security-drift/cred-rotation.ts and rotation-executor.ts: the
+    openrouter-key class policy, the staging and quarantine coordinates, the probe URL, and the
+    verify, store, deploy, revoke-confirm order this package follows by hand.
+  authority_level: supporting
+  required_version: '2026-10-07'
+  trust: trusted_instruction
+  sensitivity: internal
+- location: >-
+    ~/docs/software-delivery-system/2026-07-30-wsp213-closeout.md: the first rotation driven
+    through the orchestrator, whose lessons (probes must discriminate, leases lapse during
+    console work, the Keychain write prompts twice) bind this one.
+  authority_level: supporting
+  required_version: '2026-07-30'
+  trust: trusted_instruction
+  sensitivity: internal
+constraints:
+  time_budget: >-
+    One session for HQ's steps, with Devon's two console acts inside it. Because both keys are
+    live between the mint and the revoke, the work can pause safely at any point before the
+    revoke and at any point after it.
+  technology: >-
+    The OpenRouter console, the macOS security command, and the bws CLI under the rotation
+    identity (BWS_ACCESS_TOKEN_CRED_ROTATION, which can write to Ops / Platform). HQ performs each
+    store and deploy from a short script that reads the value from the Keychain or BWS and passes
+    it straight to a subprocess, so the value is never a tool argument. bws and security take the
+    value in argv, which the executor accepts as a brief process-list exposure on a single-user
+    machine. bws output is parsed with --color no and with FORCE_COLOR and CLICOLOR_FORCE unset.
+    The infraops MCP is not used: nothing hosted consumes this key.
+  policy_legal: null
+  privacy_security: >-
+    No key value may appear in a transcript, a tool argument, a command echo, a log, an evidence
+    payload or a file. Keys are identified by sha256 prefix and length only. The console label
+    of a key is not an identifier for evidence, because it is a fragment of the key itself.
+  compatibility: >-
+    The BWS secret and the Keychain item must hold the same value when the work finishes. Any
+    shell or process started before the Keychain write still holds the old key in its
+    environment and will fail once the old key is revoked, until it is restarted.
+  quality_accessibility: null
+  operational: >-
+    Reach is external_system and operator_machine. The external_system row gives a claim a
+    60-minute lease, longer than the 15 minutes WS-P2.13 lost an attempt to, and the
+    operator_machine change window (02:00 to 06:00 New York) is enforced at dispatch, which these
+    HQ-worked operational_action units never reach. Devon's console steps are not bound to any
+    window.
+  other: []
+
+# ac_id means two different things and nothing checks the difference:
+#   - a decomposition proposal's ac_mappings[].ac_id / retained_acs[].ac_id want
+#     the criterion's database UUID
+#   - evidence and adjudication want the human string below, e.g. AC-001
+# Getting it wrong is a bare package_acceptance_criterion_not_found with no hint.
+acceptance:
+- id: AC-001
+  condition: >-
+    A completed consumer inventory exists before any write: every place that holds or reads the
+    key is enumerated by search, each named with how it obtains the key, the positive exclusions
+    are listed with what excludes them, and the value the rotation will retire is identified by
+    the sha256 prefix of what BWS secret 9661da8f-ac66-4e97-a31f-b42500bb849c holds at that
+    moment, shown equal to the Keychain item openrouter-api / devon.
+  evidence_type: human_review
+  evidence: >-
+    human: the inventory recorded in the run's evidence file, naming the search behind each entry,
+    the excluded credentials with their distinguishing sha256 prefixes, and the old value's sha256
+    prefix and length as read from both consumers.
+  approver: devon
+- id: AC-002
+  condition: >-
+    The replacement is live before anything is revoked: the staged key answers 200 at the probe,
+    a deliberately wrong key answers 401 at the same probe so the probe is shown to discriminate,
+    and the old value is copied to the quarantine secret before the BWS secret is updated.
+  evidence_type: external_attestation
+  evidence: >-
+    external: the probe outcomes for the staged key and the wrong key, each with its sha256
+    prefix, and the quarantine secret's id with the sha256 prefix of the value it holds, equal to
+    the old value's prefix from AC-001.
+  approver: devon
+- id: AC-003
+  condition: >-
+    Both consumers carry the replacement: the BWS secret and the Keychain item each hold a value
+    whose sha256 prefix equals the staged key's and differs from the old value's, and a new login
+    shell exports OPENROUTER_API_KEY with that same prefix.
+  evidence_type: observation
+  evidence: >-
+    observation: the sha256 prefix and length read from the BWS secret, the Keychain item and a
+    fresh shell's OPENROUTER_API_KEY, each compared with the staged and the old prefixes.
+  approver: devon
+- id: AC-004
+  condition: >-
+    The old key is revoked and proven dead after Devon's console revoke: the value in the
+    quarantine secret answers 401 at the probe, the replacement still answers 200, and a wrong key
+    still answers 401.
+  evidence_type: external_attestation
+  evidence: >-
+    external: the three probe outcomes, old refused, replacement accepted and wrong key refused,
+    each with the sha256 prefix identifying it and a timestamp after Devon's recorded revoke.
+  approver: devon
+- id: AC-005
+  condition: >-
+    The rotation is recorded and leaves nothing behind: the quarantine secret and the staging
+    Keychain item are removed, security-drift record-rotation has set lastRotated for
+    openrouter-generic, and the next security-drift run reports no rotation finding for it.
+  evidence_type: human_review
+  evidence: >-
+    human: the removed quarantine secret id and staging item name, the record-rotation output
+    line, and the security-drift report showing no cred.rotation-age, cred.rotation-requested or
+    cred.exposure-rotate finding for openrouter-generic.
+  approver: devon
+authority:
+  allowed:
+  - credential_create
+  - credential_revoke
+  - secret_read
+  requires_approval:
+  - secret_write
+  prohibited:
+  - repository_write
+  - infra_mutation
+  - outward_publish
+  - email_send
+  budgets:
+    max_attempts: 3
+    max_llm_calls: null
+deliverables:
+  artifacts:
+  - >-
+    A replaced credential: a live replacement in the BWS secret and the Keychain item, and a
+    revoked key that no longer authenticates.
+  - >-
+    A dated evidence file in ~/docs/software-delivery-system/ recording the inventory, the
+    per-step sha256 prefixes, the discriminating probes and the record-rotation output.
+  - >-
+    Terminal work units in the production ledger carrying the per-criterion evidence and
+    adjudications.
+  destination: ~/docs/software-delivery-system/
+  recipient: devon
+  definition_of_done: >-
+    The replacement is live in both consumers, the old key is dead with a discriminating
+    control, the quarantine and staging copies are gone, the rotation is recorded, and every
+    acceptance criterion carries evidence and an adjudication.
+  operator_responsibilities:
+  - >-
+    Devon mints the replacement at the OpenRouter console under a distinct name and stages it at
+    his own terminal with security add-generic-password -U -s cred-rotation -a openrouter-generic
+    -T /usr/bin/security -w. No other actor sees the value.
+  - >-
+    Devon revokes the old key at the OpenRouter console, and only after HQ reports AC-002 and
+    AC-003 met.
+  - >-
+    Devon approves the package, the decomposition, each unit's authority envelope, and each
+    criterion's adjudication, as amendment 1 of ADR-0054 requires for the first rotations.
+dependencies:
+  predecessor_packages: []
+  external_decisions:
+  - >-
+    ADR-0054 amendment 1 (2026-10-07): one standing package per credential, Devon clicks every
+    gate on the first rotations, and openrouter-generic is the first credential.
+  required_people_systems:
+  - Devon, for the two console acts and every approval
+  - OpenRouter
+  - Bitwarden Secrets Manager, through the rotation identity
+  - The macOS login Keychain on this machine
+  required_capabilities:
+  - credential_create
+  - credential_revoke
+  - secret_read
+  blocking_conditions:
+  - >-
+    The inventory finds a consumer other than the BWS secret and the Keychain item, especially a
+    hosted one, which would make this live_estate work and require re-planning rather than
+    improvising.
+  - The BWS secret and the Keychain item do not hold the same value at inventory time.
+  - >-
+    The probe does not refuse a known-bad key, so it cannot tell a live key from a dead one.
+  - The rotation identity cannot write to Ops / Platform.
+risk:
+  failure_modes:
+  - >-
+    A consumer missed by the inventory keeps the old key and starts failing silently once it is
+    revoked.
+  - >-
+    A shell or long-running process started before the Keychain write still holds the old key in
+    its environment and fails after the revoke.
+  - >-
+    The probe answers for a reason other than the key, so the old key is called dead while live,
+    or the new key live while it is not.
+  - The old key is revoked before the replacement is in both consumers.
+  - >-
+    A key value reaches the transcript, which makes the new key the subject of the next rotation.
+  max_impact: >-
+    Loss of OpenRouter access for whatever reads OPENROUTER_API_KEY on this machine until a
+    working key is restored. Nothing hosted reads this key: the brains use the separate
+    BRAIN_OPENROUTER_API_KEY, so no deployed service is affected by any outcome of this package.
+  stop_conditions:
+  - A blocking condition is met.
+  - >-
+    A key value is observed anywhere it should not be. The rotation continues, the exposure is
+    disclosed immediately, and the newly minted key is itself treated as exposed.
+  - A consumer does not carry the new value and the run cannot explain why.
+  rollback: >-
+    Before the revoke there is nothing to undo: both keys are live, the old value is held in the
+    quarantine secret, and restoring it to the BWS secret and the Keychain item puts every consumer
+    back where it started. The revoke is the last act and is never taken until the new key is
+    verified in every consumer. After the revoke the recovery is forward: Devon mints another key
+    and the store and deploy steps run again. The revoked key is never restored.
+  escalation_target: devon
+verification:
+  independent_review:
+  - Devon adjudicates each criterion against its evidence in the review interface.
+  non_mechanical:
+  - >-
+    Whether the inventory is complete is a judgement about an absence, which is what the
+    inventory before WS-P2.13 got wrong.
+follow_up:
+  required: false
+  revisit_when: >-
+    The next rotation of openrouter-generic, which arrives as a new revision of this package.
+  signals:
+  - A process on this machine reports an OpenRouter authentication failure after this run.
+  owner: devon
+applicable_standards:
+  project: '1.0'
+  security: '1.0'

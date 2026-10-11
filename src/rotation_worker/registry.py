@@ -58,6 +58,10 @@ def package_path(credential_id: str) -> str:
     return f"packages/rotation-{credential_id}/package.yaml"
 
 
+def lineage_path(credential_id: str) -> str:
+    return f"packages/rotation-{credential_id}/lineage.yaml"
+
+
 def find_credential(mirror: RepoMirror, credential_id: str) -> RegistryEntry:
     """The one registry entry with this id, read at each registry repository's `main`."""
     found: list[RegistryEntry] = []

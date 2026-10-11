@@ -71,6 +71,18 @@ class RepoMirror:
         _require_commit(commit)
         return self._git(repository, self._path(repository), "show", f"{commit}:{path}")
 
+    def is_ancestor(self, repository: str, commit: str, of: str) -> bool:
+        """Whether `commit` is `of` or one of its ancestors. A commit the mirror lacks is not."""
+        _require_commit(commit)
+        _require_commit(of)
+        path = self._path(repository)
+        if self._status(repository, path, "cat-file", "-e", f"{commit}^{{commit}}") != 0:
+            return False
+        status = self._status(repository, path, "merge-base", "--is-ancestor", commit, of)
+        if status not in (0, 1):
+            raise MirrorError(f"{repository}: git merge-base exited {status}")
+        return status == 0
+
     def _clone(self, repository: str, url: str, path: Path) -> None:
         # Clone beside the mirror and rename it into place, so a clone that is interrupted leaves
         # nothing a later run would mistake for a mirror.
@@ -85,11 +97,7 @@ class RepoMirror:
         return self._root / f"{repository.replace('/', '__')}.git"
 
     def _git(self, repository: str, path: Path | None, *arguments: str) -> bytes:
-        argv = ["git", *(["-C", str(path)] if path is not None else []), *arguments]
-        try:
-            result = self._run(argv)
-        except (OSError, subprocess.TimeoutExpired) as error:
-            raise MirrorError(f"{repository}: git {arguments[0]} did not run: {error}") from error
+        result = self._invoke(repository, path, *arguments)
         if result.returncode != 0:
             said = result.stderr.decode(errors="replace").strip().splitlines()
             raise MirrorError(
@@ -97,6 +105,18 @@ class RepoMirror:
                 + (f": {said[-1]}" if said else "")
             )
         return result.stdout
+
+    def _status(self, repository: str, path: Path, *arguments: str) -> int:
+        return self._invoke(repository, path, *arguments).returncode
+
+    def _invoke(
+        self, repository: str, path: Path | None, *arguments: str
+    ) -> subprocess.CompletedProcess[bytes]:
+        argv = ["git", *(["-C", str(path)] if path is not None else []), *arguments]
+        try:
+            return self._run(argv)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise MirrorError(f"{repository}: git {arguments[0]} did not run: {error}") from error
 
 
 def _require_commit(commit: str) -> None:

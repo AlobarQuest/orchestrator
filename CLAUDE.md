@@ -44,8 +44,9 @@ style of that module.
 
 Each rule below is stated once, as it stands now. Where a procedure, method lesson or history lives
 elsewhere, the rule names it. Pages: `docs/operations/` (deploy, credentials, driving-a-unit,
-architecture-guards, local-development, landing-lanes), `docs/method-lessons.md`, and
-`docs/history/claude-md-invariants-archive.md` (the full original text of every bullet, by number).
+architecture-guards, local-development, landing-lanes, rotation-executor),
+`docs/method-lessons.md`, and `docs/history/claude-md-invariants-archive.md` (the full original
+text of every bullet, by number).
 Placement rule: global CLAUDE.md §7.
 
 - Dependency-update `repo.edit` authority is executable only if the envelope declares a non-empty
@@ -476,3 +477,10 @@ Placement rule: global CLAUDE.md §7.
   rotation executor, pinned by `tests/fixtures/rotation_evidence_schema.json`. Never extend the
   check to every unit without first running it over stored evidence. Detail:
   `docs/operations/driving-a-unit.md`.
+- The rotation executor (`src/rotation_worker/`) acts only on what git confirms: the revision's
+  commit on intent-packages' `main` with its hash recomputed, the registry at its repositories'
+  `main`, and registry, package and envelope destinations equal in `destinations.py`'s one format
+  (pinned with intent-packages by `tests/fixtures/rotation_destination_format.json`). Every
+  adapter's steps run through `contract.py`, which holds ADR-0055 decision 3's invariants; never
+  re-implement a step in an adapter. A rotation unit has no `target_repository`, so it reads
+  `GET /work-units/{id}`, never the runner brief. Detail: `docs/operations/rotation-executor.md`.

@@ -1,0 +1,756 @@
+"""The rotation contract, driven through the fake adapter: each invariant, and the path through.
+
+Every invariant here has a test that fails when the check is removed (the mutation review in the
+increment 4 report counts them).
+"""
+
+from __future__ import annotations
+
+import json
+from dataclasses import replace
+from pathlib import Path
+from typing import Any
+
+import jsonschema
+import pytest
+
+from rotation_worker.adapters.fake import PLAN, FakeProvider
+from rotation_worker.contract import (
+    Actor,
+    ContractError,
+    HumanAct,
+    Plan,
+    Rotation,
+    Step,
+    StepKind,
+    UnitPlan,
+    UnitRun,
+    validate_plan,
+)
+from rotation_worker.destinations import DestinationError
+from rotation_worker.evidence import StepEvidence
+from rotation_worker.values import Fingerprint, Value
+from tests.rotation_worker.stores import MemoryStore
+
+SCHEMA = json.loads(
+    (Path(__file__).resolve().parents[1] / "fixtures" / "rotation_evidence_schema.json").read_text()
+)
+WORK = "work-project"
+RUNTIME = 'runtime-fetch repo="orchestrator" ref="the canary has no reader; a person attests it"'
+M, H = Actor.MACHINE, Actor.HUMAN
+
+
+class Harness:
+    """One credential mid-rotation: its keeper, its provider and the evidence filed so far."""
+
+    def __init__(self, tmp_path: Path, destinations: tuple[str, ...] | None = None) -> None:
+        self.store = MemoryStore()
+        self.provider = FakeProvider(tmp_path / "provider.json")
+        self.original = self.provider.mint()
+        self.keeper_id = self.store.put(WORK, "rotation-canary keeper", self.original)
+        self.rotation = Rotation(
+            credential_id="rotation-canary",
+            occurrence="2026-10-11-requested",
+            keeper_id=self.keeper_id,
+            work_project_id=WORK,
+            destinations=destinations
+            or (f'bws-secret uuid="{self.keeper_id}"', 'provider name="fake"', RUNTIME),
+        )
+        self.filed: list[tuple[Step, StepEvidence]] = []
+        self.checks = 0
+
+    def run(self, unit: str, attestations: tuple[Fingerprint, ...] = (), **changes: Any) -> None:
+        run = UnitRun(
+            rotation=self.rotation,
+            store=self.store,
+            provider=self.provider,
+            attestations=attestations,
+            record=lambda step, evidence: self.filed.append((step, evidence)),
+            before_step=self._check,
+            filed=frozenset(step.kind for step, _ in self.filed),
+        )
+        for name, value in changes.items():
+            setattr(run, name, value)
+        run.run(PLAN.unit(unit))
+
+    def _check(self) -> None:
+        self.checks += 1
+
+    def keeper(self) -> Value:
+        return self.store.read(self.keeper_id)
+
+    def kinds(self) -> list[str]:
+        return [evidence.step for _, evidence in self.filed]
+
+
+def _attest(value: Value) -> tuple[Fingerprint, ...]:
+    return (value.fingerprint,)
+
+
+def test_the_fake_plan_rotates_end_to_end(tmp_path: Path) -> None:
+    h = Harness(tmp_path)
+    h.run("mint")
+    h.run("store")
+    new = h.keeper()
+    assert not new.same_as(h.original)
+    h.run("retire", attestations=_attest(new))
+    assert h.kinds() == [
+        "mint",
+        "stage",
+        "verify_new",
+        "store",
+        "verify_consumers",
+        "verify_consumers",
+        "retire_old",
+        "confirm_dead",
+        "confirm_dead",
+    ]
+    assert h.provider.probe(new) == 200
+    assert h.provider.probe(h.original) == 401
+    assert h.store.secrets.keys() == {h.keeper_id}
+    assert h.checks == 8
+    assert h.filed[-1][1].note is not None and h.filed[-1][1].note.startswith("deleted staging")
+
+
+def test_every_payload_conforms_to_the_orchestrator_s_schema(tmp_path: Path) -> None:
+    h = Harness(tmp_path)
+    h.run("mint")
+    h.run("store")
+    h.run("retire", attestations=_attest(h.keeper()))
+    for _, evidence in h.filed:
+        jsonschema.validate(evidence.as_payload(), SCHEMA)
+        assert h.original.reveal() not in json.dumps(evidence.as_payload())
+
+
+# ---- new is never old -----------------------------------------------------------------------
+
+
+def test_a_mint_that_returns_the_old_value_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    h = Harness(tmp_path)
+    monkeypatch.setattr(h.provider, "mint", lambda: h.original)
+    with pytest.raises(ContractError, match="equals the old"):
+        h.run("mint")
+    assert h.kinds() == []
+
+
+def _single(h: Harness, kind: StepKind, **changes: Any) -> UnitRun:
+    run = UnitRun(
+        rotation=h.rotation,
+        store=h.store,
+        provider=h.provider,
+        attestations=changes.pop("attestations", ()),
+        record=lambda step, evidence: h.filed.append((step, evidence)),
+        before_step=lambda: None,
+        **changes,
+    )
+    run.run(UnitPlan("one", (Step(kind, M, "AC-1"),)))
+    return run
+
+
+@pytest.mark.parametrize(
+    "kind", [StepKind.MINT, StepKind.VERIFY_NEW, StepKind.DISTRIBUTE, StepKind.VERIFY_CONSUMERS]
+)
+def test_a_staged_value_equal_to_the_old_is_refused_after_mint(
+    tmp_path: Path, kind: StepKind
+) -> None:
+    h = Harness(tmp_path)
+    h.store.put(WORK, h.rotation.staging_key, h.original)
+    with pytest.raises(ContractError, match="equals the old"):
+        _single(h, kind)
+    assert h.kinds() == []
+
+
+# ---- the quarantine ---------------------------------------------------------------------------
+
+
+def test_store_quarantines_the_old_value_before_the_keeper_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    h = Harness(tmp_path)
+    h.run("mint")
+    writes: list[str] = []
+    original_write = h.store.write
+
+    def watched(secret_id: str, value: Value) -> None:
+        quarantine = h.store.find(WORK, h.rotation.quarantine_key)
+        assert quarantine is not None and h.store.read(quarantine.id).same_as(h.original)
+        writes.append(secret_id)
+        original_write(secret_id, value)
+
+    monkeypatch.setattr(h.store, "write", watched)
+    h.run("store")
+    assert writes == [h.keeper_id]
+
+
+def test_a_keeper_holding_the_new_value_with_no_quarantine_is_refused(tmp_path: Path) -> None:
+    h = Harness(tmp_path)
+    h.run("mint")
+    staging = h.store.find(WORK, h.rotation.staging_key)
+    assert staging is not None
+    h.store.write(h.keeper_id, h.store.read(staging.id))
+    with pytest.raises(ContractError, match="nothing is quarantined"):
+        h.run("store")
+
+
+def test_a_keeper_holding_a_third_value_is_refused(tmp_path: Path) -> None:
+    h = Harness(tmp_path)
+    h.run("mint")
+    h.run("store")
+    h.store.write(h.keeper_id, Value("a-value-nobody-staged"))
+    with pytest.raises(ContractError, match="neither the old value nor the new"):
+        h.run("store")
+
+
+def test_store_run_again_re_proves_rather_than_writes(tmp_path: Path) -> None:
+    h = Harness(tmp_path)
+    h.run("mint")
+    h.run("store")
+    new = h.keeper()
+    h.run("store")
+    assert h.keeper().same_as(new)
+    assert len([k for k in h.store.secrets if k != h.keeper_id]) == 2
+
+
+def test_a_keeper_that_does_not_read_back_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    h = Harness(tmp_path)
+    h.run("mint")
+    monkeypatch.setattr(h.store, "write", lambda secret_id, value: None)
+    with pytest.raises(ContractError, match="the keeper doesn't read back"):
+        _single(h, StepKind.STORE)
+
+
+# ---- probes and their controls ----------------------------------------------------------------
+
+
+def test_a_probe_that_accepts_the_known_bad_value_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    h = Harness(tmp_path)
+    monkeypatch.setattr(h.provider, "probe", lambda value: 200)
+    with pytest.raises(ContractError, match="didn't refuse a known-bad"):
+        h.run("mint")
+
+
+@pytest.mark.parametrize("status", [None, 403, 404, 429, 500, 201])
+def test_any_answer_but_200_or_the_dead_status_stops_the_rotation(
+    tmp_path: Path, status: int | None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    h = Harness(tmp_path)
+    monkeypatch.setattr(h.provider, "probe", lambda value: status if _is_staged(h, value) else 401)
+    with pytest.raises(ContractError, match="indeterminate"):
+        h.run("mint")
+
+
+def _is_staged(h: Harness, value: Value) -> bool:
+    staging = h.store.find(WORK, h.rotation.staging_key)
+    return staging is not None and h.store.read(staging.id).same_as(value)
+
+
+def test_a_staged_value_the_provider_refuses_is_not_stored(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    h = Harness(tmp_path)
+    monkeypatch.setattr(h.provider, "mint", lambda: Value("minted-but-never-live"))
+    with pytest.raises(ContractError, match="probed dead"):
+        h.run("mint")
+    assert h.keeper().same_as(h.original)
+
+
+# ---- retire only after every consumer verifies ------------------------------------------------
+
+
+def test_retire_waits_for_the_human_attestation(tmp_path: Path) -> None:
+    h = Harness(tmp_path)
+    h.run("mint")
+    h.run("store")
+    with pytest.raises(ContractError, match="hasn't verified"):
+        h.run("retire")
+    assert h.provider.probe(h.original) == 200
+
+
+def test_an_attestation_of_another_value_does_not_count(tmp_path: Path) -> None:
+    h = Harness(tmp_path)
+    h.run("mint")
+    h.run("store")
+    with pytest.raises(ContractError, match="hasn't verified"):
+        h.run("retire", attestations=_attest(h.original))
+    assert h.provider.probe(h.original) == 200
+
+
+def test_one_attestation_covers_one_attested_consumer(tmp_path: Path) -> None:
+    second = 'gh-actions-secret repo="AlobarQuest/x" name="Y"'
+    h = Harness(tmp_path)
+    h.rotation = replace(h.rotation, destinations=(*h.rotation.destinations, second))
+    h.run("mint")
+    h.run("store")
+    with pytest.raises(ContractError, match="hasn't verified"):
+        h.run("retire", attestations=_attest(h.keeper()))
+    h.run("retire", attestations=_attest(h.keeper()) * 2)
+
+
+def test_retire_re_reads_bws_consumers_rather_than_trusting_store(tmp_path: Path) -> None:
+    h = Harness(tmp_path)
+    h.run("mint")
+    h.run("store")
+    new = h.keeper()
+    h.store.write(h.keeper_id, h.original)
+    h.store.write(h.keeper_id, h.original)
+    with pytest.raises(ContractError):
+        h.run("retire", attestations=_attest(new))
+    assert h.provider.probe(h.original) == 200
+
+
+def test_a_second_bws_consumer_is_written_by_distribute_and_verified(tmp_path: Path) -> None:
+    h = Harness(tmp_path)
+    copy = h.store.put("elsewhere", "copy", h.original)
+    h.rotation = replace(
+        h.rotation, destinations=(*h.rotation.destinations, f'bws-secret uuid="{copy}"')
+    )
+    h.run("mint")
+    with pytest.raises(ContractError, match="BWS consumer doesn't read back"):
+        h.run("store")
+    _single(h, StepKind.DISTRIBUTE)
+    assert h.store.read(copy).same_as(h.keeper())
+    h.run("store")
+
+
+def test_a_hosted_consumer_is_refused(tmp_path: Path) -> None:
+    hosted = 'coolify-env-hash instance="prod" resource_type="application" uuid="u" key="K"'
+    h = Harness(tmp_path)
+    h.rotation = replace(h.rotation, destinations=(*h.rotation.destinations, hosted))
+    h.run("mint")
+    with pytest.raises(ContractError, match="hosted"):
+        h.run("store")
+
+
+def test_a_consumer_kind_with_no_verification_is_refused(tmp_path: Path) -> None:
+    h = Harness(tmp_path)
+    h.rotation = replace(h.rotation, destinations=(*h.rotation.destinations, "mystery"))
+    h.run("mint")
+    with pytest.raises(DestinationError):
+        h.run("store")
+
+
+# ---- retire, confirm and clean up -------------------------------------------------------------
+
+
+def test_retire_needs_the_quarantine(tmp_path: Path) -> None:
+    h = Harness(tmp_path)
+    h.run("mint")
+    with pytest.raises(ContractError, match="no quarantined old value"):
+        _single(h, StepKind.RETIRE_OLD)
+    assert h.provider.probe(h.original) == 200
+
+
+def test_retire_derives_the_revoke_from_the_quarantined_value(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    h = Harness(tmp_path)
+    h.run("mint")
+    h.run("store")
+    revoked: list[Value] = []
+    real = h.provider.revoke
+
+    def watched(value: Value) -> None:
+        revoked.append(value)
+        real(value)
+
+    monkeypatch.setattr(h.provider, "revoke", watched)
+    h.run("retire", attestations=_attest(h.keeper()))
+    assert len(revoked) == 1 and revoked[0].same_as(h.original)
+
+
+def test_an_old_value_still_live_after_retire_stops_confirm(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    h = Harness(tmp_path)
+    h.run("mint")
+    h.run("store")
+    monkeypatch.setattr(h.provider, "revoke", lambda value: None)
+    with pytest.raises(ContractError, match="old value probed live"):
+        h.run("retire", attestations=_attest(h.keeper()))
+    assert h.store.find(WORK, h.rotation.quarantine_key) is not None
+
+
+def test_confirm_resumes_after_staging_is_deleted(tmp_path: Path) -> None:
+    h = Harness(tmp_path)
+    h.run("mint")
+    h.run("store")
+    _single(h, StepKind.RETIRE_OLD, attestations=_attest(h.keeper()))
+    staging = h.store.find(WORK, h.rotation.staging_key)
+    assert staging is not None
+    h.store.delete(staging.id)
+    _single(h, StepKind.CONFIRM_DEAD)
+    assert h.store.secrets.keys() == {h.keeper_id}
+    assert h.filed[-1][1].note is not None and "quarantine" in h.filed[-1][1].note
+
+
+def test_a_finished_unit_is_skipped_and_an_unfinished_one_is_not(tmp_path: Path) -> None:
+    h = Harness(tmp_path)
+    h.run("mint")
+    h.run("store")
+    new = h.keeper()
+    h.run("retire", attestations=_attest(new))
+    count = len(h.filed)
+    h.run("retire", attestations=_attest(new))
+    assert len(h.filed) == count
+    (tmp_path / "fresh").mkdir()
+    fresh = Harness(tmp_path / "fresh")
+    fresh.store.put(WORK, fresh.rotation.staging_key, Value("staged-only"))
+    with pytest.raises(ContractError, match="gone before confirm_dead"):
+        UnitRun(
+            rotation=fresh.rotation,
+            store=fresh.store,
+            provider=fresh.provider,
+            attestations=(),
+            record=lambda step, evidence: None,
+            before_step=lambda: None,
+        ).run(UnitPlan("c", (Step(StepKind.CONFIRM_DEAD, M, "AC-1"),)))
+
+
+# ---- mint and stage ---------------------------------------------------------------------------
+
+
+def test_mint_run_again_re_proves_the_staged_value(tmp_path: Path) -> None:
+    h = Harness(tmp_path)
+    h.run("mint")
+    staged = h.store.find(WORK, h.rotation.staging_key)
+    h.run("mint")
+    assert h.store.find(WORK, h.rotation.staging_key) == staged
+    assert h.filed[3][1].note == "already minted and staged by an earlier attempt"
+
+
+def test_a_quarantine_with_nothing_staged_is_refused_at_mint(tmp_path: Path) -> None:
+    h = Harness(tmp_path)
+    h.store.put(WORK, h.rotation.quarantine_key, h.original)
+    with pytest.raises(ContractError, match="never guess"):
+        h.run("mint")
+
+
+def test_stage_with_nothing_minted_is_refused(tmp_path: Path) -> None:
+    h = Harness(tmp_path)
+    with pytest.raises(ContractError, match="nothing minted"):
+        UnitRun(
+            rotation=h.rotation,
+            store=h.store,
+            provider=h.provider,
+            attestations=(),
+            record=lambda step, evidence: None,
+            before_step=lambda: None,
+        ).run(UnitPlan("s", (Step(StepKind.STAGE, M, "AC-1"),)))
+
+
+def test_stage_refuses_a_different_value_already_staged(tmp_path: Path) -> None:
+    h = Harness(tmp_path)
+    h.store.put(WORK, h.rotation.staging_key, Value("someone-else-staged-this"))
+    run = UnitRun(
+        rotation=h.rotation,
+        store=h.store,
+        provider=h.provider,
+        attestations=(),
+        record=lambda step, evidence: None,
+        before_step=lambda: None,
+    )
+    run._minted = Value("this-attempt-minted-this")
+    with pytest.raises(ContractError, match="different value is already staged"):
+        run.run(UnitPlan("s", (Step(StepKind.STAGE, M, "AC-1"),)))
+
+
+def test_the_registry_check_runs_before_every_step(tmp_path: Path) -> None:
+    h = Harness(tmp_path)
+
+    def handed_back() -> None:
+        raise ContractError("no longer rotated_by_sds")
+
+    with pytest.raises(ContractError, match="rotated_by_sds"):
+        h.run("mint", before_step=handed_back)
+    assert h.kinds() == []
+
+
+# ---- the plan -----------------------------------------------------------------------------------
+
+
+def _plan(*segments: UnitPlan | HumanAct) -> Plan:
+    return Plan(segments)
+
+
+def _with(kinds: list[StepKind]) -> Plan:
+    return _plan(UnitPlan("u", tuple(Step(k, M, f"AC-{i}") for i, k in enumerate(kinds))))
+
+
+GOOD = [
+    StepKind.MINT,
+    StepKind.STAGE,
+    StepKind.VERIFY_NEW,
+    StepKind.STORE,
+    StepKind.VERIFY_CONSUMERS,
+    StepKind.RETIRE_OLD,
+    StepKind.CONFIRM_DEAD,
+]
+
+
+def test_the_fake_plan_and_a_minimal_plan_are_valid() -> None:
+    validate_plan(PLAN)
+    validate_plan(_with(GOOD))
+
+
+def _without(kind: StepKind) -> list[StepKind]:
+    return [k for k in GOOD if k is not kind]
+
+
+BAD_ORDERS: dict[str, list[StepKind]] = {
+    "no mint": _without(StepKind.MINT),
+    "no stage": _without(StepKind.STAGE),
+    "no verify_new": _without(StepKind.VERIFY_NEW),
+    "no store": _without(StepKind.STORE),
+    "no verify_consumers": _without(StepKind.VERIFY_CONSUMERS),
+    "no retire": _without(StepKind.RETIRE_OLD),
+    "no confirm": _without(StepKind.CONFIRM_DEAD),
+    "two mints": [StepKind.MINT, *GOOD],
+    "stage apart from mint": [
+        StepKind.MINT,
+        StepKind.VERIFY_NEW,
+        StepKind.STAGE,
+        *GOOD[3:],
+    ],
+    "retire before verify": [*GOOD[:4], StepKind.RETIRE_OLD, StepKind.VERIFY_CONSUMERS, GOOD[6]],
+    "a step after confirm": [*GOOD, StepKind.VERIFY_CONSUMERS],
+    "a step between retire and confirm": [
+        *GOOD[:6],
+        StepKind.VERIFY_CONSUMERS,
+        StepKind.CONFIRM_DEAD,
+    ],
+    "verify before store": [*GOOD[:3], StepKind.VERIFY_CONSUMERS, *GOOD[3:]],
+    "distribute after the last verify": [*GOOD[:5], StepKind.DISTRIBUTE, *GOOD[5:]],
+    "verify_new after retire": [
+        StepKind.MINT,
+        StepKind.STAGE,
+        StepKind.STORE,
+        StepKind.VERIFY_CONSUMERS,
+        StepKind.RETIRE_OLD,
+        StepKind.CONFIRM_DEAD,
+        StepKind.VERIFY_NEW,
+    ],
+}
+
+
+@pytest.mark.parametrize("kinds", BAD_ORDERS.values(), ids=BAD_ORDERS.keys())
+def test_a_plan_that_could_break_an_invariant_is_refused(kinds: list[StepKind]) -> None:
+    with pytest.raises(ContractError):
+        validate_plan(_with(kinds))
+
+
+def test_segments_hold_the_right_actors_and_unique_names() -> None:
+    machine = UnitPlan("u", tuple(Step(k, M, f"AC-{i}") for i, k in enumerate(GOOD)))
+    with pytest.raises(ContractError, match="unique"):
+        validate_plan(_plan(machine, UnitPlan("u", (Step(StepKind.VERIFY_CONSUMERS, M, "x"),))))
+    with pytest.raises(ContractError, match="machine steps"):
+        validate_plan(_plan(UnitPlan("u", (Step(StepKind.MINT, H, "AC-1"),))))
+    with pytest.raises(ContractError, match="machine steps"):
+        validate_plan(_plan(UnitPlan("u", (Step(StepKind.MINT, M, None),))))
+    with pytest.raises(ContractError, match="human steps"):
+        validate_plan(_plan(HumanAct("h", (Step(StepKind.MINT, M),))))
+    with pytest.raises(ContractError, match="human steps"):
+        validate_plan(_plan(HumanAct("h", (Step(StepKind.MINT, H, "AC-1"),))))
+    with pytest.raises(ContractError, match="at least one step"):
+        validate_plan(_plan(UnitPlan("u", ())))
+    shared = UnitPlan("u", tuple(Step(k, M, "AC-1") for k in GOOD))
+    with pytest.raises(ContractError, match="own acceptance criterion"):
+        validate_plan(_plan(shared))
+
+
+def test_a_machine_mint_and_its_stage_share_a_unit() -> None:
+    split = _plan(
+        UnitPlan("a", (Step(StepKind.MINT, M, "AC-1"),)),
+        UnitPlan("b", tuple(Step(k, M, f"AC-{i + 2}") for i, k in enumerate(GOOD[1:]))),
+    )
+    with pytest.raises(ContractError, match="shares mint's segment"):
+        validate_plan(split)
+
+
+def test_unit_lookup_refuses_an_unknown_or_human_name() -> None:
+    with pytest.raises(ContractError, match="no unit named"):
+        PLAN.unit("attest")
+
+
+def test_store_and_confirm_refuse_a_quarantine_equal_to_the_new_value(tmp_path: Path) -> None:
+    h = Harness(tmp_path)
+    h.store.put(WORK, h.rotation.staging_key, h.original)
+    h.store.put(WORK, h.rotation.quarantine_key, h.original)
+    for kind in (StepKind.STORE, StepKind.CONFIRM_DEAD):
+        with pytest.raises(ContractError, match="equals the old"):
+            _single(h, kind)
+    assert h.kinds() == []
+
+
+def test_filed_evidence_alone_never_finishes_a_unit(tmp_path: Path) -> None:
+    """A claim that confirm_dead was filed skips nothing while a secret it would delete remains."""
+    h = Harness(tmp_path)
+    h.run("mint")
+    h.run("store")
+    h.run(
+        "retire",
+        attestations=_attest(h.keeper()),
+        filed=frozenset({StepKind.CONFIRM_DEAD}),
+    )
+    assert h.store.secrets.keys() == {h.keeper_id}
+    assert h.provider.probe(h.original) == 401
+
+
+def test_every_consumer_kind_has_one_way_to_be_verified() -> None:
+    from rotation_worker.contract import ATTESTED_KINDS, READ_BACK_KINDS
+    from rotation_worker.destinations import HOSTED_KINDS, IDENTITY_FIELDS
+
+    classes = [{"provider"}, READ_BACK_KINDS, ATTESTED_KINDS, HOSTED_KINDS]
+    for kind in IDENTITY_FIELDS:
+        assert sum(kind in group for group in classes) == 1, kind
+
+
+def test_a_kind_without_a_way_to_verify_it_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import rotation_worker.contract as contract
+
+    monkeypatch.setattr(contract, "ATTESTED_KINDS", frozenset({"runtime-fetch"}))
+    keychain = 'keychain service="s" account="a"'
+    h = Harness(tmp_path)
+    h.rotation = replace(h.rotation, destinations=(*h.rotation.destinations, keychain))
+    h.run("mint")
+    with pytest.raises(ContractError, match="no way to verify a keychain"):
+        h.run("store")
+
+
+@pytest.mark.parametrize(
+    ("recorded", "matches"),
+    [
+        (Fingerprint("0123456789abcdef", 43), True),
+        (Fingerprint("01234567", 43), True),
+        (Fingerprint("0123456", 43), False),
+        (Fingerprint("01234567", 42), False),
+        (Fingerprint("0123456789abcdef0", 43), False),
+        (Fingerprint("11234567", 43), False),
+    ],
+)
+def test_a_recorded_fingerprint_names_a_value_by_prefix_and_length(
+    recorded: Fingerprint, matches: bool
+) -> None:
+    assert Fingerprint("0123456789abcdef", 43).matches(recorded) is matches
+
+
+def test_the_fake_provider_refuses_to_revoke_what_it_never_issued(tmp_path: Path) -> None:
+    provider = FakeProvider(tmp_path / "provider.json")
+    with pytest.raises(ContractError, match="no live value"):
+        provider.revoke(Value("never-issued"))
+
+
+def test_a_cleanup_interrupted_after_staging_finishes_by_proving_death_again(
+    tmp_path: Path,
+) -> None:
+    """Staging deleted, quarantine kept: the retire unit's next attempt runs confirm_dead only."""
+    h = Harness(tmp_path)
+    h.run("mint")
+    h.run("store")
+    new = h.keeper()
+    _single(h, StepKind.RETIRE_OLD, attestations=_attest(new))
+    staging = h.store.find(WORK, h.rotation.staging_key)
+    assert staging is not None
+    h.store.delete(staging.id)
+    h.filed.clear()
+    h.run("retire", attestations=_attest(new))
+    assert h.kinds() == ["confirm_dead", "confirm_dead"]
+    assert h.store.secrets.keys() == {h.keeper_id}
+
+
+def test_any_other_unit_refuses_when_staging_is_gone_and_the_quarantine_kept(
+    tmp_path: Path,
+) -> None:
+    h = Harness(tmp_path)
+    h.run("mint")
+    h.run("store")
+    staging = h.store.find(WORK, h.rotation.staging_key)
+    assert staging is not None
+    h.store.delete(staging.id)
+    with pytest.raises(ContractError, match="never guess"):
+        h.run("store")
+
+
+def test_retire_probes_the_old_value_beside_a_control_and_files_both(tmp_path: Path) -> None:
+    h = Harness(tmp_path)
+    h.run("mint")
+    h.run("store")
+    _single(h, StepKind.RETIRE_OLD, attestations=_attest(h.keeper()))
+    probes = h.filed[-1][1].probes
+    assert [(p.subject, p.outcome) for p in probes] == [("known_bad", "dead"), ("old", "live")]
+
+
+def test_retire_refuses_when_the_probe_can_t_tell(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    h = Harness(tmp_path)
+    h.run("mint")
+    h.run("store")
+    monkeypatch.setattr(h.provider, "probe", lambda value: 401 if _is_known_bad(h, value) else 503)
+    revoked: list[Value] = []
+    monkeypatch.setattr(h.provider, "revoke", lambda value: revoked.append(value))
+    with pytest.raises(ContractError, match="indeterminate"):
+        _single(h, StepKind.RETIRE_OLD, attestations=_attest(h.keeper()))
+    assert revoked == []
+
+
+def test_retire_does_not_skip_the_revoke_on_a_probe_that_refuses_everything(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unchecked 401 once read as 'already dead'; now a probe refusing all values still needs
+    the control to pass, and a dead answer for the old value is filed as such."""
+    h = Harness(tmp_path)
+    h.run("mint")
+    h.run("store")
+    monkeypatch.setattr(h.provider, "probe", lambda value: 401)
+    _single(h, StepKind.RETIRE_OLD, attestations=_attest(h.keeper()))
+    note = h.filed[-1][1].note
+    assert note is not None and "already refused" in note
+    assert [p.outcome for p in h.filed[-1][1].probes] == ["dead", "dead"]
+
+
+def test_the_deletion_row_carries_the_proof_of_death(tmp_path: Path) -> None:
+    h = Harness(tmp_path)
+    h.run("mint")
+    h.run("store")
+    h.run("retire", attestations=_attest(h.keeper()))
+    last = h.filed[-1][1]
+    assert last.note is not None and last.note.startswith("deleted")
+    assert [(p.subject, p.outcome) for p in last.probes] == [
+        ("known_bad", "dead"),
+        ("old", "dead"),
+        ("known_bad", "dead"),
+        ("new", "live"),
+    ]
+
+
+def _is_known_bad(h: Harness, value: Value) -> bool:
+    known = {h.original.fingerprint, h.keeper().fingerprint}
+    staging = h.store.find(WORK, h.rotation.staging_key)
+    if staging is not None:
+        known.add(h.store.read(staging.id).fingerprint)
+    return value.fingerprint not in known
+
+
+@pytest.mark.parametrize(
+    "kinds",
+    [
+        [StepKind.MINT, StepKind.STAGE, StepKind.STORE, StepKind.VERIFY_NEW, *GOOD[4:]],
+        [*GOOD[:3], StepKind.DISTRIBUTE, StepKind.STORE, *GOOD[4:]],
+    ],
+    ids=["store before verify_new", "distribute before store"],
+)
+def test_nothing_unproved_reaches_a_consumer(kinds: list[StepKind]) -> None:
+    with pytest.raises(ContractError):
+        validate_plan(_with(kinds))
+
+
+def test_distribute_between_store_and_the_last_verify_is_valid() -> None:
+    validate_plan(_with([*GOOD[:4], StepKind.DISTRIBUTE, *GOOD[4:]]))

@@ -477,6 +477,12 @@ OUTBOUND_ALLOWLIST = {
     # Enforced by `system_permits` / `verifier_permits` / `anonymous_permits` and pinned by
     # tests/image_release/test_client_surface.py. Its egress is not the orchestrator's.
     Path("src/image_release/client.py"),
+    # ADR-0055 decision 1. The credential-rotation executor PULLS its work: it is a separate
+    # program in its own VM, and it reaches the orchestrator only as its WORKER identity. Its
+    # reads are the ready queue, a unit, its package revision, history and evidence; its writes
+    # are claim, renew, evidence and three commands. Enforced by `permits` and pinned by
+    # tests/rotation_worker/test_client_surface.py. Its egress is not the orchestrator's.
+    Path("src/rotation_worker/orchestrator_client.py"),
     # The pin watcher READS GitHub, and that is the point rather than an incidental dependency:
     # a caller's pin is a fact about a remote repository's workflow file, so no local surface can
     # answer it. Read-only by construction -- the client's single entry point refuses anything but
