@@ -86,7 +86,7 @@ image-release = "image_release.cli:app"
 dev = [
   "pytest>=8.0",
   "pytest-xdist>=3.6",
-  "ruff==0.16.9",
+  "ruff==0.16.10",
   "pyright==1.1.414",
   "httpx2>=2.10.0",
 ]
