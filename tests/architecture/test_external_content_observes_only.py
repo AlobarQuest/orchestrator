@@ -299,6 +299,11 @@ CLASSIFICATION: dict[str, Row] = {
         foreign={"https://api.todoist.com/api/v1": "Todoist's REST base URL"},
     ),
     # ---- NOT ORCHESTRATOR WRITERS: read the orchestrator at most. ---------------------------
+    "rotation_worker": Row(
+        Role.NOT_AN_ORCHESTRATOR_WRITER,
+        "ADR-0055: the credential-rotation executor. So far only its read-only comparison of a "
+        "credential's registry destinations with its standing package's, read from git",
+    ),
     "change_proposer": Row(
         Role.NOT_AN_ORCHESTRATOR_WRITER,
         "ADR-0019 inc 4: proposes deploy change records to change-manager; the orchestrator is "

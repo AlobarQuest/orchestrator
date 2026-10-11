@@ -1,0 +1,197 @@
+{
+  "format": "rotation-destination/1",
+  "identity_fields": {
+    "provider": [
+      "name"
+    ],
+    "bws-secret": [
+      "uuid"
+    ],
+    "coolify-env": [
+      "instance",
+      "resource_type",
+      "uuid",
+      "key",
+      "redeploy"
+    ],
+    "coolify-env-hash": [
+      "instance",
+      "resource_type",
+      "uuid",
+      "key"
+    ],
+    "gh-actions-secret": [
+      "repo",
+      "name"
+    ],
+    "keychain": [
+      "service",
+      "account"
+    ],
+    "runtime-fetch": [
+      "repo",
+      "ref"
+    ],
+    "shell-export": [
+      "file",
+      "var"
+    ]
+  },
+  "boolean_fields": [
+    "redeploy"
+  ],
+  "hosted_kinds": [
+    "coolify-env",
+    "coolify-env-hash"
+  ],
+  "examples": [
+    {
+      "consumer": {
+        "kind": "provider",
+        "name": "openrouter"
+      },
+      "destination": "provider name=\"openrouter\""
+    },
+    {
+      "consumer": {
+        "kind": "bws-secret",
+        "uuid": "f548b632-879b-4c10-904e-b3a4010b6429"
+      },
+      "destination": "bws-secret uuid=\"f548b632-879b-4c10-904e-b3a4010b6429\""
+    },
+    {
+      "consumer": {
+        "kind": "bws-secret",
+        "uuid": "d0007bfe-0aad-420c-b256-b40900fb2da7"
+      },
+      "destination": "bws-secret uuid=\"d0007bfe-0aad-420c-b256-b40900fb2da7\""
+    },
+    {
+      "consumer": {
+        "kind": "coolify-env",
+        "instance": "prod",
+        "resource_type": "application",
+        "uuid": "v04wc0wos0o0440k0ok8g08k",
+        "key": "GITHUB_TOKEN",
+        "redeploy": true
+      },
+      "destination": "coolify-env instance=\"prod\" resource_type=\"application\" uuid=\"v04wc0wos0o0440k0ok8g08k\" key=\"GITHUB_TOKEN\" redeploy=true"
+    },
+    {
+      "consumer": {
+        "kind": "coolify-env",
+        "instance": "prod",
+        "resource_type": "application",
+        "uuid": "v04wc0wos0o0440k0ok8g08k",
+        "key": "BITBUCKET_TOKEN",
+        "redeploy": true
+      },
+      "destination": "coolify-env instance=\"prod\" resource_type=\"application\" uuid=\"v04wc0wos0o0440k0ok8g08k\" key=\"BITBUCKET_TOKEN\" redeploy=true"
+    },
+    {
+      "consumer": {
+        "kind": "coolify-env-hash",
+        "instance": "prod",
+        "resource_type": "application",
+        "uuid": "eqj5l7k705fhi12x9i74fqf0",
+        "key": "ORCHESTRATOR_M2M_CREDENTIALS"
+      },
+      "destination": "coolify-env-hash instance=\"prod\" resource_type=\"application\" uuid=\"eqj5l7k705fhi12x9i74fqf0\" key=\"ORCHESTRATOR_M2M_CREDENTIALS\""
+    },
+    {
+      "consumer": {
+        "kind": "gh-actions-secret",
+        "repo": "AlobarQuest/orchestrator",
+        "name": "FACTORY_RUNNER_TOKEN"
+      },
+      "destination": "gh-actions-secret repo=\"AlobarQuest/orchestrator\" name=\"FACTORY_RUNNER_TOKEN\""
+    },
+    {
+      "consumer": {
+        "kind": "gh-actions-secret",
+        "repo": "AlobarQuest/intent-packages",
+        "name": "FACTORY_RUNNER_TOKEN"
+      },
+      "destination": "gh-actions-secret repo=\"AlobarQuest/intent-packages\" name=\"FACTORY_RUNNER_TOKEN\""
+    },
+    {
+      "consumer": {
+        "kind": "keychain",
+        "service": "openrouter-api",
+        "account": "devon"
+      },
+      "destination": "keychain service=\"openrouter-api\" account=\"devon\""
+    },
+    {
+      "consumer": {
+        "kind": "keychain",
+        "service": "Claude",
+        "account": "BWS_ACCESS_TOKEN_INFRA_DRIFT"
+      },
+      "destination": "keychain service=\"Claude\" account=\"BWS_ACCESS_TOKEN_INFRA_DRIFT\""
+    },
+    {
+      "consumer": {
+        "kind": "runtime-fetch",
+        "repo": "factory-validation-kit-restart-recovery",
+        "ref": "inherits the ambient bootstrap token when operator-invoked (no schedule)"
+      },
+      "destination": "runtime-fetch repo=\"factory-validation-kit-restart-recovery\" ref=\"inherits the ambient bootstrap token when operator-invoked (no schedule)\""
+    },
+    {
+      "consumer": {
+        "kind": "runtime-fetch",
+        "repo": "orchestrator",
+        "ref": "scripts/run-activation-sweep.sh, run-estate-landing.sh, run-inert-landing.sh, run-tool-installer.sh, run-work-carrier.sh, exit_probe.py"
+      },
+      "destination": "runtime-fetch repo=\"orchestrator\" ref=\"scripts/run-activation-sweep.sh, run-estate-landing.sh, run-inert-landing.sh, run-tool-installer.sh, run-work-carrier.sh, exit_probe.py\""
+    },
+    {
+      "consumer": {
+        "kind": "shell-export",
+        "file": "~/.zshrc",
+        "var": "OPENROUTER_API_KEY"
+      },
+      "destination": "shell-export file=\"~/.zshrc\" var=\"OPENROUTER_API_KEY\""
+    }
+  ],
+  "refused": [
+    "bws-secret uuid=\"a\" ",
+    "bws-secret  uuid=\"a\"",
+    "bws-secret uuid='a'",
+    "bws-secret uuid=\" a\"",
+    "bws-secret",
+    "bws-secret uuid=\"a\" note=\"x\"",
+    "keychain account=\"a\" service=\"s\"",
+    "coolify-env-hash instance=\"p\" resource_type=\"a\" uuid=\"u\" key=\"K\" redeploy=true",
+    "coolify-env instance=\"p\" resource_type=\"a\" uuid=\"u\" key=\"K\" redeploy=\"true\"",
+    "unknown-kind uuid=\"a\"",
+    "bws-secret uuid=\"\\u0061\"",
+    "bws-secret uuid=\"\"",
+    "keychain service=\"s\"account=\"a\"",
+    "keychain service=\"café\" account=\"a\""
+  ],
+  "credential_example": {
+    "credential": {
+      "id": "openrouter-generic",
+      "provider": "openrouter",
+      "consumer": [
+        {
+          "kind": "bws-secret",
+          "uuid": "9661da8f-ac66-4e97-a31f-b42500bb849c",
+          "note": "OPENROUTER_API_KEY (Ops / Platform)"
+        },
+        {
+          "kind": "keychain",
+          "service": "openrouter-api",
+          "account": "devon"
+        }
+      ]
+    },
+    "destinations": [
+      "bws-secret uuid=\"9661da8f-ac66-4e97-a31f-b42500bb849c\"",
+      "keychain service=\"openrouter-api\" account=\"devon\"",
+      "provider name=\"openrouter\""
+    ]
+  }
+}
