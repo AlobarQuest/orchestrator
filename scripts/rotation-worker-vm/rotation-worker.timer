@@ -1,0 +1,10 @@
+# One executor pass five minutes after the last one ended, and two minutes after boot.
+[Unit]
+Description=Credential-rotation executor, every five minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=5min
+
+[Install]
+WantedBy=timers.target

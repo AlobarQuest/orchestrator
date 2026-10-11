@@ -106,3 +106,15 @@ def test_a_failure_says_which_repository_and_what_git_said(
     mirror.sync("owner/repo")
     with pytest.raises(MirrorError, match=r"owner/repo: git show exited 128: .*absent\.txt"):
         mirror.show("owner/repo", commit, "absent.txt")
+
+
+def test_a_later_commit_is_not_an_ancestor_of_an_earlier_one(
+    mirror: RepoMirror, origins: Origins
+) -> None:
+    first = origins.commit("owner/repo", {"a.txt": "one"})
+    second = origins.commit("owner/repo", {"a.txt": "two"})
+    mirror.sync("owner/repo")
+    assert mirror.is_ancestor("owner/repo", first, second)
+    assert mirror.is_ancestor("owner/repo", second, second)
+    assert not mirror.is_ancestor("owner/repo", second, first)
+    assert not mirror.is_ancestor("owner/repo", "0" * 40, second)

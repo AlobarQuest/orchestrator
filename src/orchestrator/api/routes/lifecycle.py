@@ -26,6 +26,7 @@ from orchestrator.api.schemas.lifecycle import (
     RequeueCommand,
     RetryCommand,
     UnitResponse,
+    WorkUnitDetailResponse,
 )
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
@@ -319,6 +320,14 @@ def cost_actuals(
         event_id=event.id,
         cost_known=body.cost_known,
     )
+
+
+@router.get("/work-units/{unit_id}", response_model=WorkUnitDetailResponse)
+def work_unit(unit_id: UUID, _actor: ActorDep, session: SessionDep) -> object:
+    unit = session.get(WorkUnit, unit_id)
+    if unit is None:
+        raise DomainError("work_unit_not_found", "work unit does not exist", None)
+    return unit
 
 
 @router.get("/work-units/{unit_id}/history", response_model=list[EventResponse])

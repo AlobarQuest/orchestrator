@@ -50,6 +50,27 @@ class UnitResponse(BaseModel):
     version: int
 
 
+class WorkUnitDetailResponse(BaseModel):
+    """One work unit as a worker that pulls its work reads it (ADR-0055 decision 1).
+
+    The runner brief needs a target repository, which a credential rotation has none of, so the
+    rotation executor reads its unit here and its package revision from `/package-intakes`.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    unit_key: str
+    state: str
+    version: int
+    required_capability: str
+    work_package_revision_id: UUID
+    authority: dict[str, Any]
+    authority_fingerprint: str
+    attempt_count: int
+    max_attempts: int
+
+
 class LeaseResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

@@ -289,22 +289,37 @@ TABLE: dict[str, Row] = {
     # its confined client and its observation". So `bump_proposer` is reused rather than copied --
     # the lifecycle call, the hash re-pin, the one publishing act and both confined clients -- and
     # this program imports no HTTP client of its own. It reaches infraops only by running its CLI.
-    # ADR-0055: it reads git, never a working copy, so `subprocess` runs git and nothing else;
-    # `tomllib` and `yaml` parse the registry and the package it reads from there.
+    # ADR-0055: the credential-rotation executor. It reads git, never a working copy, so
+    # `subprocess` runs git and nothing else; `tomllib` and `yaml` parse the registry and the
+    # package it reads there. `bitwarden_sdk` is its one added dependency, so values reach BWS
+    # in-process rather than in an argument list (decision 3). `estate_clients` is the shared
+    # confined transport, and `httpx` its type; `hashlib`, `hmac` and `secrets` fingerprint,
+    # compare and mint values.
     "rotation_worker": _row(
         "__future__",
         "argparse",
+        "bitwarden_sdk",
         "collections",
         "dataclasses",
+        "datetime",
+        "enum",
+        "estate_clients",
+        "hashlib",
+        "hmac",
+        "httpx",
         "json",
+        "logging",
         "os",
         "pathlib",
         "re",
+        "secrets",
+        "stat",
         "subprocess",
         "sys",
         "tomllib",
         "typing",
         "unicodedata",
+        "uuid",
         "yaml",
         no_sibling_lanes=True,
     ),

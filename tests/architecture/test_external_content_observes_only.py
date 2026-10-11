@@ -300,9 +300,19 @@ CLASSIFICATION: dict[str, Row] = {
     ),
     # ---- NOT ORCHESTRATOR WRITERS: read the orchestrator at most. ---------------------------
     "rotation_worker": Row(
-        Role.NOT_AN_ORCHESTRATOR_WRITER,
-        "ADR-0055: the credential-rotation executor. So far only its read-only comparison of a "
-        "credential's registry destinations with its standing package's, read from git",
+        Role.INTERNAL_LANE_ACTOR,
+        "ADR-0055 decision 1: the credential-rotation executor pulls approved rotation units as "
+        "its own WORKER identity, which the orchestrator confines to rotation units; it claims, "
+        "renews, files rotation-step/1 evidence and moves its own claim through start, submit "
+        "and fail. What it acts on is checked against git, never taken from these routes",
+        frozenset(
+            {
+                "/api/v1/work-units/{unit_id}/claim",
+                "/api/v1/work-units/{unit_id}/renew",
+                "/api/v1/work-units/{unit_id}/evidence",
+                "/api/v1/work-units/{unit_id}/commands/{command}",
+            }
+        ),
     ),
     "change_proposer": Row(
         Role.NOT_AN_ORCHESTRATOR_WRITER,

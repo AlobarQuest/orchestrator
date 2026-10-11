@@ -736,7 +736,10 @@ units:
   evidence, and verifier-owned evidence, aren't checked this way.
 - **Decomposition.** Write the full destination list into each rotation unit's envelope
   `constraints` (ADR-0055 amendment 2), and set `touches_no_hosted_service: true` only on a unit
-  whose step writes no hosted consumer. Give rotation units `max_attempts` of at least three.
+  whose step writes no hosted consumer. Give rotation units `max_attempts` of at least three. The
+  executor also needs `rotation_adapter` and `rotation_unit` there; the adapter fixes the units,
+  their criteria and their hand-offs (`docs/operations/rotation-executor.md`, "Decompose a
+  rotation").
 
 ### Resolve dependencies
 

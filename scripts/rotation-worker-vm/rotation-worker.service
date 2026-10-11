@@ -1,0 +1,28 @@
+# The credential-rotation executor: one pass over the ready rotation units (ADR-0055).
+# Started by rotation-worker.timer. Its environment is PATH and HOME only (R16): systemd gives a
+# service nothing else from a login session, and the two below are the whole of what it reads.
+[Unit]
+Description=Credential-rotation executor, one pass
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/etc/rotation-worker/config.toml
+ConditionPathExists=/etc/rotation-worker/root-token
+
+[Service]
+Type=oneshot
+User=rotation
+Group=rotation
+Environment=PATH=/usr/bin:/bin
+Environment=HOME=/var/lib/rotation-worker
+ExecStart=/opt/rotation-worker/venv/bin/rotation-worker run --config /etc/rotation-worker/config.toml
+# A rotation step is bounded to fit a lease; a pass that outlives the longest lease is stuck.
+TimeoutStartSec=2h
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/rotation-worker
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
