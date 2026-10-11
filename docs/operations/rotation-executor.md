@@ -50,6 +50,24 @@ The runner brief can't serve a rotation unit, because a rotation unit has no
 `target_repository`. The executor reads its unit from `GET /api/v1/work-units/{id}` and its
 package revision from `GET /api/v1/package-intakes/{revision_id}`.
 
+## The canary
+
+`rotation-canary` is a credential with no real provider, kept so the executor's whole path can run
+on production with nothing live at stake. The fake adapter mints, probes and revokes it from a
+state file in the VM. Its keeper is `rotation-canary keeper` in `Rotation / Work`, created once by
+`rotation-worker seed-canary`, which prints the keeper's id and creates nothing if it exists. Its
+registry entry is in this repository's `.cred-consumers.toml`, and its standing package is
+intent-packages' `rotation-rotation-canary`, with one acceptance criterion per machine step
+(AC-001 to AC-008). Class `rotation-canary` is never due by age, so it rotates only when a revision
+of the package asks.
+
+To run it, give the package a new `occurrence`, approve the revision, and register its intake.
+The decomposition is the fake adapter's plan: units `mint` (AC-001 to AC-003), `store` (AC-004,
+AC-005) and `retire` (AC-006 to AC-008), each depending on the one before. Between `store` and
+`retire` is a human act: a person attests that the `runtime-fetch` consumer holds the new value,
+resolving it at `/review` with the new value's fingerprint (`sha256_prefix` and `length`) from the
+`store` unit's evidence.
+
 ## Install or update it
 
 The VM is `rotation-executor`, created with `orb create --isolated --isolate-network

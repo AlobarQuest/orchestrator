@@ -275,3 +275,28 @@ disposition = "reissue"
   kind = "runtime-fetch"
   repo = "factory-validation-kit-restart-recovery"
   ref = "src/factory_validation_kit/credentials.py"
+
+# ── The rotation canary (ADR-0055 increment 4) ───────────────────────────────────
+# A throwaway credential with no real provider: the executor's fake adapter mints, probes
+# and revokes it inside the rotation-executor VM. It exists so the executor's whole path
+# runs on production with nothing live at stake. Class rotation-canary is never due by age
+# (infraops CLASS_POLICY), so it rotates only when a package revision asks.
+[[credential]]
+id = "rotation-canary"
+class = "rotation-canary"
+provider = "fake"
+provider_identity = "the fake adapter's state file in the rotation-executor VM"
+bws_uuid = "29bb7360-7b7b-40d5-a49b-b4e00149bd63"
+created = "2026-10-11"
+disposition = "reissue"
+rotated_by_sds = true
+
+  [[credential.consumer]]
+  kind = "bws-secret"
+  uuid = "29bb7360-7b7b-40d5-a49b-b4e00149bd63"
+  note = "the keeper, in Rotation / Work"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
+  ref = "none; a person attests"
