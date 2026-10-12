@@ -11,7 +11,9 @@ Each pass, started by a systemd timer every five minutes, works every ready unit
 `constraints` name a `rotation_adapter`:
 
 1. **It checks the unit against git before claiming it** (`checks.py`). The package revision's
-   commit must be on intent-packages' `main` and hash to the approved content hash. The
+   commit must be on intent-packages' `main`, and the package read there at
+   `packages/<package_id>/package.yaml` must hash to the approved content hash. The intake's
+   `source_path` is the directory on the machine that emitted it, so the executor never reads it. The
    credential's registry entry, read at its repository's `main`, must still say
    `rotated_by_sds = true` and name the adapter's provider. The registry's destinations, the
    package's `profile_fields.destinations` and the envelope's `destinations` must be equal. A

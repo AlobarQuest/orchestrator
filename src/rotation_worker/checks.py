@@ -114,9 +114,16 @@ def check_unit(
 def _approved_package(package: Mapping[str, Any], mirror: RepoMirror) -> Mapping[str, Any]:
     if package.get("source_repository") != PACKAGES_REPOSITORY:
         raise ContractError("the revision isn't from intent-packages")
-    commit, path = package.get("source_commit"), package.get("source_path")
-    if not isinstance(commit, str) or not COMMIT.fullmatch(commit) or not isinstance(path, str):
-        raise ContractError("the revision names no full commit and path")
+    # The intake's source_path is the package directory on whichever machine emitted it, which git
+    # can't confirm, so the package is read at its id's path in intent-packages instead.
+    commit, package_id = package.get("source_commit"), package.get("package_id")
+    if (
+        not isinstance(commit, str)
+        or not COMMIT.fullmatch(commit)
+        or not isinstance(package_id, str)
+    ):
+        raise ContractError("the revision names no full commit and package")
+    path = f"packages/{package_id}/package.yaml"
     main = mirror.sync(PACKAGES_REPOSITORY)
     if not _local(mirror.is_ancestor, PACKAGES_REPOSITORY, commit, main):
         raise ContractError("the revision's commit isn't on intent-packages' main")
