@@ -29,6 +29,7 @@ from rotation_worker.contract import (
 )
 from rotation_worker.destinations import DestinationError
 from rotation_worker.evidence import StepEvidence
+from rotation_worker.secret_store import StoreError
 from rotation_worker.values import Fingerprint, Value
 from tests.rotation_worker.stores import MemoryStore
 
@@ -685,6 +686,50 @@ def test_retire_probes_the_old_value_beside_a_control_and_files_both(tmp_path: P
     _single(h, StepKind.RETIRE_OLD, attestations=_attest(h.keeper()))
     probes = h.filed[-1][1].probes
     assert [(p.subject, p.outcome) for p in probes] == [("known_bad", "dead"), ("old", "live")]
+
+
+def test_mint_reads_the_old_value_before_minting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    h = Harness(tmp_path)
+    minted: list[Value] = []
+    monkeypatch.setattr(h.provider, "mint", lambda: minted.append(Value("never")) or minted[0])
+    del h.store.secrets[h.keeper_id]
+    with pytest.raises(StoreError):
+        h.run("mint")
+    assert minted == []
+
+
+class TwoTargetProvider(FakeProvider):
+    """A fake whose probe before a revoke is its own endpoint, as OpenRouter's key-info is."""
+
+    revoke_probe_target = "fake-provider/key-info"
+
+    def __init__(self, state_path: Path) -> None:
+        super().__init__(state_path)
+        self.asked_before_revoke: list[Value] = []
+
+    def probe_before_revoke(self, value: Value) -> int | None:
+        self.asked_before_revoke.append(value)
+        return super().probe(value)
+
+
+def test_retire_asks_the_probe_before_revoke_for_control_and_subject_alike(
+    tmp_path: Path,
+) -> None:
+    h = Harness(tmp_path)
+    h.provider = TwoTargetProvider(tmp_path / "provider.json")
+    h.original = h.provider.mint()
+    h.store.write(h.keeper_id, h.original)
+    h.run("mint")
+    h.run("store")
+    assert h.provider.asked_before_revoke == []
+    h.run("retire", attestations=_attest(h.keeper()))
+    retire, confirm = h.filed[-3][1], h.filed[-1][1]
+    assert {p.target for p in retire.probes} == {"fake-provider/key-info"}
+    assert len(h.provider.asked_before_revoke) == 2
+    assert h.provider.asked_before_revoke[1].same_as(h.original)
+    assert {p.target for p in confirm.probes} == {"fake-provider/key"}
 
 
 def test_retire_refuses_when_the_probe_can_t_tell(

@@ -483,6 +483,12 @@ OUTBOUND_ALLOWLIST = {
     # are claim, renew, evidence and three commands. Enforced by `permits` and pinned by
     # tests/rotation_worker/test_client_surface.py. Its egress is not the orchestrator's.
     Path("src/rotation_worker/orchestrator_client.py"),
+    # ADR-0055 increment 5. The rotation executor's OpenRouter adapter mints, probes and revokes
+    # OpenRouter API keys, from the executor's VM. Its client may send only key-info, the model
+    # list, a chat completion, a key create, and a GET or DELETE of one key by its 64-hex hash.
+    # Enforced by `permits` and pinned by tests/rotation_worker/test_openrouter.py. Its egress is
+    # not the orchestrator's.
+    Path("src/rotation_worker/adapters/openrouter.py"),
     # The pin watcher READS GitHub, and that is the point rather than an incidental dependency:
     # a caller's pin is a fact about a remote repository's workflow file, so no local surface can
     # answer it. Read-only by construction -- the client's single entry point refuses anything but

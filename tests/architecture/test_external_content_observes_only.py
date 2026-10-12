@@ -313,6 +313,9 @@ CLASSIFICATION: dict[str, Row] = {
                 "/api/v1/work-units/{unit_id}/commands/{command}",
             }
         ),
+        foreign={
+            "https://openrouter.ai/api/v1": "OpenRouter's API root (ADR-0055 increment 5 adapter)"
+        },
     ),
     "change_proposer": Row(
         Role.NOT_AN_ORCHESTRATOR_WRITER,

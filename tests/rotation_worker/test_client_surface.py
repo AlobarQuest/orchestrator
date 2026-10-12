@@ -167,7 +167,12 @@ def test_only_the_client_spells_an_orchestrator_path() -> None:
         assert re.findall(r"/api/v1/", source.read_text()) == [], source
 
 
-def test_only_the_client_imports_an_http_client_and_only_the_mirror_runs_a_process() -> None:
+# The modules that may reach a network service: the orchestrator's client, and each adapter whose
+# provider is reached over HTTP (its own path allowlist confines what it may send).
+HTTP_CLIENTS = frozenset({"orchestrator_client.py", "adapters/openrouter.py"})
+
+
+def test_only_the_clients_import_an_http_client_and_only_the_mirror_runs_a_process() -> None:
     for source in sorted(PROGRAM.rglob("*.py")):
         imported = set()
         for node in ast.walk(ast.parse(source.read_text())):
@@ -175,7 +180,7 @@ def test_only_the_client_imports_an_http_client_and_only_the_mirror_runs_a_proce
                 imported |= {alias.name.split(".")[0] for alias in node.names}
             elif isinstance(node, ast.ImportFrom) and node.module:
                 imported.add(node.module.split(".")[0])
-        if source.name != "orchestrator_client.py":
+        if source.relative_to(PROGRAM).as_posix() not in HTTP_CLIENTS:
             assert not imported & {"httpx", "estate_clients", "requests", "urllib"}, source
         if source.name != "git_mirror.py":
             # Values never enter an argument list (ADR-0055 decision 3): no other module can

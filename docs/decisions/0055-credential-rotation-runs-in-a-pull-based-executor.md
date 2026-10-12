@@ -339,7 +339,7 @@ mechanics where a provider has an API.
 
 | Class | Live | Mint | Deploy | Retire-old | Notes |
 |---|---|---|---|---|---|
-| OpenRouter key | 1 | machine | machine (BWS) | machine for keys the executor minted; human for today's key | |
+| OpenRouter key | 1 | machine | machine (BWS) | machine, today's key included (amendment 5) | |
 | GitHub PAT (fine-grained) | 2 | human | machine for BWS and (increment 7) Actions secrets, through the rotation App's installation tokens; human for Coolify | machine (`POST /credentials/revoke`) | |
 | Atlassian API token | 1 | human | machine for BWS; human for Coolify | human | Revoke API unverified |
 | BWS machine token | 4 | human | human (Keychain consumers on the Mac) | human | Executor records evidence only; confirm-dead is Devon's fresh-login check (amendment 1) |
@@ -768,3 +768,53 @@ These needed no decision.
 - The two CLAUDE.md corrections named above.
 
 Each guard is reviewed by mutation, by hand.
+
+## Amendment 5 — Increment 5 decisions (2026-10-12)
+
+Amendments 3 and 4 are proposed in the increment 3 and increment 4 reports and aren't applied;
+this one takes the next number. Increment 5's consumer inventory came first, and it changed the
+questions put to Devon.
+
+### What the inventory found
+
+`openrouter-generic` had one reader outside BWS: the octo plugin's OpenRouter seat, which reads
+`OPENROUTER_API_KEY` from the environment that Claude Code inherits from `~/.zshrc`. The key's own
+record showed no use at all (key-info: zero usage, paid, free-model and BYOK). No hosted service
+holds it: `brain-app` and `brain-open` have an `OPENROUTER_API_KEY` variable whose values are the
+brains' separate key. The full search and its exclusions are in the increment 5 report.
+
+### Devon's answers (2026-10-12)
+
+- **The shell export is dropped with no replacement**, and octo's OpenRouter seat is disabled. So
+  the keeper is the credential's only consumer, no person attests a consumer, and the per-class
+  section's "fetches it from BWS" needs no Mac identity: nothing on the Mac reads the key.
+- **The executor retires today's key by machine.** The per-class row said human for a key the
+  executor didn't mint, a rule written when the revoke id had to be pinned at creation. Amendment
+  1's derive-then-confirm revoke works for any key on the account, and only a machine revoke files
+  the key-info 200 that is the live-before half. The row now says machine.
+- **Every minted key carries a $5 credit limit and expires 400 days after minting**: past the
+  class's 365-day rotation age, with about five weeks' grace before a stalled rotation lets it
+  lapse.
+- **The session clicks the `/review` gates in Devon's signed-in browser** for this run, with his
+  consent, recorded in the run's report. Decision 10's default is unchanged.
+
+### What the contract gained
+
+- **A provider has two probes.** `probe` asks what a consumer would (for OpenRouter, a zero-cost
+  completion on a `:free` model); `probe_before_revoke` asks the endpoint the revoke relies on
+  (key-info). Retire-old uses the second, verify-new and confirm-dead the first. The control and
+  the subject in each step go through the same probe, so a refused control proves the target the
+  subject's answer came from.
+- **`revoke` returns a note** for the retire step's evidence. It names what was checked, never a
+  label, an id or a value.
+- **An adapter is built with the executor's BWS access and its provider's admin secret id**, from
+  `config.toml`'s `admin_secrets`. The OpenRouter adapter reads the management key only when a
+  step mints or revokes.
+
+### Where the build departs from amendment 1
+
+Amendment 1 names key-info polled until 401 as confirm-dead's fallback. The adapter has no
+fallback: when no `:free` model answers a completion determinately, the probe is indeterminate,
+the unit fails, and a requeue retries it. A fallback would need a deadline primitive the contract
+doesn't have, and the requeue already recovers the same case.
+

@@ -99,7 +99,14 @@ OrbStack machines, but not the Mac.
    root_token_file = "/etc/rotation-worker/root-token"
    state_dir = "/var/lib/rotation-worker"
    source_revision = "<the first 12 characters of the installed commit>"
+
+   [admin_secrets]
+   openrouter = "<the OpenRouter management key's secret id, in Rotation / OpenRouter>"
    ```
+
+   `admin_secrets` maps a provider name to the BWS secret id of that provider's admin
+   credential. An adapter that needs one refuses to build without its entry, and reads the secret
+   only when a step mints or revokes.
 
 3. Enable the timer: `orb -m rotation-executor -u root systemctl enable --now
    rotation-worker.timer`. Read its passes with `journalctl -u rotation-worker` (one JSON line per
@@ -115,7 +122,7 @@ orb -m rotation-executor -u root runuser -u rotation -- env -i PATH=/usr/bin:/bi
 
 ## Its credentials
 
-All four are in ADR-0055's hand-rotated set: a person creates and rotates them, never the
+All five are in ADR-0055's hand-rotated set: a person creates and rotates them, never the
 executor. None is ever printed, passed as an argument, or kept on the Mac.
 
 | Credential | Lives in | Read by |
@@ -123,7 +130,8 @@ executor. None is ever printed, passed as an argument, or kept on the Mac.
 | The root: the `rotation-executor` BWS machine account's access token | `/etc/rotation-worker/root-token` in the VM, owner `rotation`, mode `0400` | The executor, to log in to BWS |
 | The executor's WORKER bearer | BWS secret `rotation-executor WORKER bearer` in `Rotation / Executor`; its hash in the orchestrator's `ORCHESTRATOR_M2M_CREDENTIALS` under key `rotation-executor-1`, agent `rotation-executor` | The executor, from BWS at each pass |
 | The read-only Healthchecks API key | BWS, in `Rotation / Healthchecks` | No reader until an adapter verifies a `runtime-fetch` consumer by its check |
-| The three BWS projects | Bitwarden Secrets Manager | The root: write on `Rotation / Work`, read on `Rotation / Executor` and `Rotation / Healthchecks`, nothing else |
+| The OpenRouter management key | BWS secret `openrouter management key` in `Rotation / OpenRouter`; its id in `config.toml`'s `admin_secrets` | The executor, from BWS, only while an `openrouter` unit mints or revokes |
+| The BWS projects | Bitwarden Secrets Manager | The root: write on `Rotation / Work` and each `Rotation / Keeper / <credential>`, read on `Rotation / Executor`, `Rotation / Healthchecks` and `Rotation / OpenRouter`, nothing else |
 
 ### Create them
 
@@ -153,6 +161,13 @@ executor. None is ever printed, passed as an argument, or kept on the Mac.
       `ORCHESTRATOR_M2M_ROLES` entry: an unpromoted credential is a WORKER.
 5. In Healthchecks, under the project's **Settings**, create a read-only API key, and store it in
    BWS as a secret in `Rotation / Healthchecks`, from the console.
+6. For OpenRouter: create the project `Rotation / OpenRouter` and give the machine account
+   **Can read** on it. In the OpenRouter console, create a management key with no expiry; the key is
+   account-wide, a provider limit. Store it in BWS as the secret `openrouter management key` in
+   `Rotation / OpenRouter`, straight from the OpenRouter page to the Bitwarden page, then clear
+   the clipboard with `pbcopy < /dev/null`. Put the secret's id in `config.toml` under
+   `[admin_secrets]` as `openrouter`, and confirm the root reads it from the VM by listing its
+   projects.
 
 ### Rotate them by hand
 
@@ -167,4 +182,7 @@ executor. None is ever printed, passed as an argument, or kept on the Mac.
   restart, and delete the old secret.
 - **The Healthchecks key:** create a new read-only key, replace the BWS secret's value in the
   console, then delete the old key in Healthchecks.
+- **The OpenRouter management key:** create a new management key, replace the BWS secret's value
+  in the console (the secret id, and so `config.toml`, stays), then delete the old management key
+  in the OpenRouter console. Do it while no `openrouter` unit is claimed.
 
