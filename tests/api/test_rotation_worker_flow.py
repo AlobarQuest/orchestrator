@@ -212,7 +212,8 @@ rotated_by_sds = true
                 "source_repository": PACKAGES_REPOSITORY,
                 "revision": 1,
                 "content_hash": package_hash(self.package),
-                "source_path": PACKAGE_PATH,
+                # What the emitter records: the package directory on the machine that emitted it.
+                "source_path": f"/Users/someone/intent-packages/packages/rotation-{CREDENTIAL}",
                 "source_commit": self.commit,
                 "approved_by": "devon",
                 "approved_at": NOW.isoformat(),

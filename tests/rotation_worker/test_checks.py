@@ -112,7 +112,8 @@ class World:
             "id": REVISION,
             "source_repository": PACKAGES_REPOSITORY,
             "source_commit": self.commit,
-            "source_path": PATH,
+            "package_id": "rotation-canary",
+            "source_path": "/Users/someone/intent-packages/packages/rotation-canary",
             "content_hash": package_hash(self.package),
             "acceptance_criteria": [{"ac_id": f"AC-00{n}"} for n in range(1, 9)],
             **changes,
@@ -303,21 +304,33 @@ def test_a_revision_at_another_package_s_path_is_refused(world: World) -> None:
     other = "packages/rotation-other/package.yaml"
     commit = world.origins.commit(PACKAGES_REPOSITORY, {other: yaml.safe_dump(world.package)})
     with pytest.raises(ContractError, match="standing package"):
-        world.check(intake=world.intake(source_commit=commit, source_path=other))
+        world.check(intake=world.intake(source_commit=commit, package_id="rotation-other"))
 
 
 @pytest.mark.parametrize(
     "changes",
-    [{"source_commit": None}, {"source_commit": "abc123"}, {"source_path": None}],
+    [
+        {"source_commit": None},
+        {"source_commit": "abc123"},
+        {"package_id": None},
+        {"package_id": "canary"},
+        {"package_id": "rotation-"},
+        {"package_id": "rotation-a/../rotation-canary"},
+    ],
 )
 def test_a_malformed_intake_is_refused_not_skipped(world: World, changes: dict[str, Any]) -> None:
-    with pytest.raises(ContractError, match="no full commit and path"):
+    with pytest.raises(ContractError, match="no full commit and standing rotation package"):
         world.check(intake=world.intake(**changes))
+
+
+@pytest.mark.parametrize("source_path", [None, "", "packages/rotation-other/package.yaml"])
+def test_the_intake_s_source_path_is_never_read(world: World, source_path: str | None) -> None:
+    world.check(intake=world.intake(source_path=source_path))
 
 
 def test_a_path_missing_at_the_commit_is_refused_not_skipped(world: World) -> None:
     with pytest.raises(ContractError, match="can't be read"):
-        world.check(intake=world.intake(source_path="packages/rotation-canary/missing.yaml"))
+        world.check(intake=world.intake(package_id="rotation-missing"))
 
 
 def test_a_package_with_no_approval_at_main_is_refused(world: World) -> None:

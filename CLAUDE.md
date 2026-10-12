@@ -483,4 +483,6 @@ Placement rule: global CLAUDE.md §7.
   (pinned with intent-packages by `tests/fixtures/rotation_destination_format.json`). Every
   adapter's steps run through `contract.py`, which holds ADR-0055 decision 3's invariants; never
   re-implement a step in an adapter. A rotation unit has no `target_repository`, so it reads
-  `GET /work-units/{id}`, never the runner brief. Detail: `docs/operations/rotation-executor.md`.
+  `GET /work-units/{id}`, never the runner brief. It reads the package at its `package_id`'s
+  path: an intake's `source_path` is the emitting machine's directory, never a git path. Detail:
+  `docs/operations/rotation-executor.md`.
