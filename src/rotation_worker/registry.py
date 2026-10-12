@@ -8,6 +8,7 @@ working copy, so the executor and the operator's comparison see the same thing.
 
 from __future__ import annotations
 
+import re
 import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -54,8 +55,17 @@ class PackageDestinations:
     destinations: list[str]
 
 
+_STANDING_PACKAGE_ID: Final = re.compile(r"^rotation-([a-z0-9][a-z0-9-]*)$")
+
+
 def package_path(credential_id: str) -> str:
     return f"packages/rotation-{credential_id}/package.yaml"
+
+
+def standing_credential(package_id: str) -> str | None:
+    """The credential whose standing package `package_id` names, or None if it names none."""
+    named = _STANDING_PACKAGE_ID.fullmatch(package_id)
+    return named.group(1) if named else None
 
 
 def lineage_path(credential_id: str) -> str:

@@ -309,11 +309,23 @@ def test_a_revision_at_another_package_s_path_is_refused(world: World) -> None:
 
 @pytest.mark.parametrize(
     "changes",
-    [{"source_commit": None}, {"source_commit": "abc123"}, {"package_id": None}],
+    [
+        {"source_commit": None},
+        {"source_commit": "abc123"},
+        {"package_id": None},
+        {"package_id": "canary"},
+        {"package_id": "rotation-"},
+        {"package_id": "rotation-a/../rotation-canary"},
+    ],
 )
 def test_a_malformed_intake_is_refused_not_skipped(world: World, changes: dict[str, Any]) -> None:
-    with pytest.raises(ContractError, match="no full commit and package"):
+    with pytest.raises(ContractError, match="no full commit and standing rotation package"):
         world.check(intake=world.intake(**changes))
+
+
+@pytest.mark.parametrize("source_path", [None, "", "packages/rotation-other/package.yaml"])
+def test_the_intake_s_source_path_is_never_read(world: World, source_path: str | None) -> None:
+    world.check(intake=world.intake(source_path=source_path))
 
 
 def test_a_path_missing_at_the_commit_is_refused_not_skipped(world: World) -> None:

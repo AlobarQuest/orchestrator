@@ -38,6 +38,7 @@ from rotation_worker.registry import (
     lineage_path,
     load_package,
     package_path,
+    standing_credential,
     standing_destinations,
 )
 
@@ -117,13 +118,10 @@ def _approved_package(package: Mapping[str, Any], mirror: RepoMirror) -> Mapping
     # The intake's source_path is the package directory on whichever machine emitted it, which git
     # can't confirm, so the package is read at its id's path in intent-packages instead.
     commit, package_id = package.get("source_commit"), package.get("package_id")
-    if (
-        not isinstance(commit, str)
-        or not COMMIT.fullmatch(commit)
-        or not isinstance(package_id, str)
-    ):
-        raise ContractError("the revision names no full commit and package")
-    path = f"packages/{package_id}/package.yaml"
+    expected = standing_credential(package_id) if isinstance(package_id, str) else None
+    if not isinstance(commit, str) or not COMMIT.fullmatch(commit) or expected is None:
+        raise ContractError("the revision names no full commit and standing rotation package")
+    path = package_path(expected)
     main = mirror.sync(PACKAGES_REPOSITORY)
     if not _local(mirror.is_ancestor, PACKAGES_REPOSITORY, commit, main):
         raise ContractError("the revision's commit isn't on intent-packages' main")
@@ -134,7 +132,7 @@ def _approved_package(package: Mapping[str, Any], mirror: RepoMirror) -> Mapping
     if not isinstance(fields, dict):
         raise RegistryError("the approved revision has no profile_fields")
     credential_id = str(fields.get("credential_id"))
-    if path != package_path(credential_id):
+    if credential_id != expected:
         raise ContractError("the revision isn't its credential's standing package")
     try:
         recomputed = package_hash(document)
