@@ -102,19 +102,37 @@ class Plan:
 
 
 class Provider(Protocol):
-    """One kind of credential's issuer: how to mint, probe and revoke a value of it."""
+    """One kind of credential's issuer: how to mint, probe and revoke a value of it.
+
+    A provider has two probes, each with its own target. `probe` asks what a consumer would: it
+    proves a new value works and an old one is dead (verify_new, confirm_dead).
+    `probe_before_revoke` asks the endpoint the revoke itself relies on, so retire_old's evidence
+    that the old value was live comes from the same place the revoke reads (ADR-0055 amendment 1:
+    OpenRouter's key-info answers 200 for a live key and lags a revoke, so it can prove live-before
+    but not dead-after). A provider whose two probes are one endpoint gives both the same target.
+    """
 
     name: str
     probe_target: str
+    revoke_probe_target: str
     dead_statuses: frozenset[int]
 
     def mint(self) -> Value: ...
 
     def probe(self, value: Value) -> int | None: ...
 
+    def probe_before_revoke(self, value: Value) -> int | None: ...
+
     def known_bad(self) -> Value: ...
 
-    def revoke(self, value: Value) -> None: ...
+    def revoke(self, value: Value) -> str:
+        """Revoke `value`, refusing (`ContractError`) unless the provider confirms which key it is.
+
+        Returns a note for the step's evidence. The note names what was checked, never a value,
+        an id or a label: a key's label carries characters of the key, and an id is a run the
+        orchestrator's evidence scan refuses.
+        """
+        ...
 
 
 def validate_plan(plan: Plan) -> None:
@@ -282,18 +300,32 @@ class UnitRun:
 
     # ---- probes -----------------------------------------------------------------------------
 
-    def probe(self, value: Value, subject: Subject, expected: State | None) -> list[ProbeAnswer]:
-        """The control, then the subject. Refuses unless both answer as they must.
+    def probe(
+        self,
+        value: Value,
+        subject: Subject,
+        expected: State | None,
+        *,
+        before_revoke: bool = False,
+    ) -> list[ProbeAnswer]:
+        """The control, then the subject, on one target. Refuses unless both answer as they must.
 
         With `expected` None the subject may be live or dead, never indeterminate; its answer is
-        filed as expected live, since a value still live is the one the step acts on.
+        filed as expected live, since a value still live is the one the step acts on. The control
+        and the subject are asked through the same probe, so a refused control proves the target
+        the subject's answer came from.
         """
-        control = self._answer(self.provider.known_bad(), "known_bad", "dead")
+        provider = self.provider
+        if before_revoke:
+            ask, target = provider.probe_before_revoke, provider.revoke_probe_target
+        else:
+            ask, target = provider.probe, provider.probe_target
+        control = self._answer(ask, target, provider.known_bad(), "known_bad", "dead")
         if control.outcome != "dead":
             raise ContractError(
                 f"the probe didn't refuse a known-bad value ({control.http_status})"
             )
-        answer = self._answer(value, subject, expected or "live")
+        answer = self._answer(ask, target, value, subject, expected or "live")
         if answer.outcome == "indeterminate" or (expected and answer.outcome != expected):
             raise ContractError(
                 f"the {subject} value probed {answer.outcome} ({answer.http_status}), "
@@ -301,15 +333,22 @@ class UnitRun:
             )
         return [control, answer]
 
-    def _answer(self, value: Value, subject: Subject, expected: State) -> ProbeAnswer:
-        status = self.provider.probe(value)
+    def _answer(
+        self,
+        ask: Callable[[Value], int | None],
+        target: str,
+        value: Value,
+        subject: Subject,
+        expected: State,
+    ) -> ProbeAnswer:
+        status = ask(value)
         if status == LIVE_STATUS:
             outcome = "live"
         elif status in self.provider.dead_statuses:
             outcome = "dead"
         else:
             outcome = "indeterminate"
-        return ProbeAnswer(self.provider.probe_target, subject, expected, status, outcome)
+        return ProbeAnswer(target, subject, expected, status, outcome)
 
     # ---- consumers --------------------------------------------------------------------------
 
@@ -350,7 +389,9 @@ def _mint(run: UnitRun, step: Step) -> None:
     else:
         if run.quarantined() is not None:
             raise ContractError("a quarantine exists with nothing staged: never guess")
-        new, old = run.provider.mint(), run.old()
+        # The old value is read first: a mint that fails to stage leaves a key nobody holds.
+        old = run.old()
+        new = run.provider.mint()
         if new.same_as(old):
             raise ContractError("the minted value's fingerprint equals the old one's")
         run._minted = new
@@ -427,10 +468,9 @@ def _retire_old(run: UnitRun, step: Step) -> None:
     new, old = run.new_and_old()
     if run.unverified(new):
         raise ContractError("a consumer hasn't verified the new value; the old stays live")
-    probes = run.probe(old, "old", None)
+    probes = run.probe(old, "old", None, before_revoke=True)
     if probes[-1].outcome == "live":
-        run.provider.revoke(old)
-        note = None
+        note = run.provider.revoke(old)
     else:
         note = "the old value was already refused; nothing to revoke"
     run.record(

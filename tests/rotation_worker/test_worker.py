@@ -8,7 +8,7 @@ from typing import Any, cast
 import pytest
 
 import rotation_worker.worker as worker
-from rotation_worker.adapters import ADAPTERS
+from rotation_worker.adapters import ADAPTERS, AdapterContext
 from rotation_worker.checks import Approved
 from rotation_worker.contract import ContractError, Rotation
 from rotation_worker.git_mirror import MirrorError, RepoMirror
@@ -81,7 +81,7 @@ class Harness:
         self.store = MemoryStore()
         self.state = tmp_path
         adapter = ADAPTERS["fake"]
-        self.provider = adapter.build(tmp_path)
+        self.provider = adapter.build(AdapterContext(tmp_path, self.store, admin_secret_id=None))
         self.original = self.provider.mint()
         self.keeper = self.store.put(WORK, "keeper", self.original)
         destinations = (f'bws-secret uuid="{self.keeper}"', 'provider name="fake"', RUNTIME)
@@ -313,6 +313,13 @@ def test_an_error_before_the_claim_is_logged_and_the_pass_goes_on(
     monkeypatch.setattr(h.client, "package_intake", breaks)
     assert run_pass(h.setup()) == 1
     assert ("claim", "u1") not in h.client.calls
+
+
+def test_an_adapter_missing_its_admin_secret_spends_no_attempt(h: Harness) -> None:
+    h.adapter = ADAPTERS["openrouter"]
+    h.add("u1", "mint")
+    assert run_pass(h.setup()) == 0
+    assert h.client.calls == []
 
 
 def test_earlier_evidence_is_tracked_per_criterion_not_per_kind(h: Harness) -> None:

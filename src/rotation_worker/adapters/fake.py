@@ -75,6 +75,7 @@ class FakeProvider:
 
     name = NAME
     probe_target = PROBE_TARGET
+    revoke_probe_target = PROBE_TARGET
     dead_statuses = frozenset({401})
 
     def __init__(self, state_path: Path) -> None:
@@ -88,15 +89,19 @@ class FakeProvider:
     def probe(self, value: Value) -> int | None:
         return 200 if _hash(value) in self._live() else 401
 
+    def probe_before_revoke(self, value: Value) -> int | None:
+        return self.probe(value)
+
     def known_bad(self) -> Value:
         return Value(secrets.token_urlsafe(VALUE_BYTES))
 
-    def revoke(self, value: Value) -> None:
+    def revoke(self, value: Value) -> str:
         live = self._live()
         key = _hash(value)
         if key not in live:
             raise ContractError("the provider holds no live value with that id")
         self._save(live - {key})
+        return "revoked the id derived from the quarantined value"
 
     def _live(self) -> frozenset[str]:
         if not self._state_path.exists():

@@ -19,10 +19,11 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final
 
+from rotation_worker.adapters import AdapterContext
 from rotation_worker.checks import Approved, check_unit, is_rotation_unit
 from rotation_worker.contract import ContractError, Step, StepKind, UnitRun
 from rotation_worker.destinations import DestinationError
@@ -51,6 +52,8 @@ class Setup:
     state_dir: Path
     # The executor's own commit, short: a full SHA is a 32-character run the evidence scan refuses.
     source_revision: str
+    # Each provider's admin secret id (`Config.admin_secrets`).
+    admin_secrets: Mapping[str, str] = field(default_factory=dict)
 
 
 def run_pass(setup: Setup) -> int:
@@ -100,6 +103,13 @@ def _claim(setup: Setup, unit: Mapping[str, Any]) -> tuple[Lease, int]:
 
 def _work(setup: Setup, unit: Mapping[str, Any], approved: Approved) -> bool:
     unit_id = str(unit["id"])
+    # Built before the claim: a provider that can't be built (an admin secret missing from the
+    # configuration) is the executor's fault, not the unit's, so no attempt is spent on it.
+    provider = approved.adapter.build(
+        AdapterContext(
+            setup.state_dir, setup.store, setup.admin_secrets.get(approved.adapter.provider_name)
+        )
+    )
     lease, version = _claim(setup, unit)
     # From here the unit is this attempt's: whatever goes wrong fails it with a reason, so it
     # never waits out its lease holding a claim nobody works.
@@ -110,7 +120,7 @@ def _work(setup: Setup, unit: Mapping[str, Any], approved: Approved) -> bool:
         run = UnitRun(
             rotation=approved.rotation,
             store=setup.store,
-            provider=approved.adapter.build(setup.state_dir),
+            provider=provider,
             attestations=_attestations(setup.client.history(unit_id)),
             record=recorder.record,
             before_step=lambda: _before_step(setup, recorder, approved),

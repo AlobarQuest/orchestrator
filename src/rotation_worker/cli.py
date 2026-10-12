@@ -22,7 +22,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Final
 
-from rotation_worker.adapters import ADAPTERS, fake
+from rotation_worker.adapters import ADAPTERS, AdapterContext, fake
 from rotation_worker.compare import Comparison, report
 from rotation_worker.config import DEFAULT_PATH, Config, ConfigError, load, read_root_token
 from rotation_worker.destinations import DestinationError
@@ -94,6 +94,7 @@ def build_setup(config: Config) -> Setup:
         work_project_id=config.work_project_id,
         state_dir=config.state_dir,
         source_revision=f"rotation-worker@{config.source_revision}",
+        admin_secrets=config.admin_secrets,
     )
 
 
@@ -111,7 +112,8 @@ def seed_canary(config: Config) -> int:
     store = open_store(config)
     existing = store.find(config.work_project_id, CANARY_KEEPER)
     if existing is None:
-        value = ADAPTERS[fake.NAME].build(config.state_dir).mint()
+        context = AdapterContext(config.state_dir, store, admin_secret_id=None)
+        value = ADAPTERS[fake.NAME].build(context).mint()
         existing = store.create(config.work_project_id, CANARY_KEEPER, value)
     print(json.dumps({"secret_id": existing.id}))
     return 0

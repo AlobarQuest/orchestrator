@@ -11,7 +11,8 @@ import os
 import re
 import stat
 import tomllib
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final
 
@@ -38,6 +39,9 @@ class Config:
     root_token_file: Path
     state_dir: Path
     source_revision: str
+    # Each provider's admin secret, by provider name: the BWS UUID an adapter reads when a step
+    # mints or revokes (decision 4). Holds ids only, never a value.
+    admin_secrets: Mapping[str, str] = field(default_factory=dict)
 
     @property
     def mirror_root(self) -> Path:
@@ -55,6 +59,12 @@ def load(path: Path) -> Config:
     bearer = raw.get("bearer_secret_id")
     if bearer is not None and (not isinstance(bearer, str) or not UUID_PATTERN.fullmatch(bearer)):
         raise ConfigError("bearer_secret_id must be a lowercase UUID")
+    admin_secrets = raw.get("admin_secrets", {})
+    if not isinstance(admin_secrets, dict) or not all(
+        isinstance(name, str) and isinstance(uuid, str) and UUID_PATTERN.fullmatch(uuid)
+        for name, uuid in admin_secrets.items()
+    ):
+        raise ConfigError("admin_secrets maps provider names to lowercase UUIDs")
     revision = _string(raw, "source_revision")
     if not REVISION_PATTERN.fullmatch(revision):
         raise ConfigError("source_revision must be 7 to 12 hex characters of the commit")
@@ -67,6 +77,7 @@ def load(path: Path) -> Config:
         root_token_file=Path(_string(raw, "root_token_file")),
         state_dir=Path(_string(raw, "state_dir")),
         source_revision=revision,
+        admin_secrets=dict(admin_secrets),
     )
 
 

@@ -59,6 +59,30 @@ def test_a_malformed_config_is_refused(tmp_path: Path, old: str, new: str) -> No
         load(path)
 
 
+def test_admin_secrets_map_provider_names_to_uuids(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(CONFIG)
+    assert load(path).admin_secrets == {}
+    path.write_text(CONFIG + f'[admin_secrets]\nopenrouter = "{PROJECT}"\n')
+    assert load(path).admin_secrets == {"openrouter": PROJECT}
+
+
+@pytest.mark.parametrize(
+    "table",
+    [
+        '[admin_secrets]\nopenrouter = "not-a-uuid"\n',
+        '[admin_secrets]\nopenrouter = "AAAAAAAA-2222-4222-8222-222222222222"\n',
+        "[admin_secrets]\nopenrouter = 7\n",
+        'admin_secrets = "openrouter"\n',
+    ],
+)
+def test_a_malformed_admin_secret_is_refused(tmp_path: Path, table: str) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(CONFIG + table)
+    with pytest.raises(ConfigError, match="admin_secrets"):
+        load(path)
+
+
 def test_an_unreadable_config_is_refused(tmp_path: Path) -> None:
     with pytest.raises(ConfigError):
         load(tmp_path / "absent.toml")

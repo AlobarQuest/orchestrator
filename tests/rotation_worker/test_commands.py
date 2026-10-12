@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from rotation_worker import cli
+from rotation_worker.adapters import AdapterContext
 from rotation_worker.config import Config, ConfigError, load
 from rotation_worker.values import Value
 from tests.rotation_worker.stores import MemoryStore
@@ -67,7 +68,8 @@ def test_seed_canary_creates_the_keeper_once(
     assert json.loads(capsys.readouterr().out)["secret_id"] == first
     assert len(store.secrets) == 1
     keeper = store.read(first)
-    assert cli.ADAPTERS["fake"].build(tmp_path).probe(keeper) == 200
+    context = AdapterContext(tmp_path, store, admin_secret_id=None)
+    assert cli.ADAPTERS["fake"].build(context).probe(keeper) == 200
 
 
 def test_run_needs_the_bearer(tmp_path: Path, store: MemoryStore) -> None:
