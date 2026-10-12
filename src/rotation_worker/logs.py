@@ -43,3 +43,5 @@ def configure() -> None:
     root = logging.getLogger()
     root.handlers = [handler]
     root.setLevel(logging.INFO)
+    # httpx logs every request's URL at info, and an OpenRouter key's URL carries its hash.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
