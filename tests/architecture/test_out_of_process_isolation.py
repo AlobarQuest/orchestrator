@@ -294,7 +294,8 @@ TABLE: dict[str, Row] = {
     # package it reads there. `bitwarden_sdk` is its one added dependency, so values reach BWS
     # in-process rather than in an argument list (decision 3). `estate_clients` is the shared
     # confined transport, and `httpx` its type; `hashlib`, `hmac` and `secrets` fingerprint,
-    # compare and mint values.
+    # compare and mint values; `time` is the OpenRouter adapter's sleep between rechecks of a key it
+    # deleted (ADR-0055 amendment 8).
     "rotation_worker": _row(
         "__future__",
         "argparse",
@@ -316,6 +317,7 @@ TABLE: dict[str, Row] = {
         "stat",
         "subprocess",
         "sys",
+        "time",
         "tomllib",
         "typing",
         "unicodedata",
