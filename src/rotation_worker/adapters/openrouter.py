@@ -10,13 +10,15 @@ ADR-0055 increment 5. The provider facts are amendment 1's, measured in incremen
   exactly 200, and a malformed key, the known-bad control, answers 401 `User not found.`. A model
   that answers anything else (rate-limited, unavailable) is skipped for the next, up to
   `MAX_MODELS_TRIED`; with no determinate answer the probe is indeterminate and the rotation stops.
-* **Probe before revoke** with key-info (`GET /key`). Key-info lags a revoke by up to about
-  a minute, so it can prove the old key live before the revoke, which is the evidence amendment 1
-  keeps, and never that it is dead after.
-* **Inference lags a delete too** (measured 2026-10-13: a deleted key was still accepted about
-  30 seconds later). So a key this provider deleted that still probes live is probed again every
-  `RECHECK_SECONDS` until it is refused or `REVOKE_LAG` has passed (ADR-0055 amendment 8). Any
-  other key is probed once: verify_new never waits.
+* **Probe before revoke** with key-info (`GET /key`). It proves the old key live before the
+  revoke, which is the evidence amendment 1 keeps, and never that it is dead after.
+* **Both endpoints lag a delete, in either order.** Amendment 1 measured key-info answering 200 for
+  up to about a minute after a delete; on 2026-10-13 key-info refused within about 20 seconds while
+  inference accepted the key for about 30. So a key known to be deleted that still probes live is
+  probed again every `RECHECK_SECONDS` until it is refused or `REVOKE_LAG` has passed (ADR-0055
+  amendment 8). A key is known deleted when this provider deleted it, when the provider holds no key
+  at its derived id, or when key-info already refuses it before a revoke. Any other key is probed
+  once: verify_new never waits.
 * **Revoke** by an id derived from the quarantined value and confirmed by the provider: sha256 of
   the value, then `GET /keys/{that hash}` with the management key must answer 200 with the
   same `label` key-info gives for the value. Only then `DELETE`. The id is never taken from
@@ -218,7 +220,11 @@ class OpenRouterProvider:
         return None
 
     def probe_before_revoke(self, value: Value) -> int | None:
-        return self._status("GET", KEY_INFO, value)
+        status = self._status("GET", KEY_INFO, value)
+        if status == 401:
+            # Key-info refuses it, so an earlier attempt deleted it; inference may still lag.
+            self._deleted.add(_key_hash(value))
+        return status
 
     def known_bad(self) -> Value:
         return Value(MALFORMED_KEY)
@@ -234,13 +240,13 @@ class OpenRouterProvider:
         if found.status_code == 404:
             # The provider holds no such key, so inference may only be lagging the delete.
             self._deleted.add(_key_hash(value))
-        if found.status_code == 404 and self._refused_at_inference(value):
-            # An earlier attempt deleted it, and key-info still lags the delete.
-            return (
-                "key-info answered 200 for the old value, but the provider holds no key with the "
-                "id derived from it and inference refuses it beside a refused malformed key: an "
-                "earlier attempt already revoked it"
-            )
+            if self._refused_at_inference(value):
+                # An earlier attempt deleted it, and key-info still lags the delete.
+                return (
+                    "key-info answered 200 for the old value, but the provider holds no key with "
+                    "the id derived from it and inference refuses it beside a refused malformed "
+                    "key: an earlier attempt already revoked it"
+                )
         if found.status_code != 200:
             raise ContractError(
                 f"the provider holds no key with the derived id ({found.status_code})"

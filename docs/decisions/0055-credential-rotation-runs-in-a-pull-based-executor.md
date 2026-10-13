@@ -883,11 +883,16 @@ refused it within about 20 seconds, the reverse of amendment 1's measurement tha
 The increment 5 report has the timeline.
 
 Devon chose a retry in the adapter (2026-10-13), not a contract change. The OpenRouter adapter
-remembers the keys it deleted, and the keys whose derived id the provider no longer holds. When one
-of those still probes live, the adapter probes it again every 10 seconds until it is refused or
-two minutes have passed (`REVOKE_LAG`, four times the measured lag). Any other key is probed once,
-so verify_new never waits. The contract still decides: a key still live after the bound fails the
-step as before.
+treats a key as known deleted when it deleted the key itself, when the provider holds no key at the
+key's derived id, or when key-info already refuses the key before a revoke. The last case covers a
+later attempt: it runs in a new process, and with key-info refusing first, retire_old files
+"already refused" without revoking. When a known-deleted key still probes live, the adapter probes
+it again every 10 seconds until it is refused or two minutes have passed (`REVOKE_LAG`, four times
+the measured lag). Any other key is probed once, so verify_new never waits. The contract still
+decides: a key still live after the bound fails the step as before.
 
-This replaces amendment 5's statement that the adapter has no fallback for confirm-dead. A step
-now takes up to two minutes longer, well inside a rotation claim's lease.
+Amendment 5's statement that the adapter has no fallback still holds for an indeterminate probe
+(no `:free` model answering): the recheck stops on any answer but 200. What changes is only that a
+deleted key still answering 200 is asked again. A recheck makes confirm_dead take up to two minutes
+longer, well inside a rotation claim's lease, and the known-bad control's answer can then be up to
+two minutes older than the old key's.
