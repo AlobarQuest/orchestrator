@@ -10,9 +10,15 @@ ADR-0055 increment 5. The provider facts are amendment 1's, measured in incremen
   exactly 200, and a malformed key, the known-bad control, answers 401 `User not found.`. A model
   that answers anything else (rate-limited, unavailable) is skipped for the next, up to
   `MAX_MODELS_TRIED`; with no determinate answer the probe is indeterminate and the rotation stops.
-* **Probe before revoke** with key-info (`GET /key`). Key-info lags a revoke by up to about
-  a minute, so it can prove the old key live before the revoke, which is the evidence amendment 1
-  keeps, and never that it is dead after.
+* **Probe before revoke** with key-info (`GET /key`). It proves the old key live before the
+  revoke, which is the evidence amendment 1 keeps, and never that it is dead after.
+* **Both endpoints lag a delete, in either order.** Amendment 1 measured key-info answering 200 for
+  up to about a minute after a delete; on 2026-10-13 key-info refused within about 20 seconds while
+  inference accepted the key for about 30. So a key known to be deleted that still probes live is
+  probed again every `RECHECK_SECONDS` until it is refused or `REVOKE_LAG` has passed (ADR-0055
+  amendment 8). A key is known deleted when this provider deleted it, when the provider holds no key
+  at its derived id, or when key-info already refuses it before a revoke. Any other key is probed
+  once: verify_new never waits.
 * **Revoke** by an id derived from the quarantined value and confirmed by the provider: sha256 of
   the value, then `GET /keys/{that hash}` with the management key must answer 200 with the
   same `label` key-info gives for the value. Only then `DELETE`. The id is never taken from
@@ -28,6 +34,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import re
+import time
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any, Final
@@ -59,6 +66,9 @@ MALFORMED_KEY: Final = KEY_PREFIX + "0" * 64
 CREDIT_LIMIT: Final = 5
 LIFETIME: Final = timedelta(days=400)
 MAX_MODELS_TRIED: Final = 3
+# Inference kept accepting a deleted key for about 30 seconds on 2026-10-13; four times that.
+REVOKE_LAG: Final = timedelta(minutes=2)
+RECHECK_SECONDS: Final = 10.0
 DETERMINATE: Final = frozenset({200, 401})
 
 KEY_INFO: Final = "/key"
@@ -113,6 +123,7 @@ def build(
     management_key_id: str | None,
     transport: httpx.BaseTransport | None = None,
     clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    sleep: Callable[[float], None] = time.sleep,
 ) -> OpenRouterProvider:
     if management_key_id is None:
         raise ContractError("the openrouter adapter needs its management key's id in admin_secrets")
@@ -125,7 +136,7 @@ def build(
         refuse=_refuse,
         transport=transport,
     )
-    return OpenRouterProvider(client, store, management_key_id, clock)
+    return OpenRouterProvider(client, store, management_key_id, clock, sleep)
 
 
 def _key_hash(value: Value) -> str:
@@ -148,12 +159,16 @@ class OpenRouterProvider:
         store: SecretStore,
         management_key_id: str,
         clock: Callable[[], datetime],
+        sleep: Callable[[float], None],
     ) -> None:
         self._client = client
         self._store = store
         self._management_key_id = management_key_id
         self._clock = clock
+        self._sleep = sleep
         self._free_models: list[str] | None = None
+        # Ids of the keys this provider deleted, so a probe can wait out inference's lag.
+        self._deleted: set[str] = set()
 
     # ---- the contract's provider ------------------------------------------------------------
 
@@ -184,6 +199,15 @@ class OpenRouterProvider:
         return value
 
     def probe(self, value: Value) -> int | None:
+        status = self._probe_once(value)
+        if status == 200 and _key_hash(value) in self._deleted:
+            deadline = self._clock() + REVOKE_LAG
+            while status == 200 and self._clock() < deadline:
+                self._sleep(RECHECK_SECONDS)
+                status = self._probe_once(value)
+        return status
+
+    def _probe_once(self, value: Value) -> int | None:
         for model in self._models()[:MAX_MODELS_TRIED]:
             body = {
                 "model": model,
@@ -196,7 +220,11 @@ class OpenRouterProvider:
         return None
 
     def probe_before_revoke(self, value: Value) -> int | None:
-        return self._status("GET", KEY_INFO, value)
+        status = self._status("GET", KEY_INFO, value)
+        if status == 401:
+            # Key-info refuses it, so an earlier attempt deleted it; inference may still lag.
+            self._deleted.add(_key_hash(value))
+        return status
 
     def known_bad(self) -> Value:
         return Value(MALFORMED_KEY)
@@ -209,13 +237,16 @@ class OpenRouterProvider:
         path = f"{KEYS}/{_key_hash(value)}"
         management = self._management()
         found = self._send("GET", path, management, "looking up the derived id")
-        if found.status_code == 404 and self._refused_at_inference(value):
-            # An earlier attempt deleted it, and key-info still lags the delete.
-            return (
-                "key-info answered 200 for the old value, but the provider holds no key with the "
-                "id derived from it and inference refuses it beside a refused malformed key: an "
-                "earlier attempt already revoked it"
-            )
+        if found.status_code == 404:
+            # The provider holds no such key, so inference may only be lagging the delete.
+            self._deleted.add(_key_hash(value))
+            if self._refused_at_inference(value):
+                # An earlier attempt deleted it, and key-info still lags the delete.
+                return (
+                    "key-info answered 200 for the old value, but the provider holds no key with "
+                    "the id derived from it and inference refuses it beside a refused malformed "
+                    "key: an earlier attempt already revoked it"
+                )
         if found.status_code != 200:
             raise ContractError(
                 f"the provider holds no key with the derived id ({found.status_code})"
@@ -225,6 +256,7 @@ class OpenRouterProvider:
         deleted = self._send("DELETE", path, management, "deleting")
         if deleted.status_code != 200:
             raise ContractError(f"deleting the old key answered {deleted.status_code}")
+        self._deleted.add(_key_hash(value))
         return (
             "key-info answered 200 for the old value; the provider confirmed the id derived "
             "from it (same label) and deleted that key"
