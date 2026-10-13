@@ -18,8 +18,8 @@ ADR-0055 increment 5. The provider facts are amendment 1's, measured in incremen
   same `label` key-info gives for the value. Only then `DELETE`. The id is never taken from
   evidence or from the create response, and a label alone never picks a key (T8).
 
-The management key is account-wide (a provider limit). It lives in `Rotation / OpenRouter`, which
-only the executor's root reads, and is read from BWS by UUID only when a step mints or revokes.
+The management key is account-wide (a provider limit). It lives in `Rotation / Admin`, which only
+the executor's root reads, and is read from BWS by UUID only when a step mints or revokes.
 Paths are relative to `BASE_URL`, OpenRouter's API root.
 """
 
