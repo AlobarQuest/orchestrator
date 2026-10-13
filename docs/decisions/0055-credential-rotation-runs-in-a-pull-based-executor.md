@@ -873,3 +873,21 @@ he added two, so an exposure rotation's record shows six:
 
 Automatic disable or revoke stays out (decision 6). Increment 5 is a requested rotation, not an
 exposure, so these factors don't apply to its run.
+
+## Amendment 8 — Confirm-dead waits out OpenRouter's inference lag (2026-10-13)
+
+Increment 5's production run deleted the old key at 15:38:33 UTC, and confirm_dead probed it three
+seconds later. OpenRouter's completion endpoint still accepted it, so the unit failed, and a requeue
+was needed. The key was refused by 15:39:09, beside a malformed key refused throughout. key-info
+refused it within about 20 seconds, the reverse of amendment 1's measurement that key-info lags.
+The increment 5 report has the timeline.
+
+Devon chose a retry in the adapter (2026-10-13), not a contract change. The OpenRouter adapter
+remembers the keys it deleted, and the keys whose derived id the provider no longer holds. When one
+of those still probes live, the adapter probes it again every 10 seconds until it is refused or
+two minutes have passed (`REVOKE_LAG`, four times the measured lag). Any other key is probed once,
+so verify_new never waits. The contract still decides: a key still live after the bound fails the
+step as before.
+
+This replaces amendment 5's statement that the adapter has no fallback for confirm-dead. A step
+now takes up to two minutes longer, well inside a rotation claim's lease.
