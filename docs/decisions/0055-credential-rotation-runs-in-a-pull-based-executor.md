@@ -158,17 +158,18 @@ The contract enforces these invariants for every adapter:
 
 ### 4. Where credentials live, and what the root can reach
 
-- **Each rotated credential's keeper moves to its own keeper project** (`Rotation / Keeper /
-  <credential>`), readable by exactly the machine accounts that consume that credential. A shared
-  keeper project would give every consumer account every rotated credential, undoing the
-  narrowing `sds-operator` has today. Credentials that share consumer accounts may share a project.
+- **Every rotated credential's keeper moves to one keeper project, `Rotation / Keepers`**, which
+  only the root has access to. Each consumer account gets a direct read grant on its own keeper
+  secrets, so it reads exactly the credentials it consumes and nothing else in the project
+  (amendment 6). A shared keeper project with project-wide read would give every consumer account
+  every rotated credential, undoing the narrowing `sds-operator` has today.
 - **Quarantine and staging secrets live in `Rotation / Work`**, which no consumer account can read.
-- **Each provider's admin credential lives in its own project** (`Rotation / <provider>`), the
+- **Every provider's admin credential lives in one project, `Rotation / Admin`** (amendment 6), the
   executor's WORKER bearer in `Rotation / Executor`, and the read-only Healthchecks API key in
   `Rotation / Healthchecks`. The executor fetches only the one admin secret
   the claimed unit's adapter needs, by UUID, when it needs it.
-- **The executor's BWS machine account is the root.** It has write on the keeper projects and
-  `Rotation / Work`, and read on `Rotation / <provider>`, `Rotation / Executor` and
+- **The executor's BWS machine account is the root.** It has write on `Rotation / Keepers` and
+  `Rotation / Work`, and read on `Rotation / Admin`, `Rotation / Executor` and
   `Rotation / Healthchecks`, and nothing else: not `Ops / Platform`, not `SDS Operator`. Its token lives only in the VM.
 - **Before a keeper moves, each consumer account is proven to read it in its new project** (with a
   canary secret: amendment 1) with only `PATH` and `HOME` set, and every repository's `.bws-secrets.toml` that names the secret is updated
@@ -303,13 +304,13 @@ exception, and Devon accepts these with this ADR.
 
 | Asset | Where it lives | Who can read it | Scope | Rotated by |
 |---|---|---|---|---|
-| Executor BWS token (**root**) | The VM only | The executor; anything with root in the VM | Write on the keeper projects and `Rotation / Work`; read on `Rotation / <provider>`, `Rotation / Executor` and `Rotation / Healthchecks` | Devon, by hand |
-| OpenRouter management key | `Rotation / OpenRouter` | The root | Account-wide, unscoped (provider limit) | Devon, by hand |
+| Executor BWS token (**root**) | The VM only | The executor; anything with root in the VM | Write on `Rotation / Keepers` and `Rotation / Work`; read on `Rotation / Admin`, `Rotation / Executor` and `Rotation / Healthchecks` (amendment 6) | Devon, by hand |
+| OpenRouter management key | `Rotation / Admin` | The root | Account-wide, unscoped (provider limit) | Devon, by hand |
 | Rotation GitHub App private key (increment 7; amendment 1) | `Rotation / GitHub` | The root | Mints installation tokens with Secrets: write (and Metadata: read) on only the repositories where the App is installed: those holding a registered Actions-secret copy | Devon, by hand |
 | Production Coolify token (amendment 1) | `Rotation / Coolify` | The root | Team-wide `read`, `write` and `deploy`, no `read:sensitive`: env writes, restarts, creating and deleting applications, projects, servers, databases and SSH keys; can run any image, so probably reaches secrets from a container | Devon, by hand |
 | Read-only Healthchecks API key | `Rotation / Healthchecks` | The root | Read check status only | Devon, by hand |
 | Executor WORKER bearer | `Rotation / Executor`, readable by the root | The root | Claim and file evidence on rotation units only (decision 1) | Devon, by hand |
-| Rotated credentials and values in flight | Per-credential keeper projects; `Rotation / Work`; the executor's memory | The root, and each credential's consumers' accounts | That credential's scope | The executor |
+| Rotated credentials and values in flight | `Rotation / Keepers`; `Rotation / Work`; the executor's memory | The root, and each credential's consumers' accounts, by direct grant on that secret | That credential's scope | The executor |
 
 ### Threats
 
@@ -443,8 +444,8 @@ Gate graduations (decision 10) are decided per class after that class's first ro
 - Every human act is a dependency Devon resolves at `/review`. Until the Coolify token exists and the
   gate graduations, a hosted rotation still has several of them; the design removes the human
   mechanics where a provider has an API, not the human decisions.
-- About a dozen BWS projects replace one shared keeper project. That is configuration, not code,
-  and it is what keeps a consumer account from reading every rotated credential.
+- Direct secret grants, not projects, keep a consumer account from reading every rotated
+  credential. A new provider or credential needs no new project (amendment 6).
 - Moving to a VPS, or to customer-run executors, changes where the VM runs, not the design.
 
 ## Review findings and how they're resolved
@@ -818,3 +819,38 @@ fallback: when no `:free` model answers a completion determinately, the probe is
 the unit fails, and a requeue retries it. A fallback would need a deadline primitive the contract
 doesn't have, and the requeue already recovers the same case.
 
+## Amendment 6 — Shared rotation projects with direct secret grants (2026-10-13)
+
+Decision 4 gave each rotated credential its own keeper project and each provider its own admin
+project. Before creating the first of them, Devon asked whether every new provider would need its
+own projects. It doesn't: Secrets Manager can grant a machine account read, or read and write, on a
+single secret, in addition to grants on projects (Devon confirmed both levels in the console). A
+secret belongs to one project at a time, so a keeper still moves out of `Ops / Platform`.
+
+### What changes
+
+- **One keeper project, `Rotation / Keepers`.** Only the root has access, with read and write.
+  Each consumer account gets a direct **Can read** grant on its own keeper secrets. Review finding
+  C's requirement holds: a consumer account reads exactly the credentials it consumes.
+- **One admin project, `Rotation / Admin`.** Only the root reads it. A project per provider
+  narrowed nothing: the root read every one of them, so a compromised root reaches every admin key
+  either way. "Fetch only the one admin secret the unit needs" is the executor's code, not a BWS
+  boundary, and it's unchanged.
+- **`Rotation / Work`, `Rotation / Executor` and `Rotation / Healthchecks` are unchanged.**
+
+### What a new provider costs
+
+The provider's admin key, created by hand in its console and stored in `Rotation / Admin`; then,
+once per credential, moving its keeper into `Rotation / Keepers` and giving each consumer account a
+direct read grant on it. No new project and no new project grant.
+
+### What is proven, and what isn't
+
+- **Proven from the VM, 2026-10-13** (fresh login, only `PATH` and `HOME` set): the root lists
+  both projects, reads the OpenRouter management key in `Rotation / Admin` (`GET /keys` answers 200
+  for it and 401 for a malformed key), and creates, writes, reads back and deletes a canary secret
+  in `Rotation / Keepers`.
+- **Not yet proven: a direct grant.** `openrouter-generic` has no consumer account, so increment 5
+  uses none. The first credential that has one proves, with a canary and an empty `HOME`, that a
+  directly granted account reads its secret and can't read a second secret in the same project,
+  before its keeper moves.

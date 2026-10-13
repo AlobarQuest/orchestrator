@@ -101,7 +101,7 @@ OrbStack machines, but not the Mac.
    source_revision = "<the first 12 characters of the installed commit>"
 
    [admin_secrets]
-   openrouter = "<the OpenRouter management key's secret id, in Rotation / OpenRouter>"
+   openrouter = "<the OpenRouter management key's secret id, in Rotation / Admin>"
    ```
 
    `admin_secrets` maps a provider name to the BWS secret id of that provider's admin
@@ -130,8 +130,8 @@ executor. None is ever printed, passed as an argument, or kept on the Mac.
 | The root: the `rotation-executor` BWS machine account's access token | `/etc/rotation-worker/root-token` in the VM, owner `rotation`, mode `0400` | The executor, to log in to BWS |
 | The executor's WORKER bearer | BWS secret `rotation-executor WORKER bearer` in `Rotation / Executor`; its hash in the orchestrator's `ORCHESTRATOR_M2M_CREDENTIALS` under key `rotation-executor-1`, agent `rotation-executor` | The executor, from BWS at each pass |
 | The read-only Healthchecks API key | BWS, in `Rotation / Healthchecks` | No reader until an adapter verifies a `runtime-fetch` consumer by its check |
-| The OpenRouter management key | BWS secret `openrouter management key` in `Rotation / OpenRouter`; its id in `config.toml`'s `admin_secrets` | The executor, from BWS, only while an `openrouter` unit mints or revokes |
-| The BWS projects | Bitwarden Secrets Manager | The root: write on `Rotation / Work` and each `Rotation / Keeper / <credential>`, read on `Rotation / Executor`, `Rotation / Healthchecks` and `Rotation / OpenRouter`, nothing else |
+| The OpenRouter management key | BWS secret `openrouter management key` in `Rotation / Admin`; its id in `config.toml`'s `admin_secrets` | The executor, from BWS, only while an `openrouter` unit mints or revokes |
+| The BWS projects | Bitwarden Secrets Manager | The root: write on `Rotation / Work` and `Rotation / Keepers`, read on `Rotation / Admin`, `Rotation / Executor` and `Rotation / Healthchecks`, nothing else. A consumer account: a direct read grant on each keeper secret it consumes, nothing else in `Rotation / Keepers` |
 
 ### Create them
 
@@ -161,13 +161,29 @@ executor. None is ever printed, passed as an argument, or kept on the Mac.
       `ORCHESTRATOR_M2M_ROLES` entry: an unpromoted credential is a WORKER.
 5. In Healthchecks, under the project's **Settings**, create a read-only API key, and store it in
    BWS as a secret in `Rotation / Healthchecks`, from the console.
-6. For OpenRouter: create the project `Rotation / OpenRouter` and give the machine account
-   **Can read** on it. In the OpenRouter console, create a management key with no expiry; the key is
-   account-wide, a provider limit. Store it in BWS as the secret `openrouter management key` in
-   `Rotation / OpenRouter`, straight from the OpenRouter page to the Bitwarden page, then clear
-   the clipboard with `pbcopy < /dev/null`. Put the secret's id in `config.toml` under
-   `[admin_secrets]` as `openrouter`, and confirm the root reads it from the VM by listing its
-   projects.
+6. Create the projects `Rotation / Keepers` and `Rotation / Admin`. On the machine account's
+   **Projects** tab, give it **Can read, write** on `Rotation / Keepers` and **Can read** on
+   `Rotation / Admin`. Every rotated credential's keeper and every provider's admin key go in these
+   two, so a new provider needs no new project (ADR-0055 amendment 6).
+7. For each provider whose adapter needs an admin credential, create it in the provider's console
+   and store it in BWS in `Rotation / Admin`, straight from the provider's page to the Bitwarden
+   page, then clear the clipboard with `pbcopy < /dev/null`. Put the secret's id in `config.toml`
+   under `[admin_secrets]`, keyed by the adapter's name, and confirm the root reads it from the VM.
+   For OpenRouter, that's a management key with no expiry (account-wide, a provider limit), stored
+   as the secret `openrouter management key` under the key `openrouter`.
+
+### Move a keeper
+
+Before a credential's first rotation, its keeper secret moves from wherever it lives into
+`Rotation / Keepers`. A move keeps the secret id, so no consumer's `.bws-secrets.toml` changes.
+
+1. For each consumer account, in the secret's **Machine accounts** tab, give it a direct
+   **Can read** grant. Prove with a canary first, with an empty `HOME`: the account reads a
+   directly granted secret in `Rotation / Keepers` and can't read a second one there.
+2. Move the secret to `Rotation / Keepers` in the console.
+3. Confirm from the VM that the root reads it and that its fingerprint is the registry's, and that
+   each consumer account still reads it with only `PATH` and `HOME` set. Accounts that read it
+   only through its old project lose access, which is the point of the move.
 
 ### Rotate them by hand
 
