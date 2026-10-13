@@ -13,7 +13,7 @@ from typing import Any
 import pytest
 
 from rotation_worker.config import ConfigError, load, read_root_token
-from rotation_worker.logs import JsonFormatter
+from rotation_worker.logs import JsonFormatter, configure
 from rotation_worker.secret_store import BwsStore, StoreError
 from rotation_worker.values import Value
 
@@ -236,3 +236,8 @@ def test_a_value_json_would_escape_is_still_scrubbed() -> None:
     line = JsonFormatter().format(record)
     assert json.loads(line)["reason"] == "probe said [redacted]"
     assert json.dumps(secret.reveal())[1:-1] not in line
+
+
+def test_request_urls_are_not_logged() -> None:
+    configure()
+    assert not logging.getLogger("httpx").isEnabledFor(logging.INFO)
