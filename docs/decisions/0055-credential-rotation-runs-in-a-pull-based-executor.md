@@ -199,7 +199,9 @@ issues, commits or tasks never triggers anything, directly or through an agent's
 and how fast to contain depends on factors the finding doesn't carry. When Devon approves an
 exposure rotation, the record shows, at minimum: where the value was exposed (the scanner's exposure
 record), every consumer and whether it is hosted, whether the provider can disable reversibly, and
-any credential that shares the value. Devon names further factors before increment 5.
+any credential that shares the value. Devon added two more on 2026-10-13 (amendment 7): any use of
+the credential since the exposure, as far as the provider reports it, and whether the credential
+carries a spending limit or an expiry.
 
 Credentials that share one value (the observer and drift-reporter bearers) are rotated together.
 An exposure of either is an exposure of both.
@@ -854,3 +856,20 @@ direct read grant on it. No new project and no new project grant.
   uses none. The first credential that has one proves, with a canary and an empty `HOME`, that a
   directly granted account reads its secret and can't read a second secret in the same project,
   before its keeper moves.
+
+## Amendment 7 — The exposure-response factors (2026-10-13)
+
+Decision 6 left Devon to name further exposure-response factors before increment 5. On 2026-10-13
+he added two, so an exposure rotation's record shows six:
+
+1. Where the value was exposed (the scanner's exposure record).
+2. Every consumer, and whether it is hosted.
+3. Whether the provider can disable reversibly.
+4. Any credential that shares the value.
+5. **Any use since the exposure**, as far as the provider reports it (for OpenRouter, key-info's
+   usage). Use Devon didn't make means containing a misuse, not preventing one.
+6. **Whether the credential carries a spending limit or an expiry.** A capped key bounds what an
+   exposure can cost; an unlimited one doesn't.
+
+Automatic disable or revoke stays out (decision 6). Increment 5 is a requested rotation, not an
+exposure, so these factors don't apply to its run.
