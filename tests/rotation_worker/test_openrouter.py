@@ -3,7 +3,8 @@
 The fake answers as increment 2 measured OpenRouter answering (`docs/superpowers/plans/
 2026-10-09-rotation-increment-2-measurement-log.md`): 401 `User not found.` for a key it doesn't
 hold, 400 for an `expires_at` in the `+00:00` form, a key's hash equal to sha256 of its value, and
-key-info still answering 200 for a deleted key while inference refuses it at once.
+key-info still answering 200 for a deleted key. Inference refuses a deleted key at once unless
+`inference_lag` says how many more completions it still accepts (measured 2026-10-13).
 """
 
 from __future__ import annotations
@@ -11,7 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import secrets
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -62,6 +63,9 @@ class FakeOpenRouter:
         self.delete_status = 200
         self.create_status = 201
         self.stored_limit: object = "as sent"
+        # How many completions a deleted key still passes, and the count left per deleted key.
+        self.inference_lag = 0
+        self.accepted_after_delete: dict[str, int] = {}
 
     def add(self, label: str = "sk-or-v1-abc...xyz") -> Value:
         key = _new_key()
@@ -85,10 +89,13 @@ class FakeOpenRouter:
         if request.method == "POST" and path == "/chat/completions":
             model = json.loads(request.content)["model"]
             self.asked_models.append(model)
-            if _hash(bearer) not in self.keys:
+            hashed = _hash(bearer)
+            if hashed not in self.keys and self.accepted_after_delete.get(hashed, 0) <= 0:
                 return _not_found()
             if model in self.busy:
                 return httpx.Response(429, json={"error": {"message": "rate limited"}})
+            if hashed not in self.keys:
+                self.accepted_after_delete[hashed] -= 1
             return httpx.Response(200, json={"choices": [{"message": {"content": "OK"}}]})
         if bearer != self.management:
             return _not_found()
@@ -103,6 +110,7 @@ class FakeOpenRouter:
             if self.delete_status != 200:
                 return httpx.Response(self.delete_status)
             self.lagging[hashed] = self.keys.pop(hashed)
+            self.accepted_after_delete[hashed] = self.inference_lag
             return httpx.Response(200, json={"deleted": True})
         return httpx.Response(405)
 
@@ -152,6 +160,8 @@ class Rig:
         self.server = FakeOpenRouter()
         self.store = CountingStore()
         self.management_id = self.store.put(ADMIN, "management", Value(self.server.management))
+        self.now = NOW
+        self.sleeps: list[float] = []
         self.provider = self.build()
 
     def build(self, transport: httpx.BaseTransport | None = None) -> adapter.OpenRouterProvider:
@@ -159,8 +169,13 @@ class Rig:
             self.store,
             self.management_id,
             transport=transport or httpx.MockTransport(self.server.handle),
-            clock=lambda: NOW,
+            clock=lambda: self.now,
+            sleep=self.sleep,
         )
+
+    def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+        self.now += timedelta(seconds=seconds)
 
     def management_reads(self) -> int:
         return self.store.reads.count(self.management_id)
@@ -174,7 +189,11 @@ def rig() -> Rig:
 # ---- the plan, end to end through the contract ------------------------------------------------
 
 
-def test_the_openrouter_plan_rotates_end_to_end_while_key_info_lags(rig: Rig) -> None:
+@pytest.mark.parametrize("inference_lag", [0, 2])
+def test_the_openrouter_plan_rotates_end_to_end_while_key_info_lags(
+    rig: Rig, inference_lag: int
+) -> None:
+    rig.server.inference_lag = inference_lag
     original = rig.server.add()
     keeper = rig.store.put(WORK, "keeper", original)
     rotation = Rotation(
@@ -206,6 +225,9 @@ def test_the_openrouter_plan_rotates_end_to_end_while_key_info_lags(rig: Rig) ->
     # Key-info still answers 200 for the deleted key, yet confirm-dead proved it dead: it asks
     # inference, which refuses at once.
     assert _hash(original.reveal()) in rig.server.lagging
+    # Confirm-dead waited out inference's lag in the same attempt, one recheck per completion the
+    # deleted key still passed.
+    assert rig.sleeps == [adapter.RECHECK_SECONDS] * inference_lag
     assert rig.store.secrets.keys() == {keeper, rig.management_id}
     by_kind = {evidence.step: evidence for _, evidence in filed}
     retire = by_kind["retire_old"]
@@ -493,3 +515,37 @@ def test_the_client_may_send_only_what_the_adapter_needs(
     method: str, path: str, allowed: bool
 ) -> None:
     assert adapter.permits(method, path) is allowed
+
+
+# ---- inference's lag after a delete (ADR-0055 amendment 8) -------------------------------------
+
+
+def test_a_live_key_this_provider_never_deleted_is_probed_once(rig: Rig) -> None:
+    assert rig.provider.probe(rig.server.add()) == 200
+    assert rig.sleeps == []
+
+
+def test_a_deleted_key_still_accepted_is_rechecked_until_refused(rig: Rig) -> None:
+    rig.server.inference_lag = 3
+    old = rig.server.add()
+    rig.provider.revoke(old)
+    assert rig.provider.probe(old) == 401
+    assert rig.sleeps == [adapter.RECHECK_SECONDS] * 3
+
+
+def test_a_deleted_key_never_refused_stops_rechecking_at_the_lag_bound(rig: Rig) -> None:
+    rig.server.inference_lag = 1000
+    old = rig.server.add()
+    rig.provider.revoke(old)
+    assert rig.provider.probe(old) == 200
+    assert sum(rig.sleeps) == adapter.REVOKE_LAG.total_seconds()
+
+
+def test_a_new_attempt_waits_out_the_lag_before_filing_already_revoked(rig: Rig) -> None:
+    rig.server.inference_lag = 2
+    old = rig.server.add()
+    rig.provider.revoke(old)
+    # A later attempt is a new process: it never saw the delete, and key-info still answers 200.
+    note = rig.build().revoke(old)
+    assert "already revoked" in note
+    assert rig.sleeps == [adapter.RECHECK_SECONDS] * 2
