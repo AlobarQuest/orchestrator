@@ -896,3 +896,48 @@ Amendment 5's statement that the adapter has no fallback still holds for an inde
 deleted key still answering 200 is asked again. A recheck makes confirm_dead take up to two minutes
 longer, well inside a rotation claim's lease, and the known-bad control's answer can then be up to
 two minutes older than the old key's.
+
+## Amendment 9 — Increment 6 decisions (2026-10-14)
+
+Increment 6's plan (`docs/superpowers/plans/2026-10-14-rotation-increment-6-plan.md`) came from
+three read-only recon passes and put four decisions to Devon on 2026-10-14.
+
+### Devon's answers
+
+1. **The operator bearer is the first self-issued bearer rotated.** It has no scheduled reader and
+   shares no value. Its reader is `sds-operator`, the BWS account interactive sessions use, so
+   moving its keeper to `Rotation / Keepers` gives that account a direct read grant on that one
+   secret. Increment 5's handoff said no session identity gets a grant in a `Rotation /` project;
+   Devon allowed this one, which amendment 6's per-secret grants keep to the one value that
+   account already reads.
+2. **The executor reads the credentials setting from the orchestrator**, through
+   `GET /api/v1/m2m-identities`, which returns each loaded key id's agent id, hash and optional
+   `previous`, and refuses every caller but the configured executor. Devon chose it over a
+   hashes-only copy in BWS: a copy goes stale silently when someone edits the variable by hand (for
+   example rotating SYSTEM or VERIFIER), and the executor's next write would then make a retired
+   bearer valid again. The route also turns amendment 1's blind Coolify write into a checked one:
+   after the restart, the executor reads the loaded hashes and confirms its write took effect.
+   The route shows what the process loaded, not what Coolify stores, so a hand edit to the
+   variable is followed by a restart at once (`docs/operations/credentials.md`); an unrestarted
+   hand edit would be overwritten.
+3. **The observer and drift-reporter bearers are split** into two values, in one coordinated
+   rotation that writes both entries in one setting. After that rotation each rotates alone, and
+   decision 6's "rotated together" no longer applies to them.
+4. **Devon consented to the session driving `/review` and the change record** for the operator
+   bearer's first rotation only. Decision 10's default is unchanged.
+
+### What the plan settles without a decision
+
+- **The executor reaches production Coolify over the tailnet** (`100.112.188.96:8000`), which
+  WireGuard encrypts. Production Coolify's API also answers plain HTTP on its public address and
+  domain, so a token sent that way crosses the internet unencrypted. That is a separate finding,
+  outside this ADR.
+- **Evidence carries a fingerprint of the generated setting**, not the setting. Its hashes are
+  64-character runs, which rotation evidence refuses. This departs from decision 7's "records it as
+  evidence".
+- **The check that no dispatched run is live excludes rotation units.** The deploy script's check
+  refuses on any unit in a live state, which would include the executor's own claim.
+
+Two decisions stay open: whether Healthchecks reads are built before the observer and
+drift-reporter rotation, and the shape of change-manager's overlap. Neither blocks the operator
+bearer.
