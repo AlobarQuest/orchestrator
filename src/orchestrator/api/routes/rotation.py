@@ -2,13 +2,17 @@ from fastapi import APIRouter, Request
 
 from orchestrator.api.dependencies import ActorDep, AuthConfig, SettingsDep
 from orchestrator.api.routes.common import ERROR_RESPONSES
-from orchestrator.api.schemas.rotation import M2MIdentityResponse, PreviousHashResponse
+from orchestrator.api.schemas.rotation import M2MIdentityResponse
 from orchestrator.errors import DomainError
 
 router = APIRouter(prefix="/api/v1", responses=ERROR_RESPONSES)
 
 
-@router.get("/m2m-identities", response_model=dict[str, M2MIdentityResponse])
+@router.get(
+    "/m2m-identities",
+    response_model=dict[str, M2MIdentityResponse],
+    response_model_exclude_none=True,
+)
 def m2m_identities(request: Request, actor: ActorDep, settings: SettingsDep) -> object:
     """The machine identities this process loaded: key ids, agent ids and bearer hashes.
 
@@ -27,17 +31,6 @@ def m2m_identities(request: Request, actor: ActorDep, settings: SettingsDep) -> 
     # An authenticated actor implies `get_actor` found this configuration.
     config: AuthConfig = request.app.state.auth_config
     return {
-        key: M2MIdentityResponse(
-            agent_id=credential.agent_id,
-            token_hash=credential.token_hash,
-            previous=(
-                None
-                if credential.previous is None
-                else PreviousHashResponse(
-                    token_hash=credential.previous.token_hash,
-                    until=credential.previous.until,
-                )
-            ),
-        )
+        key: M2MIdentityResponse.model_validate(credential)
         for key, credential in config.m2m_credentials.items()
     }
