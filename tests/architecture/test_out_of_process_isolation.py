@@ -295,7 +295,9 @@ TABLE: dict[str, Row] = {
     # in-process rather than in an argument list (decision 3). `estate_clients` is the shared
     # confined transport, and `httpx` its type; `hashlib`, `hmac` and `secrets` fingerprint,
     # compare and mint values; `time` is the OpenRouter adapter's sleep between rechecks of a key it
-    # deleted (ADR-0055 amendment 8).
+    # deleted (ADR-0055 amendment 8). `ipaddress` and `urllib` (its URL parser only) let the
+    # Coolify client send its token over plain HTTP to a tailnet address and nowhere else
+    # (amendment 9).
     "rotation_worker": _row(
         "__future__",
         "argparse",
@@ -308,6 +310,7 @@ TABLE: dict[str, Row] = {
         "hashlib",
         "hmac",
         "httpx",
+        "ipaddress",
         "json",
         "logging",
         "os",
@@ -321,6 +324,7 @@ TABLE: dict[str, Row] = {
         "tomllib",
         "typing",
         "unicodedata",
+        "urllib",
         "uuid",
         "yaml",
         no_sibling_lanes=True,

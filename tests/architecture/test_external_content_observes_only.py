@@ -314,7 +314,13 @@ CLASSIFICATION: dict[str, Row] = {
             }
         ),
         foreign={
-            "https://openrouter.ai/api/v1": "OpenRouter's API root (ADR-0055 increment 5 adapter)"
+            "https://openrouter.ai/api/v1": "OpenRouter's API root (ADR-0055 increment 5 adapter)",
+            "/api/v1/applications/{}/envs": (
+                "Coolify's env write for the one approved application (ADR-0055 amendment 9)"
+            ),
+            "/api/v1/applications/{}/restart": (
+                "Coolify's restart of the one approved application (ADR-0055 amendment 9)"
+            ),
         },
     ),
     "change_proposer": Row(

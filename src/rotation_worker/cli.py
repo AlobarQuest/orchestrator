@@ -95,6 +95,8 @@ def build_setup(config: Config) -> Setup:
         state_dir=config.state_dir,
         source_revision=f"rotation-worker@{config.source_revision}",
         admin_secrets=config.admin_secrets,
+        orchestrator_url=config.orchestrator_url,
+        coolify_url=config.coolify_url,
     )
 
 

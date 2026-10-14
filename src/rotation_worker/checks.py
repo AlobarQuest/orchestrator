@@ -23,10 +23,12 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Final
 
+from rotation_worker import envelope
 from rotation_worker.adapters import ADAPTERS, Adapter
 from rotation_worker.canonical import CanonicalError, package_hash
 from rotation_worker.contract import ContractError, Plan, Rotation, StepKind, UnitPlan
 from rotation_worker.destinations import HOSTED_KINDS, parse
+from rotation_worker.envelope import ADAPTER_KEY
 from rotation_worker.evidence import MAX_DESTINATION
 from rotation_worker.git_mirror import COMMIT_PATTERN as COMMIT
 from rotation_worker.git_mirror import MirrorError, RepoMirror
@@ -43,7 +45,6 @@ from rotation_worker.registry import (
 )
 
 PROFILE: Final = "non-software-operational"
-ADAPTER_KEY: Final = "rotation_adapter"
 UNIT_KEY: Final = "rotation_unit"
 DESTINATIONS_KEY: Final = "destinations"
 NON_HOSTED_KEY: Final = "touches_no_hosted_service"
@@ -62,11 +63,6 @@ class Approved:
     registry: RegistryEntry
 
 
-def is_rotation_unit(unit_view: Mapping[str, Any]) -> bool:
-    """Whether a unit's envelope names a rotation adapter: the units this executor works."""
-    return ADAPTER_KEY in _constraints(unit_view)
-
-
 def check_unit(
     unit_view: Mapping[str, Any],
     intake: Mapping[str, Any],
@@ -79,7 +75,7 @@ def check_unit(
     """
     if intake.get("id") != unit_view.get("work_package_revision_id"):
         raise ContractError("the package revision isn't the unit's")
-    constraints = _constraints(unit_view)
+    constraints = envelope.constraints(unit_view)
     adapter = ADAPTERS.get(str(constraints.get(ADAPTER_KEY)))
     if adapter is None:
         raise ContractError(f"no adapter named {constraints.get(ADAPTER_KEY)!r}")
@@ -174,9 +170,3 @@ def _check_destination_fit(
         raise ContractError("this adapter reaches no hosted consumer")
     if any(len(destination) > MAX_DESTINATION for destination in destinations):
         raise ContractError("a destination is longer than rotation-step/1 evidence can carry")
-
-
-def _constraints(unit_view: Mapping[str, Any]) -> Mapping[str, Any]:
-    authority = unit_view.get("authority") or {}
-    constraints = authority.get("constraints") or {}
-    return constraints if isinstance(constraints, Mapping) else {}

@@ -11,8 +11,9 @@ import pytest
 import yaml
 
 from rotation_worker.canonical import CanonicalError, package_hash
-from rotation_worker.checks import check_unit, is_rotation_unit
+from rotation_worker.checks import check_unit
 from rotation_worker.contract import ContractError
+from rotation_worker.envelope import is_rotation_unit
 from rotation_worker.git_mirror import RepoMirror
 from rotation_worker.registry import (
     PACKAGES_REPOSITORY,
@@ -346,3 +347,42 @@ def test_a_package_with_no_approval_at_main_is_refused(world: World) -> None:
     world.origins.commit(PACKAGES_REPOSITORY, {LINEAGE: yaml.safe_dump({"approvals": []})})
     with pytest.raises(ContractError, match="latest approval"):
         world.check()
+
+
+def test_both_of_the_orchestrator_adapter_s_units_write_the_hosted_service(world: World) -> None:
+    """Mint hosts the new value and retire takes the old one away, so neither may be marked."""
+    hosted = (
+        'coolify-env-hash instance="prod" resource_type="application" uuid="u" '
+        'key="ORCHESTRATOR_M2M_CREDENTIALS" entry="orchestrator-operator"'
+    )
+    destinations = sorted([f'bws-secret uuid="{KEEPER}"', 'provider name="orchestrator"', hosted])
+    world.registry(
+        _registry(provider='"orchestrator"').replace(
+            '  [[credential.consumer]]\n  kind = "runtime-fetch"\n  repo = "orchestrator"\n'
+            '  ref = "a person attests"\n',
+            '  [[credential.consumer]]\n  kind = "coolify-env-hash"\n  instance = "prod"\n'
+            '  resource_type = "application"\n  uuid = "u"\n'
+            '  key = "ORCHESTRATOR_M2M_CREDENTIALS"\n  entry = "orchestrator-operator"\n',
+        )
+    )
+    world.publish(_package(destinations=destinations))
+    intake = world.intake(acceptance_criteria=[{"ac_id": f"AC-00{n}"} for n in range(1, 10)])
+    for unit in ("mint", "retire"):
+        marked = world.unit(
+            destinations=destinations, rotation_adapter="orchestrator", rotation_unit=unit
+        )
+        with pytest.raises(ContractError, match="marked non-hosted but writes"):
+            world.check(marked, intake)
+        approved = world.check(
+            {
+                **marked,
+                "authority": {
+                    "constraints": {
+                        **marked["authority"]["constraints"],
+                        "touches_no_hosted_service": False,
+                    }
+                },
+            },
+            intake,
+        )
+        assert approved.unit.name == unit

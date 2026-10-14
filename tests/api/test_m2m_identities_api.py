@@ -1,9 +1,9 @@
 """The executor reads the machine identities the process loaded (ADR-0055 amendment 9)."""
 
 import hashlib
+import json
 from collections.abc import Iterator
 from dataclasses import replace
-import json
 from datetime import UTC, datetime, timedelta
 from typing import cast
 
@@ -15,6 +15,7 @@ from orchestrator.api.dependencies import AuthConfig
 from orchestrator.config import get_settings
 from orchestrator.identity.auth import M2MCredential, PreviousHash
 from orchestrator.main import _m2m_credentials, create_app
+from rotation_worker.m2m_setting import Change, build
 from tests.api.test_lifecycle_api import SYSTEM, WORKER
 
 ROUTE = "/api/v1/m2m-identities"
@@ -82,6 +83,31 @@ def test_the_answer_is_a_setting_the_orchestrator_boots_with(
     loaded = _m2m_credentials(auth_config.registry, json.dumps(served))
 
     assert loaded == cast(FastAPI, client.app).state.auth_config.m2m_credentials
+
+
+def test_a_rotation_built_from_the_answer_boots_through_the_orchestrator_s_parser(
+    client: TestClient, auth_config: AuthConfig
+) -> None:
+    """The executor's rewrite of the served setting is one the orchestrator boots with: the
+    worker entry gets the new hash with the old as previous, and every other entry is unchanged."""
+    _configure(client, "worker")
+    served = client.get(ROUTE, headers=WORKER).json()
+    old = hashlib.sha256(b"fixture-token").hexdigest()
+    new = hashlib.sha256(b"rotated-token").hexdigest()
+
+    hosted = build(served, "worker-key", Change.HOST, new, old, datetime.now(UTC)).text
+    assert hosted is not None
+    loaded = _m2m_credentials(auth_config.registry, hosted)
+    assert loaded["worker-key"].token_hash == new
+    previous = loaded["worker-key"].previous
+    assert previous is not None and previous.token_hash == old
+    assert {k: v for k, v in loaded.items() if k != "worker-key"} == {
+        k: v for k, v in auth_config.m2m_credentials.items() if k != "worker-key"
+    }
+
+    retired = build(json.loads(hosted), "worker-key", Change.RETIRE, new, old, datetime.now(UTC))
+    assert retired.text is not None
+    assert _m2m_credentials(auth_config.registry, retired.text)["worker-key"].previous is None
 
 
 def test_with_no_executor_configured_every_actor_is_refused(client: TestClient) -> None:
