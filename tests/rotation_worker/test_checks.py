@@ -240,12 +240,13 @@ def test_a_unit_marked_non_hosted_that_writes_a_hosted_consumer_is_refused(world
         + '  resource_type = "application"\n  uuid = "u"\n  key = "K"\n  entry = "E"\n'
     )
     world.publish(_package(destinations=destinations))
+    # Retire takes the old value away from the hosted service, so it writes one.
     with pytest.raises(ContractError, match="marked non-hosted but writes"):
+        world.check(world.unit(destinations=destinations, rotation_unit="retire"))
+    # Store writes BWS only, so it may be marked non-hosted, and is refused for the hosted
+    # consumer alone: the fake adapter has no host step, so it can reach none.
+    with pytest.raises(ContractError, match="reaches no hosted consumer"):
         world.check(world.unit(destinations=destinations))
-    # A unit that writes nothing (mint) may be marked non-hosted, and is refused for the hosted
-    # consumer alone: none is reachable until a Coolify credential exists.
-    with pytest.raises(ContractError, match="no hosted consumer is reachable"):
-        world.check(world.unit(destinations=destinations, rotation_unit="mint"))
 
 
 def test_a_destination_too_long_for_evidence_is_refused(world: World) -> None:
@@ -289,8 +290,16 @@ def test_only_a_literal_true_marks_a_unit_non_hosted(world: World) -> None:
         + '  resource_type = "application"\n  uuid = "u"\n  key = "K"\n  entry = "E"\n'
     )
     world.publish(_package(destinations=destinations))
-    with pytest.raises(ContractError, match="no hosted consumer is reachable"):
-        world.check(world.unit(destinations=destinations, touches_no_hosted_service="yes"))
+    # Retire writes the hosted service: marked, it is refused for that; unmarked, it gets past
+    # the marking and is refused only because the fake adapter reaches no hosted consumer.
+    with pytest.raises(ContractError, match="marked non-hosted but writes"):
+        world.check(world.unit(destinations=destinations, rotation_unit="retire"))
+    with pytest.raises(ContractError, match="reaches no hosted consumer"):
+        world.check(
+            world.unit(
+                destinations=destinations, rotation_unit="retire", touches_no_hosted_service="yes"
+            )
+        )
 
 
 def test_a_revision_superseded_by_a_later_approval_is_refused(world: World) -> None:

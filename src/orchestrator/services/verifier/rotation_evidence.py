@@ -39,6 +39,7 @@ LONG_RUN = re.compile(r"[A-Za-z0-9_+/=]{32,}")
 StepKind = Literal[
     "mint",
     "stage",
+    "host",
     "verify_new",
     "store",
     "distribute",

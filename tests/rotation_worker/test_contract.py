@@ -6,6 +6,7 @@ increment 4 report counts them).
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import replace
 from pathlib import Path
@@ -326,7 +327,7 @@ def test_a_hosted_consumer_is_refused(tmp_path: Path) -> None:
     h = Harness(tmp_path)
     h.rotation = replace(h.rotation, destinations=(*h.rotation.destinations, hosted))
     h.run("mint")
-    with pytest.raises(ContractError, match="hosted"):
+    with pytest.raises(ContractError, match="can't reach a coolify-env-hash consumer"):
         h.run("store")
 
 
@@ -801,3 +802,144 @@ def test_nothing_unproved_reaches_a_consumer(kinds: list[StepKind]) -> None:
 
 def test_distribute_between_store_and_the_last_verify_is_valid() -> None:
     validate_plan(_with([*GOOD[:4], StepKind.DISTRIBUTE, *GOOD[4:]]))
+
+
+# ---- a provider that is the hosted service (ADR-0055 amendment 9) ----------------------------
+
+HOSTED = 'coolify-env-hash instance="prod" resource_type="application" uuid="u" key="K" entry="E"'
+HOSTED_PLAN = Plan(
+    (
+        UnitPlan(
+            "mint",
+            (
+                Step(StepKind.MINT, M, "AC-001"),
+                Step(StepKind.STAGE, M, "AC-002"),
+                Step(StepKind.HOST, M, "AC-003"),
+                Step(StepKind.VERIFY_NEW, M, "AC-004"),
+            ),
+        ),
+        UnitPlan(
+            "store",
+            (Step(StepKind.STORE, M, "AC-005"), Step(StepKind.VERIFY_CONSUMERS, M, "AC-006")),
+        ),
+        UnitPlan(
+            "retire",
+            (
+                Step(StepKind.VERIFY_CONSUMERS, M, "AC-007"),
+                Step(StepKind.RETIRE_OLD, M, "AC-008"),
+                Step(StepKind.CONFIRM_DEAD, M, "AC-009"),
+            ),
+        ),
+    )
+)
+
+
+class HostedFake(FakeProvider):
+    """A self-issued bearer's service: a minted value works only once `host` gives it over."""
+
+    hosts_destinations = True
+
+    def __init__(self, state_path: Path) -> None:
+        super().__init__(state_path)
+        self.hosted: list[tuple[str, str]] = []
+        self.accept_hosted = True
+
+    def mint(self) -> Value:
+        return Value(f"minted-{len(self._live())}-{id(self)}-{len(self.hosted)}")
+
+    def host(self, new: Value, old: Value) -> str:
+        self.hosted.append((new.fingerprint.sha256_prefix, old.fingerprint.sha256_prefix))
+        if self.accept_hosted:
+            self._save(self._live() | {hashlib.sha256(new.reveal().encode()).hexdigest()})
+        return "the service accepts the new value beside the old"
+
+
+def _hosted(tmp_path: Path) -> Harness:
+    h = Harness(tmp_path)
+    h.provider = HostedFake(tmp_path / "hosted.json")
+    h.original = Value("the-original-bearer")
+    h.provider._save(frozenset({hashlib.sha256(b"the-original-bearer").hexdigest()}))
+    h.store.write(h.keeper_id, h.original)
+    h.rotation = replace(
+        h.rotation,
+        destinations=(f'bws-secret uuid="{h.keeper_id}"', 'provider name="fake"', HOSTED),
+    )
+    return h
+
+
+def _run_hosted(h: Harness, unit: str) -> None:
+    run = UnitRun(
+        rotation=h.rotation,
+        store=h.store,
+        provider=h.provider,
+        attestations=(),
+        record=lambda step, evidence: h.filed.append((step, evidence)),
+        before_step=lambda: None,
+        filed=frozenset(step.kind for step, _ in h.filed),
+    )
+    run.run(HOSTED_PLAN.unit(unit))
+
+
+def test_the_hosted_plan_is_valid() -> None:
+    validate_plan(HOSTED_PLAN)
+
+
+def test_a_hosted_rotation_hosts_the_new_value_before_probing_it(tmp_path: Path) -> None:
+    h = _hosted(tmp_path)
+    _run_hosted(h, "mint")
+    _run_hosted(h, "store")
+    _run_hosted(h, "retire")
+    assert h.kinds()[:4] == ["mint", "stage", "host", "verify_new"]
+    assert len(h.provider.hosted) == 1
+    assert h.provider.probe(h.keeper()) == 200
+    assert h.provider.probe(h.original) == 401
+    for _, evidence in h.filed:
+        jsonschema.validate(evidence.as_payload(), SCHEMA)
+
+
+def test_a_value_the_service_was_never_given_fails_verify_new(tmp_path: Path) -> None:
+    h = _hosted(tmp_path)
+    h.provider.accept_hosted = False
+    with pytest.raises(ContractError, match="new value probed dead"):
+        _run_hosted(h, "mint")
+    assert h.kinds() == ["mint", "stage", "host"]
+
+
+def test_a_hosted_consumer_the_service_refuses_keeps_the_old_value_live(tmp_path: Path) -> None:
+    h = _hosted(tmp_path)
+    _run_hosted(h, "mint")
+    _run_hosted(h, "store")
+    # The service stops accepting the new value before retire: the consumer is unverified.
+    h.provider._save(frozenset({hashlib.sha256(b"the-original-bearer").hexdigest()}))
+    with pytest.raises(ContractError, match="hasn't verified"):
+        _run_hosted(h, "retire")
+    assert h.provider.probe(h.original) == 200
+
+
+def test_a_hosted_consumer_whose_control_is_accepted_is_unverified(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    h = _hosted(tmp_path)
+    _run_hosted(h, "mint")
+    _run_hosted(h, "store")
+    run = UnitRun(h.rotation, h.store, h.provider, (), lambda *_: None, lambda: None)
+    assert run.unverified(h.keeper()) == []
+    monkeypatch.setattr(h.provider, "known_bad", lambda: h.keeper())
+    assert run.unverified(h.keeper()) == [HOSTED]
+
+
+@pytest.mark.parametrize(
+    ("steps", "message"),
+    [
+        ((StepKind.MINT, StepKind.HOST, StepKind.STAGE, StepKind.VERIFY_NEW), "mint, then stage"),
+        ((StepKind.MINT, StepKind.STAGE, StepKind.VERIFY_NEW, StepKind.HOST), "before verify_new"),
+        (
+            (StepKind.MINT, StepKind.STAGE, StepKind.HOST, StepKind.HOST, StepKind.VERIFY_NEW),
+            "at most one host",
+        ),
+    ],
+)
+def test_a_host_step_out_of_place_is_refused(steps: tuple[StepKind, ...], message: str) -> None:
+    first = UnitPlan("mint", tuple(Step(kind, M, f"AC-0{i}") for i, kind in enumerate(steps)))
+    with pytest.raises(ContractError, match=message):
+        validate_plan(Plan((first, *HOSTED_PLAN.segments[1:])))
