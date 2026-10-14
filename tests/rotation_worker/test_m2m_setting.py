@@ -67,6 +67,13 @@ def test_host_refuses_an_entry_holding_neither_value() -> None:
         build(served, ENTRY, Change.HOST, NEW, OLD, NOW)
 
 
+def test_host_refuses_an_entry_with_the_new_hash_but_not_the_old_as_previous() -> None:
+    served = _served()
+    served[ENTRY]["token_hash"] = NEW
+    with pytest.raises(ContractError, match="neither"):
+        build(served, ENTRY, Change.HOST, NEW, OLD, NOW)
+
+
 def test_an_unknown_entry_is_refused() -> None:
     with pytest.raises(ContractError, match="no entry"):
         build(_served(), "orchestrator-nobody", Change.HOST, NEW, OLD, NOW)

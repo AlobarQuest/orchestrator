@@ -11,9 +11,9 @@ rotation stands.
 A setting the orchestrator refuses at boot takes production down, and the executor can't import the
 orchestrator's parser, so `build` refuses everything that parser refuses before a byte is written:
 a hash that isn't 64 lowercase hex characters, a `previous` hash equal to any entry's current hash,
-an `until` that isn't UTC or is more than eight days ahead, and any change to an entry's agent id
-or to the set of key ids. `tests/rotation_worker/test_m2m_setting.py` loads what it builds through
-the orchestrator's own parser.
+and an `until` that isn't UTC or is more than eight days ahead. Key ids and agent ids are copied
+from what was served, so `build` can't change them. `tests/api/test_m2m_identities_api.py` loads
+what it builds through the orchestrator's own parser.
 """
 
 from __future__ import annotations
@@ -90,7 +90,7 @@ def build(
         if previous_hash != old_hash:
             raise ContractError("the entry's previous hash isn't the old value's")
         del target["previous"]
-    _refuse_what_boot_refuses(served, identities, now)
+    _refuse_what_boot_refuses(identities, now)
     text = json.dumps(identities, separators=(",", ":"))
     return Rewrite(text, hashlib.sha256(text.encode()).hexdigest()[:8])
 
@@ -110,17 +110,11 @@ def _until(previous: Mapping[str, Any]) -> datetime:
     return until
 
 
-def _refuse_what_boot_refuses(
-    served: Mapping[str, Any], identities: Mapping[str, dict[str, Any]], now: datetime
-) -> None:
-    if not identities or set(identities) != set(served):
-        raise ContractError("the rewrite would change which key ids exist")
+def _refuse_what_boot_refuses(identities: Mapping[str, dict[str, Any]], now: datetime) -> None:
     current: set[str] = set()
     for key, identity in identities.items():
         if set(identity) - {"previous"} != {"agent_id", "token_hash"}:
             raise ContractError(f"entry {key} isn't an agent id and a hash")
-        if identity["agent_id"] != served[key].get("agent_id"):
-            raise ContractError(f"the rewrite would change entry {key}'s agent id")
         if not isinstance(identity["token_hash"], str) or not HASH.fullmatch(
             identity["token_hash"]
         ):

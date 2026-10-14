@@ -338,11 +338,28 @@ def test_a_probe_that_never_settles_answers_what_it_last_got(h: Harness) -> None
     assert h.clock.now - START >= SWAP_WAIT
 
 
-def test_a_retired_value_still_answered_by_the_old_container_is_asked_again(h: Harness) -> None:
-    h.run("mint")
+def test_a_hosted_value_the_old_container_still_refuses_is_asked_again(h: Harness) -> None:
+    new = Value("the-new-operator-bearer")
     h.estate.lag = 3
-    h.run("retire")
+    h.provider.host(new, h.original)
+    assert h.provider.probe(new) == 200
+    assert h.clock.slept > 0
+
+
+def test_a_retired_value_the_old_container_still_accepts_is_asked_again(h: Harness) -> None:
+    h.run("mint")
+    # Retire runs in a later process: nothing from mint's provider carries over.
+    h.provider = h.build()
+    h.estate.lag = 3
+    h.provider.revoke(h.original)
     assert h.provider.probe(h.original) == 401
+
+
+def test_a_retire_the_restart_never_loads_is_refused(h: Harness) -> None:
+    h.run("mint")
+    h.estate.restart_applies = False
+    with pytest.raises(ContractError, match="didn't load"):
+        h.provider.revoke(h.original)
 
 
 def test_a_value_nobody_hosted_or_retired_is_asked_once(h: Harness) -> None:

@@ -226,7 +226,8 @@ class OrchestratorBearerProvider:
         entry = served.get(self._entry) or {}
         current = entry.get("token_hash")
         previous = entry.get("previous") or {}
-        if current == old_hash or previous.get("token_hash") != old_hash:
+        # Boot refuses a previous hash equal to a current one, so this also means old isn't current.
+        if previous.get("token_hash") != old_hash:
             raise ContractError(
                 "the orchestrator doesn't hold the old value as the entry's previous"
             )
