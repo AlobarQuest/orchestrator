@@ -21,7 +21,9 @@ def m2m_identities(request: Request, actor: ActorDep, settings: SettingsDep) -> 
     """
     # An actor id is never None, so an unset executor refuses everyone.
     if actor.actor_id != settings.rotation_executor_agent_id:
-        raise DomainError("role_forbidden", "only the rotation executor may read this surface", None)
+        raise DomainError(
+            "role_forbidden", "only the rotation executor may read this surface", None
+        )
     # An authenticated actor implies `get_actor` found this configuration.
     config: AuthConfig = request.app.state.auth_config
     return {
