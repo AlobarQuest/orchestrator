@@ -26,7 +26,7 @@ from rotation_worker.destinations import (
 )
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "rotation_destination_format.json"
-DESTINATION_FORMAT_SHA256 = "72515b3126099a064ae5c12b504e2d41114881def9e81c7545e288ef17d2b2db"
+DESTINATION_FORMAT_SHA256 = "e476c96d55280bde0efdd32b7c8d2400b29402dfb53dc7ef4c7d9c200d465fe0"
 
 
 def _fixture() -> dict[str, Any]:
@@ -112,7 +112,7 @@ def test_a_credential_without_a_provider_or_with_a_repeated_consumer_is_refused(
 
 
 def test_hosted_kinds_are_the_coolify_ones() -> None:
-    assert is_hosted('coolify-env-hash instance="p" resource_type="a" uuid="u" key="K"')
+    assert is_hosted('coolify-env-hash instance="p" resource_type="a" uuid="u" key="K" entry="E"')
     assert not is_hosted('bws-secret uuid="u"')
 
 

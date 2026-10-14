@@ -16,6 +16,7 @@ from orchestrator.api.routes import (
     reconciliation,
     release,
     reporting,
+    rotation,
     verifier,
 )
 from orchestrator.config import Settings
@@ -43,6 +44,7 @@ API_ROUTERS = (
     lifecycle.router,
     reconciliation.router,
     verifier.router,
+    rotation.router,
 )
 
 

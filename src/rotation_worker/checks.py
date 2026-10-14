@@ -23,10 +23,12 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Final
 
+from rotation_worker import envelope
 from rotation_worker.adapters import ADAPTERS, Adapter
 from rotation_worker.canonical import CanonicalError, package_hash
-from rotation_worker.contract import ContractError, Rotation, StepKind, UnitPlan
+from rotation_worker.contract import ContractError, Plan, Rotation, StepKind, UnitPlan
 from rotation_worker.destinations import HOSTED_KINDS, parse
+from rotation_worker.envelope import ADAPTER_KEY
 from rotation_worker.evidence import MAX_DESTINATION
 from rotation_worker.git_mirror import COMMIT_PATTERN as COMMIT
 from rotation_worker.git_mirror import MirrorError, RepoMirror
@@ -43,11 +45,12 @@ from rotation_worker.registry import (
 )
 
 PROFILE: Final = "non-software-operational"
-ADAPTER_KEY: Final = "rotation_adapter"
 UNIT_KEY: Final = "rotation_unit"
 DESTINATIONS_KEY: Final = "destinations"
 NON_HOSTED_KEY: Final = "touches_no_hosted_service"
-WRITING_STEPS: Final = frozenset({StepKind.STORE, StepKind.DISTRIBUTE})
+# The steps that write a hosted service: host gives it the new value, and retire_old takes the
+# old one away. Store and distribute write BWS only.
+WRITING_STEPS: Final = frozenset({StepKind.HOST, StepKind.RETIRE_OLD})
 
 
 @dataclass(frozen=True)
@@ -58,11 +61,6 @@ class Approved:
     unit: UnitPlan
     rotation: Rotation
     registry: RegistryEntry
-
-
-def is_rotation_unit(unit_view: Mapping[str, Any]) -> bool:
-    """Whether a unit's envelope names a rotation adapter: the units this executor works."""
-    return ADAPTER_KEY in _constraints(unit_view)
 
 
 def check_unit(
@@ -77,7 +75,7 @@ def check_unit(
     """
     if intake.get("id") != unit_view.get("work_package_revision_id"):
         raise ContractError("the package revision isn't the unit's")
-    constraints = _constraints(unit_view)
+    constraints = envelope.constraints(unit_view)
     adapter = ADAPTERS.get(str(constraints.get(ADAPTER_KEY)))
     if adapter is None:
         raise ContractError(f"no adapter named {constraints.get(ADAPTER_KEY)!r}")
@@ -103,7 +101,7 @@ def check_unit(
     if not isinstance(keeper, str) or f'bws-secret uuid="{keeper}"' not in packaged:
         raise ContractError(f"{credential_id}'s keeper isn't one of its destinations")
     _check_destination_fit(
-        packaged, unit, marked_non_hosted=constraints.get(NON_HOSTED_KEY) is True
+        packaged, adapter.plan, unit, marked_non_hosted=constraints.get(NON_HOSTED_KEY) is True
     )
     occurrence = fields.get("occurrence")
     if not isinstance(occurrence, str) or not occurrence.strip():
@@ -160,21 +158,15 @@ def _local[T](read: Callable[..., T], *arguments: str) -> T:
 
 
 def _check_destination_fit(
-    destinations: list[str], unit: UnitPlan, *, marked_non_hosted: bool
+    destinations: list[str], plan: Plan, unit: UnitPlan, *, marked_non_hosted: bool
 ) -> None:
     hosted = [d for d in destinations if parse(d)["kind"] in HOSTED_KINDS]
     writes = any(step.kind in WRITING_STEPS for step in unit.steps)
     if marked_non_hosted and hosted and writes:
         raise ContractError("the unit is marked non-hosted but writes a hosted consumer")
-    if hosted:
-        # No Coolify credential exists until increment 6, so no step can write or verify one:
-        # refuse before claiming rather than strand a rotation half done.
-        raise ContractError("no hosted consumer is reachable yet")
+    if hosted and StepKind.HOST not in {step.kind for step in plan.steps()}:
+        # Only an adapter whose provider is the hosted service can write or verify one: refuse
+        # before claiming rather than strand a rotation half done.
+        raise ContractError("this adapter reaches no hosted consumer")
     if any(len(destination) > MAX_DESTINATION for destination in destinations):
         raise ContractError("a destination is longer than rotation-step/1 evidence can carry")
-
-
-def _constraints(unit_view: Mapping[str, Any]) -> Mapping[str, Any]:
-    authority = unit_view.get("authority") or {}
-    constraints = authority.get("constraints") or {}
-    return constraints if isinstance(constraints, Mapping) else {}

@@ -42,7 +42,10 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   carry `"previous": {"token_hash": "<sha256>", "until": "<UTC instant>"}` (ADR-0055 decision
   7): the previous hash authenticates only before `until`, and boot refuses an `until` more than
   eight days ahead. Rolling back past the image that parses it needs `previous` removed first
-  (`deploy.md`, "Rolling back past the bearer overlap parser").
+  (`deploy.md`, "Rolling back past the bearer overlap parser"). The rotation executor rewrites
+  the whole setting from what the running process loaded (`GET /api/v1/m2m-identities`, ADR-0055
+  amendment 9), so restart straight after any hand edit to it: an edit Coolify stores but the
+  process hasn't loaded is overwritten by the executor's next rotation.
 
 ### #41
 

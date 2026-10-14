@@ -152,6 +152,7 @@ class OpenRouterProvider:
     probe_target = "openrouter.ai chat completion on a :free model"
     revoke_probe_target = "openrouter.ai key-info"
     dead_statuses = frozenset({401})
+    hosts_destinations = False
 
     def __init__(
         self,
@@ -228,6 +229,9 @@ class OpenRouterProvider:
 
     def known_bad(self) -> Value:
         return Value(MALFORMED_KEY)
+
+    def host(self, new: Value, old: Value) -> str:
+        raise ContractError("OpenRouter accepts a key from its mint; there is no host step")
 
     def revoke(self, value: Value) -> str:
         info = self._send("GET", KEY_INFO, value, "reading key-info")

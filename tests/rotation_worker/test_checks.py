@@ -11,8 +11,9 @@ import pytest
 import yaml
 
 from rotation_worker.canonical import CanonicalError, package_hash
-from rotation_worker.checks import check_unit, is_rotation_unit
+from rotation_worker.checks import check_unit
 from rotation_worker.contract import ContractError
+from rotation_worker.envelope import is_rotation_unit
 from rotation_worker.git_mirror import RepoMirror
 from rotation_worker.registry import (
     PACKAGES_REPOSITORY,
@@ -232,20 +233,21 @@ def test_a_registry_with_another_consumer_refuses(world: World) -> None:
 
 
 def test_a_unit_marked_non_hosted_that_writes_a_hosted_consumer_is_refused(world: World) -> None:
-    hosted = 'coolify-env-hash instance="p" resource_type="application" uuid="u" key="K"'
+    hosted = 'coolify-env-hash instance="p" resource_type="application" uuid="u" key="K" entry="E"'
     destinations = sorted([*DESTINATIONS, hosted])
     world.registry(
         _registry()
         + '\n  [[credential.consumer]]\n  kind = "coolify-env-hash"\n  instance = "p"\n'
-        + '  resource_type = "application"\n  uuid = "u"\n  key = "K"\n'
+        + '  resource_type = "application"\n  uuid = "u"\n  key = "K"\n  entry = "E"\n'
     )
     world.publish(_package(destinations=destinations))
+    # Retire takes the old value away from the hosted service, so it writes one.
     with pytest.raises(ContractError, match="marked non-hosted but writes"):
+        world.check(world.unit(destinations=destinations, rotation_unit="retire"))
+    # Store writes BWS only, so it may be marked non-hosted, and is refused for the hosted
+    # consumer alone: the fake adapter has no host step, so it can reach none.
+    with pytest.raises(ContractError, match="reaches no hosted consumer"):
         world.check(world.unit(destinations=destinations))
-    # A unit that writes nothing (mint) may be marked non-hosted, and is refused for the hosted
-    # consumer alone: none is reachable until a Coolify credential exists.
-    with pytest.raises(ContractError, match="no hosted consumer is reachable"):
-        world.check(world.unit(destinations=destinations, rotation_unit="mint"))
 
 
 def test_a_destination_too_long_for_evidence_is_refused(world: World) -> None:
@@ -281,16 +283,24 @@ def test_the_hash_escapes_and_orders_as_rfc_8785() -> None:
 
 def test_only_a_literal_true_marks_a_unit_non_hosted(world: World) -> None:
     """As at the orchestrator's claim: any other value leaves the unit windowed, so not marked."""
-    hosted = 'coolify-env-hash instance="p" resource_type="application" uuid="u" key="K"'
+    hosted = 'coolify-env-hash instance="p" resource_type="application" uuid="u" key="K" entry="E"'
     destinations = sorted([*DESTINATIONS, hosted])
     world.registry(
         _registry()
         + '\n  [[credential.consumer]]\n  kind = "coolify-env-hash"\n  instance = "p"\n'
-        + '  resource_type = "application"\n  uuid = "u"\n  key = "K"\n'
+        + '  resource_type = "application"\n  uuid = "u"\n  key = "K"\n  entry = "E"\n'
     )
     world.publish(_package(destinations=destinations))
-    with pytest.raises(ContractError, match="no hosted consumer is reachable"):
-        world.check(world.unit(destinations=destinations, touches_no_hosted_service="yes"))
+    # Retire writes the hosted service: marked, it is refused for that; unmarked, it gets past
+    # the marking and is refused only because the fake adapter reaches no hosted consumer.
+    with pytest.raises(ContractError, match="marked non-hosted but writes"):
+        world.check(world.unit(destinations=destinations, rotation_unit="retire"))
+    with pytest.raises(ContractError, match="reaches no hosted consumer"):
+        world.check(
+            world.unit(
+                destinations=destinations, rotation_unit="retire", touches_no_hosted_service="yes"
+            )
+        )
 
 
 def test_a_revision_superseded_by_a_later_approval_is_refused(world: World) -> None:
@@ -337,3 +347,42 @@ def test_a_package_with_no_approval_at_main_is_refused(world: World) -> None:
     world.origins.commit(PACKAGES_REPOSITORY, {LINEAGE: yaml.safe_dump({"approvals": []})})
     with pytest.raises(ContractError, match="latest approval"):
         world.check()
+
+
+def test_both_of_the_orchestrator_adapter_s_units_write_the_hosted_service(world: World) -> None:
+    """Mint hosts the new value and retire takes the old one away, so neither may be marked."""
+    hosted = (
+        'coolify-env-hash instance="prod" resource_type="application" uuid="u" '
+        'key="ORCHESTRATOR_M2M_CREDENTIALS" entry="orchestrator-operator"'
+    )
+    destinations = sorted([f'bws-secret uuid="{KEEPER}"', 'provider name="orchestrator"', hosted])
+    world.registry(
+        _registry(provider='"orchestrator"').replace(
+            '  [[credential.consumer]]\n  kind = "runtime-fetch"\n  repo = "orchestrator"\n'
+            '  ref = "a person attests"\n',
+            '  [[credential.consumer]]\n  kind = "coolify-env-hash"\n  instance = "prod"\n'
+            '  resource_type = "application"\n  uuid = "u"\n'
+            '  key = "ORCHESTRATOR_M2M_CREDENTIALS"\n  entry = "orchestrator-operator"\n',
+        )
+    )
+    world.publish(_package(destinations=destinations))
+    intake = world.intake(acceptance_criteria=[{"ac_id": f"AC-00{n}"} for n in range(1, 10)])
+    for unit in ("mint", "retire"):
+        marked = world.unit(
+            destinations=destinations, rotation_adapter="orchestrator", rotation_unit=unit
+        )
+        with pytest.raises(ContractError, match="marked non-hosted but writes"):
+            world.check(marked, intake)
+        approved = world.check(
+            {
+                **marked,
+                "authority": {
+                    "constraints": {
+                        **marked["authority"]["constraints"],
+                        "touches_no_hosted_service": False,
+                    }
+                },
+            },
+            intake,
+        )
+        assert approved.unit.name == unit

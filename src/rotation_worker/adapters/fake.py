@@ -77,6 +77,7 @@ class FakeProvider:
     probe_target = PROBE_TARGET
     revoke_probe_target = PROBE_TARGET
     dead_statuses = frozenset({401})
+    hosts_destinations = False
 
     def __init__(self, state_path: Path) -> None:
         self._state_path = state_path
@@ -94,6 +95,9 @@ class FakeProvider:
 
     def known_bad(self) -> Value:
         return Value(secrets.token_urlsafe(VALUE_BYTES))
+
+    def host(self, new: Value, old: Value) -> str:
+        raise ContractError("the fake provider has no host step")
 
     def revoke(self, value: Value) -> str:
         live = self._live()

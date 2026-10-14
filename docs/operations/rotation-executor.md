@@ -73,8 +73,8 @@ resolving it at `/review` with the new value's fingerprint (`sha256_prefix` and 
 ## Install or update it
 
 The VM is `rotation-executor`, created with `orb create --isolated --isolate-network
-ubuntu:noble rotation-executor`. It reaches the internet (BWS, `sds.alobar.net`, GitHub) and other
-OrbStack machines, but not the Mac.
+ubuntu:noble rotation-executor`. It reaches the internet (BWS, `sds.alobar.net`, GitHub), other
+OrbStack machines and the tailnet (production Coolify at `100.112.188.96:8000`), but not the Mac.
 
 1. Install the code at a commit that is on GitHub:
 
@@ -100,13 +100,23 @@ OrbStack machines, but not the Mac.
    state_dir = "/var/lib/rotation-worker"
    source_revision = "<the first 12 characters of the installed commit>"
 
+   coolify_url = "http://100.112.188.96:8000"
+   orchestrator_application = "eqj5l7k705fhi12x9i74fqf0"
+
    [admin_secrets]
    openrouter = "<the OpenRouter management key's secret id, in Rotation / Admin>"
+   orchestrator = "<the Coolify token's secret id, in Rotation / Coolify>"
    ```
 
    `admin_secrets` maps a provider name to the BWS secret id of that provider's admin
    credential. An adapter that needs one refuses to build without its entry, and reads the secret
-   only when a step mints or revokes.
+   only when a step mints, hosts or revokes. The `orchestrator` provider's admin credential is the
+   Coolify token, because writing Coolify is how it changes which bearers the orchestrator
+   accepts. `orchestrator_application` is the orchestrator's Coolify application uuid, the only
+   application that adapter may write whatever a package names. `coolify_url` is production
+   Coolify's tailnet address: the Coolify client sends its
+   token only over TLS or to a tailnet address, and production Coolify has no TLS (ADR-0055
+   amendment 9).
 
 3. Enable the timer: `orb -m rotation-executor -u root systemctl enable --now
    rotation-worker.timer`. Read its passes with `journalctl -u rotation-worker` (one JSON line per
@@ -122,7 +132,7 @@ orb -m rotation-executor -u root runuser -u rotation -- env -i PATH=/usr/bin:/bi
 
 ## Its credentials
 
-All five are in ADR-0055's hand-rotated set: a person creates and rotates them, never the
+All six are in ADR-0055's hand-rotated set: a person creates and rotates them, never the
 executor. None is ever printed, passed as an argument, or kept on the Mac.
 
 | Credential | Lives in | Read by |
@@ -131,7 +141,8 @@ executor. None is ever printed, passed as an argument, or kept on the Mac.
 | The executor's WORKER bearer | BWS secret `rotation-executor WORKER bearer` in `Rotation / Executor`; its hash in the orchestrator's `ORCHESTRATOR_M2M_CREDENTIALS` under key `rotation-executor-1`, agent `rotation-executor` | The executor, from BWS at each pass |
 | The read-only Healthchecks API key | BWS, in `Rotation / Healthchecks` | No reader until an adapter verifies a `runtime-fetch` consumer by its check |
 | The OpenRouter management key | BWS secret `openrouter management key` in `Rotation / Admin`; its id in `config.toml`'s `admin_secrets` | The executor, from BWS, only while an `openrouter` unit mints or revokes |
-| The BWS projects | Bitwarden Secrets Manager | The root: write on `Rotation / Work` and `Rotation / Keepers`, read on `Rotation / Admin`, `Rotation / Executor` and `Rotation / Healthchecks`, nothing else. A consumer account: a direct read grant on each keeper secret it consumes, nothing else in `Rotation / Keepers` |
+| The production Coolify token (`read`, `write`, `deploy`; not `read:sensitive`) | BWS secret `rotation-coolify-token` in `Rotation / Coolify`; its id in `admin_secrets` as `orchestrator` | The executor, from BWS, only while an `orchestrator` unit hosts or retires |
+| The BWS projects | Bitwarden Secrets Manager | The root: write on `Rotation / Work` and `Rotation / Keepers`, read on `Rotation / Admin`, `Rotation / Coolify`, `Rotation / Executor` and `Rotation / Healthchecks`, nothing else. A consumer account: a direct read grant on each keeper secret it consumes, nothing else in `Rotation / Keepers` |
 
 ### Create them
 
@@ -171,6 +182,12 @@ executor. None is ever printed, passed as an argument, or kept on the Mac.
    under `[admin_secrets]`, keyed by the adapter's name, and confirm the root reads it from the VM.
    For OpenRouter, that's a management key with no expiry (account-wide, a provider limit), stored
    as the secret `openrouter management key` under the key `openrouter`.
+8. In production Coolify, under **Keys & Tokens**, create the token `rotation-executor` with
+   **read**, **write** and **deploy** only. It is team-wide: Coolify tokens name actions, not
+   resources (ADR-0055 amendment 1), so the executor's Coolify client is what bounds it to one
+   application. Create the project `Rotation / Coolify`, store the token there as
+   `rotation-coolify-token`, give the root **Can read** on the project, and put the secret's id in
+   `admin_secrets` under `orchestrator`. Set `coolify_url` to the tailnet address.
 
 ### Move a keeper
 
@@ -198,6 +215,65 @@ Before a credential's first rotation, its keeper secret moves from wherever it l
   restart, and delete the old secret.
 - **The Healthchecks key:** create a new read-only key, replace the BWS secret's value in the
   console, then delete the old key in Healthchecks.
+- **The Coolify token:** create a second token with the same three abilities, replace the BWS
+  secret's value in the console, run one pass by hand, then delete the old token in Coolify.
+
+## The orchestrator's bearers
+
+The `orchestrator` adapter rotates a machine bearer the orchestrator issues (ADR-0055 increment 6
+and amendment 9). The orchestrator stores each identity's bearer as a sha256 in
+`ORCHESTRATOR_M2M_CREDENTIALS`, so the bearer's destination names the entry, its key id:
+`coolify-env-hash … key="ORCHESTRATOR_M2M_CREDENTIALS" entry="orchestrator-operator"`.
+
+Its plan has two units, each claimed only in the `live_estate` window (02:00 to 06:00
+America/New_York), because each restarts the orchestrator:
+
+- `mint` (AC-001 to AC-006): mint a value and stage it; host it, which rewrites the setting with
+  the entry's new hash and the old one as `previous` (`until` seven days out), writes both
+  `is_preview` rows, restarts, and waits until the orchestrator's identities route shows the new
+  hash; probe the new value live; store it in the keeper; verify the consumers.
+- `retire` (AC-007 to AC-009): verify the consumers again; confirm the entry's `previous` is the
+  old value's hash, write the setting without it and restart; probe the old value dead.
+
+The executor rebuilds the setting from what the running orchestrator loaded
+(`GET /api/v1/m2m-identities`, which only it may read), never from a stored copy, and changes only
+the approved entry. So a hand edit to the variable must be followed by a restart straight away,
+or the executor's next rotation overwrites it. Before each restart it refuses while any unit
+other than a rotation unit is live, or a ready unit was dispatched and not yet claimed, the same
+check `scripts/deploy_orchestrator.py` makes.
+
+It refuses an entry that is its own `credential_key_id`: the executor's bearer is hand-rotated.
+It writes the preview row before the production row, and checks for live runs again between the
+write and the restart. The check narrows, but can't close, the window in which a lane dispatches a
+run before the restart lands.
+
+### If a rotation stalls after host
+
+After `mint` hosts the new value, the orchestrator accepts the old one only until `previous`'s
+`until`, seven days later, but the keeper holds the new value only once `store` has run. A `mint`
+unit that fails after host retries from where it stopped, re-deriving from BWS and the
+identities route. If it has no attempts left, finish or undo it within the seven days:
+
+- finish: authorise a retry (`/review`) and let the next pass store the staged value;
+- undo: in Coolify, set the entry's `token_hash` back to `previous.token_hash`, delete `previous`,
+  both rows, restart, then delete the staging secret from `Rotation / Work`.
+
+Past `until`, every reader of the keeper gets 401 until one of those is done.
+
+### If the orchestrator doesn't come back after a rotation's restart
+
+The executor refuses every setting the orchestrator's boot would refuse, so this needs a cause it
+didn't foresee. The unit fails with "the restarted orchestrator didn't load the written setting in
+time". In production Coolify, open the orchestrator's `ORCHESTRATOR_M2M_CREDENTIALS` and undo the
+change by hand, in both rows:
+
+- after `mint`: in the approved entry, set `token_hash` back to `previous.token_hash` and delete
+  `previous`;
+- after `retire`: nothing to undo for the old value, which is already retired; check the
+  application's logs for the boot refusal instead.
+
+Restart, and confirm `https://sds.alobar.net/health/live` answers. The keeper still holds the old
+value after a failed `mint`, because store comes after host, so every consumer still works.
 - **The OpenRouter management key:** create a new management key, replace the BWS secret's value
   in the console (the secret id, and so `config.toml`, stays), then delete the old management key
   in the OpenRouter console. Do it while no `openrouter` unit is claimed.

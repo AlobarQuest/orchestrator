@@ -168,6 +168,9 @@ def test_production_get_route_inventory_is_explicit() -> None:
         "/api/v1/in-flight-units",
         "/api/v1/decomposition-proposals/{proposal_id}",
         "/api/v1/factory-policy",
+        # ADR-0055 amendment 9: the machine identities the process loaded, readable only by the
+        # rotation executor, which rewrites the whole credentials setting when it rotates one.
+        "/api/v1/m2m-identities",
         "/api/v1/observations",
         "/api/v1/package-intakes/{revision_id}",
         "/api/v1/package-intakes/{revision_id}/decomposition-proposals",

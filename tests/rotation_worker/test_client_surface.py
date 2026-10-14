@@ -162,14 +162,23 @@ def test_an_unusable_url_is_refused_at_construction(url: str) -> None:
 
 def test_only_the_client_spells_an_orchestrator_path() -> None:
     for source in sorted(PROGRAM.rglob("*.py")):
-        if source.name == "orchestrator_client.py":
+        # coolify.py spells Coolify's API paths, which share the `/api/v1/` prefix.
+        if source.name in ("orchestrator_client.py", "coolify.py"):
             continue
         assert re.findall(r"/api/v1/", source.read_text()) == [], source
 
 
-# The modules that may reach a network service: the orchestrator's client, and each adapter whose
-# provider is reached over HTTP (its own path allowlist confines what it may send).
-HTTP_CLIENTS = frozenset({"orchestrator_client.py", "adapters/openrouter.py"})
+# The modules that may reach a network service: the orchestrator's client, the Coolify client,
+# and each adapter whose provider is reached over HTTP (its own path allowlist confines what it may
+# send). The orchestrator-bearer adapter probes the orchestrator with the bearer being rotated.
+HTTP_CLIENTS = frozenset(
+    {
+        "orchestrator_client.py",
+        "coolify.py",
+        "adapters/openrouter.py",
+        "adapters/orchestrator_bearer.py",
+    }
+)
 
 
 def test_only_the_clients_import_an_http_client_and_only_the_mirror_runs_a_process() -> None:

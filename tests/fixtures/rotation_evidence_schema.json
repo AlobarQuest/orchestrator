@@ -149,6 +149,7 @@
       "enum": [
         "mint",
         "stage",
+        "host",
         "verify_new",
         "store",
         "distribute",

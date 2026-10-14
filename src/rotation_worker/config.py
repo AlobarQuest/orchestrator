@@ -42,6 +42,12 @@ class Config:
     # Each provider's admin secret, by provider name: the BWS UUID an adapter reads when a step
     # mints or revokes (decision 4). Holds ids only, never a value.
     admin_secrets: Mapping[str, str] = field(default_factory=dict)
+    # Production Coolify's API, over the tailnet (ADR-0055 amendment 9). Absent until an adapter
+    # writes a hosted service.
+    coolify_url: str | None = None
+    # The orchestrator's Coolify application uuid: the one application the orchestrator adapter
+    # may write, whatever a package names.
+    orchestrator_application: str | None = None
 
     @property
     def mirror_root(self) -> Path:
@@ -78,6 +84,8 @@ def load(path: Path) -> Config:
         state_dir=Path(_string(raw, "state_dir")),
         source_revision=revision,
         admin_secrets=dict(admin_secrets),
+        coolify_url=_optional_string(raw, "coolify_url"),
+        orchestrator_application=_optional_string(raw, "orchestrator_application"),
     )
 
 
@@ -93,6 +101,10 @@ def read_root_token(path: Path) -> Value:
     if not text:
         raise ConfigError("the root token file is empty")
     return Value(text)
+
+
+def _optional_string(raw: dict[str, Any], key: str) -> str | None:
+    return _string(raw, key) if key in raw else None
 
 
 def _string(raw: dict[str, Any], key: str) -> str:

@@ -24,9 +24,10 @@ from pathlib import Path
 from typing import Any, Final
 
 from rotation_worker.adapters import AdapterContext
-from rotation_worker.checks import Approved, check_unit, is_rotation_unit
+from rotation_worker.checks import Approved, check_unit
 from rotation_worker.contract import ContractError, Step, StepKind, UnitRun
 from rotation_worker.destinations import DestinationError
+from rotation_worker.envelope import is_rotation_unit
 from rotation_worker.evidence import StepEvidence
 from rotation_worker.git_mirror import MirrorError, RepoMirror
 from rotation_worker.orchestrator_client import Lease, OrchestratorClient, OrchestratorError
@@ -54,6 +55,11 @@ class Setup:
     source_revision: str
     # Each provider's admin secret id (`Config.admin_secrets`).
     admin_secrets: Mapping[str, str] = field(default_factory=dict)
+    orchestrator_url: str | None = None
+    coolify_url: str | None = None
+    orchestrator_application: str | None = None
+    # The key id the executor's own bearer is registered under.
+    executor_key_id: str | None = None
 
 
 def run_pass(setup: Setup) -> int:
@@ -107,7 +113,15 @@ def _work(setup: Setup, unit: Mapping[str, Any], approved: Approved) -> bool:
     # configuration) is the executor's fault, not the unit's, so no attempt is spent on it.
     provider = approved.adapter.build(
         AdapterContext(
-            setup.state_dir, setup.store, setup.admin_secrets.get(approved.adapter.provider_name)
+            setup.state_dir,
+            setup.store,
+            setup.admin_secrets.get(approved.adapter.provider_name),
+            rotation=approved.rotation,
+            orchestrator=setup.client,
+            orchestrator_url=setup.orchestrator_url,
+            coolify_url=setup.coolify_url,
+            orchestrator_application=setup.orchestrator_application,
+            executor_key_id=setup.executor_key_id,
         )
     )
     lease, version = _claim(setup, unit)

@@ -489,6 +489,16 @@ OUTBOUND_ALLOWLIST = {
     # Enforced by `permits` and pinned by tests/rotation_worker/test_openrouter.py. Its egress is
     # not the orchestrator's.
     Path("src/rotation_worker/adapters/openrouter.py"),
+    # ADR-0055 increment 6 and amendment 9. The rotation executor's Coolify client writes one
+    # approved application's variable (both is_preview rows) and restarts that application, over
+    # the tailnet. Its `permits` is bound to the one application uuid the approved destination
+    # names, pinned by tests/rotation_worker/test_orchestrator_bearer.py. Its egress is not the
+    # orchestrator's.
+    Path("src/rotation_worker/coolify.py"),
+    # ADR-0055 increment 6. The orchestrator-bearer adapter probes the orchestrator's status ledger
+    # with the bearer being rotated, as that bearer's key id, and may send nothing else. Pinned by
+    # tests/rotation_worker/test_orchestrator_bearer.py. Its egress is not the orchestrator's.
+    Path("src/rotation_worker/adapters/orchestrator_bearer.py"),
     # The pin watcher READS GitHub, and that is the point rather than an incidental dependency:
     # a caller's pin is a fact about a remote repository's workflow file, so no local surface can
     # answer it. Read-only by construction -- the client's single entry point refuses anything but

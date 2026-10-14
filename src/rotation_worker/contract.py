@@ -3,7 +3,7 @@
 **AN ADAPTER DECLARES; THE CONTRACT ACTS.** An adapter is a `Provider` (how to mint, probe and
 revoke one kind of credential) and a `Plan`: its steps in order, each `machine` or `human`,
 grouped into the units its decomposition holds, with every human step a human act between units
-(a dependency Devon resolves at `/review`, never a unit). The eight step kinds are implemented
+(a dependency Devon resolves at `/review`, never a unit). The nine step kinds are implemented
 here, once, so the invariants hold for every adapter rather than being re-written by each:
 
 * **Retire-old is reachable only after every registered consumer passes verify-consumers**, checked
@@ -18,6 +18,13 @@ here, once, so the invariants hold for every adapter rather than being re-writte
   anything else stops the rotation.
 * **After confirm-dead the quarantine and staging secrets are deleted**, and the deletion is
   filed as evidence.
+* **A provider that is a hosted service learns the new value before anything probes it.** A
+  self-issued bearer works only once the service accepts it, so its plan has a `host` step
+  between stage and verify_new (ADR-0055 amendment 9). Host writes only the service, never BWS,
+  and the service keeps accepting the old value until retire_old, or until the overlap's
+  backstop passes, so nothing unproved reaches the keeper and no consumer loses its value while
+  the rotation moves. A rotation stalled between host and store must be finished or undone
+  before that backstop (the runbook's "If a rotation stalls after host").
 
 **STATE IS RE-DERIVED, NEVER TRUSTED (decision 1).** Where a rotation stands is read from BWS
 (the keeper, and the staging and quarantine secrets named for this credential and occurrence) and
@@ -50,6 +57,7 @@ ATTESTED_KINDS: Final = frozenset(
 class StepKind(StrEnum):
     MINT = "mint"
     STAGE = "stage"
+    HOST = "host"
     VERIFY_NEW = "verify_new"
     STORE = "store"
     DISTRIBUTE = "distribute"
@@ -116,6 +124,9 @@ class Provider(Protocol):
     probe_target: str
     revoke_probe_target: str
     dead_statuses: frozenset[int]
+    # Whether this provider is the hosted service its credential's hosted destinations name, so
+    # those destinations are verified by probing it (ADR-0055's verification table).
+    hosts_destinations: bool
 
     def mint(self) -> Value: ...
 
@@ -124,6 +135,14 @@ class Provider(Protocol):
     def probe_before_revoke(self, value: Value) -> int | None: ...
 
     def known_bad(self) -> Value: ...
+
+    def host(self, new: Value, old: Value) -> str:
+        """Make the service accept `new` beside `old`, and confirm it does. Returns a note.
+
+        Only a provider whose plan has a host step implements it. Like every step, it re-derives
+        where things stand: a service that already accepts both is re-proved, not written again.
+        """
+        ...
 
     def revoke(self, value: Value) -> str:
         """Revoke `value`, refusing (`ContractError`) unless the provider confirms which key it is.
@@ -141,6 +160,7 @@ def validate_plan(plan: Plan) -> None:
     kinds = [step.kind for step in plan.steps()]
     _validate_counts(kinds)
     _validate_order(kinds)
+    _validate_host(kinds)
     _validate_mint_and_stage(plan)
 
 
@@ -180,6 +200,19 @@ def _validate_order(kinds: list[StepKind]) -> None:
         distribute = kinds.index(StepKind.DISTRIBUTE)
         if distribute < store or distribute > verifies[-1]:
             raise ContractError("distribute comes after store, before the last verify_consumers")
+
+
+def _validate_host(kinds: list[StepKind]) -> None:
+    if StepKind.HOST not in kinds:
+        return
+    if kinds.count(StepKind.HOST) != 1:
+        raise ContractError("a rotation has at most one host step")
+    if (
+        not kinds.index(StepKind.STAGE)
+        < kinds.index(StepKind.HOST)
+        < kinds.index(StepKind.VERIFY_NEW)
+    ):
+        raise ContractError("host comes after stage, before verify_new")
 
 
 def _validate_segments(plan: Plan) -> None:
@@ -350,6 +383,15 @@ class UnitRun:
             outcome = "indeterminate"
         return ProbeAnswer(target, subject, expected, status, outcome)
 
+    def accepts(self, new: Value) -> bool:
+        """Whether the provider's service accepts `new` right now, beside a refused control."""
+        provider = self.provider
+        control = self._answer(
+            provider.probe, provider.probe_target, provider.known_bad(), "known_bad", "dead"
+        )
+        answer = self._answer(provider.probe, provider.probe_target, new, "new", "live")
+        return control.outcome == "dead" and answer.outcome == "live"
+
     # ---- consumers --------------------------------------------------------------------------
 
     def unverified(self, new: Value) -> list[str]:
@@ -363,8 +405,11 @@ class UnitRun:
             if kind == "provider":
                 continue
             if kind in HOSTED_KINDS:
-                raise ContractError(f"no hosted consumer is reachable yet: {kind}")
-            if kind in READ_BACK_KINDS:
+                if not self.provider.hosts_destinations:
+                    raise ContractError(f"this adapter can't reach a {kind} consumer")
+                if not self.accepts(new):
+                    missing.append(destination)
+            elif kind in READ_BACK_KINDS:
                 if not self.store.read(consumer["uuid"]).same_as(new):
                     missing.append(destination)
             elif kind in ATTESTED_KINDS:
@@ -408,6 +453,12 @@ def _stage(run: UnitRun, step: Step) -> None:
         raise ContractError("a different value is already staged")
     new, old = run.new_and_old()
     run.record(step, StepEvidence(step.kind, fingerprints=_fingerprints(new, old)))
+
+
+def _host(run: UnitRun, step: Step) -> None:
+    new, old = run.new_and_old()
+    note = run.provider.host(new, old)
+    run.record(step, StepEvidence(step.kind, fingerprints=_fingerprints(new, old), note=note))
 
 
 def _verify_new(run: UnitRun, step: Step) -> None:
@@ -519,6 +570,7 @@ def _confirm_dead(run: UnitRun, step: Step) -> None:
 HANDLERS: Final[dict[StepKind, Callable[[UnitRun, Step], None]]] = {
     StepKind.MINT: _mint,
     StepKind.STAGE: _stage,
+    StepKind.HOST: _host,
     StepKind.VERIFY_NEW: _verify_new,
     StepKind.STORE: _store,
     StepKind.DISTRIBUTE: _distribute,
