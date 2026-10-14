@@ -232,12 +232,12 @@ def test_a_registry_with_another_consumer_refuses(world: World) -> None:
 
 
 def test_a_unit_marked_non_hosted_that_writes_a_hosted_consumer_is_refused(world: World) -> None:
-    hosted = 'coolify-env-hash instance="p" resource_type="application" uuid="u" key="K"'
+    hosted = 'coolify-env-hash instance="p" resource_type="application" uuid="u" key="K" entry="E"'
     destinations = sorted([*DESTINATIONS, hosted])
     world.registry(
         _registry()
         + '\n  [[credential.consumer]]\n  kind = "coolify-env-hash"\n  instance = "p"\n'
-        + '  resource_type = "application"\n  uuid = "u"\n  key = "K"\n'
+        + '  resource_type = "application"\n  uuid = "u"\n  key = "K"\n  entry = "E"\n'
     )
     world.publish(_package(destinations=destinations))
     with pytest.raises(ContractError, match="marked non-hosted but writes"):
@@ -281,12 +281,12 @@ def test_the_hash_escapes_and_orders_as_rfc_8785() -> None:
 
 def test_only_a_literal_true_marks_a_unit_non_hosted(world: World) -> None:
     """As at the orchestrator's claim: any other value leaves the unit windowed, so not marked."""
-    hosted = 'coolify-env-hash instance="p" resource_type="application" uuid="u" key="K"'
+    hosted = 'coolify-env-hash instance="p" resource_type="application" uuid="u" key="K" entry="E"'
     destinations = sorted([*DESTINATIONS, hosted])
     world.registry(
         _registry()
         + '\n  [[credential.consumer]]\n  kind = "coolify-env-hash"\n  instance = "p"\n'
-        + '  resource_type = "application"\n  uuid = "u"\n  key = "K"\n'
+        + '  resource_type = "application"\n  uuid = "u"\n  key = "K"\n  entry = "E"\n'
     )
     world.publish(_package(destinations=destinations))
     with pytest.raises(ContractError, match="no hosted consumer is reachable"):

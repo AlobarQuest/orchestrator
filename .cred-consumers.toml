@@ -68,6 +68,7 @@ disposition = "reissue"
   resource_type = "application"
   uuid = "eqj5l7k705fhi12x9i74fqf0"
   key = "ORCHESTRATOR_M2M_CREDENTIALS"
+  entry = "orchestrator-system"
   note = "orchestrator-system entry (sha256 only)"
 
   [[credential.consumer]]
@@ -110,6 +111,7 @@ disposition = "reissue"
   resource_type = "application"
   uuid = "eqj5l7k705fhi12x9i74fqf0"
   key = "ORCHESTRATOR_M2M_CREDENTIALS"
+  entry = "orchestrator-verifier"
   note = "orchestrator-verifier entry (sha256 only); role mapped in ORCHESTRATOR_M2M_ROLES"
 
   [[credential.consumer]]
@@ -137,6 +139,7 @@ disposition = "reissue"
   resource_type = "application"
   uuid = "eqj5l7k705fhi12x9i74fqf0"
   key = "ORCHESTRATOR_M2M_CREDENTIALS"
+  entry = "orchestrator-operator"
   note = "orchestrator-operator entry (sha256 only); no ROLES entry, WORKER is the default"
 
 # The observer and drift-reporter bearers are two credentials that currently share
@@ -166,6 +169,7 @@ disposition = "reissue"
   resource_type = "application"
   uuid = "eqj5l7k705fhi12x9i74fqf0"
   key = "ORCHESTRATOR_M2M_CREDENTIALS"
+  entry = "orchestrator-observer"
   note = "orchestrator-observer entry (sha256 only); OBSERVER role in ORCHESTRATOR_M2M_ROLES"
 
   [[credential.consumer]]
@@ -193,6 +197,7 @@ disposition = "reissue"
   resource_type = "application"
   uuid = "eqj5l7k705fhi12x9i74fqf0"
   key = "ORCHESTRATOR_M2M_CREDENTIALS"
+  entry = "orchestrator-drift-reporter"
   note = "drift-reporter entry (sha256 only)"
 
   [[credential.consumer]]
@@ -234,6 +239,8 @@ disposition = "reissue"
   resource_type = "application"
   uuid = "eqj5l7k705fhi12x9i74fqf0"
   key = "ORCHESTRATOR_M2M_CREDENTIALS"
+  # No `entry` yet: its key id is an Actions secret no file records. Increment 7 reads it from
+  # the orchestrator's m2m-identities route; until then the executor refuses this credential.
   note = "factory-runner entry (sha256 only)"
 
   [[credential.consumer]]

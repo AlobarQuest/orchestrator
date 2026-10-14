@@ -18,7 +18,8 @@
       "instance",
       "resource_type",
       "uuid",
-      "key"
+      "key",
+      "entry"
     ],
     "gh-actions-secret": [
       "repo",
@@ -94,9 +95,10 @@
         "instance": "prod",
         "resource_type": "application",
         "uuid": "eqj5l7k705fhi12x9i74fqf0",
-        "key": "ORCHESTRATOR_M2M_CREDENTIALS"
+        "key": "ORCHESTRATOR_M2M_CREDENTIALS",
+        "entry": "orchestrator-operator"
       },
-      "destination": "coolify-env-hash instance=\"prod\" resource_type=\"application\" uuid=\"eqj5l7k705fhi12x9i74fqf0\" key=\"ORCHESTRATOR_M2M_CREDENTIALS\""
+      "destination": "coolify-env-hash instance=\"prod\" resource_type=\"application\" uuid=\"eqj5l7k705fhi12x9i74fqf0\" key=\"ORCHESTRATOR_M2M_CREDENTIALS\" entry=\"orchestrator-operator\""
     },
     {
       "consumer": {
@@ -164,6 +166,7 @@
     "bws-secret uuid=\"a\" note=\"x\"",
     "keychain account=\"a\" service=\"s\"",
     "coolify-env-hash instance=\"p\" resource_type=\"a\" uuid=\"u\" key=\"K\" redeploy=true",
+    "coolify-env-hash instance=\"p\" resource_type=\"a\" uuid=\"u\" key=\"K\"",
     "coolify-env instance=\"p\" resource_type=\"a\" uuid=\"u\" key=\"K\" redeploy=\"true\"",
     "unknown-kind uuid=\"a\"",
     "bws-secret uuid=\"\\u0061\"",

@@ -320,7 +320,9 @@ def test_a_second_bws_consumer_is_written_by_distribute_and_verified(tmp_path: P
 
 
 def test_a_hosted_consumer_is_refused(tmp_path: Path) -> None:
-    hosted = 'coolify-env-hash instance="prod" resource_type="application" uuid="u" key="K"'
+    hosted = (
+        'coolify-env-hash instance="prod" resource_type="application" uuid="u" key="K" entry="E"'
+    )
     h = Harness(tmp_path)
     h.rotation = replace(h.rotation, destinations=(*h.rotation.destinations, hosted))
     h.run("mint")
