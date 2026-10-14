@@ -29,7 +29,9 @@ from rotation_worker.values import Value
 
 USER_AGENT: Final = "rotation-worker/1 (+AlobarQuest/orchestrator)"
 TIMEOUT_SECONDS: Final = 60.0
-PREVIEW_ROWS: Final = (False, True)
+# The preview row first: if the production row's write then fails, nothing the running service
+# would load on its next restart has changed.
+PREVIEW_ROWS: Final = (True, False)
 # Tailscale's address range. WireGuard encrypts everything sent to it, so plain HTTP is allowed
 # there and nowhere else: production Coolify's API has no TLS (ADR-0055 amendment 9).
 TAILNET: Final = ipaddress.ip_network("100.64.0.0/10")

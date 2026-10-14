@@ -101,6 +101,7 @@ OrbStack machines and the tailnet (production Coolify at `100.112.188.96:8000`),
    source_revision = "<the first 12 characters of the installed commit>"
 
    coolify_url = "http://100.112.188.96:8000"
+   orchestrator_application = "eqj5l7k705fhi12x9i74fqf0"
 
    [admin_secrets]
    openrouter = "<the OpenRouter management key's secret id, in Rotation / Admin>"
@@ -111,7 +112,9 @@ OrbStack machines and the tailnet (production Coolify at `100.112.188.96:8000`),
    credential. An adapter that needs one refuses to build without its entry, and reads the secret
    only when a step mints, hosts or revokes. The `orchestrator` provider's admin credential is the
    Coolify token, because writing Coolify is how it changes which bearers the orchestrator
-   accepts. `coolify_url` is production Coolify's tailnet address: the Coolify client sends its
+   accepts. `orchestrator_application` is the orchestrator's Coolify application uuid, the only
+   application that adapter may write whatever a package names. `coolify_url` is production
+   Coolify's tailnet address: the Coolify client sends its
    token only over TLS or to a tailnet address, and production Coolify has no TLS (ADR-0055
    amendment 9).
 
@@ -238,6 +241,24 @@ the approved entry. So a hand edit to the variable must be followed by a restart
 or the executor's next rotation overwrites it. Before each restart it refuses while any unit
 other than a rotation unit is live, or a ready unit was dispatched and not yet claimed, the same
 check `scripts/deploy_orchestrator.py` makes.
+
+It refuses an entry that is its own `credential_key_id`: the executor's bearer is hand-rotated.
+It writes the preview row before the production row, and checks for live runs again between the
+write and the restart. The check narrows, but can't close, the window in which a lane dispatches a
+run before the restart lands.
+
+### If a rotation stalls after host
+
+After `mint` hosts the new value, the orchestrator accepts the old one only until `previous`'s
+`until`, seven days later, but the keeper holds the new value only once `store` has run. A `mint`
+unit that fails after host retries from where it stopped, re-deriving from BWS and the
+identities route. If it has no attempts left, finish or undo it within the seven days:
+
+- finish: authorise a retry (`/review`) and let the next pass store the staged value;
+- undo: in Coolify, set the entry's `token_hash` back to `previous.token_hash`, delete `previous`,
+  both rows, restart, then delete the staging secret from `Rotation / Work`.
+
+Past `until`, every reader of the keeper gets 401 until one of those is done.
 
 ### If the orchestrator doesn't come back after a rotation's restart
 

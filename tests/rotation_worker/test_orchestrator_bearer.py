@@ -76,6 +76,8 @@ class Estate:
         self.scripted: list[int | None] = []
         self.coolify_status = 201
         self.restart_applies = True
+        # A ledger to serve once the variable has been written, before the restart.
+        self.ledger_after_write: list[dict[str, Any]] | None = None
         # Requests the old container answers after a restart, with what it loaded before.
         self.lag = 0
         self._before: dict[str, Any] | None = None
@@ -117,6 +119,8 @@ class Estate:
             body = json.loads(request.content)
             assert body["key"] == VARIABLE
             self.rows[body["is_preview"]] = body["value"]
+            if self.ledger_after_write is not None and False in self.rows:
+                self.ledger = self.ledger_after_write
             return httpx.Response(201)
         if self.restart_applies:
             self._before = self.loaded
@@ -162,6 +166,8 @@ class Harness:
             ),
             "orchestrator_url": ORCHESTRATOR,
             "coolify_url": COOLIFY,
+            "orchestrator_application": APP,
+            "executor_key_id": "rotation-executor-1",
             "transport": transport,
             "coolify_transport": httpx.MockTransport(self.estate.coolify),
             "clock": self.clock,
@@ -430,3 +436,57 @@ def test_the_provider_needs_exactly_one_production_setting(
 )
 def test_the_token_goes_only_over_tls_or_the_tailnet(url: str, allowed: bool) -> None:
     assert (url_problem(url) is None) is allowed
+
+
+def test_the_preview_row_is_written_before_the_production_row(h: Harness) -> None:
+    h.provider.host(Value("the-new-operator-bearer"), h.original)
+    assert list(h.estate.rows) == [True, False]
+
+
+def test_a_run_dispatched_during_the_write_stops_the_restart(h: Harness) -> None:
+    unit = "0b5bd8e1-6d0c-4e8a-9a0d-1f0b4d8f6a11"
+    h.estate.ledger_after_write = [{"unit_id": unit, "unit_key": "bump-y", "unit_state": "ready"}]
+    h.estate.histories[unit] = [{"action": "dispatch.dispatched"}]
+    with pytest.raises(ContractError, match="bump-y"):
+        h.provider.host(Value("the-new-operator-bearer"), h.original)
+    assert ("POST", f"/api/v1/applications/{APP}/restart") not in h.estate.sent
+
+
+def test_a_retire_retry_after_the_swap_finished_is_already_done(h: Harness) -> None:
+    h.run("mint")
+    h.provider = h.build()
+    h.provider.revoke(h.original)
+    sent = len(h.estate.sent)
+    retry = h.build()
+    assert "already loaded" in retry.revoke(h.original)
+    assert len(h.estate.sent) == sent
+    assert retry.probe(h.original) == 401
+
+
+@pytest.mark.parametrize(
+    ("changes", "message"),
+    [
+        ({"orchestrator_application": "another0000000000000000"}, "configured orchestrator"),
+        ({"orchestrator_application": None}, "configured orchestrator"),
+        ({"executor_key_id": ENTRY}, "its own bearer"),
+    ],
+)
+def test_the_configuration_bounds_what_a_package_may_name(
+    h: Harness, changes: dict[str, Any], message: str
+) -> None:
+    with pytest.raises(ContractError, match=message):
+        h.build(**changes)
+
+
+def test_a_destination_naming_another_variable_is_refused(h: Harness) -> None:
+    roles = HOSTED.replace(VARIABLE, "ORCHESTRATOR_M2M_ROLES")
+    keeper = f'bws-secret uuid="{h.keeper_id}"'
+    h.rotation = Rotation(
+        h.rotation.credential_id,
+        h.rotation.occurrence,
+        h.keeper_id,
+        WORK,
+        (keeper, 'provider name="orchestrator"', roles),
+    )
+    with pytest.raises(ContractError, match="must be ORCHESTRATOR_M2M_CREDENTIALS"):
+        h.build()

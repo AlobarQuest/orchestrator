@@ -5,8 +5,8 @@ amendment 9).
 `{agent_id, token_hash}` and, during a rotation's overlap, `previous: {token_hash, until}`. The
 executor's Coolify token can't read the stored value, so it starts from what the running
 orchestrator loaded (its identities route) and changes only the entry its approved
-destination names. Every other entry is written back as served, so a hand edit since the last
-rotation stands.
+destination names. Every other entry is written back as served, so a hand edit the orchestrator
+has loaded stands; one it hasn't loaded yet is overwritten.
 
 A setting the orchestrator refuses at boot takes production down, and the executor can't import the
 orchestrator's parser, so `build` refuses everything that parser refuses before a byte is written:

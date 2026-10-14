@@ -21,8 +21,10 @@ here, once, so the invariants hold for every adapter rather than being re-writte
 * **A provider that is a hosted service learns the new value before anything probes it.** A
   self-issued bearer works only once the service accepts it, so its plan has a `host` step
   between stage and verify_new (ADR-0055 amendment 9). Host writes only the service, never BWS,
-  and the service keeps accepting the old value until retire_old, so nothing unproved reaches
-  the keeper and no consumer loses its value.
+  and the service keeps accepting the old value until retire_old, or until the overlap's
+  backstop passes, so nothing unproved reaches the keeper and no consumer loses its value while
+  the rotation moves. A rotation stalled between host and store must be finished or undone
+  before that backstop (the runbook's "If a rotation stalls after host").
 
 **STATE IS RE-DERIVED, NEVER TRUSTED (decision 1).** Where a rotation stands is read from BWS
 (the keeper, and the staging and quarantine secrets named for this credential and occurrence) and

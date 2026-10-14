@@ -97,6 +97,8 @@ def build_setup(config: Config) -> Setup:
         admin_secrets=config.admin_secrets,
         orchestrator_url=config.orchestrator_url,
         coolify_url=config.coolify_url,
+        orchestrator_application=config.orchestrator_application,
+        executor_key_id=config.credential_key_id,
     )
 
 

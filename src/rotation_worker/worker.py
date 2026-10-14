@@ -57,6 +57,9 @@ class Setup:
     admin_secrets: Mapping[str, str] = field(default_factory=dict)
     orchestrator_url: str | None = None
     coolify_url: str | None = None
+    orchestrator_application: str | None = None
+    # The key id the executor's own bearer is registered under.
+    executor_key_id: str | None = None
 
 
 def run_pass(setup: Setup) -> int:
@@ -117,6 +120,8 @@ def _work(setup: Setup, unit: Mapping[str, Any], approved: Approved) -> bool:
             orchestrator=setup.client,
             orchestrator_url=setup.orchestrator_url,
             coolify_url=setup.coolify_url,
+            orchestrator_application=setup.orchestrator_application,
+            executor_key_id=setup.executor_key_id,
         )
     )
     lease, version = _claim(setup, unit)

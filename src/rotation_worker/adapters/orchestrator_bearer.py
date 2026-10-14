@@ -60,6 +60,7 @@ from rotation_worker.values import Value
 NAME: Final = "orchestrator"
 BEARER_BYTES: Final = 32
 HOSTED_KIND: Final = "coolify-env-hash"
+VARIABLE: Final = "ORCHESTRATOR_M2M_CREDENTIALS"
 INSTANCE: Final = "prod"
 # The status ledger filtered to a unit that can't exist: an authenticated caller gets 200 and an
 # empty list, anyone else 401, and nothing is read.
@@ -123,6 +124,8 @@ def build_provider(
     orchestrator: OrchestratorClient | None,
     orchestrator_url: str | None,
     coolify_url: str | None,
+    orchestrator_application: str | None,
+    executor_key_id: str | None,
     transport: httpx.BaseTransport | None = None,
     coolify_transport: httpx.BaseTransport | None = None,
     clock: Callable[[], datetime] = lambda: datetime.now(UTC),
@@ -133,6 +136,16 @@ def build_provider(
     if coolify_token_id is None or not coolify_url:
         raise ContractError("the orchestrator adapter needs coolify_url and its token's id")
     destination = hosted_destination(rotation)
+    # Defence beside Devon's approval of the destination: the one variable and application this
+    # adapter may write are the executor's own configuration, not the package's word alone.
+    if destination["key"] != VARIABLE:
+        raise ContractError(f"an orchestrator bearer's destination must be {VARIABLE}")
+    if not orchestrator_application or destination["uuid"] != orchestrator_application:
+        raise ContractError("the destination isn't the configured orchestrator application")
+    # The executor's own bearer is hand-rotated (decision 4): retiring it would lock the
+    # executor out of the orchestrator it reports to.
+    if destination["entry"] == executor_key_id:
+        raise ContractError("the executor never rotates its own bearer")
     problem = base_url_problem(orchestrator_url)
     if problem is not None:
         raise ContractError(f"the orchestrator URL {problem}")
@@ -226,6 +239,11 @@ class OrchestratorBearerProvider:
         entry = served.get(self._entry) or {}
         current = entry.get("token_hash")
         previous = entry.get("previous") or {}
+        if not previous and current not in (None, old_hash):
+            # A retry whose probe reached the old container just before the swap finished: the
+            # retire already loaded. Confirm-dead waits for the old value to be refused.
+            self._expected[old_hash] = 401
+            return "the orchestrator had already loaded the setting without the old hash"
         # Boot refuses a previous hash equal to a current one, so this also means old isn't current.
         if previous.get("token_hash") != old_hash:
             raise ContractError(
@@ -253,12 +271,19 @@ class OrchestratorBearerProvider:
         return response.status_code
 
     def _write_and_restart(self, text: str) -> None:
+        # Asked before writing, and again straight before the restart, to narrow the window in
+        # which a lane could dispatch a run between the check and the restart. It can't close it:
+        # dispatch has no off switch the executor may use.
+        self._refuse_a_stranding_restart()
+        coolify = self._coolify()
+        coolify.set_variable(self._variable, text)
+        self._refuse_a_stranding_restart()
+        coolify.restart()
+
+    def _refuse_a_stranding_restart(self) -> None:
         stranded = stranded_by_a_restart(self._orchestrator)
         if stranded:
             raise ContractError("a restart now would strand a run: " + ", ".join(stranded))
-        coolify = self._coolify()
-        coolify.set_variable(self._variable, text)
-        coolify.restart()
 
     def _await(self, loaded: Callable[[Mapping[str, Any]], bool]) -> None:
         """Wait until the restarted orchestrator serves the entry as written."""

@@ -31,6 +31,8 @@ class AdapterContext:
     orchestrator: OrchestratorClient | None = None
     orchestrator_url: str | None = None
     coolify_url: str | None = None
+    orchestrator_application: str | None = None
+    executor_key_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -59,6 +61,8 @@ ADAPTERS: Final[dict[str, Adapter]] = {
             orchestrator=context.orchestrator,
             orchestrator_url=context.orchestrator_url,
             coolify_url=context.coolify_url,
+            orchestrator_application=context.orchestrator_application,
+            executor_key_id=context.executor_key_id,
         ),
     ),
 }

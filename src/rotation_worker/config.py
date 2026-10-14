@@ -45,6 +45,9 @@ class Config:
     # Production Coolify's API, over the tailnet (ADR-0055 amendment 9). Absent until an adapter
     # writes a hosted service.
     coolify_url: str | None = None
+    # The orchestrator's Coolify application uuid: the one application the orchestrator adapter
+    # may write, whatever a package names.
+    orchestrator_application: str | None = None
 
     @property
     def mirror_root(self) -> Path:
@@ -82,6 +85,7 @@ def load(path: Path) -> Config:
         source_revision=revision,
         admin_secrets=dict(admin_secrets),
         coolify_url=_optional_string(raw, "coolify_url"),
+        orchestrator_application=_optional_string(raw, "orchestrator_application"),
     )
 
 
