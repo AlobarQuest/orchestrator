@@ -19,8 +19,8 @@ def m2m_identities(request: Request, actor: ActorDep, settings: SettingsDep) -> 
     effect. Only the configured executor may read it. A hash is the sha256 of a random bearer, so
     it is not a secret, but nothing else needs the list.
     """
-    executor = settings.rotation_executor_agent_id
-    if executor is None or actor.actor_id != executor:
+    # An actor id is never None, so an unset executor refuses everyone.
+    if actor.actor_id != settings.rotation_executor_agent_id:
         raise DomainError("role_forbidden", "only the rotation executor may read this surface", None)
     # An authenticated actor implies `get_actor` found this configuration.
     config: AuthConfig = request.app.state.auth_config
