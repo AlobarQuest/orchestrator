@@ -890,6 +890,7 @@ def test_a_hosted_rotation_hosts_the_new_value_before_probing_it(tmp_path: Path)
     _run_hosted(h, "store")
     _run_hosted(h, "retire")
     assert h.kinds()[:4] == ["mint", "stage", "host", "verify_new"]
+    assert isinstance(h.provider, HostedFake)
     assert len(h.provider.hosted) == 1
     assert h.provider.probe(h.keeper()) == 200
     assert h.provider.probe(h.original) == 401
@@ -899,6 +900,7 @@ def test_a_hosted_rotation_hosts_the_new_value_before_probing_it(tmp_path: Path)
 
 def test_a_value_the_service_was_never_given_fails_verify_new(tmp_path: Path) -> None:
     h = _hosted(tmp_path)
+    assert isinstance(h.provider, HostedFake)
     h.provider.accept_hosted = False
     with pytest.raises(ContractError, match="new value probed dead"):
         _run_hosted(h, "mint")
