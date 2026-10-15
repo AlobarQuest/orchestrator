@@ -42,13 +42,22 @@ so a missing consumer keeps the old value and breaks when the old value is retir
    the keepers move to `Rotation / Keepers`, each identity needs a direct grant on exactly the one
    secret it reads. List the grants the move will need. Don't make any.
 3. **Write the registry change** to both entries' `[[credential.consumer]]` lists, in the kinds and
-   fields the registry already uses. Run `.venv/bin/rotation-worker compare-destinations <id>` for
-   each credential and paste its registry half into the pull request. It exits 2 because neither
-   has a package yet, which is expected. Before merging, confirm that infraops still parses the
-   registry. To do that, run `security-drift-cli cred-findings` against your worktree's registry,
-   with `INFRADRIFT_CONFIG_DIR` pointing at a scratch copy of the registry list.
-4. **Don't set `rotated_by_sds`, and don't set `rotate_requested`.**
-5. **Report** the reader table, the grants the keeper moves will need, and any reader that doesn't
+   fields the registry already uses. Before merging, confirm that infraops still parses the
+   registry: run `security-drift-cli cred-findings` with `INFRADRIFT_CONFIG_DIR` set to a scratch
+   directory. In that directory, write a `cred-consumers.list` (newline-separated registry paths)
+   that names your worktree's `.cred-consumers.toml` in place of the main tree's, and copies the
+   other paths from `~/.config/infra-drift/cred-consumers.list`. The state directory defaults to
+   the same scratch directory, so the run doesn't touch the real `cred-rotation-state.json`.
+4. **Don't merge until HQ reports the operator-bearer rotation finished.** This is the one
+   exception to the common rules' "merging to `main` is fine". The executor's code is pinned, but
+   it reads the registry's data live from GitHub `main` and parses the whole file, so a bad edit
+   merged during the rotation breaks that rotation too.
+5. **After merging**, run `.venv/bin/rotation-worker compare-destinations <id>` for each credential
+   and paste its registry half into the pull request as a comment. It reads the registry from
+   GitHub `main`, not from your worktree, so before the merge it shows the old list. It exits 2
+   because neither credential has a package yet, which is expected.
+6. **Don't set `rotated_by_sds`, and don't set `rotate_requested`.**
+7. **Report** the reader table, the grants the keeper moves will need, and any reader that doesn't
    fit the executor's consumer kinds (`src/rotation_worker/destinations.py`). An unfit reader is a
    design question for HQ, not something to work around.
 
