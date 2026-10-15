@@ -42,9 +42,10 @@ scheduled lane has both.
    Create the check with the Healthchecks Management API (`POST /api/v3/checks/`), using the key
    at BWS `260cc8ad-f170-44cc-a672-b47000df3350` (`SDS_DEADMAN_API_KEY_UUID`), fetched with the
    broad identity and used in the same process, never printed. Creating needs a read-write key;
-   a listing that succeeds doesn't prove the key can write. Copy the channel assignment and the
-   timeout and grace pattern from an existing daily check such as `sds-bump-proposer`, and set the
-   period and grace from your schedule. Create it at install time, not before: once a check has
+   a listing that succeeds doesn't prove the key can write. Copy an existing daily check such as
+   `sds-bump-proposer`: on 2026-10-15 each daily `sds-*` check had a cron `schedule` matching its
+   plist (`50 6 * * *`), `tz` `America/New_York`, `grace` 14400 and one channel. Use your plist's
+   minute and hour, and the same channel. Create it at install time, not before: once a check has
    a ping, any dry run starts its silence timer.
 4. **Tests and gates.** The existing installer tests must cover the new installer. Run the full
    `make check` and `/code-review`.
