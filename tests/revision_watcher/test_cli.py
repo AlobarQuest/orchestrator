@@ -96,12 +96,13 @@ def test_an_UNSTAMPED_application_alone_exits_zero(monkeypatch) -> None:
     assert result.exit_code == cli.EXIT_CLEAN
 
 
-def test_an_undeclared_application_is_a_finding(monkeypatch) -> None:
-    """The table policing itself. Without this the declared list rots silently, which is the one
-    objection that makes a declared list the defect rather than the design."""
+def test_an_undeclared_application_alone_exits_zero(monkeypatch) -> None:
+    """Applications outside the SDS serve a revision too, so one missing from the table is reported
+    in the pass's lines and never fails the pass: garexchange held the production check down for a
+    week that way."""
     result, _ = _drive(monkeypatch, Pass(readings=[_reading(CURRENT)], undeclared=["newcomer"]))
 
-    assert result.exit_code == cli.EXIT_FOUND
+    assert result.exit_code == cli.EXIT_CLEAN
 
 
 def test_coverage_that_could_not_be_measured_is_INCOMPLETE(monkeypatch) -> None:

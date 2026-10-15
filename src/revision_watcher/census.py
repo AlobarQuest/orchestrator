@@ -295,7 +295,7 @@ def as_lines(result: Pass) -> list[str]:
             f"serving {served} of {expected} [{reading.landing}]{detail}"
         )
     for name in result.undeclared:
-        lines.append(f"!! {name:<16} undeclared serves a revision and is not a declared subject")
+        lines.append(f"-- {name:<16} undeclared serves a revision; not a subject, so not watched")
     if result.coverage_unmeasured:
         lines.append(f"[incomplete] coverage not measured: {result.coverage_unmeasured}")
     return lines

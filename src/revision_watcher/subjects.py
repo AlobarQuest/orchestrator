@@ -6,10 +6,15 @@ had four disagreeing answers to "which repositories are factory targets", ADR-00
 declaration belongs to the artifact rather than to a list the artifact cannot see, and a fifth
 hand-maintained list would go stale in exactly the way the lane holding it exists to catch.
 
-The objection is to a list that rots SILENTLY. This one cannot: `census.undeclared` asks the
-platform for every running application, probes the ones absent from this table, and reports any
-that answers with a revision. So the table's gap is a finding rather than a blind spot, and adding
-a subject is a response to the lane telling you it is missing one.
+The objection is to a list that rots SILENTLY. This one doesn't: `census.undeclared` asks the
+platform for every running application, probes the ones absent from this table, and lists any that
+answers with a revision in every pass's output. Adding a subject is a response to that line.
+
+**AN UNDECLARED APPLICATION IS REPORTED, NEVER A FINDING.** This table is the SDS's list, and
+applications built outside the SDS serve a revision too, because the health standard asks every
+application to. Until 2026-10-15 an undeclared one failed the pass, so garexchange, which is not
+an SDS application, held `sds-production-current` down for a week from the day it started serving a
+revision, and a real drift in a subject would have raised nothing new.
 
 **WHY THE POPULATION IS NOT DERIVED OUTRIGHT**, measured 2026-09-08 rather than assumed:
 
@@ -30,7 +35,7 @@ a subject is a response to the lane telling you it is missing one.
 So the table below carries the two facts no reachable surface joins for us, and the platform is
 asked to police it.
 
-**AN APPLICATION OPTS IN BY SERVING THE FIELD.** A subject that answers without a `revision` is
+**A SUBJECT IS ASKABLE WHEN IT SERVES THE FIELD.** A subject that answers without a `revision` is
 `unstamped`, which is reported and is deliberately NOT a finding -- 6 of the 18 applications
 running on 2026-09-08 answer health with no revision at all, and a lane that called each of them a
 finding would be red forever about applications that never claimed to be askable.
