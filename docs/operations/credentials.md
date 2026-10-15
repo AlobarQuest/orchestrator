@@ -66,7 +66,9 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   `221a48d5-3f29-4898-b300-b4820140c880`. **VERIFIER** (`orchestrator-verifier`,
   `verifier-evidence/named-check` + `/verify`): `660d5846-abcb-4751-be86-b483012899eb`.
   **WORKER** (`orchestrator-operator`, agent_id `claude-code-interactive` — claim / `start` /
-  evidence / `submit`): `bd71bed1-4aac-4af8-9094-b4970180bc59`, added WS-P2.13 2026-07-30.
+  evidence / `submit`): `bd71bed1-4aac-4af8-9094-b4970180bc59`, added WS-P2.13 2026-07-30. Its
+  keeper moved to `Rotation / Keepers` on 2026-10-15 for the rotation executor (ADR-0055
+  increment 6); `sds-operator` reads it there by a direct grant on that one secret.
   A unit **cannot reach COMPLETED without a WORKER actor**: `CLAIMED→EXECUTING` and
   `EXECUTING→SUBMITTED` are worker-only edges and there is no human path around them. It carries
   **no `ORCHESTRATOR_M2M_ROLES` entry** — `authenticate_m2m` returns WORKER for every M2M
