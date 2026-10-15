@@ -217,6 +217,9 @@ Before a credential's first rotation, its keeper secret moves from wherever it l
   console, then delete the old key in Healthchecks.
 - **The Coolify token:** create a second token with the same three abilities, replace the BWS
   secret's value in the console, run one pass by hand, then delete the old token in Coolify.
+- **The OpenRouter management key:** create a new management key, replace the BWS secret's value
+  in the console (the secret id, and so `config.toml`, stays), then delete the old management key
+  in the OpenRouter console. Do it while no `openrouter` unit is claimed.
 
 ## The orchestrator's bearers
 
@@ -264,8 +267,11 @@ Past `until`, every reader of the keeper gets 401 until one of those is done.
 
 The executor refuses every setting the orchestrator's boot would refuse, so this needs a cause it
 didn't foresee. The unit fails with "the restarted orchestrator didn't load the written setting in
-time". In production Coolify, open the orchestrator's `ORCHESTRATOR_M2M_CREDENTIALS` and undo the
-change by hand, in both rows:
+time". The orchestrator is then down, not degraded: Coolify doesn't keep the old container when
+the new one fails to start. Measured on a throwaway application on 2026-10-15, a restart after a
+boot-breaking variable change removed the running container and left the new one restart-looping,
+and writing the variable back and restarting again recovered it. In production Coolify, open the
+orchestrator's `ORCHESTRATOR_M2M_CREDENTIALS` and undo the change by hand, in both rows:
 
 - after `mint`: in the approved entry, set `token_hash` back to `previous.token_hash` and delete
   `previous`;
@@ -274,7 +280,3 @@ change by hand, in both rows:
 
 Restart, and confirm `https://sds.alobar.net/health/live` answers. The keeper still holds the old
 value after a failed `mint`, because store comes after host, so every consumer still works.
-- **The OpenRouter management key:** create a new management key, replace the BWS secret's value
-  in the console (the secret id, and so `config.toml`, stays), then delete the old management key
-  in the OpenRouter console. Do it while no `openrouter` unit is claimed.
-
