@@ -10,7 +10,7 @@ are equal, so the three must be written in one format, and that format is define
 `kind`, then each of the kind's identity fields as
 `name=<JSON value>`, separated by single spaces, in the fixed order `IDENTITY_FIELDS` gives:
 
-    bws-secret uuid="9661da8f-ac66-4e97-a31f-b42500bb849c"
+    bws-secret uuid="00000000-0000-0000-0000-000000000000"
     coolify-env instance="prod" resource_type="application" uuid="abc" key="FOO" redeploy=true
 
 Values are JSON because the registry's free-text fields hold spaces and commas (a `runtime-fetch`
