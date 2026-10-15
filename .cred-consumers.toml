@@ -127,11 +127,13 @@ provider_identity = "key id orchestrator-operator, ActorRole.WORKER, agent_id cl
 bws_uuid = "bd71bed1-4aac-4af8-9094-b4970180bc59"
 created = "2026-07-30"
 disposition = "reissue"
+rotated_by_sds = true
+rotate_requested = "2026-10-15"
 
   [[credential.consumer]]
   kind = "bws-secret"
   uuid = "bd71bed1-4aac-4af8-9094-b4970180bc59"
-  note = "orchestrator-operator-bearer (SDS Operator) — keeper; operator sessions fetch by UUID"
+  note = "orchestrator-operator-bearer (Rotation / Keepers; sds-operator reads it by a direct grant) — keeper; operator sessions fetch by UUID"
 
   [[credential.consumer]]
   kind = "coolify-env-hash"

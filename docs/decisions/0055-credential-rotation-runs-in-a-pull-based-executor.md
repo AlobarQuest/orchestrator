@@ -941,3 +941,20 @@ three read-only recon passes and put four decisions to Devon on 2026-10-14.
 Two decisions stay open: whether Healthchecks reads are built before the observer and
 drift-reporter rotation, and the shape of change-manager's overlap. Neither blocks the operator
 bearer.
+
+### Proven before the operator bearer's run (2026-10-15)
+
+- **A direct grant**, which amendment 6 left unproven. The root created two canary secrets in
+  `Rotation / Keepers`, and Devon gave `sds-operator` **Can read** on one. With a fresh login and
+  an empty `HOME`, `sds-operator` read the granted canary at the fingerprint the root wrote, and
+  the other answered 404, the same as a random UUID. The keeper then moved, and `sds-operator`
+  and the root each read it there at the same fingerprint, which hashes to the
+  `orchestrator-operator` entry the running orchestrator loaded. The canaries were deleted.
+- **Production Coolify, through the executor's own client**, against a throwaway application
+  that was deleted afterwards: the token reads, writes and restarts, and can't read a value
+  (`read:sensitive` absent). PATCH changes each `is_preview` row in place, keeping its uuid and
+  flags. POST restart applies a changed variable. A JSON value shaped like the credentials
+  setting arrives byte-for-byte. A value that stops the new container booting leaves the
+  application down, not degraded: Coolify removed the running container and left the new one
+  restart-looping, and writing the value back and restarting recovered it
+  (`docs/operations/rotation-executor.md`).
