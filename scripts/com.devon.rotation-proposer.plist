@@ -3,9 +3,11 @@
      scripts/install-rotation-proposer-launchd.sh, which substitutes __REPO_ROOT__ and __HOME__ and
      writes ~/Library/LaunchAgents/com.devon.rotation-proposer.plist.
 
-     No secrets live here: the wrapper fetches its two bearers from BWS at runtime, each under its
-     own Keychain identity (the propose-scoped change-manager bearer under the broad one, the
-     orchestrator's OBSERVER bearer under the narrow one).
+     No secrets live here. A writing pass fetches its two bearers from BWS at runtime, each under
+     its own Keychain identity: the propose-scoped change-manager bearer under the broad one, the
+     orchestrator's OBSERVER bearer under the narrow one. Every pass also reads the Healthchecks
+     API key under the broad identity, through scripts/sds-deadman.sh; without that identity the
+     pass runs and its dead-man alerting is off.
 
      THIS JOB WRITES. It passes --submit, which the wrapper never supplies itself. A writing pass
      revises a standing rotation package, takes it to `ready_for_review`, commits and publishes
@@ -15,10 +17,11 @@
      scripts/run-rotation-proposer.sh is the full account.
 
      06:30, BECAUSE THE PACKAGES CHECKOUT IS SHARED. bump-proposer (06:50) commits to the same
-     checkout, and the work carrier (07:05) and activation sweep (07:10) read it. Each proposer
-     refuses a dirty tree or an unpublished commit, so an overlap costs a pass, not a corruption,
-     but none is needed: a bump pass ended at 06:50:09 on 2026-10-15 and a rotation dry run takes
-     about a second, so twenty minutes leaves room for a writing pass's publish. Daily, because
+     checkout, and the work carrier (07:05) and activation sweep (07:10) read it. The two
+     proposers must never overlap: each checks for a clean, published checkout only when its pass
+     starts, so two passes committing at once could leave the checkout dirty and stop both lanes.
+     A bump pass ended at 06:50:09 on 2026-10-15 and a rotation dry run takes about a second; a
+     writing pass's duration is measured at install, from the first kickstarted pass. Daily, because
      infraops' due rule changes by the day. The time buys no earlier carry: the carry reads only
      approved records, so a proposed record is carried at the first 07:05 after Devon's click.
 

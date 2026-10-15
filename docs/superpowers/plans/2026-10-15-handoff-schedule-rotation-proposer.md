@@ -45,8 +45,9 @@ scheduled lane has both.
    a listing that succeeds doesn't prove the key can write. Copy an existing daily check such as
    `sds-bump-proposer`: on 2026-10-15 each daily `sds-*` check had a cron `schedule` matching its
    plist (`50 6 * * *`), `tz` `America/New_York`, `grace` 14400 and one channel. Use your plist's
-   minute and hour, and the same channel. Create it at install time, not before: once a check has
-   a ping, any dry run starts its silence timer.
+   minute and hour, and the same channel. Create it at install time, not before. A bare run of
+   this launcher pings the check (`sds_deadman_is_dry_run` recognises only `--dry-run`), so once
+   the check exists, a hand-run dry run resets its timer as a scheduled pass would.
 4. **Tests and gates.** The existing installer tests must cover the new installer. Run the full
    `make check` and `/code-review`.
 5. **Install it only after the operator-bearer rotation is finished.** HQ reports that; until then,
@@ -59,7 +60,8 @@ scheduled lane has both.
    the check, and confirm the following:
    - `launchctl list` shows the job;
    - one pass runs under launchd with only `PATH` and `HOME` set: kickstart it, read its log, and
-     confirm the result is exit 0 or the lane's finding code;
+     confirm the result is exit 0 or the lane's finding code. Measure how long that writing pass
+     took; if it comes near the 20 minutes before bump-proposer's 06:50, move the schedule;
    - the Healthchecks check receives its ping.
 6. **Resolve the backlog item** (`[x]`, date, pull request numbers), in a worktree.
 

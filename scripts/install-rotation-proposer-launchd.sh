@@ -23,6 +23,10 @@
 #   launchctl list | grep rotation-proposer
 #   scripts/run-rotation-proposer.sh          # dry run: reads infraops, writes nothing
 #
+# A BARE RUN STILL PINGS THE DEAD-MAN CHECK. `sds_deadman_is_dry_run` recognises only `--dry-run`,
+# so a hand-run dry run resets `sds-rotation-proposer`'s timer as a scheduled pass would. To learn
+# whether the schedule is running, read the log's modification time, not the check.
+#
 # Uninstall with:
 #   launchctl bootout "gui/$(id -u)/com.devon.rotation-proposer"
 #   rm ~/Library/LaunchAgents/com.devon.rotation-proposer.plist
@@ -45,24 +49,42 @@ if [ ! -x "$REPO_ROOT/.venv/bin/rotation-proposer" ]; then
   exit 1
 fi
 
-mkdir -p "$HOME/Library/LaunchAgents"
-sed -e "s|__REPO_ROOT__|$REPO_ROOT|g" -e "s|__HOME__|$HOME|g" "$TEMPLATE" > "$TARGET"
+# RENDERED TO A TEMPORARY FILE, CHECKED, AND ONLY THEN MOVED INTO PLACE. launchd loads every plist
+# in ~/Library/LaunchAgents at login, so a plist left there by an install that failed a check
+# below would still start writing passes.
+RENDERED="$(mktemp)"
+trap 'rm -f "$RENDERED"' EXIT
+sed -e "s|__REPO_ROOT__|$REPO_ROOT|g" -e "s|__HOME__|$HOME|g" "$TEMPLATE" > "$RENDERED"
 
-# The two trees the pass depends on, read back out of the plist just written. Each one missing
-# installs fine and then exits 2 every morning.
-PACKAGES_CHECKOUT="$(plutil -extract EnvironmentVariables.BUMP_PROPOSER_PACKAGES_CHECKOUT raw \
-  -o - "$TARGET")"
-INFRAOPS_CHECKOUT="$(plutil -extract EnvironmentVariables.ROTATION_PROPOSER_INFRAOPS_CHECKOUT raw \
-  -o - "$TARGET")"
+# The two trees the pass depends on, read back out of the rendered plist. A missing or stale one
+# installs fine and then exits 2 every morning, so each is checked here instead.
+plist_value() {
+  plutil -extract "EnvironmentVariables.$1" raw -o - "$RENDERED"
+}
+PACKAGES_CHECKOUT="$(plist_value BUMP_PROPOSER_PACKAGES_CHECKOUT)"
+INFRAOPS_CHECKOUT="$(plist_value ROTATION_PROPOSER_INFRAOPS_CHECKOUT)"
+if [ ! -d "$PACKAGES_CHECKOUT/packages" ]; then
+  echo "FATAL: $PACKAGES_CHECKOUT/packages is missing. The pass reads the standing packages" \
+       "there; check BUMP_PROPOSER_PACKAGES_CHECKOUT in $TEMPLATE." >&2
+  exit 1
+fi
 if [ ! -x "$PACKAGES_CHECKOUT/.venv/bin/python" ]; then
   echo "FATAL: $PACKAGES_CHECKOUT/.venv/bin/python is missing. Every intent-packages lifecycle" \
        "command runs through it. Run: uv sync --frozen in $PACKAGES_CHECKOUT" >&2
   exit 1
 fi
-if [ ! -f "$INFRAOPS_CHECKOUT/dist/cli/security-drift-cli.js" ]; then
-  echo "FATAL: $INFRAOPS_CHECKOUT/dist/cli/security-drift-cli.js is missing. Build that checkout." >&2
+# The pass's own first read, run with the job's PATH: it fails on a missing `node`, an unbuilt
+# checkout, and a build without `cred-findings`. It reads and writes nothing else, and exits 0
+# when it reports a credential due.
+if ! env -i PATH="$(plist_value PATH)" HOME="$HOME" \
+    node "$INFRAOPS_CHECKOUT/dist/cli/security-drift-cli.js" cred-findings > /dev/null; then
+  echo "FATAL: infraops' cred-findings did not answer from $INFRAOPS_CHECKOUT with the job's" \
+       "PATH. Pull and build that checkout." >&2
   exit 1
 fi
+
+mkdir -p "$HOME/Library/LaunchAgents"
+mv "$RENDERED" "$TARGET"
 
 # `bootout` first so a reinstall replaces rather than layering. It fails when nothing is loaded,
 # which is the ordinary first-install case, so its status is deliberately ignored.
@@ -71,5 +93,5 @@ launchctl bootstrap "gui/$(id -u)" "$TARGET"
 
 echo "installed $TARGET"
 echo "  runs at 06:30 local, with --submit; log: $HOME/Library/Logs/rotation-proposer.log"
-echo "  inspect without writing: $REPO_ROOT/scripts/run-rotation-proposer.sh"
+echo "  dry run (pings the check): $REPO_ROOT/scripts/run-rotation-proposer.sh"
 launchctl list | grep "$LABEL" || true

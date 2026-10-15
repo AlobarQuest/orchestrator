@@ -2,9 +2,10 @@
 
 ADR-0054 amendment 1. `src/rotation_proposer/` turns a credential that infraops reports due for
 rotation into a revision of that credential's standing package and, after Devon approves the
-revision by name, into a `work` change record. Launcher: `scripts/run-rotation-proposer.sh`. It
-runs daily at 06:30 with `--submit` (`scripts/install-rotation-proposer-launchd.sh`), and its
-dead-man check is `sds-rotation-proposer`, with exit 3 as its finding code.
+revision by name, into a `work` change record. Launcher: `scripts/run-rotation-proposer.sh`.
+`scripts/install-rotation-proposer-launchd.sh` schedules it daily at 06:30 with `--submit`, and its
+dead-man check is `sds-rotation-proposer`, with exit 3 as its finding code. Whether either is
+installed is read from `launchctl list` and the Healthchecks listing, not from this page.
 
 ## What it reads
 
