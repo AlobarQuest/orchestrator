@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Template for the rotation-proposer LaunchAgent (ADR-0054 amendment 1). Install with
+     scripts/install-rotation-proposer-launchd.sh, which substitutes __REPO_ROOT__ and __HOME__ and
+     writes ~/Library/LaunchAgents/com.devon.rotation-proposer.plist.
+
+     No secrets live here: the wrapper fetches its two bearers from BWS at runtime, each under its
+     own Keychain identity (the propose-scoped change-manager bearer under the broad one, the
+     orchestrator's OBSERVER bearer under the narrow one).
+
+     THIS JOB WRITES. It passes --submit, which the wrapper never supplies itself. A writing pass
+     revises a standing rotation package, takes it to `ready_for_review`, commits and publishes
+     it, and proposes a `work` change record once a revision is approved. It approves neither:
+     Devon approves the revision by name in the packages checkout, and a click in change-manager
+     approves the record. Neither bearer can do either. The header of
+     scripts/run-rotation-proposer.sh is the full account.
+
+     06:30, BECAUSE THE PACKAGES CHECKOUT IS SHARED. bump-proposer (06:50) commits to the same
+     checkout, and the work carrier (07:05) and activation sweep (07:10) read it. Each proposer
+     refuses a dirty tree or an unpublished commit, so an overlap costs a pass, not a corruption,
+     but none is needed: a bump pass ended at 06:50:09 on 2026-10-15 and a rotation dry run takes
+     about a second, so twenty minutes leaves room for a writing pass's publish. Daily, because
+     infraops' due rule changes by the day. The time buys no earlier carry: the carry reads only
+     approved records, so a proposed record is carried at the first 07:05 after Devon's click.
+
+     RunAtLoad is false. A missed firing needs no catch-up: the next pass reads the same answer
+     from infraops and replays whatever is already filed.
+
+     THE EXIT CODE IS THE REPORT, AND 0 DOES NOT MEAN THE PASS DID NOTHING. 0 includes a pass that
+     revised and published a package or proposed a record; 1 the tool failed on a credential or
+     venv; 2 it could not use its inputs (infraops, a dirty checkout); 3 a finding. Read the log's
+     lines to learn what was written.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.devon.rotation-proposer</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__REPO_ROOT__/scripts/run-rotation-proposer.sh</string>
+        <string>--submit</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict><key>Hour</key><integer>6</integer><key>Minute</key><integer>30</integer></dict>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <!-- Homebrew is on this list because `bws` and `node` live there: `bws` for both bearers,
+             `node` to run infraops' `cred-findings`. -->
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>__HOME__</string>
+        <!-- The checkout this pass revises, commits and publishes from, shared with bump-proposer
+             under that lane's variable. -->
+        <key>BUMP_PROPOSER_PACKAGES_CHECKOUT</key>
+        <string>__HOME__/Projects/intent-packages</string>
+        <!-- The infraops checkout whose built CLI answers what is due. -->
+        <key>ROTATION_PROPOSER_INFRAOPS_CHECKOUT</key>
+        <string>__HOME__/Projects/infraops-mcp-server</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/rotation-proposer.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/rotation-proposer.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>
