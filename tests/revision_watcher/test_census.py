@@ -175,7 +175,7 @@ def _sweep_with_platform(applications_running, bodies):
         return sweep(applications=applications, reader=reader, platform=platform)
 
 
-def test_an_undeclared_application_that_serves_a_revision_is_a_finding() -> None:
+def test_an_undeclared_application_that_serves_a_revision_is_reported() -> None:
     result = _sweep_with_platform(
         [
             {

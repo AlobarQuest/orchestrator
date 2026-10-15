@@ -155,6 +155,7 @@ def main(
     )
     if result.unreadable or unfiled or result.coverage_unmeasured:
         raise typer.Exit(EXIT_INCOMPLETE)
-    if result.findings or result.undeclared:
+    # An undeclared application is reported above and never a finding: it may not be the SDS's.
+    if result.findings:
         raise typer.Exit(EXIT_FOUND)
     raise typer.Exit(EXIT_CLEAN)
