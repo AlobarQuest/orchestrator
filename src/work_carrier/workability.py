@@ -110,7 +110,9 @@ OPERATIONAL_PROFILE = "non-software-operational"
 # program holds, and widening it is a reviewed diff to the lane that acts on it --
 # which is what a standing-authority change should cost. Not in intent-packages,
 # because a package that could opt itself in would be no opt-in at all.
-STANDING_OPERATIONAL_PACKAGES = frozenset({"rotation-openrouter-generic"})
+STANDING_OPERATIONAL_PACKAGES = frozenset(
+    {"rotation-openrouter-generic", "rotation-orchestrator-operator-bearer"}
+)
 
 # Mirrored from `orchestrator.reach_vocabulary` (this program imports nothing from the
 # orchestrator); `tests/work_carrier` pins it as a subset of that vocabulary. Every
