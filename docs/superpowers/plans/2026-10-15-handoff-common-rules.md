@@ -22,7 +22,10 @@ Until HQ reports the operator-bearer rotation finished, don't:
 - run `scripts/run-rotation-proposer.sh --submit` or `scripts/run-work-carrier.sh --register` by
   hand.
 
-Merging to `main` is fine: merged isn't deployed, and the VM runs a pinned revision.
+Merging to `main` is fine: merged isn't deployed, and the VM runs a pinned revision. The one
+exception is `.cred-consumers.toml`: the executor's code is pinned, but it reads the registry's
+data live from GitHub `main` and parses the whole file. Don't merge a change to it until HQ reports
+the rotation finished.
 
 ## How to work
 
