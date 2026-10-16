@@ -993,3 +993,23 @@ recomputes its verdicts with the orchestrator's parser.
   removed the plaintext form after every stored row was read back. Rolling back past #115 needs
   the variables rewritten to plaintext first (change-manager `docs/operations/bearer-settings.md`).
 
+
+### Decision 5 for the drift-reporter's readers (2026-10-16)
+
+The inventory (#430) found that a successful Healthchecks run doesn't show a drift-reporter reader
+worked. All eight readers (infraops' `drift-audit.sh`, security-standards'
+`factory-events-nightly.sh`, and six vps-backup jobs) post their observation through a helper that
+turns a failed secret fetch or post into a logged warning, and the job still pings success. Three
+of them (`sync-gdrive.sh`, `verify-backup.sh`, `hetzner-snapshot.sh`) have no check at all.
+
+Devon chose on 2026-10-16 to verify those eight by reading the orchestrator's observations: a
+reader counts as switched once it posts an observation for a run that started after the new value
+was stored. Every reader already posts one per run, with its own subject. The observer's eight
+readers keep decision 5 as written: each exits non-zero on an empty bearer, so its check receives
+`/fail`. Making the drift-reporter's readers fail their checks was the rejected alternative: it
+changes three repositories and makes a backup's check fail for a reporting fault.
+
+Neither read tells the old value from the new. The orchestrator accepts both during the overlap
+and records neither (`identity/auth.py::_hash_accepted`). Both reads rest on the readers being
+`runtime-fetch`: a reader fetches the keeper each run, and the store step has read the keeper
+back, so a run that started after the store used the new value.
