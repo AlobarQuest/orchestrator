@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -945,3 +946,52 @@ def test_a_host_step_out_of_place_is_refused(steps: tuple[StepKind, ...], messag
     first = UnitPlan("mint", tuple(Step(kind, M, f"AC-0{i}") for i, kind in enumerate(steps)))
     with pytest.raises(ContractError, match=message):
         validate_plan(Plan((first, *HOSTED_PLAN.segments[1:])))
+
+
+class Readers:
+    """Scheduled readers that have switched once the test says so."""
+
+    def __init__(self, *covered: str) -> None:
+        self.covered = set(covered)
+        self.switched_now = False
+        self.asked: list[tuple[str, datetime]] = []
+
+    def covers(self, destination: str) -> bool:
+        return destination in self.covered
+
+    def switched(self, destination: str, stored_at: datetime) -> bool:
+        self.asked.append((destination, stored_at))
+        return self.switched_now
+
+
+def test_a_scheduled_reader_is_verified_by_its_read_not_an_attestation(tmp_path: Path) -> None:
+    h = Harness(tmp_path)
+    readers = Readers(RUNTIME)
+    h.run("mint")
+    h.run("store")
+    with pytest.raises(ContractError, match="hasn't verified"):
+        h.run("retire", attestations=_attest(h.keeper()), scheduled=readers)
+    assert h.provider.probe(h.original) == 200
+    readers.switched_now = True
+    h.run("retire", scheduled=readers)
+    assert h.provider.probe(h.original) == 401
+
+
+def test_a_reader_is_asked_about_the_keeper_s_last_write(tmp_path: Path) -> None:
+    h = Harness(tmp_path)
+    readers = Readers(RUNTIME)
+    h.run("mint")
+    h.run("store")
+    readers.switched_now = True
+    h.run("retire", scheduled=readers)
+    assert {stored_at for _, stored_at in readers.asked} == {h.store.revisions[h.keeper_id]}
+
+
+def test_a_reader_the_reads_don_t_cover_still_needs_an_attestation(tmp_path: Path) -> None:
+    h = Harness(tmp_path)
+    readers = Readers('runtime-fetch repo="orchestrator" ref="another reader"')
+    readers.switched_now = True
+    h.run("mint")
+    h.run("store")
+    with pytest.raises(ContractError, match="hasn't verified"):
+        h.run("retire", scheduled=readers)

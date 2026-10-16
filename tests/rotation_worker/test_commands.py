@@ -4,14 +4,19 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
+from typing import cast
 
 import pytest
 
 from rotation_worker import cli
 from rotation_worker.adapters import AdapterContext
 from rotation_worker.config import Config, ConfigError, load
+from rotation_worker.registry import RegistryEntry
 from rotation_worker.values import Value
+from rotation_worker.worker import Setup
 from tests.rotation_worker.stores import MemoryStore
 
 WORK = "22222222-2222-4222-8222-222222222222"
@@ -90,3 +95,60 @@ def test_a_config_without_a_bearer_loads_and_a_malformed_one_does_not(tmp_path: 
     path.write_text(text + 'bearer_secret_id = "nope"\n')
     with pytest.raises(ConfigError, match="bearer_secret_id"):
         load(path)
+
+
+def test_read_consumers_prints_each_reader_s_answer_and_exits_2_on_one_unreadable(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stored = datetime(2026, 10, 15, 6, 0, tzinfo=UTC)
+    credential = {
+        "consumer": [
+            {
+                "kind": "runtime-fetch",
+                "repo": "v",
+                "ref": "a.sh",
+                "observation_source": "s",
+                "observation_subject": "after",
+            },
+            {
+                "kind": "runtime-fetch",
+                "repo": "v",
+                "ref": "b.sh",
+                "observation_source": "s",
+                "observation_subject": "before",
+            },
+            {
+                "kind": "runtime-fetch",
+                "repo": "v",
+                "ref": "c.sh",
+                "observation_source": "s",
+                "observation_subject": "silent",
+            },
+        ]
+    }
+    monkeypatch.setattr(
+        cli, "find_credential", lambda mirror, cid: RegistryEntry("r", "c" * 40, credential)
+    )
+
+    class Client:
+        def observations(self, source: str, subject: str, since: datetime) -> list[dict[str, str]]:
+            at = {"after": stored + timedelta(hours=1), "before": stored - timedelta(hours=1)}
+            return [{"observed_at": at[subject].isoformat()}] if subject in at else []
+
+    setup = cast(Setup, SimpleNamespace(mirror=None, healthchecks=None, client=Client()))
+    assert cli.read_consumers(setup, "x", stored) == cli.EXIT_UNREADABLE
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0].startswith(
+        'switched    runtime-fetch repo="v" ref="a.sh"  last run 2026-10-15T07'
+    )
+    assert lines[1].startswith(
+        'not yet     runtime-fetch repo="v" ref="b.sh"  last run 2026-10-15T05'
+    )
+    assert lines[2] == (
+        'unreadable  runtime-fetch repo="v" ref="c.sh": silent posted nothing in the last 8 days'
+    )
+
+
+def test_read_consumers_needs_a_zoned_instant() -> None:
+    with pytest.raises(SystemExit):
+        cli.main(["read-consumers", "x", "--stored-at", "2026-10-15T06:00:00"])

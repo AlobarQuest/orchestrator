@@ -15,6 +15,7 @@ from rotation_worker.checks import check_unit
 from rotation_worker.contract import ContractError
 from rotation_worker.envelope import is_rotation_unit
 from rotation_worker.git_mirror import RepoMirror
+from rotation_worker.readers import CheckRead
 from rotation_worker.registry import (
     PACKAGES_REPOSITORY,
     REGISTRY_PATH,
@@ -386,3 +387,52 @@ def test_both_of_the_orchestrator_adapter_s_units_write_the_hosted_service(world
             intake,
         )
         assert approved.unit.name == unit
+
+
+def _orchestrator_world(world: World, reader_fields: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    """An orchestrator-bearer rotation with one scheduled reader: its retire unit and intake."""
+    hosted = (
+        'coolify-env-hash instance="prod" resource_type="application" uuid="u" '
+        'key="ORCHESTRATOR_M2M_CREDENTIALS" entry="orchestrator-observer"'
+    )
+    reader = 'runtime-fetch repo="orchestrator" ref="scripts/run-x.sh"'
+    destinations = sorted(
+        [f'bws-secret uuid="{KEEPER}"', 'provider name="orchestrator"', hosted, reader]
+    )
+    world.registry(
+        _registry(provider='"orchestrator"').replace(
+            '  ref = "a person attests"\n',
+            '  ref = "scripts/run-x.sh"\n'
+            + reader_fields
+            + '\n  [[credential.consumer]]\n  kind = "coolify-env-hash"\n  instance = "prod"\n'
+            '  resource_type = "application"\n  uuid = "u"\n'
+            '  key = "ORCHESTRATOR_M2M_CREDENTIALS"\n  entry = "orchestrator-observer"\n',
+        )
+    )
+    world.publish(_package(destinations=destinations))
+    intake = world.intake(acceptance_criteria=[{"ac_id": f"AC-00{n}"} for n in range(1, 10)])
+    unit = world.unit(
+        destinations=destinations,
+        rotation_adapter="orchestrator",
+        rotation_unit="retire",
+        touches_no_hosted_service=None,
+    )
+    return unit, intake
+
+
+def test_a_reader_with_no_read_is_refused_when_no_human_act_could_attest_it(world: World) -> None:
+    unit, intake = _orchestrator_world(world, "")
+    with pytest.raises(ContractError, match="no read and no human act verifies"):
+        world.check(unit, intake)
+
+
+def test_a_reader_whose_row_names_its_read_is_approved_with_it(world: World) -> None:
+    unit, intake = _orchestrator_world(world, '  healthchecks_check = "sds-x"\n')
+    approved = world.check(unit, intake)
+    assert approved.reads == {
+        'runtime-fetch repo="orchestrator" ref="scripts/run-x.sh"': CheckRead("sds-x")
+    }
+
+
+def test_a_plan_with_a_human_act_lets_a_person_attest_a_reader_with_no_read(world: World) -> None:
+    assert world.check().reads == {}

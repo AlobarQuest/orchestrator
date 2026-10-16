@@ -11,7 +11,9 @@ from intent-packages' and the registries' public git:
   (`rotated_by_sds = true`, R6) and names the adapter's provider;
 * the registry's destinations, the package's and the unit envelope's are exactly equal;
 * the keeper (the registry's `bws_uuid`) is one of them, every one fits a `rotation-step/1` row,
-  and a unit marked as touching no hosted service writes none.
+  and a unit marked as touching no hosted service writes none;
+* every `runtime-fetch` consumer can be verified: the registry names its scheduled read, or the
+  plan holds a human act to attest it.
 
 The result names everything a unit run needs, so nothing the unit does reads the orchestrator's
 word for any of it.
@@ -26,12 +28,13 @@ from typing import Any, Final
 from rotation_worker import envelope
 from rotation_worker.adapters import ADAPTERS, Adapter
 from rotation_worker.canonical import CanonicalError, package_hash
-from rotation_worker.contract import ContractError, Plan, Rotation, StepKind, UnitPlan
+from rotation_worker.contract import ContractError, HumanAct, Plan, Rotation, StepKind, UnitPlan
 from rotation_worker.destinations import HOSTED_KINDS, parse
 from rotation_worker.envelope import ADAPTER_KEY
 from rotation_worker.evidence import MAX_DESTINATION
 from rotation_worker.git_mirror import COMMIT_PATTERN as COMMIT
 from rotation_worker.git_mirror import MirrorError, RepoMirror
+from rotation_worker.readers import Read, scheduled_reads
 from rotation_worker.registry import (
     PACKAGES_REPOSITORY,
     RegistryEntry,
@@ -61,6 +64,8 @@ class Approved:
     unit: UnitPlan
     rotation: Rotation
     registry: RegistryEntry
+    # Each scheduled reader's read, by destination (`readers.py`).
+    reads: Mapping[str, Read]
 
 
 def check_unit(
@@ -103,11 +108,13 @@ def check_unit(
     _check_destination_fit(
         packaged, adapter.plan, unit, marked_non_hosted=constraints.get(NON_HOSTED_KEY) is True
     )
+    reads = scheduled_reads(entry.credential)
+    _check_runtime_fetch_verifiable(packaged, adapter.plan, reads)
     occurrence = fields.get("occurrence")
     if not isinstance(occurrence, str) or not occurrence.strip():
         raise ContractError("the approved revision names no occurrence")
     rotation = Rotation(credential_id, occurrence, keeper, work_project_id, tuple(packaged))
-    return Approved(adapter, unit, rotation, entry)
+    return Approved(adapter, unit, rotation, entry, reads)
 
 
 def _approved_package(package: Mapping[str, Any], mirror: RepoMirror) -> Mapping[str, Any]:
@@ -170,3 +177,15 @@ def _check_destination_fit(
         raise ContractError("this adapter reaches no hosted consumer")
     if any(len(destination) > MAX_DESTINATION for destination in destinations):
         raise ContractError("a destination is longer than rotation-step/1 evidence can carry")
+
+
+def _check_runtime_fetch_verifiable(
+    destinations: list[str], plan: Plan, reads: Mapping[str, Read]
+) -> None:
+    # A plan with no human act has nobody to attest a reader, so each needs a read, or retire
+    # could never run.
+    if any(isinstance(segment, HumanAct) for segment in plan.segments):
+        return
+    for destination in destinations:
+        if parse(destination)["kind"] == "runtime-fetch" and destination not in reads:
+            raise ContractError(f"no read and no human act verifies {destination}")

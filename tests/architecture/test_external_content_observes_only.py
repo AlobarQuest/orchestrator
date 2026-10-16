@@ -304,9 +304,14 @@ CLASSIFICATION: dict[str, Row] = {
         "ADR-0055 decision 1: the credential-rotation executor pulls approved rotation units as "
         "its own WORKER identity, which the orchestrator confines to rotation units; it claims, "
         "renews, files rotation-step/1 evidence and moves its own claim through start, submit "
-        "and fail. What it acts on is checked against git, never taken from these routes",
+        "and fail. What it acts on is checked against git, never taken from these routes. It "
+        "names the observations route only to READ a scheduled reader's observations (ADR-0055 "
+        "amendment 9, decision 5); its client permits GET there and nothing else, pinned by "
+        "tests/rotation_worker/test_client_surface.py, but this guard counts a named route with "
+        "any write method as one it can write",
         frozenset(
             {
+                OBSERVATIONS,
                 "/api/v1/work-units/{unit_id}/claim",
                 "/api/v1/work-units/{unit_id}/renew",
                 "/api/v1/work-units/{unit_id}/evidence",

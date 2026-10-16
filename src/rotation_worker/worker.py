@@ -6,9 +6,15 @@ For each ready unit whose envelope names a rotation adapter, in order:
    failure (git or the network) leaves the unit for the next pass. A refusal is a finding about
    the unit itself, so the executor claims it and fails it with the reason, where the dead-letter
    report shows it to a person.
-2. **Claim and start**, then run the unit's steps through the contract. Before each step the lease
+2. **Wait, unclaimed, for the scheduled readers** (`readers.py`). Each one is read before any
+   unit that verifies consumers is claimed, so a reader the registry names wrongly is refused
+   here. A unit that retires the old value stays ready, spending nothing, until every reader has
+   run since the keeper was written: some run weekly, which no lease could wait out. Each pass
+   logs who it waits for and when the overlap's backstop ends; if the backstop comes first, the
+   overlap ends there and retire finds the old value already refused.
+3. **Claim and start**, then run the unit's steps through the contract. Before each step the lease
    is renewed and the registry is read again, so a credential handed back mid-rotation stops it.
-3. **File each step's evidence**, superseding this unit's current row for that criterion when an
+4. **File each step's evidence**, superseding this unit's current row for that criterion when an
    earlier attempt left one, then **submit**. A contract refusal fails the unit with its reason.
 
 Nothing here decides what a step does; the contract does. Nothing here holds a value; the
@@ -26,11 +32,12 @@ from typing import Any, Final
 from rotation_worker.adapters import AdapterContext
 from rotation_worker.checks import Approved, check_unit
 from rotation_worker.contract import ContractError, Step, StepKind, UnitRun
-from rotation_worker.destinations import DestinationError
+from rotation_worker.destinations import DestinationError, parse
 from rotation_worker.envelope import is_rotation_unit
 from rotation_worker.evidence import StepEvidence
 from rotation_worker.git_mirror import MirrorError, RepoMirror
 from rotation_worker.orchestrator_client import Lease, OrchestratorClient, OrchestratorError
+from rotation_worker.readers import ConsumerReads, Healthchecks, ReadError
 from rotation_worker.registry import RegistryError, find_credential
 from rotation_worker.secret_store import SecretStore, StoreError
 from rotation_worker.values import Fingerprint, scrub
@@ -39,7 +46,7 @@ LOG = logging.getLogger("rotation_worker")
 EVIDENCE_TYPE: Final = "rotation.step"
 MAX_REASON: Final = 400
 # A refusal: the unit itself is wrong, and a person must see it.
-REFUSALS: Final = (ContractError, RegistryError, DestinationError)
+REFUSALS: Final = (ContractError, RegistryError, DestinationError, ReadError)
 # Nothing could be asked: try again next pass.
 TRANSIENT: Final = (MirrorError, OrchestratorError, StoreError)
 
@@ -60,6 +67,8 @@ class Setup:
     orchestrator_application: str | None = None
     # The key id the executor's own bearer is registered under.
     executor_key_id: str | None = None
+    # The Healthchecks listing, read with the key in `Rotation / Healthchecks`.
+    healthchecks: Healthchecks | None = None
 
 
 def run_pass(setup: Setup) -> int:
@@ -85,12 +94,48 @@ def _take(setup: Setup, unit_id: str) -> int:
     if not is_rotation_unit(unit):
         return 0
     intake = setup.client.package_intake(str(unit["work_package_revision_id"]))
+    reads: ConsumerReads | None = None
     try:
         approved = check_unit(unit, intake, setup.mirror, setup.work_project_id)
+        if approved.reads and _verifies(approved):
+            reads = ConsumerReads(approved.reads, setup.healthchecks, setup.client)
+            waiting = reads.pending(setup.store.revised(approved.rotation.keeper_id))
+            if waiting and _retires(approved):
+                LOG.info(
+                    "unit_waiting",
+                    extra={
+                        "unit": str(unit["id"]),
+                        "readers": waiting,
+                        "overlap_until": _overlap_until(setup, approved),
+                    },
+                )
+                return 0
     except REFUSALS as error:
         _refuse(setup, unit, scrub(str(error)))
         return 0
-    return 1 if _work(setup, unit, approved) else 0
+    return 1 if _work(setup, unit, approved, reads) else 0
+
+
+def _verifies(approved: Approved) -> bool:
+    return any(step.kind is StepKind.VERIFY_CONSUMERS for step in approved.unit.steps)
+
+
+def _retires(approved: Approved) -> bool:
+    return any(step.kind is StepKind.RETIRE_OLD for step in approved.unit.steps)
+
+
+def _overlap_until(setup: Setup, approved: Approved) -> str | None:
+    """When the orchestrator stops accepting the old value unasked, if this rotation hosts one."""
+    consumers = [parse(d) for d in approved.rotation.destinations]
+    hosted = [c for c in consumers if c["kind"] == "coolify-env-hash"]
+    if len(hosted) != 1:
+        return None
+    try:
+        entry = setup.client.identities().get(hosted[0]["entry"]) or {}
+    except OrchestratorError:
+        return None
+    previous = entry.get("previous")
+    return str(previous.get("until")) if isinstance(previous, Mapping) else None
 
 
 def _refuse(setup: Setup, unit: Mapping[str, Any], reason: str) -> None:
@@ -107,7 +152,9 @@ def _claim(setup: Setup, unit: Mapping[str, Any]) -> tuple[Lease, int]:
     return lease, version + 1
 
 
-def _work(setup: Setup, unit: Mapping[str, Any], approved: Approved) -> bool:
+def _work(
+    setup: Setup, unit: Mapping[str, Any], approved: Approved, reads: ConsumerReads | None
+) -> bool:
     unit_id = str(unit["id"])
     # Built before the claim: a provider that can't be built (an admin secret missing from the
     # configuration) is the executor's fault, not the unit's, so no attempt is spent on it.
@@ -139,6 +186,7 @@ def _work(setup: Setup, unit: Mapping[str, Any], approved: Approved) -> bool:
             record=recorder.record,
             before_step=lambda: _before_step(setup, recorder, approved),
             filed=kinds,
+            scheduled=reads,
         )
         run.run(approved.unit)
     except Exception as error:

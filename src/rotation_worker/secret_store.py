@@ -12,6 +12,7 @@ The SDK is imported only when a `BwsStore` is built: it is an optional extra
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Protocol
 from uuid import UUID
 
@@ -34,6 +35,10 @@ class StoredSecret:
 
 class SecretStore(Protocol):
     def read(self, secret_id: str) -> Value: ...
+
+    def revised(self, secret_id: str) -> datetime:
+        """When the secret last changed: for a keeper, when the store step wrote it."""
+        ...
 
     def find(self, project_id: str, key: str) -> StoredSecret | None: ...
 
@@ -59,6 +64,12 @@ class BwsStore:
     def read(self, secret_id: str) -> Value:
         secret = self._call(lambda: self._client.secrets().get(secret_id))
         return Value(secret.value)
+
+    def revised(self, secret_id: str) -> datetime:
+        revised = self._call(lambda: self._client.secrets().get(secret_id)).revision_date
+        if not isinstance(revised, datetime) or revised.utcoffset() is None:
+            raise StoreError("BWS gave a revision date without a zone")
+        return revised
 
     def find(self, project_id: str, key: str) -> StoredSecret | None:
         listed = self._call(lambda: self._client.secrets().list(self._organization_id))
