@@ -316,3 +316,16 @@ def test_covers_only_the_readers_the_registry_names() -> None:
     reads = _reads()
     assert reads.covers(SWEEP) and reads.covers(BACKUP)
     assert not reads.covers('runtime-fetch repo="orchestrator" ref="scripts/other.sh"')
+
+
+@pytest.mark.parametrize(
+    ("method", "path"), [("POST", CHECKS), ("GET", CHECKS + "abc/pings/"), ("GET", "/api/v3/")]
+)
+def test_any_other_healthchecks_request_is_refused_before_the_transport(
+    method: str, path: str
+) -> None:
+    server = HealthchecksServer(_check())
+    client = server.client()
+    with pytest.raises(ReadError, match="may not"):
+        client._connect().request(method, path)
+    assert server.requests == []
