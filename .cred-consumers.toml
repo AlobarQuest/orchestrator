@@ -128,7 +128,6 @@ bws_uuid = "bd71bed1-4aac-4af8-9094-b4970180bc59"
 created = "2026-07-30"
 disposition = "reissue"
 rotated_by_sds = true
-rotate_requested = "2026-10-15"
 
   [[credential.consumer]]
   kind = "bws-secret"
