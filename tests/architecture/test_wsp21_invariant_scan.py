@@ -499,6 +499,11 @@ OUTBOUND_ALLOWLIST = {
     # with the bearer being rotated, as that bearer's key id, and may send nothing else. Pinned by
     # tests/rotation_worker/test_orchestrator_bearer.py. Its egress is not the orchestrator's.
     Path("src/rotation_worker/adapters/orchestrator_bearer.py"),
+    # ADR-0055 amendment 9, decision 5. The rotation executor reads Healthchecks' check listing,
+    # with a read-only key, to see whether a scheduled reader of a rotated keeper has run since the
+    # store. Its client may send only `GET /api/v3/checks/`, pinned by
+    # tests/rotation_worker/test_readers.py. Its egress is not the orchestrator's.
+    Path("src/rotation_worker/readers.py"),
     # The pin watcher READS GitHub, and that is the point rather than an incidental dependency:
     # a caller's pin is a fact about a remote repository's workflow file, so no local surface can
     # answer it. Read-only by construction -- the client's single entry point refuses anything but

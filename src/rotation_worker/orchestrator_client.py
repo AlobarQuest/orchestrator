@@ -1,8 +1,9 @@
 """The executor's one surface on the orchestrator: its WORKER bearer's reads and writes only.
 
 The executor pulls (ADR-0055 decision 1). It reads the ready queue, a unit, its package
-revision, history and evidence, and the machine identities the orchestrator loaded; it claims,
-renews, starts, files evidence, submits and fails.
+revision, history and evidence, the machine identities the orchestrator loaded, and the
+observations a scheduled reader posted (`readers.py`); it claims, renews, starts, files evidence,
+submits and fails.
 Every path is matched against an anchored pattern before a request leaves
 (`estate_clients.confined`), and any other is refused without a byte sent. The bearer comes from
 BWS at start-up and is never logged; failures carry the orchestrator's error code and message,
@@ -13,6 +14,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Final
 
 import httpx
@@ -31,6 +33,7 @@ TIMEOUT_SECONDS: Final = 30.0
 UUID_SHAPE: Final = r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}"
 LEDGER: Final = "/api/v1/status-ledger"
 IDENTITIES: Final = "/api/v1/m2m-identities"
+OBSERVATIONS: Final = "/api/v1/observations"
 _UNIT: Final = re.compile(rf"^/api/v1/work-units/{UUID_SHAPE}$")
 _UNIT_RECORDS: Final = re.compile(rf"^/api/v1/work-units/{UUID_SHAPE}/(history|evidence)$")
 _INTAKE: Final = re.compile(rf"^/api/v1/package-intakes/{UUID_SHAPE}$")
@@ -49,7 +52,7 @@ class OrchestratorError(RuntimeError):
 def permits(method: str, path: str) -> bool:
     bare = path.split("?", 1)[0]
     if method == "GET":
-        return bare in (LEDGER, IDENTITIES) or any(
+        return bare in (LEDGER, IDENTITIES, OBSERVATIONS) or any(
             p.match(bare) for p in (_UNIT, _UNIT_RECORDS, _INTAKE)
         )
     return method == "POST" and any(p.match(bare) for p in (_LEASE, _COMMAND))
@@ -101,6 +104,17 @@ class OrchestratorClient:
     def identities(self) -> dict[str, dict[str, Any]]:
         """The machine identities the orchestrator loaded (ADR-0055 amendment 9)."""
         return self._send("GET", IDENTITIES)
+
+    def observations(
+        self, source_system: str, subject_reference: str, observed_from: datetime
+    ) -> list[dict[str, Any]]:
+        """One subject's observations from one source, observed at or after `observed_from`."""
+        params = {
+            "source_system": source_system,
+            "subject_reference": subject_reference,
+            "observed_from": observed_from.isoformat(),
+        }
+        return self._send("GET", OBSERVATIONS, params=params)
 
     def unit(self, unit_id: str) -> dict[str, Any]:
         return self._send("GET", f"/api/v1/work-units/{unit_id}")

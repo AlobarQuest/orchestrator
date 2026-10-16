@@ -184,48 +184,56 @@ disposition = "reissue"
   kind = "runtime-fetch"
   repo = "orchestrator"
   ref = "scripts/run-activation-sweep.sh"
+  healthchecks_check = "sds-activation-sweep"
   note = "launchd com.devon.activation-sweep 07:10; Keychain Claude/BWS_ACCESS_TOKEN_SDS (sds-operator); Healthchecks check sds-activation-sweep"
 
   [[credential.consumer]]
   kind = "runtime-fetch"
   repo = "orchestrator"
   ref = "scripts/run-bump-proposer.sh"
+  healthchecks_check = "sds-bump-proposer"
   note = "launchd com.devon.bump-proposer 06:50 (--submit); Keychain Claude/BWS_ACCESS_TOKEN_SDS (sds-operator); Healthchecks check sds-bump-proposer"
 
   [[credential.consumer]]
   kind = "runtime-fetch"
   repo = "orchestrator"
   ref = "scripts/run-deploy-watcher.sh"
+  healthchecks_check = "sds-deploy-watcher"
   note = "launchd com.devon.deploy-watcher hourly; Keychain Claude/BWS_ACCESS_TOKEN_SDS (sds-operator); Healthchecks check sds-deploy-watcher"
 
   [[credential.consumer]]
   kind = "runtime-fetch"
   repo = "orchestrator"
   ref = "scripts/run-landing-ledger.sh"
+  healthchecks_check = "sds-landing-ledger"
   note = "launchd com.devon.landing-ledger 07:30; Keychain Claude/BWS_ACCESS_TOKEN_SDS (sds-operator); Healthchecks check sds-landing-ledger"
 
   [[credential.consumer]]
   kind = "runtime-fetch"
   repo = "orchestrator"
   ref = "scripts/run-pin-watcher.sh"
+  healthchecks_check = "sds-pin-watcher"
   note = "launchd com.devon.pin-watcher 07:20; Keychain Claude/BWS_ACCESS_TOKEN_SDS (sds-operator); Healthchecks check sds-pin-watcher"
 
   [[credential.consumer]]
   kind = "runtime-fetch"
   repo = "orchestrator"
   ref = "scripts/run-revision-watcher.sh"
+  healthchecks_check = "sds-revision-watcher"
   note = "launchd com.devon.revision-watcher hourly; Keychain Claude/BWS_ACCESS_TOKEN_SDS (sds-operator); Healthchecks check sds-revision-watcher"
 
   [[credential.consumer]]
   kind = "runtime-fetch"
   repo = "orchestrator"
   ref = "scripts/run-rotation-proposer.sh"
+  healthchecks_check = "sds-rotation-proposer"
   note = "launchd com.devon.rotation-proposer 06:30 (--submit); Keychain Claude/BWS_ACCESS_TOKEN_SDS (sds-operator); Healthchecks check sds-rotation-proposer"
 
   [[credential.consumer]]
   kind = "runtime-fetch"
   repo = "orchestrator"
   ref = "scripts/run-tool-installer.sh"
+  healthchecks_check = "sds-tool-installer"
   note = "launchd com.devon.tool-installer 03:15; Keychain Claude/BWS_ACCESS_TOKEN_SDS (sds-operator); Healthchecks check sds-tool-installer"
 
 [[credential]]
@@ -255,48 +263,64 @@ disposition = "reissue"
   kind = "runtime-fetch"
   repo = "infraops-mcp-server"
   ref = "scripts/drift-audit.sh"
+  observation_source = "drift_digest"
+  observation_subject = "coolify:prod"
   note = "observation post; launchd com.devon.infra-drift 03:00; Keychain Claude/BWS_ACCESS_TOKEN_INFRA_DRIFT (broad account); Healthchecks check Infra Standards Drif (slug infra-standards-drif); an empty fetch logs a WARN and the run still pings success"
 
   [[credential.consumer]]
   kind = "runtime-fetch"
   repo = "security-standards"
   ref = "scripts/factory-events-nightly.sh"
+  observation_source = "recovery_floor"
+  observation_subject = "chain:factory-events"
   note = "through scripts/observe-run.sh, both deployed to ~/.claude/bin; launchd com.devon.factory-events 03:30; Keychain Claude/BWS_ACCESS_TOKEN_VPS_BACKUP (broad account); Healthchecks check factory-events (slug factory-events)"
 
   [[credential.consumer]]
   kind = "runtime-fetch"
   repo = "vps-backup"
   ref = "backup.sh"
+  observation_source = "recovery_floor"
+  observation_subject = "backup:vps-production"
   note = "through observe-run.sh; launchd com.devon.vps-backup 02:00; Keychain Claude/BWS_ACCESS_TOKEN_VPS_BACKUP (broad account); Healthchecks check VPS Nightly Backup (slug vps-nightly-backup)"
 
   [[credential.consumer]]
   kind = "runtime-fetch"
   repo = "vps-backup"
   ref = "backup-orb.sh"
+  observation_source = "recovery_floor"
+  observation_subject = "backup:orb-dev"
   note = "through observe-run.sh; launchd com.devon.vps-backup 02:00; Keychain Claude/BWS_ACCESS_TOKEN_VPS_BACKUP (broad account); Healthchecks check vps-backup-orb-dev (slug vps-backup-orb-dev)"
 
   [[credential.consumer]]
   kind = "runtime-fetch"
   repo = "vps-backup"
   ref = "backup-mini.sh"
+  observation_source = "recovery_floor"
+  observation_subject = "backup:mini-host"
   note = "through observe-run.sh; launchd com.devon.vps-backup 02:00; Keychain Claude/BWS_ACCESS_TOKEN_VPS_BACKUP (broad account); Healthchecks check vps-backup-mini-host (slug vps-backup-mini-host)"
 
   [[credential.consumer]]
   kind = "runtime-fetch"
   repo = "vps-backup"
   ref = "sync-gdrive.sh"
+  observation_source = "recovery_floor"
+  observation_subject = "backup:offsite-gdrive"
   note = "through observe-run.sh; launchd com.devon.vps-backup 02:00; Keychain Claude/BWS_ACCESS_TOKEN_VPS_BACKUP (broad account) via observe-run's fallback; no Healthchecks check"
 
   [[credential.consumer]]
   kind = "runtime-fetch"
   repo = "vps-backup"
   ref = "verify-backup.sh"
+  observation_source = "recovery_floor"
+  observation_subject = "backup:restic-verification"
   note = "through observe-run.sh; launchd com.devon.vps-backup-verify Sunday 03:00; Keychain Claude/BWS_ACCESS_TOKEN_VPS_BACKUP (broad account); no Healthchecks check (HEALTHCHECK_VERIFY_UUID unset)"
 
   [[credential.consumer]]
   kind = "runtime-fetch"
   repo = "vps-backup"
   ref = "hetzner-snapshot.sh"
+  observation_source = "recovery_floor"
+  observation_subject = "snapshot:hetzner-vps"
   note = "through observe-run.sh; launchd com.devon.hetzner-snapshot Sunday 03:00; Keychain Claude/BWS_ACCESS_TOKEN_VPS_BACKUP (broad account); no Healthchecks check"
 
 # The factory-runner WORKER bearer. Seven repositories hold it as the write-only

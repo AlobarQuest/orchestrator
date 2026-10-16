@@ -3,7 +3,10 @@
 `run` is the service: one pass over the ready rotation units, started on a timer by the VM's
 init system. `seed-canary` creates the canary credential's keeper for ADR-0055 increment 4's
 end-to-end run, and `mint-bearer` the executor's own WORKER bearer.
-`compare-destinations <credential>` is read-only. It fetches intent-packages and the registry
+`read-consumers <credential> --stored-at <instant>` is read-only too: it asks each scheduled
+reader's read, from the executor's VM, whether the reader has run since that instant, and prints
+the answer and the latest run it found. Exit 0 when every reader answers, 2 when one can't be
+read. `compare-destinations <credential>` is read-only. It fetches intent-packages and the registry
 repositories into the executor's mirrors and prints the registry's destinations, ready to paste
 into a package, then compares them with the standing package's, at each repository's `main`.
 Exit codes: 0 equal, 1 different (the package needs a revision before approval), 2 unreadable.
@@ -19,6 +22,7 @@ import os
 import secrets
 import sys
 from collections.abc import Sequence
+from datetime import datetime
 from pathlib import Path
 from typing import Final
 
@@ -29,6 +33,13 @@ from rotation_worker.destinations import DestinationError
 from rotation_worker.git_mirror import MirrorError, RepoMirror
 from rotation_worker.logs import configure
 from rotation_worker.orchestrator_client import OrchestratorClient
+from rotation_worker.readers import (
+    ConsumerReads,
+    Healthchecks,
+    ReadError,
+    ReadUnavailable,
+    scheduled_reads,
+)
 from rotation_worker.registry import (
     PACKAGES_REPOSITORY,
     RegistryError,
@@ -81,6 +92,33 @@ def open_store(config: Config) -> SecretStore:
     return BwsStore(config.organization_id, read_root_token(config.root_token_file))
 
 
+def open_healthchecks(config: Config, store: SecretStore) -> Healthchecks | None:
+    key_id = config.healthchecks_key_id
+    return None if key_id is None else Healthchecks(lambda: store.read(key_id))
+
+
+def read_consumers(setup: Setup, credential_id: str, stored_at: datetime) -> int:
+    """Each scheduled reader's answer for a store at `stored_at`. Reads only."""
+    try:
+        reads = scheduled_reads(find_credential(setup.mirror, credential_id).credential)
+    except (MirrorError, RegistryError, DestinationError) as error:
+        print(f"read-consumers: {error}", file=sys.stderr)
+        return EXIT_UNREADABLE
+    consumers = ConsumerReads(reads, setup.healthchecks, setup.client)
+    unreadable = 0
+    for destination in sorted(reads):
+        try:
+            answer = consumers.answer(destination, stored_at)
+        except (ReadError, ReadUnavailable) as error:
+            unreadable += 1
+            print(f"unreadable  {destination}: {error}")
+            continue
+        verdict = "switched" if answer.switched else "not yet"
+        last_run = answer.last_run.isoformat() if answer.last_run else "none"
+        print(f"{verdict:<10}  {destination}  last run {last_run}")
+    return EXIT_UNREADABLE if unreadable else EXIT_EQUAL
+
+
 def build_setup(config: Config) -> Setup:
     """Log in to BWS with the root token, then read the executor's own bearer from it."""
     if config.bearer_secret_id is None:
@@ -99,6 +137,7 @@ def build_setup(config: Config) -> Setup:
         coolify_url=config.coolify_url,
         orchestrator_application=config.orchestrator_application,
         executor_key_id=config.credential_key_id,
+        healthchecks=open_healthchecks(config, store),
     )
 
 
@@ -164,7 +203,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     minting = commands.add_parser(
         "mint-bearer", help="create the executor's WORKER bearer; print its id and hash"
     )
-    for command in (running, seeding, minting):
+    reading = commands.add_parser(
+        "read-consumers",
+        help="ask whether each scheduled reader of a credential has run since an instant",
+    )
+    reading.add_argument("credential_id")
+    reading.add_argument("--stored-at", type=_instant, required=True)
+    for command in (running, seeding, minting, reading):
         command.add_argument("--config", type=Path, default=DEFAULT_PATH)
     arguments = parser.parse_args(argv)
     if arguments.command == "compare-destinations":
@@ -176,4 +221,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         return run(config)
     if arguments.command == "mint-bearer":
         return mint_bearer(config)
+    if arguments.command == "read-consumers":
+        return read_consumers(build_setup(config), arguments.credential_id, arguments.stored_at)
     return seed_canary(config)
+
+
+def _instant(text: str) -> datetime:
+    instant = datetime.fromisoformat(text)
+    if instant.utcoffset() is None:
+        raise argparse.ArgumentTypeError("give the instant with its zone, for example +00:00")
+    return instant

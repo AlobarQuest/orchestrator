@@ -1013,3 +1013,47 @@ Neither read tells the old value from the new. The orchestrator accepts both dur
 and records neither (`identity/auth.py::_hash_accepted`). Both reads rest on the readers being
 `runtime-fetch`: a reader fetches the keeper each run, and the store step has read the keeper
 back, so a run that started after the store used the new value.
+
+### How verify-consumers waits for the scheduled readers (2026-10-16)
+
+The reads in decision 5 can't finish inside one pass or one lease: the readers run nightly or
+hourly, and `verify-backup.sh` and `hetzner-snapshot.sh` run only on Sundays at 03:00 New York
+time. As built before this section, a claimed unit had no "not yet" exit: `retire_old` refused on
+any unverified consumer, failing the unit and spending an attempt. A lapsed lease didn't help:
+only SYSTEM may release one (decision 9), no schedule does, and each re-claim spends an attempt.
+
+**The worst case passes `until`.** `until` is the host step's instant plus seven days (`OVERLAP`),
+and host runs minutes before store. A mint claimed on a Sunday that stores after 03:00 has both
+Sunday readers' runs already behind it, so their next runs start the following Sunday at 03:00,
+minutes after `until`, and they post only when they finish. A mint that fails after host and
+stores on a later night moves the store later while `until` stays put. A mint on Monday through
+Saturday leaves every reader at least a day. Reaching `until` doesn't break a reader that fetches
+the keeper each run; it means the backstop, not retire-old, ends the overlap.
+
+**Devon chose on 2026-10-16 that weekly readers gate retire.** The rejected alternatives were
+keeping mints off Sundays, an eight-day overlap for this rotation (`MAX_OVERLAP` is the ceiling,
+and it clears a Sunday mint only if the Sunday jobs post before the window closes), and letting
+weekly readers report without gating.
+
+What was built:
+
+- **The wait is before the claim.** A unit that retires the old value stays ready, spending
+  nothing, until every scheduled reader has run since the keeper's revision date. Each pass logs
+  the readers it waits for and `until`. That log line is the only report before the backstop;
+  after it, retire-old files "the old value was already refused". Nothing reports a ready unit
+  in the dead-letter view, so a waiting retire is visible in the executor's log and at
+  `/review`, not as a finding.
+- **Each read is named in the registry**, in parsed fields beside `note`
+  (`healthchecks_check`, or `observation_source` with `observation_subject`), outside the
+  destination string, so intent-packages' pin is unchanged. infraops' parser stores extra
+  consumer fields, proven by `security-drift-cli cred-findings` against a scratch
+  `INFRADRIFT_CONFIG_DIR`. These fields merge without review and the three-way destination
+  comparison doesn't cover them: a wrong name can make a reader look switched early, never move a
+  value.
+- **A check's run start is `last_ping - last_duration`.** Healthchecks doesn't document
+  `last_duration`; its source (`Check.ping`, at b932fc4) sets it only for a success or failure
+  that follows its own `/start` and resets it otherwise, and the read-only key returns it. All
+  sixteen readers fetch the keeper after their run starts and keep no copy, confirmed in each
+  script and helper on 2026-10-16. A two-minute margin covers the three clocks involved.
+- **`Rotation / Healthchecks` already held a read-only key** (`Rotation / Healthcheck`) for the
+  project with the twenty checks, so no new credential was needed.

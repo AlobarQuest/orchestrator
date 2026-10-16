@@ -8,7 +8,8 @@ here, once, so the invariants hold for every adapter rather than being re-writte
 
 * **Retire-old is reachable only after every registered consumer passes verify-consumers**, checked
   again at retire time by re-reading each one, never by trusting earlier evidence; and only
-  confirm-dead may follow it.
+  confirm-dead may follow it. A scheduled `runtime-fetch` reader passes once it has run since the
+  keeper was written (`readers.py`); any other is attested by a person.
 * **New is never old.** Every step after mint refuses if the new value's fingerprint equals the
   old one's.
 * **The old value is quarantined before the keeper changes**, and a keeper that already holds the
@@ -36,6 +37,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import StrEnum
 from typing import Final, Protocol
 
@@ -151,6 +153,16 @@ class Provider(Protocol):
         an id or a label: a key's label carries characters of the key, and an id is a run the
         orchestrator's evidence scan refuses.
         """
+        ...
+
+
+class ScheduledReads(Protocol):
+    """A rotation's scheduled readers: whether each has run since the keeper was written."""
+
+    def covers(self, destination: str) -> bool: ...
+
+    def switched(self, destination: str, stored_at: datetime) -> bool:
+        """Never raises: a read that can't be made isn't switched."""
         ...
 
 
@@ -276,6 +288,7 @@ class UnitRun:
     before_step: Callable[[], None]
     # Step kinds this unit already filed evidence for, in an earlier attempt.
     filed: frozenset[StepKind] = frozenset()
+    scheduled: ScheduledReads | None = None
     _minted: Value | None = field(default=None, repr=False)
 
     def run(self, unit: UnitPlan) -> None:
@@ -400,25 +413,34 @@ class UnitRun:
         attested = sum(1 for print_ in self.attestations if new.fingerprint.matches(print_))
         needs_attestation = 0
         for destination in self.rotation.destinations:
-            consumer = parse(destination)
-            kind = consumer["kind"]
+            kind = parse(destination)["kind"]
             if kind == "provider":
                 continue
-            if kind in HOSTED_KINDS:
-                if not self.provider.hosts_destinations:
-                    raise ContractError(f"this adapter can't reach a {kind} consumer")
-                if not self.accepts(new):
-                    missing.append(destination)
-            elif kind in READ_BACK_KINDS:
-                if not self.store.read(consumer["uuid"]).same_as(new):
-                    missing.append(destination)
-            elif kind in ATTESTED_KINDS:
+            if kind in ATTESTED_KINDS and not self._scheduled(destination):
                 needs_attestation += 1
                 if needs_attestation > attested:
                     missing.append(destination)
-            else:
-                raise ContractError(f"no way to verify a {kind} consumer")
+            elif not self._holds(destination, new):
+                missing.append(destination)
         return missing
+
+    def _scheduled(self, destination: str) -> bool:
+        return self.scheduled is not None and self.scheduled.covers(destination)
+
+    def _holds(self, destination: str, new: Value) -> bool:
+        """Whether a machine-read consumer holds the new value, or has run since it was stored."""
+        consumer = parse(destination)
+        kind = consumer["kind"]
+        if self.scheduled is not None and self.scheduled.covers(destination):
+            stored_at = self.store.revised(self.rotation.keeper_id)
+            return self.scheduled.switched(destination, stored_at)
+        if kind in HOSTED_KINDS:
+            if not self.provider.hosts_destinations:
+                raise ContractError(f"this adapter can't reach a {kind} consumer")
+            return self.accepts(new)
+        if kind in READ_BACK_KINDS:
+            return self.store.read(consumer["uuid"]).same_as(new)
+        raise ContractError(f"no way to verify a {kind} consumer")
 
 
 def _fingerprints(new: Value, old: Value) -> tuple[tuple[Which, Fingerprint], ...]:

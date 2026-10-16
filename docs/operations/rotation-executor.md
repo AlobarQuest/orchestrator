@@ -102,6 +102,7 @@ OrbStack machines and the tailnet (production Coolify at `100.112.188.96:8000`),
 
    coolify_url = "http://100.112.188.96:8000"
    orchestrator_application = "eqj5l7k705fhi12x9i74fqf0"
+   healthchecks_key_id = "8a41c80d-54a8-4b2b-aa93-b4e0012a99da"
 
    [admin_secrets]
    openrouter = "<the OpenRouter management key's secret id, in Rotation / Admin>"
@@ -116,7 +117,9 @@ OrbStack machines and the tailnet (production Coolify at `100.112.188.96:8000`),
    application that adapter may write whatever a package names. `coolify_url` is production
    Coolify's tailnet address: the Coolify client sends its
    token only over TLS or to a tailnet address, and production Coolify has no TLS (ADR-0055
-   amendment 9).
+   amendment 9). `healthchecks_key_id` is the read-only Healthchecks key in
+   `Rotation / Healthchecks`, read only when a scheduled reader's check is (the following
+   "Scheduled readers" section).
 
 3. Enable the timer: `orb -m rotation-executor -u root systemctl enable --now
    rotation-worker.timer`. Read its passes with `journalctl -u rotation-worker` (one JSON line per
@@ -139,7 +142,7 @@ executor. None is ever printed, passed as an argument, or kept on the Mac.
 |---|---|---|
 | The root: the `rotation-executor` BWS machine account's access token | `/etc/rotation-worker/root-token` in the VM, owner `rotation`, mode `0400` | The executor, to log in to BWS |
 | The executor's WORKER bearer | BWS secret `rotation-executor WORKER bearer` in `Rotation / Executor`; its hash in the orchestrator's `ORCHESTRATOR_M2M_CREDENTIALS` under key `rotation-executor-1`, agent `rotation-executor` | The executor, from BWS at each pass |
-| The read-only Healthchecks API key | BWS, in `Rotation / Healthchecks` | No reader until an adapter verifies a `runtime-fetch` consumer by its check |
+| The read-only Healthchecks API key | BWS secret `Rotation / Healthcheck` in `Rotation / Healthchecks`; its id in `config.toml` as `healthchecks_key_id` | The executor, from BWS, only while it reads a scheduled reader's check |
 | The OpenRouter management key | BWS secret `openrouter management key` in `Rotation / Admin`; its id in `config.toml`'s `admin_secrets` | The executor, from BWS, only while an `openrouter` unit mints or revokes |
 | The production Coolify token (`read`, `write`, `deploy`; not `read:sensitive`) | BWS secret `rotation-coolify-token` in `Rotation / Coolify`; its id in `admin_secrets` as `orchestrator` | The executor, from BWS, only while an `orchestrator` unit hosts or retires |
 | The BWS projects | Bitwarden Secrets Manager | The root: write on `Rotation / Work` and `Rotation / Keepers`, read on `Rotation / Admin`, `Rotation / Coolify`, `Rotation / Executor` and `Rotation / Healthchecks`, nothing else. A consumer account: a direct read grant on each keeper secret it consumes, nothing else in `Rotation / Keepers` |
@@ -249,6 +252,43 @@ It refuses an entry that is its own `credential_key_id`: the executor's bearer i
 It writes the preview row before the production row, and checks for live runs again between the
 write and the restart. The check narrows, but can't close, the window in which a lane dispatches a
 run before the restart lands.
+
+### Scheduled readers
+
+A `runtime-fetch` reader on a schedule is verified by a read, not by a person (ADR-0055
+amendment 9, decision 5). Its registry row names the read in parsed fields beside `note`:
+`healthchecks_check` (the check's exact name) for a reader whose check fails on an empty value,
+or `observation_source` and `observation_subject` for one that posts an observation each run.
+`readers.py` holds what each read accepts. A reader counts as switched once a run that started
+more than two minutes after the keeper's revision date shows up: a successful check whose
+`last_ping - last_duration` is that late, or an observation whose `observed_at` is.
+
+- **Retire waits unclaimed.** A unit that retires the old value stays ready, spending no attempt,
+  until every scheduled reader has switched. Each pass logs `unit_waiting` with the readers it
+  waits for and the overlap's `until`. Two readers run on Sundays only, so a wait can last a week.
+- **The backstop may end the overlap first.** A mint that stores just after a Sunday reader's
+  run waits about seven days for its next run, which can land after `until`. Devon chose on
+  2026-10-16 that weekly readers still gate retire. If `until` passes first, the orchestrator
+  stops accepting the old value on its own; retire then finds it already refused, files
+  "the old value was already refused; nothing to revoke", and leaves the expired `previous` in
+  the setting for the next host step to drop.
+- **A reader the registry names wrongly is refused before the claim.** No check with that name,
+  two of them, or a subject with nothing posted in the eight days before the store fails the unit
+  into the dead-letter report. A read that gets no answer only waits.
+- **A plan with no human act refuses a reader with no read.** Nobody could attest it, so retire
+  could never run.
+
+To see what the reads answer, from the VM, without claiming anything:
+
+```sh
+orb -m rotation-executor -u root runuser -u rotation -- env -i PATH=/usr/bin:/bin \
+  HOME=/var/lib/rotation-worker /opt/rotation-worker/venv/bin/rotation-worker read-consumers \
+  orchestrator-observer-bearer --stored-at 2026-10-15T06:00:00+00:00 \
+  --config /etc/rotation-worker/config.toml
+```
+
+It prints `switched`, `not yet` or `unreadable` for each reader, with the start of the latest run
+it found. It exits 2 when any reader is unreadable.
 
 ### If a rotation stalls after host
 

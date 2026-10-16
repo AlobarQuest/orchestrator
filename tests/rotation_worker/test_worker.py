@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 
@@ -13,6 +15,7 @@ from rotation_worker.checks import Approved
 from rotation_worker.contract import ContractError, Rotation
 from rotation_worker.git_mirror import MirrorError, RepoMirror
 from rotation_worker.orchestrator_client import Lease, OrchestratorClient, OrchestratorError
+from rotation_worker.readers import ObservationRead, Read
 from rotation_worker.registry import RegistryEntry
 from rotation_worker.values import Fingerprint, Value
 from rotation_worker.worker import Setup, run_pass
@@ -33,6 +36,16 @@ class FakeClient:
         self.existing_evidence: dict[str, list[dict[str, Any]]] = {}
         self.history_events: list[dict[str, Any]] = []
         self.unreachable: set[str] = set()
+        self.observed_at: list[datetime] = []
+        self.loaded: dict[str, dict[str, Any]] = {}
+
+    def observations(
+        self, source_system: str, subject_reference: str, observed_from: datetime
+    ) -> list[dict[str, Any]]:
+        return [{"observed_at": at.isoformat()} for at in self.observed_at if at >= observed_from]
+
+    def identities(self) -> dict[str, dict[str, Any]]:
+        return self.loaded
 
     def ready_units(self) -> list[str]:
         return list(self.units)
@@ -92,6 +105,7 @@ class Harness:
         monkeypatch.setattr(worker, "find_credential", self._registry)
         self.client = FakeClient({})
         self.adapter = adapter
+        self.reads: dict[str, Read] = {}
 
     def add(self, unit_id: str, name: str) -> None:
         self.client.units[unit_id] = {
@@ -106,7 +120,7 @@ class Harness:
             raise self.refusal
         plan_unit = self.adapter.plan.unit(unit["authority"]["constraints"]["rotation_unit"])
         entry = RegistryEntry("AlobarQuest/orchestrator", "c" * 40, {"rotated_by_sds": True})
-        return Approved(self.adapter, plan_unit, self.rotation, entry)
+        return Approved(self.adapter, plan_unit, self.rotation, entry, self.reads)
 
     def _registry(self, mirror: Any, credential_id: str) -> RegistryEntry:
         rotated = not self.handed_back
@@ -331,4 +345,98 @@ def test_earlier_evidence_is_tracked_per_criterion_not_per_kind(h: Harness) -> N
 
 
 def _unit(name: str) -> dict[str, Any]:
+    return {"authority": {"constraints": {"rotation_unit": name}}}
+
+
+def _scheduled(h: Harness) -> None:
+    """The canary's one reader is a scheduled one, read through its observations."""
+    h.reads = {RUNTIME: ObservationRead("recovery_floor", "backup:canary")}
+    h.client.observed_at = [datetime.now(UTC) - timedelta(days=1)]
+
+
+def _stored(h: Harness) -> None:
+    for unit_id, name in (("u1", "mint"), ("u2", "store")):
+        h.add(unit_id, name)
+        assert run_pass(h.setup()) == 1
+        del h.client.units[unit_id]
+    h.client.calls.clear()
+
+
+class _Records(logging.Handler):
+    def __init__(self) -> None:
+        super().__init__(logging.INFO)
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.records.append(record)
+
+
+def test_retire_waits_unclaimed_until_every_scheduled_reader_has_run(h: Harness) -> None:
+    _scheduled(h)
+    _stored(h)
+    h.add("u3", "retire")
+    # Attached to the executor's logger itself and re-enabled: a test that runs alembic's
+    # `fileConfig` disables every logger that already exists.
+    records = _Records()
+    logger = logging.getLogger("rotation_worker")
+    logger.addHandler(records)
+    level, disabled = logger.level, logger.disabled
+    logger.setLevel(logging.INFO)
+    logger.disabled = False
+    try:
+        assert run_pass(h.setup()) == 0
+    finally:
+        logger.removeHandler(records)
+        logger.setLevel(level)
+        logger.disabled = disabled
+    assert h.client.calls == []
+    waiting = [r for r in records.records if r.getMessage() == "unit_waiting"]
+    assert [getattr(r, "readers", None) for r in waiting] == [[RUNTIME]]
+    assert h.provider.probe(h.original) == 200
+
+
+def test_retire_goes_ahead_once_the_reader_has_run_since_the_store(h: Harness) -> None:
+    _scheduled(h)
+    _stored(h)
+    h.client.observed_at.append(h.store.revisions[h.keeper] + timedelta(hours=1))
+    h.add("u3", "retire")
+    assert run_pass(h.setup()) == 1
+    assert ("submit", "u3") in h.client.calls
+    assert h.provider.probe(h.original) == 401
+
+
+def test_a_reader_the_registry_names_wrongly_is_refused_before_any_step(h: Harness) -> None:
+    _scheduled(h)
+    h.client.observed_at = []
+    h.add("u2", "store")
+    assert run_pass(h.setup()) == 0
+    assert "posted nothing" in h.client.failures["u2"]
+    assert ("start", "u2") not in h.client.calls
+
+
+def test_a_unit_that_verifies_but_doesn_t_retire_never_waits(h: Harness) -> None:
+    _scheduled(h)
+    h.add("u1", "mint")
+    assert run_pass(h.setup()) == 1
+    h.add("u2", "store")
+    del h.client.units["u1"]
+    assert run_pass(h.setup()) == 1
+    assert ("submit", "u2") in h.client.calls
+
+
+def test_the_wait_names_when_the_overlap_s_backstop_ends(h: Harness) -> None:
+    hosted = (
+        'coolify-env-hash instance="prod" resource_type="application" uuid="a" '
+        'key="ORCHESTRATOR_M2M_CREDENTIALS" entry="orchestrator-observer"'
+    )
+    h.rotation = Rotation("canary", "o", h.keeper, WORK, (*h.rotation.destinations, hosted))
+    until = "2026-10-23T06:00:00+00:00"
+    h.client.loaded = {"orchestrator-observer": {"previous": {"until": until}}}
+    approved = h._check(_unit_named("retire"), None, None, WORK)
+    assert worker._overlap_until(h.setup(), approved) == until
+    h.client.loaded = {"orchestrator-observer": {}}
+    assert worker._overlap_until(h.setup(), approved) is None
+
+
+def _unit_named(name: str) -> dict[str, Any]:
     return {"authority": {"constraints": {"rotation_unit": name}}}

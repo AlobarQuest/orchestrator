@@ -9,6 +9,7 @@ from __future__ import annotations
 import ast
 import json
 import re
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
@@ -34,6 +35,7 @@ ALLOWED = [
     ("GET", f"/api/v1/work-units/{UNIT}/history"),
     ("GET", f"/api/v1/work-units/{UNIT}/evidence"),
     ("GET", f"/api/v1/package-intakes/{UNIT}"),
+    ("GET", "/api/v1/observations?source_system=recovery_floor&subject_reference=backup%3Ax"),
     ("POST", f"/api/v1/work-units/{UNIT}/claim"),
     ("POST", f"/api/v1/work-units/{UNIT}/renew"),
     ("POST", f"/api/v1/work-units/{UNIT}/evidence"),
@@ -53,6 +55,7 @@ REFUSED = [
     ("POST", f"/api/v1/work-units/{UNIT}/dependencies"),
     ("POST", "/api/v1/dependencies/x/resolve"),
     ("POST", "/api/v1/observations"),
+    ("GET", "/api/v1/observations/x"),
     ("GET", f"/api/v1/work-units/{UNIT}/runner-brief"),
     ("GET", f"/api/v1/work-units/{UNIT}/history/extra"),
     ("GET", f"/api/v1/work-units/{UNIT.upper()}"),
@@ -177,6 +180,7 @@ HTTP_CLIENTS = frozenset(
         "coolify.py",
         "adapters/openrouter.py",
         "adapters/orchestrator_bearer.py",
+        "readers.py",
     }
 )
 
@@ -195,3 +199,25 @@ def test_only_the_clients_import_an_http_client_and_only_the_mirror_runs_a_proce
             # Values never enter an argument list (ADR-0055 decision 3): no other module can
             # start a process at all.
             assert "subprocess" not in imported, source
+
+
+def test_observations_are_asked_by_source_subject_and_start() -> None:
+    seen: list[httpx.Request] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json=[{"observed_at": "2026-10-16T06:00:00+00:00"}])
+
+    client = OrchestratorClient(
+        "https://sds.example", "key", Value(BEARER), transport=httpx.MockTransport(answer)
+    )
+    since = datetime(2026, 10, 8, 6, 0, tzinfo=UTC)
+    rows = client.observations("recovery_floor", "backup:vps-production", since)
+    assert rows == [{"observed_at": "2026-10-16T06:00:00+00:00"}]
+    [request] = seen
+    assert (request.method, request.url.path) == ("GET", "/api/v1/observations")
+    assert dict(request.url.params) == {
+        "source_system": "recovery_floor",
+        "subject_reference": "backup:vps-production",
+        "observed_from": "2026-10-08T06:00:00+00:00",
+    }

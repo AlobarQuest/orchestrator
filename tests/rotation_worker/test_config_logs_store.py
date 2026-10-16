@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -36,6 +37,9 @@ def test_a_complete_config_loads(tmp_path: Path) -> None:
     config = load(path)
     assert config.credential_key_id == "rotation-executor-1"
     assert config.mirror_root == Path("/var/lib/rotation-worker/mirrors")
+    assert config.healthchecks_key_id is None
+    path.write_text(CONFIG + f'healthchecks_key_id = "{PROJECT}"\n')
+    assert load(path).healthchecks_key_id == PROJECT
 
 
 @pytest.mark.parametrize(
@@ -50,6 +54,7 @@ def test_a_complete_config_loads(tmp_path: Path) -> None:
         ('source_revision = "0123456789ab"', 'source_revision = "main"'),
         ('credential_key_id = "rotation-executor-1"', 'credential_key_id = " "'),
         ('state_dir = "/var/lib/rotation-worker"', ""),
+        ('state_dir = "/var/lib/rotation-worker"', 'healthchecks_key_id = "nope"'),
     ],
 )
 def test_a_malformed_config_is_refused(tmp_path: Path, old: str, new: str) -> None:
@@ -241,3 +246,11 @@ def test_a_value_json_would_escape_is_still_scrubbed() -> None:
 def test_request_urls_are_not_logged() -> None:
     configure()
     assert not logging.getLogger("httpx").isEnabledFor(logging.INFO)
+
+
+def test_revised_is_the_secret_s_revision_date() -> None:
+    secrets = FakeSecrets()
+    sid = str(uuid.uuid4())
+    when = datetime(2026, 10, 16, 6, 5, tzinfo=UTC)
+    secrets.rows[sid] = {**_row("keeper", "v"), "revision_date": when}
+    assert _store(secrets).revised(sid) == when

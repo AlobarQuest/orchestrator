@@ -35,6 +35,7 @@ from rotation_worker.values import Value
 from rotation_worker.worker import Setup, run_pass
 from tests._support.review_forms import decide_decomposition
 from tests.api.test_lifecycle_api import HUMAN, SYSTEM, WORKER
+from tests.api.test_observations_api import uptime_body
 from tests.rotation_worker.conftest import Origins
 from tests.rotation_worker.stores import MemoryStore
 
@@ -425,3 +426,29 @@ def test_the_unit_read_route_serves_what_the_executor_reads(estate: Estate) -> N
     assert missing.status_code == 404
     assert missing.json()["error"]["code"] == "work_unit_not_found"
     assert estate.client.get(f"/api/v1/work-units/{units['mint']}").status_code == 401
+
+
+def test_the_executor_s_worker_bearer_reads_one_subject_s_observations(
+    db_client: TestClient,
+) -> None:
+    """The scheduled-reader read (ADR-0055 amendment 9, decision 5) through the real route.
+
+    The observation route admits any authenticated role, so the WORKER bearer reads it; a later
+    confinement that refused the executor here would stop every drift-reporter rotation.
+    """
+    posted = db_client.post("/api/v1/observations", headers=SYSTEM, json=uptime_body())
+    assert posted.status_code == 201
+    client = OrchestratorClient(
+        "https://testserver",
+        "worker-key",
+        Value("fixture-token"),
+        transport=_ThroughTestClient(db_client),
+    )
+    subject = "https://sds.alobar.net/health/live"
+    since = datetime(2026, 7, 8, 22, 0, tzinfo=UTC)
+    [row] = client.observations("uptime_monitor", subject, since)
+    assert row["id"] == posted.json()["id"]
+    assert datetime.fromisoformat(row["observed_at"]) == datetime(2026, 7, 8, 22, 30, tzinfo=UTC)
+    later = datetime(2026, 7, 8, 23, 0, tzinfo=UTC)
+    assert client.observations("uptime_monitor", subject, later) == []
+    assert client.observations("github", subject, since) == []
