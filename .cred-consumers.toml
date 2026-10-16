@@ -149,6 +149,13 @@ rotated_by_sds = true
 # be recorded on both, or one stays live on a compromised value. Both are aged from
 # 2026-07-28, when the shared value was created (drift-reporter BWS record); the
 # observer's own BWS record was created 2026-08-08.
+# Each scheduled reader is its own runtime-fetch row (census 2026-10-16 over ~/Projects,
+# ~/.claude/bin and hooks, ~/Library/LaunchAgents, crontabs, both OrbStack machines and
+# the VPS), so each can be verified on its own. `ref` names the file; the schedule,
+# Keychain item and Healthchecks check live in `note`, which no destination compares.
+# The sds-operator account reads only the observer value, and the one broad account
+# behind BWS_ACCESS_TOKEN_VPS_BACKUP and BWS_ACCESS_TOKEN_INFRA_DRIFT reads only the
+# drift-reporter value (probed with an empty HOME, 2026-10-16).
 
 [[credential]]
 id = "orchestrator-observer-bearer"
@@ -176,7 +183,50 @@ disposition = "reissue"
   [[credential.consumer]]
   kind = "runtime-fetch"
   repo = "orchestrator"
-  ref = "scripts/run-activation-sweep.sh, run-bump-proposer.sh, run-deploy-watcher.sh, run-landing-ledger.sh, run-pin-watcher.sh, run-revision-watcher.sh, run-rotation-proposer.sh, run-tool-installer.sh"
+  ref = "scripts/run-activation-sweep.sh"
+  note = "launchd com.devon.activation-sweep 07:10; Keychain Claude/BWS_ACCESS_TOKEN_SDS (sds-operator); Healthchecks check sds-activation-sweep"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
+  ref = "scripts/run-bump-proposer.sh"
+  note = "launchd com.devon.bump-proposer 06:50 (--submit); Keychain Claude/BWS_ACCESS_TOKEN_SDS (sds-operator); Healthchecks check sds-bump-proposer"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
+  ref = "scripts/run-deploy-watcher.sh"
+  note = "launchd com.devon.deploy-watcher hourly; Keychain Claude/BWS_ACCESS_TOKEN_SDS (sds-operator); Healthchecks check sds-deploy-watcher"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
+  ref = "scripts/run-landing-ledger.sh"
+  note = "launchd com.devon.landing-ledger 07:30; Keychain Claude/BWS_ACCESS_TOKEN_SDS (sds-operator); Healthchecks check sds-landing-ledger"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
+  ref = "scripts/run-pin-watcher.sh"
+  note = "launchd com.devon.pin-watcher 07:20; Keychain Claude/BWS_ACCESS_TOKEN_SDS (sds-operator); Healthchecks check sds-pin-watcher"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
+  ref = "scripts/run-revision-watcher.sh"
+  note = "launchd com.devon.revision-watcher hourly; Keychain Claude/BWS_ACCESS_TOKEN_SDS (sds-operator); Healthchecks check sds-revision-watcher"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
+  ref = "scripts/run-rotation-proposer.sh"
+  note = "launchd com.devon.rotation-proposer 06:30 (--submit); Keychain Claude/BWS_ACCESS_TOKEN_SDS (sds-operator); Healthchecks check sds-rotation-proposer"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
+  ref = "scripts/run-tool-installer.sh"
+  note = "launchd com.devon.tool-installer 03:15; Keychain Claude/BWS_ACCESS_TOKEN_SDS (sds-operator); Healthchecks check sds-tool-installer"
 
 [[credential]]
 id = "orchestrator-drift-reporter-bearer"
@@ -204,17 +254,50 @@ disposition = "reissue"
   [[credential.consumer]]
   kind = "runtime-fetch"
   repo = "infraops-mcp-server"
-  ref = "scripts/drift-audit.sh observation post (03:00)"
+  ref = "scripts/drift-audit.sh"
+  note = "observation post; launchd com.devon.infra-drift 03:00; Keychain Claude/BWS_ACCESS_TOKEN_INFRA_DRIFT (broad account); Healthchecks check Infra Standards Drif (slug infra-standards-drif); an empty fetch logs a WARN and the run still pings success"
 
   [[credential.consumer]]
   kind = "runtime-fetch"
   repo = "security-standards"
-  ref = "scripts/observe-run.sh"
+  ref = "scripts/factory-events-nightly.sh"
+  note = "through scripts/observe-run.sh, both deployed to ~/.claude/bin; launchd com.devon.factory-events 03:30; Keychain Claude/BWS_ACCESS_TOKEN_VPS_BACKUP (broad account); Healthchecks check factory-events (slug factory-events)"
 
   [[credential.consumer]]
   kind = "runtime-fetch"
   repo = "vps-backup"
-  ref = "observe-run.sh"
+  ref = "backup.sh"
+  note = "through observe-run.sh; launchd com.devon.vps-backup 02:00; Keychain Claude/BWS_ACCESS_TOKEN_VPS_BACKUP (broad account); Healthchecks check VPS Nightly Backup (slug vps-nightly-backup)"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "vps-backup"
+  ref = "backup-orb.sh"
+  note = "through observe-run.sh; launchd com.devon.vps-backup 02:00; Keychain Claude/BWS_ACCESS_TOKEN_VPS_BACKUP (broad account); Healthchecks check vps-backup-orb-dev (slug vps-backup-orb-dev)"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "vps-backup"
+  ref = "backup-mini.sh"
+  note = "through observe-run.sh; launchd com.devon.vps-backup 02:00; Keychain Claude/BWS_ACCESS_TOKEN_VPS_BACKUP (broad account); Healthchecks check vps-backup-mini-host (slug vps-backup-mini-host)"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "vps-backup"
+  ref = "sync-gdrive.sh"
+  note = "through observe-run.sh; launchd com.devon.vps-backup 02:00; Keychain Claude/BWS_ACCESS_TOKEN_VPS_BACKUP (broad account) via observe-run's fallback; no Healthchecks check"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "vps-backup"
+  ref = "verify-backup.sh"
+  note = "through observe-run.sh; launchd com.devon.vps-backup-verify Sunday 03:00; Keychain Claude/BWS_ACCESS_TOKEN_VPS_BACKUP (broad account); no Healthchecks check (HEALTHCHECK_VERIFY_UUID unset)"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "vps-backup"
+  ref = "hetzner-snapshot.sh"
+  note = "through observe-run.sh; launchd com.devon.hetzner-snapshot Sunday 03:00; Keychain Claude/BWS_ACCESS_TOKEN_VPS_BACKUP (broad account); no Healthchecks check"
 
 # The factory-runner WORKER bearer. Seven repositories hold it as the write-only
 # Actions secret FACTORY_RUNNER_TOKEN (census 2026-10-06 via gh secret list over every
