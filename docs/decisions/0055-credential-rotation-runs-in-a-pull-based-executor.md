@@ -346,7 +346,7 @@ mechanics where a provider has an API.
 | GitHub PAT (fine-grained) | 2 | human | machine for BWS and (increment 7) Actions secrets, through the rotation App's installation tokens; human for Coolify | machine (`POST /credentials/revoke`) | |
 | Atlassian API token | 1 | human | machine for BWS; human for Coolify | human | Revoke API unverified |
 | BWS machine token | 4 | human | human (Keychain consumers on the Mac) | human | Executor records evidence only; confirm-dead is Devon's fresh-login check (amendment 1) |
-| change-manager bearer | 4 | machine | machine through the Coolify token, from increment 6 (amendment 1) | ends the overlap | Plaintext env: while deploy is human, the value passes through the Coolify UI on the Mac, a stated exception to "no value on the Mac" |
+| change-manager bearer | 4 | machine | machine through the Coolify token, from increment 6 (amendment 1) | ends the overlap | Each variable holds the bearer's sha256 hash with an optional `previous` (amendment 9, decision 6), so no value passes through Coolify |
 | orchestrator bearer | 4 of 6 | machine | machine through the Coolify token, from increment 6 (amendment 1) | ends the overlap | SYSTEM and VERIFIER stay hand-rotated (decision 4); observer and drift-reporter rotate together; factory-runner's bearer waits for increment 7's Actions-secret writer |
 
 **The Keychain copy is dropped.** Devon decided on 2026-10-08 that whatever needs
@@ -968,3 +968,28 @@ Devon answered the two remaining decisions on 2026-10-16, after the operator bea
   application down, not degraded: Coolify removed the running container and left the new one
   restart-looping, and writing the value back and restarting recovered it
   (`docs/operations/rotation-executor.md`).
+
+### change-manager's overlap, built and verified (2026-10-16)
+
+Decision 6's precondition is met. Each of change-manager's four bearer variables holds one JSON
+entry keyed by its scope (`full`, `read`, `propose`, `observe`): the bearer's sha256 hash and an
+optional `previous` with its `until`, in `ORCHESTRATOR_M2M_CREDENTIALS`' entry form without
+`agent_id`. The rules are the orchestrator's: a previous hash is accepted only before `until`, and
+boot refuses one equal to any scope's current hash or an `until` more than eight days ahead. One
+difference is deliberate: a variable that doesn't parse grants nothing for its scope rather than
+stopping boot, because a failed boot takes the whole application down (the preceding section).
+`tests/fixtures/m2m_bearer_setting.json` pins the form in both repositories, and this side
+recomputes its verdicts with the orchestrator's parser.
+
+- **The destination kind is unchanged.** Each bearer is `coolify-env-hash` with its scope as the
+  `entry`, in change-manager's registry.
+- **The executor confirms a write by probe.** change-manager has no route reporting loaded hashes.
+  A new bearer answers 401 before the restart and 200 after, and the old one 401 after retire-old.
+- **A constraint on the change-manager adapter:** `m2m_setting.build` can't write this form, since
+  it requires `agent_id`. Each variable is one entry, so the adapter builds the value from the
+  quarantined old value and the new one, without reading the setting.
+- **The cutover** ran in three deploys, each safe under an unplanned redeploy. change-manager #115
+  read both forms. The variables were rewritten (both rows each) and restarted at 15:27 UTC. #116
+  removed the plaintext form after every stored row was read back. Rolling back past #115 needs
+  the variables rewritten to plaintext first (change-manager `docs/operations/bearer-settings.md`).
+
