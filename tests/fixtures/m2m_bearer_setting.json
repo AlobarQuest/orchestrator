@@ -1,0 +1,203 @@
+{
+  "format": "change-manager-m2m-bearer-setting/1",
+  "about": "Each change-manager bearer variable holds one JSON object keyed by its scope, in the orchestrator's ORCHESTRATOR_M2M_CREDENTIALS entry form without agent_id. Every verdict here was computed by the orchestrator's parser (_previous_hash, previous_hash_valid, _hash_accepted); both repositories test their code against it.",
+  "variables": {
+    "M2M_TOKEN": "full",
+    "M2M_TOKEN_READ": "read",
+    "M2M_TOKEN_PROPOSE": "propose",
+    "M2M_TOKEN_OBSERVE": "observe"
+  },
+  "token_hash": "sha256 hex digest, lowercase, of the bearer presented after 'Bearer ', stripped",
+  "max_previous_overlap_seconds": 691200,
+  "now": "2026-10-16T12:00:00+00:00",
+  "example": {
+    "variable": "M2M_TOKEN_READ",
+    "value": "{\"read\":{\"token_hash\":\"d57ed1b76104ae1f11345994f33a61c63cdd30c3729cde815666dd3d6d3ab454\",\"previous\":{\"token_hash\":\"654274fb9fe4a3f6a0d25d3c088e2da90814580c3d2c49b1acb19eb27ed0fa0c\",\"until\":\"2026-10-23T12:00:00+00:00\"}}}"
+  },
+  "previous_cases": {
+    "current_hash": "d556f98cc3089c11cfdf351aad13a294cd5cf838d230152f776de0464310f766",
+    "other_current_hash": "248b94134c5a3fc91ade14508b1c9456e155ed76a3dff1063ea73b52c38f698e",
+    "cases": [
+      {
+        "name": "seven days ahead",
+        "previous": {
+          "token_hash": "654274fb9fe4a3f6a0d25d3c088e2da90814580c3d2c49b1acb19eb27ed0fa0c",
+          "until": "2026-10-23T12:00:00+00:00"
+        },
+        "valid": true
+      },
+      {
+        "name": "exactly eight days ahead",
+        "previous": {
+          "token_hash": "654274fb9fe4a3f6a0d25d3c088e2da90814580c3d2c49b1acb19eb27ed0fa0c",
+          "until": "2026-10-24T12:00:00+00:00"
+        },
+        "valid": true
+      },
+      {
+        "name": "one second past eight days",
+        "previous": {
+          "token_hash": "654274fb9fe4a3f6a0d25d3c088e2da90814580c3d2c49b1acb19eb27ed0fa0c",
+          "until": "2026-10-24T12:00:01+00:00"
+        },
+        "valid": false
+      },
+      {
+        "name": "already past",
+        "previous": {
+          "token_hash": "654274fb9fe4a3f6a0d25d3c088e2da90814580c3d2c49b1acb19eb27ed0fa0c",
+          "until": "2026-10-15T12:00:00+00:00"
+        },
+        "valid": true
+      },
+      {
+        "name": "Z suffix",
+        "previous": {
+          "token_hash": "654274fb9fe4a3f6a0d25d3c088e2da90814580c3d2c49b1acb19eb27ed0fa0c",
+          "until": "2026-10-20T00:00:00Z"
+        },
+        "valid": true
+      },
+      {
+        "name": "non-UTC offset",
+        "previous": {
+          "token_hash": "654274fb9fe4a3f6a0d25d3c088e2da90814580c3d2c49b1acb19eb27ed0fa0c",
+          "until": "2026-10-20T00:00:00+01:00"
+        },
+        "valid": false
+      },
+      {
+        "name": "no offset",
+        "previous": {
+          "token_hash": "654274fb9fe4a3f6a0d25d3c088e2da90814580c3d2c49b1acb19eb27ed0fa0c",
+          "until": "2026-10-20T00:00:00"
+        },
+        "valid": false
+      },
+      {
+        "name": "until not an instant",
+        "previous": {
+          "token_hash": "654274fb9fe4a3f6a0d25d3c088e2da90814580c3d2c49b1acb19eb27ed0fa0c",
+          "until": "next week"
+        },
+        "valid": false
+      },
+      {
+        "name": "until a number",
+        "previous": {
+          "token_hash": "654274fb9fe4a3f6a0d25d3c088e2da90814580c3d2c49b1acb19eb27ed0fa0c",
+          "until": 1760000000
+        },
+        "valid": false
+      },
+      {
+        "name": "previous equals its own current hash",
+        "previous": {
+          "token_hash": "d556f98cc3089c11cfdf351aad13a294cd5cf838d230152f776de0464310f766",
+          "until": "2026-10-23T12:00:00+00:00"
+        },
+        "valid": false
+      },
+      {
+        "name": "previous equals another scope's current hash",
+        "previous": {
+          "token_hash": "248b94134c5a3fc91ade14508b1c9456e155ed76a3dff1063ea73b52c38f698e",
+          "until": "2026-10-23T12:00:00+00:00"
+        },
+        "valid": false
+      },
+      {
+        "name": "uppercase hash",
+        "previous": {
+          "token_hash": "654274FB9FE4A3F6A0D25D3C088E2DA90814580C3D2C49B1ACB19EB27ED0FA0C",
+          "until": "2026-10-23T12:00:00+00:00"
+        },
+        "valid": false
+      },
+      {
+        "name": "short hash",
+        "previous": {
+          "token_hash": "654274fb9fe4a3f6a0d25d3c088e2da90814580c3d2c49b1acb19eb27ed0fa0",
+          "until": "2026-10-23T12:00:00+00:00"
+        },
+        "valid": false
+      },
+      {
+        "name": "hash a number",
+        "previous": {
+          "token_hash": 7,
+          "until": "2026-10-23T12:00:00+00:00"
+        },
+        "valid": false
+      },
+      {
+        "name": "extra key",
+        "previous": {
+          "token_hash": "654274fb9fe4a3f6a0d25d3c088e2da90814580c3d2c49b1acb19eb27ed0fa0c",
+          "until": "2026-10-23T12:00:00+00:00",
+          "note": "x"
+        },
+        "valid": false
+      },
+      {
+        "name": "missing until",
+        "previous": {
+          "token_hash": "654274fb9fe4a3f6a0d25d3c088e2da90814580c3d2c49b1acb19eb27ed0fa0c"
+        },
+        "valid": false
+      },
+      {
+        "name": "not an object",
+        "previous": "old",
+        "valid": false
+      }
+    ]
+  },
+  "authentication_cases": {
+    "entry": {
+      "token_hash": "d57ed1b76104ae1f11345994f33a61c63cdd30c3729cde815666dd3d6d3ab454",
+      "previous": {
+        "token_hash": "654274fb9fe4a3f6a0d25d3c088e2da90814580c3d2c49b1acb19eb27ed0fa0c",
+        "until": "2026-10-23T12:00:00+00:00"
+      }
+    },
+    "cases": [
+      {
+        "name": "the new bearer",
+        "presented": "new-bearer",
+        "at": "2026-10-16T12:00:00+00:00",
+        "accepted": true
+      },
+      {
+        "name": "the new bearer after until",
+        "presented": "new-bearer",
+        "at": "2026-10-24T12:00:00+00:00",
+        "accepted": true
+      },
+      {
+        "name": "the old bearer before until",
+        "presented": "old-bearer",
+        "at": "2026-10-16T12:00:00+00:00",
+        "accepted": true
+      },
+      {
+        "name": "the old bearer at until",
+        "presented": "old-bearer",
+        "at": "2026-10-23T12:00:00+00:00",
+        "accepted": false
+      },
+      {
+        "name": "the old bearer after until",
+        "presented": "old-bearer",
+        "at": "2026-10-23T12:00:01+00:00",
+        "accepted": false
+      },
+      {
+        "name": "a random bearer",
+        "presented": "random-bearer",
+        "at": "2026-10-16T12:00:00+00:00",
+        "accepted": false
+      }
+    ]
+  }
+}
