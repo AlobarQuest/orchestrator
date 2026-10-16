@@ -64,5 +64,6 @@ so a missing consumer keeps the old value and breaks when the old value is retir
 ## Out of scope
 
 Moving keepers, granting access, splitting the value, writing a rotation package, and building
-Healthchecks reads. Each of those comes after a decision Devon hasn't made yet, or after this
-inventory.
+Healthchecks reads. Each of those comes after this inventory. Devon decided on 2026-10-16 that the
+executor verifies scheduled consumers by reading Healthchecks (ADR-0055 amendment 9, decision 5),
+so record each reader's Healthchecks check slug in the reader table.

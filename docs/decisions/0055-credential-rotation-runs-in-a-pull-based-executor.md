@@ -938,9 +938,19 @@ three read-only recon passes and put four decisions to Devon on 2026-10-14.
 - **The check that no dispatched run is live excludes rotation units.** The deploy script's check
   refuses on any unit in a live state, which would include the executor's own claim.
 
-Two decisions stay open: whether Healthchecks reads are built before the observer and
-drift-reporter rotation, and the shape of change-manager's overlap. Neither blocks the operator
-bearer.
+Devon answered the two remaining decisions on 2026-10-16, after the operator bearer's rotation:
+
+5. **The executor verifies a scheduled consumer by reading Healthchecks**, with the
+   `Rotation / Healthchecks` key: the consumer counts as switched once its check shows a
+   successful run after the new value was stored. This is the verification table's rule as
+   written, so it adds no exception, and the reads are built before the observer and
+   drift-reporter rotation. A person attesting the consumer was the rejected alternative.
+6. **change-manager holds the old bearer in the orchestrator's form**: each bearer's variable
+   becomes JSON with an optional `previous` and its `until`, modelled on the orchestrator's
+   `ORCHESTRATOR_M2M_CREDENTIALS` entries (decision 7; read the shape from the orchestrator's
+   parser, not from this text). A second variable per bearer was the rejected
+   alternative. The change ships, deploys and is verified on production before any
+   change-manager rotation.
 
 ### Proven before the operator bearer's run (2026-10-15)
 
