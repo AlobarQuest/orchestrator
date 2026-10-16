@@ -28,6 +28,7 @@ from rotation_worker.registry import RegistryError
 from rotation_worker.values import Value
 
 STORED = datetime(2026, 10, 15, 6, 0, tzinfo=UTC)
+NOW = STORED + timedelta(days=1)
 KEY = "throwaway-healthchecks-key"
 SWEEP = 'runtime-fetch repo="orchestrator" ref="scripts/run-activation-sweep.sh"'
 BACKUP = 'runtime-fetch repo="vps-backup" ref="backup.sh"'
@@ -89,6 +90,7 @@ def _reads(
         {SWEEP: CheckRead("sds-activation-sweep"), BACKUP: ObservationRead("recovery_floor", "x")},
         server.client() if server else None,
         cast(OrchestratorClient, observations or Observations()),
+        clock=lambda: NOW,
     )
 
 
@@ -173,8 +175,6 @@ def test_a_run_inside_the_skew_margin_waits(offset: timedelta, switched: bool) -
         {"status": "down"},
         {"status": "new"},
         {"status": "paused"},
-        {"started": True},
-        {"started": None},
         {"last_duration": None},
         {"last_duration": 0},
         {"last_duration": True},
@@ -192,6 +192,13 @@ def test_a_check_that_reports_no_duration_has_no_answer() -> None:
     check = _check()
     del check["last_duration"]
     assert _reads(HealthchecksServer(check)).answer(SWEEP, STORED) == Answer(False, None)
+
+
+def test_a_check_whose_next_run_is_under_way_answers_from_its_last_finished_one() -> None:
+    # A `/start` sets `started` and touches neither `last_ping` nor `last_duration`.
+    assert _reads(HealthchecksServer(_check(started=True))).answer(SWEEP, STORED).switched
+    before = _check(started=True, last_ping=(STORED - timedelta(hours=1)).isoformat())
+    assert not _reads(HealthchecksServer(before)).answer(SWEEP, STORED).switched
 
 
 def test_a_late_check_still_answers_from_its_last_success() -> None:
@@ -225,8 +232,8 @@ def test_an_unreachable_healthchecks_is_unavailable() -> None:
         reads.answer(SWEEP, STORED)
 
 
-def test_no_configured_key_is_unavailable() -> None:
-    with pytest.raises(ReadUnavailable, match="no Healthchecks key"):
+def test_no_configured_key_is_a_fault_not_a_wait() -> None:
+    with pytest.raises(ReadError, match="no Healthchecks key"):
         _reads(None).answer(SWEEP, STORED)
 
 
@@ -250,7 +257,7 @@ def test_an_observation_after_the_store_is_switched_and_the_query_is_bounded() -
     answer = _reads(observations=observations).answer(BACKUP, STORED)
     assert answer.switched
     assert answer.last_run == STORED + timedelta(hours=20)
-    assert observations.asked == [("recovery_floor", "x", STORED - LOOKBACK)]
+    assert observations.asked == [("recovery_floor", "x", NOW - LOOKBACK)]
 
 
 def test_only_observations_before_the_store_are_not_switched() -> None:
@@ -267,10 +274,17 @@ def test_an_observation_inside_the_skew_margin_waits(offset: timedelta, switched
 
 
 def test_a_subject_that_posted_nothing_in_the_lookback_is_a_registry_fault() -> None:
-    with pytest.raises(ReadError, match="posted nothing"):
-        _reads(observations=Observations(STORED - LOOKBACK - timedelta(hours=1))).answer(
+    with pytest.raises(ReadError, match="posted nothing in the last 8 days"):
+        _reads(observations=Observations(NOW - LOOKBACK - timedelta(hours=1))).answer(
             BACKUP, STORED
         )
+
+
+def test_an_old_store_is_judged_by_the_lookback_s_recent_posts() -> None:
+    long_ago = NOW - timedelta(days=90)
+    observations = Observations(NOW - timedelta(days=1))
+    assert _reads(observations=observations).answer(BACKUP, long_ago).switched
+    assert observations.asked == [("recovery_floor", "x", NOW - LOOKBACK)]
 
 
 def test_an_unanswered_observation_read_is_unavailable() -> None:
@@ -329,3 +343,26 @@ def test_any_other_healthchecks_request_is_refused_before_the_transport(
     with pytest.raises(ReadError, match="may not"):
         client._connect().request(method, path)
     assert server.requests == []
+
+
+def test_a_pass_lists_the_checks_once_and_remembers_each_answer() -> None:
+    server = HealthchecksServer(_check(), _check(name="sds-other"))
+    observations = Observations(STORED + timedelta(hours=1))
+    reads = ConsumerReads(
+        {
+            SWEEP: CheckRead("sds-activation-sweep"),
+            'runtime-fetch repo="orchestrator" ref="o.sh"': CheckRead("sds-other"),
+            BACKUP: ObservationRead("recovery_floor", "x"),
+        },
+        server.client(),
+        cast(OrchestratorClient, observations),
+        clock=lambda: NOW,
+    )
+    assert reads.pending(STORED) == []
+    # The listing then changes, as a reader starting its next run or failing would change it:
+    # the pass keeps judging what it already read.
+    server.checks = []
+    observations.error = True
+    assert reads.switched(SWEEP, STORED) and reads.switched(BACKUP, STORED)
+    assert len(server.requests) == 1
+    assert len(observations.asked) == 1

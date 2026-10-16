@@ -254,3 +254,11 @@ def test_revised_is_the_secret_s_revision_date() -> None:
     when = datetime(2026, 10, 16, 6, 5, tzinfo=UTC)
     secrets.rows[sid] = {**_row("keeper", "v"), "revision_date": when}
     assert _store(secrets).revised(sid) == when
+
+
+def test_a_revision_date_without_a_zone_is_refused() -> None:
+    secrets = FakeSecrets()
+    sid = str(uuid.uuid4())
+    secrets.rows[sid] = {**_row("keeper", "v"), "revision_date": datetime(2026, 10, 16, 6, 5)}
+    with pytest.raises(StoreError, match="without a zone"):
+        _store(secrets).revised(sid)

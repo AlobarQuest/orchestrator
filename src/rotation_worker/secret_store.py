@@ -66,7 +66,10 @@ class BwsStore:
         return Value(secret.value)
 
     def revised(self, secret_id: str) -> datetime:
-        return self._call(lambda: self._client.secrets().get(secret_id)).revision_date
+        revised = self._call(lambda: self._client.secrets().get(secret_id)).revision_date
+        if not isinstance(revised, datetime) or revised.utcoffset() is None:
+            raise StoreError("BWS gave a revision date without a zone")
+        return revised
 
     def find(self, project_id: str, key: str) -> StoredSecret | None:
         listed = self._call(lambda: self._client.secrets().list(self._organization_id))

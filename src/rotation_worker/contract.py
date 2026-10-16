@@ -35,11 +35,11 @@ re-proves it and files its evidence, and a state no step could have left is refu
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
-from typing import Final, Protocol
+from typing import Any, Final, Protocol
 
 from rotation_worker.destinations import HOSTED_KINDS, parse
 from rotation_worker.evidence import ProbeAnswer, State, StepEvidence, Subject, Which
@@ -413,27 +413,25 @@ class UnitRun:
         attested = sum(1 for print_ in self.attestations if new.fingerprint.matches(print_))
         needs_attestation = 0
         for destination in self.rotation.destinations:
-            kind = parse(destination)["kind"]
+            consumer = parse(destination)
+            kind = consumer["kind"]
             if kind == "provider":
                 continue
-            if kind in ATTESTED_KINDS and not self._scheduled(destination):
+            if self.scheduled is not None and self.scheduled.covers(destination):
+                stored_at = self.store.revised(self.rotation.keeper_id)
+                if not self.scheduled.switched(destination, stored_at):
+                    missing.append(destination)
+            elif kind in ATTESTED_KINDS:
                 needs_attestation += 1
                 if needs_attestation > attested:
                     missing.append(destination)
-            elif not self._holds(destination, new):
+            elif not self._holds(consumer, new):
                 missing.append(destination)
         return missing
 
-    def _scheduled(self, destination: str) -> bool:
-        return self.scheduled is not None and self.scheduled.covers(destination)
-
-    def _holds(self, destination: str, new: Value) -> bool:
-        """Whether a machine-read consumer holds the new value, or has run since it was stored."""
-        consumer = parse(destination)
+    def _holds(self, consumer: Mapping[str, Any], new: Value) -> bool:
+        """Whether a consumer the executor can read holds the new value right now."""
         kind = consumer["kind"]
-        if self.scheduled is not None and self.scheduled.covers(destination):
-            stored_at = self.store.revised(self.rotation.keeper_id)
-            return self.scheduled.switched(destination, stored_at)
         if kind in HOSTED_KINDS:
             if not self.provider.hosts_destinations:
                 raise ContractError(f"this adapter can't reach a {kind} consumer")

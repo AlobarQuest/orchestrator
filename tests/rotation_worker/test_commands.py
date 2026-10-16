@@ -145,8 +145,7 @@ def test_read_consumers_prints_each_reader_s_answer_and_exits_2_on_one_unreadabl
         'not yet     runtime-fetch repo="v" ref="b.sh"  last run 2026-10-15T05'
     )
     assert lines[2] == (
-        'unreadable  runtime-fetch repo="v" ref="c.sh": '
-        "silent posted nothing in the 8 days before the store"
+        'unreadable  runtime-fetch repo="v" ref="c.sh": silent posted nothing in the last 8 days'
     )
 
 

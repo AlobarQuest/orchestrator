@@ -38,6 +38,7 @@ from rotation_worker.readers import (
     Healthchecks,
     ReadError,
     ReadUnavailable,
+    instant,
     scheduled_reads,
 )
 from rotation_worker.registry import (
@@ -46,7 +47,7 @@ from rotation_worker.registry import (
     find_credential,
     latest_package_destinations,
 )
-from rotation_worker.secret_store import BwsStore, SecretStore
+from rotation_worker.secret_store import BwsStore, SecretStore, StoreError
 from rotation_worker.values import Value
 from rotation_worker.worker import Setup, run_pass
 
@@ -109,7 +110,7 @@ def read_consumers(setup: Setup, credential_id: str, stored_at: datetime) -> int
     for destination in sorted(reads):
         try:
             answer = consumers.answer(destination, stored_at)
-        except (ReadError, ReadUnavailable) as error:
+        except (ReadError, ReadUnavailable, StoreError) as error:
             unreadable += 1
             print(f"unreadable  {destination}: {error}")
             continue
@@ -227,7 +228,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _instant(text: str) -> datetime:
-    instant = datetime.fromisoformat(text)
-    if instant.utcoffset() is None:
-        raise argparse.ArgumentTypeError("give the instant with its zone, for example +00:00")
-    return instant
+    try:
+        return instant(text)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(f"{error}; give the zone, for example +00:00") from None

@@ -21,21 +21,29 @@ it can't touch a value.
 
 **WHAT COUNTS AS SWITCHED.** A run that started more than `SKEW` after the keeper's revision date.
 Three clocks meet here (BWS's, Healthchecks' and the reader's machine), so the margin sits on the
-side that waits. For a check, the run's start is `last_ping - last_duration`, which Healthchecks
-(`hc/api/models.py`, `Check.ping`, at b932fc4) computes only for a success or failure that
-follows its own `/start`, resetting it otherwise; a check that is down, running, or reports no
-duration has no answer yet.
+side that waits. For a check, the latest finished run's start is `last_ping - last_duration`,
+which Healthchecks (`hc/api/models.py`, `Check.ping`, at b932fc4) computes only for a success or
+failure that follows its own `/start`, resetting it otherwise; a `/start` touches neither field,
+so a check whose next run is under way still describes its last finished one. A check that is
+down (its latest run failed) or reports no duration has no answer yet.
+
+**EACH READ IS MADE ONCE PER PASS.** A `ConsumerReads` lives for one unit in one pass, and keeps
+every answer it got. So the wait before the claim, verify-consumers and retire-old all judge the
+same readings, taken seconds apart, and a reader starting its next run, or a request timing out,
+between the wait and the claim can't fail a unit the wait had cleared. Retire-old still reads
+afresh relative to earlier attempts: nothing outlives the pass.
 
 **A READ THAT CAN'T BE MADE NEVER COUNTS AS SWITCHED.** `ReadUnavailable` (no answer, no key) is
-worth asking again; `ReadError` (no such check, two of them, a subject with nothing posted in
-`LOOKBACK`) is a registry fault, refused before a claim rather than waited on forever.
+worth asking again; `ReadError` (no such check, two of them, a subject with nothing posted in the
+last `LOOKBACK`, no Healthchecks key configured) is a fault in the registry or the executor's
+configuration, refused before a claim rather than waited on forever.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any, Final
 
 import httpx
@@ -54,7 +62,7 @@ from rotation_worker.values import Value
 HEALTHCHECKS_URL: Final = "https://healthchecks.io"
 CHECKS: Final = "/api/v3/checks/"
 SKEW: Final = timedelta(minutes=2)
-# Long enough to hold a weekly reader's last run before the store.
+# Long enough to hold a weekly reader's latest run.
 LOOKBACK: Final = timedelta(days=8)
 CHECK_FIELD: Final = "healthchecks_check"
 SOURCE_FIELD: Final = "observation_source"
@@ -124,6 +132,7 @@ class Healthchecks:
         self._key = key
         self._transport = transport
         self._client: ConfinedClient | None = None
+        self._listing: list[dict[str, Any]] | None = None
 
     def last_run_start(self, name: str) -> datetime | None:
         """When the check's latest successful run started, or None if it has no answer yet."""
@@ -132,16 +141,22 @@ class Healthchecks:
             raise ReadError(f"{len(matches)} Healthchecks checks are named {name!r}")
         check = matches[0]
         last, duration = check.get("last_ping"), check.get("last_duration")
-        if check.get("status") not in SUCCEEDED or check.get("started") is not False:
+        if check.get("status") not in SUCCEEDED:
             return None
         if type(duration) is not int or duration <= 0 or not isinstance(last, str):
             return None
         try:
-            return _instant(last) - timedelta(seconds=duration)
+            return instant(last) - timedelta(seconds=duration)
         except ValueError:
             raise ReadUnavailable(f"check {name!r} has no readable last_ping") from None
 
     def _checks(self) -> list[dict[str, Any]]:
+        # One listing per pass: every reader's check is in it.
+        if self._listing is None:
+            self._listing = self._list()
+        return self._listing
+
+    def _list(self) -> list[dict[str, Any]]:
         try:
             response = self._connect().request("GET", CHECKS)
         except TransportFailure as failure:
@@ -178,10 +193,13 @@ class ConsumerReads:
         reads: Mapping[str, Read],
         healthchecks: Healthchecks | None,
         orchestrator: OrchestratorClient,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._reads = dict(reads)
         self._healthchecks = healthchecks
         self._orchestrator = orchestrator
+        self._clock = clock
+        self._answers: dict[tuple[str, datetime], Answer] = {}
 
     def covers(self, destination: str) -> bool:
         return destination in self._reads
@@ -205,18 +223,24 @@ class ConsumerReads:
         return waiting
 
     def answer(self, destination: str, stored_at: datetime) -> Answer:
-        read = self._reads[destination]
-        after = stored_at + SKEW
+        """Whether the reader has run since `stored_at`; asked once per pass, then remembered."""
+        key = (destination, stored_at)
+        if key not in self._answers:
+            self._answers[key] = self._read(self._reads[destination], stored_at + SKEW)
+        return self._answers[key]
+
+    def _read(self, read: Read, after: datetime) -> Answer:
         if isinstance(read, CheckRead):
             if self._healthchecks is None:
-                raise ReadUnavailable("no Healthchecks key is configured")
+                raise ReadError("a reader names a check and no Healthchecks key is configured")
             start = self._healthchecks.last_run_start(read.check)
             return Answer(start is not None and start > after, start)
-        starts = self._observed(read, stored_at - LOOKBACK)
+        # Every run since the store is newer than the window, and a reader that posted nothing in
+        # it isn't running at all.
+        starts = self._observed(read, self._clock() - LOOKBACK)
         if not starts:
             raise ReadError(
-                f"{read.subject_reference} posted nothing in the {LOOKBACK.days} days before "
-                "the store"
+                f"{read.subject_reference} posted nothing in the last {LOOKBACK.days} days"
             )
         latest = max(starts)
         return Answer(latest > after, latest)
@@ -229,12 +253,13 @@ class ConsumerReads:
         except OrchestratorError as error:
             raise ReadUnavailable(str(error)) from None
         try:
-            return [_instant(str(row["observed_at"])) for row in rows]
+            return [instant(str(row["observed_at"])) for row in rows]
         except KeyError, TypeError, ValueError:
             raise ReadUnavailable("an observation has no readable observed_at") from None
 
 
-def _instant(text: str) -> datetime:
+def instant(text: str) -> datetime:
+    """An ISO 8601 instant, refused without a zone."""
     instant = datetime.fromisoformat(text)
     if instant.utcoffset() is None:
         raise ValueError("an instant without a zone")
