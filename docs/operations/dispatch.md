@@ -26,9 +26,10 @@ itself answers, so a mistyped or invisible repository reports the second refusal
 
 Every target repository must host the caller workflow at `.github/workflows/` under the file
 name `ORCHESTRATOR_DISPATCH_WORKFLOW_ID`, and carry the `FACTORY_RUNNER_TOKEN`,
-`FACTORY_RUNNER_CREDENTIAL_KEY_ID`, and `ANTHROPIC_API_KEY` secrets. The caller workflow must
-declare exactly the inputs dispatch sends (`work_unit_id`); GitHub rejects the whole dispatch
-with `422 Unexpected inputs provided` otherwise.
+`FACTORY_RUNNER_CREDENTIAL_KEY_ID`, `ANTHROPIC_API_KEY` and `FACTORY_PR_TOKEN` secrets. The caller
+workflow must declare exactly the inputs dispatch sends (`work_unit_id`); GitHub rejects the whole
+dispatch with `422 Unexpected inputs provided` otherwise. For every step that makes a repository a
+target, see [Onboarding a factory target](onboarding-a-target.md).
 
 ## Runtime Controls
 
@@ -73,17 +74,28 @@ reason code `app_token_mint`.
 
 ## Admission
 
-A work unit is dispatchable only when all of these are true:
+A work unit is dispatchable only when all of the following are true. `_blocked_reason` in
+`services/execution/dispatch.py` asks them in this order and reports the first that fails:
 
-- the global kill switch is enabled;
-- the GitHub App dispatch credentials are configured;
-- the unit is `ready`;
-- an approved authority envelope is recorded on the unit;
-- the unit capability and change class are named in the policy artifact's `[admission]` table;
-- the unit declares `authority.constraints.target_repository`, and that repository declares
-  itself a target in its own `factory-target.toml`;
-- the unit's own conformance claim is green, or every touched standard is explicitly
-  accepted in it.
+1. The global kill switch is enabled.
+2. The GitHub App dispatch credentials are configured.
+3. The unit is `ready`.
+4. The package revision's declared reach is admissible under policy.
+5. The reach agrees with App Brain's landing answer for the target repository
+   (`reach_contradicts_estate`, `reach_estate_unknown` and the two source refusals).
+6. An approved authority envelope is recorded on the unit, unless policy's `known_good` pattern
+   recognises it.
+7. The unit capability and change class are named in the policy artifact's `[admission]` table.
+8. The envelope allows the unit's required capability, and names only capabilities the runner
+   understands.
+9. The unit declares `authority.constraints.target_repository`, and that repository declares
+   itself a target in its own `factory-target.toml`.
+10. The envelope satisfies the runner's command rules.
+11. The unit's own conformance claim is green, or every touched standard is explicitly accepted in
+    it.
+
+A unit that passes all of these can still be skipped, not blocked, outside its reach's change
+window.
 
 ## Conformance
 

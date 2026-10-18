@@ -659,7 +659,8 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   `target_repository_not_declared` (declared `false`, or no file on a repository that answers) or
   `target_repository_declaration_unreadable` (anything else, including a malformed file). **To make a
   repository a factory target, land the declaration there**; it still needs the caller workflow, the
-  Actions secrets, `FACTORY_PR_TOKEN` access and the estate's landing answer before a unit can run.
+  Actions secrets, `FACTORY_PR_TOKEN` access and the estate's landing answer before a unit can run
+  (the full procedure is `docs/operations/onboarding-a-target.md`).
   Three things worth knowing before editing it. (1) **There are three readers of that file and one
   pin**: `tests/services/test_factory_target.py` holds this reader's parse to
   `work_carrier/declaration.py`'s over a table spanning all three answers; project-standards'
