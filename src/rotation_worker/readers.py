@@ -162,8 +162,11 @@ class Healthchecks:
             matches = [check for check in checks if check.get("name") == name]
             if len(matches) != 1:
                 raise ReadError(f"{len(matches)} Healthchecks checks are named {name!r}")
-            if matches[0].get("started") is not False:
-                # Anything but a plain "not started" is treated as running: the restart waits.
+            started = matches[0].get("started")
+            if not isinstance(started, bool):
+                # A listing without the flag can't say, and waiting on it would wait forever.
+                raise ReadError(f"check {name!r} doesn't say whether it is running")
+            if started:
                 running.append(name)
         return running
 

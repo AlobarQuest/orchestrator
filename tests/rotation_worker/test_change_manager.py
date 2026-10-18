@@ -96,6 +96,7 @@ class ChangeManager:
         self._before: dict[str, str] | None = None
         # Statuses the probe answers before it consults what loaded, one per request.
         self.scripted: list[int | None] = []
+        self.asked = 0
 
     def coolify(self, request: httpx.Request) -> httpx.Response:
         self.sent.append((request.method, request.url.path))
@@ -117,6 +118,7 @@ class ChangeManager:
 
     def probe(self, request: httpx.Request) -> httpx.Response:
         assert request.url.path == PROBE_PATH
+        self.asked += 1
         assert request.headers["User-Agent"].startswith("rotation-worker/")
         if self.scripted:
             status = self.scripted.pop(0)
@@ -624,20 +626,24 @@ def _listing(checks: list[dict[str, Any]], calls: list[int]) -> Healthchecks:
 
 
 def test_running_names_the_checks_mid_run_and_reads_afresh_each_time() -> None:
-    checks = [
-        {"name": "a", "started": True},
-        {"name": "b", "started": False},
-        {"name": "c"},
-    ]
+    checks = [{"name": "a", "started": True}, {"name": "b", "started": False}]
     calls: list[int] = []
     healthchecks = _listing(checks, calls)
-    assert healthchecks.running({"a", "b", "c"}) == ["a", "c"]
+    assert healthchecks.running({"a", "b"}) == ["a"]
     checks[0]["started"] = False
     assert healthchecks.running({"a", "b"}) == []
     assert len(calls) == 2
 
 
-@pytest.mark.parametrize("checks", [[], [{"name": "a"}, {"name": "a"}]])
+@pytest.mark.parametrize(
+    "checks",
+    [
+        [],
+        [{"name": "a", "started": False}, {"name": "a", "started": False}],
+        [{"name": "a"}],
+        [{"name": "a", "started": "yes"}],
+    ],
+)
 def test_running_refuses_a_check_it_can_t_find_exactly_once(checks: list[dict[str, Any]]) -> None:
     with pytest.raises(ReadError):
         _listing(checks, []).running({"a"})
@@ -718,3 +724,61 @@ def test_retire_refuses_when_change_manager_doesn_t_accept_the_new_value(h: Harn
     with pytest.raises(ContractError, match="doesn't accept the keeper's new value"):
         h.provider.revoke(h.original)
     assert h.cm.sent == []
+
+
+def test_a_retire_waits_until_the_old_value_is_refused_several_times_running(h: Harness) -> None:
+    h.run("mint")
+    h.provider = h.build()
+    # Control and new value first; then the old value, answered by both containers in turn.
+    h.cm.scripted = [401, 200, 401, 200, 401, 401]
+    h.cm.asked = 0
+    h.provider.revoke(h.original)
+    assert h.cm.asked >= 7
+
+
+def test_a_swap_that_never_settles_is_refused(h: Harness) -> None:
+    h.run("mint")
+    h.provider = h.build()
+    h.cm.scripted = [401, 200] + [401, 200] * 1000
+    with pytest.raises(ContractError, match="still accepts the old value"):
+        h.provider.revoke(h.original)
+
+
+def test_a_value_nobody_hosted_or_retired_is_asked_once(h: Harness) -> None:
+    h.cm.asked = 0
+    assert h.provider.probe(h.original) == 200
+    assert h.cm.asked == 1
+
+
+def test_the_registry_must_name_a_keeper_for_every_other_variable(
+    origins: Origins, tmp_path: Path, h: Harness
+) -> None:
+    text = "".join(
+        _bearer_toml(scope, h.store.put(WORK, scope, Value(value)))
+        for scope, value in h.values.items()
+        if scope not in (SCOPE, "observe")
+    )
+    _registry(origins, text)
+    siblings, _ = registry_reads(
+        h.rotation, h.store, RepoMirror(tmp_path / "m", origin=origins.url), None
+    )
+    with pytest.raises(ContractError, match="exactly one keeper for M2M_TOKEN_OBSERVE"):
+        siblings()
+
+
+def test_the_registry_is_read_once_however_often_the_readers_are_asked(
+    origins: Origins, tmp_path: Path, h: Harness
+) -> None:
+    _registry(origins, _bearer_toml(SCOPE, h.keeper_id, read='healthchecks_check = "check-read"'))
+    calls: list[int] = []
+    mirror = RepoMirror(tmp_path / "m", origin=origins.url)
+    _, readers_mid_run = registry_reads(
+        h.rotation, h.store, mirror, _listing([{"name": "check-read", "started": False}], calls)
+    )
+    readers_mid_run()
+    # Every registry repository is gone: a second read would fail to fetch.
+    import shutil
+
+    shutil.rmtree(origins.root)
+    assert readers_mid_run() == []
+    assert len(calls) == 2

@@ -404,13 +404,15 @@ What differs from the orchestrator's bearers:
 - **Nothing reports what change-manager loaded.** The executor builds the value from the old and
   new values alone, and confirms each write by probing `GET /api/landing-policy`, which every
   scope may read: a random bearer gets 401, an accepted one 200. The probe shows that some scope
-  accepts the value, not which.
+  accepts the value, not which. Both containers can answer during a restart, so a value just
+  hosted or retired must answer as it now must three times running.
 - **A bad value takes change-manager down.** It doesn't boot when any scope's `previous` equals any
   scope's current hash. The executor can't read the other variables, so it reads the other
   bearers' keepers (the registry's change-manager credentials on the same application) and
-  refuses a host or retire whose old or new value is one of them. So all four keepers must be in
-  `Rotation / Keepers`, readable by the root, before the first change-manager rotation; a sibling
-  keeper it can't read fails host before anything is written. A hand edit in Coolify that no
+  refuses a host or retire whose old or new value is one of them. The registry must name exactly
+  one keeper for each other variable, and all four keepers must be in `Rotation / Keepers`,
+  readable by the root, before the first change-manager rotation; a sibling keeper it can't find
+  or read fails host before anything is written. A hand edit in Coolify that no
   keeper holds is invisible to this check.
 - **The restart waits for change-manager's clients.** Its clients are the scheduled readers of its
   four bearers, and several run inside the window. A unit that writes waits unclaimed while any

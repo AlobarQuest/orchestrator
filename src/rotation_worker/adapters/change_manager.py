@@ -76,7 +76,7 @@ from rotation_worker.readers import (
     ReadUnavailable,
     scheduled_reads,
 )
-from rotation_worker.registry import provider_entries
+from rotation_worker.registry import RegistryEntry, provider_entries
 from rotation_worker.secret_store import SecretStore
 from rotation_worker.values import Value
 
@@ -102,6 +102,9 @@ SWAP_WAIT: Final = timedelta(minutes=5)
 # worker waits unclaimed first, so this covers only a reader that started since that check.
 GATE_WAIT: Final = timedelta(minutes=5)
 RECHECK_SECONDS: Final = 10.0
+# Answers in a row a value just hosted or retired must give before the swap counts as finished.
+# Coolify kept both containers serving for about 18 seconds in the orchestrator's measured swap.
+SETTLED_RUNS: Final = 3
 
 M = Actor.MACHINE
 _MINT: Final = UnitPlan(
@@ -163,38 +166,69 @@ def registry_reads(
     mirror: RepoMirror | None,
     healthchecks: Healthchecks | None,
 ) -> tuple[Callable[[], list[Value]], Callable[[], list[str]]]:
-    """The other bearers' keepers, and the readers mid-run, as the registry names them at `main`.
-
-    Both are read when a step asks, so a registry change merged mid-rotation counts.
-    """
+    """The other bearers' keepers, and the readers mid-run, as the registry names them at `main`."""
     if rotation is None or mirror is None:
         raise ContractError("the change-manager adapter needs its rotation and the registry")
-    application = hosted_destination(rotation)["uuid"]
+    registry = _Registry(hosted_destination(rotation), store, mirror, healthchecks)
+    return registry.siblings, registry.readers_mid_run
 
-    def siblings() -> list[Value]:
-        keepers = []
-        for entry in provider_entries(mirror, NAME):
-            hosted = [parse(d) for d in entry.destinations if parse(d)["kind"] == HOSTED_KIND]
-            if entry.credential.get("id") != rotation.credential_id and any(
-                consumer["uuid"] == application for consumer in hosted
-            ):
-                keepers.append(store.read(str(entry.credential.get("bws_uuid"))))
-        return keepers
 
-    def readers_mid_run() -> list[str]:
+class _Registry:
+    """The registry is read once per provider, when a step first asks: a provider lives for one
+    unit in one pass, and the reader wait polls Healthchecks, not git, every few seconds."""
+
+    def __init__(
+        self,
+        destination: Mapping[str, Any],
+        store: SecretStore,
+        mirror: RepoMirror,
+        healthchecks: Healthchecks | None,
+    ) -> None:
+        self._application = destination["uuid"]
+        self._others = {key for key, scope in VARIABLES.items() if scope != destination["entry"]}
+        self._store = store
+        self._mirror = mirror
+        self._healthchecks = healthchecks
+        self._entries: list[RegistryEntry] | None = None
+
+    def entries(self) -> list[RegistryEntry]:
+        if self._entries is None:
+            self._entries = provider_entries(self._mirror, NAME)
+        return self._entries
+
+    def siblings(self) -> list[Value]:
+        # One keeper for each other variable, or a value no keeper is checked against slips by.
+        keepers: dict[str, list[str]] = {key: [] for key in self._others}
+        for entry in self.entries():
+            for consumer in map(parse, entry.destinations):
+                if self._is_sibling_variable(consumer):
+                    keepers[consumer["key"]].append(str(entry.credential.get("bws_uuid")))
+        unregistered = sorted(key for key, found in keepers.items() if len(found) != 1)
+        if unregistered:
+            raise ContractError(
+                "the registry doesn't name exactly one keeper for " + ", ".join(unregistered)
+            )
+        return [self._store.read(found[0]) for found in keepers.values()]
+
+    def _is_sibling_variable(self, consumer: Mapping[str, Any]) -> bool:
+        return (
+            consumer["kind"] == HOSTED_KIND
+            and consumer["uuid"] == self._application
+            and consumer["key"] in self._others
+        )
+
+    def readers_mid_run(self) -> list[str]:
         names = {
             read.check
-            for entry in provider_entries(mirror, NAME)
+            for entry in self.entries()
             for read in scheduled_reads(entry.credential).values()
             if isinstance(read, CheckRead)
         }
         if not names:
             return []
-        if healthchecks is None:
+        if self._healthchecks is None:
             raise ReadError("change-manager's readers name checks and no Healthchecks key is set")
-        return healthchecks.running(names)
-
-    return siblings, readers_mid_run
+        return self._healthchecks.running(names)
 
 
 def build_provider(
@@ -286,11 +320,19 @@ class ChangeManagerProvider:
 
     def probe(self, value: Value) -> int | None:
         expected = self._expected.get(bearer_hash(value))
+        # During a restart both containers can answer, so a value just hosted or retired counts
+        # as settled only once it has answered as it now must several times running.
+        needed = SETTLED_RUNS if expected is not None else 1
         deadline = self._clock() + SWAP_WAIT
         status = self._ask(value)
-        while not _settled(status, expected) and self._clock() < deadline:
+        runs = 1 if _settled(status, expected) else 0
+        while runs < needed and self._clock() < deadline:
             self._sleep(RECHECK_SECONDS)
             status = self._ask(value)
+            runs = runs + 1 if _settled(status, expected) else 0
+        if runs < needed and _settled(status, expected):
+            # It answered as it must, but not long enough to rule out the old container.
+            return None
         return status
 
     def probe_before_revoke(self, value: Value) -> int | None:
