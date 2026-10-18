@@ -1,10 +1,15 @@
-"""Throwaway origin repositories, so the mirror is tested against real git, never a stub."""
+"""Throwaway origin repositories, so the mirror is tested against real git, never a stub.
+
+Every test here runs without a network: a client built without a fake transport falls back to a
+real connection, and one test that did reached production Coolify with a placeholder token.
+"""
 
 from __future__ import annotations
 
 import subprocess
 from pathlib import Path
 
+import httpx
 import pytest
 
 from rotation_worker.git_mirror import RepoMirror
@@ -25,6 +30,18 @@ def git(path: Path, *arguments: str) -> str:
         ["git", "-C", str(path), *arguments], capture_output=True, text=True, env=ENV, check=True
     )
     return result.stdout.strip()
+
+
+class RealNetworkRefused(AssertionError):
+    pass
+
+
+@pytest.fixture(autouse=True)
+def no_real_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    def refuse(_transport: httpx.HTTPTransport, request: httpx.Request) -> httpx.Response:
+        raise RealNetworkRefused(f"a test reached the network: {request.method} {request.url.host}")
+
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", refuse)
 
 
 class Origins:
