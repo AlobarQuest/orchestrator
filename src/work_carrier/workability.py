@@ -111,7 +111,12 @@ OPERATIONAL_PROFILE = "non-software-operational"
 # which is what a standing-authority change should cost. Not in intent-packages,
 # because a package that could opt itself in would be no opt-in at all.
 STANDING_OPERATIONAL_PACKAGES = frozenset(
-    {"rotation-openrouter-generic", "rotation-orchestrator-operator-bearer"}
+    {
+        "rotation-openrouter-generic",
+        "rotation-orchestrator-operator-bearer",
+        "rotation-orchestrator-observer-bearer",
+        "rotation-orchestrator-drift-reporter-bearer",
+    }
 )
 
 # Mirrored from `orchestrator.reach_vocabulary` (this program imports nothing from the
