@@ -20,6 +20,41 @@ Decide two things first, because they change the amount of work:
   `ORCHESTRATOR_DISPATCH_WORKFLOW_REF`, which defaults to `main` (dispatch.md). Another default
   branch needs that setting looked at first.
 
+## Meet the portfolio standards
+
+A target must first pass the conformance kit's admission checks, which stand for the portfolio's
+code, security and project standards. Work from a checkout under `~/Projects` with a GitHub
+`origin` remote, and make each of the following checks pass (project-standards'
+`readiness_schema.py` lists them):
+
+- **`project.manifest` and `profile.declared`:** a valid `PROJECT.md` whose frontmatter declares a
+  registered `delivery_profile`. `portfolio init` scaffolds one; `portfolio lint <repo>` reports
+  what to fix.
+- **`code.onboarded`:** `.code-standards.toml` and `.github/workflows/quality.yml` exist. Run
+  `code-standards init`, then `code-standards sync`, which also vendors `dependabot.yml`. The code
+  itself must then follow `~/Developer/code-standards/STANDARDS.md`; the Quality workflow's linters
+  enforce it.
+- **`ci.executed`:** the latest Quality run on `main` passed and its log shows more than zero tests
+  collected. A green run that collected nothing fails this check, so put the test runner where
+  `uv sync` installs it (a dependency group, not an optional extra).
+- **`security.clean`:** the security-standards scanner reports no BLOCK findings. Run it from the
+  repository root:
+
+  ```bash
+  PYTHONPATH="$HOME/Projects/security-standards/src" \
+    ~/Projects/security-standards/.venv/bin/python -m security_scan.cli . --category security
+  ```
+
+  Treat any token it finds in a tracked file or in git history as leaked: rotate it.
+
+The kit also reports four advisory checks that don't fail admission: `standards.pinned` (the
+`project`, `code` and `security` versions in `PROJECT.md` are current), `repo.protection`,
+`deps.dependabot` and `backlog.hygiene`. Clear them anyway; step 9 needs branch protection.
+
+The kit checks that the standards are wired in and passing, not their content. No check queries
+Code Brain's paved roads or infra-brain's deployment patterns, so review a repository against those
+by hand before you make it a target.
+
 ## Make the repository dispatchable
 
 1. **Declare the repository a target.** Commit `factory-target.toml` at the repository root on its
@@ -145,14 +180,17 @@ Decide two things first, because they change the amount of work:
 
 ## Check the result
 
-To check steps 2–5 and 7, run the conformance kit from project-standards against the checkout:
+To check the portfolio standards and steps 2–5 and 7, run the conformance kit from
+project-standards against the checkout:
 
 ```bash
 portfolio onboard <path-to-repo>
 ```
 
-It reports `runner.caller`, `factory.secrets`, `factory.pat_access`, `factory.app_access` and
-`factory.landing_known`, among other readiness checks. It doesn't confirm step 1's declaration as
+It exits 0 only when every admission check passes, and writes its result to
+`~/.portfolio/readiness/<repo>.json`. The factory checks it reports alongside (`runner.caller` is an
+admission check; `factory.secrets`, `factory.pat_access`, `factory.app_access` and
+`factory.landing_known` are not) don't change the exit code, so read them in the output. It doesn't confirm step 1's declaration as
 admission reads it; read the file back from the default branch instead. `factory.pat_scope` can
 only report `unknown`, because a fine-grained token doesn't expose its permissions through the
 API; step 6's probe is the real test of it.
