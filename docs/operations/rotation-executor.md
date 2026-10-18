@@ -418,7 +418,11 @@ What differs from the orchestrator's bearers:
   four bearers, and several run inside the window. A unit that writes waits unclaimed while any
   reader the registry names with a `healthchecks_check`, for any change-manager bearer, shows as
   started in Healthchecks. Host and retire ask again before writing and before restarting, wait
-  up to five minutes, then refuse. A reader with no check can't be asked.
+  up to five minutes, then refuse. A reader with no check can't be asked: a restart at 03:00 can
+  cut short `drift-audit.sh`'s change-manager sync, which costs that night's sync, not the run.
+  Every wait in a step has a deadline, but together they can outlast the 15-minute lease; a
+  lapsed rotation claim is released, never reclaimed, and the next claim re-derives where the
+  rotation stands.
 - **Host never runs without an overlap.** The four bearers hold four values, so the adapter
   refuses `host_without_overlap: true`.
 - **The wait logs no `overlap_until`.** It reads the orchestrator's identities, which don't hold
