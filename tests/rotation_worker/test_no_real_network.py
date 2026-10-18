@@ -9,8 +9,7 @@ import pytest
 
 from rotation_worker.coolify import CoolifyClient
 from rotation_worker.values import Value
-
-from .conftest import RealNetworkRefused
+from tests.rotation_worker.conftest import RealNetworkRefused
 
 
 def test_a_client_built_without_a_fake_transport_is_refused() -> None:
