@@ -62,8 +62,8 @@ from rotation_worker.values import Value
 HEALTHCHECKS_URL: Final = "https://healthchecks.io"
 CHECKS: Final = "/api/v3/checks/"
 SKEW: Final = timedelta(minutes=2)
-# Long enough to hold a weekly reader's latest run.
-LOOKBACK: Final = timedelta(days=8)
+# Long enough to hold a weekly reader's latest run after it has missed one.
+LOOKBACK: Final = timedelta(days=15)
 CHECK_FIELD: Final = "healthchecks_check"
 SOURCE_FIELD: Final = "observation_source"
 SUBJECT_FIELD: Final = "observation_subject"

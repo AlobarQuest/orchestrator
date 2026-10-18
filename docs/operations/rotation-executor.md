@@ -273,7 +273,7 @@ more than two minutes after the keeper's revision date shows up: a successful ch
   "the old value was already refused; nothing to revoke", and leaves the expired `previous` in
   the setting for the next host step to drop.
 - **A reader the registry names wrongly is refused before the claim.** No check with that name,
-  two of them, a subject with nothing posted in the last eight days, or a check-read reader with
+  two of them, a subject with nothing posted in the last 15 days, or a check-read reader with
   no `healthchecks_key_id` configured fails the unit into the dead-letter report. A read that
   gets no answer only waits.
 - **Each reader is read once per pass.** The wait, verify-consumers and retire-old judge the same

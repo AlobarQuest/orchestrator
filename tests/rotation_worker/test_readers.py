@@ -274,7 +274,7 @@ def test_an_observation_inside_the_skew_margin_waits(offset: timedelta, switched
 
 
 def test_a_subject_that_posted_nothing_in_the_lookback_is_a_registry_fault() -> None:
-    with pytest.raises(ReadError, match="posted nothing in the last 8 days"):
+    with pytest.raises(ReadError, match="posted nothing in the last 15 days"):
         _reads(observations=Observations(NOW - LOOKBACK - timedelta(hours=1))).answer(
             BACKUP, STORED
         )

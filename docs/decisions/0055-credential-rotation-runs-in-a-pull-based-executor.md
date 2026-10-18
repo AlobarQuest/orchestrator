@@ -1055,5 +1055,9 @@ What was built:
   that follows its own `/start` and resets it otherwise, and the read-only key returns it. All
   sixteen readers fetch the keeper after their run starts and keep no copy, confirmed in each
   script and helper on 2026-10-16. A two-minute margin covers the three clocks involved.
+- **A drift-reporter reader is refused once it has posted nothing for 15 days.** That holds a
+  weekly reader that missed one run; two missed runs means the job is broken, not late. Devon
+  chose 15 days on 2026-10-18, over the first build's eight, which a single missed Sunday
+  turned from a wait into a refusal.
 - **`Rotation / Healthchecks` already held a read-only key** (`Rotation / Healthcheck`) for the
   project with the twenty checks, so no new credential was needed.
