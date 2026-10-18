@@ -228,6 +228,10 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   `project-standards`, plus `factory-runner`). As measured 2026-08-07; factory-runner has since been
   given its own copy (2026-08-29), so the holding set is now eight — see the #153 bullet.
   Neither set is derivable from the other.
+  **Correction, 2026-09-15: the allowlist part no longer exists.** Dispatch admission reads the
+  target's own `factory-target.toml` instead (ADR-0015 amendment 4; driving-a-unit.md #301). The
+  full ordered procedure, with the PAT access list as one step, is
+  `docs/operations/onboarding-a-target.md`.
 
 ### #153
 

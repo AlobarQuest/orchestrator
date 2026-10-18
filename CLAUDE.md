@@ -44,7 +44,7 @@ style of that module.
 
 Each rule below is stated once, as it stands now. Where a procedure, method lesson or history lives
 elsewhere, the rule names it. Pages: `docs/operations/` (deploy, credentials, driving-a-unit,
-architecture-guards, local-development, landing-lanes, rotation-executor),
+architecture-guards, local-development, landing-lanes, rotation-executor, onboarding-a-target),
 `docs/method-lessons.md`, and `docs/history/claude-md-invariants-archive.md` (the full original
 text of every bullet, by number).
 Placement rule: global CLAUDE.md §7.
@@ -443,7 +443,7 @@ Placement rule: global CLAUDE.md §7.
 - Dispatch admission reads `factory-target.toml` from the target's default branch
   (`services/execution/factory_target.py`), refusing `target_repository_not_declared` /
   `..._declaration_unreadable`; its parse is pinned to `work_carrier/declaration.py`. Detail:
-  `docs/operations/driving-a-unit.md`.
+  `docs/operations/driving-a-unit.md`; full procedure: `docs/operations/onboarding-a-target.md`.
 - Moving a rollout workflow is a paired change: re-transcribe it in
   `src/deploy_watcher/workflows.py` AND ratify the derived criteria plus the landing blob pin in
   change-manager's `app/deploy_policy.py`, or its records stay silently pending. Detail:
