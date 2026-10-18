@@ -490,7 +490,9 @@ Placement rule: global CLAUDE.md §7.
   (`healthchecks_check`, or `observation_source` with `observation_subject`, beside `note`), never
   by a person; a unit that retires waits unclaimed until every such reader has run since the
   keeper's revision date, and a plan with no human act refuses a reader with no read. Weekly
-  readers gate retire even past the overlap's `until`. Detail: `docs/operations/rotation-executor.md`.
+  readers gate retire even past the overlap's `until`. No step can answer "not yet" once its unit
+  is claimed: any exception fails the unit and spends an attempt, so a step that must wait waits
+  before the claim, in `worker.py::_take`. Detail: `docs/operations/rotation-executor.md`.
 - The rotation executor rewrites `ORCHESTRATOR_M2M_CREDENTIALS` from what the running orchestrator
   loaded (`GET /api/v1/m2m-identities`, readable only by the configured executor) and changes only
   the entry its approved `coolify-env-hash` destination names. Restart straight after any hand edit
