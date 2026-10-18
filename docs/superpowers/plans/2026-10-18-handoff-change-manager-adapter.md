@@ -43,20 +43,29 @@ marked **Stop and ask** go to him before you build past them.
 
    **Stop and ask** if a reader has no read that shows it worked, if a reader runs inside the
    02:00 to 06:00 window in a way the overlap doesn't cover, or if two bearers share a value.
-2. **Confirm the mechanisms the adapter rests on before building.** The ADR says the executor
-   can't read change-manager's loaded hashes and confirms writes by probe. Find, in
-   change-manager's source, a route each scope may call that answers 200 for an accepted bearer
-   and 401 for a refused one, with no side effect, and confirm a random bearer gets 401 there.
-   Find what in change-manager reads the bearer settings at boot, and confirm a restart applies a
-   rewritten variable. Confirm the executor's Coolify client and token can write change-manager's
-   application (its uuid is in the registry's `coolify-env-hash` rows). **Stop and ask** if any
-   of these doesn't hold.
+2. **Confirm the mechanisms the adapter rests on before building.**
+   - Every rotation so far read its registry from `AlobarQuest/orchestrator`. First run
+     `rotation-worker compare-destinations change-manager-full-bearer` on the VM: it either
+     prints the registry's side from `AlobarQuest/change-manager`, or fails before that, and then
+     the executor needs that repository added (executor work, in scope).
+   - The ADR says the executor can't read change-manager's loaded hashes and confirms writes by
+     probe. Find, in change-manager's source, a route each scope may call that answers 200 for an
+     accepted bearer and 401 for a refused one, with no side effect, and confirm a random bearer
+     gets 401 there. `change-mgr.alobar.net` is Cloudflare-proxied: send a named User-Agent, and
+     read a non-JSON 5xx as Cloudflare, not change-manager. change-manager refuses status routes
+     to the `propose` scope, so that scope may need a different route.
+   - Find what in change-manager reads the bearer settings at boot, and confirm a restart applies
+     a rewritten variable.    - Confirm the executor's Coolify client and token can write change-manager's application (its
+     uuid is in the registry's `coolify-env-hash` rows).
+
+   **Stop and ask** if any of these doesn't hold.
 3. **Decide the plan.** Write the adapter's plan the way `orchestrator_bearer.PLAN` is written:
    which steps, which units, and which acceptance criterion each step files against. Host builds
    the scope's variable from the new value and the quarantined old one, without reading the
    setting (the ADR's constraint on this adapter). Say what the executor checks before each
-   change-manager restart, since change-manager's own clients are the scheduled lanes, and
-   whether the restart needs the `live_estate` window. **Stop and ask** if the plan needs a step
+   change-manager restart, since change-manager's own clients are the scheduled lanes. Both units
+   write a hosted consumer, so neither sets `touches_no_hosted_service` and each claim asks the
+   `live_estate` window; confirm the plan leaves the flag off. **Stop and ask** if the plan needs a step
    `contract.py` doesn't have.
 4. **Build it**, through `contract.py` only, with tests that drive each unit against fakes,
    including a stop after host and its retry. Hold the variable's form to change-manager's pinned
@@ -70,14 +79,18 @@ marked **Stop and ask** go to him before you build past them.
 ## Out of scope
 
 The four keeper moves and their grants, the four packages, `rotated_by_sds`, and every rotation.
-HQ does those after this, one bearer at a time. Any change to change-manager's code is out of
-scope: if the adapter needs one, **Stop and ask**.
+HQ does those after this, one bearer at a time. In change-manager, only the registry rows in
+`.cred-consumers.toml` are in scope (step 1). Its code, settings and deploy are not: if the
+adapter needs a change there, **Stop and ask**.
 
 ## Closing steps
 
 1. Merge each pull request yourself when its checks pass.
-2. Reinstall the VM at every executor change. Neither the orchestrator nor change-manager is
-   redeployed: if your change touches `src/orchestrator/` or change-manager, **Stop and ask**.
+2. Reinstall the VM at every executor change. The orchestrator isn't redeployed: if your change
+   touches `src/orchestrator/`, **Stop and ask**. Merging the registry rows to change-manager's
+   `main` may redeploy it: read App Brain's `default-branch-landing` route for change-manager
+   (never derive it), and if landing redeploys, merge outside the scheduled lanes' hours and
+   confirm the served revision afterwards.
 3. Remove your worktree, test database and merged branch, and check the main tree's `git status`.
 4. Report to Devon: the reader inventory (each reader, its account, its schedule and its read),
    the probe route per scope, the plan, the mutation count, and every grant the keeper moves need.
