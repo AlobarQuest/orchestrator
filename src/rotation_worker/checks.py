@@ -54,7 +54,7 @@ UNIT_KEY: Final = "rotation_unit"
 DESTINATIONS_KEY: Final = "destinations"
 NON_HOSTED_KEY: Final = "touches_no_hosted_service"
 # Declares a host with no overlap, for one rotation whose old value another identity still holds
-# (ADR-0055 amendment 9). Only the literal `True` declares it, and only on a unit that hosts.
+# (ADR-0055 amendment 9). `True` declares it, only on a unit that hosts; `False` is the default.
 WITHOUT_OVERLAP_KEY: Final = "host_without_overlap"
 # The steps that write a hosted service: host gives it the new value, and retire_old takes the
 # old one away. Store and distribute write BWS only.
@@ -125,10 +125,11 @@ def check_unit(
 
 
 def _declared_without_overlap(constraints: Mapping[str, Any], unit: UnitPlan) -> bool:
-    if WITHOUT_OVERLAP_KEY not in constraints:
+    declared = constraints.get(WITHOUT_OVERLAP_KEY, False)
+    if declared is False:
         return False
-    if constraints[WITHOUT_OVERLAP_KEY] is not True:
-        raise ContractError(f"{WITHOUT_OVERLAP_KEY} is declared only by the literal true")
+    if declared is not True:
+        raise ContractError(f"{WITHOUT_OVERLAP_KEY} is a boolean")
     if StepKind.HOST not in {step.kind for step in unit.steps}:
         raise ContractError(f"{WITHOUT_OVERLAP_KEY} is declared on a unit with no host step")
     return True

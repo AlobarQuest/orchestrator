@@ -264,8 +264,8 @@ two identities share one value. The observer and drift-reporter bearers are spli
 the drift-reporter rotates with the usual one.
 
 - **It's declared, never inferred.** The `mint` unit's approved envelope sets
-  `host_without_overlap: true`. Only the literal `true` declares it, and the checks refuse it on a
-  unit with no host step. The `retire` unit needs no declaration.
+  `host_without_overlap: true`. The value must be a boolean, `false` is the ordinary overlap, and
+  the checks refuse `true` on a unit with no host step. The `retire` unit needs no declaration.
 - **The executor refuses it unless an overlap is impossible.** Host writes the new hash with no
   `previous` only if another entry in what the orchestrator serves holds the old hash as current;
   otherwise it refuses before writing (`m2m_setting.Change.REPLACE`). An undeclared host on such a
@@ -344,9 +344,16 @@ gets 401 from host's restart until `store` runs, so finish or undo it straight a
 - undo: in Coolify, set the entry's `token_hash` to the `token_hash` of the entry that shares the
   old value (for the observer, `orchestrator-drift-reporter`), both rows, restart, then delete the
   staging secret. The keeper still holds the old value, so its readers work again. A hash isn't
-  a secret, so this moves no value. Undo only while `Rotation / Work` has no quarantine secret
-  for the occurrence: `store` creates it before it writes the keeper, so once it exists the
-  keeper may hold the new value, and the only recovery is a retry.
+  a secret, so this moves no value. Undo only while both hold:
+  - `Rotation / Work` has no quarantine secret for the occurrence. `store` creates it before it
+    writes the keeper, so once it exists the keeper may hold the new value, and the only
+    recovery is a retry.
+  - The sharing entry hasn't rotated since host: its keeper's revision date in BWS is earlier
+    than host's evidence. Otherwise its hash is no longer the old value's, and copying it would
+    make the two identities share a value again.
+
+  Host refuses an entry that still accepts an earlier value as `previous`, so the old hash is the
+  only one an undo restores.
 
 ### If the orchestrator doesn't come back after a rotation's restart
 

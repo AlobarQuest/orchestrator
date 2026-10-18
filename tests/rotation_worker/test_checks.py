@@ -453,9 +453,16 @@ def test_a_host_without_overlap_is_declared_only_on_a_hosting_unit(world: World)
         world.check(_with_constraints(retire, host_without_overlap=True), intake)
 
 
-@pytest.mark.parametrize("value", [False, "true", 1, None])
-def test_only_the_literal_true_declares_a_host_without_overlap(world: World, value: Any) -> None:
+@pytest.mark.parametrize("value", ["true", "false", 1, None])
+def test_a_host_without_overlap_declaration_is_a_boolean(world: World, value: Any) -> None:
     retire, intake = _orchestrator_world(world, '  healthchecks_check = "sds-x"\n')
     mint = _with_constraints(retire, rotation_unit="mint", host_without_overlap=value)
-    with pytest.raises(ContractError, match="only by the literal true"):
+    with pytest.raises(ContractError, match="is a boolean"):
         world.check(mint, intake)
+
+
+def test_false_declares_the_ordinary_overlap(world: World) -> None:
+    retire, intake = _orchestrator_world(world, '  healthchecks_check = "sds-x"\n')
+    for name in ("mint", "retire"):
+        unit = _with_constraints(retire, rotation_unit=name, host_without_overlap=False)
+        assert world.check(unit, intake).host_without_overlap is False

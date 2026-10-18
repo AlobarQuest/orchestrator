@@ -73,6 +73,11 @@ DETERMINATE: Final = frozenset({200, 401})
 SWAP_WAIT: Final = timedelta(minutes=5)
 RESTART_WAIT: Final = timedelta(minutes=10)
 RECHECK_SECONDS: Final = 10.0
+# What a host leaves the entry accepting, for the step's note.
+HOSTED_AS: Final = {
+    Change.HOST: "the new hash with the old one as previous",
+    Change.REPLACE: "the new hash with no previous, since another entry holds the old one",
+}
 
 M = Actor.MACHINE
 # Two units, each claimed inside the live_estate window because each restarts the orchestrator,
@@ -238,21 +243,19 @@ class OrchestratorBearerProvider:
             self._clock(),
         )
         self._expected[new_hash] = 200
-        alone = self._hosting is Change.REPLACE
+        hosted_as = HOSTED_AS[self._hosting]
         if rewrite.text is None:
-            if alone:
-                return "the orchestrator already accepts the new value alone"
-            return "the orchestrator already accepts the new value beside the old"
+            return f"the orchestrator already serves {hosted_as}"
         self._write_and_restart(rewrite.text)
-        self._await(lambda entry: entry.get("token_hash") == new_hash)
-        if alone:
-            return (
-                f"wrote setting {rewrite.fingerprint} and restarted; the orchestrator loaded the "
-                "new hash with no previous, since another entry holds the old one"
+        alone = self._hosting is Change.REPLACE
+        self._await(
+            lambda entry: (
+                entry.get("token_hash") == new_hash and (not alone or "previous" not in entry)
             )
+        )
         return (
-            f"wrote setting {rewrite.fingerprint} and restarted; the orchestrator loaded the new "
-            "hash with the old one as previous"
+            f"wrote setting {rewrite.fingerprint} and restarted; the orchestrator loaded "
+            + hosted_as
         )
 
     def revoke(self, value: Value) -> str:

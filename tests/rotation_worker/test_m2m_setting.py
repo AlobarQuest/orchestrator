@@ -183,10 +183,17 @@ def test_replace_refuses_when_no_other_entry_holds_the_old_hash() -> None:
         build(_served(), ENTRY, Change.REPLACE, NEW, OLD, NOW)
 
 
-def test_replace_refuses_on_a_retry_once_no_other_entry_holds_the_old_hash() -> None:
+def test_a_replace_retry_writes_nothing_even_once_no_other_entry_holds_the_old_hash() -> None:
+    """A retry that writes nothing can't skip an overlap, so it doesn't need the condition."""
     served = _served()
     served[ENTRY]["token_hash"] = NEW
-    with pytest.raises(ContractError, match="must overlap"):
+    assert build(served, ENTRY, Change.REPLACE, NEW, OLD, NOW).text is None
+
+
+def test_replace_refuses_an_entry_that_still_accepts_an_earlier_value() -> None:
+    later = (NOW + timedelta(days=1)).isoformat()
+    served = _shared(previous={"token_hash": _hash("before"), "until": later})
+    with pytest.raises(ContractError, match="earlier value as previous"):
         build(served, ENTRY, Change.REPLACE, NEW, OLD, NOW)
 
 
@@ -204,7 +211,7 @@ def test_replace_refuses_an_entry_holding_neither_value() -> None:
         build(served, ENTRY, Change.REPLACE, NEW, OLD, NOW)
 
 
-def test_replace_drops_the_entry_s_own_previous_and_expired_ones_elsewhere() -> None:
+def test_replace_drops_expired_overlaps_on_the_entry_and_elsewhere() -> None:
     served = _shared(previous={"token_hash": _hash("before"), "until": NOW.isoformat()})
     served["orchestrator-system"]["previous"] = {
         "token_hash": _hash("long gone"),

@@ -17,7 +17,7 @@ from typing import Any
 import httpx
 import pytest
 
-from rotation_worker.adapters import ADAPTERS, AdapterContext
+from rotation_worker.adapters import ADAPTERS, AdapterContext, orchestrator_bearer
 from rotation_worker.adapters.orchestrator_bearer import (
     PLAN,
     SWAP_WAIT,
@@ -27,7 +27,6 @@ from rotation_worker.adapters.orchestrator_bearer import (
 from rotation_worker.contract import ContractError, Rotation, Step, UnitRun
 from rotation_worker.coolify import CoolifyClient, url_problem
 from rotation_worker.evidence import StepEvidence
-from rotation_worker.m2m_setting import Change
 from rotation_worker.orchestrator_client import OrchestratorClient
 from rotation_worker.values import Value
 from tests.rotation_worker.stores import MemoryStore
@@ -80,6 +79,8 @@ class Estate:
         self.scripted: list[int | None] = []
         self.coolify_status = 201
         self.restart_applies = True
+        # A previous the restarted orchestrator loads beside what was written, for every entry.
+        self.stray_previous: dict[str, Any] | None = None
         # A ledger to serve once the variable has been written, before the restart.
         self.ledger_after_write: list[dict[str, Any]] | None = None
         # Requests the old container answers after a restart, with what it loaded before.
@@ -129,6 +130,9 @@ class Estate:
         if self.restart_applies:
             self._before = self.loaded
             self.loaded = json.loads(self.rows[False])
+            if self.stray_previous is not None:
+                for entry in self.loaded.values():
+                    entry["previous"] = self.stray_previous
         return httpx.Response(200)
 
 
@@ -593,6 +597,15 @@ def test_a_declared_host_without_an_overlap_is_refused_where_one_is_possible(
     assert h.estate.sent == []
 
 
+def test_a_host_without_an_overlap_waits_until_no_previous_is_loaded(h: Harness) -> None:
+    """A restart that loads the new hash beside a previous isn't the setting written."""
+    _share_the_old_value(h)
+    h.estate.stray_previous = {"token_hash": _hash("stray"), "until": START.isoformat()}
+    provider = h.build(without_overlap=True)
+    with pytest.raises(ContractError, match="didn't load"):
+        provider.host(Value("the-new-observer-bearer"), h.original)
+
+
 def test_an_overlapping_host_says_it_kept_the_old_value_as_previous(h: Harness) -> None:
     note = h.provider.host(Value("the-new-operator-bearer"), h.original)
     assert "with the old one as previous" in note
@@ -600,21 +613,17 @@ def test_an_overlapping_host_says_it_kept_the_old_value_as_previous(h: Harness) 
 
 @pytest.mark.parametrize("declared", [True, False])
 def test_the_adapter_registry_passes_the_declaration_to_the_provider(
-    h: Harness, tmp_path: Path, declared: bool
+    h: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, declared: bool
 ) -> None:
-    _share_the_old_value(h)
-    context = AdapterContext(
-        tmp_path,
-        h.store,
-        h.token_id,
-        rotation=h.rotation,
-        orchestrator=h.build()._orchestrator,
-        orchestrator_url=ORCHESTRATOR,
-        coolify_url=COOLIFY,
-        orchestrator_application=APP,
-        executor_key_id="rotation-executor-1",
-        host_without_overlap=declared,
+    # Captured at the builder: a provider built here has no simulated transport to talk to.
+    passed: list[bool] = []
+    monkeypatch.setattr(
+        orchestrator_bearer,
+        "build_provider",
+        lambda **arguments: passed.append(arguments["without_overlap"]),
     )
-    provider = ADAPTERS["orchestrator"].build(context)
-    assert isinstance(provider, OrchestratorBearerProvider)
-    assert provider._hosting is (Change.REPLACE if declared else Change.HOST)
+    context = AdapterContext(
+        tmp_path, h.store, h.token_id, rotation=h.rotation, host_without_overlap=declared
+    )
+    ADAPTERS["orchestrator"].build(context)
+    assert passed == [declared]

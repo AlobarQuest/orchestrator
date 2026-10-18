@@ -106,16 +106,20 @@ def _replace(
     identities: dict[str, dict[str, Any]], entry: str, new_hash: str, old_hash: str, now: datetime
 ) -> bool:
     target = identities[entry]
+    # Checked first: a retry that writes nothing can't skip an overlap.
+    if target.get("token_hash") == new_hash and "previous" not in target:
+        return False
     if not any(
         identity.get("token_hash") == old_hash
         for key, identity in identities.items()
         if key != entry
     ):
         raise ContractError("no other entry holds the old hash, so the host must overlap")
-    if target.get("token_hash") == new_hash and "previous" not in target:
-        return False
     if target.get("token_hash") != old_hash:
         raise ContractError("the entry holds neither the old hash nor the new one")
+    if "previous" in target and not _expired(target, now):
+        # Writing no previous would end that overlap unrecorded: never guess.
+        raise ContractError("the entry still accepts an earlier value as previous")
     target["token_hash"] = new_hash
     target.pop("previous", None)
     _drop_expired_elsewhere(identities, entry, now)
