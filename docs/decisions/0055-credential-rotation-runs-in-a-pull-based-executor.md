@@ -1117,3 +1117,32 @@ refuses as boot would.
   drift-reporter's and got 404 on the observer's. The root read both, and each keeper's sha256
   equals the hash its entry loaded in the running orchestrator, with no `previous` on either. A
   portfolio search for both UUIDs and names found no reader outside the registry's rows.
+
+### The change-manager adapter (2026-10-18)
+
+The inventory for change-manager's four bearers (handoff
+`2026-10-18-handoff-change-manager-adapter.md`) found every scheduled reader fetches its keeper with
+the broad account, the four keepers hold four values, and `GET /api/landing-policy` answers 401 to a
+random bearer and 200 to each scope's. It also found four things the plan couldn't settle alone,
+and Devon answered them on 2026-10-18:
+
+1. **`drift-audit.sh` has no read that shows it switched.** It reads the `full` bearer for two
+   change-manager calls that only log a warning when they fail, so its check pings success either
+   way. Devon chose a human act: the `full` bearer rotates with the `change-manager-attested`
+   plan, whose person attests that reader at `/review`. The other three bearers use the
+   machine-only `change-manager` plan. Changing infraops so the failure reaches the check was the
+   rejected alternative.
+2. **factory-events held a static copy of the `full` bearer** in `~/.factory/env`, unregistered, so
+   a rotation would have broken it at retire. Devon chose to convert it to a fetch from BWS on each
+   run, after which it is an ordinary `runtime-fetch` reader with a check. Registering the file as
+   a person-attested `shell-export` was the rejected alternative.
+3. **Readers run throughout the `live_estate` window**, and the overlap covers the value, not a
+   restart's outage. Devon chose that the restart waits: a unit that writes waits unclaimed while
+   any registered reader of any change-manager bearer shows as started in Healthchecks, and host
+   and retire ask again before writing and before restarting. Accepting one failed run per restart
+   was the rejected alternative.
+4. **change-manager doesn't boot with a `previous` equal to any scope's current hash**, and has no
+   route reporting its hashes. Devon chose that host and retire read the other bearers' keepers and
+   refuse a value one of them holds, so all four keepers move to `Rotation / Keepers` before the
+   first change-manager rotation. Relying on the inventory's one-time check was the rejected
+   alternative. A hand edit in Coolify that no keeper holds stays invisible.

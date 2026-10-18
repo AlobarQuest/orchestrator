@@ -503,3 +503,9 @@ Placement rule: global CLAUDE.md §7.
   entry holds the old hash as current, the one case where boot refuses an overlap. Never widen
   that condition or infer the declaration. Its undo sets the entry's hash to the sharing entry's.
   Detail: `docs/operations/rotation-executor.md`.
+- The `change-manager` rotation adapter can't read what change-manager loaded: it writes each
+  bearer variable from the old and new values alone, confirms by probing `/api/landing-policy`,
+  and refuses a value any other change-manager keeper holds, since a shared `previous` stops
+  change-manager booting. All four keepers must be readable by the root before its first
+  rotation. Restarts wait while any registered change-manager reader is mid-run. Detail:
+  `docs/operations/rotation-executor.md`.

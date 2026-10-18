@@ -104,11 +104,13 @@ OrbStack machines and the tailnet (production Coolify at `100.112.188.96:8000`),
 
    coolify_url = "http://100.112.188.96:8000"
    orchestrator_application = "eqj5l7k705fhi12x9i74fqf0"
+   change_manager_application = "re45tafypao3nly3qa9a79dp"
    healthchecks_key_id = "8a41c80d-54a8-4b2b-aa93-b4e0012a99da"
 
    [admin_secrets]
    openrouter = "<the OpenRouter management key's secret id, in Rotation / Admin>"
    orchestrator = "<the Coolify token's secret id, in Rotation / Coolify>"
+   change-manager = "<the same Coolify token's secret id>"
    ```
 
    `admin_secrets` maps a provider name to the BWS secret id of that provider's admin
@@ -116,7 +118,8 @@ OrbStack machines and the tailnet (production Coolify at `100.112.188.96:8000`),
    only when a step mints, hosts or revokes. The `orchestrator` provider's admin credential is the
    Coolify token, because writing Coolify is how it changes which bearers the orchestrator
    accepts. `orchestrator_application` is the orchestrator's Coolify application uuid, the only
-   application that adapter may write whatever a package names. `coolify_url` is production
+   application that adapter may write whatever a package names. The `change-manager` provider's
+   admin credential is the same token, and `change_manager_application` bounds it the same way. `coolify_url` is production
    Coolify's tailnet address: the Coolify client sends its
    token only over TLS or to a tailnet address, and production Coolify has no TLS (ADR-0055
    amendment 9). `healthchecks_key_id` is the read-only Healthchecks key in
@@ -146,7 +149,7 @@ executor. None is ever printed, passed as an argument, or kept on the Mac.
 | The executor's WORKER bearer | BWS secret `rotation-executor WORKER bearer` in `Rotation / Executor`; its hash in the orchestrator's `ORCHESTRATOR_M2M_CREDENTIALS` under key `rotation-executor-1`, agent `rotation-executor` | The executor, from BWS at each pass |
 | The read-only Healthchecks API key | BWS secret `Rotation / Healthcheck` in `Rotation / Healthchecks`; its id in `config.toml` as `healthchecks_key_id` | The executor, from BWS, only while it reads a scheduled reader's check |
 | The OpenRouter management key | BWS secret `openrouter management key` in `Rotation / Admin`; its id in `config.toml`'s `admin_secrets` | The executor, from BWS, only while an `openrouter` unit mints or revokes |
-| The production Coolify token (`read`, `write`, `deploy`; not `read:sensitive`) | BWS secret `rotation-coolify-token` in `Rotation / Coolify`; its id in `admin_secrets` as `orchestrator` | The executor, from BWS, only while an `orchestrator` unit hosts or retires |
+| The production Coolify token (`read`, `write`, `deploy`; not `read:sensitive`) | BWS secret `rotation-coolify-token` in `Rotation / Coolify`; its id in `admin_secrets` as `orchestrator` and `change-manager` | The executor, from BWS, only while an `orchestrator` or `change-manager` unit hosts or retires |
 | The BWS projects | Bitwarden Secrets Manager | The root: write on `Rotation / Work` and `Rotation / Keepers`, read on `Rotation / Admin`, `Rotation / Coolify`, `Rotation / Executor` and `Rotation / Healthchecks`, nothing else. A consumer account: a direct read grant on each keeper secret it consumes, nothing else in `Rotation / Keepers` |
 
 ### Create them
@@ -372,3 +375,58 @@ orchestrator's `ORCHESTRATOR_M2M_CREDENTIALS` and undo the change by hand, in bo
 
 Restart, and confirm `https://sds.alobar.net/health/live` answers. The keeper still holds the old
 value after a failed `mint`, because store comes after host, so every consumer still works.
+
+## change-manager's bearers
+
+The `change-manager` adapter rotates one of change-manager's four machine bearers (`full`,
+`read`, `propose`, `observe`; ADR-0055 amendment 9, "The change-manager adapter"). Each bearer's
+Coolify variable holds one JSON entry keyed by its scope: the bearer's sha256 and, during an
+overlap, a `previous` hash with its `until` (change-manager's `docs/operations/bearer-settings.md`).
+Its destination names the variable and the scope:
+`coolify-env-hash … key="M2M_TOKEN_READ" entry="read"`.
+
+Its plan is the orchestrator adapter's, AC-001 to AC-009, and both units are claimed only in the
+`live_estate` window, because each restarts change-manager:
+
+- `mint` (AC-001 to AC-006): mint and stage; host writes the variable as the new hash with the old
+  one as `previous` (`until` seven days out), both rows, restarts, and waits until change-manager
+  accepts the new value; probe it; store it; verify the consumers.
+- `retire` (AC-007 to AC-009): verify the consumers; write the variable as the new hash alone,
+  restart, and wait until the old value is refused; confirm it dead.
+
+The adapter named `change-manager-attested` runs the same units with a human act between them, for
+a bearer one of whose readers has no read: a person attests that reader at `/review` with the new
+value's fingerprint. The `full` bearer needs it for `drift-audit.sh`, whose change-manager calls
+only log a warning when they fail. The other three use `change-manager`.
+
+What differs from the orchestrator's bearers:
+
+- **Nothing reports what change-manager loaded.** The executor builds the value from the old and
+  new values alone, and confirms each write by probing `GET /api/landing-policy`, which every
+  scope may read: a random bearer gets 401, an accepted one 200. The probe shows that some scope
+  accepts the value, not which.
+- **A bad value takes change-manager down.** It doesn't boot when any scope's `previous` equals any
+  scope's current hash. The executor can't read the other variables, so it reads the other
+  bearers' keepers (the registry's change-manager credentials on the same application) and
+  refuses a host or retire whose old or new value is one of them. So all four keepers must be in
+  `Rotation / Keepers`, readable by the root, before the first change-manager rotation; a sibling
+  keeper it can't read fails host before anything is written. A hand edit in Coolify that no
+  keeper holds is invisible to this check.
+- **The restart waits for change-manager's clients.** Its clients are the scheduled readers of its
+  four bearers, and several run inside the window. A unit that writes waits unclaimed while any
+  reader the registry names with a `healthchecks_check`, for any change-manager bearer, shows as
+  started in Healthchecks. Host and retire ask again before writing and before restarting, wait
+  up to five minutes, then refuse. A reader with no check can't be asked.
+- **Host never runs without an overlap.** The four bearers hold four values, so the adapter
+  refuses `host_without_overlap: true`.
+- **The wait logs no `overlap_until`.** It reads the orchestrator's identities, which don't hold
+  change-manager's entries; host's evidence time plus seven days is the backstop.
+
+### If a change-manager rotation stalls after host
+
+The same as the orchestrator's: a retry finds change-manager already accepting the new value,
+writes nothing, and goes on to store. To undo instead, in Coolify set the variable to
+`{"<scope>":{"token_hash":"<previous.token_hash>"}}`, both rows, restart, then delete the staging
+secret. A value that doesn't parse grants nothing for that one scope and leaves the others
+working; a rule broken across scopes stops change-manager booting, so read the entries of the
+other three before restarting.

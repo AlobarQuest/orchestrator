@@ -369,18 +369,20 @@ class ChangeManagerProvider:
 
     def _await_readers(self) -> None:
         deadline = self._clock() + GATE_WAIT
-        while True:
-            try:
-                running = self._readers_mid_run()
-            except ReadUnavailable as error:
-                running = [f"unreadable: {error}"]
-            if not running:
-                return
-            if self._clock() >= deadline:
-                raise ContractError(
-                    "a restart now would cut short change-manager's readers: " + ", ".join(running)
-                )
+        running = self._running()
+        while running and self._clock() < deadline:
             self._sleep(RECHECK_SECONDS)
+            running = self._running()
+        if running:
+            raise ContractError(
+                "a restart now would cut short change-manager's readers: " + ", ".join(running)
+            )
+
+    def _running(self) -> list[str]:
+        try:
+            return self._readers_mid_run()
+        except ReadUnavailable as error:
+            return [f"unreadable: {error}"]
 
 
 def _settled(status: int | None, expected: int | None) -> bool:
