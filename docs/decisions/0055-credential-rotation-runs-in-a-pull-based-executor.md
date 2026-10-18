@@ -1084,3 +1084,22 @@ The cost is the overlap's protection, for this one run. An observer lane that ru
 restart and `store` fails that run and pings `/fail`. If the unit stops after host, the observer's
 eight lanes fail until a retry stores the staged value, and the runbook's undo, which restores the
 entry from `previous`, has no `previous` to restore from.
+
+#### The recovery after a stop at a host without an overlap (2026-10-18)
+
+The build (#440) answered the open undo. A unit that stops after such a host is finished by a
+retry, which is claimed only in the `live_estate` window, finds the entry already written, and goes
+on to `store`. Or it's undone by copying a hash, not a value: the entry's `token_hash` is set to
+the sharing entry's, which the keeper's old value still matches. The undo is allowed only while
+no quarantine secret exists for the occurrence and the sharing entry hasn't rotated since host;
+otherwise a retry is the only recovery. Host refuses an entry that still accepts an earlier value
+as `previous`, so the old hash is the only one an undo can restore. The procedure is in
+`docs/operations/rotation-executor.md`, "If a rotation stalls after host".
+
+The declaration is the mint unit's approved envelope constraint `host_without_overlap: true`, so
+it's covered by the authority fingerprint and changes no contract pinned with intent-packages or
+factory-runner. Because the two keepers hold one value of one age, both may come due the same
+night; the drift-reporter's package is approved, and its registry entry marked `rotated_by_sds`,
+only after the observer's mint unit has completed. A drift-reporter host before then would write
+the shared hash as `previous` while it is still the observer's current hash, which the executor
+refuses as boot would.
