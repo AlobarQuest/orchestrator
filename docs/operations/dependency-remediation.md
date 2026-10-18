@@ -34,9 +34,9 @@ The target repository must have **both**:
   2026-09-15 this was membership in `ORCHESTRATOR_DISPATCH_ALLOWED_TARGET_REPOSITORIES`, which
   no longer exists.
 
-Six repositories have both: orchestrator, intent-packages, change-manager, brain,
-security-standards and infraops-mcp-server. Making another repository a target is a decision about
-that repository, recorded by landing its declaration; the full procedure is
+Measured 2026-10-18: six repositories have both (orchestrator, intent-packages, change-manager,
+brain, security-standards and infraops-mcp-server). Making another repository a target is a
+decision about that repository, recorded by landing its declaration; for the full procedure, see
 [Onboarding a factory target](onboarding-a-target.md).
 
 **`factory-runner` and `project-standards` have no caller by decision (ADR-0015) and are therefore

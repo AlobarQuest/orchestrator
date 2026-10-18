@@ -49,8 +49,19 @@ Decide two things first, because they change the amount of work:
 
 3. **Set the four Actions secrets** that the reusable workflow requires:
    `FACTORY_RUNNER_TOKEN`, `FACTORY_RUNNER_CREDENTIAL_KEY_ID`, `ANTHROPIC_API_KEY` and
-   `FACTORY_PR_TOKEN`. Fetch each value from BWS; never paste one into a prompt or a tool argument.
-   Use `gh secret set <NAME> -R AlobarQuest/<repo>` with the value on stdin and no `--body` flag.
+   `FACTORY_PR_TOKEN`. Actions secrets are write-only, so you can't copy one from another target.
+   Take each from its source:
+
+   | Secret | Source |
+   |---|---|
+   | `FACTORY_RUNNER_TOKEN` | BWS `d2a4c0fc-128b-4bf5-8e25-b481010e1be0` (`Ops / Platform`) |
+   | `FACTORY_RUNNER_CREDENTIAL_KEY_ID` | Not a secret value: the runner's key id, recorded in factory-runner's `docs/rollout.md` |
+   | `ANTHROPIC_API_KEY` | BWS `b56cf0df-27bc-46a8-8e94-b48201478aff`, the spend-capped runner key (`Ops / Platform`) |
+   | `FACTORY_PR_TOKEN` | BWS `a3240c2e-92d7-4b32-a726-b49b0135565a` (`SDS Operator`) |
+
+   Fetch and set each value in one process so it never appears in a prompt, a tool argument or
+   the transcript. Pipe it to `gh secret set <NAME> -R AlobarQuest/<repo>` with no `--body` flag;
+   `--body -` stores a literal dash. Step 6's probe is what proves the token and key id agree.
 
    Then add the repository to both rotation inventories, so a rotation reaches the new copies:
 
@@ -124,21 +135,24 @@ Decide two things first, because they change the amount of work:
     break. Envelopes are write-once, so a command list that fails costs the unit
     (driving-a-unit.md).
 
-12. **Optional: make the repository reachable by the work carrier.** Work that arrives through the
-    work carrier, not a direct dispatch, also needs the kit's `runner.caller`, `factory.secrets`,
-    `factory.landing_known` and `factory.pat_access` checks to pass in `~/.portfolio/portfolio.json`.
-    The nightly sweep measures a repository only when it's checked out under `~/Projects` and its
-    `PROJECT.md` declares `delivery_profile`. Otherwise the carrier answers UNKNOWN and holds the
-    work.
+12. **Declare a `delivery_profile` and check the repository out under `~/Projects`.** The
+    conformance kit measures its factory checks only for a repository whose `PROJECT.md` declares
+    `delivery_profile`, and the nightly sweep reads only checkouts under `~/Projects`. Without
+    both, the check in the following section reports every factory check as out of scope, and
+    work that arrives through the work carrier, not a direct dispatch, is held as UNKNOWN. The
+    carrier needs `runner.caller`, `factory.secrets`, `factory.landing_known` and
+    `factory.pat_access` to pass in `~/.portfolio/portfolio.json`.
 
 ## Check the result
 
-To check steps 1–5 and 7 in one pass, run the conformance kit from project-standards:
+To check steps 2–5 and 7, run the conformance kit from project-standards against the checkout:
 
 ```bash
 portfolio onboard <path-to-repo>
 ```
 
 It reports `runner.caller`, `factory.secrets`, `factory.pat_access`, `factory.app_access` and
-`factory.landing_known`. `factory.pat_scope` can only report `unknown`, because a fine-grained token
-doesn't expose its permissions through the API; step 6's probe is the real test of it.
+`factory.landing_known`, among other readiness checks. It doesn't confirm step 1's declaration as
+admission reads it; read the file back from the default branch instead. `factory.pat_scope` can
+only report `unknown`, because a fine-grained token doesn't expose its permissions through the
+API; step 6's probe is the real test of it.
