@@ -1103,3 +1103,17 @@ night; the drift-reporter's package is approved, and its registry entry marked `
 only after the observer's mint unit has completed. A drift-reporter host before then would write
 the shared hash as `previous` while it is still the observer's current hash, which the executor
 refuses as boot would.
+
+#### Proven before the observer's run (2026-10-18)
+
+- **The broad account's direct grant.** The root created two canaries in `Rotation / Keepers`, and
+  Devon gave the broad account (the Developer Machines account behind
+  `BWS_ACCESS_TOKEN_VPS_BACKUP` and `BWS_ACCESS_TOKEN_INFRA_DRIFT`) **Can read** on one. With a
+  fresh login and an empty `HOME`, it read the granted canary at the fingerprint the root wrote;
+  the other canary and the operator's keeper answered 404. The canaries were deleted.
+- **The moves.** Devon granted each keeper to its one account and moved both to
+  `Rotation / Keepers`. Afterwards, with an empty `HOME`, `sds-operator` read the observer's keeper
+  and got 404 on the drift-reporter's, and the broad account (through both Keychain names) read the
+  drift-reporter's and got 404 on the observer's. The root read both, and each keeper's sha256
+  equals the hash its entry loaded in the running orchestrator, with no `previous` on either. A
+  portfolio search for both UUIDs and names found no reader outside the registry's rows.
