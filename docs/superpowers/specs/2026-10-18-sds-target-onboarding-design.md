@@ -1,7 +1,7 @@
 # SDS target onboarding: design
 
 - **Date:** 2026-10-18
-- **Status:** Draft for Devon's review
+- **Status:** Approved by Devon 2026-10-18; plan 1 (readiness command) built in project-standards PR #49
 - **First repository:** `AlobarQuest/RentVSBuyGA`
 - **Runbook it automates:** `docs/operations/onboarding-a-target.md`
 
