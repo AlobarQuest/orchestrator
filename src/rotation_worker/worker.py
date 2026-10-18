@@ -169,6 +169,7 @@ def _work(
             coolify_url=setup.coolify_url,
             orchestrator_application=setup.orchestrator_application,
             executor_key_id=setup.executor_key_id,
+            host_without_overlap=approved.host_without_overlap,
         )
     )
     lease, version = _claim(setup, unit)

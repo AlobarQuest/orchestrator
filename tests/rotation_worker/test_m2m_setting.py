@@ -159,3 +159,80 @@ def test_the_fingerprint_is_short_and_matches_the_text() -> None:
     assert rewrite.text is not None and rewrite.fingerprint is not None
     assert len(rewrite.fingerprint) == 8
     assert hashlib.sha256(rewrite.text.encode()).hexdigest().startswith(rewrite.fingerprint)
+
+
+def _shared(**entry: Any) -> dict[str, Any]:
+    """The observer and drift-reporter case: another entry holds the old hash as current."""
+    served = _served(**entry)
+    served["orchestrator-drift-reporter"] = {"agent_id": "drift-reconciler", "token_hash": OLD}
+    return served
+
+
+def test_replace_sets_the_new_hash_with_no_previous() -> None:
+    text = build(_shared(), ENTRY, Change.REPLACE, NEW, OLD, NOW).text
+    assert text is not None
+    written = json.loads(text)
+    assert written[ENTRY] == {"agent_id": "claude-code-interactive", "token_hash": NEW}
+    # The entry that shares the old value keeps it.
+    assert written["orchestrator-drift-reporter"]["token_hash"] == OLD
+
+
+def test_replace_refuses_when_no_other_entry_holds_the_old_hash() -> None:
+    """A declared host without an overlap, on a rotation that could overlap."""
+    with pytest.raises(ContractError, match="must overlap"):
+        build(_served(), ENTRY, Change.REPLACE, NEW, OLD, NOW)
+
+
+def test_a_replace_retry_writes_nothing_even_once_no_other_entry_holds_the_old_hash() -> None:
+    """A retry that writes nothing can't skip an overlap, so it doesn't need the condition."""
+    served = _served()
+    served[ENTRY]["token_hash"] = NEW
+    assert build(served, ENTRY, Change.REPLACE, NEW, OLD, NOW).text is None
+
+
+def test_replace_refuses_an_entry_that_still_accepts_an_earlier_value() -> None:
+    later = (NOW + timedelta(days=1)).isoformat()
+    served = _shared(previous={"token_hash": _hash("before"), "until": later})
+    with pytest.raises(ContractError, match="earlier value as previous"):
+        build(served, ENTRY, Change.REPLACE, NEW, OLD, NOW)
+
+
+def test_replace_is_a_no_op_when_the_service_already_holds_the_new_hash_alone() -> None:
+    served = _shared()
+    served[ENTRY]["token_hash"] = NEW
+    rewrite = build(served, ENTRY, Change.REPLACE, NEW, OLD, NOW)
+    assert rewrite.text is None and rewrite.fingerprint is None
+
+
+def test_replace_refuses_an_entry_holding_neither_value() -> None:
+    served = _shared()
+    served[ENTRY]["token_hash"] = _hash("someone else's")
+    with pytest.raises(ContractError, match="neither"):
+        build(served, ENTRY, Change.REPLACE, NEW, OLD, NOW)
+
+
+def test_replace_drops_expired_overlaps_on_the_entry_and_elsewhere() -> None:
+    served = _shared(previous={"token_hash": _hash("before"), "until": NOW.isoformat()})
+    served["orchestrator-system"]["previous"] = {
+        "token_hash": _hash("long gone"),
+        "until": (NOW - timedelta(days=1)).isoformat(),
+    }
+    text = build(served, ENTRY, Change.REPLACE, NEW, OLD, NOW).text
+    assert text is not None
+    written = json.loads(text)
+    assert "previous" not in written[ENTRY]
+    assert "previous" not in written["orchestrator-system"]
+
+
+def test_an_undeclared_host_is_refused_where_another_entry_holds_the_old_hash() -> None:
+    """The overlap boot refuses: the observer's previous would be the drift-reporter's current."""
+    with pytest.raises(ContractError, match="still current"):
+        build(_shared(), ENTRY, Change.HOST, NEW, OLD, NOW)
+
+
+def test_replace_refuses_an_entry_with_the_new_hash_beside_a_previous() -> None:
+    """A replace leaves the new hash alone, so this is a state no step left: never a no-op."""
+    served = _shared(previous={"token_hash": _hash("before"), "until": NOW.isoformat()})
+    served[ENTRY]["token_hash"] = NEW
+    with pytest.raises(ContractError, match="neither"):
+        build(served, ENTRY, Change.REPLACE, NEW, OLD, NOW)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
@@ -440,3 +441,25 @@ def test_the_wait_names_when_the_overlap_s_backstop_ends(h: Harness) -> None:
 
 def _unit_named(name: str) -> dict[str, Any]:
     return {"authority": {"constraints": {"rotation_unit": name}}}
+
+
+@pytest.mark.parametrize("declared", [True, False])
+def test_the_approved_host_without_overlap_reaches_the_provider(
+    h: Harness, monkeypatch: pytest.MonkeyPatch, declared: bool
+) -> None:
+    built: list[AdapterContext] = []
+
+    def build(context: AdapterContext) -> Any:
+        built.append(context)
+        return h.provider
+
+    adapter = replace(h.adapter, build=build)
+    checked = h._check
+
+    def check(*arguments: Any) -> Approved:
+        return replace(checked(*arguments), adapter=adapter, host_without_overlap=declared)
+
+    monkeypatch.setattr(worker, "check_unit", check)
+    h.add("u1", "mint")
+    assert run_pass(h.setup()) == 1
+    assert [context.host_without_overlap for context in built] == [declared]

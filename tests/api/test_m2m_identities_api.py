@@ -132,3 +132,24 @@ def test_an_unauthenticated_request_is_refused(client: TestClient) -> None:
     _configure(client, "worker")
 
     assert client.get(ROUTE).status_code == 401
+
+
+def test_a_host_without_an_overlap_boots_through_the_orchestrator_s_parser(
+    client: TestClient, auth_config: AuthConfig
+) -> None:
+    """Where another entry holds the old hash as current (the observer and drift-reporter case),
+    the executor's no-overlap rewrite is one the orchestrator boots with, and the sharing entry
+    keeps the old hash."""
+    _configure(client, "worker")
+    served = client.get(ROUTE, headers=WORKER).json()
+    old = served["observer-key"]["token_hash"]
+    served["verifier-key"]["token_hash"] = old
+    _m2m_credentials(auth_config.registry, json.dumps(served))
+    new = hashlib.sha256(b"rotated-observer-token").hexdigest()
+
+    replaced = build(served, "observer-key", Change.REPLACE, new, old, datetime.now(UTC)).text
+    assert replaced is not None
+    loaded = _m2m_credentials(auth_config.registry, replaced)
+    assert loaded["observer-key"].token_hash == new
+    assert loaded["observer-key"].previous is None
+    assert loaded["verifier-key"].token_hash == old

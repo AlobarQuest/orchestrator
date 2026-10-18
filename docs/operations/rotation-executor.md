@@ -41,6 +41,8 @@ gives:
   - `destinations`: the package's list, exactly (`rotation-worker compare-destinations` prints
     it).
   - `touches_no_hosted_service: true`, only on a unit that writes no hosted consumer.
+  - `host_without_overlap: true`, only on the `orchestrator` adapter's `mint` unit, and only when
+    the old value is another entry's current one (see "Host without an overlap").
 - `ac_mappings`: each step files against its own acceptance criterion, the `ac_id` the adapter's
   plan names, so the package declares one criterion per machine step.
 - `dependencies`: each unit after the first depends on the one before it with
@@ -253,6 +255,31 @@ It writes the preview row before the production row, and checks for live runs ag
 write and the restart. The check narrows, but can't close, the window in which a lane dispatches a
 run before the restart lands.
 
+### Host without an overlap
+
+A host normally keeps the old hash as `previous`. The orchestrator refuses that when the old hash
+is another entry's current hash (`identity/auth.py::previous_hash_valid`), which is the case while
+two identities share one value. The observer and drift-reporter bearers are split this way
+(ADR-0055 amendment 9, "Decision 3 revised"): the observer rotates first with no overlap, then
+the drift-reporter rotates with the usual one.
+
+- **It's declared, never inferred.** The `mint` unit's approved envelope sets
+  `host_without_overlap: true`. The value must be a boolean, `false` is the ordinary overlap, and
+  the checks refuse `true` on a unit with no host step. The `retire` unit needs no declaration.
+- **The executor refuses it unless an overlap is impossible.** Host writes the new hash with no
+  `previous` only if another entry in what the orchestrator serves holds the old hash as current;
+  otherwise it refuses before writing (`m2m_setting.Change.REPLACE`). An undeclared host on such a
+  rotation is refused too, for the boot rule.
+- **The old value stops working for this key id at host's restart.** Authentication is per key
+  id, so the identity that shares the value keeps accepting it. Each reader of this keeper fails
+  from that restart until `store` writes the new value, then switches on its next run.
+- **Retire writes nothing.** Its before-revoke probe finds the old value refused and files "the
+  old value was already refused; nothing to revoke". Confirm-dead probes the old value as this
+  key id, so it proves it dead while the sharing identity still accepts it, then deletes the
+  staging and quarantine secrets. The sharing identity's own keeper still holds the old value.
+- **There's no backstop and no `until`.** The retire wait logs `overlap_until` as null, and the
+  paragraph on the backstop in "Scheduled readers" doesn't apply.
+
 ### Scheduled readers
 
 A `runtime-fetch` reader on a schedule is verified by a read, not by a person (ADR-0055
@@ -308,6 +335,26 @@ identities route. If it has no attempts left, finish or undo it within the seven
 
 Past `until`, every reader of the keeper gets 401 until one of those is done.
 
+After a host without an overlap there is no `previous` and no `until`: every reader of the keeper
+gets 401 from host's restart until `store` runs, so finish or undo it straight away.
+
+- finish: authorise a retry. The retry is claimed only in the `live_estate` window. It finds the
+  entry already holding the new hash with no `previous` and writes nothing, then probes, stores
+  and verifies as usual.
+- undo: in Coolify, set the entry's `token_hash` to the `token_hash` of the entry that shares the
+  old value (for the observer, `orchestrator-drift-reporter`), both rows, restart, then delete the
+  staging secret. The keeper still holds the old value, so its readers work again. A hash isn't
+  a secret, so this moves no value. Undo only while both hold:
+  - `Rotation / Work` has no quarantine secret for the occurrence. `store` creates it before it
+    writes the keeper, so once it exists the keeper may hold the new value, and the only
+    recovery is a retry.
+  - The sharing entry hasn't rotated since host: its keeper's revision date in BWS is earlier
+    than host's evidence. Otherwise its hash is no longer the old value's, and copying it would
+    make the two identities share a value again.
+
+  Host refuses an entry that still accepts an earlier value as `previous`, so the old hash is the
+  only one an undo restores.
+
 ### If the orchestrator doesn't come back after a rotation's restart
 
 The executor refuses every setting the orchestrator's boot would refuse, so this needs a cause it
@@ -319,7 +366,7 @@ and writing the variable back and restarting again recovered it. In production C
 orchestrator's `ORCHESTRATOR_M2M_CREDENTIALS` and undo the change by hand, in both rows:
 
 - after `mint`: in the approved entry, set `token_hash` back to `previous.token_hash` and delete
-  `previous`;
+  `previous`; after a host without an overlap, set it to the sharing entry's `token_hash`;
 - after `retire`: nothing to undo for the old value, which is already retired; check the
   application's logs for the boot refusal instead.
 

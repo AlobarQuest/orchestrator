@@ -498,3 +498,8 @@ Placement rule: global CLAUDE.md §7.
   the entry its approved `coolify-env-hash` destination names. Restart straight after any hand edit
   to that variable, or the executor's next rotation overwrites it. Detail:
   `docs/operations/rotation-executor.md`.
+- A host with no overlap (`m2m_setting.Change.REPLACE`) is declared only by the mint unit's
+  approved envelope (`host_without_overlap: true`), and `build` refuses it unless another served
+  entry holds the old hash as current, the one case where boot refuses an overlap. Never widen
+  that condition or infer the declaration. Its undo sets the entry's hash to the sharing entry's.
+  Detail: `docs/operations/rotation-executor.md`.

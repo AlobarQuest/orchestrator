@@ -14,6 +14,12 @@ a hash that isn't 64 lowercase hex characters, a `previous` hash equal to any en
 and an `until` that isn't UTC or is more than eight days ahead. Key ids and agent ids are copied
 from what was served, so `build` can't change them. `tests/api/test_m2m_identities_api.py` loads
 what it builds through the orchestrator's own parser.
+
+`Change.REPLACE` hosts with no overlap: the entry's new hash and no `previous`, so the old value
+stops authenticating as this key id at the restart. It exists for one case, an old hash another
+entry still holds as current (the observer and drift-reporter bearers, ADR-0055 amendment 9),
+where boot refuses the overlap. `build` refuses it whenever an overlap is possible, so an approved
+declaration can't become a way to skip one.
 """
 
 from __future__ import annotations
@@ -21,7 +27,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
@@ -41,6 +47,8 @@ class Change(StrEnum):
     HOST = "host"
     # Stop accepting the old value.
     RETIRE = "retire"
+    # Accept the new value alone, where the old is another entry's current hash.
+    REPLACE = "replace"
 
 
 @dataclass(frozen=True)
@@ -66,33 +74,91 @@ def build(
 ) -> Rewrite:
     """The setting with `entry` changed. Refuses a served setting this rotation didn't leave."""
     identities = {key: dict(value) for key, value in served.items()}
-    target = identities.get(entry)
-    if target is None:
+    if entry not in identities:
         raise ContractError("the orchestrator has no entry with the approved key id")
-    previous = target.get("previous")
-    previous_hash = previous.get("token_hash") if isinstance(previous, Mapping) else None
-    if change is Change.HOST:
-        if target.get("token_hash") == new_hash and previous_hash == old_hash:
-            return Rewrite(None, None)
-        if target.get("token_hash") != old_hash:
-            raise ContractError("the entry holds neither the old hash nor the new one")
-        target["token_hash"] = new_hash
-        target["previous"] = {"token_hash": old_hash, "until": (now + OVERLAP).isoformat()}
-        # An expired overlap authenticates nothing; rotating is a good time to drop it.
-        for key, identity in identities.items():
-            if key != entry and _expired(identity, now):
-                del identity["previous"]
-    else:
-        if target.get("token_hash") != new_hash:
-            raise ContractError("the entry doesn't hold the new hash")
-        if previous is None:
-            return Rewrite(None, None)
-        if previous_hash != old_hash:
-            raise ContractError("the entry's previous hash isn't the old value's")
-        del target["previous"]
+    if not CHANGES[change](identities, entry, new_hash, old_hash, now):
+        return Rewrite(None, None)
     _refuse_what_boot_refuses(identities, now)
     text = json.dumps(identities, separators=(",", ":"))
     return Rewrite(text, hashlib.sha256(text.encode()).hexdigest()[:8])
+
+
+# Each change edits `identities` in place, and returns False when the served setting already says
+# what it asks, so there is nothing to write.
+type _Edit = Callable[[dict[str, dict[str, Any]], str, str, str, datetime], bool]
+
+
+def _host(
+    identities: dict[str, dict[str, Any]], entry: str, new_hash: str, old_hash: str, now: datetime
+) -> bool:
+    target = identities[entry]
+    if target.get("token_hash") == new_hash and _previous_hash(target) == old_hash:
+        return False
+    if target.get("token_hash") != old_hash:
+        raise ContractError("the entry holds neither the old hash nor the new one")
+    target["token_hash"] = new_hash
+    target["previous"] = {"token_hash": old_hash, "until": (now + OVERLAP).isoformat()}
+    _drop_expired_elsewhere(identities, entry, now)
+    return True
+
+
+def _replace(
+    identities: dict[str, dict[str, Any]], entry: str, new_hash: str, old_hash: str, now: datetime
+) -> bool:
+    target = identities[entry]
+    # Checked first: a retry that writes nothing can't skip an overlap.
+    if target.get("token_hash") == new_hash and "previous" not in target:
+        return False
+    if not any(
+        identity.get("token_hash") == old_hash
+        for key, identity in identities.items()
+        if key != entry
+    ):
+        raise ContractError("no other entry holds the old hash, so the host must overlap")
+    if target.get("token_hash") != old_hash:
+        raise ContractError("the entry holds neither the old hash nor the new one")
+    if "previous" in target and not _expired(target, now):
+        # Writing no previous would end that overlap unrecorded: never guess.
+        raise ContractError("the entry still accepts an earlier value as previous")
+    target["token_hash"] = new_hash
+    target.pop("previous", None)
+    _drop_expired_elsewhere(identities, entry, now)
+    return True
+
+
+def _retire(
+    identities: dict[str, dict[str, Any]], entry: str, new_hash: str, old_hash: str, now: datetime
+) -> bool:
+    target = identities[entry]
+    if target.get("token_hash") != new_hash:
+        raise ContractError("the entry doesn't hold the new hash")
+    if target.get("previous") is None:
+        return False
+    if _previous_hash(target) != old_hash:
+        raise ContractError("the entry's previous hash isn't the old value's")
+    del target["previous"]
+    return True
+
+
+CHANGES: Final[dict[Change, _Edit]] = {
+    Change.HOST: _host,
+    Change.REPLACE: _replace,
+    Change.RETIRE: _retire,
+}
+
+
+def _previous_hash(identity: Mapping[str, Any]) -> object:
+    previous = identity.get("previous")
+    return previous.get("token_hash") if isinstance(previous, Mapping) else None
+
+
+def _drop_expired_elsewhere(
+    identities: dict[str, dict[str, Any]], entry: str, now: datetime
+) -> None:
+    # An expired overlap authenticates nothing; rotating is a good time to drop it.
+    for key, identity in identities.items():
+        if key != entry and _expired(identity, now):
+            del identity["previous"]
 
 
 def _expired(identity: Mapping[str, Any], now: datetime) -> bool:
