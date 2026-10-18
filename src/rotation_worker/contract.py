@@ -25,7 +25,10 @@ here, once, so the invariants hold for every adapter rather than being re-writte
   and the service keeps accepting the old value until retire_old, or until the overlap's
   backstop passes, so nothing unproved reaches the keeper and no consumer loses its value while
   the rotation moves. A rotation stalled between host and store must be finished or undone
-  before that backstop (the runbook's "If a rotation stalls after host").
+  before that backstop (the runbook's "If a rotation stalls after host"). The one exception is a
+  host the approved envelope declares without an overlap, which the provider refuses unless the
+  old value is another identity's current one (ADR-0055 amendment 9): the old value stops
+  working at host, its consumers fail until store, and retire_old finds it already refused.
 
 **STATE IS RE-DERIVED, NEVER TRUSTED (decision 1).** Where a rotation stands is read from BWS
 (the keeper, and the staging and quarantine secrets named for this credential and occurrence) and

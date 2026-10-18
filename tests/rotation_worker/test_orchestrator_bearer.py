@@ -9,12 +9,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
 
+from rotation_worker.adapters import ADAPTERS, AdapterContext
 from rotation_worker.adapters.orchestrator_bearer import (
     PLAN,
     SWAP_WAIT,
@@ -24,6 +27,7 @@ from rotation_worker.adapters.orchestrator_bearer import (
 from rotation_worker.contract import ContractError, Rotation, Step, UnitRun
 from rotation_worker.coolify import CoolifyClient, url_problem
 from rotation_worker.evidence import StepEvidence
+from rotation_worker.m2m_setting import Change
 from rotation_worker.orchestrator_client import OrchestratorClient
 from rotation_worker.values import Value
 from tests.rotation_worker.stores import MemoryStore
@@ -176,14 +180,14 @@ class Harness:
         }
         return build_provider(**arguments)
 
-    def run(self, unit: str) -> None:
+    def run(self, unit: str, before_step: Callable[[], None] = lambda: None) -> None:
         UnitRun(
             rotation=self.rotation,
             store=self.store,
             provider=self.provider,
             attestations=(),
             record=lambda step, evidence: self.filed.append((step, evidence)),
-            before_step=lambda: None,
+            before_step=before_step,
             filed=frozenset(step.kind for step, _ in self.filed),
         ).run(PLAN.unit(unit))
 
@@ -490,3 +494,127 @@ def test_a_destination_naming_another_variable_is_refused(h: Harness) -> None:
     )
     with pytest.raises(ContractError, match="must be ORCHESTRATOR_M2M_CREDENTIALS"):
         h.build()
+
+
+DRIFT = "orchestrator-drift-reporter"
+
+
+def _share_the_old_value(h: Harness) -> None:
+    """The observer and drift-reporter case: another entry holds the rotated entry's value."""
+    h.estate.loaded[DRIFT] = {
+        "agent_id": "drift-reconciler",
+        "token_hash": _hash(h.original.reveal()),
+    }
+
+
+def _accepts(h: Harness, key_id: str, value: Value) -> bool:
+    request = httpx.Request(
+        "GET",
+        f"{ORCHESTRATOR}/api/v1/status-ledger",
+        params={"work_unit_id": "x"},
+        headers={"Authorization": f"Bearer {value.reveal()}", "X-Credential-Key-Id": key_id},
+    )
+    return h.estate._probe(request).status_code == 200
+
+
+def test_a_rotation_without_an_overlap_runs_the_whole_plan(h: Harness) -> None:
+    _share_the_old_value(h)
+    h.provider = h.build(without_overlap=True)
+    h.run("mint")
+    new = h.keeper()
+    assert h.entry() == {"agent_id": "claude-code-interactive", "token_hash": _hash(new.reveal())}
+    assert not _accepts(h, ENTRY, h.original)
+    h.provider = h.build(without_overlap=False)
+    h.run("retire")
+    # Retire wrote nothing: the host already stopped the old value working for this key id.
+    assert h.estate.sent == [
+        ("PATCH", f"/api/v1/applications/{APP}/envs"),
+        ("PATCH", f"/api/v1/applications/{APP}/envs"),
+        ("POST", f"/api/v1/applications/{APP}/restart"),
+    ]
+    notes = {evidence.step: evidence.note for _, evidence in h.filed}
+    assert "no previous" in str(notes["host"])
+    assert notes["retire_old"] == "the old value was already refused; nothing to revoke"
+    # Confirm-dead proved the old value dead for this key id while the entry sharing it still
+    # accepts it, and cleaned up.
+    assert [e.step for _, e in h.filed][-2:] == ["confirm_dead", "confirm_dead"]
+    assert _accepts(h, DRIFT, h.original) and not _accepts(h, ENTRY, h.original)
+    assert _accepts(h, ENTRY, new)
+    assert len(h.store.deleted) == 2
+
+
+def test_a_rotation_without_an_overlap_resumes_after_a_stop_after_host(h: Harness) -> None:
+    _share_the_old_value(h)
+    h.provider = h.build(without_overlap=True)
+    steps = 0
+
+    def stop_after_host() -> None:
+        nonlocal steps
+        steps += 1
+        if steps == 4:
+            raise ContractError("stopped after host")
+
+    with pytest.raises(ContractError, match="stopped after host"):
+        h.run("mint", stop_after_host)
+    # Between host and store the old value works for no key id but the one sharing it, and the
+    # keeper still holds it; the undo's hash is that sharing entry's current one.
+    assert h.keeper().same_as(h.original)
+    assert not _accepts(h, ENTRY, h.original)
+    assert h.estate.loaded[DRIFT]["token_hash"] == _hash(h.keeper().reveal())
+    written = len(h.estate.sent)
+    # The retry re-derives from BWS and the identities route: host writes nothing again.
+    h.provider = h.build(without_overlap=True)
+    h.run("mint")
+    assert len(h.estate.sent) == written
+    new = h.keeper()
+    assert not new.same_as(h.original)
+    assert _accepts(h, ENTRY, new)
+    h.provider = h.build()
+    h.run("retire")
+    assert len(h.estate.sent) == written
+    assert _accepts(h, DRIFT, h.original) and not _accepts(h, ENTRY, h.original)
+
+
+def test_an_undeclared_host_is_refused_where_another_entry_shares_the_old_value(
+    h: Harness,
+) -> None:
+    _share_the_old_value(h)
+    with pytest.raises(ContractError, match="still current"):
+        h.provider.host(Value("the-new-observer-bearer"), h.original)
+    assert h.estate.sent == []
+
+
+def test_a_declared_host_without_an_overlap_is_refused_where_one_is_possible(
+    h: Harness,
+) -> None:
+    provider = h.build(without_overlap=True)
+    with pytest.raises(ContractError, match="must overlap"):
+        provider.host(Value("the-new-operator-bearer"), h.original)
+    assert h.estate.sent == []
+
+
+def test_an_overlapping_host_says_it_kept_the_old_value_as_previous(h: Harness) -> None:
+    note = h.provider.host(Value("the-new-operator-bearer"), h.original)
+    assert "with the old one as previous" in note
+
+
+@pytest.mark.parametrize("declared", [True, False])
+def test_the_adapter_registry_passes_the_declaration_to_the_provider(
+    h: Harness, tmp_path: Path, declared: bool
+) -> None:
+    _share_the_old_value(h)
+    context = AdapterContext(
+        tmp_path,
+        h.store,
+        h.token_id,
+        rotation=h.rotation,
+        orchestrator=h.build()._orchestrator,
+        orchestrator_url=ORCHESTRATOR,
+        coolify_url=COOLIFY,
+        orchestrator_application=APP,
+        executor_key_id="rotation-executor-1",
+        host_without_overlap=declared,
+    )
+    provider = ADAPTERS["orchestrator"].build(context)
+    assert isinstance(provider, OrchestratorBearerProvider)
+    assert provider._hosting is (Change.REPLACE if declared else Change.HOST)

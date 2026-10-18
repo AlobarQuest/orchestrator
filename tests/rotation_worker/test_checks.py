@@ -436,3 +436,26 @@ def test_a_reader_whose_row_names_its_read_is_approved_with_it(world: World) -> 
 
 def test_a_plan_with_a_human_act_lets_a_person_attest_a_reader_with_no_read(world: World) -> None:
     assert world.check().reads == {}
+
+
+def _with_constraints(unit: dict[str, Any], **constraints: Any) -> dict[str, Any]:
+    merged = {**unit["authority"]["constraints"], **constraints}
+    return {**unit, "authority": {"constraints": merged}}
+
+
+def test_a_host_without_overlap_is_declared_only_on_a_hosting_unit(world: World) -> None:
+    retire, intake = _orchestrator_world(world, '  healthchecks_check = "sds-x"\n')
+    mint = _with_constraints(retire, rotation_unit="mint")
+    assert world.check(mint, intake).host_without_overlap is False
+    declared = world.check(_with_constraints(mint, host_without_overlap=True), intake)
+    assert declared.host_without_overlap is True
+    with pytest.raises(ContractError, match="unit with no host step"):
+        world.check(_with_constraints(retire, host_without_overlap=True), intake)
+
+
+@pytest.mark.parametrize("value", [False, "true", 1, None])
+def test_only_the_literal_true_declares_a_host_without_overlap(world: World, value: Any) -> None:
+    retire, intake = _orchestrator_world(world, '  healthchecks_check = "sds-x"\n')
+    mint = _with_constraints(retire, rotation_unit="mint", host_without_overlap=value)
+    with pytest.raises(ContractError, match="only by the literal true"):
+        world.check(mint, intake)

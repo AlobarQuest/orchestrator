@@ -9,6 +9,10 @@ value itself, and the orchestrator is the hosted service that must accept it.
 * **Host** writes the setting with the approved entry's new hash and the old one as `previous`,
   restarts the orchestrator, and waits until the orchestrator's identities route shows the new hash
   loaded. The setting is rebuilt from that route (`m2m_setting.py`), never from a stored copy.
+  A mint unit whose approved envelope sets `host_without_overlap: true` writes the new hash with
+  no `previous` (`Change.REPLACE`), which `build` refuses unless another entry holds the old hash
+  as current. The old value then stops authenticating as this key id at the restart, and
+  retire-old finds it already refused.
 * **Probe** authenticates to the status ledger as the approved key id: live is exactly 200, and a
   random bearer, the known-bad control, answers 401. A restart swaps containers behind the proxy,
   so an answer that is neither (a 502 mid-swap, no answer at all) is asked again until
@@ -126,6 +130,7 @@ def build_provider(
     coolify_url: str | None,
     orchestrator_application: str | None,
     executor_key_id: str | None,
+    without_overlap: bool = False,
     transport: httpx.BaseTransport | None = None,
     coolify_transport: httpx.BaseTransport | None = None,
     clock: Callable[[], datetime] = lambda: datetime.now(UTC),
@@ -164,7 +169,14 @@ def build_provider(
         transport=transport,
     )
     return OrchestratorBearerProvider(
-        probe_client, orchestrator, coolify, destination["key"], destination["entry"], clock, sleep
+        probe_client,
+        orchestrator,
+        coolify,
+        destination["key"],
+        destination["entry"],
+        Change.REPLACE if without_overlap else Change.HOST,
+        clock,
+        sleep,
     )
 
 
@@ -182,6 +194,7 @@ class OrchestratorBearerProvider:
         coolify: Callable[[], CoolifyClient],
         variable: str,
         entry: str,
+        hosting: Change,
         clock: Callable[[], datetime],
         sleep: Callable[[float], None],
     ) -> None:
@@ -190,6 +203,7 @@ class OrchestratorBearerProvider:
         self._coolify = coolify
         self._variable = variable
         self._entry = entry
+        self._hosting = hosting
         self._clock = clock
         self._sleep = sleep
         # The status a hash must come to answer after this provider hosted or retired it.
@@ -218,16 +232,24 @@ class OrchestratorBearerProvider:
         rewrite = build(
             self._orchestrator.identities(),
             self._entry,
-            Change.HOST,
+            self._hosting,
             new_hash,
             bearer_hash(old),
             self._clock(),
         )
         self._expected[new_hash] = 200
+        alone = self._hosting is Change.REPLACE
         if rewrite.text is None:
+            if alone:
+                return "the orchestrator already accepts the new value alone"
             return "the orchestrator already accepts the new value beside the old"
         self._write_and_restart(rewrite.text)
         self._await(lambda entry: entry.get("token_hash") == new_hash)
+        if alone:
+            return (
+                f"wrote setting {rewrite.fingerprint} and restarted; the orchestrator loaded the "
+                "new hash with no previous, since another entry holds the old one"
+            )
         return (
             f"wrote setting {rewrite.fingerprint} and restarted; the orchestrator loaded the new "
             "hash with the old one as previous"

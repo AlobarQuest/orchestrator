@@ -33,6 +33,8 @@ class AdapterContext:
     coolify_url: str | None = None
     orchestrator_application: str | None = None
     executor_key_id: str | None = None
+    # The unit's approved envelope declares a host with no overlap (`checks.WITHOUT_OVERLAP_KEY`).
+    host_without_overlap: bool = False
 
 
 @dataclass(frozen=True)
@@ -63,6 +65,7 @@ ADAPTERS: Final[dict[str, Adapter]] = {
             coolify_url=context.coolify_url,
             orchestrator_application=context.orchestrator_application,
             executor_key_id=context.executor_key_id,
+            without_overlap=context.host_without_overlap,
         ),
     ),
 }

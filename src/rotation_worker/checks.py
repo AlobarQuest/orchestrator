@@ -12,6 +12,8 @@ from intent-packages' and the registries' public git:
 * the registry's destinations, the package's and the unit envelope's are exactly equal;
 * the keeper (the registry's `bws_uuid`) is one of them, every one fits a `rotation-step/1` row,
   and a unit marked as touching no hosted service writes none;
+* a unit declaring a host with no overlap has a host step (whether an overlap is impossible is
+  `m2m_setting.build`'s to refuse, from what the orchestrator serves);
 * every `runtime-fetch` consumer can be verified: the registry names its scheduled read, or the
   plan holds a human act to attest it.
 
@@ -51,6 +53,9 @@ PROFILE: Final = "non-software-operational"
 UNIT_KEY: Final = "rotation_unit"
 DESTINATIONS_KEY: Final = "destinations"
 NON_HOSTED_KEY: Final = "touches_no_hosted_service"
+# Declares a host with no overlap, for one rotation whose old value another identity still holds
+# (ADR-0055 amendment 9). Only the literal `True` declares it, and only on a unit that hosts.
+WITHOUT_OVERLAP_KEY: Final = "host_without_overlap"
 # The steps that write a hosted service: host gives it the new value, and retire_old takes the
 # old one away. Store and distribute write BWS only.
 WRITING_STEPS: Final = frozenset({StepKind.HOST, StepKind.RETIRE_OLD})
@@ -66,6 +71,7 @@ class Approved:
     registry: RegistryEntry
     # Each scheduled reader's read, by destination (`readers.py`).
     reads: Mapping[str, Read]
+    host_without_overlap: bool = False
 
 
 def check_unit(
@@ -108,13 +114,24 @@ def check_unit(
     _check_destination_fit(
         packaged, adapter.plan, unit, marked_non_hosted=constraints.get(NON_HOSTED_KEY) is True
     )
+    without_overlap = _declared_without_overlap(constraints, unit)
     reads = scheduled_reads(entry.credential)
     _check_runtime_fetch_verifiable(packaged, adapter.plan, reads)
     occurrence = fields.get("occurrence")
     if not isinstance(occurrence, str) or not occurrence.strip():
         raise ContractError("the approved revision names no occurrence")
     rotation = Rotation(credential_id, occurrence, keeper, work_project_id, tuple(packaged))
-    return Approved(adapter, unit, rotation, entry, reads)
+    return Approved(adapter, unit, rotation, entry, reads, without_overlap)
+
+
+def _declared_without_overlap(constraints: Mapping[str, Any], unit: UnitPlan) -> bool:
+    if WITHOUT_OVERLAP_KEY not in constraints:
+        return False
+    if constraints[WITHOUT_OVERLAP_KEY] is not True:
+        raise ContractError(f"{WITHOUT_OVERLAP_KEY} is declared only by the literal true")
+    if StepKind.HOST not in {step.kind for step in unit.steps}:
+        raise ContractError(f"{WITHOUT_OVERLAP_KEY} is declared on a unit with no host step")
+    return True
 
 
 def _approved_package(package: Mapping[str, Any], mirror: RepoMirror) -> Mapping[str, Any]:
