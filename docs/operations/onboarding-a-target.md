@@ -180,17 +180,28 @@ by hand before you make it a target.
 
 ## Check the result
 
-To check the portfolio standards and steps 2–5 and 7, run the conformance kit from
-project-standards against the checkout:
+To check every step on this page at once, run the SDS readiness command from project-standards
+against the checkout:
 
 ```bash
-portfolio onboard <path-to-repo>
+set -a; . ~/.portfolio/credentials.env; set +a
+~/Projects/project-standards/.venv/bin/portfolio sds-ready <path-to-repo>
 ```
 
-It exits 0 only when every admission check passes, and writes its result to
-`~/.portfolio/readiness/<repo>.json`. The factory checks it reports alongside (`runner.caller` is an
-admission check; `factory.secrets`, `factory.pat_access`, `factory.app_access` and
-`factory.landing_known` are not) don't change the exit code, so read them in the output. It doesn't confirm step 1's declaration as
-admission reads it; read the file back from the default branch instead. `factory.pat_scope` can
-only report `unknown`, because a fine-grained token doesn't expose its permissions through the
-API; step 6's probe is the real test of it.
+It runs every `portfolio onboard` check plus the SDS checks: Devon's decisions file, the
+declaration, the rotation inventories, branch settings, the before-and-after evidence and an inert
+landing. It sorts each failing check by owner and writes, under
+`~/.portfolio/onboarding/<owner>__<repository>/`:
+
+- `HANDOFF.md`: the repository work, for a build agent;
+- `TASKS.md`: the steps only Devon can do, including the decisions file;
+- `readiness.json`: every check result.
+
+It exits 0 when the repository is ready to onboard, 1 when work remains, 2 when the kit couldn't
+run and 3 when the repository is refused (Devon declined it, or landing on it redeploys). Checks it
+couldn't measure, usually for a missing credential, are listed separately and never read as ready.
+`factory.pat_scope` is left out, because a fine-grained token doesn't expose its permissions through
+the API; step 6's probe is the real test of it.
+
+`portfolio onboard <path-to-repo>` remains the conformance kit's general readiness check. Its
+output is the `portfolio-readiness/v1` document that intent-packages consumes.
