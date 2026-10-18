@@ -11,9 +11,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
-from rotation_worker.adapters import fake, openrouter, orchestrator_bearer
-from rotation_worker.contract import Plan, Provider, Rotation
+from rotation_worker.adapters import change_manager, fake, openrouter, orchestrator_bearer
+from rotation_worker.contract import ContractError, Plan, Provider, Rotation
+from rotation_worker.git_mirror import RepoMirror
 from rotation_worker.orchestrator_client import OrchestratorClient
+from rotation_worker.readers import Healthchecks
 from rotation_worker.secret_store import SecretStore
 
 
@@ -21,8 +23,8 @@ from rotation_worker.secret_store import SecretStore
 class AdapterContext:
     """What building a provider may use: the executor's state directory, its BWS access, the
     UUID of this provider's admin secret, which the provider reads only when a step needs it
-    (ADR-0055 decision 4), and, for a provider that is a hosted service, the approved rotation
-    and how to reach the orchestrator and Coolify."""
+    (ADR-0055 decision 4), and, for a provider that is a hosted service, the approved rotation,
+    how to reach the orchestrator and Coolify, and the registry and Healthchecks."""
 
     state_dir: Path
     store: SecretStore
@@ -33,6 +35,9 @@ class AdapterContext:
     coolify_url: str | None = None
     orchestrator_application: str | None = None
     executor_key_id: str | None = None
+    change_manager_application: str | None = None
+    mirror: RepoMirror | None = None
+    healthchecks: Healthchecks | None = None
     # The unit's approved envelope declares a host with no overlap (`checks.WITHOUT_OVERLAP_KEY`).
     host_without_overlap: bool = False
 
@@ -42,6 +47,24 @@ class Adapter:
     provider_name: str
     plan: Plan
     build: Callable[[AdapterContext], Provider]
+
+
+def _change_manager(context: AdapterContext) -> Provider:
+    # change-manager's four bearers hold four values, so an overlap is always possible.
+    if context.host_without_overlap:
+        raise ContractError("a change-manager bearer always hosts with an overlap")
+    siblings, readers_mid_run = change_manager.registry_reads(
+        context.rotation, context.store, context.mirror, context.healthchecks
+    )
+    return change_manager.build_provider(
+        rotation=context.rotation,
+        store=context.store,
+        coolify_token_id=context.admin_secret_id,
+        coolify_url=context.coolify_url,
+        change_manager_application=context.change_manager_application,
+        siblings=siblings,
+        readers_mid_run=readers_mid_run,
+    )
 
 
 ADAPTERS: Final[dict[str, Adapter]] = {
@@ -67,5 +90,9 @@ ADAPTERS: Final[dict[str, Adapter]] = {
             executor_key_id=context.executor_key_id,
             without_overlap=context.host_without_overlap,
         ),
+    ),
+    change_manager.NAME: Adapter(change_manager.NAME, change_manager.PLAN, _change_manager),
+    change_manager.ATTESTED_NAME: Adapter(
+        change_manager.NAME, change_manager.ATTESTED_PLAN, _change_manager
     ),
 }

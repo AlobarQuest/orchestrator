@@ -173,13 +173,15 @@ def test_only_the_client_spells_an_orchestrator_path() -> None:
 
 # The modules that may reach a network service: the orchestrator's client, the Coolify client,
 # and each adapter whose provider is reached over HTTP (its own path allowlist confines what it may
-# send). The orchestrator-bearer adapter probes the orchestrator with the bearer being rotated.
+# send). The orchestrator-bearer adapter probes the orchestrator with the bearer being rotated, and
+# the change-manager adapter probes change-manager with its.
 HTTP_CLIENTS = frozenset(
     {
         "orchestrator_client.py",
         "coolify.py",
         "adapters/openrouter.py",
         "adapters/orchestrator_bearer.py",
+        "adapters/change_manager.py",
         "readers.py",
     }
 )

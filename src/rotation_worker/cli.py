@@ -137,6 +137,7 @@ def build_setup(config: Config) -> Setup:
         orchestrator_url=config.orchestrator_url,
         coolify_url=config.coolify_url,
         orchestrator_application=config.orchestrator_application,
+        change_manager_application=config.change_manager_application,
         executor_key_id=config.credential_key_id,
         healthchecks=open_healthchecks(config, store),
     )
