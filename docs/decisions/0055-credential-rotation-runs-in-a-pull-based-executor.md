@@ -1061,3 +1061,26 @@ What was built:
   turned from a wait into a refusal.
 - **`Rotation / Healthchecks` already held a read-only key** (`Rotation / Healthcheck`) for the
   project with the twenty checks, so no new credential was needed.
+
+### Decision 3 revised: the split is two ordinary rotations (2026-10-18)
+
+Decision 3 said the observer and drift-reporter split "in one coordinated rotation". The executor
+can't do that as built: `Rotation` holds one credential, one keeper and one value throughout, and
+`m2m_setting.build` changes one entry. Hosting the observer alone with an overlap is refused too.
+Its `previous` would be the shared hash, which the drift-reporter's entry still holds as current,
+and `identity/auth.py::previous_hash_valid` refuses a previous hash equal to any identity's
+current hash, at boot and on every request. A two-entry rotation would rewrite most of
+`contract.py` for a single use, because each bearer rotates alone after the split.
+
+Devon chose on 2026-10-18 to rotate the observer first **without an overlap**: its host writes the
+new hash and no `previous`, so the shared value stops authenticating as the observer when the
+orchestrator restarts. The drift-reporter then rotates on its own, with the usual overlap; by then
+the observer's current hash is its new one, so the conflict is gone. The boot rule is unchanged,
+and the orchestrator isn't redeployed. The rejected alternatives were building the two-entry
+rotation, and relaxing the boot rule for the split and restoring it afterwards (two deploys of
+authentication code).
+
+The cost is the overlap's protection, for this one run. An observer lane that runs between the
+restart and `store` fails that run and pings `/fail`. If the unit stops after host, the observer's
+eight lanes fail until a retry stores the staged value, and the runbook's undo, which restores the
+entry from `previous`, has no `previous` to restore from.
