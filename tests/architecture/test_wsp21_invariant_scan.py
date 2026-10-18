@@ -499,6 +499,10 @@ OUTBOUND_ALLOWLIST = {
     # with the bearer being rotated, as that bearer's key id, and may send nothing else. Pinned by
     # tests/rotation_worker/test_orchestrator_bearer.py. Its egress is not the orchestrator's.
     Path("src/rotation_worker/adapters/orchestrator_bearer.py"),
+    # ADR-0055 amendment 9. The change-manager adapter probes change-manager's landing policy, a
+    # read every scope may make, with the bearer being rotated, and may send nothing else. Pinned
+    # by tests/rotation_worker/test_change_manager.py. Its egress is not the orchestrator's.
+    Path("src/rotation_worker/adapters/change_manager.py"),
     # ADR-0055 amendment 9, decision 5. The rotation executor reads Healthchecks' check listing,
     # with a read-only key, to see whether a scheduled reader of a rotated keeper has run since the
     # store. Its client may send only `GET /api/v3/checks/`, pinned by

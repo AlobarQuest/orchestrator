@@ -16,7 +16,7 @@ from rotation_worker.checks import Approved
 from rotation_worker.contract import ContractError, Rotation
 from rotation_worker.git_mirror import MirrorError, RepoMirror
 from rotation_worker.orchestrator_client import Lease, OrchestratorClient, OrchestratorError
-from rotation_worker.readers import ObservationRead, Read
+from rotation_worker.readers import ObservationRead, Read, ReadError, ReadUnavailable
 from rotation_worker.registry import RegistryEntry
 from rotation_worker.values import Fingerprint, Value
 from rotation_worker.worker import Setup, run_pass
@@ -463,3 +463,72 @@ def test_the_approved_host_without_overlap_reaches_the_provider(
     h.add("u1", "mint")
     assert run_pass(h.setup()) == 1
     assert [context.host_without_overlap for context in built] == [declared]
+
+
+class _Gated:
+    """The fake provider, with a service whose own clients a restart would cut short."""
+
+    def __init__(self, inner: Any, answers: list[Any]) -> None:
+        self._inner = inner
+        self._answers = answers
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+    def readers_mid_run(self) -> list[str]:
+        answer = self._answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+
+def _gate(h: Harness, monkeypatch: pytest.MonkeyPatch, answers: list[Any]) -> None:
+    adapter = replace(h.adapter, build=lambda _context: _Gated(h.provider, answers))
+    checked = h._check
+    monkeypatch.setattr(
+        worker, "check_unit", lambda *arguments: replace(checked(*arguments), adapter=adapter)
+    )
+
+
+def test_a_writing_unit_waits_unclaimed_while_a_reader_is_mid_run(
+    h: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _gate(h, monkeypatch, [["sds-estate-landing"]])
+    h.add("u3", "retire")
+    assert run_pass(h.setup()) == 0
+    assert h.client.calls == []
+
+
+def test_a_listing_that_can_t_be_read_also_waits(
+    h: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _gate(h, monkeypatch, [ReadUnavailable("Healthchecks answered 503")])
+    h.add("u3", "retire")
+    assert run_pass(h.setup()) == 0
+    assert h.client.calls == []
+
+
+def test_a_reader_the_registry_names_wrongly_refuses_the_writing_unit(
+    h: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _gate(h, monkeypatch, [ReadError("0 Healthchecks checks are named 'x'")])
+    h.add("u3", "retire")
+    assert run_pass(h.setup()) == 0
+    assert "named 'x'" in h.client.failures["u3"]
+    assert ("start", "u3") not in h.client.calls
+
+
+def test_a_writing_unit_goes_ahead_once_no_reader_is_mid_run(
+    h: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _gate(h, monkeypatch, [[]])
+    h.add("u1", "mint")
+    h.add("u3", "retire")
+    run_pass(h.setup())
+    assert ("claim", "u3") in h.client.calls
+
+
+def test_a_unit_that_writes_nothing_never_asks(h: Harness, monkeypatch: pytest.MonkeyPatch) -> None:
+    _gate(h, monkeypatch, [])
+    h.add("u1", "mint")
+    assert run_pass(h.setup()) == 1

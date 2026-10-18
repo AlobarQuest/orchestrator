@@ -74,6 +74,18 @@ def lineage_path(credential_id: str) -> str:
 
 def find_credential(mirror: RepoMirror, credential_id: str) -> RegistryEntry:
     """The one registry entry with this id, read at each registry repository's `main`."""
+    found = [entry for entry in _entries(mirror) if entry.credential.get("id") == credential_id]
+    if len(found) != 1:
+        raise RegistryError(f"{credential_id}: {len(found)} registry entries, expected exactly 1")
+    return found[0]
+
+
+def provider_entries(mirror: RepoMirror, provider: str) -> list[RegistryEntry]:
+    """Every registry entry whose credential `provider` issues, read at each repository's `main`."""
+    return [entry for entry in _entries(mirror) if entry.credential.get("provider") == provider]
+
+
+def _entries(mirror: RepoMirror) -> list[RegistryEntry]:
     found: list[RegistryEntry] = []
     for repository in REGISTRY_REPOSITORIES:
         commit = mirror.sync(repository)
@@ -86,12 +98,8 @@ def find_credential(mirror: RepoMirror, credential_id: str) -> RegistryEntry:
             raise RegistryError(
                 f"{repository}: {REGISTRY_PATH} credentials aren't an array of tables"
             )
-        for credential in credentials:
-            if credential.get("id") == credential_id:
-                found.append(RegistryEntry(repository, commit, credential))
-    if len(found) != 1:
-        raise RegistryError(f"{credential_id}: {len(found)} registry entries, expected exactly 1")
-    return found[0]
+        found.extend(RegistryEntry(repository, commit, credential) for credential in credentials)
+    return found
 
 
 def latest_package_destinations(mirror: RepoMirror, credential_id: str) -> PackageDestinations:

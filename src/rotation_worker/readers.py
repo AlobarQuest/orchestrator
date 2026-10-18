@@ -41,7 +41,7 @@ configuration, refused before a claim rather than waited on forever.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Final
@@ -149,6 +149,26 @@ class Healthchecks:
             return instant(last) - timedelta(seconds=duration)
         except ValueError:
             raise ReadUnavailable(f"check {name!r} has no readable last_ping") from None
+
+    def running(self, names: Collection[str]) -> list[str]:
+        """Each named check mid-run right now: it has pinged `/start` and not yet finished.
+
+        Read afresh on every call, never from the pass's listing: it guards a restart that comes
+        minutes after the listing was taken.
+        """
+        checks = self._list()
+        running = []
+        for name in sorted(names):
+            matches = [check for check in checks if check.get("name") == name]
+            if len(matches) != 1:
+                raise ReadError(f"{len(matches)} Healthchecks checks are named {name!r}")
+            started = matches[0].get("started")
+            if not isinstance(started, bool):
+                # A listing without the flag can't say, and waiting on it would wait forever.
+                raise ReadError(f"check {name!r} doesn't say whether it is running")
+            if started:
+                running.append(name)
+        return running
 
     def _checks(self) -> list[dict[str, Any]]:
         # One listing per pass: every reader's check is in it.

@@ -12,6 +12,8 @@ For each ready unit whose envelope names a rotation adapter, in order:
    run since the keeper was written: some run weekly, which no lease could wait out. Each pass
    logs who it waits for and when the overlap's backstop ends; if the backstop comes first, the
    overlap ends there and retire finds the old value already refused.
+   A unit that restarts a service whose own clients are scheduled readers (change-manager) also
+   waits, unclaimed, while any of them is mid-run, so a busy reader costs a pass, not an attempt.
 3. **Claim and start**, then run the unit's steps through the contract. Before each step the lease
    is renewed and the registry is read again, so a credential handed back mid-rotation stops it.
 4. **File each step's evidence**, superseding this unit's current row for that criterion when an
@@ -27,17 +29,17 @@ import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, Protocol, runtime_checkable
 
 from rotation_worker.adapters import AdapterContext
-from rotation_worker.checks import Approved, check_unit
-from rotation_worker.contract import ContractError, Step, StepKind, UnitRun
+from rotation_worker.checks import WRITING_STEPS, Approved, check_unit
+from rotation_worker.contract import ContractError, Provider, Step, StepKind, UnitRun
 from rotation_worker.destinations import DestinationError, parse
 from rotation_worker.envelope import is_rotation_unit
 from rotation_worker.evidence import StepEvidence
 from rotation_worker.git_mirror import MirrorError, RepoMirror
 from rotation_worker.orchestrator_client import Lease, OrchestratorClient, OrchestratorError
-from rotation_worker.readers import ConsumerReads, Healthchecks, ReadError
+from rotation_worker.readers import ConsumerReads, Healthchecks, ReadError, ReadUnavailable
 from rotation_worker.registry import RegistryError, find_credential
 from rotation_worker.secret_store import SecretStore, StoreError
 from rotation_worker.values import Fingerprint, scrub
@@ -65,6 +67,7 @@ class Setup:
     orchestrator_url: str | None = None
     coolify_url: str | None = None
     orchestrator_application: str | None = None
+    change_manager_application: str | None = None
     # The key id the executor's own bearer is registered under.
     executor_key_id: str | None = None
     # The Healthchecks listing, read with the key in `Rotation / Healthchecks`.
@@ -113,7 +116,52 @@ def _take(setup: Setup, unit_id: str) -> int:
     except REFUSALS as error:
         _refuse(setup, unit, scrub(str(error)))
         return 0
-    return 1 if _work(setup, unit, approved, reads) else 0
+    # Built before the claim: a provider that can't be built (an admin secret missing from the
+    # configuration) is the executor's fault, not the unit's, so no attempt is spent on it.
+    provider = _provider(setup, approved)
+    if isinstance(provider, GatedRestarts) and _writes(approved):
+        try:
+            busy = provider.readers_mid_run()
+        except ReadError as error:
+            _refuse(setup, unit, scrub(str(error)))
+            return 0
+        except ReadUnavailable as error:
+            busy = [f"unreadable: {scrub(str(error))}"]
+        if busy:
+            LOG.info("unit_waiting", extra={"unit": str(unit["id"]), "readers_mid_run": busy})
+            return 0
+    return 1 if _work(setup, unit, approved, provider, reads) else 0
+
+
+@runtime_checkable
+class GatedRestarts(Protocol):
+    """A provider whose service's clients a restart would cut short (the change-manager adapter)."""
+
+    def readers_mid_run(self) -> list[str]: ...
+
+
+def _writes(approved: Approved) -> bool:
+    return any(step.kind in WRITING_STEPS for step in approved.unit.steps)
+
+
+def _provider(setup: Setup, approved: Approved) -> Provider:
+    return approved.adapter.build(
+        AdapterContext(
+            setup.state_dir,
+            setup.store,
+            setup.admin_secrets.get(approved.adapter.provider_name),
+            rotation=approved.rotation,
+            orchestrator=setup.client,
+            orchestrator_url=setup.orchestrator_url,
+            coolify_url=setup.coolify_url,
+            orchestrator_application=setup.orchestrator_application,
+            executor_key_id=setup.executor_key_id,
+            change_manager_application=setup.change_manager_application,
+            mirror=setup.mirror,
+            healthchecks=setup.healthchecks,
+            host_without_overlap=approved.host_without_overlap,
+        )
+    )
 
 
 def _verifies(approved: Approved) -> bool:
@@ -153,25 +201,13 @@ def _claim(setup: Setup, unit: Mapping[str, Any]) -> tuple[Lease, int]:
 
 
 def _work(
-    setup: Setup, unit: Mapping[str, Any], approved: Approved, reads: ConsumerReads | None
+    setup: Setup,
+    unit: Mapping[str, Any],
+    approved: Approved,
+    provider: Provider,
+    reads: ConsumerReads | None,
 ) -> bool:
     unit_id = str(unit["id"])
-    # Built before the claim: a provider that can't be built (an admin secret missing from the
-    # configuration) is the executor's fault, not the unit's, so no attempt is spent on it.
-    provider = approved.adapter.build(
-        AdapterContext(
-            setup.state_dir,
-            setup.store,
-            setup.admin_secrets.get(approved.adapter.provider_name),
-            rotation=approved.rotation,
-            orchestrator=setup.client,
-            orchestrator_url=setup.orchestrator_url,
-            coolify_url=setup.coolify_url,
-            orchestrator_application=setup.orchestrator_application,
-            executor_key_id=setup.executor_key_id,
-            host_without_overlap=approved.host_without_overlap,
-        )
-    )
     lease, version = _claim(setup, unit)
     # From here the unit is this attempt's: whatever goes wrong fails it with a reason, so it
     # never waits out its lease holding a claim nobody works.

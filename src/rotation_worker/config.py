@@ -48,6 +48,9 @@ class Config:
     # The orchestrator's Coolify application uuid: the one application the orchestrator adapter
     # may write, whatever a package names.
     orchestrator_application: str | None = None
+    # change-manager's Coolify application uuid: the one application the change-manager adapter
+    # may write, whatever a package names.
+    change_manager_application: str | None = None
     # The read-only Healthchecks key in `Rotation / Healthchecks`, read only when a scheduled
     # reader's check is (ADR-0055 amendment 9, decision 5).
     healthchecks_key_id: str | None = None
@@ -94,6 +97,7 @@ def load(path: Path) -> Config:
         admin_secrets=dict(admin_secrets),
         coolify_url=_optional_string(raw, "coolify_url"),
         orchestrator_application=_optional_string(raw, "orchestrator_application"),
+        change_manager_application=_optional_string(raw, "change_manager_application"),
         healthchecks_key_id=healthchecks_key,
     )
 
