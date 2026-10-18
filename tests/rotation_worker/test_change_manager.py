@@ -90,6 +90,10 @@ class ChangeManager:
         self.sent: list[tuple[str, str]] = []
         self.coolify_status = 201
         self.restart_status = 200
+        self.restart_applies = True
+        # Requests the old container answers after a restart, with what it loaded before.
+        self.lag = 0
+        self._before: dict[str, str] | None = None
         # Statuses the probe answers before it consults what loaded, one per request.
         self.scripted: list[int | None] = []
 
@@ -103,7 +107,10 @@ class ChangeManager:
             return httpx.Response(201)
         if self.restart_status >= 300:
             return httpx.Response(self.restart_status)
+        if not self.restart_applies:
+            return httpx.Response(200)
         loaded = {v: self.rows[(v, False)] for v in VARIABLES}
+        self._before = self.loaded
         # `app/main.py` runs the boot check at import: a broken rule means no process at all.
         self.loaded = None if self._rule_broken(loaded) else loaded
         return httpx.Response(200)
@@ -116,10 +123,14 @@ class ChangeManager:
             if status is None:
                 raise httpx.ConnectError("mid-swap")
             return httpx.Response(status, text="<html>cloudflare</html>")
-        if self.loaded is None:
+        loaded = self.loaded
+        if self.lag and self._before is not None:
+            self.lag -= 1
+            loaded = self._before
+        if loaded is None:
             return httpx.Response(502, text="<html>Bad gateway</html>")
         presented = _hash(request.headers["Authorization"].removeprefix("Bearer ").strip())
-        accepted = any(self._accepts(entry, presented) for entry in self._entries(self.loaded))
+        accepted = any(self._accepts(entry, presented) for entry in self._entries(loaded))
         return httpx.Response(200 if accepted else 401, json={})
 
     def entry(self, variable: str = VARIABLE) -> dict[str, Any]:
@@ -384,6 +395,7 @@ def test_host_refuses_when_change_manager_doesn_t_accept_the_keepers_value(h: Ha
         (_hosted(variable="ORCHESTRATOR_M2M_CREDENTIALS"), "bearer variable and its scope"),
         (_hosted(scope="full"), "bearer variable and its scope"),
         (_hosted().replace('"prod"', '"dev"'), "exactly one production"),
+        (_hosted().replace('"application"', '"service"'), "application variables"),
     ],
 )
 def test_a_destination_the_adapter_may_not_write_is_refused(
@@ -486,15 +498,11 @@ def test_a_listing_that_can_t_be_read_holds_the_restart(h: Harness) -> None:
 # ---- the registry and Healthchecks -------------------------------------------------------------
 
 
-def _registry_toml(keepers: dict[str, str]) -> str:
-    blocks = []
-    for scope, keeper in keepers.items():
-        variable = next(v for v, s in VARIABLES.items() if s == scope)
-        check = f'healthchecks_check = "check-{scope}"' if scope != "full" else ""
-        blocks.append(
-            f"""
+def _bearer_toml(scope: str, keeper: str, app: str = APP, read: str = "") -> str:
+    variable = next(v for v, s in VARIABLES.items() if s == scope)
+    return f"""
 [[credential]]
-id = "change-manager-{scope}-bearer"
+id = "change-manager-{scope}-bearer{"" if app == APP else "-elsewhere"}"
 provider = "change-manager"
 bws_uuid = "{keeper}"
 
@@ -506,7 +514,7 @@ bws_uuid = "{keeper}"
   kind = "coolify-env-hash"
   instance = "prod"
   resource_type = "application"
-  uuid = "{APP}"
+  uuid = "{app}"
   key = "{variable}"
   entry = "{scope}"
 
@@ -514,36 +522,66 @@ bws_uuid = "{keeper}"
   kind = "runtime-fetch"
   repo = "orchestrator"
   ref = "scripts/run-{scope}.sh"
-  {check}
+  {read}
 """
-        )
-    blocks.append(
-        """
+
+
+# Neither of these may count: a change-manager bearer on another application isn't a sibling, and
+# a check on another provider's credential isn't change-manager's reader.
+_ELSEWHERE = """
 [[credential]]
-id = "unrelated-key"
-provider = "openrouter"
+id = "another-providers-bearer"
+provider = "orchestrator"
 bws_uuid = "00000000-0000-0000-0000-000000000000"
+
+  [[credential.consumer]]
+  kind = "coolify-env-hash"
+  instance = "prod"
+  resource_type = "application"
+  uuid = "re45tafypao3nly3qa9a79dp"
+  key = "M2M_TOKEN"
+  entry = "full"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
+  ref = "scripts/run-elsewhere.sh"
+  healthchecks_check = "another-providers-check"
 """
-    )
-    return "".join(blocks)
+
+
+def _registry(origins: Origins, text: str) -> None:
+    for repository in REGISTRY_REPOSITORIES:
+        origins.commit(
+            repository, {REGISTRY_PATH: text if repository.endswith("change-manager") else ""}
+        )
 
 
 def test_the_registry_names_the_siblings_and_every_readers_check(
     origins: Origins, tmp_path: Path, h: Harness
 ) -> None:
-    keepers = {
-        scope: h.keeper_id if scope == SCOPE else h.store.put(WORK, scope, Value(value))
-        for scope, value in h.values.items()
+    reads = {
+        "read": 'healthchecks_check = "check-read"',
+        "propose": 'healthchecks_check = "check-propose"',
+        "observe": 'observation_source = "drift_digest"\n  observation_subject = "coolify:prod"',
+        "full": "",
     }
-    for repository in REGISTRY_REPOSITORIES:
-        text = _registry_toml(keepers) if repository.endswith("change-manager") else ""
-        origins.commit(repository, {REGISTRY_PATH: text})
+    text = "".join(
+        _bearer_toml(
+            scope,
+            h.keeper_id if scope == SCOPE else h.store.put(WORK, scope, Value(value)),
+            read=reads[scope],
+        )
+        for scope, value in h.values.items()
+    )
+    elsewhere = h.store.put(WORK, "elsewhere", Value("a-bearer-on-another-application"))
+    _registry(origins, text + _bearer_toml("full", elsewhere, app="another0app") + _ELSEWHERE)
     asked: list[set[str]] = []
 
     class Checks:
         def running(self, names: set[str]) -> list[str]:
             asked.append(set(names))
-            return ["check-observe"]
+            return ["check-propose"]
 
     mirror = RepoMirror(tmp_path / "m", origin=origins.url)
     siblings, readers_mid_run = registry_reads(
@@ -552,21 +590,29 @@ def test_the_registry_names_the_siblings_and_every_readers_check(
     assert sorted(v.reveal() for v in siblings()) == sorted(
         v for s, v in h.values.items() if s != SCOPE
     )
-    assert readers_mid_run() == ["check-observe"]
-    assert asked == [{"check-read", "check-propose", "check-observe"}]
+    assert readers_mid_run() == ["check-propose"]
+    assert asked == [{"check-read", "check-propose"}]
 
 
 def test_readers_with_checks_and_no_healthchecks_key_are_refused(
     origins: Origins, tmp_path: Path, h: Harness
 ) -> None:
-    for repository in REGISTRY_REPOSITORIES:
-        text = _registry_toml({SCOPE: h.keeper_id}) if repository.endswith("change-manager") else ""
-        origins.commit(repository, {REGISTRY_PATH: text})
+    _registry(origins, _bearer_toml(SCOPE, h.keeper_id, read='healthchecks_check = "check-read"'))
     _, readers_mid_run = registry_reads(
         h.rotation, h.store, RepoMirror(tmp_path / "m", origin=origins.url), None
     )
     with pytest.raises(ReadError, match="no Healthchecks key"):
         readers_mid_run()
+
+
+def test_readers_with_no_checks_need_no_healthchecks_key(
+    origins: Origins, tmp_path: Path, h: Harness
+) -> None:
+    _registry(origins, _bearer_toml(SCOPE, h.keeper_id))
+    _, readers_mid_run = registry_reads(
+        h.rotation, h.store, RepoMirror(tmp_path / "m", origin=origins.url), None
+    )
+    assert readers_mid_run() == []
 
 
 def _listing(checks: list[dict[str, Any]], calls: list[int]) -> Healthchecks:
@@ -629,3 +675,46 @@ def test_the_adapter_registry_builds_both_plans_from_the_executor_s_context(
         assert isinstance(adapter.build(context), ChangeManagerProvider)
     with pytest.raises(ContractError, match="the registry"):
         ADAPTERS[change_manager.NAME].build(replace(context, mirror=None))
+
+
+def test_a_hosted_value_the_old_container_still_refuses_is_asked_again(h: Harness) -> None:
+    h.cm.lag = 3
+    h.run("mint")
+    assert h.cm.entry()["token_hash"] == _hash(h.keeper().reveal())
+
+
+def test_a_retired_value_the_old_container_still_accepts_is_asked_again(h: Harness) -> None:
+    h.run("mint")
+    h.cm.lag = 3
+    h.run("retire")
+    assert "previous" not in h.cm.entry()
+
+
+def test_a_restart_that_never_loads_the_host_is_refused(h: Harness) -> None:
+    h.cm.restart_applies = False
+    with pytest.raises(ContractError, match="didn't accept the new value in time"):
+        h.run("mint")
+    assert h.keeper().same_as(h.original)
+
+
+def test_a_restart_that_never_loads_the_retire_is_refused(h: Harness) -> None:
+    h.run("mint")
+    h.cm.restart_applies = False
+    with pytest.raises(ContractError, match="still accepts the old value"):
+        h.run("retire")
+
+
+def test_retire_refuses_a_keeper_still_holding_the_old_value(h: Harness) -> None:
+    with pytest.raises(ContractError, match="keeper still holds the old value"):
+        h.provider.revoke(h.original)
+    assert h.cm.sent == []
+
+
+def test_retire_refuses_when_change_manager_doesn_t_accept_the_new_value(h: Harness) -> None:
+    h.run("mint")
+    h.cm.rows[(VARIABLE, False)] = setting(SCOPE, _hash(h.original.reveal()))
+    h.cm.coolify(httpx.Request("POST", f"{COOLIFY}/api/v1/applications/{APP}/restart"))
+    h.cm.sent.clear()
+    with pytest.raises(ContractError, match="doesn't accept the keeper's new value"):
+        h.provider.revoke(h.original)
+    assert h.cm.sent == []
