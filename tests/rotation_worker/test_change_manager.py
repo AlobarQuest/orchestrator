@@ -739,7 +739,7 @@ def test_a_retire_waits_until_the_old_value_is_refused_several_times_running(h: 
 def test_a_swap_that_never_settles_is_refused(h: Harness) -> None:
     h.run("mint")
     h.provider = h.build()
-    h.cm.scripted = [401, 200] + [401, 200] * 1000
+    h.cm.scripted = [401, 200, *[401, 200] * 1000]
     with pytest.raises(ContractError, match="still accepts the old value"):
         h.provider.revoke(h.original)
 
