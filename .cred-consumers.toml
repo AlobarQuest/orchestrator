@@ -155,7 +155,10 @@ rotated_by_sds = true
 # Keychain item and Healthchecks check live in `note`, which no destination compares.
 # The sds-operator account reads only the observer value, and the one broad account
 # behind BWS_ACCESS_TOKEN_VPS_BACKUP and BWS_ACCESS_TOKEN_INFRA_DRIFT reads only the
-# drift-reporter value (probed with an empty HOME, 2026-10-16).
+# drift-reporter value (probed with an empty HOME, 2026-10-16). Both keepers moved to
+# Rotation / Keepers on 2026-10-18, each read there by its one account's direct grant.
+# The observer rotates first, without an overlap; the drift-reporter is marked
+# rotated_by_sds only after the observer's mint unit completes (ADR-0055 amendment 9).
 
 [[credential]]
 id = "orchestrator-observer-bearer"
@@ -165,11 +168,13 @@ provider_identity = "key id orchestrator-observer, ActorRole.OBSERVER (same valu
 bws_uuid = "f793576f-e9aa-4f9d-8089-b4a000b9e2d5"
 created = "2026-07-28"
 disposition = "reissue"
+rotated_by_sds = true
+rotate_requested = "2026-10-18"
 
   [[credential.consumer]]
   kind = "bws-secret"
   uuid = "f793576f-e9aa-4f9d-8089-b4a000b9e2d5"
-  note = "orchestrator-observer (SDS Operator) — keeper"
+  note = "orchestrator-observer (Rotation / Keepers; sds-operator reads it by a direct grant) — keeper"
 
   [[credential.consumer]]
   kind = "coolify-env-hash"
@@ -248,7 +253,7 @@ disposition = "reissue"
   [[credential.consumer]]
   kind = "bws-secret"
   uuid = "8998c4ea-453c-4ae1-9b5c-b49500b8dacc"
-  note = "ORCHESTRATOR_DRIFT_REPORTER_TOKEN (Ops / Platform) — keeper"
+  note = "ORCHESTRATOR_DRIFT_REPORTER_TOKEN (Rotation / Keepers; the broad account reads it by a direct grant) — keeper"
 
   [[credential.consumer]]
   kind = "coolify-env-hash"
