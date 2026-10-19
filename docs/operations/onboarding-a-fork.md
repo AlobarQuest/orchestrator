@@ -148,6 +148,12 @@ fingerprint.
    reason = "RUSTSEC-2026-0204: crossbeam-epoch fmt::Pointer only; upstream v1.0.1 still pins 0.9.18."
    ```
 
+   Put the entries on a branch and open a pull request. Its `security review` runs from the
+   current `main`, which doesn't have the new entries, and the model can flag the change to the
+   gate itself. Read the report, then merge it with `gh pr merge <number> --repo <fork> --merge
+   --admin`: `main` is protected without admin enforcement so that a person can land a gate
+   change this way.
+
 2. Run the sync again: `gh workflow run upstream-sync.yml --repo <fork>`. It rebuilds the branch
    with `main`'s new `.github/`, and the review on that push reads the acknowledgements from the
    new base. Re-running the old job does not work: it keeps the base of the event that started it.

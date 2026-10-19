@@ -518,3 +518,8 @@ Placement rule: global CLAUDE.md §7.
   refuses the unit. A repository gaining a registered copy needs the App installed and the secret
   added to its report. A plan with Actions-secret destinations needs a distribute step. Detail:
   `docs/operations/rotation-executor.md`, "Actions secrets".
+- A fork's `security review` reads its script, declaration and acknowledgements from the pull
+  request's BASE, so a change to the gate takes effect only on `main`, and a pull request that
+  changes the gate is judged by the old one. Such a pull request lands by an admin merge after a
+  person reads its report (`main` is protected without admin enforcement for this); never weaken
+  the protection to land it. Detail: `docs/operations/onboarding-a-fork.md`.
