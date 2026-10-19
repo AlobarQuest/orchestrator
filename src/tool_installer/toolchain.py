@@ -65,6 +65,14 @@ RUSTUP_CANDIDATES = (
     Path.home() / ".cargo" / "bin" / "rustup",
 )
 
+# WHERE `node` IS LOOKED FOR WHEN IT IS NOT ON `PATH` -- the same trap one tool over. Measured
+# 2026-10-19 under `env -i PATH=/usr/bin:/bin`: `command -v node` finds nothing, while
+# `/opt/homebrew/bin/node` (26.4.0) and its `npm` (11.17.0) exist. No nvm, fnm or volta here.
+NODE_CANDIDATES = (
+    Path("/opt/homebrew/bin/node"),
+    Path("/usr/local/bin/node"),
+)
+
 DEFAULT_INSTALL_ROOT = Path.home() / ".cargo"
 
 # WHERE THE OUTGOING ARTIFACT IS KEPT, and it is DURABLE rather than temporary. The precedent is
@@ -108,6 +116,55 @@ class Cargo:
         env = dict(os.environ)
         env["PATH"] = f"{self.toolchain_bin}{os.pathsep}{env.get('PATH', '')}".rstrip(os.pathsep)
         return env
+
+
+@dataclass(frozen=True)
+class Node:
+    """A usable node, and the npm installed beside it.
+
+    THE `PATH` PREFIX IS THE RUSTC LESSON AGAIN. `npm` is `#!/usr/bin/env node`, a package's `bin`
+    entry is too, and a build's scripts spawn `node` by name -- measured under
+    `env -i PATH=/usr/bin:/bin`, `/opt/homebrew/bin/npm --version` dies with
+    `env: node: No such file or directory`. Resolving the executable is not enough; the directory
+    it came from must lead `PATH` in every subprocess, the probes included.
+    """
+
+    executable: Path
+
+    @property
+    def npm(self) -> Path:
+        return self.executable.parent / "npm"
+
+    def environment(self) -> dict[str, str]:
+        env = dict(os.environ)
+        env["PATH"] = f"{self.executable.parent}{os.pathsep}{env.get('PATH', '')}".rstrip(
+            os.pathsep
+        )
+        # `engine-strict` turns a node outside the package's declared `engines` into a failed
+        # `npm ci` rather than a build of something that may not run. The other three stop npm
+        # reaching the network for things that are not the install: the update notifier is a
+        # registry request on every invocation.
+        env.update(
+            npm_config_engine_strict="true",
+            npm_config_update_notifier="false",
+            npm_config_fund="false",
+            npm_config_audit="false",
+        )
+        return env
+
+
+def resolve_node(candidates: tuple[Path, ...] = NODE_CANDIDATES) -> Node:
+    """`PATH` first, then the known locations, and npm must sit beside whichever node is found."""
+    found = shutil.which("node")
+    for candidate in (Path(found),) if found else candidates:
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            node = Node(executable=candidate)
+            if node.npm.is_file():
+                return node
+            raise ToolchainError(f"node at {candidate} has no npm beside it")
+    raise ToolchainError(
+        f"node is not on PATH and is at none of {', '.join(str(path) for path in candidates)}"
+    )
 
 
 @dataclass(frozen=True)

@@ -57,6 +57,11 @@ from tool_installer.install import (
     install_and_prove,
 )
 from tool_installer.install import ProbeResult as _ProbeResult
+from tool_installer.npm import (
+    DEFAULT_NPM_ROOT,
+    install_and_prove_npm,
+    read_installed_package,
+)
 from tool_installer.orchestrator_client import (
     ObservationWriteError,
     UnusableEndpointError,
@@ -82,11 +87,13 @@ from tool_installer.toolchain import (
     DEFAULT_BACKUP_ROOT,
     DEFAULT_INSTALL_ROOT,
     Cargo,
+    Node,
     ToolchainError,
     read_installed,
     resolve_cargo,
+    resolve_node,
 )
-from tool_installer.tools import TOOLS, CargoInstall, Tool
+from tool_installer.tools import TOOLS, CargoInstall, NpmInstall, Tool
 from tool_installer.window import WindowUnreadable, window_from_policy
 
 EXIT_OK = 0
@@ -102,7 +109,16 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
-def _installed(tool: Tool, install_root: Path, sites: Sites) -> ArtifactRecord | None:
+@dataclasses.dataclass(frozen=True)
+class _Roots:
+    """Where each strategy's artifacts live: cargo's root, npm's prefix, and the plugin sites."""
+
+    cargo: Path
+    npm: Path
+    sites: Sites
+
+
+def _installed(tool: Tool, roots: _Roots) -> ArtifactRecord | None:
     """What each strategy's OWN record says is installed, read without any toolchain.
 
     THE DISPATCH IS HERE AND NOT INSIDE EACH STRATEGY because reading is the half that must work
@@ -113,30 +129,29 @@ def _installed(tool: Tool, install_root: Path, sites: Sites) -> ArtifactRecord |
     """
     row = tool.install
     if isinstance(row, CargoInstall):
-        return read_installed(install_root, row.crate)
-    return read_entry(sites, tool, row.marketplace)
+        return read_installed(roots.cargo, row.crate)
+    if isinstance(row, NpmInstall):
+        return read_installed_package(roots.npm, row.package)
+    return read_entry(roots.sites, tool, row.marketplace)
 
 
-def _root_of(tool: Tool, install_root: Path, sites: Sites) -> str:
-    """Where this row's artifact lives, for the record: cargo's root, or the plugins root."""
+def _root_of(tool: Tool, roots: _Roots) -> str:
+    """Where this row's artifact lives, for the record."""
     if isinstance(tool.install, CargoInstall):
-        return str(install_root)
-    return str(sites.plugins_root)
+        return str(roots.cargo)
+    if isinstance(tool.install, NpmInstall):
+        return str(roots.npm)
+    return str(roots.sites.plugins_root)
 
 
-def _measure(
-    tool: Tool,
-    reader: GitHubReader,
-    install_root: Path,
-    sites: Sites,
-) -> Installation:
+def _measure(tool: Tool, reader: GitHubReader, roots: _Roots) -> Installation:
     """What is installed, what is available, and nothing about what to do with either."""
     head = commit(reader, tool.repository, tool.branch)
     if head is None:
         raise GitHubReadError(f"{tool.repository} has no {tool.branch}")
     available_revision, available_committed_at = head
 
-    installed = _installed(tool, install_root, sites)
+    installed = _installed(tool, roots)
     installed_committed_at: str | None = None
     if installed is not None:
         if installed.revision == available_revision:
@@ -150,7 +165,7 @@ def _measure(
 
     return Installation(
         tool=tool,
-        install_root=_root_of(tool, install_root, sites),
+        install_root=_root_of(tool, roots),
         installed_revision=installed.revision if installed else None,
         installed_version=installed.version if installed else None,
         installed_committed_at=installed_committed_at,
@@ -165,11 +180,10 @@ def _acted(
     action: str,
     probes: tuple[_ProbeResult, ...],
     detail: str,
-    install_root: Path,
-    sites: Sites,
+    roots: _Roots,
 ) -> Installation:
     """Re-read the strategy's own record after an act, so the row describes the machine as it is."""
-    installed = _installed(base.tool, install_root, sites)
+    installed = _installed(base.tool, roots)
     committed_at = base.installed_committed_at
     if installed is not None and installed.revision == base.available_revision:
         committed_at = base.available_committed_at
@@ -210,10 +224,20 @@ def main(  # noqa: PLR0911, PLR0912, C901
             help="Where outgoing artifacts are kept. Defaults to ~/.local/bin-backups.",
         ),
     ] = None,
+    npm_root: Annotated[
+        Path | None,
+        typer.Option(
+            "--npm-root",
+            help="npm install prefix. Defaults to ~/.local/share/sds-tools/npm.",
+        ),
+    ] = None,
 ) -> None:
-    root = install_root or DEFAULT_INSTALL_ROOT
+    roots = _Roots(
+        cargo=install_root or DEFAULT_INSTALL_ROOT,
+        npm=npm_root or DEFAULT_NPM_ROOT,
+        sites=default_sites(),
+    )
     backups = backup_root or DEFAULT_BACKUP_ROOT
-    sites = default_sites()
 
     # BOTH CREDENTIALS ARE CHECKED HERE, BEFORE ANY BINARY CAN BE REPLACED. Checking the observer
     # one at the filing step instead -- which is where it is used -- means a pass can swap the
@@ -268,7 +292,7 @@ def main(  # noqa: PLR0911, PLR0912, C901
     # 2 and 3. WHAT IS AVAILABLE AND WHAT IS INSTALLED.
     try:
         with GitHubReader(token=github_token) as reader:
-            measured = [_measure(tool, reader, root, sites) for tool in TOOLS]
+            measured = [_measure(tool, reader, roots) for tool in TOOLS]
     except GitHubReadError as error:
         typer.echo(f"UNUSABLE: the fork's revision could not be read: {error}", err=True)
         raise typer.Exit(EXIT_UNUSABLE) from error
@@ -296,13 +320,17 @@ def main(  # noqa: PLR0911, PLR0912, C901
             rows.append(dataclasses.replace(row, action=ACTION_NOT_PERMITTED))
             continue
         try:
-            # WHICHEVER TOOL WOULD DO THE INSTALL, RESOLVED LAZILY AND HERE. Both raise the same
-            # error type deliberately: "this lane cannot reach the thing that would act" is one
-            # condition with one exit code, and two branches for it would be two places to keep
-            # agreeing. Neither is looked for until a row is about to be acted on.
-            actor: Cargo | Path = (
-                resolve_cargo() if isinstance(row.tool.install, CargoInstall) else resolve_claude()
-            )
+            # WHICHEVER TOOL WOULD DO THE INSTALL, RESOLVED LAZILY AND HERE. All three raise the
+            # same error type deliberately: "this lane cannot reach the thing that would act" is
+            # one condition with one exit code, and a branch per row would be places to keep
+            # agreeing. None is looked for until a row is about to be acted on.
+            actor: Cargo | Node | Path
+            if isinstance(row.tool.install, CargoInstall):
+                actor = resolve_cargo()
+            elif isinstance(row.tool.install, NpmInstall):
+                actor = resolve_node()
+            else:
+                actor = resolve_claude()
         except ToolchainError as error:
             # THE MEASUREMENT IS ALREADY COMPLETE, so it is FILED before the pass refuses. Raising
             # straight out of this loop threw away a finished "this machine is behind" finding at
@@ -331,10 +359,12 @@ def main(  # noqa: PLR0911, PLR0912, C901
         # exactly the case a copied binary covers on the cargo side.
         #
         # DISPATCHED ON THE RESOLVED ACTOR rather than on the row a second time: a cargo toolchain
-        # performs the cargo install and a `claude` executable performs the plugin install, so the
+        # performs the cargo install, a node the npm install and a `claude` executable the plugin
+        # install, so the
         # value that was resolved for this row IS the discriminator, and the two readings cannot
         # drift apart the way a repeated `isinstance` on the row could.
         outgoing = row.installed_version or "first"
+        backup = backups / f"{row.tool.name}-{outgoing}"
         # A ROLLBACK THAT FAILED IS FILED, NEVER THROWN, and the reason is the whole point of the
         # catch. It leaves the machine between two versions -- the single state an operator most
         # needs told -- and an uncaught `RollbackFailed` reaches typer as a traceback: no summary,
@@ -343,21 +373,25 @@ def main(  # noqa: PLR0911, PLR0912, C901
         # cost the working cargo row its record. Caught per row so one tool's worst day cannot
         # erase another tool's ordinary one.
         try:
-            outcome = (
-                install_and_prove(
-                    tool=row.tool,
-                    cargo=actor,
-                    install_root=root,
-                    backup_root=backups / f"{row.tool.name}-{outgoing}",
+            if isinstance(actor, Cargo):
+                outcome = install_and_prove(
+                    tool=row.tool, cargo=actor, install_root=roots.cargo, backup_root=backup
                 )
-                if isinstance(actor, Cargo)
-                else install_and_prove_plugin(
+            elif isinstance(actor, Node):
+                outcome = install_and_prove_npm(
+                    tool=row.tool,
+                    node=actor,
+                    install_root=roots.npm,
+                    backup_root=backup,
+                    revision=row.available_revision,
+                )
+            else:
+                outcome = install_and_prove_plugin(
                     tool=row.tool,
                     claude=actor,
-                    sites=sites,
+                    sites=roots.sites,
                     head_revision=row.available_revision,
                 )
-            )
         except RollbackFailed as error:
             outcome = InstallOutcome(
                 action=ACTION_ROLLBACK_FAILED,
@@ -365,7 +399,7 @@ def main(  # noqa: PLR0911, PLR0912, C901
                 probes=[],
                 detail=str(error),
             )
-        rows.append(_acted(row, outcome.action, tuple(outcome.probes), outcome.detail, root, sites))
+        rows.append(_acted(row, outcome.action, tuple(outcome.probes), outcome.detail, roots))
 
     for row in rows:
         typer.echo(summary_of(row))

@@ -42,7 +42,7 @@ from tool_installer.toolchain import (
     remove_uncaptured,
     restore,
 )
-from tool_installer.tools import CargoInstall, Tool
+from tool_installer.tools import CargoInstall, NpmInstall, Tool
 
 # What a pass did to the artifact. A closed vocabulary because it is written into an observation,
 # and a value invented at a call site would be false provenance in a table with no supersession
@@ -113,7 +113,9 @@ class InstallOutcome:
         return self.action == ACTION_INSTALLED
 
 
-def _run(argv: list[str], *, env: dict[str, str] | None, timeout: int) -> tuple[int, str, str]:
+def _run(
+    argv: list[str], *, env: dict[str, str] | None, timeout: int, cwd: Path | None = None
+) -> tuple[int, str, str]:
     """Run and return `(returncode, stdout, last useful line)`. Never raises for a non-zero exit.
 
     **STDOUT IS RETURNED SEPARATELY FROM THE DIAGNOSTIC LINE, and the separation is load-bearing
@@ -136,6 +138,7 @@ def _run(argv: list[str], *, env: dict[str, str] | None, timeout: int) -> tuple[
             timeout=timeout,
             check=False,
             env=env,
+            cwd=cwd,
         )
     except subprocess.TimeoutExpired:
         return 124, "", f"timed out after {timeout}s"
@@ -171,8 +174,17 @@ def _undo(artifacts: tuple[Path, ...], captured: dict[str, Path]) -> None:
         ) from error
 
 
-def probe(row: CargoInstall, binary: Path, expected_version: str) -> list[ProbeResult]:
+def probe(
+    row: CargoInstall | NpmInstall,
+    binary: Path,
+    expected_version: str,
+    *,
+    env: dict[str, str] | None = None,
+) -> list[ProbeResult]:
     """Prove the installed binary. Every result is returned, including after the first failure.
+
+    `env` exists for the npm row, whose binary is a `#!/usr/bin/env node` script and cannot start
+    without node's directory on `PATH` (see `toolchain.Node`).
 
     Every probe runs even once one has failed, deliberately: the record is more useful saying
     which two of three worked than saying only that something did not, and nothing here mutates,
@@ -180,14 +192,14 @@ def probe(row: CargoInstall, binary: Path, expected_version: str) -> list[ProbeR
     """
     results: list[ProbeResult] = []
     for arguments in row.probe_commands:
-        code, _, detail = _run([str(binary), *arguments], env=None, timeout=PROBE_TIMEOUT_SECONDS)
+        code, _, detail = _run([str(binary), *arguments], env=env, timeout=PROBE_TIMEOUT_SECONDS)
         results.append(
             ProbeResult(command=arguments, passed=code == 0, detail=detail if code else "")
         )
     # The version is checked by VALUE, separately from the exit statuses above. `cargo install`
     # reports the version it built; a binary on disk answering a different one means the artifact
     # is not what cargo says it is, which no exit status would catch.
-    code, reported, _ = _run([str(binary), "--version"], env=None, timeout=PROBE_TIMEOUT_SECONDS)
+    code, reported, _ = _run([str(binary), "--version"], env=env, timeout=PROBE_TIMEOUT_SECONDS)
     matches = code == 0 and expected_version in reported
     results.append(
         ProbeResult(

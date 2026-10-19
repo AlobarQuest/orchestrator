@@ -29,6 +29,11 @@ and a person has to remember. `tools.py` kept its table and grew a per-row insta
 Code loads a SEPARATE versioned copy that a `git pull` does not touch, and what a plugin can be
 proven to be is much weaker than what a binary can.
 
+A THIRD ROW, AND IT IS AN NPM PACKAGE. `rea` is a Node CLI and stdio MCP server. `npm.py` builds
+the fork's measured commit from source with no lifecycle scripts, installs it against the fork's
+own lockfile into a prefix of its own, and proves it with an MCP handshake as well as `--version`.
+ADR-0042's first amendment has the measurements.
+
 **THIS LANE NOW PUSHES A COMMIT, and it is named here rather than left to be discovered.** Moving
 `octo`'s version means moving the pin in `AlobarQuest/devon-plugins`, and leaving that edit
 uncommitted every night is the dirty-working-copy state another lane exists to report. So the pass
