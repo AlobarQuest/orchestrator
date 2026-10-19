@@ -345,6 +345,11 @@ CLASSIFICATION: dict[str, Row] = {
         "goes through the confined client a lane passes in, and that lane's row declares it. Its "
         "own isolation row forbids it importing any client, so it cannot acquire one",
     ),
+    "fork_sync": Row(
+        Role.NOT_AN_ORCHESTRATOR_WRITER,
+        "ADR-0042's fork-sync lane: onboards a fork with the operator's gh credentials; reads "
+        "change-manager's landing policy and App Brain, and never names an orchestrator path",
+    ),
     "work_watcher": Row(
         Role.NOT_AN_ORCHESTRATOR_WRITER,
         "ADR-0029: reads what a change record caused and retires the record in change-manager; "

@@ -84,6 +84,9 @@ image-release = "image_release.cli:app"
 # ADR-0055. The credential-rotation executor. Its one command so far is read-only: the approval
 # runbook's comparison of a credential's registry destinations with its standing package's.
 rotation-worker = "rotation_worker.cli:main"
+# Onboards a fork onto the upstream sync lane (docs/operations/onboarding-a-fork.md).
+# Operator-run, never scheduled.
+fork-sync = "fork_sync.cli:app"
 
 [dependency-groups]
 # ADR-0055: the credential-rotation executor's one added dependency, the BWS SDK, so values reach
@@ -98,6 +101,10 @@ dev = [
   "pyright==1.1.414",
   "httpx2>=2.10.0",
 ]
+
+[tool.setuptools.package-data]
+# The workflow templates `fork-sync scaffold` renders into a fork.
+fork_sync = ["templates/*.yml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,0 +1,84 @@
+# Rendered by `fork-sync scaffold` (AlobarQuest/orchestrator); `fork-sync check` reports drift.
+#
+# Both JOB names are the branch-protection contexts (`build and test`, `security review`), and
+# both report on every pull request: no path filter, or a pull request waits forever for a check
+# that never runs. Commands come from `.github/fork-sync.toml`.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: build and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+      # Install-time scripts never run in CI; the configured build runs what it needs.
+      - name: Install
+        run: npm ci --ignore-scripts
+      - name: Build
+        run: python3 .github/scripts/fork_sync_review.py run build
+      - name: Test
+        run: python3 .github/scripts/fork_sync_review.py run test
+
+  # Executes nothing from the pull request. The checkout is the BASE (so this script, the
+  # declaration and the acknowledgements are main's); the head's objects are fetched and read
+  # with git, never checked out. Audits run on copies of the head's lockfile in a scratch
+  # directory with fixed arguments.
+  security-review:
+    name: security review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      GIT_NO_REPLACE_OBJECTS: '1'
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+      - name: Fetch the head without checking it out
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: git fetch --no-tags origin "$HEAD_SHA"
+      - name: Review
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        # A base without the script fails the check (the scaffold pull request only).
+        run: |
+          test -f .github/scripts/fork_sync_review.py \
+            || { echo "::error::the base has no review script"; exit 2; }
+          python3 .github/scripts/fork_sync_review.py review

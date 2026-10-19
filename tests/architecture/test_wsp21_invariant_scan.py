@@ -543,6 +543,13 @@ OUTBOUND_ALLOWLIST = {
     Path("src/revision_watcher/estate.py"),
     Path("src/revision_watcher/github.py"),
     Path("src/revision_watcher/orchestrator_client.py"),
+    # The fork onboarding tool (docs/operations/onboarding-a-fork.md). `estate.py` reads
+    # change-manager's landing policy, one GET on one path through the confined transport.
+    # `fork_sync_review.py` is the script `fork-sync scaffold` copies into each fork: it calls the
+    # Anthropic API and edits one pull-request comment, on the fork's Actions runner, never from
+    # this machine or the orchestrator.
+    Path("src/fork_sync/estate.py"),
+    Path("src/fork_sync/fork_sync_review.py"),
     Path("src/tool_installer/github.py"),
     Path("src/tool_installer/policy_client.py"),
     Path("src/tool_installer/orchestrator_client.py"),

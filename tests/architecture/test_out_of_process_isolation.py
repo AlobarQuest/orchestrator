@@ -350,6 +350,35 @@ TABLE: dict[str, Row] = {
         "sys",
         "typing",
     ),
+    # The fork onboarding tool. Operator-run, never scheduled. It reuses two sibling readers rather
+    # than writing third copies (`revision_watcher`'s App Brain landing reader, and
+    # `tool_installer`'s TOOLS table, which it only reads), so it does not carry
+    # `no_sibling_lanes`. `urllib` is `urllib.request` in `fork_sync_review.py`, the script it
+    # copies into each fork: that file runs on the fork's Actions runner, never here.
+    "fork_sync": _row(
+        "__future__",
+        "collections",
+        "dataclasses",
+        "estate_clients",
+        "fnmatch",
+        "hashlib",
+        "httpx",
+        "importlib",
+        "json",
+        "os",
+        "pathlib",
+        "re",
+        "revision_watcher",
+        "shlex",
+        "subprocess",
+        "sys",
+        "tempfile",
+        "tomllib",
+        "tool_installer",
+        "typer",
+        "typing",
+        "urllib",
+    ),
     "tool_installer": _row(
         "__future__",
         "dataclasses",
