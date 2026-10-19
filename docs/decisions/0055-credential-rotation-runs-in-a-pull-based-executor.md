@@ -1146,3 +1146,14 @@ and Devon answered them on 2026-10-18:
    refuse a value one of them holds, so all four keepers move to `Rotation / Keepers` before the
    first change-manager rotation. Relying on the inventory's one-time check was the rejected
    alternative. A hand edit in Coolify that no keeper holds stays invisible.
+
+### The observer's first mint and an expired tailnet key (2026-10-19)
+
+The observer bearer's mint unit was claimed at 02:00 on 2026-10-19 and failed at host after mint
+and stage: `Coolify PATCH got no answer: ConnectTimeout`. The VPS's Tailscale node,
+`ubuntu-2gb-ash-1`, had reached its key expiry at 16:40 on 2026-10-18 and logged out, so the
+executor's tailnet address for Coolify answered nothing. The write never connected: the keeper
+and the orchestrator's loaded hash still held the old value, and every reader kept working.
+Devon logged the node back in and disabled its key expiry. HQ requeued the unit as SYSTEM, since
+it had used one of its three attempts, for the next `live_estate` window.
+
