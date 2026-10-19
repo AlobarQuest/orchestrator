@@ -26,10 +26,12 @@ Nothing was rotated, no keeper moved, no package was written, and the VM wasn't 
 | github-to-bitbucket-mirror #2 (BWS fetch and a Healthchecks ping) | The mirror's BWS account, a Healthchecks check, and an App Brain landing determination (the repository has none, so it's un-landable) |
 | The VM reinstall at `88f84075` | Devon's go-ahead. The installed executor knows none of the three new adapters |
 
-**Healthchecks is at its 20-check free-plan limit.** The checks `portfolio-scan` and
-`github-to-bitbucket-mirror` can't be created until Devon frees two slots or upgrades. Until then
-the scan runs with no check watching it, and neither credential can be rotated, because its reader
-has no read.
+**Healthchecks was at its 20-check free-plan limit.** Devon freed two slots on 2026-10-19: a check
+outside the SDS, and `sds-production-current`, the only SDS check no registry row names (every
+other one verifies a `runtime-fetch` reader). `portfolio-scan` and `github-to-bitbucket-mirror`
+now exist, and the account is at 20 again. The revision watcher's condition report went with its
+check: a stale application is still recorded in the `production_revision` observation each pass,
+but nothing pages on it.
 
 **After #96 and #455 merge**, delete the copies they drop:
 `gh secret delete FACTORY_PR_TOKEN --repo AlobarQuest/project-standards`, the same for
