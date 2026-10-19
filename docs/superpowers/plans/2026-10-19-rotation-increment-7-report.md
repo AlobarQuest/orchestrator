@@ -37,6 +37,38 @@ has no read.
 `gh secret delete FACTORY_PR_TOKEN --repo AlobarQuest/factory-runner`. Then remove the
 `FACTORY_PR_TOKEN=` line from `~/.portfolio/credentials.env`, which the scan now ignores.
 
+## After the report
+
+Everything the "What waits" table held landed on 2026-10-19, outside the change window, with
+Devon's go-ahead:
+
+- **The checks.** Devon freed two slots. `portfolio-scan` (daily, 03:00 New York) and
+  `github-to-bitbucket-mirror` (hourly) exist.
+- **The mirror.** App Brain records its landing as `inert`: Coolify builds it from a deploy key,
+  and it has no workflow and no webhook. #2 merged. Devon created its BWS account and the
+  ping-URL secret (`59a7df60-…`, `Ops / Platform`). With the secret ids set, the first run pinged
+  start and success. With `GITHUB_TOKEN` and `BITBUCKET_TOKEN` then deleted from its Coolify env,
+  the second run succeeded on tokens from BWS alone.
+- **infraops #125.** Its own executor classifies a `runtime-fetch` consumer as manual, so its
+  test now expects a manual plan for both mirror credentials. The orchestrator's executor rotates
+  them.
+- **orchestrator #455 and factory-runner #96.** Both merged. The four copies they dropped are
+  deleted, and so is the `FACTORY_PR_TOKEN=` line in `~/.portfolio/credentials.env`. Nothing read
+  any of them: no workflow in either repository names the three secrets, and `factory-runner.yml`
+  has never run in factory-runner itself.
+- **The VM.** Reinstalled at `88f84075` with the App keys. The two ready units (change-manager's
+  `observe` bearer and `orchestrator-observer`) touch no registry row #455 changed. The first pass
+  on the new install skipped both with the change window's 409, as before, and logged no refusal.
+  As the service user under `env -i`, the install read the App key, minted a read token and read
+  brain's report end to end.
+
+**orchestrator's report workflow was never registered.** GitHub ran nothing for the push of
+`88f8407`, the merge of #457, not even `Quality`, though every later push triggered it. So
+`secret-fingerprint.yml` sat on `main` unregistered, and the runs list for it answered 404. GitHub
+registers a workflow only from a push that changes its file. A comment edit registered it, and a
+second change restored the bytes the other five repositories hold. From the executor's side an
+unregistered file looks like a stopped schedule: both refuse the unit for want of a report.
+
 ## The VM reinstall
 
 Per `docs/operations/rotation-executor.md`, with `88f84075702c51b605e18ac566ece58568c2c838`, then add
