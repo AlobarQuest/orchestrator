@@ -12,11 +12,12 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 from typer.testing import CliRunner
 
 from fork_sync import cli, fork_sync_review
 from fork_sync.gh import CommandFailed
-from fork_sync.onboard import REQUIRED_CHECKS, render
+from fork_sync.onboard import ACKS_PATH, EMPTY_ACKS, REQUIRED_CHECKS, render
 
 FORK = "AlobarQuest/rea"
 UPSTREAM = "morluto/rea"
@@ -24,6 +25,7 @@ CONFIG = f"""upstream = "{UPSTREAM}"
 ecosystem = "npm"
 release_tag_pattern = '^rea-agents-(\\d+\\.\\d+\\.\\d+)$'
 """
+PINNED = [{"context": name, "app_id": 15368} for name in REQUIRED_CHECKS]
 NOT_FOUND = CommandFailed(["gh"], 1, "gh: Not Found (HTTP 404)")
 
 
@@ -72,7 +74,7 @@ def _onboarded() -> dict[str, Any]:
         f"repos/{UPSTREAM}/contents/.github/workflows": [{"name": "ci.yml"}, {"name": "cd.yml"}],
         f"repos/{FORK}/actions/permissions": {"enabled": True},
         f"repos/{FORK}/branches/main/protection": {
-            "required_status_checks": {"strict": False, "contexts": list(REQUIRED_CHECKS)},
+            "required_status_checks": {"strict": False, "checks": PINNED},
             "enforce_admins": {"enabled": False},
         },
         f"repos/{FORK}/actions/secrets": {
@@ -99,6 +101,13 @@ def test_check_reports_an_onboarded_fork_ok(monkeypatch: pytest.MonkeyPatch) -> 
     ("change", "step"),
     [
         (lambda a: a.update({f"repos/{FORK}/branches/main/protection": NOT_FOUND}), "protection"),
+        (
+            # Names alone: any app could post a status called `security review`.
+            lambda a: a[f"repos/{FORK}/branches/main/protection"].update(
+                {"required_status_checks": {"strict": False, "contexts": list(REQUIRED_CHECKS)}}
+            ),
+            "protection",
+        ),
         (
             lambda a: a.update(
                 {f"repos/{FORK}/contents/.github/workflows/ci.yml?ref=main": "edited"}
@@ -162,7 +171,8 @@ def test_scaffold_opens_a_pull_request(monkeypatch: pytest.MonkeyPatch, tmp_path
     assert result.exit_code == 0, result.output
     assert "opened pull request #12" in result.output
     [add] = [argv for argv, _ in runner.calls if argv[:2] == ["git", "add"]]
-    assert set(add[2:]) == {".github/fork-sync.toml", *render("npm")}
+    assert set(add[2:]) == {".github/fork-sync.toml", ACKS_PATH, *render("npm")}
+    assert fork_sync_review.parse_acks(EMPTY_ACKS.decode()) == {}
 
 
 def test_scaffold_refuses_a_declaration_for_another_upstream(
@@ -210,10 +220,11 @@ def test_baseline_resets_main_with_a_lease(monkeypatch: pytest.MonkeyPatch) -> N
     )
     assert result.exit_code == 0, result.output
     assert runner.ran("git checkout --quiet -B main refs/upstream-tags/rea-agents-6.7.0")
-    assert runner.ran("git rm -r -q --ignore-unmatch .github/workflows")
+    assert runner.ran("git rm -r -q --ignore-unmatch .github")
+    assert not runner.ran("git rm -r -q --ignore-unmatch .github/workflows")
     assert runner.ran(
         "git commit --quiet --allow-empty -m fork-sync baseline: rea-agents-6.7.0, "
-        "upstream workflows removed"
+        "upstream .github removed"
     )
     assert runner.ran("git push --quiet --force-with-lease=main:old origin HEAD:main")
 
@@ -242,10 +253,7 @@ def test_protect_applies_settings_and_protection(monkeypatch: pytest.MonkeyPatch
     writes = {argv[4]: json.loads(stdin or "{}") for argv, stdin in runner.calls if "-X" in argv}
     assert writes[f"repos/{FORK}"]["squash_merge_commit_message"] == "COMMIT_MESSAGES"
     protection = writes[f"repos/{FORK}/branches/main/protection"]
-    assert protection["required_status_checks"] == {
-        "strict": False,
-        "contexts": list(REQUIRED_CHECKS),
-    }
+    assert protection["required_status_checks"] == {"strict": False, "checks": PINNED}
     assert protection["enforce_admins"] is False
     assert protection["required_pull_request_reviews"] is None
 
@@ -271,3 +279,45 @@ def test_the_rendered_files_are_the_lane_contract() -> None:
     assert "npm ci --ignore-scripts" in render("npm")[".github/workflows/ci.yml"].decode()
     script = Path(fork_sync_review.__file__).read_bytes()
     assert render("cargo")[".github/scripts/fork_sync_review.py"] == script
+
+
+def _jobs(ecosystem: str) -> dict[str, Any]:
+    return yaml.safe_load(render(ecosystem)[".github/workflows/ci.yml"])["jobs"]
+
+
+@pytest.mark.parametrize("ecosystem", ["cargo", "npm"])
+def test_the_review_job_never_checks_out_the_head(ecosystem: str) -> None:
+    jobs = _jobs(ecosystem)
+    review_steps = jobs["security-review"]["steps"]
+    checkouts = [s for s in review_steps if s.get("uses", "").startswith("actions/checkout")]
+    assert [s["with"] for s in checkouts] == [
+        {
+            "ref": "${{ github.event.pull_request.base.sha }}",
+            "fetch-depth": 0,
+            "persist-credentials": False,
+        }
+    ]
+    runs = "\n".join(s.get("run", "") for s in review_steps)
+    assert 'git fetch --no-tags origin "$HEAD_SHA"' in runs
+    assert "checkout" not in runs and "HEAD_SHA" not in runs.split("git fetch")[0]
+    assert jobs["security-review"]["env"] == {"GIT_NO_REPLACE_OBJECTS": "1"}
+    build = jobs["build-and-test"]["steps"][0]
+    assert build["with"] == {"persist-credentials": False}
+
+
+def test_cargo_audit_is_pinned_and_installed_outside_the_checkout() -> None:
+    [install] = [
+        s
+        for s in _jobs("cargo")["security-review"]["steps"]
+        if s.get("name") == "Install cargo-audit"
+    ]
+    assert install["run"] == "cargo install cargo-audit --locked --version 0.22.2"
+    assert install["working-directory"] == "${{ runner.temp }}"
+
+
+def test_the_sync_keeps_the_forks_whole_github_and_fences_nothing() -> None:
+    sync = render("npm")[".github/workflows/upstream-sync.yml"].decode()
+    assert "rm -rf .github\n" in sync and "git checkout origin/main -- .github/\n" in sync
+    # Commit subjects are upstream's text: an indented block has no fence for one to close.
+    body = sync.split("Open or update the pull request")[1]
+    assert "```" not in body and "| sed 's/^/    /'" in body

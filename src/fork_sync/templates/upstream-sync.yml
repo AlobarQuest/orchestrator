@@ -83,9 +83,9 @@ jobs:
           {
             printf '## Upstream sync: %s\n\n' "$TAG"
             printf 'Release notes: https://github.com/%s/releases/tag/%s\n\n' "$UPSTREAM" "$TAG"
-            printf 'Commits (first 50):\n```\n'
-            git log origin/main..upstream-sync --oneline -- . ':!.github' | head -50
-            printf '```\n\nThe `security review` check posts its findings as a comment.\n'
+            printf 'Commits (first 50), as an indented block so no subject can end it:\n\n'
+            git log origin/main..upstream-sync --oneline -- . ':!.github' | head -50 | sed 's/^/    /'
+            printf '\nThe `security review` check posts its findings as a comment.\n'
           } > "$RUNNER_TEMP/body.md"
           EXISTING=$(gh pr list --repo "$GITHUB_REPOSITORY" --base main --head upstream-sync --json number --jq '.[0].number')
           if [ -n "$EXISTING" ]; then

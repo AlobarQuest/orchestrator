@@ -19,6 +19,8 @@ CI_WORKFLOW = ".github/workflows/ci.yml"
 REVIEW_SCRIPT = ".github/scripts/fork_sync_review.py"
 OWN_WORKFLOWS = frozenset({"upstream-sync.yml", "ci.yml"})
 REQUIRED_CHECKS = ("build and test", "security review")
+GITHUB_ACTIONS_APP_ID = 15368
+"""The GitHub Actions app: a required check must come from a workflow, not any status poster."""
 SYNC_APP = "fork-secure-upstream-sync"
 SYNC_AUTHOR = f"{SYNC_APP}[bot]"
 SECRETS = ("APP_ID", "APP_PRIVATE_KEY", "ANTHROPIC_API_KEY")
@@ -30,6 +32,11 @@ REPO_SETTINGS = {
     "squash_merge_commit_message": "COMMIT_MESSAGES",
     "delete_branch_on_merge": True,
 }
+
+
+EMPTY_ACKS = b"""# Findings a person has read and accepted, by fingerprint (fork-sync review).
+# One [[ack]] per finding: fingerprint, by, date, reason. See onboarding-a-fork.md.
+"""
 
 
 class Refused(RuntimeError):
@@ -76,7 +83,7 @@ def scaffold(run: Runner, fork: str, config_path: Path) -> int:
     with tempfile.TemporaryDirectory() as scratch:
         clone = _clone(run, fork, Path(scratch), "--depth", "1")
         run(["git", "checkout", "--quiet", "-b", SCAFFOLD_BRANCH], None, clone)
-        files = {CONFIG_PATH: text.encode(), **render(config.ecosystem)}
+        files = {CONFIG_PATH: text.encode(), ACKS_PATH: EMPTY_ACKS, **render(config.ecosystem)}
         for path, content in files.items():
             (clone / path).parent.mkdir(parents=True, exist_ok=True)
             (clone / path).write_bytes(content)
@@ -139,8 +146,10 @@ def baseline(run: Runner, fork: str, tag: str) -> str:
             )
         old = run(["git", "rev-parse", "origin/main"], None, clone).strip()
         run(["git", "checkout", "--quiet", "-B", "main", target], None, clone)
-        run(["git", "rm", "-r", "-q", "--ignore-unmatch", ".github/workflows"], None, clone)
-        message = f"fork-sync baseline: {tag}, upstream workflows removed"
+        # All of upstream's `.github/`, not only its workflows: a planted acknowledgements file or
+        # review script must not become the fork's gate.
+        run(["git", "rm", "-r", "-q", "--ignore-unmatch", ".github"], None, clone)
+        message = f"fork-sync baseline: {tag}, upstream .github removed"
         run(["git", "commit", "--quiet", "--allow-empty", "-m", message], None, clone)
         run(
             ["git", "push", "--quiet", f"--force-with-lease=main:{old}", "origin", "HEAD:main"],
@@ -179,7 +188,12 @@ def protect(run: Runner, fork: str) -> int:
         "PUT",
         f"repos/{fork}/branches/main/protection",
         {
-            "required_status_checks": {"strict": False, "contexts": list(REQUIRED_CHECKS)},
+            "required_status_checks": {
+                "strict": False,
+                "checks": [
+                    {"context": name, "app_id": GITHUB_ACTIONS_APP_ID} for name in REQUIRED_CHECKS
+                ],
+            },
             "enforce_admins": False,
             "required_pull_request_reviews": None,
             "restrictions": None,

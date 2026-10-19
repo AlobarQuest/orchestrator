@@ -14,6 +14,7 @@ from typing import Any
 from fork_sync.fork_sync_review import CONFIG_PATH, Config, ConfigError, parse_config
 from fork_sync.gh import Runner, gh_api
 from fork_sync.onboard import (
+    GITHUB_ACTIONS_APP_ID,
     OWN_WORKFLOWS,
     REPO_SETTINGS,
     REQUIRED_CHECKS,
@@ -99,10 +100,10 @@ def _protection_step(run: Runner, fork: str) -> Step:
     if protection is None:
         return Step("branch protection on main", MISSING, "main is not protected")
     checks = protection.get("required_status_checks") or {}
-    contexts = set(checks.get("contexts") or [])
+    pinned = {(c.get("context"), c.get("app_id")) for c in checks.get("checks") or []}
     problems = []
-    if contexts != set(REQUIRED_CHECKS):
-        problems.append(f"required checks {sorted(contexts)}")
+    if pinned != {(name, GITHUB_ACTIONS_APP_ID) for name in REQUIRED_CHECKS}:
+        problems.append(f"required checks {sorted(pinned, key=str)}")
     if checks.get("strict"):
         problems.append("strict is on")
     if protection.get("required_pull_request_reviews"):

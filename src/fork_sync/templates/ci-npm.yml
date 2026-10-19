@@ -24,6 +24,8 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.14'
@@ -38,7 +40,10 @@ jobs:
       - name: Test
         run: python3 .github/scripts/fork_sync_review.py run test
 
-  # Runs nothing from the tree under review: it reads the diff, the lockfile audit and the model.
+  # Executes nothing from the pull request. The checkout is the BASE (so this script, the
+  # declaration and the acknowledgements are main's); the head's objects are fetched and read
+  # with git, never checked out. Audits run on copies of the head's lockfile in a scratch
+  # directory with fixed arguments.
   security-review:
     name: security review
     if: github.event_name == 'pull_request'
@@ -47,17 +52,24 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+    env:
+      GIT_NO_REPLACE_OBJECTS: '1'
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.base.sha }}
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.14'
       - uses: actions/setup-node@v4
         with:
           node-version: lts/*
+      - name: Fetch the head without checking it out
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: git fetch --no-tags origin "$HEAD_SHA"
       - name: Review
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -65,9 +77,8 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-        # The BASE's copy of the script runs, never the head's: the gate a pull request is judged
-        # by is the one already on main. A base without it fails the check (bootstrap only).
+        # A base without the script fails the check (the scaffold pull request only).
         run: |
-          git show "${BASE_SHA}:.github/scripts/fork_sync_review.py" > "$RUNNER_TEMP/review.py" \
+          test -f .github/scripts/fork_sync_review.py \
             || { echo "::error::the base has no review script"; exit 2; }
-          python3 "$RUNNER_TEMP/review.py" review
+          python3 .github/scripts/fork_sync_review.py review
