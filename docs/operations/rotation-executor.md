@@ -416,7 +416,8 @@ verifies it through what a workflow in the same repository reports (ADR-0055 ame
   store. A repository whose newest successful report is older than three hours, or that has none,
   refuses the unit before its claim: GitHub turns a schedule off after 60 days without repository
   activity, and a stopped report must be seen, not waited on. Re-enable it in the repository's
-  **Actions** tab.
+  **Actions** tab. A file GitHub never registered looks the same from here: if
+  `gh api repos/<owner>/<repo>/actions/workflows` doesn't list it, push a change to the file.
 
 To see what the reports say, `read-consumers` covers Actions copies too (it reads the keeper as
 the value to compare).
