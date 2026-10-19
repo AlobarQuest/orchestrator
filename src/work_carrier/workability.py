@@ -116,6 +116,7 @@ STANDING_OPERATIONAL_PACKAGES = frozenset(
         "rotation-orchestrator-operator-bearer",
         "rotation-orchestrator-observer-bearer",
         "rotation-orchestrator-drift-reporter-bearer",
+        "rotation-change-manager-observe-bearer",
     }
 )
 
