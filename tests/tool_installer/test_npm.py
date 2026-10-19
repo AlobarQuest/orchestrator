@@ -51,7 +51,9 @@ _ENTRY = """#!/bin/sh
 case "$1" in
   --help) echo "usage: faketool" ;;
   --version) echo "REPORTS" ;;
-  mcp) read -r _; printf '{"result":{"serverInfo":{"name":"faketool","version":"REPORTS"}}}\\n' ;;
+  mcp) read -r _
+       echo '{"jsonrpc":"2.0","method":"notifications/message","params":{}}'
+       printf '{"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"version":"REPORTS"}}}\\n' ;;
   *) exit 2 ;;
 esac
 """
@@ -265,7 +267,7 @@ def test_node_without_npm_beside_it_is_refused(
 ) -> None:
     monkeypatch.setenv("PATH", "/nonexistent")
     _executable(tmp_path / "node", "#!/bin/sh\n")
-    with pytest.raises(ToolchainError, match="no npm beside it"):
+    with pytest.raises(ToolchainError, match="no node with npm beside it"):
         resolve_node((tmp_path / "node",))
 
 
@@ -280,3 +282,30 @@ def test_node_is_found_off_PATH_and_leads_the_subprocess_PATH(
     found = resolve_node((tmp_path / "missing", tmp_path / "node"))
     assert found.executable == tmp_path / "node"
     assert found.environment()["PATH"].split(os.pathsep)[0] == str(tmp_path)
+
+
+def test_a_move_aside_that_is_refused_leaves_the_live_package_whole(
+    node: Node, tmp_path: Path
+) -> None:
+    """The outgoing package leaves only by an atomic rename. A backup root that cannot take it
+    refuses before anything live changes, rather than leaving a half-copied, half-deleted tree."""
+    source, revision = _fork(tmp_path)
+    root = tmp_path / "root"
+    _seed_installed(root)
+    (tmp_path / "backups").write_text("a file where the backup root's parent should be")
+    outcome = _act(node, tmp_path, source, revision)
+
+    assert outcome.action == ACTION_INSTALL_FAILED
+    assert "moved aside" in outcome.detail
+    restored = read_installed_package(root, "fake-agents")
+    assert restored is not None
+    assert restored.revision == OLD_REVISION
+    assert os.readlink(root / "bin" / "faketool") == "../lib/node_modules/fake-agents/scripts/t"
+
+
+def test_a_workspace_left_by_a_killed_pass_is_cleared(node: Node, tmp_path: Path) -> None:
+    source, revision = _fork(tmp_path)
+    stale = tmp_path / "root" / ".sds-build-killed" / "src"
+    stale.mkdir(parents=True)
+    _act(node, tmp_path, source, revision)
+    assert not stale.parent.exists()

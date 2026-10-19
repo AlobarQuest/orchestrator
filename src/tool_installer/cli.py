@@ -360,11 +360,10 @@ def main(  # noqa: PLR0911, PLR0912, C901
         #
         # DISPATCHED ON THE RESOLVED ACTOR rather than on the row a second time: a cargo toolchain
         # performs the cargo install, a node the npm install and a `claude` executable the plugin
-        # install, so the
-        # value that was resolved for this row IS the discriminator, and the two readings cannot
-        # drift apart the way a repeated `isinstance` on the row could.
-        outgoing = row.installed_version or "first"
-        backup = backups / f"{row.tool.name}-{outgoing}"
+        # install, so the value that was resolved for this row IS the discriminator, and the
+        # readings cannot drift apart the way a repeated `isinstance` on the row could. The
+        # plugin act takes no backup directory (see above).
+        backup = backups / f"{row.tool.name}-{row.installed_version or 'first'}"
         # A ROLLBACK THAT FAILED IS FILED, NEVER THROWN, and the reason is the whole point of the
         # catch. It leaves the machine between two versions -- the single state an operator most
         # needs told -- and an uncaught `RollbackFailed` reaches typer as a traceback: no summary,

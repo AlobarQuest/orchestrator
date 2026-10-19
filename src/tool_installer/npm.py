@@ -71,6 +71,7 @@ from tool_installer.tools import NpmInstall, Tool
 DEFAULT_NPM_ROOT: Final = Path.home() / ".local" / "share" / "sds-tools" / "npm"
 
 REVISION_FIELD: Final = "gitHead"
+BUILD_PREFIX: Final = ".sds-build-"
 _REVISION: Final = re.compile(r"[0-9a-f]{40}")
 
 MCP_PROTOCOL_VERSION: Final = "2025-06-18"
@@ -154,6 +155,8 @@ def _build(
 
     manifest = src / "package.json"
     document = json.loads(manifest.read_text(encoding="utf-8"))
+    if not isinstance(document, dict):
+        raise NpmError("package.json is not an object")
     document[REVISION_FIELD] = revision
     manifest.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
 
@@ -169,7 +172,8 @@ def _build(
     shutil.copy2(src / "package-lock.json", staged / "package-lock.json")
     _step([npm, "ci", "--omit=dev"], cwd=staged, env=env)
 
-    bins = json.loads((staged / "package.json").read_text(encoding="utf-8")).get("bin")
+    bins = json.loads((staged / "package.json").read_text(encoding="utf-8"))
+    bins = bins.get("bin") if isinstance(bins, dict) else None
     entry = bins.get(tool.name) if isinstance(bins, dict) else None
     if not isinstance(entry, str):
         raise NpmError(f"{row.package} declares no `{tool.name}` in its bin map")
@@ -185,7 +189,10 @@ def _move_aside(target: Path, backup_root: Path) -> Path | None:
     # newer copy is the one worth keeping.
     if moved.exists():
         shutil.rmtree(moved)
-    shutil.move(target, moved)
+    # A RENAME, never `shutil.move`: across volumes that is copy-then-delete, and a failure partway
+    # through the delete leaves the live package half gone. A rename is all or nothing, and a
+    # backup root on another volume refuses here with the live package untouched.
+    target.rename(moved)
     return moved
 
 
@@ -196,6 +203,9 @@ def _place(staged: Path, target: Path, link: Path, link_target: str) -> None:
     if link.is_symlink() or link.exists():
         link.unlink()
     link.symlink_to(link_target)
+    # npm's own bin-linking sets this; the lane links by hand, so it sets it too.
+    entry = link.resolve()
+    entry.chmod(entry.stat().st_mode | 0o111)
 
 
 def _undo(target: Path, link: Path, outgoing: _Outgoing) -> None:
@@ -204,7 +214,7 @@ def _undo(target: Path, link: Path, outgoing: _Outgoing) -> None:
         if target.exists():
             shutil.rmtree(target)
         if outgoing.package is not None:
-            shutil.move(outgoing.package, target)
+            outgoing.package.rename(target)
         if link.is_symlink() or link.exists():
             link.unlink()
         if outgoing.link is not None:
@@ -246,11 +256,16 @@ def probe_mcp(
         )
     except (subprocess.TimeoutExpired, OSError) as error:
         return ProbeResult(command=command, passed=False, detail=type(error).__name__)
-    lines = completed.stdout.strip().splitlines()
-    try:
-        reported = json.loads(lines[0])["result"]["serverInfo"]["version"]
-    except IndexError, ValueError, KeyError, TypeError:
-        reported = None
+    # The response is found by its `id`, not by position: a server may emit a notification first.
+    reported = None
+    for line in completed.stdout.splitlines():
+        try:
+            message = json.loads(line)
+            if message.get("id") == request["id"]:
+                reported = message["result"]["serverInfo"]["version"]
+                break
+        except ValueError, KeyError, TypeError, AttributeError:
+            continue
     passed = completed.returncode == 0 and reported == expected_version
     detail = "" if passed else f"exited {completed.returncode}, reported {reported!r}"
     return ProbeResult(command=command, passed=passed, detail=detail)
@@ -276,7 +291,6 @@ def install_and_prove_npm(
     target = package_dir(install_root, row.package)
     link = install_root / "bin" / tool.name
     env = _environment(node)
-    install_root.mkdir(parents=True, exist_ok=True)
 
     def failed(detail: str) -> InstallOutcome:
         return InstallOutcome(
@@ -285,9 +299,19 @@ def install_and_prove_npm(
             detail=detail,
         )
 
-    with tempfile.TemporaryDirectory(
-        dir=install_root, prefix=".sds-build-", ignore_cleanup_errors=True
-    ) as work:
+    try:
+        install_root.mkdir(parents=True, exist_ok=True)
+        # A pass killed mid-build (a launchd timeout, a reboot) never reaches the cleanup below,
+        # and each such workspace holds two `node_modules` trees.
+        for stale in install_root.glob(f"{BUILD_PREFIX}*"):
+            shutil.rmtree(stale)
+        workspace = tempfile.TemporaryDirectory(
+            dir=install_root, prefix=BUILD_PREFIX, ignore_cleanup_errors=True
+        )
+    except OSError as error:
+        return failed(f"the install root is not usable: {type(error).__name__}")
+
+    with workspace as work:
         try:
             staged, entry = _build(
                 tool,

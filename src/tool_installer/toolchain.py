@@ -154,16 +154,14 @@ class Node:
 
 
 def resolve_node(candidates: tuple[Path, ...] = NODE_CANDIDATES) -> Node:
-    """`PATH` first, then the known locations, and npm must sit beside whichever node is found."""
+    """The first node, `PATH` then the known locations, that has npm beside it."""
     found = shutil.which("node")
-    for candidate in (Path(found),) if found else candidates:
-        if candidate.is_file() and os.access(candidate, os.X_OK):
-            node = Node(executable=candidate)
-            if node.npm.is_file():
-                return node
-            raise ToolchainError(f"node at {candidate} has no npm beside it")
+    for candidate in ((Path(found),) if found else ()) + candidates:
+        node = Node(executable=candidate)
+        if candidate.is_file() and os.access(candidate, os.X_OK) and node.npm.is_file():
+            return node
     raise ToolchainError(
-        f"node is not on PATH and is at none of {', '.join(str(path) for path in candidates)}"
+        f"no node with npm beside it on PATH or at {', '.join(str(path) for path in candidates)}"
     )
 
 

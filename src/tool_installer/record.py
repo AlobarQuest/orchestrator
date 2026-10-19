@@ -296,8 +296,9 @@ def summary_of(installation: Installation) -> str:
     ):
         # The npm row's own reason; every other sentence of the cargo wording is true of it.
         return (
-            f"{name} could not be built at {short}; the working artifact was left in place, "
-            f"because the build is staged and swapped in only on success."
+            f"{name} could not be built and installed at {short}; the working artifact is in "
+            f"place, because the old package is moved aside only by an atomic rename and is "
+            f"renamed back if the new one cannot follow it."
         )
     if installation.action == ACTION_INSTALL_FAILED:
         return (
