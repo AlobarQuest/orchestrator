@@ -620,9 +620,15 @@ def build_report(config: Config, base: str, head: str, api_key: str, opener: Ope
 
 
 def review(env: Mapping[str, str], opener: Opener = urllib.request.urlopen) -> int:
-    config = load_config()
-    acks_file = Path(ACKS_PATH)
-    acks = parse_acks(acks_file.read_text(encoding="utf-8")) if acks_file.exists() else {}
+    # The declaration and the acknowledgements come from the BASE, as does this script (ci.yml
+    # runs the base's copy): a pull request must not be able to rewrite the gate it is judged by.
+    config_text = _show(env["BASE_SHA"], CONFIG_PATH)
+    if config_text is None:
+        print(f"::error::the base has no {CONFIG_PATH}; nothing is trusted to review this")
+        return 2
+    config = parse_config(config_text.decode())
+    acks_text = _show(env["BASE_SHA"], ACKS_PATH)
+    acks = parse_acks(acks_text.decode()) if acks_text is not None else {}
     report = build_report(
         config, env["BASE_SHA"], env["HEAD_SHA"], env.get("ANTHROPIC_API_KEY", ""), opener
     )

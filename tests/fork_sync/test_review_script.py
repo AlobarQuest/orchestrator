@@ -312,3 +312,60 @@ def test_build_report_over_a_real_repository(tmp_path: Path, monkeypatch: Any) -
     }
     prompt = json.loads(seen[0].data)["messages"][0]["content"]
     assert "build.rs" in prompt and "blob.bin" not in prompt
+
+
+@pytest.mark.parametrize("loosen", ["declaration", "acknowledgement"])
+def test_the_gate_is_read_from_the_base_not_the_head(
+    tmp_path: Path, monkeypatch: Any, loosen: str
+) -> None:
+    """A pull request that loosens the declaration or acknowledges its own finding changes nothing.
+
+    History: `strict` (the gate), `loosened` (the gate loosened), `change` (adds a watched file).
+    Judged from `strict` the change fails; the control judges the same change from `loosened`,
+    where the loosened gate is legitimately on the base, and it passes.
+    """
+    declared = CARGO.replace("[review]", '[review]\naudit_commands = ["true"]')
+    source = "fn main() {}\n"
+    _git(tmp_path, "init", "-q", "-b", "main")
+    (tmp_path / ".github").mkdir()
+    (tmp_path / ".github/fork-sync.toml").write_text(declared)
+    (tmp_path / "Cargo.toml").write_text('[package]\nversion = "0.1.0"\n')
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-q", "-m", "strict")
+    strict = _git(tmp_path, "rev-parse", "HEAD")
+    if loosen == "declaration":
+        (tmp_path / ".github/fork-sync.toml").write_text(declared.replace('"build.rs"', '"none"'))
+    else:
+        (tmp_path / "blob").write_text(source)
+        blob = _git(tmp_path, "hash-object", "blob")
+        (tmp_path / "blob").unlink()
+        accepted = review.Finding("watched-path", "build.rs", "", blob).fingerprint("0.1.0")
+        (tmp_path / ".github/fork-sync-acks.toml").write_text(
+            f'[[ack]]\nfingerprint = "{accepted}"\nby = "head"\n'
+            'date = "2026-10-19"\nreason = "self-approved"\n'
+        )
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-q", "-m", "loosened")
+    loosened = _git(tmp_path, "rev-parse", "HEAD")
+    (tmp_path / "build.rs").write_text(source)
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-q", "-m", "change")
+    change = _git(tmp_path, "rev-parse", "HEAD")
+    monkeypatch.chdir(tmp_path)
+
+    def judged_from(base: str) -> int:
+        env = {"BASE_SHA": base, "HEAD_SHA": change, "ANTHROPIC_API_KEY": "key"}
+        return review.review(env, _model('{"findings": []}', []))
+
+    assert judged_from(strict) == 1
+    assert judged_from(loosened) == 0
+
+
+def test_a_base_without_a_declaration_fails_closed(tmp_path: Path, monkeypatch: Any) -> None:
+    _git(tmp_path, "init", "-q", "-b", "main")
+    (tmp_path / "Cargo.toml").write_text('[package]\nversion = "0.1.0"\n')
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-q", "-m", "base")
+    base = _git(tmp_path, "rev-parse", "HEAD")
+    monkeypatch.chdir(tmp_path)
+    assert review.review({"BASE_SHA": base, "HEAD_SHA": base}) == 2

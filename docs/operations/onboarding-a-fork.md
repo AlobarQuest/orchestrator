@@ -126,13 +126,17 @@ worktree. Run `fork-sync check <fork>` after any step to see where you are.
    with the value on stdin and no `--body` flag (`gh secret set NAME --repo <fork>`). Never pass
    `--body -`, which stores a literal dash. Register each copy in factory-runner's
    `.cred-consumers.toml`.
-6. **Merge the scaffold pull request** once both checks have reported on it.
-7. **Protect `main`.** Run `fork-sync protect <fork>`. It refuses until an open pull request has
-   reported both `build and test` and `security review` (read from the Actions jobs API), then
-   allows merge commits, sets `squash_merge_commit_message` to `COMMIT_MESSAGES`, deletes branches
-   on merge, and requires both checks with `strict: false`, no required reviews and no admin
-   enforcement.
-8. **Run the first sync:** `gh workflow run upstream-sync.yml --repo <fork>`.
+6. **Merge the scaffold pull request** once `build and test` passes on it. Its `security review`
+   fails by design: the review runs from the base, and the base has no review script yet. If
+   `main` is already protected (rtk), `security review` is not yet a required check, so the
+   failure doesn't block the merge.
+7. **Run the first sync:** `gh workflow run upstream-sync.yml --repo <fork>`. Both checks now run
+   on the sync pull request, from the scaffolded `main`.
+8. **Protect `main`.** Run `fork-sync protect <fork>`. It refuses until an open pull request has
+   reported both `build and test` and `security review` (read from the Actions jobs API), which the
+   sync pull request from step 7 has. It then allows merge commits, sets
+   `squash_merge_commit_message` to `COMMIT_MESSAGES`, deletes branches on merge, and requires both
+   checks with `strict: false`, no required reviews and no admin enforcement.
 9. **Review the sync pull request.** Read the review comment. Acknowledge what you accept; do not
    acknowledge what you have not read.
 10. **Release the landing policy.** Release a change-manager policy listing the fork in
@@ -154,5 +158,10 @@ worktree. Run `fork-sync check <fork>` after any step to see where you are.
 - The `security review` job runs only on pull requests. A pull request without access to the
   repository's secrets, such as one from Dependabot, fails it, which keeps such a pull request
   from landing.
-- The review script on a pull request comes from that pull request's head. The sync restores the
-  fork's own `.github/`, so a sync pull request runs the fork's script, never upstream's.
+- The review script, the declaration and the acknowledgements all come from the pull request's
+  BASE, never its head, so a pull request can't loosen the gate it is judged by. A change to the
+  gate takes effect only once it is on `main`. A base with no script fails the check, which is
+  why the scaffold pull request fails `security review`.
+- The model reads upstream's diff, and an instruction planted in that diff can try to talk it out
+  of a finding. The deterministic findings (watched paths, submodule pointers, binaries, npm
+  lifecycle scripts, the audit) don't pass through the model, so they hold regardless.
