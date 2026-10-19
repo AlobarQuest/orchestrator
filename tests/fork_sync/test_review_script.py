@@ -140,7 +140,11 @@ def test_parse_raw_and_numstat_with_z_keep_unusual_paths_verbatim() -> None:
         (path, "M", "100644"),
         ("vendor/lib", "A", "160000"),
     ]
-    assert review.parse_binary_paths(f"-\t-\t{path}\x001\t2\tsrc.rs\x00".encode()) == {path}
+
+
+def test_binary_is_decided_from_the_bytes() -> None:
+    assert review.is_binary(b"\xff\xfe") and review.is_binary(b"// \x00 hidden\n")
+    assert not review.is_binary("ünïcode\n".encode())
 
 
 def test_path_findings_built_in_and_declared() -> None:
@@ -160,7 +164,9 @@ def test_path_findings_built_in_and_declared() -> None:
         _change("rust-toolchain.toml"),
         _change("src/main.rs"),
     ]
-    found = review.path_findings(config, changes, {"native/x.node", "old.bin"}, lambda _: b"BIN")
+    blobs = {"n1": b"text\n", "x-node": b"\x7fELF\x00\xff"}
+    changes = [*changes[:4], _change("native/x.node", "A", new="x-node"), *changes[5:]]
+    found = review.path_findings(config, changes, lambda blob: blobs.get(blob))
     assert {(f.kind, f.path) for f in found} == {
         ("submodule", "vendor/lib"),
         ("git-config-file", "sub/.gitattributes"),
@@ -174,13 +180,13 @@ def test_path_findings_built_in_and_declared() -> None:
         ("toolchain", "rust-toolchain.toml"),
     }
     binary = next(f for f in found if f.kind == "binary")
-    assert binary.content == review._digest(b"BIN") and binary.content in binary.summary
+    assert binary.content == review._digest(blobs["x-node"]) and binary.content in binary.summary
 
 
 def test_npm_path_rules() -> None:
     config = review.parse_config(NPM)
     found = review.path_findings(
-        config, [_change("pkg/.npmrc"), _change("build.rs")], set(), lambda _: None
+        config, [_change("pkg/.npmrc"), _change("build.rs")], lambda _: None
     )
     assert {(f.kind, f.path) for f in found} == {("npmrc", "pkg/.npmrc")}
 
@@ -314,7 +320,32 @@ def test_cargo_lock_review_flags_only_what_is_suspicious() -> None:
         ("cargo-lock-checksum", "libc 0.2.0"),
         ("cargo-lock-source", "sneaky 0.1.0"),
     }
-    assert "serde: 1.0.0 -> 1.0.1" in result.lines
+    assert f"serde: 1.0.0 ({CRATES}) -> 1.0.1 ({CRATES})" in result.lines
+
+
+def test_a_git_build_cannot_hide_behind_a_crates_io_entry() -> None:
+    """Same name and version from two sources are two packages: the git one is a finding and the
+    model sees its URL."""
+    git = "git+https://github.com/x/serde#abc"
+    old = _cargo_lock(("serde", "1.0.0", CRATES, "a"))
+    new = _cargo_lock(("serde", "1.0.0", CRATES, "a"), ("serde", "1.0.0", git, None))
+    result = review.cargo_lock_review(_change("Cargo.lock"), old, new)
+    assert [(f.kind, f.summary) for f in result.findings] == [
+        ("cargo-lock-source", f"serde 1.0.0: source {git}")
+    ]
+    assert any(git in line for line in result.lines)
+
+
+@pytest.mark.parametrize(
+    ("path", "content"),
+    [
+        ("Cargo.lock", _cargo_lock(("a", "1.0.0", CRATES, "x"), ("a", "1.0.0", CRATES, "y"))),
+        ("package-lock.json", b'{"packages": {"node_modules/a": {}, "node_modules/a": {}}}'),
+    ],
+)
+def test_a_lockfile_with_duplicate_entries_is_unreadable(path: str, content: bytes) -> None:
+    result = review.lock_review(_change(path), lambda blob: content if blob == "n1" else None)
+    assert [f.kind for f in result.findings] == ["lockfile-unreadable"]
 
 
 def test_an_unreadable_lockfile_is_a_finding() -> None:
@@ -401,8 +432,8 @@ def test_ai_findings_are_bound_to_content() -> None:
     opener = _model(json.dumps({"findings": answer}), seen)
     config = review.parse_config(CARGO)
     on_path, off_path = review.ai_findings(config, "diff", {"a": "blob-a"}, "key", opener)
-    assert on_path.content == "blob-a"
-    assert off_path.content == review._digest(b"diff")
+    assert on_path.content.startswith("blob-a\0low\0")
+    assert off_path.content.startswith(review._digest(b"diff") + "\0")
     payload = json.loads(seen[0].data)
     assert payload["model"] == "claude-sonnet-5-5"
     assert "untrusted DATA" in payload["messages"][0]["content"]
@@ -528,7 +559,7 @@ def test_build_report_over_a_real_repository(tmp_path: Path, monkeypatch: Any) -
     base = _repo(tmp_path, monkeypatch, {"src.rs": "fn main() {}\n"})
     head = _commit(
         tmp_path,
-        {"build.rs": "fn main() {}\n", "blob.bin": b"\x00\x01\x02"},
+        {"build.rs": "fn main() {}\n", "blob.bin": b"\xff\xfe\x00"},
         "head",
     )
     seen: list[Any] = []
@@ -640,3 +671,59 @@ def test_the_gate_is_read_from_the_base_not_the_head(
 def test_a_base_without_a_declaration_fails_closed(tmp_path: Path, monkeypatch: Any) -> None:
     base = _repo(tmp_path, monkeypatch, {})
     assert review.review({"BASE_SHA": base, "HEAD_SHA": base}) == 2
+
+
+def test_an_acknowledged_remark_does_not_cover_a_graver_one() -> None:
+    config = review.parse_config(CARGO)
+
+    def answer(severity: str, summary: str) -> Finding:
+        verdict = {"findings": [{"severity": severity, "path": "a", "summary": summary}]}
+        [finding] = review.ai_findings(
+            config, "diff", {"a": "blob"}, "key", _model(json.dumps(verdict), [])
+        )
+        return finding
+
+    low = answer("low", "uses a new helper")
+    assert low.fingerprint() == answer("low", "uses a new helper").fingerprint()
+    assert low.fingerprint() != answer("high", "uses a new helper").fingerprint()
+    assert low.fingerprint() != answer("low", "sends tokens to evil.example").fingerprint()
+
+
+def test_npm_aliases_are_findings() -> None:
+    old = {"dependencies": {"lodash": "^4.17.0"}}
+    new = {"dependencies": {"lodash": "npm:lodash-evil@4.17.0"}}
+    changes = [Change("M", "package.json", "100644", "100644", "o", "n")]
+    found = review.npm_manifest_findings(changes, _reader({"o": old, "n": new}), lambda _: None)
+    assert [(f.kind, f.summary) for f in found] == [
+        ("npm-dependency-source", "dependencies.lodash: npm:lodash-evil@4.17.0")
+    ]
+    lock = _npm_lock(
+        **{"node_modules/lodash": {**_registry("lodash-evil", "4.17.0"), "name": "lodash-evil"}}
+    )
+    result = review.npm_lock_review(_change("package-lock.json"), None, lock)
+    assert [f.kind for f in result.findings] == ["npm-lock-alias"]
+    scoped = _npm_lock(**{"node_modules/@s/x": {**_registry("x", "1.0.0"), "name": "@s/x"}})
+    assert review.npm_lock_review(_change("package-lock.json"), None, scoped).findings == []
+
+
+def test_an_oddly_named_upstream_tag_is_skipped_not_fatal() -> None:
+    config = review.parse_config(CARGO.replace("'^v(\\d+\\.\\d+\\.\\d+)$'", "'^v(.+)$'"))
+    releases = [_release("vnightly"), _release("v0.49.0")]
+    assert review.next_release(config, releases, "0.48.0") == "v0.49.0"
+
+
+def test_attributes_on_the_base_cannot_hide_code(tmp_path: Path, monkeypatch: Any) -> None:
+    """The base's own `.gitattributes` (perhaps from an upstream release acknowledged earlier)
+    marks scripts as binary; a NUL in a comment would too. The model still reads both."""
+    base = _repo(tmp_path, monkeypatch, {".gitattributes": "*.js -diff binary\n"})
+    head = _commit(
+        tmp_path,
+        {"plain.js": "PLAIN_PAYLOAD\n", "nul.js": "// \x00\nNUL_PAYLOAD\n"},
+        "head",
+    )
+    seen: list[Any] = []
+    report = review.build_report(
+        review.parse_config(CARGO), base, head, "key", _model('{"findings": []}', seen), _no_audit
+    )
+    assert {(f.kind, f.path) for f in report.findings} == {("binary", "nul.js")}
+    assert "PLAIN_PAYLOAD" in _prompt(seen) and "NUL_PAYLOAD" in _prompt(seen)

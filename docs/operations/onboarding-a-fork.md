@@ -64,8 +64,8 @@ commands that build and test without network side effects. For `npm`, CI always 
   - `build and test` runs the configured build and test commands.
   - `security review` runs `.github/scripts/fork_sync_review.py review` on pull requests. It
     checks out the BASE, fetches the head's objects without checking them out, and reads them
-    with git (no replace objects, no global attributes file), so nothing from the pull request
-    executes in the job that holds `ANTHROPIC_API_KEY`.
+    with git (no replace objects, and no attributes from any source, which needs git 2.40 or
+    later), so nothing from the pull request executes in the job that holds `ANTHROPIC_API_KEY`.
 
 ### Why the review is a required check
 
@@ -80,16 +80,21 @@ with exit 2. The deterministic findings are:
 - Any change under `review.paths_watched`.
 - Any submodule pointer change, and any `.gitattributes`, `.lfsconfig` or `.gitmodules` change
   anywhere.
-- Any added or changed binary file, with its sha256.
+- Any added or changed binary file, with its sha256. Binary is decided from the bytes (a NUL
+  byte, or not UTF-8), never from git or `.gitattributes`; a binary file that is still UTF-8,
+  such as a script with a NUL in a comment, is also sent to the model.
 - Any shell script at the repository root, such as `install.sh`.
 - For `npm`: a `package.json` anywhere whose install-time lifecycle scripts or `bin` changed; a
-  changed file a lifecycle script runs; a dependency added or changed to a git, URL, file or link
-  spec; any `.npmrc`; and in `package-lock.json`, a package resolved outside
-  `https://registry.npmjs.org/`, a link, an `integrity` change at an unchanged version, or a new or
-  changed package with `hasInstallScript`.
+  changed file a lifecycle script runs; a dependency added or changed to a git, URL, file, link
+  or `npm:` alias spec; any `.npmrc`; and in `package-lock.json`, a package resolved outside
+  `https://registry.npmjs.org/`, a link, an entry whose `name` differs from the package it is
+  installed as, an `integrity` change at an unchanged version, or a new or changed package with
+  `hasInstallScript`.
 - For `cargo`: any `build.rs`, a `proc-macro` change, anything under `.cargo/`, any
-  `rust-toolchain*`; and in `Cargo.lock`, a source other than crates.io or a `checksum` change at
-  an unchanged version.
+  `rust-toolchain*`; and in `Cargo.lock`, a new package from a source other than crates.io or a
+  `checksum` change at an unchanged version. Packages are told apart by name, version and source,
+  so a git build cannot hide behind a crates.io entry of the same name and version.
+- A lockfile with duplicate entries, or one that does not parse.
 - A failing audit.
 - What the model reports, trust-critical files first. A diff over `max_diff_chars` is itself a
   finding and is not sent.
@@ -110,7 +115,9 @@ It writes a report to the job summary and to one rolling pull-request comment, t
 A finding a person has read and accepts is acknowledged by its fingerprint, which the report
 prints. The fingerprint covers the finding's kind, its path and the exact content it is about: the
 changed file's blob, a binary's sha256, the lockfile and the package entry, or, for a model
-finding on a path that did not change, the whole reviewed diff. An acknowledgement therefore covers
+finding, the path's blob (or the whole reviewed diff for a path that did not change) plus the
+finding's severity and wording. A model finding can therefore return with a new fingerprint when
+the model words it differently on a later run; acknowledge it again after reading it. An acknowledgement therefore covers
 that content and nothing later: if the file changes again, the finding returns with a new
 fingerprint.
 

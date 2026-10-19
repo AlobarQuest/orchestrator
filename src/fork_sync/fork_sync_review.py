@@ -70,9 +70,13 @@ NPM_DEPENDENCY_KEYS = (
 )
 SCRIPT_SUFFIXES = (".js", ".mjs", ".cjs", ".ts", ".sh", ".py")
 SAFE_TAG = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/+-]*")
-# Git runs with no replace objects, literal pathspecs and no global attributes file: the checkout
-# is the base, whose own `.gitattributes` is trusted, and nothing the head ships can redirect it.
+# Git runs with no replace objects, literal pathspecs and NO attributes at all (no global file,
+# and the empty tree as the attribute source): an attribute the base carries, perhaps from an
+# upstream release acknowledged earlier, could otherwise turn a script into "binary" or route it
+# through a filter. Whether content is binary is decided from the bytes, below.
 GIT_ENV = {"GIT_NO_REPLACE_OBJECTS": "1", "GIT_LITERAL_PATHSPECS": "1"}
+EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+GIT_OPTIONS = ("-c", "core.attributesFile=/dev/null", f"--attr-source={EMPTY_TREE}")
 
 
 class ConfigError(ValueError):
@@ -248,7 +252,11 @@ def next_release(config: Config, releases: Sequence[Mapping[str, Any]], current:
             continue
         if not SAFE_TAG.fullmatch(tag):
             raise ConfigError(f"upstream tag {tag!r} has characters a ref must not")
-        return tag if version_key(match.group(1)) > version_key(current) else None
+        try:
+            upstream = version_key(match.group(1))
+        except ConfigError:
+            continue  # upstream's oddly named tag is skipped, not a reason to stop syncing
+        return tag if upstream > version_key(current) else None
     return None
 
 
@@ -257,7 +265,7 @@ def next_release(config: Config, releases: Sequence[Mapping[str, Any]], current:
 
 def _git_bytes(*args: str) -> bytes:
     return subprocess.run(
-        ["git", "-c", "core.attributesFile=/dev/null", *args],
+        ["git", *GIT_OPTIONS, *args],
         env=os.environ | GIT_ENV,
         check=True,
         capture_output=True,
@@ -309,13 +317,19 @@ def parse_raw_diff(raw: bytes) -> list[Change]:
     return changes
 
 
-def parse_binary_paths(numstat: bytes) -> set[str]:
-    """Paths `git diff --numstat -z` reports as binary (`-<TAB>-<TAB>path`)."""
-    return {
-        os.fsdecode(record.split(b"\t", 2)[2])
-        for record in numstat.split(b"\0")
-        if record.startswith(b"-\t-\t")
-    }
+def _utf8(data: bytes | None) -> bool:
+    if data is None:
+        return True
+    try:
+        data.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    return True
+
+
+def is_binary(data: bytes) -> bool:
+    """Decided from the bytes, never from git: a NUL byte or anything that is not UTF-8."""
+    return b"\0" in data or not _utf8(data)
 
 
 # ---- findings and acknowledgements ----------------------------------------------------------
@@ -393,7 +407,6 @@ PATH_RULES: dict[str, tuple[PathRule, ...]] = {
 def path_findings(
     config: Config,
     changes: Sequence[Change],
-    binaries: set[str],
     read: Callable[[str], bytes | None],
 ) -> list[Finding]:
     """What needs no model: watched paths, built-in path rules, submodules, binaries."""
@@ -409,8 +422,8 @@ def path_findings(
             findings.append(
                 Finding("submodule", change.path, "a submodule pointer changed", change.content)
             )
-        elif change.path in binaries and change.status != "D":
-            digest = _digest(read(change.new_blob) or b"")
+        elif change.status != "D" and is_binary(data := read(change.new_blob) or b""):
+            digest = _digest(data)
             findings.append(
                 Finding("binary", change.path, f"binary added or changed, sha256 {digest}", digest)
             )
@@ -420,10 +433,17 @@ def path_findings(
 # ---- manifests ------------------------------------------------------------------------------
 
 
+def _unique_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    keys = [key for key, _ in pairs]
+    if len(set(keys)) != len(keys):
+        raise ValueError("duplicate keys: a reader would see one value and npm another")
+    return dict(pairs)
+
+
 def _json_object(data: bytes | None) -> dict[str, Any]:
     if data is None:
         return {}
-    value = json.loads(data)
+    value = json.loads(data, object_pairs_hook=_unique_keys)
     if not isinstance(value, dict):
         raise ValueError("not a JSON object")
     return value
@@ -446,14 +466,15 @@ def _referenced_files(command: str) -> set[str]:
 
 
 def _non_registry_deps(manifest: Mapping[str, Any]) -> dict[str, str]:
-    """Dependencies whose spec is git, a URL, a file or a link rather than a registry version."""
+    """Dependencies whose spec is git, a URL, a file, a link or an `npm:` alias (which installs a
+    different package under the declared name) rather than a registry version."""
     found = {}
     for key in NPM_DEPENDENCY_KEYS:
         for name, spec in (manifest.get(key) or {}).items():
             spec = str(spec)
-            if re.match(r"(git\+|git:|github:|gitlab:|bitbucket:|https?:|file:|link:)", spec) or (
-                "/" in spec and not spec.startswith("npm:")
-            ):
+            if re.match(
+                r"(npm:|git\+|git:|github:|gitlab:|bitbucket:|https?:|file:|link:)", spec
+            ) or ("/" in spec):
                 found[f"{key}.{name}"] = spec
     return found
 
@@ -546,8 +567,13 @@ def _npm_packages(data: bytes | None) -> dict[str, dict[str, Any]]:
     return {name: entry for name, entry in packages.items() if name and isinstance(entry, dict)}
 
 
-def _npm_entry_problems(old: dict[str, Any] | None, new: dict[str, Any]) -> list[tuple[str, str]]:
+def _npm_entry_problems(
+    path: str, old: dict[str, Any] | None, new: dict[str, Any]
+) -> list[tuple[str, str]]:
     problems = []
+    installed_as = path.rpartition("node_modules/")[2]
+    if new.get("name") not in (None, installed_as):
+        problems.append(("npm-lock-alias", f"installs {new.get('name')} as {installed_as}"))
     resolved = new.get("resolved")
     if new.get("link"):
         problems.append(("npm-lock-source", "a link to a local path"))
@@ -576,36 +602,40 @@ def npm_lock_review(change: Change, old: bytes | None, new: bytes | None) -> Loc
             f"{name}: {old_version} -> {now.get('version')} {now.get('resolved', '')}"
         )
         entry = _digest(f"{change.content}\0{name}".encode())
-        for kind, why in _npm_entry_problems(was, now):
+        for kind, why in _npm_entry_problems(name, was, now):
             review.findings.append(Finding(kind, change.path, f"{name}: {why}", entry))
     return review
 
 
-def _cargo_packages(data: bytes | None) -> dict[tuple[str, str], dict[str, Any]]:
+def _cargo_packages(data: bytes | None) -> dict[tuple[str, str, str], dict[str, Any]]:
+    """Keyed by name, version AND source: a git build of `serde 1.0.0` is a different package
+    from crates.io's, and keying on less would let one shadow the other."""
     packages = tomllib.loads((data or b"").decode()).get("package", [])
-    return {(p["name"], p["version"]): p for p in packages}
+    keyed = {(p["name"], p["version"], p.get("source", "")): p for p in packages}
+    if len(keyed) != len(packages):
+        raise ValueError("duplicate [[package]] entries")
+    return keyed
+
+
+def _cargo_label(key: tuple[str, str, str]) -> str:
+    return f"{key[1]} ({key[2] or 'local'})"
 
 
 def cargo_lock_review(change: Change, old: bytes | None, new: bytes | None) -> LockReview:
     review = LockReview()
     before, after = _cargo_packages(old), _cargo_packages(new)
-    names = {name for name, _ in before.keys() | after.keys()}
-    for name in sorted(names):
-        was = sorted(v for n, v in before if n == name)
-        now = sorted(v for n, v in after if n == name)
+    for name in sorted({key[0] for key in before.keys() | after.keys()}):
+        was = sorted(_cargo_label(k) for k in before if k[0] == name)
+        now = sorted(_cargo_label(k) for k in after if k[0] == name)
         if was != now:
             review.lines.append(
                 f"{name}: {', '.join(was) or 'new'} -> {', '.join(now) or 'removed'}"
             )
     for key, package in sorted(after.items()):
-        entry = _digest(f"{change.content}\0{key[0]}\0{key[1]}".encode())
+        entry = _digest("\0".join((change.content, *key)).encode())
         label = f"{key[0]} {key[1]}"
-        source = package.get("source")
-        if (
-            source is not None
-            and source not in CRATES_IO
-            and before.get(key, {}).get("source") != source
-        ):
+        source = key[2]
+        if source and source not in CRATES_IO and key not in before:
             review.findings.append(
                 Finding("cargo-lock-source", change.path, f"{label}: source {source}", entry)
             )
@@ -771,7 +801,15 @@ def ai_findings(
     prompt = PROMPT.format(upstream=config.upstream, diff=material)
     verdict = parse_verdict(ask_model(config.review.model, prompt, api_key, opener))
     return [
-        Finding(f.kind, f.path, f.summary, contents.get(f.path, digest), f.severity)
+        Finding(
+            f.kind,
+            f.path,
+            f.summary,
+            # The severity and the wording are part of what was accepted: an acknowledged low
+            # remark does not cover a later high one on the same content.
+            "\0".join((contents.get(f.path, digest), f.severity, _digest(f.summary.encode()))),
+            f.severity,
+        )
         for f in verdict
     ]
 
@@ -847,13 +885,19 @@ def post_comment(repository: str, number: str, body: str, token: str, opener: Op
 # ---- the entry points -----------------------------------------------------------------------
 
 
-def _section(change: Change, binaries: set[str], span: str) -> str | None:
-    """What the model reads for one ordinary change; `None` when a finding carries it."""
+def _section(change: Change, span: str, read: Callable[[str], bytes | None]) -> str | None:
+    """What the model reads for one ordinary change; `None` when a finding carries it.
+
+    Any side that is UTF-8 is shown as text, even with a NUL byte in it (which also makes it a
+    binary finding): code hidden behind a NUL is still code the model should read.
+    """
     if GITLINK_MODE in (change.old_mode, change.new_mode):
         return None
-    if change.path in binaries:
+    if not (_utf8(read(change.old_blob)) and _utf8(read(change.new_blob))):
         return f"Deleted binary file: {change.path}\n" if change.status == "D" else None
-    diff = _git("diff", "--no-ext-diff", "--no-textconv", "--no-renames", span, "--", change.path)
+    diff = _git(
+        "diff", "--text", "--no-ext-diff", "--no-textconv", "--no-renames", span, "--", change.path
+    )  # fmt: skip
     if not diff:
         raise ReviewUnavailable(f"{change.path!r} changed but git shows no diff for it")
     return diff
@@ -885,12 +929,11 @@ def build_report(
         changes = parse_raw_diff(
             _git_bytes("diff", "--raw", "-z", "--no-renames", "--no-abbrev", span)
         )
-        binaries = parse_binary_paths(_git_bytes("diff", "--numstat", "-z", "--no-renames", span))
 
         def head_file(path: str) -> bytes | None:
             return _show(head, path)
 
-        report.findings += path_findings(config, changes, binaries, _blob)
+        report.findings += path_findings(config, changes, _blob)
         if config.ecosystem == "npm":
             report.findings += npm_manifest_findings(changes, _blob, head_file)
         else:
@@ -902,9 +945,9 @@ def build_report(
                 locked = lock_review(change, _blob)
                 report.findings += locked.findings
                 # A change no package entry explains is shown in full rather than summarised away.
-                summary = "\n".join(locked.lines) or _section(change, binaries, span) or ""
+                summary = "\n".join(locked.lines) or _section(change, span, _blob) or ""
                 sections[change.path] = f"Lockfile {change.path}:\n{summary}"
-            elif (section := _section(change, binaries, span)) is not None:
+            elif (section := _section(change, span, _blob)) is not None:
                 sections[change.path] = section
         account(changes, sections, report.findings)
         material = order_material(config, sections)
