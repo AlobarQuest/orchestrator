@@ -181,8 +181,15 @@ DISPATCH_VOCABULARY = ("workflow_dispatch", "factory-runner", "factory_runner")
 # Note the twin allowlist in tests/architecture/test_no_automatic_merge.py, which scans the same
 # directory with a different vocabulary — an edit to one that misses the other leaves that one
 # wrong.
+#
+# `secret-fingerprint.yml` is the fifth, and dispatches nothing: it runs on a schedule with no
+# permissions and prints a fingerprint of each Actions secret for the rotation executor
+# (ADR-0055 increment 7). It spells `FACTORY_RUNNER_TOKEN` because that is one of the secrets.
+# Its twin in test_no_automatic_merge.py needs no entry: the file names none of that guard's
+# merge vocabulary.
 MANUAL_DISPATCH_WORKFLOWS = {
     "factory-runner-pilot.yml",
+    "secret-fingerprint.yml",
     "attest-exit-criteria.yml",
     "attest-wave-exit.yml",
     "release-image.yml",

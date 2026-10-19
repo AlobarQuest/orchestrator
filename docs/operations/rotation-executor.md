@@ -112,6 +112,8 @@ expired, the node logged out and every write timed out before it connected (ADR-
    orchestrator_application = "eqj5l7k705fhi12x9i74fqf0"
    change_manager_application = "re45tafypao3nly3qa9a79dp"
    healthchecks_key_id = "8a41c80d-54a8-4b2b-aa93-b4e0012a99da"
+   github_app_id = "5383095"
+   github_app_key_id = "80c752aa-866c-43dc-a9e2-b4e80102d444"
 
    [admin_secrets]
    openrouter = "<the OpenRouter management key's secret id, in Rotation / Admin>"
@@ -130,7 +132,10 @@ expired, the node logged out and every write timed out before it connected (ADR-
    token only over TLS or to a tailnet address, and production Coolify has no TLS (ADR-0055
    amendment 9). `healthchecks_key_id` is the read-only Healthchecks key in
    `Rotation / Healthchecks`, read only when a scheduled reader's check is (the following
-   "Scheduled readers" section).
+   "Scheduled readers" section). `github_app_id` and `github_app_key_id` name the rotation
+   GitHub App and its private key in `Rotation / Admin`; they come together, and the executor
+   reads the key only when a step writes an Actions secret or a wait reads a report ("Actions
+   secrets").
 
 3. Enable the timer: `orb -m rotation-executor -u root systemctl enable --now
    rotation-worker.timer`. Read its passes with `journalctl -u rotation-worker` (one JSON line per
@@ -155,6 +160,7 @@ executor. None is ever printed, passed as an argument, or kept on the Mac.
 | The executor's WORKER bearer | BWS secret `rotation-executor WORKER bearer` in `Rotation / Executor`; its hash in the orchestrator's `ORCHESTRATOR_M2M_CREDENTIALS` under key `rotation-executor-1`, agent `rotation-executor` | The executor, from BWS at each pass |
 | The read-only Healthchecks API key | BWS secret `Rotation / Healthcheck` in `Rotation / Healthchecks`; its id in `config.toml` as `healthchecks_key_id` | The executor, from BWS, only while it reads a scheduled reader's check |
 | The OpenRouter management key | BWS secret `openrouter management key` in `Rotation / Admin`; its id in `config.toml`'s `admin_secrets` | The executor, from BWS, only while an `openrouter` unit mints or revokes |
+| The rotation GitHub App's private key (`alobar-sds-rotation`, App id 5383095) | BWS secret `rotation github app private key` in `Rotation / Admin`; its id in `config.toml` as `github_app_key_id` | The executor, from BWS, only while it writes an Actions secret or reads a report |
 | The production Coolify token (`read`, `write`, `deploy`; not `read:sensitive`) | BWS secret `rotation-coolify-token` in `Rotation / Coolify`; its id in `admin_secrets` as `orchestrator` and `change-manager` | The executor, from BWS, only while an `orchestrator` or `change-manager` unit hosts or retires |
 | The BWS projects | Bitwarden Secrets Manager | The root: write on `Rotation / Work` and `Rotation / Keepers`, read on `Rotation / Admin`, `Rotation / Coolify`, `Rotation / Executor` and `Rotation / Healthchecks`, nothing else. A consumer account: a direct read grant on each keeper secret it consumes, nothing else in `Rotation / Keepers` |
 
@@ -383,6 +389,69 @@ orchestrator's `ORCHESTRATOR_M2M_CREDENTIALS` and undo the change by hand, in bo
 
 Restart, and confirm `https://sds.alobar.net/health/live` answers. The keeper still holds the old
 value after a failed `mint`, because store comes after host, so every consumer still works.
+
+## Actions secrets
+
+An Actions secret is write-only, so the executor writes it through a dedicated GitHub App and
+verifies it through what a workflow in the same repository reports (ADR-0055 amendment 10).
+
+- **The App** is `alobar-sds-rotation` (installation `173083952`). It holds Secrets: write,
+  Actions: read and Metadata: read, has no webhook, and is installed only on the repositories that
+  hold a registered Actions-secret copy: brain, change-manager, infraops-mcp-server,
+  intent-packages, orchestrator and security-standards. A repository that gains a registered copy
+  must be added to the installation (**Settings > Developer settings > GitHub Apps >
+  alobar-sds-rotation > Install App**), or every write to it is refused.
+- **A write** mints a token for the destination's one repository with exactly
+  `{secrets: write, metadata: read}`, refuses unless GitHub's answer names that repository and
+  those permissions alone, seals the value with the repository's public key, and counts only once
+  the secret's `updated_at` moved. It writes nothing the approved destination doesn't name.
+- **The report** is `.github/workflows/secret-fingerprint.yml`, byte-identical in every holding
+  repository. It runs hourly with no permissions and prints `fingerprint <NAME> <sha256 prefix>
+  <length>` for each secret. A new secret name in a repository means adding it to that file.
+  The executor reads the newest successful run's job log with a token minted
+  `{actions: read, metadata: read}`, following GitHub's one redirect to its log storage with no
+  credential.
+- **A copy counts as switched once its report shows the keeper's fingerprint.** A unit that
+  retires waits unclaimed until every copy has switched, so a retire can wait up to an hour after
+  store. A repository whose newest successful report is older than three hours, or that has none,
+  refuses the unit before its claim: GitHub turns a schedule off after 60 days without repository
+  activity, and a stopped report must be seen, not waited on. Re-enable it in the repository's
+  **Actions** tab.
+
+To see what the reports say, `read-consumers` covers Actions copies too (it reads the keeper as
+the value to compare).
+
+## GitHub PATs and the Atlassian token
+
+A person mints these in the provider's console; the executor does the rest (ADR-0055
+amendment 10).
+
+- **`github-pat`** (`factory-pr-token`, `github-finegrained-mirror`): a human act mints and
+  stages, then `store` (AC-001 to AC-004: verify-new, store, distribute, verify-consumers) and
+  `retire` (AC-005 to AC-007: verify-consumers, retire-old, confirm-dead). Neither writes a hosted
+  service, so both may set `touches_no_hosted_service: true`. Retire revokes the old value by value
+  at `POST /credentials/revoke`, sent with no credential, then confirm-dead rechecks `GET /user`
+  until it answers 401 (measured: within six seconds). For a credential with Actions-secret copies,
+  the `retire` unit waits unclaimed while a dispatched run is live, because a revoke fails that
+  run's push; the revoke asks once more and refuses if a run started since.
+- **`bitbucket`** (`bitbucket-mirror-token`): a human act mints and stages, then `store` (AC-001,
+  AC-002), `verify` (AC-003), a human act that revokes the old token in the Atlassian console, and
+  `confirm` (AC-004). The `verify` unit waits unclaimed until every reader has switched; revoke
+  only after it completes.
+- **`orchestrator-distributed`** (`orchestrator-factory-runner-bearer`): the orchestrator plan
+  with distribute after store, AC-001 to AC-010, both units windowed.
+
+### Mint and stage a value by hand
+
+1. In the provider's console, create the token. For `factory-pr-token`, create a new
+   fine-grained PAT, never a regenerated one (regenerating kills the old value at once): its
+   repository list is every factory target and factory-runner, and its permissions are the current
+   PAT's (at least Contents, Pull requests and Workflows read and write). For the mirror PAT, use
+   the registry's `replacement_scope`.
+2. In the Bitwarden console, in `Rotation / Work`, create the secret
+   `rotation/<credential id>/<occurrence>/staging` and paste the value. Run `pbcopy < /dev/null`.
+3. At `/review`, resolve the human act with a note. The fingerprint is optional: `store`'s
+   verify-new proves the value works before anything depends on it.
 
 ## change-manager's bearers
 

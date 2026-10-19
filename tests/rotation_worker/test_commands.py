@@ -135,7 +135,9 @@ def test_read_consumers_prints_each_reader_s_answer_and_exits_2_on_one_unreadabl
             at = {"after": stored + timedelta(hours=1), "before": stored - timedelta(hours=1)}
             return [{"observed_at": at[subject].isoformat()}] if subject in at else []
 
-    setup = cast(Setup, SimpleNamespace(mirror=None, healthchecks=None, client=Client()))
+    setup = cast(
+        Setup, SimpleNamespace(mirror=None, healthchecks=None, client=Client(), github_app=None)
+    )
     assert cli.read_consumers(setup, "x", stored) == cli.EXIT_UNREADABLE
     lines = capsys.readouterr().out.splitlines()
     assert lines[0].startswith(
@@ -152,3 +154,20 @@ def test_read_consumers_prints_each_reader_s_answer_and_exits_2_on_one_unreadabl
 def test_read_consumers_needs_a_zoned_instant() -> None:
     with pytest.raises(SystemExit):
         cli.main(["read-consumers", "x", "--stored-at", "2026-10-15T06:00:00"])
+
+
+def test_the_rotation_app_is_built_only_when_configured(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    from rotation_worker.cli import open_github_app
+    from rotation_worker.config import Config
+    from rotation_worker.github_actions import RotationApp
+    from tests.rotation_worker.stores import MemoryStore
+
+    config = Config(
+        "https://sds.test", "k", "o", "w", None, tmp_path / "t", tmp_path, "0123456789ab"
+    )
+    store = MemoryStore()
+    assert open_github_app(config, store) is None
+    configured = replace(config, github_app_id="5383095", github_app_key_id="id")
+    assert isinstance(open_github_app(configured, store), RotationApp)

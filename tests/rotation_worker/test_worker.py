@@ -15,6 +15,7 @@ from rotation_worker.adapters import ADAPTERS, AdapterContext
 from rotation_worker.checks import Approved
 from rotation_worker.contract import ContractError, Rotation
 from rotation_worker.git_mirror import MirrorError, RepoMirror
+from rotation_worker.github_actions import ActionsSecrets, FingerprintReports, RotationApp
 from rotation_worker.orchestrator_client import Lease, OrchestratorClient, OrchestratorError
 from rotation_worker.readers import ObservationRead, Read, ReadError, ReadUnavailable
 from rotation_worker.registry import RegistryEntry
@@ -532,3 +533,51 @@ def test_a_unit_that_writes_nothing_never_asks(h: Harness, monkeypatch: pytest.M
     _gate(h, monkeypatch, [])
     h.add("u1", "mint")
     assert run_pass(h.setup()) == 1
+
+
+def test_a_configured_rotation_app_reaches_the_unit_and_the_reads(
+    h: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    built: dict[str, Any] = {}
+
+    class Run:
+        def __init__(self, **arguments: Any) -> None:
+            built["run"] = arguments
+
+        def run(self, unit: Any) -> None:
+            pass
+
+    class Reads:
+        def __init__(self, *arguments: Any, **keywords: Any) -> None:
+            built["reads"] = keywords
+
+        def pending(self, stored_at: Any) -> list[str]:
+            return []
+
+    monkeypatch.setattr(worker, "UnitRun", Run)
+    monkeypatch.setattr(worker, "ConsumerReads", Reads)
+    _scheduled(h)
+    h.add("u1", "retire")
+    app = RotationApp("5383095", lambda: Value("unused"))
+    assert run_pass(replace(h.setup(), github_app=app)) == 1
+    assert isinstance(built["run"]["actions_secrets"], ActionsSecrets)
+    assert isinstance(built["reads"]["reports"], FingerprintReports)
+    assert built["reads"]["keeper"]() == h.store.read(h.keeper).fingerprint
+
+
+def test_without_a_rotation_app_nothing_can_write_or_read_an_actions_secret(
+    h: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    built: dict[str, Any] = {}
+
+    class Run:
+        def __init__(self, **arguments: Any) -> None:
+            built.update(arguments)
+
+        def run(self, unit: Any) -> None:
+            pass
+
+    monkeypatch.setattr(worker, "UnitRun", Run)
+    h.add("u1", "mint")
+    assert run_pass(h.setup()) == 1
+    assert built["actions_secrets"] is None

@@ -285,7 +285,7 @@ def test_an_attestation_of_another_value_does_not_count(tmp_path: Path) -> None:
 
 
 def test_one_attestation_covers_one_attested_consumer(tmp_path: Path) -> None:
-    second = 'gh-actions-secret repo="AlobarQuest/x" name="Y"'
+    second = 'shell-export file="/home/x/.profile" var="Y"'
     h = Harness(tmp_path)
     h.rotation = replace(h.rotation, destinations=(*h.rotation.destinations, second))
     h.run("mint")
@@ -607,10 +607,10 @@ def test_filed_evidence_alone_never_finishes_a_unit(tmp_path: Path) -> None:
 
 
 def test_every_consumer_kind_has_one_way_to_be_verified() -> None:
-    from rotation_worker.contract import ATTESTED_KINDS, READ_BACK_KINDS
+    from rotation_worker.contract import ACTIONS_KIND, ATTESTED_KINDS, READ_BACK_KINDS
     from rotation_worker.destinations import HOSTED_KINDS, IDENTITY_FIELDS
 
-    classes = [{"provider"}, READ_BACK_KINDS, ATTESTED_KINDS, HOSTED_KINDS]
+    classes = [{"provider"}, READ_BACK_KINDS, ATTESTED_KINDS, HOSTED_KINDS, {ACTIONS_KIND}]
     for kind in IDENTITY_FIELDS:
         assert sum(kind in group for group in classes) == 1, kind
 

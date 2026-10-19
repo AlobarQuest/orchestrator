@@ -318,9 +318,10 @@ Placement rule: global CLAUDE.md §7.
 - Unknown capability names fail closed but mistyped levels (e.g. `requires_approval`) read as
   prohibited and pass orchestrator gates while the runner refuses the envelope. History:
   `docs/history/claude-md-invariants-archive.md` #150.
-- `FACTORY_PR_TOKEN` (BWS `a3240c2e-…`) lives as Actions secrets in eight repositories, listed
-  per copy in factory-runner's `.cred-consumers.toml`; a rotation re-sets every copy and is
-  verified with a workflow-file push probe. Detail: `docs/operations/credentials.md`.
+- `FACTORY_PR_TOKEN` (BWS `a3240c2e-…`) lives as Actions secrets in the repositories listed per
+  copy in factory-runner's `.cred-consumers.toml`; the rotation executor re-sets every copy and
+  verifies each by its repository's `secret-fingerprint.yml` report. Detail:
+  `docs/operations/credentials.md`, `docs/operations/rotation-executor.md`.
 - Named-check evidence is ingested only for criteria declared `automated_check`, with `check_name`
   the JOB name. A human adjudication does not complete a unit: `AWAITING_REVIEW -> COMPLETED` is a
   separate human gate. History: `docs/history/claude-md-invariants-archive.md` #154.
@@ -510,3 +511,10 @@ Placement rule: global CLAUDE.md §7.
   change-manager booting. All four keepers must be readable by the root before its first
   rotation. Restarts wait while any registered change-manager reader is mid-run. Detail:
   `docs/operations/rotation-executor.md`.
+- The executor writes an Actions secret only through the rotation App, with a token minted for
+  the destination's one repository and exactly `{secrets: write, metadata: read}` (refused if
+  GitHub grants more), and counts a copy switched only when that repository's hourly
+  `secret-fingerprint.yml` report shows the keeper's fingerprint; no report in three hours
+  refuses the unit. A repository gaining a registered copy needs the App installed and the secret
+  added to its report. A plan with Actions-secret destinations needs a distribute step. Detail:
+  `docs/operations/rotation-executor.md`, "Actions secrets".

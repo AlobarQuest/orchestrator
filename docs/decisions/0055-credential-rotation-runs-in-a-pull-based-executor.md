@@ -297,7 +297,7 @@ exception, and Devon accepts these with this ADR.
 | `coolify-env` (a third-party key a hosted app uses) | A human attestation that the app works after restart, until an app-level probe exists | **Yes** |
 | `runtime-fetch` on a schedule | The keeper readback, the consumer account's read proven at the keeper move (decision 4), and the consumer's next run reported green by Healthchecks, read directly with a read-only Healthchecks API key in `Rotation / Healthchecks` rather than through the orchestrator | No |
 | `runtime-fetch` run only when invoked (for example the intent-packages CLI) | A human attestation after running it | **Yes** |
-| `gh-actions-secret` | A human attestation until a probe workflow exists (increment 7 decides it; it needs both workflow-guard allowlists) | **Yes** |
+| `gh-actions-secret` | Its repository's hourly `secret-fingerprint.yml` report showing the keeper's fingerprint, read with the rotation App (amendment 10) | No |
 | `keychain` | Not a machine kind. `openrouter-generic`'s Keychain copy is dropped (below); BWS machine tokens' Keychain consumers are human-rotated | — |
 
 ## Threat model
@@ -308,7 +308,7 @@ exception, and Devon accepts these with this ADR.
 |---|---|---|---|---|
 | Executor BWS token (**root**) | The VM only | The executor; anything with root in the VM | Write on `Rotation / Keepers` and `Rotation / Work`; read on `Rotation / Admin`, `Rotation / Executor` and `Rotation / Healthchecks` (amendment 6) | Devon, by hand |
 | OpenRouter management key | `Rotation / Admin` | The root | Account-wide, unscoped (provider limit) | Devon, by hand |
-| Rotation GitHub App private key (increment 7; amendment 1) | `Rotation / GitHub` | The root | Mints installation tokens with Secrets: write (and Metadata: read) on only the repositories where the App is installed: those holding a registered Actions-secret copy | Devon, by hand |
+| Rotation GitHub App private key (increment 7; amendments 1 and 10) | `Rotation / Admin` | The root | Mints installation tokens with Secrets: write or Actions: read (and Metadata: read) on only the repositories where the App is installed: those holding a registered Actions-secret copy | Devon, by hand |
 | Production Coolify token (amendment 1) | `Rotation / Coolify` | The root | Team-wide `read`, `write` and `deploy`, no `read:sensitive`: env writes, restarts, creating and deleting applications, projects, servers, databases and SSH keys; can run any image, so probably reaches secrets from a container | Devon, by hand |
 | Read-only Healthchecks API key | `Rotation / Healthchecks` | The root | Read check status only | Devon, by hand |
 | Executor WORKER bearer | `Rotation / Executor`, readable by the root | The root | Claim and file evidence on rotation units only (decision 1) | Devon, by hand |
@@ -343,11 +343,11 @@ mechanics where a provider has an API.
 | Class | Live | Mint | Deploy | Retire-old | Notes |
 |---|---|---|---|---|---|
 | OpenRouter key | 1 | machine | machine (BWS) | machine, today's key included (amendment 5) | |
-| GitHub PAT (fine-grained) | 2 | human | machine for BWS and (increment 7) Actions secrets, through the rotation App's installation tokens; human for Coolify | machine (`POST /credentials/revoke`) | |
-| Atlassian API token | 1 | human | machine for BWS; human for Coolify | human | Revoke API unverified |
+| GitHub PAT (fine-grained) | 2 | human | machine for BWS and Actions secrets, through the rotation App's installation tokens; no Coolify copy once the mirror fetches from BWS (amendment 10) | machine (`POST /credentials/revoke`, by value) | |
+| Atlassian API token | 1 | human | machine for BWS; no Coolify copy once the mirror fetches from BWS (amendment 10) | human, gated by a `verify` unit | Revoke API unverified |
 | BWS machine token | 4 | human | human (Keychain consumers on the Mac) | human | Executor records evidence only; confirm-dead is Devon's fresh-login check (amendment 1) |
 | change-manager bearer | 4 | machine | machine through the Coolify token, from increment 6 (amendment 1) | ends the overlap | Each variable holds the bearer's sha256 hash with an optional `previous` (amendment 9, decision 6), so no value passes through Coolify |
-| orchestrator bearer | 4 of 6 | machine | machine through the Coolify token, from increment 6 (amendment 1) | ends the overlap | SYSTEM and VERIFIER stay hand-rotated (decision 4); observer and drift-reporter rotate together; factory-runner's bearer waits for increment 7's Actions-secret writer |
+| orchestrator bearer | 4 of 6 | machine | machine through the Coolify token, from increment 6 (amendment 1) | ends the overlap | SYSTEM and VERIFIER stay hand-rotated (decision 4); observer and drift-reporter rotate together; factory-runner's bearer distributes its Actions secrets through the rotation App (`orchestrator-distributed`, amendment 10) |
 
 **The Keychain copy is dropped.** Devon decided on 2026-10-08 that whatever needs
 `OPENROUTER_API_KEY` fetches it from BWS, so the credential's only stored copy is its keeper. The
@@ -1157,3 +1157,101 @@ and the orchestrator's loaded hash still held the old value, and every reader ke
 Devon logged the node back in and disabled its key expiry. HQ requeued the unit as SYSTEM, since
 it had used one of its three attempts, for the next `live_estate` window.
 
+## Amendment 10 — Increment 7 decisions (2026-10-19)
+
+Increment 7's handoff (`docs/superpowers/plans/2026-10-19-handoff-increment-7-github-atlassian.md`)
+inventoried the GitHub PATs, the Atlassian token and factory-runner's bearer, and put its open
+decisions to Devon. The build plan is `docs/superpowers/plans/2026-10-19-increment-7-build-plan.md`.
+
+### What the inventory found
+
+- **Four live keepers hold four values.** `factory-pr-token` (in `SDS Operator`) and the
+  factory-runner bearer, the mirror PAT and the Bitbucket token (all three in `Ops / Platform`).
+  No keeper of the four has a scheduled BWS reader.
+- **The two classic PATs were already revoked**, by infraops' legacy executor on 2026-07-02, which
+  recorded "revoke confirmed dead (401)" for both. Their keepers answer 404 to both Mac accounts,
+  which in the same run read three other secrets in the same project, so the keepers are deleted.
+- **The factory-runner bearer's entry is `factory-runner-github`**, read through the executor's own
+  client from the identities route; its loaded hash equals the keeper's sha256 and no other entry
+  shares it.
+- **Copies the registry didn't list:** a plaintext `FACTORY_PR_TOKEN` in `~/.portfolio/credentials.env`,
+  read nightly by project-standards' portfolio scan; and `FACTORY_RUNNER_CREDENTIAL_KEY_ID` beside
+  each `FACTORY_RUNNER_TOKEN`, which is the entry's key id and isn't a secret.
+- **Copies with no reader:** project-standards holds `FACTORY_PR_TOKEN`, `FACTORY_RUNNER_TOKEN` and
+  the key id but isn't a factory target; factory-runner's own `FACTORY_PR_TOKEN` has never run. The
+  factory-runner bearer's `runtime-fetch` row named code on an unmerged branch with no schedule.
+
+### Devon's answers (2026-10-19)
+
+1. **Actions-secret copies are verified by machine.** Devon rejected human attestation: "What we are
+   not going to do is automate this work via a human doing the tasks." Each holding repository runs
+   `.github/workflows/secret-fingerprint.yml` hourly, with no permissions, printing each secret's
+   sha256 prefix and length. The executor reads the latest successful run's job log with a token
+   minted `{actions: read, metadata: read}` and counts a copy switched when the report matches the
+   keeper. The rejected alternative was the executor dispatching the probe, which needs
+   `actions: write` over every workflow in those repositories.
+2. **The classic PATs stay as they are.** No revoke-only path; their registry entries stay as the
+   record infraops reads.
+3. **The mirror fetches both tokens from BWS each cycle** and pings a Healthchecks check, so its
+   Coolify copies go away and it is an ordinary scheduled `runtime-fetch` reader. It reads them
+   with its own BWS machine account, directly granted the two keepers. The rejected alternative,
+   the executor writing the mirror's Coolify env, would have had to count the mirror switched from
+   its restart, which the executor has no trusted record of.
+4. **A person mints a PAT or an Atlassian token in the console** and pastes it into the rotation's
+   staging secret in `Rotation / Work`, then resolves the human act at `/review`.
+   `factory-pr-token`'s two `rotation_preconditions` are met at that mint: a new PAT (not a
+   regenerated one, which would kill the old value at once) with the factory targets and
+   factory-runner in its repository list and the current PAT's permissions.
+5. **The App's private key lives in `Rotation / Admin`**, correcting the asset row's
+   `Rotation / GitHub`, which the root has no grant on.
+6. **The portfolio scan fetches `FACTORY_PR_TOKEN` from BWS each run** through `sds-operator`, with a
+   Healthchecks check that fails when the fetch does. This reverses project-standards' recorded
+   choice to stay out of BWS, knowingly.
+7. **The copies with no reader are deleted**, with their registry rows.
+8. **The factory-runner bearer's `runtime-fetch` row is dropped.**
+
+### Measured before the build (2026-10-19)
+
+- **`POST /credentials/revoke`** with a throwaway fine-grained PAT, from the VM: the throwaway
+  answered `GET /user` 200 and a malformed control 401; the revoke, sent with no credential,
+  answered 202 with an empty body; the throwaway answered 401 within six seconds and still at +30 s.
+  GitHub's documentation says the endpoint refuses an authenticated request with 403 and doesn't
+  report what it revoked, so death is shown by the probe alone.
+- **Question 6, repeated against the real App** (`alobar-sds-rotation`, installation `173083952`,
+  selected repositories only: brain, change-manager, infraops-mcp-server, intent-packages,
+  orchestrator, security-standards). A mint for orchestrator with `{secrets: write, metadata: read}`
+  answered 201 with exactly those permissions and that one repository; a mint asking
+  `actions: write`, or for a repository outside the installation, answered 422. A token minted with
+  `{metadata: read}` got 403 `Resource not accessible by integration` on the write; the
+  `secrets: write` token wrote a throwaway secret (201, `updated_at` set) and deleted it (204, then
+  404). The token is longer than 100 characters, as GitHub announced.
+- **GitHub answers a job's log with a 302** to a signed URL on
+  `productionresultssa<n>.blob.core.windows.net`, so the report read follows that one hop with a
+  client bounded to that host and carrying no credential.
+
+### What the contract gained
+
+- **`_distribute` writes Actions secrets** through a writer the unit run is given, one repository
+  and secret name per approved destination. `gh-actions-secret` leaves `ATTESTED_KINDS`: it is
+  verified by its report, read like a scheduled reader, never attested.
+- **A plan that has Actions-secret destinations must have a distribute step**, or the unit is
+  refused before its claim.
+- **The wait before the claim also gates a person's revoke**: a unit straight before a human
+  retire-old act waits unclaimed, as a retiring unit does, until every reader has switched. Such a
+  plan is refused unless every consumer is machine-verified, and only a human act that verifies
+  consumers counts as attesting a reader.
+- **A PAT's retire waits unclaimed while a dispatched run is live**, the way change-manager's
+  restarts wait for its readers: a revoke would fail that run's push.
+- **One new dependency, PyNaCl**, locked by hash in `uv.lock`. The App's login uses `pyjwt[crypto]`,
+  which the orchestrator already had.
+
+### The per-class rows, as amended
+
+| Class | Mint | Deploy | Retire-old |
+|---|---|---|---|
+| GitHub PAT (fine-grained) | human (console, then the staging secret) | machine: BWS and Actions secrets through the rotation App; no Coolify copy after the mirror's cutover | machine, by value at `POST /credentials/revoke`, then confirm-dead rechecks until 401 |
+| Atlassian API token | human | machine: BWS; no Coolify copy after the mirror's cutover | human (console), gated by the `verify` unit; confirm-dead machine |
+| orchestrator bearer | machine | machine through the Coolify token, and the factory-runner bearer's Actions secrets through the rotation App (`orchestrator-distributed`) | ends the overlap |
+
+The verification table's `gh-actions-secret` row is no longer an exception to R15: a copy is
+verified by its repository's fingerprint report.

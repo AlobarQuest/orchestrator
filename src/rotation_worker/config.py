@@ -21,6 +21,7 @@ from rotation_worker.values import Value
 DEFAULT_PATH: Final = Path("/etc/rotation-worker/config.toml")
 UUID_PATTERN: Final = re.compile(r"^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$")
 REVISION_PATTERN: Final = re.compile(r"^[0-9a-f]{7,12}$")
+APP_ID_PATTERN: Final = re.compile(r"^[1-9][0-9]{0,11}$")
 
 
 class ConfigError(RuntimeError):
@@ -54,6 +55,10 @@ class Config:
     # The read-only Healthchecks key in `Rotation / Healthchecks`, read only when a scheduled
     # reader's check is (ADR-0055 amendment 9, decision 5).
     healthchecks_key_id: str | None = None
+    # The rotation GitHub App (increment 7): its numeric id, and its private key's secret id in
+    # `Rotation / Admin`. Both or neither; read only when a step writes or reads an Actions secret.
+    github_app_id: str | None = None
+    github_app_key_id: str | None = None
 
     @property
     def mirror_root(self) -> Path:
@@ -76,6 +81,7 @@ def load(path: Path) -> Config:
         not isinstance(healthchecks_key, str) or not UUID_PATTERN.fullmatch(healthchecks_key)
     ):
         raise ConfigError("healthchecks_key_id must be a lowercase UUID")
+    app_id, app_key = _github_app(raw)
     admin_secrets = raw.get("admin_secrets", {})
     if not isinstance(admin_secrets, dict) or not all(
         isinstance(name, str) and isinstance(uuid, str) and UUID_PATTERN.fullmatch(uuid)
@@ -99,7 +105,20 @@ def load(path: Path) -> Config:
         orchestrator_application=_optional_string(raw, "orchestrator_application"),
         change_manager_application=_optional_string(raw, "change_manager_application"),
         healthchecks_key_id=healthchecks_key,
+        github_app_id=app_id,
+        github_app_key_id=app_key,
     )
+
+
+def _github_app(raw: dict[str, Any]) -> tuple[str | None, str | None]:
+    app_id, app_key = raw.get("github_app_id"), raw.get("github_app_key_id")
+    if app_id is None and app_key is None:
+        return None, None
+    if not isinstance(app_id, str) or not APP_ID_PATTERN.fullmatch(app_id):
+        raise ConfigError("github_app_id is the App's numeric id, as a string, with its key id")
+    if not isinstance(app_key, str) or not UUID_PATTERN.fullmatch(app_key):
+        raise ConfigError("github_app_key_id must be a lowercase UUID, with the App's id")
+    return app_id, app_key
 
 
 def read_root_token(path: Path) -> Value:

@@ -92,7 +92,7 @@ fork-sync = "fork_sync.cli:app"
 # ADR-0055: the credential-rotation executor's one added dependency, the BWS SDK, so values reach
 # BWS in-process rather than in a CLI's argument list. Its own group so the orchestrator image
 # (`--no-dev`) never installs it; the executor's VM installs `--no-dev --group rotation-worker`.
-rotation-worker = ["bitwarden-sdk==2.1.0"]
+rotation-worker = ["bitwarden-sdk==2.1.0", "pynacl==1.5.0"]
 dev = [
   {include-group = "rotation-worker"},
   "pytest>=8.0",

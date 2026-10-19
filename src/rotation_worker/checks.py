@@ -15,7 +15,7 @@ from intent-packages' and the registries' public git:
 * a unit declaring a host with no overlap has a host step (whether an overlap is impossible is
   `m2m_setting.build`'s to refuse, from what the orchestrator serves);
 * every `runtime-fetch` consumer can be verified: the registry names its scheduled read, or the
-  plan holds a human act to attest it.
+  plan holds a human act to attest it; and an Actions secret has a distribute step to write it.
 
 The result names everything a unit run needs, so nothing the unit does reads the orchestrator's
 word for any of it.
@@ -30,7 +30,16 @@ from typing import Any, Final
 from rotation_worker import envelope
 from rotation_worker.adapters import ADAPTERS, Adapter
 from rotation_worker.canonical import CanonicalError, package_hash
-from rotation_worker.contract import ContractError, HumanAct, Plan, Rotation, StepKind, UnitPlan
+from rotation_worker.contract import (
+    ACTIONS_KIND,
+    READ_BACK_KINDS,
+    ContractError,
+    HumanAct,
+    Plan,
+    Rotation,
+    StepKind,
+    UnitPlan,
+)
 from rotation_worker.destinations import HOSTED_KINDS, parse
 from rotation_worker.envelope import ADAPTER_KEY
 from rotation_worker.evidence import MAX_DESTINATION
@@ -117,6 +126,7 @@ def check_unit(
     without_overlap = _declared_without_overlap(constraints, unit)
     reads = scheduled_reads(entry.credential)
     _check_runtime_fetch_verifiable(packaged, adapter.plan, reads)
+    _check_human_retire_verifiable(packaged, adapter.plan, reads)
     occurrence = fields.get("occurrence")
     if not isinstance(occurrence, str) or not occurrence.strip():
         raise ContractError("the approved revision names no occurrence")
@@ -193,6 +203,10 @@ def _check_destination_fit(
         # Only an adapter whose provider is the hosted service can write or verify one: refuse
         # before claiming rather than strand a rotation half done.
         raise ContractError("this adapter reaches no hosted consumer")
+    actions = [d for d in destinations if parse(d)["kind"] == ACTIONS_KIND]
+    if actions and StepKind.DISTRIBUTE not in {step.kind for step in plan.steps()}:
+        # Nothing else writes an Actions secret, so its copies would keep the old value.
+        raise ContractError("this adapter writes no Actions secret")
     if any(len(destination) > MAX_DESTINATION for destination in destinations):
         raise ContractError("a destination is longer than rotation-step/1 evidence can carry")
 
@@ -200,10 +214,35 @@ def _check_destination_fit(
 def _check_runtime_fetch_verifiable(
     destinations: list[str], plan: Plan, reads: Mapping[str, Read]
 ) -> None:
-    # A plan with no human act has nobody to attest a reader, so each needs a read, or retire
-    # could never run.
-    if any(isinstance(segment, HumanAct) for segment in plan.segments):
+    # Only a human act that verifies consumers can attest a reader (a person minting or
+    # revoking attests nothing), so without one each reader needs a read, or retire could
+    # never run.
+    if any(_attests(segment) for segment in plan.segments):
         return
     for destination in destinations:
         if parse(destination)["kind"] == "runtime-fetch" and destination not in reads:
             raise ContractError(f"no read and no human act verifies {destination}")
+
+
+def _check_human_retire_verifiable(
+    destinations: list[str], plan: Plan, reads: Mapping[str, Read]
+) -> None:
+    # A person who revokes has no machine step after the last verify_consumers to re-check
+    # every consumer, so the wait before that unit's claim must be able to see each one.
+    human_retire = any(
+        isinstance(segment, HumanAct)
+        and any(step.kind is StepKind.RETIRE_OLD for step in segment.steps)
+        for segment in plan.segments
+    )
+    if not human_retire:
+        return
+    for destination in destinations:
+        kind = parse(destination)["kind"]
+        if kind != "provider" and kind not in READ_BACK_KINDS and destination not in reads:
+            raise ContractError(f"a person revokes, and nothing machine-verifies {destination}")
+
+
+def _attests(segment: UnitPlan | HumanAct) -> bool:
+    return isinstance(segment, HumanAct) and any(
+        step.kind is StepKind.VERIFY_CONSUMERS for step in segment.steps
+    )
