@@ -819,3 +819,53 @@ def test_attributes_on_the_base_cannot_hide_code(tmp_path: Path, monkeypatch: An
     )
     assert {(f.kind, f.path) for f in report.findings} == {("binary", "nul.js")}
     assert "PLAIN_PAYLOAD" in _prompt(seen) and "NUL_PAYLOAD" in _prompt(seen)
+
+
+def test_the_fork_s_own_github_is_not_part_of_the_reviewed_change(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """The sync restores main's `.github/`, so it introduces nothing there: it is not reviewed, and
+    adding an acknowledgement to main leaves the reviewed diff -- and every digest bound to it --
+    unchanged. Before this, an acknowledgement of a whole-diff finding could never match."""
+    upstream = _repo(tmp_path, monkeypatch, {"src.rs": "1\n", ".github/up.yml": "upstream\n"})
+    fork: dict[str, str | None] = {".github/up.yml": None, ".github/fork-sync.toml": CARGO}
+
+    def tree(github: Mapping[str, str | None]) -> None:
+        for path, content in github.items():
+            target = tmp_path / path
+            if content is None:
+                target.unlink(missing_ok=True)
+            else:
+                target.write_text(content)
+
+    tree(fork)
+    main = _commit(tmp_path, {}, "fork .github")
+    _git(tmp_path, "checkout", "-q", "-b", "sync", upstream)
+    tree(fork)
+    sync = _commit(tmp_path, {"src.rs": "2\n"}, "upstream release, fork .github")
+    _git(tmp_path, "checkout", "-q", "main")
+    acked = _commit(tmp_path, {".github/fork-sync-acks.toml": "# none\n"}, "ack")
+    _git(tmp_path, "checkout", "-q", "sync")
+    resynced = _commit(tmp_path, {".github/fork-sync-acks.toml": "# none\n"}, "resync .github")
+
+    prompts = []
+    for base, head in ((main, sync), (acked, resynced)):
+        seen: list[Any] = []
+        report = review.build_report(
+            review.parse_config(CARGO),
+            base,
+            head,
+            "key",
+            _model('{"findings": []}', seen),
+            _no_audit,
+        )
+        assert report.unavailable is None and report.findings == []
+        prompts.append(_prompt(seen))
+    assert prompts[0] == prompts[1]
+    assert "src.rs" in prompts[0] and ".github" not in prompts[0]
+
+
+def test_a_path_the_head_changed_away_from_the_base_tip_is_still_reviewed() -> None:
+    a = review.Change("M", "a", "100644", "100644", "1" * 40, "2" * 40)
+    b = review.Change("M", "b", "100644", "100644", "1" * 40, "3" * 40)
+    assert review.merged_changes([a, b], [b]) == [b]
