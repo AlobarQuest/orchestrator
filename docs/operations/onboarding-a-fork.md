@@ -40,8 +40,8 @@ Globs are `fnmatch` patterns, so `*` crosses directories. The ecosystem defaults
 
 | Ecosystem | Version read from | Build | Test | Audit (built in) |
 |-|-|-|-|-|
-| `cargo` | `Cargo.toml` | `cargo build --locked --all-targets` | `cargo test --locked` | `cargo-audit audit --file <copy of Cargo.lock>` (cargo-audit 0.22.2) |
-| `npm` | `package.json` | `npm run build` | `npm test` | `npm audit --audit-level=high --userconfig /dev/null --registry https://registry.npmjs.org` |
+| `cargo` | `Cargo.toml` | `cargo build --locked --all-targets` | `cargo test --locked` | `cargo-audit audit --json --file <copy of Cargo.lock>` (cargo-audit 0.22.2) |
+| `npm` | `package.json` | `npm run build` | `npm test` | `npm audit --json --audit-level=high --userconfig /dev/null --registry https://registry.npmjs.org` |
 
 The audit is not configurable: it runs on copies of the head's manifest and lockfile in a scratch
 directory, so no configuration the head ships (`.npmrc`, `.cargo/config.toml`) applies to it.
@@ -95,7 +95,10 @@ with exit 2. The deterministic findings are:
   `checksum` change at an unchanged version. Packages are told apart by name, version and source,
   so a git build cannot hide behind a crates.io entry of the same name and version.
 - A lockfile with duplicate entries, or one that does not parse.
-- A failing audit.
+- Each advisory a failing audit reports: every cargo-audit vulnerability, and every npm advisory
+  of `high` or `critical` severity, once per installed package version. cargo-audit's warnings
+  (unmaintained, unsound, yanked) are not findings. An audit that fails with output that does not
+  parse, or with no advisory listed, means the review could not run (exit 2).
 - What the model reports, trust-critical files first. A diff over `max_diff_chars` is itself a
   finding and is not sent.
 
@@ -129,6 +132,20 @@ fingerprint.
    by = "devon"
    date = 2026-10-19
    reason = "Prebuilt Windows binary, sha256 matches upstream's release asset."
+   ```
+
+   An audit finding's fingerprint covers only the advisory, the package and its installed
+   version, so its acknowledgement names exactly what it accepts. It lasts across releases until
+   that package version changes, and a newly published advisory fails the check again. For a
+   report row `RUSTSEC-2026-0204 crossbeam-epoch 0.9.18: Invalid pointer dereference … (no CVSS;
+   fix: >=0.9.20)`:
+
+   ```toml
+   [[ack]]
+   fingerprint = "<the fingerprint the report prints for that row>"
+   by = "devon"
+   date = 2026-10-19
+   reason = "RUSTSEC-2026-0204: crossbeam-epoch fmt::Pointer only; upstream v1.0.1 still pins 0.9.18."
    ```
 
 2. Run the sync again: `gh workflow run upstream-sync.yml --repo <fork>`. It rebuilds the branch

@@ -42,8 +42,8 @@ test_commands = ["npm run test:run"]
 """
 
 
-def _no_audit(argv: list[str], cwd: Path, env: dict[str, str]) -> int:
-    return 0
+def _no_audit(argv: list[str], cwd: Path, env: dict[str, str]) -> tuple[int, bytes]:
+    return 0, b""
 
 
 # ---- the declaration and releases -----------------------------------------------------------
@@ -353,12 +353,22 @@ def test_an_unreadable_lockfile_is_a_finding() -> None:
     assert [f.kind for f in result.findings] == ["lockfile-unreadable"]
 
 
+FIXTURES = Path(__file__).parent / "fixtures"
+# Real output, captured 2026-10-19: cargo-audit 0.22.2 over rtk-ai/rtk v1.0.1's Cargo.lock (seven
+# advisories, four warnings), and npm 11.17.0 over a lockfile pinning lodash 4.17.15,
+# minimist 1.2.5, node-fetch 2.6.0 and express 4.17.1 (whose own entry is `high` only through
+# string `via` entries naming its vulnerable dependencies).
+CARGO_REPORT = (FIXTURES / "cargo-audit-0.22.2-rtk-v1.0.1.json").read_bytes()
+NPM_REPORT = (FIXTURES / "npm-11-audit.json").read_bytes()
+NPM_LOCK = (FIXTURES / "npm-11-audit-package-lock.json").read_bytes()
+
+
 def test_audits_are_fixed_and_run_on_copies_away_from_the_checkout() -> None:
     seen: list[tuple[list[str], list[str], dict[str, str]]] = []
 
-    def run(argv: list[str], cwd: Path, env: dict[str, str]) -> int:
+    def run(argv: list[str], cwd: Path, env: dict[str, str]) -> tuple[int, bytes]:
         seen.append((argv, sorted(p.name for p in cwd.iterdir()), env))
-        return 1
+        return 0, b""
 
     head = {
         "package.json": b"{}",
@@ -366,19 +376,101 @@ def test_audits_are_fixed_and_run_on_copies_away_from_the_checkout() -> None:
         "Cargo.toml": b"",
         "Cargo.lock": b"x",
     }
-    [npm] = review.audit_findings("npm", head.get, run)
-    [cargo] = review.audit_findings("cargo", head.get, run)
+    assert review.audit_findings("npm", head.get, run) == []
+    assert review.audit_findings("cargo", head.get, run) == []
     (npm_argv, npm_files, _), (cargo_argv, cargo_files, cargo_env) = seen
     assert npm_argv == [
-        "npm", "audit", "--audit-level=high", "--userconfig", "/dev/null",
+        "npm", "audit", "--json", "--audit-level=high", "--userconfig", "/dev/null",
         "--registry", "https://registry.npmjs.org",
     ]  # fmt: skip
     assert npm_files == ["package-lock.json", "package.json"]
-    assert cargo_argv[:3] == ["cargo-audit", "audit", "--file"]
-    assert Path(cargo_argv[3]).name == "Cargo.lock" and cargo_files == ["Cargo.lock", "Cargo.toml"]
-    assert Path(cargo_env["CARGO_HOME"]).parent == Path(cargo_argv[3]).parent
-    assert npm.content == review._digest(b"{}") and cargo.content == review._digest(b"x")
+    assert cargo_argv[:4] == ["cargo-audit", "audit", "--json", "--file"]
+    assert Path(cargo_argv[4]).name == "Cargo.lock" and cargo_files == ["Cargo.lock", "Cargo.toml"]
+    assert Path(cargo_env["CARGO_HOME"]).parent == Path(cargo_argv[4]).parent
     assert review.audit_findings("npm", {}.get, run)[0].summary.startswith("no lockfile")
+
+
+def test_cargo_audit_yields_one_finding_per_advisory() -> None:
+    findings = review.advisory_findings("cargo", 1, CARGO_REPORT, b"", "Cargo.lock")
+    assert [f.summary.split(":")[0] for f in findings] == [
+        "RUSTSEC-2026-0204 crossbeam-epoch 0.9.18",
+        "RUSTSEC-2026-0195 quick-xml 0.37.5",
+        "RUSTSEC-2026-0194 quick-xml 0.37.5",
+        "RUSTSEC-2026-0346 rustls 0.23.37",
+        "RUSTSEC-2026-0285 rustls 0.23.37",
+        "RUSTSEC-2026-0348 rustls 0.23.37",
+        "RUSTSEC-2026-0349 rustls 0.23.37",
+    ]  # the four warnings (unmaintained, unsound) are not findings
+    assert findings[0].summary.endswith("(no CVSS; fix: >=0.9.20)")
+    assert "(CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H; fix: >=0.41.0)" in findings[1].summary
+    assert all((f.kind, f.path) == ("audit", "Cargo.lock") for f in findings)
+
+
+def test_npm_audit_yields_one_finding_per_high_advisory_at_the_installed_version() -> None:
+    findings = review.advisory_findings("npm", 1, NPM_REPORT, NPM_LOCK, "package-lock.json")
+    assert sorted(f.summary.split(":")[0] for f in findings) == [
+        "GHSA-35jh-r3h4-6jhm lodash 4.17.15",
+        "GHSA-37ch-88jc-xwx2 path-to-regexp 0.1.7",
+        "GHSA-9wv6-86v2-598j path-to-regexp 0.1.7",
+        "GHSA-hrpp-h998-j3pp qs 6.7.0",
+        "GHSA-p6mc-m468-83gw lodash 4.17.15",
+        "GHSA-qwcr-r2fm-qrc7 body-parser 1.19.0",
+        "GHSA-r5fr-rjxr-66jc lodash 4.17.15",
+        "GHSA-r683-j2x4-v87g node-fetch 2.6.0",
+        "GHSA-rhx6-c78j-4q9w path-to-regexp 0.1.7",
+        "GHSA-xvch-5gv4-984h minimist 1.2.5",
+    ]  # low and moderate advisories are not findings, and express's string `via` entries are
+    # its dependencies' advisories, already listed under their own names
+    [minimist] = [f for f in findings if "minimist" in f.summary]
+    assert minimist.summary.endswith("(critical; fix: minimist 1.2.8)")
+
+
+def test_an_advisory_ack_names_what_it_accepts_and_outlives_other_changes() -> None:
+    """The fingerprint is the advisory, the package and its installed version: unchanged by any
+    other change to the lockfile, changed by a new version or a newly published advisory."""
+    report = json.loads(CARGO_REPORT)
+    [first, *_] = review.advisory_findings("cargo", 1, CARGO_REPORT, b"lock-1", "Cargo.lock")
+    [again, *_] = review.advisory_findings("cargo", 1, CARGO_REPORT, b"lock-2", "Cargo.lock")
+    assert first.fingerprint() == again.fingerprint()
+    report["vulnerabilities"]["list"][0]["package"]["version"] = "0.9.19"
+    [bumped, *_] = review.advisory_findings(
+        "cargo", 1, json.dumps(report).encode(), b"", "Cargo.lock"
+    )
+    assert bumped.fingerprint() != first.fingerprint()
+    report["vulnerabilities"]["list"][0]["package"]["version"] = "0.9.18"
+    report["vulnerabilities"]["list"][0]["advisory"]["id"] = "RUSTSEC-2026-9999"
+    [new, *_] = review.advisory_findings("cargo", 1, json.dumps(report).encode(), b"", "Cargo.lock")
+    assert new.fingerprint() != first.fingerprint()
+
+
+def test_audit_findings_read_the_audits_output_against_the_heads_lockfile() -> None:
+    head = {"package.json": b"{}", "package-lock.json": NPM_LOCK}
+    findings = review.audit_findings("npm", head.get, lambda argv, cwd, env: (1, NPM_REPORT))
+    assert len(findings) == 10
+
+
+def test_a_clean_audit_passes() -> None:
+    assert review.advisory_findings("cargo", 0, CARGO_REPORT, b"", "Cargo.lock") == []
+
+
+@pytest.mark.parametrize(
+    ("ecosystem", "output"),
+    [
+        ("cargo", b"error: couldn't fetch advisory database"),
+        ("npm", b'{"error": {"code": "ENOTFOUND", "summary": "request failed"}}'),
+        # A failing exit with nothing listed: never read as a pass.
+        (
+            "cargo",
+            json.dumps({"vulnerabilities": {"found": False, "count": 0, "list": []}}).encode(),
+        ),
+        ("npm", json.dumps({"auditReportVersion": 2, "vulnerabilities": {}}).encode()),
+    ],
+)
+def test_an_audit_that_failed_without_advisories_could_not_run(
+    ecosystem: str, output: bytes
+) -> None:
+    with pytest.raises(ReviewUnavailable):
+        review.advisory_findings(ecosystem, 1, output, NPM_LOCK, "lock")
 
 
 def test_every_changed_path_must_be_accounted_for() -> None:
