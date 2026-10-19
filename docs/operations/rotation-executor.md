@@ -78,6 +78,12 @@ The VM is `rotation-executor`, created with `orb create --isolated --isolate-net
 ubuntu:noble rotation-executor`. It reaches the internet (BWS, `sds.alobar.net`, GitHub), other
 OrbStack machines and the tailnet (production Coolify at `100.112.188.96:8000`), but not the Mac.
 
+The Coolify path depends on the VPS's Tailscale node, `ubuntu-2gb-ash-1`, staying logged in to the
+tailnet. Its key expiry is disabled. If a step fails with `Coolify PATCH got no answer:
+ConnectTimeout`, check that node in `tailscale status` before anything else: when its key
+expired, the node logged out and every write timed out before it connected (ADR-0055,
+"The observer's first mint and an expired tailnet key").
+
 1. Install the code at a commit that is on GitHub:
 
    ```sh
@@ -330,7 +336,9 @@ it found. It exits 2 when any reader is unreadable.
 After `mint` hosts the new value, the orchestrator accepts the old one only until `previous`'s
 `until`, seven days later, but the keeper holds the new value only once `store` has run. A `mint`
 unit that fails after host retries from where it stopped, re-deriving from BWS and the
-identities route. If it has no attempts left, finish or undo it within the seven days:
+identities route. While it has attempts left, the operator requeues it (`POST
+/work-units/{id}/requeue`, as SYSTEM); `/review`'s retry is refused until they're spent. If it has
+no attempts left, finish or undo it within the seven days:
 
 - finish: authorise a retry (`/review`) and let the next pass store the staged value;
 - undo: in Coolify, set the entry's `token_hash` back to `previous.token_hash`, delete `previous`,
