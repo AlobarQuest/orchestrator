@@ -56,7 +56,7 @@ from tool_installer.install import (
     ACTION_ROLLED_BACK,
     ProbeResult,
 )
-from tool_installer.tools import PluginInstall, Tool
+from tool_installer.tools import NpmInstall, PluginInstall, Tool
 
 # ADR-0042's lane, named once for the whole lane rather than once per tool -- the precedent is
 # `drift_digest`, `recovery_floor`, `machine_activation` and `pin_watcher`: `source_system` names
@@ -290,6 +290,15 @@ def summary_of(installation: Installation) -> str:
             f"{name} built at {short} but the result could not be confirmed, so the previous "
             f"artifact was restored; the machine is running "
             f"{(installation.installed_revision or 'nothing')[:7]}."
+        )
+    if installation.action == ACTION_INSTALL_FAILED and isinstance(
+        installation.tool.install, NpmInstall
+    ):
+        # The npm row's own reason; every other sentence of the cargo wording is true of it.
+        return (
+            f"{name} could not be built and installed at {short}; the working artifact is in "
+            f"place, because the old package is moved aside only by an atomic rename and is "
+            f"renamed back if the new one cannot follow it."
         )
     if installation.action == ACTION_INSTALL_FAILED:
         return (

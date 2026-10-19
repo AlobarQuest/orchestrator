@@ -94,6 +94,13 @@ def test_check_reports_an_onboarded_fork_ok(monkeypatch: pytest.MonkeyPatch) -> 
     assert result.exit_code == 0, result.output
     assert "missing" not in result.output
     assert "human    change-manager inert landing policy" in result.output
+    assert "ok       tool_installer row -- rea" in result.output
+
+
+def test_check_reports_a_fork_with_no_installer_row(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("fork_sync.checks.TOOLS", ())
+    result = _invoke(monkeypatch, FakeRunner(_onboarded()), "check", FORK)
+    assert result.exit_code == 0, result.output
     assert "info     tool_installer row -- not an installed tool" in result.output
 
 

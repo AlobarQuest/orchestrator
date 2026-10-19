@@ -1,5 +1,10 @@
 """What this lane may install, as a table rather than as code.
 
+THREE ROWS NOW. The paragraphs below were written at two, and they held: the third, `rea`, is a
+Node CLI and MCP server, and it arrived as a row plus a third strategy type (`NpmInstall`) with no
+change to the other two. See that type's docstring for what it does that neither of the others
+does.
+
 TWO ROWS, AND THE SHAPE IS THE POINT: a second tool was a row plus a strategy, not a rewrite. The
 table stayed; what varies per row is HOW the artifact is fetched, replaced and proven, because
 that is the only thing the two rows disagree about. `rtk` is a compiled binary `cargo install`
@@ -66,12 +71,37 @@ class PluginInstall:
 
 
 @dataclass(frozen=True)
+class NpmInstall:
+    """A Node package built from the fork's source and installed into a dedicated prefix.
+
+    Built from source rather than fetched from the npm registry, because the fork is the reviewed
+    artifact and the registry's copy is upstream's. See `npm.py` for the act and its reasons.
+    """
+
+    package: str
+    """The npm package name, which need not equal the binary's name (`rea-agents` ships `rea`)."""
+
+    build_commands: tuple[tuple[str, ...], ...]
+    """`npm` argument vectors run after `npm ci --ignore-scripts`, in order, to produce what the
+    package's `files` list ships. Named here rather than delegated to a lifecycle script, because
+    the lane runs no lifecycle script at all."""
+
+    probe_commands: tuple[tuple[str, ...], ...]
+    """As `CargoInstall.probe_commands`: suffixes run against the installed binary's path."""
+
+    mcp_arguments: tuple[str, ...]
+    """The suffix that starts the tool's stdio MCP server. The probe sends one `initialize` and
+    checks the server's reported version by value -- a stdin exchange, which no argv suffix in
+    `probe_commands` can express."""
+
+
+@dataclass(frozen=True)
 class Tool:
     """One installable tool: where it comes from, how it is installed, how it is proven."""
 
     name: str
-    """The tool's name on this machine -- a binary under the install root's `bin/` for a crate,
-    and the plugin's own name for a plugin."""
+    """The tool's name on this machine -- a binary under the install root's `bin/` for a crate or
+    an npm package, and the plugin's own name for a plugin."""
 
     repository: str
     """`owner/name` on GitHub. The lane reads its head; it never clones it."""
@@ -79,7 +109,7 @@ class Tool:
     branch: str
     """The branch the install tracks, and the one whose head decides whether work is pending."""
 
-    install: CargoInstall | PluginInstall
+    install: CargoInstall | PluginInstall | NpmInstall
     """How this row is fetched, replaced and proven. The one thing that varies per row."""
 
 
@@ -113,4 +143,22 @@ OCTO = Tool(
     install=PluginInstall(marketplace="devon-plugins"),
 )
 
-TOOLS: tuple[Tool, ...] = (RTK, OCTO)
+# The third row. `rea` reaches Claude Code as a stdio MCP server (`rea mcp`); registering it there
+# is a one-time manual step outside this lane, which keeps the binary current and nothing else.
+REA = Tool(
+    name="rea",
+    repository="AlobarQuest/rea",
+    branch="main",
+    install=NpmInstall(
+        package="rea-agents",
+        # Exactly what `prepack` would produce, without `prepack`: it re-runs this build through
+        # turbo, which brings its own cache and telemetry. `compile` writes `dist/` and
+        # `artifacts:skills` writes `skills/`; both are in the package's `files`. Measured at
+        # rea-agents 6.7.0 with network denied: 5.8s and 0.5s.
+        build_commands=(("run", "compile"), ("run", "artifacts:skills")),
+        probe_commands=(("--help",),),
+        mcp_arguments=("mcp",),
+    ),
+)
+
+TOOLS: tuple[Tool, ...] = (RTK, OCTO, REA)

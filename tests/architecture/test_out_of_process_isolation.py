@@ -398,6 +398,10 @@ TABLE: dict[str, Row] = {
         "re",
         "shutil",
         "subprocess",
+        # `npm.py` unpacks the tarball `npm pack` produced, with the `data` extraction filter.
+        "tarfile",
+        # `npm.py` builds in a temporary directory inside the install root.
+        "tempfile",
         "typer",
         "typing",
         # `urllib.parse` only, for the base-URL shape check.

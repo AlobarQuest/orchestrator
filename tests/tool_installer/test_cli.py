@@ -17,10 +17,10 @@ from typer.testing import CliRunner
 
 from tool_installer import cli as cli_module
 from tool_installer.cli import app
-from tool_installer.install import RollbackFailed
+from tool_installer.install import InstallOutcome, RollbackFailed
 from tool_installer.orchestrator_client import ObservationWriteError
 from tool_installer.plugin import Sites
-from tool_installer.toolchain import CRATES_JSON, CRATES_TOML, ToolchainError
+from tool_installer.toolchain import CRATES_JSON, CRATES_TOML, Node, ToolchainError
 
 HEAD = "4be91ebe1fc4eaf73688e28cd62782eadb355379"
 OLD = "1111111111111111111111111111111111111111"
@@ -61,6 +61,15 @@ class _Recorder:
         return {"id": "recorded"}
 
 
+def _seed_rea(npm_root: Path, revision: str) -> None:
+    """The installed package's own manifest, which is the npm row's whole record."""
+    package = npm_root / "lib" / "node_modules" / "rea-agents"
+    package.mkdir(parents=True, exist_ok=True)
+    (package / "package.json").write_text(
+        json.dumps({"name": "rea-agents", "version": "6.7.0", "gitHead": revision})
+    )
+
+
 def _seed_plugin(plugins_root: Path, version: str, revision: str) -> None:
     """Claude Code's own record, plus the cache directory it names."""
     cache = plugins_root / "cache" / "devon-plugins" / "octo" / version
@@ -88,11 +97,12 @@ def _seed_plugin(plugins_root: Path, version: str, revision: str) -> None:
 def machine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Recorder:
     """A scratch install root holding an OLD rtk, and a cargo that must never be reached.
 
-    THE PLUGIN ROW IS SEEDED CURRENT, so every assertion below stays about rtk. The alternative --
-    leaving the plugin sites at their real defaults -- would have each of these read the operator's
-    own `~/.claude/plugins`, which is both a test that depends on the machine it runs on and a
-    pass one `--install` away from acting on it. `resolve_claude` is a RAISING stub for the same
-    reason `resolve_cargo` is: reaching either is the failure.
+    THE PLUGIN AND NPM ROWS ARE SEEDED CURRENT, so every assertion below stays about rtk. The
+    alternative -- leaving their roots at the real defaults -- would have each of these read the
+    operator's own `~/.claude/plugins` or npm prefix, which is both a test that depends on the
+    machine it runs on and a pass one `--install` away from acting on it. `resolve_claude` and
+    `resolve_node` are RAISING stubs for the same reason `resolve_cargo` is: reaching any of them
+    is the failure.
     """
     root = tmp_path / "cargo"
     (root / "bin").mkdir(parents=True)
@@ -106,6 +116,8 @@ def machine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Recorder:
     plugins_root.mkdir()
     _seed_plugin(plugins_root, "11.0.1", HEAD)
     sites = Sites(hub_root=tmp_path / "hub", plugins_root=plugins_root)
+    npm_root = tmp_path / "npm"
+    _seed_rea(npm_root, HEAD)
     monkeypatch.setattr(cli_module, "default_sites", lambda: sites)
 
     recorder = _Recorder()
@@ -124,8 +136,12 @@ def machine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Recorder:
         # would install it cannot be satisfied by the cargo row reaching its own stub first.
         raise AssertionError("the pass reached CLAUDE when it was not permitted to act")
 
+    def _never_node(*_: object, **__: object) -> None:
+        raise AssertionError("the pass reached NODE when it was not permitted to act")
+
     monkeypatch.setattr(cli_module, "resolve_cargo", _never)
     monkeypatch.setattr(cli_module, "resolve_claude", _never_claude)
+    monkeypatch.setattr(cli_module, "resolve_node", _never_node)
 
     for name, value in (
         ("ORCHESTRATOR_API_URL", "https://sds.example.net"),
@@ -138,6 +154,7 @@ def machine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Recorder:
         monkeypatch.setenv(name, value)
     recorder.root = root  # type: ignore[attr-defined]
     recorder.sites = sites  # type: ignore[attr-defined]
+    recorder.npm_root = npm_root  # type: ignore[attr-defined]
     return recorder
 
 
@@ -157,7 +174,13 @@ def _invoke(recorder: _Recorder, monkeypatch: pytest.MonkeyPatch, moment: dateti
     monkeypatch.setattr(cli_module, "_now", lambda: moment)
     return CliRunner().invoke(
         app,
-        ["--install-root", str(recorder.root), *args],  # type: ignore[attr-defined]
+        [
+            "--install-root",
+            str(recorder.root),  # type: ignore[attr-defined]
+            "--npm-root",
+            str(recorder.npm_root),  # type: ignore[attr-defined]
+            *args,
+        ],
     )
 
 
@@ -202,14 +225,15 @@ def test_a_pass_files_its_row_even_when_it_was_not_permitted_to_act(
     """The finding's durable home is the observation, not the exit code -- so a machine running an
     old tool is recorded whether or not anybody permitted an install."""
     _invoke(machine, monkeypatch, OUT_OF_WINDOW, "--install")
-    # TWO ROWS: the behind rtk and the current octo. The plugin row is asserted here rather than
-    # ignored, because "every tool is filed every pass" is the property that makes silence mean
-    # something -- a pass that filed only the interesting row would be indistinguishable from a
-    # pass that stopped measuring the other one.
-    assert len(machine.filed) == 2
+    # THREE ROWS: the behind rtk, the current octo and the current rea. The current rows are
+    # asserted here rather than ignored, because "every tool is filed every pass" is the
+    # property that makes silence mean something -- a pass that filed only the interesting row
+    # would be indistinguishable from a pass that stopped measuring the others.
+    assert len(machine.filed) == 3
     assert [row["subject_reference"] for row in machine.filed] == [
         "AlobarQuest/rtk",
         "AlobarQuest/claude-octopus",
+        "AlobarQuest/rea",
     ]
     row = machine.filed[0]
     assert row["source_system"] == "tool_installer"
@@ -341,7 +365,7 @@ def test_a_missing_toolchain_FILES_the_finding_it_already_made(
     monkeypatch.setattr(cli_module, "resolve_cargo", _raise_toolchain)
     result = _invoke(machine, monkeypatch, IN_WINDOW, "--install")
     assert result.exit_code == 2
-    assert len(machine.filed) == 2
+    assert len(machine.filed) == 3
     assert machine.filed[0]["status"] == "degraded"
     assert machine.filed[0]["facts"]["state"] == "behind"
 
@@ -445,3 +469,53 @@ def test_a_failed_rollback_is_FILED_and_does_not_cost_the_other_row_its_record(
     assert "AlobarQuest/claude-octopus" in filed
     assert filed["AlobarQuest/claude-octopus"]["facts"]["action"] == "rollback_failed"
     assert "AlobarQuest/rtk" in filed, "the working row lost its record to the other row's crash"
+
+
+def _rea_behind(machine: _Recorder) -> None:
+    _seed_rea(machine.npm_root, OLD)  # type: ignore[attr-defined]
+
+
+def test_the_window_refuses_the_REA_row_with_the_install_flag(
+    machine: _Recorder, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The npm row's first half: permitted to act, told not now, and node never resolved."""
+    _rea_behind(machine)
+    _rtk_current(machine)
+    result = _invoke(machine, monkeypatch, OUT_OF_WINDOW, "--install")
+    assert result.exit_code == 0
+    filed = {row["subject_reference"]: row for row in machine.filed}
+    assert filed["AlobarQuest/rea"]["facts"]["action"] == "not_permitted"
+    assert filed["AlobarQuest/rea"]["facts"]["state"] == "behind"
+    assert filed["AlobarQuest/rea"]["facts"]["installed"]["version"] == "6.7.0"
+
+
+def test_the_window_ADMITS_the_REA_row_when_it_is_open(
+    machine: _Recorder, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The pair for the test above: only the clock differs, and the open clock reaches node."""
+    _rea_behind(machine)
+    _rtk_current(machine)
+    result = _invoke(machine, monkeypatch, IN_WINDOW, "--install")
+    assert isinstance(result.exception, AssertionError)
+    assert "reached NODE" in str(result.exception)
+
+
+def test_an_admitted_rea_row_is_handed_to_the_npm_act_with_the_head_it_measured(
+    machine: _Recorder, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The act builds the revision the pass READ, never whatever the branch is by the time it
+    fetches -- so the head is passed through, and the npm root is the one the pass was given."""
+    _rea_behind(machine)
+    _rtk_current(machine)
+    seen: dict[str, object] = {}
+
+    def act(**kwargs: object) -> InstallOutcome:
+        seen.update(kwargs)
+        return InstallOutcome(action="install_failed", installed=None, detail="stub")
+
+    monkeypatch.setattr(cli_module, "resolve_node", lambda: Node(executable=Path("/usr/bin/true")))
+    monkeypatch.setattr(cli_module, "install_and_prove_npm", act)
+    result = _invoke(machine, monkeypatch, IN_WINDOW, "--install")
+    assert result.exit_code == 3
+    assert seen["revision"] == HEAD
+    assert seen["install_root"] == machine.npm_root  # type: ignore[attr-defined]

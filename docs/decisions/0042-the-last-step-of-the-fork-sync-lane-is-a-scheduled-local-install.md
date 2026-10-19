@@ -109,3 +109,42 @@ path to this machine. The lane reads a revision the fork already holds; getting 
 fork stays the sync lane's job and a person's merge.
 
 It does not add a second tool. The table has one row.
+
+## Amendment 1 — A third row: `rea`, an npm package (2026-10-19)
+
+The table no longer has one row. `octo` (a Claude Code plugin, `PluginInstall`, `plugin.py`) was
+added as the second row on 2026-09-07 without an amendment here; its reasoning lives in that
+module's docstring. This amendment records the third.
+
+**`AlobarQuest/rea`** is a fork of a Node/TypeScript reverse-engineering CLI that is also a stdio
+MCP server (`rea mcp`). It is a row plus a third strategy type, `NpmInstall`, in
+`src/tool_installer/npm.py`, with the same order as the cargo row: nothing live is touched before
+the new artifact exists, the outgoing one is kept, the new one is probed, and any failure restores
+the old one.
+
+| | |
+|---|---|
+| Fetch | shallow fetch of the exact head SHA the pass measured; no submodules (none is in the package's `files`) |
+| Build | `npm ci`, then the row's `build_commands` — `npm run compile`, `npm run artifacts:skills` — in a temporary directory inside the install root |
+| Lifecycle scripts | never: `npm_config_ignore_scripts=true` on every npm call. `prepare` (husky hooks) and `prepack` (the same build re-run through turbo) are skipped; the optional `frida`, the only runtime dependency with an install script, is installed but not built, and nothing probed needs it |
+| Record | `gitHead` written into `package.json` before `npm pack` (npm does not record it); the installed manifest is the record |
+| Install | unpack the tarball, copy the reviewed `package-lock.json` beside it, `npm ci --omit=dev`, rename into `<root>/lib/node_modules/rea-agents`, link `<root>/bin/rea` |
+| Root | `~/.local/share/sds-tools/npm` (`--npm-root`), a prefix of its own rather than Homebrew's |
+| Toolchain | `node` from `PATH`, else `/opt/homebrew/bin/node`, else `/usr/local/bin/node`, with `npm` beside it; its directory leads every subprocess `PATH`. `engine-strict` makes a node outside the package's `engines` fail the build |
+| Probes | `--help`; `--version` by value; one MCP `initialize` with `serverInfo.version` checked by value |
+| Rollback | the package directory and the `bin/rea` link together; the outgoing directory is moved into `~/.local/bin-backups/rea-<version>/` |
+
+**Why not `npm install -g <tarball>`.** Measured at rea-agents 6.7.0: a global install resolves
+dependencies from the registry by semver range, and eleven runtime packages landed at versions
+the fork's lockfile does not name (eight even with the lockfile packed as `npm-shrinkwrap.json`).
+The lockfile is what the fork's security review covered, so the install is a production-only
+`npm ci` against it: zero mismatches across 173 runtime packages.
+
+**What still executes.** `npm run compile` runs `tsc` and the fork's own `scripts/*.mjs`. That is
+the same trust boundary as a crate's `build.rs` on the cargo row: the fork's reviewed code runs at
+build time. Measured with network access and writes outside the build tree both denied, the build
+needed neither.
+
+**Registering the MCP server is not this lane's act.** The lane keeps `<root>/bin/rea` current.
+Pointing Claude Code at it — `claude mcp add rea ~/.local/share/sds-tools/npm/bin/rea mcp` — is a
+one-time manual step, and a running session keeps the server it started until it restarts.
