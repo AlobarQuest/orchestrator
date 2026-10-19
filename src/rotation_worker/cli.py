@@ -31,10 +31,10 @@ from rotation_worker.compare import Comparison, report
 from rotation_worker.config import DEFAULT_PATH, Config, ConfigError, load, read_root_token
 from rotation_worker.destinations import DestinationError
 from rotation_worker.git_mirror import MirrorError, RepoMirror
+from rotation_worker.github_actions import RotationApp
 from rotation_worker.logs import configure
 from rotation_worker.orchestrator_client import OrchestratorClient
 from rotation_worker.readers import (
-    ConsumerReads,
     Healthchecks,
     ReadError,
     ReadUnavailable,
@@ -49,7 +49,7 @@ from rotation_worker.registry import (
 )
 from rotation_worker.secret_store import BwsStore, SecretStore, StoreError
 from rotation_worker.values import Value
-from rotation_worker.worker import Setup, run_pass
+from rotation_worker.worker import Setup, consumer_reads, run_pass
 
 EXIT_EQUAL: Final = 0
 EXIT_DIFFERENT: Final = 1
@@ -98,14 +98,22 @@ def open_healthchecks(config: Config, store: SecretStore) -> Healthchecks | None
     return None if key_id is None else Healthchecks(lambda: store.read(key_id))
 
 
+def open_github_app(config: Config, store: SecretStore) -> RotationApp | None:
+    app_id, key_id = config.github_app_id, config.github_app_key_id
+    if app_id is None or key_id is None:
+        return None
+    return RotationApp(app_id, lambda: store.read_key(key_id))
+
+
 def read_consumers(setup: Setup, credential_id: str, stored_at: datetime) -> int:
     """Each scheduled reader's answer for a store at `stored_at`. Reads only."""
     try:
-        reads = scheduled_reads(find_credential(setup.mirror, credential_id).credential)
+        credential = find_credential(setup.mirror, credential_id).credential
+        reads = scheduled_reads(credential)
     except (MirrorError, RegistryError, DestinationError) as error:
         print(f"read-consumers: {error}", file=sys.stderr)
         return EXIT_UNREADABLE
-    consumers = ConsumerReads(reads, setup.healthchecks, setup.client)
+    consumers = consumer_reads(setup, reads, str(credential.get("bws_uuid")))
     unreadable = 0
     for destination in sorted(reads):
         try:
@@ -140,6 +148,7 @@ def build_setup(config: Config) -> Setup:
         change_manager_application=config.change_manager_application,
         executor_key_id=config.credential_key_id,
         healthchecks=open_healthchecks(config, store),
+        github_app=open_github_app(config, store),
     )
 
 

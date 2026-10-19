@@ -33,13 +33,20 @@ from typing import Any, Final, Protocol, runtime_checkable
 
 from rotation_worker.adapters import AdapterContext
 from rotation_worker.checks import WRITING_STEPS, Approved, check_unit
-from rotation_worker.contract import ContractError, Provider, Step, StepKind, UnitRun
+from rotation_worker.contract import ContractError, HumanAct, Provider, Step, StepKind, UnitRun
 from rotation_worker.destinations import DestinationError, parse
 from rotation_worker.envelope import is_rotation_unit
 from rotation_worker.evidence import StepEvidence
 from rotation_worker.git_mirror import MirrorError, RepoMirror
+from rotation_worker.github_actions import ActionsSecrets, FingerprintReports, RotationApp
 from rotation_worker.orchestrator_client import Lease, OrchestratorClient, OrchestratorError
-from rotation_worker.readers import ConsumerReads, Healthchecks, ReadError, ReadUnavailable
+from rotation_worker.readers import (
+    ConsumerReads,
+    Healthchecks,
+    Read,
+    ReadError,
+    ReadUnavailable,
+)
 from rotation_worker.registry import RegistryError, find_credential
 from rotation_worker.secret_store import SecretStore, StoreError
 from rotation_worker.values import Fingerprint, scrub
@@ -72,6 +79,8 @@ class Setup:
     executor_key_id: str | None = None
     # The Healthchecks listing, read with the key in `Rotation / Healthchecks`.
     healthchecks: Healthchecks | None = None
+    # The rotation GitHub App, which writes Actions secrets and reads their reports.
+    github_app: RotationApp | None = None
 
 
 def run_pass(setup: Setup) -> int:
@@ -101,9 +110,9 @@ def _take(setup: Setup, unit_id: str) -> int:
     try:
         approved = check_unit(unit, intake, setup.mirror, setup.work_project_id)
         if approved.reads and _verifies(approved):
-            reads = ConsumerReads(approved.reads, setup.healthchecks, setup.client)
+            reads = _consumer_reads(setup, approved)
             waiting = reads.pending(setup.store.revised(approved.rotation.keeper_id))
-            if waiting and _retires(approved):
+            if waiting and _gates_retire(approved):
                 LOG.info(
                     "unit_waiting",
                     extra={
@@ -135,7 +144,8 @@ def _take(setup: Setup, unit_id: str) -> int:
 
 @runtime_checkable
 class GatedRestarts(Protocol):
-    """A provider whose service's clients a restart would cut short (the change-manager adapter)."""
+    """A provider whose writes would cut short something running: change-manager's readers during
+    its restart, or a factory run holding a PAT the GitHub PAT adapter is about to revoke."""
 
     def readers_mid_run(self) -> list[str]: ...
 
@@ -160,6 +170,7 @@ def _provider(setup: Setup, approved: Approved) -> Provider:
             mirror=setup.mirror,
             healthchecks=setup.healthchecks,
             host_without_overlap=approved.host_without_overlap,
+            credential=approved.registry.credential,
         )
     )
 
@@ -168,8 +179,37 @@ def _verifies(approved: Approved) -> bool:
     return any(step.kind is StepKind.VERIFY_CONSUMERS for step in approved.unit.steps)
 
 
-def _retires(approved: Approved) -> bool:
-    return any(step.kind is StepKind.RETIRE_OLD for step in approved.unit.steps)
+def _gates_retire(approved: Approved) -> bool:
+    """Whether the old value is retired in this unit, or by the person acting straight after it.
+
+    Either way every consumer must have switched first, and a claimed unit can't wait, so the
+    unit waits unclaimed (the Bitbucket plan's console revoke follows its `verify` unit).
+    """
+    if any(step.kind is StepKind.RETIRE_OLD for step in approved.unit.steps):
+        return True
+    segments = approved.adapter.plan.segments
+    following = segments[segments.index(approved.unit) + 1 :][:1]
+    return any(
+        isinstance(segment, HumanAct)
+        and any(step.kind is StepKind.RETIRE_OLD for step in segment.steps)
+        for segment in following
+    )
+
+
+def _consumer_reads(setup: Setup, approved: Approved) -> ConsumerReads:
+    return consumer_reads(setup, approved.reads, approved.rotation.keeper_id)
+
+
+def consumer_reads(setup: Setup, reads: Mapping[str, Read], keeper: str) -> ConsumerReads:
+    """One rotation's reads for one pass: a scheduled reader's, and an Actions copy's report,
+    compared with what the keeper holds."""
+    return ConsumerReads(
+        reads,
+        setup.healthchecks,
+        setup.client,
+        reports=FingerprintReports(setup.github_app) if setup.github_app else None,
+        keeper=lambda: setup.store.read(keeper).fingerprint,
+    )
 
 
 def _overlap_until(setup: Setup, approved: Approved) -> str | None:
@@ -224,6 +264,7 @@ def _work(
             before_step=lambda: _before_step(setup, recorder, approved),
             filed=kinds,
             scheduled=reads,
+            actions_secrets=ActionsSecrets(setup.github_app) if setup.github_app else None,
         )
         run.run(approved.unit)
     except Exception as error:

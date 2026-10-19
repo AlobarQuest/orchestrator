@@ -64,6 +64,32 @@ def test_a_malformed_config_is_refused(tmp_path: Path, old: str, new: str) -> No
         load(path)
 
 
+def test_the_rotation_app_is_configured_by_id_and_key_secret_together(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(CONFIG + f'github_app_id = "5383095"\ngithub_app_key_id = "{PROJECT}"\n')
+    config = load(path)
+    assert (config.github_app_id, config.github_app_key_id) == ("5383095", PROJECT)
+    path.write_text(CONFIG)
+    assert load(path).github_app_id is None
+
+
+@pytest.mark.parametrize(
+    "lines",
+    [
+        'github_app_id = "5383095"',
+        f'github_app_key_id = "{PROJECT}"',
+        f'github_app_id = 5383095\ngithub_app_key_id = "{PROJECT}"',
+        f'github_app_id = "app-1"\ngithub_app_key_id = "{PROJECT}"',
+        'github_app_id = "5383095"\ngithub_app_key_id = "not-a-uuid"',
+    ],
+)
+def test_a_half_or_malformed_rotation_app_is_refused(tmp_path: Path, lines: str) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(CONFIG + lines + "\n")
+    with pytest.raises(ConfigError, match="github_app"):
+        load(path)
+
+
 def test_admin_secrets_map_provider_names_to_uuids(tmp_path: Path) -> None:
     path = tmp_path / "config.toml"
     path.write_text(CONFIG)
@@ -262,3 +288,14 @@ def test_a_revision_date_without_a_zone_is_refused() -> None:
     secrets.rows[sid] = {**_row("keeper", "v"), "revision_date": datetime(2026, 10, 16, 6, 5)}
     with pytest.raises(StoreError, match="without a zone"):
         _store(secrets).revised(sid)
+
+
+def test_a_private_key_is_read_without_its_trailing_newline() -> None:
+    secrets = FakeSecrets()
+    sid = str(uuid.uuid4())
+    pem = "-----BEGIN RSA PRIVATE KEY-----\nabc\n-----END RSA PRIVATE KEY-----"
+    secrets.rows[sid] = _row("rotation github app private key", pem + "\n")
+    store = _store(secrets)
+    assert store.read_key(sid).reveal() == pem
+    with pytest.raises(ValueError, match="surrounding whitespace"):
+        store.read(sid)

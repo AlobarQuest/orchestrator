@@ -108,6 +108,35 @@ PLAN: Final = Plan(
     )
 )
 validate_plan(PLAN)
+# The factory-runner bearer's plan (increment 7): the same units with the Actions-secret copies
+# written straight after store, while the mint unit holds the window. A separate name, because
+# approved packages pin `PLAN`'s criteria and a rotation under it may be in flight.
+DISTRIBUTED_NAME: Final = "orchestrator-distributed"
+DISTRIBUTED_PLAN: Final = Plan(
+    (
+        UnitPlan(
+            "mint",
+            (
+                Step(StepKind.MINT, M, "AC-001"),
+                Step(StepKind.STAGE, M, "AC-002"),
+                Step(StepKind.HOST, M, "AC-003"),
+                Step(StepKind.VERIFY_NEW, M, "AC-004"),
+                Step(StepKind.STORE, M, "AC-005"),
+                Step(StepKind.DISTRIBUTE, M, "AC-006"),
+                Step(StepKind.VERIFY_CONSUMERS, M, "AC-007"),
+            ),
+        ),
+        UnitPlan(
+            "retire",
+            (
+                Step(StepKind.VERIFY_CONSUMERS, M, "AC-008"),
+                Step(StepKind.RETIRE_OLD, M, "AC-009"),
+                Step(StepKind.CONFIRM_DEAD, M, "AC-010"),
+            ),
+        ),
+    )
+)
+validate_plan(DISTRIBUTED_PLAN)
 
 
 def _settled(status: int | None, expected: int | None) -> bool:

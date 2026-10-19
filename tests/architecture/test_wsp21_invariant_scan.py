@@ -508,6 +508,19 @@ OUTBOUND_ALLOWLIST = {
     # store. Its client may send only `GET /api/v3/checks/`, pinned by
     # tests/rotation_worker/test_readers.py. Its egress is not the orchestrator's.
     Path("src/rotation_worker/readers.py"),
+    # ADR-0055 increment 7. The rotation App mints a token for one repository with exactly the
+    # permissions one purpose needs, writes that repository's one approved Actions secret, and
+    # reads its secret-fingerprint report's job log (one hop to GitHub's log storage, which
+    # carries no credential). Pinned by tests/rotation_worker/test_github_actions.py. Its egress
+    # is not the orchestrator's.
+    Path("src/rotation_worker/github_actions.py"),
+    # ADR-0055 increment 7. The GitHub PAT adapter probes `GET /user` with the value and revokes it
+    # by value at `POST /credentials/revoke`, with no credential; the Bitbucket adapter probes one
+    # workspace's repository listing. Each may send nothing else. Pinned by
+    # tests/rotation_worker/test_github_pat_and_bitbucket.py. Their egress is not the
+    # orchestrator's.
+    Path("src/rotation_worker/adapters/github_pat.py"),
+    Path("src/rotation_worker/adapters/bitbucket.py"),
     # The pin watcher READS GitHub, and that is the point rather than an incidental dependency:
     # a caller's pin is a fact about a remote repository's workflow file, so no local surface can
     # answer it. Read-only by construction -- the client's single entry point refuses anything but

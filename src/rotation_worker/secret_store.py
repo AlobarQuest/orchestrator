@@ -36,6 +36,10 @@ class StoredSecret:
 class SecretStore(Protocol):
     def read(self, secret_id: str) -> Value: ...
 
+    def read_key(self, secret_id: str) -> Value:
+        """A multi-line private key, which a console paste stores with a trailing newline."""
+        ...
+
     def revised(self, secret_id: str) -> datetime:
         """When the secret last changed: for a keeper, when the store step wrote it."""
         ...
@@ -64,6 +68,10 @@ class BwsStore:
     def read(self, secret_id: str) -> Value:
         secret = self._call(lambda: self._client.secrets().get(secret_id))
         return Value(secret.value)
+
+    def read_key(self, secret_id: str) -> Value:
+        secret = self._call(lambda: self._client.secrets().get(secret_id))
+        return Value(str(secret.value).strip())
 
     def revised(self, secret_id: str) -> datetime:
         revised = self._call(lambda: self._client.secrets().get(secret_id)).revision_date

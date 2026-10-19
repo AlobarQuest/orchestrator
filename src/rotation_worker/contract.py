@@ -51,12 +51,12 @@ from rotation_worker.values import Fingerprint, Value
 
 LIVE_STATUS: Final = 200
 # Destination kinds a machine verifies by reading BWS back, and kinds only a person can attest
-# (ADR-0055's verification table: a `runtime-fetch` run only when invoked, an Actions secret, and
-# the operator machine's own files have no probe the executor can run).
+# (ADR-0055's verification table: a `runtime-fetch` run only when invoked, and the operator
+# machine's own files, have no probe the executor can run). An Actions secret is neither: the
+# executor writes it and reads its repository's fingerprint report (increment 7).
 READ_BACK_KINDS: Final = frozenset({"bws-secret"})
-ATTESTED_KINDS: Final = frozenset(
-    {"runtime-fetch", "gh-actions-secret", "keychain", "shell-export"}
-)
+ACTIONS_KIND: Final = "gh-actions-secret"
+ATTESTED_KINDS: Final = frozenset({"runtime-fetch", "keychain", "shell-export"})
 
 
 class StepKind(StrEnum):
@@ -157,6 +157,12 @@ class Provider(Protocol):
         orchestrator's evidence scan refuses.
         """
         ...
+
+
+class ActionsSecretWriter(Protocol):
+    """Writes one repository's Actions secret, and confirms GitHub recorded the write."""
+
+    def write(self, repository: str, name: str, value: Value) -> None: ...
 
 
 class ScheduledReads(Protocol):
@@ -292,6 +298,7 @@ class UnitRun:
     # Step kinds this unit already filed evidence for, in an earlier attempt.
     filed: frozenset[StepKind] = frozenset()
     scheduled: ScheduledReads | None = None
+    actions_secrets: ActionsSecretWriter | None = None
     _minted: Value | None = field(default=None, repr=False)
 
     def run(self, unit: UnitPlan) -> None:
@@ -516,13 +523,19 @@ def _store(run: UnitRun, step: Step) -> None:
 
 def _distribute(run: UnitRun, step: Step) -> None:
     new, old = run.new_and_old()
-    written = 0
+    written = actions = 0
     for destination in run.rotation.destinations:
         consumer = parse(destination)
         if consumer["kind"] in READ_BACK_KINDS and consumer["uuid"] != run.rotation.keeper_id:
             run.store.write(consumer["uuid"], new)
             written += 1
-    note = f"wrote {written} secret(s) beside the keeper"
+        elif consumer["kind"] == ACTIONS_KIND:
+            if run.actions_secrets is None:
+                raise ContractError("an Actions secret is approved and no writer is configured")
+            # Only the approved repository and name: the writer's client permits nothing else.
+            run.actions_secrets.write(consumer["repo"], consumer["name"], new)
+            actions += 1
+    note = f"wrote {written} secret(s) beside the keeper and {actions} Actions secret(s)"
     run.record(step, StepEvidence(step.kind, fingerprints=_fingerprints(new, old), note=note))
 
 

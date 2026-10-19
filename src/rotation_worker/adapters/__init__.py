@@ -6,12 +6,19 @@ point a credential at another provider's adapter.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 
-from rotation_worker.adapters import change_manager, fake, openrouter, orchestrator_bearer
+from rotation_worker.adapters import (
+    bitbucket,
+    change_manager,
+    fake,
+    github_pat,
+    openrouter,
+    orchestrator_bearer,
+)
 from rotation_worker.contract import ContractError, Plan, Provider, Rotation
 from rotation_worker.git_mirror import RepoMirror
 from rotation_worker.orchestrator_client import OrchestratorClient
@@ -40,6 +47,9 @@ class AdapterContext:
     healthchecks: Healthchecks | None = None
     # The unit's approved envelope declares a host with no overlap (`checks.WITHOUT_OVERLAP_KEY`).
     host_without_overlap: bool = False
+    # The credential's registry entry, for a provider that reads its own fields (Bitbucket's
+    # probe account and workspace).
+    credential: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -67,6 +77,20 @@ def _change_manager(context: AdapterContext) -> Provider:
     )
 
 
+def _orchestrator(context: AdapterContext) -> Provider:
+    return orchestrator_bearer.build_provider(
+        rotation=context.rotation,
+        store=context.store,
+        coolify_token_id=context.admin_secret_id,
+        orchestrator=context.orchestrator,
+        orchestrator_url=context.orchestrator_url,
+        coolify_url=context.coolify_url,
+        orchestrator_application=context.orchestrator_application,
+        executor_key_id=context.executor_key_id,
+        without_overlap=context.host_without_overlap,
+    )
+
+
 ADAPTERS: Final[dict[str, Adapter]] = {
     fake.NAME: Adapter(
         fake.NAME, fake.PLAN, lambda context: fake.FakeProvider(context.state_dir / "fake.json")
@@ -77,19 +101,22 @@ ADAPTERS: Final[dict[str, Adapter]] = {
         lambda context: openrouter.build(context.store, context.admin_secret_id),
     ),
     orchestrator_bearer.NAME: Adapter(
-        orchestrator_bearer.NAME,
-        orchestrator_bearer.PLAN,
-        lambda context: orchestrator_bearer.build_provider(
-            rotation=context.rotation,
-            store=context.store,
-            coolify_token_id=context.admin_secret_id,
-            orchestrator=context.orchestrator,
-            orchestrator_url=context.orchestrator_url,
-            coolify_url=context.coolify_url,
-            orchestrator_application=context.orchestrator_application,
-            executor_key_id=context.executor_key_id,
-            without_overlap=context.host_without_overlap,
+        orchestrator_bearer.NAME, orchestrator_bearer.PLAN, _orchestrator
+    ),
+    orchestrator_bearer.DISTRIBUTED_NAME: Adapter(
+        orchestrator_bearer.NAME, orchestrator_bearer.DISTRIBUTED_PLAN, _orchestrator
+    ),
+    github_pat.NAME: Adapter(
+        github_pat.PROVIDER,
+        github_pat.PLAN,
+        lambda context: github_pat.build_provider(
+            rotation=context.rotation, orchestrator=context.orchestrator
         ),
+    ),
+    bitbucket.NAME: Adapter(
+        bitbucket.NAME,
+        bitbucket.PLAN,
+        lambda context: bitbucket.build_provider(credential=context.credential),
     ),
     change_manager.NAME: Adapter(change_manager.NAME, change_manager.PLAN, _change_manager),
     change_manager.ATTESTED_NAME: Adapter(

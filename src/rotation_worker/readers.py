@@ -49,7 +49,9 @@ from typing import Any, Final
 import httpx
 
 from estate_clients.confined import ConfinedClient, TransportFailure
+from rotation_worker.contract import ContractError
 from rotation_worker.destinations import render
+from rotation_worker.github_actions import FingerprintReports, GitHubUnavailable, ReportMissing
 from rotation_worker.orchestrator_client import (
     TIMEOUT_SECONDS,
     USER_AGENT,
@@ -57,7 +59,8 @@ from rotation_worker.orchestrator_client import (
     OrchestratorError,
 )
 from rotation_worker.registry import RegistryError
-from rotation_worker.values import Value
+from rotation_worker.secret_store import StoreError
+from rotation_worker.values import Fingerprint, Value
 
 HEALTHCHECKS_URL: Final = "https://healthchecks.io"
 CHECKS: Final = "/api/v3/checks/"
@@ -91,7 +94,15 @@ class ObservationRead:
     subject_reference: str
 
 
-type Read = CheckRead | ObservationRead
+@dataclass(frozen=True)
+class ActionsSecretRead:
+    """An Actions secret, read through its repository's fingerprint report (increment 7)."""
+
+    repository: str
+    name: str
+
+
+type Read = CheckRead | ObservationRead | ActionsSecretRead
 
 
 @dataclass(frozen=True)
@@ -106,6 +117,10 @@ def scheduled_reads(credential: Mapping[str, Any]) -> dict[str, Read]:
     reads: dict[str, Read] = {}
     for consumer in credential.get("consumer", []):
         fields = {name: consumer[name] for name in READ_FIELDS if name in consumer}
+        if consumer.get("kind") == "gh-actions-secret" and not fields:
+            # Every copy's read is its repository's report, so the registry names none.
+            reads[render(consumer)] = ActionsSecretRead(consumer["repo"], consumer["name"])
+            continue
         if not fields:
             continue
         if consumer.get("kind") != "runtime-fetch":
@@ -214,11 +229,18 @@ class ConsumerReads:
         healthchecks: Healthchecks | None,
         orchestrator: OrchestratorClient,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        reports: FingerprintReports | None = None,
+        keeper: Callable[[], Fingerprint] | None = None,
     ) -> None:
         self._reads = dict(reads)
         self._healthchecks = healthchecks
         self._orchestrator = orchestrator
         self._clock = clock
+        # An Actions secret's report is compared with what the keeper holds now: once store has
+        # run, that is the new value.
+        self._reports = reports
+        self._keeper = keeper
+        self._keeper_print: Fingerprint | None = None
         self._answers: dict[tuple[str, datetime], Answer] = {}
 
     def covers(self, destination: str) -> bool:
@@ -250,6 +272,8 @@ class ConsumerReads:
         return self._answers[key]
 
     def _read(self, read: Read, after: datetime) -> Answer:
+        if isinstance(read, ActionsSecretRead):
+            return self._read_report(read)
         if isinstance(read, CheckRead):
             if self._healthchecks is None:
                 raise ReadError("a reader names a check and no Healthchecks key is configured")
@@ -264,6 +288,26 @@ class ConsumerReads:
             )
         latest = max(starts)
         return Answer(latest > after, latest)
+
+    def _read_report(self, read: ActionsSecretRead) -> Answer:
+        """Switched once the newest report shows the keeper's value. Never by time alone: the
+        report hashes the secret itself, so it tells the old value from the new."""
+        if self._reports is None or self._keeper is None:
+            raise ReadError("an Actions secret is approved and no rotation App is configured")
+        try:
+            report = self._reports.latest(read.repository, read.name)
+            if self._keeper_print is None:
+                self._keeper_print = self._keeper()
+            keeper = self._keeper_print
+        except ReportMissing as error:
+            raise ReadError(str(error)) from None
+        except (GitHubUnavailable, StoreError) as error:
+            raise ReadUnavailable(str(error)) from None
+        except ContractError as error:
+            raise ReadError(str(error)) from None
+        if report.fingerprint is None:
+            raise ReadError(f"{read.repository}'s report doesn't name {read.name}")
+        return Answer(keeper.matches(report.fingerprint), report.started)
 
     def _observed(self, read: ObservationRead, since: datetime) -> list[datetime]:
         try:

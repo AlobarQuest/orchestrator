@@ -26,6 +26,9 @@ class MemoryStore:
             raise StoreError("no such secret")
         return self.secrets[secret_id][2]
 
+    def read_key(self, secret_id: str) -> Value:
+        return self.read(secret_id)
+
     def revised(self, secret_id: str) -> datetime:
         if secret_id not in self.secrets:
             raise StoreError("no such secret")

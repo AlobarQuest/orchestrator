@@ -297,12 +297,16 @@ TABLE: dict[str, Row] = {
     # compare and mint values; `time` is the OpenRouter adapter's sleep between rechecks of a key it
     # deleted (ADR-0055 amendment 8). `ipaddress` and `urllib` (its URL parser only) let the
     # Coolify client send its token over plain HTTP to a tailnet address and nowhere else
-    # (amendment 9).
+    # (amendment 9). The rotation App (increment 7) signs its login with `jwt` and `cryptography`
+    # (both already the orchestrator's) and seals an Actions secret with `nacl`, the one added
+    # dependency for it; `base64` carries the sealed value and Bitbucket's Basic auth.
     "rotation_worker": _row(
         "__future__",
         "argparse",
+        "base64",
         "bitwarden_sdk",
         "collections",
+        "cryptography",
         "dataclasses",
         "datetime",
         "enum",
@@ -312,7 +316,9 @@ TABLE: dict[str, Row] = {
         "httpx",
         "ipaddress",
         "json",
+        "jwt",
         "logging",
+        "nacl",
         "os",
         "pathlib",
         "re",

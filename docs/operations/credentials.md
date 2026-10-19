@@ -271,6 +271,12 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   `push=true` mean something. So measured, the current token reaches all eight factory-adjacent
   repositories with write, **`project-standards` included** — correcting this file's claim that it
   was the one repository the PAT could not reach.
+  **From ADR-0055 increment 7 the rotation executor does the re-set.** Its `github-pat` adapter
+  writes every registered copy through the rotation App and verifies each by its repository's
+  hourly `secret-fingerprint.yml` report, which prints the secret's sha256 prefix and length
+  (`docs/operations/rotation-executor.md`, "Actions secrets"). The push probe stays the way to
+  check a new target's PAT access by hand. Devon decided on 2026-10-19 to drop the copies in
+  `project-standards` and `factory-runner`, which have no reader.
 
 ### #175
 
