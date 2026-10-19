@@ -328,10 +328,13 @@ disposition = "reissue"
   observation_subject = "snapshot:hetzner-vps"
   note = "through observe-run.sh; launchd com.devon.hetzner-snapshot Sunday 03:00; Keychain Claude/BWS_ACCESS_TOKEN_VPS_BACKUP (broad account); no Healthchecks check"
 
-# The factory-runner WORKER bearer. Seven repositories hold it as the write-only
-# Actions secret FACTORY_RUNNER_TOKEN (census 2026-10-06 via gh secret list over every
-# non-archived AlobarQuest repo; set dates 2026-07-08/09, project-standards 2026-08-07).
-# A rotation re-sets all seven; a copy left behind fails at claim time.
+# The factory-runner WORKER bearer. Six repositories hold it as the write-only Actions
+# secret FACTORY_RUNNER_TOKEN, each beside FACTORY_RUNNER_CREDENTIAL_KEY_ID, the entry's key
+# id, which a rotation doesn't change (census 2026-10-19 by gh secret list). project-standards'
+# copy was dropped on 2026-10-19: it isn't a factory target and no workflow reads it. So was the
+# factory-validation-kit reader, which exists only on an unmerged branch with no schedule.
+# The rotation executor writes every copy and reads each repository's secret-fingerprint
+# report (ADR-0055 increment 7).
 [[credential]]
 id = "orchestrator-factory-runner-bearer"
 class = "orchestrator-m2m-bearer"
@@ -352,8 +355,9 @@ disposition = "reissue"
   resource_type = "application"
   uuid = "eqj5l7k705fhi12x9i74fqf0"
   key = "ORCHESTRATOR_M2M_CREDENTIALS"
-  # No `entry` yet: its key id is an Actions secret no file records. Increment 7 reads it from
-  # the orchestrator's m2m-identities route; until then the executor refuses this credential.
+  # Read from the orchestrator's m2m-identities route on 2026-10-19 (agent factory-runner); the
+  # served hash equals the keeper's sha256. The key id itself is also an Actions secret.
+  entry = "factory-runner-github"
   note = "factory-runner entry (sha256 only)"
 
   [[credential.consumer]]
@@ -385,16 +389,6 @@ disposition = "reissue"
   kind = "gh-actions-secret"
   repo = "AlobarQuest/brain"
   name = "FACTORY_RUNNER_TOKEN"
-
-  [[credential.consumer]]
-  kind = "gh-actions-secret"
-  repo = "AlobarQuest/project-standards"
-  name = "FACTORY_RUNNER_TOKEN"
-
-  [[credential.consumer]]
-  kind = "runtime-fetch"
-  repo = "factory-validation-kit-restart-recovery"
-  ref = "src/factory_validation_kit/credentials.py"
 
 # ── The rotation canary (ADR-0055 increment 4) ───────────────────────────────────
 # A throwaway credential with no real provider: the executor's fake adapter mints, probes
