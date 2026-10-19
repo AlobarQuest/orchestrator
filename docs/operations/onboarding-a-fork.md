@@ -178,8 +178,11 @@ worktree. Run `fork-sync check <fork>` after any step to see where you are.
    `fork-sync-scaffold` branch.
 5. **Set the secrets** `APP_ID`, `APP_PRIVATE_KEY` and `ANTHROPIC_API_KEY` from BWS, in-process,
    with the value on stdin and no `--body` flag (`gh secret set NAME --repo <fork>`). Never pass
-   `--body -`, which stores a literal dash. Register each copy in factory-runner's
-   `.cred-consumers.toml`.
+   `--body -`, which stores a literal dash. Then register the fork's copies in factory-runner's
+   `.cred-consumers.toml`: add a `gh-actions-secret` consumer (`repo = "AlobarQuest/<fork>"`)
+   named `APP_PRIVATE_KEY` to the `fork-sync-app-private-key` entry and one named
+   `ANTHROPIC_API_KEY` to the `anthropic-api-key` entry. Every fork adds to both. `APP_ID` is the
+   App's id, not a credential, so it is not registered.
 6. **Merge the scaffold pull request** once `build and test` passes on it. Its `security review`
    fails by design: the review runs from the base, and the base has no review script yet. If
    `main` is already protected (rtk), `security review` is not yet a required check, so the
