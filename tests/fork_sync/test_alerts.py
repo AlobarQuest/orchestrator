@@ -274,7 +274,7 @@ def test_a_failed_review_opens_an_issue_that_mentions_the_owner() -> None:
 
 
 def test_a_failure_at_a_new_head_comments_on_the_open_issue() -> None:
-    github = FakeGitHub([_open_issue(f"{MARKER}\n<!-- head:{'b' * 40} -->")])
+    github = FakeGitHub([_open_issue(f"{MARKER}\n<!-- head:{'b' * 40} --><!-- pr:10 -->")])
     assert review.notify(ENV | {"RESULT": "failure"}, github) == 0
     [(method, url, payload)] = github.writes()
     assert (method, url) == ("POST", f"{ISSUES}/3/comments")
@@ -283,11 +283,11 @@ def test_a_failure_at_a_new_head_comments_on_the_open_issue() -> None:
 
 @pytest.mark.parametrize("where", ["body", "comment"])
 def test_a_failure_at_a_head_already_reported_writes_nothing(where: str) -> None:
-    seen = f"{MARKER}\n<!-- head:{'a' * 40} -->"
+    seen = f"<!-- head:{'a' * 40} --><!-- pr:10 -->"
     if where == "body":
-        github = FakeGitHub([_open_issue(seen)])
+        github = FakeGitHub([_open_issue(f"{MARKER}\n{seen}")])
     else:
-        github = FakeGitHub([_open_issue()], [{"body": f"x <!-- head:{'a' * 40} -->"}])
+        github = FakeGitHub([_open_issue()], [{"body": f"x {seen}"}])
     assert review.notify(ENV | {"RESULT": "failure"}, github) == 0
     assert github.writes() == []
 
@@ -302,22 +302,45 @@ def test_a_pass_closes_the_open_issue() -> None:
     assert github.writes()[-1][2] == {"state": "closed"}
 
 
-@pytest.mark.parametrize("where", ["body", "comment"])
-def test_a_pass_by_another_pull_request_leaves_the_alert_open(where: str) -> None:
-    """An acknowledgement or a gate change passing says nothing about the held sync."""
-    if where == "body":
-        github = FakeGitHub([_open_issue(f"{MARKER}\n<!-- pr:11 -->")])
-    else:
-        github = FakeGitHub([_open_issue(f"{MARKER}\n")], [{"body": "<!-- pr:11 -->"}])
-    assert review.notify(ENV | {"RESULT": "success"}, github) == 0
-    assert github.writes() == []
+def test_a_new_pull_request_at_a_reported_head_is_named() -> None:
+    """A sync pull request closed and re-opened on the same head is a new pull request: without a
+    comment naming it, nothing would record it."""
+    github = FakeGitHub([_open_issue(f"{MARKER}\n<!-- head:{'a' * 40} --><!-- pr:9 -->")])
+    assert review.notify(ENV | {"RESULT": "failure"}, github) == 0
+    [(method, url, payload)] = github.writes()
+    assert (method, url) == ("POST", f"{ISSUES}/3/comments")
+    assert "<!-- pr:10 -->" in payload["body"]
 
 
-def test_a_pass_by_a_pull_request_named_only_in_a_comment_closes_the_alert() -> None:
-    """A replacement sync pull request is named in the comment it raised, not the body."""
-    github = FakeGitHub([_open_issue(f"{MARKER}\n<!-- pr:9 -->")], [{"body": "<!-- pr:10 -->"}])
+def test_any_pass_of_the_sync_pull_request_closes_the_alert() -> None:
+    """The workflow raises review alerts only for the sync pull request, so a pass by one, even
+    one the issue doesn't name, means nothing is held."""
+    github = FakeGitHub([_open_issue(f"{MARKER}\n<!-- pr:9 -->")])
     assert review.notify(ENV | {"RESULT": "success"}, github) == 0
     assert github.writes()[-1][2] == {"state": "closed"}
+
+
+def test_the_review_alert_says_to_re_run_a_review_that_couldn_t_run() -> None:
+    """Nothing re-runs it: the sync pushes only a changed tree."""
+    assert (
+        "If the comment says the review couldn't run, re-run the failed `security review` job"
+        in review.alert_body("review", ENV)
+    )
+
+
+def test_network_calls_time_out() -> None:
+    """A hung call ends as "could not run", which alerts, not as a cancelled job, which doesn't."""
+    assert review.review.__defaults__ is not None
+    assert review._urlopen in review.review.__defaults__
+    assert review.notify.__defaults__ == (review._urlopen,)
+    assert 0 < review.HTTP_TIMEOUT_SECONDS < 30 * 60
+
+
+def test_the_timeout_reaches_the_request(monkeypatch: Any) -> None:
+    seen: dict[str, Any] = {}
+    monkeypatch.setattr(review.urllib.request, "urlopen", lambda request, **kw: seen.update(kw))
+    review._urlopen(review.urllib.request.Request("https://example.invalid"))
+    assert seen == {"timeout": review.HTTP_TIMEOUT_SECONDS}
 
 
 def test_every_page_of_comments_is_read() -> None:
@@ -327,7 +350,8 @@ def test_every_page_of_comments_is_read() -> None:
         def __call__(self, request: Any) -> _Response:
             if request.get_method() == "GET" and request.full_url.endswith("&page=2"):
                 self.calls.append(("GET", request.full_url, None))
-                return _Response(json.dumps([{"body": f"<!-- head:{'a' * 40} -->"}]).encode())
+                seen = f"<!-- head:{'a' * 40} --><!-- pr:10 -->"
+                return _Response(json.dumps([{"body": seen}]).encode())
             return super().__call__(request)
 
     github = Paged([_open_issue()], [{"body": "x"}] * 100)
@@ -432,6 +456,7 @@ def test_the_alert_job_runs_after_a_decided_review_with_the_base_s_script(ecosys
     assert notify["needs"] == "security-review"
     assert notify["if"] == (
         f"always() && {PULL_REQUEST} "
+        "&& github.head_ref == 'upstream-sync' "
         '&& contains(fromJSON(\'["success", "failure"]\'), needs.security-review.result)'
     )
     assert notify["permissions"] == {"contents": "read", "issues": "write"}
@@ -478,11 +503,39 @@ def test_protect_turns_issues_on() -> None:
     assert REPO_SETTINGS["has_issues"] is True
 
 
-def test_the_sync_pushes_only_a_changed_tree() -> None:
-    """A daily rebuild of the same tag would otherwise re-run the review and re-raise the alert."""
+def _push_decision() -> str:
+    """The rendered sync's push step, from the tree comparison to its `fi`."""
     sync = render("cargo")[".github/workflows/upstream-sync.yml"].decode()
-    push = sync.index("git push --force origin upstream-sync")
-    assert sync.rindex('if [ "$PUBLISHED" = "$(git rev-parse \'HEAD^{tree}\')" ]', 0, push) > 0
+    start = sync.index("          PUBLISHED=")
+    end = sync.index("          fi\n", start) + len("          fi\n")
+    return "\n".join(line.removeprefix("          ") for line in sync[start:end].splitlines())
+
+
+@pytest.mark.parametrize(
+    ("published", "rebuilt", "pushed"),
+    [(None, "tag", True), ("tag", "tag", False), ("tag", "tag+acks", True)],
+)
+def test_the_sync_pushes_only_a_changed_tree(
+    tmp_path: Path, published: str | None, rebuilt: str, pushed: bool
+) -> None:
+    """Run the rendered step against real git: no branch yet, the same tree on a new commit (a
+    daily rebuild of the same tag), and a changed tree (main's .github moved)."""
+    remote, work = tmp_path / "remote.git", tmp_path / "work"
+    _git(tmp_path, "init", "-q", "--bare", str(remote))
+    work.mkdir()
+    _git(work, "init", "-q", "-b", "main")
+    _git(work, "remote", "add", "origin", str(remote))
+    trees = {"tag": {"src": "upstream\n"}, "tag+acks": {"src": "upstream\n", "acks": "x\n"}}
+    if published is not None:
+        _commit(work, trees[published], "published")
+        _git(work, "push", "-q", "origin", "HEAD:upstream-sync")
+        _git(work, "fetch", "-q", "origin")
+        _git(work, "rm", "-q", "-r", ".")
+    _git(work, "checkout", "-q", "-B", "upstream-sync")
+    head = _commit(work, trees[rebuilt], "rebuilt on another day")
+    subprocess.run(["bash", "-euo", "pipefail", "-c", _push_decision()], cwd=work, check=True)
+    remote_head = _git(work, "ls-remote", "origin", "refs/heads/upstream-sync").split("\t")[0]
+    assert (remote_head == head) is pushed
 
 
 @pytest.mark.parametrize("ecosystem", ["npm", "npm-no-deps"])

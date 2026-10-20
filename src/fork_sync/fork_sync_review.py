@@ -874,6 +874,13 @@ def parse_verdict(text: str) -> list[Finding]:
 
 
 Opener = Callable[[urllib.request.Request], Any]
+HTTP_TIMEOUT_SECONDS = 300
+"""A hung call must end as "the review could not run" (exit 2), which fails the check and raises
+the alert, not run on until the job's own timeout, which GitHub may report as cancelled."""
+
+
+def _urlopen(request: urllib.request.Request) -> Any:
+    return urllib.request.urlopen(request, timeout=HTTP_TIMEOUT_SECONDS)
 
 
 def ask_model(model: str, prompt: str, api_key: str, opener: Opener) -> str:
@@ -1088,7 +1095,7 @@ def build_report(
 
 def review(
     env: Mapping[str, str],
-    opener: Opener = urllib.request.urlopen,
+    opener: Opener = _urlopen,
     run_audit: AuditRunner = _run_audit,
 ) -> int:
     # The declaration and the acknowledgements come from the BASE, as does this script (ci.yml
@@ -1169,7 +1176,8 @@ def alert_body(kind: str, env: Mapping[str, str]) -> str:
         what = (
             f"`security review` failed on pull request {pull} at `{head}`, so it can't land. "
             "Read the review comment on the pull request. Acknowledge what you accept in "
-            f"`{ACKS_PATH}` on main, or leave the sync held."
+            f"`{ACKS_PATH}` on main, or leave the sync held. If the comment says the review "
+            "couldn't run, re-run the failed `security review` job: nothing re-runs it for you."
         )
     else:
         what = (
@@ -1216,7 +1224,7 @@ class _Issues:
         return texts
 
 
-def notify(env: Mapping[str, str], opener: Opener = urllib.request.urlopen) -> int:
+def notify(env: Mapping[str, str], opener: Opener = _urlopen) -> int:
     """One open issue per kind of alert. A failure opens it, or comments on it once per new head;
     a pass closes it. A failure to raise an alert fails the job; a failure to close one only
     warns, because a red job would hold a pull request that passed its review."""
@@ -1226,9 +1234,10 @@ def notify(env: Mapping[str, str], opener: Opener = urllib.request.urlopen) -> i
         return 2
     if result not in ("success", "failure"):
         return 0
+    # One comment per head and pull request: a sync pull request closed and re-opened on the
+    # same head is a new pull request to name. The workflow raises a review alert only for the
+    # sync pull request, so any pass of one clears it.
     head = f"<!-- head:{env['HEAD_SHA']} -->"
-    # A review alert belongs to the pull request it reported: a pass by another (an
-    # acknowledgement, a gate change) says nothing about the held sync and must not close it.
     subject = f"<!-- pr:{env['PR_NUMBER']} -->" if kind == "review" else ""
     issues = _Issues(env, opener)
     try:
@@ -1237,9 +1246,9 @@ def notify(env: Mapping[str, str], opener: Opener = urllib.request.urlopen) -> i
             body = f"{alert_body(kind, env)}{head}{subject}\n"
             if issue is None:
                 issues.call("", "POST", {"title": ALERT_TITLES[kind], "body": body})
-            elif not any(head in text for text in issues.texts(issue)):
+            elif not any(head in text and subject in text for text in issues.texts(issue)):
                 issues.call(f"/{issue['number']}/comments", "POST", {"body": body})
-        elif issue is not None and any(subject in text for text in issues.texts(issue)):
+        elif issue is not None:
             passed = f"Passed at `{env['HEAD_SHA'][:12]}` ({env['RUN_URL']}). Closing.\n"
             issues.call(f"/{issue['number']}/comments", "POST", {"body": passed})
             issues.call(f"/{issue['number']}", "PATCH", {"state": "closed"})

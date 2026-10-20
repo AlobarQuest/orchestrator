@@ -130,12 +130,17 @@ It writes a report to the job summary and to one rolling pull-request comment, t
 
 ## The alert
 
-A held sync reaches the maintainer as an issue on the fork. When `security review` fails, `notify`
-opens one issue titled "Fork-sync: a security review is holding an upstream sync", mentioning the
-repository owner, or comments on the open one when the pull request's head is new. When a later
-review of a pull request the issue names passes, it comments and closes the issue; a pass by any
-other pull request, such as one adding acknowledgements, leaves it open. The weekly audit does
-the same with its own issue. The issue holds fixed fields only (the pull request, the head, the run); the findings stay
+A held sync reaches the maintainer as an issue on the fork. When `security review` fails on the
+sync pull request (branch `upstream-sync`), `notify` opens one issue titled "Fork-sync: a
+security review is holding an upstream sync", mentioning the repository owner, or comments on
+the open one for each new head or new sync pull request. When a later review of a sync pull
+request passes, it comments and closes the issue. A pull request a person opens raises no alert:
+that person is watching it. The weekly audit alerts the same way with its own issue.
+
+A review that couldn't run (exit 2: an API error or timeout) is not retried: the sync pushes only
+a changed tree, so nothing re-triggers it. Re-run the failed `security review` job; the alert
+says so. Network calls time out after 300 seconds, so a hung call fails the check rather than
+running until the job is cancelled, which raises no alert. The issue holds fixed fields only (the pull request, the head, the run); the findings stay
 in the report, because their text comes from upstream's diff.
 
 A failure to open or comment fails `notify`. A failure to close only warns: a red job would hold a
@@ -267,3 +272,6 @@ worktree. Run `fork-sync check <fork>` after any step to see where you are.
 - The jobs a `pull_request` run executes are defined by the pull request's own `ci.yml`. A sync
   pull request can't change it, because the sync restores the fork's whole `.github/` from `main`;
   a pull request a person opens on the fork is trusted to the same degree as that person.
+- GitHub disables a repository's scheduled workflows after 60 days without activity. A fork whose
+  upstream doesn't release for that long, or whose sync stays held, loses both the daily sync and
+  the weekly audit until a person re-enables them on the Actions tab.

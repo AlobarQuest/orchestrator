@@ -523,3 +523,8 @@ Placement rule: global CLAUDE.md §7.
   changes the gate is judged by the old one. Such a pull request lands by an admin merge after a
   person reads its report (`main` is protected without admin enforcement for this); never weaken
   the protection to land it. Detail: `docs/operations/onboarding-a-fork.md`.
+- A fork's `ci.yml` must trigger only on `pull_request` and `push`: a manual or scheduled run on a
+  pull request's branch reports the required jobs as skipped, which branch protection counts as
+  passing. Scheduled work (the weekly audit) lives in its own workflow. The held-sync alert is an
+  issue, so the fork needs issues on (`fork-sync protect` sets it). Detail:
+  `docs/operations/onboarding-a-fork.md`, "The alert".

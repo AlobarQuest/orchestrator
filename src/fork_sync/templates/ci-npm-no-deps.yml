@@ -83,12 +83,14 @@ jobs:
           python3 .github/scripts/fork_sync_review.py review
 
   # Opens, comments on or closes one issue on this fork, so a held sync reaches the maintainer.
+  # Only for the sync pull request: a person's own pull request is watched by that person.
   # Holds no secret; its token can write issues and nothing else. It runs the BASE's script.
   notify:
     name: notify
     needs: security-review
     if: >-
       always() && github.event_name == 'pull_request'
+      && github.head_ref == 'upstream-sync'
       && contains(fromJSON('["success", "failure"]'), needs.security-review.result)
     runs-on: ubuntu-latest
     timeout-minutes: 10
