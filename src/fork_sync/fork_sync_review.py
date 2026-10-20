@@ -785,10 +785,13 @@ def advisory_findings(
 
 
 def declared_dependencies(manifest: bytes | None) -> list[Finding]:
-    """For an ecosystem that audits nothing: a finding while the manifest declares any dependency,
-    fingerprinted by the declared tables, so an acknowledgement lasts until they change."""
+    """For an ecosystem that audits nothing: a finding while the manifest declares any dependency
+    or workspace (whose packages' dependencies an install would fetch), fingerprinted by the
+    declared tables, so an acknowledgement lasts until they change."""
     try:
-        tables = {key: _json_object(manifest).get(key) for key in NPM_DEPENDENCY_KEYS}
+        tables = {
+            key: _json_object(manifest).get(key) for key in (*NPM_DEPENDENCY_KEYS, "workspaces")
+        }
     except ValueError:
         return [Finding("manifest-unreadable", "package.json", "not readable JSON", "unreadable")]
     declared = {key: value for key, value in tables.items() if value}
@@ -1177,6 +1180,42 @@ def alert_body(kind: str, env: Mapping[str, str]) -> str:
     return f"<!-- fork-sync-alert:{kind} -->\n@{owner} {what}\n\nRun: {run}\n"
 
 
+class _Issues:
+    """The fork's issues, through the workflow's token."""
+
+    def __init__(self, env: Mapping[str, str], opener: Opener) -> None:
+        self.api = f"{env['GITHUB_API_URL']}/repos/{env['GITHUB_REPOSITORY']}/issues"
+        self.headers = {
+            "Authorization": f"Bearer {env['GITHUB_TOKEN']}",
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "fork-sync-review/1",
+        }
+        self.opener = opener
+
+    def call(self, path: str, method: str = "GET", payload: Any = None) -> Any:
+        data = json.dumps(payload).encode() if payload is not None else None
+        url = f"{self.api}{path}"
+        request = urllib.request.Request(url, data=data, headers=self.headers, method=method)
+        with self.opener(request) as response:
+            return json.loads(response.read() or b"null")
+
+    def alert(self, marker: str) -> dict[str, Any] | None:
+        """The open alert: an issue (not a pull request) the workflow bot opened with `marker`."""
+        issues = self.call("?state=open&creator=github-actions%5Bbot%5D&per_page=100")
+        return next(
+            (i for i in issues if "pull_request" not in i and marker in (i.get("body") or "")),
+            None,
+        )
+
+    def texts(self, issue: Mapping[str, Any]) -> list[str]:
+        """The issue's body and every comment, all pages."""
+        texts, page = [issue.get("body") or ""], 1
+        while batch := self.call(f"/{issue['number']}/comments?per_page=100&page={page}"):
+            texts += [comment.get("body") or "" for comment in batch]
+            page += 1
+        return texts
+
+
 def notify(env: Mapping[str, str], opener: Opener = urllib.request.urlopen) -> int:
     """One open issue per kind of alert. A failure opens it, or comments on it once per new head;
     a pass closes it. A failure to raise an alert fails the job; a failure to close one only
@@ -1187,43 +1226,23 @@ def notify(env: Mapping[str, str], opener: Opener = urllib.request.urlopen) -> i
         return 2
     if result not in ("success", "failure"):
         return 0
-    api = f"{env['GITHUB_API_URL']}/repos/{env['GITHUB_REPOSITORY']}/issues"
-    headers = {
-        "Authorization": f"Bearer {env['GITHUB_TOKEN']}",
-        "Accept": "application/vnd.github+json",
-        "User-Agent": "fork-sync-review/1",
-    }
-
-    def call(url: str, method: str = "GET", payload: Any = None) -> Any:
-        data = json.dumps(payload).encode() if payload is not None else None
-        request = urllib.request.Request(url, data=data, headers=headers, method=method)
-        with opener(request) as response:
-            return json.loads(response.read() or b"null")
-
-    marker = f"<!-- fork-sync-alert:{kind} -->"
-    head_marker = f"<!-- head:{env['HEAD_SHA']} -->"
+    head = f"<!-- head:{env['HEAD_SHA']} -->"
+    # A review alert belongs to the pull request it reported: a pass by another (an
+    # acknowledgement, a gate change) says nothing about the held sync and must not close it.
+    subject = f"<!-- pr:{env['PR_NUMBER']} -->" if kind == "review" else ""
+    issues = _Issues(env, opener)
     try:
-        issues = call(f"{api}?state=open&creator=github-actions%5Bbot%5D&per_page=100")
-        issue = next(
-            (i for i in issues if "pull_request" not in i and marker in (i.get("body") or "")),
-            None,
-        )
+        issue = issues.alert(f"<!-- fork-sync-alert:{kind} -->")
         if result == "failure":
-            body = alert_body(kind, env) + head_marker + "\n"
+            body = f"{alert_body(kind, env)}{head}{subject}\n"
             if issue is None:
-                call(api, "POST", {"title": ALERT_TITLES[kind], "body": body})
-            else:
-                comments = call(f"{api}/{issue['number']}/comments?per_page=100")
-                seen = head_marker in (issue.get("body") or "") or any(
-                    head_marker in (c.get("body") or "") for c in comments
-                )
-                if not seen:
-                    call(f"{api}/{issue['number']}/comments", "POST", {"body": body})
-            return 0
-        if issue is not None:
+                issues.call("", "POST", {"title": ALERT_TITLES[kind], "body": body})
+            elif not any(head in text for text in issues.texts(issue)):
+                issues.call(f"/{issue['number']}/comments", "POST", {"body": body})
+        elif issue is not None and any(subject in text for text in issues.texts(issue)):
             passed = f"Passed at `{env['HEAD_SHA'][:12]}` ({env['RUN_URL']}). Closing.\n"
-            call(f"{api}/{issue['number']}/comments", "POST", {"body": passed})
-            call(f"{api}/{issue['number']}", "PATCH", {"state": "closed"})
+            issues.call(f"/{issue['number']}/comments", "POST", {"body": passed})
+            issues.call(f"/{issue['number']}", "PATCH", {"state": "closed"})
     except Exception as error:  # every failure to reach GitHub is reported the same way
         level = "error" if result == "failure" else "warning"
         print(f"::{level}::could not update the fork-sync alert issue: {type(error).__name__}")

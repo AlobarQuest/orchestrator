@@ -3,28 +3,25 @@
 # Both JOB names are the branch-protection contexts (`build and test`, `security review`), and
 # both report on every pull request: no path filter, or a pull request waits forever for a check
 # that never runs. Commands come from `.github/fork-sync.toml`. `notify` raises the alert issue
-# for a failed review, and `weekly audit` audits main on a schedule.
+# for a failed review. Only `pull_request` and `push` trigger this workflow: a manual run on a
+# pull request's branch would report the required jobs as skipped, which counts as passing.
 name: CI
 
 on:
   pull_request:
   push:
     branches: [main]
-  schedule:
-    - cron: '0 13 * * 1'
-  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.event_name }}-${{ github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   build-and-test:
     name: build and test
-    if: github.event_name == 'pull_request' || github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -116,41 +113,5 @@ jobs:
           RESULT: ${{ needs.security-review.result }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: python3 .github/scripts/fork_sync_review.py notify
-
-  # Weekly, and on demand: main's dependencies against main's acknowledgements, so an advisory
-  # published against a version already installed is found between upstream releases.
-  audit:
-    name: weekly audit
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read
-      issues: write
-    env:
-      GIT_NO_REPLACE_OBJECTS: '1'
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          ref: main
-          persist-credentials: false
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.14'
-      - uses: actions/setup-node@v4
-        with:
-          node-version: lts/*
-      - name: Audit
-        id: audit
-        run: python3 .github/scripts/fork_sync_review.py audit-main
-      - name: Notify
-        if: always() && steps.audit.outcome != 'skipped'
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          ALERT_KIND: audit
-          RESULT: ${{ steps.audit.outcome }}
-          HEAD_SHA: ${{ github.sha }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: python3 .github/scripts/fork_sync_review.py notify

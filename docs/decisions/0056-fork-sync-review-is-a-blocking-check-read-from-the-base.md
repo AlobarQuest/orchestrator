@@ -111,9 +111,10 @@ environment," and "Yes, but also the optional Item #3").
   a `notify` job that opens, comments on or closes one issue on the fork, mentioning the owner.
   It needs no credential: Healthchecks has no free check, and a GitHub issue reaches the owner
   through GitHub's own notifications.
-- **`main` is audited weekly.** A `weekly audit` job audits `main`'s dependencies against
-  `main`'s acknowledgements, so an advisory published against an installed version is found
-  between releases, and alerts the same way.
+- **`main` is audited weekly.** A `weekly audit` job, in a workflow of its own so it can never
+  report a required check on a pull request, audits `main`'s dependencies against `main`'s
+  acknowledgements. An advisory published against an installed version is then found between
+  releases, and alerts the same way.
 - **`npm-no-deps`** is a third ecosystem for a fork whose root `package.json` declares no
   dependencies: nothing is installed or audited, and a declared dependency is a finding.
 - **A one-time review of each fork's current code.** The gate reviews only what each sync

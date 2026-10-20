@@ -65,6 +65,7 @@ def _onboarded() -> dict[str, Any]:
             "allow_merge_commit": True,
             "squash_merge_commit_message": "COMMIT_MESSAGES",
             "delete_branch_on_merge": True,
+            "has_issues": True,
         },
         f"repos/{FORK}/contents/.github/fork-sync.toml?ref=main": CONFIG,
         f"repos/{FORK}/contents/.github/workflows?ref=main": [
@@ -128,6 +129,7 @@ def test_check_reports_a_fork_with_no_installer_row(monkeypatch: pytest.MonkeyPa
             "upstream workflows absent from main -- cd.yml",
         ),
         (lambda a: a[f"repos/{FORK}"].update({"delete_branch_on_merge": False}), "settings"),
+        (lambda a: a[f"repos/{FORK}"].update({"has_issues": False}), "has_issues"),
         (lambda a: a[f"repos/{FORK}/actions/secrets"]["secrets"].pop(), "ANTHROPIC_API_KEY"),
         (
             lambda a: a.update(

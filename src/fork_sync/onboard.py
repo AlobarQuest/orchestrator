@@ -16,8 +16,9 @@ from fork_sync.gh import Runner, gh_api, gh_write
 
 SYNC_WORKFLOW = ".github/workflows/upstream-sync.yml"
 CI_WORKFLOW = ".github/workflows/ci.yml"
+AUDIT_WORKFLOW = ".github/workflows/fork-sync-audit.yml"
 REVIEW_SCRIPT = ".github/scripts/fork_sync_review.py"
-OWN_WORKFLOWS = frozenset({"upstream-sync.yml", "ci.yml"})
+OWN_WORKFLOWS = frozenset({"upstream-sync.yml", "ci.yml", "fork-sync-audit.yml"})
 REQUIRED_CHECKS = ("build and test", "security review")
 GITHUB_ACTIONS_APP_ID = 15368
 """The GitHub Actions app: a required check must come from a workflow, not any status poster."""
@@ -31,6 +32,8 @@ REPO_SETTINGS = {
     "squash_merge_commit_title": "COMMIT_OR_PR_TITLE",
     "squash_merge_commit_message": "COMMIT_MESSAGES",
     "delete_branch_on_merge": True,
+    # The alert is an issue, and a fork starts with issues off.
+    "has_issues": True,
 }
 
 
@@ -44,11 +47,12 @@ class Refused(RuntimeError):
 
 
 def render(ecosystem: str) -> dict[str, bytes]:
-    """The three fork-side files, exactly as `check` expects to find them on main."""
+    """The fork-side files, exactly as `check` expects to find them on main."""
     package = resources.files("fork_sync")
     return {
         SYNC_WORKFLOW: package.joinpath("templates/upstream-sync.yml").read_bytes(),
         CI_WORKFLOW: package.joinpath(f"templates/ci-{ecosystem}.yml").read_bytes(),
+        AUDIT_WORKFLOW: package.joinpath(f"templates/audit-{ecosystem}.yml").read_bytes(),
         REVIEW_SCRIPT: package.joinpath("fork_sync_review.py").read_bytes(),
     }
 

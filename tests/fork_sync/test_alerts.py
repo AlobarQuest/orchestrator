@@ -17,7 +17,14 @@ import pytest
 import yaml
 
 from fork_sync import fork_sync_review as review
-from fork_sync.onboard import REQUIRED_CHECKS, render
+from fork_sync.onboard import (
+    AUDIT_WORKFLOW,
+    CI_WORKFLOW,
+    OWN_WORKFLOWS,
+    REPO_SETTINGS,
+    REQUIRED_CHECKS,
+    render,
+)
 
 NO_DEPS = """
 upstream = "nyldn/claude-octopus"
@@ -76,6 +83,12 @@ def test_the_dependency_finding_is_bound_to_the_declared_tables() -> None:
     bumped = finding({"version": "1.0.0", "dependencies": {"a": "1.0.1"}})
     assert pinned.fingerprint() == renamed.fingerprint()
     assert pinned.fingerprint() != bumped.fingerprint()
+
+
+def test_a_workspace_is_a_finding() -> None:
+    """A local install would fetch the workspace packages' dependencies."""
+    [finding] = review.declared_dependencies(b'{"workspaces": ["packages/*"]}')
+    assert finding.kind == "dependencies-declared"
 
 
 def test_an_unreadable_manifest_is_a_finding_not_a_pass() -> None:
@@ -163,6 +176,24 @@ def test_the_weekly_audit_reads_git_not_the_working_tree(tmp_path: Path, monkeyp
     assert review.audit_main({}, _vulnerable) == 1
 
 
+def test_the_weekly_audit_reads_config_and_lockfile_from_git(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """An uncommitted declaration naming no lockfile, and a clean uncommitted lockfile, change
+    nothing: the audit sees main's committed files."""
+    _main_repo(tmp_path, monkeypatch)
+    (tmp_path / ".github/fork-sync.toml").write_text(NO_DEPS)
+    (tmp_path / "Cargo.lock").write_text("# emptied\n")
+    seen: list[bytes] = []
+
+    def audit(argv: list[str], cwd: Path, env: dict[str, str]) -> tuple[int, bytes]:
+        seen.append((cwd / "Cargo.lock").read_bytes())
+        return 1, CARGO_REPORT
+
+    assert review.audit_main({}, audit) == 1
+    assert seen == [b"version = 3\n"]
+
+
 def test_an_audit_that_cannot_run_fails_the_weekly_audit(tmp_path: Path, monkeypatch: Any) -> None:
     _main_repo(tmp_path, monkeypatch)
     assert review.audit_main({}, lambda argv, cwd, env: (1, b"network down")) == 2
@@ -217,14 +248,15 @@ class FakeGitHub:
         if request.full_url == LISTING:
             return _Response(json.dumps(self.issues).encode())
         if request.get_method() == "GET":
-            return _Response(json.dumps(self.comments).encode())
+            page = self.comments if request.full_url.endswith("&page=1") else []
+            return _Response(json.dumps(page).encode())
         return _Response(b"{}")
 
     def writes(self) -> list[tuple[str, str, Any]]:
         return [call for call in self.calls if call[0] != "GET"]
 
 
-def _open_issue(body: str = f"{MARKER}\nfirst") -> dict[str, Any]:
+def _open_issue(body: str = f"{MARKER}\nfirst <!-- pr:10 -->") -> dict[str, Any]:
     return {"number": 3, "body": body}
 
 
@@ -238,6 +270,7 @@ def test_a_failed_review_opens_an_issue_that_mentions_the_owner() -> None:
     assert "@AlobarQuest" in payload["body"]
     assert "https://github.com/AlobarQuest/rtk/pull/10" in payload["body"]
     assert f"<!-- head:{'a' * 40} -->" in payload["body"]
+    assert "<!-- pr:10 -->" in payload["body"]
 
 
 def test_a_failure_at_a_new_head_comments_on_the_open_issue() -> None:
@@ -266,6 +299,47 @@ def test_a_pass_closes_the_open_issue() -> None:
         ("POST", f"{ISSUES}/3/comments"),
         ("PATCH", f"{ISSUES}/3"),
     ]
+    assert github.writes()[-1][2] == {"state": "closed"}
+
+
+@pytest.mark.parametrize("where", ["body", "comment"])
+def test_a_pass_by_another_pull_request_leaves_the_alert_open(where: str) -> None:
+    """An acknowledgement or a gate change passing says nothing about the held sync."""
+    if where == "body":
+        github = FakeGitHub([_open_issue(f"{MARKER}\n<!-- pr:11 -->")])
+    else:
+        github = FakeGitHub([_open_issue(f"{MARKER}\n")], [{"body": "<!-- pr:11 -->"}])
+    assert review.notify(ENV | {"RESULT": "success"}, github) == 0
+    assert github.writes() == []
+
+
+def test_a_pass_by_a_pull_request_named_only_in_a_comment_closes_the_alert() -> None:
+    """A replacement sync pull request is named in the comment it raised, not the body."""
+    github = FakeGitHub([_open_issue(f"{MARKER}\n<!-- pr:9 -->")], [{"body": "<!-- pr:10 -->"}])
+    assert review.notify(ENV | {"RESULT": "success"}, github) == 0
+    assert github.writes()[-1][2] == {"state": "closed"}
+
+
+def test_every_page_of_comments_is_read() -> None:
+    """A head reported on the second page is still a head already reported."""
+
+    class Paged(FakeGitHub):
+        def __call__(self, request: Any) -> _Response:
+            if request.get_method() == "GET" and request.full_url.endswith("&page=2"):
+                self.calls.append(("GET", request.full_url, None))
+                return _Response(json.dumps([{"body": f"<!-- head:{'a' * 40} -->"}]).encode())
+            return super().__call__(request)
+
+    github = Paged([_open_issue()], [{"body": "x"}] * 100)
+    assert review.notify(ENV | {"RESULT": "failure"}, github) == 0
+    assert github.writes() == []
+
+
+def test_an_audit_pass_closes_its_alert() -> None:
+    audit = "<!-- fork-sync-alert:audit -->"
+    github = FakeGitHub([_open_issue(f"{audit}\n")])
+    env = {k: v for k, v in ENV.items() if k != "PR_NUMBER"} | {"ALERT_KIND": "audit"}
+    assert review.notify(env | {"RESULT": "success"}, github) == 0
     assert github.writes()[-1][2] == {"state": "closed"}
 
 
@@ -321,47 +395,106 @@ def test_an_unknown_alert_kind_is_refused() -> None:
 # ---- the rendered workflows -----------------------------------------------------------------
 
 
+def _workflow(ecosystem: str, path: str) -> dict[str, Any]:
+    document = yaml.safe_load(render(ecosystem)[path])
+    document["on"] = document.pop(True)  # YAML 1.1 reads the bare key `on` as true
+    return document
+
+
 def _ci(ecosystem: str) -> dict[str, Any]:
-    return yaml.safe_load(render(ecosystem)[".github/workflows/ci.yml"])
+    return _workflow(ecosystem, CI_WORKFLOW)
 
 
-@pytest.mark.parametrize("ecosystem", sorted(review.ECOSYSTEMS))
-def test_every_ecosystem_renders_the_required_jobs_alert_and_audit(ecosystem: str) -> None:
-    jobs = _ci(ecosystem)["jobs"]
-    names = {job["name"] for job in jobs.values()}
-    assert set(REQUIRED_CHECKS) <= names
-    assert {"notify", "weekly audit"} <= names
+def _audit(ecosystem: str) -> dict[str, Any]:
+    return _workflow(ecosystem, AUDIT_WORKFLOW)
 
 
-@pytest.mark.parametrize("ecosystem", sorted(review.ECOSYSTEMS))
-@pytest.mark.parametrize("job", ["notify", "audit"])
-def test_the_alert_and_audit_jobs_hold_no_secret_and_write_only_issues(
-    ecosystem: str, job: str
-) -> None:
-    definition = _ci(ecosystem)["jobs"][job]
-    assert definition["permissions"] == {"contents": "read", "issues": "write"}
-    assert "secrets." not in json.dumps(definition)
+ECOSYSTEMS = sorted(review.ECOSYSTEMS)
+PULL_REQUEST = "github.event_name == 'pull_request'"
 
 
-@pytest.mark.parametrize("ecosystem", sorted(review.ECOSYSTEMS))
-def test_the_alert_runs_the_base_s_script(ecosystem: str) -> None:
-    [checkout] = [s for s in _ci(ecosystem)["jobs"]["notify"]["steps"] if "checkout" in str(s)]
+@pytest.mark.parametrize("ecosystem", ECOSYSTEMS)
+def test_ci_runs_only_on_pull_requests_and_pushes(ecosystem: str) -> None:
+    """A manual or scheduled run on a pull request's branch would report the required jobs as
+    skipped, which branch protection counts as passing."""
+    ci = _ci(ecosystem)
+    assert set(ci["on"]) == {"pull_request", "push"}
+    assert ci["concurrency"]["group"] == "ci-${{ github.ref }}"
+    jobs = ci["jobs"]
+    assert set(REQUIRED_CHECKS) | {"notify"} == {job["name"] for job in jobs.values()}
+    assert "if" not in jobs["build-and-test"]
+    assert jobs["security-review"]["if"] == PULL_REQUEST
+
+
+@pytest.mark.parametrize("ecosystem", ECOSYSTEMS)
+def test_the_alert_job_runs_after_a_decided_review_with_the_base_s_script(ecosystem: str) -> None:
+    notify = _ci(ecosystem)["jobs"]["notify"]
+    assert notify["needs"] == "security-review"
+    assert notify["if"] == (
+        f"always() && {PULL_REQUEST} "
+        '&& contains(fromJSON(\'["success", "failure"]\'), needs.security-review.result)'
+    )
+    assert notify["permissions"] == {"contents": "read", "issues": "write"}
+    assert "secrets." not in json.dumps(notify)
+    [checkout] = [step for step in notify["steps"] if "checkout" in str(step.get("uses"))]
     assert checkout["with"]["ref"] == "${{ github.event.pull_request.base.sha }}"
+    [step] = [step for step in notify["steps"] if step.get("name") == "Notify"]
+    assert step["env"]["HEAD_SHA"] == "${{ github.event.pull_request.head.sha }}"
+    assert step["env"]["RESULT"] == "${{ needs.security-review.result }}"
+    assert step["env"]["ALERT_KIND"] == "review"
 
 
-@pytest.mark.parametrize("ecosystem", sorted(review.ECOSYSTEMS))
-def test_the_schedule_runs_only_the_audit(ecosystem: str) -> None:
-    """A scheduled run must not build the head or need the review's key."""
-    jobs = _ci(ecosystem)["jobs"]
-    assert "schedule" not in jobs["build-and-test"]["if"].replace("!= 'schedule'", "")
-    assert "pull_request" in jobs["security-review"]["if"]
-    assert "schedule" in jobs["audit"]["if"]
-    [checkout] = [s for s in jobs["audit"]["steps"] if "checkout" in str(s)]
+@pytest.mark.parametrize("ecosystem", ECOSYSTEMS)
+def test_the_audit_is_its_own_scheduled_workflow(ecosystem: str) -> None:
+    audit = _audit(ecosystem)
+    assert set(audit["on"]) == {"schedule", "workflow_dispatch"}
+    [job] = audit["jobs"].values()
+    assert job["name"] == "weekly audit"
+    assert job["name"] not in REQUIRED_CHECKS
+    assert job["permissions"] == {"contents": "read", "issues": "write"}
+    assert "secrets." not in json.dumps(audit)
+    [checkout] = [step for step in job["steps"] if "checkout" in str(step.get("uses"))]
     assert checkout["with"]["ref"] == "main"
 
 
+@pytest.mark.parametrize("ecosystem", ECOSYSTEMS)
+def test_any_audit_outcome_but_success_alerts(ecosystem: str) -> None:
+    """A setup step that fails before the audit runs still raises the alert."""
+    [job] = _audit(ecosystem)["jobs"].values()
+    [step] = [step for step in job["steps"] if step.get("name") == "Notify"]
+    assert step["if"] == "always()"
+    assert step["env"]["RESULT"] == (
+        "${{ steps.audit.outcome == 'success' && 'success' || 'failure' }}"
+    )
+    assert step["env"]["ALERT_KIND"] == "audit"
+
+
+def test_the_audit_workflow_is_the_fork_s_own() -> None:
+    assert "fork-sync-audit.yml" in OWN_WORKFLOWS
+
+
+def test_protect_turns_issues_on() -> None:
+    """The alert is an issue, and a fork starts with issues off."""
+    assert REPO_SETTINGS["has_issues"] is True
+
+
+def test_the_sync_pushes_only_a_changed_tree() -> None:
+    """A daily rebuild of the same tag would otherwise re-run the review and re-raise the alert."""
+    sync = render("cargo")[".github/workflows/upstream-sync.yml"].decode()
+    push = sync.index("git push --force origin upstream-sync")
+    assert sync.rindex('if [ "$PUBLISHED" = "$(git rev-parse \'HEAD^{tree}\')" ]', 0, push) > 0
+
+
+@pytest.mark.parametrize("ecosystem", ["npm", "npm-no-deps"])
+def test_an_npmrc_is_a_finding_for_both_npm_ecosystems(ecosystem: str) -> None:
+    config = review.parse_config(NO_DEPS.replace('"npm-no-deps"', f'"{ecosystem}"'))
+    change = review.Change("M", ".npmrc", "100644", "100644", "o", "n")
+    kinds = [f.kind for f in review.path_findings(config, [change], lambda blob: b"x")]
+    assert "npmrc" in kinds
+
+
 def test_the_no_dependency_template_installs_nothing() -> None:
-    text = render("npm-no-deps")[".github/workflows/ci.yml"].decode()
+    text = render("npm-no-deps")[CI_WORKFLOW].decode()
     assert "npm ci" not in text
     assert "npm install" not in text
 
