@@ -217,7 +217,9 @@ worktree. Run `fork-sync check <fork>` after any step to see where you are.
    removes upstream's whole `.github/`, so nothing upstream planted there (an acknowledgements
    file, a script) becomes the fork's. It refuses, and prints the commits, if `main` has commits
    no upstream branch or tag contains. Read them; if the fork is to drop them (for example, local
-   hardening the lane doesn't carry), re-run with `--discard-fork-commits`.
+   hardening the lane doesn't carry), re-run with `--discard-fork-commits`. It force-pushes
+   `main`, so a fork whose `main` is already protected must have that protection removed first
+   (save it with `gh api repos/<fork>/branches/main/protection`); step 8 applies the lane's own.
 4. **Scaffold.** Write the declaration, then run `fork-sync scaffold <fork> --config <file>`. It
    prints the pull request number. If the old lane left files `scaffold` does not render (for rtk,
    `.github/scripts/ai_security_review.py`), push a commit removing them to the
