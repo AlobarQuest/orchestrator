@@ -3,7 +3,8 @@
 This page explains how to put a fork on the fork-sync lane: a daily workflow opens one rolling pull
 request that brings the fork up to upstream's newest release, two required checks build and review
 it, the inert landing lane lands it, and, for a tool installed on the operator machine,
-`tool-installer` installs it (ADR-0042). `AlobarQuest/rtk` is the reference fork.
+`tool-installer` installs it (ADR-0042). `AlobarQuest/rtk` is the reference fork. The lane's
+design decisions are recorded in ADR-0056.
 
 The `fork-sync` console script automates every step it can and reports the rest:
 
