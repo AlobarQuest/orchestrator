@@ -16,8 +16,9 @@ from fork_sync.gh import Runner, gh_api, gh_write
 
 SYNC_WORKFLOW = ".github/workflows/upstream-sync.yml"
 CI_WORKFLOW = ".github/workflows/ci.yml"
+AUDIT_WORKFLOW = ".github/workflows/fork-sync-audit.yml"
 REVIEW_SCRIPT = ".github/scripts/fork_sync_review.py"
-OWN_WORKFLOWS = frozenset({"upstream-sync.yml", "ci.yml"})
+OWN_WORKFLOWS = frozenset({"upstream-sync.yml", "ci.yml", "fork-sync-audit.yml"})
 REQUIRED_CHECKS = ("build and test", "security review")
 GITHUB_ACTIONS_APP_ID = 15368
 """The GitHub Actions app: a required check must come from a workflow, not any status poster."""
@@ -31,6 +32,8 @@ REPO_SETTINGS = {
     "squash_merge_commit_title": "COMMIT_OR_PR_TITLE",
     "squash_merge_commit_message": "COMMIT_MESSAGES",
     "delete_branch_on_merge": True,
+    # The alert is an issue, and a fork starts with issues off.
+    "has_issues": True,
 }
 
 
@@ -44,11 +47,12 @@ class Refused(RuntimeError):
 
 
 def render(ecosystem: str) -> dict[str, bytes]:
-    """The three fork-side files, exactly as `check` expects to find them on main."""
+    """The fork-side files, exactly as `check` expects to find them on main."""
     package = resources.files("fork_sync")
     return {
         SYNC_WORKFLOW: package.joinpath("templates/upstream-sync.yml").read_bytes(),
         CI_WORKFLOW: package.joinpath(f"templates/ci-{ecosystem}.yml").read_bytes(),
+        AUDIT_WORKFLOW: package.joinpath(f"templates/audit-{ecosystem}.yml").read_bytes(),
         REVIEW_SCRIPT: package.joinpath("fork_sync_review.py").read_bytes(),
     }
 
@@ -83,7 +87,10 @@ def scaffold(run: Runner, fork: str, config_path: Path) -> int:
     with tempfile.TemporaryDirectory() as scratch:
         clone = _clone(run, fork, Path(scratch), "--depth", "1")
         run(["git", "checkout", "--quiet", "-b", SCAFFOLD_BRANCH], None, clone)
-        files = {CONFIG_PATH: text.encode(), ACKS_PATH: EMPTY_ACKS, **render(config.ecosystem)}
+        files = {CONFIG_PATH: text.encode(), **render(config.ecosystem)}
+        # Re-scaffolding an onboarded fork keeps what a person has acknowledged.
+        if not (clone / ACKS_PATH).exists():
+            files[ACKS_PATH] = EMPTY_ACKS
         for path, content in files.items():
             (clone / path).parent.mkdir(parents=True, exist_ok=True)
             (clone / path).write_bytes(content)
@@ -121,8 +128,12 @@ def fork_only_commits(run: Runner, clone: Path) -> list[str]:
     return out.splitlines()
 
 
-def baseline(run: Runner, fork: str, tag: str) -> str:
-    """Reset the fork's main to upstream's tag minus its workflows. Returns the new head."""
+def baseline(run: Runner, fork: str, tag: str, *, discard_fork_commits: bool = False) -> str:
+    """Reset the fork's main to upstream's tag minus its workflows. Returns the new head.
+
+    Commits on main that upstream doesn't have are refused unless the caller has decided to drop
+    them; they're printed either way, so the decision is made against the list.
+    """
     upstream = parent_of(run, fork)
     with tempfile.TemporaryDirectory() as scratch:
         clone = _clone(run, fork, Path(scratch))
@@ -139,10 +150,13 @@ def baseline(run: Runner, fork: str, tag: str) -> str:
         except RuntimeError:
             raise Refused(f"{upstream} has no tag {tag}") from None
         stranded = fork_only_commits(run, clone)
-        if stranded:
+        if stranded and discard_fork_commits:
+            print(f"discarding {len(stranded)} commit(s) upstream does not have:")
+            print("\n".join(stranded))
+        elif stranded:
             raise Refused(
                 f"main has {len(stranded)} commit(s) upstream does not; a baseline would lose "
-                "them:\n" + "\n".join(stranded)
+                "them (pass --discard-fork-commits to drop them):\n" + "\n".join(stranded)
             )
         old = run(["git", "rev-parse", "origin/main"], None, clone).strip()
         run(["git", "checkout", "--quiet", "-B", "main", target], None, clone)

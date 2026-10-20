@@ -65,6 +65,7 @@ def _onboarded() -> dict[str, Any]:
             "allow_merge_commit": True,
             "squash_merge_commit_message": "COMMIT_MESSAGES",
             "delete_branch_on_merge": True,
+            "has_issues": True,
         },
         f"repos/{FORK}/contents/.github/fork-sync.toml?ref=main": CONFIG,
         f"repos/{FORK}/contents/.github/workflows?ref=main": [
@@ -128,6 +129,7 @@ def test_check_reports_a_fork_with_no_installer_row(monkeypatch: pytest.MonkeyPa
             "upstream workflows absent from main -- cd.yml",
         ),
         (lambda a: a[f"repos/{FORK}"].update({"delete_branch_on_merge": False}), "settings"),
+        (lambda a: a[f"repos/{FORK}"].update({"has_issues": False}), "has_issues"),
         (lambda a: a[f"repos/{FORK}/actions/secrets"]["secrets"].pop(), "ANTHROPIC_API_KEY"),
         (
             lambda a: a.update(
@@ -182,6 +184,40 @@ def test_scaffold_opens_a_pull_request(monkeypatch: pytest.MonkeyPatch, tmp_path
     assert fork_sync_review.parse_acks(EMPTY_ACKS.decode()) == {}
 
 
+def test_re_scaffolding_keeps_the_acknowledgements(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An onboarded fork's acknowledgements are a person's decisions; a template upgrade keeps
+    them. Control: the preceding test, where the fork has none, writes the empty file."""
+    config = tmp_path / "fork-sync.toml"
+    config.write_text(CONFIG)
+    accepted = '[[ack]]\nfingerprint = "abc"\nby = "devon"\ndate = "2026-10-19"\nreason = "r"\n'
+    kept: list[str] = []
+
+    class Onboarded(FakeRunner):
+        def __call__(self, argv: Sequence[str], stdin: str | None, cwd: Path | None) -> str:
+            out = super().__call__(argv, stdin, cwd)
+            if list(argv[:2]) == ["git", "clone"]:
+                acks = Path(argv[-1]) / ACKS_PATH
+                acks.parent.mkdir(parents=True)
+                acks.write_text(accepted)
+            if list(argv[:2]) == ["git", "commit"] and cwd is not None:
+                kept.append((cwd / ACKS_PATH).read_text())
+            return out
+
+    runner = Onboarded(
+        {
+            f"repos/{FORK}": {"fork": True, "parent": {"full_name": UPSTREAM}},
+            "gh pr create": f"https://github.com/{FORK}/pull/12\n",
+        }
+    )
+    result = _invoke(monkeypatch, runner, "scaffold", FORK, "--config", str(config))
+    assert result.exit_code == 0, result.output
+    [add] = [argv for argv, _ in runner.calls if argv[:2] == ["git", "add"]]
+    assert ACKS_PATH not in add
+    assert kept == [accepted]
+
+
 def test_scaffold_refuses_a_declaration_for_another_upstream(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -218,6 +254,23 @@ def test_baseline_refuses_to_lose_fork_commits(monkeypatch: pytest.MonkeyPatch) 
     assert result.exit_code == 1
     assert "abc123 fork-only work" in result.output
     assert not runner.ran("git push")
+
+
+def test_baseline_drops_fork_commits_only_when_told_to(monkeypatch: pytest.MonkeyPatch) -> None:
+    runner = _baseline_runner("abc123 fork-only work\n")
+    result = _invoke(
+        monkeypatch,
+        runner,
+        "baseline",
+        FORK,
+        "--tag",
+        "rea-agents-6.7.0",
+        "--confirm",
+        "--discard-fork-commits",
+    )
+    assert result.exit_code == 0, result.output
+    assert "abc123 fork-only work" in result.output
+    assert runner.ran("git push --quiet --force-with-lease=main:old origin HEAD:main")
 
 
 def test_baseline_resets_main_with_a_lease(monkeypatch: pytest.MonkeyPatch) -> None:

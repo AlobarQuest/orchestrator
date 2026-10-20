@@ -12,7 +12,7 @@ The `fork-sync` console script automates every step it can and reports the rest:
 |-|-|-|
 | `fork-sync check <fork>` | nothing | Reports each step below as `ok`, `missing`, `human` or `info`. Exits 1 while anything is `missing`. |
 | `fork-sync human-steps <fork>` | nothing | Prints the steps only a person can do, then the agent steps. |
-| `fork-sync baseline <fork> --tag <tag> --confirm` | the fork's `main` | Resets `main` to an upstream tag with upstream's whole `.github/` removed. |
+| `fork-sync baseline <fork> --tag <tag> --confirm` | the fork's `main` | Resets `main` to an upstream tag with upstream's whole `.github/` removed. `--discard-fork-commits` drops commits upstream doesn't have. |
 | `fork-sync scaffold <fork> --config <file>` | a branch and pull request | Commits `.github/fork-sync.toml`, an empty `.github/fork-sync-acks.toml`, and the rendered workflows and review script. |
 | `fork-sync protect <fork>` | repository settings | Applies the landing settings and branch protection on `main`. |
 
@@ -25,7 +25,7 @@ through one parser (`src/fork_sync/fork_sync_review.py`), and unknown keys are r
 
 ```toml
 upstream = "morluto/rea"                                  # owner/name
-ecosystem = "npm"                                         # cargo | npm
+ecosystem = "npm"                                         # cargo | npm | npm-no-deps
 release_tag_pattern = '^rea-agents-(\d+\.\d+\.\d+)$'      # group 1 is the version
 build_commands = ["npm run build"]                        # optional; ecosystem default
 test_commands = ["npm run test:run"]                      # optional; ecosystem default
@@ -43,6 +43,11 @@ Globs are `fnmatch` patterns, so `*` crosses directories. The ecosystem defaults
 |-|-|-|-|-|
 | `cargo` | `Cargo.toml` | `cargo build --locked --all-targets` | `cargo test --locked` | `cargo-audit audit --json --file <copy of Cargo.lock>` (cargo-audit 0.22.2) |
 | `npm` | `package.json` | `npm run build` | `npm test` | `npm audit --json --audit-level=high --userconfig /dev/null --registry https://registry.npmjs.org` |
+| `npm-no-deps` | `package.json` | none | `npm test` | none: any dependency the root `package.json` declares is a `dependencies-declared` finding |
+
+`npm-no-deps` is for a fork, such as a Claude Code plugin, whose root `package.json` only carries
+the version and which installs nothing. CI installs nothing for it, and a nested `package.json`
+that declares dependencies the fork never installs is left to the model and the watched paths.
 
 The audit is not configurable: it runs on copies of the head's manifest and lockfile in a scratch
 directory, so no configuration the head ships (`.npmrc`, `.cargo/config.toml`) applies to it.
@@ -58,15 +63,24 @@ commands that build and test without network side effects. For `npm`, CI always 
   `release_tag_pattern`, and compares its version with the fork's manifest. When upstream's is
   greater (compared as numbers; an older or equal tag is never synced to), it
   rebuilds the `upstream-sync` branch from the tag, restores the fork's whole `.github/`, and opens
-  or edits one rolling pull request. Submodule gitlinks stay as upstream has them; nothing fetches
-  their content. It does not review.
-- **`ci.yml`** runs on every pull request and on pushes to `main`. Its two job names are the
-  required checks:
+  or edits one rolling pull request. It pushes only when the rebuilt tree differs from the
+  branch's, so a held sync isn't re-reviewed and re-alerted every day. Submodule gitlinks stay as
+  upstream has them; nothing fetches their content. It does not review.
+- **`ci.yml`** runs on every pull request and on pushes to `main`, and on nothing else: a manual
+  run on a pull request's branch would report the required jobs as skipped, which branch
+  protection counts as passing. Its first two job names are the required checks:
   - `build and test` runs the configured build and test commands.
   - `security review` runs `.github/scripts/fork_sync_review.py review` on pull requests. It
     checks out the BASE, fetches the head's objects without checking them out, and reads them
     with git (no replace objects, and no attributes from any source, which needs git 2.40 or
     later), so nothing from the pull request executes in the job that holds `ANTHROPIC_API_KEY`.
+  - `notify` raises the alert (see the following section). It runs the base's script, holds no
+    secret, and its token can write only issues.
+- **`fork-sync-audit.yml`** runs weekly (Mondays 13:00 UTC) and on demand. Its `weekly audit`
+  job audits `main`'s dependencies against `main`'s acknowledgements, read from git, so an
+  advisory published against a version already installed is found between upstream releases.
+  Its exits match the review's, and any outcome but success raises the audit alert, including a
+  setup step that failed before the audit ran.
 
 ### Why the review is a required check
 
@@ -113,6 +127,30 @@ It writes a report to the job summary and to one rolling pull-request comment, t
 | 0 | No unacknowledged finding | Passes |
 | 1 | At least one unacknowledged finding | Fails |
 | 2 | The review could not run: no key, API error, unparseable verdict | Fails |
+
+## The alert
+
+A held sync reaches the maintainer as an issue on the fork. When `security review` fails on the
+sync pull request (branch `upstream-sync`), `notify` opens one issue titled "Fork-sync: a
+security review is holding an upstream sync", mentioning the repository owner, or comments on
+the open one for each new head or new sync pull request. When a later review of a sync pull
+request passes, it comments and closes the issue. A pull request a person opens raises no alert:
+that person is watching it. The weekly audit alerts the same way with its own issue.
+
+A review that couldn't run (exit 2: an API error or timeout) is not retried: the sync pushes only
+a changed tree, so nothing re-triggers it. Re-run the failed `security review` job; the alert
+says so. Network calls time out after 300 seconds, so a hung call fails the check rather than
+running until the job is cancelled, which raises no alert. The issue holds fixed fields only (the pull request, the head, the run); the findings stay
+in the report, because their text comes from upstream's diff.
+
+A failure to open or comment fails `notify`. A failure to close only warns: a red job would hold a
+pull request whose review passed, with no alert to say so. The landing lane doesn't alert; its
+holds are in `~/Library/Logs/inert-landing.log` only.
+
+The alert needs issues turned on, and a fork starts with them off. `fork-sync protect` turns them
+on and `fork-sync check` reports a fork without them. A fork onboarded before the alert existed
+needs `fork-sync scaffold` (an admin merge: the pull request is judged by the old gate, whose
+script has no `notify`, so that job fails on it) and then `fork-sync protect` again.
 
 ## Acknowledge a finding
 
@@ -178,7 +216,8 @@ worktree. Run `fork-sync check <fork>` after any step to see where you are.
    manifest version matches, then run `fork-sync baseline <fork> --tag <tag> --confirm`. It
    removes upstream's whole `.github/`, so nothing upstream planted there (an acknowledgements
    file, a script) becomes the fork's. It refuses, and prints the commits, if `main` has commits
-   no upstream branch or tag contains.
+   no upstream branch or tag contains. Read them; if the fork is to drop them (for example, local
+   hardening the lane doesn't carry), re-run with `--discard-fork-commits`.
 4. **Scaffold.** Write the declaration, then run `fork-sync scaffold <fork> --config <file>`. It
    prints the pull request number. If the old lane left files `scaffold` does not render (for rtk,
    `.github/scripts/ai_security_review.py`), push a commit removing them to the
@@ -199,7 +238,8 @@ worktree. Run `fork-sync check <fork>` after any step to see where you are.
 8. **Protect `main`.** Run `fork-sync protect <fork>`. It refuses until an open pull request has
    reported both `build and test` and `security review` (read from the Actions jobs API), which the
    sync pull request from step 7 has. It then allows merge commits, sets
-   `squash_merge_commit_message` to `COMMIT_MESSAGES`, deletes branches on merge, and requires both
+   `squash_merge_commit_message` to `COMMIT_MESSAGES`, deletes branches on merge, turns issues on
+   for the alert, and requires both
    checks from the GitHub Actions app (`app_id` 15368, so no other status poster can satisfy
    them) with `strict: false`, no required reviews and no admin enforcement.
 9. **Review the sync pull request.** Read the review comment. Acknowledge what you accept; do not
@@ -232,3 +272,6 @@ worktree. Run `fork-sync check <fork>` after any step to see where you are.
 - The jobs a `pull_request` run executes are defined by the pull request's own `ci.yml`. A sync
   pull request can't change it, because the sync restores the fork's whole `.github/` from `main`;
   a pull request a person opens on the fork is trusted to the same degree as that person.
+- GitHub disables a repository's scheduled workflows after 60 days without activity. A fork whose
+  upstream doesn't release for that long, or whose sync stays held, loses both the daily sync and
+  the weekly audit until a person re-enables them on the Actions tab.
