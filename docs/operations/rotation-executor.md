@@ -352,6 +352,11 @@ no attempts left, finish or undo it within the seven days:
 
 Past `until`, every reader of the keeper gets 401 until one of those is done.
 
+The store retries a 429 or 5xx from BWS for about three minutes, so a stall at `store` means BWS
+kept refusing, not a passing burst. If a restart for an undo doesn't take effect (the container's
+age doesn't change), check that the orchestrator's Coolify health check is off: with it on, Coolify
+judges each new container unhealthy and keeps the old one.
+
 After a host without an overlap there is no `previous` and no `until`: every reader of the keeper
 gets 401 from host's restart until `store` runs, so finish or undo it straight away.
 

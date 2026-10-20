@@ -15,7 +15,7 @@ import pytest
 
 from rotation_worker.config import ConfigError, load, read_root_token
 from rotation_worker.logs import JsonFormatter, configure
-from rotation_worker.secret_store import BwsStore, StoreError
+from rotation_worker.secret_store import RETRY_DELAYS, BwsStore, StoreError
 from rotation_worker.values import Value
 
 ORG = "11111111-1111-4111-8111-111111111111"
@@ -196,6 +196,7 @@ def _store(secrets: FakeSecrets) -> BwsStore:
     store = BwsStore.__new__(BwsStore)
     store._organization_id = ORG
     setattr(store, "_client", SimpleNamespace(secrets=lambda: secrets))
+    store._sleep = lambda seconds: None
     return store
 
 
@@ -258,6 +259,95 @@ def test_a_response_marked_unsuccessful_fails_even_with_data(
     monkeypatch.setattr(secrets, "get", half_answer)
     with pytest.raises(StoreError, match="no"):
         _store(secrets).read(sid)
+
+
+RATE_LIMITED = "Received error message from server: [429 Too Many Requests] Slow down!"
+
+
+def _flaky(answers: list[Exception | None], real: Any) -> Any:
+    """A request that raises each of `answers` in turn (None means answer for real)."""
+
+    def request(*arguments: Any) -> Any:
+        answer = answers.pop(0) if answers else None
+        if answer is not None:
+            raise answer
+        return real(*arguments)
+
+    return request
+
+
+def test_a_rate_limit_or_server_error_is_retried_after_a_pause(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    secrets = FakeSecrets()
+    sid = str(uuid.uuid4())
+    secrets.rows[sid] = _row("k", "the-value")
+    answers: list[Exception | None] = [
+        Exception(RATE_LIMITED),
+        Exception("[500 Internal Server Error] "),
+    ]
+    monkeypatch.setattr(secrets, "get", _flaky(answers, secrets.get))
+    store = _store(secrets)
+    slept: list[float] = []
+    store._sleep = slept.append
+    assert store.read(sid).reveal() == "the-value"
+    assert slept == list(RETRY_DELAYS[:2])
+
+
+def test_any_other_refusal_is_final_and_a_lasting_rate_limit_runs_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    secrets = FakeSecrets()
+    store = _store(secrets)
+    slept: list[float] = []
+    store._sleep = slept.append
+    with pytest.raises(StoreError, match="404"):
+        store.read(str(uuid.uuid4()))
+    assert slept == []
+
+    def always_limited(secret_id: str) -> Any:
+        raise Exception(RATE_LIMITED)
+
+    monkeypatch.setattr(secrets, "get", always_limited)
+    with pytest.raises(StoreError, match="429"):
+        store.read(str(uuid.uuid4()))
+    assert slept == list(RETRY_DELAYS)
+
+
+def test_a_create_that_failed_after_bws_made_the_secret_is_not_made_twice() -> None:
+    secrets = FakeSecrets()
+    creates: list[str] = []
+
+    def create(organization: Any, key: str, value: str, note: Any, projects: Any) -> Any:
+        sid = str(uuid.uuid4())
+        creates.append(sid)
+        secrets.rows[sid] = _row(key, value, project=str(projects[0]))
+        raise Exception("[500 Internal Server Error] ")
+
+    setattr(secrets, "create", create)
+    store = _store(secrets)
+    created = store.create(PROJECT, "rotation/x/quarantine", Value("v"))
+    assert creates == [created.id]
+
+
+def test_a_delete_that_failed_after_bws_deleted_the_secret_succeeds() -> None:
+    """Retire deletes the quarantine once the old value is proved dead; a retry that found it gone
+    and failed would leave the next attempt with nothing to prove death with."""
+    secrets = FakeSecrets()
+    sid = str(uuid.uuid4())
+    secrets.rows[sid] = _row("rotation/x/quarantine", "old")
+    deletes: list[list[str]] = []
+
+    def delete(ids: list[str]) -> Any:
+        deletes.append(ids)
+        if ids[0] not in secrets.rows:
+            raise Exception(f"404 Resource not found: {ids[0]}")
+        del secrets.rows[ids[0]]
+        raise Exception("[500 Internal Server Error] ")
+
+    setattr(secrets, "delete", delete)
+    _store(secrets).delete(sid)
+    assert deletes == [[sid]]
 
 
 def test_a_value_json_would_escape_is_still_scrubbed() -> None:
