@@ -87,7 +87,7 @@ HUMAN = ActorContext("devon", ActorRole.HUMAN)
 
 PR = 49
 IN_WINDOW = datetime(2026, 8, 11, 7, 30, tzinfo=UTC)
-OUT_OF_WINDOW = datetime(2026, 8, 11, 19, 30, tzinfo=UTC)
+OUT_OF_WINDOW = datetime(2026, 8, 12, 3, 59, 30, tzinfo=UTC)  # 23:59:30 New York, shut either way
 
 # A requirement-range bump: the real title of the pull request this lane must never touch. It
 # states no single version delta, so no rule about update types can apply to it, and no amount of

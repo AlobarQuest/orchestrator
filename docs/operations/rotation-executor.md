@@ -248,8 +248,9 @@ and amendment 9). The orchestrator stores each identity's bearer as a sha256 in
 `ORCHESTRATOR_M2M_CREDENTIALS`, so the bearer's destination names the entry, its key id:
 `coolify-env-hash … key="ORCHESTRATOR_M2M_CREDENTIALS" entry="orchestrator-operator"`.
 
-Its plan has two units, each claimed only in the `live_estate` window (02:00 to 06:00
-America/New_York), because each restarts the orchestrator:
+Its plan has two units, each claimed only in the `live_estate` window (read its hours in
+`factory-policy.toml`; ADR-0012 amendment 1 widens them for the build phase), because each
+restarts the orchestrator:
 
 - `mint` (AC-001 to AC-006): mint a value and stage it; host it, which rewrites the setting with
   the entry's new hash and the old one as `previous` (`until` seven days out), writes both
