@@ -131,7 +131,15 @@ class BwsStore:
         )
 
     def delete(self, secret_id: str) -> None:
-        self._call(lambda: self._client.secrets().delete([secret_id]))
+        # As with `create`: a 5xx can come after BWS deleted it, and deleting it again is refused.
+        self._call(
+            lambda: self._client.secrets().delete([secret_id]),
+            recover=lambda: None if self._listed(secret_id) else secret_id,
+        )
+
+    def _listed(self, secret_id: str) -> bool:
+        listed = self._call(lambda: self._client.secrets().list(self._organization_id))
+        return any(str(entry.id) == secret_id for entry in listed.data)
 
     def _call(self, request: Any, *, recover: Callable[[], Any] | None = None) -> Any:
         """`request`'s data, retrying a transient refusal. Before each retry, `recover` may

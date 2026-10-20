@@ -330,6 +330,26 @@ def test_a_create_that_failed_after_bws_made_the_secret_is_not_made_twice() -> N
     assert creates == [created.id]
 
 
+def test_a_delete_that_failed_after_bws_deleted_the_secret_succeeds() -> None:
+    """Retire deletes the quarantine once the old value is proved dead; a retry that found it gone
+    and failed would leave the next attempt with nothing to prove death with."""
+    secrets = FakeSecrets()
+    sid = str(uuid.uuid4())
+    secrets.rows[sid] = _row("rotation/x/quarantine", "old")
+    deletes: list[list[str]] = []
+
+    def delete(ids: list[str]) -> Any:
+        deletes.append(ids)
+        if ids[0] not in secrets.rows:
+            raise Exception(f"404 Resource not found: {ids[0]}")
+        del secrets.rows[ids[0]]
+        raise Exception("[500 Internal Server Error] ")
+
+    setattr(secrets, "delete", delete)
+    _store(secrets).delete(sid)
+    assert deletes == [[sid]]
+
+
 def test_a_value_json_would_escape_is_still_scrubbed() -> None:
     secret = Value('a"value\\with-escapes-é')
     record = logging.LogRecord("rotation_worker", logging.ERROR, "x", 1, "unit_failed", None, None)

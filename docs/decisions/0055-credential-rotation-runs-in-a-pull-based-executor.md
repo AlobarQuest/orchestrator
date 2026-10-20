@@ -1175,8 +1175,8 @@ container stayed healthy. HQ disabled the health check again, as the orchestrato
 require, and the third restart loaded the undo. The unit used its second attempt.
 
 The executor's BWS store retries a 429 or a 5xx for about three minutes before a step fails, and a
-`create` retry looks for the secret first so a 5xx that came after BWS made it doesn't make a
-second.
+`create` or `delete` retry first checks whether BWS already did it, so a 5xx that came late
+doesn't make a second secret or fail retire's deletion of the quarantine.
 
 ## Amendment 10 — Increment 7 decisions (2026-10-19)
 
