@@ -11,6 +11,9 @@ The SDK is imported only when a `BwsStore` is built: it is an optional extra
 
 from __future__ import annotations
 
+import re
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Protocol
@@ -20,6 +23,13 @@ from rotation_worker.values import Value, scrub
 
 if TYPE_CHECKING:
     from bitwarden_sdk import BitwardenClient
+
+# BWS answers a burst with 429 ("Slow down! ... Try again in 1m") and sometimes a healthy request
+# with a 500. Either one failing a step would spend an attempt, and after a host without an
+# overlap it leaves every reader refused until someone undoes it. So a 429 or 5xx is retried, for
+# about three minutes in all, well inside a rotation unit's lease. Any other refusal is final.
+TRANSIENT = re.compile(r"\[(?:429|5\d\d) ")
+RETRY_DELAYS: tuple[float, ...] = (5.0, 20.0, 60.0, 90.0)
 
 
 class StoreError(RuntimeError):
@@ -55,6 +65,8 @@ class SecretStore(Protocol):
 
 class BwsStore:
     """The root's view of BWS: one organization, every call checked for success."""
+
+    _sleep: Callable[[float], None] = staticmethod(time.sleep)
 
     def __init__(self, organization_id: str, access_token: Value) -> None:
         from bitwarden_sdk import BitwardenClient
@@ -93,10 +105,13 @@ class BwsStore:
         return StoredSecret(str(matches[0].id), key, project_id)
 
     def create(self, project_id: str, key: str, value: Value) -> StoredSecret:
+        # A 5xx can come after BWS created the secret, so a retry looks for it first: creating it
+        # twice would leave two secrets with one name, which `find` refuses from then on.
         created = self._call(
             lambda: self._client.secrets().create(
                 UUID(self._organization_id), key, value.reveal(), None, [UUID(project_id)]
-            )
+            ),
+            recover=lambda: self.find(project_id, key),
         )
         return StoredSecret(str(created.id), key, project_id)
 
@@ -118,7 +133,21 @@ class BwsStore:
     def delete(self, secret_id: str) -> None:
         self._call(lambda: self._client.secrets().delete([secret_id]))
 
-    def _call(self, request: Any) -> Any:
+    def _call(self, request: Any, *, recover: Callable[[], Any] | None = None) -> Any:
+        """`request`'s data, retrying a transient refusal. Before each retry, `recover` may
+        return what the failed request already did."""
+        for delay in RETRY_DELAYS:
+            try:
+                return self._once(request)
+            except StoreError as error:
+                if TRANSIENT.search(str(error)) is None:
+                    raise
+            self._sleep(delay)
+            if recover is not None and (found := recover()) is not None:
+                return found
+        return self._once(request)
+
+    def _once(self, request: Any) -> Any:
         try:
             response = request()
         except Exception as error:

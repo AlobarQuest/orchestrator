@@ -1157,6 +1157,27 @@ and the orchestrator's loaded hash still held the old value, and every reader ke
 Devon logged the node back in and disabled its key expiry. HQ requeued the unit as SYSTEM, since
 it had used one of its three attempts, for the next `live_estate` window.
 
+### The observer's second mint, a BWS rate limit and a re-enabled health check (2026-10-20)
+
+The requeued observer mint ran at 02:07 ET on 2026-10-20, straight after change-manager's observe
+bearer completed its own six steps. Mint, stage and host succeeded, the host without an overlap
+(amendment 9), and `verify_new` proved the new value live. `store` then failed on BWS's
+`429 Too Many Requests`, before it created the quarantine secret, so the keeper still held the old
+value while the orchestrator accepted only the new one as `orchestrator-observer`. Seven of the
+observer's eight scheduled readers failed from then until the undo loaded, about seven hours later.
+
+HQ undid the host by the runbook ("If a rotation stalls after host"): the observer's entry took
+the drift-reporter entry's hash. The first two restarts didn't take effect. At 04:00 ET infraops'
+change window had applied drift rule #570 to the orchestrator, enabling Coolify's health check at
+its defaults (port 80, path `/`), which the image can't answer. Coolify judged each new container
+unhealthy and kept the old one, and the window reported the change done because the old
+container stayed healthy. HQ disabled the health check again, as the orchestrator's invariants
+require, and the third restart loaded the undo. The unit used its second attempt.
+
+The executor's BWS store retries a 429 or a 5xx for about three minutes before a step fails, and a
+`create` retry looks for the secret first so a 5xx that came after BWS made it doesn't make a
+second.
+
 ## Amendment 10 — Increment 7 decisions (2026-10-19)
 
 Increment 7's handoff (`docs/superpowers/plans/2026-10-19-handoff-increment-7-github-atlassian.md`)
