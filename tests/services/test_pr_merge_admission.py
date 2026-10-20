@@ -201,7 +201,7 @@ class FixedClock:
 # Inside `live_estate`'s declared 02:00-06:00 America/New_York window, and outside it. Written as
 # UTC instants because an instant is what policy is asked about.
 IN_WINDOW = datetime(2026, 8, 11, 7, 30, tzinfo=UTC)
-OUT_OF_WINDOW = datetime(2026, 8, 11, 19, 30, tzinfo=UTC)
+OUT_OF_WINDOW = datetime(2026, 8, 12, 3, 59, 30, tzinfo=UTC)  # 23:59:30 New York, shut either way
 
 
 def _answer(session: Session, unit: WorkUnit, source=None, record_source=None, clock=None):

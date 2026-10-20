@@ -585,41 +585,56 @@ def test_the_live_estate_row_declares_a_change_window() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_the_occurrence_start_is_computed_where_the_hours_live() -> None:
+# These read a night window written here, not the shipped one: they test how an occurrence is
+# computed, and the shipped hours move (ADR-0012 amendment 1 widened them for the build phase).
+NIGHTLY = (
+    VALID
+    + f"""
+[reach.live_estate.change_window]
+rationale = "nightly"
+{DECIDED}
+timezone = "America/New_York"
+start = "02:00"
+end = "06:00"
+"""
+)
+
+
+def test_the_occurrence_start_is_computed_where_the_hours_live(tmp_path: Path) -> None:
     """A rate rule needs a BOUNDARY, which `window_refusal` cannot answer -- and computing it in
     the caller would be a second reading of the artifact's hours, which is the second copy this
     module exists to prevent.
 
-    `live_estate` is 02:00-06:00 New York. 06:30 UTC is 02:30 EDT, so the occurrence began at
+    Under a 02:00-06:00 New York window, 06:30 UTC is 02:30 EDT, so the occurrence began at
     02:00 EDT the same day, which is 06:00 UTC.
     """
-    policy = load_factory_policy()
+    policy = load_factory_policy(write(tmp_path, NIGHTLY))
     opened = policy.window_opened_at(LIVE_ESTATE, datetime(2026, 8, 11, 6, 30, tzinfo=UTC))
 
     assert opened == datetime(2026, 8, 11, 6, 0, tzinfo=UTC)
 
 
-def test_two_instants_in_one_occurrence_report_the_same_start() -> None:
+def test_two_instants_in_one_occurrence_report_the_same_start(tmp_path: Path) -> None:
     """The property a rate rule rests on: 'has anything happened since this window opened?'"""
-    policy = load_factory_policy()
+    policy = load_factory_policy(write(tmp_path, NIGHTLY))
     early = policy.window_opened_at(LIVE_ESTATE, datetime(2026, 8, 11, 6, 5, tzinfo=UTC))
     late = policy.window_opened_at(LIVE_ESTATE, datetime(2026, 8, 11, 9, 55, tzinfo=UTC))
 
     assert early is not None and early == late
 
 
-def test_consecutive_nights_are_different_occurrences() -> None:
-    policy = load_factory_policy()
+def test_consecutive_nights_are_different_occurrences(tmp_path: Path) -> None:
+    policy = load_factory_policy(write(tmp_path, NIGHTLY))
     tonight = policy.window_opened_at(LIVE_ESTATE, datetime(2026, 8, 11, 6, 30, tzinfo=UTC))
     tomorrow = policy.window_opened_at(LIVE_ESTATE, datetime(2026, 8, 12, 6, 30, tzinfo=UTC))
 
     assert tonight is not None and tomorrow is not None and tonight != tomorrow
 
 
-def test_outside_the_window_there_is_no_occurrence() -> None:
+def test_outside_the_window_there_is_no_occurrence(tmp_path: Path) -> None:
     """`None` rather than the previous start: outside the hours nothing is open, and answering
     with a boundary would let a rate rule believe it was inside one."""
-    policy = load_factory_policy()
+    policy = load_factory_policy(write(tmp_path, NIGHTLY))
 
     assert policy.window_opened_at(LIVE_ESTATE, datetime(2026, 8, 11, 19, 30, tzinfo=UTC)) is None
 

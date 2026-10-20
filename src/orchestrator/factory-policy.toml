@@ -256,11 +256,19 @@ outage at 15:00. Identical to the operator-machine window on purpose — these t
 rows are the pair most likely to be declared together, and windows compose by
 intersection, so hours that did not overlap would make such work unrunnable rather
 than restrained.
+
+WIDENED FOR THE BUILD PHASE (ADR-0012 amendment 1, Devon, 2026-10-20). Until the
+SDS goes into operation, the only things relying on the services this reach
+changes are the SDS's own scheduled jobs, and a failure seen while it happens is
+worth more than a quiet hour: the night's first rotation failure went unnoticed
+until morning. The night hours, 02:00 to 06:00, come back when the SDS goes into
+operation. The operator-machine row keeps the night; it lies inside these hours,
+so work declaring both reaches is still runnable, at night.
 """
-decided = "2026-08-01"
+decided = "2026-10-20"
 timezone = "America/New_York"
-start = "02:00"
-end = "06:00"
+start = "00:00"
+end = "23:59"
 
 [reach.external_system]
 rationale = """

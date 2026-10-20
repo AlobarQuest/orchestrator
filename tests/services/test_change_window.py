@@ -488,10 +488,11 @@ def test_the_valid_fixture_is_the_control_for_every_malformation(tmp_path: Path)
 # 6. Through admission itself
 # ---------------------------------------------------------------------------------------------
 
-# Instants the SHIPPED artifact is open and shut at, for the units below. 03:00 and 12:00 in New
-# York on a day with no transition on it, expressed as the UTC instants they are.
+# Instants the SHIPPED artifact is open and shut at, for the units below. 03:00 and 23:59:30 in New
+# York on a day with no transition on it, expressed as the UTC instants they are. 23:59:30 is shut
+# under both the night window and the build phase's widened one (ADR-0012 amendment 1).
 OPEN = datetime(2026, 8, 12, 7, tzinfo=UTC)
-SHUT = datetime(2026, 8, 12, 16, tzinfo=UTC)
+SHUT = datetime(2026, 8, 13, 3, 59, 30, tzinfo=UTC)
 
 
 def test_out_of_window_work_is_refused_at_admission_and_in_window_work_is_not(

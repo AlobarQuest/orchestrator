@@ -96,7 +96,7 @@ from tests.services.estate_landing_doubles import (
 
 PR = 49
 IN_WINDOW = datetime(2026, 8, 11, 7, 30, tzinfo=UTC)
-OUT_OF_WINDOW = datetime(2026, 8, 11, 19, 30, tzinfo=UTC)
+OUT_OF_WINDOW = datetime(2026, 8, 12, 3, 59, 30, tzinfo=UTC)  # 23:59:30 New York, shut either way
 
 
 class FixedClock:

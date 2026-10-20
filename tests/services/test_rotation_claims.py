@@ -43,7 +43,7 @@ SYSTEM = ActorContext("system", ActorRole.SYSTEM)
 NOW = datetime(2026, 10, 9, tzinfo=UTC)
 # The shipped `live_estate` window is 02:00-06:00 America/New_York.
 OPEN = datetime(2026, 10, 10, 7, 30, tzinfo=UTC)  # 03:30 in New York
-SHUT = datetime(2026, 10, 10, 16, 0, tzinfo=UTC)  # 12:00 in New York
+SHUT = datetime(2026, 10, 10, 3, 59, 30, tzinfo=UTC)  # 23:59:30 in New York, shut in either window
 
 ROTATION_FIELDS: dict[str, Any] = {
     "owner": "devon",

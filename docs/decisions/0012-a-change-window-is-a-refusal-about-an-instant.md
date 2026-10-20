@@ -141,3 +141,29 @@ list, so the exposure is now empty.)*
 - **Execution locus remains unmodelled and is not this.** `local-heavy` in `routing-policy.toml`
   describes where work *executes*; reach describes what it *touches*. A window keyed on the second
   says nothing about the first.
+
+## Amendment 1 — The `live_estate` window is widened for the build phase (2026-10-20)
+
+**Decision (Devon, 2026-10-20).** Until the SDS goes into operation, the `live_estate` window is
+00:00 to 23:59 local, not 02:00 to 06:00. The night window comes back when the SDS goes into
+operation.
+
+**Why.** The window's premise is that it names "the hours in which nobody is relying on the thing
+being changed." During the build, the only things relying on the services `live_estate` work
+changes are the SDS's own scheduled jobs. And a failure seen while it happens is worth more than a
+quiet hour: on 2026-10-20 the observer bearer's mint failed after host at 02:08 and left seven of
+eight readers failing until morning (ADR-0055). A daytime rotation fails in front of somebody.
+
+**What it does not change.**
+- **The `operator_machine` window keeps the night.** It protects Devon's working day on his own
+  machine, which the build phase doesn't change. It lies inside the widened hours, so work that
+  declares both reaches is still runnable, at night (decision 4).
+- **`live_estate` still declares a window**, as `test_the_live_estate_row_declares_a_change_window`
+  requires. 23:59 rather than midnight, because a window whose start equals its end is refused at
+  load; the minute from 23:59 to 00:00 is the only closed time.
+- **Every scheduled lane keeps its launchd schedule.** The estate lander runs at 02:15, 03:15, 04:15
+  and 05:15 whatever the window says, so it still lands at night. What the widening opens is
+  work started outside a schedule: rotation-unit claims, dispatch of `live_estate` work, and
+  landings run by hand.
+- **The executor still confirms no dispatched run is live before it restarts the orchestrator**,
+  and waits while a change-manager reader is mid-run before it restarts change-manager.
