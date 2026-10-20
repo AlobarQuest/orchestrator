@@ -184,6 +184,40 @@ def test_scaffold_opens_a_pull_request(monkeypatch: pytest.MonkeyPatch, tmp_path
     assert fork_sync_review.parse_acks(EMPTY_ACKS.decode()) == {}
 
 
+def test_re_scaffolding_keeps_the_acknowledgements(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An onboarded fork's acknowledgements are a person's decisions; a template upgrade keeps
+    them. Control: the preceding test, where the fork has none, writes the empty file."""
+    config = tmp_path / "fork-sync.toml"
+    config.write_text(CONFIG)
+    accepted = '[[ack]]\nfingerprint = "abc"\nby = "devon"\ndate = "2026-10-19"\nreason = "r"\n'
+    kept: list[str] = []
+
+    class Onboarded(FakeRunner):
+        def __call__(self, argv: Sequence[str], stdin: str | None, cwd: Path | None) -> str:
+            out = super().__call__(argv, stdin, cwd)
+            if list(argv[:2]) == ["git", "clone"]:
+                acks = Path(argv[-1]) / ACKS_PATH
+                acks.parent.mkdir(parents=True)
+                acks.write_text(accepted)
+            if list(argv[:2]) == ["git", "commit"] and cwd is not None:
+                kept.append((cwd / ACKS_PATH).read_text())
+            return out
+
+    runner = Onboarded(
+        {
+            f"repos/{FORK}": {"fork": True, "parent": {"full_name": UPSTREAM}},
+            "gh pr create": f"https://github.com/{FORK}/pull/12\n",
+        }
+    )
+    result = _invoke(monkeypatch, runner, "scaffold", FORK, "--config", str(config))
+    assert result.exit_code == 0, result.output
+    [add] = [argv for argv, _ in runner.calls if argv[:2] == ["git", "add"]]
+    assert ACKS_PATH not in add
+    assert kept == [accepted]
+
+
 def test_scaffold_refuses_a_declaration_for_another_upstream(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

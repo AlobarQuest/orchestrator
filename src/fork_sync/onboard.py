@@ -87,7 +87,10 @@ def scaffold(run: Runner, fork: str, config_path: Path) -> int:
     with tempfile.TemporaryDirectory() as scratch:
         clone = _clone(run, fork, Path(scratch), "--depth", "1")
         run(["git", "checkout", "--quiet", "-b", SCAFFOLD_BRANCH], None, clone)
-        files = {CONFIG_PATH: text.encode(), ACKS_PATH: EMPTY_ACKS, **render(config.ecosystem)}
+        files = {CONFIG_PATH: text.encode(), **render(config.ecosystem)}
+        # Re-scaffolding an onboarded fork keeps what a person has acknowledged.
+        if not (clone / ACKS_PATH).exists():
+            files[ACKS_PATH] = EMPTY_ACKS
         for path, content in files.items():
             (clone / path).parent.mkdir(parents=True, exist_ok=True)
             (clone / path).write_bytes(content)
