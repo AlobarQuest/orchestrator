@@ -121,8 +121,12 @@ def fork_only_commits(run: Runner, clone: Path) -> list[str]:
     return out.splitlines()
 
 
-def baseline(run: Runner, fork: str, tag: str) -> str:
-    """Reset the fork's main to upstream's tag minus its workflows. Returns the new head."""
+def baseline(run: Runner, fork: str, tag: str, *, discard_fork_commits: bool = False) -> str:
+    """Reset the fork's main to upstream's tag minus its workflows. Returns the new head.
+
+    Commits on main that upstream doesn't have are refused unless the caller has decided to drop
+    them; they're printed either way, so the decision is made against the list.
+    """
     upstream = parent_of(run, fork)
     with tempfile.TemporaryDirectory() as scratch:
         clone = _clone(run, fork, Path(scratch))
@@ -139,10 +143,13 @@ def baseline(run: Runner, fork: str, tag: str) -> str:
         except RuntimeError:
             raise Refused(f"{upstream} has no tag {tag}") from None
         stranded = fork_only_commits(run, clone)
-        if stranded:
+        if stranded and discard_fork_commits:
+            print(f"discarding {len(stranded)} commit(s) upstream does not have:")
+            print("\n".join(stranded))
+        elif stranded:
             raise Refused(
                 f"main has {len(stranded)} commit(s) upstream does not; a baseline would lose "
-                "them:\n" + "\n".join(stranded)
+                "them (pass --discard-fork-commits to drop them):\n" + "\n".join(stranded)
             )
         old = run(["git", "rev-parse", "origin/main"], None, clone).strip()
         run(["git", "checkout", "--quiet", "-B", "main", target], None, clone)

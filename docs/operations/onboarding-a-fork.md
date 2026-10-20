@@ -12,7 +12,7 @@ The `fork-sync` console script automates every step it can and reports the rest:
 |-|-|-|
 | `fork-sync check <fork>` | nothing | Reports each step below as `ok`, `missing`, `human` or `info`. Exits 1 while anything is `missing`. |
 | `fork-sync human-steps <fork>` | nothing | Prints the steps only a person can do, then the agent steps. |
-| `fork-sync baseline <fork> --tag <tag> --confirm` | the fork's `main` | Resets `main` to an upstream tag with upstream's whole `.github/` removed. |
+| `fork-sync baseline <fork> --tag <tag> --confirm` | the fork's `main` | Resets `main` to an upstream tag with upstream's whole `.github/` removed. `--discard-fork-commits` drops commits upstream doesn't have. |
 | `fork-sync scaffold <fork> --config <file>` | a branch and pull request | Commits `.github/fork-sync.toml`, an empty `.github/fork-sync-acks.toml`, and the rendered workflows and review script. |
 | `fork-sync protect <fork>` | repository settings | Applies the landing settings and branch protection on `main`. |
 
@@ -25,7 +25,7 @@ through one parser (`src/fork_sync/fork_sync_review.py`), and unknown keys are r
 
 ```toml
 upstream = "morluto/rea"                                  # owner/name
-ecosystem = "npm"                                         # cargo | npm
+ecosystem = "npm"                                         # cargo | npm | npm-no-deps
 release_tag_pattern = '^rea-agents-(\d+\.\d+\.\d+)$'      # group 1 is the version
 build_commands = ["npm run build"]                        # optional; ecosystem default
 test_commands = ["npm run test:run"]                      # optional; ecosystem default
@@ -43,6 +43,11 @@ Globs are `fnmatch` patterns, so `*` crosses directories. The ecosystem defaults
 |-|-|-|-|-|
 | `cargo` | `Cargo.toml` | `cargo build --locked --all-targets` | `cargo test --locked` | `cargo-audit audit --json --file <copy of Cargo.lock>` (cargo-audit 0.22.2) |
 | `npm` | `package.json` | `npm run build` | `npm test` | `npm audit --json --audit-level=high --userconfig /dev/null --registry https://registry.npmjs.org` |
+| `npm-no-deps` | `package.json` | none | `npm test` | none: any dependency the root `package.json` declares is a `dependencies-declared` finding |
+
+`npm-no-deps` is for a fork, such as a Claude Code plugin, whose root `package.json` only carries
+the version and which installs nothing. CI installs nothing for it, and a nested `package.json`
+that declares dependencies the fork never installs is left to the model and the watched paths.
 
 The audit is not configurable: it runs on copies of the head's manifest and lockfile in a scratch
 directory, so no configuration the head ships (`.npmrc`, `.cargo/config.toml`) applies to it.
@@ -60,13 +65,18 @@ commands that build and test without network side effects. For `npm`, CI always 
   rebuilds the `upstream-sync` branch from the tag, restores the fork's whole `.github/`, and opens
   or edits one rolling pull request. Submodule gitlinks stay as upstream has them; nothing fetches
   their content. It does not review.
-- **`ci.yml`** runs on every pull request and on pushes to `main`. Its two job names are the
-  required checks:
+- **`ci.yml`** runs on every pull request, on pushes to `main`, weekly (Mondays 13:00 UTC) and on
+  demand. Its first two job names are the required checks:
   - `build and test` runs the configured build and test commands.
   - `security review` runs `.github/scripts/fork_sync_review.py review` on pull requests. It
     checks out the BASE, fetches the head's objects without checking them out, and reads them
     with git (no replace objects, and no attributes from any source, which needs git 2.40 or
     later), so nothing from the pull request executes in the job that holds `ANTHROPIC_API_KEY`.
+  - `notify` raises the alert (see the following section). It runs the base's script, holds no
+    secret, and its token can write only issues.
+  - `weekly audit` runs only on the schedule and on demand. It audits `main`'s dependencies
+    against `main`'s acknowledgements, read from git, so an advisory published against a version
+    already installed is found between upstream releases. Its exits match the review's.
 
 ### Why the review is a required check
 
@@ -113,6 +123,19 @@ It writes a report to the job summary and to one rolling pull-request comment, t
 | 0 | No unacknowledged finding | Passes |
 | 1 | At least one unacknowledged finding | Fails |
 | 2 | The review could not run: no key, API error, unparseable verdict | Fails |
+
+## The alert
+
+A held sync reaches the maintainer as an issue on the fork. When `security review` fails, `notify`
+opens one issue titled "Fork-sync: a security review is holding an upstream sync", mentioning the
+repository owner, or comments on the open one when the pull request's head is new. When a later
+review passes, it comments and closes the issue. The weekly audit does the same with its own
+issue. The issue holds fixed fields only (the pull request, the head, the run); the findings stay
+in the report, because their text comes from upstream's diff.
+
+A failure to open or comment fails `notify`. A failure to close only warns: a red job would hold a
+pull request whose review passed, with no alert to say so. The landing lane doesn't alert; its
+holds are in `~/Library/Logs/inert-landing.log` only.
 
 ## Acknowledge a finding
 
@@ -178,7 +201,8 @@ worktree. Run `fork-sync check <fork>` after any step to see where you are.
    manifest version matches, then run `fork-sync baseline <fork> --tag <tag> --confirm`. It
    removes upstream's whole `.github/`, so nothing upstream planted there (an acknowledgements
    file, a script) becomes the fork's. It refuses, and prints the commits, if `main` has commits
-   no upstream branch or tag contains.
+   no upstream branch or tag contains. Read them; if the fork is to drop them (for example, local
+   hardening the lane doesn't carry), re-run with `--discard-fork-commits`.
 4. **Scaffold.** Write the declaration, then run `fork-sync scaffold <fork> --config <file>`. It
    prints the pull request number. If the old lane left files `scaffold` does not render (for rtk,
    `.github/scripts/ai_security_review.py`), push a commit removing them to the

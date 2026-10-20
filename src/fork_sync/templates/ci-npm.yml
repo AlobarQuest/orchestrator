@@ -2,24 +2,29 @@
 #
 # Both JOB names are the branch-protection contexts (`build and test`, `security review`), and
 # both report on every pull request: no path filter, or a pull request waits forever for a check
-# that never runs. Commands come from `.github/fork-sync.toml`.
+# that never runs. Commands come from `.github/fork-sync.toml`. `notify` raises the alert issue
+# for a failed review, and `weekly audit` audits main on a schedule.
 name: CI
 
 on:
   pull_request:
   push:
     branches: [main]
+  schedule:
+    - cron: '0 13 * * 1'
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   build-and-test:
     name: build and test
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -82,3 +87,70 @@ jobs:
           test -f .github/scripts/fork_sync_review.py \
             || { echo "::error::the base has no review script"; exit 2; }
           python3 .github/scripts/fork_sync_review.py review
+
+  # Opens, comments on or closes one issue on this fork, so a held sync reaches the maintainer.
+  # Holds no secret; its token can write issues and nothing else. It runs the BASE's script.
+  notify:
+    name: notify
+    needs: security-review
+    if: >-
+      always() && github.event_name == 'pull_request'
+      && contains(fromJSON('["success", "failure"]'), needs.security-review.result)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Notify
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          ALERT_KIND: review
+          RESULT: ${{ needs.security-review.result }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python3 .github/scripts/fork_sync_review.py notify
+
+  # Weekly, and on demand: main's dependencies against main's acknowledgements, so an advisory
+  # published against a version already installed is found between upstream releases.
+  audit:
+    name: weekly audit
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      issues: write
+    env:
+      GIT_NO_REPLACE_OBJECTS: '1'
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+      - name: Audit
+        id: audit
+        run: python3 .github/scripts/fork_sync_review.py audit-main
+      - name: Notify
+        if: always() && steps.audit.outcome != 'skipped'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          ALERT_KIND: audit
+          RESULT: ${{ steps.audit.outcome }}
+          HEAD_SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python3 .github/scripts/fork_sync_review.py notify

@@ -72,12 +72,18 @@ def baseline(
     fork: Fork,
     tag: Annotated[str, typer.Option(help="The upstream release tag to reset main to.")],
     confirm: Annotated[bool, typer.Option(help="Required: this force-pushes main.")] = False,
+    discard_fork_commits: Annotated[
+        bool, typer.Option(help="Drop commits on main that upstream doesn't have.")
+    ] = False,
 ) -> None:
     """Reset the fork's main to an upstream tag with upstream's .github removed."""
     if not confirm:
         typer.echo("baseline refused: it force-pushes main; pass --confirm", err=True)
         raise typer.Exit(1)
-    head = _act("baseline", lambda: onboard.baseline(run_command, fork, tag))
+    head = _act(
+        "baseline",
+        lambda: onboard.baseline(run_command, fork, tag, discard_fork_commits=discard_fork_commits),
+    )
     typer.echo(f"{fork} main is now {head} ({tag}, upstream .github removed)")
 
 

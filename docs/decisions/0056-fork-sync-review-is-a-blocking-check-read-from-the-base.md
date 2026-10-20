@@ -95,3 +95,27 @@ fork lands it on a machine that holds infrastructure credentials.
 - claude-octopus uses the shared App but not this gate: it keeps its own non-blocking
   `ai_security_review.py` and has no `fork-sync.toml`. Bringing it onto the lane follows the
   runbook.
+
+## Amendment 1 (2026-10-20): no hardening in the lane; a held sync raises an alert
+
+**Status:** Accepted (Devon, 2026-10-20: "We should drop the auto-hardening for now, from all
+fork-sync repos. If there is a security concern, then that version should not land in my
+environment," and "Yes, but also the optional Item #3").
+
+- **The lane never changes upstream's code.** A fork's `main` is upstream's release plus the
+  fork's `.github/`. A security concern holds that version; it isn't patched out. A hardening
+  process a person runs against a fork may come later, outside fork-sync. claude-octopus, which
+  patched upstream's shell scripts during its old sync, joins the lane without its patches.
+- **A failed review raises an alert.** Before this, a held sync was visible only in the landing
+  lane's log, and claude-octopus #29 sat held for nine days unnoticed. Each fork's `ci.yml` gains
+  a `notify` job that opens, comments on or closes one issue on the fork, mentioning the owner.
+  It needs no credential: Healthchecks has no free check, and a GitHub issue reaches the owner
+  through GitHub's own notifications.
+- **`main` is audited weekly.** A `weekly audit` job audits `main`'s dependencies against
+  `main`'s acknowledgements, so an advisory published against an installed version is found
+  between releases, and alerts the same way.
+- **`npm-no-deps`** is a third ecosystem for a fork whose root `package.json` declares no
+  dependencies: nothing is installed or audited, and a declared dependency is a finding.
+- **A one-time review of each fork's current code.** The gate reviews only what each sync
+  changes, so the code each fork started from was never reviewed. It is reviewed once, and the
+  result is reported to Devon; it is information, not gate state.

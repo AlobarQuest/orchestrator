@@ -220,6 +220,23 @@ def test_baseline_refuses_to_lose_fork_commits(monkeypatch: pytest.MonkeyPatch) 
     assert not runner.ran("git push")
 
 
+def test_baseline_drops_fork_commits_only_when_told_to(monkeypatch: pytest.MonkeyPatch) -> None:
+    runner = _baseline_runner("abc123 fork-only work\n")
+    result = _invoke(
+        monkeypatch,
+        runner,
+        "baseline",
+        FORK,
+        "--tag",
+        "rea-agents-6.7.0",
+        "--confirm",
+        "--discard-fork-commits",
+    )
+    assert result.exit_code == 0, result.output
+    assert "abc123 fork-only work" in result.output
+    assert runner.ran("git push --quiet --force-with-lease=main:old origin HEAD:main")
+
+
 def test_baseline_resets_main_with_a_lease(monkeypatch: pytest.MonkeyPatch) -> None:
     runner = _baseline_runner("")
     result = _invoke(
