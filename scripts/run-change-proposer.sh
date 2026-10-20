@@ -87,20 +87,6 @@ source "$REPO_ROOT/scripts/sds-deadman.sh"
 sds_deadman_arm sds-change-proposer --finding 3 "$@"
 
 
-# The change-manager tokens live in a BWS project the narrow `sds-operator` account behind
-# scripts/sds-token.sh cannot read, so this launcher bootstraps with the broad machine
-# account — named rather than silently different, exactly as the rollout watcher's launcher
-# names it. Narrowing it is open work for both.
-if [ -z "${BWS_ACCESS_TOKEN:-}" ]; then
-  BWS_ACCESS_TOKEN="$(/usr/bin/security find-generic-password \
-    -s 'Claude' -a 'BWS_ACCESS_TOKEN_VPS_BACKUP' -w 2>/dev/null || true)"
-  export BWS_ACCESS_TOKEN
-fi
-if [ -z "${BWS_ACCESS_TOKEN:-}" ]; then
-  echo "FATAL: BWS_ACCESS_TOKEN not found in Keychain (service Claude)" >&2
-  exit 1
-fi
-
 # `--color no` AND an environment with the forcing variables removed. FORCE_COLOR /
 # CLICOLOR_FORCE make `bws secret get` wrap its JSON in ANSI escapes even when stdout is a
 # pipe, which breaks the parse below.
@@ -116,8 +102,19 @@ case " $* " in
   *) NEEDS_CREDENTIAL=0 ;;
 esac
 
+# THE BROAD IDENTITY IS NEVER EXPORTED. The propose keeper is in `Rotation / Keepers`, which only the
+# broad machine account reads (a direct grant), so this launcher reads that account's token into a
+# local variable and hands it to the one `bws` call that needs it, as `run-estate-landing.sh` does.
+# It used to export it as `BWS_ACCESS_TOKEN`, which made it the identity of every process started
+# after it, the tool and `gh` included, though neither reads BWS.
 if [ "$NEEDS_CREDENTIAL" -eq 1 ]; then
-  CHANGE_PROPOSER_CHANGE_MANAGER_TOKEN="$(sds_bws_value "$CHANGE_MANAGER_PROPOSE_UUID")"
+  BROAD_IDENTITY="${BWS_ACCESS_TOKEN_BROAD:-$(/usr/bin/security find-generic-password \
+    -s 'Claude' -a 'BWS_ACCESS_TOKEN_VPS_BACKUP' -w 2>/dev/null || true)}"
+  if [ -z "$BROAD_IDENTITY" ]; then
+    echo "FATAL: no BWS identity for the change-manager credential (Keychain service Claude)" >&2
+    exit 1
+  fi
+  CHANGE_PROPOSER_CHANGE_MANAGER_TOKEN="$(sds_bws_value "$CHANGE_MANAGER_PROPOSE_UUID" "$BROAD_IDENTITY")"
   export CHANGE_PROPOSER_CHANGE_MANAGER_TOKEN
 fi
 
