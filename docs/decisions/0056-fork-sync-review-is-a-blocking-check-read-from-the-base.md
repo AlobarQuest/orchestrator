@@ -92,9 +92,9 @@ fork lands it on a machine that holds infrastructure credentials.
   deterministic findings don't pass through the model, so they hold regardless.
 - A pull request without the fork's secrets, such as Dependabot's, fails `security review` and
   can't land on a fork.
-- claude-octopus uses the shared App but not this gate: it keeps its own non-blocking
-  `ai_security_review.py` and has no `fork-sync.toml`. Bringing it onto the lane follows the
-  runbook.
+- claude-octopus joined the gate on 2026-10-20 by the runbook, rebuilt from upstream's v11.14.1
+  with its old sync, hardening patches and CI discarded. Its first sync (#31, v11.14.2) passed
+  `security review` with no findings, and the inert landing lane landed it as `14edb140`.
 
 ## Amendment 1 (2026-10-20): no hardening in the lane; a held sync raises an alert
 
@@ -105,7 +105,7 @@ environment," and "Yes, but also the optional Item #3").
 - **The lane never changes upstream's code.** A fork's `main` is upstream's release plus the
   fork's `.github/`. A security concern holds that version; it isn't patched out. A hardening
   process a person runs against a fork may come later, outside fork-sync. claude-octopus, which
-  patched upstream's shell scripts during its old sync, joins the lane without its patches.
+  patched upstream's shell scripts during its old sync, joined the lane without its patches.
 - **A failed review raises an alert.** Before this, a held sync was visible only in the landing
   lane's log, and claude-octopus #29 sat held for nine days unnoticed. Each fork's `ci.yml` gains
   a `notify` job that opens, comments on or closes one issue on the fork, mentioning the owner.
