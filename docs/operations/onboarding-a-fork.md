@@ -220,6 +220,10 @@ worktree. Run `fork-sync check <fork>` after any step to see where you are.
    hardening the lane doesn't carry), re-run with `--discard-fork-commits`. It force-pushes
    `main`, so a fork whose `main` is already protected must have that protection removed first
    (save it with `gh api repos/<fork>/branches/main/protection`); step 8 applies the lane's own.
+   If `tool-installer` already serves the fork as a plugin, its local copy
+   (`~/Developer/devon-plugins/<tool>`) still holds the old history, and every nightly pass
+   fails `git pull --ff-only` until it's reset: tag its `HEAD`, then
+   `git reset --hard origin/main` there. The copy must be clean and on `main`.
 4. **Scaffold.** Write the declaration, then run `fork-sync scaffold <fork> --config <file>`. It
    prints the pull request number. If the old lane left files `scaffold` does not render (for rtk,
    `.github/scripts/ai_security_review.py`), push a commit removing them to the
