@@ -262,8 +262,8 @@ SDS goes into operation, the only things relying on the services this reach
 changes are the SDS's own scheduled jobs, and a failure seen while it happens is
 worth more than a quiet hour: the night's first rotation failure went unnoticed
 until morning. The night hours, 02:00 to 06:00, come back when the SDS goes into
-operation. The operator-machine row keeps the night; it lies inside these hours,
-so work declaring both reaches is still runnable, at night.
+operation. The operator-machine row was widened to the same hours the next day
+(amendment 2).
 """
 decided = "2026-10-20"
 timezone = "America/New_York"
@@ -329,8 +329,15 @@ his day, which is why the hours are local and the zone is written down rather th
 assumed. Chosen wide enough to be useful and narrow enough that nothing inside it
 can collide with a working day — a person asleep is the only reliable signal that
 an interruption costs nothing. Set once and left; changing it costs a release.
+
+WIDENED FOR THE BUILD PHASE (ADR-0012 amendment 2, Devon, 2026-10-21), to the
+live-estate row's hours. During the build, Devon is the one asking for the work on
+his machine, so a daytime install interrupts a person who chose it, and a failure
+seen while it happens is worth more than a quiet night. Matching the live-estate
+row also keeps work that declares both reaches runnable at the same hours. The
+night hours, 02:00 to 06:00, come back when the SDS goes into operation.
 """
-decided = "2026-08-01"
+decided = "2026-10-21"
 timezone = "America/New_York"
-start = "02:00"
-end = "06:00"
+start = "00:00"
+end = "23:59"

@@ -167,3 +167,23 @@ eight readers failing until morning (ADR-0055). A daytime rotation fails in fron
   landings run by hand.
 - **The executor still confirms no dispatched run is live before it restarts the orchestrator**,
   and waits while a change-manager reader is mid-run before it restarts change-manager.
+
+## Amendment 2 — The `operator_machine` window matches `live_estate` for the build phase (2026-10-21)
+
+**Decision (Devon, 2026-10-21).** Until the SDS goes into operation, the `operator_machine` window
+is 00:00 to 23:59 local, the same as `live_estate` under amendment 1. This reverses amendment 1's
+"the `operator_machine` window keeps the night." The night window, 02:00 to 06:00, comes back for
+both reaches when the SDS goes into operation.
+
+**Why.** The window protects Devon's working day from changes to his own machine. During the build,
+that work happens because he asks for it: on 2026-10-21 he asked for an octo install that the
+installer refused to do before 02:00. Matching the two rows also keeps work that declares both
+reaches runnable at the same hours, since windows compose by intersection.
+
+**What it does not change.**
+- **The tool installer keeps its launchd schedule** (03:15), so its unattended installs still
+  happen at night. What the widening opens is a pass run by hand during the day.
+- **Admission still asks the window** for `operator_machine` work; it's open all day except the
+  minute from 23:59 to 00:00.
+- **The installer reads the deployed policy**, so the change takes effect only after the
+  orchestrator that serves it is deployed.
