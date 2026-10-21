@@ -493,8 +493,15 @@ class FactoryPolicy:
         reach: Sequence[str] | None,
         envelope: AuthorityEnvelope,
         unit_id: UUID,
+        *,
+        rotation_unit: bool,
     ) -> AuthorityRecognition:
         """Why policy objects to this envelope running without a human authority approval.
+
+        ``rotation_unit`` says whether the caller established that the unit is a rotation unit,
+        which only the unit and its package revision can show, never the envelope. Rotation
+        patterns are consulted only then, so an envelope shaped like a rotation unit's lifts
+        nothing for a unit that isn't one.
 
         A pattern is declared UNDER a reach row, so a work unit that reaches two places must be
         recognised under both -- the same union-of-refusals composition ``refusals_for`` uses, and
@@ -513,7 +520,7 @@ class FactoryPolicy:
             return AuthorityRecognition(tuple(sorted(refusals)), ())
         names: set[str] = set()
         for member in reach:
-            name = _recognising_pattern(self.rows[member], envelope, unit_id)
+            name = _recognising_pattern(self.rows[member], envelope, unit_id, rotation_unit)
             if name is None:
                 refusals.add(AUTHORITY_ENVELOPE_NOVEL)
             else:
@@ -637,12 +644,14 @@ def _rotation_pattern_report(pattern: RotationPattern) -> dict[str, Any]:
 
 
 def _recognising_pattern(
-    row: ReachPolicy, envelope: AuthorityEnvelope, unit_id: UUID
+    row: ReachPolicy, envelope: AuthorityEnvelope, unit_id: UUID, rotation_unit: bool
 ) -> str | None:
     """The name of the first pattern in this row that recognises the envelope, or ``None``."""
     for pattern in row.known_good:
         if _recognises(pattern, envelope, unit_id):
             return pattern.name
+    if not rotation_unit:
+        return None
     for rotation_pattern in row.rotation_known_good:
         if _rotation_recognises(rotation_pattern, envelope, unit_id):
             return rotation_pattern.name

@@ -110,11 +110,16 @@ def pre_verify_bump() -> dict[str, Any]:
 
 
 def refusals(
-    envelope: dict[str, Any], reach: tuple[str, ...] = REPOSITORY_REACH
+    envelope: dict[str, Any],
+    reach: tuple[str, ...] = REPOSITORY_REACH,
+    *,
+    rotation_unit: bool = False,
 ) -> tuple[str, ...]:
     return (
         load_factory_policy()
-        .authority_refusals(reach, normalize_authority(envelope), UNIT_ID)
+        .authority_refusals(
+            reach, normalize_authority(envelope), UNIT_ID, rotation_unit=rotation_unit
+        )
         .refusals
     )
 
@@ -127,7 +132,9 @@ def refusals(
 def test_the_shipped_pattern_recognises_the_envelope_the_profile_emits_today() -> None:
     recognition = (
         load_factory_policy()
-        .authority_refusals(REPOSITORY_REACH, normalize_authority(uv_bump()), UNIT_ID)
+        .authority_refusals(
+            REPOSITORY_REACH, normalize_authority(uv_bump()), UNIT_ID, rotation_unit=False
+        )
         .recognised_by
     )
 
@@ -150,9 +157,11 @@ def test_recognition_names_the_pattern_and_a_refusal_names_none() -> None:
     contract["constraints"]["work_unit_id"] = str(UNIT_ID)
 
     recognised = policy.authority_refusals(
-        REPOSITORY_REACH, normalize_authority(uv_bump()), UNIT_ID
+        REPOSITORY_REACH, normalize_authority(uv_bump()), UNIT_ID, rotation_unit=False
     )
-    novel = policy.authority_refusals(REPOSITORY_REACH, normalize_authority(contract), UNIT_ID)
+    novel = policy.authority_refusals(
+        REPOSITORY_REACH, normalize_authority(contract), UNIT_ID, rotation_unit=False
+    )
 
     assert (recognised.refusals, bool(recognised.recognised_by)) == ((), True)
     assert (novel.refusals, novel.recognised_by) == ((AUTHORITY_ENVELOPE_NOVEL,), ())
@@ -600,19 +609,21 @@ def observer_retire() -> dict[str, Any]:
 
 
 def test_a_rotation_unit_of_an_approved_package_is_recognised() -> None:
-    assert refusals(bitbucket_confirm(), ROTATION_REACH) == ()
-    assert refusals(observer_retire(), BEARER_REACH) == ()
+    assert refusals(bitbucket_confirm(), ROTATION_REACH, rotation_unit=True) == ()
+    assert refusals(observer_retire(), BEARER_REACH, rotation_unit=True) == ()
 
 
 def test_a_rotation_unit_must_be_recognised_under_every_reach_member() -> None:
-    assert refusals(observer_retire(), (*BEARER_REACH, "operator_machine")) == (
+    assert refusals(observer_retire(), (*BEARER_REACH, "operator_machine"), rotation_unit=True) == (
         AUTHORITY_ENVELOPE_NOVEL,
     )
 
 
 def test_a_host_without_overlap_is_never_recognised() -> None:
     # The one declaration only a person makes. The real envelope, unchanged.
-    assert refusals(observer_mint(), BEARER_REACH) == (AUTHORITY_ENVELOPE_NOVEL,)
+    assert refusals(observer_mint(), BEARER_REACH, rotation_unit=True) == (
+        AUTHORITY_ENVELOPE_NOVEL,
+    )
 
 
 def _edited(mutate: Any) -> dict[str, Any]:
@@ -656,12 +667,23 @@ ROTATION_SHAPES_NOT_RECOGNISED: list[tuple[str, Any]] = [
 def test_a_rotation_envelope_the_pattern_does_not_account_for_draws_the_objection(
     mutate: Any,
 ) -> None:
-    assert refusals(bitbucket_confirm(), ROTATION_REACH) == ()  # control
-    assert refusals(_edited(mutate), ROTATION_REACH) == (AUTHORITY_ENVELOPE_NOVEL,)
+    assert refusals(bitbucket_confirm(), ROTATION_REACH, rotation_unit=True) == ()  # control
+    assert refusals(_edited(mutate), ROTATION_REACH, rotation_unit=True) == (
+        AUTHORITY_ENVELOPE_NOVEL,
+    )
 
 
 def test_neither_kind_of_pattern_recognises_the_other_kinds_envelope() -> None:
     # No rotation pattern sits under `source_repository`, and the uv pattern can't read a
     # rotation envelope; nor does the rotation pattern read a uv bump under its own rows.
-    assert refusals(bitbucket_confirm(), REPOSITORY_REACH) == (AUTHORITY_ENVELOPE_NOVEL,)
-    assert refusals(uv_bump(), ROTATION_REACH) == (AUTHORITY_ENVELOPE_NOVEL,)
+    assert refusals(bitbucket_confirm(), REPOSITORY_REACH, rotation_unit=True) == (
+        AUTHORITY_ENVELOPE_NOVEL,
+    )
+    assert refusals(uv_bump(), ROTATION_REACH, rotation_unit=True) == (AUTHORITY_ENVELOPE_NOVEL,)
+
+
+def test_a_rotation_shaped_envelope_lifts_nothing_for_a_unit_that_is_not_a_rotation_unit() -> None:
+    # Whether a unit is a rotation unit is read from it and its package revision, never from the
+    # envelope, so an ordinary unit carrying this envelope still needs a person's approval.
+    assert refusals(bitbucket_confirm(), ROTATION_REACH, rotation_unit=True) == ()  # control
+    assert refusals(bitbucket_confirm(), ROTATION_REACH) == (AUTHORITY_ENVELOPE_NOVEL,)

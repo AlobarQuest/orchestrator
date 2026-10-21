@@ -267,7 +267,8 @@ unit unless the registry's, the package's and the envelope's destinations are
 exactly equal, and refuses a unit marked as touching no hosted service that writes
 one. A host with no overlap is the one declaration only a person makes, so an
 envelope carrying `host_without_overlap` is never recognised here. The adapters
-are the live ones; the fake adapter the canary uses is left out.
+are the ones the approved packages use. Left out: the fake adapter the canary
+uses, and the attested change-manager variant, which no package uses.
 """
 decided = "2026-10-21"
 rotation_adapters = ["bitbucket", "change-manager", "github-pat", "openrouter", "orchestrator", "orchestrator-distributed"]
@@ -347,7 +348,8 @@ unit unless the registry's, the package's and the envelope's destinations are
 exactly equal, and refuses a unit marked as touching no hosted service that writes
 one. A host with no overlap is the one declaration only a person makes, so an
 envelope carrying `host_without_overlap` is never recognised here. The adapters
-are the live ones; the fake adapter the canary uses is left out.
+are the ones the approved packages use. Left out: the fake adapter the canary
+uses, and the attested change-manager variant, which no package uses.
 """
 decided = "2026-10-21"
 rotation_adapters = ["bitbucket", "change-manager", "github-pat", "openrouter", "orchestrator", "orchestrator-distributed"]

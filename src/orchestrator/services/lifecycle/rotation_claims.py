@@ -18,17 +18,10 @@ approved envelope marks it as touching no hosted service. It is a continuation, 
 windowed, exactly when the unit's previous claim was released because its lease lapsed and that
 claim's holder filed evidence on that attempt. Renewal never starts work and is never windowed:
 the deliberate exception to the rule that a per-claim rule covers all three lease writers.
-
-**The claim is where a rotation unit's lifted authority requirement is acted on** (ADR-0055
-amendment 11). A rotation unit is never dispatched, so the dispatch-time authority term and its
-record never run for one. A claim on a rotation unit nobody approved asks policy again, as dispatch
-does: a pattern that no longer recognises the envelope refuses the claim, and one that does leaves
-the same ``authority.human_gate_not_required`` event dispatch writes, attributed to the claimant.
 """
 
 from __future__ import annotations
 
-import uuid
 from datetime import datetime
 
 from sqlalchemy import select
@@ -37,15 +30,8 @@ from sqlalchemy.orm import Session
 from orchestrator.errors import DomainError
 from orchestrator.factory_policy import load_factory_policy
 from orchestrator.kernel.authority import normalize_authority
-from orchestrator.persistence.models import (
-    Claim,
-    Event,
-    Evidence,
-    WorkPackageRevision,
-    WorkUnit,
-)
+from orchestrator.persistence.models import Claim, Evidence, WorkPackageRevision, WorkUnit
 from orchestrator.reach_vocabulary import LIVE_ESTATE
-from orchestrator.services.intake.authority_gate import AuthorityGate, human_authority_gate
 
 # The envelope constraint that exempts a rotation unit from the claim-time window. Only the
 # literal `True` exempts; any other value, or none, leaves the unit windowed.
@@ -135,60 +121,3 @@ def _is_continuation(session: Session, unit: WorkUnit) -> bool:
         .limit(1)
     )
     return holder_evidence is not None
-
-
-def policy_authority_gate(unit: WorkUnit, revision: WorkPackageRevision) -> AuthorityGate | None:
-    """Policy's answer for a rotation unit no person approved; ``None`` when it isn't asked.
-
-    A unit carrying a person's approval passed the authority term on that approval, so policy is
-    not consulted for it and nothing records that policy lifted anything.
-    """
-    if unit.authority_approval_id is not None or not is_rotation_unit(unit, revision):
-        return None
-    return human_authority_gate(unit, revision)
-
-
-def authority_refusal(gate: AuthorityGate | None) -> DomainError | None:
-    """Why the claim may not proceed on authority grounds; ``None`` means it may."""
-    if gate is None or not gate.refusals:
-        return None
-    return DomainError(
-        "authority_approval_missing",
-        "no person approved this rotation unit's envelope and policy no longer recognises it",
-        "approve the authority envelope",
-    )
-
-
-def record_gate_not_required(
-    session: Session,
-    unit: WorkUnit,
-    gate: AuthorityGate,
-    claimant: str,
-    attempt: int,
-    idempotency_key: str,
-) -> None:
-    """The trace dispatch leaves when policy lifted the requirement, written at the claim instead.
-
-    Not an approval: an event naming the patterns, the artifact version and the fingerprint they
-    recognised, with ``authority_approval_id`` left null.
-    """
-    session.add(
-        Event(
-            actor_id=claimant,
-            action="authority.human_gate_not_required",
-            subject_type="work_unit",
-            subject_id=unit.id,
-            from_state=unit.state,
-            to_state=unit.state,
-            payload={
-                "recognised_by": list(gate.recognised_by),
-                "policy_version": gate.policy_version,
-                "policy_source": gate.policy_source,
-                "authority_fingerprint": unit.authority_fingerprint,
-                "claim_attempt": attempt,
-            },
-            correlation_id=uuid.uuid4(),
-            idempotency_key=f"{idempotency_key}:authority-gate",
-        )
-    )
-    session.flush()

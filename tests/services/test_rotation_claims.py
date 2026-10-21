@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from orchestrator.errors import DomainError
 from orchestrator.factory_policy import OUTSIDE_CHANGE_WINDOW
 from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope
+from orchestrator.kernel.readiness import ReadinessStatus
 from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import Claim, Event, Evidence, WorkPackageRevision, WorkUnit
 from orchestrator.services.intake.packages import register_approved_unit, register_revision
@@ -28,6 +29,7 @@ from orchestrator.services.lifecycle.claims import (
     release_expired_claim,
     renew_claim,
 )
+from orchestrator.services.lifecycle.readiness import evaluate_readiness
 from orchestrator.services.lifecycle.rotation_claims import (
     NON_HOSTED_CONSTRAINT,
     claim_window_refusal,
@@ -970,3 +972,66 @@ def test_an_approved_rotation_unit_is_claimed_on_its_approval_and_leaves_no_trac
 
     assert isinstance(grant, LeaseGrant)
     assert _gate_events(migrated_session, unit) == []
+
+
+def test_a_rotation_shaped_envelope_on_an_ordinary_unit_still_needs_an_approval(
+    migrated_session: Session,
+) -> None:
+    unit_id = uuid.uuid4()
+    unit = seed_unit(
+        migrated_session,
+        "not-rotation",
+        profile=None,
+        constraints={**BITBUCKET_CONFIRM, "work_unit_id": str(unit_id)},
+        reach=["external_system"],
+        max_llm_calls=None,
+        max_attempts=3,
+        approved=False,
+        unit_id=unit_id,
+    )
+    rotation = seed_recognised(migrated_session, "rotation-control", approved=False)
+
+    assert evaluate_readiness(migrated_session, rotation.id).status is ReadinessStatus.READY
+    decision = evaluate_readiness(migrated_session, unit.id)
+    assert decision.status is ReadinessStatus.NOT_AUTHORIZED
+    assert [reason.code for reason in decision.reasons] == ["authority_not_approved"]
+
+
+def test_a_standing_authority_refusal_is_reported_before_a_shut_window(
+    migrated_session: Session, window_shut: _Policy
+) -> None:
+    hosted = {k: v for k, v in BITBUCKET_CONFIRM.items() if k != NON_HOSTED_CONSTRAINT}
+    unit_id = uuid.uuid4()
+    unit = seed_unit(
+        migrated_session,
+        "rot-hosted-overlap",
+        constraints={**hosted, "host_without_overlap": True, "work_unit_id": str(unit_id)},
+        reach=["external_system"],
+        max_llm_calls=None,
+        max_attempts=3,
+        approved=False,
+        unit_id=unit_id,
+    )
+
+    refused = _claim(migrated_session, unit, EXECUTOR_ACTOR, "rot-hosted-overlap-claim")
+
+    assert isinstance(refused, DomainError)
+    assert refused.code == "authority_approval_missing"
+
+
+def test_an_unreadable_policy_refuses_a_claim_nobody_approved_by_name(
+    migrated_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    unit = seed_recognised(migrated_session, "rot-unreadable", approved=False)
+
+    def unreadable() -> None:
+        raise DomainError("factory_policy_invalid", "unreadable", None)
+
+    monkeypatch.setattr(
+        "orchestrator.services.intake.authority_gate.load_factory_policy", unreadable
+    )
+
+    refused = _claim(migrated_session, unit, EXECUTOR_ACTOR, "rot-unreadable-claim")
+
+    assert isinstance(refused, DomainError)
+    assert refused.code == "authority_policy_unreadable"
