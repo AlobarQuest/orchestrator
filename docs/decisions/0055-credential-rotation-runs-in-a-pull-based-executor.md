@@ -1276,3 +1276,118 @@ decisions to Devon. The build plan is `docs/superpowers/plans/2026-10-19-increme
 
 The verification table's `gh-actions-secret` row is no longer an exception to R15: a copy is
 verified by its repository's fingerprint report.
+
+## Amendment 11 — A rotation unit's authority approval graduates to a declared pattern (proposed 2026-10-21)
+
+**Status: proposed, awaiting Devon's decision.** Nothing in this amendment is in force until he
+accepts it.
+
+On 2026-10-20 Devon approved seven rotation units' authority envelopes and called it "that bit of
+theater". The six rotations that finished on 2026-10-20 and 2026-10-21 had thirteen units, and
+each needed an approval that re-attested an envelope he had already approved. Threat T4 left this
+to "the gate-graduation decision". This amendment is that decision, put to him.
+
+### What enforces the approval today
+
+A unit's readiness reports `authority_not_approved` until a human approval bound to its authority
+fingerprint is recorded (`kernel/readiness.py`). There is already one exit: ADR-0011's known-good
+patterns. When every reach member's row in `factory-policy.toml` declares a pattern that
+recognises the envelope completely, `authority_gate.human_authority_gate` returns no refusals and
+readiness sets `authority_recognised_by_policy`.
+
+That exit can't recognise a rotation envelope, and no edit to the policy file alone can change
+that. The schema 7 pattern describes one envelope shape, a command list run against one
+repository, and `_recognises` rejects a rotation envelope four ways:
+
+- `change_class` is `None`, and a pattern names a string.
+- `conformance` is `None`, and `_conformance_recognised` requires a complete green claim.
+- `max_llm_calls` is `None`, which `_within` reads as unbounded.
+- The constraint keys are `destinations`, `rotation_adapter`, `rotation_unit` and `work_unit_id`,
+  sometimes with `touches_no_hosted_service` or `host_without_overlap`, and
+  `_constraints_recognised` requires exactly `allowed_commands`, `mutation_commands`,
+  `target_repository` and `work_unit_id`.
+
+`factory_policy.py` says so at `_CONSTRAINT_FIELDS`: a unit that runs no commands "is a different
+schema version, not a looser check here". So graduation is a schema bump with the code that
+reads it, which is a release.
+
+### Why the per-unit approval adds nothing for a rotation unit
+
+1. **The decomposition approval shows the same bytes.** `decomposition_proposal.html` renders
+   every unit's full envelope: capabilities, budgets, change class, conformance, every constraint
+   and value, unknown fields and the authority fingerprint. `work_unit_id` is stamped when the
+   proposal is submitted (ADR-0001 decision 3), and envelopes are write-once
+   (`tests/architecture/test_authority_write_once.py`). The unit's approval page shows the
+   fingerprint the decomposition approver already saw.
+2. **Destinations are held equal by machine.** Before claiming, the executor refuses a unit
+   unless the registry's destinations (read at its repository's `main`), the approved package
+   revision's (verified against intent-packages' `main` by content hash) and the envelope's are
+   exactly equal (`rotation_worker/checks.py`). An envelope can't name a destination that the
+   package Devon approved doesn't.
+3. **`touches_no_hosted_service` is checked by machine.** The same checks refuse a unit carrying
+   it that writes a hosted destination, so a false marker can't move a hosted write out of the
+   `live_estate` window.
+4. **`host_without_overlap` is checked by machine, but only partly.** The executor requires the
+   unit to have a host step, and `m2m_setting.build` refuses unless another served entry holds
+   the old hash as current. The flag stays the one place where a person declares that a host
+   takes no overlap, and it's rare: one unit in thirteen.
+
+T4's remaining defence was Devon reading the destination list on `/review`. Under this amendment
+that read happens once, on the decomposition page, which shows the same list.
+
+### Decision proposed
+
+1. **Policy schema 8 adds a rotation pattern.** It's a second kind of `known_good` entry, and each
+   of its fields only narrows:
+   - `rotation_adapters`: the adapter names it recognises;
+   - `rotation_units`: the unit names it recognises;
+   - `capabilities`: exactly `{ operational_action = "allowed" }`;
+   - `max_attempts`: a ceiling of 3.
+
+   It recognises an envelope only when all of the following hold:
+   - `unknown_fields` is empty;
+   - the constraint keys are exactly `destinations`, `rotation_adapter`, `rotation_unit` and
+     `work_unit_id`, optionally with `touches_no_hosted_service = true`;
+   - `work_unit_id` is the unit's own id.
+
+   Three `None` values are the recognised shape here, not unbounded or missing values:
+   `change_class`, `conformance` and `max_llm_calls`. The executor makes no model calls, and a
+   rotation unit is never dispatched.
+2. **`host_without_overlap` is never recognised.** A mint unit declaring it keeps the per-unit
+   approval.
+3. **The pattern is declared under `external_system` and `live_estate`.** Every rotation package
+   declares `external_system`, and the five bearer packages also declare `live_estate`.
+   Recognition needs a pattern under every member.
+4. **The lifted requirement leaves a trace at the claim.** Today `authority.human_gate_not_required`
+   is written only at dispatch (`dispatch.py`), and rotation units are never dispatched. The
+   rotation claim writes the same event: system-attributed, with the recognising patterns, the
+   policy version and source, and the authority fingerprint. "The gate didn't fire" and "a human
+   approved" stay different records, and `authority_approval_id` stays null.
+5. **Nothing else changes.** The package revision approval, the decomposition approval, the
+   human-act dependencies (mint and revoke), adjudication and the `AWAITING_REVIEW → COMPLETED`
+   gate are untouched.
+
+The 21 envelopes of this shape that had cleared the gate by 2026-10-21 are evidence about the shape only
+(ADR-0014). They aren't the justification; the four machine checks are.
+
+### Alternatives
+
+- **Keep the click.** It costs one approval per unit, three or four per rotation, and the
+  every later rotation needs it too.
+- **Count the decomposition approval as each unit's authority approval.** It's a real human
+  approval of the same bytes, but it would add a second way to write an authority approval,
+  beside the one ADR-0011 already gives policy. Rejected in favour of reusing the pattern route.
+
+### Cost
+
+One increment:
+- schema 8 in `factory_policy.py`, with its loader, matcher and `SUPPORTED_SCHEMA_VERSIONS`;
+- the two pattern rows;
+- the claim-side trace;
+- tests that the pattern refuses each excluded shape (`host_without_overlap`, an extra
+  constraint, a second capability, an unknown field);
+- a deploy.
+
+Rotation envelopes take their budgets from the decomposition author, not from an intent-packages
+profile, so `check_profile_budget_agreement.py` has nothing to hold the ceiling to. The enforced
+attempt cap stays the `work_units.max_attempts` column.
