@@ -163,3 +163,6 @@ review never sees a dependency change, which is the supply-chain path the lane e
 - **Every fork's sync workflow gains a Node setup and the `lock` step,** which does nothing
   unless the declaration sets `generate_lockfile`. `fork-sync check` reports the older workflow
   as drift, so each onboarded fork is re-scaffolded to the new template.
+- **A release tag may start with `@`.** npm monorepos tag each package by its scoped name
+  (`@n8n-as-code/n8n-manager-v0.7.1`), which the tag rule refused. `@` is valid in a ref except
+  as `@{`, and `{` stays refused.

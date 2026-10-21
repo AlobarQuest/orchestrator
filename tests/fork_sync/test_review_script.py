@@ -167,6 +167,19 @@ def test_next_release_never_walks_main_back() -> None:
     )
 
 
+def test_a_scoped_monorepo_tag_is_synced() -> None:
+    config = review.parse_config(NPM.replace("'^rea-agents-(", "'^@n8n-as-code/n8n-manager-v("))
+    tag = "@n8n-as-code/n8n-manager-v0.7.1"
+    assert review.next_release(config, [_release(tag)], "0.7.0") == tag
+
+
+@pytest.mark.parametrize("tag", ["v1.0.0 x", "v1.0.0;x", "@{1}v1.0.0", "-v1.0.0"])
+def test_a_tag_with_unsafe_characters_is_refused(tag: str) -> None:
+    config = review.parse_config(CARGO.replace("'^v(", "'^.*v(").replace(")$'", ").*$'"))
+    with pytest.raises(ConfigError, match="characters"):
+        review.next_release(config, [_release(tag)], "0.1.0")
+
+
 def test_an_unsafe_upstream_tag_is_refused() -> None:
     config = review.parse_config(CARGO.replace("'^v(", "'^v(.*"))
     with pytest.raises(ConfigError, match="characters"):

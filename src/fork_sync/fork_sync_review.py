@@ -73,7 +73,9 @@ NPM_DEPENDENCY_KEYS = (
     "peerDependencies",
 )
 SCRIPT_SUFFIXES = (".js", ".mjs", ".cjs", ".ts", ".sh", ".py")
-SAFE_TAG = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/+-]*")
+# `@` for an npm monorepo's scoped release tags (`@n8n-as-code/n8n-manager-v0.7.1`): it is valid in
+# a ref except as `@{`, and `{` is refused.
+SAFE_TAG = re.compile(r"[A-Za-z0-9@][A-Za-z0-9._/+@-]*")
 # Git runs with no replace objects, literal pathspecs and NO attributes at all (no global file,
 # and the empty tree as the attribute source): an attribute the base carries, perhaps from an
 # upstream release acknowledged earlier, could otherwise turn a script into "binary" or route it
