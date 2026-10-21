@@ -1394,10 +1394,10 @@ Rotation envelopes take their budgets from the decomposition author, not from an
 profile, so `check_profile_budget_agreement.py` has nothing to hold the ceiling to. The enforced
 attempt cap stays the `work_units.max_attempts` column.
 
-## Amendment 12 — BWS machine tokens rotate through a second executor on the Mac (proposed 2026-10-21)
+## Amendment 12 — BWS machine tokens rotate through a second executor on the Mac (2026-10-21)
 
-**Status: proposed, awaiting Devon's decision.** Nothing in this amendment is in force until he
-accepts it.
+**Status: accepted by Devon on 2026-10-21** ("amendment 12 accepted"), including decision 7's
+threat-model change. It takes effect as increment 8 builds it.
 
 Increment 8 and the per-class table said every step of a BWS machine token's rotation is human,
 and the executor only records the evidence. On 2026-10-21 Devon rejected that: "SDS can not do an
