@@ -611,37 +611,21 @@ def _npm_packages(data: bytes | None) -> dict[str, dict[str, Any]]:
     return {name: entry for name, entry in packages.items() if name and isinstance(entry, dict)}
 
 
-def _npm_workspaces(data: bytes | None) -> tuple[str, ...]:
-    """The workspace patterns the lockfile's root entry declares (an array, or `{packages}`)."""
-    root = (_json_object(data).get("packages") or {}).get("") or {}
-    patterns = root.get("workspaces") if isinstance(root, dict) else None
-    if isinstance(patterns, dict):
-        patterns = patterns.get("packages")
-    if not isinstance(patterns, list):
-        return ()
-    return tuple(p.removeprefix("./") for p in patterns if isinstance(p, str))
-
-
-def _is_workspace(path: Any, workspaces: Sequence[str]) -> bool:
-    """A folder inside the tree that the root's `workspaces` names: its code is in the diff."""
-    if not isinstance(path, str) or not path or path.startswith("/") or ":" in path:
-        return False
-    parts = path.split("/")
-    return ".." not in parts and "node_modules" not in parts and _matches(path, workspaces)
-
-
 def _npm_entry_problems(
-    path: str, old: dict[str, Any] | None, new: dict[str, Any], workspaces: Sequence[str] = ()
+    path: str, old: dict[str, Any] | None, new: dict[str, Any]
 ) -> list[tuple[str, str]]:
     problems = []
+    # Only a `node_modules/` entry is installed under a name. A folder entry (a workspace, or a
+    # `file:` target) is keyed by its path, so its own name is no alias, and its version moves
+    # every release. What it could shadow, it shadows through a link, and a new or changed link
+    # is always a finding: workspace links name only a path, so they stay unchanged once
+    # acknowledged.
     installed_as = path.rpartition("node_modules/")[2]
-    # A workspace's own folder entry is keyed by its path, not by the name it installs as.
-    if new.get("name") not in (None, installed_as) and not _is_workspace(path, workspaces):
+    if "node_modules/" in path and new.get("name") not in (None, installed_as):
         problems.append(("npm-lock-alias", f"installs {new.get('name')} as {installed_as}"))
     resolved = new.get("resolved")
     if new.get("link"):
-        if not _is_workspace(resolved, workspaces):
-            problems.append(("npm-lock-source", "a link to a local path"))
+        problems.append(("npm-lock-source", "a link to a local path"))
     elif isinstance(resolved, str) and not resolved.startswith(NPM_REGISTRY):
         problems.append(("npm-lock-source", f"resolved from {resolved}"))
     same_version = old is not None and old.get("version") == new.get("version")
@@ -655,7 +639,6 @@ def _npm_entry_problems(
 def npm_lock_review(change: Change, old: bytes | None, new: bytes | None) -> LockReview:
     review = LockReview()
     before, after = _npm_packages(old), _npm_packages(new)
-    workspaces = _npm_workspaces(new)
     for name in sorted(set(before) | set(after)):
         was, now = before.get(name), after.get(name)
         if was == now:
@@ -668,7 +651,7 @@ def npm_lock_review(change: Change, old: bytes | None, new: bytes | None) -> Loc
             f"{name}: {old_version} -> {now.get('version')} {now.get('resolved', '')}"
         )
         entry = _digest(f"{change.content}\0{name}".encode())
-        for kind, why in _npm_entry_problems(name, was, now, workspaces):
+        for kind, why in _npm_entry_problems(name, was, now):
             review.findings.append(Finding(kind, change.path, f"{name}: {why}", entry))
     return review
 
@@ -1325,6 +1308,9 @@ def _copy_manifests(commit: str, into: Path) -> int:
         mode, kind, blob = meta.decode().split()
         path = os.fsdecode(raw)
         parts = path.split("/")
+        # Git can carry a tree entry named `..` (fsck only warns); never write above `into`.
+        if any(part in ("", ".", "..") for part in parts):
+            raise ConfigError(f"the tag's tree has a path npm must not see: {path!r}")
         if kind != "blob" or mode not in REGULAR_FILE_MODES or parts[-1] != "package.json":
             continue
         if "node_modules" in parts:

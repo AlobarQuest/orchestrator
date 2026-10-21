@@ -1076,27 +1076,82 @@ def _never_runs(argv: list[str], cwd: Path) -> int:
     raise AssertionError(f"ran {argv}")
 
 
-def test_workspace_entries_are_not_findings_but_links_elsewhere_are() -> None:
-    """npm keys a workspace's folder entry by its path and links it into node_modules; both are
-    the tree's own code, which the diff already carries. Anything outside `workspaces` is not."""
-    lock = json.dumps(
+def _workspace_lock(version: str, **extra: dict[str, Any]) -> bytes:
+    return json.dumps(
         {
             "lockfileVersion": 3,
             "packages": {
-                "": {"name": "mono", "workspaces": ["./packages/*"]},
-                "packages/cli": {"name": "@x/cli", "version": "6.7.0"},
+                "": {"name": "mono", "workspaces": ["packages/*"]},
+                "packages/cli": {"name": "@x/cli", "version": version},
                 "node_modules/@x/cli": {"resolved": "packages/cli", "link": True},
-                "vendor/thing": {"name": "thing-evil", "version": "1.0.0"},
-                "node_modules/thing": {"resolved": "vendor/thing", "link": True},
-                "node_modules/up": {"resolved": "packages/../../outside", "link": True},
-                "node_modules/deep": {"resolved": "packages/x/node_modules/y", "link": True},
+                **extra,
             },
         }
     ).encode()
-    result = review.npm_lock_review(_change("package-lock.json"), None, lock)
-    assert sorted((f.kind, f.summary.split(":")[0]) for f in result.findings) == [
-        ("npm-lock-alias", "vendor/thing"),
-        ("npm-lock-source", "node_modules/deep"),
-        ("npm-lock-source", "node_modules/thing"),
-        ("npm-lock-source", "node_modules/up"),
+
+
+def test_a_workspace_link_is_acknowledged_once_and_its_folder_is_never_a_finding() -> None:
+    """A folder entry is keyed by its path and installs as nothing, so its name and its moving
+    version are not findings. Its link names only a path, so once acknowledged it stays put."""
+    first = review.npm_lock_review(_change("package-lock.json"), None, _workspace_lock("6.7.0"))
+    assert [(f.kind, f.summary.split(":")[0]) for f in first.findings] == [
+        ("npm-lock-source", "node_modules/@x/cli")
     ]
+    later = review.npm_lock_review(
+        _change("package-lock.json"), _workspace_lock("6.7.0"), _workspace_lock("6.8.0")
+    )
+    assert later.findings == []
+
+
+def test_an_in_tree_package_taking_a_registry_name_is_a_finding() -> None:
+    """Upstream adds packages/lodash and npm links it where the registry's lodash was."""
+    lodash = {"node_modules/lodash": _registry("lodash", "4.17.21")}
+    shadow = {
+        "packages/lodash": {"name": "lodash", "version": "4.99.0"},
+        "node_modules/lodash": {"resolved": "packages/lodash", "link": True},
+    }
+    result = review.npm_lock_review(
+        _change("package-lock.json"),
+        _workspace_lock("6.7.0", **lodash),
+        _workspace_lock("6.7.0", **shadow),
+    )
+    assert [(f.kind, f.summary.split(":")[0]) for f in result.findings] == [
+        ("npm-lock-source", "node_modules/lodash")
+    ]
+
+
+def test_lock_refuses_a_tree_entry_that_climbs_out(tmp_path: Path, monkeypatch: Any) -> None:
+    """`git mktree` accepts an entry named `..`; its package.json must not land above scratch."""
+    _git(tmp_path, "init", "-q", "-b", "main")
+    monkeypatch.chdir(tmp_path)
+    blob = (
+        subprocess.run(
+            ["git", "hash-object", "-w", "--stdin"], input=b"{}", capture_output=True, check=True
+        )
+        .stdout.decode()
+        .strip()
+    )
+    inner = (
+        subprocess.run(
+            ["git", "mktree"],
+            input=f"100644 blob {blob}\tpackage.json\n".encode(),
+            capture_output=True,
+            check=True,
+        )
+        .stdout.decode()
+        .strip()
+    )
+    root = (
+        subprocess.run(
+            ["git", "mktree"],
+            input=f"040000 tree {inner}\t..\n100644 blob {blob}\tpackage.json\n".encode(),
+            capture_output=True,
+            check=True,
+        )
+        .stdout.decode()
+        .strip()
+    )
+    commit = _git(tmp_path, "commit-tree", root, "-m", "release")
+    _git(tmp_path, "tag", "rea-agents-6.7.0", commit)
+    with pytest.raises(ConfigError, match="must not see"):
+        review.lock(review.parse_config(MONOREPO), "rea-agents-6.7.0", _never_runs)

@@ -156,10 +156,15 @@ review never sees a dependency change, which is the supply-chain path the lane e
 - **A tag that ships its own lockfile (`package-lock.json` or `npm-shrinkwrap.json`) fails the
   sync** rather than being silently overwritten, so the declaration is revisited when upstream
   starts committing one.
-- **A workspace's own lockfile entries aren't findings.** npm keys each workspace folder by its
-  path and links it into `node_modules`. Both entries are accepted only when the path matches the
-  lockfile's declared `workspaces`; their code is the tree's own, and the diff carries it.
-  Without this, every n8n-as-code release raised an alias and a link finding per package.
+- **A workspace's folder entry isn't a finding; its link is, once.** npm keys each workspace
+  folder by its path and links it into `node_modules`. The folder entry installs under no name,
+  and its version moves every release, so the alias check applies only to `node_modules/` entries.
+  Every new or changed link stays a finding: a link is how an in-tree package can take a
+  registry package's name, which a second review round reproduced against an earlier rule that
+  trusted the declared `workspaces` patterns. A workspace link names only a path, so it is
+  acknowledged once and stays unchanged across releases. At v2.7.0 that is nine links.
+- **`lock` refuses a tree path with a `..`, `.` or empty part.** Git accepts a tree entry named
+  `..` with only an fsck warning, and copying it would write above the scratch directory.
 - **Every fork's sync workflow gains a Node setup and the `lock` step,** which does nothing
   unless the declaration sets `generate_lockfile`. `fork-sync check` reports the older workflow
   as drift, so each onboarded fork is re-scaffolded to the new template.
