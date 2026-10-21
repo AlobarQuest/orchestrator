@@ -251,6 +251,10 @@ provider_identity = "drift-reporter key id, agent_id drift-reconciler, OBSERVER 
 bws_uuid = "8998c4ea-453c-4ae1-9b5c-b49500b8dacc"
 created = "2026-07-28"
 disposition = "reissue"
+# Handed to the rotation executor 2026-10-21 (intent-packages rotation-orchestrator-drift-reporter-bearer
+# rev 1, approved by Devon 2026-10-21, after the observer's mint completed).
+rotated_by_sds = true
+rotate_requested = "2026-10-21"
 
   [[credential.consumer]]
   kind = "bws-secret"
