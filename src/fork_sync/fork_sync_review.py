@@ -41,6 +41,7 @@ import tomllib
 import urllib.request
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -608,16 +609,37 @@ def _npm_packages(data: bytes | None) -> dict[str, dict[str, Any]]:
     return {name: entry for name, entry in packages.items() if name and isinstance(entry, dict)}
 
 
+def _npm_workspaces(data: bytes | None) -> tuple[str, ...]:
+    """The workspace patterns the lockfile's root entry declares (an array, or `{packages}`)."""
+    root = (_json_object(data).get("packages") or {}).get("") or {}
+    patterns = root.get("workspaces") if isinstance(root, dict) else None
+    if isinstance(patterns, dict):
+        patterns = patterns.get("packages")
+    if not isinstance(patterns, list):
+        return ()
+    return tuple(p.removeprefix("./") for p in patterns if isinstance(p, str))
+
+
+def _is_workspace(path: Any, workspaces: Sequence[str]) -> bool:
+    """A folder inside the tree that the root's `workspaces` names: its code is in the diff."""
+    if not isinstance(path, str) or not path or path.startswith("/") or ":" in path:
+        return False
+    parts = path.split("/")
+    return ".." not in parts and "node_modules" not in parts and _matches(path, workspaces)
+
+
 def _npm_entry_problems(
-    path: str, old: dict[str, Any] | None, new: dict[str, Any]
+    path: str, old: dict[str, Any] | None, new: dict[str, Any], workspaces: Sequence[str] = ()
 ) -> list[tuple[str, str]]:
     problems = []
     installed_as = path.rpartition("node_modules/")[2]
-    if new.get("name") not in (None, installed_as):
+    # A workspace's own folder entry is keyed by its path, not by the name it installs as.
+    if new.get("name") not in (None, installed_as) and not _is_workspace(path, workspaces):
         problems.append(("npm-lock-alias", f"installs {new.get('name')} as {installed_as}"))
     resolved = new.get("resolved")
     if new.get("link"):
-        problems.append(("npm-lock-source", "a link to a local path"))
+        if not _is_workspace(resolved, workspaces):
+            problems.append(("npm-lock-source", "a link to a local path"))
     elif isinstance(resolved, str) and not resolved.startswith(NPM_REGISTRY):
         problems.append(("npm-lock-source", f"resolved from {resolved}"))
     same_version = old is not None and old.get("version") == new.get("version")
@@ -631,6 +653,7 @@ def _npm_entry_problems(
 def npm_lock_review(change: Change, old: bytes | None, new: bytes | None) -> LockReview:
     review = LockReview()
     before, after = _npm_packages(old), _npm_packages(new)
+    workspaces = _npm_workspaces(new)
     for name in sorted(set(before) | set(after)):
         was, now = before.get(name), after.get(name)
         if was == now:
@@ -643,7 +666,7 @@ def npm_lock_review(change: Change, old: bytes | None, new: bytes | None) -> Loc
             f"{name}: {old_version} -> {now.get('version')} {now.get('resolved', '')}"
         )
         entry = _digest(f"{change.content}\0{name}".encode())
-        for kind, why in _npm_entry_problems(name, was, now):
+        for kind, why in _npm_entry_problems(name, was, now, workspaces):
             review.findings.append(Finding(kind, change.path, f"{name}: {why}", entry))
     return review
 
@@ -1279,21 +1302,53 @@ def notify(env: Mapping[str, str], opener: Opener = _urlopen) -> int:
     return 0
 
 
-LockRunner = Callable[[list[str]], int]
-"""`(argv) -> exit code`, run in the working tree."""
+LockRunner = Callable[[list[str], Path], int]
+"""`(argv, cwd) -> exit code`."""
+
+NPM_LOCKFILES = ("package-lock.json", "npm-shrinkwrap.json")
+REGULAR_FILE_MODES = frozenset({"100644", "100755"})
 
 
-def lock(
-    config: Config, tag: str, run: LockRunner = lambda argv: subprocess.run(argv).returncode
-) -> int:
-    """Resolve and stage the lockfile upstream doesn't commit, in a checkout of `tag`.
+def _run_lock(argv: list[str], cwd: Path) -> int:
+    return subprocess.run(argv, cwd=cwd).returncode
 
-    Resolution only: `--package-lock-only` installs nothing, and no lifecycle script runs. It is
-    pinned to versions published before the tag's commit, so it records what upstream's users got
-    at that release, and a rerun writes the same file -- the sync pushes only a changed tree, and a
-    lockfile that moved daily would re-review and re-alert a held sync every day. The registry is
-    fixed on the command line; a scoped registry in upstream's `.npmrc` is not overridden, and the
-    review finds both that `.npmrc` and any package it resolves elsewhere.
+
+def _copy_manifests(commit: str, into: Path) -> int:
+    """Every `package.json` the commit tracks as a regular file, from git's objects, and nothing
+    else: no `.npmrc` and no file a symlink names reaches the resolver. Returns the count."""
+    listing = _git_bytes("ls-tree", "-r", "-z", "--full-tree", commit).split(b"\0")
+    copied = 0
+    for line in filter(None, listing):
+        meta, _, raw = line.partition(b"\t")
+        mode, kind, blob = meta.decode().split()
+        path = os.fsdecode(raw)
+        parts = path.split("/")
+        if kind != "blob" or mode not in REGULAR_FILE_MODES or parts[-1] != "package.json":
+            continue
+        if "node_modules" in parts:
+            continue
+        target = into.joinpath(*parts)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(_git_bytes("cat-file", "blob", blob))
+        copied += 1
+    return copied
+
+
+def lock(config: Config, tag: str, run: LockRunner = _run_lock) -> int:
+    """Resolve the lockfile upstream doesn't commit, for `tag`, and stage it in the working tree.
+
+    Upstream's tree is untrusted, so npm never runs in it. It resolves in an empty scratch
+    directory holding only the tag's tracked `package.json` files, read from git objects: no
+    project `.npmrc` (whose `git=` key would otherwise run a program of upstream's choosing, with
+    the sync's token in `.git/config`), and no symlink followed. User and global configuration are
+    empty, the registry is fixed, `--ignore-scripts` runs no lifecycle script, and `git` is
+    `false`, so a git dependency fails the sync rather than being fetched. The result is written
+    with an exclusive create, which never writes through a link.
+
+    Resolution is pinned to versions published before the tag's commit, so it records what
+    upstream's users got at that release, and a rerun on the same npm writes the same file: the
+    sync pushes only a changed tree, and a lockfile that moved daily would re-review and re-alert
+    a held sync every day. A commit dated in the future would unpin it, so it is refused.
     """
     if not config.generate_lockfile:
         print("the declaration generates no lockfile")
@@ -1302,17 +1357,35 @@ def lock(
     assert lockfile is not None  # parse_config allows generate_lockfile only for npm
     if not SAFE_TAG.fullmatch(tag):
         raise ConfigError(f"tag {tag!r} has characters a ref must not")
-    if Path(lockfile).exists():
-        print(
-            f"::error::{tag} has its own {lockfile}; remove generate_lockfile from the declaration"
-        )
+    present = [name for name in NPM_LOCKFILES if os.path.lexists(name)]
+    if present:
+        print(f"::error::{tag} has its own {present[0]}; remove generate_lockfile")
         return 1
-    published_before = _git("log", "-1", "--format=%cI", f"refs/tags/{tag}^{{commit}}").strip()
+    commit = _git("rev-parse", "--verify", f"refs/tags/{tag}^{{commit}}").strip()
+    published_before = _git("log", "-1", "--format=%cI", commit).strip()
+    if datetime.fromisoformat(published_before) > datetime.now(UTC):
+        print(f"::error::{tag}'s commit is dated {published_before}, in the future")
+        return 1
     argv = ["npm", "install", "--package-lock-only", "--ignore-scripts", "--no-audit", "--no-fund"]
-    argv += ["--userconfig", "/dev/null", "--registry", NPM_REGISTRY.rstrip("/")]
-    code = run([*argv, "--before", published_before])
-    if code != 0:
-        return code
+    argv += ["--git", "false", "--registry", NPM_REGISTRY.rstrip("/")]
+    argv += ["--before", published_before]
+    with tempfile.TemporaryDirectory(dir=os.environ.get("RUNNER_TEMP")) as scratch:
+        # npm refuses one file as both user and global config, so each gets an empty one of its
+        # own, outside the directory it resolves in.
+        for scope in ("user", "global"):
+            (Path(scratch) / scope).write_bytes(b"")
+            argv += [f"--{scope}config", str(Path(scratch) / scope)]
+        directory = Path(scratch) / "tree"
+        directory.mkdir()
+        if not (_copy_manifests(commit, directory) and (directory / "package.json").is_file()):
+            print(f"::error::{tag} has no package.json at its root")
+            return 1
+        code = run(argv, directory)
+        if code != 0:
+            return code
+        resolved = (directory / lockfile).read_bytes()
+    with open(lockfile, "xb") as out:
+        out.write(resolved)
     _git("add", "--force", "--", lockfile)
     return 0
 

@@ -138,18 +138,28 @@ review never sees a dependency change, which is the supply-chain path the lane e
   release, an older one included.
 - **`generate_lockfile = true`** (npm only) makes the fork own its lockfile. After the sync
   restores the fork's `.github/`, `fork_sync_review.py lock <tag>` resolves `package-lock.json`
-  with `npm install --package-lock-only --ignore-scripts`, which installs nothing and runs no
-  script, and commits it on the sync branch. The lockfile sits at the root, so CI, the audit, the
-  review and the weekly audit read it unchanged.
-- **Resolution is pinned with `--before` to the tag's commit date.** The lockfile records what
-  upstream's own users received at that release, and a rerun writes the same file. Measured at
-  v2.7.0: two resolutions gave byte-identical lockfiles. A lockfile that moved daily would make
-  every rebuild a new tree, which would re-review and re-alert a held sync every day.
-- **A tag that ships its own lockfile fails the sync** rather than being silently overwritten, so
-  the declaration is revisited when upstream starts committing one.
-- **The registry is fixed on the command line, and a scoped registry in upstream's `.npmrc` is
-  not.** The review's deterministic findings already cover that case: any `.npmrc`, and any
-  package resolved outside `https://registry.npmjs.org/`.
+  with `npm install --package-lock-only --ignore-scripts` and commits it on the sync branch. The
+  lockfile sits at the root, so CI, the audit, the review and the weekly audit read it unchanged.
+- **npm never runs in upstream's tree.** A project `.npmrc` is upstream's to write, and its `git=`
+  key names a program npm runs to fetch a git dependency, even with `--ignore-scripts`; the sync
+  job holds the App token in `.git/config`. An adversarial review reproduced that. So `lock`
+  resolves in an empty scratch directory that holds only the tag's tracked `package.json` files,
+  read from git objects, with empty user and global configuration, a fixed registry, and `git`
+  set to `false`, so a git dependency fails the sync rather than being fetched. The lockfile is
+  written back with an exclusive create, which never writes through a link. Resolving there
+  instead of in the tree gave a byte-identical lockfile at v2.7.0.
+- **Resolution is pinned with `--before` to the tag's commit date,** on an exact Node version.
+  The lockfile records what upstream's own users received at that release, and a rerun writes
+  the same file: two resolutions at v2.7.0 were byte-identical. A lockfile that moved daily would
+  make every rebuild a new tree, which would re-review and re-alert a held sync every day. A
+  commit dated in the future would unpin it, so it fails the sync.
+- **A tag that ships its own lockfile (`package-lock.json` or `npm-shrinkwrap.json`) fails the
+  sync** rather than being silently overwritten, so the declaration is revisited when upstream
+  starts committing one.
+- **A workspace's own lockfile entries aren't findings.** npm keys each workspace folder by its
+  path and links it into `node_modules`. Both entries are accepted only when the path matches the
+  lockfile's declared `workspaces`; their code is the tree's own, and the diff carries it.
+  Without this, every n8n-as-code release raised an alias and a link finding per package.
 - **Every fork's sync workflow gains a Node setup and the `lock` step,** which does nothing
   unless the declaration sets `generate_lockfile`. `fork-sync check` reports the older workflow
   as drift, so each onboarded fork is re-scaffolded to the new template.

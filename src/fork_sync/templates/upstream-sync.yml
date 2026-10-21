@@ -44,9 +44,11 @@ jobs:
           python-version: '3.14'
 
       # For `lock`, which resolves a lockfile only when the declaration sets `generate_lockfile`.
+      # An exact version: npm's output can change between releases, and a lockfile that changed
+      # with the runner would re-review and re-alert a held sync on every rebuild.
       - uses: actions/setup-node@v4
         with:
-          node-version: lts/*
+          node-version: '26.4.0'
 
       - name: Find the upstream release
         id: release

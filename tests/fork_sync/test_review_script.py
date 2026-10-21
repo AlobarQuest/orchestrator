@@ -928,33 +928,68 @@ def test_a_path_the_head_changed_away_from_the_base_tip_is_still_reviewed() -> N
 
 # ---- the generated lockfile -----------------------------------------------------------------
 
+WORKSPACE_ROOT = '{"name": "mono", "version": "0.2.0", "workspaces": ["packages/*"]}'
 
-def _tagged(tmp_path: Path, monkeypatch: Any) -> None:
+
+def _tagged(tmp_path: Path, monkeypatch: Any, files: Mapping[str, str] | None = None) -> None:
+    """An upstream tag whose tree also holds a hostile `.npmrc` and a symlinked manifest."""
     _git(tmp_path, "init", "-q", "-b", "main")
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("GIT_COMMITTER_DATE", "2026-09-11T16:33:54-04:00")
-    _commit(tmp_path, {"package.json": '{"version": "6.7.0"}'}, "release")
+    (tmp_path / "packages/linked").mkdir(parents=True)
+    (tmp_path / "packages/linked/package.json").symlink_to("/etc/hosts")
+    base = {
+        "package.json": WORKSPACE_ROOT,
+        "packages/cli/package.json": '{"name": "cli", "version": "6.7.0"}',
+        ".npmrc": "git=./evil.sh\n",
+        "README.md": "upstream\n",
+    }
+    _commit(tmp_path, {**base, **(files or {})}, "release")
     monkeypatch.delenv("GIT_COMMITTER_DATE")
-    _git(tmp_path, "tag", "rea-agents-6.7.0")
+    _git(tmp_path, "tag", "-a", "-m", "release", "rea-agents-6.7.0")
 
 
-def test_lock_resolves_as_of_the_tag_and_stages_the_lockfile(
+def _resolver(seen: list[tuple[list[str], Path]], code: int = 0) -> review.LockRunner:
+    def resolve(argv: list[str], cwd: Path) -> int:
+        seen.append((argv, cwd))
+        (cwd / "package-lock.json").write_text('{"lockfileVersion": 3}\n')
+        return code
+
+    return resolve
+
+
+def test_lock_resolves_outside_the_tree_from_tracked_manifests_only(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
     _tagged(tmp_path, monkeypatch)
-    seen: list[list[str]] = []
+    seen: list[tuple[list[str], Path]] = []
+    captured: dict[str, bytes] = {}
 
-    def resolve(argv: list[str]) -> int:
-        seen.append(argv)
-        (tmp_path / "package-lock.json").write_text("{}\n")
-        return 0
+    def resolve(argv: list[str], cwd: Path) -> int:
+        captured.update(
+            {str(f.relative_to(cwd)): f.read_bytes() for f in cwd.rglob("*") if f.is_file()}
+        )
+        configs = {Path(argv[argv.index(f"--{s}config") + 1]) for s in ("user", "global")}
+        # npm refuses one file loaded as both; each must be its own empty file.
+        assert len(configs) == 2 and all(c.read_bytes() == b"" for c in configs)
+        return _resolver(seen)(argv, cwd)
 
     assert review.lock(review.parse_config(MONOREPO), "rea-agents-6.7.0", resolve) == 0
-    [argv] = seen
+    [(argv, cwd)] = seen
+    assert not cwd.is_relative_to(tmp_path)
+    # Only regular, tracked package.json files: no .npmrc, no README, no symlink's target.
+    assert captured == {
+        "package.json": WORKSPACE_ROOT.encode(),
+        "packages/cli/package.json": b'{"name": "cli", "version": "6.7.0"}',
+    }
     assert argv[:4] == ["npm", "install", "--package-lock-only", "--ignore-scripts"]
+    assert argv[argv.index("--git") + 1] == "false"
     assert argv[argv.index("--registry") + 1] == "https://registry.npmjs.org"
-    assert argv[argv.index("--userconfig") + 1] == "/dev/null"
     assert argv[argv.index("--before") + 1] == "2026-09-11T16:33:54-04:00"
+    for scope in ("--userconfig", "--globalconfig"):
+        config = Path(argv[argv.index(scope) + 1])
+        assert not config.is_relative_to(cwd) and not config.is_relative_to(tmp_path)
+    assert (tmp_path / "package-lock.json").read_text() == '{"lockfileVersion": 3}\n'
     assert _git(tmp_path, "diff", "--cached", "--name-only") == "package-lock.json"
 
 
@@ -963,20 +998,58 @@ def test_lock_does_nothing_unless_declared(tmp_path: Path, monkeypatch: Any) -> 
     assert review.lock(review.parse_config(NPM), "rea-agents-6.7.0", _never_runs) == 0
 
 
-def test_lock_refuses_a_tag_that_ships_its_own_lockfile(tmp_path: Path, monkeypatch: Any) -> None:
-    _tagged(tmp_path, monkeypatch)
-    (tmp_path / "package-lock.json").write_text("{}\n")
+@pytest.mark.parametrize("name", ["package-lock.json", "npm-shrinkwrap.json"])
+def test_lock_refuses_a_tag_that_ships_its_own_lockfile(
+    tmp_path: Path, monkeypatch: Any, name: str
+) -> None:
+    _tagged(tmp_path, monkeypatch, {name: "{}\n"})
     assert review.lock(review.parse_config(MONOREPO), "rea-agents-6.7.0", _never_runs) == 1
 
 
-def test_a_failed_resolution_stages_nothing(tmp_path: Path, monkeypatch: Any) -> None:
+def test_lock_never_writes_through_a_dangling_link(tmp_path: Path, monkeypatch: Any) -> None:
     _tagged(tmp_path, monkeypatch)
+    (tmp_path / "package-lock.json").symlink_to(tmp_path.parent / "outside.json")
+    assert review.lock(review.parse_config(MONOREPO), "rea-agents-6.7.0", _never_runs) == 1
+    assert not (tmp_path.parent / "outside.json").exists()
 
-    def fail(argv: list[str]) -> int:
-        (tmp_path / "package-lock.json").write_text("{}\n")
-        return 1
 
-    assert review.lock(review.parse_config(MONOREPO), "rea-agents-6.7.0", fail) == 1
+def test_lock_never_writes_through_a_link_planted_during_resolution(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    _tagged(tmp_path, monkeypatch)
+    outside = tmp_path.parent / "planted.json"
+
+    def plant(argv: list[str], cwd: Path) -> int:
+        (tmp_path / "package-lock.json").symlink_to(outside)
+        return _resolver([])(argv, cwd)
+
+    with pytest.raises(FileExistsError):
+        review.lock(review.parse_config(MONOREPO), "rea-agents-6.7.0", plant)
+    assert not outside.exists()
+
+
+def test_lock_refuses_a_commit_dated_in_the_future(tmp_path: Path, monkeypatch: Any) -> None:
+    _git(tmp_path, "init", "-q", "-b", "main")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GIT_COMMITTER_DATE", "2099-01-01T00:00:00+00:00")
+    _commit(tmp_path, {"package.json": WORKSPACE_ROOT}, "release")
+    _git(tmp_path, "tag", "rea-agents-6.7.0")
+    assert review.lock(review.parse_config(MONOREPO), "rea-agents-6.7.0", _never_runs) == 1
+
+
+def test_lock_refuses_a_tag_with_no_root_manifest(tmp_path: Path, monkeypatch: Any) -> None:
+    _git(tmp_path, "init", "-q", "-b", "main")
+    monkeypatch.chdir(tmp_path)
+    _commit(tmp_path, {"packages/cli/package.json": "{}"}, "release")
+    _git(tmp_path, "tag", "rea-agents-6.7.0")
+    assert review.lock(review.parse_config(MONOREPO), "rea-agents-6.7.0", _never_runs) == 1
+
+
+def test_a_failed_resolution_writes_and_stages_nothing(tmp_path: Path, monkeypatch: Any) -> None:
+    _tagged(tmp_path, monkeypatch)
+    seen: list[tuple[list[str], Path]] = []
+    assert review.lock(review.parse_config(MONOREPO), "rea-agents-6.7.0", _resolver(seen, 1)) == 1
+    assert not (tmp_path / "package-lock.json").exists()
     assert _git(tmp_path, "diff", "--cached", "--name-only") == ""
 
 
@@ -986,5 +1059,31 @@ def test_lock_refuses_an_unsafe_tag(tmp_path: Path, monkeypatch: Any) -> None:
         review.lock(review.parse_config(MONOREPO), "-x", _never_runs)
 
 
-def _never_runs(argv: list[str]) -> int:
+def _never_runs(argv: list[str], cwd: Path) -> int:
     raise AssertionError(f"ran {argv}")
+
+
+def test_workspace_entries_are_not_findings_but_links_elsewhere_are() -> None:
+    """npm keys a workspace's folder entry by its path and links it into node_modules; both are
+    the tree's own code, which the diff already carries. Anything outside `workspaces` is not."""
+    lock = json.dumps(
+        {
+            "lockfileVersion": 3,
+            "packages": {
+                "": {"name": "mono", "workspaces": ["./packages/*"]},
+                "packages/cli": {"name": "@x/cli", "version": "6.7.0"},
+                "node_modules/@x/cli": {"resolved": "packages/cli", "link": True},
+                "vendor/thing": {"name": "thing-evil", "version": "1.0.0"},
+                "node_modules/thing": {"resolved": "vendor/thing", "link": True},
+                "node_modules/up": {"resolved": "packages/../../outside", "link": True},
+                "node_modules/deep": {"resolved": "packages/x/node_modules/y", "link": True},
+            },
+        }
+    ).encode()
+    result = review.npm_lock_review(_change("package-lock.json"), None, lock)
+    assert sorted((f.kind, f.summary.split(":")[0]) for f in result.findings) == [
+        ("npm-lock-alias", "vendor/thing"),
+        ("npm-lock-source", "node_modules/deep"),
+        ("npm-lock-source", "node_modules/thing"),
+        ("npm-lock-source", "node_modules/up"),
+    ]
