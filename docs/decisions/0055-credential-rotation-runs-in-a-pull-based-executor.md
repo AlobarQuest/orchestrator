@@ -1277,15 +1277,15 @@ decisions to Devon. The build plan is `docs/superpowers/plans/2026-10-19-increme
 The verification table's `gh-actions-secret` row is no longer an exception to R15: a copy is
 verified by its repository's fingerprint report.
 
-## Amendment 11 — A rotation unit's authority approval graduates to a declared pattern (proposed 2026-10-21)
+## Amendment 11 — A rotation unit's authority approval graduates to a declared pattern (2026-10-21)
 
-**Status: proposed, awaiting Devon's decision.** Nothing in this amendment is in force until he
-accepts it.
+**Status: accepted by Devon on 2026-10-21** ("amendment accepted"). It takes effect when the
+schema 8 release that implements it is deployed.
 
 On 2026-10-20 Devon approved seven rotation units' authority envelopes and called it "that bit of
 theater". The six rotations that finished on 2026-10-20 and 2026-10-21 had thirteen units, and
 each needed an approval that re-attested an envelope he had already approved. Threat T4 left this
-to "the gate-graduation decision". This amendment is that decision, put to him.
+to "the gate-graduation decision". This amendment is that decision.
 
 ### What enforces the approval today
 
