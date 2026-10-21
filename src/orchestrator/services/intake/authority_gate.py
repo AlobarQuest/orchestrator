@@ -23,13 +23,17 @@ actor that read them. "The gate did not fire" and "a human approved" are never t
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
+
+from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
 from orchestrator.factory_policy import load_factory_policy
 from orchestrator.kernel.authority import normalize_authority
-from orchestrator.persistence.models import WorkPackageRevision, WorkUnit
+from orchestrator.persistence.models import Event, WorkPackageRevision, WorkUnit
 from orchestrator.reach_vocabulary import reach_from_snapshot
+from orchestrator.services.lifecycle.rotation_claims import is_rotation_unit
 
 # Policy could not be consulted at all. Distinct from every refusal the artifact itself can make,
 # because it is a fault in this process rather than a statement about this unit -- and it is still
@@ -71,6 +75,7 @@ def human_authority_gate(unit: WorkUnit, revision: WorkPackageRevision) -> Autho
         reach_from_snapshot(revision.enforcement_snapshot),
         normalize_authority(unit.authority),
         unit.id,
+        rotation_unit=is_rotation_unit(unit, revision),
     )
     return AuthorityGate(
         refusals=recognition.refusals,
@@ -78,3 +83,70 @@ def human_authority_gate(unit: WorkUnit, revision: WorkPackageRevision) -> Autho
         policy_version=policy.version,
         policy_source=policy.source,
     )
+
+
+def policy_authority_gate(unit: WorkUnit, revision: WorkPackageRevision) -> AuthorityGate | None:
+    """Policy's answer at the claim, for a rotation unit no person approved; else ``None``.
+
+    The claim is where a rotation unit's lifted requirement is acted on (ADR-0055 amendment 11):
+    a rotation unit is never dispatched, so the dispatch-time authority term and its record never
+    run for one. So the claim asks policy again, as dispatch does.
+
+    A unit carrying a person's approval passed the authority term on that approval, so policy is
+    not consulted for it and nothing records that policy lifted anything.
+    """
+    if unit.authority_approval_id is not None or not is_rotation_unit(unit, revision):
+        return None
+    return human_authority_gate(unit, revision)
+
+
+def authority_refusal(gate: AuthorityGate | None) -> DomainError | None:
+    """Why the claim may not proceed on authority grounds; ``None`` means it may."""
+    if gate is None or not gate.refusals:
+        return None
+    if POLICY_UNREADABLE in gate.refusals:
+        return DomainError(
+            POLICY_UNREADABLE,
+            "the policy artifact could not be read, so nothing recognises this unit's envelope",
+            "correct the policy artifact",
+        )
+    return DomainError(
+        "authority_approval_missing",
+        "no person approved this rotation unit's envelope and policy no longer recognises it",
+        "approve the authority envelope",
+    )
+
+
+def record_gate_not_required(
+    session: Session,
+    unit: WorkUnit,
+    gate: AuthorityGate,
+    claimant: str,
+    attempt: int,
+    idempotency_key: str,
+) -> None:
+    """The trace dispatch leaves when policy lifted the requirement, written at the claim instead.
+
+    Not an approval: an event naming the patterns, the artifact version and the fingerprint they
+    recognised, with ``authority_approval_id`` left null.
+    """
+    session.add(
+        Event(
+            actor_id=claimant,
+            action="authority.human_gate_not_required",
+            subject_type="work_unit",
+            subject_id=unit.id,
+            from_state=unit.state,
+            to_state=unit.state,
+            payload={
+                "recognised_by": list(gate.recognised_by),
+                "policy_version": gate.policy_version,
+                "policy_source": gate.policy_source,
+                "authority_fingerprint": unit.authority_fingerprint,
+                "claim_attempt": attempt,
+            },
+            correlation_id=uuid.uuid4(),
+            idempotency_key=f"{idempotency_key}:authority-gate",
+        )
+    )
+    session.flush()

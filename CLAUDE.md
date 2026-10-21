@@ -468,6 +468,13 @@ Placement rule: global CLAUDE.md §7.
   claim asks the `live_estate` window unless its envelope sets `touches_no_hosted_service: true`,
   except a continuation after a lapse with the holder's evidence. Detail:
   `docs/operations/driving-a-unit.md`.
+- A rotation unit needs no per-unit authority approval while `factory-policy.toml`'s
+  `rotation_known_good` pattern recognises its envelope under every reach member. Rotation patterns
+  apply only when `is_rotation_unit` holds for the unit and its revision, never on envelope shape
+  alone, and never recognise `host_without_overlap`. Rotation units are never dispatched, so the
+  claim re-asks policy for a unit nobody approved, refusing `authority_approval_missing` or
+  recording `authority.human_gate_not_required` (`services/intake/authority_gate.py`). Detail:
+  `docs/operations/rotation-executor.md`.
 - A unit's completion satisfies, in `_perform_transition`'s transaction, the pending `work_unit`
   dependencies that require it `completed` (exact match); no other condition or kind. A human-act
   dependency is resolved only at `/review/dependencies/{id}/resolution`, whose detail is

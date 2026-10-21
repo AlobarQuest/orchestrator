@@ -1341,10 +1341,12 @@ that read happens once, on the decomposition page, which shows the same list.
    of its fields only narrows:
    - `rotation_adapters`: the adapter names it recognises;
    - `rotation_units`: the unit names it recognises;
-   - `capabilities`: exactly `{ operational_action = "allowed" }`;
+   - `capabilities`: at most `{ operational_action = "allowed" }`;
    - `max_attempts`: a ceiling of 3.
 
    It recognises an envelope only when all of the following hold:
+   - the unit is a rotation unit (`is_rotation_unit`, read from the unit and its package
+     revision, never from the envelope);
    - `unknown_fields` is empty;
    - the constraint keys are exactly `destinations`, `rotation_adapter`, `rotation_unit` and
      `work_unit_id`, optionally with `touches_no_hosted_service = true`;
@@ -1360,8 +1362,8 @@ that read happens once, on the decomposition page, which shows the same list.
    Recognition needs a pattern under every member.
 4. **The lifted requirement leaves a trace at the claim.** Today `authority.human_gate_not_required`
    is written only at dispatch (`dispatch.py`), and rotation units are never dispatched. The
-   rotation claim writes the same event: system-attributed, with the recognising patterns, the
-   policy version and source, and the authority fingerprint. "The gate didn't fire" and "a human
+   rotation claim writes the same event, attributed to the claiming executor, with the
+   recognising patterns, the policy version and source, and the authority fingerprint. "The gate didn't fire" and "a human
    approved" stay different records, and `authority_approval_id` stays null.
 5. **Nothing else changes.** The package revision approval, the decomposition approval, the
    human-act dependencies (mint and revoke), adjudication and the `AWAITING_REVIEW → COMPLETED`

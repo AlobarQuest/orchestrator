@@ -22,6 +22,11 @@ from orchestrator.persistence.models import (
     WorkPackageRevision,
     WorkUnit,
 )
+from orchestrator.services.intake.authority_gate import (
+    authority_refusal,
+    policy_authority_gate,
+    record_gate_not_required,
+)
 from orchestrator.services.lifecycle.budget import is_over_budget
 from orchestrator.services.lifecycle.claim_release import release_claim
 from orchestrator.services.lifecycle.context import PreflightCommand, require_claim_context
@@ -86,6 +91,11 @@ def claim_unit(
         confinement = confinement_refusal(unit, revision, actor.actor_id, rotation_executor)
         if confinement is not None:
             raise confinement
+        # Before the window, which clears itself: a standing refusal is reported first.
+        authority_gate = policy_authority_gate(unit, revision)
+        authority = authority_refusal(authority_gate)
+        if authority is not None:
+            raise authority
         if is_over_budget(session, unit):
             # Halt at the cap and record the breach, then refuse. Driving the failure through
             # the private _transition keeps it inside this function's transaction (the public
@@ -142,6 +152,10 @@ def claim_unit(
                 ),
             },
         )
+        if authority_gate is not None:
+            record_gate_not_required(
+                session, unit, authority_gate, actor.actor_id, claim.attempt, idempotency_key
+            )
         session.commit()
         return LeaseGrant(
             claim.id,

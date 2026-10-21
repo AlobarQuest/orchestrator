@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from orchestrator.errors import DomainError
 from orchestrator.factory_policy import OUTSIDE_CHANGE_WINDOW
 from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope
+from orchestrator.kernel.readiness import ReadinessStatus
 from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import Claim, Event, Evidence, WorkPackageRevision, WorkUnit
 from orchestrator.services.intake.packages import register_approved_unit, register_revision
@@ -28,6 +29,7 @@ from orchestrator.services.lifecycle.claims import (
     release_expired_claim,
     renew_claim,
 )
+from orchestrator.services.lifecycle.readiness import evaluate_readiness
 from orchestrator.services.lifecycle.rotation_claims import (
     NON_HOSTED_CONSTRAINT,
     claim_window_refusal,
@@ -65,8 +67,14 @@ def seed_unit(
     reach: list[str] | None = None,
     max_llm_calls: int | None = 10,
     max_attempts: int = 5,
+    approved: bool = True,
+    unit_id: uuid.UUID | None = None,
 ) -> WorkUnit:
-    """A READY unit with the revision and envelope the test names; a rotation unit by default."""
+    """A READY unit with the revision and envelope the test names; a rotation unit by default.
+
+    ``approved=False`` leaves it without a person's authority approval, as a unit whose envelope
+    policy recognises is left.
+    """
     snapshot: dict[str, Any] = {
         "acceptance_criteria": ["ac-1"],
         "profile_fields": ROTATION_FIELDS if fields is None else fields,
@@ -108,8 +116,10 @@ def seed_unit(
         approved_at=NOW,
         actor_id="devon",
         actor_role=ActorRole.HUMAN,
+        unit_id=unit_id,
     )
-    authorize_readiness(session, unit)
+    if approved:
+        authorize_readiness(session, unit)
     unit.state = WorkUnitState.READY
     session.commit()
     return unit
@@ -874,3 +884,154 @@ def test_a_release_replay_accepts_only_its_own_kind_of_event(
 
     assert isinstance(conflict, DomainError) and conflict.code == "idempotency_conflict"
     assert _claim_row(migrated_session, grant.claim_id).released_at is None
+
+
+# --- The lifted authority requirement (ADR-0055 amendment 11) -------------------------------------
+
+BITBUCKET_CONFIRM: dict[str, Any] = {
+    "destinations": [
+        'bws-secret uuid="1078dcaf-c1cd-48a0-a794-b4030100cf24"',
+        'provider name="bitbucket"',
+        'runtime-fetch repo="github-to-bitbucket-mirror" ref="mirror.py"',
+    ],
+    "rotation_adapter": "bitbucket",
+    "rotation_unit": "confirm",
+    "touches_no_hosted_service": True,
+}
+
+
+def seed_recognised(session: Session, key: str, *, approved: bool, **extra: Any) -> WorkUnit:
+    """A rotation unit whose envelope the shipped policy's rotation pattern recognises."""
+    unit_id = uuid.uuid4()
+    return seed_unit(
+        session,
+        key,
+        constraints={**BITBUCKET_CONFIRM, "work_unit_id": str(unit_id), **extra},
+        reach=["external_system"],
+        max_llm_calls=None,
+        max_attempts=3,
+        approved=approved,
+        unit_id=unit_id,
+    )
+
+
+def _gate_events(session: Session, unit: WorkUnit) -> list[Event]:
+    return list(
+        session.scalars(
+            select(Event).where(
+                Event.subject_id == unit.id, Event.action == "authority.human_gate_not_required"
+            )
+        )
+    )
+
+
+def test_a_recognised_rotation_unit_nobody_approved_is_claimed_and_leaves_the_trace(
+    migrated_session: Session,
+) -> None:
+    unit = seed_recognised(migrated_session, "rot-lifted", approved=False)
+
+    grant = _claim(migrated_session, unit, EXECUTOR_ACTOR, "rot-lifted-claim")
+
+    assert isinstance(grant, LeaseGrant)
+    migrated_session.expire_all()
+    assert unit.authority_approval_id is None
+    [event] = _gate_events(migrated_session, unit)
+    assert event.actor_id == EXECUTOR
+    assert event.payload["recognised_by"] == [
+        "credential rotation unit of an approved standing package"
+    ]
+    assert event.payload["policy_version"] == 8
+    assert event.payload["authority_fingerprint"] == unit.authority_fingerprint
+    assert event.payload["claim_attempt"] == 1
+
+
+def test_a_rotation_claim_nobody_approved_is_refused_when_policy_does_not_recognise_it(
+    migrated_session: Session,
+) -> None:
+    unit = seed_recognised(
+        migrated_session, "rot-overlap", approved=False, host_without_overlap=True
+    )
+
+    refused = _claim(migrated_session, unit, EXECUTOR_ACTOR, "rot-overlap-claim")
+
+    assert isinstance(refused, DomainError)
+    assert refused.code == "authority_approval_missing"
+    claims = migrated_session.scalar(
+        select(func.count()).select_from(Claim).where(Claim.work_unit_id == unit.id)
+    )
+    assert claims == 0
+    assert _gate_events(migrated_session, unit) == []
+
+
+def test_an_approved_rotation_unit_is_claimed_on_its_approval_and_leaves_no_trace(
+    migrated_session: Session,
+) -> None:
+    unit = seed_recognised(migrated_session, "rot-approved", approved=True)
+
+    grant = _claim(migrated_session, unit, EXECUTOR_ACTOR, "rot-approved-claim")
+
+    assert isinstance(grant, LeaseGrant)
+    assert _gate_events(migrated_session, unit) == []
+
+
+def test_a_rotation_shaped_envelope_on_an_ordinary_unit_still_needs_an_approval(
+    migrated_session: Session,
+) -> None:
+    unit_id = uuid.uuid4()
+    unit = seed_unit(
+        migrated_session,
+        "not-rotation",
+        profile=None,
+        constraints={**BITBUCKET_CONFIRM, "work_unit_id": str(unit_id)},
+        reach=["external_system"],
+        max_llm_calls=None,
+        max_attempts=3,
+        approved=False,
+        unit_id=unit_id,
+    )
+    rotation = seed_recognised(migrated_session, "rotation-control", approved=False)
+
+    assert evaluate_readiness(migrated_session, rotation.id).status is ReadinessStatus.READY
+    decision = evaluate_readiness(migrated_session, unit.id)
+    assert decision.status is ReadinessStatus.NOT_AUTHORIZED
+    assert [reason.code for reason in decision.reasons] == ["authority_not_approved"]
+
+
+def test_a_standing_authority_refusal_is_reported_before_a_shut_window(
+    migrated_session: Session, window_shut: _Policy
+) -> None:
+    hosted = {k: v for k, v in BITBUCKET_CONFIRM.items() if k != NON_HOSTED_CONSTRAINT}
+    unit_id = uuid.uuid4()
+    unit = seed_unit(
+        migrated_session,
+        "rot-hosted-overlap",
+        constraints={**hosted, "host_without_overlap": True, "work_unit_id": str(unit_id)},
+        reach=["external_system"],
+        max_llm_calls=None,
+        max_attempts=3,
+        approved=False,
+        unit_id=unit_id,
+    )
+
+    refused = _claim(migrated_session, unit, EXECUTOR_ACTOR, "rot-hosted-overlap-claim")
+
+    assert isinstance(refused, DomainError)
+    assert refused.code == "authority_approval_missing"
+
+
+def test_an_unreadable_policy_refuses_a_claim_nobody_approved_by_name(
+    migrated_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    unit = seed_recognised(migrated_session, "rot-unreadable", approved=False)
+
+    def unreadable() -> None:
+        raise DomainError("factory_policy_invalid", "unreadable", None)
+
+    monkeypatch.setattr(
+        "orchestrator.services.intake.authority_gate.load_factory_policy", unreadable
+    )
+
+    refused = _claim(migrated_session, unit, EXECUTOR_ACTOR, "rot-unreadable-claim")
+
+    assert isinstance(refused, DomainError)
+    assert refused.code == "authority_policy_unreadable"

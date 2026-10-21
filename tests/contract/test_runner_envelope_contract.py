@@ -523,7 +523,7 @@ def test_the_shipped_pattern_recognises_the_verify_envelope() -> None:
     payload["constraints"]["work_unit_id"] = str(unit_id)
 
     recognition = load_factory_policy().authority_refusals(
-        ("source_repository",), normalize_authority(payload), unit_id
+        ("source_repository",), normalize_authority(payload), unit_id, rotation_unit=False
     )
 
     assert recognition.refusals == ()

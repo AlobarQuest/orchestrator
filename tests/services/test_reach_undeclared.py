@@ -56,7 +56,7 @@ def test_the_undeclared_objection_is_the_whole_answer_for_no_reach() -> None:
 
 def test_a_document_still_carrying_the_exemption_does_not_load(tmp_path: Path) -> None:
     """The exemption cannot come back by accident: its table is an unknown key now."""
-    assert load_factory_policy(write(tmp_path, VALID)).version == 7  # control
+    assert load_factory_policy(write(tmp_path, VALID)).version == 8  # control
 
     with_table = (
         VALID
@@ -76,7 +76,7 @@ revisions = ["{FORMERLY_GRANDFATHERED}"]
 
 def test_the_schema_that_carried_the_exemption_is_no_longer_read(tmp_path: Path) -> None:
     with pytest.raises(DomainError) as raised:
-        load_factory_policy(write(tmp_path, VALID.replace("version = 7", "version = 5")))
+        load_factory_policy(write(tmp_path, VALID.replace("version = 8", "version = 5")))
 
     assert raised.value.code == "factory_policy_version_unsupported"
 
@@ -84,7 +84,7 @@ def test_the_schema_that_carried_the_exemption_is_no_longer_read(tmp_path: Path)
 def test_the_shipped_artifact_exempts_nobody() -> None:
     policy = load_factory_policy()
 
-    assert policy.version == 7
+    assert policy.version == 8
     assert "grandfathered" not in policy.report()
     assert FORMERLY_GRANDFATHERED not in PACKAGED_ARTIFACT.read_text(encoding="utf-8")
 

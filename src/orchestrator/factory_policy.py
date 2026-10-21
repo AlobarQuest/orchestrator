@@ -86,6 +86,15 @@ no runner performs. Change classes are free strings and have no such vocabulary 
 The table is top-level rather than per reach row because the question it answers -- what kind of
 work this factory takes -- is the same whatever the work touches; four rows would be four copies of
 one value, and keying it on reach would be a new dimension nobody decided.
+
+**Schema version 8 adds a second kind of known-good pattern, for rotation units (ADR-0055
+amendment 11).** A rotation unit runs no commands and names no repository, so the schema 2 pattern
+cannot describe it, and its code says a unit of a different shape is a different schema version
+rather than a looser check. A ``rotation_known_good`` pattern is still only a withheld refusal, and
+it is matched by its own function, so neither kind of pattern can recognise the other's envelopes.
+It recognises only the constraint keys every rotation unit carries plus the one marker the rotation
+executor checks against its destinations; ``host_without_overlap`` is never recognised, so a unit
+that declares it still needs a person's approval.
 """
 
 from __future__ import annotations
@@ -113,7 +122,7 @@ PACKAGED_ARTIFACT: Final[Path] = Path(__file__).parent / "factory-policy.toml"
 # narrowing the new version introduced, which is the permissive reading of a version skew. A new
 # version is therefore a coordinated change -- the loader learns it in the same commit that ships
 # the document at it and the code that reads its new field.
-SUPPORTED_SCHEMA_VERSIONS: Final[frozenset[int]] = frozenset({7})
+SUPPORTED_SCHEMA_VERSIONS: Final[frozenset[int]] = frozenset({8})
 
 # Why policy objects. These are the whole output vocabulary of this module.
 REACH_UNDECLARED: Final = "reach_undeclared"
@@ -125,7 +134,7 @@ CAPABILITY_NOT_ENABLED: Final = "capability_not_enabled"
 CHANGE_CLASS_NOT_ALLOWED: Final = "change_class_not_allowed"
 
 _ROW_REQUIRED_FIELDS = frozenset({"rationale", "decided"})
-_ROW_OPTIONAL_FIELDS = frozenset({"known_good", "change_window", "lease"})
+_ROW_OPTIONAL_FIELDS = frozenset({"known_good", "rotation_known_good", "change_window", "lease"})
 _TOP_LEVEL_FIELDS = frozenset({"version", "admission", "reach"})
 _ADMISSION_FIELDS = frozenset({"rationale", "decided", "capabilities", "change_classes"})
 _WINDOW_FIELDS = frozenset({"rationale", "decided", "timezone", "start", "end"})
@@ -163,6 +172,27 @@ _CONSTRAINT_FIELDS = frozenset(
 # document schema is unchanged: patterns declare no new field.
 _OPTIONAL_CONSTRAINT_FIELDS = frozenset({"verify_commands"})
 _COMMAND_CONSTRAINT_FIELDS = ("allowed_commands", "mutation_commands", "verify_commands")
+_ROTATION_PATTERN_FIELDS = frozenset(
+    {
+        "name",
+        "rationale",
+        "decided",
+        "rotation_adapters",
+        "rotation_units",
+        "capabilities",
+        "max_attempts",
+    }
+)
+# The constraint keys every rotation unit's envelope carries (ADR-0055): the destinations the
+# executor holds equal to the package's and the registry's, the adapter and the unit of its plan,
+# and the stamped `work_unit_id`. EXACT, apart from the one optional marker below, so
+# `host_without_overlap` -- the one declaration nothing but a person makes -- is never recognised.
+_ROTATION_CONSTRAINT_FIELDS = frozenset(
+    {"destinations", "rotation_adapter", "rotation_unit", "work_unit_id"}
+)
+# Recognised only as the literal `True`. The executor refuses a unit carrying it that writes a
+# hosted destination, so the marker cannot move a hosted write out of the change window.
+_ROTATION_NON_HOSTED_FIELD = "touches_no_hosted_service"
 _CONFORMANCE_FIELDS = frozenset({"status", "standards_touched", "accepted_standards"})
 
 # Characters through which a command string could become more than the one invocation its declared
@@ -216,6 +246,26 @@ class KnownGoodPattern:
     conformance_status: str
     target_repositories: frozenset[str]
     command_prefixes: tuple[tuple[str, ...], ...]
+
+
+@dataclass(frozen=True)
+class RotationPattern:
+    """A rotation-unit envelope shape somebody decided (ADR-0055 amendment 11).
+
+    Declared and narrowing, like :class:`KnownGoodPattern`. What a schema 2 pattern states as a
+    ceiling or a name, a rotation envelope leaves out: it carries no change class and no
+    conformance claim, and no model-call budget because the rotation executor makes no model
+    calls. So those absences are the recognised shape here, and anything present in their place
+    is not.
+    """
+
+    name: str
+    rationale: str
+    decided: date
+    rotation_adapters: frozenset[str]
+    rotation_units: frozenset[str]
+    capabilities: Mapping[str, str]
+    max_attempts: int
 
 
 @dataclass(frozen=True)
@@ -279,6 +329,7 @@ class ReachPolicy:
     rationale: str
     decided: date
     known_good: tuple[KnownGoodPattern, ...] = ()
+    rotation_known_good: tuple[RotationPattern, ...] = ()
     change_window: ChangeWindow | None = None
     lease: Lease | None = None
 
@@ -442,8 +493,15 @@ class FactoryPolicy:
         reach: Sequence[str] | None,
         envelope: AuthorityEnvelope,
         unit_id: UUID,
+        *,
+        rotation_unit: bool,
     ) -> AuthorityRecognition:
         """Why policy objects to this envelope running without a human authority approval.
+
+        ``rotation_unit`` says whether the caller established that the unit is a rotation unit,
+        which only the unit and its package revision can show, never the envelope. Rotation
+        patterns are consulted only then, so an envelope shaped like a rotation unit's lifts
+        nothing for a unit that isn't one.
 
         A pattern is declared UNDER a reach row, so a work unit that reaches two places must be
         recognised under both -- the same union-of-refusals composition ``refusals_for`` uses, and
@@ -462,7 +520,7 @@ class FactoryPolicy:
             return AuthorityRecognition(tuple(sorted(refusals)), ())
         names: set[str] = set()
         for member in reach:
-            name = _recognising_pattern(self.rows[member], envelope, unit_id)
+            name = _recognising_pattern(self.rows[member], envelope, unit_id, rotation_unit)
             if name is None:
                 refusals.add(AUTHORITY_ENVELOPE_NOVEL)
             else:
@@ -495,6 +553,9 @@ class FactoryPolicy:
                     "rationale": row.rationale,
                     "decided": row.decided,
                     "known_good": [_pattern_report(pattern) for pattern in row.known_good],
+                    "rotation_known_good": [
+                        _rotation_pattern_report(pattern) for pattern in row.rotation_known_good
+                    ],
                     "change_window": _window_report(row.change_window),
                     "lease": _lease_report(row.lease),
                 }
@@ -570,14 +631,66 @@ def _pattern_report(pattern: KnownGoodPattern) -> dict[str, Any]:
     }
 
 
+def _rotation_pattern_report(pattern: RotationPattern) -> dict[str, Any]:
+    return {
+        "name": pattern.name,
+        "rationale": pattern.rationale,
+        "decided": pattern.decided,
+        "rotation_adapters": sorted(pattern.rotation_adapters),
+        "rotation_units": sorted(pattern.rotation_units),
+        "capabilities": dict(sorted(pattern.capabilities.items())),
+        "max_attempts": pattern.max_attempts,
+    }
+
+
 def _recognising_pattern(
-    row: ReachPolicy, envelope: AuthorityEnvelope, unit_id: UUID
+    row: ReachPolicy, envelope: AuthorityEnvelope, unit_id: UUID, rotation_unit: bool
 ) -> str | None:
     """The name of the first pattern in this row that recognises the envelope, or ``None``."""
     for pattern in row.known_good:
         if _recognises(pattern, envelope, unit_id):
             return pattern.name
+    if not rotation_unit:
+        return None
+    for rotation_pattern in row.rotation_known_good:
+        if _rotation_recognises(rotation_pattern, envelope, unit_id):
+            return rotation_pattern.name
     return None
+
+
+def _rotation_recognises(
+    pattern: RotationPattern, envelope: AuthorityEnvelope, unit_id: UUID
+) -> bool:
+    """Whether a rotation pattern accounts for EVERY field of the envelope.
+
+    The same totality as :func:`_recognises`, over the rotation shape: the three fields a rotation
+    envelope leaves out must be absent, and every constraint must be one the pattern names.
+    """
+    constraints = envelope.constraints
+    return (
+        not envelope.unknown_fields
+        and envelope.change_class is None
+        and envelope.conformance is None
+        and envelope.budgets.max_llm_calls is None
+        and _within(envelope.budgets.max_attempts, pattern.max_attempts)
+        and envelope.capabilities.items() <= pattern.capabilities.items()
+        and set(constraints) - {_ROTATION_NON_HOSTED_FIELD} == _ROTATION_CONSTRAINT_FIELDS
+        and constraints.get(_ROTATION_NON_HOSTED_FIELD, True) is True
+        and constraints["work_unit_id"] == str(unit_id)
+        and constraints["rotation_adapter"] in pattern.rotation_adapters
+        and constraints["rotation_unit"] in pattern.rotation_units
+        and _destinations_recognised(constraints["destinations"])
+    )
+
+
+def _destinations_recognised(value: object) -> bool:
+    """A non-empty list of strings. What each one names is the executor's to hold equal to the
+    approved package and the registry, before it acts; policy reads only the shape."""
+    return (
+        isinstance(value, list)
+        and bool(value)
+        and all(isinstance(entry, str) and entry for entry in value)
+    )
 
 
 def _recognises(pattern: KnownGoodPattern, envelope: AuthorityEnvelope, unit_id: UUID) -> bool:
@@ -792,12 +905,19 @@ def _row(member: str, value: object) -> ReachPolicy:
     rationale = value["rationale"]
     if not isinstance(rationale, str) or not rationale.strip():
         raise _invalid(f"`[reach.{member}].rationale` must be a non-empty string")
+    known_good = _patterns(member, value.get("known_good", []))
+    rotation_known_good = _rotation_patterns(member, value.get("rotation_known_good", []))
+    # One namespace per row: the name is what a lifted requirement's record cites.
+    names = [pattern.name for pattern in (*known_good, *rotation_known_good)]
+    if len(set(names)) != len(names):
+        raise _invalid(f"`[reach.{member}]` declares two known-good patterns with the same name")
     return ReachPolicy(
         member=member,
         # Wrapped in the file for review; one sentence on the wire.
         rationale=" ".join(rationale.split()),
         decided=_decided(f"reach.{member}", value["decided"]),
-        known_good=_patterns(member, value.get("known_good", [])),
+        known_good=known_good,
+        rotation_known_good=rotation_known_good,
         # Absent is "this policy raises no objection on window grounds" -- never a default window,
         # and never confusable with one that failed to parse, which stops the document loading.
         change_window=(
@@ -893,11 +1013,7 @@ def _local_time(where: str, field: str, value: object) -> time:
 def _patterns(member: str, value: object) -> tuple[KnownGoodPattern, ...]:
     if not isinstance(value, list):
         raise _invalid(f"`[[reach.{member}.known_good]]` must be an array of tables")
-    patterns = tuple(_pattern(member, entry) for entry in value)
-    names = [pattern.name for pattern in patterns]
-    if len(set(names)) != len(names):
-        raise _invalid(f"`[reach.{member}]` declares two known-good patterns with the same name")
-    return patterns
+    return tuple(_pattern(member, entry) for entry in value)
 
 
 def _pattern(member: str, value: object) -> KnownGoodPattern:
@@ -922,6 +1038,32 @@ def _pattern(member: str, value: object) -> KnownGoodPattern:
             _string_list(f"{where}.{name}", "target_repositories", value["target_repositories"])
         ),
         command_prefixes=_command_prefixes(f"{where}.{name}", value["command_prefixes"]),
+    )
+
+
+def _rotation_patterns(member: str, value: object) -> tuple[RotationPattern, ...]:
+    if not isinstance(value, list):
+        raise _invalid(f"`[[reach.{member}.rotation_known_good]]` must be an array of tables")
+    return tuple(_rotation_pattern(member, entry) for entry in value)
+
+
+def _rotation_pattern(member: str, value: object) -> RotationPattern:
+    where = f"reach.{member}.rotation_known_good"
+    if not isinstance(value, dict) or set(value) != _ROTATION_PATTERN_FIELDS:
+        raise _invalid(
+            f"`[[{where}]]` must be a table declaring exactly "
+            + ", ".join(sorted(_ROTATION_PATTERN_FIELDS))
+        )
+    name = _text(where, "name", value["name"])
+    named = f"{where}.{name}"
+    return RotationPattern(
+        name=name,
+        rationale=_text(named, "rationale", value["rationale"]),
+        decided=_decided(named, value["decided"]),
+        rotation_adapters=_member_set(named, "rotation_adapters", value["rotation_adapters"]),
+        rotation_units=_member_set(named, "rotation_units", value["rotation_units"]),
+        capabilities=_capabilities(named, value["capabilities"]),
+        max_attempts=_ceiling(named, "max_attempts", value["max_attempts"]),
     )
 
 
