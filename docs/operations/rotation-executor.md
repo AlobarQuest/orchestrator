@@ -50,6 +50,17 @@ gives:
   `external_system` dependency on the unit after it, resolved at `/review` with the fingerprint
   the act produced.
 
+Once the decomposition is approved, a unit needs no authority approval of its own when the
+`rotation_known_good` pattern in `factory-policy.toml` recognises its envelope (ADR-0055
+amendment 11). The pattern covers the live adapters' units with exactly the constraints in the
+preceding list, `operational_action` alone and at most three attempts. It never covers
+`host_without_overlap`, the `fake` adapter, or anything else it doesn't name, so such a unit
+still needs **Approve this authority envelope** on its `/review` page; until then,
+`/work-units/{id}/readiness` reports `authority_not_approved`. A claim on a unit nobody approved
+asks policy again: it's refused `authority_approval_missing` if the pattern no longer recognises
+the envelope, and otherwise records an `authority.human_gate_not_required` event naming the
+pattern and the policy version.
+
 The runner brief can't serve a rotation unit, because a rotation unit has no
 `target_repository`. The executor reads its unit from `GET /api/v1/work-units/{id}` and its
 package revision from `GET /api/v1/package-intakes/{revision_id}`.
@@ -282,6 +293,8 @@ the drift-reporter rotates with the usual one.
 - **It's declared, never inferred.** The `mint` unit's approved envelope sets
   `host_without_overlap: true`. The value must be a boolean, `false` is the ordinary overlap, and
   the checks refuse `true` on a unit with no host step. The `retire` unit needs no declaration.
+  The `mint` unit carrying it is the one rotation unit whose authority envelope a person still
+  approves.
 - **The executor refuses it unless an overlap is impossible.** Host writes the new hash with no
   `previous` only if another entry in what the orchestrator serves holds the old hash as current;
   otherwise it refuses before writing (`m2m_setting.Change.REPLACE`). An undeclared host on such a

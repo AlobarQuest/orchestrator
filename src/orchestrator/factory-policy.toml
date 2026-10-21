@@ -144,8 +144,17 @@
 # IT IS TOP-LEVEL, NOT PER REACH ROW, because the question is the same whatever the
 # work touches. Four rows would be four copies of one value, and keying the list on
 # reach would be a new restriction nobody decided.
+#
+# A ROTATION UNIT HAS ITS OWN KIND OF PATTERN (schema 8, ADR-0055 amendment 11).
+# A rotation unit runs no commands and names no repository, so the schema 2
+# pattern cannot describe it. `rotation_known_good` describes the other shape: a
+# named adapter and unit of its fixed plan, the destinations the rotation executor
+# holds equal to the approved package and the registry before it acts, and none
+# of a change class, a conformance claim or a model-call budget. It withholds the
+# same objection and nothing else, and it never recognises `host_without_overlap`,
+# so a unit declaring that still needs a person's approval.
 
-version = 7
+version = 8
 
 [admission]
 rationale = """
@@ -246,6 +255,26 @@ buys nothing except that the first attempt is still allowed to finish.
 decided = "2026-08-02"
 minutes = 30
 
+[[reach.live_estate.rotation_known_good]]
+name = "credential rotation unit of an approved standing package"
+rationale = """
+Every rotation unit's envelope is shown in full on the decomposition page a person
+approves, carries the fingerprint that approval saw, and cannot change afterwards,
+so approving it again unit by unit restated a decision already made (Devon,
+2026-10-20: "that bit of theater"). The rotation executor holds what the envelope
+could get wrong to the approved package by machine before it acts: it refuses a
+unit unless the registry's, the package's and the envelope's destinations are
+exactly equal, and refuses a unit marked as touching no hosted service that writes
+one. A host with no overlap is the one declaration only a person makes, so an
+envelope carrying `host_without_overlap` is never recognised here. The adapters
+are the live ones; the fake adapter the canary uses is left out.
+"""
+decided = "2026-10-21"
+rotation_adapters = ["bitbucket", "change-manager", "github-pat", "openrouter", "orchestrator", "orchestrator-distributed"]
+rotation_units = ["confirm", "mint", "retire", "store", "verify"]
+capabilities = { "operational_action" = "allowed" }
+max_attempts = 3
+
 [reach.live_estate.change_window]
 rationale = """
 Something already serving is changed, and the change is felt the moment it lands,
@@ -279,8 +308,9 @@ wrong answer costs the most to unwind, so it earns the most restraint.
 NO WINDOW, and the reason is worth writing down because the absence looks like an
 oversight. A window moves WHEN work runs; it does nothing about how hard the work
 is to undo. Restraint here is a person having read the envelope, which is what
-this row gets: no known-good pattern is declared under it, so every envelope of
-this reach draws the human objection. And a window would have had to be one of two
+this row gets: the only pattern declared under it is the rotation pattern below,
+and a rotation unit's envelope is the one the decomposition page already showed a
+person in full. And a window would have had to be one of two
 wrong things. The same night hours as the rows below would be ceremony, since
 nothing about an external system of record cares what time it is here. Office
 hours — "run it while somebody can notice" — reads better and is worse: they do
@@ -304,6 +334,26 @@ outcome possible.
 """
 decided = "2026-08-02"
 minutes = 60
+
+[[reach.external_system.rotation_known_good]]
+name = "credential rotation unit of an approved standing package"
+rationale = """
+Every rotation unit's envelope is shown in full on the decomposition page a person
+approves, carries the fingerprint that approval saw, and cannot change afterwards,
+so approving it again unit by unit restated a decision already made (Devon,
+2026-10-20: "that bit of theater"). The rotation executor holds what the envelope
+could get wrong to the approved package by machine before it acts: it refuses a
+unit unless the registry's, the package's and the envelope's destinations are
+exactly equal, and refuses a unit marked as touching no hosted service that writes
+one. A host with no overlap is the one declaration only a person makes, so an
+envelope carrying `host_without_overlap` is never recognised here. The adapters
+are the live ones; the fake adapter the canary uses is left out.
+"""
+decided = "2026-10-21"
+rotation_adapters = ["bitbucket", "change-manager", "github-pat", "openrouter", "orchestrator", "orchestrator-distributed"]
+rotation_units = ["confirm", "mint", "retire", "store", "verify"]
+capabilities = { "operational_action" = "allowed" }
+max_attempts = 3
 
 [reach.operator_machine]
 rationale = """

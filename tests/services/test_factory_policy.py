@@ -53,7 +53,7 @@ change_classes = ["dependency-update"]
 """
 
 VALID = f"""
-version = 7
+version = 8
 {ADMISSION}
 [reach.source_repository]
 {RATIONALE}
@@ -73,7 +73,7 @@ rationale = "the operator's own machine"
 """
 
 ROWS_ARE_NOT_TABLES = f"""
-version = 7
+version = 8
 {ADMISSION}
 [reach]
 source_repository = 1
@@ -84,11 +84,11 @@ operator_machine = 1
 
 MALFORMED: tuple[tuple[str, str], ...] = (
     ("not toml at all", "this is not = = toml"),
-    ("no version", VALID.replace("version = 7\n", "")),
-    ("version is a string", VALID.replace("version = 7", 'version = "4"')),
-    ("version is a boolean", VALID.replace("version = 7", "version = true")),
+    ("no version", VALID.replace("version = 8\n", "")),
+    ("version is a string", VALID.replace("version = 8", 'version = "4"')),
+    ("version is a boolean", VALID.replace("version = 8", "version = true")),
     ("an unknown top-level key", VALID + '\nlease = "15m"\n'),
-    ("no reach table", f"version = 7\n{ADMISSION}"),
+    ("no reach table", f"version = 8\n{ADMISSION}"),
     ("a missing row", VALID.replace("[reach.external_system]", "[reach.spare]")),
     ("an unknown row", VALID + f'\n[reach.invented]\nrationale = "x"\n{DECIDED}\n'),
     ("a row that is not a table", ROWS_ARE_NOT_TABLES),
@@ -148,7 +148,7 @@ def write(tmp_path: Path, text: str) -> Path:
 def test_the_shipped_artifact_loads_and_covers_every_reach_member() -> None:
     policy = load_factory_policy()
 
-    assert policy.version == 7
+    assert policy.version == 8
     assert set(policy.rows) == set(REACH_VOCABULARY)
     assert all(row.rationale and row.decided for row in policy.rows.values())
 
@@ -168,7 +168,7 @@ def test_the_artifact_ships_beside_the_module_that_reads_it() -> None:
 def test_a_valid_artifact_loads_the_control_for_every_malformation(tmp_path: Path) -> None:
     policy = load_factory_policy(write(tmp_path, VALID))
 
-    assert policy.version == 7
+    assert policy.version == 8
     assert sorted(policy.rows) == sorted(REACH_VOCABULARY)
 
 
@@ -196,10 +196,10 @@ def test_an_absent_artifact_is_a_named_failure_not_an_empty_policy(tmp_path: Pat
 
 
 def test_an_unknown_schema_version_fails_closed(tmp_path: Path) -> None:
-    assert load_factory_policy(write(tmp_path, VALID)).version == 7  # control
+    assert load_factory_policy(write(tmp_path, VALID)).version == 8  # control
 
     with pytest.raises(DomainError) as raised:
-        load_factory_policy(write(tmp_path, VALID.replace("version = 7", "version = 8")))
+        load_factory_policy(write(tmp_path, VALID.replace("version = 8", "version = 9")))
 
     assert raised.value.code == "factory_policy_version_unsupported"
 
@@ -208,7 +208,7 @@ def test_a_version_below_the_supported_one_fails_closed_too(tmp_path: Path) -> N
     # Compatibility is an exact set, not a floor: an artifact at an OLDER schema is as unreadable
     # as a newer one, because this loader was not written against its shape either.
     with pytest.raises(DomainError) as raised:
-        load_factory_policy(write(tmp_path, VALID.replace("version = 7", "version = 6")))
+        load_factory_policy(write(tmp_path, VALID.replace("version = 8", "version = 7")))
 
     assert raised.value.code == "factory_policy_version_unsupported"
 
@@ -528,7 +528,7 @@ def test_the_posture_reader_answers_from_the_shipped_artifact() -> None:
 def test_the_report_names_the_version_the_source_and_every_row() -> None:
     report: dict[str, Any] = load_factory_policy().report()
 
-    assert report["version"] == 7
+    assert report["version"] == 8
     assert report["source"] == PACKAGED_ARTIFACT.name
     assert [row["member"] for row in report["reach"]] == sorted(REACH_VOCABULARY)
     assert all(isinstance(row["rationale"], str) and row["rationale"] for row in report["reach"])
@@ -684,3 +684,39 @@ def test_a_window_that_wraps_midnight_opened_the_PREVIOUS_local_day(tmp_path: Pa
     assert after == before, (
         "an instant after midnight belongs to the occurrence that opened before it"
     )
+
+
+# The rotation pattern (schema 8, ADR-0055 amendment 11), checked against edits of the shipped file.
+ROTATION_NAME = 'name = "credential rotation unit of an approved standing package"'
+
+
+def _shipped() -> str:
+    return PACKAGED_ARTIFACT.read_text(encoding="utf-8")
+
+
+def test_a_rotation_pattern_declaring_an_unexpected_field_fails_closed(tmp_path: Path) -> None:
+    assert load_factory_policy(write(tmp_path, _shipped())).version == 8  # control
+    widened = _shipped().replace(
+        "max_attempts = 3\n", "max_attempts = 3\nhost_without_overlap = true\n"
+    )
+
+    with pytest.raises(DomainError) as raised:
+        load_factory_policy(write(tmp_path, widened))
+
+    assert raised.value.code == "factory_policy_invalid"
+
+
+def test_a_rotation_pattern_may_not_share_a_name_with_a_command_pattern(tmp_path: Path) -> None:
+    shipped = _shipped()
+    command_name = 'name = "uv dependency pin bump into a named repository"'
+    assert command_name in shipped and shipped.count(ROTATION_NAME) == 2  # control
+    # Moved under the one row that also declares the command pattern, under that pattern's name.
+    clash = shipped.replace(
+        "[[reach.live_estate.rotation_known_good]]",
+        "[[reach.source_repository.rotation_known_good]]",
+    ).replace(ROTATION_NAME, command_name, 1)
+
+    with pytest.raises(DomainError) as raised:
+        load_factory_policy(write(tmp_path, clash))
+
+    assert "same name" in raised.value.message

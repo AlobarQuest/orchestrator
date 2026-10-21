@@ -28,9 +28,12 @@ from orchestrator.services.lifecycle.context import PreflightCommand, require_cl
 from orchestrator.services.lifecycle.lease_policy import claim_lease
 from orchestrator.services.lifecycle.readiness import evaluate_readiness
 from orchestrator.services.lifecycle.rotation_claims import (
+    authority_refusal,
     claim_window_refusal,
     confinement_refusal,
     is_rotation_unit,
+    policy_authority_gate,
+    record_gate_not_required,
 )
 
 # The states in which a unit still holds the claim it was granted. One definition, because the
@@ -109,6 +112,10 @@ def claim_unit(
         window = claim_window_refusal(session, unit, revision, now)
         if window is not None:
             raise window
+        authority_gate = policy_authority_gate(unit, revision)
+        authority = authority_refusal(authority_gate)
+        if authority is not None:
+            raise authority
         context_snapshot = _claim_context_snapshot(
             session, unit, actor, idempotency_key, standing_context
         )
@@ -142,6 +149,10 @@ def claim_unit(
                 ),
             },
         )
+        if authority_gate is not None:
+            record_gate_not_required(
+                session, unit, authority_gate, actor.actor_id, claim.attempt, idempotency_key
+            )
         session.commit()
         return LeaseGrant(
             claim.id,

@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from orchestrator.api.schemas.execution import (
     FactoryPolicyAdmissionResponse,
     FactoryPolicyResponse,
+    FactoryPolicyRotationKnownGoodResponse,
 )
 from orchestrator.factory_policy import load_factory_policy
 from orchestrator.reach_vocabulary import REACH_VOCABULARY
@@ -24,7 +25,7 @@ def test_the_policy_surface_reports_the_version_and_every_reach_row(db_client: T
 
     assert response.status_code == 200
     body = response.json()
-    assert body["version"] == 7
+    assert body["version"] == 8
     # Served keys, model fields and report keys are one set: a response model drops what it does
     # not declare, and a field the report stopped producing must not linger in the model either.
     assert (
@@ -131,3 +132,25 @@ def _leaves(value: object) -> list[object]:
     if isinstance(value, list):
         return [leaf for item in value for leaf in _leaves(item)]
     return [value]
+
+
+def test_the_policy_surface_serves_each_rotation_pattern_whole(db_client: TestClient) -> None:
+    # ADR-0055 amendment 11. Served keys, model fields and report keys are one set, for the reason
+    # the top level is: a response model drops what it does not declare.
+    reach = db_client.get("/api/v1/factory-policy", headers=SYSTEM).json()["reach"]
+    served = {row["member"]: row["rotation_known_good"] for row in reach}
+    reported = {
+        row["member"]: row["rotation_known_good"] for row in load_factory_policy().report()["reach"]
+    }
+
+    assert sorted(member for member, patterns in served.items() if patterns) == [
+        "external_system",
+        "live_estate",
+    ]
+    for member, patterns in served.items():
+        for pattern, report in zip(patterns, reported[member], strict=True):
+            assert (
+                set(pattern)
+                == set(FactoryPolicyRotationKnownGoodResponse.model_fields)
+                == set(report)
+            )

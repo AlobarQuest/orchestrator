@@ -122,6 +122,24 @@ class FactoryPolicyAdmissionResponse(BaseModel):
     change_classes: list[str]
 
 
+class FactoryPolicyRotationKnownGoodResponse(BaseModel):
+    """One declared rotation-unit pattern, in full (ADR-0055 amendment 11).
+
+    Served for the reason the schema 2 pattern is: everything the matcher reads, so an operator can
+    answer "would it recognise THIS envelope" without reading the image.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    name: str
+    rationale: str
+    decided: date
+    rotation_adapters: list[str]
+    rotation_units: list[str]
+    capabilities: dict[str, str]
+    max_attempts: int
+
+
 class FactoryPolicyReachResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -129,6 +147,7 @@ class FactoryPolicyReachResponse(BaseModel):
     rationale: str
     decided: date
     known_good: list[FactoryPolicyKnownGoodResponse]
+    rotation_known_good: list[FactoryPolicyRotationKnownGoodResponse]
     change_window: FactoryPolicyChangeWindowResponse | None
     lease: FactoryPolicyLeaseResponse | None
 

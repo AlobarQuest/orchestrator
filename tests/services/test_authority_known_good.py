@@ -339,7 +339,7 @@ command_prefixes = ["uv add"]
 """
 
 VALID_V2 = f"""
-version = 7
+version = 8
 {ADMISSION}
 [reach.source_repository]
 rationale = "repository only"
@@ -405,7 +405,7 @@ def write(tmp_path: Path, text: str) -> Path:
 def test_a_valid_v2_artifact_loads_the_control_for_every_malformation(tmp_path: Path) -> None:
     policy = load_factory_policy(write(tmp_path, VALID_V2))
 
-    assert policy.version == 7
+    assert policy.version == 8
     assert [pattern.name for pattern in policy.rows["source_repository"].known_good] == ["example"]
     assert policy.rows["live_estate"].known_good == ()
 
@@ -540,3 +540,128 @@ def test_uv_bump_takes_its_capabilities_from_the_profile_constant(monkeypatch) -
     monkeypatch.setattr(sys.modules[__name__], "PROFILE_CAPABILITIES", sentinel)
 
     assert uv_bump()["capabilities"] == sentinel
+
+
+# --- Rotation units (schema 8, ADR-0055 amendment 11) ---------------------------------------------
+#
+# Both envelopes are copied from production: the Bitbucket mirror token's `confirm` unit and the
+# orchestrator observer bearer's `mint` unit, as `GET /work-units/{id}` served them on 2026-10-21.
+# Only `work_unit_id` is replaced, because the matcher holds it to the unit asked about.
+
+ROTATION_REACH = ("external_system",)
+BEARER_REACH = ("external_system", "live_estate")
+
+
+def bitbucket_confirm(unit_id: uuid.UUID = UNIT_ID) -> dict[str, Any]:
+    return {
+        "budgets": {"max_attempts": 3, "max_llm_calls": None},
+        "capabilities": {"operational_action": "allowed"},
+        "constraints": {
+            "destinations": [
+                'bws-secret uuid="1078dcaf-c1cd-48a0-a794-b4030100cf24"',
+                'provider name="bitbucket"',
+                'runtime-fetch repo="github-to-bitbucket-mirror" ref="mirror.py"',
+            ],
+            "rotation_adapter": "bitbucket",
+            "rotation_unit": "confirm",
+            "touches_no_hosted_service": True,
+            "work_unit_id": str(unit_id),
+        },
+    }
+
+
+def observer_mint(unit_id: uuid.UUID = UNIT_ID) -> dict[str, Any]:
+    return {
+        "budgets": {"max_attempts": 3, "max_llm_calls": None},
+        "capabilities": {"operational_action": "allowed"},
+        "constraints": {
+            "destinations": [
+                'bws-secret uuid="f793576f-e9aa-4f9d-8089-b4a000b9e2d5"',
+                'coolify-env-hash instance="prod" resource_type="application" '
+                'uuid="eqj5l7k705fhi12x9i74fqf0" key="ORCHESTRATOR_M2M_CREDENTIALS" '
+                'entry="orchestrator-observer"',
+                'provider name="orchestrator"',
+                'runtime-fetch repo="orchestrator" ref="scripts/run-landing-ledger.sh"',
+            ],
+            "host_without_overlap": True,
+            "rotation_adapter": "orchestrator",
+            "rotation_unit": "mint",
+            "work_unit_id": str(unit_id),
+        },
+    }
+
+
+def observer_retire() -> dict[str, Any]:
+    """The same bearer's retire unit: no overlap declaration, and it writes a hosted service."""
+    envelope = observer_mint()
+    del envelope["constraints"]["host_without_overlap"]
+    envelope["constraints"]["rotation_unit"] = "retire"
+    return envelope
+
+
+def test_a_rotation_unit_of_an_approved_package_is_recognised() -> None:
+    assert refusals(bitbucket_confirm(), ROTATION_REACH) == ()
+    assert refusals(observer_retire(), BEARER_REACH) == ()
+
+
+def test_a_rotation_unit_must_be_recognised_under_every_reach_member() -> None:
+    assert refusals(observer_retire(), (*BEARER_REACH, "operator_machine")) == (
+        AUTHORITY_ENVELOPE_NOVEL,
+    )
+
+
+def test_a_host_without_overlap_is_never_recognised() -> None:
+    # The one declaration only a person makes. The real envelope, unchanged.
+    assert refusals(observer_mint(), BEARER_REACH) == (AUTHORITY_ENVELOPE_NOVEL,)
+
+
+def _edited(mutate: Any) -> dict[str, Any]:
+    envelope = bitbucket_confirm()
+    mutate(envelope)
+    return envelope
+
+
+ROTATION_SHAPES_NOT_RECOGNISED: list[tuple[str, Any]] = [
+    ("an extra constraint", lambda e: e["constraints"].update(target_repository="AlobarQuest/x")),
+    (
+        "a false non-hosted marker",
+        lambda e: e["constraints"].update(touches_no_hosted_service=False),
+    ),
+    ("a second capability", lambda e: e["capabilities"].update({"repo.edit": "allowed"})),
+    ("a model-call budget", lambda e: e["budgets"].update(max_llm_calls=10)),
+    ("more attempts", lambda e: e["budgets"].update(max_attempts=4)),
+    ("no attempt budget", lambda e: e["budgets"].update(max_attempts=None)),
+    ("a change class", lambda e: e.update(change_class="dependency-update")),
+    (
+        "a conformance claim",
+        lambda e: e.update(
+            conformance={"status": "green", "standards_touched": [], "accepted_standards": []}
+        ),
+    ),
+    ("an unknown field", lambda e: e.update(future_field=True)),
+    ("the canary's adapter", lambda e: e["constraints"].update(rotation_adapter="fake")),
+    ("a unit no plan has", lambda e: e["constraints"].update(rotation_unit="attest")),
+    ("another unit's id", lambda e: e["constraints"].update(work_unit_id=str(uuid.uuid4()))),
+    ("no destinations", lambda e: e["constraints"].update(destinations=[])),
+    ("a destination that is not a string", lambda e: e["constraints"].update(destinations=[1])),
+    ("a missing destination list", lambda e: e["constraints"].pop("destinations")),
+]
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [m for _, m in ROTATION_SHAPES_NOT_RECOGNISED],
+    ids=[n for n, _ in ROTATION_SHAPES_NOT_RECOGNISED],
+)
+def test_a_rotation_envelope_the_pattern_does_not_account_for_draws_the_objection(
+    mutate: Any,
+) -> None:
+    assert refusals(bitbucket_confirm(), ROTATION_REACH) == ()  # control
+    assert refusals(_edited(mutate), ROTATION_REACH) == (AUTHORITY_ENVELOPE_NOVEL,)
+
+
+def test_neither_kind_of_pattern_recognises_the_other_kinds_envelope() -> None:
+    # No rotation pattern sits under `source_repository`, and the uv pattern can't read a
+    # rotation envelope; nor does the rotation pattern read a uv bump under its own rows.
+    assert refusals(bitbucket_confirm(), REPOSITORY_REACH) == (AUTHORITY_ENVELOPE_NOVEL,)
+    assert refusals(uv_bump(), ROTATION_REACH) == (AUTHORITY_ENVELOPE_NOVEL,)
