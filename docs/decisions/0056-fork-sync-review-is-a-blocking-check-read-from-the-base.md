@@ -120,3 +120,36 @@ environment," and "Yes, but also the optional Item #3").
 - **A one-time review of each fork's current code.** The gate reviews only what each sync
   changes, so the code each fork started from was never reviewed. It is reviewed once, and the
   result is reported to Devon; it is information, not gate state.
+
+## Amendment 2 (2026-10-21): a monorepo upstream, and a lockfile the fork owns
+
+**Status:** Accepted (Devon, 2026-10-21, choosing "the fork owns the lockfile" from three options
+for n8n-as-code).
+
+n8n-as-code was the first upstream that didn't fit the lane. It is an npm workspace monorepo
+whose root `package.json` is private and pinned at `0.2.0`, while the version a release tag names
+lives in `packages/cli/package.json`. Its `.gitignore` also excludes `package-lock.json`, so no
+release records the dependency versions it was built with. Without a lockfile, `npm ci` and the
+audit can't run, every build resolves version ranges against the registry at that moment, and the
+review never sees a dependency change, which is the supply-chain path the lane exists to close.
+
+- **`version_manifest`** names the manifest a sync's version is compared against. It defaults to
+  the ecosystem's manifest at the root. Comparing against a root that never moves would sync every
+  release, an older one included.
+- **`generate_lockfile = true`** (npm only) makes the fork own its lockfile. After the sync
+  restores the fork's `.github/`, `fork_sync_review.py lock <tag>` resolves `package-lock.json`
+  with `npm install --package-lock-only --ignore-scripts`, which installs nothing and runs no
+  script, and commits it on the sync branch. The lockfile sits at the root, so CI, the audit, the
+  review and the weekly audit read it unchanged.
+- **Resolution is pinned with `--before` to the tag's commit date.** The lockfile records what
+  upstream's own users received at that release, and a rerun writes the same file. Measured at
+  v2.7.0: two resolutions gave byte-identical lockfiles. A lockfile that moved daily would make
+  every rebuild a new tree, which would re-review and re-alert a held sync every day.
+- **A tag that ships its own lockfile fails the sync** rather than being silently overwritten, so
+  the declaration is revisited when upstream starts committing one.
+- **The registry is fixed on the command line, and a scoped registry in upstream's `.npmrc` is
+  not.** The review's deterministic findings already cover that case: any `.npmrc`, and any
+  package resolved outside `https://registry.npmjs.org/`.
+- **Every fork's sync workflow gains a Node setup and the `lock` step,** which does nothing
+  unless the declaration sets `generate_lockfile`. `fork-sync check` reports the older workflow
+  as drift, so each onboarded fork is re-scaffolded to the new template.

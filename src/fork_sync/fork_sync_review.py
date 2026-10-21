@@ -9,6 +9,7 @@ Subcommands, each invoked by a rendered workflow:
 
   upstream               print the declared upstream (`owner/name`)
   next-release FILE      given upstream's releases as JSON, print the tag to sync to, or nothing
+  lock TAG               write and stage the lockfile upstream doesn't commit (`generate_lockfile`)
   run build|test         run the configured build or test commands
   review                 the `security review` required check
   audit-main             the weekly audit of main's dependencies, against main's acknowledgements
@@ -136,6 +137,12 @@ class Config:
     build_commands: tuple[str, ...]
     test_commands: tuple[str, ...]
     review: ReviewConfig
+    version_manifest: str
+    """The manifest whose version a sync is compared against: the ecosystem's, at the root, unless
+    upstream is a monorepo whose root never moves (n8n-as-code's is a private `0.2.0`)."""
+    generate_lockfile: bool = False
+    """Upstream commits no lockfile, so the sync resolves one (`lock`) and commits it beside the
+    fork's `.github/`. Without it there is nothing to install from, audit or review."""
 
 
 _TOP_KEYS = {
@@ -144,6 +151,8 @@ _TOP_KEYS = {
     "release_tag_pattern",
     "build_commands",
     "test_commands",
+    "version_manifest",
+    "generate_lockfile",
     "review",
 }
 _REVIEW_KEYS = {"paths_watched", "trust_critical", "model", "max_diff_chars"}
@@ -205,6 +214,15 @@ def parse_config(text: str) -> Config:
         raise ConfigError(f"release_tag_pattern is not a regex: {error}") from None
     if groups < 1:
         raise ConfigError("release_tag_pattern needs a capture group holding the version")
+    version_manifest = _string(table, "version_manifest", ecosystem.manifest)
+    parts = version_manifest.split("/")
+    if parts[-1] != ecosystem.manifest or version_manifest.startswith("/") or ".." in parts:
+        raise ConfigError(f"version_manifest must be a relative path to a {ecosystem.manifest}")
+    generate_lockfile = table.get("generate_lockfile", False)
+    if not isinstance(generate_lockfile, bool):
+        raise ConfigError("generate_lockfile must be true or false")
+    if generate_lockfile and name != "npm":
+        raise ConfigError("generate_lockfile applies only to the npm ecosystem")
     return Config(
         upstream=upstream,
         ecosystem=name,
@@ -212,6 +230,8 @@ def parse_config(text: str) -> Config:
         build_commands=_strings(table, "build_commands", ecosystem.build),
         test_commands=_strings(table, "test_commands", ecosystem.test),
         review=_review(table.get("review", {})),
+        version_manifest=version_manifest,
+        generate_lockfile=generate_lockfile,
     )
 
 
@@ -1259,6 +1279,44 @@ def notify(env: Mapping[str, str], opener: Opener = _urlopen) -> int:
     return 0
 
 
+LockRunner = Callable[[list[str]], int]
+"""`(argv) -> exit code`, run in the working tree."""
+
+
+def lock(
+    config: Config, tag: str, run: LockRunner = lambda argv: subprocess.run(argv).returncode
+) -> int:
+    """Resolve and stage the lockfile upstream doesn't commit, in a checkout of `tag`.
+
+    Resolution only: `--package-lock-only` installs nothing, and no lifecycle script runs. It is
+    pinned to versions published before the tag's commit, so it records what upstream's users got
+    at that release, and a rerun writes the same file -- the sync pushes only a changed tree, and a
+    lockfile that moved daily would re-review and re-alert a held sync every day. The registry is
+    fixed on the command line; a scoped registry in upstream's `.npmrc` is not overridden, and the
+    review finds both that `.npmrc` and any package it resolves elsewhere.
+    """
+    if not config.generate_lockfile:
+        print("the declaration generates no lockfile")
+        return 0
+    lockfile = ECOSYSTEMS[config.ecosystem].lockfile
+    assert lockfile is not None  # parse_config allows generate_lockfile only for npm
+    if not SAFE_TAG.fullmatch(tag):
+        raise ConfigError(f"tag {tag!r} has characters a ref must not")
+    if Path(lockfile).exists():
+        print(
+            f"::error::{tag} has its own {lockfile}; remove generate_lockfile from the declaration"
+        )
+        return 1
+    published_before = _git("log", "-1", "--format=%cI", f"refs/tags/{tag}^{{commit}}").strip()
+    argv = ["npm", "install", "--package-lock-only", "--ignore-scripts", "--no-audit", "--no-fund"]
+    argv += ["--userconfig", "/dev/null", "--registry", NPM_REGISTRY.rstrip("/")]
+    code = run([*argv, "--before", published_before])
+    if code != 0:
+        return code
+    _git("add", "--force", "--", lockfile)
+    return 0
+
+
 def run_commands(commands: Sequence[str]) -> int:
     for command in commands:
         print(f"$ {command}", flush=True)
@@ -1275,10 +1333,12 @@ def main(argv: Sequence[str]) -> int:
         return 0
     if command == "next-release":
         config = load_config()
-        manifest = Path(ECOSYSTEMS[config.ecosystem].manifest).read_text(encoding="utf-8")
+        manifest = Path(config.version_manifest).read_text(encoding="utf-8")
         releases = json.loads(Path(rest[0]).read_text(encoding="utf-8"))
         print(next_release(config, releases, manifest_version(config.ecosystem, manifest)) or "")
         return 0
+    if command == "lock" and len(rest) == 1:
+        return lock(load_config(), rest[0])
     if command == "run" and rest in (["build"], ["test"]):
         config = load_config()
         return run_commands(config.build_commands if rest == ["build"] else config.test_commands)
@@ -1290,7 +1350,7 @@ def main(argv: Sequence[str]) -> int:
         return notify(os.environ)
     print(
         f"usage: {Path(sys.argv[0]).name} "
-        "upstream|next-release FILE|run build|run test|review|audit-main|notify"
+        "upstream|next-release FILE|lock TAG|run build|run test|review|audit-main|notify"
     )
     return 64
 

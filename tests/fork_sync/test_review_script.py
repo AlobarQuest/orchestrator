@@ -76,6 +76,61 @@ def test_the_declaration_is_strict(text: str, message: str) -> None:
         review.parse_config(text)
 
 
+MONOREPO = NPM.replace(
+    'test_commands = ["npm run test:run"]',
+    'version_manifest = "packages/cli/package.json"\ngenerate_lockfile = true',
+)
+
+
+def test_a_monorepo_names_its_version_manifest_and_generates_its_lockfile() -> None:
+    config = review.parse_config(MONOREPO)
+    assert config.version_manifest == "packages/cli/package.json"
+    assert config.generate_lockfile is True
+    plain = review.parse_config(CARGO)
+    assert (plain.version_manifest, plain.generate_lockfile) == ("Cargo.toml", False)
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        (MONOREPO.replace("packages/cli/package.json", "packages/cli/manifest.json"), "relative"),
+        (MONOREPO.replace("packages/cli/package.json", "/etc/package.json"), "relative"),
+        (MONOREPO.replace("packages/cli/package.json", "../x/package.json"), "relative"),
+        (MONOREPO.replace("generate_lockfile = true", 'generate_lockfile = "yes"'), "true or"),
+        ("generate_lockfile = true\n" + CARGO, "only to the npm"),
+        (
+            MONOREPO.replace('"npm"', '"npm-no-deps"').replace(
+                'version_manifest = "packages/cli/package.json"\n', ""
+            ),
+            "only to the npm",
+        ),
+    ],
+)
+def test_the_monorepo_keys_are_strict(text: str, message: str) -> None:
+    with pytest.raises(ConfigError, match=message):
+        review.parse_config(text)
+
+
+def test_next_release_reads_the_declared_version_manifest(
+    tmp_path: Path, monkeypatch: Any, capsys: Any
+) -> None:
+    """A monorepo's root version never moves; comparing against it would sync every release,
+    an older one included."""
+    (tmp_path / ".github").mkdir()
+    (tmp_path / ".github/fork-sync.toml").write_text(MONOREPO)
+    (tmp_path / "package.json").write_text('{"version": "0.2.0"}')
+    (tmp_path / "packages/cli").mkdir(parents=True)
+    (tmp_path / "packages/cli/package.json").write_text('{"version": "6.7.0"}')
+    releases = tmp_path / "releases.json"
+    releases.write_text(json.dumps([_release("rea-agents-6.6.0")]))
+    monkeypatch.chdir(tmp_path)
+    assert review.main(["next-release", str(releases)]) == 0
+    assert capsys.readouterr().out == "\n"
+    releases.write_text(json.dumps([_release("rea-agents-6.8.0")]))
+    assert review.main(["next-release", str(releases)]) == 0
+    assert capsys.readouterr().out == "rea-agents-6.8.0\n"
+
+
 def test_manifest_versions() -> None:
     assert review.manifest_version("npm", '{"version": "6.4.0"}') == "6.4.0"
     assert review.manifest_version("cargo", '[package]\nversion = "0.48.0"\n') == "0.48.0"
@@ -869,3 +924,67 @@ def test_a_path_the_head_changed_away_from_the_base_tip_is_still_reviewed() -> N
     a = review.Change("M", "a", "100644", "100644", "1" * 40, "2" * 40)
     b = review.Change("M", "b", "100644", "100644", "1" * 40, "3" * 40)
     assert review.merged_changes([a, b], [b]) == [b]
+
+
+# ---- the generated lockfile -----------------------------------------------------------------
+
+
+def _tagged(tmp_path: Path, monkeypatch: Any) -> None:
+    _git(tmp_path, "init", "-q", "-b", "main")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GIT_COMMITTER_DATE", "2026-09-11T16:33:54-04:00")
+    _commit(tmp_path, {"package.json": '{"version": "6.7.0"}'}, "release")
+    monkeypatch.delenv("GIT_COMMITTER_DATE")
+    _git(tmp_path, "tag", "rea-agents-6.7.0")
+
+
+def test_lock_resolves_as_of_the_tag_and_stages_the_lockfile(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    _tagged(tmp_path, monkeypatch)
+    seen: list[list[str]] = []
+
+    def resolve(argv: list[str]) -> int:
+        seen.append(argv)
+        (tmp_path / "package-lock.json").write_text("{}\n")
+        return 0
+
+    assert review.lock(review.parse_config(MONOREPO), "rea-agents-6.7.0", resolve) == 0
+    [argv] = seen
+    assert argv[:4] == ["npm", "install", "--package-lock-only", "--ignore-scripts"]
+    assert argv[argv.index("--registry") + 1] == "https://registry.npmjs.org"
+    assert argv[argv.index("--userconfig") + 1] == "/dev/null"
+    assert argv[argv.index("--before") + 1] == "2026-09-11T16:33:54-04:00"
+    assert _git(tmp_path, "diff", "--cached", "--name-only") == "package-lock.json"
+
+
+def test_lock_does_nothing_unless_declared(tmp_path: Path, monkeypatch: Any) -> None:
+    _tagged(tmp_path, monkeypatch)
+    assert review.lock(review.parse_config(NPM), "rea-agents-6.7.0", _never_runs) == 0
+
+
+def test_lock_refuses_a_tag_that_ships_its_own_lockfile(tmp_path: Path, monkeypatch: Any) -> None:
+    _tagged(tmp_path, monkeypatch)
+    (tmp_path / "package-lock.json").write_text("{}\n")
+    assert review.lock(review.parse_config(MONOREPO), "rea-agents-6.7.0", _never_runs) == 1
+
+
+def test_a_failed_resolution_stages_nothing(tmp_path: Path, monkeypatch: Any) -> None:
+    _tagged(tmp_path, monkeypatch)
+
+    def fail(argv: list[str]) -> int:
+        (tmp_path / "package-lock.json").write_text("{}\n")
+        return 1
+
+    assert review.lock(review.parse_config(MONOREPO), "rea-agents-6.7.0", fail) == 1
+    assert _git(tmp_path, "diff", "--cached", "--name-only") == ""
+
+
+def test_lock_refuses_an_unsafe_tag(tmp_path: Path, monkeypatch: Any) -> None:
+    _tagged(tmp_path, monkeypatch)
+    with pytest.raises(ConfigError, match="characters"):
+        review.lock(review.parse_config(MONOREPO), "-x", _never_runs)
+
+
+def _never_runs(argv: list[str]) -> int:
+    raise AssertionError(f"ran {argv}")
