@@ -70,8 +70,8 @@ def test_the_policy_surface_serves_the_change_window_a_row_declares(
     window = rows["operator_machine"]["change_window"]
     assert (window["timezone"], window["start"], window["end"]) == (
         "America/New_York",
-        "02:00",
-        "06:00",
+        "00:00",
+        "23:59",
     )
     assert window["rationale"] and window["decided"]
 

@@ -764,6 +764,6 @@ def test_the_window_is_visible_in_the_report_and_declared_by_the_response_model(
         # An offset would be true for half the year. The reason the zone is in the artifact at all
         # is that the question is about somebody's day, so the answer has to name the same thing.
         "timezone": "America/New_York",
-        "start": "02:00",
-        "end": "06:00",
+        "start": "00:00",
+        "end": "23:59",
     }
