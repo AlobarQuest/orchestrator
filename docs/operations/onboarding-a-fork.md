@@ -29,6 +29,8 @@ ecosystem = "npm"                                         # cargo | npm | npm-no
 release_tag_pattern = '^rea-agents-(\d+\.\d+\.\d+)$'      # group 1 is the version
 build_commands = ["npm run build"]                        # optional; ecosystem default
 test_commands = ["npm run test:run"]                      # optional; ecosystem default
+version_manifest = "package.json"                         # optional; see the following list
+generate_lockfile = false                                 # optional; npm only
 
 [review]
 paths_watched = ["install.sh", ".claude/*"]   # any change is a finding
@@ -36,6 +38,17 @@ trust_critical = ["src/mcp/*"]                # reviewed first, most closely
 model = "claude-sonnet-5-5"                   # optional
 max_diff_chars = 400000                       # optional
 ```
+
+Two keys exist for an upstream that is an npm workspace monorepo, such as n8n-as-code
+(ADR-0056 amendment 2):
+
+- `version_manifest` is the manifest whose version a sync is compared against. It defaults to
+  the ecosystem's manifest at the root. Name the package the release tags version
+  (`packages/cli/package.json`) when the root's version never moves.
+- `generate_lockfile = true` is for an upstream that commits no `package-lock.json`. The sync
+  resolves one as of the release tag's commit date and commits it on the sync branch, so the
+  fork's `main` carries a lockfile that CI, the audit and the review read as usual. A tag that
+  ships its own lockfile fails the sync.
 
 Globs are `fnmatch` patterns, so `*` crosses directories. The ecosystem defaults are:
 
@@ -62,8 +75,9 @@ commands that build and test without network side effects. For `npm`, CI always 
   `fork-secure-upstream-sync`, picks upstream's newest published release whose tag matches
   `release_tag_pattern`, and compares its version with the fork's manifest. When upstream's is
   greater (compared as numbers; an older or equal tag is never synced to), it
-  rebuilds the `upstream-sync` branch from the tag, restores the fork's whole `.github/`, and opens
-  or edits one rolling pull request. It pushes only when the rebuilt tree differs from the
+  rebuilds the `upstream-sync` branch from the tag, restores the fork's whole `.github/`, commits a
+  resolved lockfile if the declaration sets `generate_lockfile`, and opens or edits one rolling
+  pull request. It pushes only when the rebuilt tree differs from the
   branch's, so a held sync isn't re-reviewed and re-alerted every day. Submodule gitlinks stay as
   upstream has them; nothing fetches their content. It does not review.
 - **`ci.yml`** runs on every pull request and on pushes to `main`, and on nothing else: a manual
@@ -227,7 +241,11 @@ worktree. Run `fork-sync check <fork>` after any step to see where you are.
 4. **Scaffold.** Write the declaration, then run `fork-sync scaffold <fork> --config <file>`. It
    prints the pull request number. If the old lane left files `scaffold` does not render (for rtk,
    `.github/scripts/ai_security_review.py`), push a commit removing them to the
-   `fork-sync-scaffold` branch.
+   `fork-sync-scaffold` branch. If the declaration sets `generate_lockfile`, `main` has no lockfile
+   yet, so `build and test` can't install. In a clone of the `fork-sync-scaffold` branch, fetch
+   the baseline tag from upstream (`git fetch --no-tags <upstream-url>
+   "refs/tags/<tag>:refs/tags/<tag>"`), run `python3 .github/scripts/fork_sync_review.py lock
+   <tag>`, then commit and push the staged lockfile.
 5. **Set the secrets** `APP_ID`, `APP_PRIVATE_KEY` and `ANTHROPIC_API_KEY` from BWS, in-process,
    with the value on stdin and no `--body` flag (`gh secret set NAME --repo <fork>`). Never pass
    `--body -`, which stores a literal dash. Then register the fork's copies in factory-runner's

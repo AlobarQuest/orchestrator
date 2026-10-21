@@ -120,3 +120,54 @@ environment," and "Yes, but also the optional Item #3").
 - **A one-time review of each fork's current code.** The gate reviews only what each sync
   changes, so the code each fork started from was never reviewed. It is reviewed once, and the
   result is reported to Devon; it is information, not gate state.
+
+## Amendment 2 (2026-10-21): a monorepo upstream, and a lockfile the fork owns
+
+**Status:** Accepted (Devon, 2026-10-21, choosing "the fork owns the lockfile" from three options
+for n8n-as-code).
+
+n8n-as-code was the first upstream that didn't fit the lane. It is an npm workspace monorepo
+whose root `package.json` is private and pinned at `0.2.0`, while the version a release tag names
+lives in `packages/cli/package.json`. Its `.gitignore` also excludes `package-lock.json`, so no
+release records the dependency versions it was built with. Without a lockfile, `npm ci` and the
+audit can't run, every build resolves version ranges against the registry at that moment, and the
+review never sees a dependency change, which is the supply-chain path the lane exists to close.
+
+- **`version_manifest`** names the manifest a sync's version is compared against. It defaults to
+  the ecosystem's manifest at the root. Comparing against a root that never moves would sync every
+  release, an older one included.
+- **`generate_lockfile = true`** (npm only) makes the fork own its lockfile. After the sync
+  restores the fork's `.github/`, `fork_sync_review.py lock <tag>` resolves `package-lock.json`
+  with `npm install --package-lock-only --ignore-scripts` and commits it on the sync branch. The
+  lockfile sits at the root, so CI, the audit, the review and the weekly audit read it unchanged.
+- **npm never runs in upstream's tree.** A project `.npmrc` is upstream's to write, and its `git=`
+  key names a program npm runs to fetch a git dependency, even with `--ignore-scripts`; the sync
+  job holds the App token in `.git/config`. An adversarial review reproduced that. So `lock`
+  resolves in an empty scratch directory that holds only the tag's tracked `package.json` files,
+  read from git objects, with empty user and global configuration, a fixed registry, and `git`
+  set to `false`, so a git dependency fails the sync rather than being fetched. The lockfile is
+  written back with an exclusive create, which never writes through a link. Resolving there
+  instead of in the tree gave a byte-identical lockfile at v2.7.0.
+- **Resolution is pinned with `--before` to the tag's commit date,** on an exact Node version.
+  The lockfile records what upstream's own users received at that release, and a rerun writes
+  the same file: two resolutions at v2.7.0 were byte-identical. A lockfile that moved daily would
+  make every rebuild a new tree, which would re-review and re-alert a held sync every day. A
+  commit dated in the future would unpin it, so it fails the sync.
+- **A tag that ships its own lockfile (`package-lock.json` or `npm-shrinkwrap.json`) fails the
+  sync** rather than being silently overwritten, so the declaration is revisited when upstream
+  starts committing one.
+- **A workspace's folder entry isn't a finding; its link is, once.** npm keys each workspace
+  folder by its path and links it into `node_modules`. The folder entry installs under no name,
+  and its version moves every release, so the alias check applies only to `node_modules/` entries.
+  Every new or changed link stays a finding: a link is how an in-tree package can take a
+  registry package's name, which a second review round reproduced against an earlier rule that
+  trusted the declared `workspaces` patterns. A workspace link names only a path, so it is
+  acknowledged once and stays unchanged across releases. At v2.7.0 that is nine links.
+- **`lock` refuses a tree path with a `..`, `.` or empty part.** Git accepts a tree entry named
+  `..` with only an fsck warning, and copying it would write above the scratch directory.
+- **Every fork's sync workflow gains a Node setup and the `lock` step,** which does nothing
+  unless the declaration sets `generate_lockfile`. `fork-sync check` reports the older workflow
+  as drift, so each onboarded fork is re-scaffolded to the new template.
+- **A release tag may start with `@`.** npm monorepos tag each package by its scoped name
+  (`@n8n-as-code/n8n-manager-v0.7.1`), which the tag rule refused. `@` is valid in a ref except
+  as `@{`, and `{` stays refused.

@@ -365,6 +365,7 @@ TABLE: dict[str, Row] = {
         "__future__",
         "collections",
         "dataclasses",
+        "datetime",
         "estate_clients",
         "fnmatch",
         "hashlib",
