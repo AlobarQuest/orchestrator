@@ -1393,3 +1393,108 @@ One increment:
 Rotation envelopes take their budgets from the decomposition author, not from an intent-packages
 profile, so `check_profile_budget_agreement.py` has nothing to hold the ceiling to. The enforced
 attempt cap stays the `work_units.max_attempts` column.
+
+## Amendment 12 — BWS machine tokens rotate through a second executor on the Mac (proposed 2026-10-21)
+
+**Status: proposed, awaiting Devon's decision.** Nothing in this amendment is in force until he
+accepts it.
+
+Increment 8 and the per-class table said every step of a BWS machine token's rotation is human,
+and the executor only records the evidence. On 2026-10-21 Devon rejected that: "SDS can not do an
+all human rotation." This amendment replaces it. Two steps stay human, because nothing else can
+do them, and a second instance of the executor on the Mac does the rest.
+
+### What forces two human steps
+
+- **Bitwarden offers no machine path to create or revoke an access token.** Its documentation
+  describes both only in the web app ([Access tokens](https://bitwarden.com/help/access-tokens/)).
+  A search found no API for either, and `bws` 2.0.0's commands cover only projects and secrets
+  (checked 2026-10-21).
+- That's the Atlassian token's position (amendment 10): a person creates the token, and a person
+  revokes the old one. The contract already supports both as human acts.
+
+### Why the VM executor doesn't do the rest
+
+Decision 4 keeps live BWS consumer tokens out of the `rotation-executor` VM's reach. The
+consumers are also Keychain items on the Mac, which the VM can't reach. The original increment 8
+read those two facts as "a person does everything". The real limit is only "not from the VM": the
+tokens an executor on the Mac would handle are already in the Mac's Keychain, so decision 4's
+reason doesn't apply to them. The Mac does gain one new asset, the instance's own orchestrator
+identity, which decision 7 below accounts for.
+
+### Decision proposed
+
+1. **The plan is the Atlassian token's shape.** A human act creates the token in the web app and
+   puts it in a staging Keychain item through a hidden prompt; a machine unit proves it and
+   switches every consumer; a human act revokes the old token; a machine unit proves it dead.
+   - **Proving the new value:** a fresh login, with a new SDK client and an empty throwaway
+     `HOME` (amendment 1). Amendment 1 measured fresh logins through the CLI and the executor's
+     code path; increment 8's measurement repeats it for the Mac instance's own client before
+     anything depends on it.
+   - **The switch:** write the new value into every Keychain item that held the old value,
+     keeping the old value in a quarantine Keychain item until confirm-dead. Which step kinds
+     carry this is the build's to fit to `contract.py`.
+   - **Consumer verification:** every registered Keychain item hashes to the new fingerprint; each
+     long-running holder has restarted after the switch, proved by its process start time; and
+     each scheduled reader has run since the switch, read from its Healthchecks check as today.
+     Because every item already holds the new value, a reader's run after the switch is a
+     discriminating read, which a green check alone was not.
+   - **Confirm-dead:** the pair amendment 1 defines. Before the revoke, the old value logs in
+     fresh; after it, the same fingerprint fails with `invalid_client` while the new value logs
+     in. Then the quarantine and staging items are deleted.
+   - **The exposure window:** the unit records the revoke instant, and evidence that the window
+     closed is filed no earlier than 75 minutes after it (amendment 1).
+2. **A second executor instance runs on the Mac**, from the same code at the same revision. Every
+   adapter step still runs through `contract.py`. It claims only units of the BWS-token adapter,
+   and the VM instance never claims them.
+3. **It's a second orchestrator identity.** The orchestrator lets exactly one identity
+   (`rotation_executor_agent_id`) claim rotation units, so it learns a second identity confined
+   to the BWS-token adapter's units, and confinement holds both ways for each identity. The
+   identity needs a security-standards registry entry and an orchestrator release.
+4. **Its state stays off BWS.** The VM instance's own bearer and staging live in BWS projects
+   under a root token. The Mac instance's live in Keychain items: its orchestrator bearer, the
+   staging item, the quarantine item and its own copy of the read-only Healthchecks key, which the
+   VM instance reads from `Rotation / Healthchecks`. It reads no BWS project; its only BWS calls
+   are the fresh logins with the tokens it rotates.
+5. **The keeper is a Keychain item.** A machine token has no BWS copy of itself, so this class's
+   registry entry names one Keychain item as the keeper. The checks that require the keeper among
+   the destinations, and that refuse a person-revoked plan whose Keychain destinations have no
+   scheduled read, learn this class.
+6. **Everything else is unchanged.** Each token is a standing package in intent-packages, marked
+   `rotated_by_sds` and proposed like every other class, with the same human gates and evidence
+   schema.
+7. **The threat model gains one identity on the Mac.** The VM exists so an agent session on the
+   Mac can't act as the executor (decision 2, T1). After this amendment, a session that reads the
+   Mac instance's Keychain bearer can claim BWS-token units and file their evidence, and under
+   amendment 11 that claim needs no per-unit approval. T1's accepted residual grows by that
+   identity, and the confinement bounds it: the identity claims only this adapter's units, and
+   the most it can do is write Keychain items the session could already read and file evidence.
+   It can't create or revoke a token, because only the web app can.
+
+### Open before building
+
+- **The Mac instance's bearer.** The VM's is minted by `rotation-worker mint-bearer` into BWS;
+  the Mac's needs a Keychain path, and its orchestrator entry follows the rule that
+  `ORCHESTRATOR_M2M_CREDENTIALS` is written before `ORCHESTRATOR_M2M_ROLES`.
+- **`bws-cred-rotation-token`:** proposed not to rotate; revoke it once increment 9 retires its
+  only reader.
+- **Holders no machine can restart.** The infraops MCP server reads its token once, when a Claude
+  Code session starts it, so sessions open across a switch keep the old token until they end.
+- **The two unidentified tokens.** The github-to-bitbucket mirror and the `facelesstt-admin`
+  OrbStack application hold BWS tokens from Coolify. If one of them is a rotated value, it is a
+  hosted destination: its write goes through Coolify, which only the VM instance reaches.
+- **`BRAIN_OPS` has no reader**, and `CLAUDE_CODING` and `LISTING_PREP` are unregistered.
+- **Switch timing:** no switch while another rotation is between `store` and `retire_old`, since
+  the broad token starts the readers those rotations verify, and none between 02:00 and 07:35,
+  when the scheduled lanes run.
+
+### What this changes
+
+- **Per-class table:** the BWS machine token's Mint and Retire-old become "human (web app only)",
+  and Deploy becomes "machine, from the Mac instance".
+- **Increment 8** is replaced by: the BWS-token adapter and the Mac instance; the orchestrator's
+  second identity (a release); the registry and package changes; then each token's first
+  rotation. The 2026-10-20 increment 8 handoff is superseded except its inventory and
+  value-handling rules.
+- **Decision 4** gains one sentence: a BWS consumer token may be handled by an executor instance
+  on the machine that already holds it, and never by the VM.
