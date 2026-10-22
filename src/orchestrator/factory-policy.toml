@@ -357,6 +357,21 @@ rotation_units = ["confirm", "mint", "retire", "store", "verify"]
 capabilities = { "operational_action" = "allowed" }
 max_attempts = 3
 
+[[reach.external_system.rotation_known_good]]
+name = "BWS machine-token rotation unit of an approved standing package"
+rationale = """
+A BWS machine access token is proved and proved dead by logging in to Bitwarden,
+so its rotation's machine units reach that service (ADR-0055 amendment 12).
+Recognised for the reason the pattern above gives. Its own pattern, so that only
+this adapter's machine units are named: a person creates and revokes the token in
+the web app, so no mint or retire unit of this adapter exists to recognise.
+"""
+decided = "2026-10-22"
+rotation_adapters = ["bws-machine-token"]
+rotation_units = ["confirm", "store", "verify"]
+capabilities = { "operational_action" = "allowed" }
+max_attempts = 3
+
 [reach.operator_machine]
 rationale = """
 Distinct from every other member because the cost of running at a bad moment is
@@ -372,6 +387,24 @@ not, and declaring one to keep the two restraints symmetrical would be symmetry
 standing in for a reason.
 """
 decided = "2026-08-01"
+
+[[reach.operator_machine.rotation_known_good]]
+name = "BWS machine-token rotation unit of an approved standing package"
+rationale = """
+A BWS machine access token lives in this machine's Keychain, so its rotation's
+store, verify and confirm units write and read Keychain items here (ADR-0055
+amendment 12). Recognised for the reason the external-system row gives: the
+envelope a person approved on the decomposition page is the one the executor
+runs, and it holds the envelope's destinations to the approved package's before
+it acts. Only this adapter and only its machine units: the token's creation and
+revocation are human acts in the web app, which file nothing, and no other
+adapter's unit touches this machine.
+"""
+decided = "2026-10-22"
+rotation_adapters = ["bws-machine-token"]
+rotation_units = ["confirm", "store", "verify"]
+capabilities = { "operational_action" = "allowed" }
+max_attempts = 3
 
 [reach.operator_machine.change_window]
 rationale = """

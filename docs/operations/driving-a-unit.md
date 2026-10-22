@@ -708,12 +708,16 @@ revision has profile `non-software-operational` with `standing: true` and a non-
 claims to the credential-rotation executor, so it is driven differently from other operational
 units:
 
-- **Only the configured executor claims one.** `ORCHESTRATOR_ROTATION_EXECUTOR_AGENT_ID` names the
-  executor's `agent_id`; only that identity may claim a rotation unit, and it may claim nothing
-  else. Unset, every claim on a rotation unit is refused `rotation_claim_confined`, including one
-  by HQ. The orchestrator refuses to boot when a credential's identity holds the
-  `rotation-executor-v1` profile and the setting doesn't name it, or when the setting names an
-  identity without that profile.
+- **Only the configured executor instance claims one.** The executor runs as two instances
+  (ADR-0055 amendment 12). `ORCHESTRATOR_ROTATION_KEYCHAIN_EXECUTOR_AGENT_ID` names the Keychain
+  instance on the operator machine, which alone claims a unit whose envelope's `rotation_adapter`
+  is in `rotation_claims.KEYCHAIN_ADAPTERS` (`bws-machine-token`).
+  `ORCHESTRATOR_ROTATION_EXECUTOR_AGENT_ID` names the VM instance, which alone claims every other
+  rotation unit. Neither may claim anything else. With an instance's setting unset, every claim on
+  its units is refused `rotation_claim_confined`, including one by HQ. The orchestrator refuses to
+  boot when a credential's identity holds `rotation-executor-v1` or
+  `rotation-executor-keychain-v1` and that profile's setting doesn't name it, or when a setting
+  names an identity without its profile.
 - **A lapsed claim is released, never reclaimed.** `reclaim-expired-claim` refuses a rotation
   unit (`rotation_reclaim_refused`), because the pulling executor never receives the lease token
   the reclaim route returns to its SYSTEM caller. Run

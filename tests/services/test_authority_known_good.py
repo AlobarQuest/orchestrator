@@ -687,3 +687,48 @@ def test_a_rotation_shaped_envelope_lifts_nothing_for_a_unit_that_is_not_a_rotat
     # envelope, so an ordinary unit carrying this envelope still needs a person's approval.
     assert refusals(bitbucket_confirm(), ROTATION_REACH, rotation_unit=True) == ()  # control
     assert refusals(bitbucket_confirm(), ROTATION_REACH) == (AUTHORITY_ENVELOPE_NOVEL,)
+
+
+def bws_machine_token(unit: str = "store") -> dict[str, Any]:
+    """A BWS machine-token unit (ADR-0055 amendment 12): Keychain destinations on this machine."""
+    return {
+        "budgets": {"max_attempts": 3, "max_llm_calls": None},
+        "capabilities": {"operational_action": "allowed"},
+        "constraints": {
+            "destinations": [
+                'keychain service="Claude" account="BWS_ACCESS_TOKEN_BRAIN_OPS"',
+                'provider name="bitwarden-sm"',
+            ],
+            "rotation_adapter": "bws-machine-token",
+            "rotation_unit": unit,
+            "touches_no_hosted_service": True,
+            "work_unit_id": str(UNIT_ID),
+        },
+    }
+
+
+KEYCHAIN_REACH = ("external_system", "operator_machine")
+
+
+@pytest.mark.parametrize("unit", ["store", "verify", "confirm"])
+def test_a_bws_machine_token_unit_is_recognised_on_this_machine(unit: str) -> None:
+    assert refusals(bws_machine_token(unit), KEYCHAIN_REACH, rotation_unit=True) == ()
+
+
+@pytest.mark.parametrize(
+    ("label", "envelope", "reach"),
+    [
+        ("a unit only a person does", bws_machine_token("mint"), KEYCHAIN_REACH),
+        ("the live estate", bws_machine_token(), ("external_system", "live_estate")),
+        (
+            "a unit only a person does, declared off this machine",
+            bws_machine_token("retire"),
+            ("external_system",),
+        ),
+        ("another adapter on this machine", bitbucket_confirm(), KEYCHAIN_REACH),
+    ],
+)
+def test_the_machine_row_recognises_only_the_bws_adapter_s_machine_units(
+    label: str, envelope: dict[str, Any], reach: tuple[str, ...]
+) -> None:
+    assert refusals(envelope, reach, rotation_unit=True) == (AUTHORITY_ENVELOPE_NOVEL,)

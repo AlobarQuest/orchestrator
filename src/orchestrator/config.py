@@ -134,6 +134,11 @@ class Settings(BaseSettings):
     # boot when a credential carries the executor's profile and this does not name its identity,
     # so the other direction cannot fail open.
     rotation_executor_agent_id: str | None = None
+    # ADR-0055 amendment 12. The agent_id of the executor's Keychain instance on the operator
+    # machine. Only it may claim a unit of a Keychain adapter (`rotation_claims.KEYCHAIN_ADAPTERS`),
+    # and it may claim nothing else; the instance above may not claim those units. Unset refuses
+    # every claim on them, and boot holds this setting to its profile the same way.
+    rotation_keychain_executor_agent_id: str | None = None
     # Runtime authentication, read once at boot by `main.load_auth_config`. Every one of these is
     # a RAW STRING on purpose, including the three that hold JSON. A `dict` or `list` annotation
     # would have pydantic-settings decode them itself, so a malformed value would fail while
@@ -151,7 +156,7 @@ class Settings(BaseSettings):
     credential_key_header: str = "X-Credential-Key-Id"
     csrf_secret: SecretStr | None = None
 
-    @field_validator("rotation_executor_agent_id")
+    @field_validator("rotation_executor_agent_id", "rotation_keychain_executor_agent_id")
     @classmethod
     def _blank_is_unset(cls, value: str | None) -> str | None:
         return value.strip() or None if value is not None else None

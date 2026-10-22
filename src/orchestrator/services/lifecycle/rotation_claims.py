@@ -7,6 +7,11 @@ confined both ways at the server: only the configured executor identity may hold
 rotation unit, and that identity may hold a claim on nothing else. With no executor configured,
 every claim on a rotation unit is refused.
 
+The executor runs as two instances (amendment 12): the VM instance, and a Keychain instance on the
+operator machine for credentials that live in its Keychain. A unit whose approved envelope names a
+Keychain adapter belongs to the Keychain instance and every other rotation unit to the VM
+instance, and each identity may claim only its own units.
+
 A rotation unit is never reclaimed to a new owner, because the reclaim route hands the new lease
 token to its SYSTEM caller and a pulling executor never receives it. A lapsed rotation claim is
 released instead (``claims.release_expired_claim``) and claimed again through ``claim_unit``,
@@ -22,6 +27,7 @@ the deliberate exception to the rule that a per-claim rule covers all three leas
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 
 from sqlalchemy import select
@@ -36,6 +42,33 @@ from orchestrator.reach_vocabulary import LIVE_ESTATE
 # The envelope constraint that exempts a rotation unit from the claim-time window. Only the
 # literal `True` exempts; any other value, or none, leaves the unit windowed.
 NON_HOSTED_CONSTRAINT = "touches_no_hosted_service"
+# The envelope constraint naming the executor adapter that runs the unit.
+ADAPTER_CONSTRAINT = "rotation_adapter"
+# Adapters whose units only the Keychain instance may claim: the rotation executor's own adapter
+# names (`rotation_worker.adapters`), and the credentials they rotate live in the operator
+# machine's Keychain, which the VM instance can't reach.
+KEYCHAIN_ADAPTERS = frozenset({"bws-machine-token"})
+
+
+@dataclass(frozen=True)
+class RotationExecutors:
+    """The configured identity of each executor instance; ``None`` is unconfigured."""
+
+    vm: str | None = None
+    keychain: str | None = None
+
+    def owner(self, unit: WorkUnit) -> str | None:
+        """The only identity that may claim this rotation unit."""
+        adapter = normalize_authority(unit.authority).constraints.get(ADAPTER_CONSTRAINT)
+        keychain = isinstance(adapter, str) and adapter in KEYCHAIN_ADAPTERS
+        return self.keychain if keychain else self.vm
+
+    def includes(self, claimant: str) -> bool:
+        return claimant in {self.vm, self.keychain} - {None}
+
+
+# Neither instance configured: every claim on a rotation unit is refused.
+NO_ROTATION_EXECUTORS = RotationExecutors()
 
 
 def is_rotation_unit(unit: WorkUnit, revision: WorkPackageRevision) -> bool:
@@ -56,18 +89,19 @@ def confinement_refusal(
     unit: WorkUnit,
     revision: WorkPackageRevision,
     claimant: str,
-    executor: str | None,
+    executors: RotationExecutors,
 ) -> DomainError | None:
     """Why ``claimant`` may not hold a claim on ``unit``; ``None`` means confinement allows it."""
     if is_rotation_unit(unit, revision):
-        if executor is None or claimant != executor:
+        owner = executors.owner(unit)
+        if owner is None or claimant != owner:
             return DomainError(
                 "rotation_claim_confined",
                 "only the rotation executor may claim a rotation unit",
                 None,
             )
         return None
-    if executor is not None and claimant == executor:
+    if executors.includes(claimant):
         return DomainError(
             "rotation_executor_confined",
             "the rotation executor may claim only rotation units",
