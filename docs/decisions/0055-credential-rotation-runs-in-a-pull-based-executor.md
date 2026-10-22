@@ -1499,10 +1499,10 @@ identity, which decision 7 below accounts for.
 - **Decision 4** gains one sentence: a BWS consumer token may be handled by an executor instance
   on the machine that already holds it, and never by the VM.
 
-## Amendment 13 — A credential the orchestrator holds for another service is a destination (proposed 2026-10-22)
+## Amendment 13 — A credential the orchestrator holds for another service is a destination (2026-10-22)
 
-**Status: proposed, awaiting Devon's decision.** Devon chose this direction on 2026-10-22 ("1",
-answering option 1 of two); nothing in this amendment is in force until he accepts it.
+**Status: accepted by Devon on 2026-10-22** ("amend #13 approved"), after choosing this direction
+("1", answering option 1 of two). It takes effect as it is built.
 
 ### What happened
 
