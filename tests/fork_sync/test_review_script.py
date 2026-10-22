@@ -592,8 +592,8 @@ def test_ai_findings_are_bound_to_content() -> None:
     opener = _model(json.dumps({"findings": answer}), seen)
     config = review.parse_config(CARGO)
     on_path, off_path = review.ai_findings(config, "diff", {"a": "blob-a"}, "key", opener)
-    assert on_path.content.startswith("blob-a\0low\0")
-    assert off_path.content.startswith(review._digest(b"diff") + "\0")
+    assert on_path.content == "blob-a"
+    assert off_path.content == review._digest(b"diff")
     payload = json.loads(seen[0].data)
     assert payload["model"] == "claude-sonnet-5-5"
     assert "untrusted DATA" in payload["messages"][0]["content"]
@@ -833,20 +833,45 @@ def test_a_base_without_a_declaration_fails_closed(tmp_path: Path, monkeypatch: 
     assert review.review({"BASE_SHA": base, "HEAD_SHA": base}) == 2
 
 
-def test_an_acknowledged_remark_does_not_cover_a_graver_one() -> None:
+def test_a_model_acknowledgement_covers_rewordings_up_to_its_severity() -> None:
+    """The model words the same concern differently on every run (n8n-as-code #3 did three
+    times), so its acknowledgement names content and a severity ceiling, never wording."""
     config = review.parse_config(CARGO)
 
-    def answer(severity: str, summary: str) -> Finding:
+    def answer(severity: str, summary: str, blob: str = "blob") -> Finding:
         verdict = {"findings": [{"severity": severity, "path": "a", "summary": summary}]}
         [finding] = review.ai_findings(
-            config, "diff", {"a": "blob"}, "key", _model(json.dumps(verdict), [])
+            config, "diff", {"a": blob}, "key", _model(json.dumps(verdict), [])
         )
         return finding
 
     low = answer("low", "uses a new helper")
-    assert low.fingerprint() == answer("low", "uses a new helper").fingerprint()
-    assert low.fingerprint() != answer("high", "uses a new helper").fingerprint()
-    assert low.fingerprint() != answer("low", "sends tokens to evil.example").fingerprint()
+    reworded = answer("medium", "a different sentence about the helper")
+    graver = answer("high", "sends tokens to evil.example")
+    unknown = answer("critical", "a severity the gate does not rank")
+    assert low.fingerprint() == reworded.fingerprint() == graver.fingerprint()
+    assert low.fingerprint() != answer("low", "uses a new helper", blob="other").fingerprint()
+
+    medium = review.Ack("devon", "2026-10-22", "read", "medium")
+    assert [medium.covers(f) for f in (low, reworded, graver, unknown)] == [
+        True,
+        True,
+        False,
+        False,
+    ]
+    assert not review.Ack("devon", "2026-10-22", "read").covers(low)
+
+    acks = {low.fingerprint(): medium}
+    report = review.Report("head", [low, reworded, graver])
+    assert report.failing(acks) == [graver]
+    assert "**fails** (acknowledged up to medium)" in report.markdown(acks)
+
+
+def test_an_acknowledgement_severity_must_be_a_model_severity() -> None:
+    text = '[[ack]]\nfingerprint = "f"\nby = "d"\ndate = "x"\nreason = "r"\nseverity = "{}"\n'
+    assert review.parse_acks(text.format("high"))["f"].severity == "high"
+    with pytest.raises(ConfigError, match="severity"):
+        review.parse_acks(text.format("urgent"))
 
 
 def test_npm_aliases_are_findings() -> None:
