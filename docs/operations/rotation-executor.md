@@ -614,8 +614,13 @@ key="ORCHESTRATOR_CHANGE_RECORD_TOKEN"`
 
 If distribute stops after writing and before the restart, the orchestrator holds the new value in
 its settings and the old one in its process; change-manager accepts both until retire, so nothing
-breaks. A retry writes nothing new and restarts. To undo, write the keeper's old value (in the
-quarantine secret until retire) to both rows and restart, between dispatched runs.
+breaks. A retry sees the copy not loaded, writes both rows again and restarts. To undo, write the
+keeper's old value (in the quarantine secret until retire) to both rows and restart, between
+dispatched runs.
+
+A unit with a held copy also waits unclaimed while a restart would strand a dispatched run, as
+the pass logs (`restart_would_strand`): distribute runs after host and store, so a refusal there
+would spend an attempt with the rotation half done.
 
 ## change-manager's bearers
 

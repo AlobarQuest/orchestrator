@@ -56,3 +56,26 @@ def test_anyone_but_the_configured_executor_is_refused(client: TestClient) -> No
 
         assert response.status_code == 403, (executor, response.text)
         assert response.json()["error"]["code"] == "role_forbidden"
+
+
+def test_the_executor_s_reader_understands_the_route_s_answer(client: TestClient) -> None:
+    """The route and `held.py` each spell the fields; this holds the two together."""
+    from rotation_worker.coolify import CoolifyClient
+    from rotation_worker.held import HeldSettings
+    from rotation_worker.orchestrator_client import OrchestratorClient
+    from rotation_worker.values import Value
+
+    _configure(client, "worker")
+    answer = client.get(ROUTE, headers=WORKER).json()
+
+    class Orchestrator:
+        def held(self) -> dict[str, dict[str, object]]:
+            return answer
+
+    def no_coolify(application: str) -> CoolifyClient:
+        raise AssertionError("a read writes nothing")
+
+    held = HeldSettings(cast(OrchestratorClient, Orchestrator()), no_coolify, "app")
+    consumer = {"key": "ORCHESTRATOR_CHANGE_RECORD_TOKEN"}
+    assert held.holds(consumer, Value(HELD))
+    assert not held.holds(consumer, Value(HELD + "x"))

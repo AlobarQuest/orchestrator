@@ -271,7 +271,7 @@ are the ones the approved packages use. Left out: the fake adapter the canary
 uses, and the attested change-manager variant, which no package uses.
 """
 decided = "2026-10-21"
-rotation_adapters = ["bitbucket", "change-manager", "change-manager-distributed", "github-pat", "openrouter", "orchestrator", "orchestrator-distributed"]
+rotation_adapters = ["bitbucket", "change-manager", "github-pat", "openrouter", "orchestrator", "orchestrator-distributed"]
 rotation_units = ["confirm", "mint", "retire", "store", "verify"]
 capabilities = { "operational_action" = "allowed" }
 max_attempts = 3
@@ -352,7 +352,7 @@ are the ones the approved packages use. Left out: the fake adapter the canary
 uses, and the attested change-manager variant, which no package uses.
 """
 decided = "2026-10-21"
-rotation_adapters = ["bitbucket", "change-manager", "change-manager-distributed", "github-pat", "openrouter", "orchestrator", "orchestrator-distributed"]
+rotation_adapters = ["bitbucket", "change-manager", "github-pat", "openrouter", "orchestrator", "orchestrator-distributed"]
 rotation_units = ["confirm", "mint", "retire", "store", "verify"]
 capabilities = { "operational_action" = "allowed" }
 max_attempts = 3

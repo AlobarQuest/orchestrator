@@ -13,7 +13,7 @@ import pytest
 import rotation_worker.worker as worker
 from rotation_worker.adapters import ADAPTERS, AdapterContext
 from rotation_worker.checks import Approved
-from rotation_worker.contract import ContractError, Rotation
+from rotation_worker.contract import Actor, ContractError, Plan, Rotation, Step, StepKind
 from rotation_worker.git_mirror import MirrorError, RepoMirror
 from rotation_worker.github_actions import ActionsSecrets, FingerprintReports, RotationApp
 from rotation_worker.held import HeldSettings
@@ -41,6 +41,9 @@ class FakeClient:
         self.unreachable: set[str] = set()
         self.observed_at: list[datetime] = []
         self.loaded: dict[str, dict[str, Any]] = {}
+        self.active: list[dict[str, Any]] = []
+        # Units another lane runs: readable, but never this executor's to work.
+        self.others: dict[str, dict[str, Any]] = {}
 
     def observations(
         self, source_system: str, subject_reference: str, observed_from: datetime
@@ -49,6 +52,9 @@ class FakeClient:
 
     def identities(self) -> dict[str, dict[str, Any]]:
         return self.loaded
+
+    def active_units(self) -> list[dict[str, Any]]:
+        return self.active
 
     def held(self) -> dict[str, dict[str, Any]]:
         if "held" in self.unreachable:
@@ -61,6 +67,8 @@ class FakeClient:
     def unit(self, unit_id: str) -> dict[str, Any]:
         if unit_id in self.unreachable:
             raise OrchestratorError("no answer")
+        if unit_id in self.others:
+            return self.others[unit_id]
         return self.units[unit_id]
 
     def package_intake(self, revision_id: str) -> dict[str, Any]:
@@ -742,3 +750,39 @@ def test_an_orchestrator_that_can_t_say_what_it_holds_is_a_wait(
     h.client.unreachable.add("held")
     assert run_pass(_held_setup(h)) == 0
     assert h.client.calls == []
+
+
+def _distributing(h: Harness) -> None:
+    """The fake adapter with a distribute step closing its mint unit."""
+    mint = h.adapter.plan.unit("mint")
+    step = Step(StepKind.DISTRIBUTE, Actor.MACHINE, "AC-099")
+    segments = tuple(
+        replace(s, steps=(*s.steps, step)) if s is mint else s for s in h.adapter.plan.segments
+    )
+    h.adapter = replace(h.adapter, plan=Plan(segments))
+
+
+def _live_run(h: Harness) -> None:
+    h.client.others["u9"] = {"id": "u9", "authority": {"constraints": {}}}
+    h.client.active = [{"unit_id": "u9", "unit_key": "deps-bump", "unit_state": "executing"}]
+
+
+def test_a_unit_that_distributes_a_held_copy_waits_unclaimed_while_a_run_is_live(
+    h: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _distributing(h)
+    built = _holding(h, monkeypatch)
+    _live_run(h)
+    assert run_pass(_held_setup(h)) == 0
+    assert h.client.calls == []
+    h.client.active = []
+    assert run_pass(_held_setup(h)) == 1
+    assert isinstance(built["held"], HeldSettings)
+
+
+def test_a_unit_that_doesn_t_distribute_isn_t_held_back_by_a_live_run(
+    h: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _holding(h, monkeypatch)
+    _live_run(h)
+    assert run_pass(_held_setup(h)) == 1

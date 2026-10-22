@@ -53,6 +53,7 @@ from rotation_worker.evidence import StepEvidence
 from rotation_worker.git_mirror import MirrorError, RepoMirror
 from rotation_worker.github_actions import ActionsSecrets, FingerprintReports, RotationApp
 from rotation_worker.held import HeldSettings
+from rotation_worker.live_runs import stranded_by_a_restart
 from rotation_worker.orchestrator_client import Lease, OrchestratorClient, OrchestratorError
 from rotation_worker.readers import (
     ConsumerReads,
@@ -140,7 +141,7 @@ def _take(setup: Setup, unit_id: str) -> int:
     except REFUSALS as error:
         _refuse(setup, unit, scrub(str(error)))
         return 0
-    if _adapter_waits(setup, approved, unit_id):
+    if _adapter_waits(setup, approved, unit_id) or _restart_waits(setup, approved, held, unit_id):
         return 0
     # Built before the claim: a provider that can't be built (an admin secret missing from the
     # configuration) is the executor's fault, not the unit's, so no attempt is spent on it.
@@ -242,6 +243,22 @@ def _adapter_waits(setup: Setup, approved: Approved, unit_id: str) -> bool:
     if reason is not None:
         LOG.info("unit_waiting", extra={"unit": unit_id, "reason": reason})
     return reason is not None
+
+
+def _restart_waits(
+    setup: Setup, approved: Approved, held: HeldSettings | None, unit_id: str
+) -> bool:
+    """Whether writing the unit's held copy would restart the orchestrator under a live run.
+
+    Distribute runs after host and store, so a live run is waited out here, unclaimed, rather
+    than refused mid-unit at an attempt's cost. The step still asks again before it writes.
+    """
+    if held is None or not any(s.kind is StepKind.DISTRIBUTE for s in approved.unit.steps):
+        return False
+    stranded = stranded_by_a_restart(setup.client)
+    if stranded:
+        LOG.info("unit_waiting", extra={"unit": unit_id, "restart_would_strand": stranded})
+    return bool(stranded)
 
 
 def _verifies(approved: Approved) -> bool:
