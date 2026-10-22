@@ -38,7 +38,8 @@ REPO_SETTINGS = {
 
 
 EMPTY_ACKS = b"""# Findings a person has read and accepted, by fingerprint (fork-sync review).
-# One [[ack]] per finding: fingerprint, by, date, reason. See onboarding-a-fork.md.
+# One [[ack]] per finding: fingerprint, by, date, reason, and for an `ai` finding severity
+# (the highest accepted: low, medium or high). See onboarding-a-fork.md.
 """
 
 

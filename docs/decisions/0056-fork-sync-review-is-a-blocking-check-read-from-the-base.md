@@ -184,3 +184,29 @@ review never sees a dependency change, which is the supply-chain path the lane e
 - **A release tag may start with `@`.** npm monorepos tag each package by its scoped name
   (`@n8n-as-code/n8n-manager-v0.7.1`), which the tag rule refused. `@` is valid in a ref except
   as `@{`, and `{` stays refused.
+
+## Amendment 3 (2026-10-22): a model finding is acknowledged by content and a severity ceiling
+
+**Status:** Accepted (Devon, 2026-10-22, choosing option 1 of three: content plus a severity
+ceiling, over content alone and over re-acknowledging each run).
+
+A model finding's fingerprint included its wording and severity, so an acknowledgement covered
+one phrasing of one run. n8n-as-code #3 (v2.4.1) showed that this never converges: each of three
+review runs reworded the same concerns (a lockfile downgrade, a docs downloader's path handling),
+every rewording failed the check under a new fingerprint, and each needed a person again.
+
+- **A model finding's fingerprint is its path and the content it is about,** the path's blob, or
+  the whole reviewed diff for a path that did not change. Wording and severity are out of it.
+- **Its acknowledgement names `severity`, the highest it accepts.** A finding on that content at
+  or below the severity is covered; a higher one fails, and the report marks it "acknowledged up
+  to" the accepted severity. An acknowledgement without `severity` covers no model finding. The
+  model's severity is read in lower case, and one outside `low`, `medium` and `high` counts as
+  `high`, so it can still be accepted. A fingerprint may be acknowledged only once, since a second
+  entry would silently replace the first. Other kinds are unchanged.
+- **The cost:** a different concern about the same unchanged content, at or below the accepted
+  severity, is covered without a person reading it. The content is exactly what the person read,
+  and any change to it brings the finding back.
+- Existing model acknowledgements no longer match (their fingerprints included the wording), so
+  each fork's next review raises its model findings once more, to be acknowledged with a
+  severity. Each onboarded fork is re-scaffolded.
+

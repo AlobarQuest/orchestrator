@@ -174,11 +174,29 @@ script has no `notify`, so that job fails on it) and then `fork-sync protect` ag
 A finding a person has read and accepts is acknowledged by its fingerprint, which the report
 prints. The fingerprint covers the finding's kind, its path and the exact content it is about: the
 changed file's blob, a binary's sha256, the lockfile and the package entry, or, for a model
-finding, the path's blob (or the whole reviewed diff for a path that did not change) plus the
-finding's severity and wording. A model finding can therefore return with a new fingerprint when
-the model words it differently on a later run; acknowledge it again after reading it. An acknowledgement therefore covers
-that content and nothing later: if the file changes again, the finding returns with a new
-fingerprint.
+finding, the path's blob (or the whole reviewed diff for a path that did not change). An
+acknowledgement covers that content and nothing later: if the file changes again, the finding
+returns with a new fingerprint.
+
+A model finding's fingerprint leaves out its wording and its severity, because the model words
+the same concern differently on every run. Its acknowledgement must instead name `severity`, the
+highest it accepts (`low`, `medium` or `high`). A rewording at or below that severity stays
+acknowledged, and a concern rated higher fails again; the report marks it "acknowledged up to"
+the accepted severity. An acknowledgement of a model finding without `severity` covers nothing,
+and `severity` is ignored on every other kind. The model's severity is read in lower case, and one
+outside the three counts as `high`. Name the severity you read, not `high` by default: an
+acknowledgement at `high` covers every model concern about that content until it changes. Each
+fingerprint is acknowledged once; a second entry for it fails the review. For a report row
+`ai (medium) | scripts/fetch-docs.cjs | Headings from the remote index feed path.join …`:
+
+```toml
+[[ack]]
+fingerprint = "4922f33d224f0111"
+by = "devon"
+date = 2026-10-22
+severity = "medium"
+reason = "Build-time docs script the fork's build never runs; reported upstream."
+```
 
 1. Add an entry to `.github/fork-sync-acks.toml` on the fork's `main`:
 
