@@ -539,3 +539,7 @@ Placement rule: global CLAUDE.md §7.
   passing. Scheduled work (the weekly audit) lives in its own workflow. The held-sync alert is an
   issue, so the fork needs issues on (`fork-sync protect` sets it). Detail:
   `docs/operations/onboarding-a-fork.md`, "The alert".
+- The sync commit's parents are the release tag and `origin/main` (`upstream-sync.yml`, built
+  with `git commit-tree`). Without `main` as a parent, a file only the fork has (an owned
+  lockfile) conflicts on every release, and GitHub then runs no `pull_request` checks, so no
+  required check ever reports. History: ADR-0056 amendment 2.

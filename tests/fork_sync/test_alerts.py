@@ -512,14 +512,20 @@ def _push_decision() -> str:
 
 
 @pytest.mark.parametrize(
-    ("published", "rebuilt", "pushed"),
-    [(None, "tag", True), ("tag", "tag", False), ("tag", "tag+acks", True)],
+    ("published", "rebuilt", "main_moved", "pushed"),
+    [
+        (None, "tag", False, True),
+        ("tag", "tag", False, False),
+        ("tag", "tag+acks", False, True),
+        ("tag", "tag", True, True),
+    ],
 )
 def test_the_sync_pushes_only_a_changed_tree(
-    tmp_path: Path, published: str | None, rebuilt: str, pushed: bool
+    tmp_path: Path, published: str | None, rebuilt: str, main_moved: bool, pushed: bool
 ) -> None:
     """Run the rendered step against real git: no branch yet, the same tree on a new commit (a
-    daily rebuild of the same tag), and a changed tree (main's .github moved)."""
+    daily rebuild of the same tag), a changed tree (main's .github moved), and the same tree after
+    main moved, which the branch must take as a parent again."""
     remote, work = tmp_path / "remote.git", tmp_path / "work"
     _git(tmp_path, "init", "-q", "--bare", str(remote))
     work.mkdir()
@@ -528,7 +534,11 @@ def test_the_sync_pushes_only_a_changed_tree(
     trees = {"tag": {"src": "upstream\n"}, "tag+acks": {"src": "upstream\n", "acks": "x\n"}}
     if published is not None:
         _commit(work, trees[published], "published")
-        _git(work, "push", "-q", "origin", "HEAD:upstream-sync")
+        # The published branch already holds main, as every sync commit does.
+        _git(work, "push", "-q", "origin", "HEAD:upstream-sync", "HEAD:main")
+        if main_moved:
+            _git(work, "commit", "-q", "--allow-empty", "-m", "main moved")
+            _git(work, "push", "-q", "origin", "HEAD:main")
         _git(work, "fetch", "-q", "origin")
         _git(work, "rm", "-q", "-r", ".")
     _git(work, "checkout", "-q", "-B", "upstream-sync")
