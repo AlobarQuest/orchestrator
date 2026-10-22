@@ -77,8 +77,11 @@ commands that build and test without network side effects. For `npm`, CI always 
   greater (compared as numbers; an older or equal tag is never synced to), it
   rebuilds the `upstream-sync` branch from the tag, restores the fork's whole `.github/`, commits a
   resolved lockfile if the declaration sets `generate_lockfile`, and opens or edits one rolling
-  pull request. It pushes only when the rebuilt tree differs from the
-  branch's, so a held sync isn't re-reviewed and re-alerted every day. Submodule gitlinks stay as
+  pull request. The sync commit has the tag as its first parent and `main` as its second, so the
+  pull request always merges cleanly: a file only the fork has, such as its lockfile, would
+  otherwise conflict, and GitHub runs no `pull_request` checks on a conflicted pull request. It
+  pushes only when the rebuilt tree differs from the branch's or `main` has moved, so a held sync
+  isn't re-reviewed and re-alerted every day. Submodule gitlinks stay as
   upstream has them; nothing fetches their content. It does not review.
 - **`ci.yml`** runs on every pull request and on pushes to `main`, and on nothing else: a manual
   run on a pull request's branch would report the required jobs as skipped, which branch

@@ -528,7 +528,8 @@ def test_the_sync_pushes_only_a_changed_tree(
     trees = {"tag": {"src": "upstream\n"}, "tag+acks": {"src": "upstream\n", "acks": "x\n"}}
     if published is not None:
         _commit(work, trees[published], "published")
-        _git(work, "push", "-q", "origin", "HEAD:upstream-sync")
+        # The published branch already holds main, as every sync commit does.
+        _git(work, "push", "-q", "origin", "HEAD:upstream-sync", "HEAD:main")
         _git(work, "fetch", "-q", "origin")
         _git(work, "rm", "-q", "-r", ".")
     _git(work, "checkout", "-q", "-B", "upstream-sync")

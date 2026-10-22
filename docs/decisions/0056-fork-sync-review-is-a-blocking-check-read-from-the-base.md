@@ -168,6 +168,14 @@ review never sees a dependency change, which is the supply-chain path the lane e
 - **Every fork's sync workflow gains a Node setup and the `lock` step,** which does nothing
   unless the declaration sets `generate_lockfile`. `fork-sync check` reports the older workflow
   as drift, so each onboarded fork is re-scaffolded to the new template.
+- **The sync commit has `main` as its second parent.** The first sync after this amendment,
+  n8n-as-code #3 (v2.4.1), conflicted on `package-lock.json`. The branch was built on upstream's
+  tag, whose history never held the lockfile that the bootstrap committed to `main`, so both sides
+  added it with different content. GitHub runs no `pull_request` workflow on a conflicted pull
+  request, so neither required check reported. With `main` as a parent, `main` is an ancestor of
+  the branch and the merge is clean for every release. The tree is unchanged: the release, the
+  fork's `.github/`, and the lockfile. A rebuild also pushes when `main` has moved and the tree
+  hasn't, so the branch keeps `main` as an ancestor.
 - **A release tag may start with `@`.** npm monorepos tag each package by its scoped name
   (`@n8n-as-code/n8n-manager-v0.7.1`), which the tag rule refused. `@` is valid in a ref except
   as `@{`, and `{` stays refused.
