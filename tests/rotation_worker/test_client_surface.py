@@ -31,6 +31,7 @@ BEARER = "throwaway-bearer-value-for-tests"
 ALLOWED = [
     ("GET", "/api/v1/status-ledger"),
     ("GET", "/api/v1/status-ledger?state=ready"),
+    ("GET", "/api/v1/held-credentials"),
     ("GET", f"/api/v1/work-units/{UNIT}"),
     ("GET", f"/api/v1/work-units/{UNIT}/history"),
     ("GET", f"/api/v1/work-units/{UNIT}/evidence"),

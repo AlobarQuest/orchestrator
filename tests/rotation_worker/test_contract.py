@@ -610,14 +610,14 @@ def test_every_consumer_kind_has_one_way_to_be_verified() -> None:
     # On the VM, every kind has exactly one way. On the Keychain instance (amendment 12) a
     # Keychain item is read back, which `unverified` asks before attestation, and a BWS secret
     # has none, so a unit naming one is refused there.
-    from rotation_worker.contract import ACTIONS_KIND, ATTESTED_KINDS
+    from rotation_worker.contract import ACTIONS_KIND, ATTESTED_KINDS, HELD_KIND
     from rotation_worker.destinations import HOSTED_KINDS, IDENTITY_FIELDS
     from rotation_worker.secret_store import KeychainStore
 
     for store, unverifiable in ((MemoryStore(), set()), (KeychainStore(), {"bws-secret"})):
         read_back = {store.read_back_kind}
         attested = ATTESTED_KINDS - read_back
-        classes = [{"provider"}, read_back, attested, HOSTED_KINDS, {ACTIONS_KIND}]
+        classes = [{"provider"}, read_back, attested, HOSTED_KINDS, {ACTIONS_KIND}, {HELD_KIND}]
         for kind in IDENTITY_FIELDS:
             ways = sum(kind in group for group in classes)
             assert ways == (0 if kind in unverifiable else 1), (store.read_back_kind, kind)

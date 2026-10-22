@@ -33,14 +33,27 @@ from pathlib import Path
 from typing import Any, Final, Protocol, runtime_checkable
 
 from rotation_worker.adapters import ADAPTERS, AdapterContext
+from rotation_worker.adapters.orchestrator_bearer import NAME as ORCHESTRATOR_PROVIDER
 from rotation_worker.checks import WRITING_STEPS, Approved, check_unit
-from rotation_worker.contract import ContractError, HumanAct, Provider, Step, StepKind, UnitRun
+from rotation_worker.config import ConfigError
+from rotation_worker.contract import (
+    HELD_KIND,
+    ContractError,
+    HumanAct,
+    Provider,
+    Step,
+    StepKind,
+    UnitRun,
+)
+from rotation_worker.coolify import CoolifyClient
 from rotation_worker.destinations import DestinationError, parse
 from rotation_worker.envelope import ADAPTER_KEY, is_rotation_unit
 from rotation_worker.envelope import constraints as envelope_constraints
 from rotation_worker.evidence import StepEvidence
 from rotation_worker.git_mirror import MirrorError, RepoMirror
 from rotation_worker.github_actions import ActionsSecrets, FingerprintReports, RotationApp
+from rotation_worker.held import HeldSettings
+from rotation_worker.live_runs import stranded_by_a_restart
 from rotation_worker.orchestrator_client import Lease, OrchestratorClient, OrchestratorError
 from rotation_worker.readers import (
     ConsumerReads,
@@ -111,6 +124,7 @@ def _take(setup: Setup, unit_id: str) -> int:
     reads: ConsumerReads | None = None
     try:
         approved = check_unit(unit, intake, setup.mirror, setup.work_project_id, setup.store)
+        held = _held(setup, approved)
         if approved.reads and _verifies(approved):
             reads = _consumer_reads(setup, approved)
             waiting = reads.pending(setup.store.revised(approved.rotation.keeper_id))
@@ -127,10 +141,7 @@ def _take(setup: Setup, unit_id: str) -> int:
     except REFUSALS as error:
         _refuse(setup, unit, scrub(str(error)))
         return 0
-    wait = approved.adapter.wait
-    reason = wait(approved.unit, setup.client.history(unit_id), _now()) if wait else None
-    if reason is not None:
-        LOG.info("unit_waiting", extra={"unit": str(unit["id"]), "reason": reason})
+    if _adapter_waits(setup, approved, unit_id) or _restart_waits(setup, approved, held, unit_id):
         return 0
     # Built before the claim: a provider that can't be built (an admin secret missing from the
     # configuration) is the executor's fault, not the unit's, so no attempt is spent on it.
@@ -146,7 +157,7 @@ def _take(setup: Setup, unit_id: str) -> int:
         if busy:
             LOG.info("unit_waiting", extra={"unit": str(unit["id"]), "readers_mid_run": busy})
             return 0
-    return 1 if _work(setup, unit, approved, provider, reads) else 0
+    return 1 if _work(setup, unit, approved, provider, reads, held) else 0
 
 
 def _ours(setup: Setup, unit: Mapping[str, Any]) -> bool:
@@ -195,6 +206,59 @@ def _provider(setup: Setup, approved: Approved) -> Provider:
             credential=approved.registry.credential,
         )
     )
+
+
+def _held_destinations(approved: Approved) -> list[dict[str, Any]]:
+    return [c for c in map(parse, approved.rotation.destinations) if c["kind"] == HELD_KIND]
+
+
+def _held(setup: Setup, approved: Approved) -> HeldSettings | None:
+    """The writer for the unit's held copies, checked against each one; `None` when it has none.
+
+    It reaches the orchestrator's application through production Coolify with the orchestrator
+    adapter's token. A configuration without those is the executor's fault, not the unit's, so it
+    raises `ConfigError`, which no attempt is spent on.
+    """
+    destinations = _held_destinations(approved)
+    if not destinations:
+        return None
+    token_id = setup.admin_secrets.get(ORCHESTRATOR_PROVIDER)
+    coolify_url, application, store = setup.coolify_url, setup.orchestrator_application, setup.store
+    if token_id is None or not coolify_url or application is None:
+        raise ConfigError("a held copy is approved and this executor can't write one")
+    held = HeldSettings(
+        setup.client,
+        lambda app: CoolifyClient(coolify_url, store.read(token_id), app),
+        application,
+    )
+    for consumer in destinations:
+        held.check(consumer)
+    return held
+
+
+def _adapter_waits(setup: Setup, approved: Approved, unit_id: str) -> bool:
+    """Whether the adapter says the unit can't be claimed yet; the reason is logged."""
+    wait = approved.adapter.wait
+    reason = wait(approved.unit, setup.client.history(unit_id), _now()) if wait else None
+    if reason is not None:
+        LOG.info("unit_waiting", extra={"unit": unit_id, "reason": reason})
+    return reason is not None
+
+
+def _restart_waits(
+    setup: Setup, approved: Approved, held: HeldSettings | None, unit_id: str
+) -> bool:
+    """Whether writing the unit's held copy would restart the orchestrator under a live run.
+
+    Distribute runs after host and store, so a live run is waited out here, unclaimed, rather
+    than refused mid-unit at an attempt's cost. The step still asks again before it writes.
+    """
+    if held is None or not any(s.kind is StepKind.DISTRIBUTE for s in approved.unit.steps):
+        return False
+    stranded = stranded_by_a_restart(setup.client)
+    if stranded:
+        LOG.info("unit_waiting", extra={"unit": unit_id, "restart_would_strand": stranded})
+    return bool(stranded)
 
 
 def _verifies(approved: Approved) -> bool:
@@ -273,6 +337,7 @@ def _work(
     approved: Approved,
     provider: Provider,
     reads: ConsumerReads | None,
+    held: HeldSettings | None = None,
 ) -> bool:
     unit_id = str(unit["id"])
     lease, version = _claim(setup, unit)
@@ -293,6 +358,7 @@ def _work(
             scheduled=reads,
             actions_secrets=ActionsSecrets(setup.github_app) if setup.github_app else None,
             person_revokes_next=_person_revokes_next(approved),
+            held=held,
         )
         run.run(approved.unit)
     except Exception as error:

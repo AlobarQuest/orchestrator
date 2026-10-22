@@ -13,9 +13,10 @@ import pytest
 import rotation_worker.worker as worker
 from rotation_worker.adapters import ADAPTERS, AdapterContext
 from rotation_worker.checks import Approved
-from rotation_worker.contract import ContractError, Rotation
+from rotation_worker.contract import Actor, ContractError, Plan, Rotation, Step, StepKind
 from rotation_worker.git_mirror import MirrorError, RepoMirror
 from rotation_worker.github_actions import ActionsSecrets, FingerprintReports, RotationApp
+from rotation_worker.held import HeldSettings
 from rotation_worker.orchestrator_client import Lease, OrchestratorClient, OrchestratorError
 from rotation_worker.readers import ObservationRead, Read, ReadError, ReadUnavailable
 from rotation_worker.registry import RegistryEntry
@@ -40,6 +41,9 @@ class FakeClient:
         self.unreachable: set[str] = set()
         self.observed_at: list[datetime] = []
         self.loaded: dict[str, dict[str, Any]] = {}
+        self.active: list[dict[str, Any]] = []
+        # Units another lane runs: readable, but never this executor's to work.
+        self.others: dict[str, dict[str, Any]] = {}
 
     def observations(
         self, source_system: str, subject_reference: str, observed_from: datetime
@@ -49,12 +53,22 @@ class FakeClient:
     def identities(self) -> dict[str, dict[str, Any]]:
         return self.loaded
 
+    def active_units(self) -> list[dict[str, Any]]:
+        return self.active
+
+    def held(self) -> dict[str, dict[str, Any]]:
+        if "held" in self.unreachable:
+            raise OrchestratorError("no answer")
+        return {"ORCHESTRATOR_CHANGE_RECORD_TOKEN": {"sha256_prefix": "0" * 16, "length": 43}}
+
     def ready_units(self) -> list[str]:
         return list(self.units)
 
     def unit(self, unit_id: str) -> dict[str, Any]:
         if unit_id in self.unreachable:
             raise OrchestratorError("no answer")
+        if unit_id in self.others:
+            return self.others[unit_id]
         return self.units[unit_id]
 
     def package_intake(self, revision_id: str) -> dict[str, Any]:
@@ -631,3 +645,144 @@ def test_the_unit_before_a_person_s_revoke_proves_the_old_value_live(
         h.add(unit_id, name)
     assert run_pass(h.setup()) == 3
     assert runs == [False, True, False]
+
+
+# ---- held copies (ADR-0055 amendment 13) -------------------------------------------------------
+
+HELD_APP = "eqj5l7k705fhi12x9i74fqf0"
+
+
+def _held_destination(**changes: str) -> str:
+    fields = {
+        "instance": "prod",
+        "resource_type": "application",
+        "uuid": HELD_APP,
+        "key": "ORCHESTRATOR_CHANGE_RECORD_TOKEN",
+        **changes,
+    }
+    return "coolify-env-held " + " ".join(f'{k}="{v}"' for k, v in fields.items())
+
+
+def _holding(h: Harness, monkeypatch: pytest.MonkeyPatch, **changes: str) -> dict[str, Any]:
+    """A rotation that also writes the orchestrator's held copy; returns what `UnitRun` got."""
+    h.rotation = replace(
+        h.rotation, destinations=(*h.rotation.destinations, _held_destination(**changes))
+    )
+    built: dict[str, Any] = {}
+
+    class Run:
+        def __init__(self, **arguments: Any) -> None:
+            built.update(arguments)
+
+        def run(self, unit: Any) -> None:
+            pass
+
+    monkeypatch.setattr(worker, "UnitRun", Run)
+    h.add("u1", "mint")
+    return built
+
+
+def _held_setup(h: Harness, **changes: Any) -> Setup:
+    configured: dict[str, Any] = {
+        "admin_secrets": {"orchestrator": h.store.put(WORK, "coolify", Value("coolify-token"))},
+        "coolify_url": "http://100.112.188.96:8000",
+        "orchestrator_application": HELD_APP,
+    }
+    return replace(h.setup(), **{**configured, **changes})
+
+
+def test_a_unit_with_no_held_copy_gets_no_writer(
+    h: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    built: dict[str, Any] = {}
+
+    class Run:
+        def __init__(self, **arguments: Any) -> None:
+            built.update(arguments)
+
+        def run(self, unit: Any) -> None:
+            pass
+
+    monkeypatch.setattr(worker, "UnitRun", Run)
+    h.add("u1", "mint")
+    assert run_pass(h.setup()) == 1
+    assert built["held"] is None
+
+
+def test_a_unit_with_a_held_copy_gets_the_writer(
+    h: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    built = _holding(h, monkeypatch)
+    assert run_pass(_held_setup(h)) == 1
+    assert isinstance(built["held"], HeldSettings)
+
+
+@pytest.mark.parametrize(
+    "missing",
+    [{"admin_secrets": {}}, {"coolify_url": None}, {"orchestrator_application": None}],
+)
+def test_an_executor_that_can_t_write_a_held_copy_leaves_the_unit_unclaimed(
+    h: Harness, monkeypatch: pytest.MonkeyPatch, missing: dict[str, Any]
+) -> None:
+    _holding(h, monkeypatch)
+    assert run_pass(_held_setup(h, **missing)) == 0
+    # The executor's configuration is at fault, not the unit: no claim, so no attempt spent.
+    assert h.client.calls == []
+
+
+@pytest.mark.parametrize(
+    "change",
+    [{"uuid": "re45tafypao3nly3qa9a79dp"}, {"key": "ORCHESTRATOR_NOT_REPORTED"}],
+)
+def test_a_held_copy_the_executor_couldn_t_confirm_is_refused_before_any_step(
+    h: Harness, monkeypatch: pytest.MonkeyPatch, change: dict[str, str]
+) -> None:
+    built = _holding(h, monkeypatch, **change)
+    assert run_pass(_held_setup(h)) == 0
+    assert [call for call, _ in h.client.calls] == ["claim", "fail"]
+    assert built == {}
+
+
+def test_an_orchestrator_that_can_t_say_what_it_holds_is_a_wait(
+    h: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _holding(h, monkeypatch)
+    h.client.unreachable.add("held")
+    assert run_pass(_held_setup(h)) == 0
+    assert h.client.calls == []
+
+
+def _distributing(h: Harness) -> None:
+    """The fake adapter with a distribute step closing its mint unit."""
+    mint = h.adapter.plan.unit("mint")
+    step = Step(StepKind.DISTRIBUTE, Actor.MACHINE, "AC-099")
+    segments = tuple(
+        replace(s, steps=(*s.steps, step)) if s is mint else s for s in h.adapter.plan.segments
+    )
+    h.adapter = replace(h.adapter, plan=Plan(segments))
+
+
+def _live_run(h: Harness) -> None:
+    h.client.others["u9"] = {"id": "u9", "authority": {"constraints": {}}}
+    h.client.active = [{"unit_id": "u9", "unit_key": "deps-bump", "unit_state": "executing"}]
+
+
+def test_a_unit_that_distributes_a_held_copy_waits_unclaimed_while_a_run_is_live(
+    h: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _distributing(h)
+    built = _holding(h, monkeypatch)
+    _live_run(h)
+    assert run_pass(_held_setup(h)) == 0
+    assert h.client.calls == []
+    h.client.active = []
+    assert run_pass(_held_setup(h)) == 1
+    assert isinstance(built["held"], HeldSettings)
+
+
+def test_a_unit_that_doesn_t_distribute_isn_t_held_back_by_a_live_run(
+    h: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _holding(h, monkeypatch)
+    _live_run(h)
+    assert run_pass(_held_setup(h)) == 1

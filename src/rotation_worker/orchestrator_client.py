@@ -33,6 +33,7 @@ TIMEOUT_SECONDS: Final = 30.0
 UUID_SHAPE: Final = r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}"
 LEDGER: Final = "/api/v1/status-ledger"
 IDENTITIES: Final = "/api/v1/m2m-identities"
+HELD: Final = "/api/v1/held-credentials"
 OBSERVATIONS: Final = "/api/v1/observations"
 _UNIT: Final = re.compile(rf"^/api/v1/work-units/{UUID_SHAPE}$")
 _UNIT_RECORDS: Final = re.compile(rf"^/api/v1/work-units/{UUID_SHAPE}/(history|evidence)$")
@@ -52,7 +53,7 @@ class OrchestratorError(RuntimeError):
 def permits(method: str, path: str) -> bool:
     bare = path.split("?", 1)[0]
     if method == "GET":
-        return bare in (LEDGER, IDENTITIES, OBSERVATIONS) or any(
+        return bare in (LEDGER, IDENTITIES, HELD, OBSERVATIONS) or any(
             p.match(bare) for p in (_UNIT, _UNIT_RECORDS, _INTAKE)
         )
     return method == "POST" and any(p.match(bare) for p in (_LEASE, _COMMAND))
@@ -104,6 +105,11 @@ class OrchestratorClient:
     def identities(self) -> dict[str, dict[str, Any]]:
         """The machine identities the orchestrator loaded (ADR-0055 amendment 9)."""
         return self._send("GET", IDENTITIES)
+
+    def held(self) -> dict[str, dict[str, Any]]:
+        """The fingerprint of each credential the orchestrator loaded to call another service
+        (ADR-0055 amendment 13), by the variable that holds it."""
+        return self._send("GET", HELD)
 
     def observations(
         self, source_system: str, subject_reference: str, observed_from: datetime

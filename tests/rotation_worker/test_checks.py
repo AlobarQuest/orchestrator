@@ -12,7 +12,7 @@ import yaml
 
 from rotation_worker.canonical import CanonicalError, package_hash
 from rotation_worker.checks import check_unit
-from rotation_worker.contract import ContractError
+from rotation_worker.contract import ContractError, StepKind, UnitPlan
 from rotation_worker.envelope import is_rotation_unit
 from rotation_worker.git_mirror import RepoMirror
 from rotation_worker.readers import CheckRead
@@ -469,3 +469,46 @@ def test_false_declares_the_ordinary_overlap(world: World) -> None:
     for name in ("mint", "retire"):
         unit = _with_constraints(retire, rotation_unit=name, host_without_overlap=False)
         assert world.check(unit, intake).host_without_overlap is False
+
+
+# ---- held copies (ADR-0055 amendment 13) -------------------------------------------------------
+
+HELD = (
+    'coolify-env-held instance="prod" resource_type="application" '
+    'uuid="eqj5l7k705fhi12x9i74fqf0" key="ORCHESTRATOR_CHANGE_RECORD_TOKEN"'
+)
+
+
+def test_a_held_copy_needs_an_adapter_that_distributes() -> None:
+    from rotation_worker.adapters import change_manager
+    from rotation_worker.checks import _check_destination_fit
+
+    plan = change_manager.PLAN
+    with pytest.raises(ContractError, match="writes no held copy"):
+        _check_destination_fit([HELD], plan, plan.unit("mint"), marked_non_hosted=False)
+    distributed = change_manager.DISTRIBUTED_PLAN
+    _check_destination_fit([HELD], distributed, distributed.unit("mint"), marked_non_hosted=False)
+
+
+def test_a_unit_that_writes_a_held_copy_may_not_be_marked_non_hosted() -> None:
+    from rotation_worker.adapters import bws_machine_token
+    from rotation_worker.checks import _check_destination_fit
+
+    plan = bws_machine_token.PLAN
+    units = [segment for segment in plan.segments if isinstance(segment, UnitPlan)]
+    distributing = [u for u in units if StepKind.DISTRIBUTE in {s.kind for s in u.steps}]
+    assert distributing and len(distributing) < len(units)
+    for unit in units:
+        if unit in distributing:
+            with pytest.raises(ContractError, match="non-hosted but restarts an application"):
+                _check_destination_fit([HELD], plan, unit, marked_non_hosted=True)
+        else:
+            _check_destination_fit([HELD], plan, unit, marked_non_hosted=True)
+
+
+def test_a_person_s_revoke_counts_a_held_copy_as_machine_verified() -> None:
+    from rotation_worker.adapters import bitbucket
+    from rotation_worker.checks import _check_human_retire_verifiable
+
+    keeper = 'bws-secret uuid="00000000-0000-0000-0000-000000000000"'
+    _check_human_retire_verifiable([keeper, HELD], bitbucket.PLAN, {}, MemoryStore())
