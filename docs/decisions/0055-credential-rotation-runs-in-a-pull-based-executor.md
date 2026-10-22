@@ -1565,4 +1565,3 @@ twelve credentials and the canary.
 
 So the orchestrator is the only application that needs decision 3's report today, and the
 destination kind stays general so the next one is a registry entry.
-- **Which units carry distribute** for the change-manager adapter, whose plan has none today.
