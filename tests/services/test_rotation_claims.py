@@ -32,6 +32,7 @@ from orchestrator.services.lifecycle.claims import (
 from orchestrator.services.lifecycle.readiness import evaluate_readiness
 from orchestrator.services.lifecycle.rotation_claims import (
     NON_HOSTED_CONSTRAINT,
+    RotationExecutors,
     claim_window_refusal,
     is_rotation_unit,
 )
@@ -40,6 +41,10 @@ from tests.services.test_reclaim import authorize_readiness, expire
 
 EXECUTOR = "rotation-executor"
 EXECUTOR_ACTOR = ActorContext(EXECUTOR, ActorRole.WORKER)
+KEYCHAIN = "rotation-executor-keychain"
+KEYCHAIN_ACTOR = ActorContext(KEYCHAIN, ActorRole.WORKER)
+EXECUTORS = RotationExecutors(EXECUTOR, KEYCHAIN)
+KEYCHAIN_UNIT = {"rotation_adapter": "bws-machine-token", NON_HOSTED_CONSTRAINT: True}
 OTHER = ActorContext("worker-1", ActorRole.WORKER)
 SYSTEM = ActorContext("system", ActorRole.SYSTEM)
 NOW = datetime(2026, 10, 9, tzinfo=UTC)
@@ -156,9 +161,14 @@ def window_open(monkeypatch: pytest.MonkeyPatch) -> _Policy:
 
 
 def _claim(
-    session: Session, unit: WorkUnit, actor: ActorContext, key: str, executor: str | None = EXECUTOR
+    session: Session,
+    unit: WorkUnit,
+    actor: ActorContext,
+    key: str,
+    executors: RotationExecutors | None = None,
 ) -> LeaseGrant | DomainError:
-    return claim_unit(session, unit.id, actor, key, rotation_executor=executor)
+    chosen = EXECUTORS if executors is None else executors
+    return claim_unit(session, unit.id, actor, key, rotation_executors=chosen)
 
 
 def _untouched(session: Session, unit: WorkUnit) -> None:
@@ -233,7 +243,9 @@ def test_with_no_executor_configured_every_rotation_claim_is_refused(
     unit = seed_unit(migrated_session, "confine-unset")
 
     for actor in (OTHER, EXECUTOR_ACTOR):
-        refused = _claim(migrated_session, unit, actor, f"confine-unset-{actor.actor_id}", None)
+        refused = _claim(
+            migrated_session, unit, actor, f"confine-unset-{actor.actor_id}", RotationExecutors()
+        )
         assert isinstance(refused, DomainError) and refused.code == "rotation_claim_confined"
     _untouched(migrated_session, unit)
 
@@ -281,6 +293,67 @@ def test_other_workers_claim_other_work_as_before(
 
     assert isinstance(grant, LeaseGrant), grant
     assert window_open.asked == []
+
+
+# Amendment 12: each instance claims only its own rotation units, and neither claims other work.
+_UNIT_KINDS = {
+    "keychain": {"constraints": KEYCHAIN_UNIT},
+    "vm": {"constraints": {"rotation_adapter": "openrouter"}},
+    "vm_no_adapter": {},
+    "other_work": {"capability": "repo.edit"},
+}
+
+
+@pytest.mark.parametrize(
+    ("claimant", "kind", "refusal"),
+    [
+        pytest.param(KEYCHAIN_ACTOR, "keychain", None, id="keychain_claims_its_unit"),
+        pytest.param(KEYCHAIN_ACTOR, "vm", "rotation_claim_confined", id="keychain_vm_unit"),
+        pytest.param(
+            KEYCHAIN_ACTOR, "vm_no_adapter", "rotation_claim_confined", id="keychain_no_adapter"
+        ),
+        pytest.param(
+            KEYCHAIN_ACTOR, "other_work", "rotation_executor_confined", id="keychain_other"
+        ),
+        pytest.param(EXECUTOR_ACTOR, "keychain", "rotation_claim_confined", id="vm_keychain_unit"),
+        pytest.param(EXECUTOR_ACTOR, "vm", None, id="vm_claims_its_unit"),
+        pytest.param(OTHER, "keychain", "rotation_claim_confined", id="other_keychain_unit"),
+    ],
+)
+def test_each_executor_instance_claims_only_its_own_units(
+    migrated_session: Session,
+    window_open: _Policy,
+    claimant: ActorContext,
+    kind: str,
+    refusal: str | None,
+) -> None:
+    key = f"instances-{uuid.uuid4().hex[:8]}"
+    unit = seed_unit(migrated_session, key, **_UNIT_KINDS[kind])
+
+    answer = _claim(migrated_session, unit, claimant, f"{key}-1")
+
+    if refusal is None:
+        assert isinstance(answer, LeaseGrant), answer
+    else:
+        assert isinstance(answer, DomainError) and answer.code == refusal
+        _untouched(migrated_session, unit)
+
+
+def test_with_no_keychain_instance_configured_its_units_are_refused_to_everyone(
+    migrated_session: Session, window_open: _Policy
+) -> None:
+    unit = seed_unit(migrated_session, "keychain-unset", constraints=KEYCHAIN_UNIT)
+
+    for actor in (EXECUTOR_ACTOR, KEYCHAIN_ACTOR, OTHER):
+        refused = _claim(
+            migrated_session,
+            unit,
+            actor,
+            f"keychain-unset-{actor.actor_id}",
+            RotationExecutors(EXECUTOR),
+        )
+        assert isinstance(refused, DomainError) and refused.code == "rotation_claim_confined"
+    _untouched(migrated_session, unit)
 
 
 def test_confinement_refuses_before_the_budget_halt_writes(
@@ -563,7 +636,7 @@ def test_reclaim_refuses_a_rotation_unit_and_releases_nothing(
         SYSTEM,
         EXECUTOR_ACTOR,
         "reclaim-rotation-1",
-        rotation_executor=EXECUTOR,
+        rotation_executors=EXECUTORS,
     )
 
     assert isinstance(refused, DomainError) and refused.code == "rotation_reclaim_refused"
@@ -583,12 +656,31 @@ def test_reclaim_refuses_to_grant_other_work_to_the_executor(
         SYSTEM,
         EXECUTOR_ACTOR,
         "reclaim-to-executor-1",
-        rotation_executor=EXECUTOR,
+        rotation_executors=EXECUTORS,
     )
 
     assert isinstance(refused, DomainError) and refused.code == "rotation_executor_confined"
     assert _claim_row(migrated_session, grant.claim_id).released_at is None
     assert unit.state == WorkUnitState.CLAIMED
+
+
+def test_reclaim_refuses_to_grant_other_work_to_the_keychain_instance(
+    migrated_session: Session, window_open: _Policy
+) -> None:
+    unit = seed_unit(migrated_session, "reclaim-to-keychain", capability="repo.edit")
+    grant = _lapsed(migrated_session, unit, OTHER, "reclaim-to-keychain")
+
+    refused = reclaim_expired_claim(
+        migrated_session,
+        unit.id,
+        SYSTEM,
+        KEYCHAIN_ACTOR,
+        "reclaim-to-keychain-1",
+        rotation_executors=EXECUTORS,
+    )
+
+    assert isinstance(refused, DomainError) and refused.code == "rotation_executor_confined"
+    assert _claim_row(migrated_session, grant.claim_id).released_at is None
 
 
 def test_reclaim_of_other_work_to_another_worker_is_unchanged(
@@ -603,7 +695,7 @@ def test_reclaim_of_other_work_to_another_worker_is_unchanged(
         SYSTEM,
         ActorContext("worker-2", ActorRole.WORKER),
         "reclaim-control-1",
-        rotation_executor=EXECUTOR,
+        rotation_executors=EXECUTORS,
     )
 
     assert isinstance(grant, LeaseGrant), grant

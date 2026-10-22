@@ -136,7 +136,14 @@ def load_auth_config(settings: Settings | None = None) -> AuthConfig | None:
             role is ActorRole.HUMAN for role in roles.values()
         ):
             raise RuntimeError("invalid runtime authentication configuration")
-        _require_rotation_executor(registry, credentials, settings.rotation_executor_agent_id)
+        _require_rotation_executors(
+            registry,
+            credentials,
+            {
+                ROTATION_EXECUTOR_PROFILE: settings.rotation_executor_agent_id,
+                ROTATION_KEYCHAIN_EXECUTOR_PROFILE: settings.rotation_keychain_executor_agent_id,
+            },
+        )
         marker = _required_secret(settings.proxy_marker)
         csrf_secret = _required_secret(settings.csrf_secret).encode()
         return AuthConfig(
@@ -218,27 +225,31 @@ def _m2m_credentials(registry: RegistryAdapter, document: str | None) -> dict[st
     return credentials
 
 
-# The authority profile security-standards gives the credential-rotation executor (ADR-0055).
+# The authority profiles security-standards gives the credential-rotation executor's two
+# instances: the VM (ADR-0055) and the Keychain instance on the operator machine (amendment 12).
 ROTATION_EXECUTOR_PROFILE = "rotation-executor-v1"
+ROTATION_KEYCHAIN_EXECUTOR_PROFILE = "rotation-executor-keychain-v1"
 
 
-def _require_rotation_executor(
-    registry: RegistryAdapter, credentials: dict[str, M2MCredential], configured: str | None
+def _require_rotation_executors(
+    registry: RegistryAdapter,
+    credentials: dict[str, M2MCredential],
+    configured: dict[str, str | None],
 ) -> None:
-    """Refuse to boot unless the executor setting and the credentials agree (ADR-0055 decision 1).
+    """Refuse to boot unless the executor settings and the credentials agree (ADR-0055 decision 1).
 
-    A configured executor must resolve to a machine identity holding the executor's profile. And a
-    credential whose identity holds that profile must be the configured executor: otherwise the
-    executor would authenticate while claim confinement, keyed on the setting, did not know it,
-    and it could claim any unit that is not a rotation unit.
+    ``configured`` maps each executor profile to its setting. A configured executor must resolve
+    to a machine identity holding its own profile, so one identity can't be both instances. And a
+    credential whose identity holds an executor profile must be that profile's configured
+    executor: otherwise the executor would authenticate while claim confinement, keyed on the
+    settings, did not know it, and it could claim any unit that is not a rotation unit.
     """
-    if configured is not None:
-        actor = registry.resolve(configured)
-        if actor.authority_profile != ROTATION_EXECUTOR_PROFILE:
+    for profile, agent_id in configured.items():
+        if agent_id is not None and registry.resolve(agent_id).authority_profile != profile:
             raise RuntimeError("invalid runtime authentication configuration")
     for credential in credentials.values():
         profile = registry.resolve(credential.agent_id).authority_profile
-        if profile == ROTATION_EXECUTOR_PROFILE and credential.agent_id != configured:
+        if profile in configured and credential.agent_id != configured[profile]:
             raise RuntimeError("invalid runtime authentication configuration")
 
 

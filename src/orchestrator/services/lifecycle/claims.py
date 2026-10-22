@@ -33,6 +33,8 @@ from orchestrator.services.lifecycle.context import PreflightCommand, require_cl
 from orchestrator.services.lifecycle.lease_policy import claim_lease
 from orchestrator.services.lifecycle.readiness import evaluate_readiness
 from orchestrator.services.lifecycle.rotation_claims import (
+    NO_ROTATION_EXECUTORS,
+    RotationExecutors,
     claim_window_refusal,
     confinement_refusal,
     is_rotation_unit,
@@ -62,12 +64,13 @@ def claim_unit(
     expected_version: int | None = None,
     standing_context: dict[str, Any] | None = None,
     *,
-    rotation_executor: str | None = None,
+    rotation_executors: RotationExecutors = NO_ROTATION_EXECUTORS,
 ) -> LeaseGrant | DomainError:
     """Grant a claim on a READY unit to a WORKER.
 
-    `rotation_executor` is the configured executor identity (ADR-0055): only it may claim a
-    rotation unit, and it may claim nothing else. `None` refuses every rotation claim.
+    `rotation_executors` are the configured executor identities (ADR-0055): only the instance a
+    rotation unit belongs to may claim it, and neither may claim anything else. An unconfigured
+    instance refuses every claim on its units.
     """
     try:
         unit = _locked_unit(session, unit_id)
@@ -88,7 +91,7 @@ def claim_unit(
         revision = _revision(session, unit)
         # Before the budget halt, which commits a write: a claimant that may not touch this unit
         # must not cause one.
-        confinement = confinement_refusal(unit, revision, actor.actor_id, rotation_executor)
+        confinement = confinement_refusal(unit, revision, actor.actor_id, rotation_executors)
         if confinement is not None:
             raise confinement
         # Before the window, which clears itself: a standing refusal is reported first.
@@ -250,7 +253,7 @@ def reclaim_expired_claim(
     *,
     expected_version: int | None = None,
     standing_context: dict[str, Any] | None = None,
-    rotation_executor: str | None = None,
+    rotation_executors: RotationExecutors = NO_ROTATION_EXECUTORS,
 ) -> LeaseGrant | DomainError:
     try:
         grant = _perform_reclaim(
@@ -261,7 +264,7 @@ def reclaim_expired_claim(
             idempotency_key,
             expected_version=expected_version,
             standing_context=standing_context,
-            rotation_executor=rotation_executor,
+            rotation_executors=rotation_executors,
         )
         session.commit()
         return grant
@@ -282,7 +285,7 @@ def _perform_reclaim(
     *,
     expected_version: int | None = None,
     standing_context: dict[str, Any] | None = None,
-    rotation_executor: str | None = None,
+    rotation_executors: RotationExecutors = NO_ROTATION_EXECUTORS,
 ) -> LeaseGrant | DomainError:
     unit = _locked_unit(session, unit_id)
     replay = _claim_replay(
@@ -310,7 +313,7 @@ def _perform_reclaim(
             "a lapsed rotation claim is released, never reclaimed to a new owner",
             "release_expired_claim",
         )
-    if rotation_executor is not None and next_owner.actor_id == rotation_executor:
+    if rotation_executors.includes(next_owner.actor_id):
         raise DomainError(
             "rotation_executor_confined",
             "the rotation executor may claim only rotation units",

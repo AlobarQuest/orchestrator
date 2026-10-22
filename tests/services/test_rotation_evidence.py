@@ -20,7 +20,7 @@ from orchestrator.kernel.secret_metadata import SECRET_KEY_PARTS
 from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import Evidence, WorkUnit
 from orchestrator.services.lifecycle.claims import LeaseGrant, claim_unit
-from orchestrator.services.lifecycle.rotation_claims import NON_HOSTED_CONSTRAINT
+from orchestrator.services.lifecycle.rotation_claims import NON_HOSTED_CONSTRAINT, RotationExecutors
 from orchestrator.services.verifier.evidence import append_evidence, recover_evidence
 from orchestrator.services.verifier.rotation_evidence import RotationStepEvidence
 from tests.services.test_reclaim import expire
@@ -66,7 +66,9 @@ def _claimed(session: Session, key: str, *, rotation: bool = True) -> tuple[Work
         constraints={NON_HOSTED_CONSTRAINT: True},
     )
     actor = EXECUTOR_ACTOR if rotation else WORKER
-    grant = claim_unit(session, unit.id, actor, f"{key}-claim", rotation_executor=EXECUTOR)
+    grant = claim_unit(
+        session, unit.id, actor, f"{key}-claim", rotation_executors=RotationExecutors(EXECUTOR)
+    )
     assert isinstance(grant, LeaseGrant), grant
     return unit, grant
 

@@ -28,6 +28,7 @@ from orchestrator.api.schemas.lifecycle import (
     UnitResponse,
     WorkUnitDetailResponse,
 )
+from orchestrator.config import Settings
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import ContextSnapshot, WorkUnit
@@ -47,8 +48,15 @@ from orchestrator.services.lifecycle.lifecycle import (
     unit_history,
 )
 from orchestrator.services.lifecycle.pr_bindings import arm_verification_head, upsert_pr_binding
+from orchestrator.services.lifecycle.rotation_claims import RotationExecutors
 
 router = APIRouter(prefix="/api/v1", responses=ERROR_RESPONSES)
+
+
+def rotation_executors(settings: Settings) -> RotationExecutors:
+    return RotationExecutors(
+        settings.rotation_executor_agent_id, settings.rotation_keychain_executor_agent_id
+    )
 
 
 COMMAND_TARGETS = {
@@ -171,7 +179,7 @@ def claim(
             body.idempotency_key,
             expected_version=body.expected_version,
             standing_context=body.standing_context,
-            rotation_executor=settings.rotation_executor_agent_id,
+            rotation_executors=rotation_executors(settings),
         )
     )
 
@@ -213,7 +221,7 @@ def reclaim_expired(
             body.idempotency_key,
             expected_version=body.expected_version,
             standing_context=body.standing_context,
-            rotation_executor=settings.rotation_executor_agent_id,
+            rotation_executors=rotation_executors(settings),
         )
     )
 

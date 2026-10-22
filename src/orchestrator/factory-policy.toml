@@ -349,10 +349,11 @@ exactly equal, and refuses a unit marked as touching no hosted service that writ
 one. A host with no overlap is the one declaration only a person makes, so an
 envelope carrying `host_without_overlap` is never recognised here. The adapters
 are the ones the approved packages use. Left out: the fake adapter the canary
-uses, and the attested change-manager variant, which no package uses.
+uses, and the attested change-manager variant, which no package uses. The BWS
+machine-token adapter joined on 2026-10-22 (ADR-0055 amendment 12).
 """
 decided = "2026-10-21"
-rotation_adapters = ["bitbucket", "change-manager", "github-pat", "openrouter", "orchestrator", "orchestrator-distributed"]
+rotation_adapters = ["bitbucket", "bws-machine-token", "change-manager", "github-pat", "openrouter", "orchestrator", "orchestrator-distributed"]
 rotation_units = ["confirm", "mint", "retire", "store", "verify"]
 capabilities = { "operational_action" = "allowed" }
 max_attempts = 3
@@ -372,6 +373,24 @@ not, and declaring one to keep the two restraints symmetrical would be symmetry
 standing in for a reason.
 """
 decided = "2026-08-01"
+
+[[reach.operator_machine.rotation_known_good]]
+name = "BWS machine-token rotation unit of an approved standing package"
+rationale = """
+A BWS machine access token lives in this machine's Keychain, so its rotation's
+store, verify and confirm units write and read Keychain items here (ADR-0055
+amendment 12). Recognised for the reason the external-system row gives: the
+envelope a person approved on the decomposition page is the one the executor
+runs, and it holds the envelope's destinations to the approved package's before
+it acts. Only this adapter and only its machine units: the token's creation and
+revocation are human acts in the web app, which file nothing, and no other
+adapter's unit touches this machine.
+"""
+decided = "2026-10-22"
+rotation_adapters = ["bws-machine-token"]
+rotation_units = ["confirm", "store", "verify"]
+capabilities = { "operational_action" = "allowed" }
+max_attempts = 3
 
 [reach.operator_machine.change_window]
 rationale = """

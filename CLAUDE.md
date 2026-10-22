@@ -461,10 +461,13 @@ Placement rule: global CLAUDE.md §7.
 - A holding Dependabot branch whose checks never finish stalls its repository by design (ADR-0045);
   do not test that every holding refusal clears on its own. Detail:
   `docs/operations/landing-lanes.md`.
-- Only `ORCHESTRATOR_ROTATION_EXECUTOR_AGENT_ID` may claim a rotation unit
-  (`rotation_claims.is_rotation_unit`), and it may claim nothing else; unset refuses every rotation
-  claim, and boot refuses a credential holding `rotation-executor-v1` that the setting doesn't
-  name. A lapsed rotation claim is released (`release_expired_claim`), never reclaimed. A rotation
+- The rotation executor runs as two identities, each confined both ways
+  (`rotation_claims.RotationExecutors`): `ORCHESTRATOR_ROTATION_KEYCHAIN_EXECUTOR_AGENT_ID` alone
+  claims a rotation unit whose envelope's `rotation_adapter` is in `KEYCHAIN_ADAPTERS`, and
+  `ORCHESTRATOR_ROTATION_EXECUTOR_AGENT_ID` alone claims every other rotation unit
+  (`rotation_claims.is_rotation_unit`); neither claims anything else. An unset setting refuses
+  every claim on its units, and boot refuses a credential holding `rotation-executor-v1` or
+  `rotation-executor-keychain-v1` that its profile's setting doesn't name. A lapsed rotation claim is released (`release_expired_claim`), never reclaimed. A rotation
   claim asks the `live_estate` window unless its envelope sets `touches_no_hosted_service: true`,
   except a continuation after a lapse with the holder's evidence. Detail:
   `docs/operations/driving-a-unit.md`.
