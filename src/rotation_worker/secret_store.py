@@ -275,8 +275,9 @@ class KeychainStore:
             f'add-generic-password {option} -s "{service}" -a "{account}" -w "{value.reveal()}"\n'
         )
         written = self._security(["-i"], stdin=command)
-        if written.returncode != 0 or written.stderr.strip():
-            # stderr is never shown: `security -i` may echo the command, value included.
+        if written.returncode != 0:
+            # `security -i` exits non-zero on a refused command (measured 2026-10-22). Its output
+            # is never shown: it may echo the command, value included.
             raise StoreError(f"the Keychain refused a write to {self._id(service, account)}")
 
     def _security(

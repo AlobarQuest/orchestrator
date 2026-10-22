@@ -583,3 +583,51 @@ def test_without_a_rotation_app_nothing_can_write_or_read_an_actions_secret(
     h.add("u1", "mint")
     assert run_pass(h.setup()) == 1
     assert built["actions_secrets"] is None
+
+
+def _adapted(h: Harness, monkeypatch: pytest.MonkeyPatch, **changes: Any) -> None:
+    adapter = replace(h.adapter, **changes)
+    checked = h._check
+    monkeypatch.setattr(
+        worker, "check_unit", lambda *arguments: replace(checked(*arguments), adapter=adapter)
+    )
+
+
+def test_a_unit_its_adapter_says_must_wait_is_left_unclaimed(
+    h: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    asked: list[str] = []
+
+    def wait(unit: Any, history: Any, now: datetime) -> str | None:
+        asked.append(unit.name)
+        return "not yet" if len(asked) == 1 else None
+
+    _adapted(h, monkeypatch, wait=wait)
+    h.add("u1", "mint")
+    assert run_pass(h.setup()) == 0
+    assert h.client.calls == []
+    assert run_pass(h.setup()) == 1
+    assert asked == ["mint", "mint"]
+
+
+def test_the_unit_before_a_person_s_revoke_proves_the_old_value_live(
+    h: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Amendment 1's first half, which no machine retire step files when a person revokes.
+    from rotation_worker.adapters import bws_machine_token
+
+    runs: list[bool] = []
+
+    class Recorded:
+        def __init__(self, **fields: Any) -> None:
+            runs.append(fields["person_revokes_next"])
+
+        def run(self, unit: Any) -> None:
+            pass
+
+    monkeypatch.setattr(worker, "UnitRun", Recorded)
+    h.adapter = replace(h.adapter, plan=bws_machine_token.PLAN)
+    for unit_id, name in (("u1", "store"), ("u2", "verify"), ("u3", "confirm")):
+        h.add(unit_id, name)
+    assert run_pass(h.setup()) == 3
+    assert runs == [False, True, False]

@@ -477,6 +477,63 @@ amendment 10).
 3. At `/review`, resolve the human act with a note. The fingerprint is optional: `store`'s
    verify-new proves the value works before anything depends on it.
 
+## BWS machine tokens: the Keychain instance
+
+A BWS machine access token lives in the Mac's login Keychain, which the VM can't reach, so a
+second instance of the executor runs on the Mac and rotates these tokens (ADR-0055 amendment 12).
+It runs the same code through the same contract, with its own orchestrator identity
+(`rotation-executor-keychain`). It keeps its state in the Keychain instead of BWS:
+
+- **Its store is `KeychainStore`** (`secret_store.py`), through `/usr/bin/security`. A secret's id
+  is its destination string, `keychain service="…" account="…"`.
+- **Its staging and quarantine items** are accounts `rotation/<credential>/<occurrence>/…` under
+  the service its configuration names as `work_project_id`, and so is its bearer
+  (`worker-bearer`).
+- **Values travel only on stdin and stdout.** A value is written through `security -i`, and never
+  appears in a process argument.
+- **Items are updated in place with `-U`, never re-created,** so a reader never finds one missing.
+  An update never restates the item's access list: macOS then asks a person to allow it, and the
+  executor would wait for an answer that never comes (measured 2026-10-22).
+
+Each instance takes only the units of adapters kept in its own store (`Adapter.store_kind`) and
+leaves the other's units unclaimed. The orchestrator confines the two identities the same way.
+
+### The plan
+
+The `bws-machine-token` adapter (`adapters/bws_machine_token.py`) runs these segments in order:
+
+1. **A human act creates the token and stages it.** In the web app, create a new access token for
+   the same machine account. Then run `rotation-worker stage <credential> --occurrence
+   <occurrence> --config <the Mac configuration>` and paste the token at the hidden prompt. The
+   command checks the token's shape, writes the staging item, and prints only its fingerprint.
+   Resolve the act at `/review` with that fingerprint.
+2. **`store`** (AC-001 to AC-003) proves the new token with a fresh login. Then it quarantines the
+   keeper's old value, updates the keeper, and updates every other Keychain item that held the
+   old value.
+3. **`verify`** (AC-004) reads every item back. It waits, unclaimed, until each scheduled reader
+   has run since the switch, then proves the old token still logs in.
+4. **A human act revokes the old token** in the web app. Revoke it only after `verify` completes.
+5. **`confirm`** (AC-005) proves the old token refused and the new one live. Then it deletes the
+   staging and quarantine items.
+
+The probe is a fresh login: a new SDK client in a child process, with an empty throwaway `HOME`
+and the token on stdin.
+- A login answers 200.
+- `invalid_client` answers 400, for a revoked token and a malformed one alike.
+- Anything else stops the rotation.
+
+The control is a well-formed random token. Measured 2026-10-22: a random token and a just-revoked
+one both answered `invalid_client`, and a live one logged in.
+
+### Waits
+
+- **`store` isn't claimed between 02:00 and 07:35 New York time,** while the scheduled lanes read
+  these tokens.
+- **`confirm` isn't claimed until 75 minutes after the revoke was recorded.** A session that
+  logged in before the revoke keeps working. On 2026-10-22, a client that logged in at 12:45 UTC,
+  just before a revoke, kept reading until 13:39 and was first refused at 13:40. That's about 55
+  minutes after its login.
+
 ## change-manager's bearers
 
 The `change-manager` adapter rotates one of change-manager's four machine bearers (`full`,
