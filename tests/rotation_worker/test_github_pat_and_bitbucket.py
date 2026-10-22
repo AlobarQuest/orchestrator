@@ -471,10 +471,12 @@ def test_a_person_s_revoke_needs_every_consumer_machine_verified() -> None:
 
     keeper = 'bws-secret uuid="00000000-0000-0000-0000-000000000000"'
     unread = 'keychain service="s" account="a"'
-    _check_human_retire_verifiable([keeper, 'provider name="bitbucket"'], bitbucket.PLAN, {})
+    _check_human_retire_verifiable(
+        [keeper, 'provider name="bitbucket"'], bitbucket.PLAN, {}, MemoryStore()
+    )
     with pytest.raises(ContractError, match="nothing machine-verifies"):
-        _check_human_retire_verifiable([keeper, unread], bitbucket.PLAN, {})
-    _check_human_retire_verifiable([keeper, unread], github_pat.PLAN, {})
+        _check_human_retire_verifiable([keeper, unread], bitbucket.PLAN, {}, MemoryStore())
+    _check_human_retire_verifiable([keeper, unread], github_pat.PLAN, {}, MemoryStore())
 
 
 def test_an_orchestrator_outage_during_the_gate_is_a_wait() -> None:

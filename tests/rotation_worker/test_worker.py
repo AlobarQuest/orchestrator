@@ -117,7 +117,9 @@ class Harness:
             "authority": {"constraints": {"rotation_adapter": "fake", "rotation_unit": name}},
         }
 
-    def _check(self, unit: dict[str, Any], intake: Any, mirror: Any, work: str) -> Approved:
+    def _check(
+        self, unit: dict[str, Any], intake: Any, mirror: Any, work: str, store: Any
+    ) -> Approved:
         if self.refusal is not None:
             raise self.refusal
         plan_unit = self.adapter.plan.unit(unit["authority"]["constraints"]["rotation_unit"])
@@ -339,7 +341,7 @@ def test_an_adapter_missing_its_admin_secret_spends_no_attempt(h: Harness) -> No
 
 
 def test_earlier_evidence_is_tracked_per_criterion_not_per_kind(h: Harness) -> None:
-    approved = h._check(_unit("retire"), None, None, "")
+    approved = h._check(_unit("retire"), None, None, "", h.store)
     rows = [{"ac_id": "AC-006"}, {"ac_id": "AC-007"}, {"ac_id": "AC-099"}]
     kinds, criteria = worker._filed(rows, approved)
     assert criteria == {"AC-006", "AC-007"}
@@ -434,7 +436,7 @@ def test_the_wait_names_when_the_overlap_s_backstop_ends(h: Harness) -> None:
     h.rotation = Rotation("canary", "o", h.keeper, WORK, (*h.rotation.destinations, hosted))
     until = "2026-10-23T06:00:00+00:00"
     h.client.loaded = {"orchestrator-observer": {"previous": {"until": until}}}
-    approved = h._check(_unit_named("retire"), None, None, WORK)
+    approved = h._check(_unit_named("retire"), None, None, WORK, h.store)
     assert worker._overlap_until(h.setup(), approved) == until
     h.client.loaded = {"orchestrator-observer": {}}
     assert worker._overlap_until(h.setup(), approved) is None

@@ -314,7 +314,7 @@ def test_a_second_bws_consumer_is_written_by_distribute_and_verified(tmp_path: P
         h.rotation, destinations=(*h.rotation.destinations, f'bws-secret uuid="{copy}"')
     )
     h.run("mint")
-    with pytest.raises(ContractError, match="BWS consumer doesn't read back"):
+    with pytest.raises(ContractError, match="stored consumer doesn't read back"):
         h.run("store")
     _single(h, StepKind.DISTRIBUTE)
     assert h.store.read(copy).same_as(h.keeper())
@@ -607,12 +607,20 @@ def test_filed_evidence_alone_never_finishes_a_unit(tmp_path: Path) -> None:
 
 
 def test_every_consumer_kind_has_one_way_to_be_verified() -> None:
-    from rotation_worker.contract import ACTIONS_KIND, ATTESTED_KINDS, READ_BACK_KINDS
+    # On the VM, every kind has exactly one way. On the Keychain instance (amendment 12) a
+    # Keychain item is read back, which `unverified` asks before attestation, and a BWS secret
+    # has none, so a unit naming one is refused there.
+    from rotation_worker.contract import ACTIONS_KIND, ATTESTED_KINDS
     from rotation_worker.destinations import HOSTED_KINDS, IDENTITY_FIELDS
+    from rotation_worker.secret_store import KeychainStore
 
-    classes = [{"provider"}, READ_BACK_KINDS, ATTESTED_KINDS, HOSTED_KINDS, {ACTIONS_KIND}]
-    for kind in IDENTITY_FIELDS:
-        assert sum(kind in group for group in classes) == 1, kind
+    for store, unverifiable in ((MemoryStore(), set()), (KeychainStore(), {"bws-secret"})):
+        read_back = {store.read_back_kind}
+        attested = ATTESTED_KINDS - read_back
+        classes = [{"provider"}, read_back, attested, HOSTED_KINDS, {ACTIONS_KIND}]
+        for kind in IDENTITY_FIELDS:
+            ways = sum(kind in group for group in classes)
+            assert ways == (0 if kind in unverifiable else 1), (store.read_back_kind, kind)
 
 
 def test_a_kind_without_a_way_to_verify_it_is_refused(

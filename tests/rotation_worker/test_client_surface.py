@@ -191,7 +191,21 @@ HTTP_CLIENTS = frozenset(
 )
 
 
-def test_only_the_clients_import_an_http_client_and_only_the_mirror_runs_a_process() -> None:
+# The modules that may start a process, each passing values only on stdin, which the tests of
+# each prove (`test_keychain_store.py`, `test_bws_machine_token.py`).
+PROCESS_RUNNERS = frozenset(
+    {
+        # git, with no value at all.
+        "git_mirror.py",
+        # `/usr/bin/security`, the only way to the Keychain (ADR-0055 amendment 12).
+        "secret_store.py",
+        # A fresh Bitwarden login in a child process with an empty HOME (amendment 1).
+        "adapters/bws_machine_token.py",
+    }
+)
+
+
+def test_only_the_clients_import_an_http_client_and_only_named_modules_run_a_process() -> None:
     for source in sorted(PROGRAM.rglob("*.py")):
         imported = set()
         for node in ast.walk(ast.parse(source.read_text())):
@@ -201,7 +215,7 @@ def test_only_the_clients_import_an_http_client_and_only_the_mirror_runs_a_proce
                 imported.add(node.module.split(".")[0])
         if source.relative_to(PROGRAM).as_posix() not in HTTP_CLIENTS:
             assert not imported & {"httpx", "estate_clients", "requests", "urllib"}, source
-        if source.name != "git_mirror.py":
+        if source.relative_to(PROGRAM).as_posix() not in PROCESS_RUNNERS:
             # Values never enter an argument list (ADR-0055 decision 3): no other module can
             # start a process at all.
             assert "subprocess" not in imported, source

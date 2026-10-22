@@ -1,8 +1,14 @@
-"""The executor's configuration: ids and paths only. The one secret it starts from is a file.
+"""The executor's configuration: ids and paths only. The configuration file holds no value.
 
-ADR-0055 decision 2: the root token lives in a file readable only by the service's user, and the
-executor refuses one that anyone else could read. Everything else it needs (its WORKER bearer)
-it reads from BWS with that token. The configuration file itself holds no value.
+ADR-0055 decision 2: on the VM (`store = "bws"`, the default) the root token lives in a file
+readable only by the service's user, and the executor refuses one that anyone else could read.
+Everything else it needs (its WORKER bearer) it reads from BWS with that token.
+
+On the operator machine (`store = "keychain"`, amendment 12) there is no root token: the
+executor's state is in the login Keychain. `work_project_id` is then the Keychain service its
+staging, quarantine and bearer items live under, and `bearer_secret_id` and
+`healthchecks_key_id` are account names under it. Nothing else applies: that instance reads no
+BWS project and reaches no hosted service.
 """
 
 from __future__ import annotations
@@ -22,6 +28,19 @@ DEFAULT_PATH: Final = Path("/etc/rotation-worker/config.toml")
 UUID_PATTERN: Final = re.compile(r"^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$")
 REVISION_PATTERN: Final = re.compile(r"^[0-9a-f]{7,12}$")
 APP_ID_PATTERN: Final = re.compile(r"^[1-9][0-9]{0,11}$")
+KEYCHAIN_NAME: Final = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+STORES: Final = ("bws", "keychain")
+# What only the VM instance's configuration may name.
+VM_ONLY: Final = (
+    "organization_id",
+    "root_token_file",
+    "admin_secrets",
+    "coolify_url",
+    "orchestrator_application",
+    "change_manager_application",
+    "github_app_id",
+    "github_app_key_id",
+)
 
 
 class ConfigError(RuntimeError):
@@ -33,13 +52,14 @@ class Config:
     orchestrator_url: str
     # The key id the bearer's hash is registered under in `ORCHESTRATOR_M2M_CREDENTIALS`.
     credential_key_id: str
-    organization_id: str
+    organization_id: str | None
     work_project_id: str
     # Absent until the executor's WORKER bearer exists (`rotation-worker mint-bearer`).
     bearer_secret_id: str | None
-    root_token_file: Path
+    root_token_file: Path | None
     state_dir: Path
     source_revision: str
+    store: str = "bws"
     # Each provider's admin secret, by provider name: the BWS UUID an adapter reads when a step
     # mints or revokes (decision 4). Holds ids only, never a value.
     admin_secrets: Mapping[str, str] = field(default_factory=dict)
@@ -70,6 +90,11 @@ def load(path: Path) -> Config:
         raw = tomllib.loads(path.read_text())
     except (OSError, tomllib.TOMLDecodeError) as error:
         raise ConfigError(f"{path}: {error}") from error
+    store = raw.get("store", "bws")
+    if store not in STORES:
+        raise ConfigError(f"store is one of {', '.join(STORES)}")
+    if store == "keychain":
+        return _keychain(raw)
     for key in ("organization_id", "work_project_id"):
         if not UUID_PATTERN.fullmatch(_string(raw, key)):
             raise ConfigError(f"{key} must be a lowercase UUID")
@@ -107,6 +132,33 @@ def load(path: Path) -> Config:
         healthchecks_key_id=healthchecks_key,
         github_app_id=app_id,
         github_app_key_id=app_key,
+    )
+
+
+def _keychain(raw: dict[str, Any]) -> Config:
+    named = [key for key in VM_ONLY if key in raw]
+    if named:
+        raise ConfigError(f"a Keychain executor names no {', '.join(named)}")
+    for key in ("work_project_id", "bearer_secret_id", "healthchecks_key_id"):
+        value = raw.get(key)
+        if (value is not None or key == "work_project_id") and (
+            not isinstance(value, str) or not KEYCHAIN_NAME.fullmatch(value)
+        ):
+            raise ConfigError(f"{key} is a Keychain name: letters, digits, '.', '_' or '-'")
+    revision = _string(raw, "source_revision")
+    if not REVISION_PATTERN.fullmatch(revision):
+        raise ConfigError("source_revision must be 7 to 12 hex characters of the commit")
+    return Config(
+        orchestrator_url=_string(raw, "orchestrator_url"),
+        credential_key_id=_string(raw, "credential_key_id"),
+        organization_id=None,
+        work_project_id=_string(raw, "work_project_id"),
+        bearer_secret_id=raw.get("bearer_secret_id"),
+        root_token_file=None,
+        state_dir=Path(_string(raw, "state_dir")),
+        source_revision=revision,
+        store="keychain",
+        healthchecks_key_id=raw.get("healthchecks_key_id"),
     )
 
 

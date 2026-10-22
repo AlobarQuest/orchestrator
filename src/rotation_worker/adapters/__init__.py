@@ -1,25 +1,28 @@
 """Rotation adapters: a provider and a plan each, chosen by the envelope's `rotation_adapter`.
 
 An adapter's provider must be the one the credential's registry entry names, so an envelope can't
-point a credential at another provider's adapter.
+point a credential at another provider's adapter. Each adapter runs on one instance of the
+executor: the one whose store keeps its credentials (`store_kind`, ADR-0055 amendment 12).
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Final
 
 from rotation_worker.adapters import (
     bitbucket,
+    bws_machine_token,
     change_manager,
     fake,
     github_pat,
     openrouter,
     orchestrator_bearer,
 )
-from rotation_worker.contract import ContractError, Plan, Provider, Rotation
+from rotation_worker.contract import ContractError, Plan, Provider, Rotation, UnitPlan
 from rotation_worker.git_mirror import RepoMirror
 from rotation_worker.orchestrator_client import OrchestratorClient
 from rotation_worker.readers import Healthchecks
@@ -52,11 +55,19 @@ class AdapterContext:
     credential: Mapping[str, Any] | None = None
 
 
+# Why a unit can't be claimed yet, from the unit, its history and the time; `None` means now.
+WaitReason = Callable[[UnitPlan, Sequence[Mapping[str, Any]], datetime], str | None]
+
+
 @dataclass(frozen=True)
 class Adapter:
     provider_name: str
     plan: Plan
     build: Callable[[AdapterContext], Provider]
+    # The destination kind of the store this adapter's keepers live in: only the executor
+    # instance whose store reads that kind takes its units.
+    store_kind: str = "bws-secret"
+    wait: WaitReason | None = None
 
 
 def _change_manager(context: AdapterContext) -> Provider:
@@ -119,6 +130,13 @@ ADAPTERS: Final[dict[str, Adapter]] = {
         lambda context: bitbucket.build_provider(credential=context.credential),
     ),
     change_manager.NAME: Adapter(change_manager.NAME, change_manager.PLAN, _change_manager),
+    bws_machine_token.NAME: Adapter(
+        bws_machine_token.PROVIDER,
+        bws_machine_token.PLAN,
+        lambda _context: bws_machine_token.BwsMachineTokenProvider(),
+        store_kind="keychain",
+        wait=bws_machine_token.wait_reason,
+    ),
     change_manager.ATTESTED_NAME: Adapter(
         change_manager.NAME, change_manager.ATTESTED_PLAN, _change_manager
     ),

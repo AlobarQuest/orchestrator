@@ -16,7 +16,12 @@ from typing import Any, Final
 
 import yaml
 
-from rotation_worker.destinations import DestinationError, credential_destinations, parse
+from rotation_worker.destinations import (
+    DestinationError,
+    credential_destinations,
+    parse,
+    render,
+)
 from rotation_worker.git_mirror import RepoMirror
 
 REGISTRY_REPOSITORIES: Final = (
@@ -46,6 +51,25 @@ class RegistryEntry:
     @property
     def rotated_by_sds(self) -> bool:
         return self.credential.get("rotated_by_sds") is True
+
+    @property
+    def keeper(self) -> str:
+        """The keeper's destination string, which every rotation step reads the value from.
+
+        A BWS secret (`bws_uuid`), or for a machine token, which has no BWS copy of itself, one
+        of its Keychain items (`keeper_service` with `keeper_account`, ADR-0055 amendment 12).
+        Exactly one of the two.
+        """
+        uuid = self.credential.get("bws_uuid")
+        service = self.credential.get("keeper_service")
+        account = self.credential.get("keeper_account")
+        if uuid is not None and service is None and account is None and isinstance(uuid, str):
+            return render({"kind": "bws-secret", "uuid": uuid})
+        if uuid is None and isinstance(service, str) and isinstance(account, str):
+            return render({"kind": "keychain", "service": service, "account": account})
+        raise RegistryError(
+            "a credential's keeper is bws_uuid, or keeper_service with keeper_account"
+        )
 
 
 @dataclass(frozen=True)
