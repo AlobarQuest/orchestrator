@@ -1545,8 +1545,24 @@ the old value.
 
 ### Open before building
 
-- **The audit:** whether any other rotated credential has an unregistered copy in a Coolify
-  setting. A read-only pass that fingerprints every production application's settings against the
-  old and current values of each rotated credential answers it, and it decides whether decision 3's
-  report is needed by any application besides the orchestrator.
+- **Which units carry distribute** for the change-manager adapter, whose plan has none today.
+
+### The audit (2026-10-22)
+
+Devon asked for it before the build. It fingerprinted values in-process and printed names only,
+comparing whole values with the old and new fingerprints in the evidence of every rotation so far:
+twelve credentials and the canary.
+
+- **Coolify:** 458 production settings and 67 dev settings, applications and services. One setting
+  holds a rotated credential's value: the orchestrator's `ORCHESTRATOR_CHANGE_RECORD_TOKEN`, now
+  the read bearer's current value. It would have matched the old value before HQ's fix, so it is
+  also the scan's control. Every other match is a stored hash in a registered `coolify-env-hash`
+  destination, including the drift-reporter's previous hash, valid until its overlap ends.
+- **The Mac:** 295 values in `.env` files under `~/Projects`, `~/.claude` and `~/Developer`, and in
+  the LaunchAgents' environments. None matches.
+- **Not scanned:** Keychain items, which reading could make macOS prompt a person for; Actions
+  secrets, which can't be read; and files on the VPS.
+
+So the orchestrator is the only application that needs decision 3's report today, and the
+destination kind stays general so the next one is a registry entry.
 - **Which units carry distribute** for the change-manager adapter, whose plan has none today.
