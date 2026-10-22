@@ -585,6 +585,38 @@ is already in the keeper, so the rotation has happened without its proof:
 4. Record the rotation in the registry as usual, with a comment that the live-before half is
    missing.
 
+## Held copies
+
+A held copy is a value an application keeps in its own Coolify settings to call another service,
+named by a `coolify-env-held` destination (ADR-0055 amendment 13). The only one is the
+orchestrator's `ORCHESTRATOR_CHANGE_RECORD_TOKEN`, its copy of change-manager's read bearer:
+
+`coolify-env-held instance="prod" resource_type="application" uuid="eqj5l7k705fhi12x9i74fqf0"
+key="ORCHESTRATOR_CHANGE_RECORD_TOKEN"`
+
+- **Distribute writes it**, both rows, and restarts the orchestrator. It asks whether a restart
+  would strand a dispatched run before writing and again before restarting, and refuses if one
+  would. A copy already reporting the new value isn't written again.
+- **The orchestrator reports what it loaded** on `GET /api/v1/held-credentials`, readable only by
+  the VM executor: each held variable's sha256 prefix and length. Distribute waits up to ten
+  minutes for the new fingerprint, and verify-consumers counts the copy switched only while the
+  report shows it.
+- **Only the orchestrator reports,** so a held destination anywhere else is refused before the
+  claim, as is a variable the report doesn't list. A new held setting needs a line in the route's
+  `HELD_SETTINGS` and a deploy first.
+- **The executor writes it with the production Coolify token** it uses for the orchestrator's
+  bearers (`admin_secrets` entry `orchestrator`, with `coolify_url` and
+  `orchestrator_application`). Without those, a unit with a held copy stays unclaimed and the
+  pass logs `unit_not_worked`.
+- **The plan needs a distribute step.** For change-manager's read bearer that is the adapter
+  `change-manager-distributed`: change-manager's plan with distribute after store in `mint`,
+  AC-001 to AC-010.
+
+If distribute stops after writing and before the restart, the orchestrator holds the new value in
+its settings and the old one in its process; change-manager accepts both until retire, so nothing
+breaks. A retry writes nothing new and restarts. To undo, write the keeper's old value (in the
+quarantine secret until retire) to both rows and restart, between dispatched runs.
+
 ## change-manager's bearers
 
 The `change-manager` adapter rotates one of change-manager's four machine bearers (`full`,

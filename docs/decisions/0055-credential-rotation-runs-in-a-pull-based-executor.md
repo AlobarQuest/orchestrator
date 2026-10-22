@@ -1565,3 +1565,25 @@ twelve credentials and the canary.
 
 So the orchestrator is the only application that needs decision 3's report today, and the
 destination kind stays general so the next one is a registry entry.
+
+### As built (2026-10-22)
+
+- **Mint carries distribute.** The adapter `change-manager-distributed` runs change-manager's
+  plan with a distribute step after store, AC-001 to AC-010: `mint` is mint, stage, host,
+  verify-new, store, distribute and verify-consumers (AC-001 to AC-007); `retire` is
+  verify-consumers, retire-old and confirm-dead (AC-008 to AC-010). The `change-manager` and
+  `change-manager-attested` plans are unchanged, so a bearer with no held copy keeps its approved
+  package.
+- **The report is its own route, not the identities surface.** `GET /api/v1/held-credentials`
+  answers each held setting's sha256 prefix and length by variable name, only to the configured
+  VM executor. The identities surface answers the bearer hashes the orchestrator verifies; a held
+  copy is a value it presents, and keeping them apart keeps each route's response one thing. A
+  setting the process didn't load is left out.
+- **The checks refuse before the claim** a held destination outside the production orchestrator
+  application, or whose variable the orchestrator doesn't report. An executor without the
+  production Coolify token, URL or orchestrator application leaves the unit unclaimed and logs it:
+  that is the executor's configuration, not the unit, so no attempt is spent.
+- **Distribute's write follows the orchestrator adapter's restart rules:** it asks whether a
+  restart would strand a dispatched run before writing and again before restarting, then waits up
+  to ten minutes for the route to report the new fingerprint. A copy that already reports it is
+  not written again, so a retried unit restarts nothing.

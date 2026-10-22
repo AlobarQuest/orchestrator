@@ -529,6 +529,13 @@ Placement rule: global CLAUDE.md §7.
   change-manager booting. All four keepers must be readable by the root before its first
   rotation. Restarts wait while any registered change-manager reader is mid-run. Detail:
   `docs/operations/rotation-executor.md`.
+- A value one application holds to call another service is a `coolify-env-held` destination
+  (ADR-0055 amendment 13), never unregistered: a rotation that misses one strands its holder on a
+  dead value. Distribute writes it and restarts the holder; it counts switched only when the
+  holder reports the new fingerprint, and only the orchestrator reports
+  (`GET /api/v1/held-credentials`, executor-only, its `HELD_SETTINGS`), so the checks refuse a
+  held destination anywhere else, or one the report doesn't list, before the claim. Detail:
+  `docs/operations/rotation-executor.md`, "Held copies".
 - The executor writes an Actions secret only through the rotation App, with a token minted for
   the destination's one repository and exactly `{secrets: write, metadata: read}` (refused if
   GitHub grants more), and counts a copy switched only when that repository's hourly
