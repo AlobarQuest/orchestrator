@@ -415,11 +415,9 @@ class Ack:
         concern rated higher than the acknowledgement fails again."""
         if finding.kind != "ai":
             return True
-        return (
-            self.severity is not None
-            and finding.severity in MODEL_SEVERITIES
-            and MODEL_SEVERITIES.index(finding.severity) <= MODEL_SEVERITIES.index(self.severity)
-        )
+        return self.severity is not None and MODEL_SEVERITIES.index(
+            finding.severity
+        ) <= MODEL_SEVERITIES.index(self.severity)
 
 
 def parse_acks(text: str) -> dict[str, Ack]:
@@ -428,6 +426,8 @@ def parse_acks(text: str) -> dict[str, Ack]:
         missing = [key for key in ("fingerprint", "by", "date", "reason") if not entry.get(key)]
         if missing:
             raise ConfigError(f"an [[ack]] entry is missing {', '.join(missing)}")
+        if str(entry["fingerprint"]) in acks:
+            raise ConfigError(f"fingerprint {entry['fingerprint']} is acknowledged twice")
         severity = entry.get("severity")
         if severity is not None and severity not in MODEL_SEVERITIES:
             raise ConfigError(f"an [[ack]] severity must be one of {', '.join(MODEL_SEVERITIES)}")
@@ -927,7 +927,12 @@ def parse_verdict(text: str) -> list[Finding]:
             isinstance(item.get(key), str) for key in ("severity", "path", "summary")
         ):
             raise ReviewUnavailable("a finding in the model's verdict is malformed")
-        findings.append(Finding("ai", item["path"], item["summary"], "", item["severity"]))
+        # A severity outside the ranked three is read as the gravest, so it fails until a person
+        # accepts it at `high`, and never as one no acknowledgement can reach.
+        severity = item["severity"].lower()
+        if severity not in MODEL_SEVERITIES:
+            severity = MODEL_SEVERITIES[-1]
+        findings.append(Finding("ai", item["path"], item["summary"], "", severity))
     return findings
 
 
@@ -1033,11 +1038,13 @@ class Report:
         else:
             lines += ["| | kind | path | finding | fingerprint |", "|-|-|-|-|-|"]
             for finding in self.findings:
-                ack = covering_ack(acks, finding)
-                mark = f"acknowledged by {_cell(ack.by)} ({ack.date})" if ack else "**fails**"
-                held = acks.get(finding.fingerprint())
-                if ack is None and held is not None:
-                    mark += f" (acknowledged up to {_cell(held.severity or 'no severity')})"
+                ack = acks.get(finding.fingerprint())
+                if ack is None:
+                    mark = "**fails**"
+                elif ack.covers(finding):
+                    mark = f"acknowledged by {_cell(ack.by)} ({ack.date})"
+                else:
+                    mark = f"**fails** (acknowledged up to {_cell(ack.severity or 'no severity')})"
                 lines.append(
                     f"| {mark} | {finding.kind} ({_cell(finding.severity)}) "
                     f"| `{_cell(finding.path)}` | {_cell(finding.summary)} "

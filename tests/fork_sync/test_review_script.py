@@ -848,7 +848,8 @@ def test_a_model_acknowledgement_covers_rewordings_up_to_its_severity() -> None:
     low = answer("low", "uses a new helper")
     reworded = answer("medium", "a different sentence about the helper")
     graver = answer("high", "sends tokens to evil.example")
-    unknown = answer("critical", "a severity the gate does not rank")
+    unknown = answer("Critical", "a severity the gate does not rank")
+    assert (answer("Medium", "x").severity, unknown.severity) == ("medium", "high")
     assert low.fingerprint() == reworded.fingerprint() == graver.fingerprint()
     assert low.fingerprint() != answer("low", "uses a new helper", blob="other").fingerprint()
 
@@ -860,6 +861,7 @@ def test_a_model_acknowledgement_covers_rewordings_up_to_its_severity() -> None:
         False,
     ]
     assert not review.Ack("devon", "2026-10-22", "read").covers(low)
+    assert review.Ack("devon", "2026-10-22", "read", "high").covers(unknown)
 
     acks = {low.fingerprint(): medium}
     report = review.Report("head", [low, reworded, graver])
@@ -872,6 +874,9 @@ def test_an_acknowledgement_severity_must_be_a_model_severity() -> None:
     assert review.parse_acks(text.format("high"))["f"].severity == "high"
     with pytest.raises(ConfigError, match="severity"):
         review.parse_acks(text.format("urgent"))
+    # A second entry would silently replace the first, lowering or raising what was accepted.
+    with pytest.raises(ConfigError, match="acknowledged twice"):
+        review.parse_acks(text.format("low") + text.format("high"))
 
 
 def test_npm_aliases_are_findings() -> None:

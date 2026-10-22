@@ -199,8 +199,10 @@ every rewording failed the check under a new fingerprint, and each needed a pers
   the whole reviewed diff for a path that did not change. Wording and severity are out of it.
 - **Its acknowledgement names `severity`, the highest it accepts.** A finding on that content at
   or below the severity is covered; a higher one fails, and the report marks it "acknowledged up
-  to" the accepted severity. An acknowledgement without `severity` covers no model finding, and a
-  severity outside `low`, `medium` and `high` is never covered. Other kinds are unchanged.
+  to" the accepted severity. An acknowledgement without `severity` covers no model finding. The
+  model's severity is read in lower case, and one outside `low`, `medium` and `high` counts as
+  `high`, so it can still be accepted. A fingerprint may be acknowledged only once, since a second
+  entry would silently replace the first. Other kinds are unchanged.
 - **The cost:** a different concern about the same unchanged content, at or below the accepted
   severity, is covered without a person reading it. The content is exactly what the person read,
   and any change to it brings the finding back.

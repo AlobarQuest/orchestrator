@@ -182,7 +182,21 @@ A model finding's fingerprint leaves out its wording and its severity, because t
 the same concern differently on every run. Its acknowledgement must instead name `severity`, the
 highest it accepts (`low`, `medium` or `high`). A rewording at or below that severity stays
 acknowledged, and a concern rated higher fails again; the report marks it "acknowledged up to"
-the accepted severity. An acknowledgement of a model finding without `severity` covers nothing.
+the accepted severity. An acknowledgement of a model finding without `severity` covers nothing,
+and `severity` is ignored on every other kind. The model's severity is read in lower case, and one
+outside the three counts as `high`. Name the severity you read, not `high` by default: an
+acknowledgement at `high` covers every model concern about that content until it changes. Each
+fingerprint is acknowledged once; a second entry for it fails the review. For a report row
+`ai (medium) | scripts/fetch-docs.cjs | Headings from the remote index feed path.join …`:
+
+```toml
+[[ack]]
+fingerprint = "4922f33d224f0111"
+by = "devon"
+date = 2026-10-22
+severity = "medium"
+reason = "Build-time docs script the fork's build never runs; reported upstream."
+```
 
 1. Add an entry to `.github/fork-sync-acks.toml` on the fork's `main`:
 
