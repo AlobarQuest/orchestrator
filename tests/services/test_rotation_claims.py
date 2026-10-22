@@ -300,6 +300,7 @@ _UNIT_KINDS = {
     "keychain": {"constraints": KEYCHAIN_UNIT},
     "vm": {"constraints": {"rotation_adapter": "openrouter"}},
     "vm_no_adapter": {},
+    "unhashable_adapter": {"constraints": {"rotation_adapter": ["bws-machine-token"]}},
     "other_work": {"capability": "repo.edit"},
 }
 
@@ -317,6 +318,12 @@ _UNIT_KINDS = {
         ),
         pytest.param(EXECUTOR_ACTOR, "keychain", "rotation_claim_confined", id="vm_keychain_unit"),
         pytest.param(EXECUTOR_ACTOR, "vm", None, id="vm_claims_its_unit"),
+        pytest.param(
+            KEYCHAIN_ACTOR,
+            "unhashable_adapter",
+            "rotation_claim_confined",
+            id="keychain_list_adapter",
+        ),
         pytest.param(OTHER, "keychain", "rotation_claim_confined", id="other_keychain_unit"),
     ],
 )

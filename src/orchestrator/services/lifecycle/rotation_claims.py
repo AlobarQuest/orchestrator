@@ -60,7 +60,8 @@ class RotationExecutors:
     def owner(self, unit: WorkUnit) -> str | None:
         """The only identity that may claim this rotation unit."""
         adapter = normalize_authority(unit.authority).constraints.get(ADAPTER_CONSTRAINT)
-        return self.keychain if adapter in KEYCHAIN_ADAPTERS else self.vm
+        keychain = isinstance(adapter, str) and adapter in KEYCHAIN_ADAPTERS
+        return self.keychain if keychain else self.vm
 
     def includes(self, claimant: str) -> bool:
         return claimant in {self.vm, self.keychain} - {None}

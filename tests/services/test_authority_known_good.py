@@ -720,6 +720,11 @@ def test_a_bws_machine_token_unit_is_recognised_on_this_machine(unit: str) -> No
     [
         ("a unit only a person does", bws_machine_token("mint"), KEYCHAIN_REACH),
         ("the live estate", bws_machine_token(), ("external_system", "live_estate")),
+        (
+            "a unit only a person does, declared off this machine",
+            bws_machine_token("retire"),
+            ("external_system",),
+        ),
         ("another adapter on this machine", bitbucket_confirm(), KEYCHAIN_REACH),
     ],
 )

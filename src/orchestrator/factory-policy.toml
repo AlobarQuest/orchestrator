@@ -349,12 +349,26 @@ exactly equal, and refuses a unit marked as touching no hosted service that writ
 one. A host with no overlap is the one declaration only a person makes, so an
 envelope carrying `host_without_overlap` is never recognised here. The adapters
 are the ones the approved packages use. Left out: the fake adapter the canary
-uses, and the attested change-manager variant, which no package uses. The BWS
-machine-token adapter joined on 2026-10-22 (ADR-0055 amendment 12).
+uses, and the attested change-manager variant, which no package uses.
 """
 decided = "2026-10-21"
-rotation_adapters = ["bitbucket", "bws-machine-token", "change-manager", "github-pat", "openrouter", "orchestrator", "orchestrator-distributed"]
+rotation_adapters = ["bitbucket", "change-manager", "github-pat", "openrouter", "orchestrator", "orchestrator-distributed"]
 rotation_units = ["confirm", "mint", "retire", "store", "verify"]
+capabilities = { "operational_action" = "allowed" }
+max_attempts = 3
+
+[[reach.external_system.rotation_known_good]]
+name = "BWS machine-token rotation unit of an approved standing package"
+rationale = """
+A BWS machine access token is proved and proved dead by logging in to Bitwarden,
+so its rotation's machine units reach that service (ADR-0055 amendment 12).
+Recognised for the reason the pattern above gives. Its own pattern, so that only
+this adapter's machine units are named: a person creates and revokes the token in
+the web app, so no mint or retire unit of this adapter exists to recognise.
+"""
+decided = "2026-10-22"
+rotation_adapters = ["bws-machine-token"]
+rotation_units = ["confirm", "store", "verify"]
 capabilities = { "operational_action" = "allowed" }
 max_attempts = 3
 
