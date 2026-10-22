@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -154,7 +155,7 @@ class KeychainShaped:
         self.revisions: dict[str, datetime] = {}
         self.deleted: list[str] = []
 
-    def locate(self, consumer: dict[str, Any]) -> str | None:
+    def locate(self, consumer: Mapping[str, Any]) -> str | None:
         return render(consumer) if consumer.get("kind") == "keychain" else None
 
     def read(self, secret_id: str) -> Value:
