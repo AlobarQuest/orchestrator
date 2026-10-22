@@ -122,6 +122,7 @@ STANDING_OPERATIONAL_PACKAGES = frozenset(
         "rotation-factory-pr-token",
         "rotation-github-finegrained-mirror",
         "rotation-bitbucket-mirror-token",
+        "rotation-bws-tok-brain-ops",
     }
 )
 
