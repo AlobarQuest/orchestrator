@@ -498,6 +498,32 @@ It runs the same code through the same contract, with its own orchestrator ident
 Each instance takes only the units of adapters kept in its own store (`Adapter.store_kind`) and
 leaves the other's units unclaimed. The orchestrator confines the two identities the same way.
 
+### Install or update the Keychain instance
+
+`scripts/install-rotation-worker-launchd.sh <40-character commit>`, from the main tree. It checks
+the orchestrator out at that commit into `~/Library/Application Support/rotation-worker/src`,
+builds the environment there from the lockfile, and writes the configuration. The configuration
+holds names only. It loads the LaunchAgent `com.devon.rotation-worker` only once the bearer
+exists. The agent runs a pass every five minutes and logs to
+`~/Library/Logs/rotation-worker.log`.
+
+First install, in this order, with nothing dispatched in flight:
+
+1. Run the installer. It reports that no bearer exists yet.
+2. Run `"~/Library/Application Support/rotation-worker/venv/bin/rotation-worker" mint-bearer
+   --config "~/Library/Application Support/rotation-worker/config.toml"`. It creates the Keychain
+   item `rotation-executor`/`worker-bearer` and prints its `token_hash` and fingerprint, never
+   the value.
+3. Change the orchestrator's settings, both rows of each variable:
+   1. Set `ORCHESTRATOR_ROTATION_KEYCHAIN_EXECUTOR_AGENT_ID=rotation-executor-keychain`, restart,
+      and confirm it boots.
+   2. Add `"rotation-executor-keychain-1": {"agent_id": "rotation-executor-keychain",
+      "token_hash": "<hash>"}` to `ORCHESTRATOR_M2M_CREDENTIALS`, restart, and confirm it boots.
+      No roles entry is needed: an unpromoted credential is a WORKER.
+4. Run the installer again. It loads the agent.
+
+To update, run the installer with the newer commit.
+
 ### The plan
 
 The `bws-machine-token` adapter (`adapters/bws_machine_token.py`) runs these segments in order:

@@ -122,7 +122,9 @@ def test_control_the_same_installer_in_a_main_tree_gets_past_the_refusal(
     main, _linked = trees
     result = _run_installer(installer, main, tmp_path)
     assert "linked worktree" not in result.stderr
-    # It stops at the next precondition instead: the throwaway tree has no venv.
+    # It stops at the next precondition instead: the throwaway tree has no venv, or, for the
+    # executor's Keychain instance, which builds its own environment at a pinned commit, no commit
+    # was given.
     assert result.returncode == 1
-    assert ".venv/bin/" in result.stderr
+    assert ".venv/bin/" in result.stderr or "40-character orchestrator commit" in result.stderr
     assert not (tmp_path / "launchctl.log").exists()
