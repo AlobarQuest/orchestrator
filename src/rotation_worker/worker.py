@@ -35,6 +35,7 @@ from typing import Any, Final, Protocol, runtime_checkable
 from rotation_worker.adapters import ADAPTERS, AdapterContext
 from rotation_worker.adapters.orchestrator_bearer import NAME as ORCHESTRATOR_PROVIDER
 from rotation_worker.checks import WRITING_STEPS, Approved, check_unit
+from rotation_worker.config import ConfigError
 from rotation_worker.contract import (
     HELD_KIND,
     ContractError,
@@ -214,7 +215,8 @@ def _held(setup: Setup, approved: Approved) -> HeldSettings | None:
     """The writer for the unit's held copies, checked against each one; `None` when it has none.
 
     It reaches the orchestrator's application through production Coolify with the orchestrator
-    adapter's token, so a configuration without those can't write one, and refuses.
+    adapter's token. A configuration without those is the executor's fault, not the unit's, so it
+    raises `ConfigError`, which no attempt is spent on.
     """
     destinations = _held_destinations(approved)
     if not destinations:
@@ -222,7 +224,7 @@ def _held(setup: Setup, approved: Approved) -> HeldSettings | None:
     token_id = setup.admin_secrets.get(ORCHESTRATOR_PROVIDER)
     coolify_url, application, store = setup.coolify_url, setup.orchestrator_application, setup.store
     if token_id is None or not coolify_url or application is None:
-        raise ContractError("a held copy is approved and this executor can't write one")
+        raise ConfigError("a held copy is approved and this executor can't write one")
     held = HeldSettings(
         setup.client,
         lambda app: CoolifyClient(coolify_url, store.read(token_id), app),

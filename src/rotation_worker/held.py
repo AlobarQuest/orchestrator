@@ -49,11 +49,17 @@ class HeldSettings:
         self._sleep = sleep
 
     def check(self, consumer: Mapping[str, Any]) -> None:
-        """Refuse a held destination this executor can't write or read back."""
+        """Refuse a held destination this executor can't write or read back.
+
+        A variable the orchestrator doesn't report could be written but never confirmed, so it is
+        refused here, before the claim, not after a restart and a ten-minute wait.
+        """
         if consumer["instance"] != INSTANCE or consumer["resource_type"] != "application":
             raise ContractError("a held copy is written only in a production application")
         if consumer["uuid"] != self._application:
             raise ContractError("only the orchestrator reports what it holds; refused elsewhere")
+        if str(consumer["key"]) not in self._orchestrator.held():
+            raise ContractError(f"the orchestrator doesn't report {consumer['key']}")
 
     def write(self, consumer: Mapping[str, Any], value: Value) -> None:
         self.check(consumer)
