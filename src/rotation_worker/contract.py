@@ -57,6 +57,9 @@ LIVE_STATUS: Final = 200
 # probe the executor can run). An Actions secret is neither: the executor writes it and reads its
 # repository's fingerprint report (increment 7).
 ACTIONS_KIND: Final = "gh-actions-secret"
+# A copy another application holds to call a service (amendment 13): distribute writes it, and only
+# the holding application can say what it loaded.
+HELD_KIND: Final = "coolify-env-held"
 ATTESTED_KINDS: Final = frozenset({"runtime-fetch", "keychain", "shell-export"})
 
 
@@ -164,6 +167,16 @@ class ActionsSecretWriter(Protocol):
     """Writes one repository's Actions secret, and confirms GitHub recorded the write."""
 
     def write(self, repository: str, name: str, value: Value) -> None: ...
+
+
+class HeldCopies(Protocol):
+    """Writes a held copy and asks the holding application what it loaded (`held.py`)."""
+
+    def write(self, consumer: Mapping[str, Any], value: Value) -> None: ...
+
+    def holds(self, consumer: Mapping[str, Any], value: Value) -> bool:
+        """Never raises: an application that can't be asked doesn't hold it."""
+        ...
 
 
 class ScheduledReads(Protocol):
@@ -300,6 +313,7 @@ class UnitRun:
     filed: frozenset[StepKind] = frozenset()
     scheduled: ScheduledReads | None = None
     actions_secrets: ActionsSecretWriter | None = None
+    held: HeldCopies | None = None
     # A person revokes the old value straight after this unit, so its verify_consumers step also
     # proves the old value live: the first half of amendment 1's pair, which no machine retire
     # step is there to file.
@@ -429,23 +443,28 @@ class UnitRun:
         needs_attestation = 0
         for destination in self.rotation.destinations:
             consumer = parse(destination)
-            kind = consumer["kind"]
-            if kind == "provider":
+            if consumer["kind"] == "provider":
                 continue
-            if self.scheduled is not None and self.scheduled.covers(destination):
-                stored_at = self.store.revised(self.rotation.keeper_id)
-                if not self.scheduled.switched(destination, stored_at):
-                    missing.append(destination)
-            elif self.store.locate(consumer) is not None:
-                if not self._holds(consumer, new):
-                    missing.append(destination)
-            elif kind in ATTESTED_KINDS:
+            if consumer["kind"] in ATTESTED_KINDS and not self._machine_read(destination, consumer):
                 needs_attestation += 1
                 if needs_attestation > attested:
                     missing.append(destination)
-            elif not self._holds(consumer, new):
+            elif not self._switched(destination, consumer, new):
                 missing.append(destination)
         return missing
+
+    def _machine_read(self, destination: str, consumer: Mapping[str, Any]) -> bool:
+        """Whether the executor itself can tell if this consumer switched."""
+        scheduled = self.scheduled is not None and self.scheduled.covers(destination)
+        return scheduled or self.store.locate(consumer) is not None
+
+    def _switched(self, destination: str, consumer: Mapping[str, Any], new: Value) -> bool:
+        if self.scheduled is not None and self.scheduled.covers(destination):
+            stored_at = self.store.revised(self.rotation.keeper_id)
+            return self.scheduled.switched(destination, stored_at)
+        if consumer["kind"] == HELD_KIND:
+            return self.held is not None and self.held.holds(consumer, new)
+        return self._holds(consumer, new)
 
     def _holds(self, consumer: Mapping[str, Any], new: Value) -> bool:
         """Whether a consumer the executor can read holds the new value right now."""
@@ -532,7 +551,7 @@ def _store(run: UnitRun, step: Step) -> None:
 
 def _distribute(run: UnitRun, step: Step) -> None:
     new, old = run.new_and_old()
-    written = actions = 0
+    written = actions = held = 0
     for destination in run.rotation.destinations:
         consumer = parse(destination)
         secret_id = run.store.locate(consumer)
@@ -546,7 +565,17 @@ def _distribute(run: UnitRun, step: Step) -> None:
             # Only the approved repository and name: the writer's client permits nothing else.
             run.actions_secrets.write(consumer["repo"], consumer["name"], new)
             actions += 1
-    note = f"wrote {written} secret(s) beside the keeper and {actions} Actions secret(s)"
+        elif consumer["kind"] == HELD_KIND:
+            if run.held is None:
+                raise ContractError("a held copy is approved and no writer is configured")
+            # Writes the one approved application and variable, restarts it, and waits until it
+            # reports the new value loaded.
+            run.held.write(consumer, new)
+            held += 1
+    note = (
+        f"wrote {written} secret(s) beside the keeper, {actions} Actions secret(s) "
+        f"and {held} held cop(ies)"
+    )
     run.record(step, StepEvidence(step.kind, fingerprints=_fingerprints(new, old), note=note))
 
 
@@ -555,6 +584,8 @@ def _verify_consumers(run: UnitRun, step: Step) -> None:
     missing = run.unverified(new)
     if any(run.store.locate(parse(d)) is not None for d in missing):
         raise ContractError("a stored consumer doesn't read back the new value")
+    if any(parse(d)["kind"] == HELD_KIND for d in missing):
+        raise ContractError("a held copy isn't loaded with the new value")
     verified = sum(1 for d in run.rotation.destinations if parse(d)["kind"] != "provider")
     note = f"{verified - len(missing)} of {verified} consumers hold or attest the new value"
     probes: list[ProbeAnswer] = []

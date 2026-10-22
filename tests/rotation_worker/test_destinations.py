@@ -26,7 +26,7 @@ from rotation_worker.destinations import (
 )
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "rotation_destination_format.json"
-DESTINATION_FORMAT_SHA256 = "e476c96d55280bde0efdd32b7c8d2400b29402dfb53dc7ef4c7d9c200d465fe0"
+DESTINATION_FORMAT_SHA256 = "3c81cc3d22882598efa0486af4bf980f620f482243198ae1912f0134c0453f41"
 
 
 def _fixture() -> dict[str, Any]:

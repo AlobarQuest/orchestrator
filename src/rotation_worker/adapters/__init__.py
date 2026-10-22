@@ -140,4 +140,7 @@ ADAPTERS: Final[dict[str, Adapter]] = {
     change_manager.ATTESTED_NAME: Adapter(
         change_manager.NAME, change_manager.ATTESTED_PLAN, _change_manager
     ),
+    change_manager.DISTRIBUTED_NAME: Adapter(
+        change_manager.NAME, change_manager.DISTRIBUTED_PLAN, _change_manager
+    ),
 }

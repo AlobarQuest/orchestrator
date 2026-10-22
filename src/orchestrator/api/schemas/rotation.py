@@ -22,3 +22,13 @@ class M2MIdentityResponse(BaseModel):
     agent_id: str
     token_hash: str
     previous: PreviousHashResponse | None = None
+
+
+class HeldCredentialResponse(BaseModel):
+    """The fingerprint of a value this process loaded to call another service: a sha256 prefix
+    and the length, enough to tell two values apart and never to recover one."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    sha256_prefix: str
+    length: int

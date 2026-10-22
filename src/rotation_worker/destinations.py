@@ -39,6 +39,9 @@ IDENTITY_FIELDS: Final[Mapping[str, tuple[str, ...]]] = {
     # `entry` is the key id inside the variable's JSON whose hash this credential's bearer is, so
     # the executor rewrites only the entry Devon approved (ADR-0055 amendment 9).
     "coolify-env-hash": ("instance", "resource_type", "uuid", "key", "entry"),
+    # A value an application holds in its settings to call another service (ADR-0055 amendment
+    # 13): distribute writes it, and only the holding application can say what it loaded.
+    "coolify-env-held": ("instance", "resource_type", "uuid", "key"),
     "gh-actions-secret": ("repo", "name"),
     "keychain": ("service", "account"),
     "runtime-fetch": ("repo", "ref"),

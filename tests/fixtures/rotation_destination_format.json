@@ -21,6 +21,12 @@
       "key",
       "entry"
     ],
+    "coolify-env-held": [
+      "instance",
+      "resource_type",
+      "uuid",
+      "key"
+    ],
     "gh-actions-secret": [
       "repo",
       "name"

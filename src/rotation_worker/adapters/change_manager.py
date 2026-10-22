@@ -82,6 +82,7 @@ from rotation_worker.values import Value
 
 NAME: Final = "change-manager"
 ATTESTED_NAME: Final = "change-manager-attested"
+DISTRIBUTED_NAME: Final = "change-manager-distributed"
 BASE_URL: Final = "https://change-mgr.alobar.net"
 # Every scope may read the landing policy (change-manager's `app/scopes.py`), and it writes nothing.
 PROBE_PATH: Final = "/api/landing-policy"
@@ -134,8 +135,35 @@ PLAN: Final = Plan((_MINT, _RETIRE))
 ATTESTED_PLAN: Final = Plan(
     (_MINT, HumanAct("attest", (Step(StepKind.VERIFY_CONSUMERS, Actor.HUMAN),)), _RETIRE)
 )
+# The plan for a bearer another application also holds (ADR-0055 amendment 13): distribute writes
+# that copy after store, and the last verify-consumers asks the holding application what it loaded.
+DISTRIBUTED_PLAN: Final = Plan(
+    (
+        UnitPlan(
+            "mint",
+            (
+                Step(StepKind.MINT, M, "AC-001"),
+                Step(StepKind.STAGE, M, "AC-002"),
+                Step(StepKind.HOST, M, "AC-003"),
+                Step(StepKind.VERIFY_NEW, M, "AC-004"),
+                Step(StepKind.STORE, M, "AC-005"),
+                Step(StepKind.DISTRIBUTE, M, "AC-006"),
+                Step(StepKind.VERIFY_CONSUMERS, M, "AC-007"),
+            ),
+        ),
+        UnitPlan(
+            "retire",
+            (
+                Step(StepKind.VERIFY_CONSUMERS, M, "AC-008"),
+                Step(StepKind.RETIRE_OLD, M, "AC-009"),
+                Step(StepKind.CONFIRM_DEAD, M, "AC-010"),
+            ),
+        ),
+    )
+)
 validate_plan(PLAN)
 validate_plan(ATTESTED_PLAN)
+validate_plan(DISTRIBUTED_PLAN)
 
 
 def setting(scope: str, new_hash: str, previous: tuple[str, datetime] | None = None) -> str:

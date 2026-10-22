@@ -33,6 +33,7 @@ from rotation_worker.adapters import ADAPTERS, Adapter
 from rotation_worker.canonical import CanonicalError, package_hash
 from rotation_worker.contract import (
     ACTIONS_KIND,
+    HELD_KIND,
     ContractError,
     HumanAct,
     Plan,
@@ -217,6 +218,12 @@ def _check_destination_fit(
     if actions and StepKind.DISTRIBUTE not in {step.kind for step in plan.steps()}:
         # Nothing else writes an Actions secret, so its copies would keep the old value.
         raise ContractError("this adapter writes no Actions secret")
+    held = [d for d in destinations if parse(d)["kind"] == HELD_KIND]
+    if held and StepKind.DISTRIBUTE not in {step.kind for step in plan.steps()}:
+        raise ContractError("this adapter writes no held copy")
+    if held and marked_non_hosted and StepKind.DISTRIBUTE in {s.kind for s in unit.steps}:
+        # Writing a held copy restarts the application that holds it.
+        raise ContractError("the unit is marked non-hosted but restarts an application")
     if any(len(destination) > MAX_DESTINATION for destination in destinations):
         raise ContractError("a destination is longer than rotation-step/1 evidence can carry")
 
@@ -248,7 +255,7 @@ def _check_human_retire_verifiable(
         return
     for destination in destinations:
         consumer = parse(destination)
-        stored = store.locate(consumer) is not None
+        stored = store.locate(consumer) is not None or consumer["kind"] == HELD_KIND
         if consumer["kind"] != "provider" and not stored and destination not in reads:
             raise ContractError(f"a person revokes, and nothing machine-verifies {destination}")
 
