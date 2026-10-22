@@ -135,8 +135,8 @@ def _leaves(value: object) -> list[object]:
 
 
 def test_the_policy_surface_serves_each_rotation_pattern_whole(db_client: TestClient) -> None:
-    # ADR-0055 amendments 11 and 12. Served keys, model fields and report keys are one set, for the reason
-    # the top level is: a response model drops what it does not declare.
+    # ADR-0055 amendments 11 and 12. Served keys, model fields and report keys are one set, for the
+    # reason the top level is: a response model drops what it does not declare.
     reach = db_client.get("/api/v1/factory-policy", headers=SYSTEM).json()["reach"]
     served = {row["member"]: row["rotation_known_good"] for row in reach}
     reported = {
