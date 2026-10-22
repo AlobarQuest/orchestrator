@@ -15,7 +15,7 @@ from rotation_worker.checks import _keeper_id
 from rotation_worker.config import ConfigError, load
 from rotation_worker.contract import ContractError
 from rotation_worker.registry import RegistryEntry, RegistryError
-from rotation_worker.secret_store import KeychainStore
+from rotation_worker.secret_store import KeychainStore, StoreError
 from rotation_worker.values import Value
 from rotation_worker.worker import Setup
 from tests.rotation_worker.stores import MemoryStore
@@ -119,6 +119,18 @@ def test_stage_refuses_anything_not_shaped_like_a_token(
     monkeypatch.setattr(cli, "open_store", lambda config: store)
     result = cli.stage(load(_config(tmp_path)), "c", "o", lambda _p: typed)
     assert result == cli.EXIT_UNREADABLE and store.secrets == {}
+
+
+def test_stage_reports_a_keychain_refusal_without_a_traceback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    class Refusing(Recording):
+        def create(self, project_id: str, key: str, value: Value) -> Any:
+            raise StoreError("the Keychain didn't answer: it may be asking a person")
+
+    monkeypatch.setattr(cli, "open_store", lambda config: Refusing())
+    assert cli.stage(load(_config(tmp_path)), "c", "o", lambda _p: TOKEN) == cli.EXIT_UNREADABLE
+    assert "asking a person" in capsys.readouterr().err
 
 
 def test_stage_refuses_a_second_staging_and_a_vm_configuration(

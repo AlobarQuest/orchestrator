@@ -320,3 +320,12 @@ def test_confirm_refuses_an_old_token_still_live() -> None:
     with pytest.raises(ContractError, match="old value probed live"):
         r.run("confirm")
     assert set(r.store.items) > {KEEPER, COPY}
+
+
+def test_the_keychain_adapters_are_the_ones_the_orchestrator_confines() -> None:
+    # Two lists, one in each program: if they drift, the units of an adapter one side calls
+    # Keychain and the other doesn't are never claimed, and nothing reports it.
+    from orchestrator.services.lifecycle.rotation_claims import KEYCHAIN_ADAPTERS
+
+    keychain = {name for name, adapter in ADAPTERS.items() if adapter.store_kind == "keychain"}
+    assert keychain == KEYCHAIN_ADAPTERS

@@ -512,7 +512,8 @@ The `bws-machine-token` adapter (`adapters/bws_machine_token.py`) runs these seg
    old value.
 3. **`verify`** (AC-004) reads every item back. It waits, unclaimed, until each scheduled reader
    has run since the switch, then proves the old token still logs in.
-4. **A human act revokes the old token** in the web app. Revoke it only after `verify` completes.
+4. **A human act revokes the old token** in the web app. Revoke it only after `verify` completes,
+   and resolve the act only after revoking: `confirm`'s 75 minutes count from the resolution.
 5. **`confirm`** (AC-005) proves the old token refused and the new one live. Then it deletes the
    staging and quarantine items.
 
@@ -525,6 +526,15 @@ and the token on stdin.
 The control is a well-formed random token. Measured 2026-10-22: a random token and a just-revoked
 one both answered `invalid_client`, and a live one logged in.
 
+A `keychain` destination names a service and an account, not a machine: it means the item on the
+Mac this instance runs on. A token also kept on another machine needs its registry entry changed
+before it's rotated, or the other copy keeps the old value.
+
+Two Keychain states stop a rotation rather than corrupt it. An item whose value isn't printable
+reads back hex-encoded and fails read-back. A second item with the same service and account in
+another keychain is found by reads, while `-U` writes the default keychain. Remove the duplicate,
+then requeue the unit.
+
 ### Waits
 
 - **`store` isn't claimed between 02:00 and 07:35 New York time,** while the scheduled lanes read
@@ -533,6 +543,21 @@ one both answered `invalid_client`, and a live one logged in.
   logged in before the revoke keeps working. On 2026-10-22, a client that logged in at 12:45 UTC,
   just before a revoke, kept reading until 13:39 and was first refused at 13:40. That's about 55
   minutes after its login.
+
+### If the old token is dead before `verify` completes
+
+The Bitbucket and BWS-token plans' `verify` unit proves the old value still works before the
+person revokes it. If it's already dead, because it was revoked early or expired, every attempt
+fails with "the old value probed dead", and no later step can file the missing half. The new value
+is already in the keeper, so the rotation has happened without its proof:
+
+1. At `/review`, cancel the `verify` and `confirm` units with a reason that names the early revoke.
+2. Confirm the new value works with the probe the adapter uses (a fresh login, or the provider's
+   API), and that the old one is refused.
+3. Delete the staging and quarantine items, or secrets, named
+   `rotation/<credential>/<occurrence>/…`.
+4. Record the rotation in the registry as usual, with a comment that the live-before half is
+   missing.
 
 ## change-manager's bearers
 

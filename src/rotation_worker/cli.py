@@ -240,14 +240,20 @@ def stage(
         return EXIT_UNREADABLE
     store = open_store(config)
     rotation = Rotation(credential_id, occurrence, "", config.work_project_id, ())
-    if store.find(config.work_project_id, rotation.staging_key) is not None:
-        print(f"stage: {rotation.staging_key} is already staged", file=sys.stderr)
+    try:
+        if store.find(config.work_project_id, rotation.staging_key) is not None:
+            print(f"stage: {rotation.staging_key} is already staged", file=sys.stderr)
+            return EXIT_UNREADABLE
+        value = Value(ask("New BWS access token (hidden): ").strip())
+        if not BWS_TOKEN.fullmatch(value.reveal()):
+            print(
+                "stage: that isn't the shape of a BWS access token; nothing staged", file=sys.stderr
+            )
+            return EXIT_UNREADABLE
+        store.create(config.work_project_id, rotation.staging_key, value)
+    except StoreError as error:
+        print(f"stage: {error}", file=sys.stderr)
         return EXIT_UNREADABLE
-    value = Value(ask("New BWS access token (hidden): ").strip())
-    if not BWS_TOKEN.fullmatch(value.reveal()):
-        print("stage: that isn't the shape of a BWS access token; nothing staged", file=sys.stderr)
-        return EXIT_UNREADABLE
-    store.create(config.work_project_id, rotation.staging_key, value)
     print_ = value.fingerprint
     print(json.dumps({"sha256_prefix": print_.sha256_prefix, "length": print_.length}))
     return 0
