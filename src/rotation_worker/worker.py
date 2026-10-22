@@ -28,14 +28,16 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final, Protocol, runtime_checkable
 
-from rotation_worker.adapters import AdapterContext
+from rotation_worker.adapters import ADAPTERS, AdapterContext
 from rotation_worker.checks import WRITING_STEPS, Approved, check_unit
 from rotation_worker.contract import ContractError, HumanAct, Provider, Step, StepKind, UnitRun
 from rotation_worker.destinations import DestinationError, parse
-from rotation_worker.envelope import is_rotation_unit
+from rotation_worker.envelope import ADAPTER_KEY, is_rotation_unit
+from rotation_worker.envelope import constraints as envelope_constraints
 from rotation_worker.evidence import StepEvidence
 from rotation_worker.git_mirror import MirrorError, RepoMirror
 from rotation_worker.github_actions import ActionsSecrets, FingerprintReports, RotationApp
@@ -103,12 +105,12 @@ def run_pass(setup: Setup) -> int:
 
 def _take(setup: Setup, unit_id: str) -> int:
     unit = setup.client.unit(unit_id)
-    if not is_rotation_unit(unit):
+    if not is_rotation_unit(unit) or not _ours(setup, unit):
         return 0
     intake = setup.client.package_intake(str(unit["work_package_revision_id"]))
     reads: ConsumerReads | None = None
     try:
-        approved = check_unit(unit, intake, setup.mirror, setup.work_project_id)
+        approved = check_unit(unit, intake, setup.mirror, setup.work_project_id, setup.store)
         if approved.reads and _verifies(approved):
             reads = _consumer_reads(setup, approved)
             waiting = reads.pending(setup.store.revised(approved.rotation.keeper_id))
@@ -125,6 +127,11 @@ def _take(setup: Setup, unit_id: str) -> int:
     except REFUSALS as error:
         _refuse(setup, unit, scrub(str(error)))
         return 0
+    wait = approved.adapter.wait
+    reason = wait(approved.unit, setup.client.history(unit_id), _now()) if wait else None
+    if reason is not None:
+        LOG.info("unit_waiting", extra={"unit": str(unit["id"]), "reason": reason})
+        return 0
     # Built before the claim: a provider that can't be built (an admin secret missing from the
     # configuration) is the executor's fault, not the unit's, so no attempt is spent on it.
     provider = _provider(setup, approved)
@@ -140,6 +147,21 @@ def _take(setup: Setup, unit_id: str) -> int:
             LOG.info("unit_waiting", extra={"unit": str(unit["id"]), "readers_mid_run": busy})
             return 0
     return 1 if _work(setup, unit, approved, provider, reads) else 0
+
+
+def _ours(setup: Setup, unit: Mapping[str, Any]) -> bool:
+    """Whether this instance's store keeps the unit's credentials (ADR-0055 amendment 12).
+
+    The other instance's units are left alone, unclaimed: the orchestrator would refuse this
+    instance's claim on them anyway, and failing them would spend their attempts. An adapter no
+    instance knows is the checks' to refuse, so it counts as ours.
+    """
+    adapter = ADAPTERS.get(str(envelope_constraints(unit).get(ADAPTER_KEY)))
+    return adapter is None or adapter.store_kind == setup.store.read_back_kind
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
 
 
 @runtime_checkable
@@ -187,6 +209,11 @@ def _gates_retire(approved: Approved) -> bool:
     """
     if any(step.kind is StepKind.RETIRE_OLD for step in approved.unit.steps):
         return True
+    return _person_revokes_next(approved)
+
+
+def _person_revokes_next(approved: Approved) -> bool:
+    """Whether the segment straight after this unit is a person retiring the old value."""
     segments = approved.adapter.plan.segments
     following = segments[segments.index(approved.unit) + 1 :][:1]
     return any(
@@ -265,6 +292,7 @@ def _work(
             filed=kinds,
             scheduled=reads,
             actions_secrets=ActionsSecrets(setup.github_app) if setup.github_app else None,
+            person_revokes_next=_person_revokes_next(approved),
         )
         run.run(approved.unit)
     except Exception as error:

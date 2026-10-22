@@ -102,6 +102,7 @@ def test_read_consumers_prints_each_reader_s_answer_and_exits_2_on_one_unreadabl
 ) -> None:
     stored = datetime(2026, 10, 15, 6, 0, tzinfo=UTC)
     credential = {
+        "bws_uuid": "00000000-0000-4000-8000-000000000000",
         "consumer": [
             {
                 "kind": "runtime-fetch",
@@ -124,7 +125,7 @@ def test_read_consumers_prints_each_reader_s_answer_and_exits_2_on_one_unreadabl
                 "observation_source": "s",
                 "observation_subject": "silent",
             },
-        ]
+        ],
     }
     monkeypatch.setattr(
         cli, "find_credential", lambda mirror, cid: RegistryEntry("r", "c" * 40, credential)
@@ -136,7 +137,10 @@ def test_read_consumers_prints_each_reader_s_answer_and_exits_2_on_one_unreadabl
             return [{"observed_at": at[subject].isoformat()}] if subject in at else []
 
     setup = cast(
-        Setup, SimpleNamespace(mirror=None, healthchecks=None, client=Client(), github_app=None)
+        Setup,
+        SimpleNamespace(
+            mirror=None, healthchecks=None, client=Client(), github_app=None, store=MemoryStore()
+        ),
     )
     assert cli.read_consumers(setup, "x", stored) == cli.EXIT_UNREADABLE
     lines = capsys.readouterr().out.splitlines()

@@ -117,7 +117,9 @@ class Harness:
             "authority": {"constraints": {"rotation_adapter": "fake", "rotation_unit": name}},
         }
 
-    def _check(self, unit: dict[str, Any], intake: Any, mirror: Any, work: str) -> Approved:
+    def _check(
+        self, unit: dict[str, Any], intake: Any, mirror: Any, work: str, store: Any
+    ) -> Approved:
         if self.refusal is not None:
             raise self.refusal
         plan_unit = self.adapter.plan.unit(unit["authority"]["constraints"]["rotation_unit"])
@@ -339,7 +341,7 @@ def test_an_adapter_missing_its_admin_secret_spends_no_attempt(h: Harness) -> No
 
 
 def test_earlier_evidence_is_tracked_per_criterion_not_per_kind(h: Harness) -> None:
-    approved = h._check(_unit("retire"), None, None, "")
+    approved = h._check(_unit("retire"), None, None, "", h.store)
     rows = [{"ac_id": "AC-006"}, {"ac_id": "AC-007"}, {"ac_id": "AC-099"}]
     kinds, criteria = worker._filed(rows, approved)
     assert criteria == {"AC-006", "AC-007"}
@@ -434,7 +436,7 @@ def test_the_wait_names_when_the_overlap_s_backstop_ends(h: Harness) -> None:
     h.rotation = Rotation("canary", "o", h.keeper, WORK, (*h.rotation.destinations, hosted))
     until = "2026-10-23T06:00:00+00:00"
     h.client.loaded = {"orchestrator-observer": {"previous": {"until": until}}}
-    approved = h._check(_unit_named("retire"), None, None, WORK)
+    approved = h._check(_unit_named("retire"), None, None, WORK, h.store)
     assert worker._overlap_until(h.setup(), approved) == until
     h.client.loaded = {"orchestrator-observer": {}}
     assert worker._overlap_until(h.setup(), approved) is None
@@ -581,3 +583,51 @@ def test_without_a_rotation_app_nothing_can_write_or_read_an_actions_secret(
     h.add("u1", "mint")
     assert run_pass(h.setup()) == 1
     assert built["actions_secrets"] is None
+
+
+def _adapted(h: Harness, monkeypatch: pytest.MonkeyPatch, **changes: Any) -> None:
+    adapter = replace(h.adapter, **changes)
+    checked = h._check
+    monkeypatch.setattr(
+        worker, "check_unit", lambda *arguments: replace(checked(*arguments), adapter=adapter)
+    )
+
+
+def test_a_unit_its_adapter_says_must_wait_is_left_unclaimed(
+    h: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    asked: list[str] = []
+
+    def wait(unit: Any, history: Any, now: datetime) -> str | None:
+        asked.append(unit.name)
+        return "not yet" if len(asked) == 1 else None
+
+    _adapted(h, monkeypatch, wait=wait)
+    h.add("u1", "mint")
+    assert run_pass(h.setup()) == 0
+    assert h.client.calls == []
+    assert run_pass(h.setup()) == 1
+    assert asked == ["mint", "mint"]
+
+
+def test_the_unit_before_a_person_s_revoke_proves_the_old_value_live(
+    h: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Amendment 1's first half, which no machine retire step files when a person revokes.
+    from rotation_worker.adapters import bws_machine_token
+
+    runs: list[bool] = []
+
+    class Recorded:
+        def __init__(self, **fields: Any) -> None:
+            runs.append(fields["person_revokes_next"])
+
+        def run(self, unit: Any) -> None:
+            pass
+
+    monkeypatch.setattr(worker, "UnitRun", Recorded)
+    h.adapter = replace(h.adapter, plan=bws_machine_token.PLAN)
+    for unit_id, name in (("u1", "store"), ("u2", "verify"), ("u3", "confirm")):
+        h.add(unit_id, name)
+    assert run_pass(h.setup()) == 3
+    assert runs == [False, True, False]

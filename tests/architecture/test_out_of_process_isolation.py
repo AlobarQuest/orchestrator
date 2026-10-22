@@ -311,6 +311,8 @@ TABLE: dict[str, Row] = {
         "datetime",
         "enum",
         "estate_clients",
+        # The hidden prompt a person stages a new BWS access token through (amendment 12).
+        "getpass",
         "hashlib",
         "hmac",
         "httpx",
@@ -324,8 +326,12 @@ TABLE: dict[str, Row] = {
         "re",
         "secrets",
         "stat",
+        # The BWS-token probe's known-bad control, a well-formed random token.
+        "string",
         "subprocess",
         "sys",
+        # The throwaway HOME a fresh Bitwarden login runs in (amendment 1).
+        "tempfile",
         "time",
         "tomllib",
         "typing",
@@ -333,6 +339,8 @@ TABLE: dict[str, Row] = {
         "urllib",
         "uuid",
         "yaml",
+        # The scheduled lanes' night hours, which a BWS-token switch waits out.
+        "zoneinfo",
         no_sibling_lanes=True,
     ),
     "rotation_proposer": _row(

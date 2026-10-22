@@ -499,6 +499,13 @@ Placement rule: global CLAUDE.md §7.
   `GET /work-units/{id}`, never the runner brief. It reads the package at its `package_id`'s
   path: an intake's `source_path` is the emitting machine's directory, never a git path. Detail:
   `docs/operations/rotation-executor.md`.
+- The executor's Keychain instance (ADR-0055 amendment 12) keeps state in the login Keychain
+  through `/usr/bin/security` (`secret_store.KeychainStore`): values only on stdin and stdout
+  (`security -i`), items updated in place with `-U`, never re-created, and an update never
+  restates the access list (macOS then prompts a person). Each instance takes only its own store's
+  adapters (`Adapter.store_kind`). A store reads back its own kind (`SecretStore.locate`); any
+  other `keychain` destination stays person-attested. Detail:
+  `docs/operations/rotation-executor.md`.
 - A scheduled `runtime-fetch` reader is verified by the read its registry row names
   (`healthchecks_check`, or `observation_source` with `observation_subject`, beside `note`), never
   by a person; a unit that retires waits unclaimed until every such reader has run since the

@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Mapping
 from datetime import UTC, datetime
+from typing import Any
 
 from rotation_worker.secret_store import StoredSecret, StoreError
 from rotation_worker.values import Value
 
 
 class MemoryStore:
+    """BWS's shape: secrets by UUID, and `bws-secret` destinations read back."""
+
+    read_back_kind = "bws-secret"
+
     def __init__(self) -> None:
         self.secrets: dict[str, tuple[str, str, Value]] = {}
         self.deleted: list[str] = []
@@ -20,6 +26,9 @@ class MemoryStore:
         self.secrets[secret_id] = (project_id, key, value)
         self.revisions[secret_id] = datetime.now(UTC)
         return secret_id
+
+    def locate(self, consumer: Mapping[str, Any]) -> str | None:
+        return str(consumer["uuid"]) if consumer.get("kind") == self.read_back_kind else None
 
     def read(self, secret_id: str) -> Value:
         if secret_id not in self.secrets:

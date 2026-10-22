@@ -10,8 +10,9 @@ from intent-packages' and the registries' public git:
 * that credential's registry entry, read at its repository's `main`, still hands it to the SDS
   (`rotated_by_sds = true`, R6) and names the adapter's provider;
 * the registry's destinations, the package's and the unit envelope's are exactly equal;
-* the keeper (the registry's `bws_uuid`) is one of them, every one fits a `rotation-step/1` row,
-  and a unit marked as touching no hosted service writes none;
+* the keeper (the registry's `bws_uuid`, or a machine token's Keychain item) is one of them and
+  is kept where this instance's store reads, every one fits a `rotation-step/1` row, and a unit
+  marked as touching no hosted service writes none;
 * a unit declaring a host with no overlap has a host step (whether an overlap is impossible is
   `m2m_setting.build`'s to refuse, from what the orchestrator serves);
 * every `runtime-fetch` consumer can be verified: the registry names its scheduled read, or the
@@ -32,7 +33,6 @@ from rotation_worker.adapters import ADAPTERS, Adapter
 from rotation_worker.canonical import CanonicalError, package_hash
 from rotation_worker.contract import (
     ACTIONS_KIND,
-    READ_BACK_KINDS,
     ContractError,
     HumanAct,
     Plan,
@@ -57,6 +57,7 @@ from rotation_worker.registry import (
     standing_credential,
     standing_destinations,
 )
+from rotation_worker.secret_store import SecretStore
 
 PROFILE: Final = "non-software-operational"
 UNIT_KEY: Final = "rotation_unit"
@@ -88,6 +89,7 @@ def check_unit(
     intake: Mapping[str, Any],
     mirror: RepoMirror,
     work_project_id: str,
+    store: SecretStore,
 ) -> Approved:
     """Every check before a claim. A refusal raises `ContractError` or `RegistryError`.
 
@@ -117,21 +119,29 @@ def check_unit(
     enveloped = constraints.get(DESTINATIONS_KEY)
     if not (entry.destinations == packaged == enveloped):
         raise ContractError("the registry's, the package's and the envelope's destinations differ")
-    keeper = entry.credential.get("bws_uuid")
-    if not isinstance(keeper, str) or f'bws-secret uuid="{keeper}"' not in packaged:
-        raise ContractError(f"{credential_id}'s keeper isn't one of its destinations")
+    keeper = _keeper_id(entry, packaged, store)
     _check_destination_fit(
         packaged, adapter.plan, unit, marked_non_hosted=constraints.get(NON_HOSTED_KEY) is True
     )
     without_overlap = _declared_without_overlap(constraints, unit)
     reads = scheduled_reads(entry.credential)
     _check_runtime_fetch_verifiable(packaged, adapter.plan, reads)
-    _check_human_retire_verifiable(packaged, adapter.plan, reads)
+    _check_human_retire_verifiable(packaged, adapter.plan, reads, store)
     occurrence = fields.get("occurrence")
     if not isinstance(occurrence, str) or not occurrence.strip():
         raise ContractError("the approved revision names no occurrence")
     rotation = Rotation(credential_id, occurrence, keeper, work_project_id, tuple(packaged))
     return Approved(adapter, unit, rotation, entry, reads, without_overlap)
+
+
+def _keeper_id(entry: RegistryEntry, packaged: list[str], store: SecretStore) -> str:
+    credential_id = entry.credential.get("id")
+    if entry.keeper not in packaged:
+        raise ContractError(f"{credential_id}'s keeper isn't one of its destinations")
+    keeper = store.locate(parse(entry.keeper))
+    if keeper is None:
+        raise ContractError(f"{credential_id}'s keeper isn't kept where this executor reads")
+    return keeper
 
 
 def _declared_without_overlap(constraints: Mapping[str, Any], unit: UnitPlan) -> bool:
@@ -225,7 +235,7 @@ def _check_runtime_fetch_verifiable(
 
 
 def _check_human_retire_verifiable(
-    destinations: list[str], plan: Plan, reads: Mapping[str, Read]
+    destinations: list[str], plan: Plan, reads: Mapping[str, Read], store: SecretStore
 ) -> None:
     # A person who revokes has no machine step after the last verify_consumers to re-check
     # every consumer, so the wait before that unit's claim must be able to see each one.
@@ -237,8 +247,9 @@ def _check_human_retire_verifiable(
     if not human_retire:
         return
     for destination in destinations:
-        kind = parse(destination)["kind"]
-        if kind != "provider" and kind not in READ_BACK_KINDS and destination not in reads:
+        consumer = parse(destination)
+        stored = store.locate(consumer) is not None
+        if consumer["kind"] != "provider" and not stored and destination not in reads:
             raise ContractError(f"a person revokes, and nothing machine-verifies {destination}")
 
 

@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Template for the rotation executor's Keychain instance (ADR-0055 amendment 12). Install with
+     scripts/install-rotation-worker-launchd.sh <commit>, which substitutes __BASE__ and __HOME__
+     and writes ~/Library/LaunchAgents/com.devon.rotation-worker.plist.
+
+     It runs the executor checked out at a pinned commit under __BASE__, never the main tree's
+     working copy. No secret lives here: the instance reads its bearer, and everything it rotates,
+     from the login Keychain through /usr/bin/security.
+
+     A pass every five minutes, as the VM instance's timer runs. RunAtLoad is false: a missed pass
+     needs no catch-up, because each one re-derives where every rotation stands.
+
+     PATH names only system directories: /usr/bin has `security` and `git`, and the fresh-login
+     probe runs the environment's own interpreter, not one found on PATH.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.devon.rotation-worker</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__BASE__/venv/bin/rotation-worker</string>
+        <string>run</string>
+        <string>--config</string>
+        <string>__BASE__/config.toml</string>
+    </array>
+
+    <key>StartInterval</key>
+    <integer>300</integer>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>__HOME__</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/rotation-worker.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/rotation-worker.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>

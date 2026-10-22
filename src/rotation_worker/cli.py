@@ -1,8 +1,10 @@
 """`rotation-worker`: the credential-rotation executor's commands.
 
 `run` is the service: one pass over the ready rotation units, started on a timer by the VM's
-init system. `seed-canary` creates the canary credential's keeper for ADR-0055 increment 4's
-end-to-end run, and `mint-bearer` the executor's own WORKER bearer.
+init system, or by launchd for the Keychain instance. `seed-canary` creates the canary
+credential's keeper for ADR-0055 increment 4's end-to-end run, and `mint-bearer` the executor's
+own WORKER bearer. `stage <credential> --occurrence <o>` is a person's step on the Keychain
+instance (amendment 12): it asks for a new BWS access token at a hidden prompt and stages it.
 `read-consumers <credential> --stored-at <instant>` is read-only too: it asks each scheduled
 reader's read, from the executor's VM, whether the reader has run since that instant, and prints
 the answer and the latest run it found. Exit 0 when every reader answers, 2 when one can't be
@@ -19,17 +21,20 @@ import hashlib
 import json
 import logging
 import os
+import re
 import secrets
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import datetime
+from getpass import getpass
 from pathlib import Path
 from typing import Final
 
 from rotation_worker.adapters import ADAPTERS, AdapterContext, fake
 from rotation_worker.compare import Comparison, report
 from rotation_worker.config import DEFAULT_PATH, Config, ConfigError, load, read_root_token
-from rotation_worker.destinations import DestinationError
+from rotation_worker.contract import Rotation
+from rotation_worker.destinations import DestinationError, parse, render
 from rotation_worker.git_mirror import MirrorError, RepoMirror
 from rotation_worker.github_actions import RotationApp
 from rotation_worker.logs import configure
@@ -47,7 +52,7 @@ from rotation_worker.registry import (
     find_credential,
     latest_package_destinations,
 )
-from rotation_worker.secret_store import BwsStore, SecretStore, StoreError
+from rotation_worker.secret_store import BwsStore, KeychainStore, SecretStore, StoreError
 from rotation_worker.values import Value
 from rotation_worker.worker import Setup, consumer_reads, run_pass
 
@@ -56,6 +61,12 @@ EXIT_DIFFERENT: Final = 1
 EXIT_UNREADABLE: Final = 2
 CANARY_KEEPER: Final = "rotation-canary keeper"
 BEARER_KEY: Final = "rotation-executor WORKER bearer"
+# The Keychain instance's bearer, an account under its work service.
+KEYCHAIN_BEARER: Final = "worker-bearer"
+# A BWS access token: `0.`, the access-key id, `.`, the client secret, `:`, the encryption key.
+BWS_TOKEN: Final = re.compile(
+    r"^0\.[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.[A-Za-z0-9]+:[A-Za-z0-9+/]+=*$"
+)
 BEARER_BYTES: Final = 48
 LOG = logging.getLogger("rotation_worker")
 
@@ -90,12 +101,26 @@ def compare_destinations(credential_id: str, mirror: RepoMirror) -> int:
 
 
 def open_store(config: Config) -> SecretStore:
+    if config.store == "keychain":
+        return KeychainStore()
+    if config.organization_id is None or config.root_token_file is None:
+        raise ConfigError("a BWS executor needs organization_id and root_token_file")
     return BwsStore(config.organization_id, read_root_token(config.root_token_file))
 
 
+def secret_id(config: Config, name: str) -> str:
+    """The store's id for a secret the configuration names: a BWS UUID, or a Keychain account
+    under the instance's own service."""
+    if config.store == "keychain":
+        return render({"kind": "keychain", "service": config.work_project_id, "account": name})
+    return name
+
+
 def open_healthchecks(config: Config, store: SecretStore) -> Healthchecks | None:
-    key_id = config.healthchecks_key_id
-    return None if key_id is None else Healthchecks(lambda: store.read(key_id))
+    if config.healthchecks_key_id is None:
+        return None
+    key_id = secret_id(config, config.healthchecks_key_id)
+    return Healthchecks(lambda: store.read(key_id))
 
 
 def open_github_app(config: Config, store: SecretStore) -> RotationApp | None:
@@ -108,12 +133,16 @@ def open_github_app(config: Config, store: SecretStore) -> RotationApp | None:
 def read_consumers(setup: Setup, credential_id: str, stored_at: datetime) -> int:
     """Each scheduled reader's answer for a store at `stored_at`. Reads only."""
     try:
-        credential = find_credential(setup.mirror, credential_id).credential
-        reads = scheduled_reads(credential)
+        entry = find_credential(setup.mirror, credential_id)
+        reads = scheduled_reads(entry.credential)
+        keeper = setup.store.locate(parse(entry.keeper))
     except (MirrorError, RegistryError, DestinationError) as error:
         print(f"read-consumers: {error}", file=sys.stderr)
         return EXIT_UNREADABLE
-    consumers = consumer_reads(setup, reads, str(credential.get("bws_uuid")))
+    if keeper is None:
+        print("read-consumers: the keeper isn't kept where this executor reads", file=sys.stderr)
+        return EXIT_UNREADABLE
+    consumers = consumer_reads(setup, reads, keeper)
     unreadable = 0
     for destination in sorted(reads):
         try:
@@ -133,7 +162,7 @@ def build_setup(config: Config) -> Setup:
     if config.bearer_secret_id is None:
         raise ConfigError("bearer_secret_id is needed to run; mint the bearer first")
     store = open_store(config)
-    bearer = store.read(config.bearer_secret_id)
+    bearer = store.read(secret_id(config, config.bearer_secret_id))
     return Setup(
         client=OrchestratorClient(config.orchestrator_url, config.credential_key_id, bearer),
         mirror=RepoMirror(config.mirror_root),
@@ -181,11 +210,12 @@ def mint_bearer(config: Config) -> int:
     orchestrator's `ORCHESTRATOR_M2M_CREDENTIALS`.
     """
     store = open_store(config)
-    if store.find(config.work_project_id, BEARER_KEY) is not None:
-        print("mint-bearer: a bearer is already waiting in Rotation / Work", file=sys.stderr)
+    key = KEYCHAIN_BEARER if config.store == "keychain" else BEARER_KEY
+    if store.find(config.work_project_id, key) is not None:
+        print(f"mint-bearer: a bearer is already waiting as {key!r}", file=sys.stderr)
         return EXIT_UNREADABLE
     bearer = Value(secrets.token_urlsafe(BEARER_BYTES))
-    created = store.create(config.work_project_id, BEARER_KEY, bearer)
+    created = store.create(config.work_project_id, key, bearer)
     print_ = bearer.fingerprint
     print(
         json.dumps(
@@ -197,6 +227,35 @@ def mint_bearer(config: Config) -> int:
             }
         )
     )
+    return 0
+
+
+def stage(
+    config: Config, credential_id: str, occurrence: str, ask: Callable[[str], str] = getpass
+) -> int:
+    """A person's stage step on the Keychain instance: the new token goes from a hidden prompt
+    straight into the staging item, and only its fingerprint is printed, for `/review`."""
+    if config.store != "keychain":
+        print("stage: only the Keychain executor stages by prompt", file=sys.stderr)
+        return EXIT_UNREADABLE
+    store = open_store(config)
+    rotation = Rotation(credential_id, occurrence, "", config.work_project_id, ())
+    try:
+        if store.find(config.work_project_id, rotation.staging_key) is not None:
+            print(f"stage: {rotation.staging_key} is already staged", file=sys.stderr)
+            return EXIT_UNREADABLE
+        value = Value(ask("New BWS access token (hidden): ").strip())
+        if not BWS_TOKEN.fullmatch(value.reveal()):
+            print(
+                "stage: that isn't the shape of a BWS access token; nothing staged", file=sys.stderr
+            )
+            return EXIT_UNREADABLE
+        store.create(config.work_project_id, rotation.staging_key, value)
+    except StoreError as error:
+        print(f"stage: {error}", file=sys.stderr)
+        return EXIT_UNREADABLE
+    print_ = value.fingerprint
+    print(json.dumps({"sha256_prefix": print_.sha256_prefix, "length": print_.length}))
     return 0
 
 
@@ -220,7 +279,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     reading.add_argument("credential_id")
     reading.add_argument("--stored-at", type=_instant, required=True)
-    for command in (running, seeding, minting, reading):
+    staging = commands.add_parser(
+        "stage", help="stage a new BWS access token from a hidden prompt (Keychain executor)"
+    )
+    staging.add_argument("credential_id")
+    staging.add_argument("--occurrence", required=True)
+    for command in (running, seeding, minting, reading, staging):
         command.add_argument("--config", type=Path, default=DEFAULT_PATH)
     arguments = parser.parse_args(argv)
     if arguments.command == "compare-destinations":
@@ -234,6 +298,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return mint_bearer(config)
     if arguments.command == "read-consumers":
         return read_consumers(build_setup(config), arguments.credential_id, arguments.stored_at)
+    if arguments.command == "stage":
+        return stage(config, arguments.credential_id, arguments.occurrence)
     return seed_canary(config)
 
 

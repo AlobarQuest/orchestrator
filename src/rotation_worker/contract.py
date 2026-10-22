@@ -50,11 +50,12 @@ from rotation_worker.secret_store import SecretStore, StoredSecret
 from rotation_worker.values import Fingerprint, Value
 
 LIVE_STATUS: Final = 200
-# Destination kinds a machine verifies by reading BWS back, and kinds only a person can attest
-# (ADR-0055's verification table: a `runtime-fetch` run only when invoked, and the operator
-# machine's own files, have no probe the executor can run). An Actions secret is neither: the
-# executor writes it and reads its repository's fingerprint report (increment 7).
-READ_BACK_KINDS: Final = frozenset({"bws-secret"})
+# A consumer the unit's store can read (`SecretStore.locate`: BWS secrets for the VM instance,
+# Keychain items for the Keychain instance, amendment 12) is verified by reading it back and is
+# written by distribute. Otherwise these kinds are attested by a person (ADR-0055's verification
+# table: a `runtime-fetch` run only when invoked, and the operator machine's own files, have no
+# probe the executor can run). An Actions secret is neither: the executor writes it and reads its
+# repository's fingerprint report (increment 7).
 ACTIONS_KIND: Final = "gh-actions-secret"
 ATTESTED_KINDS: Final = frozenset({"runtime-fetch", "keychain", "shell-export"})
 
@@ -299,6 +300,10 @@ class UnitRun:
     filed: frozenset[StepKind] = frozenset()
     scheduled: ScheduledReads | None = None
     actions_secrets: ActionsSecretWriter | None = None
+    # A person revokes the old value straight after this unit, so its verify_consumers step also
+    # proves the old value live: the first half of amendment 1's pair, which no machine retire
+    # step is there to file.
+    person_revokes_next: bool = False
     _minted: Value | None = field(default=None, repr=False)
 
     def run(self, unit: UnitPlan) -> None:
@@ -431,6 +436,9 @@ class UnitRun:
                 stored_at = self.store.revised(self.rotation.keeper_id)
                 if not self.scheduled.switched(destination, stored_at):
                     missing.append(destination)
+            elif self.store.locate(consumer) is not None:
+                if not self._holds(consumer, new):
+                    missing.append(destination)
             elif kind in ATTESTED_KINDS:
                 needs_attestation += 1
                 if needs_attestation > attested:
@@ -446,8 +454,9 @@ class UnitRun:
             if not self.provider.hosts_destinations:
                 raise ContractError(f"this adapter can't reach a {kind} consumer")
             return self.accepts(new)
-        if kind in READ_BACK_KINDS:
-            return self.store.read(consumer["uuid"]).same_as(new)
+        secret_id = self.store.locate(consumer)
+        if secret_id is not None:
+            return self.store.read(secret_id).same_as(new)
         raise ContractError(f"no way to verify a {kind} consumer")
 
 
@@ -526,9 +535,11 @@ def _distribute(run: UnitRun, step: Step) -> None:
     written = actions = 0
     for destination in run.rotation.destinations:
         consumer = parse(destination)
-        if consumer["kind"] in READ_BACK_KINDS and consumer["uuid"] != run.rotation.keeper_id:
-            run.store.write(consumer["uuid"], new)
-            written += 1
+        secret_id = run.store.locate(consumer)
+        if secret_id is not None:
+            if secret_id != run.rotation.keeper_id:
+                run.store.write(secret_id, new)
+                written += 1
         elif consumer["kind"] == ACTIONS_KIND:
             if run.actions_secrets is None:
                 raise ContractError("an Actions secret is approved and no writer is configured")
@@ -542,11 +553,22 @@ def _distribute(run: UnitRun, step: Step) -> None:
 def _verify_consumers(run: UnitRun, step: Step) -> None:
     new, old = run.new_and_old()
     missing = run.unverified(new)
-    if any(parse(d)["kind"] in READ_BACK_KINDS for d in missing):
-        raise ContractError("a BWS consumer doesn't read back the new value")
+    if any(run.store.locate(parse(d)) is not None for d in missing):
+        raise ContractError("a stored consumer doesn't read back the new value")
     verified = sum(1 for d in run.rotation.destinations if parse(d)["kind"] != "provider")
     note = f"{verified - len(missing)} of {verified} consumers hold or attest the new value"
-    run.record(step, StepEvidence(step.kind, fingerprints=_fingerprints(new, old), note=note))
+    probes: list[ProbeAnswer] = []
+    if run.person_revokes_next:
+        # The old value must be live when the person is asked to revoke it, or confirm_dead's
+        # "dead" would prove nothing about the revoke (ADR-0055 amendment 1).
+        probes = run.probe(old, "old", "live", before_revoke=True)
+        note += "; the old value is live before the revoke"
+    run.record(
+        step,
+        StepEvidence(
+            step.kind, fingerprints=_fingerprints(new, old), probes=tuple(probes), note=note
+        ),
+    )
 
 
 def _retire_old(run: UnitRun, step: Step) -> None:

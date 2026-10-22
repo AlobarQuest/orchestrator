@@ -23,6 +23,7 @@ from rotation_worker.registry import (
     RegistryError,
 )
 from tests.rotation_worker.conftest import Origins
+from tests.rotation_worker.stores import MemoryStore
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 KEEPER = "11111111-2222-4333-8444-555555555555"
@@ -122,7 +123,9 @@ class World:
         }
 
     def check(self, unit: dict[str, Any] | None = None, intake: dict[str, Any] | None = None):
-        return check_unit(unit or self.unit(), intake or self.intake(), self.mirror, WORK)
+        return check_unit(
+            unit or self.unit(), intake or self.intake(), self.mirror, WORK, MemoryStore()
+        )
 
 
 @pytest.fixture
