@@ -53,6 +53,28 @@ wasn't the reason for disabling octo. Whether hardening covers it is Devon's cal
 Devon may have posted an upstream issue for the HIGH finding. Ask him. If upstream fixes it, octo
 needs no hardening, and the process should notice that.
 
+## The second case: n8n-as-code
+
+n8n-as-code's v2.6.0 sync review (AlobarQuest/n8n-as-code #15) found this, rated medium, on
+2026-10-22:
+
+- The Claude plugin's `plugins/claude/n8n-as-code/.claude-plugin/plugin.json` registers an MCP
+  server that runs `npx -y @n8n-as-code/mcp` with no version. Claude Code starts it whenever the
+  plugin loads, so it fetches and runs upstream's newest npm release on every session, outside the
+  fork's review. Pinning it means a fixed version, or a path to a build of the fork's own
+  `packages/mcp`.
+- The skill (`plugins/claude/n8n-as-code/skills/*/SKILL.md`) has the same shape: it tells an agent
+  to run `npx --yes n8nac …`, which also resolves from npm rather than the fork.
+
+Devon chose on 2026-10-22 to land v2.6.0 in the fork and to keep the plugin off the tool installer
+until this process pins the MCP server. So **no `PluginInstall` row for n8n-as-code may be added
+until hardening has pinned it**; the fork's `main` holds the unpinned version.
+
+Two installs already bypass the fork (`~/.claude/plugins/installed_plugins.json`): a project-scoped
+2.2.6 for `~/Projects/listing-prep` from the `n8nac-marketplace` marketplace, which points at
+upstream's repository directly, and a user-scoped 2.3.0 from `devon-plugins`. Whether to remove or
+replace them is Devon's call.
+
 ## Read first
 
 - `docs/superpowers/plans/2026-10-15-handoff-common-rules.md`: **How to work** and **Closing
