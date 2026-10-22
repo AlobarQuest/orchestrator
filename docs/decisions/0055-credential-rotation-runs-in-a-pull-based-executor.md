@@ -1498,3 +1498,70 @@ identity, which decision 7 below accounts for.
   value-handling rules.
 - **Decision 4** gains one sentence: a BWS consumer token may be handled by an executor instance
   on the machine that already holds it, and never by the VM.
+
+## Amendment 13 — A credential the orchestrator holds for another service is a destination (2026-10-22)
+
+**Status: accepted by Devon on 2026-10-22** ("amend #13 approved"), after choosing this direction
+("1", answering option 1 of two). It takes effect as it is built.
+
+### What happened
+
+The orchestrator calls change-manager with change-manager's read bearer, which it holds in its
+own Coolify setting `ORCHESTRATOR_CHANGE_RECORD_TOKEN`. The registry didn't list that copy. The
+read bearer's rotation (2026-10-20 to 2026-10-21, units `590670f9` and `9bda584e`) wrote every
+registered destination, proved the old value (`4cffba19`) dead, and left the orchestrator holding
+it. From the retire on, change-manager refused the orchestrator: the inert landing lane held every
+pull request with `inert_landing_policy_source_unreadable`, and every change-record read through
+that setting failed. A session working on fork-sync found it on 2026-10-22. HQ wrote the current
+read bearer into both rows of the setting and restarted the orchestrator, after which
+change-manager answered it 200.
+
+The rotation did what the contract says. The defect is that no destination kind can name a value
+one application holds to call another, so the registry couldn't have listed it, and the closest
+kind (`coolify-env`) is verified by probing the provider, which would pass while this copy held
+the old value.
+
+### Decision proposed
+
+1. **A new destination kind, `coolify-env-held`,** names a value an application holds in its
+   Coolify settings to call another service: `instance`, `resource_type`, `uuid` and `key`, in the
+   one destination format (`destinations.py`, pinned with intent-packages by
+   `tests/fixtures/rotation_destination_format.json`). It is not a hosted kind: the provider's
+   probe proves nothing about it.
+2. **Distribute writes it.** The executor writes both rows of the named setting through Coolify
+   and restarts the application, under the same rules as the orchestrator adapter's host step: the
+   one application and variable the approved destination names, never while a dispatched run is
+   live. A plan with a `coolify-env-held` destination needs a distribute step, as a plan with an
+   Actions secret does.
+3. **Verify-consumers asks the holding application.** A `coolify-env-held` destination counts as
+   switched only when the application reports the fingerprint of the value it loaded for that
+   setting, and it equals the keeper's. The orchestrator reports it on the executor-only identities
+   surface, beside the bearer hashes it already serves. An application with no such report is a
+   destination the checks refuse before the claim: nothing verifies it, so nothing may rotate it.
+4. **The read bearer's registry entry lists the orchestrator's copy,** and its standing package
+   gains the destination by revision. Until this amendment is built, the checks refuse the read
+   bearer's next rotation, because the registry's and the package's destinations then differ.
+5. **Everything else is unchanged.**
+
+### Open before building
+
+- **Which units carry distribute** for the change-manager adapter, whose plan has none today.
+
+### The audit (2026-10-22)
+
+Devon asked for it before the build. It fingerprinted values in-process and printed names only,
+comparing whole values with the old and new fingerprints in the evidence of every rotation so far:
+twelve credentials and the canary.
+
+- **Coolify:** 458 production settings and 67 dev settings, applications and services. One setting
+  holds a rotated credential's value: the orchestrator's `ORCHESTRATOR_CHANGE_RECORD_TOKEN`, now
+  the read bearer's current value. It would have matched the old value before HQ's fix, so it is
+  also the scan's control. Every other match is a stored hash in a registered `coolify-env-hash`
+  destination, including the drift-reporter's previous hash, valid until its overlap ends.
+- **The Mac:** 295 values in `.env` files under `~/Projects`, `~/.claude` and `~/Developer`, and in
+  the LaunchAgents' environments. None matches.
+- **Not scanned:** Keychain items, which reading could make macOS prompt a person for; Actions
+  secrets, which can't be read; and files on the VPS.
+
+So the orchestrator is the only application that needs decision 3's report today, and the
+destination kind stays general so the next one is a registry entry.
