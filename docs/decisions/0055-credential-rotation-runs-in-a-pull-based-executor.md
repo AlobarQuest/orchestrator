@@ -1498,3 +1498,55 @@ identity, which decision 7 below accounts for.
   value-handling rules.
 - **Decision 4** gains one sentence: a BWS consumer token may be handled by an executor instance
   on the machine that already holds it, and never by the VM.
+
+## Amendment 13 — A credential the orchestrator holds for another service is a destination (proposed 2026-10-22)
+
+**Status: proposed, awaiting Devon's decision.** Devon chose this direction on 2026-10-22 ("1",
+answering option 1 of two); nothing in this amendment is in force until he accepts it.
+
+### What happened
+
+The orchestrator calls change-manager with change-manager's read bearer, which it holds in its
+own Coolify setting `ORCHESTRATOR_CHANGE_RECORD_TOKEN`. The registry didn't list that copy. The
+read bearer's rotation (2026-10-20 to 2026-10-21, units `590670f9` and `9bda584e`) wrote every
+registered destination, proved the old value (`4cffba19`) dead, and left the orchestrator holding
+it. From the retire on, change-manager refused the orchestrator: the inert landing lane held every
+pull request with `inert_landing_policy_source_unreadable`, and every change-record read through
+that setting failed. A session working on fork-sync found it on 2026-10-22. HQ wrote the current
+read bearer into both rows of the setting and restarted the orchestrator, after which
+change-manager answered it 200.
+
+The rotation did what the contract says. The defect is that no destination kind can name a value
+one application holds to call another, so the registry couldn't have listed it, and the closest
+kind (`coolify-env`) is verified by probing the provider, which would pass while this copy held
+the old value.
+
+### Decision proposed
+
+1. **A new destination kind, `coolify-env-held`,** names a value an application holds in its
+   Coolify settings to call another service: `instance`, `resource_type`, `uuid` and `key`, in the
+   one destination format (`destinations.py`, pinned with intent-packages by
+   `tests/fixtures/rotation_destination_format.json`). It is not a hosted kind: the provider's
+   probe proves nothing about it.
+2. **Distribute writes it.** The executor writes both rows of the named setting through Coolify
+   and restarts the application, under the same rules as the orchestrator adapter's host step: the
+   one application and variable the approved destination names, never while a dispatched run is
+   live. A plan with a `coolify-env-held` destination needs a distribute step, as a plan with an
+   Actions secret does.
+3. **Verify-consumers asks the holding application.** A `coolify-env-held` destination counts as
+   switched only when the application reports the fingerprint of the value it loaded for that
+   setting, and it equals the keeper's. The orchestrator reports it on the executor-only identities
+   surface, beside the bearer hashes it already serves. An application with no such report is a
+   destination the checks refuse before the claim: nothing verifies it, so nothing may rotate it.
+4. **The read bearer's registry entry lists the orchestrator's copy,** and its standing package
+   gains the destination by revision. Until this amendment is built, the checks refuse the read
+   bearer's next rotation, because the registry's and the package's destinations then differ.
+5. **Everything else is unchanged.**
+
+### Open before building
+
+- **The audit:** whether any other rotated credential has an unregistered copy in a Coolify
+  setting. A read-only pass that fingerprints every production application's settings against the
+  old and current values of each rotated credential answers it, and it decides whether decision 3's
+  report is needed by any application besides the orchestrator.
+- **Which units carry distribute** for the change-manager adapter, whose plan has none today.
