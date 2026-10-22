@@ -175,7 +175,12 @@ review never sees a dependency change, which is the supply-chain path the lane e
   request, so neither required check reported. With `main` as a parent, `main` is an ancestor of
   the branch and the merge is clean for every release. The tree is unchanged: the release, the
   fork's `.github/`, and the lockfile. A rebuild also pushes when `main` has moved and the tree
-  hasn't, so the branch keeps `main` as an ancestor.
+  hasn't, so the branch keeps `main` as an ancestor. Two consequences follow. Landing a sync makes
+  `main` exactly the sync's tree, so a file only `main` holds outside `.github/` is deleted, and
+  the review shows the deletion. That is amendment 1's rule ("upstream's release plus the fork's
+  `.github/`"), which the three-way merge used to blur. The review's old side for the lockfile is
+  `main`'s own, so only what a release changes in it is a finding. The bootstrap lockfile was
+  never reviewed by the gate, so it belongs to the fork's one-time baseline review.
 - **A release tag may start with `@`.** npm monorepos tag each package by its scoped name
   (`@n8n-as-code/n8n-manager-v0.7.1`), which the tag rule refused. `@` is valid in a ref except
   as `@{`, and `{` stays refused.
