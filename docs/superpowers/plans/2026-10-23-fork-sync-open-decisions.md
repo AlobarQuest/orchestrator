@@ -17,7 +17,10 @@ review, so an update would take upstream's plugin as published, including the un
 
 Options: remove the project install and the marketplace; or keep it and accept the bypass.
 
-**Status:** open.
+**Status:** resolved 2026-10-23. Devon chose removal. The project install was uninstalled
+(`claude plugin uninstall n8n-as-code@n8nac-marketplace --scope project`, which also cleared
+`listing-prep`'s untracked `.claude/settings.json`), and `n8nac-marketplace` was removed.
+`listing-prep` loads n8n-as-code 2.3.0 from the user-scope `devon-plugins` install (section 2).
 
 ## 2. The user-scope plugin comes from a pre-gate checkout
 
