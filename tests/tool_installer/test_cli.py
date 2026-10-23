@@ -413,12 +413,28 @@ def test_the_octo_row_is_reported_current_when_it_is(
     assert machine.filed[1]["facts"]["action"] == "none"
 
 
+@pytest.mark.parametrize(
+    ("dirty", "state", "status", "action"),
+    [
+        (None, "current", "passed", "none"),
+        ("untracked", "behind", "degraded", "not_permitted"),
+        ("tracked", "behind", "degraded", "not_permitted"),
+    ],
+)
 def test_the_octo_row_is_current_by_the_FOLDER_it_loads_when_the_version_did_not_move(
-    machine: _Recorder, monkeypatch: pytest.MonkeyPatch
+    machine: _Recorder,
+    monkeypatch: pytest.MonkeyPatch,
+    dirty: str | None,
+    state: str,
+    status: str,
+    action: str,
 ) -> None:
     """The measurement agrees with `verify`: the record names the folder's version at an older
     commit (Claude Code rewrites `gitCommitSha` only on a version change), the folder is at the
-    fork's head, and the row is current -- so a permitted pass would not act and roll back."""
+    fork's head, and the row is current -- so a permitted pass would not act and roll back.
+
+    A DIRTY folder is the pair: Claude Code loads the working tree, which its HEAD no longer
+    describes, so the record's older commit stands and the row is behind."""
     clone = machine.sites.clone_root(OCTO)  # type: ignore[attr-defined]
     (clone / ".claude-plugin").mkdir(parents=True)
     (clone / ".claude-plugin" / "plugin.json").write_text(
@@ -443,6 +459,12 @@ def test_the_octo_row_is_current_by_the_FOLDER_it_loads_when_the_version_did_not
     folder = subprocess.run(
         ["git", "-C", str(clone), "rev-parse", "HEAD"], check=True, capture_output=True, text=True
     ).stdout.strip()
+    if dirty == "untracked":
+        (clone / "scratch.md").write_text("an edit nobody committed\n")
+    elif dirty == "tracked":
+        (clone / ".claude-plugin" / "plugin.json").write_text(
+            json.dumps({"name": "octo", "version": "11.0.1", "description": "edited"})
+        )
     _seed_plugin(machine.sites.plugins_root, "11.0.1", OLD)  # type: ignore[attr-defined]
     monkeypatch.setattr(
         cli_module,
@@ -456,9 +478,9 @@ def test_the_octo_row_is_current_by_the_FOLDER_it_loads_when_the_version_did_not
     result = _invoke(machine, monkeypatch, IN_WINDOW)
     assert result.exit_code == 0
     octo = machine.filed[1]
-    assert octo["status"] == "passed"
-    assert octo["facts"]["state"] == "current"
-    assert octo["facts"]["action"] == "none"
+    assert octo["status"] == status
+    assert octo["facts"]["state"] == state
+    assert octo["facts"]["action"] == action
 
 
 def test_the_window_refuses_the_OCTO_row_with_the_install_flag(

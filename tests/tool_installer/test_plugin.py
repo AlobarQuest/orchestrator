@@ -858,27 +858,45 @@ def test_a_version_change_claude_code_has_NOT_recorded_still_fails_the_revision_
     assert "from the record" in results[2].detail
 
 
-@pytest.mark.parametrize("break_it", ["no_git", "no_commit", "manifest"])
+@pytest.mark.parametrize("break_it", ["no_git", "no_commit", "manifest", "corrupt_index"])
 def test_a_folder_that_cannot_be_read_leaves_the_RECORD_revision_and_never_invents_one(
     estate: Estate, break_it: str
 ) -> None:
-    """The fallback is the record, byte for byte. `no_git` is the sharp case: the folder sits
-    inside the hub, so asking git for its HEAD without the `.git` check answers with the HUB's
-    commit -- a real sha, belonging to the wrong repository. `no_commit` is the other: in a
-    repository with no commits `git rev-parse HEAD` exits 128 and still prints `HEAD` on stdout,
-    so a reader that trusted the output over the exit code would report the revision "HEAD"."""
+    """The fallback is the record, byte for byte. Each case leaves the folder CLEAN to git, so it
+    is its own condition that refuses rather than the dirty-tree check standing in for it.
+
+    `no_git` is the sharp case: the folder sits inside the hub, so asking git for its HEAD without
+    the `.git` check answers with the HUB's commit -- a real sha, belonging to the wrong
+    repository (the `.git` is moved OUTSIDE the hub, or the hub would read as dirty). In
+    `no_commit`, `git rev-parse HEAD` exits 128 and still prints `HEAD` on stdout, so a reader
+    that trusted the output over the exit code would report the revision "HEAD"; the files are
+    excluded so the tree reads clean. `manifest` is a COMMITTED unreadable manifest. In
+    `corrupt_index` HEAD reads fine and `git status` exits non-zero with nothing on stdout, which
+    a reader of the output alone would take for a clean tree."""
     _act(estate)
     head = _advance_fork_without_a_version_change(estate)
     _pull_clone(estate)
-    if break_it == "no_git":
-        (estate.clone / ".git").rename(estate.hub / "octo-git-aside")
-    elif break_it == "no_commit":
-        (estate.clone / ".git").rename(estate.hub / "octo-git-aside")
+    if break_it in ("no_git", "no_commit"):
+        (estate.clone / ".git").rename(estate.seed.parent / "octo-git-aside")
+    if break_it == "no_commit":
         subprocess.run(
             ["git", "init", "-b", "main", str(estate.clone)], check=True, capture_output=True
         )
-    else:
+        (estate.clone / ".git" / "info" / "exclude").write_text("*\n")
+    elif break_it == "manifest":
         (estate.clone / PLUGIN_MANIFEST).write_text("{not json")
+        _git(estate.clone, "commit", "-am", "an unreadable manifest")
+    elif break_it == "corrupt_index":
+        (estate.clone / ".git" / "index").write_bytes(b"not an index")
+    if break_it != "no_git":
+        # The precondition each case depends on: git calls the folder clean, or it refuses.
+        status = subprocess.run(
+            ["git", "-C", str(estate.clone), "status", "--porcelain"],
+            capture_output=True,
+            text=True,
+        )
+        assert status.stdout == ""
+        assert (status.returncode != 0) == (break_it == "corrupt_index")
 
     recorded = read_entry(estate.sites, OCTO, MARKETPLACE)
     assert recorded is not None
@@ -886,6 +904,27 @@ def test_a_folder_that_cannot_be_read_leaves_the_RECORD_revision_and_never_inven
     results = verify(estate.sites, OCTO, MARKETPLACE, head)
     assert results[2].passed is False
     assert f"installed {recorded.revision[:7]} from the record" in results[2].detail
+
+
+@pytest.mark.parametrize("dirty", ["untracked", "tracked"])
+def test_a_DIRTY_folder_at_the_head_verifies_by_the_RECORD(estate: Estate, dirty: str) -> None:
+    """Claude Code loads the folder's WORKING TREE, so a folder with uncommitted changes is not
+    described by its HEAD -- even at the head, with the record's version. The record's older
+    commit stands and the revision check fails; the version and cache checks are untouched."""
+    _act(estate)
+    head = _advance_fork_without_a_version_change(estate)
+    assert _pull_clone(estate) == head
+    if dirty == "untracked":
+        (estate.clone / "scratch.md").write_text("an edit nobody committed\n")
+    else:
+        (estate.clone / ".github" / "ci.yml").write_text("# edited in place\n")
+
+    entry = loaded_entry(estate.sites, OCTO, MARKETPLACE)
+    assert entry == read_entry(estate.sites, OCTO, MARKETPLACE)
+    assert entry is not None and entry.revision_source == "record"
+    results = verify(estate.sites, OCTO, MARKETPLACE, head)
+    assert [result.passed for result in results] == [True, True, False, True]
+    assert "from the record" in results[2].detail
 
 
 def test_no_record_is_no_entry_whatever_the_folder_holds(estate: Estate) -> None:

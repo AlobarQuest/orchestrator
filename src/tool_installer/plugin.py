@@ -298,6 +298,10 @@ def loaded_entry(sites: Sites, tool: Tool, marketplace: str) -> PluginEntry | No
     whose manifest cannot be read leaves the record as it is. The `.git` test is not redundant
     with git's own refusal: the folder sits inside the hub, so `git -C` on a folder that has lost
     its `.git` answers with the HUB's HEAD rather than failing.
+
+    A DIRTY FOLDER LEAVES THE RECORD TOO. Claude Code loads the working tree, not the commit, so
+    once the tree carries changes git would show -- tracked or untracked -- HEAD no longer
+    describes what runs, and naming it would report a revision nobody is loading.
     """
     entry = read_entry(sites, tool, marketplace)
     if entry is None:
@@ -308,6 +312,9 @@ def loaded_entry(sites: Sites, tool: Tool, marketplace: str) -> PluginEntry | No
     code, out, _ = _git_maybe(root, "rev-parse", "HEAD")
     head = out.strip()
     if code != 0 or not head:
+        return entry
+    code, status, _ = _git_maybe(root, "status", "--porcelain")
+    if code != 0 or status.strip():
         return entry
     try:
         folder_version = _clone_version(sites, tool)
