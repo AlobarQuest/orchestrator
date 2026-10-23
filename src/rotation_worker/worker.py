@@ -55,6 +55,7 @@ from rotation_worker.github_actions import ActionsSecrets, FingerprintReports, R
 from rotation_worker.held import HeldSettings
 from rotation_worker.live_runs import stranded_by_a_restart
 from rotation_worker.orchestrator_client import Lease, OrchestratorClient, OrchestratorError
+from rotation_worker.overlaps import mid_overlap
 from rotation_worker.readers import (
     ConsumerReads,
     Healthchecks,
@@ -141,7 +142,11 @@ def _take(setup: Setup, unit_id: str) -> int:
     except REFUSALS as error:
         _refuse(setup, unit, scrub(str(error)))
         return 0
-    if _adapter_waits(setup, approved, unit_id) or _restart_waits(setup, approved, held, unit_id):
+    if (
+        _adapter_waits(setup, approved, unit_id)
+        or _overlap_waits(setup, approved, unit)
+        or _restart_waits(setup, approved, held, unit_id)
+    ):
         return 0
     # Built before the claim: a provider that can't be built (an admin secret missing from the
     # configuration) is the executor's fault, not the unit's, so no attempt is spent on it.
@@ -243,6 +248,17 @@ def _adapter_waits(setup: Setup, approved: Approved, unit_id: str) -> bool:
     if reason is not None:
         LOG.info("unit_waiting", extra={"unit": unit_id, "reason": reason})
     return reason is not None
+
+
+def _overlap_waits(setup: Setup, approved: Approved, unit: Mapping[str, Any]) -> bool:
+    """Whether the unit switches a value while another rotation is mid-overlap (ADR-0055
+    amendment 12); the units it waits on are logged."""
+    if approved.unit.name not in approved.adapter.overlap_waits:
+        return False
+    others = mid_overlap(setup.client, str(unit["work_package_revision_id"]))
+    if others:
+        LOG.info("unit_waiting", extra={"unit": str(unit["id"]), "mid_overlap": others})
+    return bool(others)
 
 
 def _restart_waits(

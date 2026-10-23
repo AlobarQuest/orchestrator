@@ -68,6 +68,8 @@ class Adapter:
     # instance whose store reads that kind takes its units.
     store_kind: str = "bws-secret"
     wait: WaitReason | None = None
+    # The units that wait, unclaimed, while another rotation is mid-overlap (`overlaps.py`).
+    overlap_waits: frozenset[str] = frozenset()
 
 
 def _change_manager(context: AdapterContext) -> Provider:
@@ -136,6 +138,7 @@ ADAPTERS: Final[dict[str, Adapter]] = {
         lambda _context: bws_machine_token.BwsMachineTokenProvider(),
         store_kind="keychain",
         wait=bws_machine_token.wait_reason,
+        overlap_waits=frozenset({"store"}),
     ),
     change_manager.ATTESTED_NAME: Adapter(
         change_manager.NAME, change_manager.ATTESTED_PLAN, _change_manager
