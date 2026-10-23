@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pytest
 
+from tool_installer import plugin as plugin_module
 from tool_installer.install import (
     ACTION_INSTALL_FAILED,
     ACTION_INSTALLED,
@@ -30,6 +31,7 @@ from tool_installer.install import (
     RollbackFailed,
 )
 from tool_installer.plugin import (
+    GIT_READ_TIMEOUT_SECONDS,
     MARKETPLACE_MANIFEST,
     PLUGIN_MANIFEST,
     PluginError,
@@ -82,7 +84,9 @@ MANIFEST = """{
 # copies the SERVING CLONE into the cache directory named by the version the MARKETPLACE pins, and
 # rewrites Claude Code's own record. `SDS_FAKE_CLAUDE_STALE` makes it bump the catalog and leave
 # the install alone -- which IS the 2026-06-17 defect, reproduced so the verification below can be
-# shown to catch it rather than asserted to.
+# shown to catch it rather than asserted to. `SDS_FAKE_CLAUDE_RECORD_ON_VERSION_CHANGE_ONLY` is the
+# behaviour measured 2026-10-23: with the pinned version already recorded, "nothing to update",
+# and the record's `gitCommitSha` stays where it was.
 FAKE_CLAUDE = """#!/usr/bin/env python3
 import json, os, subprocess, sys
 from pathlib import Path
@@ -105,6 +109,12 @@ manifest = json.loads((hub / ".claude-plugin" / "marketplace.json").read_text())
 pinned = next(e["version"] for e in manifest["plugins"] if e["name"] == name)
 if os.environ.get("SDS_FAKE_CLAUDE_STALE") == "1":
     sys.exit(0)
+
+record = plugins / "installed_plugins.json"
+if os.environ.get("SDS_FAKE_CLAUDE_RECORD_ON_VERSION_CHANGE_ONLY") == "1" and record.exists():
+    rows = json.loads(record.read_text())["plugins"].get(f"{name}@{marketplace}", [])
+    if rows and rows[0]["version"] == pinned:
+        sys.exit(0)
 
 clone = hub / name
 head = subprocess.run(
@@ -925,6 +935,77 @@ def test_a_DIRTY_folder_at_the_head_verifies_by_the_RECORD(estate: Estate, dirty
     results = verify(estate.sites, OCTO, MARKETPLACE, head)
     assert [result.passed for result in results] == [True, True, False, True]
     assert "from the record" in results[2].detail
+
+
+@pytest.mark.parametrize("off_branch", ["detached", "other_branch"])
+def test_a_folder_OFF_the_tracked_branch_verifies_by_the_RECORD(
+    estate: Estate, off_branch: str
+) -> None:
+    """At the head commit, clean, with the record's version -- and not on the tracked branch, so
+    it is not the history this lane measured against. The record's commit stands, exactly as
+    `_require_usable_clone` would refuse the same folder before acting."""
+    _act(estate)
+    head = _advance_fork_without_a_version_change(estate)
+    assert _pull_clone(estate) == head
+    if off_branch == "detached":
+        _git(estate.clone, "checkout", "--detach", head)
+    else:
+        _git(estate.clone, "checkout", "-b", "stray")
+    assert _git(estate.clone, "rev-parse", "HEAD").strip() == head
+
+    assert loaded_entry(estate.sites, OCTO, MARKETPLACE) == read_entry(
+        estate.sites, OCTO, MARKETPLACE
+    )
+    results = verify(estate.sites, OCTO, MARKETPLACE, head)
+    assert [result.passed for result in results] == [True, True, False, True]
+    assert "from the record" in results[2].detail
+
+
+def test_the_loaded_revision_reads_take_no_optional_locks_and_a_short_timeout(
+    estate: Estate, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every git call `loaded_entry` makes is bounded by the READ timeout, not the act's 600 s, and
+    `status` runs with `--no-optional-locks` so a measuring pass never takes the index lock. The
+    real `_run` still runs underneath, so the answer is asserted too."""
+    _act(estate)
+    head = _advance_fork_without_a_version_change(estate)
+    _pull_clone(estate)
+    calls: list[tuple[tuple[str, ...], int]] = []
+    real_run = plugin_module._run
+
+    def _recording(argv: tuple[str, ...], *, cwd: Path | None, timeout: int):
+        calls.append((argv, timeout))
+        return real_run(argv, cwd=cwd, timeout=timeout)
+
+    monkeypatch.setattr(plugin_module, "_run", _recording)
+    entry = loaded_entry(estate.sites, OCTO, MARKETPLACE)
+    assert entry is not None and entry.revision == head
+
+    git_calls = [(argv, timeout) for argv, timeout in calls if argv[0] == "git"]
+    assert git_calls
+    assert all(timeout == GIT_READ_TIMEOUT_SECONDS for _, timeout in git_calls)
+    status = [argv for argv, _ in git_calls if "status" in argv]
+    assert len(status) == 1
+    assert status[0].index("--no-optional-locks") < status[0].index("status")
+
+
+def test_a_pass_that_kept_the_version_REPORTS_the_folder_revision(
+    estate: Estate, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The outcome names what `verify` checked. With Claude Code rewriting its record only on a
+    version change, a pass over a fork move that kept the version installs, verifies, and reports
+    the folder's revision -- never the record's stale commit."""
+    _act(estate)
+    stale = estate.entry()
+    head = _advance_fork_without_a_version_change(estate)
+    monkeypatch.setenv("SDS_FAKE_CLAUDE_RECORD_ON_VERSION_CHANGE_ONLY", "1")
+
+    outcome = _act(estate, head)
+    assert outcome.action == ACTION_INSTALLED
+    assert estate.entry() == stale
+    assert outcome.installed is not None
+    assert outcome.installed.revision == head
+    assert outcome.installed.revision_source == "folder"  # type: ignore[attr-defined]
 
 
 def test_no_record_is_no_entry_whatever_the_folder_holds(estate: Estate) -> None:

@@ -133,6 +133,11 @@ PLUGIN_MANIFEST: Final = Path(".claude-plugin") / "plugin.json"
 INSTALLED_RECORD: Final = "installed_plugins.json"
 
 GIT_TIMEOUT_SECONDS: Final = 600
+# THE READS THAT DECIDE WHICH REVISION IS LOADED get a short bound of their own. They run on every
+# pass, the bare measuring one included, and a `rev-parse` or `status` that has not answered in
+# half a minute is not going to; the 600 seconds above are for a pull that genuinely can take
+# that long.
+GIT_READ_TIMEOUT_SECONDS: Final = 30
 CLAUDE_TIMEOUT_SECONDS: Final = 300
 
 # `"version"` and its string value, with the KEY AND SEPARATOR CAPTURED so a rewrite preserves the
@@ -223,8 +228,8 @@ def _git(root: Path, *args: str) -> str:
     return out
 
 
-def _git_maybe(root: Path, *args: str) -> tuple[int, str, str]:
-    return _run(("git", "-C", str(root), *args), cwd=None, timeout=GIT_TIMEOUT_SECONDS)
+def _git_maybe(root: Path, *args: str, timeout: int = GIT_TIMEOUT_SECONDS) -> tuple[int, str, str]:
+    return _run(("git", "-C", str(root), *args), cwd=None, timeout=timeout)
 
 
 def resolve_claude(candidates: tuple[Path, ...] = CLAUDE_CANDIDATES) -> Path:
@@ -293,34 +298,57 @@ def loaded_entry(sites: Sites, tool: Tool, marketplace: str) -> PluginEntry | No
 
     The serving folder's HEAD, when the record names the version the folder declares -- the
     module docstring has the measurement. Otherwise the record's own `gitCommitSha`, unchanged.
+    The rule itself is `_with_loaded_revision`; this reads the folder's manifest for it.
+    """
+    try:
+        folder_version: str | None = _clone_version(sites, tool)
+    except PluginError:
+        folder_version = None
+    return _with_loaded_revision(read_entry(sites, tool, marketplace), sites, tool, folder_version)
 
-    NEVER INVENTED. A folder that is not its own git checkout, whose HEAD git will not answer, or
-    whose manifest cannot be read leaves the record as it is. The `.git` test is not redundant
-    with git's own refusal: the folder sits inside the hub, so `git -C` on a folder that has lost
-    its `.git` answers with the HUB's HEAD rather than failing.
+
+def _with_loaded_revision(
+    entry: PluginEntry | None, sites: Sites, tool: Tool, folder_version: str | None
+) -> PluginEntry | None:
+    """The one place the loaded-revision rule lives. `folder_version` is the folder's manifest
+    version, already read by the caller (`None` when it could not be), so `verify` reads the
+    manifest once for both this rule and its own `installed == clone` check.
+
+    NEVER INVENTED. A folder that is not its own git checkout, is not on the tracked branch,
+    whose HEAD git will not answer, or whose manifest cannot be read leaves the record as it is.
+    The `.git` test is not redundant with git's own refusal: the folder sits inside the hub, so
+    `git -C` on a folder that has lost its `.git` answers with the HUB's HEAD rather than failing.
+    The branch test matches `_require_usable_clone`: a detached HEAD or a stray branch is a
+    history this lane did not measure against, even when its commit happens to be the head.
 
     A DIRTY FOLDER LEAVES THE RECORD TOO. Claude Code loads the working tree, not the commit, so
     once the tree carries changes git would show -- tracked or untracked -- HEAD no longer
-    describes what runs, and naming it would report a revision nobody is loading.
+    describes what runs, and naming it would report a revision nobody is loading. A STATED LIMIT:
+    `git status --porcelain` does not show gitignored files, so ignored content in the folder is
+    loaded and not detected here.
+
+    READS ONLY, AND THEY NEITHER LOCK NOR WAIT LONG. `status` runs with `--no-optional-locks`, so
+    a measuring pass never takes the index lock a person's git command in the same folder would
+    then trip over, and every call here is bounded by `GIT_READ_TIMEOUT_SECONDS`.
     """
-    entry = read_entry(sites, tool, marketplace)
-    if entry is None:
-        return None
+    if entry is None or folder_version is None or folder_version != entry.version:
+        return entry
     root = sites.clone_root(tool)
     if not (root / ".git").exists():
         return entry
-    code, out, _ = _git_maybe(root, "rev-parse", "HEAD")
+    code, branch, _ = _git_maybe(
+        root, "symbolic-ref", "--short", "HEAD", timeout=GIT_READ_TIMEOUT_SECONDS
+    )
+    if code != 0 or branch.strip() != tool.branch:
+        return entry
+    code, out, _ = _git_maybe(root, "rev-parse", "HEAD", timeout=GIT_READ_TIMEOUT_SECONDS)
     head = out.strip()
     if code != 0 or not head:
         return entry
-    code, status, _ = _git_maybe(root, "status", "--porcelain")
+    code, status, _ = _git_maybe(
+        root, "--no-optional-locks", "status", "--porcelain", timeout=GIT_READ_TIMEOUT_SECONDS
+    )
     if code != 0 or status.strip():
-        return entry
-    try:
-        folder_version = _clone_version(sites, tool)
-    except PluginError:
-        return entry
-    if folder_version != entry.version:
         return entry
     return replace(entry, revision=head, revision_source="folder")
 
@@ -548,13 +576,21 @@ def _require_publishable_now(root: Path) -> None:
 
 
 def _refresh_install(claude: Path, marketplace: str, plugin: str) -> None:
-    """Re-copy the serving clone into the versioned cache Claude Code actually loads.
+    """Have Claude Code re-read the catalog and record the version the serving folder declares.
 
-    THE TWO COMMANDS ARE ONE STEP. The first re-reads the local directory-marketplace's catalog
-    so it sees the pin this pass moved; the second copies the clone into the cache directory for
-    that version and rewrites Claude Code's own installed record. Running only the first leaves
-    the catalog current and the machine stale, which is the 2026-06-17 defect with an extra
-    command in front of it.
+    WHAT THE TWO COMMANDS DO, AS MEASURED 2026-10-23 on this machine. `claude plugin list` reports
+    each `devon-plugins` plugin "Read from" its serving folder (`.../devon-plugins/octo`, and for
+    n8n-as-code its nested plugin folder, which runs with NO cache directory at all). The first
+    command re-reads the local directory-marketplace's catalog so it sees the pin this pass
+    moved; the second rewrites Claude Code's own installed record ONLY when the version changes --
+    with the version unchanged it answered "octo is read from its folder ... nothing to update"
+    and left `gitCommitSha` where it was. So neither command changes what runs: the folder does,
+    and `loaded_entry` reads the revision from it.
+
+    THE 2026-06-17 HISTORY IS THE BEHAVIOUR THEN, kept as history. At that time the running
+    plugin was a versioned copy under `~/.claude/plugins/cache/`, it drifted to 9.42.3 while the
+    clone and the pin read 9.44.0, and running only the catalog command left it stale. The two
+    commands are still run as one step, so the record names the version the pin moved to.
 
     `-y` IS PASSED AND THE ROUTINE A PERSON FOLLOWS DOES NOT CARRY IT. Be exact about what was
     measured, because it is less than "required": on Claude Code 2.1.263 the flag's own help text
@@ -582,16 +618,18 @@ def verify(sites: Sites, tool: Tool, marketplace: str, head_revision: str) -> li
     THIS IS NOT A FUNCTIONAL CHECK and the module docstring says so. It is the agreement the
     2026-06-17 defect broke, and nothing more.
     """
-    entry = loaded_entry(sites, tool, marketplace)
+    try:
+        clone_version: str | None = _clone_version(sites, tool)
+        clone = clone_version
+    except PluginError as error:
+        clone_version = None
+        clone = f"unreadable: {error}"
+    entry = _with_loaded_revision(read_entry(sites, tool, marketplace), sites, tool, clone_version)
     installed = entry.version if entry else ""
     try:
         pinned = _pinned_version(sites, tool) or ""
     except PluginError as error:
         pinned = f"unreadable: {error}"
-    try:
-        clone = _clone_version(sites, tool)
-    except PluginError as error:
-        clone = f"unreadable: {error}"
 
     cache = Path(entry.install_path) if entry and entry.install_path else None
     populated = bool(cache and cache.is_dir() and any(cache.iterdir()))
@@ -757,7 +795,7 @@ def install_and_prove_plugin(
         # Nothing has moved, so there is nothing to put back. The refusal is the whole outcome.
         return InstallOutcome(
             action=ACTION_INSTALL_FAILED,
-            installed=read_entry(sites, tool, marketplace),
+            installed=loaded_entry(sites, tool, marketplace),
             detail=str(error),
         )
 
@@ -767,7 +805,7 @@ def install_and_prove_plugin(
         _undo(claude=claude, sites=sites, tool=tool, marketplace=marketplace, act=act)
         return InstallOutcome(
             action=ACTION_INSTALL_FAILED,
-            installed=read_entry(sites, tool, marketplace),
+            installed=loaded_entry(sites, tool, marketplace),
             detail=str(error),
         )
 
@@ -776,7 +814,7 @@ def install_and_prove_plugin(
         _undo(claude=claude, sites=sites, tool=tool, marketplace=marketplace, act=act)
         return InstallOutcome(
             action=ACTION_ROLLED_BACK,
-            installed=read_entry(sites, tool, marketplace),
+            installed=loaded_entry(sites, tool, marketplace),
             probes=results,
             detail="the installed plugin did not agree with the pin, the clone or the head",
         )
@@ -791,12 +829,15 @@ def install_and_prove_plugin(
         _undo(claude=claude, sites=sites, tool=tool, marketplace=marketplace, act=act)
         return InstallOutcome(
             action=ACTION_ROLLED_BACK,
-            installed=read_entry(sites, tool, marketplace),
+            installed=loaded_entry(sites, tool, marketplace),
             probes=results,
             detail=str(error),
         )
 
-    entry = read_entry(sites, tool, marketplace)
+    # THE OUTCOME NAMES THE REVISION CLAUDE CODE LOADS, the same answer `verify` just checked and
+    # the measurement in `cli` reads; `act.previous` and the undo stay on the record, because they
+    # ask whether Claude Code's record moved.
+    entry = loaded_entry(sites, tool, marketplace)
     # THE CACHE ROOT COMES FROM THE INSTALLED RECORD'S OWN PATH, never from a path this module
     # composes out of the plugins root. It is the tool's own answer to where it put things, so
     # pruning cannot wander into a directory unrelated to what is installed -- and the two are
