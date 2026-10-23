@@ -48,6 +48,7 @@ BASE="$HOME/Library/Application Support/rotation-worker"
 SRC="$BASE/src"
 SERVICE="rotation-executor"
 BEARER="worker-bearer"
+HEALTHCHECKS_KEY="healthchecks-key"
 
 if [ ! -d "$SRC/.git" ]; then
   git clone --quiet --no-checkout https://github.com/AlobarQuest/orchestrator.git "$SRC"
@@ -70,6 +71,11 @@ bearer_secret_id = "$BEARER"
 state_dir = "$BASE/state"
 source_revision = "${commit:0:12}"
 EOF
+# Named only once the item exists, so a pass before then reads no check rather than failing on a
+# missing item. Devon creates it ("Install or update the Keychain instance").
+if /usr/bin/security find-generic-password -s "$SERVICE" -a "$HEALTHCHECKS_KEY" > /dev/null 2>&1; then
+  echo "healthchecks_key_id = \"$HEALTHCHECKS_KEY\"" >> "$BASE/config.toml.new"
+fi
 mv "$BASE/config.toml.new" "$BASE/config.toml"
 
 # RENDERED TO A TEMPORARY FILE AND MOVED INTO PLACE ONLY WHEN IT WILL BE LOADED: launchd loads
