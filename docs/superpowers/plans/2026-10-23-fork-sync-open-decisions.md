@@ -60,12 +60,16 @@ Measured on 2026-10-23:
   with install scripts, builds n8n's node packages and loads them with `require`, so it can't run
   on the operator machine.
 
-**Status:** in progress. Devon chose the tool-installer row, with the knowledge data taken only
+**Status:** resolved 2026-10-23. Devon chose the tool-installer row, with the knowledge data taken only
 as the `dist/assets/*.json` files of upstream's published `@n8n-as-code/skills` at the fork's
 version (integrity-checked; none of its code is used). The row installs the whole built
 checkout (the CLI's sibling packages are workspace links), and owns `<npm prefix>/bin/n8nac` so
 the skill's `npx` resolves the gated build. The hardening session should remove the need for that
-prefix link.
+prefix link. The row landed in orchestrator #493 (`576ecf16`); the tool installer's pass that
+afternoon installed n8nac 2.7.0 at `e238c7a`, passed every probe, and repointed
+`/opt/homebrew/bin/n8nac` at `~/.local/share/sds-tools/npm/bin/n8nac`. From a cold directory,
+`npm exec --no -- n8nac --version` printed 2.7.0 and `npx --yes n8nac skills node-info` answered
+from the published data.
 
 ## 4. Two local clones from the old lane
 
