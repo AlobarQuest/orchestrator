@@ -104,4 +104,7 @@ operator machine through the fork today.
 Options: file them as issues on EtienneLescot/n8n-as-code (an outward-facing act Devon confirms);
 or record them only.
 
-**Status:** open.
+**Status:** resolved 2026-10-23. Devon chose to record them only; nothing was sent upstream.
+Upstream's `SECURITY.md` asks for private reports through GitHub Security Advisories or email,
+and private vulnerability reporting is off on the repository, so a later report would go by email
+to the maintainer. The fork's review acknowledgements name each finding.
