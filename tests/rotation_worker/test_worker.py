@@ -809,7 +809,7 @@ def test_a_unit_that_waits_for_overlaps_is_left_unclaimed_while_another_rotation
     with caplog.at_level(logging.INFO):
         assert run_pass(h.setup()) == 0
     assert h.client.calls == []
-    assert [r.mid_overlap for r in caplog.records if hasattr(r, "mid_overlap")] == [
+    assert [vars(r)["mid_overlap"] for r in caplog.records if "mid_overlap" in vars(r)] == [
         ["drift-retire (ready)"]
     ]
     h.client.active = []
