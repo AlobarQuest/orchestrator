@@ -36,7 +36,9 @@ The gated fork's `main` holds plugin 2.4.1, which has the unpinned MCP server. D
 Options: keep 2.3.0 until hardening pins the MCP server, then install from the fork through the
 tool installer; or uninstall the plugin now.
 
-**Status:** open.
+**Status:** resolved 2026-10-23. Devon chose to keep 2.3.0 from `devon-plugins` until the hardening
+session pins the MCP server; the plugin then moves to an install from the gated fork through the
+tool installer. Nothing changed on the machine.
 
 ## 3. The global `n8nac` is a link to an old checkout
 

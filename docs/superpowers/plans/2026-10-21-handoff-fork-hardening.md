@@ -70,10 +70,11 @@ Devon chose on 2026-10-22 to land v2.6.0 in the fork and to keep the plugin off 
 until this process pins the MCP server. So **no `PluginInstall` row for n8n-as-code may be added
 until hardening has pinned it**; the fork's `main` holds the unpinned version.
 
-Two installs already bypass the fork (`~/.claude/plugins/installed_plugins.json`): a project-scoped
-2.2.6 for `~/Projects/listing-prep` from the `n8nac-marketplace` marketplace, which points at
-upstream's repository directly, and a user-scoped 2.3.0 from `devon-plugins`. Whether to remove or
-replace them is Devon's call.
+The plugin Devon runs is the user-scoped 2.3.0 from `devon-plugins`, a pre-gate checkout of the
+fork at `43e3e360` with no MCP server. Devon decided on 2026-10-23 to keep it until this process
+pins the MCP server, then to install from the gated fork through the tool installer. The
+project-scoped install that read upstream directly was removed the same day
+(`2026-10-23-fork-sync-open-decisions.md`).
 
 ## Read first
 
