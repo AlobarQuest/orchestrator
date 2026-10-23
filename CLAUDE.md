@@ -370,7 +370,10 @@ Placement rule: global CLAUDE.md §7.
   re-implemented here. The occurrence comes from that answer's structured fields and never
   contains today's date. It acts only on a credential its registry entry marks `rotated_by_sds`,
   which infraops' 04:00 window then refuses; a package without that flag is a finding and is never
-  acted on. Detail: `docs/operations/rotation-proposer.md`.
+  acted on. Its one write to infraops is `security-drift-cli record-rotation`, made only when the
+  record for the approved revision is `resolved` by `work-watcher` and the trigger isn't an
+  exposure. Detail:
+  `docs/operations/rotation-proposer.md`.
 - change-manager's `resolved` is terminal by design and will not be made recoverable; `reactivate`
   applies only to `wontfix`. Do not re-propose recoverability. History:
   `docs/history/claude-md-invariants-archive.md` #209.

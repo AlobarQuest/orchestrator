@@ -424,3 +424,121 @@ def test_a_refused_publish_stops_the_next_credential_from_stacking_on_it(
     revised = [call[1] for call in rig.lifecycle.calls if call[0] == "revise"]
     assert len(revised) == 1
     assert capsys.readouterr().out.count("error") == 2
+
+
+EXPOSED = Due(CREDENTIAL, "openrouter-key", "exposure", "exp-7", "2026-10-07", True)
+
+
+def _proposed_and_built(rig, monkeypatch, *, decided_by: str = "work-watcher") -> list[str]:
+    """Through Devon's approval and the proposal, then the work watcher retiring the record."""
+    recorded: list[str] = []
+    monkeypatch.setattr(cli, "record_rotation", recorded.append)
+    run(["--submit"])
+    rig.approve_by_name()
+    run(["--submit"])
+    rig.estate.records[0].update(status="resolved", decided_by=decided_by)
+    return recorded
+
+
+def test_a_finished_rotation_is_recorded_in_infraops_instead_of_replayed(
+    rig, capsys, monkeypatch
+) -> None:
+    recorded = _proposed_and_built(rig, monkeypatch)
+    capsys.readouterr()
+
+    assert run(["--submit"]) == EXIT_OK
+    assert recorded == [CREDENTIAL]
+    assert len(rig.estate.proposals) == 1
+    assert "recorded" in capsys.readouterr().out
+
+
+def test_a_record_a_person_resolved_records_nothing_and_is_a_finding(
+    rig, capsys, monkeypatch
+) -> None:
+    """Only the work watcher retires a record because its work completed; anyone else's
+    resolution would otherwise leave the credential due with nothing reported."""
+    recorded = _proposed_and_built(rig, monkeypatch, decided_by="devon")
+    capsys.readouterr()
+
+    assert run(["--submit"]) == EXIT_FINDINGS
+    assert recorded == []
+    assert "resolved-by-person" in capsys.readouterr().out
+
+
+def test_a_retired_record_for_another_revision_records_nothing(rig, capsys, monkeypatch) -> None:
+    recorded = _proposed_and_built(rig, monkeypatch)
+    rig.estate.records[0]["package_revision"] = 1
+    capsys.readouterr()
+
+    run(["--submit"])
+    assert recorded == []
+
+
+def test_infraops_refusing_the_record_is_that_credentials_error(rig, capsys, monkeypatch) -> None:
+    _proposed_and_built(rig, monkeypatch)
+
+    def refuse(credential_id: str) -> None:
+        raise FindingsError("infraops refused record-rotation: unknown credential id")
+
+    monkeypatch.setattr(cli, "record_rotation", refuse)
+    capsys.readouterr()
+
+    assert run(["--submit"]) == EXIT_FINDINGS
+    out = capsys.readouterr().out
+    assert "error" in out and "unknown credential id" in out
+
+
+def test_a_finished_exposure_rotation_is_left_to_a_person_and_never_recorded(
+    rig, capsys, monkeypatch
+) -> None:
+    """record-rotation doesn't close an exposure, so the credential stays due: recording on every
+    pass would move lastRotated forward every day."""
+    rig.due = [EXPOSED]
+    recorded = _proposed_and_built(rig, monkeypatch)
+    capsys.readouterr()
+
+    assert run(["--submit"]) == EXIT_FINDINGS
+    assert run(["--submit"]) == EXIT_FINDINGS
+    out = capsys.readouterr().out
+    assert recorded == []
+    assert "exposure-open" in out and "exp-7" in out
+
+
+def test_the_next_rotation_revises_rather_than_recording_the_last_one_again(
+    rig, capsys, monkeypatch
+) -> None:
+    recorded = _proposed_and_built(rig, monkeypatch)
+    run(["--submit"])
+    rig.due = [AGE]
+    capsys.readouterr()
+
+    run(["--submit"])
+    assert recorded == [CREDENTIAL]
+    assert "revised" in capsys.readouterr().out
+
+
+def test_only_a_resolved_record_records(rig, capsys, monkeypatch) -> None:
+    recorded = _proposed_and_built(rig, monkeypatch)
+    rig.estate.records[0]["status"] = "approved"
+    capsys.readouterr()
+
+    run(["--submit"])
+    assert recorded == []
+    assert "replayed" in capsys.readouterr().out
+
+
+def test_a_retired_record_for_another_package_at_the_same_revision_records_nothing(
+    rig, capsys, monkeypatch
+) -> None:
+    recorded = _proposed_and_built(rig, monkeypatch)
+    rig.estate.records[0]["package_id"] = "rotation-another-credential"
+    capsys.readouterr()
+
+    run(["--submit"])
+    assert recorded == []
+
+
+def test_the_retirement_actor_is_the_work_watchers() -> None:
+    from work_watcher.change_manager import RETIREMENT_ACTOR
+
+    assert cli.RETIREMENT_ACTOR == RETIREMENT_ACTOR

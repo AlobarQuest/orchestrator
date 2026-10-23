@@ -38,6 +38,7 @@ from typing import Any, Final
 
 SCHEMA_VERSION: Final = 1
 SUBCOMMAND: Final = "cred-findings"
+RECORD_SUBCOMMAND: Final = "record-rotation"
 DEFAULT_INFRAOPS_CHECKOUT: Final = Path.home() / "Projects" / "infraops-mcp-server"
 CLI_SCRIPT: Final = Path("dist") / "cli" / "security-drift-cli.js"
 TIMEOUT_SECONDS: Final = 60.0
@@ -193,24 +194,38 @@ def _run(command: list[str]) -> subprocess.CompletedProcess[str]:
     try:
         return subprocess.run(command, capture_output=True, text=True, timeout=TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired as error:
-        raise FindingsError("infraops did not answer what is due in time") from error
+        raise FindingsError(f"infraops did not answer {command[2]} in time") from error
     except OSError as error:
         raise FindingsError(f"infraops could not be run: {type(error).__name__}") from error
 
 
-def read_due(
-    checkout: Path | None = None, *, run: Runner = _run
-) -> tuple[list[Due], list[Unrecognised]]:
-    """Ask infraops what is due. Every failure is a `FindingsError`, which stops the pass."""
+def _invoke(checkout: Path | None, run: Runner, subcommand: str, *arguments: str) -> str:
+    """Run one security-drift subcommand and return its stdout. Every failure is a
+    `FindingsError`."""
     script = (checkout or infraops_checkout()) / CLI_SCRIPT
     if not script.is_file():
         raise FindingsError(f"no infraops security-drift CLI at {script}")
-    completed = run([str(node_binary()), str(script), SUBCOMMAND])
+    completed = run([str(node_binary()), str(script), subcommand, *arguments])
     if completed.returncode != 0:
         # The LAST line only, bounded: infraops names its refusal there (an unparseable registry,
         # an unknown subcommand on an infraops that predates this one), and nothing it prints
         # carries a value -- the registries hold names, UUIDs and fingerprints, never secrets.
         lines = (completed.stderr or "").strip().splitlines()
         reason = lines[-1][:300] if lines else f"exit {completed.returncode}"
-        raise FindingsError(f"infraops refused {SUBCOMMAND}: {reason}")
-    return parse(completed.stdout)
+        raise FindingsError(f"infraops refused {subcommand}: {reason}")
+    return completed.stdout
+
+
+def read_due(
+    checkout: Path | None = None, *, run: Runner = _run
+) -> tuple[list[Due], list[Unrecognised]]:
+    """Ask infraops what is due. Every failure is a `FindingsError`, which stops the pass."""
+    return parse(_invoke(checkout, run, SUBCOMMAND))
+
+
+def record_rotation(
+    credential_id: str, checkout: Path | None = None, *, run: Runner = _run
+) -> None:
+    """Tell infraops the credential rotated today. Its `lastRotated` moves, which clears the
+    request and age findings on infraops' next run. Every failure is a `FindingsError`."""
+    _invoke(checkout, run, RECORD_SUBCOMMAND, "--cred", credential_id, "--date", "now")

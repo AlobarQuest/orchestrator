@@ -32,6 +32,14 @@ not the record: its change-manager bearer is propose-scoped and its client asser
 surface. Its orchestrator client names one route, the observation ingest, under the OBSERVER
 bearer, which can neither transition a unit nor create work.
 
+**IT RECORDS A FINISHED ROTATION IN INFRAOPS.** Once the work watcher retires the record for the
+approved revision (`resolved`, decided by `work-watcher`, which it does only when every unit
+completed), the pass runs `security-drift-cli record-rotation` instead of replaying the proposal,
+so infraops stops reporting the credential due. The date is the day of that pass, normally the day
+after the work completed. A record anyone else resolved is a finding and records nothing. An
+exposure records nothing either and is a finding: record-rotation doesn't close it, and closing it
+is a person's statement that the old value is dead.
+
 **A REPEAT PASS IS A REPLAY.** A package whose tip already carries the occurrence is not revised
 again; the observation is content-addressed; change-manager answers 200 for an identical proposal.
 """
@@ -66,7 +74,13 @@ from bump_proposer.standing import (
     require_publishable,
     snapshot_hash,
 )
-from rotation_proposer.findings import Due, FindingsError, Unrecognised, read_due
+from rotation_proposer.findings import (
+    Due,
+    FindingsError,
+    Unrecognised,
+    read_due,
+    record_rotation,
+)
 from rotation_proposer.observation import ObservationUncomposable, rotation_observation
 from rotation_proposer.standing import (
     APPROVED,
@@ -88,6 +102,9 @@ ACTOR: Final = "rotation-proposer"
 RISK: Final = "caution"
 USER_AGENT: Final = "rotation-proposer/1 (+AlobarQuest/orchestrator)"
 OBSERVER_KEY_ID: Final = "orchestrator-observer"
+# The actor the work watcher retires a record as (`work_watcher.change_manager`), duplicated
+# because this program imports only its own row; a test holds the two equal.
+RETIREMENT_ACTOR: Final = "work-watcher"
 
 # What makes a pass a FINDING rather than a clean run. `legacy` is absent: a credential the
 # registry has not handed to the SDS is infraops' to rotate. `unlaned` and `not-handed-over` are
@@ -105,6 +122,8 @@ FINDING_STATUSES: Final = frozenset(
         "unrecognised",
         "unlaned",
         "not-handed-over",
+        "exposure-open",
+        "resolved-by-person",
     }
 )
 
@@ -201,6 +220,52 @@ def _superseded(records: list[dict[str, Any]], package: RotationPackage) -> list
     return stranded
 
 
+def _resolved(records: list[dict[str, Any]], package: RotationPackage) -> dict[str, Any] | None:
+    """The record for this revision, if it has been resolved."""
+    for row in records:
+        if (
+            row.get("package_id") == package.package_id
+            and row.get("package_revision") == package.revision
+            and row.get("status") == "resolved"
+        ):
+            return row
+    return None
+
+
+def _record(due: Due, row: dict[str, Any]) -> Outcome:
+    subject = due.credential_id
+    record = f"record {row.get('id')}"
+    if row.get("decided_by") != RETIREMENT_ACTOR:
+        # The work watcher retires a record only once its work completed; anyone else's
+        # resolution says nothing about that, and the credential would stay due unreported.
+        return Outcome(
+            subject,
+            "resolved-by-person",
+            f"{record} was resolved by {row.get('decided_by')!r}, not {RETIREMENT_ACTOR}; "
+            "nothing is recorded, and the credential stays due until a person decides",
+        )
+    if due.trigger == "exposure":
+        # record-rotation doesn't close an exposure, so the credential would stay due and a
+        # daily record would move lastRotated every day. Both acts are a person's, once.
+        return Outcome(
+            subject,
+            "exposure-open",
+            f"{record} was retired by {RETIREMENT_ACTOR}: the rotation completed. Exposure "
+            f"{due.basis} stays open: once the old value is confirmed dead, run "
+            f"security-drift-cli resolve-exposure and record-rotation for {subject}",
+        )
+    try:
+        record_rotation(subject)
+    except FindingsError as error:
+        return Outcome(subject, "error", str(error))
+    return Outcome(
+        subject,
+        "recorded",
+        f"{record} was retired by {RETIREMENT_ACTOR}: the rotation completed; infraops records "
+        "it rotated today",
+    )
+
+
 def _act(
     package: RotationPackage,
     due: Due,
@@ -215,6 +280,10 @@ def _act(
         # Reported on every path, not only when proposing: while a newer revision waits for
         # approval, an open record for an older one is still stranded, and still approvable.
         return [Outcome(subject, action, detail), *_superseded(records, package)]
+    resolved = _resolved(records, package) if action == _PROPOSE else None
+    if resolved is not None:
+        # Reached only by a writing pass: a dry run reads no records.
+        return [_record(due, resolved), *_superseded(records, package)]
     if client is None or observer is None:
         return [Outcome(subject, f"would-{action}", f"{detail} -> {due.occurrence}")]
 

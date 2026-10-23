@@ -72,6 +72,17 @@ For a due credential whose package is `rotation-<credential_id>`:
    the `work` record with the propose-scoped bearer. The record names the approved revision and
    that observation, with `bump_proposer`'s asserted fields (`PROPOSAL_FIELDS`). Later passes
    replay it.
+5. **The pass after the rotation completes.** The work watcher retires the record once every unit
+   it caused has completed: `resolved`, decided by `work-watcher`. Seeing that, the pass runs
+   `security-drift-cli record-rotation --cred <credential_id> --date now` instead of replaying the
+   proposal, and reports `recorded`. infraops' `lastRotated` then moves to that day, normally the
+   day after the work completed, and the next `cred-findings` stops reporting a requested or aged
+   credential due. Two cases record nothing and are findings:
+   - **`resolved-by-person`:** the record was resolved by anyone but `work-watcher`, which says
+     nothing about whether the work completed. A person decides what happened.
+   - **`exposure-open`:** the rotation completed, but `record-rotation` doesn't close an exposure.
+     Once the old value is confirmed dead, a person runs `security-drift-cli resolve-exposure` and
+     `record-rotation` for the credential.
 
 Compared with `bump_proposer`, the order is observe, revise, publish, propose, with the approval
 moved out of the pass and given to a person. `bump_proposer` approves by policy and proposes in the
