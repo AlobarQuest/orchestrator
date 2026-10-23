@@ -1,5 +1,12 @@
 """What this lane may install, as a table rather than as code.
 
+FOUR ROWS NOW. The fourth, `n8nac`, is a second npm row, and it is the first to disagree with
+`rea`: its CLI is one workspace of a monorepo whose runtime dependencies are its siblings, it needs
+data files its safe build cannot produce, and the place it must be reachable from is Homebrew's npm
+prefix rather than this lane's own. Each disagreement arrived as an optional field on `NpmInstall`
+whose default is exactly what `rea` already did -- the rule below, applied: a field added when a
+row needed it, with that row to fit it to.
+
 THREE ROWS NOW. The paragraphs below were written at two, and they held: the third, `rea`, is a
 Node CLI and MCP server, and it arrived as a row plus a third strategy type (`NpmInstall`) with no
 change to the other two. See that type's docstring for what it does that neither of the others
@@ -71,6 +78,29 @@ class PluginInstall:
 
 
 @dataclass(frozen=True)
+class PublishedAssets:
+    """DATA FILES, NEVER CODE, taken from upstream's published package at the fork's own version.
+
+    The files are JSON the package's code reads with `readFileSync` and `JSON.parse`, and nothing
+    else of that tarball is used: its `dist/` code is upstream's, and the fork's own build supplies
+    the code. They exist because the build that GENERATES them builds n8n itself, which would run
+    n8n's code on this machine, so Devon chose upstream's published data instead on 2026-10-23.
+    The registry verifies the tarball's integrity on download and the installed manifest records
+    what landed.
+    """
+
+    package: str
+    """The published package the data comes from, fetched at the version `workspace` names."""
+
+    workspace: str
+    """The fork's workspace whose `package.json` names the version to fetch, and whose tree
+    receives the files."""
+
+    directory: str
+    """Where the files sit, both inside the published package and inside `workspace`."""
+
+
+@dataclass(frozen=True)
 class NpmInstall:
     """A Node package built from the fork's source and installed into a dedicated prefix.
 
@@ -89,10 +119,33 @@ class NpmInstall:
     probe_commands: tuple[tuple[str, ...], ...]
     """As `CargoInstall.probe_commands`: suffixes run against the installed binary's path."""
 
-    mcp_arguments: tuple[str, ...]
+    mcp_arguments: tuple[str, ...] | None = None
     """The suffix that starts the tool's stdio MCP server. The probe sends one `initialize` and
     checks the server's reported version by value -- a stdin exchange, which no argv suffix in
-    `probe_commands` can express."""
+    `probe_commands` can express. `None` for a package that serves no MCP, which is then not
+    asked to."""
+
+    workspace: str | None = None
+    """The package's directory inside a monorepo, when it is one workspace of several.
+
+    Then the WHOLE built checkout is installed, not a packed copy of this directory, because the
+    package's runtime dependencies are its sibling workspaces and a packed copy would fetch them
+    from the registry -- upstream's code, not the fork's. The version, `gitHead` and `bin` map
+    are read from `<checkout>/<workspace>/package.json`. See `npm.py`."""
+
+    published_assets: PublishedAssets | None = None
+    """Data files taken from upstream's published package, when the safe build cannot make them."""
+
+    probe_environment: tuple[tuple[str, str], ...] = ()
+    """Variables set for every probe, on top of the act's own environment. For a CLI that would
+    otherwise report telemetry or check for updates: a probe is not a use of the tool."""
+
+    link_into_npm_prefix: bool = False
+    """Also own `<npm prefix -g>/bin/<name>`, pointing at this lane's own `bin/<name>`.
+
+    For a tool something else runs through `npx`, which resolves a command from the global
+    prefix's `bin/` and downloads upstream's package from the registry when it finds none there.
+    """
 
 
 @dataclass(frozen=True)
@@ -161,4 +214,40 @@ REA = Tool(
     ),
 )
 
-TOOLS: tuple[Tool, ...] = (RTK, OCTO, REA)
+# The fourth row. The n8n-as-code plugin runs `npx --yes n8nac ...`, and npx resolves that from
+# Homebrew's npm prefix -- where `bin/n8nac` was a hand-made `npm link` into an old checkout nobody
+# had reviewed. So this row builds the fork, and also owns that prefix link, pointing it at this
+# lane's own `bin/n8nac`; with no link there, npx would fetch upstream from the registry instead.
+# Devon's decisions of 2026-10-23: install from the fork, take the knowledge data from upstream's
+# published `@n8n-as-code/skills` at the fork's version, and own the prefix link. The hardening
+# session (docs/superpowers/plans/2026-10-21-handoff-fork-hardening.md) should remove the need for
+# that link by having the plugin call this lane's binary rather than `npx`.
+N8NAC = Tool(
+    name="n8nac",
+    repository="AlobarQuest/n8n-as-code",
+    branch="main",
+    install=NpmInstall(
+        package="n8nac",
+        # Builds `packages/cli/dist` and the `dist/` of every workspace it references. Measured at
+        # n8nac 2.7.0 with lifecycle scripts refused: the production install that follows leaves
+        # 0 invalid and 0 missing packages.
+        build_commands=(("run", "build:cli"),),
+        # Both exit 1 ("Knowledge index not found") without the published data, so their exit
+        # status alone proves the data landed where the code reads it.
+        probe_commands=(
+            ("skills", "search", "http request"),
+            ("skills", "node-info", "httpRequest", "--compact"),
+        ),
+        # The CLI reports telemetry (`packages/telemetry`) and checks for updates; the fork's
+        # review lists both that package and `packages/cli/src` as trust_critical. A probe
+        # proves the install and should not phone home doing it.
+        probe_environment=(("DO_NOT_TRACK", "1"), ("NO_UPDATE_NOTIFIER", "1"), ("CI", "1")),
+        workspace="packages/cli",
+        published_assets=PublishedAssets(
+            package="@n8n-as-code/skills", workspace="packages/skills", directory="dist/assets"
+        ),
+        link_into_npm_prefix=True,
+    ),
+)
+
+TOOLS: tuple[Tool, ...] = (RTK, OCTO, REA, N8NAC)

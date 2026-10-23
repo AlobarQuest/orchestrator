@@ -131,7 +131,7 @@ def _installed(tool: Tool, roots: _Roots) -> ArtifactRecord | None:
     if isinstance(row, CargoInstall):
         return read_installed(roots.cargo, row.crate)
     if isinstance(row, NpmInstall):
-        return read_installed_package(roots.npm, row.package)
+        return read_installed_package(roots.npm, row.package, row.workspace)
     return read_entry(roots.sites, tool, row.marketplace)
 
 
