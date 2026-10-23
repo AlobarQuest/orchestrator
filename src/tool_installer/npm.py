@@ -62,10 +62,18 @@ The workspace manifest records the package, version, integrity and file names it
 that from `<npm prefix -g>/bin/n8nac` -- measured: a prefix holding only `bin/n8nac` resolves, one
 holding only `lib/node_modules/n8nac` does not, and with neither npx downloads upstream from the
 registry. So that row also points the prefix's link at this lane's own `bin/n8nac`, by an atomic
-rename, only after every probe has passed. Its previous target is restored by any rollback after
-that, and a regular file there is someone else's install, so the pass refuses before touching
-anything. The `lib/node_modules/n8nac` an `npm link` left behind is removed only when it is a
-symlink; a real directory there is not this lane's to delete.
+rename, only after every probe has passed, and then proves the version once more THROUGH that
+link, because that path is the one npx runs.
+
+The link is taken over only from three states: absent, already this lane's, or the shape `npm
+link` leaves -- `lib/node_modules/n8nac` a symlink (or gone) and `bin/n8nac` pointing through it.
+Anything else is someone else's install -- a real `npm install -g` puts a DIRECTORY at
+`lib/node_modules/n8nac` -- and the pass refuses before building anything. The build takes
+minutes, so the link is read again just before it is written, and a rollback puts back only the
+link this pass wrote: one that changed meanwhile belongs to whoever changed it. A rollback
+restores the prefix's link FIRST, since it is the path npx reads, so a rollback that fails partway
+cannot leave npx pointing into a removed tree. The `npm link` package is removed last, only once
+the new link has proven itself, and only when it is a symlink.
 """
 
 from __future__ import annotations
@@ -77,7 +85,7 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
@@ -125,18 +133,20 @@ class NpmInstalled:
 
 @dataclass(frozen=True)
 class _PrefixLink:
-    """The npm prefix's link for the tool, and where it pointed before (`None`: it was absent)."""
+    """The npm prefix's link for the tool: where it pointed when the pass read it (`None`: it was
+    absent), and the lane's own `bin/` entry the pass points it at."""
 
     path: Path
     previous: str | None
+    own: str
 
 
 @dataclass(frozen=True)
 class _Outgoing:
     """What a rollback must put back: where the old package went, and where the old link pointed.
 
-    `prefix` is set only once the pass has written the npm prefix's link, so a rollback before
-    that leaves the link exactly as it was found.
+    `prefix` is restored only while it still holds what this pass wrote, so a rollback before the
+    write, or after someone else changed it, leaves it exactly as it is.
     """
 
     package: Path | None
@@ -224,7 +234,7 @@ def _build(
     for command in row.build_commands:
         _step([npm, *command], cwd=src, env=env)
     if row.workspace is not None:
-        return _stage_workspace(tool, row, row.workspace, node, work, src, revision)
+        return _stage_workspace(tool, row, npm, env, work, src, revision)
 
     manifest = src / "package.json"
     document = _read_manifest(manifest)
@@ -246,13 +256,16 @@ def _build(
 
 
 def _stage_workspace(
-    tool: Tool, row: NpmInstall, workspace: str, node: Node, work: Path, src: Path, revision: str
+    tool: Tool, row: NpmInstall, npm: str, env: dict[str, str], work: Path, src: Path, revision: str
 ) -> tuple[Path, str]:
     """The built checkout itself is the staged tree -- see the module docstring for why."""
-    _step([str(node.npm), "ci", "--omit=dev"], cwd=src, env=_environment(node))
+    workspace = row.workspace
+    if workspace is None:
+        raise TypeError(f"{row.package} is not a workspace package")
+    _step([npm, "ci", "--omit=dev"], cwd=src, env=env)
     shutil.rmtree(src / ".git")
     if row.published_assets is not None:
-        _place_published_assets(row.published_assets, node, work, src)
+        _place_published_assets(row.published_assets, npm, env, work, src)
     # After the prune, so nothing the production install rewrites can drop the record.
     manifest = src / workspace / "package.json"
     document = _read_manifest(manifest)
@@ -261,8 +274,33 @@ def _stage_workspace(
     return src, f"{workspace}/{_bin_entry(tool, row, manifest)}"
 
 
+def _assets_destination(assets: PublishedAssets, checkout: Path) -> Path:
+    """The directory the data lands in, made and checked to be inside the checkout and empty."""
+    destination = checkout / assets.workspace / assets.directory
+    # Every component is checked BEFORE anything is made: a symlinked parent would carry the
+    # files -- and `mkdir` -- somewhere outside the tree being installed.
+    component = checkout
+    for part in destination.relative_to(checkout).parts:
+        component = component / part
+        if component.is_symlink():
+            raise NpmError(
+                f"{component.relative_to(checkout)} is a symlink; the data could land "
+                "outside the checkout"
+            )
+    destination.mkdir(parents=True, exist_ok=True)
+    if not destination.resolve().is_relative_to(checkout.resolve()):
+        raise NpmError(f"{assets.directory} resolves outside the checkout")
+    present = sorted(path.name for path in destination.iterdir())
+    if present:
+        raise NpmError(
+            f"{destination.relative_to(checkout)} already holds {', '.join(present)}: the fork's "
+            "build and the published data both wrote there"
+        )
+    return destination
+
+
 def _place_published_assets(
-    assets: PublishedAssets, node: Node, work: Path, checkout: Path
+    assets: PublishedAssets, npm: str, env: dict[str, str], work: Path, checkout: Path
 ) -> None:
     """Fetch upstream's published package and copy ONLY its data files into the checkout."""
     manifest = checkout / assets.workspace / "package.json"
@@ -270,6 +308,7 @@ def _place_published_assets(
     version = document.get("version")
     if not isinstance(version, str) or not _VERSION.fullmatch(version):
         raise NpmError(f"{assets.workspace} names no plain version to fetch: {version!r}")
+    destination = _assets_destination(assets, checkout)
 
     # An empty directory as the working directory, so no project or `.npmrc` of the checkout's
     # is in effect for the download.
@@ -277,8 +316,8 @@ def _place_published_assets(
     download.mkdir()
     spec = f"{assets.package}@{version}"
     code, stdout, detail = _run(
-        [str(node.npm), "pack", spec, "--json", "--pack-destination", str(download)],
-        env=_environment(node),
+        [npm, "pack", spec, "--json", "--pack-destination", str(download)],
+        env=env,
         timeout=INSTALL_TIMEOUT_SECONDS,
         cwd=download,
     )
@@ -293,8 +332,6 @@ def _place_published_assets(
         raise NpmError(f"`npm pack {spec}` reported no usable tarball")
 
     prefix = f"package/{assets.directory}/"
-    destination = checkout / assets.workspace / assets.directory
-    destination.mkdir(parents=True, exist_ok=True)
     landed: list[str] = []
     with tarfile.open(download / filename) as archive:
         for member in archive.getmembers():
@@ -309,7 +346,7 @@ def _place_published_assets(
             data = archive.extractfile(member)
             if data is None:
                 raise NpmError(f"{spec} holds {member.name!r} with no content")
-            # `x`: a file the build already wrote, or a name the tarball repeats, refuses.
+            # `x`: a name the tarball repeats refuses rather than overwriting.
             with open(destination / name, "xb") as written:
                 shutil.copyfileobj(data, written)
             landed.append(name)
@@ -356,6 +393,10 @@ def _place(staged: Path, target: Path, link: Path, link_target: str) -> None:
 def _undo(target: Path, link: Path, outgoing: _Outgoing) -> None:
     """Both halves, under one guard -- see the module docstring and `install._undo`."""
     try:
+        # The prefix's link FIRST: it is the path npx reads, and restoring it last would leave it
+        # pointing into a removed tree whenever a later step of this rollback failed.
+        if outgoing.prefix is not None:
+            _restore_prefix_link(outgoing.prefix)
         if target.exists():
             shutil.rmtree(target)
         if outgoing.package is not None:
@@ -364,28 +405,50 @@ def _undo(target: Path, link: Path, outgoing: _Outgoing) -> None:
             link.unlink()
         if outgoing.link is not None:
             link.symlink_to(outgoing.link)
-        if outgoing.prefix is not None:
-            _repoint(outgoing.prefix.path, outgoing.prefix.previous)
     except OSError as error:
         raise RollbackFailed(
             f"the previous package could not be restored: {type(error).__name__}"
         ) from error
 
 
-def _npm_prefix_link(tool: Tool, node: Node, env: dict[str, str]) -> _PrefixLink:
-    """Where `npx` will look for the tool, and what is there now. Refuses a regular file."""
+def _read_link(path: Path) -> str | None:
+    """Where the symlink `path` points, `None` when nothing is there; refuses anything else."""
+    if path.is_symlink():
+        return os.readlink(path)
+    if path.exists():
+        raise NpmError(f"{path} is not a symlink, so it is not this lane's to replace")
+    return None
+
+
+def _linked_package(prefix: Path, package: str) -> Path:
+    return prefix / "lib" / "node_modules" / package
+
+
+def _npm_prefix_link(
+    tool: Tool, row: NpmInstall, node: Node, env: dict[str, str], own: Path
+) -> _PrefixLink:
+    """Where `npx` will look for the tool, and what is there now -- refused unless it is absent,
+    already `own`, or what `npm link` leaves. See the module docstring."""
     code, stdout, detail = _run(
         [str(node.npm), "prefix", "-g"], env=env, timeout=PROBE_TIMEOUT_SECONDS
     )
     prefix = Path(stdout.strip())
     if code != 0 or not prefix.is_absolute() or not prefix.is_dir():
         raise NpmError(f"`npm prefix -g` exited {code} with no usable prefix: {detail}")
+    linked = _linked_package(prefix, row.package)
+    if linked.exists() and not linked.is_symlink():
+        raise NpmError(f"{linked} is a real install, not an `npm link`; it is not this lane's")
     path = prefix / "bin" / tool.name
-    if path.is_symlink():
-        return _PrefixLink(path=path, previous=os.readlink(path))
-    if path.exists():
-        raise NpmError(f"{path} is not a symlink, so it is not this lane's to replace")
-    return _PrefixLink(path=path, previous=None)
+    previous = _read_link(path)
+    if previous is not None and previous != str(own):
+        # Resolved as text, not through the filesystem: the question is whether the link goes
+        # THROUGH the linked package, which may be a dangling symlink by now.
+        through = os.path.normpath(os.path.join(path.parent, previous))
+        if not through.startswith(f"{linked}{os.sep}"):
+            raise NpmError(
+                f"{path} points at {previous!r}, which is neither this lane's nor an `npm link`"
+            )
+    return _PrefixLink(path=path, previous=previous, own=str(own))
 
 
 def _repoint(path: Path, target: str | None) -> None:
@@ -408,16 +471,45 @@ def _repoint(path: Path, target: str | None) -> None:
     os.replace(staged, path)
 
 
-def _link_into_npm_prefix(prefix: _PrefixLink, target: Path, package: str) -> None:
-    """Point the prefix's link at `target`, then drop a stale `npm link` package.
+def _restore_prefix_link(prefix: _PrefixLink) -> None:
+    # Only the link this pass wrote is put back; one changed since belongs to whoever changed it.
+    if prefix.path.is_symlink() and os.readlink(prefix.path) == prefix.own:
+        _repoint(prefix.path, prefix.previous)
 
-    The link is replaced BEFORE the stale package is removed: the previous link may resolve
-    through that package, so the other order could restore a link pointing at nothing.
+
+def _write_prefix_link(prefix: _PrefixLink) -> None:
+    """Point the prefix's link at the lane's own, if it still holds what the pass first read."""
+    if _read_link(prefix.path) != prefix.previous:
+        raise NpmError(f"{prefix.path} changed during the pass, so it is left as it is now")
+    _repoint(prefix.path, prefix.own)
+
+
+def _probe_through(path: Path, expected_version: str, env: dict[str, str]) -> ProbeResult:
+    """The version by VALUE, through the path npx runs rather than the lane's own."""
+    code, reported, _ = _run([str(path), "--version"], env=env, timeout=PROBE_TIMEOUT_SECONDS)
+    passed = code == 0 and expected_version in reported
+    return ProbeResult(
+        command=(str(path), "--version", "== ", expected_version),
+        passed=passed,
+        detail="" if passed else f"reported {reported!r}",
+    )
+
+
+def _take_npm_prefix(
+    prefix: _PrefixLink, row: NpmInstall, expected_version: str, env: dict[str, str]
+) -> ProbeResult:
+    """Write the prefix's link, prove it, and only then drop the `npm link` package.
+
+    The package goes LAST: the previous link may resolve through it, so removing it first could
+    leave a rollback restoring a link pointing at nothing.
     """
-    _repoint(prefix.path, str(target))
-    stale = prefix.path.parent.parent / "lib" / "node_modules" / package
-    if stale.is_symlink():
-        stale.unlink()
+    _write_prefix_link(prefix)
+    result = _probe_through(prefix.path, expected_version, _probe_environment(row, env))
+    if result.passed:
+        linked = _linked_package(prefix.path.parent.parent, row.package)
+        if linked.is_symlink():
+            linked.unlink()
+    return result
 
 
 def probe_mcp(
@@ -466,13 +558,15 @@ def probe_mcp(
     return ProbeResult(command=command, passed=passed, detail=detail)
 
 
+def _probe_environment(row: NpmInstall, env: dict[str, str]) -> dict[str, str]:
+    return {**env, **dict(row.probe_environment)}
+
+
 def _prove(
     row: NpmInstall, binary: Path, expected_version: str, env: dict[str, str]
 ) -> list[ProbeResult]:
     """Every probe the row declares, plus the MCP exchange when it serves one."""
-    # A workspace row's CLI has telemetry and an update check; a probe is not a use of it.
-    if row.workspace is not None:
-        env = {**env, "DO_NOT_TRACK": "1", "NO_UPDATE_NOTIFIER": "1", "CI": "1"}
+    env = _probe_environment(row, env)
     results = probe(row, binary, expected_version, env=env)
     if row.mcp_arguments is not None:
         results.append(probe_mcp(row.mcp_arguments, binary, expected_version, env))
@@ -495,11 +589,11 @@ def _prove_in_place(
     row: NpmInstall,
     install_root: Path,
     outgoing: _Outgoing,
-    prefix: _PrefixLink | None,
     revision: str,
     env: dict[str, str],
 ) -> InstallOutcome:
     """Everything after the swap: check the record, probe, and only then write the prefix link."""
+    prefix = outgoing.prefix
     target = package_dir(install_root, row.package)
     link = install_root / "bin" / tool.name
     installed = read_installed_package(install_root, row.package, row.workspace)
@@ -524,13 +618,25 @@ def _prove_in_place(
 
     if prefix is not None:
         try:
-            _link_into_npm_prefix(prefix, link.absolute(), row.package)
+            through = _take_npm_prefix(prefix, row, installed.version, env)
+        except NpmError as error:
+            _undo(target, link, outgoing)
+            return _rolled_back(install_root, row, str(error), results)
         except OSError as error:
-            _undo(target, link, replace(outgoing, prefix=prefix))
+            _undo(target, link, outgoing)
             return _rolled_back(
                 install_root,
                 row,
                 f"the npm prefix's link could not be written: {type(error).__name__}",
+                results,
+            )
+        results.append(through)
+        if not through.passed:
+            _undo(target, link, outgoing)
+            return _rolled_back(
+                install_root,
+                row,
+                "the tool failed its probe through the npm prefix's link, and both were restored",
                 results,
             )
     return InstallOutcome(action=ACTION_INSTALLED, installed=installed, probes=results)
@@ -567,7 +673,11 @@ def install_and_prove_npm(
     try:
         # Read before anything is built or moved, so a prefix that is someone else's refuses the
         # pass with the machine exactly as it was found.
-        prefix = _npm_prefix_link(tool, node, env) if row.link_into_npm_prefix else None
+        prefix = (
+            _npm_prefix_link(tool, row, node, env, link.absolute())
+            if row.link_into_npm_prefix
+            else None
+        )
         install_root.mkdir(parents=True, exist_ok=True)
         # A pass killed mid-build (a launchd timeout, a reboot) never reaches the cleanup below,
         # and each such workspace holds two `node_modules` trees.
@@ -596,7 +706,9 @@ def install_and_prove_npm(
 
         previous_link = os.readlink(link) if link.is_symlink() else None
         try:
-            outgoing = _Outgoing(package=_move_aside(target, backup_root), link=previous_link)
+            outgoing = _Outgoing(
+                package=_move_aside(target, backup_root), link=previous_link, prefix=prefix
+            )
         except OSError as error:
             return failed(f"the previous package could not be moved aside: {type(error).__name__}")
         try:
@@ -605,4 +717,4 @@ def install_and_prove_npm(
             _undo(target, link, outgoing)
             return failed(f"the new package could not be put in place: {type(error).__name__}")
 
-    return _prove_in_place(tool, row, install_root, outgoing, prefix, revision, env)
+    return _prove_in_place(tool, row, install_root, outgoing, revision, env)

@@ -136,6 +136,10 @@ class NpmInstall:
     published_assets: PublishedAssets | None = None
     """Data files taken from upstream's published package, when the safe build cannot make them."""
 
+    probe_environment: tuple[tuple[str, str], ...] = ()
+    """Variables set for every probe, on top of the act's own environment. For a CLI that would
+    otherwise report telemetry or check for updates: a probe is not a use of the tool."""
+
     link_into_npm_prefix: bool = False
     """Also own `<npm prefix -g>/bin/<name>`, pointing at this lane's own `bin/<name>`.
 
@@ -234,6 +238,10 @@ N8NAC = Tool(
             ("skills", "search", "http request"),
             ("skills", "node-info", "httpRequest", "--compact"),
         ),
+        # The CLI reports telemetry (`packages/telemetry`) and checks for updates; the fork's
+        # review lists both that package and `packages/cli/src` as trust_critical. A probe
+        # proves the install and should not phone home doing it.
+        probe_environment=(("DO_NOT_TRACK", "1"), ("NO_UPDATE_NOTIFIER", "1"), ("CI", "1")),
         workspace="packages/cli",
         published_assets=PublishedAssets(
             package="@n8n-as-code/skills", workspace="packages/skills", directory="dist/assets"

@@ -16,6 +16,7 @@ import stat
 import subprocess
 import tarfile
 from collections.abc import Iterator
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -25,15 +26,18 @@ from tool_installer.install import (
     ACTION_INSTALLED,
     ACTION_ROLLED_BACK,
     InstallOutcome,
+    RollbackFailed,
 )
 from tool_installer.npm import install_and_prove_npm, package_dir, read_installed_package
 from tool_installer.toolchain import Node
-from tool_installer.tools import N8NAC, NpmInstall
+from tool_installer.tools import N8NAC, REA, NpmInstall, PublishedAssets
 
 OLD_REVISION = "a" * 40
 OLD_TARGET = "../lib/node_modules/n8nac/packages/cli/dist/index.js"
-# Where the hand-made `npm link` pointed: an old checkout, which need not exist for the test.
-HAND_LINKED = "/nonexistent/old-checkout/packages/cli/dist/index.js"
+# What `npm link` left in the prefix, as measured on this machine: `bin/n8nac` points THROUGH
+# `lib/node_modules/n8nac`, itself a symlink into an old checkout (which need not exist here).
+HAND_LINKED = "../lib/node_modules/n8nac/dist/index.js"
+OLD_CHECKOUT = "/nonexistent/old-checkout/packages/cli"
 DATA_FILES = (
     "n8n-credentials-ontology.json",
     "n8n-docs-complete.json",
@@ -46,10 +50,20 @@ UPSTREAM_CODE = "UPSTREAM-CODE-MUST-NOT-LAND"
 # The CLI's entry point. It refuses to run with telemetry or the update check left on, answers
 # `--version` with `REPORTS`, and fails the knowledge commands -- as the real one does -- unless
 # the published data and the sibling workspace link are both where the installed tree needs them.
+# Run through the npm prefix's link, it can instead lie about its version (`LIE_THROUGH_PREFIX`),
+# repoint that link (`RELINK_THROUGH_PREFIX`) or lock a directory (`LOCK_THROUGH_PREFIX`), then
+# fail -- the three things a test needs to happen after the link is written.
 _ENTRY = """#!/bin/sh
 if [ "$DO_NOT_TRACK" != 1 ] || [ "$NO_UPDATE_NOTIFIER" != 1 ] || [ "$CI" != 1 ]; then
   echo "telemetry is on" >&2; exit 1
 fi
+case "$0" in
+  "$NPM_PREFIX"/*)
+    [ -n "$LIE_THROUGH_PREFIX" ] && { echo 0.0.0; exit 0; }
+    [ -n "$RELINK_THROUGH_PREFIX" ] && { ln -sfn "$RELINK_THROUGH_PREFIX" "$0"; exit 1; }
+    [ -n "$LOCK_THROUGH_PREFIX" ] && { chmod 555 "$LOCK_THROUGH_PREFIX"; exit 1; }
+    ;;
+esac
 checkout="$(dirname "$0")/../lib/node_modules/n8nac"
 case "$1" in
   --version) echo "REPORTS" ;;
@@ -66,7 +80,10 @@ esac
 # npm, as far as the workspace act uses it. `ci` links the sibling workspace as npm does (a
 # relative symlink), and a dev-only directory the production `ci` removes; the build writes the
 # fork's own code into both workspaces; `prefix -g` answers `$NPM_PREFIX`; `pack <spec>` copies
-# `$NPM_PUBLISHED` into the destination and reports it as npm does.
+# `$NPM_PUBLISHED` into the destination and reports it as npm does. The build can also repoint
+# the prefix's link mid-pass (`NPM_RELINK_PREFIX`), write into the data directory itself
+# (`NPM_BUILD_WRITES_ASSETS`), make the skills `dist/` a symlink (`NPM_BUILD_LINKS_DIST`), or put
+# a real install where the `npm link` package was (`NPM_INSTALLS_LINKED`).
 _NPM = """#!/bin/sh
 echo "$* ignore_scripts=$npm_config_ignore_scripts" >> "$NPM_LOG"
 if [ -n "$NPM_FAIL" ] && [ "$1 $2" = "$NPM_FAIL" ]; then echo "npm ERR! $NPM_FAIL" >&2; exit 1; fi
@@ -79,7 +96,17 @@ case "$1" in
     ;;
   run)
     [ "$2" = "build:cli" ] || exit 1
+    [ -n "$NPM_RELINK_PREFIX" ] && ln -sfn "$NPM_RELINK_PREFIX" "$NPM_PREFIX/bin/n8nac"
+    [ -n "$NPM_BUILD_LINKS_DIST" ] && ln -s "$NPM_BUILD_LINKS_DIST" packages/skills/dist
+    if [ -n "$NPM_INSTALLS_LINKED" ]; then
+      rm "$NPM_PREFIX/lib/node_modules/n8nac" && mkdir "$NPM_PREFIX/lib/node_modules/n8nac"
+      echo '{}' > "$NPM_PREFIX/lib/node_modules/n8nac/package.json"
+    fi
     mkdir -p packages/cli/dist packages/skills/dist
+    if [ -n "$NPM_BUILD_WRITES_ASSETS" ]; then
+      mkdir -p packages/skills/dist/assets
+      echo '{}' > packages/skills/dist/assets/n8n-knowledge-index.json
+    fi
     cp packages/cli/src/entry.sh packages/cli/dist/index.js
     echo "the fork's code" > packages/skills/dist/index.js
     ;;
@@ -171,7 +198,7 @@ def prefix(tmp_path: Path) -> Path:
     (root / "bin").mkdir(parents=True)
     (root / "lib" / "node_modules").mkdir(parents=True)
     (root / "bin" / "n8nac").symlink_to(HAND_LINKED)
-    (root / "lib" / "node_modules" / "n8nac").symlink_to("/nonexistent/old-checkout")
+    (root / "lib" / "node_modules" / "n8nac").symlink_to(OLD_CHECKOUT)
     return root
 
 
@@ -183,8 +210,19 @@ def node(tmp_path: Path, prefix: Path, monkeypatch: pytest.MonkeyPatch) -> Node:
     monkeypatch.setenv("NPM_LOG", str(tmp_path / "npm.log"))
     monkeypatch.setenv("NPM_PREFIX", str(prefix))
     monkeypatch.setenv("NPM_PUBLISHED", str(_published(tmp_path)))
-    monkeypatch.delenv("NPM_FAIL", raising=False)
-    for name in ("DO_NOT_TRACK", "NO_UPDATE_NOTIFIER", "CI"):
+    for name in (
+        "NPM_FAIL",
+        "NPM_RELINK_PREFIX",
+        "NPM_BUILD_WRITES_ASSETS",
+        "NPM_BUILD_LINKS_DIST",
+        "NPM_INSTALLS_LINKED",
+        "LIE_THROUGH_PREFIX",
+        "RELINK_THROUGH_PREFIX",
+        "LOCK_THROUGH_PREFIX",
+        "DO_NOT_TRACK",
+        "NO_UPDATE_NOTIFIER",
+        "CI",
+    ):
         monkeypatch.delenv(name, raising=False)
     return Node(executable=bin_dir / "node")
 
@@ -225,7 +263,7 @@ def _assert_nothing_live_changed(tmp_path: Path, prefix: Path) -> None:
     assert installed.revision == OLD_REVISION
     assert os.readlink(_root(tmp_path) / "bin" / "n8nac") == OLD_TARGET
     assert os.readlink(prefix / "bin" / "n8nac") == HAND_LINKED
-    assert (prefix / "lib" / "node_modules" / "n8nac").is_symlink()
+    assert os.readlink(prefix / "lib" / "node_modules" / "n8nac") == OLD_CHECKOUT
 
 
 def _calls(tmp_path: Path) -> list[str]:
@@ -280,10 +318,12 @@ def test_a_first_workspace_install_is_built_pruned_given_its_data_and_linked(
     assert os.readlink(prefix / "bin" / "n8nac") == str((root / "bin" / "n8nac").absolute())
     # The `npm link` package went with it, because it was a symlink.
     assert not (prefix / "lib" / "node_modules" / "n8nac").is_symlink()
+    # The last probe is the one npx's path gets: the version, by value, through the prefix.
     assert [probe.command[:2] for probe in outcome.probes] == [
         ("skills", "search"),
         ("skills", "node-info"),
         ("--version", "== "),
+        (str(prefix / "bin" / "n8nac"), "--version"),
     ]
     assert sorted(path.name for path in root.iterdir()) == ["bin", "lib"]
 
@@ -442,22 +482,198 @@ def test_a_regular_file_at_the_prefix_link_is_REFUSED_before_anything_is_built(
     assert installed.revision == OLD_REVISION
 
 
-def test_a_real_directory_at_the_prefix_package_is_LEFT(
+def test_a_real_install_at_the_prefix_package_is_REFUSED_before_anything_is_built(
     node: Node, tmp_path: Path, prefix: Path
 ) -> None:
-    """Only an `npm link` symlink is this lane's to remove; a real install there is not."""
-    stale = prefix / "lib" / "node_modules" / "n8nac"
-    stale.unlink()
-    (stale / "dist").mkdir(parents=True)
-    (stale / "package.json").write_text("{}")
+    """A real `npm install -g n8nac` puts a DIRECTORY there, and a bin link into it. Neither is
+    this lane's: taking the link over would silently replace someone's install."""
+    linked = prefix / "lib" / "node_modules" / "n8nac"
+    linked.unlink()
+    (linked / "dist").mkdir(parents=True)
+    (linked / "package.json").write_text("{}")
     source, revision = _fork(tmp_path)
     outcome = _act(node, tmp_path, source, revision)
 
+    assert outcome.action == ACTION_INSTALL_FAILED
+    assert "real install" in outcome.detail
+    assert (linked / "package.json").read_text() == "{}"
+    assert os.readlink(prefix / "bin" / "n8nac") == HAND_LINKED
+    assert [call.split(" ignore_scripts=")[0] for call in _calls(tmp_path)] == ["prefix -g"]
+
+
+def test_a_prefix_link_pointing_anywhere_else_is_REFUSED(
+    node: Node, tmp_path: Path, prefix: Path
+) -> None:
+    """Not absent, not the lane's, and not through the `npm link` package: someone else's."""
+    (prefix / "bin" / "n8nac").unlink()
+    (prefix / "bin" / "n8nac").symlink_to("/usr/local/elsewhere/n8nac")
+    source, revision = _fork(tmp_path)
+    _seed_installed(_root(tmp_path))
+    outcome = _act(node, tmp_path, source, revision)
+
+    assert outcome.action == ACTION_INSTALL_FAILED
+    assert "neither this lane's nor an `npm link`" in outcome.detail
+    assert os.readlink(prefix / "bin" / "n8nac") == "/usr/local/elsewhere/n8nac"
+    assert [call.split(" ignore_scripts=")[0] for call in _calls(tmp_path)] == ["prefix -g"]
+
+
+def test_a_prefix_link_already_the_lanes_is_taken_and_left_unwritten(
+    node: Node, tmp_path: Path, prefix: Path, read_only: list[Path]
+) -> None:
+    """The next pass after a first install finds its own link there. Nothing in `bin/` needs to
+    change, so an unwritable `bin/` does not stop it."""
+    own = str((_root(tmp_path) / "bin" / "n8nac").absolute())
+    (prefix / "bin" / "n8nac").unlink()
+    (prefix / "bin" / "n8nac").symlink_to(own)
+    (prefix / "bin").chmod(0o555)
+    read_only.append(prefix / "bin")
+    source, revision = _fork(tmp_path)
+    _seed_installed(_root(tmp_path))
+    outcome = _act(node, tmp_path, source, revision)
+
     assert outcome.action == ACTION_INSTALLED, outcome.detail
-    assert (stale / "package.json").read_text() == "{}"
-    assert os.readlink(prefix / "bin" / "n8nac") == str(
-        (_root(tmp_path) / "bin" / "n8nac").absolute()
+    assert os.readlink(prefix / "bin" / "n8nac") == own
+
+
+def test_a_prefix_link_changed_DURING_the_build_is_left_and_the_pass_rolled_back(
+    node: Node, tmp_path: Path, prefix: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Read before a build of minutes, and read again before the write: what someone did in
+    between is theirs, so the swap is undone and their link is not touched."""
+    monkeypatch.setenv("NPM_RELINK_PREFIX", "/somebody/else/n8nac")
+    source, revision = _fork(tmp_path)
+    _seed_installed(_root(tmp_path))
+    outcome = _act(node, tmp_path, source, revision)
+
+    assert outcome.action == ACTION_ROLLED_BACK
+    assert "changed during the pass" in outcome.detail
+    assert os.readlink(prefix / "bin" / "n8nac") == "/somebody/else/n8nac"
+    installed = _installed(tmp_path)
+    assert installed is not None
+    assert installed.revision == OLD_REVISION
+
+
+def test_a_prefix_link_changed_AFTER_it_was_written_is_not_restored_over(
+    node: Node, tmp_path: Path, prefix: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The rollback puts back only the link this pass wrote."""
+    monkeypatch.setenv("RELINK_THROUGH_PREFIX", "/somebody/else/n8nac")
+    source, revision = _fork(tmp_path)
+    _seed_installed(_root(tmp_path))
+    outcome = _act(node, tmp_path, source, revision)
+
+    assert outcome.action == ACTION_ROLLED_BACK
+    assert os.readlink(prefix / "bin" / "n8nac") == "/somebody/else/n8nac"
+    installed = _installed(tmp_path)
+    assert installed is not None
+    assert installed.revision == OLD_REVISION
+
+
+def test_a_version_that_fails_THROUGH_the_prefix_link_rolls_everything_back(
+    node: Node, tmp_path: Path, prefix: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The lane's own path probed clean; the path npx runs did not. Both are put back, and the
+    `npm link` package the previous link resolves through is still there."""
+    monkeypatch.setenv("LIE_THROUGH_PREFIX", "1")
+    source, revision = _fork(tmp_path)
+    _seed_installed(_root(tmp_path))
+    outcome = _act(node, tmp_path, source, revision)
+
+    assert outcome.action == ACTION_ROLLED_BACK
+    assert "through the npm prefix's link" in outcome.detail
+    assert outcome.probes[-1].command[0] == str(prefix / "bin" / "n8nac")
+    assert not outcome.probes[-1].passed
+    _assert_nothing_live_changed(tmp_path, prefix)
+
+
+def test_a_rollback_that_fails_partway_has_ALREADY_restored_the_prefix_link(
+    node: Node, tmp_path: Path, prefix: Path, monkeypatch: pytest.MonkeyPatch, read_only: list[Path]
+) -> None:
+    """The outgoing package cannot be moved back (its backup directory is locked), so the
+    rollback fails -- after the link npx reads is already back where it was, rather than left
+    pointing at a package that has just been removed."""
+    backup = tmp_path / "backups" / "n8nac-2.6.0"
+    monkeypatch.setenv("LOCK_THROUGH_PREFIX", str(backup))
+    read_only.append(backup)
+    source, revision = _fork(tmp_path)
+    _seed_installed(_root(tmp_path))
+    with pytest.raises(RollbackFailed):
+        _act(node, tmp_path, source, revision)
+
+    assert os.readlink(prefix / "bin" / "n8nac") == HAND_LINKED
+
+
+def test_a_real_install_that_appears_DURING_the_pass_is_never_deleted(
+    node: Node, tmp_path: Path, prefix: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only the `npm link` symlink is this lane's to remove, whenever the pass gets there."""
+    monkeypatch.setenv("NPM_INSTALLS_LINKED", "1")
+    source, revision = _fork(tmp_path)
+    _act(node, tmp_path, source, revision)
+    assert (prefix / "lib" / "node_modules" / "n8nac" / "package.json").read_text() == "{}\n"
+
+
+def test_a_data_directory_that_climbs_out_of_the_checkout_is_REFUSED(
+    node: Node, tmp_path: Path, prefix: Path
+) -> None:
+    """No symlink is involved, so only resolving the path catches it: a row is a table entry,
+    and a `..` in one must not carry the data out of the tree being installed."""
+    assert isinstance(N8NAC.install, NpmInstall)
+    climbing = replace(
+        N8NAC,
+        install=replace(
+            N8NAC.install,
+            published_assets=PublishedAssets(
+                package="@n8n-as-code/skills", workspace="packages/skills", directory="../../../x"
+            ),
+        ),
     )
+    source, revision = _fork(tmp_path)
+    _seed_installed(_root(tmp_path))
+    outcome = install_and_prove_npm(
+        tool=climbing,
+        node=node,
+        install_root=_root(tmp_path),
+        backup_root=tmp_path / "backups" / "n8nac-2.6.0",
+        revision=revision,
+        source=source,
+    )
+
+    assert outcome.action == ACTION_INSTALL_FAILED
+    assert "resolves outside the checkout" in outcome.detail
+    _assert_nothing_live_changed(tmp_path, prefix)
+
+
+def test_data_the_build_already_wrote_is_a_named_REFUSAL(
+    node: Node, tmp_path: Path, prefix: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two sources for one file is a question for a person, not a silent overwrite either way."""
+    monkeypatch.setenv("NPM_BUILD_WRITES_ASSETS", "1")
+    source, revision = _fork(tmp_path)
+    _seed_installed(_root(tmp_path))
+    outcome = _act(node, tmp_path, source, revision)
+
+    assert outcome.action == ACTION_INSTALL_FAILED
+    assert "already holds n8n-knowledge-index.json" in outcome.detail
+    assert "both wrote there" in outcome.detail
+    _assert_nothing_live_changed(tmp_path, prefix)
+
+
+def test_a_symlinked_parent_of_the_data_directory_is_REFUSED(
+    node: Node, tmp_path: Path, prefix: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The data would land wherever the link points -- here, outside the checkout."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    monkeypatch.setenv("NPM_BUILD_LINKS_DIST", str(outside))
+    source, revision = _fork(tmp_path)
+    _seed_installed(_root(tmp_path))
+    outcome = _act(node, tmp_path, source, revision)
+
+    assert outcome.action == ACTION_INSTALL_FAILED
+    assert "packages/skills/dist is a symlink" in outcome.detail
+    assert not (outside / "assets").exists()
+    _assert_nothing_live_changed(tmp_path, prefix)
 
 
 def test_an_upgrade_keeps_the_outgoing_checkout_and_reads_the_new_workspace_record(
@@ -478,5 +694,19 @@ def test_the_row_serves_no_MCP_and_is_not_asked_to(node: Node, tmp_path: Path) -
     outcome = _act(node, tmp_path, source, revision)
     assert isinstance(N8NAC.install, NpmInstall)
     assert N8NAC.install.mcp_arguments is None
+    assert isinstance(REA.install, NpmInstall)
+    assert REA.install.mcp_arguments == ("mcp",)
     assert outcome.action == ACTION_INSTALLED, outcome.detail
     assert not [probe for probe in outcome.probes if "initialize" in probe.command]
+
+
+def test_the_probe_environment_is_declared_on_the_row() -> None:
+    """n8nac's telemetry and update check are switched off for its probes; rea's are as before."""
+    assert isinstance(N8NAC.install, NpmInstall)
+    assert dict(N8NAC.install.probe_environment) == {
+        "DO_NOT_TRACK": "1",
+        "NO_UPDATE_NOTIFIER": "1",
+        "CI": "1",
+    }
+    assert isinstance(REA.install, NpmInstall)
+    assert REA.install.probe_environment == ()
