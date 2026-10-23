@@ -40,6 +40,7 @@ from tool_installer.plugin import (
     bump_marketplace_version,
     default_sites,
     install_and_prove_plugin,
+    loaded_entry,
     prune,
     read_entry,
     resolve_claude,
@@ -150,6 +151,7 @@ class Estate:
     old_head: str
     new_head: str
     log: Path
+    seed: Path
 
     def manifest(self) -> dict[str, object]:
         return json.loads((self.hub / MARKETPLACE_MANIFEST).read_text())
@@ -254,6 +256,7 @@ def estate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Estate:
         old_head=old_head,
         new_head=new_head,
         log=log,
+        seed=seed,
     )
 
 
@@ -794,6 +797,114 @@ def test_an_unreadable_manifest_fails_the_check_rather_than_raising(estate: Esta
     results = verify(estate.sites, OCTO, MARKETPLACE, estate.new_head)
     assert results[0].passed is False
     assert "unreadable" in results[0].detail
+
+
+# ------------------------------------------------------------------------------------------------
+# The revision Claude Code LOADS: the serving folder's HEAD while its record names the clone's
+# version, and the record's own commit otherwise.
+# ------------------------------------------------------------------------------------------------
+
+
+def _advance_fork_without_a_version_change(estate: Estate) -> str:
+    """Move the fork by one commit that leaves `plugin.json` alone, and answer the new head.
+
+    The shape measured on 2026-10-23: fork-sync re-scaffolds that touched only `.github/`, so
+    Claude Code's `plugin update` said "nothing to update" and left `gitCommitSha` behind.
+    """
+    workflows = estate.seed / ".github"
+    workflows.mkdir(exist_ok=True)
+    (workflows / "ci.yml").write_text(f"# {len(list(workflows.iterdir()))}\n")
+    _git(estate.seed, "add", "-A")
+    _git(estate.seed, "commit", "-m", "ci: re-scaffold")
+    _git(estate.seed, "push", "origin", "main")
+    return _git(estate.seed, "rev-parse", "HEAD").strip()
+
+
+def _pull_clone(estate: Estate) -> str:
+    _git(estate.clone, "pull", "--ff-only", "origin", "main")
+    return _git(estate.clone, "rev-parse", "HEAD").strip()
+
+
+def test_a_fork_move_that_kept_the_version_verifies_by_the_FOLDER_it_loads(
+    estate: Estate,
+) -> None:
+    """THE OCTO CASE. The record names the clone's version at an older commit, because Claude Code
+    rewrites `gitCommitSha` only on a version change -- and for a directory marketplace it loads
+    the folder, so the folder's HEAD is what runs. Reading the record's commit instead failed
+    this check every night and rolled back an install that was already right."""
+    _act(estate)
+    recorded = estate.entry()
+    head = _advance_fork_without_a_version_change(estate)
+    assert _pull_clone(estate) == head
+    # The record is exactly as Claude Code left it: same version, the OLD commit.
+    assert estate.entry() == recorded
+    assert recorded is not None and recorded.revision != head  # type: ignore[attr-defined]
+
+    results = verify(estate.sites, OCTO, MARKETPLACE, head)
+    assert [result.passed for result in results] == [True, True, True, True]
+    assert "from the folder" in results[2].detail
+
+
+def test_a_version_change_claude_code_has_NOT_recorded_still_fails_the_revision_check(
+    estate: Estate,
+) -> None:
+    """The record says 1.0.0 at the old commit; the folder is 2.0.0 at the head. The folder's HEAD
+    is not what Claude Code installed until it records the new version, so the record's commit
+    stands and the check fails -- as does `installed == clone`, as it always did. The pin has not
+    moved here, so `installed == pinned` holds; the revision check fails on its own merits."""
+    assert _pull_clone(estate) == estate.new_head
+    results = verify(estate.sites, OCTO, MARKETPLACE, estate.new_head)
+    assert [result.passed for result in results] == [True, False, False, True]
+    assert "from the record" in results[2].detail
+
+
+@pytest.mark.parametrize("break_it", ["no_git", "no_commit", "manifest"])
+def test_a_folder_that_cannot_be_read_leaves_the_RECORD_revision_and_never_invents_one(
+    estate: Estate, break_it: str
+) -> None:
+    """The fallback is the record, byte for byte. `no_git` is the sharp case: the folder sits
+    inside the hub, so asking git for its HEAD without the `.git` check answers with the HUB's
+    commit -- a real sha, belonging to the wrong repository. `no_commit` is the other: in a
+    repository with no commits `git rev-parse HEAD` exits 128 and still prints `HEAD` on stdout,
+    so a reader that trusted the output over the exit code would report the revision "HEAD"."""
+    _act(estate)
+    head = _advance_fork_without_a_version_change(estate)
+    _pull_clone(estate)
+    if break_it == "no_git":
+        (estate.clone / ".git").rename(estate.hub / "octo-git-aside")
+    elif break_it == "no_commit":
+        (estate.clone / ".git").rename(estate.hub / "octo-git-aside")
+        subprocess.run(
+            ["git", "init", "-b", "main", str(estate.clone)], check=True, capture_output=True
+        )
+    else:
+        (estate.clone / PLUGIN_MANIFEST).write_text("{not json")
+
+    recorded = read_entry(estate.sites, OCTO, MARKETPLACE)
+    assert recorded is not None
+    assert loaded_entry(estate.sites, OCTO, MARKETPLACE) == recorded
+    results = verify(estate.sites, OCTO, MARKETPLACE, head)
+    assert results[2].passed is False
+    assert f"installed {recorded.revision[:7]} from the record" in results[2].detail
+
+
+def test_no_record_is_no_entry_whatever_the_folder_holds(estate: Estate) -> None:
+    """A folder at the head is not an install: without Claude Code's record there is nothing."""
+    (estate.sites.installed_record_path()).unlink()
+    _pull_clone(estate)
+    assert loaded_entry(estate.sites, OCTO, MARKETPLACE) is None
+
+
+def test_a_folder_BEHIND_the_head_fails_the_revision_check(estate: Estate) -> None:
+    """Record and folder agree on the version, and the folder is not at the head: what loads is
+    not the head, whichever source the revision came from."""
+    _act(estate)
+    _advance_fork_without_a_version_change(estate)
+    _pull_clone(estate)
+    head = _advance_fork_without_a_version_change(estate)
+    results = verify(estate.sites, OCTO, MARKETPLACE, head)
+    assert [result.passed for result in results] == [True, True, False, True]
+    assert "from the folder" in results[2].detail
 
 
 # ------------------------------------------------------------------------------------------------

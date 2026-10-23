@@ -36,9 +36,22 @@ binary through its own filter -- the tool doing the job it exists to do. A plugi
 executable, and the functional check (`/octo:doctor`) needs a Claude Code session, which a
 scheduled pass does not have and must not pretend to. So what is checkable is AGREEMENT across
 the sites: the installed version equals the marketplace pin, equals the serving clone's manifest;
-the installed revision equals the fork head this pass acted on; and the cache directory that
-version names exists and is not empty. That is a real check -- it is precisely what the
+the revision Claude Code loads equals the fork head this pass acted on; and the cache directory
+that version names exists and is not empty. That is a real check -- it is precisely what the
 2026-06-17 defect would have failed -- and it is not a check that the plugin works.
+
+**THE REVISION IS THE SERVING FOLDER'S HEAD, NOT THE RECORD'S `gitCommitSha`, while the record
+names the folder's version.** Claude Code rewrites `gitCommitSha` only when the version changes.
+Measured 2026-10-23: the fork moved by two commits that touched only `.github/`, `claude plugin
+update octo@devon-plugins -y` answered "octo is read from its folder ... nothing to update", and
+the record kept its old commit while the folder sat at the head. Read off the record, every pass
+reported octo behind, re-ran the update, failed this check and rolled back, until upstream next
+bumped the version. For a directory marketplace Claude Code loads the folder itself, so the
+folder's checked-out commit is what runs. When the record names a DIFFERENT version than the
+folder declares, Claude Code has not taken the folder's version yet, the folder is not what it
+installed, and the record's commit stands -- so that case still fails until the record moves.
+`loaded_entry` is the one place this rule lives; the measurement in `cli` reads it too, so the
+two can never disagree about whether a row is current.
 
 **THE RESTART GAP, WHICH THIS LANE CANNOT CLOSE AND MUST NOT PRETEND TO.** Claude Code loads
 plugins at session start. After a successful pass the INSTALLED plugin is the new one and the
@@ -63,7 +76,7 @@ import os
 import re
 import shutil
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Final
 
@@ -170,6 +183,8 @@ class PluginEntry:
     version: str
     revision: str
     install_path: str
+    revision_source: str = "record"
+    """Where `revision` was read: Claude Code's `record`, or the serving `folder` it loads."""
 
 
 def _run(argv: tuple[str, ...], *, cwd: Path | None, timeout: int) -> tuple[int, str, str]:
@@ -271,6 +286,36 @@ def read_entry(sites: Sites, tool: Tool, marketplace: str) -> PluginEntry | None
         revision=revision,
         install_path=install_path if isinstance(install_path, str) else "",
     )
+
+
+def loaded_entry(sites: Sites, tool: Tool, marketplace: str) -> PluginEntry | None:
+    """Claude Code's record, with `revision` set to the commit it actually LOADS.
+
+    The serving folder's HEAD, when the record names the version the folder declares -- the
+    module docstring has the measurement. Otherwise the record's own `gitCommitSha`, unchanged.
+
+    NEVER INVENTED. A folder that is not its own git checkout, whose HEAD git will not answer, or
+    whose manifest cannot be read leaves the record as it is. The `.git` test is not redundant
+    with git's own refusal: the folder sits inside the hub, so `git -C` on a folder that has lost
+    its `.git` answers with the HUB's HEAD rather than failing.
+    """
+    entry = read_entry(sites, tool, marketplace)
+    if entry is None:
+        return None
+    root = sites.clone_root(tool)
+    if not (root / ".git").exists():
+        return entry
+    code, out, _ = _git_maybe(root, "rev-parse", "HEAD")
+    head = out.strip()
+    if code != 0 or not head:
+        return entry
+    try:
+        folder_version = _clone_version(sites, tool)
+    except PluginError:
+        return entry
+    if folder_version != entry.version:
+        return entry
+    return replace(entry, revision=head, revision_source="folder")
 
 
 def _pinned_version(sites: Sites, tool: Tool) -> str | None:
@@ -530,7 +575,7 @@ def verify(sites: Sites, tool: Tool, marketplace: str, head_revision: str) -> li
     THIS IS NOT A FUNCTIONAL CHECK and the module docstring says so. It is the agreement the
     2026-06-17 defect broke, and nothing more.
     """
-    entry = read_entry(sites, tool, marketplace)
+    entry = loaded_entry(sites, tool, marketplace)
     installed = entry.version if entry else ""
     try:
         pinned = _pinned_version(sites, tool) or ""
@@ -558,7 +603,12 @@ def verify(sites: Sites, tool: Tool, marketplace: str, head_revision: str) -> li
         ProbeResult(
             command=("installed", "revision", "==", "head"),
             passed=bool(entry) and entry.revision == head_revision,
-            detail=f"installed {(entry.revision if entry else '')[:7]}, head {head_revision[:7]}",
+            detail=(
+                f"installed {entry.revision[:7]} from the {entry.revision_source}, "
+                f"head {head_revision[:7]}"
+                if entry
+                else f"nothing installed, head {head_revision[:7]}"
+            ),
         ),
         ProbeResult(
             command=("cache", "is", "populated"),
