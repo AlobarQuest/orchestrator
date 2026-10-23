@@ -14,7 +14,14 @@ from pathlib import Path
 import pytest
 
 from rotation_proposer import findings
-from rotation_proposer.findings import CLI_SCRIPT, Due, FindingsError, parse, read_due
+from rotation_proposer.findings import (
+    CLI_SCRIPT,
+    Due,
+    FindingsError,
+    parse,
+    read_due,
+    record_rotation,
+)
 
 FIXTURE = Path("tests/fixtures/rotation_findings.json")
 
@@ -197,3 +204,25 @@ def test_a_finding_that_cannot_say_who_owns_the_credential_refuses_the_pass(valu
         entry["rotated_by_sds"] = value
     with pytest.raises(FindingsError, match="rotated_by_sds"):
         parse(_document(entry))
+
+
+def test_a_rotation_is_recorded_through_infraops_cli_as_of_today(checkout) -> None:
+    run, seen = _answer(0)
+    record_rotation("openrouter-generic", checkout, run=run)
+    assert seen == [
+        [
+            "/bin/node",
+            str(checkout / CLI_SCRIPT),
+            "record-rotation",
+            "--cred",
+            "openrouter-generic",
+            "--date",
+            "now",
+        ]
+    ]
+
+
+def test_a_refused_record_names_infraops_last_line(checkout) -> None:
+    run, _ = _answer(1, stderr="trace\nError: unknown credential id 'x'\n")
+    with pytest.raises(FindingsError, match="unknown credential id"):
+        record_rotation("x", checkout, run=run)
