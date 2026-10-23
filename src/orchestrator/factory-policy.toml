@@ -269,9 +269,12 @@ one. A host with no overlap is the one declaration only a person makes, so an
 envelope carrying `host_without_overlap` is never recognised here. The adapters
 are the ones the approved packages use. Left out: the fake adapter the canary
 uses, and the attested change-manager variant, which no package uses.
+`change-manager-distributed` (ADR-0055 amendment 13) also restarts the
+orchestrator, at distribute, and its executor waits unclaimed while that restart
+would strand a dispatched run, as the orchestrator adapter's host does.
 """
-decided = "2026-10-21"
-rotation_adapters = ["bitbucket", "change-manager", "github-pat", "openrouter", "orchestrator", "orchestrator-distributed"]
+decided = "2026-10-22"
+rotation_adapters = ["bitbucket", "change-manager", "change-manager-distributed", "github-pat", "openrouter", "orchestrator", "orchestrator-distributed"]
 rotation_units = ["confirm", "mint", "retire", "store", "verify"]
 capabilities = { "operational_action" = "allowed" }
 max_attempts = 3
@@ -350,9 +353,12 @@ one. A host with no overlap is the one declaration only a person makes, so an
 envelope carrying `host_without_overlap` is never recognised here. The adapters
 are the ones the approved packages use. Left out: the fake adapter the canary
 uses, and the attested change-manager variant, which no package uses.
+`change-manager-distributed` (ADR-0055 amendment 13) also restarts the
+orchestrator, at distribute, and its executor waits unclaimed while that restart
+would strand a dispatched run, as the orchestrator adapter's host does.
 """
-decided = "2026-10-21"
-rotation_adapters = ["bitbucket", "change-manager", "github-pat", "openrouter", "orchestrator", "orchestrator-distributed"]
+decided = "2026-10-22"
+rotation_adapters = ["bitbucket", "change-manager", "change-manager-distributed", "github-pat", "openrouter", "orchestrator", "orchestrator-distributed"]
 rotation_units = ["confirm", "mint", "retire", "store", "verify"]
 capabilities = { "operational_action" = "allowed" }
 max_attempts = 3
