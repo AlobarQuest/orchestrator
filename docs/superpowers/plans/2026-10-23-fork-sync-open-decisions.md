@@ -82,7 +82,11 @@ manifest (`a019528c`) and a `.gitignore` change (`429461ce`).
 Options: reset each to the gated `main` after sections 2 and 3 no longer depend on them, keeping
 the six local commits on a branch or a bundle first; or leave them.
 
-**Status:** open.
+**Status:** resolved 2026-10-23 for `~/Projects/n8n-as-code`. Devon chose to reset it to the
+gated `main` and keep `PROJECT.md` (the portfolio manifest) as a local file excluded through
+`.git/info/exclude`. The clone is at `e238c7ad`; the `pre-fork-sync-baseline` tag still holds the
+six local commits at `429461ce`. `~/Developer/devon-plugins/n8n-as-code` stays at `43e3e360`
+because the 2.3.0 plugin loads from it (section 2); it moves when the plugin does.
 
 ## 5. Upstream reports
 
