@@ -540,6 +540,9 @@ The `bws-machine-token` adapter (`adapters/bws_machine_token.py`) runs these seg
    has run since the switch, then proves the old token still logs in.
 4. **A human act revokes the old token** in the web app. Revoke it only after `verify` completes,
    and resolve the act only after revoking: `confirm`'s 75 minutes count from the resolution.
+   For a token a long-running process holds (the infraops MCP server holds `ops-mini`'s), end
+   every process started before the switch first: for the MCP server, every Claude Code session
+   started before `store`. Resolving the act attests it.
 5. **`confirm`** (AC-005) proves the old token refused and the new one live. Then it deletes the
    staging and quarantine items.
 

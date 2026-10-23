@@ -1514,6 +1514,16 @@ of its `store` unit. A hosted unit can't, because it claims only between 02:00 a
 BWS `store` unit is claimed. A rotation that touches no hosted service can, such as an OpenRouter or
 GitHub PAT rotation.
 
+### Holders no machine can restart (2026-10-23)
+
+The infraops MCP server is the one long-running holder left among the remaining BWS tokens: it reads
+`ops-mini`'s Keychain item once, when a Claude Code session starts it. VideoCreator's launch agent,
+the other registered holder, is disabled. Devon chose a person's attestation: before revoking the
+old token, the person ends every Claude Code session started before the switch, and resolving the
+revoke act at `/review` attests it. The executor gains nothing for this. The rejected alternative
+was a machine read that waits until every MCP server process started after the switch, which could
+wait days while one session stays open.
+
 ## Amendment 13 — A credential the orchestrator holds for another service is a destination (2026-10-22)
 
 **Status: accepted by Devon on 2026-10-22** ("amend #13 approved"), after choosing this direction
