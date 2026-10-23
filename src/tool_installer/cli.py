@@ -71,7 +71,7 @@ from tool_installer.plugin import (
     Sites,
     default_sites,
     install_and_prove_plugin,
-    read_entry,
+    loaded_entry,
     resolve_claude,
 )
 from tool_installer.policy_client import PolicyReadError, open_policy_client
@@ -126,13 +126,17 @@ def _installed(tool: Tool, roots: _Roots) -> ArtifactRecord | None:
     the plugins root, so neither needs the thing that would do an install. Resolving a toolchain
     to answer "what is installed" would make the read-only half of this lane depend on the acting
     half's inputs.
+
+    A plugin row's revision is the one Claude Code LOADS (`loaded_entry`), the same answer
+    `verify` checks -- read off the record alone, a fork move that kept the version measured
+    behind every pass, and every permitted pass acted and rolled back.
     """
     row = tool.install
     if isinstance(row, CargoInstall):
         return read_installed(roots.cargo, row.crate)
     if isinstance(row, NpmInstall):
         return read_installed_package(roots.npm, row.package, row.workspace)
-    return read_entry(roots.sites, tool, row.marketplace)
+    return loaded_entry(roots.sites, tool, row.marketplace)
 
 
 def _root_of(tool: Tool, roots: _Roots) -> str:

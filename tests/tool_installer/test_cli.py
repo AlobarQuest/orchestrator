@@ -8,6 +8,7 @@ comes in a pair whose answers must differ, so a term that was dropped entirely c
 from __future__ import annotations
 
 import json
+import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,7 @@ from tool_installer.install import InstallOutcome, RollbackFailed
 from tool_installer.orchestrator_client import ObservationWriteError
 from tool_installer.plugin import Sites
 from tool_installer.toolchain import CRATES_JSON, CRATES_TOML, Node, ToolchainError
+from tool_installer.tools import OCTO
 
 HEAD = "4be91ebe1fc4eaf73688e28cd62782eadb355379"
 OLD = "1111111111111111111111111111111111111111"
@@ -409,6 +411,76 @@ def test_the_octo_row_is_reported_current_when_it_is(
     assert "which is main's head" in result.stdout
     assert machine.filed[1]["status"] == "passed"
     assert machine.filed[1]["facts"]["action"] == "none"
+
+
+@pytest.mark.parametrize(
+    ("dirty", "state", "status", "action"),
+    [
+        (None, "current", "passed", "none"),
+        ("untracked", "behind", "degraded", "not_permitted"),
+        ("tracked", "behind", "degraded", "not_permitted"),
+    ],
+)
+def test_the_octo_row_is_current_by_the_FOLDER_it_loads_when_the_version_did_not_move(
+    machine: _Recorder,
+    monkeypatch: pytest.MonkeyPatch,
+    dirty: str | None,
+    state: str,
+    status: str,
+    action: str,
+) -> None:
+    """The measurement agrees with `verify`: the record names the folder's version at an older
+    commit (Claude Code rewrites `gitCommitSha` only on a version change), the folder is at the
+    fork's head, and the row is current -- so a permitted pass would not act and roll back.
+
+    A DIRTY folder is the pair: Claude Code loads the working tree, which its HEAD no longer
+    describes, so the record's older commit stands and the row is behind."""
+    clone = machine.sites.clone_root(OCTO)  # type: ignore[attr-defined]
+    (clone / ".claude-plugin").mkdir(parents=True)
+    (clone / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"name": "octo", "version": "11.0.1"})
+    )
+    for args in (
+        ("init", "-b", "main"),
+        ("-c", "user.email=sds@example.invalid", "-c", "user.name=sds", "add", "-A"),
+        (
+            "-c",
+            "user.email=sds@example.invalid",
+            "-c",
+            "user.name=sds",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-m",
+            "folder",
+        ),
+    ):
+        subprocess.run(["git", "-C", str(clone), *args], check=True, capture_output=True)
+    folder = subprocess.run(
+        ["git", "-C", str(clone), "rev-parse", "HEAD"], check=True, capture_output=True, text=True
+    ).stdout.strip()
+    if dirty == "untracked":
+        (clone / "scratch.md").write_text("an edit nobody committed\n")
+    elif dirty == "tracked":
+        (clone / ".claude-plugin" / "plugin.json").write_text(
+            json.dumps({"name": "octo", "version": "11.0.1", "description": "edited"})
+        )
+    _seed_plugin(machine.sites.plugins_root, "11.0.1", OLD)  # type: ignore[attr-defined]
+    monkeypatch.setattr(
+        cli_module,
+        "commit",
+        lambda reader, repository, ref: (
+            (folder if repository == OCTO.repository else HEAD),
+            "2026-09-05T18:00:00Z",
+        ),
+    )
+
+    result = _invoke(machine, monkeypatch, IN_WINDOW)
+    assert result.exit_code == 0
+    octo = machine.filed[1]
+    assert octo["status"] == status
+    assert octo["facts"]["state"] == state
+    assert octo["facts"]["action"] == action
 
 
 def test_the_window_refuses_the_OCTO_row_with_the_install_flag(
