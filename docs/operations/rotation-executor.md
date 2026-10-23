@@ -522,6 +522,16 @@ First install, in this order, with nothing dispatched in flight:
       No roles entry is needed: an unpromoted credential is a WORKER.
 4. Run the installer again. It loads the agent.
 
+A token with scheduled readers that have Healthchecks checks needs the instance's own read-only
+Healthchecks key, a separate key from the VM's:
+
+1. In Healthchecks, under the project's **Settings**, create a read-only API key.
+2. Store it from a terminal, typing the key at the hidden prompt:
+   `security add-generic-password -s rotation-executor -a healthchecks-key -T /usr/bin/security -w`
+3. Run the installer again. It names the item as `healthchecks_key_id` once the item exists.
+
+Without it, a unit whose reader names a check is refused at its checks.
+
 To update, run the installer with the newer commit.
 
 ### The plan

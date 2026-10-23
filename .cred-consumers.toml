@@ -31,17 +31,99 @@ provider = "bitwarden-sm"
 provider_identity = "Bitwarden SM machine account sds-operator (read-only, SDS Operator project), access-key 5d401526-…"
 created = "2026-07-30"
 disposition = "reissue"
+# A machine token has no BWS copy of itself, so its keeper is its one Keychain item.
+keeper_service = "Claude"
+keeper_account = "BWS_ACCESS_TOKEN_SDS"
 
   [[credential.consumer]]
   kind = "keychain"
   service = "Claude"
   account = "BWS_ACCESS_TOKEN_SDS"
-  note = "read by scripts/sds-token.sh and the run-*.sh launchers; also infraops-mcp-server scripts/drift-audit.sh (mint-follow-ups step)"
+  note = "the keeper. Every reader reads it fresh on each run, so it switches with the item. Scheduled readers with a Healthchecks check are the rows below. Verified by this item's read-back alone (Devon, 2026-10-23): infraops-mcp-server scripts/drift-audit.sh's mint-follow-ups step, whose check pings success when the read fails; and on demand, scripts/deploy_orchestrator.py, scripts/exit_probe.py, infraops-mcp-server scripts/cred-consumer-sweep.py, and factory-validation-kit-restart-recovery, which inherits an ambient BWS_ACCESS_TOKEN when run by hand"
 
   [[credential.consumer]]
   kind = "runtime-fetch"
-  repo = "factory-validation-kit-restart-recovery"
-  ref = "inherits the ambient bootstrap token when operator-invoked (no schedule)"
+  repo = "orchestrator"
+  ref = "scripts/run-activation-sweep.sh"
+  healthchecks_check = "sds-activation-sweep"
+  note = "reads Keychain Claude/BWS_ACCESS_TOKEN_SDS each run, through sds-token.sh or directly; pings sds-activation-sweep through sds-deadman.sh"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
+  ref = "scripts/run-bump-proposer.sh"
+  healthchecks_check = "sds-bump-proposer"
+  note = "reads Keychain Claude/BWS_ACCESS_TOKEN_SDS each run, through sds-token.sh or directly; pings sds-bump-proposer through sds-deadman.sh"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
+  ref = "scripts/run-deploy-watcher.sh"
+  healthchecks_check = "sds-deploy-watcher"
+  note = "reads Keychain Claude/BWS_ACCESS_TOKEN_SDS each run, through sds-token.sh or directly; pings sds-deploy-watcher through sds-deadman.sh"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
+  ref = "scripts/run-estate-landing.sh"
+  healthchecks_check = "sds-estate-landing"
+  note = "reads Keychain Claude/BWS_ACCESS_TOKEN_SDS each run, through sds-token.sh or directly; pings sds-estate-landing through sds-deadman.sh"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
+  ref = "scripts/run-inert-landing.sh"
+  healthchecks_check = "sds-inert-landing"
+  note = "reads Keychain Claude/BWS_ACCESS_TOKEN_SDS each run, through sds-token.sh or directly; pings sds-inert-landing through sds-deadman.sh"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
+  ref = "scripts/run-landing-ledger.sh"
+  healthchecks_check = "sds-landing-ledger"
+  note = "reads Keychain Claude/BWS_ACCESS_TOKEN_SDS each run, through sds-token.sh or directly; pings sds-landing-ledger through sds-deadman.sh"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
+  ref = "scripts/run-pin-watcher.sh"
+  healthchecks_check = "sds-pin-watcher"
+  note = "reads Keychain Claude/BWS_ACCESS_TOKEN_SDS each run, through sds-token.sh or directly; pings sds-pin-watcher through sds-deadman.sh"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
+  ref = "scripts/run-revision-watcher.sh"
+  healthchecks_check = "sds-revision-watcher"
+  note = "reads Keychain Claude/BWS_ACCESS_TOKEN_SDS each run, through sds-token.sh or directly; pings sds-revision-watcher through sds-deadman.sh"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
+  ref = "scripts/run-rotation-proposer.sh"
+  healthchecks_check = "sds-rotation-proposer"
+  note = "reads Keychain Claude/BWS_ACCESS_TOKEN_SDS each run, through sds-token.sh or directly; pings sds-rotation-proposer through sds-deadman.sh"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
+  ref = "scripts/run-tool-installer.sh"
+  healthchecks_check = "sds-tool-installer"
+  note = "reads Keychain Claude/BWS_ACCESS_TOKEN_SDS each run, through sds-token.sh or directly; pings sds-tool-installer through sds-deadman.sh"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
+  ref = "scripts/run-work-carrier.sh"
+  healthchecks_check = "sds-work-carrier"
+  note = "reads Keychain Claude/BWS_ACCESS_TOKEN_SDS each run, through sds-token.sh or directly; pings sds-work-carrier through sds-deadman.sh"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "project-standards"
+  ref = "integrations/portfolio-scan.sh"
+  healthchecks_check = "portfolio-scan"
+  note = "launchd com.devon.portfolio-scan 03:00; reads Keychain Claude/BWS_ACCESS_TOKEN_SDS each run; pings portfolio-scan"
 
 # ── Orchestrator M2M bearers ─────────────────────────────────────────────────────
 # Each is one key id in Coolify ORCHESTRATOR_M2M_CREDENTIALS on the orchestrator app,
