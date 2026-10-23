@@ -1499,6 +1499,15 @@ identity, which decision 7 below accounts for.
 - **Decision 4** gains one sentence: a BWS consumer token may be handled by an executor instance
   on the machine that already holds it, and never by the VM.
 
+### As built: switch timing (2026-10-23)
+
+Both halves of "Switch timing" hold the BWS-token plan's `store` unit unclaimed. The 02:00 to 07:35
+window was built with the adapter. The other half is `overlaps.py`: no `store` while another
+rotation's listed units show it has stored and not finished. A rotation counts as stored once its
+unit holding `store` has been claimed, because the orchestrator and change-manager plans store
+inside their first unit, and it stops counting when its last unit completes or is cancelled. That
+is later than `retire_old` for a plan with a `confirm` unit; the wait errs long, never short.
+
 ## Amendment 13 — A credential the orchestrator holds for another service is a destination (2026-10-22)
 
 **Status: accepted by Devon on 2026-10-22** ("amend #13 approved"), after choosing this direction

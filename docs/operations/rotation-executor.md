@@ -565,6 +565,11 @@ then requeue the unit.
 
 - **`store` isn't claimed between 02:00 and 07:35 New York time,** while the scheduled lanes read
   these tokens.
+- **`store` isn't claimed while another rotation is mid-overlap** (`overlaps.py`): the broad token
+  starts the scheduled readers other rotations verify by. Another rotation counts from the first
+  claim of its unit holding `store` until its last unit completes or is cancelled, so a failed unit
+  holds every token switch until someone requeues or cancels it. The log line `unit_waiting` names
+  the units in `mid_overlap`.
 - **`confirm` isn't claimed until 75 minutes after the revoke was recorded.** A session that
   logged in before the revoke keeps working. On 2026-10-22, a client that logged in at 12:45 UTC,
   just before a revoke, kept reading until 13:39 and was first refused at 13:40. That's about 55

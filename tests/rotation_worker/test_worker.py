@@ -786,3 +786,45 @@ def test_a_unit_that_doesn_t_distribute_isn_t_held_back_by_a_live_run(
     _holding(h, monkeypatch)
     _live_run(h)
     assert run_pass(_held_setup(h)) == 1
+
+
+def _mid_overlap(h: Harness) -> None:
+    h.client.others["u9"] = {
+        "id": "u9",
+        "work_package_revision_id": "another-revision",
+        "attempt_count": 1,
+        "authority": {
+            "constraints": {"rotation_adapter": "orchestrator", "rotation_unit": "retire"}
+        },
+    }
+    h.client.active = [{"unit_id": "u9", "unit_key": "drift-retire", "unit_state": "ready"}]
+
+
+def test_a_unit_that_waits_for_overlaps_is_left_unclaimed_while_another_rotation_is_mid_overlap(
+    h: Harness, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    _adapted(h, monkeypatch, overlap_waits=frozenset({"mint"}))
+    _mid_overlap(h)
+    h.add("u1", "mint")
+    with caplog.at_level(logging.INFO):
+        assert run_pass(h.setup()) == 0
+    assert h.client.calls == []
+    assert [r.mid_overlap for r in caplog.records if hasattr(r, "mid_overlap")] == [
+        ["drift-retire (ready)"]
+    ]
+    h.client.active = []
+    assert run_pass(h.setup()) == 1
+
+
+def test_a_unit_that_doesn_t_wait_for_overlaps_is_claimed_mid_overlap(
+    h: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _adapted(h, monkeypatch, overlap_waits=frozenset({"store"}))
+    _mid_overlap(h)
+    h.add("u1", "mint")
+    assert run_pass(h.setup()) == 1
+
+
+def test_only_the_bws_token_switch_waits_for_overlaps() -> None:
+    waiting = {name: a.overlap_waits for name, a in ADAPTERS.items() if a.overlap_waits}
+    assert waiting == {"bws-machine-token": frozenset({"store"})}
