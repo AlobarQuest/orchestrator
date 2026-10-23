@@ -37,7 +37,7 @@ def mid_overlap(client: OrchestratorClient, revision_id: str) -> list[str]:
             listed = _Listed(
                 f"{row['unit_key']} ({row['unit_state']})",
                 _from_store(envelope_constraints(unit)),
-                int(unit.get("attempt_count") or 0) > 0,
+                int(unit["attempt_count"]) > 0,
             )
             rotations.setdefault(revision, []).append(listed)
     found = []

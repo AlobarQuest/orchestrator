@@ -1506,7 +1506,13 @@ window was built with the adapter. The other half is `overlaps.py`: no `store` w
 rotation's listed units show it has stored and not finished. A rotation counts as stored once its
 unit holding `store` has been claimed, because the orchestrator and change-manager plans store
 inside their first unit, and it stops counting when its last unit completes or is cancelled. That
-is later than `retire_old` for a plan with a `confirm` unit; the wait errs long, never short.
+is later than `retire_old` for a plan with a `confirm` unit.
+
+The wait is one-way. The VM instance doesn't ask whether a BWS `store` unit is running, so it can
+claim a unit that stores while the Keychain instance is between its read of the ledger and the end
+of its `store` unit. A hosted unit can't, because it claims only between 02:00 and 06:00, when no
+BWS `store` unit is claimed. A rotation that touches no hosted service can, such as an OpenRouter or
+GitHub PAT rotation.
 
 ## Amendment 13 — A credential the orchestrator holds for another service is a destination (2026-10-22)
 

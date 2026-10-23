@@ -74,11 +74,25 @@ def test_a_rotation_waiting_on_a_person_s_revoke_is_mid_overlap() -> None:
 
 
 def test_units_before_the_store_never_count() -> None:
-    # A Bitbucket store unit not yet claimed, behind the person's mint.
+    # The fake plan has a machine unit before the one holding store.
     ledger = Ledger()
-    ledger.add("mirror-store", "mirror", "bitbucket", "store")
-    ledger.add("mirror-verify", "mirror", "bitbucket", "verify")
-    assert ledger.mid_overlap() == []
+    ledger.add("canary-mint", "canary", "fake", "mint", "failed", attempts=1)
+    ledger.add("canary-store", "canary", "fake", "store", "claimed", attempts=1)
+    assert ledger.mid_overlap() == ["canary-store (claimed)"]
+
+
+def test_a_store_unit_claimed_alone_is_mid_overlap() -> None:
+    ledger = Ledger()
+    ledger.add("ops-mini-store", "ops", "bws-machine-token", "store", "claimed", attempts=1)
+    assert ledger.mid_overlap() == ["ops-mini-store (claimed)"]
+
+
+def test_each_rotation_is_judged_on_its_own_units() -> None:
+    ledger = Ledger()
+    ledger.add("read-mint", "read", "change-manager", "mint")
+    ledger.add("read-retire", "read", "change-manager", "retire")
+    ledger.add("drift-retire", "drift", "orchestrator", "retire")
+    assert ledger.mid_overlap() == ["drift-retire (ready)"]
 
 
 def test_the_unit_s_own_rotation_never_counts() -> None:
