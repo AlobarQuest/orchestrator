@@ -801,17 +801,18 @@ def _mid_overlap(h: Harness) -> None:
 
 
 def test_a_unit_that_waits_for_overlaps_is_left_unclaimed_while_another_rotation_is_mid_overlap(
-    h: Harness, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    h: Harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    logged: list[Any] = []
+    monkeypatch.setattr(
+        worker.LOG, "info", lambda event, extra: logged.append(extra.get("mid_overlap"))
+    )
     _adapted(h, monkeypatch, overlap_waits=frozenset({"mint"}))
     _mid_overlap(h)
     h.add("u1", "mint")
-    with caplog.at_level(logging.INFO):
-        assert run_pass(h.setup()) == 0
+    assert run_pass(h.setup()) == 0
     assert h.client.calls == []
-    assert [vars(r)["mid_overlap"] for r in caplog.records if "mid_overlap" in vars(r)] == [
-        ["drift-retire (ready)"]
-    ]
+    assert logged == [["drift-retire (ready)"]]
     h.client.active = []
     assert run_pass(h.setup()) == 1
 
