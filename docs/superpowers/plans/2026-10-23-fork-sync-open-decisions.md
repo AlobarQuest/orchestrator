@@ -50,7 +50,22 @@ Options: replace the link with an n8nac built from the gated fork's `main` (v2.7
 installer row (a workspace-aware npm install, scripts disabled); or leave it until the plugin
 question in section 2 is settled, since both change together.
 
-**Status:** open.
+Measured on 2026-10-23:
+
+- `npx` resolves `n8nac` from `<npm prefix>/bin` (`/opt/homebrew/bin/n8nac`) and downloads from
+  the registry when that path is missing, so the link can't be removed without a replacement: the
+  skill would then run upstream's newest published `n8nac` unreviewed.
+- The CLI's knowledge commands (`skills search`, `node-info`, `node-schema`, `guides`, `docs`,
+  `examples`) need about 60 MB of generated data. Generating it clones n8n, runs `pnpm install`
+  with install scripts, builds n8n's node packages and loads them with `require`, so it can't run
+  on the operator machine.
+
+**Status:** in progress. Devon chose the tool-installer row, with the knowledge data taken only
+as the `dist/assets/*.json` files of upstream's published `@n8n-as-code/skills` at the fork's
+version (integrity-checked; none of its code is used). The row installs the whole built
+checkout (the CLI's sibling packages are workspace links), and owns `<npm prefix>/bin/n8nac` so
+the skill's `npx` resolves the gated build. The hardening session should remove the need for that
+prefix link.
 
 ## 4. Two local clones from the old lane
 
