@@ -70,6 +70,15 @@ def _seed_rea(npm_root: Path, revision: str) -> None:
     )
 
 
+def _seed_n8nac(npm_root: Path, revision: str) -> None:
+    """A workspace package's record is its WORKSPACE's manifest, inside the installed checkout."""
+    workspace = npm_root / "lib" / "node_modules" / "n8nac" / "packages" / "cli"
+    workspace.mkdir(parents=True, exist_ok=True)
+    (workspace / "package.json").write_text(
+        json.dumps({"name": "n8nac", "version": "2.7.0", "gitHead": revision})
+    )
+
+
 def _seed_plugin(plugins_root: Path, version: str, revision: str) -> None:
     """Claude Code's own record, plus the cache directory it names."""
     cache = plugins_root / "cache" / "devon-plugins" / "octo" / version
@@ -118,6 +127,7 @@ def machine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Recorder:
     sites = Sites(hub_root=tmp_path / "hub", plugins_root=plugins_root)
     npm_root = tmp_path / "npm"
     _seed_rea(npm_root, HEAD)
+    _seed_n8nac(npm_root, HEAD)
     monkeypatch.setattr(cli_module, "default_sites", lambda: sites)
 
     recorder = _Recorder()
@@ -225,15 +235,16 @@ def test_a_pass_files_its_row_even_when_it_was_not_permitted_to_act(
     """The finding's durable home is the observation, not the exit code -- so a machine running an
     old tool is recorded whether or not anybody permitted an install."""
     _invoke(machine, monkeypatch, OUT_OF_WINDOW, "--install")
-    # THREE ROWS: the behind rtk, the current octo and the current rea. The current rows are
+    # FOUR ROWS: the behind rtk and the current octo, rea and n8nac. The current rows are
     # asserted here rather than ignored, because "every tool is filed every pass" is the
     # property that makes silence mean something -- a pass that filed only the interesting row
     # would be indistinguishable from a pass that stopped measuring the others.
-    assert len(machine.filed) == 3
+    assert len(machine.filed) == 4
     assert [row["subject_reference"] for row in machine.filed] == [
         "AlobarQuest/rtk",
         "AlobarQuest/claude-octopus",
         "AlobarQuest/rea",
+        "AlobarQuest/n8n-as-code",
     ]
     row = machine.filed[0]
     assert row["source_system"] == "tool_installer"
@@ -365,7 +376,7 @@ def test_a_missing_toolchain_FILES_the_finding_it_already_made(
     monkeypatch.setattr(cli_module, "resolve_cargo", _raise_toolchain)
     result = _invoke(machine, monkeypatch, IN_WINDOW, "--install")
     assert result.exit_code == 2
-    assert len(machine.filed) == 3
+    assert len(machine.filed) == 4
     assert machine.filed[0]["status"] == "degraded"
     assert machine.filed[0]["facts"]["state"] == "behind"
 
@@ -495,6 +506,26 @@ def test_the_window_ADMITS_the_REA_row_when_it_is_open(
     """The pair for the test above: only the clock differs, and the open clock reaches node."""
     _rea_behind(machine)
     _rtk_current(machine)
+    result = _invoke(machine, monkeypatch, IN_WINDOW, "--install")
+    assert isinstance(result.exception, AssertionError)
+    assert "reached NODE" in str(result.exception)
+
+
+def test_the_N8NAC_row_reads_its_record_from_the_workspace_manifest(
+    machine: _Recorder, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Behind is measured from `packages/cli/package.json` inside the installed checkout, and the
+    window still decides: refused out of hours, node reached in them."""
+    _seed_n8nac(machine.npm_root, OLD)  # type: ignore[attr-defined]
+    _rtk_current(machine)
+    result = _invoke(machine, monkeypatch, OUT_OF_WINDOW, "--install")
+    assert result.exit_code == 0
+    filed = {row["subject_reference"]: row for row in machine.filed}
+    facts = filed["AlobarQuest/n8n-as-code"]["facts"]
+    assert facts["action"] == "not_permitted"
+    assert facts["state"] == "behind"
+    assert facts["installed"]["version"] == "2.7.0"
+
     result = _invoke(machine, monkeypatch, IN_WINDOW, "--install")
     assert isinstance(result.exception, AssertionError)
     assert "reached NODE" in str(result.exception)
