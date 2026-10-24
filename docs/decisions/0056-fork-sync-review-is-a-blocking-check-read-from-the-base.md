@@ -378,3 +378,25 @@ fork stays stuck the check stays down, and a second fork becoming stuck raises n
 is in the report the latest `/fail` carries. That is the cost of one check for the lane, accepted
 because each reason names something only a person can clear and the report lists them all.
 
+
+## Amendment 7 (2026-10-24): only install-time scripts, and only files they run
+
+**Status:** Accepted (Devon, 2026-10-24: "fix the gate, add orchestrate.sh to watched paths").
+
+claude-octopus v11.15.1 (#35) held on an `npm-lifecycle-file` finding for `scripts/orchestrate.sh`.
+Its only lifecycle script is `prepublishOnly: "... && test -f scripts/orchestrate.sh && test -f
+README.md"`, which runs only on `npm publish` and only checks that the file exists. The rule was
+wrong twice: it counted publish-only scripts, and it counted any path a command mentions.
+
+- **Install-time scripts only.** `NPM_LIFECYCLE_SCRIPTS` is `preinstall`, `install`,
+  `postinstall`, `prepare` and `prepublish` (deprecated, but still run by a bare `npm install`).
+  `prepack`, `postpack` and `prepublishOnly` run only on pack or publish, which the lane never
+  does, and the tool installer's `npm pack` runs with scripts disabled. The same set decides the
+  `npm-lifecycle` finding, so a change to a publish-only script no longer holds.
+- **Files a script runs, not files it tests.** A path that follows a file-test operator (`test -f`,
+  `[ -e`, and the other single-letter file tests) is checked, not run, so it is not counted; the
+  same path run elsewhere in the command still is.
+- **What still protects `orchestrate.sh`.** It is octo's dispatcher, which its hooks run in a
+  session. claude-octopus's declaration already lists `scripts/*` as `trust_critical`, so the model
+  reads every change to it, and from this amendment it is also a watched path, so any change to it
+  holds for a person.
