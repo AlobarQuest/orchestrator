@@ -207,7 +207,8 @@ with `scripts/install-fork-sync-watch-launchd.sh` from the main tree. The log is
 `APP_PRIVATE_KEY` under `fork-sync-app-private-key` in factory-runner's `.cred-consumers.toml` on
 `main` (onboarding step 5 writes it), confirmed by `.github/fork-sync.toml` on its own `main`. A
 registered repository without the declaration is printed `not_on_lane` and isn't classified: it
-is mid-onboarding. The source needs only the operator's `gh` login.
+is mid-onboarding. A registered repository that isn't visible at all (renamed, deleted, or out of
+the login's reach) is printed `unreadable`. The source needs only the operator's `gh` login.
 
 **What it prints.** One line per fork, `ok`, `waiting_on_person` or `stuck` with its reasons, then
 a summary with the number of GitHub API calls the pass made. Each fork costs at most eight reads
@@ -217,20 +218,22 @@ and nothing pages, so a pass is bounded by `1 + 8 x forks` calls.
 |-|-|-|
 | 0 | Nothing is stuck | success |
 | 1 | The tool failed | `/fail` |
-| 2 | Unreadable: a GitHub read failed (a 403 rate limit among them), or a declaration doesn't parse | `/fail` |
-| 3 | A fork is stuck | `/fail` |
+| 2 | Unreadable: a GitHub read failed (a 403 rate limit among them), or a fork serves something the watcher can't use (a declaration or manifest that doesn't parse) | `/fail` |
+| 3 | A fork is stuck, whatever else the pass found | `/fail` |
 
 The codes are the lander group's, as `run-inert-landing.sh` uses them. The check
 `sds-fork-sync-watch` is an outcome alarm: unlike a lane's dead-man check, a finding pings
 `/fail`, with the report as the ping's body (readable on the check's page). The launcher pings
 `/start` first and success only on exit 0, so a watcher that stops is reported too, after the
 grace. The installer creates the check (`unique` by name, schedule `55 * * * *` in
-`America/New_York`, grace 1,800 seconds, every channel). The first read that fails ends the pass:
-a rate-limited API is not read again.
+`America/New_York`, grace 1,800 seconds, every channel). The first GitHub read that fails ends the pass,
+so a rate-limited API is not read again; content one fork serves badly makes only that fork
+`unreadable`, and the pass goes on.
 
 **`waiting_on_person`** is a sync whose `security review` failed while the fork's alert issue
-("Fork-sync: a security review is holding an upstream sync") is open. It isn't stuck: the issue
-already alerts. Do what the issue says.
+("Fork-sync: a security review is holding an upstream sync") is open and was raised or commented
+on since the sync's head arrived (`notify` comments once per new head, so an issue left open by an
+older sync doesn't count). It isn't stuck: the issue already alerts. Do what the issue says.
 
 **`stuck`**, with each reason that applies:
 

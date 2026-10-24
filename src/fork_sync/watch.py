@@ -36,7 +36,7 @@ from fork_sync.fork_sync_review import (
     parse_config,
 )
 from fork_sync.gh import CommandFailed, Runner, gh_api
-from fork_sync.onboard import CI_WORKFLOW, REQUIRED_CHECKS, Refused
+from fork_sync.onboard import REQUIRED_CHECKS, Refused
 from fork_sync.onboarding import REGISTRY_PATH, REGISTRY_REPO
 
 # ---- thresholds: plain ints, no off value --------------------------------------------------
@@ -119,9 +119,13 @@ class Pass:
     calls: int = 0
 
     def exit_code(self) -> int:
-        if self.unreadable is not None:
+        """3 when any fork is stuck, even in a pass a failed read ended: a finding is never
+        reported as less than one. Otherwise 2 when anything could not be read."""
+        if any(v.status == STUCK for v in self.verdicts):
+            return EXIT_STUCK
+        if self.unreadable is not None or any(v.status == UNREADABLE for v in self.verdicts):
             return EXIT_UNREADABLE
-        return EXIT_STUCK if any(v.status == STUCK for v in self.verdicts) else EXIT_OK
+        return EXIT_OK
 
     def lines(self) -> list[str]:
         lines = [verdict.line() for verdict in self.verdicts]
@@ -160,8 +164,12 @@ def forks(run: Runner) -> list[str]:
         raise Unreadable(f"{REGISTRY_PATH} has no {REGISTRY_CREDENTIAL} entry")
     found: dict[str, str] = {}
     for consumer in credentials[REGISTRY_CREDENTIAL].get("consumer", []):
-        repo = str(consumer.get("repo", ""))
-        if consumer.get("kind") == "gh-actions-secret" and consumer.get("name") == REGISTRY_SECRET:
+        repo = str(consumer.get("repo", "")).strip()
+        if (
+            repo
+            and consumer.get("kind") == "gh-actions-secret"
+            and consumer.get("name") == REGISTRY_SECRET
+        ):
             found.setdefault(repo.lower(), repo)
     return sorted(found.values(), key=str.lower)
 
@@ -181,17 +189,9 @@ def _sync_reasons(run: Runner, fork: str, now: datetime) -> tuple[list[str], str
     return [], ""
 
 
-def _latest_ci_run(run: Runner, fork: str, sha: str) -> dict[str, Any] | None:
-    """The newest run of the fork's own `ci.yml` at `sha`, in any status (as `ci_jobs` picks
-    it, but a run still going is returned too)."""
-    runs = (gh_api(run, f"repos/{fork}/actions/runs?head_sha={sha}&per_page=100") or {}).get(
-        "workflow_runs", []
-    )
-    ci = [workflow_run for workflow_run in runs if workflow_run.get("path") == CI_WORKFLOW]
-    return max(ci, key=lambda r: (r.get("created_at") or "", r["id"])) if ci else None
-
-
-def _alert_issue(run: Runner, fork: str) -> int | None:
+def _alert_issue(run: Runner, fork: str, since: datetime) -> int | None:
+    """The open review alert, if `notify` raised or commented on it since the head arrived: it
+    comments once per new head, so an alert left open from an older sync doesn't count."""
     issues = (
         gh_api(run, f"repos/{fork}/issues?state=open&creator=github-actions%5Bbot%5D&per_page=100")
         or []
@@ -200,7 +200,9 @@ def _alert_issue(run: Runner, fork: str) -> int | None:
         (
             issue["number"]
             for issue in issues
-            if "pull_request" not in issue and ALERT_MARKER in (issue.get("body") or "")
+            if "pull_request" not in issue
+            and ALERT_MARKER in (issue.get("body") or "")
+            and _instant(issue.get("updated_at") or "1970-01-01T00:00:00Z") >= since
         ),
         None,
     )
@@ -226,7 +228,7 @@ def _pull_reasons(
     # committer date is when the head arrived.
     pushed = (commit.get("commit") or {}).get("committer", {}).get("date") or pull["created_at"]
     since = max(_instant(pushed), _instant(pull["created_at"]))
-    ci = _latest_ci_run(run, fork, sha)
+    ci = acknowledge.latest_ci_run(run, fork, sha)
     if ci is None or ci.get("status") != "completed":
         waited = now - since
         what = "no ci.yml run" if ci is None else f"ci.yml {ci.get('status')}"
@@ -256,12 +258,12 @@ def _pull_reasons(
             else:
                 details.append(f"both checks passed {_hours(open_for)} ago; landing")
         return reasons, f"#{number}: " + "; ".join(details), ""
-    issue = _alert_issue(run, fork)
+    issue = _alert_issue(run, fork, since)
+    if issue is not None:
+        waiting = f"#{number}: `security review` failed; alert issue #{issue} is open"
+        return reasons, f"#{number}: " + "; ".join(details), waiting
     unavailable = _review_unavailable(run, fork, number, sha)
     held = "could not run" if unavailable else "holds findings"
-    if issue is not None:
-        waiting = f"#{number}: the review {held}; alert issue #{issue} is open"
-        return reasons, f"#{number}: " + "; ".join(details), waiting
     reasons.append(REVIEW_UNAVAILABLE if unavailable else HELD_WITHOUT_ALERT)
     details.append(f"the review {held} and no alert issue is open")
     return reasons, f"#{number}: " + "; ".join(details), ""
@@ -288,8 +290,14 @@ def _release_reasons(
 def classify(run: Runner, fork: str, now: datetime) -> Verdict:
     text = gh_api(run, f"repos/{fork}/contents/{CONFIG_PATH}?ref=main", raw=True)
     if text is None:
+        if gh_api(run, f"repos/{fork}") is None:
+            # Renamed, deleted or out of the login's reach: its lane can't be seen at all.
+            return Verdict(fork, UNREADABLE, detail="registered, but the repository isn't visible")
         return Verdict(fork, NOT_ON_LANE, detail=f"registered, but main has no {CONFIG_PATH}")
-    config = parse_config(text)
+    try:
+        config = parse_config(text)
+    except ConfigError as error:
+        return Verdict(fork, UNREADABLE, detail=f"{CONFIG_PATH} on main: {error}")
     reasons, sync_detail = _sync_reasons(run, fork, now)
     pulls = gh_api(run, f"repos/{fork}/pulls?state=open&head={fork.split('/')[0]}:upstream-sync")
     waiting = ""
@@ -317,7 +325,9 @@ class _Counting:
 
 
 def watch(run: Runner, now: datetime | None = None) -> Pass:
-    """One pass over every fork on the lane. The first failed read ends it."""
+    """One pass over every fork on the lane. The first failed GitHub read ends it; content one
+    fork serves that can't be used (a manifest, a tag) makes that fork `unreadable` and the
+    pass goes on."""
     counting = _Counting(run)
     result = Pass()
     now = now or clock()
@@ -325,8 +335,10 @@ def watch(run: Runner, now: datetime | None = None) -> Pass:
         for fork in forks(counting):
             try:
                 result.verdicts.append(classify(counting, fork, now))
-            except (CommandFailed, ConfigError, Unreadable) as error:
+            except CommandFailed as error:
                 raise Unreadable(f"{fork}: {error}") from None
+            except (ValueError, Unreadable) as error:  # ConfigError and every decode error
+                result.verdicts.append(Verdict(fork, UNREADABLE, detail=str(error)))
     except (CommandFailed, Unreadable) as error:
         result.unreadable = str(error)
     result.calls = counting.calls

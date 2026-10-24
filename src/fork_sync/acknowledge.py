@@ -375,20 +375,24 @@ def _open_pull(run: Runner, plan: Plan) -> tuple[int, str]:
     return int(match.group(1)), sha
 
 
-def ci_jobs(run: Runner, fork: str, sha: str) -> dict[str, dict[str, Any]] | None:
-    """The jobs of the most recent run of the fork's own CI workflow at `sha`, once that run has
-    completed; `None` until then. Only that workflow's jobs count: another workflow's job of the
-    same name, or an older run, must not decide the merge."""
+def latest_ci_run(run: Runner, fork: str, sha: str) -> dict[str, Any] | None:
+    """The most recent run of the fork's own CI workflow at `sha`, in any status. Only that
+    workflow counts: another workflow's job of the same name, or an older run, must not decide."""
     runs = (gh_api(run, f"repos/{fork}/actions/runs?head_sha={sha}&per_page=100") or {}).get(
         "workflow_runs", []
     )
     ci = [workflow_run for workflow_run in runs if workflow_run.get("path") == CI_WORKFLOW]
     if not ci:
         return None
-    latest = max(
+    return max(
         ci, key=lambda workflow_run: (workflow_run.get("created_at") or "", workflow_run["id"])
     )
-    if latest.get("status") != "completed":
+
+
+def ci_jobs(run: Runner, fork: str, sha: str) -> dict[str, dict[str, Any]] | None:
+    """The jobs of `latest_ci_run`, once that run has completed; `None` until then."""
+    latest = latest_ci_run(run, fork, sha)
+    if latest is None or latest.get("status") != "completed":
         return None
     listed = gh_api(run, f"repos/{fork}/actions/runs/{latest['id']}/jobs") or {}
     return {job["name"]: job for job in listed.get("jobs", [])}

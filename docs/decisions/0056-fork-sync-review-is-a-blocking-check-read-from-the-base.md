@@ -364,8 +364,9 @@ healthy. A held review already alerts through the fork's issue (amendment 1); no
   was the other candidate; it would make the watcher a new reader of a rotated bearer, through a
   second BWS identity, to learn a list GitHub already holds.
 - **An outcome alarm, not a dead-man switch.** The check `sds-fork-sync-watch` gets `/fail`, with
-  the report as its body, on every non-zero exit: 3 stuck, 2 unreadable (any GitHub read failing,
-  a rate limit included, ends the pass), 1 the tool failed. The dead-man helper's arming is not
+  the report as its body, on every non-zero exit: 3 stuck (outranking the rest), 2 unreadable
+  (any GitHub read failing, a rate limit included, ends the pass; content one fork serves badly
+  marks only that fork), 1 the tool failed. The dead-man helper's arming is not
   used, because it pings success on a lane's finding code; only its lookup of the ping URL by
   name is. The success ping on exit 0 makes the check a liveness signal too.
 - **Bounded reads.** At most eight GitHub reads per fork and one for the registry, none paged,

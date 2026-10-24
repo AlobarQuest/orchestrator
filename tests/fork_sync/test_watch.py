@@ -158,7 +158,13 @@ def lane(
         }
         issues = [{"number": 3, "pull_request": {}, "body": watch.ALERT_MARKER}]
         if issue:
-            issues.append({"number": 9, "body": f"{watch.ALERT_MARKER}\n@AlobarQuest held"})
+            issues.append(
+                {
+                    "number": 9,
+                    "body": f"{watch.ALERT_MARKER}\n@AlobarQuest held",
+                    "updated_at": ago(hours=1),
+                }
+            )
         answers[ISSUES] = issues
         answers[COMMENTS] = [comment] if comment is not None else []
     return answers
@@ -223,16 +229,28 @@ def test_a_fork_current_with_upstream_is_ok() -> None:
 
 
 def test_a_held_review_with_its_alert_open_is_waiting_on_person_not_stuck() -> None:
-    found = verdict(lane(pull=True, review="failure", issue=True, comment=review_comment()))
+    answers = lane(pull=True, review="failure", issue=True, comment=review_comment())
+    gh = FakeGh(answers)
+    [found] = watch.watch(gh, NOW).verdicts
     assert found.status == watch.WAITING_ON_PERSON
-    assert "holds findings" in found.detail and "#9" in found.detail
+    assert "alert issue #9 is open" in found.detail
+    # The alert already says what the review found, so its comment isn't read.
+    assert not any(argv[-1] == COMMENTS for argv in gh.calls)
 
 
 def test_a_review_that_could_not_run_with_its_alert_open_is_waiting_on_person() -> None:
     found = verdict(
         lane(pull=True, review="failure", issue=True, comment=review_comment(unavailable=True))
     )
-    assert found.status == watch.WAITING_ON_PERSON and "could not run" in found.detail
+    assert found.status == watch.WAITING_ON_PERSON
+
+
+def test_an_alert_left_open_from_an_older_sync_does_not_count() -> None:
+    """`notify` comments on its issue for each new head, so an issue untouched since this head
+    arrived is an older sync's, and a cancelled review now is told to nobody."""
+    answers = lane(pull=True, review="cancelled", issue=True, pushed=ago(minutes=30))
+    found = verdict(answers)
+    assert (found.status, found.reasons) == (watch.STUCK, (watch.REVIEW_UNAVAILABLE,))
 
 
 def test_an_open_alert_does_not_hide_a_failing_sync() -> None:
@@ -306,7 +324,10 @@ def test_a_held_review_whose_alert_never_opened_is_stuck() -> None:
 
 def test_an_alert_on_a_pull_request_is_not_the_alert_issue() -> None:
     answers = lane(pull=True, review="failure", comment=review_comment())
-    answers[ISSUES] = [{"number": 3, "pull_request": {}, "body": watch.ALERT_MARKER}]
+    # Fresh and marked, so only its being a pull request keeps it from counting.
+    answers[ISSUES] = [
+        {"number": 3, "pull_request": {}, "body": watch.ALERT_MARKER, "updated_at": ago(hours=1)}
+    ]
     assert verdict(answers).reasons == (watch.HELD_WITHOUT_ALERT,)
 
 
@@ -396,16 +417,62 @@ def test_forks_are_the_registered_app_key_copies() -> None:
 def test_a_registered_repository_without_a_declaration_is_not_on_the_lane() -> None:
     answers = lane()
     del answers[DECLARATION]
+    answers[f"repos/{FORK}"] = {"full_name": FORK}
     found = verdict(answers)
     assert found.status == watch.NOT_ON_LANE
     assert watch.watch(FakeGh(answers), NOW).exit_code() == watch.EXIT_OK
 
 
-def test_an_unparseable_declaration_is_unreadable() -> None:
+def test_a_registered_repository_that_is_not_visible_is_unreadable() -> None:
+    """Renamed, deleted or out of reach: every path 404s, and that is not mid-onboarding."""
     answers = lane()
-    answers[DECLARATION] = 'upstream = "x/y"\n'
+    del answers[DECLARATION]
+    found = verdict(answers)
+    assert found.status == watch.UNREADABLE
+    assert watch.watch(FakeGh(answers), NOW).exit_code() == watch.EXIT_UNREADABLE
+
+
+@pytest.mark.parametrize(
+    ("path", "served"),
+    [(DECLARATION, 'upstream = "x/y"\n'), (MANIFEST, "{not json"), (MANIFEST, "{}")],
+)
+def test_content_one_fork_serves_badly_makes_that_fork_unreadable_and_the_pass_goes_on(
+    path: str, served: str
+) -> None:
+    answers = lane()
+    other = "AlobarQuest/zzz"
+    answers[REGISTRY] = registry(FORK, other)
+    for key, value in list(answers.items()):
+        if key.startswith(f"repos/{FORK}/"):
+            answers[key.replace(FORK, other)] = value
+    answers[path] = served
     result = watch.watch(FakeGh(answers), NOW)
-    assert result.unreadable is not None and result.exit_code() == watch.EXIT_UNREADABLE
+    assert result.unreadable is None
+    assert [(v.fork, v.status) for v in result.verdicts] == [
+        (FORK, watch.UNREADABLE),
+        (other, watch.OK),
+    ]
+    assert result.exit_code() == watch.EXIT_UNREADABLE
+
+
+def test_stuck_outranks_unreadable_in_the_exit_code() -> None:
+    answers = lane(pull=True, checks_done=ago(hours=7))
+    answers[REGISTRY] = registry(FORK, "AlobarQuest/zzz")
+    answers["repos/AlobarQuest/zzz/contents/.github/fork-sync.toml?ref=main"] = RATE_LIMITED
+    result = watch.watch(FakeGh(answers), NOW)
+    assert result.unreadable is not None
+    assert result.exit_code() == watch.EXIT_STUCK
+
+
+def test_a_consumer_with_no_repository_is_skipped() -> None:
+    blank = (
+        '  [[credential.consumer]]\n  kind = "gh-actions-secret"\n  name = "APP_PRIVATE_KEY"\n\n'
+    )
+    text = registry("AlobarQuest/rtk").replace(
+        '[[credential]]\nid = "anthropic-api-key"',
+        blank + '[[credential]]\nid = "anthropic-api-key"',
+    )
+    assert watch.forks(FakeGh({REGISTRY: text})) == ["AlobarQuest/rtk"]
 
 
 def test_the_alert_marker_is_the_one_notify_writes() -> None:
