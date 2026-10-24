@@ -115,12 +115,22 @@ def test_the_no_dependency_ecosystem_keeps_the_package_json_rules(
 # ---- the weekly audit of main ---------------------------------------------------------------
 
 
+NPM = """
+upstream = "morluto/rea"
+ecosystem = "npm"
+release_tag_pattern = '^rea-agents-(\\d+\\.\\d+\\.\\d+)$'
+"""
+NPM_LOCK = json.dumps({"packages": {"": {}, "node_modules/dep": {"version": "1.0.0"}}})
 CARGO_REPORT = json.dumps(
     {
         "vulnerabilities": {
             "list": [
                 {
-                    "advisory": {"id": "RUSTSEC-2026-0001", "title": "bad", "cvss": None},
+                    "advisory": {
+                        "id": "RUSTSEC-2026-0001",
+                        "title": "bad",
+                        "cvss": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+                    },
                     "package": {"name": "dep", "version": "1.0.0"},
                     "versions": {"patched": [">=1.0.1"]},
                 }
@@ -130,11 +140,67 @@ CARGO_REPORT = json.dumps(
 ).encode()
 
 
-def _vulnerable(argv: list[str], cwd: Path, env: dict[str, str]) -> tuple[int, bytes]:
-    return 1, CARGO_REPORT
+def _npm_report(severity: str, score: float) -> bytes:
+    via = {
+        "source": 1,
+        "url": "https://github.com/advisories/GHSA-aaaa-bbbb-cccc",
+        "title": "bad",
+        "severity": severity,
+        "cvss": {"score": score, "vectorString": "CVSS:3.1/AV:N"},
+    }
+    vulnerability = {"name": "dep", "via": [via], "nodes": ["node_modules/dep"]}
+    return json.dumps(
+        {"vulnerabilities": {"dep": {**vulnerability, "fixAvailable": True}}}
+    ).encode()
+
+
+def _critical(argv: list[str], cwd: Path, env: dict[str, str]) -> tuple[int, bytes]:
+    return 1, _npm_report("critical", 9.8)
 
 
 def _main_repo(tmp_path: Path, monkeypatch: Any, acks: str = "") -> None:
+    monkeypatch.chdir(tmp_path)
+    _git(tmp_path, "init", "-q", "-b", "main")
+    files = {
+        ".github/fork-sync.toml": NPM,
+        "package.json": '{"version": "6.7.0"}\n',
+        "package-lock.json": NPM_LOCK,
+    }
+    if acks:
+        files[".github/fork-sync-acks.toml"] = acks
+    _commit(tmp_path, files, "main")
+
+
+def _critical_finding() -> review.Finding:
+    [finding] = review.advisory_findings(
+        "npm", 1, _npm_report("critical", 9.8), NPM_LOCK.encode(), "package-lock.json"
+    )
+    return finding
+
+
+def test_the_weekly_audit_fails_on_an_unacknowledged_critical_advisory(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    _main_repo(tmp_path, monkeypatch)
+    assert review.audit_main({}, _critical) == 1
+
+
+@pytest.mark.parametrize(("severity", "score"), [("high", 7.5), ("high", 8.9)])
+def test_the_weekly_audit_reports_an_advisory_that_is_not_critical(
+    tmp_path: Path, monkeypatch: Any, capsys: Any, severity: str, score: float
+) -> None:
+    """Amendment 4 applies to main as to a sync: only a critical advisory holds. Control: the
+    preceding test, where the same main and advisory at `critical` fail."""
+    _main_repo(tmp_path, monkeypatch)
+    report = _npm_report(severity, score)
+    assert review.audit_main({}, lambda argv, cwd, env: (1, report)) == 0
+    assert "| reported | audit" in capsys.readouterr().out
+
+
+def test_the_weekly_audit_reports_a_cargo_advisory_it_cannot_score(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """cargo-audit gives a CVSS vector, never a score, and nothing here scores a vector."""
     monkeypatch.chdir(tmp_path)
     _git(tmp_path, "init", "-q", "-b", "main")
     files = {
@@ -142,38 +208,29 @@ def _main_repo(tmp_path: Path, monkeypatch: Any, acks: str = "") -> None:
         "Cargo.toml": '[package]\nversion = "0.1.0"\n',
         "Cargo.lock": "version = 3\n",
     }
-    if acks:
-        files[".github/fork-sync-acks.toml"] = acks
     _commit(tmp_path, files, "main")
-
-
-def test_the_weekly_audit_fails_on_an_unacknowledged_advisory(
-    tmp_path: Path, monkeypatch: Any
-) -> None:
-    _main_repo(tmp_path, monkeypatch)
-    assert review.audit_main({}, _vulnerable) == 1
+    assert review.audit_main({}, lambda argv, cwd, env: (1, CARGO_REPORT)) == 0
 
 
 def test_the_weekly_audit_reads_main_s_acknowledgements(tmp_path: Path, monkeypatch: Any) -> None:
     """The same fingerprint a sync pull request's review printed, so one acknowledgement serves
-    both. Control: without it, the same main fails (preceding test)."""
-    [finding] = review.advisory_findings("cargo", 1, CARGO_REPORT, b"", "Cargo.lock")
+    both. Control: without it, the same main fails (preceding tests)."""
     ack = (
-        f'[[ack]]\nfingerprint = "{finding.fingerprint()}"\nby = "devon"\n'
+        f'[[ack]]\nfingerprint = "{_critical_finding().fingerprint()}"\nby = "devon"\n'
         'date = "2026-10-20"\nreason = "read"\n'
     )
     _main_repo(tmp_path, monkeypatch, ack)
-    assert review.audit_main({}, _vulnerable) == 0
+    assert review.audit_main({}, _critical) == 0
 
 
 def test_the_weekly_audit_reads_git_not_the_working_tree(tmp_path: Path, monkeypatch: Any) -> None:
     """An uncommitted acknowledgement in the checkout is not main's."""
     _main_repo(tmp_path, monkeypatch)
-    [finding] = review.advisory_findings("cargo", 1, CARGO_REPORT, b"", "Cargo.lock")
     (tmp_path / ".github/fork-sync-acks.toml").write_text(
-        f'[[ack]]\nfingerprint = "{finding.fingerprint()}"\nby = "x"\ndate = "d"\nreason = "r"\n'
+        f'[[ack]]\nfingerprint = "{_critical_finding().fingerprint()}"\nby = "x"\ndate = "d"\n'
+        'reason = "r"\n'
     )
-    assert review.audit_main({}, _vulnerable) == 1
+    assert review.audit_main({}, _critical) == 1
 
 
 def test_the_weekly_audit_reads_config_and_lockfile_from_git(
@@ -183,15 +240,15 @@ def test_the_weekly_audit_reads_config_and_lockfile_from_git(
     nothing: the audit sees main's committed files."""
     _main_repo(tmp_path, monkeypatch)
     (tmp_path / ".github/fork-sync.toml").write_text(NO_DEPS)
-    (tmp_path / "Cargo.lock").write_text("# emptied\n")
-    seen: list[bytes] = []
+    (tmp_path / "package-lock.json").write_text("{}\n")
+    seen: list[str] = []
 
     def audit(argv: list[str], cwd: Path, env: dict[str, str]) -> tuple[int, bytes]:
-        seen.append((cwd / "Cargo.lock").read_bytes())
-        return 1, CARGO_REPORT
+        seen.append((cwd / "package-lock.json").read_text())
+        return _critical(argv, cwd, env)
 
     assert review.audit_main({}, audit) == 1
-    assert seen == [b"version = 3\n"]
+    assert seen == [NPM_LOCK]
 
 
 def test_an_audit_that_cannot_run_fails_the_weekly_audit(tmp_path: Path, monkeypatch: Any) -> None:

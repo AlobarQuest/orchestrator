@@ -18,8 +18,9 @@ Subcommands, each invoked by a rendered workflow:
 `review` runs in a checkout of the BASE, with the head's objects fetched but never checked out, so
 nothing from the head executes. Every changed path must be accounted for: its diff (or, for a
 lockfile, a summary) reaches the model, or it carries a deterministic finding. A path that is
-neither fails the review. Exit codes are the check's verdict: 0 no unacknowledged finding;
-1 findings, so nothing lands; 2 the review could not run, which also fails the check.
+neither fails the review. A finding either holds the sync or is only reported (amendment 4).
+Exit codes are the check's verdict: 0 no unacknowledged finding that holds; 1 one or more, so
+nothing lands; 2 the review could not run, which also fails the check.
 
 Upstream content is untrusted: the diff reaches the model as data, and a person accepts a finding
 by its fingerprint in `.github/fork-sync-acks.toml` on main. A fingerprint names the exact content
@@ -392,6 +393,9 @@ class Finding:
     content: str
     """The exact content the finding is about: a blob id, a sha256, or a digest of the entry."""
     severity: str = "high"
+    holds: bool = True
+    """Whether it holds the sync until acknowledged. The review decides, never the acknowledgements
+    file; a reported finding is listed for a person to read and fails nothing (amendment 4)."""
 
     def fingerprint(self) -> str:
         return _digest("\0".join((self.kind, self.path, self.content)).encode())[:16]
@@ -478,6 +482,33 @@ PATH_RULES: dict[str, tuple[PathRule, ...]] = {
 }
 
 
+def _versions_blanked(value: Any) -> Any:
+    """`value` with every string-valued `version` key's value replaced, at any depth. The key
+    stays, so adding or removing one is still a difference, and a `version` holding anything but
+    a string stays as it is: blanking an object would hide whatever is inside it."""
+    if isinstance(value, dict):
+        return {
+            key: "" if key == "version" and isinstance(item, str) else _versions_blanked(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_versions_blanked(item) for item in value]
+    return value
+
+
+def only_versions_differ(path: str, old: bytes | None, new: bytes | None) -> bool:
+    """A JSON file whose two sides, parsed, differ only in `version` values: a release bumping
+    its manifest. An added or deleted side, a side that is not JSON, or duplicate keys (one reader
+    would see one value and another reader the other) is a change like any other."""
+    if not path.endswith(".json") or old is None or new is None:
+        return False
+    try:
+        before, after = (json.loads(side, object_pairs_hook=_unique_keys) for side in (old, new))
+    except ValueError:
+        return False
+    return _versions_blanked(before) == _versions_blanked(after)
+
+
 def path_findings(
     config: Config,
     changes: Sequence[Change],
@@ -488,7 +519,14 @@ def path_findings(
     findings = []
     for change in changes:
         if _matches(change.path, config.review.paths_watched):
-            findings.append(Finding("watched-path", change.path, "a watched path", change.content))
+            # A version bump to a watched manifest is reported; anything else in it holds.
+            if only_versions_differ(change.path, read(change.old_blob), read(change.new_blob)):
+                summary, holds = "a watched path (only `version` values changed)", False
+            else:
+                summary, holds = "a watched path", True
+            findings.append(
+                Finding("watched-path", change.path, summary, change.content, holds=holds)
+            )
         for kind, why, applies in rules:
             if applies(change.path):
                 findings.append(Finding(kind, change.path, why, change.content))
@@ -682,7 +720,10 @@ def npm_lock_review(change: Change, old: bytes | None, new: bytes | None) -> Loc
         )
         entry = _digest(f"{change.content}\0{name}".encode())
         for kind, why in _npm_entry_problems(name, was, now):
-            review.findings.append(Finding(kind, change.path, f"{name}: {why}", entry))
+            # CI and the tool installer install with lifecycle scripts disabled, so a script
+            # that would run at install is reported, not held (amendment 4).
+            holds = kind != "npm-install-script"
+            review.findings.append(Finding(kind, change.path, f"{name}: {why}", entry, holds=holds))
     return review
 
 
@@ -767,11 +808,21 @@ class Advisory:
     title: str
     severity: str
     fix: str
+    score: float | None = None
+    """The CVSS base score, where the audit gives one as a number."""
+
+    @property
+    def critical(self) -> bool:
+        """What holds a sync (amendment 4): npm's `critical`, or a given base score of 9.0 or
+        more. Nothing here computes a score from a CVSS vector, so an advisory with only a vector
+        (every cargo-audit one) or none is never critical, and is reported."""
+        return self.severity == "critical" or (self.score is not None and self.score >= 9.0)
 
 
 def cargo_advisories(report: Mapping[str, Any], _lock: bytes) -> list[Advisory]:
     """`vulnerabilities.list[]` of `cargo-audit audit --json`. Warnings (unmaintained, unsound,
-    yanked) are not advisories: cargo-audit does not fail on them, and neither does this."""
+    yanked) are not advisories: cargo-audit does not fail on them, and neither does this. The
+    `cvss` it gives is a vector string, never a score."""
     return [
         Advisory(
             id=item["advisory"]["id"],
@@ -783,6 +834,11 @@ def cargo_advisories(report: Mapping[str, Any], _lock: bytes) -> list[Advisory]:
         )
         for item in report["vulnerabilities"]["list"]
     ]
+
+
+def _npm_score(via: Mapping[str, Any]) -> float | None:
+    score = (via.get("cvss") or {}).get("score")
+    return float(score) if isinstance(score, int | float) and not isinstance(score, bool) else None
 
 
 NPM_FAILING_SEVERITIES = frozenset({"high", "critical"})
@@ -810,6 +866,7 @@ def npm_advisories(report: Mapping[str, Any], lock: bytes) -> list[Advisory]:
                         via["title"],
                         via["severity"],
                         fixed,
+                        _npm_score(via),
                     )
                 )
     return advisories
@@ -822,7 +879,8 @@ def advisory_findings(
     ecosystem: str, code: int, output: bytes, lock: bytes, lockfile: str
 ) -> list[Finding]:
     """One finding per advisory, fingerprinted by the advisory, package and installed version: an
-    acknowledgement names exactly what it accepts and lasts until that version changes."""
+    acknowledgement names exactly what it accepts and lasts until that version changes. Only a
+    critical advisory holds; the rest are reported."""
     if code == 0:
         return []
     try:
@@ -837,6 +895,7 @@ def advisory_findings(
             lockfile,
             f"{a.id} {a.package} {a.version}: {a.title} ({a.severity}; fix: {a.fix})",
             "\0".join((a.id, a.package, a.version)),
+            holds=a.critical,
         )
         for a in advisories
     ]
@@ -1002,12 +1061,17 @@ def ai_findings(
             # Only the content: its acknowledgement names the severity it accepts (`Ack.covers`).
             contents.get(f.path, digest),
             f.severity,
+            # A `low` concern is reported; `medium` and `high` hold (amendment 4).
+            holds=f.severity != MODEL_SEVERITIES[0],
         )
         for f in verdict
     ]
 
 
 # ---- the report -----------------------------------------------------------------------------
+
+
+REPORTED_MARK = "reported"
 
 
 def _cell(text: str) -> str:
@@ -1022,7 +1086,9 @@ class Report:
     title: str = "Fork-sync security review"
 
     def failing(self, acks: Mapping[str, Ack]) -> list[Finding]:
-        return [f for f in self.findings if covering_ack(acks, f) is None]
+        """The holding findings no acknowledgement covers. A reported finding never fails, so an
+        acknowledgement of one is harmless and changes nothing."""
+        return [f for f in self.findings if f.holds and covering_ack(acks, f) is None]
 
     def exit_code(self, acks: Mapping[str, Ack]) -> int:
         if self.unavailable is not None:
@@ -1039,7 +1105,9 @@ class Report:
             lines += ["| | kind | path | finding | fingerprint |", "|-|-|-|-|-|"]
             for finding in self.findings:
                 ack = acks.get(finding.fingerprint())
-                if ack is None:
+                if not finding.holds:
+                    mark = REPORTED_MARK
+                elif ack is None:
                     mark = "**fails**"
                 elif ack.covers(finding):
                     mark = f"acknowledged by {_cell(ack.by)} ({ack.date})"
@@ -1050,6 +1118,12 @@ class Report:
                     f"| `{_cell(finding.path)}` | {_cell(finding.summary)} "
                     f"| `{finding.fingerprint()}` |"
                 )
+            if any(not finding.holds for finding in self.findings):
+                lines += [
+                    "",
+                    f"Rows marked `{REPORTED_MARK}` are listed to be read: they fail nothing "
+                    "and need no acknowledgement (ADR-0056 amendment 4).",
+                ]
             lines += [
                 "",
                 f"To accept a finding, add an `[[ack]]` with its fingerprint to `{ACKS_PATH}` "

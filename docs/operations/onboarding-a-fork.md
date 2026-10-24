@@ -137,12 +137,27 @@ with exit 2. The deterministic findings are:
 An ordinary dependency version bump from the registry is not a finding; the model sees it in the
 lockfile summary.
 
+Not every finding holds the sync (ADR-0056 amendment 4). These are reported: they stay in the
+report, marked `reported`, but fail nothing and need no acknowledgement.
+
+- An audit advisory that isn't critical. Critical means npm's severity `critical`, or a CVSS base
+  score of 9.0 or more where the audit gives one. cargo-audit gives a vector and never a score,
+  and nothing here scores a vector, so every cargo advisory is reported. The weekly audit of
+  `main` follows the same rule.
+- `npm-install-script`: CI and the tool installer install with lifecycle scripts disabled.
+- A model finding rated `low`. `medium`, `high`, and any other rating hold.
+- A watched JSON file whose two sides, parsed, differ only in the string values of keys named
+  `version`, at any depth: a manifest's release bump. Any other change to it holds, including one
+  that also adds a key, or a side that isn't JSON or has duplicate keys.
+
+Every other finding holds until it's acknowledged.
+
 It writes a report to the job summary and to one rolling pull-request comment, then exits:
 
 | Exit | Meaning | Check |
 |-|-|-|
-| 0 | No unacknowledged finding | Passes |
-| 1 | At least one unacknowledged finding | Fails |
+| 0 | No unacknowledged finding that holds | Passes |
+| 1 | At least one unacknowledged finding that holds | Fails |
 | 2 | The review could not run: no key, API error, unparseable verdict | Fails |
 
 ## The alert
@@ -171,8 +186,8 @@ script has no `notify`, so that job fails on it) and then `fork-sync protect` ag
 
 ## Acknowledge a finding
 
-A finding a person has read and accepts is acknowledged by its fingerprint, which the report
-prints. The fingerprint covers the finding's kind, its path and the exact content it is about: the
+A holding finding a person has read and accepts is acknowledged by its fingerprint, which the
+report prints. A `reported` row needs none, and an acknowledgement of one changes nothing. The fingerprint covers the finding's kind, its path and the exact content it is about: the
 changed file's blob, a binary's sha256, the lockfile and the package entry, or, for a model
 finding, the path's blob (or the whole reviewed diff for a path that did not change). An
 acknowledgement covers that content and nothing later: if the file changes again, the finding

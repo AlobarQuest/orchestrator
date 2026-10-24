@@ -210,3 +210,41 @@ every rewording failed the check under a new fingerprint, and each needed a pers
   each fork's next review raises its model findings once more, to be acknowledged with a
   severity. Each onboarded fork is re-scaffolded.
 
+
+## Amendment 4 (2026-10-24): what holds a sync
+
+**Status:** Accepted (Devon, 2026-10-24, from a census of every finding the gate had raised).
+
+The census counted 180 distinct findings across the five onboarded forks: 99 audit advisories, 43
+watched paths, 17 model notes, 12 install scripts and 9 of the other structural kinds. One led to
+action: a plugin manifest that added an unpinned `npx` MCP server, caught by a watched path and by
+a `medium` model note. Every other finding was read, acknowledged and landed. A gate that holds
+every release on findings nobody acts on trains the reader to acknowledge without reading.
+
+A finding now either holds the sync or is reported. The review decides which when it makes the
+finding, never the acknowledgements file. A reported finding stays in the review table, marked
+`reported`, fails nothing and needs no acknowledgement; the comment says so once. Exit codes keep
+their meaning: 1 is now "a holding finding no acknowledgement covers". Fingerprints don't change,
+so every existing acknowledgement still names the same finding, and an acknowledgement of a
+reported finding is harmless.
+
+- **An audit advisory holds only when it's critical:** npm's severity is `critical`, or the audit
+  gives a CVSS base score of 9.0 or more. The weekly audit of `main` follows the same rule. The
+  cost: a `high` advisory against an installed version lands without a person accepting it.
+  Nothing in the script computes a score from a CVSS vector, and cargo-audit gives only a vector
+  (or none), so **no cargo advisory holds**. rtk, the one cargo fork, has no holding audit
+  finding until a scorer exists, and a critical RustSec advisory reaches it as a reported row.
+- **An `npm-install-script` finding is reported.** CI and the tool installer run every npm
+  install with lifecycle scripts disabled, so the script never runs on the lane. The cost: a fork
+  installed some other way would run it unread.
+- **A `low` model finding is reported;** `medium` and `high` hold, and a severity outside the three
+  still counts as `high`. Acknowledgement is by content and a severity ceiling, as amendment 3
+  says. The cost: the model's own rating decides, and an instruction planted in the diff can try
+  to talk it down to `low`. The deterministic findings don't pass through the model.
+- **A watched JSON file whose only change is the value of `version` keys is reported.** Both
+  sides are parsed, every string-valued `version` key at any depth is blanked, and the results
+  compared. Anything else holds as before: a side that isn't JSON, duplicate keys, an added or
+  deleted file, a `version` key added or removed, a `version` that isn't a string, or any other
+  difference. This is the release bump of a plugin manifest. The cost: the version a manifest
+  declares can change without a person reading it, and so can anything a consumer derives from
+  it.
