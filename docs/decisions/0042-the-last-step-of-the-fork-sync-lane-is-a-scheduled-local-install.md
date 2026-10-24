@@ -148,3 +148,52 @@ needed neither.
 **Registering the MCP server is not this lane's act.** The lane keeps `<root>/bin/rea` current.
 Pointing Claude Code at it — `claude mcp add rea ~/.local/share/sds-tools/npm/bin/rea mcp` — is a
 one-time manual step, and a running session keeps the server it started until it restarts.
+
+## Amendment 2 — A fourth row: `n8nac`, a workspace CLI with published data (2026-10-23)
+
+**Status:** Accepted (Devon, 2026-10-23: replace the hand-made `npm link` of `n8nac` with a row
+built from the gated fork, taking the CLI's knowledge data from upstream's published package).
+Landed in orchestrator #493; the first pass installed n8nac 2.7.0 at `e238c7a`.
+
+- **The whole built checkout is installed.** `n8nac` is `packages/cli` of an npm workspace whose
+  sibling packages (`@n8n-as-code/*`) are workspace links in the root lockfile, so packing the CLI
+  alone would fetch the siblings from the registry, which is upstream's code. The row runs
+  `npm ci`, `npm run build:cli` and `npm ci --omit=dev` at the root, with scripts off, and installs
+  the tree (measured: 0 invalid or missing in `npm ls --omit=dev`, about 320 MB).
+- **Knowledge data from the published package, never its code.** The CLI's `skills` commands need
+  about 60 MB of JSON that upstream generates by cloning n8n, running `pnpm install` with scripts,
+  building its node packages and `require`-ing them, which can't run on this machine. The row takes
+  only `package/dist/assets/*.json` from `npm pack @n8n-as-code/skills@<the fork's version>`
+  (registry integrity), refuses links, non-JSON members, symlinked parents and collisions with the
+  build, and records package, version and integrity in the installed manifest. The skills code
+  reads those files only with `readFileSync` and `JSON.parse`.
+- **The row owns `<npm prefix>/bin/n8nac`.** The n8n-as-code skill runs `npx --yes n8nac`, and
+  `npx` resolves a command from `<npm prefix -g>/bin` (`/opt/homebrew/bin` here), downloading from
+  the registry when it's missing (measured with scratch prefixes). Removing the old link without a
+  replacement would therefore run upstream's newest `n8nac` unreviewed. The row takes over only its
+  own link or the `npm link` shape, re-reads it before writing, writes it last, probes `--version`
+  through it, and restores it first on rollback. The hardening process should remove the need for
+  this link (`docs/superpowers/plans/2026-10-21-handoff-fork-hardening.md`).
+- **Probes:** `--version` by value, `skills search` and `skills node-info`, then the version through
+  the prefix link, with `DO_NOT_TRACK`, `NO_UPDATE_NOTIFIER` and `CI` set
+  (`NpmInstall.probe_environment`) so a probe never phones home.
+
+## Amendment 3 — A plugin's revision is the folder Claude Code reads (2026-10-23)
+
+**Status:** Accepted (Devon, 2026-10-23: "yes, build it"). Landed in orchestrator #497.
+
+octo's nightly update failed to verify from 2026-10-21: the third check compared Claude Code's
+recorded `gitCommitSha` with the fork's head, and Claude Code rewrites that field only when the
+plugin's version changes. octo's fork moved twice with `.github/`-only changes, so the record
+stayed at `14edb140` while the serving folder and the head were `912871b8`, and every pass rolled
+back. Measured: `claude plugin update octo@devon-plugins -y` answered "octo is read from its
+folder … nothing to update", and `claude plugin list` reports each devon-plugins plugin "Read
+from" its serving folder.
+
+- `plugin.loaded_entry` defines the installed revision once, for both the measurement and
+  `verify`: the serving folder's `HEAD` when Claude Code's record names the version the folder
+  declares, the folder is on the tracked branch, and its working tree is clean; otherwise the
+  record's `gitCommitSha`. Read-only git calls use `--no-optional-locks` and a 30-second timeout.
+- The version, pin and cache checks are unchanged. Gitignored files in the folder are not seen.
+- Not yet fitted: `verify`'s cache check requires a populated cache directory, and n8n-as-code
+  runs with none, so a future `PluginInstall` row for it needs that check revisited first.

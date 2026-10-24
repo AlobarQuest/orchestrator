@@ -66,6 +66,13 @@ n8n-as-code's v2.6.0 sync review (AlobarQuest/n8n-as-code #15) found this, rated
 - The skill (`plugins/claude/n8n-as-code/skills/*/SKILL.md`) has the same shape: it tells an agent
   to run `npx --yes n8nac …`, which also resolves from npm rather than the fork.
 
+Because the skill runs `npx --yes n8nac`, the tool installer's `n8nac` row (ADR-0042 amendment 2)
+owns `/opt/homebrew/bin/n8nac`: `npx` resolves from `<npm prefix>/bin` and downloads upstream's
+package when that path is missing. Pinning the skill to the installed binary (or to a path)
+removes the need for that link; say so if hardening does it. A `PluginInstall` row for
+n8n-as-code also needs the installer's cache check revisited first: n8n-as-code runs with no
+cache directory (ADR-0042 amendment 3).
+
 Devon chose on 2026-10-22 to land v2.6.0 in the fork and to keep the plugin off the tool installer
 until this process pins the MCP server. So **no `PluginInstall` row for n8n-as-code may be added
 until hardening has pinned it**; the fork's `main` holds the unpinned version.
