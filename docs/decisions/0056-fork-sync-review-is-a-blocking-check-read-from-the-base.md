@@ -393,9 +393,13 @@ wrong twice: it counted publish-only scripts, and it counted any path a command 
   `prepack`, `postpack` and `prepublishOnly` run only on pack or publish, which the lane never
   does, and the tool installer's `npm pack` runs with scripts disabled. The same set decides the
   `npm-lifecycle` finding, so a change to a publish-only script no longer holds.
-- **Files a script runs, not files it tests.** A path that follows a file-test operator (`test -f`,
-  `[ -e`, and the other single-letter file tests) is checked, not run, so it is not counted; the
-  same path run elsewhere in the command still is.
+- **Files a script runs, not files it tests.** Inside a `test` or `[` command, a path that follows
+  a file-test operator (`-f`, `-e` and the other single-letter file tests) is checked, not run, so
+  it is not counted. The exemption ends at the next shell separator (`&&`, `||`, `;`, `|`) and
+  applies to no other command, because the same letters mean something else elsewhere: the first
+  version exempted them everywhere, and the re-scaffold reviews on every fork caught that `node -r
+  ./x.js` would then hide a file node loads and runs. The same path run elsewhere in the command
+  still counts.
 - **What still protects `orchestrate.sh`.** It is octo's dispatcher, which its hooks run in a
   session. claude-octopus's declaration already lists `scripts/*` as `trust_critical`, so the model
   reads every change to it, and from this amendment it is also a watched path, so any change to it
