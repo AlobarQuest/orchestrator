@@ -187,32 +187,10 @@ script has no `notify`, so that job fails on it) and then `fork-sync protect` ag
 
 ## Acknowledge a finding
 
-`fork-sync ack` does every step below after one approval:
-
-1. `fork-sync ack <fork> <pr> --reason "<why>"` changes nothing. It reads the sync pull request's
-   latest review comment, posted by `github-actions[bot]` (a comment from anyone else is ignored),
-   and lists every row still marked failing, then the `[[ack]]` entries it would add and the
-   command to record them. It refuses a pull request that isn't open, isn't the `upstream-sync`
-   branch, or whose review is of an older head, and one whose review couldn't run.
-2. Read the rows. If you accept them, run the printed command: it adds `--yes --expect
-   <fingerprints>`. It re-reads everything and refuses unless the failing fingerprints are exactly
-   the ones shown. It writes one entry per fingerprint to `.github/fork-sync-acks.toml` on a new
-   branch from `main` (two model concerns about one file share a fingerprint, so they become one
-   entry at the higher severity), and opens a pull request. `by` defaults to `devon (approved in
-   session; recorded by Claude)`; `--by` replaces it.
-3. It waits for that pull request's checks, then admin-merges it only if its diff is only the
-   acknowledgements file at the commit it pushed, `build and test` passed, and every failing row
-   of its own review is on the acknowledgements file. Otherwise it stops and leaves the pull request
-   open. After merging it dispatches `upstream-sync.yml` and prints the merge commit.
-
-It refuses a fingerprint already in the file. A model finding acknowledged below the severity a
-new review gives it fails under the same fingerprint, so raise that entry's `severity` by hand.
-
-The steps by hand:
-
 A holding finding a person has read and accepts is acknowledged by its fingerprint, which the
-report prints. A `reported` row needs none, and an acknowledgement of one changes nothing. The fingerprint covers the finding's kind, its path and the exact content it is about: the
-changed file's blob, a binary's sha256, the lockfile and the package entry, or, for a model
+report prints. A `reported` row needs none, and an acknowledgement of one changes nothing. The
+fingerprint covers the finding's kind, its path and the exact content it is about: the changed
+file's blob, a binary's sha256, the lockfile and the package entry, or, for a model
 finding, the path's blob (or the whole reviewed diff for a path that did not change). An
 acknowledgement covers that content and nothing later: if the file changes again, the finding
 returns with a new fingerprint.
@@ -237,6 +215,29 @@ severity = "medium"
 reason = "Build-time docs script the fork's build never runs; reported upstream."
 ```
 
+`fork-sync ack` does the steps by hand, below, after one approval:
+
+1. `fork-sync ack <fork> <pr> --reason "<why>"` changes nothing. It reads the sync pull request's
+   latest review comment, posted by `github-actions[bot]` (a comment from anyone else is ignored),
+   and lists every row still marked failing, then the `[[ack]]` entries it would add and the
+   command to record them. It refuses a pull request that isn't open, isn't the `upstream-sync`
+   branch, or whose review is of an older head, and one whose review couldn't run.
+2. Read the rows. If you accept them, run the printed command: it adds `--yes --expect
+   <fingerprints>`. It re-reads everything and refuses unless the failing fingerprints are exactly
+   the ones shown. It writes one entry per fingerprint to `.github/fork-sync-acks.toml` on a new
+   branch from `main` (two model concerns about one file share a fingerprint, so they become one
+   entry at the higher severity), and opens a pull request. `by` defaults to `devon (approved in
+   session; recorded by Claude)`; `--by` replaces it.
+3. It waits for that pull request's checks, then admin-merges it only if its diff is only the
+   acknowledgements file at the commit it pushed, `build and test` passed, and every failing row
+   of its own review is on the acknowledgements file. Otherwise it stops and leaves the pull request
+   open. After merging it dispatches `upstream-sync.yml` and prints the merge commit.
+
+It refuses a fingerprint already in the file. A model finding acknowledged below the severity a
+new review gives it fails under the same fingerprint, so raise that entry's `severity` by hand.
+
+The steps by hand:
+
 1. Add an entry to `.github/fork-sync-acks.toml` on the fork's `main`:
 
    ```toml
@@ -249,16 +250,16 @@ reason = "Build-time docs script the fork's build never runs; reported upstream.
 
    An audit finding's fingerprint covers only the advisory, the package and its installed
    version, so its acknowledgement names exactly what it accepts. It lasts across releases until
-   that package version changes, and a newly published advisory fails the check again. For a
-   report row `RUSTSEC-2026-0204 crossbeam-epoch 0.9.18: Invalid pointer dereference … (no CVSS;
-   fix: >=0.9.20)`:
+   that package version changes, and a newly published critical advisory fails the check again.
+   Only a critical advisory needs one. For a report row `GHSA-xvch-5gv4-984h minimist 1.2.5:
+   Prototype Pollution … (critical; fix: minimist 1.2.8)`:
 
    ```toml
    [[ack]]
    fingerprint = "<the fingerprint the report prints for that row>"
    by = "devon"
-   date = 2026-10-19
-   reason = "RUSTSEC-2026-0204: crossbeam-epoch fmt::Pointer only; upstream v1.0.1 still pins 0.9.18."
+   date = 2026-10-24
+   reason = "GHSA-xvch-5gv4-984h: minimist is a build-time dependency only; upstream still pins 1.2.5."
    ```
 
    Put the entries on a branch and open a pull request. Its `security review` runs from the

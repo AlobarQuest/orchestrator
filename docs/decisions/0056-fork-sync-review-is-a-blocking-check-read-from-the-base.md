@@ -218,8 +218,8 @@ every rewording failed the check under a new fingerprint, and each needed a pers
 The census counted 180 distinct findings across the five onboarded forks: 99 audit advisories, 43
 watched paths, 17 model notes, 12 install scripts and 9 of the other structural kinds. One led to
 action: a plugin manifest that added an unpinned `npx` MCP server, caught by a watched path and by
-a `medium` model note. Every other finding was read, acknowledged and landed. A gate that holds
-every release on findings nobody acts on trains the reader to acknowledge without reading.
+a `medium` model note. No other finding led to action. A gate that holds every release on
+findings nobody acts on trains the reader to acknowledge without reading.
 
 A finding now either holds the sync or is reported. The review decides which when it makes the
 finding, never the acknowledgements file. A reported finding stays in the review table, marked
@@ -232,8 +232,8 @@ reported finding is harmless.
   gives a CVSS base score of 9.0 or more. The weekly audit of `main` follows the same rule. The
   cost: a `high` advisory against an installed version lands without a person accepting it.
   Nothing in the script computes a score from a CVSS vector, and cargo-audit gives only a vector
-  (or none), so **no cargo advisory holds**. rtk, the one cargo fork, has no holding audit
-  finding until a scorer exists, and a critical RustSec advisory reaches it as a reported row.
+  (or none), so **no cargo advisory holds**. rtk is a cargo fork: it has no holding audit finding
+  until a scorer exists, and a critical RustSec advisory reaches it as a reported row.
 - **An `npm-install-script` finding is reported.** CI and the tool installer run every npm
   install with lifecycle scripts disabled, so the script never runs on the lane. The cost: a fork
   installed some other way would run it unread.
@@ -247,4 +247,12 @@ reported finding is harmless.
   deleted file, a `version` key added or removed, a `version` that isn't a string, or any other
   difference. This is the release bump of a plugin manifest. The cost: the version a manifest
   declares can change without a person reading it, and so can anything a consumer derives from
+  it.
+- The rules live in the vendored review script, so `fork-sync check` reports drift on every fork
+  until it's re-scaffolded, and each fork follows them only from then.
+- **`fork-sync ack` records an acceptance after one approval.** A person reads the held sync's
+  failing rows in a dry run and approves them; the tool writes the acknowledgements, admin-merges
+  that pull request only when its diff is the acknowledgements file alone, `build and test`
+  passed and its own review fails only on that file, and re-runs the sync. Decision 7's admin
+  merge is then made by the tool, on a report it reads by those rules, not by a person reading
   it.
