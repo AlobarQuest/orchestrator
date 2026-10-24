@@ -1,10 +1,11 @@
 """`fork-sync`: onboard a fork onto the upstream sync lane. Operator-run; never scheduled.
 
-`check` and `human-steps` only read, as does `ack` without `--yes`. `scaffold`, `baseline`,
+`check`, `human-steps` and `watch` only read, as does `ack` without `--yes`. `scaffold`, `baseline`,
 `protect` and `ack --yes` write to the fork with the operator's own `gh` and git credentials, and
 each refuses before writing when its precondition does not hold. `onboard` runs those steps and
 the rest of the runbook in order, resuming where the fork stands (`onboarding.py`). Exit codes:
-0 done (or every step ok); 1 something missing or refused.
+0 done (or every step ok); 1 something missing or refused. `watch`, the scheduled stuck-lane
+alarm, has its own: 0 nothing stuck, 2 GitHub unreadable, 3 a fork stuck (`watch.py`).
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from typing import Annotated
 
 import typer
 
-from fork_sync import acknowledge, bws, checks, estate, onboard, onboarding
+from fork_sync import acknowledge, bws, checks, estate, onboard, onboarding, watch
 from fork_sync.fork_sync_review import ConfigError
 from fork_sync.gh import CommandFailed, subprocess_runner
 
@@ -209,3 +210,15 @@ def ack(
         f"#{number} in #{landed.number}, "
         f"admin-merged as {landed.merge_sha}; dispatched {acknowledge.SYNC_WORKFLOW} on {fork}"
     )
+
+
+@app.command("watch")
+def watch_command() -> None:
+    """Classify every fork on the lane as ok / waiting_on_person / stuck. Read-only, one pass.
+
+    Exits 0 when nothing is stuck, 3 when a fork is stuck, 2 when GitHub could not be read."""
+    result = watch.watch(run_command)
+    for line in result.lines():
+        typer.echo(line)
+    if code := result.exit_code():
+        raise typer.Exit(code)
