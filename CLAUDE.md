@@ -424,6 +424,10 @@ Placement rule: global CLAUDE.md §7.
 - `sds_deadman_finish` pings success for 0 and for the lane's declared `--finding` code; only other
   codes ping `/fail`, so the check answers liveness, never whether something was found. Detail:
   `docs/operations/local-development.md`.
+- `sds-fork-sync-watch` is an outcome alarm: `run-fork-sync-watch.sh` pings `/fail`, with the
+  report, on every non-zero exit, stuck included, and never arms the dead-man switch. A launcher
+  that doesn't arm it must not contain the arming function's name, which `test_sds_deadman.py`
+  keys on. Detail: `docs/operations/onboarding-a-fork.md`, "The stuck-lane alarm".
 - The scheduled lanes run the main tree's working copy and `.venv` by absolute path: never check out
   a branch, edit, or run uv there while a pass may fire; edit in a worktree. Detail:
   `docs/operations/local-development.md`.

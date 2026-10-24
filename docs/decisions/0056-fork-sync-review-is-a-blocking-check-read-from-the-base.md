@@ -332,3 +332,49 @@ change-manager grant, generated rather than hand-written.
   make. Both are bounded by exact-content and required-check conditions, and every other judgement
   (the review, the App install) is still a person's.
 
+## Amendment 6 (2026-10-24): a stuck-lane alarm
+
+**Context.** Devon asked on 2026-10-24 for the lane to say when it stops moving. It failed
+silently three times on 2026-10-21/22, each found only because a person looked:
+
+1. A sync pull request had an add/add merge conflict, so GitHub ran no `pull_request` workflows
+   and no required check ever reported (fixed in amendment 2 by giving the sync commit `main` as
+   a second parent).
+2. The production orchestrator's change-manager bearer was stale, so the inert landing lane held
+   every passing pull request `inert_landing_policy_source_unreadable` for a day.
+3. A runaway `gh` loop exhausted the 5,000-an-hour GitHub limit, and every lane read 403.
+
+The lanes' dead-man pings prove only that a pass ran: a pass that runs and holds everything looks
+healthy. A held review already alerts through the fork's issue (amendment 1); nothing else did.
+
+**Decision.**
+
+- **A separate, read-only process.** `fork-sync watch` (`src/fork_sync/watch.py`) runs hourly at
+  :55 from its own LaunchAgent, beside the lanes rather than inside one, and changes nothing. It
+  classifies each fork as `ok`, `waiting_on_person` (the review holds and its alert issue is
+  open) or `stuck` with reasons: `no_checks` (60 minutes), `not_landing` (6 hours after both
+  checks passed), `review_unavailable`, `sync_failing` (a failed run, or none started in 36
+  hours) and `not_syncing` (a newer matching release published 36 hours ago with no sync open).
+  Two reasons were added beyond the request because each is a hold nothing alerts on:
+  `held_without_alert` (the review holds but `notify` never opened the issue) and
+  `build_failing` (`notify` follows only the review). The thresholds are constants, each with its
+  reason; the meanings and first checks are in `docs/operations/onboarding-a-fork.md`.
+- **The forks are the registered copies of the sync App's key** in factory-runner's
+  `.cred-consumers.toml`, confirmed by each fork's declaration. Change-manager's inert population
+  was the other candidate; it would make the watcher a new reader of a rotated bearer, through a
+  second BWS identity, to learn a list GitHub already holds.
+- **An outcome alarm, not a dead-man switch.** The check `sds-fork-sync-watch` gets `/fail`, with
+  the report as its body, on every non-zero exit: 3 stuck (outranking the rest), 2 unreadable
+  (any GitHub read failing, a rate limit included, ends the pass; content one fork serves badly
+  marks only that fork), 1 the tool failed. The dead-man helper's arming is not
+  used, because it pings success on a lane's finding code; only its lookup of the ping URL by
+  name is. The success ping on exit 0 makes the check a liveness signal too.
+- **Bounded reads.** At most eight GitHub reads per fork and one for the registry, none paged,
+  and the count is printed with every pass.
+
+**Consequences.** A sync that stops moving pages within an hour of crossing its threshold
+instead of waiting for a person to look. Healthchecks alerts on a change of state, so while one
+fork stays stuck the check stays down, and a second fork becoming stuck raises no new alert: it
+is in the report the latest `/fail` carries. That is the cost of one check for the lane, accepted
+because each reason names something only a person can clear and the report lists them all.
+

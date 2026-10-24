@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Template for the fork-sync stuck-lane watcher's LaunchAgent (ADR-0056 amendment 6). Install
+     with scripts/install-fork-sync-watch-launchd.sh, which substitutes __REPO_ROOT__ and __HOME__
+     and writes ~/Library/LaunchAgents/com.devon.fork-sync-watch.plist.
+
+     No secrets live here: the pass reads GitHub with the operator's `gh` login, and the wrapper
+     reads the Healthchecks API key from BWS only to find the ping URL.
+
+     HOURLY AT :55 LOCAL. No other agent on this machine starts at :55 (the lanes use :05, :10,
+     :15, :20, :30, :35 and :50; other jobs :00 and :45). It sits twenty minutes after the inert
+     landing lane's :35, so a sync pull request that lane could land has had the pass to land it
+     before this one reads it. Hourly because the shortest threshold it applies is an hour.
+
+     READ-ONLY. It changes nothing on GitHub or anywhere else; its whole output is the report in
+     the log and the Healthchecks ping. RunAtLoad is false, as for every lane. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.devon.fork-sync-watch</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__REPO_ROOT__/scripts/run-fork-sync-watch.sh</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <dict><key>Minute</key><integer>55</integer></dict>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>__HOME__</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/fork-sync-watch.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/fork-sync-watch.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>

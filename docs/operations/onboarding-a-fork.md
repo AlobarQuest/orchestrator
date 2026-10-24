@@ -17,6 +17,7 @@ The `fork-sync` console script automates every step it can and reports the rest:
 | `fork-sync protect <fork>` | repository settings | Applies the landing settings and branch protection on `main`. |
 | `fork-sync ack <fork> <pr> --reason <text> --by <who>` | nothing; with `--yes`, the acknowledgements on `main` | Lists a held sync's failing rows and the entries it would add or raise. With `--yes --expect <fingerprints>` it records them, admin-merges the change and re-runs the sync. |
 | `fork-sync onboard <fork> --config <file>` | everything the steps below write | Runs the whole procedure, resuming where the fork stands, and stops at the first step that needs a person (see "Procedure"). |
+| `fork-sync watch` | nothing | Classifies every fork on the lane as `ok`, `waiting_on_person` or `stuck`, scheduled hourly (see "The stuck-lane alarm"). |
 
 Each writing command refuses before it writes when its precondition does not hold.
 
@@ -185,12 +186,69 @@ in the report, because their text comes from upstream's diff.
 
 A failure to open or comment fails `notify`. A failure to close only warns: a red job would hold a
 pull request whose review passed, with no alert to say so. The landing lane doesn't alert; its
-holds are in `~/Library/Logs/inert-landing.log` only.
+holds are in `~/Library/Logs/inert-landing.log`, and the stuck-lane alarm (the following section)
+reports a sync it has held for six hours.
 
 The alert needs issues turned on, and a fork starts with them off. `fork-sync protect` turns them
 on and `fork-sync check` reports a fork without them. A fork onboarded before the alert existed
 needs `fork-sync scaffold` (an admin merge: the pull request is judged by the old gate, whose
 script has no `notify`, so that job fails on it) and then `fork-sync protect` again.
+
+## The stuck-lane alarm
+
+The lanes' dead-man pings prove only that a pass ran, and a pass that runs and holds everything
+looks healthy to them (ADR-0056 amendment 6). `fork-sync watch` reads each fork's lane once an
+hour and says whether it is moving. It only reads, and it runs as its own LaunchAgent
+(`com.devon.fork-sync-watch`, hourly at :55 local, after the inert landing lane's :35), installed
+with `scripts/install-fork-sync-watch-launchd.sh` from the main tree. The log is
+`~/Library/Logs/fork-sync-watch.log`.
+
+**Which forks.** Every repository registered as a `gh-actions-secret` consumer named
+`APP_PRIVATE_KEY` under `fork-sync-app-private-key` in factory-runner's `.cred-consumers.toml` on
+`main` (onboarding step 5 writes it), confirmed by `.github/fork-sync.toml` on its own `main`. A
+registered repository without the declaration is printed `not_on_lane` and isn't classified: it
+is mid-onboarding. A registered repository that isn't visible at all (renamed, deleted, or out of
+the login's reach) is printed `unreadable`. The source needs only the operator's `gh` login.
+
+**What it prints.** One line per fork, `ok`, `waiting_on_person` or `stuck` with its reasons, then
+a summary with the number of GitHub API calls the pass made. Each fork costs at most eight reads
+and nothing pages, so a pass is bounded by `1 + 8 x forks` calls.
+
+| Exit | Meaning | Healthchecks |
+|-|-|-|
+| 0 | Nothing is stuck | success |
+| 1 | The tool failed | `/fail` |
+| 2 | Unreadable: a GitHub read failed (a 403 rate limit among them), or a fork serves something the watcher can't use (a declaration or manifest that doesn't parse) | `/fail` |
+| 3 | A fork is stuck, whatever else the pass found | `/fail` |
+
+The codes are the lander group's, as `run-inert-landing.sh` uses them. The check
+`sds-fork-sync-watch` is an outcome alarm: unlike a lane's dead-man check, a finding pings
+`/fail`, with the report as the ping's body (readable on the check's page). The launcher pings
+`/start` first and success only on exit 0, so a watcher that stops is reported too, after the
+grace. The installer creates the check (`unique` by name, schedule `55 * * * *` in
+`America/New_York`, grace 1,800 seconds, every channel). The first GitHub read that fails ends the pass,
+so a rate-limited API is not read again; content one fork serves badly makes only that fork
+`unreadable`, and the pass goes on.
+
+**`waiting_on_person`** is a sync whose `security review` failed while the fork's alert issue
+("Fork-sync: a security review is holding an upstream sync") is open and was raised or commented
+on since the sync's head arrived (`notify` comments once per new head, so an issue left open by an
+older sync doesn't count). It isn't stuck: the issue already alerts. Do what the issue says.
+
+**`stuck`**, with each reason that applies:
+
+| Reason | When | First thing to check |
+|-|-|-|
+| `no_checks` | An open sync pull request has no completed `ci.yml` run at its head 60 minutes after the head was pushed or the pull request opened, whichever is later. The head's committer date stands for the push: the sync builds that commit just before pushing it. A run starts within seconds and builds in minutes, so an hour means GitHub ran nothing, as for a conflicted pull request. | The pull request's mergeability (a conflict runs no `pull_request` workflow), then the Actions tab for a run stuck queued. |
+| `not_landing` | Both required checks passed on the latest `ci.yml` run at the head, and the pull request is still open six hours after they completed: six inert landing passes have had it. | `~/Library/Logs/inert-landing.log` for the pull request's hold reason; a policy read failure (`inert_landing_policy_source_unreadable`) means the production orchestrator's change-manager bearer. |
+| `review_unavailable` | `security review` didn't reach a verdict (its comment says the review couldn't run, there is no comment of this head, or the job was cancelled or timed out) and no alert issue is open. | The job log; re-run the failed `security review` job. |
+| `held_without_alert` | `security review` holds findings but no alert issue is open, so `notify` failed to raise it. | The `notify` job's log; then read the review comment as if the alert had opened. |
+| `build_failing` | `build and test` didn't pass on the latest run at the head. Nothing alerts on this, since `notify` follows the review only. | The job log; upstream's release may need a different build or test command in the declaration. |
+| `sync_failing` | The latest `upstream-sync.yml` run concluded `failure`, `timed_out` or `startup_failure`, or no run started in 36 hours (one missed day; also GitHub disabling an idle repository's schedules). | The run's log; for silence, whether the workflow is disabled on the Actions tab. |
+| `not_syncing` | No sync pull request is open, yet upstream published a release matching `release_tag_pattern`, newer than `main`'s manifest version, more than 36 hours ago. The review script's own release selection decides (`next_release`), so a prerelease or older tag never counts. | The latest `upstream-sync.yml` run, then whether the pull request was closed by hand. |
+
+Reasons are reported together, and an open alert issue never hides one. The thresholds are module
+constants in `src/fork_sync/watch.py`, each with its reason.
 
 ## Acknowledge a finding
 
