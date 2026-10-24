@@ -16,6 +16,7 @@ The `fork-sync` console script automates every step it can and reports the rest:
 | `fork-sync scaffold <fork> --config <file>` | a branch and pull request | Commits `.github/fork-sync.toml`, an empty `.github/fork-sync-acks.toml`, and the rendered workflows and review script. |
 | `fork-sync protect <fork>` | repository settings | Applies the landing settings and branch protection on `main`. |
 | `fork-sync ack <fork> <pr> --reason <text> --by <who>` | nothing; with `--yes`, the acknowledgements on `main` | Lists a held sync's failing rows and the entries it would add or raise. With `--yes --expect <fingerprints>` it records them, admin-merges the change and re-runs the sync. |
+| `fork-sync onboard <fork> --config <file>` | everything the steps below write | Runs the whole procedure, resuming where the fork stands, and stops at the first step that needs a person (see "Procedure"). |
 
 Each writing command refuses before it writes when its precondition does not hold.
 
@@ -295,67 +296,126 @@ carry over.
 
 ## Procedure
 
+Onboarding is one command, rerun until it finishes (ADR-0056 amendment 5):
+
+```
+fork-sync onboard <fork> --config <declaration.toml> [--baseline-tag <tag>] [--discard-fork-commits] [--reset-secrets]
+```
+
 Work from the orchestrator's main tree venv (`~/Projects/orchestrator/.venv/bin/fork-sync`) or a
-worktree. Run `fork-sync check <fork>` after any step to see where you are.
+worktree. Each run reads where the fork stands, does the next steps it can, and prints one line
+per step: `done` (nothing to do), `did now`, `waiting` (something did not finish within 45
+minutes; rerun to resume) or `needs you`, followed by what to do. It stops at the first step that
+is waiting or needs a person, and exits 0 only when every step is done. Rerunning continues from
+where it stopped; a step whose check says done changes nothing. Each step below gives its reason
+and the manual fallback, which is what to do when the step refuses. `fork-sync check <fork>`
+reports where the fork stands at any time.
+
+Secret values come from BWS through the broad machine account's token, read from the login
+Keychain item `Claude` / `BWS_ACCESS_TOKEN_VPS_BACKUP` (`BWS_ACCESS_TOKEN_BROAD` overrides it),
+and go to `bws` in its environment and to `gh secret set` on stdin: no value is printed or passed
+as an argument.
 
 1. **Decide the fork belongs on the lane.** The lane is for a fork you take upstream's releases
-   into wholesale, where a landing on `main` changes nothing already serving.
-2. **Do the human steps.** Run `fork-sync human-steps <fork>`. A person installs the App
-   `fork-secure-upstream-sync` on the fork (Only select repositories) and confirms BWS holds the
-   App key.
-3. **Baseline the fork**, if upstream's workflows are on its `main`. Pick the tag the fork's
-   manifest version matches, then run `fork-sync baseline <fork> --tag <tag> --confirm`. It
-   removes upstream's whole `.github/`, so nothing upstream planted there (an acknowledgements
-   file, a script) becomes the fork's. It refuses, and prints the commits, if `main` has commits
-   no upstream branch or tag contains. Read them; if the fork is to drop them (for example, local
-   hardening the lane doesn't carry), re-run with `--discard-fork-commits`. It force-pushes
-   `main`, so a fork whose `main` is already protected must have that protection removed first
-   (save it with `gh api repos/<fork>/branches/main/protection`); step 8 applies the lane's own.
-   If `tool-installer` already serves the fork as a plugin, its local copy
-   (`~/Developer/devon-plugins/<tool>`) still holds the old history, and every nightly pass
-   fails `git pull --ff-only` until it's reset: tag its `HEAD`, then
-   `git reset --hard origin/main` there. The copy must be clean and on `main`.
-4. **Scaffold.** Write the declaration, then run `fork-sync scaffold <fork> --config <file>`. It
-   prints the pull request number. If the old lane left files `scaffold` does not render (for rtk,
-   `.github/scripts/ai_security_review.py`), push a commit removing them to the
-   `fork-sync-scaffold` branch. If the declaration sets `generate_lockfile`, `main` has no lockfile
-   yet, so `build and test` can't install. In a clone of the `fork-sync-scaffold` branch, fetch
-   the baseline tag from upstream (`git fetch --no-tags <upstream-url>
-   "refs/tags/<tag>:refs/tags/<tag>"`), run `python3 .github/scripts/fork_sync_review.py lock
-   <tag>`, then commit and push the staged lockfile.
-5. **Set the secrets** `APP_ID`, `APP_PRIVATE_KEY` and `ANTHROPIC_API_KEY` from BWS, in-process,
-   with the value on stdin and no `--body` flag (`gh secret set NAME --repo <fork>`). Never pass
-   `--body -`, which stores a literal dash. Then register the fork's copies in factory-runner's
-   `.cred-consumers.toml`: add a `gh-actions-secret` consumer (`repo = "AlobarQuest/<fork>"`)
-   named `APP_PRIVATE_KEY` to the `fork-sync-app-private-key` entry and one named
-   `ANTHROPIC_API_KEY` to the `anthropic-api-key` entry. Every fork adds to both. `APP_ID` is the
-   App's id, not a credential, so it is not registered.
+   into wholesale, where a landing on `main` changes nothing already serving. This is yours;
+   `onboard` assumes it.
+2. **The App is installed** (a person's). Only a person can install the App
+   `fork-secure-upstream-sync` on the fork (Only select repositories). `onboard` asks GitHub
+   whether its installation covers the fork, as the App: it signs a short-lived JWT with the
+   App's key from BWS (`998b817e-…`) and reads `GET /repos/<fork>/installation`. Until it does,
+   it prints the install link and the BWS confirmation `fork-sync human-steps` prints, and
+   stops.
+3. **Baseline the fork**, if upstream's workflows are on its `main` and the declaration is not.
+   Pass `--baseline-tag <tag>`, the tag the fork's manifest version matches; without it, the step
+   stops and asks for one. It runs `fork-sync baseline`, which removes upstream's whole
+   `.github/`, so nothing upstream planted there (an acknowledgements file, a script) becomes the
+   fork's. It refuses, and prints the commits, if `main` has commits no upstream branch or tag
+   contains. Read them; if the fork is to drop them (for example, local hardening the lane doesn't
+   carry), rerun with `--discard-fork-commits`. It force-pushes `main`, so `onboard` stops if
+   `main` is protected: save the protection with `gh api repos/<fork>/branches/main/protection`,
+   remove it, and rerun; step 8 applies the lane's own. A fork whose `main` already carries the
+   declaration is never baselined. If `tool-installer` already serves the fork as a plugin, its
+   local copy (`~/Developer/devon-plugins/<tool>`) still holds the old history, and every nightly
+   pass fails `git pull --ff-only` until it's reset: tag its `HEAD`, then `git reset --hard
+   origin/main` there. The copy must be clean and on `main`. Manual fallback: `fork-sync baseline
+   <fork> --tag <tag> --confirm`.
+4. **Scaffold.** Write the declaration and pass it as `--config`. `onboard` runs `fork-sync
+   scaffold` unless a `fork-sync-scaffold` pull request is open. If the declaration sets
+   `generate_lockfile`, `main` has no lockfile yet, so `build and test` can't install: when the
+   scaffold branch has none, `onboard` clones it, checks that its review script is the one
+   `scaffold` renders, fetches the baseline tag from upstream, runs that script's `lock <tag>`,
+   and commits and pushes the staged lockfile. It needs `--baseline-tag` for this and stops
+   without it. Manual fallback: `fork-sync scaffold <fork> --config <file>`; for the lockfile, in a
+   clone of the `fork-sync-scaffold` branch, `git fetch --no-tags <upstream-url>
+   "refs/tags/<tag>:refs/tags/<tag>"`, `python3 .github/scripts/fork_sync_review.py lock <tag>`,
+   then commit and push. If the old lane left files `scaffold` does not render (for rtk,
+   `.github/scripts/ai_security_review.py`), push a commit removing them to the scaffold branch;
+   step 6 then refuses the merge, which is yours to make.
+5. **Set the secrets and register them.** `onboard` sets `APP_ID` (the App's id, 4094707),
+   `APP_PRIVATE_KEY` (BWS `998b817e-…`, which holds base64 of the PEM; each Actions copy holds the
+   decoded PEM, so it is decoded in-process) and `ANTHROPIC_API_KEY` (BWS `b74bf8b3-…`) with `gh
+   secret set NAME --repo <fork>` and the value on stdin, never `--body` (`--body -` stores a
+   literal dash). It reads every value before setting any, and skips a secret the fork already
+   has unless `--reset-secrets`. Then it registers the fork's copies in factory-runner's
+   `.cred-consumers.toml`: a `gh-actions-secret` consumer (`repo = "<fork>"`) named
+   `APP_PRIVATE_KEY` in the `fork-sync-app-private-key` entry and one named `ANTHROPIC_API_KEY` in
+   the `anthropic-api-key` entry. Every fork adds to both. `APP_ID` is not a credential, so it is
+   not registered. Unless both consumers are already there, it opens a pull request adding exactly
+   them (the result must parse to the old registry plus those two), waits for every check
+   factory-runner's `main` requires to pass at the commit it pushed, and squash-merges it; a
+   failed check leaves it open and stops. It refuses unless the fork has committed this
+   declaration (on `main` or its scaffold branch) and the App is installed on it. The census
+   comments above each entry are not edited. Manual fallback: the same edit by hand.
 6. **Merge the scaffold pull request** once `build and test` passes on it. Its `security review`
    fails by design: the review runs from the base, and the base has no review script yet. If
    `main` is already protected (rtk), `security review` is not yet a required check, so the
-   failure doesn't block the merge.
-7. **Run the first sync:** `gh workflow run upstream-sync.yml --repo <fork>`. Both checks now run
-   on the sync pull request, from the scaffolded `main`.
-8. **Protect `main`.** Run `fork-sync protect <fork>`. It refuses until an open pull request has
-   reported both `build and test` and `security review` (read from the Actions jobs API), which the
-   sync pull request from step 7 has. It then allows merge commits, sets
-   `squash_merge_commit_message` to `COMMIT_MESSAGES`, deletes branches on merge, turns issues on
-   for the alert, and requires both
-   checks from the GitHub Actions app (`app_id` 15368, so no other status poster can satisfy
-   them) with `strict: false`, no required reviews and no admin enforcement.
-9. **Review the sync pull request.** Read the review comment. Acknowledge what you accept; do not
-   acknowledge what you have not read.
-10. **Release the landing policy.** Release a change-manager policy listing the fork in
-    `inert_landing.repositories` and `fork-secure-upstream-sync[bot]` in both `permitted_authors`
-    and `non_ecosystem_authors` (ADR-0041).
-11. **Record App Brain's landing** with `record_default_branch_landing(github_repo=<fork>,
-    landing="inert", evidence=...)`, naming the workflows you read.
+   failure doesn't block the merge. `onboard` admin-merges it only when its diff is exactly the
+   rendered lane files, the declaration and (when `main` has none) the empty acknowledgements,
+   plus the lockfile when the declaration generates one, each added or changed, and the rendered
+   files and the declaration carry exactly the bytes `scaffold` writes. Anything else stops with
+   the reason: read the pull request and merge it yourself with `gh pr merge <number> --repo
+   <fork> --merge --admin`.
+7. **Run the first sync.** `onboard` dispatches `upstream-sync.yml` when it has never run, and
+   waits for the run. Both checks then run on the sync pull request, from the scaffolded `main`.
+   A sync run that failed stops with its link: fix the cause, run `gh workflow run
+   upstream-sync.yml --repo <fork>`, and rerun.
+8. **Protect `main`.** `onboard` runs `fork-sync protect` once the sync pull request's CI run has
+   reported both checks. `protect` refuses until an open pull request has reported both `build
+   and test` and `security review` (read from the Actions jobs API). It then allows merge
+   commits, sets `squash_merge_commit_message` to `COMMIT_MESSAGES`, deletes branches on merge,
+   turns issues on for the alert, and requires both checks from the GitHub Actions app (`app_id`
+   15368, so no other status poster can satisfy them) with `strict: false`, no required reviews
+   and no admin enforcement. If the first sync opened no pull request (the fork is already at
+   upstream's newest release), nothing can show the checks reporting, and the step stops until a
+   later sync opens one.
+9. **Review the sync pull request** (a person's). If its review holds, `onboard` stops and prints
+   the `fork-sync ack <fork> <pr> --by <who> --reason <why>` dry run. Run it, read the rows, and
+   acknowledge what you accept; do not acknowledge what you have not read. `onboard` never
+   approves a finding. A review that couldn't run stops with "re-run its `security review` job".
+10. **Release the landing policy.** The fork must be in change-manager's
+    `inert_landing.repositories`, with `fork-secure-upstream-sync[bot]` in both `permitted_authors`
+    and `non_ecosystem_authors` (ADR-0041). Each fork stays an explicit, versioned grant. When the
+    served policy lacks the fork, `onboard` clones `AlobarQuest/change-manager`, runs `uv run
+    python scripts/release_inert_repository.py --repository <fork, lower-cased> --reason <text>`
+    there, which writes the next version (exit 0, printing `<N+1> <repository>`; exit 2 when the
+    current version already has it, which counts as done once change-manager serves it; exit 1 is
+    a refusal). It commits that, opens a pull request, waits for the checks change-manager's
+    `main` requires, squash-merges it, and waits until `https://change-mgr.alobar.net/api/health`
+    reports the merge commit as its `revision` and the policy serves version N+1 with the fork. It
+    refuses unless the declaration is committed and the App installed. A listed fork missing an
+    author stops: that is a person's edit. The policy is read with `FORK_SYNC_CHANGE_MANAGER_TOKEN`
+    when set, otherwise with the read bearer from BWS (`314f276d-…`), as the inert landing lane
+    reads it. Merging redeploys change-manager.
+11. **Record App Brain's landing** (an agent's). The write needs App Brain's write path, which has
+    no credential outside an agent session. `onboard` prints the exact
+    `record_default_branch_landing(github_repo=<fork>, landing="inert", evidence=...)` call, with
+    evidence naming `main`'s workflows, for an agent session to make. It counts the step done
+    only when App Brain answers `inert`, which it can read only with `FORK_SYNC_APP_BRAIN_URL` and
+    `FORK_SYNC_APP_BRAIN_KEY` (App Brain's read key) set.
 12. **Add the installer row** in `src/tool_installer/tools.py` if the fork is a tool this machine
-    installs.
-13. **Confirm.** `fork-sync check <fork>` reports no `missing` step. To have it verify steps 10 and
-    11 rather than report them as `human`, set `FORK_SYNC_CHANGE_MANAGER_TOKEN` (a change-manager
-    read bearer) and `FORK_SYNC_APP_BRAIN_URL` with `FORK_SYNC_APP_BRAIN_KEY` (App Brain's read
-    key).
+    installs. That is a separate change per tool; `onboard` says whether a row exists.
+13. **Confirm.** `onboard` ends by running `fork-sync check <fork>` and printing its summary; the
+    run is done when nothing is `missing`.
 
 ## Limits
 

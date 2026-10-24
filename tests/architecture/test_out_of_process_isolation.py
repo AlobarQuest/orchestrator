@@ -370,10 +370,16 @@ TABLE: dict[str, Row] = {
     # `no_sibling_lanes`. `urllib` is `urllib.request` in `fork_sync_review.py`, the script it
     # copies into each fork: that file runs on the fork's Actions runner, never here. `time` is
     # `fork-sync ack`'s pause between polls of its pull request's checks, and `math` is the
-    # review script's CVSS roundup.
+    # review script's CVSS roundup. `fork-sync onboard` (ADR-0056 amendment 5) adds five:
+    # `jwt` and `cryptography` sign the one JWT it asks GitHub with, as the sync App, whether the
+    # App is installed on a fork; `base64` and `binascii` decode that App's PEM from its BWS
+    # keeper; and `shutil` finds the `bws` and `uv` executables, which launchd's PATH may miss.
     "fork_sync": _row(
         "__future__",
+        "base64",
+        "binascii",
         "collections",
+        "cryptography",
         "dataclasses",
         "datetime",
         "estate_clients",
@@ -382,12 +388,14 @@ TABLE: dict[str, Row] = {
         "httpx",
         "importlib",
         "json",
+        "jwt",
         "math",
         "os",
         "pathlib",
         "re",
         "revision_watcher",
         "shlex",
+        "shutil",
         "subprocess",
         "sys",
         "tempfile",

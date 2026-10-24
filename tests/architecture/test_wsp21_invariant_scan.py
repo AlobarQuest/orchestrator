@@ -172,6 +172,21 @@ MERGE_EXEMPT_PATHS: set[Path] = {
     # pushed. The repository is a marketplace manifest for plugins on Devon's own machine; nothing
     # already serving changes, and the change window governs when it may happen at all.
     Path("src/tool_installer/plugin.py"),
+    # ADR-0056 amendment 5, the SIXTH entry: `fork-sync onboard`, an operator-run command that is
+    # never scheduled, merges three pull requests it opened itself while onboarding one fork, on
+    # Devon's 2026-10-24 decision that onboarding is one command. No justification above carries
+    # over: there is no work unit, no change record and no policy version, and one of the three
+    # repositories redeploys on landing. What bounds each merge is its content and its checks.
+    # The fork's scaffold pull request is admin-merged (ADR-0056 decision 7) only when its diff is
+    # exactly the files `fork-sync scaffold` renders, with the bytes it renders, after `build and
+    # test` passed. factory-runner's registry pull request is squash-merged only when it adds
+    # exactly the fork's two Actions-secret consumers and parses as the old registry plus them,
+    # and change-manager's only when it is the release script's next policy version naming the
+    # fork; each only after every check that repository's `main` requires passed at the commit
+    # the command pushed, and each refuses unless the fork has committed its declaration and has
+    # the App installed. The first review's findings are never accepted here: that stays a
+    # person's, through `fork-sync ack`.
+    Path("src/fork_sync/onboarding.py"),
 }
 
 
@@ -556,8 +571,10 @@ OUTBOUND_ALLOWLIST = {
     Path("src/revision_watcher/estate.py"),
     Path("src/revision_watcher/github.py"),
     Path("src/revision_watcher/orchestrator_client.py"),
-    # The fork onboarding tool (docs/operations/onboarding-a-fork.md). `estate.py` reads
-    # change-manager's landing policy, one GET on one path through the confined transport.
+    # The fork onboarding tool (docs/operations/onboarding-a-fork.md). `estate.py` makes four
+    # reads, each one GET on one path through the confined transport: change-manager's landing
+    # policy and its health route's revision, App Brain's landing (through `revision_watcher`),
+    # and, signed as the sync App, GitHub's answer to whether that App is installed on a fork.
     # `fork_sync_review.py` is the script `fork-sync scaffold` copies into each fork: it calls the
     # Anthropic API and edits one pull-request comment, on the fork's Actions runner, never from
     # this machine or the orchestrator.

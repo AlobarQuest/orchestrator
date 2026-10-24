@@ -549,9 +549,11 @@ Placement rule: global CLAUDE.md §7.
 - A fork's `security review` reads its script, declaration and acknowledgements from the pull
   request's BASE, so a change to the gate takes effect only on `main`, and a pull request that
   changes the gate is judged by the old one. Such a pull request lands by an admin merge after a
-  person reads its report (`main` is protected without admin enforcement for this), or, for an
+  person reads its report (`main` is protected without admin enforcement for this); for an
   acknowledgements-only change, by `fork-sync ack`, which merges only when the diff is that file
-  alone and its review fails only on it; never weaken the protection to land it. Detail:
+  alone and its review fails only on it; and for the scaffold, by `fork-sync onboard`, which
+  merges only when the diff is exactly the rendered files with their rendered bytes after `build
+  and test` passed. Never weaken the protection to land it. Detail:
   `docs/operations/onboarding-a-fork.md`.
 - A fork's `ci.yml` must trigger only on `pull_request` and `push`: a manual or scheduled run on a
   pull request's branch reports the required jobs as skipped, which branch protection counts as

@@ -47,7 +47,7 @@ LandingReader = Callable[[str], str]
 """Returns App Brain's landing for a repository."""
 
 
-def _repository_steps(repo: dict[str, Any], upstream: str | None) -> list[Step]:
+def repository_steps(repo: dict[str, Any], upstream: str | None) -> list[Step]:
     parent = (repo.get("parent") or {}).get("full_name", "")
     steps = [
         _step(
@@ -95,7 +95,7 @@ def _workflow_steps(run: Runner, fork: str, upstream: str) -> list[Step]:
     ]
 
 
-def _protection_step(run: Runner, fork: str) -> Step:
+def protection_step(run: Runner, fork: str) -> Step:
     protection = gh_api(run, f"repos/{fork}/branches/main/protection")
     if protection is None:
         return Step("branch protection on main", MISSING, "main is not protected")
@@ -135,7 +135,7 @@ def _secrets_and_run_steps(run: Runner, fork: str) -> list[Step]:
     ]
 
 
-def _policy_step(fork: str, read_policy: PolicyReader | None) -> Step:
+def policy_step(fork: str, read_policy: PolicyReader | None) -> Step:
     name = "change-manager inert landing policy"
     if read_policy is None:
         return Step(name, HUMAN, "not checked: set FORK_SYNC_CHANGE_MANAGER_TOKEN")
@@ -152,7 +152,7 @@ def _policy_step(fork: str, read_policy: PolicyReader | None) -> Step:
     return _step(name, not problems, "; ".join(problems))
 
 
-def _landing_step(fork: str, read_landing: LandingReader | None) -> Step:
+def landing_step(fork: str, read_landing: LandingReader | None) -> Step:
     name = "App Brain landing record"
     if read_landing is None:
         return Step(
@@ -165,7 +165,7 @@ def _landing_step(fork: str, read_landing: LandingReader | None) -> Step:
     return _step(name, answer == "inert", f"App Brain answers {answer}")
 
 
-def _tool_step(fork: str) -> Step:
+def tool_step(fork: str) -> Step:
     rows = [tool.name for tool in TOOLS if tool.repository.lower() == fork.lower()]
     if rows:
         return Step("tool_installer row", OK, ", ".join(rows))
@@ -192,14 +192,14 @@ def check(
         except ConfigError as error:
             steps = [Step(f"{CONFIG_PATH} on main", MISSING, f"invalid: {error}")]
     upstream = config.upstream if config else (repo.get("parent") or {}).get("full_name")
-    steps += _repository_steps(repo, config.upstream if config else None)
+    steps += repository_steps(repo, config.upstream if config else None)
     if config is not None:
         steps += _file_steps(run, fork, config)
     if upstream:
         steps += _workflow_steps(run, fork, upstream)
-    steps.append(_protection_step(run, fork))
+    steps.append(protection_step(run, fork))
     steps += _secrets_and_run_steps(run, fork)
-    steps.append(_policy_step(fork, read_policy))
-    steps.append(_landing_step(fork, read_landing))
-    steps.append(_tool_step(fork))
+    steps.append(policy_step(fork, read_policy))
+    steps.append(landing_step(fork, read_landing))
+    steps.append(tool_step(fork))
     return steps
