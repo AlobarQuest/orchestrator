@@ -1242,18 +1242,6 @@ def test_advisory_holding_keeps_every_fingerprint() -> None:
     assert len(npm) == 10
 
 
-def test_a_cargo_advisory_is_reported_because_nothing_scores_its_vector() -> None:
-    """cargo-audit gives a CVSS vector or none, never a score, and this script computes none, so
-    even a 9.8 vector is reported."""
-    report = json.loads(CARGO_REPORT)
-    report["vulnerabilities"]["list"][1]["advisory"]["cvss"] = (
-        "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
-    )
-    findings = review.advisory_findings("cargo", 1, json.dumps(report).encode(), b"", "Cargo.lock")
-    assert findings and not any(f.holds for f in findings)
-    assert Report("h", findings).exit_code({}) == 0
-
-
 def test_an_install_script_is_reported_and_the_other_lock_findings_hold() -> None:
     old = _npm_lock(**{"node_modules/retagged": _registry("retagged", "2.0.0", "sha512-old")})
     new = _npm_lock(
@@ -1381,3 +1369,99 @@ def test_reported_findings_are_marked_and_fail_nothing() -> None:
     acks = {reported.fingerprint(): Ack("devon", "d", "read", "low")}
     assert report.failing(acks) == [held] and "| reported | ai (low) |" in report.markdown(acks)
     assert "fail nothing" not in Report("h", [held]).markdown({})
+
+
+@pytest.mark.parametrize(
+    ("vector", "score"),
+    [
+        # Published scores (FIRST's calculator).
+        ("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H", 9.8),
+        ("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H", 10.0),
+        ("CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H", 7.8),
+        ("CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N", 6.1),
+        ("CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:N/A:N", 5.9),
+        ("CVSS:3.0/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H", 9.8),
+        # Privileges Required weighs 0.68, not 0.62, once the scope changes.
+        ("CVSS:3.0/AV:N/AC:L/PR:L/UI:N/S:C/C:L/I:L/A:N", 6.4),
+        ("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:N", 0.0),
+        # The metrics in any order.
+        ("CVSS:3.1/A:H/I:H/C:H/S:U/UI:N/PR:N/AC:L/AV:N", 9.8),
+    ],
+)
+def test_cvss_base_scores(vector: str, score: float) -> None:
+    assert review.cvss_base_score(vector) == score
+
+
+@pytest.mark.parametrize(
+    "vector",
+    [
+        "",
+        "no CVSS",
+        "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+        "CVSS:2.0/AV:N/AC:L/Au:N/C:C/I:C/A:C",
+        "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N",
+        "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H",
+        "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H/A:H",
+        "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N/AV:L",
+        "CVSS:3.1/AV:X/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+        "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H/E:F",
+        "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H/",
+        "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/AH",
+        "CVSS:3.1/av:n/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+        "CVSS:3.1",
+        # A well-formed v3 base body under any other version is not scored.
+        "CVSS:4.0/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+        "CVSS:3.2/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+        "CVSS:2.0/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+        "cvss:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+    ],
+    ids=[
+        "empty",
+        "no-cvss",
+        "no-prefix",
+        "v2",
+        "v4",
+        "metric-missing",
+        "duplicate-metric",
+        "duplicate-with-other-value",
+        "unknown-value",
+        "temporal-metric",
+        "trailing-slash",
+        "no-colon",
+        "lower-case",
+        "prefix-only",
+        "v4-prefix-v3-body",
+        "v3.2-prefix",
+        "v2-prefix-v3-body",
+        "lower-case-prefix",
+    ],
+)
+def test_a_vector_that_is_not_a_strict_v3_base_vector_is_not_scored(vector: str) -> None:
+    assert review.cvss_base_score(vector) is None
+
+
+def test_the_roundups_round_up_and_v31_ignores_floating_point_error() -> None:
+    assert review._roundup_v31(4.02) == review._roundup_v30(4.02) == 4.1
+    assert review._roundup_v31(4.000000000000001) == 4.0  # v3.0's ceil reads this as 4.1
+    assert review._roundup_v30(4.0) == review._roundup_v31(4.0) == 4.0
+
+
+@pytest.mark.parametrize(
+    ("vector", "holds"),
+    [
+        ("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H", True),
+        ("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H", True),
+        ("CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H", False),
+        ("CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N", False),
+        (None, False),
+    ],
+)
+def test_a_cargo_advisory_holds_when_its_vector_scores_critical(
+    vector: str | None, holds: bool
+) -> None:
+    report = json.loads(CARGO_REPORT)
+    report["vulnerabilities"]["list"] = report["vulnerabilities"]["list"][:1]
+    report["vulnerabilities"]["list"][0]["advisory"]["cvss"] = vector
+    [finding] = review.advisory_findings("cargo", 1, json.dumps(report).encode(), b"", "Cargo.lock")
+    assert finding.holds is holds
+    assert Report("h", [finding]).exit_code({}) == (1 if holds else 0)

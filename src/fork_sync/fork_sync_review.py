@@ -33,6 +33,7 @@ from __future__ import annotations
 import fnmatch
 import hashlib
 import json
+import math
 import os
 import re
 import shlex
@@ -813,16 +814,73 @@ class Advisory:
 
     @property
     def critical(self) -> bool:
-        """What holds a sync (amendment 4): npm's `critical`, or a given base score of 9.0 or
-        more. Nothing here computes a score from a CVSS vector, so an advisory with only a vector
-        (every cargo-audit one) or none is never critical, and is reported."""
+        """What holds a sync (amendment 4): npm's `critical`, or a base score of 9.0 or more,
+        given by npm or computed from cargo-audit's CVSS v3 vector. An advisory with no score
+        (no CVSS, or a vector that is not a well-formed v3.0 or v3.1 base vector) is reported."""
         return self.severity == "critical" or (self.score is not None and self.score >= 9.0)
+
+
+# CVSS v3.0 and v3.1 base metric weights (FIRST, "CVSS v3.1: Specification Document", section 7.4;
+# v3.0 uses the same). Privileges Required weighs more when the scope changes. Scope has no weight
+# of its own: it selects the equations, and is listed so that only its two values parse.
+CVSS_WEIGHTS: dict[str, dict[str, float]] = {
+    "AV": {"N": 0.85, "A": 0.62, "L": 0.55, "P": 0.2},
+    "AC": {"L": 0.77, "H": 0.44},
+    "PR": {"N": 0.85, "L": 0.62, "H": 0.27},
+    "UI": {"N": 0.85, "R": 0.62},
+    "S": {"U": 0.0, "C": 0.0},
+    "C": {"H": 0.56, "L": 0.22, "N": 0.0},
+    "I": {"H": 0.56, "L": 0.22, "N": 0.0},
+    "A": {"H": 0.56, "L": 0.22, "N": 0.0},
+}
+CVSS_PR_SCOPE_CHANGED = {"N": 0.85, "L": 0.68, "H": 0.5}
+
+
+def _roundup_v31(value: float) -> float:
+    """CVSS v3.1 Appendix A: the smallest number of one decimal place at or above `value`, worked
+    in integers so that floating-point error never rounds 4.0 up to 4.1."""
+    whole = round(value * 100_000)
+    return whole / 100_000.0 if whole % 10_000 == 0 else (math.floor(whole / 10_000) + 1) / 10.0
+
+
+def _roundup_v30(value: float) -> float:
+    """CVSS v3.0: round up to one decimal place."""
+    return math.ceil(value * 10) / 10
+
+
+def cvss_base_score(vector: str) -> float | None:
+    """The base score of a CVSS v3.0 or v3.1 vector, or `None` for anything else: no vector, another
+    version, a metric missing, repeated, unknown or extra, or a value outside its metric's. Strict,
+    because only a score holds a sync, and a vector read loosely could be scored as critical."""
+    version, _, rest = vector.partition("/")
+    roundup = {"CVSS:3.1": _roundup_v31, "CVSS:3.0": _roundup_v30}.get(version)
+    if roundup is None or not rest:
+        return None
+    metrics: dict[str, str] = {}
+    for part in rest.split("/"):
+        name, _, value = part.partition(":")  # no colon leaves an empty value, which no metric has
+        if name in metrics or value not in CVSS_WEIGHTS.get(name, {}):
+            return None
+        metrics[name] = value
+    if set(metrics) != set(CVSS_WEIGHTS):
+        return None
+    weight = {name: CVSS_WEIGHTS[name][value] for name, value in metrics.items()}
+    changed = metrics["S"] == "C"
+    if changed:
+        weight["PR"] = CVSS_PR_SCOPE_CHANGED[metrics["PR"]]
+    iss = 1 - (1 - weight["C"]) * (1 - weight["I"]) * (1 - weight["A"])
+    impact = 7.52 * (iss - 0.029) - 3.25 * (iss - 0.02) ** 15 if changed else 6.42 * iss
+    if impact <= 0:
+        return 0.0
+    exploitability = 8.22 * weight["AV"] * weight["AC"] * weight["PR"] * weight["UI"]
+    total = 1.08 * (impact + exploitability) if changed else impact + exploitability
+    return roundup(min(total, 10))
 
 
 def cargo_advisories(report: Mapping[str, Any], _lock: bytes) -> list[Advisory]:
     """`vulnerabilities.list[]` of `cargo-audit audit --json`. Warnings (unmaintained, unsound,
     yanked) are not advisories: cargo-audit does not fail on them, and neither does this. The
-    `cvss` it gives is a vector string, never a score."""
+    `cvss` it gives is a vector string, scored here (`cvss_base_score`)."""
     return [
         Advisory(
             id=item["advisory"]["id"],
@@ -831,6 +889,7 @@ def cargo_advisories(report: Mapping[str, Any], _lock: bytes) -> list[Advisory]:
             title=item["advisory"]["title"],
             severity=item["advisory"].get("cvss") or "no CVSS",
             fix=", ".join(item["versions"]["patched"]) or "none",
+            score=cvss_base_score(item["advisory"].get("cvss") or ""),
         )
         for item in report["vulnerabilities"]["list"]
     ]

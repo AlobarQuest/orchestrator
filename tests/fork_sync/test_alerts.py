@@ -197,10 +197,17 @@ def test_the_weekly_audit_reports_an_advisory_that_is_not_critical(
     assert "| reported | audit" in capsys.readouterr().out
 
 
-def test_the_weekly_audit_reports_a_cargo_advisory_it_cannot_score(
-    tmp_path: Path, monkeypatch: Any
+@pytest.mark.parametrize(
+    ("vector", "code"),
+    [
+        ("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H", 1),
+        ("CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H", 0),
+    ],
+)
+def test_the_weekly_audit_scores_a_cargo_advisory_s_vector(
+    tmp_path: Path, monkeypatch: Any, vector: str, code: int
 ) -> None:
-    """cargo-audit gives a CVSS vector, never a score, and nothing here scores a vector."""
+    """cargo-audit gives a CVSS vector, never a score: 9.8 holds main's audit, 7.8 is reported."""
     monkeypatch.chdir(tmp_path)
     _git(tmp_path, "init", "-q", "-b", "main")
     files = {
@@ -209,7 +216,8 @@ def test_the_weekly_audit_reports_a_cargo_advisory_it_cannot_score(
         "Cargo.lock": "version = 3\n",
     }
     _commit(tmp_path, files, "main")
-    assert review.audit_main({}, lambda argv, cwd, env: (1, CARGO_REPORT)) == 0
+    report = CARGO_REPORT.replace(b"CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H", vector.encode())
+    assert review.audit_main({}, lambda argv, cwd, env: (1, report)) == code
 
 
 def test_the_weekly_audit_reads_main_s_acknowledgements(tmp_path: Path, monkeypatch: Any) -> None:

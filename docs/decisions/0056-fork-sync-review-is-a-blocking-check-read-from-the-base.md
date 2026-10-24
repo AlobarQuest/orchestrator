@@ -228,12 +228,15 @@ their meaning: 1 is now "a holding finding no acknowledgement covers". Fingerpri
 so every existing acknowledgement still names the same finding, and an acknowledgement of a
 reported finding is harmless.
 
-- **An audit advisory holds only when it's critical:** npm's severity is `critical`, or the audit
-  gives a CVSS base score of 9.0 or more. The weekly audit of `main` follows the same rule. The
-  cost: a `high` advisory against an installed version lands without a person accepting it.
-  Nothing in the script computes a score from a CVSS vector, and cargo-audit gives only a vector
-  (or none), so **no cargo advisory holds**. rtk is a cargo fork: it has no holding audit finding
-  until a scorer exists, and a critical RustSec advisory reaches it as a reported row.
+- **An audit advisory holds only when it's critical:** npm's severity is `critical`, or its CVSS
+  base score is 9.0 or more. npm gives the score. cargo-audit gives only a vector, so the script
+  scores it with FIRST's CVSS v3.0 and v3.1 base equations (`cvss_base_score`), each version
+  rounded up by its own rule. Only a strict v3.0 or v3.1 base vector is scored: the version
+  prefix, each of the eight base metrics exactly once, and known values only. Anything else (no
+  CVSS, CVSS v2 or v4, or a malformed vector) has no score, so it isn't critical and is
+  reported. The weekly audit of `main` follows the same rule. The cost: a `high` advisory
+  against an installed version lands without a person accepting it, and so does a RustSec
+  advisory whose vector is missing, or isn't v3.
 - **An `npm-install-script` finding is reported.** CI and the tool installer run every npm
   install with lifecycle scripts disabled, so the script never runs on the lane. The cost: a fork
   installed some other way would run it unread.

@@ -142,8 +142,9 @@ Not every finding holds the sync (ADR-0056 amendment 4). These are reported: the
 report, marked `reported`, but fail nothing and need no acknowledgement.
 
 - An audit advisory that isn't critical. Critical means npm's severity `critical`, or a CVSS base
-  score of 9.0 or more where the audit gives one. cargo-audit gives a vector and never a score,
-  and nothing here scores a vector, so every cargo advisory is reported. The weekly audit of
+  score of 9.0 or more. npm gives the score. cargo-audit gives a vector, which the review scores
+  with the CVSS v3.0 or v3.1 base equations. A vector that isn't a strict v3.0 or v3.1 base
+  vector, or no vector at all, has no score, so its advisory is reported. The weekly audit of
   `main` follows the same rule.
 - `npm-install-script`: CI and the tool installer install with lifecycle scripts disabled.
 - A model finding rated `low`. `medium`, `high`, and any other rating hold.
