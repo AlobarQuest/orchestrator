@@ -319,20 +319,28 @@ def test_only_install_time_scripts_and_the_files_they_run_hold() -> None:
         )
         return {f.path for f in found if f.kind == "npm-lifecycle-file"}
 
-    assert runs("test -f scripts/a.sh") == set()
-    assert runs("[ -e scripts/a.sh ]") == set()
-    assert runs("test -f scripts/a.sh && sh scripts/a.sh") == {"scripts/a.sh"}
-    assert runs("sh scripts/a.sh") == {"scripts/a.sh"}
-    # The same letters outside `test` and `[` mean something else, and the file runs.
-    assert runs("node -r ./scripts/a.sh app.js") == {"scripts/a.sh"}
-    assert runs("bash -x scripts/a.sh") == {"scripts/a.sh"}
-    # A separator ends the test, with or without spaces around it.
-    assert runs("[ -e scripts/b.sh ];sh scripts/a.sh") == {"scripts/a.sh"}
-    assert runs("test -f scripts/b.sh||scripts/a.sh") == {"scripts/a.sh"}
-    assert runs("scripts/a.sh") == {"scripts/a.sh"}
-    # The test's scope ends at the separator: a flag in the next command is that command's.
-    assert runs("test -f scripts/b.sh && node -r scripts/a.sh x.js") == {"scripts/a.sh"}
-    assert runs("[ -e scripts/b.sh ];node -r scripts/a.sh x.js") == {"scripts/a.sh"}
+    # In an install-time script every mention counts, a `test -f` operand included: exempting it
+    # needs a shell parser, and each attempt was bypassed (newlines, substitutions, `node -r`).
+    for command in (
+        "sh scripts/a.sh",
+        "test -f scripts/a.sh",
+        "[ -e scripts/a.sh ]",
+        "test -f x\nnode -r scripts/a.sh y.js",
+        "test -f `sh scripts/a.sh`",
+        "node -r ./scripts/a.sh app.js",
+        "echo $(sh scripts/a.sh)",
+        "sh scripts/a.sh;echo done",
+    ):
+        assert runs(command) == {"scripts/a.sh"}, command
+
+    # A quoted path with a space is one shell word; only the shell reading keeps it whole.
+    manifest = {"scripts": {"postinstall": 'sh "my dir/a.sh"'}}
+    found = review.npm_manifest_findings(
+        [Change("M", "my dir/a.sh", "100644", "100644", "o", "n")],
+        _reader({}),
+        lambda _: json.dumps(manifest).encode(),
+    )
+    assert [f.path for f in found if f.kind == "npm-lifecycle-file"] == ["my dir/a.sh"]
 
     # A file a publish-only script runs outright is still never run by an install.
     for script in ("prepublishOnly", "prepack", "postpack"):
