@@ -111,7 +111,7 @@ def ack(
     fork: Fork,
     number: Annotated[int, typer.Argument(help="The held upstream-sync pull request.")],
     reason: Annotated[str, typer.Option(help="Why these findings are accepted.")],
-    by: Annotated[str, typer.Option(help="Who accepts them.")] = acknowledge.DEFAULT_BY,
+    by: Annotated[str, typer.Option(help="Who accepts them, as the acknowledgements record it.")],
     yes: Annotated[bool, typer.Option(help="Record, merge and re-sync; without it, only show.")] = (
         False
     ),
@@ -131,17 +131,22 @@ def ack(
             typer.echo(
                 f"  {row.kind} ({row.severity}) | {row.path} | {row.text} | {row.fingerprint}"
             )
-        typer.echo(f"\nWould add to {acknowledge.ACKS_PATH} on main:\n")
-        typer.echo("\n".join(entry.toml() for entry in plan.entries))
-        command = ["fork-sync", "ack", fork, str(number), "--reason", reason]
-        if by != acknowledge.DEFAULT_BY:
-            command += ["--by", by]
+        if plan.entries:
+            typer.echo(f"\nWould add to {acknowledge.ACKS_PATH} on main:\n")
+            typer.echo("\n".join(entry.toml() for entry in plan.entries))
+        if plan.raises:
+            typer.echo(f"\nWould raise in {acknowledge.ACKS_PATH} on main:\n")
+            for change in plan.raises:
+                typer.echo(f"  {change.fingerprint}: severity -> {change.severity}{change.suffix}")
+            typer.echo("")
+        command = ["fork-sync", "ack", fork, str(number), "--reason", reason, "--by", by]
         command += ["--yes", "--expect", ",".join(plan.fingerprints)]
         typer.echo(f"To record them: {shlex.join(command)}")
         return
     expected = [fingerprint for fingerprint in expect.split(",") if fingerprint]
     landed = _act("ack", lambda: acknowledge.land(run_command, plan, expected))
     typer.echo(
-        f"acknowledged {len(plan.entries)} finding(s) of #{number} in #{landed.number}, "
+        f"acknowledged {len(plan.entries)} and raised {len(plan.raises)} finding(s) of "
+        f"#{number} in #{landed.number}, "
         f"admin-merged as {landed.merge_sha}; dispatched {acknowledge.SYNC_WORKFLOW} on {fork}"
     )

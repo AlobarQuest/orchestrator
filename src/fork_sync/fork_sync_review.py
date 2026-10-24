@@ -483,31 +483,70 @@ PATH_RULES: dict[str, tuple[PathRule, ...]] = {
 }
 
 
-def _versions_blanked(value: Any) -> Any:
-    """`value` with every string-valued `version` key's value replaced, at any depth. The key
-    stays, so adding or removing one is still a difference, and a `version` holding anything but
-    a string stays as it is: blanking an object would hide whatever is inside it."""
-    if isinstance(value, dict):
-        return {
-            key: "" if key == "version" and isinstance(item, str) else _versions_blanked(item)
-            for key, item in value.items()
-        }
-    if isinstance(value, list):
-        return [_versions_blanked(item) for item in value]
-    return value
+RELEASE_VERSION = re.compile(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?")
+# Keys whose contents run, resolve or install something: a `version` anywhere below one is a
+# script, a dependency or a constraint, never the manifest's own release (amendment 4).
+VERSION_GUARDED_KEYS = frozenset(
+    {
+        "scripts",
+        "dependencies",
+        "devDependencies",
+        "peerDependencies",
+        "optionalDependencies",
+        "bundleDependencies",
+        "bundledDependencies",
+        "overrides",
+        "resolutions",
+        "bin",
+        "exports",
+        "engines",
+        "config",
+    }
+)
+
+
+def _release_version(value: Any) -> bool:
+    return isinstance(value, str) and RELEASE_VERSION.fullmatch(value) is not None
+
+
+def _same_but_release_versions(old: Any, new: Any, guarded: bool = False) -> bool:
+    """`old` and `new` are equal except, perhaps, for `version` keys whose two values are both
+    plain release versions (`1.2.3`, `1.2.3-rc.1+b5`) and that sit below none of
+    `VERSION_GUARDED_KEYS`. A key added or removed, a range, a URL or a type change is a
+    difference."""
+    if isinstance(old, dict) and isinstance(new, dict):
+        if old.keys() != new.keys():
+            return False
+        return all(
+            (
+                key == "version"
+                and not guarded
+                and _release_version(old[key])
+                and _release_version(new[key])
+            )
+            or _same_but_release_versions(
+                old[key], new[key], guarded or key in VERSION_GUARDED_KEYS
+            )
+            for key in old
+        )
+    if isinstance(old, list) and isinstance(new, list):
+        return len(old) == len(new) and all(
+            _same_but_release_versions(a, b, guarded) for a, b in zip(old, new, strict=True)
+        )
+    return type(old) is type(new) and old == new
 
 
 def only_versions_differ(path: str, old: bytes | None, new: bytes | None) -> bool:
-    """A JSON file whose two sides, parsed, differ only in `version` values: a release bumping
-    its manifest. An added or deleted side, a side that is not JSON, or duplicate keys (one reader
-    would see one value and another reader the other) is a change like any other."""
+    """A JSON file whose two sides, parsed, differ only in release `version` values: a release
+    bumping its manifest. An added or deleted side, a side that is not JSON, or duplicate keys (one
+    reader would see one value and another reader the other) is a change like any other."""
     if not path.endswith(".json") or old is None or new is None:
         return False
     try:
         before, after = (json.loads(side, object_pairs_hook=_unique_keys) for side in (old, new))
     except ValueError:
         return False
-    return _versions_blanked(before) == _versions_blanked(after)
+    return _same_but_release_versions(before, after)
 
 
 def path_findings(
@@ -801,6 +840,10 @@ def _run_audit(argv: list[str], cwd: Path, env: dict[str, str]) -> tuple[int, by
     return result.returncode, result.stdout
 
 
+CRITICAL_SCORE = 9.0
+"""The CVSS base score at and above which an advisory holds a sync."""
+
+
 @dataclass(frozen=True)
 class Advisory:
     id: str
@@ -817,7 +860,9 @@ class Advisory:
         """What holds a sync (amendment 4): npm's `critical`, or a base score of 9.0 or more,
         given by npm or computed from cargo-audit's CVSS v3 vector. An advisory with no score
         (no CVSS, or a vector that is not a well-formed v3.0 or v3.1 base vector) is reported."""
-        return self.severity == "critical" or (self.score is not None and self.score >= 9.0)
+        return self.severity == "critical" or (
+            self.score is not None and self.score >= CRITICAL_SCORE
+        )
 
 
 # CVSS v3.0 and v3.1 base metric weights (FIRST, "CVSS v3.1: Specification Document", section 7.4;
@@ -834,6 +879,20 @@ CVSS_WEIGHTS: dict[str, dict[str, float]] = {
     "A": {"H": 0.56, "L": 0.22, "N": 0.0},
 }
 CVSS_PR_SCOPE_CHANGED = {"N": 0.85, "L": 0.68, "H": 0.5}
+# The temporal and environmental metrics (section 7.4), each with its values. A vector may carry
+# them; the base score ignores them, but a name or value outside these is still refused.
+CVSS_OTHER_METRICS: dict[str, frozenset[str]] = {
+    "E": frozenset("XUPFH"),
+    "RL": frozenset("XOTWU"),
+    "RC": frozenset("XURC"),
+    **{name: frozenset("XLMH") for name in ("CR", "IR", "AR")},
+    "MAV": frozenset("XNALP"),
+    "MAC": frozenset("XLH"),
+    "MPR": frozenset("XNLH"),
+    "MUI": frozenset("XNR"),
+    "MS": frozenset("XUC"),
+    **{name: frozenset("XNLH") for name in ("MC", "MI", "MA")},
+}
 
 
 def _roundup_v31(value: float) -> float:
@@ -850,8 +909,10 @@ def _roundup_v30(value: float) -> float:
 
 def cvss_base_score(vector: str) -> float | None:
     """The base score of a CVSS v3.0 or v3.1 vector, or `None` for anything else: no vector, another
-    version, a metric missing, repeated, unknown or extra, or a value outside its metric's. Strict,
-    because only a score holds a sync, and a vector read loosely could be scored as critical."""
+    version, a base metric missing, any metric repeated or unknown, or a value outside its
+    metric's. Temporal and environmental metrics are allowed and play no part in the base score.
+    Strict, because only a score holds a sync, and a vector read loosely could be scored as
+    critical."""
     version, _, rest = vector.partition("/")
     roundup = {"CVSS:3.1": _roundup_v31, "CVSS:3.0": _roundup_v30}.get(version)
     if roundup is None or not rest:
@@ -859,12 +920,13 @@ def cvss_base_score(vector: str) -> float | None:
     metrics: dict[str, str] = {}
     for part in rest.split("/"):
         name, _, value = part.partition(":")  # no colon leaves an empty value, which no metric has
-        if name in metrics or value not in CVSS_WEIGHTS.get(name, {}):
+        allowed = CVSS_WEIGHTS[name] if name in CVSS_WEIGHTS else CVSS_OTHER_METRICS.get(name, {})
+        if name in metrics or value not in allowed:
             return None
         metrics[name] = value
-    if set(metrics) != set(CVSS_WEIGHTS):
+    if not set(CVSS_WEIGHTS) <= set(metrics):
         return None
-    weight = {name: CVSS_WEIGHTS[name][value] for name, value in metrics.items()}
+    weight = {name: CVSS_WEIGHTS[name][metrics[name]] for name in CVSS_WEIGHTS}
     changed = metrics["S"] == "C"
     if changed:
         weight["PR"] = CVSS_PR_SCOPE_CHANGED[metrics["PR"]]
@@ -904,16 +966,22 @@ NPM_FAILING_SEVERITIES = frozenset({"high", "critical"})
 
 
 def npm_advisories(report: Mapping[str, Any], lock: bytes) -> list[Advisory]:
-    """Each advisory at or above `high` in `npm audit --json`'s `vulnerabilities[*].via`, once
-    per installed copy. A `via` that is a string names another vulnerable package, which is
-    listed under its own name; the installed version comes from the lockfile, not the report."""
+    """Each advisory at or above `high` in `npm audit --json`'s `vulnerabilities[*].via`, or with
+    a critical CVSS score whatever npm rates it, once per installed copy. A `via` that is a string
+    names another vulnerable package, which is listed under its own name; the installed version
+    comes from the lockfile, not the report."""
     installed = _npm_packages(lock)
     advisories = []
     for vulnerability in report["vulnerabilities"].values():
         fix = vulnerability.get("fixAvailable")
         fixed = f"{fix['name']} {fix['version']}" if isinstance(fix, dict) else str(fix).lower()
         for via in vulnerability["via"]:
-            if isinstance(via, str) or via["severity"] not in NPM_FAILING_SEVERITIES:
+            if isinstance(via, str):
+                continue
+            score = _npm_score(via)
+            if via["severity"] not in NPM_FAILING_SEVERITIES and not (
+                score is not None and score >= CRITICAL_SCORE
+            ):
                 continue
             ident = str(via.get("url") or via["source"]).rpartition("/")[2]
             for node in vulnerability["nodes"]:
@@ -925,7 +993,7 @@ def npm_advisories(report: Mapping[str, Any], lock: bytes) -> list[Advisory]:
                         via["title"],
                         via["severity"],
                         fixed,
-                        _npm_score(via),
+                        score,
                     )
                 )
     return advisories
@@ -939,25 +1007,36 @@ def advisory_findings(
 ) -> list[Finding]:
     """One finding per advisory, fingerprinted by the advisory, package and installed version: an
     acknowledgement names exactly what it accepts and lasts until that version changes. Only a
-    critical advisory holds; the rest are reported."""
-    if code == 0:
+    critical advisory holds; the rest are reported.
+
+    A passing npm audit is still read: npm passes `--audit-level=high` with only `low` and
+    `moderate` advisories, and one of those can carry a critical CVSS score. Its output, if it does
+    not parse, lists nothing, as before. cargo-audit fails whenever it lists a vulnerability."""
+    if code == 0 and ecosystem != "npm":
         return []
+    if code == 0:
+        try:
+            advisories = ADVISORY_READERS[ecosystem](json.loads(output), lock)
+        except ValueError, KeyError, TypeError, AttributeError:
+            return []
+        return [_advisory_finding(a, lockfile) for a in advisories]
     try:
         advisories = ADVISORY_READERS[ecosystem](json.loads(output), lock)
     except (ValueError, KeyError, TypeError, AttributeError) as error:
         raise ReviewUnavailable(f"the audit's JSON is unreadable: {type(error).__name__}") from None
     if not advisories:
         raise ReviewUnavailable(f"the audit exited {code} and listed no advisory")
-    return [
-        Finding(
-            "audit",
-            lockfile,
-            f"{a.id} {a.package} {a.version}: {a.title} ({a.severity}; fix: {a.fix})",
-            "\0".join((a.id, a.package, a.version)),
-            holds=a.critical,
-        )
-        for a in advisories
-    ]
+    return [_advisory_finding(a, lockfile) for a in advisories]
+
+
+def _advisory_finding(a: Advisory, lockfile: str) -> Finding:
+    return Finding(
+        "audit",
+        lockfile,
+        f"{a.id} {a.package} {a.version}: {a.title} ({a.severity}; fix: {a.fix})",
+        "\0".join((a.id, a.package, a.version)),
+        holds=a.critical,
+    )
 
 
 def declared_dependencies(manifest: bytes | None) -> list[Finding]:

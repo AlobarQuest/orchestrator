@@ -41,6 +41,21 @@ MAIN_ACKS = {BINARY.fingerprint(): Ack("devon", "2026-10-19", "known artifact")}
 SYNC_FINDINGS = [MEDIUM, HIGH, LOW, AUDIT, BINARY]
 EXPECT = f"{MEDIUM.fingerprint()},{AUDIT.fingerprint()}"
 GATE_FLAG = Finding("ai", ACKS_PATH, "the gate's acknowledgements change", "blob-acks", "medium")
+BY = "devon (approved in session; recorded by Claude)"
+CI = ".github/workflows/ci.yml"
+MAIN_ACKS_PATH = f"repos/{FORK}/contents/{ACKS_PATH}?ref=main"
+OPEN_ACK_PULLS = f"repos/{FORK}/pulls?state=open&head=AlobarQuest:fork-sync-ack-7-555555555555"
+
+
+def _run(id_: int, status: str = "completed", path: str = CI, at: str = "2026-10-24T10:00:00Z"):
+    return {"id": id_, "status": status, "path": path, "created_at": at}
+
+
+def _job(name: str, conclusion: str | None, status: str = "completed") -> dict[str, Any]:
+    return {"name": name, "status": status, "conclusion": conclusion}
+
+
+GREEN = {"jobs": [_job("build and test", "success"), _job("security review", "failure")]}
 
 
 class Then:
@@ -64,7 +79,11 @@ def _sync_pull(**changes: Any) -> dict[str, Any]:
 
 class FakeFork:
     def __init__(self, **api: Any) -> None:
+        """`api` answers paths; `main_acks`, if given, is main's acknowledgements file."""
+        self.main_acks: str = api.pop("main_acks", OLD_ACK)
         self.api: dict[str, Any] = {
+            MAIN_ACKS_PATH: self.main_acks,
+            OPEN_ACK_PULLS: [],
             f"repos/{FORK}/pulls/7": _sync_pull(),
             f"repos/{FORK}/issues/7/comments?per_page=100": [
                 _comment(SYNC_SHA, SYNC_FINDINGS, MAIN_ACKS)
@@ -75,15 +94,10 @@ class FakeFork:
             ),
             f"repos/{FORK}/pulls/8/files?per_page=100": [{"filename": ACKS_PATH}],
             f"repos/{FORK}/actions/runs?head_sha={ACK_SHA}&per_page=100": Then(
-                {"workflow_runs": [{"id": 1, "status": "in_progress"}]},
-                {"workflow_runs": [{"id": 1, "status": "completed"}]},
+                {"workflow_runs": [_run(1, "in_progress")]},
+                {"workflow_runs": [_run(1)]},
             ),
-            f"repos/{FORK}/actions/runs/1/jobs": {
-                "jobs": [
-                    {"name": "build and test", "conclusion": "success"},
-                    {"name": "security review", "conclusion": "failure"},
-                ]
-            },
+            f"repos/{FORK}/actions/runs/1/jobs": GREEN,
             f"repos/{FORK}/issues/8/comments?per_page=100": [_comment(ACK_SHA, [GATE_FLAG])],
             **api,
         }
@@ -96,7 +110,7 @@ class FakeFork:
         if argv[:2] == ["git", "clone"]:
             acks = Path(argv[-1]) / ACKS_PATH
             acks.parent.mkdir(parents=True)
-            acks.write_text(OLD_ACK)
+            acks.write_text(self.main_acks)
         if argv[:2] == ["git", "commit"] and cwd is not None:
             self.committed = (cwd / ACKS_PATH).read_text()
         if argv[:3] == ["git", "rev-parse", "HEAD"]:
@@ -107,7 +121,8 @@ class FakeFork:
             if argv[-1] not in self.api:
                 raise CommandFailed(argv, 1, "gh: Not Found (HTTP 404)")
             answer = self.api[argv[-1]]
-            return json.dumps(answer.next() if isinstance(answer, Then) else answer)
+            answer = answer.next() if isinstance(answer, Then) else answer
+            return answer if isinstance(answer, str) else json.dumps(answer)
         return ""
 
     def writes(self) -> list[str]:
@@ -136,7 +151,7 @@ def waits(monkeypatch: pytest.MonkeyPatch) -> list[float]:
 
 def _ack(monkeypatch: pytest.MonkeyPatch, fork: FakeFork, *extra: str) -> Any:
     monkeypatch.setattr(cli, "run_command", fork)
-    args = ["ack", FORK, "7", "--reason", "Read in session."]
+    args = ["ack", FORK, "7", "--reason", "Read in session.", "--by", BY]
     return CliRunner().invoke(cli.app, [*args, *extra])
 
 
@@ -202,16 +217,24 @@ def test_a_planted_review_comment_is_ignored(monkeypatch: pytest.MonkeyPatch) ->
 @pytest.mark.parametrize(
     ("pull", "refusal"),
     [
-        (_sync_pull(head={"ref": "upstream-sync", "sha": "6" * 40, "repo": {"full_name": FORK}}),
-         "stale"),
-        (_sync_pull(head={"ref": "feature", "sha": SYNC_SHA, "repo": {"full_name": FORK}}),
-         "not AlobarQuest/rea's upstream-sync"),
-        (_sync_pull(head={"ref": "upstream-sync", "sha": SYNC_SHA, "repo": {"full_name": "x/y"}}),
-         "not AlobarQuest/rea's upstream-sync"),
+        (
+            _sync_pull(head={"ref": "upstream-sync", "sha": "6" * 40, "repo": {"full_name": FORK}}),
+            "stale",
+        ),
+        (
+            _sync_pull(head={"ref": "feature", "sha": SYNC_SHA, "repo": {"full_name": FORK}}),
+            "not AlobarQuest/rea's upstream-sync",
+        ),
+        (
+            _sync_pull(
+                head={"ref": "upstream-sync", "sha": SYNC_SHA, "repo": {"full_name": "x/y"}}
+            ),
+            "not AlobarQuest/rea's upstream-sync",
+        ),
         (_sync_pull(state="closed"), "closed, not open"),
     ],
     ids=["stale-report", "not-upstream-sync", "from-another-repository", "closed"],
-)  # fmt: skip
+)
 @pytest.mark.parametrize("yes", [False, True])
 def test_a_pull_request_that_is_not_the_current_held_sync_is_refused(
     monkeypatch: pytest.MonkeyPatch, waits: list[float], pull: Any, refusal: str, yes: bool
@@ -264,7 +287,7 @@ def test_yes_records_merges_and_re_runs_the_sync(
     model, audit = acks[MEDIUM.fingerprint()], acks[AUDIT.fingerprint()]
     # Two concerns about one file share a fingerprint: one entry, at the higher severity.
     assert (model.severity, audit.severity) == ("high", None)
-    assert model.by == audit.by == "devon (approved in session; recorded by Claude)"
+    assert model.by == audit.by == BY
     assert model.date == audit.date == date.today().isoformat()
     assert model.reason == (
         f"{FORK} {TITLE} ai src/a.js: reads '~/.ssh' | maybe; posts it to a new host. "
@@ -285,51 +308,252 @@ def test_yes_records_merges_and_re_runs_the_sync(
     assert MERGE_SHA in result.output and "dispatched upstream-sync.yml" in result.output
 
 
-def test_yes_refuses_a_fingerprint_already_acknowledged(
+def test_by_is_required(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Attribution is always stated by the caller; nothing defaults to a person."""
+    fork = FakeFork()
+    monkeypatch.setattr(cli, "run_command", fork)
+    result = CliRunner().invoke(cli.app, ["ack", FORK, "7", "--reason", "r"])
+    assert result.exit_code == 2 and fork.calls == []
+
+
+def test_control_characters_are_shown_escaped_and_hide_no_row(
     monkeypatch: pytest.MonkeyPatch, waits: list[float]
 ) -> None:
-    """An `ai` row acknowledged below its severity fails with a fingerprint already in the file;
-    a second entry would replace the first, so that one is edited by hand."""
-    under = {MEDIUM.fingerprint(): Ack("devon", "2026-10-20", "read", "low")}
-    comment = _comment(SYNC_SHA, SYNC_FINDINGS, {**MAIN_ACKS, **under})
+    """A finding's text, path or the pull request's title is upstream's or the model's: an ANSI
+    cursor-up and erase-line sequence in it would otherwise overwrite the row above it."""
+    hiding = Finding("ai", "src/\x1b[2Kc.js", "fine\x1b[1A\x1b[2K\u202e", "blob-c", "medium")
+    comment = _comment(SYNC_SHA, [*SYNC_FINDINGS, hiding], MAIN_ACKS)
+    fork = FakeFork(
+        **{
+            f"repos/{FORK}/issues/7/comments?per_page=100": [comment],
+            f"repos/{FORK}/pulls/7": _sync_pull(title="sync\x9b2J v2"),
+        }
+    )
+    result = _ack(monkeypatch, fork)
+    assert result.exit_code == 0, result.output
+    assert not any(c in result.output for c in "\x1b\x9b\u202e")
+    assert "src/\\x1b[2Kc.js | fine\\x1b[1A\\x1b[2K\\u202e" in result.output
+    assert "sync\\x9b2J v2" in result.output
+    rows = [line for line in result.output.splitlines() if line.startswith("  ")]
+    assert len(rows) == 4  # medium, high and the audit row, then the hiding one, all visible
+    fingerprints = f"{MEDIUM.fingerprint()},{AUDIT.fingerprint()},{hiding.fingerprint()}"
+    result = _ack(monkeypatch, fork, "--yes", "--expect", fingerprints)
+    assert result.exit_code == 0, result.output
+    assert fork.committed is not None and "\x1b" not in fork.committed
+    written = parse_acks(fork.committed)[hiding.fingerprint()].reason
+    assert "\\x1b[1A" in written and "sync\\x9b2J v2" in written
 
-    class Acknowledged(FakeFork):
-        def __call__(self, argv: Sequence[str], stdin: str | None, cwd: Path | None) -> str:
-            out = super().__call__(argv, stdin, cwd)
-            if list(argv[:2]) == ["git", "clone"]:
-                (Path(argv[-1]) / ACKS_PATH).write_text(
-                    OLD_ACK
-                    + OLD_ACK.replace(BINARY.fingerprint(), MEDIUM.fingerprint())
-                    + 'severity = "low"\n'
-                )
-            return out
 
-    fork = Acknowledged(**{f"repos/{FORK}/issues/7/comments?per_page=100": [comment]})
-    result = _ack(monkeypatch, fork, "--yes", "--expect", EXPECT)
+LOW_ACK = (
+    f'\n[[ack]]\nfingerprint = "{MEDIUM.fingerprint()}"\nby = "devon"\ndate = 2026-10-20\n'
+    'severity = "low"\nreason = "read once"\n'
+)
+
+
+def _under(ceiling: str, rows: list[Finding]) -> FakeFork:
+    """Main acknowledges MEDIUM/HIGH's content at `ceiling`; the review rates `rows`."""
+    acks = {**MAIN_ACKS, MEDIUM.fingerprint(): Ack("devon", "2026-10-20", "read once", ceiling)}
+    comment = _comment(SYNC_SHA, [*rows, AUDIT, BINARY], acks)
+    return FakeFork(
+        main_acks=OLD_ACK + LOW_ACK.replace('"low"', f'"{ceiling}"'),
+        **{f"repos/{FORK}/issues/7/comments?per_page=100": [comment]},
+    )
+
+
+def test_a_model_acknowledgement_below_a_new_rating_is_raised_in_place(
+    monkeypatch: pytest.MonkeyPatch, waits: list[float]
+) -> None:
+    fork = _under("low", [MEDIUM, HIGH])
+    result = _ack(monkeypatch, fork)
+    assert result.exit_code == 0, result.output
+    # The raise is listed apart from the new entry, and --expect covers both.
+    added, raised = result.output.split("Would add to")[1].split("Would raise in")
+    assert AUDIT.fingerprint() in added and MEDIUM.fingerprint() not in added
+    assert f"{MEDIUM.fingerprint()}: severity -> high; raised to high on" in raised
+    assert f"--expect {AUDIT.fingerprint()},{MEDIUM.fingerprint()}" in result.output
+    result = _ack(
+        monkeypatch, fork, "--yes", "--expect", f"{AUDIT.fingerprint()},{MEDIUM.fingerprint()}"
+    )
+    assert result.exit_code == 0, result.output
+    assert fork.committed is not None
+    acks = parse_acks(fork.committed)
+    raised_ack = acks[MEDIUM.fingerprint()]
+    assert (raised_ack.severity, raised_ack.by, raised_ack.date) == ("high", "devon", "2026-10-20")
+    assert raised_ack.reason == f"read once; raised to high on {date.today()} ({TITLE})"
+    assert fork.committed.count(MEDIUM.fingerprint()) == 1
+    assert acks[BINARY.fingerprint()] == MAIN_ACKS[BINARY.fingerprint()]
+    assert AUDIT.fingerprint() in acks
+
+
+@pytest.mark.parametrize(
+    ("ceiling", "rows"),
+    [
+        # Main already accepts `high`, and a stale comment still shows the row failing at medium.
+        ("high", [MEDIUM]),
+        ("medium", [MEDIUM]),
+    ],
+    ids=["downward", "level"],
+)
+def test_a_raise_only_ever_raises(
+    monkeypatch: pytest.MonkeyPatch, waits: list[float], ceiling: str, rows: list[Finding]
+) -> None:
+    fork = _under(ceiling, rows)
+    # The comment renders the row as covered at this ceiling; show it failing, as a stale one would.
+    stale = Report(SYNC_SHA, [*rows, AUDIT, BINARY]).markdown(MAIN_ACKS)
+    fork.api[f"repos/{FORK}/issues/7/comments?per_page=100"] = [{"user": BOT, "body": stale}]
+    result = _ack(monkeypatch, fork)
     assert result.exit_code == 1 and "already acknowledged" in result.output
+    assert fork.writes() == []
+
+
+def test_any_other_fingerprint_already_acknowledged_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Main acknowledges the audit row while the comment still shows it failing: not a model
+    rating to raise, so it is a person's to edit."""
+    audit_ack = OLD_ACK.replace(BINARY.fingerprint(), AUDIT.fingerprint())
+    fork = FakeFork(main_acks=OLD_ACK + "\n" + audit_ack)
+    result = _ack(monkeypatch, fork)
+    assert result.exit_code == 1 and "already acknowledged" in result.output
+    assert fork.writes() == []
+
+
+def test_a_severity_on_another_kind_s_acknowledgement_raises_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`severity` is ignored on every kind but `ai`, so an audit acknowledgement carrying one is
+    still a person's to edit, not a ceiling to raise."""
+    audit_ack = OLD_ACK.replace(BINARY.fingerprint(), AUDIT.fingerprint()) + 'severity = "low"\n'
+    fork = FakeFork(main_acks=OLD_ACK + "\n" + audit_ack)
+    result = _ack(monkeypatch, fork)
+    assert result.exit_code == 1 and "already acknowledged (severity low)" in result.output
+    assert fork.writes() == []
+
+
+def test_an_open_pull_request_from_an_earlier_run_is_refused(
+    monkeypatch: pytest.MonkeyPatch, waits: list[float]
+) -> None:
+    """A refusal leaves its pull request open; a second run names it rather than failing at
+    `git push`, and deletes nothing."""
+    fork = FakeFork(**{OPEN_ACK_PULLS: [{"number": 8}]})
+    result = _ack(monkeypatch, fork, "--yes", "--expect", EXPECT)
+    assert result.exit_code == 1
+    assert "#8 from fork-sync-ack-7-555555555555 is still open" in result.output
+    assert "merge or close it" in result.output
+    assert fork.writes() == []
+
+
+def test_main_s_acknowledgements_moving_after_they_were_read_is_refused(
+    monkeypatch: pytest.MonkeyPatch, waits: list[float]
+) -> None:
+    fork = FakeFork()
+    fork.main_acks = OLD_ACK + "\n# edited meanwhile\n"  # what the clone sees
+    result = _ack(monkeypatch, fork, "--yes", "--expect", EXPECT)
+    assert result.exit_code == 1 and "changed since it was read" in result.output
     assert [w for w in fork.writes() if not w.startswith("git clone")] == []
+
+
+RUNS = f"repos/{FORK}/actions/runs?head_sha={ACK_SHA}&per_page=100"
+
+
+@pytest.mark.parametrize(
+    ("runs", "jobs", "refusal"),
+    [
+        (
+            [_run(1), _run(2, at="2026-10-24T11:00:00Z")],
+            {1: GREEN, 2: {"jobs": [_job("build and test", "failure")]}},
+            "`build and test` concluded failure",
+        ),
+        (
+            # Another workflow's job of the same name does not stand in for the CI run's.
+            [_run(1), _run(3, path=".github/workflows/other.yml", at="2026-10-24T12:00:00Z")],
+            {
+                1: {
+                    "jobs": [_job("build and test", "failure"), _job("security review", "failure")]
+                },
+                3: GREEN,
+            },
+            "`build and test` concluded failure",
+        ),
+        (
+            [_run(1)],
+            {
+                1: {
+                    "jobs": [
+                        _job("build and test", "success"),
+                        _job("security review", "cancelled"),
+                    ]
+                }
+            },
+            "`security review` concluded cancelled",
+        ),
+        (
+            [_run(1)],
+            {1: {"jobs": [_job("build and test", "success")]}},
+            "`security review` concluded nothing",
+        ),
+    ],
+    ids=["latest-run-failed", "other-workflow-masks-nothing", "review-cancelled", "review-missing"],
+)
+def test_only_the_latest_ci_run_decides_and_its_review_must_have_a_verdict(
+    monkeypatch: pytest.MonkeyPatch,
+    waits: list[float],
+    runs: list[dict[str, Any]],
+    jobs: dict[int, Any],
+    refusal: str,
+) -> None:
+    api = {RUNS: {"workflow_runs": runs}}
+    api |= {f"repos/{FORK}/actions/runs/{n}/jobs": answer for n, answer in jobs.items()}
+    fork = FakeFork(**api)
+    result = _ack(monkeypatch, fork, "--yes", "--expect", EXPECT)
+    assert result.exit_code == 1
+    assert "#8 is open and unmerged" in result.output and refusal in result.output
+    assert not fork.ran("gh pr merge")
+
+
+def test_a_successful_re_run_after_a_failed_run_is_the_one_that_counts(
+    monkeypatch: pytest.MonkeyPatch, waits: list[float]
+) -> None:
+    """Control for the preceding test: with the runs the other way round, it merges."""
+    failed = {"jobs": [_job("build and test", "failure"), _job("security review", "failure")]}
+    fork = FakeFork(
+        **{
+            RUNS: {"workflow_runs": [_run(1), _run(2, at="2026-10-24T11:00:00Z")]},
+            f"repos/{FORK}/actions/runs/1/jobs": failed,
+            f"repos/{FORK}/actions/runs/2/jobs": GREEN,
+        }
+    )
+    result = _ack(monkeypatch, fork, "--yes", "--expect", EXPECT)
+    assert result.exit_code == 0, result.output
+    assert fork.ran("gh pr merge 8")
 
 
 @pytest.mark.parametrize(
     ("change", "refusal"),
     [
         (
-            {f"repos/{FORK}/pulls/8/files?per_page=100": [
-                {"filename": ACKS_PATH}, {"filename": ".github/workflows/ci.yml"},
-            ]},
+            {
+                f"repos/{FORK}/pulls/8/files?per_page=100": [
+                    {"filename": ACKS_PATH},
+                    {"filename": ".github/workflows/ci.yml"},
+                ]
+            },
             "not only .github/fork-sync-acks.toml",
         ),
         (
-            {f"repos/{FORK}/issues/8/comments?per_page=100": [
-                _comment(ACK_SHA, [GATE_FLAG, Finding("ai", "src/c.js", "x", "b", "high")]),
-            ]},
+            {
+                f"repos/{FORK}/issues/8/comments?per_page=100": [
+                    _comment(ACK_SHA, [GATE_FLAG, Finding("ai", "src/c.js", "x", "b", "high")]),
+                ]
+            },
             "its review fails on ['src/c.js']",
         ),
         (
-            {f"repos/{FORK}/actions/runs/1/jobs": {"jobs": [
-                {"name": "build and test", "conclusion": "failure"},
-                {"name": "security review", "conclusion": "failure"},
-            ]}},
+            {
+                f"repos/{FORK}/actions/runs/1/jobs": {
+                    "jobs": [_job("build and test", "failure"), _job("security review", "failure")]
+                }
+            },
             "`build and test` concluded failure",
         ),
         (
@@ -342,7 +566,7 @@ def test_yes_refuses_a_fingerprint_already_acknowledged(
         ),
     ],
     ids=["another-file", "failing-elsewhere", "build-failed", "stale-own-review", "head-moved"],
-)  # fmt: skip
+)
 def test_the_acknowledgement_pull_request_is_merged_only_when_it_flags_only_itself(
     monkeypatch: pytest.MonkeyPatch, waits: list[float], change: dict[str, Any], refusal: str
 ) -> None:
@@ -353,13 +577,21 @@ def test_the_acknowledgement_pull_request_is_merged_only_when_it_flags_only_itse
     assert not fork.ran("gh pr merge") and not fork.ran("gh workflow run")
 
 
+@pytest.mark.parametrize(
+    "runs",
+    [
+        {"workflow_runs": [_run(1, "in_progress")]},
+        {"workflow_runs": [_run(4, path=".github/workflows/other.yml")]},
+        {"workflow_runs": []},
+    ],
+    ids=["never-completes", "no-ci-run", "no-run"],
+)
 def test_checks_that_never_finish_stop_at_the_deadline(
-    monkeypatch: pytest.MonkeyPatch, waits: list[float]
+    monkeypatch: pytest.MonkeyPatch, waits: list[float], runs: dict[str, Any]
 ) -> None:
-    runs = {"workflow_runs": [{"id": 1, "status": "in_progress"}]}
-    fork = FakeFork(**{f"repos/{FORK}/actions/runs?head_sha={ACK_SHA}&per_page=100": runs})
+    fork = FakeFork(**{RUNS: runs})
     result = _ack(monkeypatch, fork, "--yes", "--expect", EXPECT)
-    assert result.exit_code == 1 and "did not finish in time" in result.output
+    assert result.exit_code == 1 and "completed in time" in result.output
     assert sum(waits) >= acknowledge.DEADLINE_SECONDS
     assert all(pause == acknowledge.POLL_SECONDS for pause in waits)
     assert not fork.ran("gh pr merge")

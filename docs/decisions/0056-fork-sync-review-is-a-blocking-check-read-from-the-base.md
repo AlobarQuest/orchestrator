@@ -231,12 +231,16 @@ reported finding is harmless.
 - **An audit advisory holds only when it's critical:** npm's severity is `critical`, or its CVSS
   base score is 9.0 or more. npm gives the score. cargo-audit gives only a vector, so the script
   scores it with FIRST's CVSS v3.0 and v3.1 base equations (`cvss_base_score`), each version
-  rounded up by its own rule. Only a strict v3.0 or v3.1 base vector is scored: the version
-  prefix, each of the eight base metrics exactly once, and known values only. Anything else (no
-  CVSS, CVSS v2 or v4, or a malformed vector) has no score, so it isn't critical and is
-  reported. The weekly audit of `main` follows the same rule. The cost: a `high` advisory
-  against an installed version lands without a person accepting it, and so does a RustSec
-  advisory whose vector is missing, or isn't v3.
+  rounded up by its own rule. Only a strict v3.0 or v3.1 vector is scored: the version prefix,
+  each of the eight base metrics exactly once, and known values only. Temporal and
+  environmental metrics may follow, each once with one of its own values, and play no part in
+  the base score. Anything else (no CVSS, CVSS v2 or v4, an unknown or repeated metric, or a
+  malformed vector) has no score, so it isn't critical and is reported. npm drops `low` and
+  `moderate` advisories, except one whose score is 9.0 or more, which holds; its audit passes
+  `--audit-level=high` with only such advisories, so a passing npm audit is read too. The
+  weekly audit of `main` follows the same rule. The cost: a `high` advisory against an installed
+  version lands without a person accepting it, and so does a RustSec advisory whose vector is
+  missing, or isn't v3.
 - **An `npm-install-script` finding is reported.** CI and the tool installer run every npm
   install with lifecycle scripts disabled, so the script never runs on the lane. The cost: a fork
   installed some other way would run it unread.
@@ -244,18 +248,24 @@ reported finding is harmless.
   still counts as `high`. Acknowledgement is by content and a severity ceiling, as amendment 3
   says. The cost: the model's own rating decides, and an instruction planted in the diff can try
   to talk it down to `low`. The deterministic findings don't pass through the model.
-- **A watched JSON file whose only change is the value of `version` keys is reported.** Both
-  sides are parsed, every string-valued `version` key at any depth is blanked, and the results
-  compared. Anything else holds as before: a side that isn't JSON, duplicate keys, an added or
-  deleted file, a `version` key added or removed, a `version` that isn't a string, or any other
-  difference. This is the release bump of a plugin manifest. The cost: the version a manifest
-  declares can change without a person reading it, and so can anything a consumer derives from
-  it.
+- **A watched JSON file whose only change is release versions is reported.** Both sides are
+  parsed and compared, and a `version` key may differ only when both its values are plain
+  release versions (`1.2.3`, with an optional `-prerelease` or `+build`) and no key above it is
+  one that runs, resolves or installs something (`scripts`, the dependency tables, `overrides`,
+  `resolutions`, `bin`, `exports`, `engines`, `config`). `scripts.version` is a command npm
+  runs, and a dependency may be named `version`. Anything else holds as before: a side that isn't
+  JSON, duplicate keys, an added or deleted file, a `version` key added or removed, a range or a
+  URL, or any other difference. This is the release bump of a plugin manifest. The cost: the
+  version a manifest declares can change without a person reading it, and so can anything a
+  consumer derives from it.
 - The rules live in the vendored review script, so `fork-sync check` reports drift on every fork
   until it's re-scaffolded, and each fork follows them only from then.
 - **`fork-sync ack` records an acceptance after one approval.** A person reads the held sync's
-  failing rows in a dry run and approves them; the tool writes the acknowledgements, admin-merges
-  that pull request only when its diff is the acknowledgements file alone, `build and test`
-  passed and its own review fails only on that file, and re-runs the sync. Decision 7's admin
-  merge is then made by the tool, on a report it reads by those rules, not by a person reading
-  it.
+  failing rows in a dry run and approves them, naming who approves (`--by` has no default); the
+  tool writes the acknowledgements, admin-merges that pull request only when its diff is the
+  acknowledgements file alone and the latest run of the fork's CI at its head passed
+  `build and test`, reached a verdict in `security review` and reviewed only that file as
+  failing, and re-runs the sync. Decision 7's admin merge is then made by the tool, on a report it
+  reads by those rules, not by a person reading it. A model acknowledgement a new review rates
+  higher is raised in place, upward only, and shown as a raise. Upstream's and the model's text
+  is printed and recorded with every control character escaped.
