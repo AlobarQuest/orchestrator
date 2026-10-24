@@ -323,6 +323,16 @@ def test_only_install_time_scripts_and_the_files_they_run_hold() -> None:
     assert runs("[ -e scripts/a.sh ]") == set()
     assert runs("test -f scripts/a.sh && sh scripts/a.sh") == {"scripts/a.sh"}
     assert runs("sh scripts/a.sh") == {"scripts/a.sh"}
+    # The same letters outside `test` and `[` mean something else, and the file runs.
+    assert runs("node -r ./scripts/a.sh app.js") == {"scripts/a.sh"}
+    assert runs("bash -x scripts/a.sh") == {"scripts/a.sh"}
+    # A separator ends the test, with or without spaces around it.
+    assert runs("[ -e scripts/b.sh ];sh scripts/a.sh") == {"scripts/a.sh"}
+    assert runs("test -f scripts/b.sh||scripts/a.sh") == {"scripts/a.sh"}
+    assert runs("scripts/a.sh") == {"scripts/a.sh"}
+    # The test's scope ends at the separator: a flag in the next command is that command's.
+    assert runs("test -f scripts/b.sh && node -r scripts/a.sh x.js") == {"scripts/a.sh"}
+    assert runs("[ -e scripts/b.sh ];node -r scripts/a.sh x.js") == {"scripts/a.sh"}
 
     # A file a publish-only script runs outright is still never run by an install.
     for script in ("prepublishOnly", "prepack", "postpack"):

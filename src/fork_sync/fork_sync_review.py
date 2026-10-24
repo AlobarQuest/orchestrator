@@ -63,8 +63,13 @@ CRATES_IO = frozenset(
 # tool installer makes, `npm pack` included, disables scripts. Counting them held claude-octopus
 # v11.15.1 on a `prepublishOnly` that only checks a file exists (ADR-0056 amendment 7).
 NPM_LIFECYCLE_SCRIPTS = frozenset({"preinstall", "install", "postinstall", "prepublish", "prepare"})
-# File-test operators (`test -f path`, `[ -e path ]`): the path after one is checked, not run.
+# File-test operators (`test -f path`, `[ -e path ]`): inside a `test` or `[` command the path
+# after one is checked, not run. Anywhere else the same letters mean something else (`node -r
+# ./x.js` loads and runs x.js), so the exemption is scoped to those two commands.
 FILE_TEST_FLAGS = frozenset({"-e", "-f", "-d", "-s", "-r", "-w", "-x", "-L", "-h"})
+FILE_TEST_COMMANDS = frozenset({"test", "["})
+# Shell tokens that end one command and begin the next (`shlex` with `punctuation_chars`).
+COMMAND_SEPARATORS = frozenset({"&&", "||", ";", ";;", "|", "&", "(", ")"})
 NPM_DEPENDENCY_KEYS = (
     "dependencies",
     "devDependencies",
@@ -603,16 +608,28 @@ def _lifecycle(manifest: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _referenced_files(command: str) -> set[str]:
-    """Files a script command runs: words naming a path or a script (`node install.js`)."""
+    """Files a script command runs: words naming a path or a script (`node install.js`), except
+    the operand of a file test inside a `test` or `[` command, which is checked and never run."""
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
     try:
-        words = shlex.split(command)
+        words = list(lexer)
     except ValueError:
         words = command.split()
-    return {
-        word.removeprefix("./")
-        for previous, word in zip(["", *words[:-1]], words, strict=True)
-        if previous not in FILE_TEST_FLAGS and ("/" in word or word.endswith(SCRIPT_SUFFIXES))
-    }
+    found: set[str] = set()
+    testing = False
+    previous: str | None = None  # None: the next word starts a command
+    for word in words:
+        if word in COMMAND_SEPARATORS:
+            previous = None
+            continue
+        if previous is None:
+            testing = word in FILE_TEST_COMMANDS
+        checked_only = testing and previous in FILE_TEST_FLAGS
+        if not checked_only and ("/" in word or word.endswith(SCRIPT_SUFFIXES)):
+            found.add(word.removeprefix("./"))
+        previous = word
+    return found
 
 
 def _non_registry_deps(manifest: Mapping[str, Any]) -> dict[str, str]:
