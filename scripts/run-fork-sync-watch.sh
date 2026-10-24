@@ -72,7 +72,13 @@ watch_ping() {
     return 0
 }
 
-REPORT="$(mktemp -t fork-sync-watch)"
+# A template with X's, which BSD and GNU `mktemp` both take; `-t NAME` without them is BSD-only
+# (GNU refuses it, and the empty path then makes the pass's own redirect fail with exit 1).
+REPORT="$(mktemp "${TMPDIR:-/tmp}/fork-sync-watch.XXXXXX")" || {
+    echo "FATAL: could not create the report file" >&2
+    watch_ping "/fail"
+    exit 1
+}
 trap 'rm -f "$REPORT"' EXIT
 watch_ping "/start"
 "$REPO_ROOT/.venv/bin/fork-sync" watch > "$REPORT" 2>&1
