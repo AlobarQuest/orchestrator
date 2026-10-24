@@ -46,6 +46,9 @@ VALUES = {
     bws.ANTHROPIC_API_KEY_UUID: ANTHROPIC,
 }
 SCAFFOLD_MERGED_AT = "2026-10-24T10:00:00Z"
+DECLARED_AT = "2026-10-24T09:30:00Z"
+"""When the scaffold commit itself was made: before its pull request merged it into main."""
+DECLARED_SHA = "a" * 40
 SYNC_RUN = {
     "status": "completed",
     "conclusion": "success",
@@ -127,6 +130,8 @@ class World:
         self.revision = "0" * 40
         self.release_exit = 0
         self.release_stdout: str | None = None
+        # change-manager's source version when it is ahead of the served one (merged, undeployed).
+        self.source_version: int | None = None
         # What the release script changes in change-manager, as git status and the pull request
         # both report it.
         self.policy_changes = ["app/deploy_policy.py", "app/deploy_policy_history.py"]
@@ -222,7 +227,7 @@ class World:
                 raise CommandFailed(argv, self.release_exit, "release refused")
             if self.release_stdout is not None:
                 return self.release_stdout
-            line = {"status": "released", "version": self.policy["version"] + 1}
+            line = {"status": "released", "version": self.source() + 1}
             return json.dumps({**line, "repository": FORK.lower()}) + "\n"
         if argv[:3] == ["gh", "secret", "list"]:
             return json.dumps([{"name": name} for name in sorted(self.secrets)])
@@ -238,6 +243,10 @@ class World:
             return ""
         return ""
 
+    def source(self) -> int:
+        """The version in force in change-manager's source on main."""
+        return self.policy["version"] if self.source_version is None else self.source_version
+
     def _clone(self, argv: list[str]) -> str:
         target = Path(argv[-1])
         target.mkdir(parents=True)
@@ -249,6 +258,8 @@ class World:
             files = self.branches[branch] if branch else self.main
         elif repo == "AlobarQuest/factory-runner":
             files = {".cred-consumers.toml": self.registry}
+        elif repo == "AlobarQuest/change-manager":
+            files = {"app/deploy_policy.py": f"CURRENT_VERSION: Final = {self.source()}\n"}
         for path, content in files.items():
             (target / path).parent.mkdir(parents=True, exist_ok=True)
             (target / path).write_text(content)
@@ -311,7 +322,8 @@ class World:
             self.registry = self.branches[pull["branch"]][".cred-consumers.toml"]
         else:  # change-manager deploys the merge, then serves the version it adds
             self.revision = pull["merge_commit_sha"]
-            self.policy["version"] += 1
+            self.policy["version"] = self.source() + 1
+            self.source_version = None
             self.policy["inert_landing"]["repositories"].append(FORK.lower())
         return ""
 
@@ -379,6 +391,21 @@ class World:
             return {"secrets": [{"name": name} for name in sorted(self.secrets)]}
         if path == f"{fork}/actions/workflows/upstream-sync.yml/runs?per_page=1":
             return {"workflow_runs": self.sync_runs[:1]}
+        if path.startswith(f"{fork}/actions/workflows/upstream-sync.yml/runs?per_page=100&page="):
+            return {"workflow_runs": self.sync_runs if path.endswith("page=1") else []}
+        if path.startswith(f"{fork}/commits?sha=main&path={CONFIG_PATH}&per_page=100&page="):
+            declared = CONFIG_PATH in self.main and path.endswith("page=1")
+            commit = {"sha": DECLARED_SHA, "commit": {"committer": {"date": DECLARED_AT}}}
+            return [commit] if declared else []
+        if path == f"{fork}/commits/{DECLARED_SHA}/pulls":
+            return [p for (r, _), p in self.pulls.items() if r == FORK and p.get("merged_at")]
+        if path == "repos/AlobarQuest/change-manager/contents/app/deploy_policy.py?ref=main":
+            return f"CURRENT_VERSION: Final = {self.source()}\n"
+        if (
+            path
+            == f"repos/AlobarQuest/change-manager/contents/app/deploy_policy.py?ref={POLICY_SHA}"
+        ):
+            return f"CURRENT_VERSION: Final = {self.source() + 1}\n"
         if path == f"{fork}/pulls?state=open&per_page=100":
             return self._open_pulls(FORK)
         if path == f"{fork}/issues/13/comments?per_page=100":
@@ -773,10 +800,27 @@ def test_a_declared_lockfile_is_resolved_on_the_scaffold_branch(
     assert world.ran(f"git fetch --quiet --no-tags https://github.com/{UPSTREAM}.git")
     assert "package-lock.json" in world.branches[SCAFFOLD_BRANCH]
     # The merge accepts the lockfile, and only because the declaration generates one.
-    ctx = _context(world, tmp_path)
+    ctx = _context(world, tmp_path, baseline_tag=TAG)
     assert onboarding.scaffold_diff_refusal(ctx, 12, LOCKED_SHA) == ""
     plain = _context(world, tmp_path, config=_context(World(), tmp_path).config)
     assert "package-lock.json" in onboarding.scaffold_diff_refusal(plain, 12, LOCKED_SHA)
+    # Its bytes are checked against the tag's resolution, which needs the tag.
+    untagged = _context(world, tmp_path)
+    assert "--baseline-tag" in onboarding.scaffold_diff_refusal(untagged, 12, LOCKED_SHA)
+
+
+def test_a_tampered_lockfile_is_not_admin_merged(tmp_path: Path, waits: list[float]) -> None:
+    """A lockfile names what gets installed: anything pushed to the branch other than what the
+    baseline tag resolves to refuses the merge, whatever its name."""
+    world = World(config=LOCKED_CONFIG)
+    world.main_workflows = set()
+    onboarding.scaffold(_context(world, tmp_path, baseline_tag=TAG))
+    world.branches[SCAFFOLD_BRANCH]["package-lock.json"] = '{"lockfileVersion": 3, "evil": 1}'
+    outcome = onboarding.merge_scaffold(_context(world, tmp_path, baseline_tag=TAG))
+    assert outcome.status == onboarding.NEEDS_YOU
+    assert f"is not what {TAG} resolves to" in outcome.detail
+    assert world.ran(f"{sys.executable} .github/scripts/fork_sync_review.py lock {TAG}")
+    assert not world.ran("gh pr merge")
 
 
 @pytest.mark.parametrize("code", [1, 2])
@@ -820,7 +864,7 @@ def test_an_already_present_release_is_done_once_it_is_served(
     world = World().onboarded()
     world.policy["inert_landing"]["repositories"].remove(FORK.lower())
     world.policy["version"] = 12
-    line = {"status": "already_present", "version": 13, "repository": FORK.lower()}
+    line = {"status": "already_present", "version": 12, "repository": FORK.lower()}
     world.release_stdout = json.dumps(line) + "\n"
     reads = iter([False, False, False, True])
     policy = world.policy
@@ -934,11 +978,48 @@ def test_a_sync_from_before_the_scaffold_merged_does_not_count(
     assert world.writes() == []
 
 
-def test_a_first_sync_needs_a_merged_scaffold(tmp_path: Path, waits: list[float]) -> None:
+def test_the_scaffold_is_dated_by_its_pull_request_or_by_its_commit(tmp_path: Path) -> None:
+    """Merged through a pull request, main received the declaration when that merged (later
+    than the commit); pushed straight to main, at the commit's own date."""
+    world = World().onboarded()
+    assert onboarding.scaffolded_at(_context(world, tmp_path)).isoformat() == (
+        "2026-10-24T10:00:00+00:00"
+    )
+    world.pulls.clear()  # scaffolded another way: no pull request carried it
+    assert onboarding.scaffolded_at(_context(world, tmp_path)).isoformat() == (
+        "2026-10-24T09:30:00+00:00"
+    )
+
+
+def test_a_fork_scaffolded_without_a_pull_request_still_passes_the_first_sync(
+    tmp_path: Path, waits: list[float]
+) -> None:
     world = World().onboarded()
     world.pulls.clear()
-    with pytest.raises(onboarding.Refused, match="no merged fork-sync-scaffold"):
-        onboarding.first_sync(_context(world, tmp_path))
+    world.sync_runs = [{**SYNC_RUN, "created_at": "2026-10-24T09:45:00Z"}]
+    assert onboarding.first_sync(_context(world, tmp_path)).status == onboarding.DONE
+    assert world.writes() == []
+    world.sync_runs = [{**SYNC_RUN, "created_at": "2026-10-24T09:00:00Z"}]  # before the commit
+    assert onboarding.first_sync(_context(world, tmp_path)).status == onboarding.DID
+    assert world.ran("gh workflow run upstream-sync.yml")
+
+
+def test_a_later_failed_sync_does_not_undo_a_finished_first_sync(
+    tmp_path: Path, waits: list[float]
+) -> None:
+    world = World().onboarded()
+    failed = {**SYNC_RUN, "conclusion": "failure", "created_at": "2026-10-25T06:00:00Z"}
+    world.sync_runs = [failed, SYNC_RUN]
+    outcome = onboarding.first_sync(_context(world, tmp_path))
+    assert outcome.status == onboarding.DONE
+    assert world.writes() == []
+
+
+def test_only_failed_syncs_since_the_scaffold_need_you(tmp_path: Path, waits: list[float]) -> None:
+    world = World().onboarded()
+    world.sync_runs = [{**SYNC_RUN, "conclusion": "failure", "html_url": "https://run/9"}]
+    outcome = onboarding.first_sync(_context(world, tmp_path))
+    assert outcome.status == onboarding.NEEDS_YOU and "https://run/9" in outcome.detail
     assert world.writes() == []
 
 
@@ -959,13 +1040,35 @@ def test_app_brain_other_than_inert_needs_the_agent(tmp_path: Path) -> None:
     assert "ci.yml, fork-sync-audit.yml, upstream-sync.yml" in outcome.detail
 
 
-def test_a_sync_that_opened_no_pull_request_cannot_be_protected(
+def test_a_sync_that_opened_no_pull_request_waits_to_protect_without_blocking(
     tmp_path: Path, waits: list[float]
 ) -> None:
     world = World()
     outcome = onboarding.protect(_context(world, tmp_path))
-    assert outcome.status == onboarding.NEEDS_YOU and "no sync pull request" in outcome.detail
+    assert outcome.status == onboarding.WAITING and not outcome.blocking
+    assert "waiting for the next upstream release" in outcome.detail
     assert world.writes() == []
+
+
+def test_with_nothing_newer_upstream_the_policy_and_app_brain_still_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, waits: list[float]
+) -> None:
+    """The fork is at upstream's newest release, so the first sync opens no pull request and
+    protection waits for weeks; the steps that don't depend on it run meanwhile, and the run
+    ends unfinished, saying why."""
+    world = World().onboarded()
+    world.protection = None
+    world.policy["inert_landing"]["repositories"].remove(FORK.lower())
+    world.policy["version"] = 12
+    result = _onboard(monkeypatch, tmp_path, world)
+    assert result.exit_code == 1, result.output
+    statuses = dict((step, status) for status, step in _statuses(result.output))
+    assert statuses["main protected"] == "waiting"
+    assert statuses["change-manager inert landing policy"] == "did now"
+    assert statuses["App Brain landing record"] == "done"
+    assert statuses["fork-sync check"] == "needs you"  # it reports main unprotected
+    assert "not finished: main protected, fork-sync check" in result.output
+    assert world.protection is None and not world.ran("gh api -X")
 
 
 def test_a_wait_stops_as_waiting_at_its_deadline(
@@ -981,3 +1084,124 @@ def test_a_wait_stops_as_waiting_at_its_deadline(
     assert sum(waits) >= onboarding.DEADLINE_SECONDS
     assert all(seconds == onboarding.POLL_SECONDS for seconds in waits)
     assert not world.ran("gh pr merge")
+
+
+def _unreleased(world: World) -> World:
+    world.policy["inert_landing"]["repositories"].remove(FORK.lower())
+    world.policy["version"] = 12
+    return world
+
+
+def test_the_release_version_comes_from_the_source_not_the_served_policy(
+    tmp_path: Path, waits: list[float]
+) -> None:
+    """change-manager's main is at 13 (merged, undeployed) while 12 is served: the release must
+    write 14, and the run waits for 14 or later to be served with the fork."""
+    world = _unreleased(World().onboarded())
+    world.source_version = 13
+    outcome = onboarding.landing_policy(_context(world, tmp_path))
+    assert outcome.status == onboarding.DID and "version 14 served" in outcome.detail
+    world = _unreleased(World().onboarded())
+    world.source_version = 13
+    world.release_stdout = json.dumps(
+        {"status": "released", "version": 13, "repository": FORK.lower()}
+    )
+    with pytest.raises(onboarding.Refused, match="released at version 13, not 14"):
+        onboarding.landing_policy(_context(world, tmp_path))
+    assert not world.ran("git commit")
+
+
+def test_the_policy_wait_reads_the_served_policy_not_the_revision(
+    tmp_path: Path, waits: list[float]
+) -> None:
+    """A revision that never matches the merge (another deploy, or a health route that lags)
+    doesn't hold a policy change change-manager already serves; it is only reported."""
+    world = _unreleased(World().onboarded())
+    reads: list[int] = []
+    estate = world.estate()
+
+    def counted() -> dict[str, Any]:
+        reads.append(1)
+        return estate.policy()
+
+    never = onboarding.Estate(estate.secret, estate.installed, counted, lambda: "e" * 40, None)
+    outcome = onboarding.landing_policy(_context(world, tmp_path, estate=never))
+    assert outcome.status == onboarding.DID and "running eeeeeeeeeeee" in outcome.detail
+    assert len(reads) == 2  # one for the decision to release, one for the served wait
+
+
+def test_the_policy_change_stages_exactly_the_checked_paths(
+    tmp_path: Path, waits: list[float]
+) -> None:
+    world = _unreleased(World().onboarded())
+    world.policy_changes = [*world.policy_changes, "contracts/ratified_rollout_policy.json"]
+    onboarding.landing_policy(_context(world, tmp_path))
+    [add] = [argv for argv, _ in world.calls if argv[:2] == ["git", "add"]]
+    staged = (
+        "app/deploy_policy.py app/deploy_policy_history.py contracts/ratified_rollout_policy.json"
+    )
+    assert " ".join(add) == f"git add -- {staged}"
+    assert not world.ran("git add --update") and not world.ran("git add -A")
+
+
+def test_an_open_policy_pull_request_must_release_the_next_version(
+    tmp_path: Path, waits: list[float]
+) -> None:
+    world = _unreleased(World().onboarded())
+    world.pulls[("AlobarQuest/change-manager", 132)] = {
+        "number": 132,
+        "branch": "fork-sync-inert-rea",
+        "head": {"sha": "9" * 40},  # its source declares no version
+        "state": "open",
+        "merged": False,
+    }
+    with pytest.raises(onboarding.Refused, match="CURRENT_VERSION"):
+        onboarding.landing_policy(_context(world, tmp_path))
+    assert not world.ran("gh pr merge")
+
+
+def test_output_nothing_expected_is_a_refusal_naming_the_step(tmp_path: Path) -> None:
+    """GitHub answering with something that isn't JSON, or JSON missing what a step reads, is a
+    refusal of that step, not a traceback, and the payload isn't echoed."""
+    world = World()
+
+    def garbled(argv: Sequence[str], stdin: str | None, cwd: Path | None) -> str:
+        if list(argv[:3]) == ["gh", "secret", "list"]:
+            return "<html>secret-looking payload</html>"
+        return world(argv, stdin, cwd)
+
+    outcome = onboarding.attempt(onboarding.secrets, _context(world, tmp_path, run=garbled))
+    assert outcome.status == onboarding.NEEDS_YOU
+    assert outcome.detail == "refused: secrets read output it can't use (JSONDecodeError)"
+
+    def keyless(argv: Sequence[str], stdin: str | None, cwd: Path | None) -> str:
+        if list(argv[:3]) == ["gh", "secret", "list"]:
+            return '[{"nom": "APP_ID"}]'
+        return world(argv, stdin, cwd)
+
+    outcome = onboarding.attempt(onboarding.secrets, _context(world, tmp_path, run=keyless))
+    assert outcome.detail == "refused: secrets read output it can't use (KeyError)"
+    assert "nom" not in outcome.detail
+
+
+def test_the_policy_wait_holds_until_the_released_version_is_served(
+    tmp_path: Path, waits: list[float]
+) -> None:
+    """A document listing the fork at a version below the one released is not the release."""
+    world = _unreleased(World().onboarded())
+    estate = world.estate()
+    listed = world.policy["inert_landing"]
+    served = iter(
+        [
+            estate.policy(),  # the decision: not listed
+            {**world.policy, "inert_landing": {**listed, "repositories": [FORK.lower()]}},
+        ]
+    )
+
+    def policy() -> dict[str, Any]:
+        return next(served, None) or estate.policy()
+
+    slow = onboarding.Estate(estate.secret, estate.installed, policy, estate.revision, None)
+    outcome = onboarding.landing_policy(_context(world, tmp_path, estate=slow))
+    assert outcome.status == onboarding.DID and "version 13 served" in outcome.detail
+    assert waits

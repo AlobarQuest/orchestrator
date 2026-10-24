@@ -290,18 +290,25 @@ change-manager grant, generated rather than hand-written.
   lockfile, the three Actions secrets (from BWS, on stdin), the registry pull request in
   factory-runner, the scaffold pull request's admin merge, the first sync, and `protect`. The
   scaffold merge is decision 7's admin merge made by the tool, and only when the diff is exactly
-  the files `scaffold` renders with their exact bytes. Each pull request it opens outside the
+  the files `scaffold` renders with their exact bytes, and a declared lockfile only when it is
+  byte for byte what the baseline tag resolves to, resolved again by the tool. Each pull request it opens outside the
   fork is squash-merged only when every check that repository's `main` requires has passed at
   the commit it pushed.
 - **Each fork is an explicit, versioned grant, generated rather than hand-written.** The policy
   step runs change-manager's `scripts/release_inert_repository.py`, which writes the next policy
   version adding the fork, and lands it like the registry change, then waits until change-manager
-  runs the merge and serves that version. The change may touch only the files the script
-  writes, checked before the commit and again on the pull request before the merge, and the
+  serves that version or a later one. The version it must write is read from the source the
+  script runs on, never from what is served, which can lag. The change may touch only the files
+  the script writes, checked before the commit and again on the pull request before the merge, and the
   script's one JSON line is read strictly. Nothing widens the inert population by pattern: every
   fork is still one version, one pull request and one merge.
-- **The first sync is one that ran from the scaffolded `main`:** created after the scaffold
-  pull request merged. An older run, from a lane the fork had before, doesn't count.
+- **The first sync is one that ran from the scaffolded `main`:** any successful sync created
+  after `main` received the declaration (when the pull request carrying its first commit merged,
+  or that commit's date if it was pushed directly). An older run, from a lane the fork had
+  before, doesn't count, and a later failure doesn't undo it.
+- **Protection waits for a real pull request without holding the rest.** With nothing newer
+  upstream, the first sync opens no pull request, so `protect` waits for the next release; the
+  policy, App Brain and confirmation steps run meanwhile, and the run ends unfinished.
 - **Every merge the tools make is visible to the merge guard.** The guard read only the text
   `gh pr merge`, so `fork-sync ack` and `onboard`, which merge with an argv list, were invisible
   to it; it now also reads a list holding `"pr"` and `"merge"` side by side, and both carry a

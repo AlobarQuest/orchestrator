@@ -188,9 +188,11 @@ MERGE_EXEMPT_PATHS: set[Path] = {
     # over: there is no work unit, no change record and no policy version, and one of the three
     # repositories redeploys on landing. What bounds each merge is its content and its checks.
     # The fork's scaffold pull request is admin-merged (ADR-0056 decision 7) only when its diff is
-    # exactly the files `fork-sync scaffold` renders, with the bytes it renders, after `build and
-    # test` passed. factory-runner's registry pull request is squash-merged only when it adds
-    # exactly the fork's two Actions-secret consumers and parses as the old registry plus them,
+    # exactly the files `fork-sync scaffold` renders, with the bytes it renders (a declared
+    # lockfile only when it is what the baseline tag resolves to, resolved again here), after
+    # `build and test` passed. factory-runner's registry pull request is squash-merged only when
+    # it adds exactly the fork's two Actions-secret consumers and parses as the old registry plus
+    # them,
     # and change-manager's only when it is the release script's next policy version naming the
     # fork, read from its one JSON line, and its diff (in the clone, then on the pull request) is
     # only the files that script writes; each only after every check that repository's `main`

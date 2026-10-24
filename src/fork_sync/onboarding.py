@@ -31,14 +31,7 @@ from typing import Any, Final
 
 from fork_sync import acknowledge, bws, checks, onboard
 from fork_sync.estate import SYNC_APP_ID, EstateReadError
-from fork_sync.fork_sync_review import (
-    ACKS_PATH,
-    CONFIG_PATH,
-    ECOSYSTEMS,
-    Config,
-    ConfigError,
-    parse_config,
-)
+from fork_sync.fork_sync_review import ACKS_PATH, CONFIG_PATH, ECOSYSTEMS, Config, parse_config
 from fork_sync.gh import CommandFailed, Runner, gh_api
 from fork_sync.onboard import (
     REQUIRED_CHECKS,
@@ -77,6 +70,9 @@ POLICY_FILES: Final = frozenset(  # not-a-vocabulary: the generator's output fil
 outgoing version goes to the history), so those two are required; the contract is moved only when
 the rollout terms are."""
 POLICY_REQUIRED: Final = frozenset({"app/deploy_policy.py", "app/deploy_policy_history.py"})
+POLICY_SOURCE: Final = "app/deploy_policy.py"
+MAX_PAGES: Final = 10
+"""How many pages of a GitHub listing a step reads before refusing as implausible."""
 REASON_RUN: Final = 80
 """The longest unbroken run in a reason the release script is given; it refuses one over ~89."""
 CONFIRM: Final = "fork-sync check"
@@ -95,6 +91,9 @@ class Outcome:
     step: str
     status: str
     detail: str = ""
+    blocking: bool = True
+    """Whether a `waiting` or `needs you` stops the run. Only a wait the later steps don't depend
+    on is not: they run, and the run still ends unfinished."""
 
 
 class Waiting(RuntimeError):
@@ -291,25 +290,46 @@ def scaffold(ctx: Context) -> Outcome:
     return Outcome(name, DONE, f"#{pull['number'] if pull else '?'} is open")
 
 
+def _resolve_lockfile(ctx: Context, clone: Path, tag: str, lockfile: str) -> bytes:
+    """Resolve `lockfile` for `tag` in a clone of the scaffold branch with the review script's own
+    `lock`, exactly as the sync will, and return its bytes (staged in the clone). The script run is
+    the one this tool rendered, checked byte for byte. `lock` pins resolution to the tag's commit
+    date, so the same tag resolves to the same bytes."""
+    script = clone / REVIEW_SCRIPT
+    if not script.is_file() or script.read_bytes() != render(ctx.config.ecosystem)[REVIEW_SCRIPT]:
+        raise Refused(f"the scaffold branch's {REVIEW_SCRIPT} is not the one scaffold renders")
+    (clone / lockfile).unlink(missing_ok=True)  # `lock` refuses to overwrite one
+    source = f"https://github.com/{ctx.upstream}.git"
+    refspec = f"refs/tags/{tag}:refs/tags/{tag}"
+    ctx.run(["git", "fetch", "--quiet", "--no-tags", source, refspec], None, clone)
+    ctx.run([sys.executable, REVIEW_SCRIPT, "lock", tag], None, clone)
+    return (clone / lockfile).read_bytes()
+
+
 def bootstrap_lockfile(ctx: Context, tag: str, lockfile: str) -> None:
     """main has no lockfile yet, so `build and test` can't install: resolve one for the baseline
-    tag with the review script's own `lock`, exactly as the sync will, and push it to the
-    scaffold branch. The script run is the one this tool rendered, checked byte for byte."""
+    tag and push it to the scaffold branch."""
     with tempfile.TemporaryDirectory() as scratch:
         clone = onboard.clone_fork(ctx.run, ctx.fork, Path(scratch), "--branch", SCAFFOLD_BRANCH)
-        script = clone / REVIEW_SCRIPT
-        if (
-            not script.is_file()
-            or script.read_bytes() != render(ctx.config.ecosystem)[REVIEW_SCRIPT]
-        ):
-            raise Refused(f"the scaffold branch's {REVIEW_SCRIPT} is not the one scaffold renders")
-        source = f"https://github.com/{ctx.upstream}.git"
-        refspec = f"refs/tags/{tag}:refs/tags/{tag}"
-        ctx.run(["git", "fetch", "--quiet", "--no-tags", source, refspec], None, clone)
-        ctx.run([sys.executable, REVIEW_SCRIPT, "lock", tag], None, clone)
+        _resolve_lockfile(ctx, clone, tag, lockfile)
         message = f"fork-sync: resolve {lockfile} for {tag}"
         ctx.run(["git", "commit", "--quiet", "-m", message], None, clone)
         ctx.run(["git", "push", "--quiet", "origin", SCAFFOLD_BRANCH], None, clone)
+
+
+def lockfile_refusal(ctx: Context, sha: str, lockfile: str) -> str:
+    """Why the scaffold head's lockfile must not be admin-merged, or "" when it may: its bytes are
+    the ones this command resolves for the baseline tag. A lockfile names what gets installed, so
+    one anybody pushed to the branch is not trusted for being the right file name."""
+    if ctx.baseline_tag is None:
+        return f"{lockfile} can be checked only against the baseline tag; rerun with --baseline-tag"
+    with tempfile.TemporaryDirectory() as scratch:
+        clone = onboard.clone_fork(ctx.run, ctx.fork, Path(scratch), "--branch", SCAFFOLD_BRANCH)
+        ctx.run(["git", "checkout", "--quiet", "--detach", sha], None, clone)
+        resolved = _resolve_lockfile(ctx, clone, ctx.baseline_tag, lockfile)
+    if (_on(ctx, lockfile, sha) or "").encode() != resolved:
+        return f"{lockfile} at its head is not what {ctx.baseline_tag} resolves to"
+    return ""
 
 
 # ---- 4. secrets --------------------------------------------------------------------------------
@@ -458,6 +478,8 @@ def scaffold_diff_refusal(ctx: Context, number: int, sha: str) -> str:
     for path, content in expected.items():
         if (_on(ctx, path, sha) or "").encode() != content:
             return f"{path} at its head is not what scaffold renders"
+    if lockfile is not None and lockfile in changed:
+        return lockfile_refusal(ctx, sha, lockfile)
     return ""
 
 
@@ -498,21 +520,40 @@ def merge_scaffold(ctx: Context) -> Outcome:
 # ---- 7. first sync -----------------------------------------------------------------------------
 
 
-def _latest_sync_run(ctx: Context) -> dict[str, Any] | None:
-    path = f"repos/{ctx.fork}/actions/workflows/{acknowledge.SYNC_WORKFLOW}/runs?per_page=1"
-    return ((gh_api(ctx.run, path) or {}).get("workflow_runs") or [None])[0]
+def _sync_runs_since(ctx: Context, since: datetime) -> list[dict[str, Any]]:
+    """Every `upstream-sync` run created after `since`, newest first."""
+    workflow = f"repos/{ctx.fork}/actions/workflows/{acknowledge.SYNC_WORKFLOW}/runs?per_page=100"
+    runs: list[dict[str, Any]] = []
+    for page in range(1, MAX_PAGES + 1):
+        listed = (gh_api(ctx.run, f"{workflow}&page={page}") or {}).get("workflow_runs") or []
+        newer = [r for r in listed if _instant(r["created_at"]) > since]
+        runs += newer
+        if len(newer) < len(listed) or len(listed) < 100:
+            return runs
+    raise Refused(f"{ctx.fork} has more than {MAX_PAGES * 100} sync runs since its scaffold")
 
 
-def _scaffold_merged_at(ctx: Context) -> datetime:
-    """When the scaffold pull request merged: a sync from before then ran some other lane."""
-    owner = ctx.fork.split("/")[0]
-    path = f"repos/{ctx.fork}/pulls?state=closed&head={owner}:{SCAFFOLD_BRANCH}&per_page=100"
-    merged = [pull["merged_at"] for pull in gh_api(ctx.run, path) or [] if pull.get("merged_at")]
-    if not merged:
-        raise Refused(
-            f"{ctx.fork} has no merged {SCAFFOLD_BRANCH} pull request to date a sync from"
-        )
-    return max(_instant(at) for at in merged)
+def scaffolded_at(ctx: Context) -> datetime:
+    """When main first carried the declaration. A sync from before then ran some other lane.
+
+    It is the first commit on main that touched `.github/fork-sync.toml` (the oldest the commits
+    API lists for the path). A commit that reached main through a pull request reached it when
+    that pull request merged, which is later than the commit itself; one pushed straight to main
+    reached it at its own commit date."""
+    path = f"repos/{ctx.fork}/commits?sha=main&path={CONFIG_PATH}&per_page=100"
+    oldest: dict[str, Any] | None = None
+    for page in range(1, MAX_PAGES + 1):
+        listed = gh_api(ctx.run, f"{path}&page={page}") or []
+        oldest = listed[-1] if listed else oldest
+        if len(listed) < 100:
+            break
+    else:
+        raise Refused(f"{CONFIG_PATH} has more than {MAX_PAGES * 100} commits on {ctx.fork} main")
+    if oldest is None:
+        raise Refused(f"no commit on {ctx.fork} main adds {CONFIG_PATH}")
+    pulls = gh_api(ctx.run, f"repos/{ctx.fork}/commits/{oldest['sha']}/pulls") or []
+    merged = [_instant(pull["merged_at"]) for pull in pulls if pull.get("merged_at")]
+    return min(merged) if merged else _instant(oldest["commit"]["committer"]["date"])
 
 
 def _instant(text: str) -> datetime:
@@ -520,37 +561,48 @@ def _instant(text: str) -> datetime:
 
 
 def first_sync(ctx: Context) -> Outcome:
-    """A sync counts only if it ran from the scaffolded main: created after the scaffold merged."""
+    """Done once any sync that ran from the scaffolded main (created after the declaration
+    reached it) succeeded; a later failure is the lane's to report, not onboarding's. With none,
+    it waits for one already running, or dispatches one."""
     name = "first sync"
-    since = _scaffold_merged_at(ctx)
+    since = scaffolded_at(ctx)
 
-    def ours(workflow_run: dict[str, Any] | None) -> bool:
-        created = (workflow_run or {}).get("created_at")
-        return bool(created) and _instant(created) > since
+    def succeeded(runs: list[dict[str, Any]]) -> dict[str, Any] | None:
+        return next((r for r in runs if r.get("conclusion") == "success"), None)
 
+    runs = _sync_runs_since(ctx, since)
+    if (run := succeeded(runs)) is not None:
+        return Outcome(name, DONE, f"{run.get('html_url', 'a sync')} succeeded")
     status = DONE
-    if not ours(_latest_sync_run(ctx)):
+    if not runs:
         ctx.run(
             ["gh", "workflow", "run", acknowledge.SYNC_WORKFLOW, "--repo", ctx.fork], None, None
         )
         status = DID
+    elif all(r.get("status") == "completed" for r in runs):
+        return _sync_failed(ctx, runs[0])
 
-    def finished() -> dict[str, Any] | None:
-        newest = _latest_sync_run(ctx)
-        return newest if ours(newest) and (newest or {}).get("status") == "completed" else None
+    def finished() -> list[dict[str, Any]] | None:
+        current = _sync_runs_since(ctx, since)
+        settled = current and all(r.get("status") == "completed" for r in current)
+        return current if succeeded(current) or settled else None
 
-    finished_run = wait_for(f"{acknowledge.SYNC_WORKFLOW} on {ctx.fork}", finished)
-    if finished_run.get("conclusion") != "success":
-        return Outcome(
-            name,
-            NEEDS_YOU,
-            f"the sync concluded {finished_run.get('conclusion')} "
-            f"({finished_run.get('html_url', '')}); fix it, run gh workflow run "
-            f"{acknowledge.SYNC_WORKFLOW} --repo {ctx.fork}, and rerun",
-        )
+    runs = wait_for(f"{acknowledge.SYNC_WORKFLOW} on {ctx.fork}", finished)
+    if succeeded(runs) is None:
+        return _sync_failed(ctx, runs[0])
     pull = _open_pull(ctx.run, ctx.fork, acknowledge.SYNC_BRANCH)
     detail = f"sync pull request #{pull['number']}" if pull else "no sync pull request open"
     return Outcome(name, status, detail)
+
+
+def _sync_failed(ctx: Context, workflow_run: dict[str, Any]) -> Outcome:
+    return Outcome(
+        "first sync",
+        NEEDS_YOU,
+        f"the sync concluded {workflow_run.get('conclusion')} "
+        f"({workflow_run.get('html_url', '')}); fix it, run gh workflow run "
+        f"{acknowledge.SYNC_WORKFLOW} --repo {ctx.fork}, and rerun",
+    )
 
 
 # ---- 8. protect --------------------------------------------------------------------------------
@@ -568,12 +620,14 @@ def protect(ctx: Context) -> Outcome:
         return Outcome(name, DONE)
     pull = _open_pull(ctx.run, ctx.fork, acknowledge.SYNC_BRANCH)
     if pull is None:
+        # The first sync succeeded and opened nothing: upstream has no newer release. The policy
+        # and App Brain steps don't depend on protection, so they run meanwhile.
         return Outcome(
             name,
-            NEEDS_YOU,
-            "no sync pull request is open, so neither required check can be seen reporting "
-            "(the fork may already be at upstream's newest release); protect after the next "
-            "sync opens one",
+            WAITING,
+            "waiting for the next upstream release; protection needs a real pull request to see "
+            "both required checks report",
+            blocking=False,
         )
     number, sha = pull["number"], pull["head"]["sha"]
     jobs = wait_for(
@@ -629,12 +683,10 @@ def first_review(ctx: Context) -> Outcome:
 # ---- 10. the landing policy --------------------------------------------------------------------
 
 
-def _served(ctx: Context, version: int | None) -> dict[str, Any] | None:
-    document = ctx.estate.policy()
-    listed = ctx.fork.lower() in {
-        r.lower() for r in document["inert_landing"].get("repositories", [])
-    }
-    return document if listed and (version is None or document["version"] >= version) else None
+def _serves(document: dict[str, Any], fork: str, version: int) -> bool:
+    """Whether a policy document lists the fork, at `version` or later."""
+    listed = {r.lower() for r in document["inert_landing"].get("repositories", [])}
+    return fork.lower() in listed and document["version"] >= version
 
 
 def _while_deploying[T](probe: Callable[[], T | None]) -> Callable[[], T | None]:
@@ -662,6 +714,18 @@ def release_reason(text: str) -> str:
     return " ".join(words)
 
 
+_CURRENT_VERSION = re.compile(r"^CURRENT_VERSION: Final = (\d+)$", re.MULTILINE)
+
+
+def policy_version(source: str) -> int:
+    """The version in force in change-manager's `app/deploy_policy.py`, read from its text: the
+    module is never imported here."""
+    found = _CURRENT_VERSION.findall(source)
+    if len(found) != 1:
+        raise Refused(f"{POLICY_SOURCE} does not declare exactly one CURRENT_VERSION")
+    return int(found[0])
+
+
 def policy_diff_refusal(changed: set[str]) -> str:
     """Why a policy change must not be committed or merged, or "" when it may: it changes only
     the files the release script writes, and both `app/` files among them."""
@@ -677,9 +741,10 @@ class Release:
     version: int
 
 
-def parse_release(stdout: str, repository: str, expected: int) -> Release:
+def parse_release(stdout: str, repository: str, current: int) -> Release:
     """The release script's one JSON line, read strictly: exactly the three keys, a known status,
-    the repository asked for, and for `released` the version after the one served."""
+    the repository asked for, and the version: `current + 1` for `released`, `current` for
+    `already_present`, where `current` is the version in force in the source it ran on."""
     lines = stdout.strip().splitlines()
     try:
         answer = json.loads(lines[0]) if len(lines) == 1 else None
@@ -694,12 +759,13 @@ def parse_release(stdout: str, repository: str, expected: int) -> Release:
     # GitHub resolves a repository's name in any case.
     if not isinstance(named, str) or named.lower() != repository.lower():
         raise Refused(f"{RELEASE_SCRIPT} released {named!r}, not {repository}")
-    if status == RELEASED and version != expected:
-        raise Refused(f"{RELEASE_SCRIPT} wrote version {version}, not {expected}")
+    expected = current + 1 if status == RELEASED else current
+    if version != expected:
+        raise Refused(f"{RELEASE_SCRIPT} answered {status} at version {version}, not {expected}")
     return Release(status, version)
 
 
-def _release(ctx: Context, clone: Path, expected: int) -> Release:
+def _release(ctx: Context, clone: Path, current: int) -> Release:
     """Run change-manager's release script for the fork. It exits 0 for both outcomes; any other
     exit, 2 included (uv's and Python's own usage exit), is a failure."""
     uv = shutil.which("uv") or str(Path.home() / ".local/bin/uv")
@@ -723,7 +789,51 @@ def _release(ctx: Context, clone: Path, expected: int) -> Release:
         raise Refused(
             f"{RELEASE_SCRIPT} exited {failure.returncode}: {failure.stderr.strip()[:300]}"
         ) from None
-    return parse_release(stdout, ctx.fork.lower(), expected)
+    return parse_release(stdout, ctx.fork.lower(), current)
+
+
+def _open_policy_pull(ctx: Context, branch: str) -> tuple[int, str, int] | None:
+    """A pull request an earlier run opened: its number, head, and the version it releases, which
+    must be the one after main's."""
+    pull = _open_pull(ctx.run, POLICY_REPO, branch)
+    if pull is None:
+        return None
+    number, sha = pull["number"], pull["head"]["sha"]
+    at = f"repos/{POLICY_REPO}/contents/{POLICY_SOURCE}?ref="
+    main, head = (gh_api(ctx.run, at + ref, raw=True) or "" for ref in ("main", sha))
+    version, released = policy_version(main), policy_version(head)
+    if released != version + 1:
+        raise Refused(f"{POLICY_REPO}#{number} releases version {released}, not {version + 1}")
+    return number, sha, released
+
+
+def _release_pull(ctx: Context, branch: str) -> tuple[int, str, int] | Release:
+    """Run the release script in a clone, check its change, and open its pull request; or, when
+    the fork is already in the source's current version, that answer."""
+    with tempfile.TemporaryDirectory() as scratch:
+        clone = onboard.clone_fork(ctx.run, POLICY_REPO, Path(scratch), "--depth", "1")
+        # The source can be ahead of what is served (merged, not yet deployed), so the version
+        # the script must write is read from the source it runs on.
+        current = policy_version((clone / POLICY_SOURCE).read_text(encoding="utf-8"))
+        release = _release(ctx, clone, current)
+        if release.status == ALREADY_PRESENT:
+            return release
+        # Untracked paths are listed too, so debris refuses as surely as a stray edit.
+        status = ctx.run(["git", "status", "--porcelain"], None, clone)
+        changed = {line[3:] for line in status.splitlines() if line}
+        refusal = policy_diff_refusal(changed)
+        if refusal:
+            raise Refused(f"{RELEASE_SCRIPT}'s change is not committed: {refusal}")
+        title = f"Landing policy v{release.version}: admit {ctx.fork} to the inert lane"
+        sha = _push_branch(ctx.run, clone, branch, sorted(changed), title)
+        body = (
+            f"Generated by `fork-sync onboard` with `{RELEASE_SCRIPT}`: version {release.version} "
+            f"lists {ctx.fork.lower()} in `inert_landing.repositories` (orchestrator ADR-0056 "
+            "amendment 5)."
+        )
+        argv = ["gh", "pr", "create", "--repo", POLICY_REPO, "--base", "main", "--head", branch]
+        url = ctx.run([*argv, "--title", title, "--body", body], None, clone)
+    return _number(url), sha, release.version
 
 
 def landing_policy(ctx: Context) -> Outcome:
@@ -732,54 +842,42 @@ def landing_policy(ctx: Context) -> Outcome:
     step = checks.policy_step(ctx.fork, lambda: document["inert_landing"])
     if step.status == checks.OK:
         return Outcome(name, DONE, f"version {document['version']}")
-    if _served(ctx, None) is not None:
+    if _serves(document, ctx.fork, 0):
         return Outcome(name, NEEDS_YOU, f"the fork is listed, but {step.detail}")
     _in_place(ctx)
-    expected = document["version"] + 1
     branch = f"fork-sync-inert-{ctx.fork.split('/')[1].lower()}"
-    pull = _open_pull(ctx.run, POLICY_REPO, branch)
-    if pull is not None:
-        number, sha = pull["number"], pull["head"]["sha"]
-    else:
-        with tempfile.TemporaryDirectory() as scratch:
-            clone = onboard.clone_fork(ctx.run, POLICY_REPO, Path(scratch), "--depth", "1")
-            release = _release(ctx, clone, expected)
-            if release.status == ALREADY_PRESENT:
-                # Already in change-manager's source: merged earlier, perhaps not yet deployed.
-                serving = _while_deploying(lambda: _served(ctx, None))
-                wait_for(f"change-manager serving {ctx.fork}", serving)
-                return Outcome(
-                    name, DONE, f"{ctx.fork.lower()} was already released (v{release.version})"
-                )
-            title = f"Landing policy v{expected}: admit {ctx.fork} to the inert lane"
-            # Untracked paths are listed too, so debris refuses as surely as a stray edit.
-            status = ctx.run(["git", "status", "--porcelain"], None, clone)
-            refusal = policy_diff_refusal({line[3:] for line in status.splitlines() if line})
-            if refusal:
-                raise Refused(f"{RELEASE_SCRIPT}'s change is not committed: {refusal}")
-            ctx.run(["git", "checkout", "--quiet", "-b", branch], None, clone)
-            ctx.run(["git", "add", "--update"], None, clone)
-            ctx.run(["git", "commit", "--quiet", "-m", title], None, clone)
-            ctx.run(["git", "push", "--quiet", "origin", branch], None, clone)
-            sha = ctx.run(["git", "rev-parse", "HEAD"], None, clone).strip()
-            body = (
-                f"Generated by `fork-sync onboard` with `{RELEASE_SCRIPT}`: version {expected} "
-                f"lists {ctx.fork.lower()} in `inert_landing.repositories` (orchestrator ADR-0056 "
-                "amendment 5)."
-            )
-            argv = ["gh", "pr", "create", "--repo", POLICY_REPO, "--base", "main", "--head", branch]
-            url = ctx.run([*argv, "--title", title, "--body", body], None, clone)
-        number = _number(url)
+    opened = _open_policy_pull(ctx, branch) or _release_pull(ctx, branch)
+    if isinstance(opened, Release):
+        # Already in change-manager's source: merged earlier, perhaps not yet deployed.
+        _wait_served(ctx, opened.version)
+        return Outcome(name, DONE, f"{ctx.fork.lower()} was already released (v{opened.version})")
+    number, sha, version = opened
     files = gh_api(ctx.run, f"repos/{POLICY_REPO}/pulls/{number}/files?per_page=100") or []
     refusal = policy_diff_refusal({item["filename"] for item in files})
     if refusal:
         raise Refused(f"{POLICY_REPO}#{number} is open and unmerged: {refusal}")
     merged = land_pull(ctx.run, POLICY_REPO, number, sha)
-    running = _while_deploying(lambda: ctx.estate.revision() == merged or None)
-    wait_for(f"change-manager running {merged[:12]}", running)
-    serving = _while_deploying(lambda: _served(ctx, expected))
-    served = wait_for(f"change-manager serving version {expected}", serving)
-    return Outcome(name, DID, f"{POLICY_REPO}#{number} merged; version {served['version']} served")
+    served = _wait_served(ctx, version)
+    try:
+        running = f"; running {ctx.estate.revision()[:12]}"
+    except EstateReadError:
+        running = ""
+    return Outcome(
+        name,
+        DID,
+        f"{POLICY_REPO}#{number} merged as {merged[:12]}; version {served} served{running}",
+    )
+
+
+def _wait_served(ctx: Context, version: int) -> int:
+    """Wait until change-manager serves `version` or later with the fork, deciding each poll on
+    the one document it read. Returns the version served."""
+
+    def serving() -> int | None:
+        document = ctx.estate.policy()
+        return document["version"] if _serves(document, ctx.fork, version) else None
+
+    return wait_for(f"change-manager serving version {version}", _while_deploying(serving))
 
 
 # ---- 11. App Brain (an agent's) ----------------------------------------------------------------
@@ -896,9 +994,14 @@ def onboard_fork(
         outcome = attempt(step, ctx)
         outcomes.append(outcome)
         report(outcome)
-        if outcome.status in (WAITING, NEEDS_YOU):
+        if outcome.status in (WAITING, NEEDS_YOU) and outcome.blocking:
             break
     return outcomes
+
+
+def finished(outcomes: list[Outcome]) -> bool:
+    """Whether a run onboarded the fork: it reached the last step and every step is done."""
+    return outcomes[-1].step == CONFIRM and all(o.status in (DONE, DID) for o in outcomes)
 
 
 def attempt(step: Step, ctx: Context) -> Outcome:
@@ -908,6 +1011,13 @@ def attempt(step: Step, ctx: Context) -> Outcome:
     except Waiting as waiting:
         return Outcome(name, WAITING, str(waiting))
     # Each refusal is a RuntimeError (`Refused`, `CommandFailed`, `bws.Unavailable`,
-    # `EstateReadError`); a declaration or registry that doesn't parse is a ValueError of its own.
-    except (RuntimeError, ConfigError, tomllib.TOMLDecodeError) as error:
+    # `EstateReadError`), and says why.
+    except RuntimeError as error:
         return Outcome(name, NEEDS_YOU, f"refused: {error}")
+    # Output in a shape nothing here expected: JSON that doesn't parse, a key or type missing, a
+    # declaration or registry that doesn't parse. Only the error's type is named: the message
+    # could carry the payload, which is GitHub's or upstream's text.
+    except (ValueError, KeyError, TypeError) as error:
+        return Outcome(
+            name, NEEDS_YOU, f"refused: {name} read output it can't use ({type(error).__name__})"
+        )

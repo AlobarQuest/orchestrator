@@ -153,7 +153,9 @@ def onboard_command(
             report=report,
         ),
     )
-    if outcomes[-1].status != onboarding.DONE or outcomes[-1].step != onboarding.CONFIRM:
+    if not onboarding.finished(outcomes):
+        pending = [o.step for o in outcomes if o.status not in (onboarding.DONE, onboarding.DID)]
+        typer.echo(f"not finished: {', '.join(pending)}; rerun after doing what it printed")
         raise typer.Exit(1)
 
 

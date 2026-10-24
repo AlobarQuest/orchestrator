@@ -372,14 +372,20 @@ as an argument.
    failure doesn't block the merge. `onboard` admin-merges it only when its diff is exactly the
    rendered lane files, the declaration and (when `main` has none) the empty acknowledgements,
    plus the lockfile when the declaration generates one, each added or changed, and the rendered
-   files and the declaration carry exactly the bytes `scaffold` writes. Anything else stops with
+   files and the declaration carry exactly the bytes `scaffold` writes. A lockfile names what gets
+   installed, so its bytes must be what the baseline tag resolves to: `onboard` resolves it again
+   in a scratch clone with the review script's `lock <tag>` (pinned to the tag's commit date, so
+   the same tag gives the same bytes) and compares. That needs `--baseline-tag`. Anything else stops with
    the reason: read the pull request and merge it yourself with `gh pr merge <number> --repo
    <fork> --merge --admin`.
-7. **Run the first sync.** Only a sync created after the scaffold pull request merged counts,
-   since an older one (a fork with an earlier lane) ran from some other `main`. `onboard` reads
-   that merge time from the scaffold pull request, dispatches `upstream-sync.yml` when no run
-   is newer, and waits for one that is. Both checks then run on the sync pull request, from the
-   scaffolded `main`.
+7. **Run the first sync.** Only a sync created after `main` received the declaration counts,
+   since an older one (a fork with an earlier lane) ran from some other `main`. That moment is the
+   first commit on `main` that touched `.github/fork-sync.toml`: when the pull request carrying it
+   merged, or the commit's own date if it was pushed straight to `main`, so a fork scaffolded
+   another way still passes. The step is done once any such sync succeeded; a later failure is
+   the lane's to report. With none, `onboard` waits for one already running, or dispatches
+   `upstream-sync.yml`. Both checks then run on the sync pull request, from the scaffolded
+   `main`.
    A sync run that failed stops with its link: fix the cause, run `gh workflow run
    upstream-sync.yml --repo <fork>`, and rerun.
 8. **Protect `main`.** `onboard` runs `fork-sync protect` once the sync pull request's CI run has
@@ -389,8 +395,10 @@ as an argument.
    turns issues on for the alert, and requires both checks from the GitHub Actions app (`app_id`
    15368, so no other status poster can satisfy them) with `strict: false`, no required reviews
    and no admin enforcement. If the first sync opened no pull request (the fork is already at
-   upstream's newest release), nothing can show the checks reporting, and the step stops until a
-   later sync opens one.
+   upstream's newest release), nothing can show the checks reporting: the step reports `waiting`
+   for the next upstream release, and `onboard` goes on with the steps that don't depend on it
+   (the landing policy, App Brain, the confirmation). The run ends unfinished, exit 1, naming the
+   step, until a rerun after that release protects `main`.
 9. **Review the sync pull request** (a person's). If its review holds, `onboard` stops and prints
    the `fork-sync ack <fork> <pr> --by <who> --reason <why>` dry run. Run it, read the rows, and
    acknowledge what you accept; do not acknowledge what you have not read. `onboard` never
@@ -400,19 +408,22 @@ as an argument.
     and `non_ecosystem_authors` (ADR-0041). Each fork stays an explicit, versioned grant. When the
     served policy lacks the fork, `onboard` clones `AlobarQuest/change-manager`, runs `uv run
     python scripts/release_inert_repository.py --repository <fork, lower-cased> --reason <text>`
-    there, which writes the next version. The script exits 0 with one JSON line, `{"status":
-    "released", "version": <N+1>, "repository": ...}` or `{"status": "already_present", ...}`;
-    `onboard` refuses any other line, another repository, a `released` version other than the
-    served N+1, and every nonzero exit (2 included: it is also uv's and Python's own usage exit).
-    `already_present` counts as done once change-manager serves the fork. The reason is passed
+    there, which writes the next version. N is read from the clone's `app/deploy_policy.py`
+    (`CURRENT_VERSION`), never from what is served: change-manager's `main` can be ahead of its
+    deploy. The script exits 0 with one JSON line, `{"status": "released", "version": <N+1>,
+    "repository": ...}` or `{"status": "already_present", "version": <N>, ...}`; `onboard`
+    refuses any other line, another repository, any other version, and every nonzero exit (2
+    included: it is also uv's and Python's own usage exit). `already_present` counts as done once
+    change-manager serves the fork. A pull request an earlier run opened is reused only when its
+    head's version is the one after `main`'s. The reason is passed
     without quotes, backslashes or control characters and with no long unbroken run, which the
     script refuses. The change must touch only the files the script writes
     (`app/deploy_policy.py` and `app/deploy_policy_history.py`, and possibly
     `contracts/ratified_rollout_policy.json`), checked in the clone before committing and again
     on the pull request before merging. It commits that, opens a pull request, waits for the
-    checks change-manager's `main` requires, squash-merges it, and waits until
-    `https://change-mgr.alobar.net/api/health` reports the merge commit as its `revision` and the
-    policy serves version N+1 with the fork. It refuses unless the declaration is committed and
+    checks change-manager's `main` requires, squash-merges it (staging exactly the checked
+    paths), and waits until the served policy is version N+1 or later and lists the fork. The
+    running revision (`https://change-mgr.alobar.net/api/health`) is reported, not waited on. It refuses unless the declaration is committed and
     the App installed. A listed fork missing an
     author stops: that is a person's edit. The policy is read with `FORK_SYNC_CHANGE_MANAGER_TOKEN`
     when set, otherwise with the read bearer from BWS (`314f276d-…`), as the inert landing lane
