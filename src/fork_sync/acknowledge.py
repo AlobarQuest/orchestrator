@@ -375,7 +375,7 @@ def _open_pull(run: Runner, plan: Plan) -> tuple[int, str]:
     return int(match.group(1)), sha
 
 
-def _ci_jobs(run: Runner, fork: str, sha: str) -> dict[str, dict[str, Any]] | None:
+def ci_jobs(run: Runner, fork: str, sha: str) -> dict[str, dict[str, Any]] | None:
     """The jobs of the most recent run of the fork's own CI workflow at `sha`, once that run has
     completed; `None` until then. Only that workflow's jobs count: another workflow's job of the
     same name, or an older run, must not decide the merge."""
@@ -396,7 +396,7 @@ def _ci_jobs(run: Runner, fork: str, sha: str) -> dict[str, dict[str, Any]] | No
 
 def wait_for_checks(run: Runner, fork: str, number: int, sha: str) -> dict[str, dict[str, Any]]:
     deadline = monotonic() + DEADLINE_SECONDS
-    while (jobs := _ci_jobs(run, fork, sha)) is None:
+    while (jobs := ci_jobs(run, fork, sha)) is None:
         if monotonic() >= deadline:
             raise Refused(
                 f"no {CI_WORKFLOW} run on #{number} completed in time; it is open and unmerged"

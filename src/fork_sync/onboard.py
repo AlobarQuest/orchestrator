@@ -217,13 +217,18 @@ def protect(run: Runner, fork: str) -> int:
     return min(proven)
 
 
-def human_steps(fork: str) -> str:
+def install_steps(fork: str) -> str:
+    """The two steps only a person can do, before anything else."""
     return f"""Human steps (only a person can do these):
   1. Install the App {SYNC_APP} on {fork}:
      https://github.com/settings/apps/{SYNC_APP}/installations -> Configure ->
      "Only select repositories" -> add {fork}.
   2. Confirm BWS project "Ops / Platform" holds the App key
-     fork-secure-upstream-sync-app-private-key-b64 (998b817e-6164-4b9f-9c52-b4e800e8270d).
+     fork-secure-upstream-sync-app-private-key-b64 (998b817e-6164-4b9f-9c52-b4e800e8270d)."""
+
+
+def human_steps(fork: str) -> str:
+    return f"""{install_steps(fork)}
 
 Agent steps (docs/operations/onboarding-a-fork.md):
   3. Set Actions secrets {", ".join(SECRETS)} on {fork} from BWS, in-process, value on stdin

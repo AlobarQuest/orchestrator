@@ -2,8 +2,9 @@
 
 `check` and `human-steps` only read, as does `ack` without `--yes`. `scaffold`, `baseline`,
 `protect` and `ack --yes` write to the fork with the operator's own `gh` and git credentials, and
-each refuses before writing when its precondition does not hold. Exit codes: 0 done (or every
-step ok); 1 something missing or refused.
+each refuses before writing when its precondition does not hold. `onboard` runs those steps and
+the rest of the runbook in order, resuming where the fork stands (`onboarding.py`). Exit codes:
+0 done (or every step ok); 1 something missing or refused.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from typing import Annotated
 
 import typer
 
-from fork_sync import acknowledge, checks, estate, onboard
+from fork_sync import acknowledge, bws, checks, estate, onboard, onboarding
 from fork_sync.fork_sync_review import ConfigError
 from fork_sync.gh import CommandFailed, subprocess_runner
 
@@ -39,6 +40,22 @@ def _readers() -> tuple[checks.PolicyReader | None, checks.LandingReader | None]
         else None
     )
     return policy, landing
+
+
+def onboarding_estate() -> onboarding.Estate:
+    """The reads `onboard` makes outside `gh`. BWS is reached only when a step needs a value."""
+    secret = bws.reader()
+    token = os.environ.get("FORK_SYNC_CHANGE_MANAGER_TOKEN", "").strip()
+    _, landing = _readers()
+    return onboarding.Estate(
+        secret=secret,
+        installed=lambda fork: estate.app_installed(
+            fork, bws.pem(secret(bws.APP_PRIVATE_KEY_UUID))
+        ),
+        policy=lambda: estate.read_landing_policy(token or secret(bws.CHANGE_MANAGER_READ_UUID)),
+        revision=estate.change_manager_revision,
+        landing=landing,
+    )
 
 
 @app.command()
@@ -98,6 +115,48 @@ def protect(fork: Fork) -> None:
         f"protected {fork} main with {', '.join(onboard.REQUIRED_CHECKS)} "
         f"(both reported on pull request #{number})"
     )
+
+
+@app.command("onboard")
+def onboard_command(
+    fork: Fork,
+    config: Annotated[Path, typer.Option(help="The fork-sync.toml to commit.", exists=True)],
+    baseline_tag: Annotated[
+        str | None, typer.Option(help="The upstream tag to baseline main on, when it must be.")
+    ] = None,
+    discard_fork_commits: Annotated[
+        bool, typer.Option(help="With a baseline: drop commits on main that upstream doesn't have.")
+    ] = False,
+    reset_secrets: Annotated[
+        bool, typer.Option(help="Set the Actions secrets again even where the fork has them.")
+    ] = False,
+) -> None:
+    """Run every onboarding step not yet done, stopping at the first that needs a person.
+
+    Resumable: rerun it after doing what it printed. Exits 0 once every step is done."""
+
+    def report(outcome: onboarding.Outcome) -> None:
+        typer.echo(f"{outcome.status:9} {outcome.step}")
+        for line in outcome.detail.splitlines():
+            typer.echo(f"          {line}")
+
+    outcomes = _act(
+        "onboard",
+        lambda: onboarding.onboard_fork(
+            run_command,
+            fork,
+            config,
+            onboarding_estate(),
+            baseline_tag=baseline_tag,
+            discard_fork_commits=discard_fork_commits,
+            reset_secrets=reset_secrets,
+            report=report,
+        ),
+    )
+    if not onboarding.finished(outcomes):
+        pending = [o.step for o in outcomes if o.status not in (onboarding.DONE, onboarding.DID)]
+        typer.echo(f"not finished: {', '.join(pending)}; rerun after doing what it printed")
+        raise typer.Exit(1)
 
 
 @app.command("human-steps")

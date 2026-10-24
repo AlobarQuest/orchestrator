@@ -269,3 +269,66 @@ reported finding is harmless.
   reads by those rules, not by a person reading it. A model acknowledgement a new review rates
   higher is raised in place, upward only, and shown as a raise. Upstream's and the model's text
   is printed and recorded with every control character escaped.
+
+## Amendment 5 (2026-10-24): onboarding is one resumable command
+
+**Status:** Accepted (Devon, 2026-10-24).
+
+Onboarding a fork took thirteen runbook steps, most of them an agent driving `gh`, git and BWS by
+hand, and each onboarding was a chance to get one of them slightly wrong. Devon decided that
+onboarding is one repeatable command, and that each fork stays an explicit, versioned
+change-manager grant, generated rather than hand-written.
+
+- **`fork-sync onboard <fork> --config <declaration>` runs the procedure and resumes.** Each step
+  reads where the fork stands, acts only when that read says it isn't done, and reports `done`,
+  `did now`, `waiting` or `needs you`. The run stops at the first step that is waiting or needs a
+  person, so rerunning continues from there. Every wait pauses between polls and has a deadline.
+  Decision 10's tool gains the command; the runbook's procedure is now organised around it, with
+  each step's manual fallback kept.
+- **The steps it takes in place of a person:** the baseline (only with `--baseline-tag`, and
+  never on a protected `main` or one that carries the declaration), the scaffold and its bootstrap
+  lockfile, the three Actions secrets (from BWS, on stdin), the registry pull request in
+  factory-runner, the scaffold pull request's admin merge, the first sync, and `protect`. The
+  scaffold merge is decision 7's admin merge made by the tool, and only when the diff is exactly
+  the files `scaffold` renders with their exact bytes, and a declared lockfile only when it is
+  byte for byte what the baseline tag resolves to, resolved again by the tool. Each pull request it opens outside the
+  fork is squash-merged only when every check that repository's `main` requires has passed at
+  the commit it pushed.
+- **Each fork is an explicit, versioned grant, generated rather than hand-written.** The policy
+  step runs change-manager's `scripts/release_inert_repository.py`, which writes the next policy
+  version adding the fork, and lands it like the registry change, then waits until change-manager
+  serves that version or a later one. The version it must write is read from the source the
+  script runs on, never from what is served, which can lag. The change may touch only the files
+  the script writes, checked before the commit and again on the pull request before the merge, and the
+  script's one JSON line is read strictly. Nothing widens the inert population by pattern: every
+  fork is still one version, one pull request and one merge.
+- **The first sync is one that ran from the scaffolded `main`:** any successful sync created
+  after `main` received the declaration (when the pull request carrying its first commit merged,
+  or that commit's date if it was pushed directly). An older run, from a lane the fork had
+  before, doesn't count, and a later failure doesn't undo it.
+- **Protection waits for a real pull request without holding the rest.** With nothing newer
+  upstream, the first sync opens no pull request, so `protect` waits for the next release; the
+  policy, App Brain and confirmation steps run meanwhile, and the run ends unfinished.
+- **Every merge the tools make is visible to the merge guard.** The guard read only the text
+  `gh pr merge`, so `fork-sync ack` and `onboard`, which merge with an argv list, were invisible
+  to it; it now also reads a list holding `"pr"` and `"merge"` side by side, and both carry a
+  reasoned exemption.
+- **A step that writes outside the fork refuses** unless the fork has committed the declaration and
+  the App is installed on it, both re-read at the step.
+- **What remains a person's:** installing the App on the fork (no API does it), and accepting the
+  first review's findings: `onboard` prints the `fork-sync ack` dry run and never approves. **What
+  remains an agent's:** App Brain's landing record, whose write has no credential outside an agent
+  session; `onboard` prints the exact call and counts it done only when App Brain's read confirms
+  it.
+- **How it reaches BWS.** All three values (the App key `998b817e-…`, `anthropic-api-key`
+  `b74bf8b3-…` and change-manager's read bearer `314f276d-…`) are read through the broad machine
+  account's Keychain item, as `scripts/run-inert-landing.sh` reads its broad identity. To learn
+  whether the App is installed, it signs a JWT with the App key in-process and asks GitHub as
+  the App, since GitHub answers that only to the App. The App key and `anthropic-api-key` are
+  declared in the orchestrator's `.bws-secrets.toml`, each naming `fork-sync onboard` as its
+  reader, by Devon's decision of 2026-10-24 ("keep them for now"): the orchestrator now reads
+  them itself.
+- **The cost:** the tool holds the App key while it runs, and decides two merges a person used to
+  make. Both are bounded by exact-content and required-check conditions, and every other judgement
+  (the review, the App install) is still a person's.
+
