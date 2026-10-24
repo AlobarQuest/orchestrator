@@ -15,6 +15,7 @@ The `fork-sync` console script automates every step it can and reports the rest:
 | `fork-sync baseline <fork> --tag <tag> --confirm` | the fork's `main` | Resets `main` to an upstream tag with upstream's whole `.github/` removed. `--discard-fork-commits` drops commits upstream doesn't have. |
 | `fork-sync scaffold <fork> --config <file>` | a branch and pull request | Commits `.github/fork-sync.toml`, an empty `.github/fork-sync-acks.toml`, and the rendered workflows and review script. |
 | `fork-sync protect <fork>` | repository settings | Applies the landing settings and branch protection on `main`. |
+| `fork-sync ack <fork> <pr> --reason <text> --by <who>` | nothing; with `--yes`, the acknowledgements on `main` | Lists a held sync's failing rows and the entries it would add or raise. With `--yes --expect <fingerprints>` it records them, admin-merges the change and re-runs the sync. |
 
 Each writing command refuses before it writes when its precondition does not hold.
 
@@ -137,12 +138,33 @@ with exit 2. The deterministic findings are:
 An ordinary dependency version bump from the registry is not a finding; the model sees it in the
 lockfile summary.
 
+Not every finding holds the sync (ADR-0056 amendment 4). These are reported: they stay in the
+report, marked `reported`, but fail nothing and need no acknowledgement.
+
+- An audit advisory that isn't critical. Critical means npm's severity `critical`, or a CVSS base
+  score of 9.0 or more. npm gives the score. cargo-audit gives a vector, which the review scores
+  with the CVSS v3.0 or v3.1 base equations; temporal and environmental metrics after the base
+  ones are allowed and don't change it. A vector that isn't a strict v3.0 or v3.1 vector, or no
+  vector at all, has no score, so its advisory is reported. An npm `low` or `moderate` advisory
+  is not a finding unless its score is 9.0 or more, and then it holds. The weekly audit of `main`
+  follows the same rule.
+- `npm-install-script`: CI and the tool installer install with lifecycle scripts disabled.
+- A model finding rated `low`. `medium`, `high`, and any other rating hold.
+- A watched JSON file whose two sides, parsed, differ only in `version` keys whose two values are
+  both plain release versions (`1.2.3`, `1.2.3-rc.1+b5`), and none of them below `scripts`, a
+  dependency table, `overrides`, `resolutions`, `bin`, `exports`, `engines` or `config`: a
+  manifest's release bump. Any other change to it holds, including a `scripts.version` change, a
+  version turned into a range or a URL, one that also adds a key, or a side that isn't JSON or has
+  duplicate keys.
+
+Every other finding holds until it's acknowledged.
+
 It writes a report to the job summary and to one rolling pull-request comment, then exits:
 
 | Exit | Meaning | Check |
 |-|-|-|
-| 0 | No unacknowledged finding | Passes |
-| 1 | At least one unacknowledged finding | Fails |
+| 0 | No unacknowledged finding that holds | Passes |
+| 1 | At least one unacknowledged finding that holds | Fails |
 | 2 | The review could not run: no key, API error, unparseable verdict | Fails |
 
 ## The alert
@@ -171,9 +193,10 @@ script has no `notify`, so that job fails on it) and then `fork-sync protect` ag
 
 ## Acknowledge a finding
 
-A finding a person has read and accepts is acknowledged by its fingerprint, which the report
-prints. The fingerprint covers the finding's kind, its path and the exact content it is about: the
-changed file's blob, a binary's sha256, the lockfile and the package entry, or, for a model
+A holding finding a person has read and accepts is acknowledged by its fingerprint, which the
+report prints. A `reported` row needs none, and an acknowledgement of one changes nothing. The
+fingerprint covers the finding's kind, its path and the exact content it is about: the changed
+file's blob, a binary's sha256, the lockfile and the package entry, or, for a model
 finding, the path's blob (or the whole reviewed diff for a path that did not change). An
 acknowledgement covers that content and nothing later: if the file changes again, the finding
 returns with a new fingerprint.
@@ -198,6 +221,39 @@ severity = "medium"
 reason = "Build-time docs script the fork's build never runs; reported upstream."
 ```
 
+`fork-sync ack` does the steps by hand, below, after one approval:
+
+1. `fork-sync ack <fork> <pr> --reason "<why>" --by "<who>"` changes nothing. `--by` is
+   required: it is what the acknowledgements record as having accepted the findings. It reads the
+   sync pull request's latest review comment, posted by `github-actions[bot]` (a comment from
+   anyone else is ignored), and lists every row still marked failing, then the `[[ack]]` entries
+   it would add, the entries it would raise, and the command to record them. Every control
+   character in upstream's or the model's text is printed as its escape (`\x1b`), so none can
+   move the cursor or hide a row. It refuses a pull request that isn't open, isn't the
+   `upstream-sync` branch, or whose review is of an older head, and one whose review couldn't
+   run.
+2. Read the rows. If you accept them, run the printed command: it adds `--yes --expect
+   <fingerprints>`. It re-reads everything and refuses unless the failing fingerprints are exactly
+   the ones shown. It writes one entry per fingerprint to `.github/fork-sync-acks.toml` on a new
+   branch from `main` (two model concerns about one file share a fingerprint, so they become one
+   entry at the higher severity), and opens a pull request. It refuses if `main`'s
+   acknowledgements changed since it read them, or if a pull request from an earlier run of the
+   same acknowledgement is still open: merge or close that one first.
+3. It waits for the latest run of the fork's `ci.yml` at that pull request's head, then
+   admin-merges it only if its diff is only the acknowledgements file at the commit it pushed,
+   that run's `build and test` passed and its `security review` reached a verdict (`success`, or
+   `failure` on the acknowledgements file by design; `cancelled`, `skipped` or a missing job
+   refuses), and every failing row of its own review is on the acknowledgements file. Otherwise
+   it stops and leaves the pull request open. After merging it dispatches `upstream-sync.yml` and
+   prints the merge commit.
+
+A model finding acknowledged below the severity a new review gives it fails under the same
+fingerprint. `ack` raises that entry's `severity` in place, upward only, and appends `; raised to
+<severity> on <date> (<pull request title>)` to its reason; `--expect` covers raises too. Any
+other fingerprint already in the file is refused, for a person to edit.
+
+The steps by hand:
+
 1. Add an entry to `.github/fork-sync-acks.toml` on the fork's `main`:
 
    ```toml
@@ -210,16 +266,16 @@ reason = "Build-time docs script the fork's build never runs; reported upstream.
 
    An audit finding's fingerprint covers only the advisory, the package and its installed
    version, so its acknowledgement names exactly what it accepts. It lasts across releases until
-   that package version changes, and a newly published advisory fails the check again. For a
-   report row `RUSTSEC-2026-0204 crossbeam-epoch 0.9.18: Invalid pointer dereference … (no CVSS;
-   fix: >=0.9.20)`:
+   that package version changes, and a newly published critical advisory fails the check again.
+   Only a critical advisory needs one. For a report row `GHSA-xvch-5gv4-984h minimist 1.2.5:
+   Prototype Pollution … (critical; fix: minimist 1.2.8)`:
 
    ```toml
    [[ack]]
    fingerprint = "<the fingerprint the report prints for that row>"
    by = "devon"
-   date = 2026-10-19
-   reason = "RUSTSEC-2026-0204: crossbeam-epoch fmt::Pointer only; upstream v1.0.1 still pins 0.9.18."
+   date = 2026-10-24
+   reason = "GHSA-xvch-5gv4-984h: minimist is a build-time dependency only; upstream still pins 1.2.5."
    ```
 
    Put the entries on a branch and open a pull request. Its `security review` runs from the

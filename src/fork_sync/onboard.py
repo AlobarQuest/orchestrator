@@ -68,7 +68,7 @@ def parent_of(run: Runner, fork: str) -> str:
     return parent
 
 
-def _clone(run: Runner, fork: str, into: Path, *extra: str) -> Path:
+def clone_fork(run: Runner, fork: str, into: Path, *extra: str) -> Path:
     target = into / "fork"
     run(
         ["git", "clone", "--quiet", *extra, f"https://github.com/{fork}.git", str(target)],
@@ -86,7 +86,7 @@ def scaffold(run: Runner, fork: str, config_path: Path) -> int:
     if parent.lower() != config.upstream.lower():
         raise Refused(f"{fork} is a fork of {parent}, but the declaration names {config.upstream}")
     with tempfile.TemporaryDirectory() as scratch:
-        clone = _clone(run, fork, Path(scratch), "--depth", "1")
+        clone = clone_fork(run, fork, Path(scratch), "--depth", "1")
         run(["git", "checkout", "--quiet", "-b", SCAFFOLD_BRANCH], None, clone)
         files = {CONFIG_PATH: text.encode(), **render(config.ecosystem)}
         # Re-scaffolding an onboarded fork keeps what a person has acknowledged.
@@ -137,7 +137,7 @@ def baseline(run: Runner, fork: str, tag: str, *, discard_fork_commits: bool = F
     """
     upstream = parent_of(run, fork)
     with tempfile.TemporaryDirectory() as scratch:
-        clone = _clone(run, fork, Path(scratch))
+        clone = clone_fork(run, fork, Path(scratch))
         run(["git", "remote", "add", "upstream", f"https://github.com/{upstream}.git"], None, clone)
         run(
             ["git", "fetch", "--quiet", "--no-tags", "upstream",

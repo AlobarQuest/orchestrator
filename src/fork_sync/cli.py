@@ -1,20 +1,23 @@
 """`fork-sync`: onboard a fork onto the upstream sync lane. Operator-run; never scheduled.
 
-`check` and `human-steps` only read. `scaffold`, `baseline` and `protect` write to the fork with
-the operator's own `gh` and git credentials, and each refuses before writing when its
-precondition does not hold. Exit codes: 0 done (or every step ok); 1 something missing or refused.
+`check` and `human-steps` only read, as does `ack` without `--yes`. `scaffold`, `baseline`,
+`protect` and `ack --yes` write to the fork with the operator's own `gh` and git credentials, and
+each refuses before writing when its precondition does not hold. Exit codes: 0 done (or every
+step ok); 1 something missing or refused.
 """
 
 from __future__ import annotations
 
 import os
+import shlex
 from collections.abc import Callable
+from datetime import date
 from pathlib import Path
 from typing import Annotated
 
 import typer
 
-from fork_sync import checks, estate, onboard
+from fork_sync import acknowledge, checks, estate, onboard
 from fork_sync.fork_sync_review import ConfigError
 from fork_sync.gh import CommandFailed, subprocess_runner
 
@@ -101,3 +104,49 @@ def protect(fork: Fork) -> None:
 def human_steps(fork: Fork) -> None:
     """Print the steps only a person can do, then the agent steps."""
     typer.echo(onboard.human_steps(fork))
+
+
+@app.command()
+def ack(
+    fork: Fork,
+    number: Annotated[int, typer.Argument(help="The held upstream-sync pull request.")],
+    reason: Annotated[str, typer.Option(help="Why these findings are accepted.")],
+    by: Annotated[str, typer.Option(help="Who accepts them, as the acknowledgements record it.")],
+    yes: Annotated[bool, typer.Option(help="Record, merge and re-sync; without it, only show.")] = (
+        False
+    ),
+    expect: Annotated[
+        str, typer.Option(help="With --yes: the fingerprints the dry run printed, comma-separated.")
+    ] = "",
+) -> None:
+    """Acknowledge every failing finding of a held sync, then land it and re-run the sync."""
+    plan = _act(
+        "ack", lambda: acknowledge.plan(run_command, fork, number, reason, by, date.today())
+    )
+    if not yes:
+        typer.echo(
+            f"#{number} {plan.title} at {plan.head[:12]}: {len(plan.failing)} failing row(s)"
+        )
+        for row in plan.failing:
+            typer.echo(
+                f"  {row.kind} ({row.severity}) | {row.path} | {row.text} | {row.fingerprint}"
+            )
+        if plan.entries:
+            typer.echo(f"\nWould add to {acknowledge.ACKS_PATH} on main:\n")
+            typer.echo("\n".join(entry.toml() for entry in plan.entries))
+        if plan.raises:
+            typer.echo(f"\nWould raise in {acknowledge.ACKS_PATH} on main:\n")
+            for change in plan.raises:
+                typer.echo(f"  {change.fingerprint}: severity -> {change.severity}{change.suffix}")
+            typer.echo("")
+        command = ["fork-sync", "ack", fork, str(number), "--reason", reason, "--by", by]
+        command += ["--yes", "--expect", ",".join(plan.fingerprints)]
+        typer.echo(f"To record them: {shlex.join(command)}")
+        return
+    expected = [fingerprint for fingerprint in expect.split(",") if fingerprint]
+    landed = _act("ack", lambda: acknowledge.land(run_command, plan, expected))
+    typer.echo(
+        f"acknowledged {len(plan.entries)} and raised {len(plan.raises)} finding(s) of "
+        f"#{number} in #{landed.number}, "
+        f"admin-merged as {landed.merge_sha}; dispatched {acknowledge.SYNC_WORKFLOW} on {fork}"
+    )
