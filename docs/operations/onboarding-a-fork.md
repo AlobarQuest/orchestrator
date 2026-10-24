@@ -15,6 +15,7 @@ The `fork-sync` console script automates every step it can and reports the rest:
 | `fork-sync baseline <fork> --tag <tag> --confirm` | the fork's `main` | Resets `main` to an upstream tag with upstream's whole `.github/` removed. `--discard-fork-commits` drops commits upstream doesn't have. |
 | `fork-sync scaffold <fork> --config <file>` | a branch and pull request | Commits `.github/fork-sync.toml`, an empty `.github/fork-sync-acks.toml`, and the rendered workflows and review script. |
 | `fork-sync protect <fork>` | repository settings | Applies the landing settings and branch protection on `main`. |
+| `fork-sync ack <fork> <pr> --reason <text>` | nothing; with `--yes`, the acknowledgements on `main` | Lists a held sync's failing rows and the entries it would add. With `--yes --expect <fingerprints>` it records them, admin-merges the change and re-runs the sync. |
 
 Each writing command refuses before it writes when its precondition does not hold.
 
@@ -185,6 +186,29 @@ needs `fork-sync scaffold` (an admin merge: the pull request is judged by the ol
 script has no `notify`, so that job fails on it) and then `fork-sync protect` again.
 
 ## Acknowledge a finding
+
+`fork-sync ack` does every step below after one approval:
+
+1. `fork-sync ack <fork> <pr> --reason "<why>"` changes nothing. It reads the sync pull request's
+   latest review comment, posted by `github-actions[bot]` (a comment from anyone else is ignored),
+   and lists every row still marked failing, then the `[[ack]]` entries it would add and the
+   command to record them. It refuses a pull request that isn't open, isn't the `upstream-sync`
+   branch, or whose review is of an older head, and one whose review couldn't run.
+2. Read the rows. If you accept them, run the printed command: it adds `--yes --expect
+   <fingerprints>`. It re-reads everything and refuses unless the failing fingerprints are exactly
+   the ones shown. It writes one entry per fingerprint to `.github/fork-sync-acks.toml` on a new
+   branch from `main` (two model concerns about one file share a fingerprint, so they become one
+   entry at the higher severity), and opens a pull request. `by` defaults to `devon (approved in
+   session; recorded by Claude)`; `--by` replaces it.
+3. It waits for that pull request's checks, then admin-merges it only if its diff is only the
+   acknowledgements file at the commit it pushed, `build and test` passed, and every failing row
+   of its own review is on the acknowledgements file. Otherwise it stops and leaves the pull request
+   open. After merging it dispatches `upstream-sync.yml` and prints the merge commit.
+
+It refuses a fingerprint already in the file. A model finding acknowledged below the severity a
+new review gives it fails under the same fingerprint, so raise that entry's `severity` by hand.
+
+The steps by hand:
 
 A holding finding a person has read and accepts is acknowledged by its fingerprint, which the
 report prints. A `reported` row needs none, and an acknowledgement of one changes nothing. The fingerprint covers the finding's kind, its path and the exact content it is about: the

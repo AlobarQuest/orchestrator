@@ -368,7 +368,8 @@ TABLE: dict[str, Row] = {
     # than writing third copies (`revision_watcher`'s App Brain landing reader, and
     # `tool_installer`'s TOOLS table, which it only reads), so it does not carry
     # `no_sibling_lanes`. `urllib` is `urllib.request` in `fork_sync_review.py`, the script it
-    # copies into each fork: that file runs on the fork's Actions runner, never here.
+    # copies into each fork: that file runs on the fork's Actions runner, never here. `time` is
+    # `fork-sync ack`'s pause between polls of its pull request's checks.
     "fork_sync": _row(
         "__future__",
         "collections",
@@ -388,6 +389,7 @@ TABLE: dict[str, Row] = {
         "subprocess",
         "sys",
         "tempfile",
+        "time",
         "tomllib",
         "tool_installer",
         "typer",
