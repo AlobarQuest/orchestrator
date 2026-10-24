@@ -91,9 +91,9 @@ resolving it at `/review` with the new value's fingerprint (`sha256_prefix` and 
 
 The VM is `rotation-executor`, created with `orb create --isolated --isolate-network
 ubuntu:noble rotation-executor`. It reaches the internet (BWS, `sds.alobar.net`, GitHub), other
-OrbStack machines and the tailnet (production Coolify at `100.112.188.96:8000`), but not the Mac.
+OrbStack machines and the tailnet (production Coolify at `100.92.138.19:8000`), but not the Mac.
 
-The Coolify path depends on the VPS's Tailscale node, `ubuntu-2gb-ash-1`, staying logged in to the
+The Coolify path depends on the VPS's Tailscale node, `ovh-vps1`, staying logged in to the
 tailnet. Its key expiry is disabled. If a step fails with `Coolify PATCH got no answer:
 ConnectTimeout`, check that node in `tailscale status` before anything else: when its key
 expired, the node logged out and every write timed out before it connected (ADR-0055,
@@ -123,10 +123,10 @@ expired, the node logged out and every write timed out before it connected (ADR-
    state_dir = "/var/lib/rotation-worker"
    source_revision = "<the first 12 characters of the installed commit>"
 
-   coolify_url = "http://100.112.188.96:8000"
+   coolify_url = "http://100.92.138.19:8000"
    orchestrator_application = "eqj5l7k705fhi12x9i74fqf0"
    change_manager_application = "re45tafypao3nly3qa9a79dp"
-   healthchecks_key_id = "8a41c80d-54a8-4b2b-aa93-b4e0012a99da"
+   healthchecks_key_id = "f07b1368-f937-4287-baf1-b4ed00b6b274"
    github_app_id = "5383095"
    github_app_key_id = "80c752aa-866c-43dc-a9e2-b4e80102d444"
 
@@ -145,8 +145,8 @@ expired, the node logged out and every write timed out before it connected (ADR-
    admin credential is the same token, and `change_manager_application` bounds it the same way. `coolify_url` is production
    Coolify's tailnet address: the Coolify client sends its
    token only over TLS or to a tailnet address, and production Coolify has no TLS (ADR-0055
-   amendment 9). `healthchecks_key_id` is the read-only Healthchecks key in
-   `Rotation / Healthchecks`, read only when a scheduled reader's check is (the following
+   amendment 9). `healthchecks_key_id` is the read-only key of the self-hosted Healthchecks at
+   `https://healthcheck.alobar.net`, in `Rotation / Healthchecks`, read only when a scheduled reader's check is (the following
    "Scheduled readers" section). `github_app_id` and `github_app_key_id` name the rotation
    GitHub App and its private key in `Rotation / Admin`; they come together, and the executor
    reads the key only when a step writes an Actions secret or a wait reads a report ("Actions
@@ -173,7 +173,7 @@ executor. None is ever printed, passed as an argument, or kept on the Mac.
 |---|---|---|
 | The root: the `rotation-executor` BWS machine account's access token | `/etc/rotation-worker/root-token` in the VM, owner `rotation`, mode `0400` | The executor, to log in to BWS |
 | The executor's WORKER bearer | BWS secret `rotation-executor WORKER bearer` in `Rotation / Executor`; its hash in the orchestrator's `ORCHESTRATOR_M2M_CREDENTIALS` under key `rotation-executor-1`, agent `rotation-executor` | The executor, from BWS at each pass |
-| The read-only Healthchecks API key | BWS secret `Rotation / Healthcheck` in `Rotation / Healthchecks`; its id in `config.toml` as `healthchecks_key_id` | The executor, from BWS, only while it reads a scheduled reader's check |
+| The read-only Healthchecks API key (self-hosted, `healthcheck.alobar.net`) | BWS secret `f07b1368-…` in `Rotation / Healthchecks`; its id in `config.toml` as `healthchecks_key_id` | The executor, from BWS, only while it reads a scheduled reader's check |
 | The OpenRouter management key | BWS secret `openrouter management key` in `Rotation / Admin`; its id in `config.toml`'s `admin_secrets` | The executor, from BWS, only while an `openrouter` unit mints or revokes |
 | The rotation GitHub App's private key (`alobar-sds-rotation`, App id 5383095) | BWS secret `rotation github app private key` in `Rotation / Admin`; its id in `config.toml` as `github_app_key_id` | The executor, from BWS, only while it writes an Actions secret or reads a report |
 | The production Coolify token (`read`, `write`, `deploy`; not `read:sensitive`) | BWS secret `rotation-coolify-token` in `Rotation / Coolify`; its id in `admin_secrets` as `orchestrator` and `change-manager` | The executor, from BWS, only while an `orchestrator` or `change-manager` unit hosts or retires |
@@ -523,7 +523,10 @@ First install, in this order, with nothing dispatched in flight:
 4. Run the installer again. It loads the agent.
 
 A token with scheduled readers that have Healthchecks checks needs the instance's own read-only
-Healthchecks key, a separate key from the VM's:
+Healthchecks key, a separate key from the VM's. Healthchecks allows one read-only key per project,
+and the VM holds the self-hosted project's, so this instance has none: it refuses any unit whose
+reader names a check. Giving it one means a second Healthchecks project that holds those checks.
+The steps, once such a key exists:
 
 1. In Healthchecks, under the project's **Settings**, create a read-only API key.
 2. Store it from a terminal, typing the key at the hidden prompt:

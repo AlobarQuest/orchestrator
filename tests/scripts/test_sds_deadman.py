@@ -44,7 +44,7 @@ DECLARES_FINDING = re.compile(r"^#\s+(?P<code>\d+)\s+something was found", re.MU
 _CURL_STUB = """#!/usr/bin/env bash
 for argument in "$@"; do
     case "$argument" in
-        *healthchecks.io/api/v3/checks/*)
+        *healthcheck.alobar.net/api/v3/checks/*)
             printf '%s' "$LISTING"
             exit 0
             ;;

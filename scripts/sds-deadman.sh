@@ -58,8 +58,8 @@
 # `run-estate-landing.sh` is the worked example of the same discipline.
 
 # The Healthchecks Management API key. Value fetched at runtime; never stored in this repo.
-SDS_DEADMAN_API_KEY_UUID="260cc8ad-f170-44cc-a672-b47000df3350"
-SDS_DEADMAN_API="https://healthchecks.io/api/v3/checks/"
+SDS_DEADMAN_API_KEY_UUID="51509d5e-64f5-4781-ae82-b4ed00b644e1"
+SDS_DEADMAN_API="https://healthcheck.alobar.net/api/v3/checks/"
 
 # Resolved at arm time. Empty means alerting is disabled for this run, which every ping honours.
 SDS_DEADMAN_PING_URL=""

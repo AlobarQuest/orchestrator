@@ -62,7 +62,7 @@ from rotation_worker.registry import RegistryError
 from rotation_worker.secret_store import StoreError
 from rotation_worker.values import Fingerprint, Value
 
-HEALTHCHECKS_URL: Final = "https://healthchecks.io"
+HEALTHCHECKS_URL: Final = "https://healthcheck.alobar.net"
 CHECKS: Final = "/api/v3/checks/"
 SKEW: Final = timedelta(minutes=2)
 # Long enough to hold a weekly reader's latest run after it has missed one.
