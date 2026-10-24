@@ -63,13 +63,6 @@ CRATES_IO = frozenset(
 # tool installer makes, `npm pack` included, disables scripts. Counting them held claude-octopus
 # v11.15.1 on a `prepublishOnly` that only checks a file exists (ADR-0056 amendment 7).
 NPM_LIFECYCLE_SCRIPTS = frozenset({"preinstall", "install", "postinstall", "prepublish", "prepare"})
-# File-test operators (`test -f path`, `[ -e path ]`): inside a `test` or `[` command the path
-# after one is checked, not run. Anywhere else the same letters mean something else (`node -r
-# ./x.js` loads and runs x.js), so the exemption is scoped to those two commands.
-FILE_TEST_FLAGS = frozenset({"-e", "-f", "-d", "-s", "-r", "-w", "-x", "-L", "-h"})
-FILE_TEST_COMMANDS = frozenset({"test", "["})
-# Shell tokens that end one command and begin the next (`shlex` with `punctuation_chars`).
-COMMAND_SEPARATORS = frozenset({"&&", "||", ";", ";;", "|", "&", "(", ")"})
 NPM_DEPENDENCY_KEYS = (
     "dependencies",
     "devDependencies",
@@ -608,28 +601,26 @@ def _lifecycle(manifest: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _referenced_files(command: str) -> set[str]:
-    """Files a script command runs: words naming a path or a script (`node install.js`), except
-    the operand of a file test inside a `test` or `[` command, which is checked and never run."""
-    lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
-    lexer.whitespace_split = True
+    """Files a script command mentions: words naming a path or a script (`node install.js`).
+
+    Every mention counts, a `test -f` operand included. Telling a checked path from a run one means
+    parsing shell (separators, newlines, substitutions, flags that differ per command), and three
+    attempts to exempt `test -f` were each bypassed in review (ADR-0056 amendment 7); a rare false
+    hold is the safe direction.
+    """
     try:
-        words = list(lexer)
+        words = shlex.split(command)
     except ValueError:
         words = command.split()
-    found: set[str] = set()
-    testing = False
-    previous: str | None = None  # None: the next word starts a command
-    for word in words:
-        if word in COMMAND_SEPARATORS:
-            previous = None
-            continue
-        if previous is None:
-            testing = word in FILE_TEST_COMMANDS
-        checked_only = testing and previous in FILE_TEST_FLAGS
-        if not checked_only and ("/" in word or word.endswith(SCRIPT_SUFFIXES)):
-            found.add(word.removeprefix("./"))
-        previous = word
-    return found
+    # Two readings, unioned: the shell words (a quoted path with spaces stays whole) and a split on
+    # every operator character, since shell punctuation clings to words (`` `sh x.sh` ``,
+    # `$(node y.js)`, `a.sh;echo`). Counting one too many only holds a sync.
+    candidates = set(words) | set(re.split(r"[\s;&|`$(){}<>'\"]+", command))
+    return {
+        word.removeprefix("./")
+        for word in candidates
+        if word and ("/" in word or word.endswith(SCRIPT_SUFFIXES))
+    }
 
 
 def _non_registry_deps(manifest: Mapping[str, Any]) -> dict[str, str]:
