@@ -375,8 +375,11 @@ as an argument.
    files and the declaration carry exactly the bytes `scaffold` writes. Anything else stops with
    the reason: read the pull request and merge it yourself with `gh pr merge <number> --repo
    <fork> --merge --admin`.
-7. **Run the first sync.** `onboard` dispatches `upstream-sync.yml` when it has never run, and
-   waits for the run. Both checks then run on the sync pull request, from the scaffolded `main`.
+7. **Run the first sync.** Only a sync created after the scaffold pull request merged counts,
+   since an older one (a fork with an earlier lane) ran from some other `main`. `onboard` reads
+   that merge time from the scaffold pull request, dispatches `upstream-sync.yml` when no run
+   is newer, and waits for one that is. Both checks then run on the sync pull request, from the
+   scaffolded `main`.
    A sync run that failed stops with its link: fix the cause, run `gh workflow run
    upstream-sync.yml --repo <fork>`, and rerun.
 8. **Protect `main`.** `onboard` runs `fork-sync protect` once the sync pull request's CI run has
@@ -397,12 +400,20 @@ as an argument.
     and `non_ecosystem_authors` (ADR-0041). Each fork stays an explicit, versioned grant. When the
     served policy lacks the fork, `onboard` clones `AlobarQuest/change-manager`, runs `uv run
     python scripts/release_inert_repository.py --repository <fork, lower-cased> --reason <text>`
-    there, which writes the next version (exit 0, printing `<N+1> <repository>`; exit 2 when the
-    current version already has it, which counts as done once change-manager serves it; exit 1 is
-    a refusal). It commits that, opens a pull request, waits for the checks change-manager's
-    `main` requires, squash-merges it, and waits until `https://change-mgr.alobar.net/api/health`
-    reports the merge commit as its `revision` and the policy serves version N+1 with the fork. It
-    refuses unless the declaration is committed and the App installed. A listed fork missing an
+    there, which writes the next version. The script exits 0 with one JSON line, `{"status":
+    "released", "version": <N+1>, "repository": ...}` or `{"status": "already_present", ...}`;
+    `onboard` refuses any other line, another repository, a `released` version other than the
+    served N+1, and every nonzero exit (2 included: it is also uv's and Python's own usage exit).
+    `already_present` counts as done once change-manager serves the fork. The reason is passed
+    without quotes, backslashes or control characters and with no long unbroken run, which the
+    script refuses. The change must touch only the files the script writes
+    (`app/deploy_policy.py` and `app/deploy_policy_history.py`, and possibly
+    `contracts/ratified_rollout_policy.json`), checked in the clone before committing and again
+    on the pull request before merging. It commits that, opens a pull request, waits for the
+    checks change-manager's `main` requires, squash-merges it, and waits until
+    `https://change-mgr.alobar.net/api/health` reports the merge commit as its `revision` and the
+    policy serves version N+1 with the fork. It refuses unless the declaration is committed and
+    the App installed. A listed fork missing an
     author stops: that is a person's edit. The policy is read with `FORK_SYNC_CHANGE_MANAGER_TOKEN`
     when set, otherwise with the read bearer from BWS (`314f276d-…`), as the inert landing lane
     reads it. Merging redeploys change-manager.

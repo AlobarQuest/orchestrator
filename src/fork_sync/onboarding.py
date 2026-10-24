@@ -25,7 +25,7 @@ import time
 import tomllib
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Final
 
@@ -64,8 +64,21 @@ REGISTRATIONS: Final = (
 )
 POLICY_REPO: Final = "AlobarQuest/change-manager"
 RELEASE_SCRIPT: Final = "scripts/release_inert_repository.py"
-RELEASE_ALREADY_PRESENT: Final = 2
-"""The release script's exit when the repository is already in the current version."""
+RELEASED: Final = "released"
+ALREADY_PRESENT: Final = "already_present"
+POLICY_FILES: Final = frozenset(  # not-a-vocabulary: the generator's output files, read as paths
+    {
+        "app/deploy_policy.py",
+        "app/deploy_policy_history.py",
+        "contracts/ratified_rollout_policy.json",
+    }
+)
+"""Every file the release script may change. A version bump always moves both `app/` files (the
+outgoing version goes to the history), so those two are required; the contract is moved only when
+the rollout terms are."""
+POLICY_REQUIRED: Final = frozenset({"app/deploy_policy.py", "app/deploy_policy_history.py"})
+REASON_RUN: Final = 80
+"""The longest unbroken run in a reason the release script is given; it refuses one over ~89."""
 CONFIRM: Final = "fork-sync check"
 """The last step's name: a run that ends on it, done, has onboarded the fork."""
 POLL_SECONDS: Final = 30
@@ -490,11 +503,33 @@ def _latest_sync_run(ctx: Context) -> dict[str, Any] | None:
     return ((gh_api(ctx.run, path) or {}).get("workflow_runs") or [None])[0]
 
 
+def _scaffold_merged_at(ctx: Context) -> datetime:
+    """When the scaffold pull request merged: a sync from before then ran some other lane."""
+    owner = ctx.fork.split("/")[0]
+    path = f"repos/{ctx.fork}/pulls?state=closed&head={owner}:{SCAFFOLD_BRANCH}&per_page=100"
+    merged = [pull["merged_at"] for pull in gh_api(ctx.run, path) or [] if pull.get("merged_at")]
+    if not merged:
+        raise Refused(
+            f"{ctx.fork} has no merged {SCAFFOLD_BRANCH} pull request to date a sync from"
+        )
+    return max(_instant(at) for at in merged)
+
+
+def _instant(text: str) -> datetime:
+    return datetime.fromisoformat(text.replace("Z", "+00:00"))
+
+
 def first_sync(ctx: Context) -> Outcome:
+    """A sync counts only if it ran from the scaffolded main: created after the scaffold merged."""
     name = "first sync"
-    latest = _latest_sync_run(ctx)
+    since = _scaffold_merged_at(ctx)
+
+    def ours(workflow_run: dict[str, Any] | None) -> bool:
+        created = (workflow_run or {}).get("created_at")
+        return bool(created) and _instant(created) > since
+
     status = DONE
-    if latest is None:
+    if not ours(_latest_sync_run(ctx)):
         ctx.run(
             ["gh", "workflow", "run", acknowledge.SYNC_WORKFLOW, "--repo", ctx.fork], None, None
         )
@@ -502,7 +537,7 @@ def first_sync(ctx: Context) -> Outcome:
 
     def finished() -> dict[str, Any] | None:
         newest = _latest_sync_run(ctx)
-        return newest if newest is not None and newest.get("status") == "completed" else None
+        return newest if ours(newest) and (newest or {}).get("status") == "completed" else None
 
     finished_run = wait_for(f"{acknowledge.SYNC_WORKFLOW} on {ctx.fork}", finished)
     if finished_run.get("conclusion") != "success":
@@ -615,13 +650,62 @@ def _while_deploying[T](probe: Callable[[], T | None]) -> Callable[[], T | None]
     return tolerant
 
 
-def _release(ctx: Context, clone: Path) -> str:
-    """Run change-manager's release script for the fork. Returns what it printed on success,
-    or "" when the repository is already in the current version."""
+def release_reason(text: str) -> str:
+    """`text` as the release script accepts a reason: no quote, backslash or control character
+    (each becomes a space), whitespace collapsed, and no run longer than `REASON_RUN` unbroken."""
+    cleaned = "".join(" " if c in '"\\' or not c.isprintable() else c for c in text)
+    words = [
+        word[i : i + REASON_RUN]
+        for word in cleaned.split()
+        for i in range(0, len(word), REASON_RUN)
+    ]
+    return " ".join(words)
+
+
+def policy_diff_refusal(changed: set[str]) -> str:
+    """Why a policy change must not be committed or merged, or "" when it may: it changes only
+    the files the release script writes, and both `app/` files among them."""
+    if changed - POLICY_FILES or not POLICY_REQUIRED <= changed:
+        return f"it changes {sorted(changed)}, not the release script's {sorted(POLICY_FILES)}"
+    return ""
+
+
+@dataclass(frozen=True)
+class Release:
+    status: str
+    """`released` (a new version was written) or `already_present` (nothing was)."""
+    version: int
+
+
+def parse_release(stdout: str, repository: str, expected: int) -> Release:
+    """The release script's one JSON line, read strictly: exactly the three keys, a known status,
+    the repository asked for, and for `released` the version after the one served."""
+    lines = stdout.strip().splitlines()
+    try:
+        answer = json.loads(lines[0]) if len(lines) == 1 else None
+    except ValueError:
+        answer = None
+    shown = repr(stdout.strip()[:200])
+    if not isinstance(answer, dict) or set(answer) != {"status", "version", "repository"}:
+        raise Refused(f"{RELEASE_SCRIPT} printed {shown}, not one release line")
+    status, version, named = answer["status"], answer["version"], answer["repository"]
+    if status not in (RELEASED, ALREADY_PRESENT) or type(version) is not int:
+        raise Refused(f"{RELEASE_SCRIPT} printed {shown}, not a release it describes")
+    # GitHub resolves a repository's name in any case.
+    if not isinstance(named, str) or named.lower() != repository.lower():
+        raise Refused(f"{RELEASE_SCRIPT} released {named!r}, not {repository}")
+    if status == RELEASED and version != expected:
+        raise Refused(f"{RELEASE_SCRIPT} wrote version {version}, not {expected}")
+    return Release(status, version)
+
+
+def _release(ctx: Context, clone: Path, expected: int) -> Release:
+    """Run change-manager's release script for the fork. It exits 0 for both outcomes; any other
+    exit, 2 included (uv's and Python's own usage exit), is a failure."""
     uv = shutil.which("uv") or str(Path.home() / ".local/bin/uv")
-    reason = (
+    reason = release_reason(
         f"{ctx.fork} joins the fork-sync lane (orchestrator ADR-0056), released by "
-        f"`fork-sync onboard` on {ctx.today.isoformat()}"
+        f"fork-sync onboard on {ctx.today.isoformat()}"
     )
     argv = [
         uv,
@@ -634,11 +718,12 @@ def _release(ctx: Context, clone: Path) -> str:
         reason,
     ]
     try:
-        return ctx.run(argv, None, clone).strip()
+        stdout = ctx.run(argv, None, clone)
     except CommandFailed as failure:
-        if failure.returncode == RELEASE_ALREADY_PRESENT:
-            return ""
-        raise Refused(f"{RELEASE_SCRIPT} refused: {failure.stderr.strip()[:300]}") from None
+        raise Refused(
+            f"{RELEASE_SCRIPT} exited {failure.returncode}: {failure.stderr.strip()[:300]}"
+        ) from None
+    return parse_release(stdout, ctx.fork.lower(), expected)
 
 
 def landing_policy(ctx: Context) -> Outcome:
@@ -658,20 +743,20 @@ def landing_policy(ctx: Context) -> Outcome:
     else:
         with tempfile.TemporaryDirectory() as scratch:
             clone = onboard.clone_fork(ctx.run, POLICY_REPO, Path(scratch), "--depth", "1")
-            released = _release(ctx, clone)
-            if not released:
+            release = _release(ctx, clone, expected)
+            if release.status == ALREADY_PRESENT:
                 # Already in change-manager's source: merged earlier, perhaps not yet deployed.
                 serving = _while_deploying(lambda: _served(ctx, None))
                 wait_for(f"change-manager serving {ctx.fork}", serving)
-                return Outcome(name, DONE, f"{ctx.fork.lower()} was already released")
-            if released.split() != [str(expected), ctx.fork.lower()]:
-                raise Refused(f"{RELEASE_SCRIPT} printed {released[:200]!r}, not {expected}")
+                return Outcome(
+                    name, DONE, f"{ctx.fork.lower()} was already released (v{release.version})"
+                )
             title = f"Landing policy v{expected}: admit {ctx.fork} to the inert lane"
-            # The script edits tracked files only; anything untracked is debris, not policy.
+            # Untracked paths are listed too, so debris refuses as surely as a stray edit.
             status = ctx.run(["git", "status", "--porcelain"], None, clone)
-            untracked = [line[3:] for line in status.splitlines() if line.startswith("??")]
-            if untracked:
-                raise Refused(f"{RELEASE_SCRIPT} left untracked files: {untracked[:5]}")
+            refusal = policy_diff_refusal({line[3:] for line in status.splitlines() if line})
+            if refusal:
+                raise Refused(f"{RELEASE_SCRIPT}'s change is not committed: {refusal}")
             ctx.run(["git", "checkout", "--quiet", "-b", branch], None, clone)
             ctx.run(["git", "add", "--update"], None, clone)
             ctx.run(["git", "commit", "--quiet", "-m", title], None, clone)
@@ -685,6 +770,10 @@ def landing_policy(ctx: Context) -> Outcome:
             argv = ["gh", "pr", "create", "--repo", POLICY_REPO, "--base", "main", "--head", branch]
             url = ctx.run([*argv, "--title", title, "--body", body], None, clone)
         number = _number(url)
+    files = gh_api(ctx.run, f"repos/{POLICY_REPO}/pulls/{number}/files?per_page=100") or []
+    refusal = policy_diff_refusal({item["filename"] for item in files})
+    if refusal:
+        raise Refused(f"{POLICY_REPO}#{number} is open and unmerged: {refusal}")
     merged = land_pull(ctx.run, POLICY_REPO, number, sha)
     running = _while_deploying(lambda: ctx.estate.revision() == merged or None)
     wait_for(f"change-manager running {merged[:12]}", running)

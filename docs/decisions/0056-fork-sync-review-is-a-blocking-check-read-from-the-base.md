@@ -296,8 +296,16 @@ change-manager grant, generated rather than hand-written.
 - **Each fork is an explicit, versioned grant, generated rather than hand-written.** The policy
   step runs change-manager's `scripts/release_inert_repository.py`, which writes the next policy
   version adding the fork, and lands it like the registry change, then waits until change-manager
-  runs the merge and serves that version. Nothing widens the inert population by pattern: every
+  runs the merge and serves that version. The change may touch only the files the script
+  writes, checked before the commit and again on the pull request before the merge, and the
+  script's one JSON line is read strictly. Nothing widens the inert population by pattern: every
   fork is still one version, one pull request and one merge.
+- **The first sync is one that ran from the scaffolded `main`:** created after the scaffold
+  pull request merged. An older run, from a lane the fork had before, doesn't count.
+- **Every merge the tools make is visible to the merge guard.** The guard read only the text
+  `gh pr merge`, so `fork-sync ack` and `onboard`, which merge with an argv list, were invisible
+  to it; it now also reads a list holding `"pr"` and `"merge"` side by side, and both carry a
+  reasoned exemption.
 - **A step that writes outside the fork refuses** unless the fork has committed the declaration and
   the App is installed on it, both re-read at the step.
 - **What remains a person's:** installing the App on the fork (no API does it), and accepting the
@@ -309,7 +317,10 @@ change-manager grant, generated rather than hand-written.
   `b74bf8b3-…` and change-manager's read bearer `314f276d-…`) are read through the broad machine
   account's Keychain item, as `scripts/run-inert-landing.sh` reads its broad identity. To learn
   whether the App is installed, it signs a JWT with the App key in-process and asks GitHub as
-  the App, since GitHub answers that only to the App.
+  the App, since GitHub answers that only to the App. The App key and `anthropic-api-key` are
+  declared in the orchestrator's `.bws-secrets.toml`, each naming `fork-sync onboard` as its
+  reader, by Devon's decision of 2026-10-24 ("keep them for now"): the orchestrator now reads
+  them itself.
 - **The cost:** the tool holds the App key while it runs, and decides two merges a person used to
   make. Both are bounded by exact-content and required-check conditions, and every other judgement
   (the review, the App install) is still a person's.

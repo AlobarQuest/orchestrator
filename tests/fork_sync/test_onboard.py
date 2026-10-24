@@ -45,6 +45,13 @@ VALUES = {
     bws.APP_PRIVATE_KEY_UUID: base64.b64encode(PEM.encode()).decode(),
     bws.ANTHROPIC_API_KEY_UUID: ANTHROPIC,
 }
+SCAFFOLD_MERGED_AT = "2026-10-24T10:00:00Z"
+SYNC_RUN = {
+    "status": "completed",
+    "conclusion": "success",
+    "id": 70,
+    "created_at": "2026-10-24T11:00:00Z",
+}
 FINDING = Finding("binary", "x.node", "binary added", "d")
 CI = ".github/workflows/ci.yml"
 REGISTRY = """# The fork-sync lane's credentials.
@@ -119,6 +126,10 @@ class World:
         }
         self.revision = "0" * 40
         self.release_exit = 0
+        self.release_stdout: str | None = None
+        # What the release script changes in change-manager, as git status and the pull request
+        # both report it.
+        self.policy_changes = ["app/deploy_policy.py", "app/deploy_policy_history.py"]
         self.landing: str | None = None
         self.calls: list[tuple[list[str], str | None]] = []
         self.clones: dict[Path, str] = {}
@@ -149,7 +160,15 @@ class World:
         }
         self.secrets = {"APP_ID", "APP_PRIVATE_KEY", "ANTHROPIC_API_KEY"}
         self.registry = registered_registry()
-        self.sync_runs = [{"status": "completed", "conclusion": "success", "id": 70}]
+        self.sync_runs = [SYNC_RUN]
+        self.pulls[(FORK, 12)] = {
+            "number": 12,
+            "branch": SCAFFOLD_BRANCH,
+            "head": {"sha": SCAFFOLD_SHA},
+            "state": "closed",
+            "merged": True,
+            "merged_at": SCAFFOLD_MERGED_AT,
+        }
         self.policy["version"] = 13
         self.policy["inert_landing"]["repositories"].append(FORK.lower())
         self.landing = "inert"
@@ -193,13 +212,18 @@ class World:
             )
         if argv[:3] == ["git", "rev-parse", "origin/main"]:
             return "old\n"
+        if argv == ["git", "status", "--porcelain"]:
+            return "".join(f" M {path}\n" for path in self.policy_changes)
         if argv[:2] == [sys.executable, ".github/scripts/fork_sync_review.py"] and cwd:
             (cwd / "package-lock.json").write_text('{"lockfileVersion": 3}')
             return ""
         if argv[1:3] == ["run", "python"]:
             if self.release_exit:
                 raise CommandFailed(argv, self.release_exit, "release refused")
-            return f"{self.policy['version'] + 1} {FORK.lower()}\n"
+            if self.release_stdout is not None:
+                return self.release_stdout
+            line = {"status": "released", "version": self.policy["version"] + 1}
+            return json.dumps({**line, "repository": FORK.lower()}) + "\n"
         if argv[:3] == ["gh", "secret", "list"]:
             return json.dumps([{"name": name} for name in sorted(self.secrets)])
         if argv[:3] == ["gh", "secret", "set"]:
@@ -279,6 +303,7 @@ class World:
         repo, number = argv[argv.index("--repo") + 1], int(argv[3])
         pull = self.pulls[(repo, number)]
         pull.update(state="closed", merged=True, merge_commit_sha=f"{number:040d}")
+        pull["merged_at"] = SCAFFOLD_MERGED_AT
         if repo == FORK:
             self.main.update(self.branches[pull["branch"]])
             self.main_workflows = {"ci.yml", "upstream-sync.yml", "fork-sync-audit.yml"}
@@ -291,7 +316,7 @@ class World:
         return ""
 
     def _sync(self) -> None:
-        self.sync_runs.insert(0, {"status": "completed", "conclusion": "success", "id": 70})
+        self.sync_runs.insert(0, SYNC_RUN)
         self.pulls[(FORK, 13)] = {
             "number": 13,
             "branch": "upstream-sync",
@@ -368,6 +393,13 @@ class World:
         ):
             if path.startswith(f"repos/{repo}/pulls?state=open&head="):
                 return self._open_pulls(repo, path.split(":", 1)[1])
+            if path.startswith(f"repos/{repo}/pulls?state=closed&head="):
+                branch = path.split(":", 1)[1].split("&")[0]
+                return [
+                    pull
+                    for (r, _), pull in self.pulls.items()
+                    if r == repo and pull["state"] == "closed" and pull["branch"] == branch
+                ]
             if path == f"repos/{repo}/branches/main/protection" and context:
                 return {"required_status_checks": {"checks": [{"context": context}]}}
             if path.startswith(f"repos/{repo}/actions/runs?head_sha="):
@@ -381,6 +413,10 @@ class World:
                 jobs = self.runs[sha]["jobs"]
                 return {"jobs": [{**job, "id": 1 + i} for i, job in enumerate(jobs)]}
             if path.startswith(f"repos/{repo}/pulls/") and path.endswith("/files?per_page=100"):
+                if repo == "AlobarQuest/change-manager":
+                    return [
+                        {"filename": name, "status": "modified"} for name in self.policy_changes
+                    ]
                 files = self.branches.get(SCAFFOLD_BRANCH, {})
                 changed = [name for name in files if self.main.get(name) != files[name]]
                 return [{"filename": name, "status": "added"} for name in changed]
@@ -743,18 +779,49 @@ def test_a_declared_lockfile_is_resolved_on_the_scaffold_branch(
     assert "package-lock.json" in onboarding.scaffold_diff_refusal(plain, 12, LOCKED_SHA)
 
 
-def test_the_policy_release_exit_2_is_done_and_exit_1_refuses(
+@pytest.mark.parametrize("code", [1, 2])
+def test_every_nonzero_release_exit_refuses(tmp_path: Path, waits: list[float], code: int) -> None:
+    """2 included: it is uv's and Python's own usage exit, so it can never mean "present"."""
+    world = World().onboarded()
+    world.policy["inert_landing"]["repositories"].remove(FORK.lower())
+    world.policy["version"] = 12
+    world.release_exit = code
+    with pytest.raises(onboarding.Refused, match=f"exited {code}"):
+        onboarding.landing_policy(_context(world, tmp_path))
+    assert not world.ran("git commit") and not world.ran("gh pr create")
+
+
+@pytest.mark.parametrize(
+    "stdout",
+    [
+        "13 alobarquest/rea\n",  # the retired interface
+        "",
+        '{"status": "released", "version": 13, "repository": "alobarquest/rea"}\nmore\n',
+        '{"status": "released", "version": 14, "repository": "alobarquest/rea"}\n',
+        '{"status": "released", "version": "13", "repository": "alobarquest/rea"}\n',
+        '{"status": "released", "version": 13, "repository": "alobarquest/rtk"}\n',
+        '{"status": "done", "version": 13, "repository": "alobarquest/rea"}\n',
+        '{"status": "released", "version": 13, "repository": "alobarquest/rea", "x": 1}\n',
+    ],
+)
+def test_a_malformed_release_line_refuses(tmp_path: Path, waits: list[float], stdout: str) -> None:
+    world = World().onboarded()
+    world.policy["inert_landing"]["repositories"].remove(FORK.lower())
+    world.policy["version"] = 12
+    world.release_stdout = stdout
+    with pytest.raises(onboarding.Refused):
+        onboarding.landing_policy(_context(world, tmp_path))
+    assert not world.ran("git commit") and not world.ran("gh pr create")
+
+
+def test_an_already_present_release_is_done_once_it_is_served(
     tmp_path: Path, waits: list[float]
 ) -> None:
     world = World().onboarded()
     world.policy["inert_landing"]["repositories"].remove(FORK.lower())
     world.policy["version"] = 12
-    world.release_exit = 1
-    with pytest.raises(onboarding.Refused, match="release refused"):
-        onboarding.landing_policy(_context(world, tmp_path))
-    assert not world.ran("git commit") and not world.ran("gh pr create")
-
-    world.release_exit = 2  # already in change-manager's source; served once it deploys
+    line = {"status": "already_present", "version": 13, "repository": FORK.lower()}
+    world.release_stdout = json.dumps(line) + "\n"
     reads = iter([False, False, False, True])
     policy = world.policy
 
@@ -790,12 +857,89 @@ def test_the_policy_change_refuses_untracked_files(tmp_path: Path, waits: list[f
 
     def debris(argv: Sequence[str], stdin: str | None, cwd: Path | None) -> str:
         if list(argv) == ["git", "status", "--porcelain"]:
-            return " M app/deploy_policy.py\n?? stray.txt\n"
+            return " M app/deploy_policy.py\n M app/deploy_policy_history.py\n?? stray.txt\n"
         return world(argv, stdin, cwd)
 
     with pytest.raises(onboarding.Refused, match="stray.txt"):
         onboarding.landing_policy(_context(world, tmp_path, run=debris))
     assert not world.ran("git commit") and not world.ran("gh pr create")
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        ["app/deploy_policy.py", "app/deploy_policy_history.py", "app/main.py"],
+        ["app/deploy_policy.py"],  # a version bump always moves the history too
+        ["contracts/ratified_rollout_policy.json"],
+    ],
+)
+def test_the_policy_change_is_committed_only_when_it_is_the_generators_files(
+    tmp_path: Path, waits: list[float], changes: list[str]
+) -> None:
+    world = World().onboarded()
+    world.policy["inert_landing"]["repositories"].remove(FORK.lower())
+    world.policy_changes = changes
+    with pytest.raises(onboarding.Refused, match="is not committed"):
+        onboarding.landing_policy(_context(world, tmp_path))
+    assert not world.ran("git commit") and not world.ran("gh pr create")
+
+
+def test_the_policy_pull_request_is_merged_only_when_its_diff_is_the_generators_files(
+    tmp_path: Path, waits: list[float]
+) -> None:
+    """The second check, on the opened pull request: a push to its branch after this command
+    pushed (here, an existing pull request found on rerun) cannot widen what lands."""
+    world = World().onboarded()
+    world.policy["inert_landing"]["repositories"].remove(FORK.lower())
+    world.pulls[("AlobarQuest/change-manager", 132)] = {
+        "number": 132,
+        "branch": "fork-sync-inert-rea",
+        "head": {"sha": POLICY_SHA},
+        "state": "open",
+        "merged": False,
+    }
+    world.runs[POLICY_SHA] = {"path": "x", "jobs": [_job("Lint, type-check, and test", "success")]}
+    world.policy_changes = [*world.policy_changes, ".github/workflows/deploy.yml"]
+    with pytest.raises(onboarding.Refused, match="open and unmerged"):
+        onboarding.landing_policy(_context(world, tmp_path))
+    assert not world.ran("gh pr merge")
+    world.policy_changes = world.policy_changes[:2]
+    assert onboarding.landing_policy(_context(world, tmp_path)).status == onboarding.DID
+    assert world.ran("gh pr merge 132 --repo AlobarQuest/change-manager --squash")
+
+
+def test_the_release_reason_meets_the_generators_constraints() -> None:
+    nasty = 'a "quoted"\\ reason\twith\x1b[31m control\n and ' + "x" * 200 + "  end"
+    reason = onboarding.release_reason(nasty)
+    assert not set(reason) & {'"', "\\", "\t", "\n", "\x1b"}
+    assert all(c.isprintable() for c in reason)
+    assert max(len(word) for word in reason.split()) <= onboarding.REASON_RUN
+    assert "  " not in reason and reason.endswith("end")
+    plain = "AlobarQuest/rea joins the fork-sync lane (orchestrator ADR-0056)"
+    assert onboarding.release_reason(plain) == plain
+
+
+def test_a_sync_from_before_the_scaffold_merged_does_not_count(
+    tmp_path: Path, waits: list[float]
+) -> None:
+    """An rtk-shaped fork ran some older sync before the lane's scaffold; that run proves nothing
+    about the scaffolded main, so the first sync is dispatched anyway."""
+    world = World().onboarded()
+    world.sync_runs = [{**SYNC_RUN, "created_at": "2026-10-23T09:00:00Z"}]
+    outcome = onboarding.first_sync(_context(world, tmp_path))
+    assert outcome.status == onboarding.DID
+    assert world.ran("gh workflow run upstream-sync.yml --repo AlobarQuest/rea")
+    world.calls.clear()
+    assert onboarding.first_sync(_context(world, tmp_path)).status == onboarding.DONE
+    assert world.writes() == []
+
+
+def test_a_first_sync_needs_a_merged_scaffold(tmp_path: Path, waits: list[float]) -> None:
+    world = World().onboarded()
+    world.pulls.clear()
+    with pytest.raises(onboarding.Refused, match="no merged fork-sync-scaffold"):
+        onboarding.first_sync(_context(world, tmp_path))
+    assert world.writes() == []
 
 
 def test_the_policy_is_not_released_for_a_listed_fork_missing_an_author(tmp_path: Path) -> None:

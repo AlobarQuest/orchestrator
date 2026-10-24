@@ -172,7 +172,17 @@ MERGE_EXEMPT_PATHS: set[Path] = {
     # pushed. The repository is a marketplace manifest for plugins on Devon's own machine; nothing
     # already serving changes, and the change window governs when it may happen at all.
     Path("src/tool_installer/plugin.py"),
-    # ADR-0056 amendment 5, the SIXTH entry: `fork-sync onboard`, an operator-run command that is
+    # ADR-0056 amendment 4, the SIXTH entry: `fork-sync ack`, an operator-run command that is never
+    # scheduled. It merged with an argv list from the day it shipped (2026-10-24), which the text
+    # scan could not see, and is named here since the list-form scan above found it. It admin-merges
+    # one pull request of its own (ADR-0056 decision 7): the acknowledgements a person approved by
+    # naming each fingerprint (`--yes --expect`) after reading the dry run. It merges only when that
+    # pull request's diff is the acknowledgements file alone at the commit it pushed, the fork's
+    # latest CI run at that head passed `build and test` and reached a verdict in `security review`,
+    # and that review fails only on the acknowledgements file; otherwise it leaves the pull request
+    # open. It never merges the held sync itself: the inert landing lane does, under policy.
+    Path("src/fork_sync/acknowledge.py"),
+    # ADR-0056 amendment 5, the SEVENTH entry: `fork-sync onboard`, an operator-run command that is
     # never scheduled, merges three pull requests it opened itself while onboarding one fork, on
     # Devon's 2026-10-24 decision that onboarding is one command. No justification above carries
     # over: there is no work unit, no change record and no policy version, and one of the three
@@ -182,25 +192,91 @@ MERGE_EXEMPT_PATHS: set[Path] = {
     # test` passed. factory-runner's registry pull request is squash-merged only when it adds
     # exactly the fork's two Actions-secret consumers and parses as the old registry plus them,
     # and change-manager's only when it is the release script's next policy version naming the
-    # fork; each only after every check that repository's `main` requires passed at the commit
-    # the command pushed, and each refuses unless the fork has committed its declaration and has
-    # the App installed. The first review's findings are never accepted here: that stays a
-    # person's, through `fork-sync ack`.
+    # fork, read from its one JSON line, and its diff (in the clone, then on the pull request) is
+    # only the files that script writes; each only after every check that repository's `main`
+    # requires passed at the commit the command pushed, and each refuses unless the fork has
+    # committed its declaration and has the App installed. The first review's findings are never
+    # accepted here: that stays a person's, through `fork-sync ack`.
     Path("src/fork_sync/onboarding.py"),
 }
+
+
+# The text scan above reads `gh pr merge` as one string, so the same command held as an argv
+# list -- `["gh", "pr", "merge", str(number), ...]`, the shape every subprocess call in this repo
+# takes -- spelled none of it. Measured 2026-10-24: `fork-sync ack` and `fork-sync onboard` both
+# merged that way and the text scan saw neither (`onboard` was caught only by a fallback message
+# that happened to spell the command for a person). So a list or tuple holding the string
+# literals "pr" and "merge" next to each other is a merge too, read from the syntax tree rather
+# than the text, since no spacing or quoting of the elements changes what the command does. The
+# REST spelling, `pulls/{n}/merge` however it is assembled into one string, is the `/merge` text
+# above; a planted example of each is held to firing below.
+def _list_form_merges(source: Path) -> list[str]:
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    found = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.List, ast.Tuple)):
+            continue
+        words = [
+            element.value
+            if isinstance(element, ast.Constant) and isinstance(element.value, str)
+            else None
+            for element in node.elts
+        ]
+        if any(pair == ("pr", "merge") for pair in zip(words, words[1:], strict=False)):
+            found.append(f"{source}:{node.lineno}")
+    return found
+
+
+def _merges(source: Path) -> list[str]:
+    """Every way this scan reads a file as merging: the text spellings, and in Python source an
+    argv-list merge."""
+    text = source.read_text(encoding="utf-8").lower()
+    found = [repr(action) for action in MERGE_ACTIONS if action in text]
+    if source.suffix == ".py":
+        found += _list_form_merges(source)
+    return found
 
 
 @pytest.mark.parametrize("source", [*MERGE_SCAN_SOURCES, *SHELL_SOURCES], ids=lambda p: str(p))
 def test_nothing_in_the_repo_merges_a_pull_request(source: Path) -> None:
     if source in MERGE_EXEMPT_PATHS:
         return
-    text = source.read_text(encoding="utf-8").lower()
-    for action in MERGE_ACTIONS:
-        assert action not in text, (
-            f"{source} performs a merge ({action!r}). Merging is Devon's gate; "
-            "code that merges has removed it. If this file is the bounded exception ADR-0020 "
-            "allows, add it to MERGE_EXEMPT_PATHS with a reason -- openly, never by rewording."
-        )
+    merges = _merges(source)
+    assert not merges, (
+        f"{source} performs a merge ({', '.join(merges)}). Merging is Devon's gate; "
+        "code that merges has removed it. If this file is the bounded exception ADR-0020 "
+        "allows, add it to MERGE_EXEMPT_PATHS with a reason -- openly, never by rewording."
+    )
+
+
+@pytest.mark.parametrize(
+    "planted",
+    [
+        'MERGE = ["gh", "pr", "merge", "7", "--squash"]\n',
+        'run(("gh", "pr", "merge", str(number)), None, None)\n',
+        'command = [GH, "pr", "merge", number]\n',
+        'path = f"repos/{repo}/pulls/{number}" + "/merge"\n',
+        'gh_write(run, "PUT", f"repos/{fork}/pulls/{n}/merge", {})\n',
+    ],
+)
+def test_the_merge_scan_fires_on_a_planted_merge(planted: str, tmp_path: Path) -> None:
+    """The guard is only as good as the shapes it is shown catching: each of these merges, in a
+    file no exemption names, fails the scan."""
+    source = tmp_path / "planted.py"
+    source.write_text(planted, encoding="utf-8")
+    with pytest.raises(AssertionError, match="performs a merge"):
+        test_nothing_in_the_repo_merges_a_pull_request(source)
+
+
+@pytest.mark.parametrize(
+    "harmless", ['X = ["pr", "view", "merge"]\n', "X = [pr, merge]\n", 'X = ("merge", "pr")\n']
+)
+def test_the_list_form_scan_does_not_fire_on_the_words_apart(harmless: str, tmp_path: Path) -> None:
+    """Control: "pr" and "merge" in one list but not adjacent, in the other order, or adjacent but
+    not literals, is not the command."""
+    source = tmp_path / "harmless.py"
+    source.write_text(harmless, encoding="utf-8")
+    assert _list_form_merges(source) == []
 
 
 # The residual gap WS-P3.7 measured: a merge performed as a METHOD CALL on a client object --
@@ -244,8 +320,7 @@ def test_the_merge_exemption_names_only_files_that_need_it() -> None:
     unused = [
         str(path)
         for path in MERGE_EXEMPT_PATHS
-        if not any(action in path.read_text(encoding="utf-8").lower() for action in MERGE_ACTIONS)
-        and not (path.suffix == ".py" and _merge_method_calls(path))
+        if not _merges(path) and not (path.suffix == ".py" and _merge_method_calls(path))
     ]
     assert not unused, (
         f"these files are exempt from the merge guard but no longer merge anything: {unused}. "
