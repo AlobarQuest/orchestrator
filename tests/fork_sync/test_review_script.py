@@ -297,6 +297,44 @@ def test_npm_manifest_findings() -> None:
     }
 
 
+def test_only_install_time_scripts_and_the_files_they_run_hold() -> None:
+    """claude-octopus v11.15.1 held on `prepublishOnly: "... && test -f scripts/orchestrate.sh"`:
+    publish-only scripts never run here, and a file-test operand is checked, not run."""
+    old = {"scripts": {"prepublishOnly": "test -f scripts/orchestrate.sh", "prepack": "a"}}
+    new = {"scripts": {"prepublishOnly": "test -f scripts/orchestrate.sh", "prepack": "b"}}
+    changes = [
+        Change("M", "package.json", "100644", "100644", "o", "n"),
+        Change("M", "scripts/orchestrate.sh", "100644", "100644", "o2", "n2"),
+    ]
+    assert (
+        review.npm_manifest_findings(changes, _reader({"o": old, "n": new}), lambda _: b"{}") == []
+    )
+
+    def runs(command: str) -> set[str]:
+        manifest = {"scripts": {"postinstall": command}}
+        found = review.npm_manifest_findings(
+            [Change("M", "scripts/a.sh", "100644", "100644", "o", "n")],
+            _reader({}),
+            lambda _: json.dumps(manifest).encode(),
+        )
+        return {f.path for f in found if f.kind == "npm-lifecycle-file"}
+
+    assert runs("test -f scripts/a.sh") == set()
+    assert runs("[ -e scripts/a.sh ]") == set()
+    assert runs("test -f scripts/a.sh && sh scripts/a.sh") == {"scripts/a.sh"}
+    assert runs("sh scripts/a.sh") == {"scripts/a.sh"}
+
+    # A file a publish-only script runs outright is still never run by an install.
+    for script in ("prepublishOnly", "prepack", "postpack"):
+        manifest = {"scripts": {script: "sh scripts/a.sh"}}
+        found = review.npm_manifest_findings(
+            [Change("M", "scripts/a.sh", "100644", "100644", "o", "n")],
+            _reader({}),
+            lambda _, m=manifest: json.dumps(m).encode(),
+        )
+        assert found == [], script
+
+
 def test_an_ordinary_script_change_is_left_to_the_model() -> None:
     old = {"scripts": {"test": "vitest"}, "dependencies": {"a": "^1"}}
     new = {"scripts": {"test": "vitest run"}, "dependencies": {"a": "^2"}}
