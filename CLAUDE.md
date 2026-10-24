@@ -564,6 +564,13 @@ Placement rule: global CLAUDE.md §7.
   passing. Scheduled work (the weekly audit) lives in its own workflow. The held-sync alert is an
   issue, so the fork needs issues on (`fork-sync protect` sets it). Detail:
   `docs/operations/onboarding-a-fork.md`, "The alert".
+- A plugin row's installed revision is `plugin.loaded_entry`: the serving folder's `HEAD` when
+  Claude Code's record names the folder's version and the folder is clean and on the branch,
+  else the record's `gitCommitSha`, which Claude Code rewrites only on a version change. The
+  measurement and `verify` must both use it. Detail: ADR-0042 amendment 3.
+- The `n8nac` row owns `<npm prefix>/bin/n8nac` (`/opt/homebrew/bin/n8nac`): `npx` resolves a
+  command there and downloads from the registry when it's missing, so never remove that link
+  without the row's replacement. Detail: ADR-0042 amendment 2.
 - The sync commit's parents are the release tag and `origin/main` (`upstream-sync.yml`, built
   with `git commit-tree`). Without `main` as a parent, a file only the fork has (an owned
   lockfile) conflicts on every release, and GitHub then runs no `pull_request` checks, so no

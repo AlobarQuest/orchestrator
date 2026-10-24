@@ -119,8 +119,10 @@ with exit 2. The deterministic findings are:
   byte, or not UTF-8), never from git or `.gitattributes`; a binary file that is still UTF-8,
   such as a script with a NUL in a comment, is also sent to the model.
 - Any shell script at the repository root, such as `install.sh`.
-- For `npm`: a `package.json` anywhere whose install-time lifecycle scripts or `bin` changed; a
-  changed file a lifecycle script runs; a dependency added or changed to a git, URL, file, link
+- For `npm`: a `package.json` anywhere whose install-time lifecycle scripts (`preinstall`,
+  `install`, `postinstall`, `prepare`, `prepublish`; not the publish-only `prepack`, `postpack`
+  or `prepublishOnly`) or `bin` changed; a changed file any of those scripts mentions, a
+  `test -f` operand included (ADR-0056 amendment 7); a dependency added or changed to a git, URL, file, link
   or `npm:` alias spec; any `.npmrc`; and in `package-lock.json`, a package resolved outside
   `https://registry.npmjs.org/`, a link, an entry whose `name` differs from the package it is
   installed as, an `integrity` change at an unchanged version, or a new or changed package with
