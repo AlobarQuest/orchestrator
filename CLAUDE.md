@@ -575,3 +575,9 @@ Placement rule: global CLAUDE.md §7.
   with `git commit-tree`). Without `main` as a parent, a file only the fork has (an owned
   lockfile) conflicts on every release, and GitHub then runs no `pull_request` checks, so no
   required check ever reports. History: ADR-0056 amendment 2.
+- A fork's `hardened` branch (ADR-0057) is written only by `fork-harden`, rebuilt each pass as the
+  rules applied to `main` with the previous `hardened` and `main` as parents, and never
+  force-pushed: the installer's serving clone pulls it `--ff-only`. Never open a pull request from
+  it (`delete_branch_on_merge` would delete it). A tool row moves to or from `hardened` only with
+  its plugin serving clone checked out on that branch in the same step. Detail:
+  `docs/operations/fork-hardening.md`.

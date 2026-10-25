@@ -406,6 +406,28 @@ TABLE: dict[str, Row] = {
         "typing",
         "urllib",
     ),
+    # ADR-0057. The fork-hardening pass: reads and pushes a fork with the operator's own git
+    # credentials, through `subprocess` alone, and imports no sibling lane. `tempfile` holds the
+    # private index a hardened tree is built in; `fnmatch` matches a rule's paths; `hashlib` is
+    # the sha256 a read line is keyed by; `sys` is `sys.stdlib_module_names`, which decides
+    # whether `python3 -m <module>` survives `-I`.
+    "fork_harden": _row(
+        "__future__",
+        "collections",
+        "dataclasses",
+        "fnmatch",
+        "hashlib",
+        "json",
+        "os",
+        "pathlib",
+        "re",
+        "subprocess",
+        "sys",
+        "tempfile",
+        "typer",
+        "typing",
+        no_sibling_lanes=True,
+    ),
     "tool_installer": _row(
         "__future__",
         "dataclasses",

@@ -87,6 +87,9 @@ rotation-worker = "rotation_worker.cli:main"
 # Onboards a fork onto the upstream sync lane (docs/operations/onboarding-a-fork.md).
 # Operator-run, never scheduled.
 fork-sync = "fork_sync.cli:app"
+# ADR-0057. Writes each fork's `hardened` branch: its landed `main` with every hardening rule's fix
+# applied. A scheduled local pass, daily before the tool installer.
+fork-harden = "fork_harden.cli:app"
 
 [dependency-groups]
 # ADR-0055: the credential-rotation executor's one added dependency, the BWS SDK, so values reach
