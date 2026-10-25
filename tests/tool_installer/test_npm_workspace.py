@@ -712,16 +712,24 @@ def test_the_rows_MCP_server_is_probed_at_its_own_version_and_exit_code(
     outcome = _act(node, tmp_path, source, revision)
     assert isinstance(N8NAC.install, NpmInstall)
     assert (N8NAC.install.mcp_arguments, N8NAC.install.mcp_version) == (("mcp",), "1.0.0")
-    assert N8NAC.install.mcp_exit_code == 13
+    assert N8NAC.install.mcp_exit_codes == (0, 13)
     assert isinstance(REA.install, NpmInstall)
-    assert (REA.install.mcp_version, REA.install.mcp_exit_code) == (None, 0)
+    assert (REA.install.mcp_version, REA.install.mcp_exit_codes) == (None, (0,))
     assert outcome.action == ACTION_INSTALLED, outcome.detail
     mcp = [probe for probe in outcome.probes if "initialize" in probe.command]
     assert [probe.passed for probe in mcp] == [True]
     assert "1.0.0" in mcp[0].command
 
 
-@pytest.mark.parametrize(("mcp_reports", "exit_code"), [("2.7.0", "13"), ("1.0.0", "0")])
+def test_an_MCP_server_ending_cleanly_is_accepted(
+    node: Node, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source, revision = _fork(tmp_path)
+    monkeypatch.setenv("MCP_EXIT", "0")
+    assert _act(node, tmp_path, source, revision).action == ACTION_INSTALLED
+
+
+@pytest.mark.parametrize(("mcp_reports", "exit_code"), [("2.7.0", "13"), ("1.0.0", "1")])
 def test_an_MCP_server_answering_otherwise_rolls_back(
     node: Node,
     tmp_path: Path,

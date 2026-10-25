@@ -2,7 +2,8 @@
 
 FIVE ROWS NOW. The fifth, `n8n-as-code`, is the second plugin row, and its manifest is nested in
 its clone: so a plugin's folder is read from the hub's own `source`, as the old `PluginInstall`
-docstring said a second plugin row must. Two plugin rows track `hardened` (ADR-0057).
+docstring said a second plugin row must. Both of n8n-as-code's rows and octo's track `hardened`
+(ADR-0057).
 
 FOUR ROWS NOW. The fourth, `n8nac`, is a second npm row, and it is the first to disagree with
 `rea`: its CLI is one workspace of a monorepo whose runtime dependencies are its siblings, it needs
@@ -26,9 +27,10 @@ single case is a guess wearing the shape of a design.
 
 NOTHING HERE IS GENERALISED PAST WHAT THESE TWO ROWS PROVE. `CargoInstall` and `PluginInstall`
 are separate types rather than one with optional fields, so a row cannot be half of each; and
-`PluginInstall` carries only the marketplace name, because the serving clone's directory and the
-plugin's manifest location are derivable from the tool's name for both plugins this machine
-serves. A third row that disagrees adds the field then, with a case to fit it to.
+`PluginInstall` carries only the marketplace name. The serving clone's directory is derived from
+the tool's name; the plugin's folder inside it is read from the hub (see `PluginInstall`), since
+the second plugin row showed it is not derivable. A row that disagrees adds the field then, with
+a case to fit it to.
 
 `probe_commands` is the bar Devon named, and it is deliberately per-tool rather than a constant.
 What proves a binary works is a fact about that binary: for `rtk` it is that the tool still filters
@@ -126,8 +128,8 @@ class NpmInstall:
     """The version the MCP server reports, when it is not the package's own. `None` checks the
     package's version, as `rea`'s server reports it."""
 
-    mcp_exit_code: int = 0
-    """The exit code the MCP server ends with when its stdin closes after the exchange."""
+    mcp_exit_codes: tuple[int, ...] = (0,)
+    """The exit codes the MCP server may end with when its stdin closes after the exchange."""
 
     workspace: str | None = None
     """The package's directory inside a monorepo, when it is one workspace of several.
@@ -225,13 +227,14 @@ REA = Tool(
 # had reviewed. So this row builds the fork, and also owns that prefix link, pointing it at this
 # lane's own `bin/n8nac`; with no link there, npx would fetch upstream from the registry instead.
 # Devon's decisions of 2026-10-23: install from the fork, take the knowledge data from upstream's
-# published `@n8n-as-code/skills` at the fork's version, and own the prefix link. The hardening
-# session (docs/superpowers/plans/2026-10-21-handoff-fork-hardening.md) should remove the need for
-# that link by having the plugin call this lane's binary rather than `npx`.
+# published `@n8n-as-code/skills` at the fork's version, and own the prefix link. The link stays:
+# the hardened plugin runs a bare `n8nac`, which resolves through it (ADR-0057 decision 9). The row
+# tracks `hardened`, as every row of a fork with a hardening rule does, so the CLI and MCP server
+# the hardened plugin runs come from the hardened tree too (ADR-0042 amendment 4).
 N8NAC = Tool(
     name="n8nac",
     repository="AlobarQuest/n8n-as-code",
-    branch="main",
+    branch="hardened",
     install=NpmInstall(
         package="n8nac",
         # Builds `packages/cli/dist` and the `dist/` of every workspace it references. Measured at
@@ -260,9 +263,10 @@ N8NAC = Tool(
         # version proves only that the built server starts and answers, not which build it is;
         # the record's `gitHead` says that. Node ends it with 13, its code for a top-level
         # `await` left unsettled, when stdin closes: measured 2026-10-25, and how it always ends.
+        # 0 stays accepted, so an upstream release that settles the `await` doesn't roll back.
         mcp_arguments=("mcp",),
         mcp_version="1.0.0",
-        mcp_exit_code=13,
+        mcp_exit_codes=(0, 13),
     ),
 )
 

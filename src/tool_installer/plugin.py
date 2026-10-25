@@ -36,9 +36,11 @@ binary through its own filter -- the tool doing the job it exists to do. A plugi
 executable, and the functional check (`/octo:doctor`) needs a Claude Code session, which a
 scheduled pass does not have and must not pretend to. So what is checkable is AGREEMENT across
 the sites: the installed version equals the marketplace pin, equals the serving clone's manifest;
-the revision Claude Code loads equals the fork head this pass acted on; and the cache directory
-that version names exists and is not empty. That is a real check -- it is precisely what the
-2026-06-17 defect would have failed -- and it is not a check that the plugin works.
+the revision Claude Code loads equals the fork head this pass acted on; and Claude Code has
+something to load at that version -- a populated cache directory, or the serving folder itself,
+which is what a directory marketplace loads (ADR-0042 amendments 3 and 4; n8n-as-code runs with no
+cache directory at all). That is a real check -- it is precisely what the 2026-06-17 defect would
+have failed -- and it is not a check that the plugin works.
 
 **THE REVISION IS THE SERVING FOLDER'S HEAD, NOT THE RECORD'S `gitCommitSha`, while the record
 names the folder's version.** Claude Code rewrites `gitCommitSha` only when the version changes.
@@ -353,14 +355,18 @@ def _with_loaded_revision(
     return replace(entry, revision=head, revision_source="folder")
 
 
-def _pinned_version(sites: Sites, tool: Tool) -> str | None:
-    """The version the marketplace manifest pins for this plugin."""
+def _marketplace_entry(sites: Sites, tool: Tool) -> dict[str, Any]:
+    """This plugin's one entry in the hub's marketplace manifest."""
     try:
         document = json.loads(sites.marketplace_path().read_text(encoding="utf-8"))
     except (OSError, ValueError) as error:
         raise PluginError(f"the marketplace manifest could not be read: {error!s:.120}") from error
-    entries = _entries_named(document, tool.name)
-    version = entries[0].get("version")
+    return _entries_named(document, tool.name)[0]
+
+
+def _pinned_version(sites: Sites, tool: Tool) -> str | None:
+    """The version the marketplace manifest pins for this plugin."""
+    version = _marketplace_entry(sites, tool).get("version")
     return version if isinstance(version, str) else None
 
 
@@ -372,11 +378,7 @@ def plugin_folder(sites: Sites, tool: Tool) -> Path:
     resolves outside the clone is refused: the clone is what this pass pulls, resets and measures,
     so a folder elsewhere would be loaded from a history nothing here checked.
     """
-    try:
-        document = json.loads(sites.marketplace_path().read_text(encoding="utf-8"))
-    except (OSError, ValueError) as error:
-        raise PluginError(f"the marketplace manifest could not be read: {error!s:.120}") from error
-    source = _entries_named(document, tool.name)[0].get("source")
+    source = _marketplace_entry(sites, tool).get("source")
     if not isinstance(source, str) or not source.startswith("./"):
         raise PluginError(f"the marketplace names no local `source` for {tool.name}")
     clone = sites.clone_root(tool).resolve()
@@ -760,6 +762,10 @@ def prune(cache_root: Path, installed_version: str, *, plugins_root: Path) -> li
                 f"the install cache {resolved.name} is not named for the installed version "
                 f"{installed_version}, so nothing was pruned"
             ]
+        if not resolved.is_dir():
+            # A plugin Claude Code reads from its folder may have no cache directory at all
+            # (n8n-as-code): then nothing is cached, and nothing needs pruning.
+            return []
         cache_root = resolved.parent
         present = sorted(path.name for path in cache_root.iterdir() if path.is_dir())
     except OSError as error:

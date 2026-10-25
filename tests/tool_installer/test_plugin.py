@@ -50,7 +50,7 @@ from tool_installer.plugin import (
     resolve_claude,
     verify,
 )
-from tool_installer.tools import N8N_AS_CODE, OCTO, TOOLS
+from tool_installer.tools import N8N_AS_CODE, N8NAC, OCTO, TOOLS
 
 # THE MECHANICS ARE TESTED ON `main`, WHATEVER BRANCH THE REAL ROW TRACKS. The real octo row
 # tracks `hardened` (ADR-0057); these fixtures build a fork with one branch, so they use the row
@@ -124,12 +124,13 @@ if os.environ.get("SDS_FAKE_CLAUDE_RECORD_ON_VERSION_CHANGE_ONLY") == "1" and re
         sys.exit(0)
 
 clone = hub / name
+folder = hub / next(e["source"] for e in manifest["plugins"] if e["name"] == name)
 head = subprocess.run(
     ["git", "-C", str(clone), "rev-parse", "HEAD"], capture_output=True, text=True, check=True
 ).stdout.strip()
 cache = plugins / "cache" / marketplace / name / pinned
 cache.mkdir(parents=True, exist_ok=True)
-(cache / "plugin.json").write_text((clone / ".claude-plugin" / "plugin.json").read_text())
+(cache / "plugin.json").write_text((folder / ".claude-plugin" / "plugin.json").read_text())
 
 record = plugins / "installed_plugins.json"
 document = json.loads(record.read_text()) if record.exists() else {"plugins": {}}
@@ -189,9 +190,22 @@ class Estate:
         return self.log.read_text().splitlines() if self.log.exists() else []
 
 
+NESTED = Path("plugins") / "claude" / "octo"
+"""Where a nested estate's plugin folder sits in its clone, as n8n-as-code's does."""
+
+
 @pytest.fixture
-def estate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Estate:
-    """A serving clone one commit behind its fork, a published hub, and an installed old plugin."""
+def estate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> Estate:
+    """A serving clone one commit behind its fork, a published hub, and an installed old plugin.
+
+    With `nested` (indirect parametrisation), the plugin's folder is `NESTED` inside the clone and
+    the hub's `source` says so, while the clone's root carries a decoy manifest at `0.0.0`: the
+    shape of n8n-as-code, where reading the root would install the wrong version.
+    """
+    nested = bool(getattr(request, "param", False))
+    folder = NESTED if nested else Path()
     fork = tmp_path / "fork.git"
     subprocess.run(
         ["git", "init", "--bare", "-b", "main", str(fork)], check=True, capture_output=True
@@ -200,8 +214,11 @@ def estate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Estate:
     seed = tmp_path / "seed"
     subprocess.run(["git", "clone", str(fork), str(seed)], check=True, capture_output=True)
     _identify(seed)
-    (seed / ".claude-plugin").mkdir()
-    (seed / PLUGIN_MANIFEST).write_text(_plugin_manifest("1.0.0"))
+    (seed / folder / ".claude-plugin").mkdir(parents=True)
+    (seed / folder / PLUGIN_MANIFEST).write_text(_plugin_manifest("1.0.0"))
+    if nested:
+        (seed / ".claude-plugin").mkdir(exist_ok=True)
+        (seed / PLUGIN_MANIFEST).write_text(_plugin_manifest("0.0.0"))
     _git(seed, "add", "-A")
     _git(seed, "commit", "-m", "v1")
     _git(seed, "push", "origin", "main")
@@ -215,7 +232,9 @@ def estate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Estate:
     subprocess.run(["git", "clone", str(hub_origin), str(hub)], check=True, capture_output=True)
     _identify(hub)
     (hub / ".claude-plugin").mkdir()
-    (hub / MARKETPLACE_MANIFEST).write_text(MANIFEST)
+    (hub / MARKETPLACE_MANIFEST).write_text(
+        MANIFEST.replace('"./octo"', f'"./octo/{NESTED.as_posix()}"') if nested else MANIFEST
+    )
     # THE SERVING CLONE IS GITIGNORED IN THE HUB, exactly as it is on the machine -- it is a clone
     # of a repository already on GitHub and is never committed here. Without this line the hub is
     # permanently dirty and every pass refuses before it starts, which is a fixture that measures
@@ -229,7 +248,7 @@ def estate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Estate:
     # clone is genuinely one fast-forward behind, which is the state a merged sync leaves.
     subprocess.run(["git", "clone", str(fork), str(hub / "octo")], check=True, capture_output=True)
     _identify(hub / "octo")
-    (seed / PLUGIN_MANIFEST).write_text(_plugin_manifest("2.0.0"))
+    (seed / folder / PLUGIN_MANIFEST).write_text(_plugin_manifest("2.0.0"))
     _git(seed, "add", "-A")
     _git(seed, "commit", "-m", "v2")
     _git(seed, "push", "origin", "main")
@@ -1083,10 +1102,22 @@ def test_a_prune_that_cannot_read_the_cache_reports_rather_than_raises(tmp_path:
     """A directory that could not be pruned is untidy, not broken -- and failing the pass over it
     would roll back an install that has already been verified."""
     plugins = tmp_path / "plugins"
+    installed = plugins / "octo" / "11.0.1"
+    installed.mkdir(parents=True)
+    (plugins / "octo").chmod(0o300)  # searchable, so the version resolves; not listable
+    try:
+        assert prune(installed, "11.0.1", plugins_root=plugins) == [
+            "the install cache could not be listed: PermissionError"
+        ]
+    finally:
+        (plugins / "octo").chmod(0o700)
+
+
+def test_a_plugin_with_no_cache_directory_has_nothing_to_prune(tmp_path: Path) -> None:
+    """n8n-as-code is read from its folder and never had a cache directory: no report at all."""
+    plugins = tmp_path / "plugins"
     plugins.mkdir()
-    assert prune(plugins / "octo" / "11.0.1", "11.0.1", plugins_root=plugins) == [
-        "the install cache could not be listed: FileNotFoundError"
-    ]
+    assert prune(plugins / "n8n-as-code" / "2.4.1", "2.4.1", plugins_root=plugins) == []
 
 
 def test_a_successful_pass_prunes_and_says_what_it_removed(estate: Estate) -> None:
@@ -1409,7 +1440,28 @@ def test_the_version_is_read_from_the_nested_manifest(tmp_path: Path) -> None:
 
 
 def test_both_plugin_rows_track_hardened_and_the_cli_installs_before_its_plugin() -> None:
-    assert (OCTO.branch, N8N_AS_CODE.branch) == ("hardened", "hardened")
+    assert (OCTO.branch, N8N_AS_CODE.branch, N8NAC.branch) == ("hardened",) * 3
     assert N8N_AS_CODE.repository == "AlobarQuest/n8n-as-code"
     names = [tool.name for tool in TOOLS]
     assert names.index("n8nac") < names.index("n8n-as-code")
+
+
+@pytest.mark.parametrize("estate", [True], indirect=True)
+def test_a_nested_plugin_installs_end_to_end_from_the_folder_the_hub_names(
+    estate: Estate,
+) -> None:
+    """n8n-as-code's shape, the whole act: the version comes from the nested manifest, never the
+    decoy at the clone's root, and every verification check passes."""
+    outcome = _act(estate)
+    assert outcome.action == ACTION_INSTALLED, outcome.detail
+    assert estate.pinned("octo") == "2.0.0"
+    assert [
+        result.passed for result in verify(estate.sites, TOOL, MARKETPLACE, estate.new_head)
+    ] == [
+        True,
+        True,
+        True,
+        True,
+    ]
+    published = _git(estate.hub, "log", "-1", "--format=%s", "origin/main").strip()
+    assert "2.0.0" in published

@@ -207,6 +207,9 @@ before he runs it. This amendment points the installer at it.
 
 - **octo's row tracks `hardened`,** with its serving clone checked out on `hardened` in the same
   step (`_require_usable_clone` refuses a clone on another branch).
+- **Every row of a fork with a hardening rule tracks `hardened`,** `n8nac` included: the hardened
+  plugin runs the CLI and MCP server that row builds, so a later rule on `packages/cli` or
+  `packages/mcp` reaches what runs. The hardened tree's CLI code equals `main`'s today.
 - **A fifth row, `n8n-as-code`,** installs the Claude plugin from the fork's `hardened` branch,
   whose MCP server and skill run this machine's `n8nac` rather than upstream's npm packages. It
   follows `n8nac` in `TOOLS`, so the CLI its plugin runs is installed first. Its serving clone,
@@ -217,13 +220,14 @@ before he runs it. This amendment points the installer at it.
   `plugins/claude/n8n-as-code/.claude-plugin/plugin.json`, and its clone's root holds a
   `marketplace.json` instead. A `source` that resolves outside the serving clone is refused.
 - **`verify`'s cache check passes on a populated cache or on a revision read from the serving
-  folder.** n8n-as-code runs with no cache directory at all, and for a directory marketplace the
+  folder,** and `prune` reports nothing for a plugin with no cache directory. n8n-as-code runs with no cache directory at all, and for a directory marketplace the
   folder is what Claude Code loads (amendment 3), so a clean folder on the branch at the recorded
   version is the same assurance.
 - **The `n8nac` row builds `packages/mcp`** beside the CLI (`n8nac mcp` starts it) and probes it
   with one `initialize`. The server hard-codes version `1.0.0`, and Node ends it with exit code 13
   (an unsettled top-level `await`) when stdin closes, measured 2026-10-25; the row declares both
-  (`mcp_version`, `mcp_exit_code`). That version proves the built server starts and answers, not
+  (`mcp_version`, and `mcp_exit_codes = (0, 13)` so a release that settles the `await` still
+  passes). That version proves the built server starts and answers, not
   which build it is; the record's `gitHead` says which.
 - **Two rows share n8n-as-code's repository.** Each row's observation is content-addressed over
   its whole record, the tool's name included, so the two never collide; their `subject_reference`
