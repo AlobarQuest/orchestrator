@@ -8,6 +8,15 @@ beside fork-sync. It never changes fork-sync.
 This is a design proposal first. Bring Devon a design and wait for his answer before you build.
 Questions marked **Stop and ask** go to him.
 
+**Status:** built and installed 2026-10-25. Devon approved the design that day ("all as
+recommended, 10: remove"); ADR-0057 records it. `fork-harden` landed in orchestrator #511 and the
+installer rows in #512 (ADR-0042 amendment 4). Both forks have a protected `hardened` branch
+(claude-octopus `c566a089`, n8n-as-code `d65e98c6`), the tool installer's own pass installed octo
+11.15.1, n8nac 2.7.0 and the n8n-as-code plugin 2.4.1 from them, and `com.devon.fork-harden` runs
+daily at 03:00 (Healthchecks `sds-fork-hardening`). octo stays disabled until Devon re-enables it.
+No octo release after v11.15.1 had arrived by 2026-10-25, so a full re-apply cycle on a new
+release is not yet proven. The operations page is `docs/operations/fork-hardening.md`.
+
 ## Devon's direction
 
 His words, 2026-10-21: "I think the fork-sync process is fine as is. I think we need a seperate

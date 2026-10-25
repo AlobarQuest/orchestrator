@@ -40,6 +40,12 @@ tool installer; or uninstall the plugin now.
 session pins the MCP server; the plugin then moves to an install from the gated fork through the
 tool installer. Nothing changed on the machine.
 
+**Update 2026-10-25:** done. The hardening process pinned the MCP server to the installer's
+`n8nac mcp` (ADR-0057), and the plugin installs from the fork's `hardened` branch through the tool
+installer's `n8n-as-code` row (ADR-0042 amendment 4): 2.4.1 at `d65e98c6`. The 2.3.0 checkout
+moved to `~/Developer/devon-plugins-pre-hardening/n8n-as-code-43e3e360`, and
+`~/Developer/devon-plugins/n8n-as-code` is a fresh clone on `hardened`.
+
 ## 3. The global `n8nac` is a link to an old checkout
 
 `/opt/homebrew/bin/n8nac` resolves through `npm link` to `~/Projects/n8n-as-code/packages/cli`, a
@@ -70,6 +76,10 @@ afternoon installed n8nac 2.7.0 at `e238c7a`, passed every probe, and repointed
 `/opt/homebrew/bin/n8nac` at `~/.local/share/sds-tools/npm/bin/n8nac`. From a cold directory,
 `npm exec --no -- n8nac --version` printed 2.7.0 and `npx --yes n8nac skills node-info` answered
 from the published data.
+
+**Update 2026-10-25:** the prefix link stays. The hardened plugin runs a bare `n8nac`, which
+resolves through it, and a project's generated `AGENTS.md` still names `npx --yes n8nac`, which
+resolves through it too (ADR-0057 decision 9). The row tracks `hardened` from that day.
 
 ## 4. Two local clones from the old lane
 
