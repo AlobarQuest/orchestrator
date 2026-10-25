@@ -23,7 +23,9 @@ INLINE = [
     'X="$Y" python3 -c "import os"',
 ]
 
-STDIN = [
+FLAGGED_NOT_REWRITTEN = [
+    '"python3" -c "import os"',
+    "'python3' - <<'PY'",
     'printf "%s" "$x" | python3',
     "python3 <<'EOF'",
     "out=$(python3)",
@@ -46,10 +48,13 @@ NOT_A_RUN = [
     'echo "pid-ledger-python" "state"',
     "python3 --version",
     "[[ $x =~ (python3?|pip) ]]",
+    "my-python3 -c 'import os'",
+    "tool.python3 -c 'import os'",
+    "$python3 -c 'import os'",
 ]
 
 
-@pytest.mark.parametrize("line", INLINE + STDIN)
+@pytest.mark.parametrize("line", INLINE + FLAGGED_NOT_REWRITTEN)
 def test_an_inline_run_without_isolation_is_the_finding(line: str) -> None:
     assert octo.detect(PATH, line + "\n") == (1,)
 
@@ -72,8 +77,8 @@ def test_the_fix_isolates_every_explicit_inline_run(line: str) -> None:
     assert octo.detect(PATH, fixed) == ()
 
 
-@pytest.mark.parametrize("line", STDIN)
-def test_a_stdin_run_is_not_rewritten_and_stays_the_finding(line: str) -> None:
+@pytest.mark.parametrize("line", FLAGGED_NOT_REWRITTEN)
+def test_a_stdin_run_or_a_quoted_word_is_not_rewritten_and_stays_the_finding(line: str) -> None:
     text = line + "\n"
     assert octo.fix(PATH, text) == text
     assert octo.detect(PATH, octo.fix(PATH, text)) == (1,)

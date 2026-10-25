@@ -314,3 +314,30 @@ def test_a_fork_with_no_main_is_unreadable(tmp_path: Path) -> None:
     repo = git.open_cache(tmp_path / "cache.git", str(bare))
     with pytest.raises(git.GitError, match="has no main"):
         harden(repo, FORK, push=True)
+
+
+def test_main_moving_without_changing_the_tree_still_moves_hardened(
+    upstream: Upstream, repo: git.Repo
+) -> None:
+    upstream.land(dict(RELEASE_1))
+    harden(repo, FORK, push=True)
+    previous = upstream.head(BRANCH)
+    # A commit on `main` with an identical tree (fork-sync re-landing the same release): `main`
+    # must stay an ancestor of `hardened`, so the branch moves even though its tree does not.
+    upstream._git("commit", "-q", "--allow-empty", "-m", "same tree")
+    upstream._git("push", "-q", "origin", "main")
+    main = upstream.head("main")
+    outcome = harden(repo, FORK, push=True)
+    assert outcome.status == "advanced"
+    assert upstream.parents(upstream.head(BRANCH) or "") == [previous, main]
+
+
+def test_a_replace_ref_in_the_cache_cannot_substitute_a_tree(
+    upstream: Upstream, repo: git.Repo
+) -> None:
+    main = upstream.land(dict(RELEASE_1))
+    other = upstream.land({"src/a.sh": "echo other\n"})
+    git.fetch(repo, main, other)
+    real = git.tree_of(repo, main)
+    subprocess.run(["git", "-C", str(repo.root), "replace", main, other], check=True)
+    assert git.tree_of(repo, main) == real

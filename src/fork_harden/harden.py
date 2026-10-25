@@ -145,7 +145,9 @@ def guard(repo: git.Repo, fork: Fork, main_tree: str, hardened_tree: str) -> int
     """Refuse a hardened tree that differs from `main` beyond what the rules may edit."""
     found = git.changes(repo, main_tree, hardened_tree)
     for change in found:
-        if change.status != "M" or change.old_mode != change.new_mode:
+        # The mode comparison is the whole test of "a content change": with renames off, an add, a
+        # delete and a type change each have a different mode on one side (`000000` or another).
+        if change.old_mode != change.new_mode:
             raise Held(
                 f"guard: {change.path} is {change.status} {change.old_mode}->{change.new_mode}"
             )

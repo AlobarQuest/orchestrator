@@ -42,6 +42,8 @@ def test_the_upstream_mcp_server_becomes_the_forks_build(server: dict[str, objec
     "server",
     [
         {"command": "npx", "args": ["-y", "@other/mcp"]},
+        {"command": "npx", "args": ["-y", "@n8n-as-code/mcp-extra"]},
+        {"command": "npx", "args": ["-y", "x@n8n-as-code/mcp"]},
         {"command": "npx", "args": ["-y", "@n8n-as-code/mcp"], "env": {"A": "1"}},
         {"command": "node", "args": ["server.js"]},
         {"command": "n8nac", "args": ["mcp", "--cwd", "."]},

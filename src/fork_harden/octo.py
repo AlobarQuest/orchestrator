@@ -15,7 +15,8 @@ HOW A SITE IS READ, AND WHERE IT OVER-COUNTS. An interpreter word (`python`, `py
 alone or ending a path) is followed by its options; the first token that is not an option decides.
 `-c`, `-m` or `-` (or an option cluster containing `c` or `m`) is inline. Nothing more on the line,
 or shell punctuation, is stdin, which is inline too. Anything else is a script or not a run at
-all. A word after `command -v`, `which`, `type` or `hash` is a lookup, and a line whose first
+all. A quoted word (`"python3" -c`) is read past its quote and flagged, but never rewritten. A
+word after `command -v`, `which`, `type` or `hash` is a lookup, and a line whose first
 non-blank character is `#` never runs. The reading is deliberately crude: a stdin site in prose or
 in a list of names is flagged too, and holds until its exact line is listed in `READ_LINES`. The
 stated limit is an interpreter reached through a variable (`"$PY" -c`), which no reading of the
@@ -36,6 +37,7 @@ _STDIN_PUNCTUATION: Final = frozenset(
     "|;&)<>`"
 )  # not-a-vocabulary: shell characters, read here only
 _TAKES_ARGUMENT: Final = frozenset("WXQ")  # not-a-vocabulary: Python's own options with a value
+_QUOTES: Final = frozenset("\"'")  # not-a-vocabulary: the two shell quote characters
 
 READ_LINES: Final[ReadLines] = {
     (
@@ -59,8 +61,12 @@ READ_LINES: Final[ReadLines] = {
         "scripts/lib/routing.sh",
         "8f2f763369d56d1c45333be1d1a5f709752714c3cc93e26d80985b68e10af578",
     ): "a regular expression of prompt keywords",
+    (
+        "hooks/cwd-changed.sh",
+        "905eaf3f380087b409ad0c85d141a497adf6189167876722ff8df63ed04c2858",
+    ): "a string naming a project's languages",
 }
-"""Stdin-form sites a person read at v11.15.1 (2026-10-25) and found are not a run."""
+"""Flagged sites a person read at v11.15.1 (2026-10-25) and found are not a run."""
 
 
 def _inline_unisolated(rest: str) -> tuple[bool, bool]:
@@ -70,31 +76,23 @@ def _inline_unisolated(rest: str) -> tuple[bool, bool]:
     explicit `-c`, `-m` or `-`, which is the only form the fix rewrites.
     """
     isolated = False
-    position = 0
     skip_next = False
-    while True:
-        while position < len(rest) and rest[position] in " \t":
-            position += 1
-        if position >= len(rest) or rest[position] in _STDIN_PUNCTUATION:
-            return (not isolated, False)
-        end = position
-        while end < len(rest) and not rest[end].isspace():
-            end += 1
-        token = rest[position:end]
-        position = end
+    for token in rest.split():
+        if token[0] in _STDIN_PUNCTUATION:
+            break
         if skip_next:
             skip_next = False
             continue
         if token == "-":
             return (not isolated, True)
-        if _OPTION_CLUSTER.fullmatch(token):
-            letters = token[1:]
-            isolated = isolated or "I" in letters
-            if "c" in letters or "m" in letters:
-                return (not isolated, True)
-            skip_next = letters[-1] in _TAKES_ARGUMENT
-            continue
-        return (False, False)
+        if not _OPTION_CLUSTER.fullmatch(token):
+            return (False, False)
+        letters = token[1:]
+        isolated = isolated or "I" in letters
+        if "c" in letters or "m" in letters:
+            return (not isolated, True)
+        skip_next = letters[-1] in _TAKES_ARGUMENT
+    return (not isolated, False)
 
 
 def _sites(line: str) -> list[tuple[int, bool]]:
@@ -105,9 +103,13 @@ def _sites(line: str) -> list[tuple[int, bool]]:
     for match in _INTERPRETER.finditer(line):
         if _LOOKUP.search(line[: match.start()]):
             continue
-        inline, explicit = _inline_unisolated(line[match.end() :])
+        rest = line[match.end() :]
+        quoted = rest[:1] in _QUOTES
+        inline, explicit = _inline_unisolated(rest[1:] if quoted else rest)
         if inline:
-            found.append((match.end(), explicit))
+            # A quoted word (`"python3" -c`) is read past its closing quote, but never rewritten:
+            # `-I` inside the quotes would make one word of the interpreter and its option.
+            found.append((match.end(), explicit and not quoted))
     return found
 
 

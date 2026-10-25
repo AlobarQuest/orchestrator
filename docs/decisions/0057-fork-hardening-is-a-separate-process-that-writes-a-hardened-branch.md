@@ -95,9 +95,9 @@ site it wrongly flags only holds the branch until a person reads it (Code Brain 
 narrows by structure it can read exactly: for octo, the first token after an interpreter word and
 its options; for n8n-as-code, the parsed manifest and any registry-runner word in the plugin. A
 line a person read and found is not the finding is listed by path and the sha256 of its exact
-text (`READ_LINES` in the rule's module), so any change to it brings it back. Six lines are
-listed at 2026-10-25: five in octo (regular expressions, a registry row and the interpreter
-candidates array) and one docs example in n8n-as-code's README.
+text (`READ_LINES` in the rule's module), so any change to it brings it back. Seven lines are
+listed at 2026-10-25: six in octo (three regular expressions, a string, a registry row and the
+interpreter candidates array) and one docs example in n8n-as-code's README.
 
 Stated limits: an interpreter reached through a variable (`"$PY" -c`) is invisible to octo's
 check, and octo's one such path runs scripts only. n8n-as-code's CLI writes `npx --yes n8nac`
