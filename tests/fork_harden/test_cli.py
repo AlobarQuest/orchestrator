@@ -75,3 +75,18 @@ def test_an_unknown_fork_is_refused(tmp_path: Path) -> None:
 
 def test_every_fork_with_rules_is_the_fork_not_upstream() -> None:
     assert {fork.repository.split("/")[0] for fork in rules.FORKS} == {"AlobarQuest"}
+
+
+def test_a_path_that_is_not_utf8_is_printed_escaped(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    name = b"src/caf\xe9.sh".decode("utf-8", "surrogateescape")
+
+    def held(repo: git.Repo, fork: Fork, *, push: bool) -> Outcome:
+        return Outcome(fork, "held", reasons=[f"{name} is not UTF-8 text"])
+
+    monkeypatch.setattr(cli, "FORKS", (A,))
+    monkeypatch.setattr(cli, "harden", held)
+    result = CliRunner().invoke(cli.app, ["run", "--cache", str(tmp_path)])
+    assert result.exit_code == cli.EXIT_HELD
+    assert "src/caf\\udce9.sh is not UTF-8 text" in result.output

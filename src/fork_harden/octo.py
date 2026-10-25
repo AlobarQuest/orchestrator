@@ -18,8 +18,11 @@ decides. Four readings:
 - NOT A RUN: a script operand (`python3 x.py`), `--version` or `--help`, a word after `command -v`,
   `which`, `type` or `hash`, or a line whose first non-blank character is `#`.
 - ISOLATED: `-I` among the options.
-- FIXABLE, and the fix inserts `-I` after the word: `-c`, `-` or a `<` redirect; `-m` with a
-  standard-library module; or nothing at all after a word that a `|` feeds.
+- FIXABLE, and the fix inserts `-I` after the word: `-c`, `-` or an input redirect (`<`, `<<`);
+  `-m` with a standard-library module; or no program at all after a word a ` | ` feeds (a `|`
+  with whitespace on both sides, so a regular expression's `|python|` is not read as a pipe). An
+  option cluster is read letter by letter, as Python reads it, and an output redirect (`2>&1`,
+  `>/dev/null`) is read past.
 - UNCLEAR, flagged and never rewritten: anything else that may be a run. Shell punctuation or
   the end of the line (stdin), a backslash continuation, an option the reading doesn't know,
   `-m` with a module outside the standard library (`-I` drops user site-packages, so the fix
@@ -27,9 +30,10 @@ decides. Four readings:
   the word), a list element (`["python3", "-c"]`), and an interpreter found by a lookup
   (`$(command -v python3) -c`).
 
-Any line that names `PYTHONPATH` or `PYTHONHOME` is flagged too: `-I` ignores both, so a run that
-relies on them would change behaviour silently. A flagged line that is not a run holds until its
-exact line is listed in `READ_LINES`.
+Any line that assigns `PYTHONPATH` or `PYTHONHOME` as a word of its own (`PYTHONPATH=lib cmd`,
+`export PYTHONHOME=...`) is flagged too: `-I` ignores both, so a run that relies on them would
+change behaviour silently. A flagged line that is not a run holds until its exact line is listed
+in `READ_LINES`.
 
 STATED LIMITS. An interpreter reached through a variable (`"$PY" -c`) is invisible to any reading
 of the text; octo's one such path runs scripts only (`_octo_pid_python_run`). A `-c` body that
@@ -47,12 +51,12 @@ from fork_harden.read_lines import ReadLines, is_read
 
 _INTERPRETER: Final = re.compile(r"(?<![\w.$-])python(?:3(?:\.\d+)?)?(?![\w.-])")
 _LOOKUP: Final = re.compile(r"(?:\bcommand\s+-v|\bwhich|\btype|\bhash)\s+(?:\S*/)?$")
-_PIPED: Final = re.compile(r"\|\s*(?:\S*/)?$")
-_ENVIRONMENT: Final = re.compile(r"\bPYTHON(?:PATH|HOME)\b")
-_OPTION_CLUSTER: Final = re.compile(r"-[A-Za-z]+")
-_ATTACHED_VALUE: Final = re.compile(r"-[WX]\S+")
+_PIPED: Final = re.compile(r"(?:^|\s)\|\s+(?:\S*/)?$")
+_ENVIRONMENT_SET: Final = re.compile(r"(?:^|[\s;&|(])PYTHON(?:PATH|HOME)=")
+_INPUT_REDIRECT: Final = re.compile(r"\d*<.*")
+_OUTPUT_REDIRECT: Final = re.compile(r"(?:\d*|&)>>?(&?\S*)")
 _PUNCTUATION: Final = frozenset("|;&)<>`")  # not-a-vocabulary: shell characters, read here only
-_TAKES_ARGUMENT: Final = frozenset("WXQ")  # not-a-vocabulary: Python's own options with a value
+_TAKES_ARGUMENT: Final = frozenset("WX")  # not-a-vocabulary: Python's own options with a value
 _QUOTES: Final = frozenset("\"'")  # not-a-vocabulary: the two shell quote characters
 _TERMINAL: Final = frozenset({"--version", "--help", "-V", "-h"})  # not-a-vocabulary: no code runs
 
@@ -60,6 +64,10 @@ NOT_A_RUN: Final = "not a run"
 ISOLATED: Final = "isolated"
 FIXABLE: Final = "fixable"
 UNCLEAR: Final = "unclear"
+STDIN_END: Final = "stdin"
+"""The options ended with nothing else: the program is read from stdin. Fixable when a `|` feeds
+the word, since then the run is plain; otherwise unclear."""
+_MAY_RUN: Final = frozenset({FIXABLE, UNCLEAR, STDIN_END})  # not-a-vocabulary: readings, here only
 
 READ_LINES: Final[ReadLines] = {
     (
@@ -97,27 +105,31 @@ def _module_reading(module: str) -> str:
 
 
 def _option(token: str, following: list[str]) -> tuple[str | None, bool]:
-    """`(reading, skip the next token)` for one token starting with `-`; no reading continues."""
+    """`(reading, skip the next token)` for one token starting with `-`; no reading continues.
+
+    A cluster is read letter by letter, as Python reads it: everything after `c` is the command,
+    after `m` the module, and after `W` or `X` that option's value.
+    """
     if token in _TERMINAL:
         return (NOT_A_RUN, False)
     if token == "-":
         return (FIXABLE, False)
-    if token.startswith("--"):
-        # A long option may take its value as the next token, so where the options end is unknown.
-        return (UNCLEAR, False)
-    if _ATTACHED_VALUE.fullmatch(token):
-        return (None, False)
-    if not _OPTION_CLUSTER.fullmatch(token):
-        return (UNCLEAR, False)
-    letters = token[1:]
-    if "I" in letters:
-        return (ISOLATED, False)
-    if "c" in letters:
-        return (FIXABLE, False)
-    if "m" in letters:
-        named = letters[-1] == "m" and following
-        return (_module_reading(following[0]) if named else UNCLEAR, False)
-    return (None, letters[-1] in _TAKES_ARGUMENT)
+    for index, letter in enumerate(token[1:], start=1):
+        value = token[index + 1 :]
+        if letter == "I":
+            return (ISOLATED, False)
+        if letter == "c":
+            return (FIXABLE, False)
+        if letter == "m":
+            module = value or (following[0] if following else "")
+            return (_module_reading(module) if module else UNCLEAR, False)
+        if letter in _TAKES_ARGUMENT:
+            return (None, not value)
+        if not letter.isalpha():
+            # A long option (`--x`) lands here too: it may take its value as the next token, so
+            # where the options end is unknown.
+            return (UNCLEAR, False)
+    return (None, False)
 
 
 def _reading(rest: str) -> str:
@@ -128,16 +140,35 @@ def _reading(rest: str) -> str:
         if skip_next:
             skip_next = False
             continue
-        if token[0] == "<":
+        if _INPUT_REDIRECT.fullmatch(token):
             return FIXABLE
-        if token[0] in _PUNCTUATION or token[0] in ",]\\":
+        if output := _OUTPUT_REDIRECT.fullmatch(token):
+            skip_next = output.group(1) == ""
+            continue
+        if token[0] in _PUNCTUATION:
+            return STDIN_END
+        if token[0] in ",]\\":
             return UNCLEAR
         if not token.startswith("-"):
             return NOT_A_RUN
         reading, skip_next = _option(token, tokens[index + 1 : index + 2])
         if reading is not None:
             return reading
-    return UNCLEAR
+    return STDIN_END
+
+
+def _after_lookup(rest: str) -> bool:
+    """Whether what a lookup found is run inline: `$(command -v python3) -c ...`.
+
+    Only an option right after the substitution counts, so an assignment (`PY=$(command -v
+    python3)`) or a test (`$(command -v python3) || exit`) is not read as a run.
+    """
+    if not rest.startswith(")"):
+        return False
+    after = rest[1:]
+    after = after[1:] if after[:1] in _QUOTES else after
+    tokens = after.split()
+    return bool(tokens) and tokens[0].startswith("-") and _reading(after) in _MAY_RUN
 
 
 def _sites(line: str) -> list[tuple[int, bool]]:
@@ -148,18 +179,17 @@ def _sites(line: str) -> list[tuple[int, bool]]:
     for match in _INTERPRETER.finditer(line):
         before, rest = line[: match.start()], line[match.end() :]
         if _LOOKUP.search(before):
-            # `$(command -v python3) -c ...` runs what the lookup found.
-            if rest.startswith(")") and _reading(rest[1:]) in (FIXABLE, UNCLEAR):
+            if _after_lookup(rest):
                 found.append((match.end(), False))
             continue
         if rest[:1] in _QUOTES:
-            if _reading(rest[1:]) != ISOLATED:
+            if _reading(rest[1:]) in _MAY_RUN:
                 found.append((match.end(), False))
             continue
         reading = _reading(rest)
-        if reading == UNCLEAR and not rest.strip() and _PIPED.search(before):
-            reading = FIXABLE
-        if reading in (FIXABLE, UNCLEAR):
+        if reading == STDIN_END:
+            reading = FIXABLE if _PIPED.search(before) else UNCLEAR
+        if reading in _MAY_RUN:
             found.append((match.end(), reading == FIXABLE))
     return found
 
@@ -168,7 +198,7 @@ def detect(path: str, text: str) -> tuple[int, ...]:
     flagged: list[int] = []
     for number, line in enumerate(text.splitlines(), start=1):
         flagged_line = _sites(line) or (
-            not line.lstrip().startswith("#") and _ENVIRONMENT.search(line)
+            not line.lstrip().startswith("#") and _ENVIRONMENT_SET.search(line)
         )
         if flagged_line and not is_read(READ_LINES, path, line):
             flagged.append(number)
@@ -176,11 +206,13 @@ def detect(path: str, text: str) -> tuple[int, ...]:
 
 
 def fix(path: str, text: str) -> str:
-    del path
     lines = text.splitlines(keepends=True)
     for index, line in enumerate(lines):
         body = line.rstrip("\r\n")
         ending = line[len(body) :]
+        if is_read(READ_LINES, path, body):
+            # A person read this line and found it is not a run: it is never rewritten.
+            continue
         for end, fixable in reversed(_sites(body)):
             if fixable:
                 body = f"{body[:end]} -I{body[end:]}"

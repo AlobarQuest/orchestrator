@@ -81,6 +81,8 @@ def run_command(
         raise typer.Exit(1)
     lines, code = run_pass(forks, cache, push=push)
     for line in lines:
-        typer.echo(line)
+        # A tree path that isn't UTF-8 is carried with surrogate escapes (`git.PATHS`); print it
+        # escaped rather than let the encoder end the pass.
+        typer.echo(line.encode("utf-8", "backslashreplace").decode("utf-8"))
     if code:
         raise typer.Exit(code)

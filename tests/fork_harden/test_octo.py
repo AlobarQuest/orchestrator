@@ -27,15 +27,23 @@ INLINE = [
     "python3 <<'EOF'",
     "python3 < payload.py",
     "python3 -Xutf8 -c 'import os'",
+    "python3 2>/dev/null <<'EOF'",
+    "python3 2> err.log -c 'import os'",
+    'echo "$code" | python3 2>&1',
+    "python3 -uc'import os'",
+    "python3 -cI 'import os'",
+    "python3 -mjson.tool",
+    "python3 -W ignore::DeprecationWarning -c 'import os'",
     "python3 -Wignore::DeprecationWarning -c 'import os'",
 ]
 
 FLAGGED_NOT_REWRITTEN = [
     "python3 \\",
     "out=$($(command -v python3) -c 'import os')",
+    "out=$(\"$(command -v python3)\" -c 'import os')",
     'subprocess.run(["python3", "-c", "import os"])',
     "python3 -m requests",
-    "python3 -mjson.tool",
+    "python3 -mcowsay",
     "python3 -1 x",
     "python3 --check-hash-based-pycs never -c 'import os'",
     '"python3" -c "import os"',
@@ -61,6 +69,12 @@ NOT_A_RUN = [
     "python3 --version",
     "python3 -V",
     "$(command -v python3) script.py",
+    "PY=$(command -v python3)",
+    "$(command -v python3) || exit 1",
+    '"python3" "$script"',
+    '"$VENV/bin/python3" --version',
+    "unset PYTHONPATH",
+    'echo "PYTHONPATH=$PYTHONPATH" >&2 # shown',
     '"python3" -I -c "import os"',
     "[[ $x =~ (python3?|pip) ]]",
     "my-python3 -c 'import os'",
@@ -134,13 +148,36 @@ def test_a_line_a_person_read_is_excused_only_while_it_is_unchanged(
     assert octo.detect(PATH, line + " \n") == (1,)
 
 
+def test_a_line_a_person_read_is_never_rewritten(monkeypatch: pytest.MonkeyPatch) -> None:
+    line = "x | python3"
+    monkeypatch.setattr(octo, "READ_LINES", {(PATH, digest(line)): "not a run"})
+    assert octo.fix(PATH, line + "\n") == line + "\n"
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "anthropic-api||python3|anthropic|model-config",
+        '[[ "$p" =~ (typescript|python|react) ]] || \\',
+        'echo "$x" |python3',
+    ],
+)
+def test_a_bar_without_spaces_is_not_read_as_a_pipe_and_is_not_rewritten(line: str) -> None:
+    assert octo.fix(PATH, line + "\n") == line + "\n"
+    assert octo.detect(PATH, line + "\n") == (1,)
+
+
 def test_the_flagged_line_numbers_are_the_lines_with_a_site() -> None:
     text = "ok\npython3 -c 'a'\nok\nx | python3\n"
     assert octo.detect(PATH, text) == (2, 4)
 
 
-def test_a_line_naming_pythonpath_is_flagged_and_not_rewritten() -> None:
-    for line in ("PYTHONPATH=lib python3 helper.py", "export PYTHONHOME=/opt/py"):
+def test_a_line_setting_pythonpath_is_flagged_and_not_rewritten() -> None:
+    for line in (
+        "PYTHONPATH=lib python3 helper.py",
+        "export PYTHONHOME=/opt/py",
+        "env PYTHONPATH=lib python3 x.py",
+    ):
         assert octo.detect(PATH, line + "\n") == (1,)
         assert octo.fix(PATH, line + "\n") == line + "\n"
     assert octo.detect(PATH, "# PYTHONPATH is not used\n") == ()

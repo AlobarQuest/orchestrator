@@ -39,6 +39,9 @@ Status = Literal["advanced", "would_advance", "current", "held"]
 FORK_OWNED: Final = ".github/"
 """fork-sync's half of the fork (ADR-0056 amendment 1). Hardening never changes it."""
 
+BASH_BINARY_SAMPLE: Final = 80
+"""How many leading bytes bash samples for a NUL before it refuses to run a file."""
+
 BLOB_MODES: Final = frozenset({"100644", "100755"})  # not-a-vocabulary: git's own blob modes
 
 IDENTITY: Final = {
@@ -74,6 +77,8 @@ class Outcome:
     reasons: list[str] = field(default_factory=list)
     results: list[RuleResult] = field(default_factory=list)
     changed_files: int = 0
+    counted: bool = False
+    """Whether every rule ran over every covered file, so the counts are whole."""
 
     def lines(self) -> list[str]:
         head = f"{self.fork.repository}: {self.status}"
@@ -82,9 +87,9 @@ class Outcome:
             head += f", hardened {(self.hardened_after or self.hardened_before or 'none')[:12]})"
         out = [head]
         out += [f"  held: {reason}" for reason in self.reasons]
-        if self.status == "held":
-            # A hold stops the pass part way, so the counts below would be partial, and a partial
-            # count of zero would read as "fixed upstream".
+        if not self.counted:
+            # A hold inside the rules stops them part way, so the counts below would be partial,
+            # and a partial count of zero would read as "fixed upstream".
             return out
         for result in self.results:
             note = " -- fixed upstream; this rule can retire" if result.fixed_upstream else ""
@@ -100,16 +105,19 @@ class Outcome:
 def _text(repo: git.Repo, entry: git.Entry) -> str | None:
     """A covered file's text, or `None` for a binary file, which nothing runs as a script.
 
-    A file holding a NUL byte is skipped rather than held: bash refuses to run it ("cannot
-    execute binary file") and Python refuses it as source, so no rule's finding can be in it. A
-    symlink or a submodule still holds, because what it points at may be outside every rule's
-    paths, and so does text that isn't UTF-8, which a shell runs regardless.
+    A file is skipped rather than held only when bash would refuse it: a NUL byte before the
+    first newline within its first 80 bytes, the sample bash's own `check_binary_file` reads
+    before it runs or sources a file ("cannot execute binary file"). A NUL anywhere later holds,
+    since bash runs that file. A symlink or a submodule holds, because what it points at may be
+    outside every rule's paths, and so does text that isn't UTF-8, which a shell runs regardless.
     """
     if entry.kind != "blob" or entry.mode not in BLOB_MODES:
         raise Held(f"{entry.path} is a {entry.kind} (mode {entry.mode}), which no rule can read")
     data = git.blob(repo, entry.sha)
-    if b"\0" in data:
+    if b"\0" in data[:BASH_BINARY_SAMPLE].split(b"\n", 1)[0]:
         return None
+    if b"\0" in data:
+        raise Held(f"{entry.path} holds a NUL byte after its first line, which a shell still runs")
     try:
         return data.decode("utf-8")
     except UnicodeDecodeError as error:
@@ -196,6 +204,7 @@ def harden(repo: git.Repo, fork: Fork, *, push: bool) -> Outcome:
     main_tree = git.tree_of(repo, main)
     try:
         replaced = _apply(repo, fork, main_tree, outcome.results)
+        outcome.counted = True
         tree = git.tree_with(repo, main_tree, replaced)
         outcome.changed_files = guard(repo, fork, main_tree, tree)
     except Held as reason:

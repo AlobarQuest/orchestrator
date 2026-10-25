@@ -377,3 +377,26 @@ def test_the_cache_keeps_what_it_fetched_for_the_next_fetch(
     main = upstream.land(dict(RELEASE_1))
     harden(repo, FORK, push=False)
     assert repo.text("rev-parse", "refs/cache/main") == main
+
+
+def test_a_nul_after_the_first_line_holds_because_bash_still_runs_it(
+    upstream: Upstream, repo: git.Repo
+) -> None:
+    upstream.land({**RELEASE_1, "src/payload.sh": b"echo BAD\nexit 0\n\0payload"})
+    outcome = harden(repo, FORK, push=True)
+    assert outcome.status == "held"
+    assert "src/payload.sh holds a NUL byte after its first line" in outcome.reasons[0]
+
+
+def test_a_nul_past_bashs_sample_holds(upstream: Upstream, repo: git.Repo) -> None:
+    upstream.land({**RELEASE_1, "src/long.sh": b"echo BAD " + b"x" * 80 + b"\0"})
+    outcome = harden(repo, FORK, push=True)
+    assert outcome.status == "held"
+
+
+def test_a_guard_hold_keeps_the_whole_counts(upstream: Upstream, repo: git.Repo) -> None:
+    upstream.land({**RELEASE_1, ".github/BAD.yml": "BAD\n"})
+    fork = Fork("AlobarQuest/toy", (Rule("greedy", "x", ("*",), _detect, _fix),))
+    outcome = harden(repo, fork, push=True)
+    assert outcome.status == "held"
+    assert any("greedy: 3 line(s) on main" in line for line in outcome.lines())
