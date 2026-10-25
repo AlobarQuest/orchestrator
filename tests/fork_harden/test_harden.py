@@ -209,17 +209,25 @@ def test_a_rule_that_covers_no_file_holds(upstream: Upstream, repo: git.Repo) ->
     assert "gone covers no file" in outcome.reasons[0]
 
 
-@pytest.mark.parametrize(
-    ("content", "reason"),
-    [(b"BAD\0binary", "is binary"), (b"BAD \xff\xfe", "is not UTF-8")],
-)
-def test_a_covered_file_no_rule_can_read_holds(
-    upstream: Upstream, repo: git.Repo, content: bytes, reason: str
-) -> None:
-    upstream.land({**RELEASE_1, "src/blob.bin": content})
+def test_covered_text_that_is_not_utf8_holds(upstream: Upstream, repo: git.Repo) -> None:
+    upstream.land({**RELEASE_1, "src/latin1.sh": b"echo BAD \xe9\n"})
     outcome = harden(repo, FORK, push=True)
     assert outcome.status == "held"
-    assert reason in outcome.reasons[0]
+    assert "src/latin1.sh is not UTF-8 text" in outcome.reasons[0]
+    assert outcome.lines()[1:] == [f"  held: {outcome.reasons[0]}"]
+
+
+def test_a_covered_binary_file_is_skipped_unchanged(upstream: Upstream, repo: git.Repo) -> None:
+    upstream.land({**RELEASE_1, "src/icon.png": b"BAD\0binary"})
+    outcome = harden(repo, FORK, push=True)
+    assert outcome.status == "advanced"
+    assert outcome.changed_files == 1
+    show = subprocess.run(
+        ["git", "-C", str(upstream.bare), "show", f"{BRANCH}:src/icon.png"],
+        check=True,
+        capture_output=True,
+    )
+    assert show.stdout == b"BAD\0binary"
 
 
 def test_a_covered_symlink_holds(upstream: Upstream, repo: git.Repo) -> None:
@@ -244,7 +252,7 @@ def test_a_rule_that_reaches_into_fork_syncs_files_is_refused_by_the_guard(
 
 def _main_tree(upstream: Upstream, repo: git.Repo) -> str:
     main = upstream.land(dict(RELEASE_1))
-    git.fetch(repo, main)
+    git.fetch(repo, {"main": main})
     return git.tree_of(repo, main)
 
 
@@ -278,7 +286,7 @@ def test_the_guard_refuses_anything_but_a_content_change(
 def test_the_guard_refuses_a_deletion(upstream: Upstream, repo: git.Repo) -> None:
     main_tree = _main_tree(upstream, repo)
     main = upstream.land({"src/clean.sh": None})
-    git.fetch(repo, main)
+    git.fetch(repo, {"main": main})
     with pytest.raises(Held, match="src/clean.sh is D"):
         guard(repo, FORK, main_tree, git.tree_of(repo, main))
 
@@ -287,7 +295,7 @@ def test_a_push_that_is_not_a_fast_forward_is_refused(upstream: Upstream, repo: 
     upstream.land(dict(RELEASE_1))
     harden(repo, FORK, push=True)
     main = upstream.land({"src/c.sh": "BAD\n"})
-    git.fetch(repo, main)
+    git.fetch(repo, {"main": main})
     # A commit that does not descend from the published `hardened`: the push must fail rather
     # than rewrite the branch the installer's serving clone pulls with --ff-only.
     stray = git.commit(
@@ -337,7 +345,35 @@ def test_a_replace_ref_in_the_cache_cannot_substitute_a_tree(
 ) -> None:
     main = upstream.land(dict(RELEASE_1))
     other = upstream.land({"src/a.sh": "echo other\n"})
-    git.fetch(repo, main, other)
+    git.fetch(repo, {"main": main, "other": other})
     real = git.tree_of(repo, main)
     subprocess.run(["git", "-C", str(repo.root), "replace", main, other], check=True)
     assert git.tree_of(repo, main) == real
+
+
+def test_a_path_that_is_not_utf8_survives_the_tree_build(
+    upstream: Upstream, repo: git.Repo
+) -> None:
+    # macOS refuses such a name on disk, so the tree is written with git's plumbing alone.
+    name = b"src/caf\xe9.sh".decode("utf-8", "surrogateescape")
+    main_tree = _main_tree(upstream, repo)
+    tree = git.tree_with(repo, main_tree, {name: ("100644", git.write_blob(repo, b"ok\n"))})
+    assert name in [entry.path for entry in git.entries(repo, tree)]
+    assert [change.path for change in git.changes(repo, main_tree, tree)] == [name]
+
+
+def test_a_git_timeout_is_a_git_error(monkeypatch: pytest.MonkeyPatch, repo: git.Repo) -> None:
+    def slow(*_: object, **__: object) -> None:
+        raise subprocess.TimeoutExpired(["git"], 300)
+
+    monkeypatch.setattr(subprocess, "run", slow)
+    with pytest.raises(git.GitError, match="timed out"):
+        repo.git("status")
+
+
+def test_the_cache_keeps_what_it_fetched_for_the_next_fetch(
+    upstream: Upstream, repo: git.Repo
+) -> None:
+    main = upstream.land(dict(RELEASE_1))
+    harden(repo, FORK, push=False)
+    assert repo.text("rev-parse", "refs/cache/main") == main

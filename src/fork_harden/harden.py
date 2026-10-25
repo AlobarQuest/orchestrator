@@ -82,6 +82,10 @@ class Outcome:
             head += f", hardened {(self.hardened_after or self.hardened_before or 'none')[:12]})"
         out = [head]
         out += [f"  held: {reason}" for reason in self.reasons]
+        if self.status == "held":
+            # A hold stops the pass part way, so the counts below would be partial, and a partial
+            # count of zero would read as "fixed upstream".
+            return out
         for result in self.results:
             note = " -- fixed upstream; this rule can retire" if result.fixed_upstream else ""
             out.append(
@@ -93,12 +97,19 @@ class Outcome:
         return out
 
 
-def _text(repo: git.Repo, entry: git.Entry) -> str:
+def _text(repo: git.Repo, entry: git.Entry) -> str | None:
+    """A covered file's text, or `None` for a binary file, which nothing runs as a script.
+
+    A file holding a NUL byte is skipped rather than held: bash refuses to run it ("cannot
+    execute binary file") and Python refuses it as source, so no rule's finding can be in it. A
+    symlink or a submodule still holds, because what it points at may be outside every rule's
+    paths, and so does text that isn't UTF-8, which a shell runs regardless.
+    """
     if entry.kind != "blob" or entry.mode not in BLOB_MODES:
         raise Held(f"{entry.path} is a {entry.kind} (mode {entry.mode}), which no rule can read")
     data = git.blob(repo, entry.sha)
     if b"\0" in data:
-        raise Held(f"{entry.path} is binary, which no rule can read")
+        return None
     try:
         return data.decode("utf-8")
     except UnicodeDecodeError as error:
@@ -132,6 +143,8 @@ def _apply(
         if not fork.covers(entry.path):
             continue
         original = _text(repo, entry)
+        if original is None:
+            continue
         text = _hardened_text(entry.path, original, results)
         if text != original:
             replaced[entry.path] = (entry.mode, git.write_blob(repo, text.encode("utf-8")))
@@ -177,7 +190,7 @@ def harden(repo: git.Repo, fork: Fork, *, push: bool) -> Outcome:
         raise git.GitError(f"{fork.repository} has no {SOURCE_BRANCH}")
     main = heads[SOURCE_BRANCH]
     before = heads.get(BRANCH)
-    git.fetch(repo, *[sha for sha in (main, before) if sha])
+    git.fetch(repo, heads)
     outcome = Outcome(fork, "held", main=main, hardened_before=before)
     outcome.results = [RuleResult(rule) for rule in fork.rules]
     main_tree = git.tree_of(repo, main)

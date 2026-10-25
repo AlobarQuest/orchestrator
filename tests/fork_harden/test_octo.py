@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from fork_harden import octo
@@ -21,13 +23,23 @@ INLINE = [
     "python3 -E -m http.server",
     "exec python3 -c 'import os'",
     'X="$Y" python3 -c "import os"',
+    'printf "%s" "$x" | python3',
+    "python3 <<'EOF'",
+    "python3 < payload.py",
+    "python3 -Xutf8 -c 'import os'",
+    "python3 -Wignore::DeprecationWarning -c 'import os'",
 ]
 
 FLAGGED_NOT_REWRITTEN = [
+    "python3 \\",
+    "out=$($(command -v python3) -c 'import os')",
+    'subprocess.run(["python3", "-c", "import os"])',
+    "python3 -m requests",
+    "python3 -mjson.tool",
+    "python3 -1 x",
+    "python3 --check-hash-based-pycs never -c 'import os'",
     '"python3" -c "import os"',
     "'python3' - <<'PY'",
-    'printf "%s" "$x" | python3',
-    "python3 <<'EOF'",
     "out=$(python3)",
     "python3; echo done",
 ]
@@ -47,6 +59,9 @@ NOT_A_RUN = [
     '_octo_pid_python_path "$candidate"',
     'echo "pid-ledger-python" "state"',
     "python3 --version",
+    "python3 -V",
+    "$(command -v python3) script.py",
+    '"python3" -I -c "import os"',
     "[[ $x =~ (python3?|pip) ]]",
     "my-python3 -c 'import os'",
     "tool.python3 -c 'import os'",
@@ -73,7 +88,8 @@ def test_an_interpreter_named_by_a_variable_is_a_stated_limit() -> None:
 @pytest.mark.parametrize("line", INLINE)
 def test_the_fix_isolates_every_explicit_inline_run(line: str) -> None:
     fixed = octo.fix(PATH, line + "\n")
-    assert " -I " in fixed
+    assert fixed != line + "\n"
+    assert re.search(r"python[\d.]* -I\b", fixed)
     assert octo.detect(PATH, fixed) == ()
 
 
@@ -90,8 +106,11 @@ def test_the_fix_leaves_everything_else_byte_identical(line: str) -> None:
 
 
 def test_every_site_on_a_line_is_fixed_and_the_rest_of_the_line_kept() -> None:
-    line = 'a=$(python3 -c "x"); b=$(python3 -m y | python3 - z)'
-    assert octo.fix(PATH, line) == 'a=$(python3 -I -c "x"); b=$(python3 -I -m y | python3 -I - z)'
+    line = 'a=$(python3 -c "x"); b=$(python3 -m json.tool | python3 - z)'
+    assert (
+        octo.fix(PATH, line)
+        == 'a=$(python3 -I -c "x"); b=$(python3 -I -m json.tool | python3 -I - z)'
+    )
 
 
 def test_the_fix_keeps_line_endings_and_a_missing_final_newline() -> None:
@@ -118,3 +137,10 @@ def test_a_line_a_person_read_is_excused_only_while_it_is_unchanged(
 def test_the_flagged_line_numbers_are_the_lines_with_a_site() -> None:
     text = "ok\npython3 -c 'a'\nok\nx | python3\n"
     assert octo.detect(PATH, text) == (2, 4)
+
+
+def test_a_line_naming_pythonpath_is_flagged_and_not_rewritten() -> None:
+    for line in ("PYTHONPATH=lib python3 helper.py", "export PYTHONHOME=/opt/py"):
+        assert octo.detect(PATH, line + "\n") == (1,)
+        assert octo.fix(PATH, line + "\n") == line + "\n"
+    assert octo.detect(PATH, "# PYTHONPATH is not used\n") == ()

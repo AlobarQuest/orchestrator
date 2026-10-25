@@ -17,12 +17,16 @@ from __future__ import annotations
 import os
 import subprocess
 import tempfile
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
 GIT_TIMEOUT_SECONDS: Final = 300
 NO_REPLACE: Final = {"GIT_NO_REPLACE_OBJECTS": "1", "GIT_TERMINAL_PROMPT": "0"}
+PATHS: Final = "utf-8"
+"""How a tree path is decoded. A path that isn't UTF-8 survives through `surrogateescape`, so it
+can be matched, reported and written back exactly rather than ending the pass."""
 
 
 class GitError(RuntimeError):
@@ -58,13 +62,16 @@ class Repo:
         env: dict[str, str] | None = None,
     ) -> bytes:
         argv = ["git", "-C", str(self.root), "-c", "core.hooksPath=/dev/null", *args]
-        result = subprocess.run(
-            argv,
-            input=stdin,
-            capture_output=True,
-            timeout=GIT_TIMEOUT_SECONDS,
-            env={**os.environ, **NO_REPLACE, **(env or {})},
-        )
+        try:
+            result = subprocess.run(
+                argv,
+                input=stdin,
+                capture_output=True,
+                timeout=GIT_TIMEOUT_SECONDS,
+                env={**os.environ, **NO_REPLACE, **(env or {})},
+            )
+        except subprocess.TimeoutExpired as error:
+            raise GitError(f"git {' '.join(args[:2])} timed out after {error.timeout}s") from error
         if result.returncode != 0:
             detail = result.stderr.decode(errors="replace").strip()[:300]
             raise GitError(f"git {' '.join(args[:2])} exited {result.returncode}: {detail}")
@@ -76,10 +83,10 @@ class Repo:
 
 def open_cache(root: Path, remote: str) -> Repo:
     """The bare cache at `root`, created when missing, with `origin` set to `remote`."""
+    repo = Repo(root)
     if not (root / "HEAD").exists():
         root.mkdir(parents=True, exist_ok=True)
-        subprocess.run(["git", "init", "-q", "--bare", str(root)], check=True, timeout=60)
-    repo = Repo(root)
+        repo.git("init", "-q", "--bare")
     if remote != _remote_url(repo):
         repo.git("config", "remote.origin.url", remote)
     return repo
@@ -102,9 +109,14 @@ def remote_heads(repo: Repo, *branches: str) -> dict[str, str]:
     return heads
 
 
-def fetch(repo: Repo, *shas: str) -> None:
-    """Fetch exactly these commits, never a branch name that could move between reads."""
-    repo.git("fetch", "-q", "--no-tags", "origin", *shas)
+def fetch(repo: Repo, heads: Mapping[str, str]) -> None:
+    """Fetch exactly these commits, never a branch name that could move between reads.
+
+    Each is kept under `refs/cache/<branch>`, so the next fetch can tell the fork what the cache
+    already holds rather than download the whole history again.
+    """
+    refspecs = [f"+{sha}:refs/cache/{branch}" for branch, sha in heads.items()]
+    repo.git("fetch", "-q", "--no-tags", "origin", *refspecs)
 
 
 def tree_of(repo: Repo, commit: str) -> str:
@@ -120,7 +132,7 @@ def is_ancestor(repo: Repo, ancestor: str, descendant: str) -> bool:
 
 
 def entries(repo: Repo, tree: str) -> list[Entry]:
-    out = repo.git("ls-tree", "-r", "-z", "--full-tree", tree).decode()
+    out = repo.git("ls-tree", "-r", "-z", "--full-tree", tree).decode(PATHS, "surrogateescape")
     found: list[Entry] = []
     for record in filter(None, out.split("\0")):
         meta, path = record.split("\t", 1)
@@ -146,14 +158,15 @@ def tree_with(repo: Repo, base_tree: str, replaced: dict[str, tuple[str, str]]) 
             info = "".join(
                 f"{mode} {sha}\t{path}\0" for path, (mode, sha) in sorted(replaced.items())
             )
-            repo.git("update-index", "-z", "--index-info", stdin=info.encode(), env=index)
+            stdin = info.encode(PATHS, "surrogateescape")
+            repo.git("update-index", "-z", "--index-info", stdin=stdin, env=index)
         return repo.git("write-tree", env=index).decode().strip()
 
 
 def changes(repo: Repo, old_tree: str, new_tree: str) -> list[Change]:
     """Every path that differs between two trees, renames not detected."""
-    out = repo.git("diff-tree", "-r", "-z", "--no-renames", old_tree, new_tree).decode()
-    fields = out.split("\0")
+    out = repo.git("diff-tree", "-r", "-z", "--no-renames", old_tree, new_tree)
+    fields = out.decode(PATHS, "surrogateescape").split("\0")
     found: list[Change] = []
     for index in range(0, len(fields) - 1, 2):
         old_mode, new_mode, _, _, status = fields[index].lstrip(":").split(" ")

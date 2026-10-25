@@ -38,7 +38,9 @@ Each fork reports one of these statuses:
 `held`
 : `hardened` didn't move, so the installer stays on the last good hardened version. The `held:`
   line says why: a rule's fix refused a file, a check still flags the result, the guard refused, a
-  covered file isn't UTF-8 text, or a rule covers no file on `main`.
+  covered file is a symlink, a submodule or text that isn't UTF-8, or a rule covers no file on
+  `main`. A covered file that holds a NUL byte is skipped, because neither a shell nor Python
+  runs it as a script.
 
 A rule whose check flags nothing on `main` is reported as **fixed upstream; this rule can
 retire**. That isn't a hold: the rule's fix changes nothing, so `hardened`'s tree is `main`'s.
@@ -95,10 +97,13 @@ merging one would delete the branch the installer tracks.
 
 ## Retire a rule
 
-When a pass reports a rule as fixed upstream, remove the rule. When a fork has no rule left, set
-its tool row's `branch` back to `main`, and for a plugin check out `main` in the serving clone in
-the same step. Nothing breaks while this waits: `hardened` keeps tracking `main` with no
-difference.
+When a pass reports a rule as fixed upstream, remove the rule. Nothing breaks while this waits:
+the rule's fix changes nothing, so `hardened` keeps tracking `main`.
+
+Remove a fork's last rule in the same pull request that sets its tool row's `branch` back to
+`main`, and for a plugin row check out `main` in the serving clone in the same step. Once a fork
+leaves `FORKS`, no pass moves its `hardened` again, so a row left on `hardened` would install a
+version that stays behind `main` with nothing reporting it.
 
 ## The rules
 
