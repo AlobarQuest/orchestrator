@@ -67,6 +67,11 @@ esac
 checkout="$(dirname "$0")/../lib/node_modules/n8nac"
 case "$1" in
   --version) echo "REPORTS" ;;
+  mcp)
+    read -r request
+    info='"serverInfo":{"name":"n8n-as-code","version":"MCP_REPORTS"}'
+    printf '{"jsonrpc":"2.0","id":1,"result":{%s}}\n' "$info"
+    exit "${MCP_EXIT:-13}" ;;
   skills)
     [ -f "$checkout/packages/skills/dist/assets/n8n-knowledge-index.json" ] \\
       || { echo "Knowledge index not found" >&2; exit 1; }
@@ -95,6 +100,7 @@ case "$1" in
     if [ "$2" = "--omit=dev" ]; then rmdir dev-only; else mkdir dev-only; fi
     ;;
   run)
+    [ "$2 $3" = "build --workspace=packages/mcp" ] && exit 0
     [ "$2" = "build:cli" ] || exit 1
     [ -n "$NPM_RELINK_PREFIX" ] && ln -sfn "$NPM_RELINK_PREFIX" "$NPM_PREFIX/bin/n8nac"
     [ -n "$NPM_BUILD_LINKS_DIST" ] && ln -s "$NPM_BUILD_LINKS_DIST" packages/skills/dist
@@ -132,7 +138,11 @@ def _git(cwd: Path, *args: str) -> str:
 
 
 def _fork(
-    tmp_path: Path, *, reports: str = "2.7.0", skills_version: str = "2.4.1"
+    tmp_path: Path,
+    *,
+    reports: str = "2.7.0",
+    skills_version: str = "2.4.1",
+    mcp_reports: str = "1.0.0",
 ) -> tuple[str, str]:
     """A local monorepo shaped like n8n-as-code's. Returns `(source, revision)`."""
     repo = tmp_path / "fork"
@@ -151,7 +161,8 @@ def _fork(
             }
         )
     )
-    _executable(repo / "packages" / "cli" / "src" / "entry.sh", _ENTRY.replace("REPORTS", reports))
+    entry = _ENTRY.replace("MCP_REPORTS", mcp_reports).replace("REPORTS", reports)
+    _executable(repo / "packages" / "cli" / "src" / "entry.sh", entry)
     (repo / "packages" / "skills" / "package.json").write_text(
         json.dumps({"name": "@n8n-as-code/skills", "version": skills_version})
     )
@@ -219,6 +230,7 @@ def node(tmp_path: Path, prefix: Path, monkeypatch: pytest.MonkeyPatch) -> Node:
         "LIE_THROUGH_PREFIX",
         "RELINK_THROUGH_PREFIX",
         "LOCK_THROUGH_PREFIX",
+        "MCP_EXIT",
         "DO_NOT_TRACK",
         "NO_UPDATE_NOTIFIER",
         "CI",
@@ -323,6 +335,7 @@ def test_a_first_workspace_install_is_built_pruned_given_its_data_and_linked(
         ("skills", "search"),
         ("skills", "node-info"),
         ("--version", "== "),
+        ("mcp", "initialize"),
         (str(prefix / "bin" / "n8nac"), "--version"),
     ]
     assert sorted(path.name for path in root.iterdir()) == ["bin", "lib"]
@@ -340,6 +353,7 @@ def test_the_workspace_build_runs_in_order_and_NEVER_with_lifecycle_scripts(
         "prefix -g",
         "ci",
         "run build:cli",
+        "run build --workspace=packages/mcp",
         "ci --omit=dev",
         "pack @n8n-as-code/skills@2.4.1 --json",
     ]
@@ -413,6 +427,7 @@ def test_a_failed_probe_rolls_back_the_checkout_the_link_AND_leaves_the_prefix_l
     assert {probe.command[0]: probe.passed for probe in outcome.probes} == {
         "skills": True,
         "--version": False,
+        "mcp": True,
     }
     _assert_nothing_live_changed(tmp_path, prefix)
 
@@ -689,15 +704,35 @@ def test_an_upgrade_keeps_the_outgoing_checkout_and_reads_the_new_workspace_reco
     assert os.readlink(_root(tmp_path) / "bin" / "n8nac") == OLD_TARGET
 
 
-def test_the_row_serves_no_MCP_and_is_not_asked_to(node: Node, tmp_path: Path) -> None:
+def test_the_rows_MCP_server_is_probed_at_its_own_version_and_exit_code(
+    node: Node, tmp_path: Path
+) -> None:
+    """n8nac's server reports `1.0.0` and Node ends it with 13 on EOF; rea's is unchanged."""
     source, revision = _fork(tmp_path)
     outcome = _act(node, tmp_path, source, revision)
     assert isinstance(N8NAC.install, NpmInstall)
-    assert N8NAC.install.mcp_arguments is None
+    assert (N8NAC.install.mcp_arguments, N8NAC.install.mcp_version) == (("mcp",), "1.0.0")
+    assert N8NAC.install.mcp_exit_code == 13
     assert isinstance(REA.install, NpmInstall)
-    assert REA.install.mcp_arguments == ("mcp",)
+    assert (REA.install.mcp_version, REA.install.mcp_exit_code) == (None, 0)
     assert outcome.action == ACTION_INSTALLED, outcome.detail
-    assert not [probe for probe in outcome.probes if "initialize" in probe.command]
+    mcp = [probe for probe in outcome.probes if "initialize" in probe.command]
+    assert [probe.passed for probe in mcp] == [True]
+    assert "1.0.0" in mcp[0].command
+
+
+@pytest.mark.parametrize(("mcp_reports", "exit_code"), [("2.7.0", "13"), ("1.0.0", "0")])
+def test_an_MCP_server_answering_otherwise_rolls_back(
+    node: Node,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mcp_reports: str,
+    exit_code: str,
+) -> None:
+    source, revision = _fork(tmp_path, mcp_reports=mcp_reports)
+    monkeypatch.setenv("MCP_EXIT", exit_code)
+    outcome = _act(node, tmp_path, source, revision)
+    assert outcome.action == ACTION_ROLLED_BACK, outcome.detail
 
 
 def test_the_probe_environment_is_declared_on_the_row() -> None:

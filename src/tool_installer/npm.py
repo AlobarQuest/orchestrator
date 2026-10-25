@@ -513,12 +513,18 @@ def _take_npm_prefix(
 
 
 def probe_mcp(
-    arguments: tuple[str, ...], binary: Path, expected_version: str, env: dict[str, str]
+    arguments: tuple[str, ...],
+    binary: Path,
+    expected_version: str,
+    env: dict[str, str],
+    *,
+    exit_code: int = 0,
 ) -> ProbeResult:
     """Start the MCP server, send one `initialize`, and check the reported version by VALUE.
 
     The server reads stdin and exits when it closes, so one request and EOF is the whole
     exchange: measured at 6.7.0, 0.5-0.7s with network denied and nothing written under `HOME`.
+    `exit_code` is how the row says its server ends on EOF; anything else fails.
     """
     command = (*arguments, "initialize", "serverInfo.version ==", expected_version)
     request = {
@@ -553,7 +559,7 @@ def probe_mcp(
                 break
         except ValueError, KeyError, TypeError, AttributeError:
             continue
-    passed = completed.returncode == 0 and reported == expected_version
+    passed = completed.returncode == exit_code and reported == expected_version
     detail = "" if passed else f"exited {completed.returncode}, reported {reported!r}"
     return ProbeResult(command=command, passed=passed, detail=detail)
 
@@ -569,7 +575,10 @@ def _prove(
     env = _probe_environment(row, env)
     results = probe(row, binary, expected_version, env=env)
     if row.mcp_arguments is not None:
-        results.append(probe_mcp(row.mcp_arguments, binary, expected_version, env))
+        version = row.mcp_version or expected_version
+        results.append(
+            probe_mcp(row.mcp_arguments, binary, version, env, exit_code=row.mcp_exit_code)
+        )
     return results
 
 

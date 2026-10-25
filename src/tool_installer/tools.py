@@ -1,5 +1,9 @@
 """What this lane may install, as a table rather than as code.
 
+FIVE ROWS NOW. The fifth, `n8n-as-code`, is the second plugin row, and its manifest is nested in
+its clone: so a plugin's folder is read from the hub's own `source`, as the old `PluginInstall`
+docstring said a second plugin row must. Two plugin rows track `hardened` (ADR-0057).
+
 FOUR ROWS NOW. The fourth, `n8nac`, is a second npm row, and it is the first to disagree with
 `rea`: its CLI is one workspace of a monorepo whose runtime dependencies are its siblings, it needs
 data files its safe build cannot produce, and the place it must be reachable from is Homebrew's npm
@@ -57,19 +61,12 @@ class CargoInstall:
 class PluginInstall:
     """A Claude Code plugin served from a local directory-marketplace.
 
-    The serving clone is `<hub>/<tool name>` and its manifest is `.claude-plugin/plugin.json` at
-    that clone's root. Both are derived from the tool's name rather than declared.
-
-    THAT IS TRUE OF `octo` AND FALSE OF THE HUB'S OTHER PLUGIN, which this docstring claimed
-    until 2026-09-07. `n8n-as-code/.claude-plugin/` exists and holds a `marketplace.json`, not a
-    `plugin.json`; its real manifest is at `n8n-as-code/plugins/claude/n8n-as-code/.claude-plugin/`,
-    exactly as the hub's own `source` field says. So the derivation would read the wrong document
-    for that row rather than fail loudly, and the hub already DECLARES the answer the old
-    reasoning dismissed as "a second copy of a fact".
-
-    Left derived because `octo` is the only plugin row, and a field fitted to a second row before
-    that row exists is a guess. A THIRD ROW MUST ADD A DECLARED MANIFEST PATH -- read it from the
-    hub's `source`, do not extend the derivation.
+    The serving clone is `<hub>/<tool name>`, a git clone of the row's repository on its
+    `branch`. The plugin's folder is where the hub's marketplace `source` names, which must be
+    that clone or inside it: `./octo` for octo, and `./n8n-as-code/plugins/claude/n8n-as-code`
+    for n8n-as-code, whose manifest is nested. The hub DECLARES that answer, so it is read from
+    the hub rather than derived from the tool's name, which read the wrong document for
+    n8n-as-code (`.claude-plugin/marketplace.json` at the clone's root, not its plugin).
     """
 
     marketplace: str
@@ -124,6 +121,13 @@ class NpmInstall:
     checks the server's reported version by value -- a stdin exchange, which no argv suffix in
     `probe_commands` can express. `None` for a package that serves no MCP, which is then not
     asked to."""
+
+    mcp_version: str | None = None
+    """The version the MCP server reports, when it is not the package's own. `None` checks the
+    package's version, as `rea`'s server reports it."""
+
+    mcp_exit_code: int = 0
+    """The exit code the MCP server ends with when its stdin closes after the exchange."""
 
     workspace: str | None = None
     """The package's directory inside a monorepo, when it is one workspace of several.
@@ -184,7 +188,9 @@ RTK = Tool(
     ),
 )
 
-# ADR-0042's second row. `octo` sat at 9.45.0 for 72 days -- 323 commits and two major versions
+# ADR-0042's second row, tracking `hardened` since ADR-0057: octo's fork-sync `main` runs inline
+# Python from hooks without `-I`, and `fork-harden` writes `hardened` as `main` with that fixed.
+# `octo` sat at 9.45.0 for 72 days -- 323 commits and two major versions
 # behind the fork -- because the routine that updates it fires only after a sync pull request
 # merges, and a person has to remember. The subject is `AlobarQuest/claude-octopus`, the FORK,
 # never upstream: what reaches this machine is the hardened clone, and its head is what "behind"
@@ -192,7 +198,7 @@ RTK = Tool(
 OCTO = Tool(
     name="octo",
     repository="AlobarQuest/claude-octopus",
-    branch="main",
+    branch="hardened",
     install=PluginInstall(marketplace="devon-plugins"),
 )
 
@@ -231,7 +237,10 @@ N8NAC = Tool(
         # Builds `packages/cli/dist` and the `dist/` of every workspace it references. Measured at
         # n8nac 2.7.0 with lifecycle scripts refused: the production install that follows leaves
         # 0 invalid and 0 missing packages.
-        build_commands=(("run", "build:cli"),),
+        # The second builds `packages/mcp`, which `n8nac mcp` starts: the hardened Claude plugin
+        # runs it in place of upstream's `npx -y @n8n-as-code/mcp` (ADR-0057). Measured at
+        # 2.7.0: 27s for both, and the server answers `initialize`.
+        build_commands=(("run", "build:cli"), ("run", "build", "--workspace=packages/mcp")),
         # Both exit 1 ("Knowledge index not found") without the published data, so their exit
         # status alone proves the data landed where the code reads it.
         probe_commands=(
@@ -247,7 +256,24 @@ N8NAC = Tool(
             package="@n8n-as-code/skills", workspace="packages/skills", directory="dist/assets"
         ),
         link_into_npm_prefix=True,
+        # The server hard-codes `1.0.0` (`packages/mcp/src/services/mcp-server.ts`), so the
+        # version proves only that the built server starts and answers, not which build it is;
+        # the record's `gitHead` says that. Node ends it with 13, its code for a top-level
+        # `await` left unsettled, when stdin closes: measured 2026-10-25, and how it always ends.
+        mcp_arguments=("mcp",),
+        mcp_version="1.0.0",
+        mcp_exit_code=13,
     ),
 )
 
-TOOLS: tuple[Tool, ...] = (RTK, OCTO, REA, N8NAC)
+# The fifth row: n8n-as-code's Claude plugin, from the gated fork's `hardened` branch, whose MCP
+# server and skill run this machine's `n8nac` rather than upstream's npm packages (ADR-0057).
+# It follows `n8nac` in `TOOLS`, so the CLI its plugin runs is installed first in a pass.
+N8N_AS_CODE = Tool(
+    name="n8n-as-code",
+    repository="AlobarQuest/n8n-as-code",
+    branch="hardened",
+    install=PluginInstall(marketplace="devon-plugins"),
+)
+
+TOOLS: tuple[Tool, ...] = (RTK, OCTO, REA, N8NAC, N8N_AS_CODE)

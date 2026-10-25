@@ -22,7 +22,7 @@ from tool_installer.install import InstallOutcome, RollbackFailed
 from tool_installer.orchestrator_client import ObservationWriteError
 from tool_installer.plugin import Sites
 from tool_installer.toolchain import CRATES_JSON, CRATES_TOML, Node, ToolchainError
-from tool_installer.tools import OCTO
+from tool_installer.tools import OCTO, TOOLS
 
 HEAD = "4be91ebe1fc4eaf73688e28cd62782eadb355379"
 OLD = "1111111111111111111111111111111111111111"
@@ -82,26 +82,21 @@ def _seed_n8nac(npm_root: Path, revision: str) -> None:
 
 
 def _seed_plugin(plugins_root: Path, version: str, revision: str) -> None:
-    """Claude Code's own record, plus the cache directory it names."""
-    cache = plugins_root / "cache" / "devon-plugins" / "octo" / version
-    cache.mkdir(parents=True, exist_ok=True)
-    (cache / "plugin.json").write_text("{}")
-    (plugins_root / "installed_plugins.json").write_text(
-        json.dumps(
+    """Claude Code's own record, plus the cache directory it names, for both plugin rows."""
+    rows: dict[str, list[dict[str, str]]] = {}
+    for plugin in ("octo", "n8n-as-code"):
+        cache = plugins_root / "cache" / "devon-plugins" / plugin / version
+        cache.mkdir(parents=True, exist_ok=True)
+        (cache / "plugin.json").write_text("{}")
+        rows[f"{plugin}@devon-plugins"] = [
             {
-                "plugins": {
-                    "octo@devon-plugins": [
-                        {
-                            "scope": "user",
-                            "installPath": str(cache),
-                            "version": version,
-                            "gitCommitSha": revision,
-                        }
-                    ]
-                }
+                "scope": "user",
+                "installPath": str(cache),
+                "version": version,
+                "gitCommitSha": revision,
             }
-        )
-    )
+        ]
+    (plugins_root / "installed_plugins.json").write_text(json.dumps({"plugins": rows}))
 
 
 @pytest.fixture
@@ -127,6 +122,19 @@ def machine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Recorder:
     plugins_root.mkdir()
     _seed_plugin(plugins_root, "11.0.1", HEAD)
     sites = Sites(hub_root=tmp_path / "hub", plugins_root=plugins_root)
+    # The hub's catalog names where each plugin's folder is, as the real one does.
+    (sites.hub_root / ".claude-plugin").mkdir(parents=True)
+    (sites.hub_root / ".claude-plugin" / "marketplace.json").write_text(
+        json.dumps(
+            {
+                "name": "devon-plugins",
+                "plugins": [
+                    {"name": "octo", "source": "./octo"},
+                    {"name": "n8n-as-code", "source": "./n8n-as-code/plugins/claude/n8n-as-code"},
+                ],
+            }
+        )
+    )
     npm_root = tmp_path / "npm"
     _seed_rea(npm_root, HEAD)
     _seed_n8nac(npm_root, HEAD)
@@ -241,11 +249,12 @@ def test_a_pass_files_its_row_even_when_it_was_not_permitted_to_act(
     # asserted here rather than ignored, because "every tool is filed every pass" is the
     # property that makes silence mean something -- a pass that filed only the interesting row
     # would be indistinguishable from a pass that stopped measuring the others.
-    assert len(machine.filed) == 4
+    assert len(machine.filed) == len(TOOLS)
     assert [row["subject_reference"] for row in machine.filed] == [
         "AlobarQuest/rtk",
         "AlobarQuest/claude-octopus",
         "AlobarQuest/rea",
+        "AlobarQuest/n8n-as-code",
         "AlobarQuest/n8n-as-code",
     ]
     row = machine.filed[0]
@@ -378,7 +387,7 @@ def test_a_missing_toolchain_FILES_the_finding_it_already_made(
     monkeypatch.setattr(cli_module, "resolve_cargo", _raise_toolchain)
     result = _invoke(machine, monkeypatch, IN_WINDOW, "--install")
     assert result.exit_code == 2
-    assert len(machine.filed) == 4
+    assert len(machine.filed) == len(TOOLS)
     assert machine.filed[0]["status"] == "degraded"
     assert machine.filed[0]["facts"]["state"] == "behind"
 
@@ -441,7 +450,7 @@ def test_the_octo_row_is_current_by_the_FOLDER_it_loads_when_the_version_did_not
         json.dumps({"name": "octo", "version": "11.0.1"})
     )
     for args in (
-        ("init", "-b", "main"),
+        ("init", "-b", OCTO.branch),
         ("-c", "user.email=sds@example.invalid", "-c", "user.name=sds", "add", "-A"),
         (
             "-c",
@@ -592,8 +601,9 @@ def test_the_N8NAC_row_reads_its_record_from_the_workspace_manifest(
     _rtk_current(machine)
     result = _invoke(machine, monkeypatch, OUT_OF_WINDOW, "--install")
     assert result.exit_code == 0
-    filed = {row["subject_reference"]: row for row in machine.filed}
-    facts = filed["AlobarQuest/n8n-as-code"]["facts"]
+    # Two rows share n8n-as-code's repository (the CLI and its plugin), so a row is found by name.
+    filed = {row["facts"]["tool"]["name"]: row for row in machine.filed}
+    facts = filed["n8nac"]["facts"]
     assert facts["action"] == "not_permitted"
     assert facts["state"] == "behind"
     assert facts["installed"]["version"] == "2.7.0"
