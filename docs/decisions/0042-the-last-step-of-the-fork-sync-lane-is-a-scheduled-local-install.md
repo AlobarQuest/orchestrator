@@ -197,3 +197,40 @@ from" its serving folder.
 - The version, pin and cache checks are unchanged. Gitignored files in the folder are not seen.
 - Not yet fitted: `verify`'s cache check requires a populated cache directory, and n8n-as-code
   runs with none, so a future `PluginInstall` row for it needs that check revisited first.
+
+## Amendment 4 — Two plugin rows track `hardened`, and a plugin's folder is read from the hub (2026-10-25)
+
+**Status:** Accepted (Devon, 2026-10-25, ADR-0057 decisions 9 and 11: "all as recommended").
+
+ADR-0057 writes a `hardened` branch on a fork whose landed `main` has a finding Devon wants fixed
+before he runs it. This amendment points the installer at it.
+
+- **octo's row tracks `hardened`,** with its serving clone checked out on `hardened` in the same
+  step (`_require_usable_clone` refuses a clone on another branch).
+- **Every row of a fork with a hardening rule tracks `hardened`,** `n8nac` included: the hardened
+  plugin runs the CLI and MCP server that row builds, so a later rule on `packages/cli` or
+  `packages/mcp` reaches what runs. The hardened tree's CLI code equals `main`'s today.
+- **A fifth row, `n8n-as-code`,** installs the Claude plugin from the fork's `hardened` branch,
+  whose MCP server and skill run this machine's `n8nac` rather than upstream's npm packages. It
+  follows `n8nac` in `TOOLS`, so the CLI its plugin runs is installed first. Its serving clone,
+  `~/Developer/devon-plugins/n8n-as-code`, is replaced with a fresh clone on `hardened`: the old
+  one held the pre-gate checkout `43e3e360`, kept at `~/Developer/devon-plugins-pre-hardening/`.
+- **A plugin's folder is where the hub's marketplace `source` names** (`plugin.plugin_folder`),
+  never derived from the tool's name: n8n-as-code's manifest is nested at
+  `plugins/claude/n8n-as-code/.claude-plugin/plugin.json`, and its clone's root holds a
+  `marketplace.json` instead. A `source` that resolves outside the serving clone is refused.
+- **`verify`'s cache check passes on a populated cache or on a revision read from the serving
+  folder,** and `prune` reports nothing for a plugin with no cache directory. n8n-as-code runs with no cache directory at all, and for a directory marketplace the
+  folder is what Claude Code loads (amendment 3), so a clean folder on the branch at the recorded
+  version is the same assurance.
+- **The `n8nac` row builds `packages/mcp`** beside the CLI (`n8nac mcp` starts it) and probes it
+  with one `initialize`. The server hard-codes version `1.0.0`, and Node ends it with exit code 13
+  (an unsettled top-level `await`) when stdin closes, measured 2026-10-25; the row declares both
+  (`mcp_version`, and `mcp_exit_codes = (0, 13)` so a release that settles the `await` still
+  passes). That version proves the built server starts and answers, not
+  which build it is; the record's `gitHead` says which.
+- **Two rows share n8n-as-code's repository.** Each row's observation is content-addressed over
+  its whole record, the tool's name included, so the two never collide; their `subject_reference`
+  is the repository for both.
+- **The prefix link stays.** The hardened plugin runs a bare `n8nac`, which resolves through
+  `/opt/homebrew/bin/n8nac`, the link the `n8nac` row owns.

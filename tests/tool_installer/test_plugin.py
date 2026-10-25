@@ -16,9 +16,10 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import stat
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import pytest
@@ -43,12 +44,18 @@ from tool_installer.plugin import (
     default_sites,
     install_and_prove_plugin,
     loaded_entry,
+    plugin_folder,
     prune,
     read_entry,
     resolve_claude,
     verify,
 )
-from tool_installer.tools import OCTO
+from tool_installer.tools import N8N_AS_CODE, N8NAC, OCTO, TOOLS
+
+# THE MECHANICS ARE TESTED ON `main`, WHATEVER BRANCH THE REAL ROW TRACKS. The real octo row
+# tracks `hardened` (ADR-0057); these fixtures build a fork with one branch, so they use the row
+# with that branch, and the row's own data is pinned separately below.
+TOOL = replace(OCTO, branch="main")
 
 MARKETPLACE = "devon-plugins"
 
@@ -117,12 +124,13 @@ if os.environ.get("SDS_FAKE_CLAUDE_RECORD_ON_VERSION_CHANGE_ONLY") == "1" and re
         sys.exit(0)
 
 clone = hub / name
+folder = hub / next(e["source"] for e in manifest["plugins"] if e["name"] == name)
 head = subprocess.run(
     ["git", "-C", str(clone), "rev-parse", "HEAD"], capture_output=True, text=True, check=True
 ).stdout.strip()
 cache = plugins / "cache" / marketplace / name / pinned
 cache.mkdir(parents=True, exist_ok=True)
-(cache / "plugin.json").write_text((clone / ".claude-plugin" / "plugin.json").read_text())
+(cache / "plugin.json").write_text((folder / ".claude-plugin" / "plugin.json").read_text())
 
 record = plugins / "installed_plugins.json"
 document = json.loads(record.read_text()) if record.exists() else {"plugins": {}}
@@ -172,7 +180,7 @@ class Estate:
         return next(e["version"] for e in entries if e["name"] == plugin)
 
     def entry(self) -> object:
-        return read_entry(self.sites, OCTO, MARKETPLACE)
+        return read_entry(self.sites, TOOL, MARKETPLACE)
 
     def cache_versions(self) -> list[str]:
         root = self.sites.plugins_root / "cache" / MARKETPLACE / "octo"
@@ -182,9 +190,22 @@ class Estate:
         return self.log.read_text().splitlines() if self.log.exists() else []
 
 
+NESTED = Path("plugins") / "claude" / "octo"
+"""Where a nested estate's plugin folder sits in its clone, as n8n-as-code's does."""
+
+
 @pytest.fixture
-def estate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Estate:
-    """A serving clone one commit behind its fork, a published hub, and an installed old plugin."""
+def estate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> Estate:
+    """A serving clone one commit behind its fork, a published hub, and an installed old plugin.
+
+    With `nested` (indirect parametrisation), the plugin's folder is `NESTED` inside the clone and
+    the hub's `source` says so, while the clone's root carries a decoy manifest at `0.0.0`: the
+    shape of n8n-as-code, where reading the root would install the wrong version.
+    """
+    nested = bool(getattr(request, "param", False))
+    folder = NESTED if nested else Path()
     fork = tmp_path / "fork.git"
     subprocess.run(
         ["git", "init", "--bare", "-b", "main", str(fork)], check=True, capture_output=True
@@ -193,8 +214,11 @@ def estate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Estate:
     seed = tmp_path / "seed"
     subprocess.run(["git", "clone", str(fork), str(seed)], check=True, capture_output=True)
     _identify(seed)
-    (seed / ".claude-plugin").mkdir()
-    (seed / PLUGIN_MANIFEST).write_text(_plugin_manifest("1.0.0"))
+    (seed / folder / ".claude-plugin").mkdir(parents=True)
+    (seed / folder / PLUGIN_MANIFEST).write_text(_plugin_manifest("1.0.0"))
+    if nested:
+        (seed / ".claude-plugin").mkdir(exist_ok=True)
+        (seed / PLUGIN_MANIFEST).write_text(_plugin_manifest("0.0.0"))
     _git(seed, "add", "-A")
     _git(seed, "commit", "-m", "v1")
     _git(seed, "push", "origin", "main")
@@ -208,7 +232,9 @@ def estate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Estate:
     subprocess.run(["git", "clone", str(hub_origin), str(hub)], check=True, capture_output=True)
     _identify(hub)
     (hub / ".claude-plugin").mkdir()
-    (hub / MARKETPLACE_MANIFEST).write_text(MANIFEST)
+    (hub / MARKETPLACE_MANIFEST).write_text(
+        MANIFEST.replace('"./octo"', f'"./octo/{NESTED.as_posix()}"') if nested else MANIFEST
+    )
     # THE SERVING CLONE IS GITIGNORED IN THE HUB, exactly as it is on the machine -- it is a clone
     # of a repository already on GitHub and is never committed here. Without this line the hub is
     # permanently dirty and every pass refuses before it starts, which is a fixture that measures
@@ -222,7 +248,7 @@ def estate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Estate:
     # clone is genuinely one fast-forward behind, which is the state a merged sync leaves.
     subprocess.run(["git", "clone", str(fork), str(hub / "octo")], check=True, capture_output=True)
     _identify(hub / "octo")
-    (seed / PLUGIN_MANIFEST).write_text(_plugin_manifest("2.0.0"))
+    (seed / folder / PLUGIN_MANIFEST).write_text(_plugin_manifest("2.0.0"))
     _git(seed, "add", "-A")
     _git(seed, "commit", "-m", "v2")
     _git(seed, "push", "origin", "main")
@@ -272,7 +298,7 @@ def estate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Estate:
 
 def _act(estate: Estate, head: str | None = None):
     return install_and_prove_plugin(
-        tool=OCTO,
+        tool=TOOL,
         claude=estate.claude,
         sites=estate.sites,
         head_revision=head or estate.new_head,
@@ -763,7 +789,7 @@ def test_an_unreachable_origin_is_refused_BEFORE_the_machine_is_touched(estate: 
 
 def test_every_verification_check_holds_on_a_healthy_machine(estate: Estate) -> None:
     _act(estate)
-    results = verify(estate.sites, OCTO, MARKETPLACE, estate.new_head)
+    results = verify(estate.sites, TOOL, MARKETPLACE, estate.new_head)
     assert [result.passed for result in results] == [True, True, True, True]
 
 
@@ -793,18 +819,31 @@ def test_each_verification_check_can_fail_on_its_own(
         assert entry is not None
         for child in Path(entry.install_path).iterdir():  # type: ignore[attr-defined]
             child.unlink()
+        # The folder is no longer what loads (an untracked file), so only the cache could answer.
+        (estate.clone / "untracked.txt").write_text("x\n")
 
     head = "c" * 40 if break_it == "head" else estate.new_head
-    results = verify(estate.sites, OCTO, MARKETPLACE, head)
+    results = verify(estate.sites, TOOL, MARKETPLACE, head)
     assert [result.passed for result in results].index(False) == index
     assert sum(1 for result in results if not result.passed) == 1
+
+
+def test_no_cache_passes_when_claude_code_loads_the_serving_folder(estate: Estate) -> None:
+    """n8n-as-code runs with no cache directory at all: the folder it loads is the assurance."""
+    _act(estate)
+    entry = read_entry(estate.sites, TOOL, MARKETPLACE)
+    assert entry is not None
+    shutil.rmtree(entry.install_path)
+    results = verify(estate.sites, TOOL, MARKETPLACE, estate.new_head)
+    assert [result.passed for result in results] == [True, True, True, True]
+    assert results[3].detail == "loaded from the serving folder"
 
 
 def test_an_unreadable_manifest_fails_the_check_rather_than_raising(estate: Estate) -> None:
     """Verification reports; it must not be the thing that ends the pass with a traceback."""
     _act(estate)
     (estate.hub / MARKETPLACE_MANIFEST).write_text("{not json")
-    results = verify(estate.sites, OCTO, MARKETPLACE, estate.new_head)
+    results = verify(estate.sites, TOOL, MARKETPLACE, estate.new_head)
     assert results[0].passed is False
     assert "unreadable" in results[0].detail
 
@@ -838,7 +877,7 @@ def _pull_clone(estate: Estate) -> str:
 def test_a_fork_move_that_kept_the_version_verifies_by_the_FOLDER_it_loads(
     estate: Estate,
 ) -> None:
-    """THE OCTO CASE. The record names the clone's version at an older commit, because Claude Code
+    """THE TOOL CASE. The record names the clone's version at an older commit, because Claude Code
     rewrites `gitCommitSha` only on a version change -- and for a directory marketplace it loads
     the folder, so the folder's HEAD is what runs. Reading the record's commit instead failed
     this check every night and rolled back an install that was already right."""
@@ -850,7 +889,7 @@ def test_a_fork_move_that_kept_the_version_verifies_by_the_FOLDER_it_loads(
     assert estate.entry() == recorded
     assert recorded is not None and recorded.revision != head  # type: ignore[attr-defined]
 
-    results = verify(estate.sites, OCTO, MARKETPLACE, head)
+    results = verify(estate.sites, TOOL, MARKETPLACE, head)
     assert [result.passed for result in results] == [True, True, True, True]
     assert "from the folder" in results[2].detail
 
@@ -863,7 +902,7 @@ def test_a_version_change_claude_code_has_NOT_recorded_still_fails_the_revision_
     stands and the check fails -- as does `installed == clone`, as it always did. The pin has not
     moved here, so `installed == pinned` holds; the revision check fails on its own merits."""
     assert _pull_clone(estate) == estate.new_head
-    results = verify(estate.sites, OCTO, MARKETPLACE, estate.new_head)
+    results = verify(estate.sites, TOOL, MARKETPLACE, estate.new_head)
     assert [result.passed for result in results] == [True, False, False, True]
     assert "from the record" in results[2].detail
 
@@ -908,10 +947,10 @@ def test_a_folder_that_cannot_be_read_leaves_the_RECORD_revision_and_never_inven
         assert status.stdout == ""
         assert (status.returncode != 0) == (break_it == "corrupt_index")
 
-    recorded = read_entry(estate.sites, OCTO, MARKETPLACE)
+    recorded = read_entry(estate.sites, TOOL, MARKETPLACE)
     assert recorded is not None
-    assert loaded_entry(estate.sites, OCTO, MARKETPLACE) == recorded
-    results = verify(estate.sites, OCTO, MARKETPLACE, head)
+    assert loaded_entry(estate.sites, TOOL, MARKETPLACE) == recorded
+    results = verify(estate.sites, TOOL, MARKETPLACE, head)
     assert results[2].passed is False
     assert f"installed {recorded.revision[:7]} from the record" in results[2].detail
 
@@ -929,10 +968,10 @@ def test_a_DIRTY_folder_at_the_head_verifies_by_the_RECORD(estate: Estate, dirty
     else:
         (estate.clone / ".github" / "ci.yml").write_text("# edited in place\n")
 
-    entry = loaded_entry(estate.sites, OCTO, MARKETPLACE)
-    assert entry == read_entry(estate.sites, OCTO, MARKETPLACE)
+    entry = loaded_entry(estate.sites, TOOL, MARKETPLACE)
+    assert entry == read_entry(estate.sites, TOOL, MARKETPLACE)
     assert entry is not None and entry.revision_source == "record"
-    results = verify(estate.sites, OCTO, MARKETPLACE, head)
+    results = verify(estate.sites, TOOL, MARKETPLACE, head)
     assert [result.passed for result in results] == [True, True, False, True]
     assert "from the record" in results[2].detail
 
@@ -953,10 +992,10 @@ def test_a_folder_OFF_the_tracked_branch_verifies_by_the_RECORD(
         _git(estate.clone, "checkout", "-b", "stray")
     assert _git(estate.clone, "rev-parse", "HEAD").strip() == head
 
-    assert loaded_entry(estate.sites, OCTO, MARKETPLACE) == read_entry(
-        estate.sites, OCTO, MARKETPLACE
+    assert loaded_entry(estate.sites, TOOL, MARKETPLACE) == read_entry(
+        estate.sites, TOOL, MARKETPLACE
     )
-    results = verify(estate.sites, OCTO, MARKETPLACE, head)
+    results = verify(estate.sites, TOOL, MARKETPLACE, head)
     assert [result.passed for result in results] == [True, True, False, True]
     assert "from the record" in results[2].detail
 
@@ -978,7 +1017,7 @@ def test_the_loaded_revision_reads_take_no_optional_locks_and_a_short_timeout(
         return real_run(argv, cwd=cwd, timeout=timeout)
 
     monkeypatch.setattr(plugin_module, "_run", _recording)
-    entry = loaded_entry(estate.sites, OCTO, MARKETPLACE)
+    entry = loaded_entry(estate.sites, TOOL, MARKETPLACE)
     assert entry is not None and entry.revision == head
 
     git_calls = [(argv, timeout) for argv, timeout in calls if argv[0] == "git"]
@@ -1012,7 +1051,7 @@ def test_no_record_is_no_entry_whatever_the_folder_holds(estate: Estate) -> None
     """A folder at the head is not an install: without Claude Code's record there is nothing."""
     (estate.sites.installed_record_path()).unlink()
     _pull_clone(estate)
-    assert loaded_entry(estate.sites, OCTO, MARKETPLACE) is None
+    assert loaded_entry(estate.sites, TOOL, MARKETPLACE) is None
 
 
 def test_a_folder_BEHIND_the_head_fails_the_revision_check(estate: Estate) -> None:
@@ -1022,7 +1061,7 @@ def test_a_folder_BEHIND_the_head_fails_the_revision_check(estate: Estate) -> No
     _advance_fork_without_a_version_change(estate)
     _pull_clone(estate)
     head = _advance_fork_without_a_version_change(estate)
-    results = verify(estate.sites, OCTO, MARKETPLACE, head)
+    results = verify(estate.sites, TOOL, MARKETPLACE, head)
     assert [result.passed for result in results] == [True, True, False, True]
     assert "from the folder" in results[2].detail
 
@@ -1063,10 +1102,22 @@ def test_a_prune_that_cannot_read_the_cache_reports_rather_than_raises(tmp_path:
     """A directory that could not be pruned is untidy, not broken -- and failing the pass over it
     would roll back an install that has already been verified."""
     plugins = tmp_path / "plugins"
+    installed = plugins / "octo" / "11.0.1"
+    installed.mkdir(parents=True)
+    (plugins / "octo").chmod(0o300)  # searchable, so the version resolves; not listable
+    try:
+        assert prune(installed, "11.0.1", plugins_root=plugins) == [
+            "the install cache could not be listed: PermissionError"
+        ]
+    finally:
+        (plugins / "octo").chmod(0o700)
+
+
+def test_a_plugin_with_no_cache_directory_has_nothing_to_prune(tmp_path: Path) -> None:
+    """n8n-as-code is read from its folder and never had a cache directory: no report at all."""
+    plugins = tmp_path / "plugins"
     plugins.mkdir()
-    assert prune(plugins / "octo" / "11.0.1", "11.0.1", plugins_root=plugins) == [
-        "the install cache could not be listed: FileNotFoundError"
-    ]
+    assert prune(plugins / "n8n-as-code" / "2.4.1", "2.4.1", plugins_root=plugins) == []
 
 
 def test_a_successful_pass_prunes_and_says_what_it_removed(estate: Estate) -> None:
@@ -1119,7 +1170,7 @@ def test_the_default_sites_are_the_ones_this_machine_uses() -> None:
 def test_an_absent_installed_record_reads_as_a_first_install(tmp_path: Path) -> None:
     """`None` is a first install, which is allowed -- and deliberately not confused with a record
     that exists and names a different revision."""
-    assert read_entry(Sites(tmp_path, tmp_path), OCTO, MARKETPLACE) is None
+    assert read_entry(Sites(tmp_path, tmp_path), TOOL, MARKETPLACE) is None
 
 
 def test_a_record_that_cannot_say_what_it_installed_reads_as_absent(tmp_path: Path) -> None:
@@ -1127,7 +1178,7 @@ def test_a_record_that_cannot_say_what_it_installed_reads_as_absent(tmp_path: Pa
     (tmp_path / "installed_plugins.json").write_text(
         json.dumps({"plugins": {"octo@devon-plugins": [{"version": "1.0.0"}]}})
     )
-    assert read_entry(Sites(tmp_path, tmp_path), OCTO, MARKETPLACE) is None
+    assert read_entry(Sites(tmp_path, tmp_path), TOOL, MARKETPLACE) is None
 
 
 # ---------------------------------------------------------------------------------------------
@@ -1218,13 +1269,13 @@ def test_a_rollback_that_SUCCEEDS_is_not_reported_as_a_rollback_failure(
     Here the forward install fails outright, so the cache never moved and there is nothing to put
     back. The pass must report `install_failed` and leave the machine exactly as it found it.
     """
-    before = read_entry(estate.sites, OCTO, MARKETPLACE)
+    before = read_entry(estate.sites, TOOL, MARKETPLACE)
     monkeypatch.setenv("SDS_FAKE_CLAUDE_FAIL", "1")
 
     outcome = _act(estate)
 
     assert outcome.action == ACTION_INSTALL_FAILED
-    after = read_entry(estate.sites, OCTO, MARKETPLACE)
+    after = read_entry(estate.sites, TOOL, MARKETPLACE)
     assert before is not None and after is not None
     assert (after.version, after.revision) == (before.version, before.revision)
 
@@ -1279,7 +1330,7 @@ def test_a_rollback_with_nothing_recorded_either_side_does_not_re_run_the_instal
 
     # `read_entry` on a plugins root that does not exist returns None, which is the state under
     # test: unreadable/absent on both sides.
-    assert _install_still_moved(sites, OCTO, MARKETPLACE, act) is False
+    assert _install_still_moved(sites, TOOL, MARKETPLACE, act) is False
 
 
 def test_read_entry_takes_the_USER_scope_row_not_whichever_is_first(tmp_path: Path) -> None:
@@ -1315,7 +1366,7 @@ def test_read_entry_takes_the_USER_scope_row_not_whichever_is_first(tmp_path: Pa
     )
     sites = Sites(hub_root=tmp_path / "hub", plugins_root=plugins)
 
-    entry = read_entry(sites, OCTO, MARKETPLACE)
+    entry = read_entry(sites, TOOL, MARKETPLACE)
 
     assert entry is not None
     assert (entry.version, entry.revision) == ("11.0.1", "u" * 40)
@@ -1338,4 +1389,79 @@ def test_read_entry_is_None_when_no_row_is_user_scoped(tmp_path: Path) -> None:
     )
     sites = Sites(hub_root=tmp_path / "hub", plugins_root=plugins)
 
-    assert read_entry(sites, OCTO, MARKETPLACE) is None
+    assert read_entry(sites, TOOL, MARKETPLACE) is None
+
+
+# ------------------------------------------------------------------------------------------------
+# The plugin's folder is read from the hub's `source`, and the rows track `hardened` (ADR-0057).
+# ------------------------------------------------------------------------------------------------
+
+
+def _hub(tmp_path: Path, sources: dict[str, object]) -> Sites:
+    hub = tmp_path / "hub"
+    (hub / ".claude-plugin").mkdir(parents=True)
+    document = {
+        "name": MARKETPLACE,
+        "plugins": [{"name": n, "source": s} for n, s in sources.items()],
+    }
+    (hub / MARKETPLACE_MANIFEST).write_text(json.dumps(document))
+    return Sites(hub_root=hub, plugins_root=tmp_path / "plugins")
+
+
+def test_the_plugin_folder_is_where_the_hub_says(tmp_path: Path) -> None:
+    sites = _hub(
+        tmp_path,
+        {"octo": "./octo", "n8n-as-code": "./n8n-as-code/plugins/claude/n8n-as-code"},
+    )
+    assert plugin_folder(sites, TOOL) == (sites.hub_root / "octo").resolve()
+    nested = sites.hub_root / "n8n-as-code" / "plugins" / "claude" / "n8n-as-code"
+    assert plugin_folder(sites, N8N_AS_CODE) == nested.resolve()
+
+
+@pytest.mark.parametrize(
+    "source",
+    ["./elsewhere", "./octo/../elsewhere", "./octo-other", "octo", "/abs/octo", None, 3],
+)
+def test_a_source_outside_the_serving_clone_is_refused(tmp_path: Path, source: object) -> None:
+    sites = _hub(tmp_path, {"octo": source})
+    with pytest.raises(PluginError):
+        plugin_folder(sites, TOOL)
+
+
+def test_the_version_is_read_from_the_nested_manifest(tmp_path: Path) -> None:
+    sites = _hub(tmp_path, {"n8n-as-code": "./n8n-as-code/plugins/claude/n8n-as-code"})
+    root = sites.hub_root / "n8n-as-code"
+    (root / ".claude-plugin").mkdir(parents=True)
+    (root / ".claude-plugin" / "marketplace.json").write_text('{"version": "0.0.0"}')
+    nested = root / "plugins" / "claude" / "n8n-as-code" / ".claude-plugin"
+    nested.mkdir(parents=True)
+    (nested / "plugin.json").write_text('{"name": "n8n-as-code", "version": "2.4.1"}')
+    assert plugin_module._clone_version(sites, N8N_AS_CODE) == "2.4.1"
+
+
+def test_both_plugin_rows_track_hardened_and_the_cli_installs_before_its_plugin() -> None:
+    assert (OCTO.branch, N8N_AS_CODE.branch, N8NAC.branch) == ("hardened",) * 3
+    assert N8N_AS_CODE.repository == "AlobarQuest/n8n-as-code"
+    names = [tool.name for tool in TOOLS]
+    assert names.index("n8nac") < names.index("n8n-as-code")
+
+
+@pytest.mark.parametrize("estate", [True], indirect=True)
+def test_a_nested_plugin_installs_end_to_end_from_the_folder_the_hub_names(
+    estate: Estate,
+) -> None:
+    """n8n-as-code's shape, the whole act: the version comes from the nested manifest, never the
+    decoy at the clone's root, and every verification check passes."""
+    outcome = _act(estate)
+    assert outcome.action == ACTION_INSTALLED, outcome.detail
+    assert estate.pinned("octo") == "2.0.0"
+    assert [
+        result.passed for result in verify(estate.sites, TOOL, MARKETPLACE, estate.new_head)
+    ] == [
+        True,
+        True,
+        True,
+        True,
+    ]
+    published = _git(estate.hub, "log", "-1", "--format=%s", "origin/main").strip()
+    assert "2.0.0" in published
