@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Template for the fork-hardening pass's LaunchAgent (ADR-0057). Install with
+     scripts/install-fork-harden-launchd.sh, which substitutes __REPO_ROOT__ and __HOME__ and
+     writes ~/Library/LaunchAgents/com.devon.fork-harden.plist.
+
+     No secrets live here: the pass reads and pushes with the operator's git credentials, and the
+     wrapper reads the Healthchecks API key from BWS only to find the ping URL.
+
+     DAILY AT 03:00 LOCAL, fifteen minutes before the tool installer (03:15), so a branch this
+     pass moves is installed the same night. The installer runs nightly, so a more frequent pass
+     would install nothing sooner. RunAtLoad is false, as for every lane. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.devon.fork-harden</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__REPO_ROOT__/scripts/run-fork-harden.sh</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <dict><key>Hour</key><integer>3</integer><key>Minute</key><integer>0</integer></dict>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>__HOME__</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/fork-harden.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/fork-harden.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>
