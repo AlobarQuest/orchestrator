@@ -3,6 +3,7 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
+from orchestrator.api.schemas.common import CommandBase
 from orchestrator.services.membership.changes import (
     GrantChange,
     MemberApp,
@@ -15,11 +16,17 @@ __all__ = [
     "MemberApp",
     "MemberChange",
     "MemberProposalBody",
+    "MemberProposalRequest",
     "MemberProposalResponse",
     "MemberView",
     "MembersResponse",
     "GrantView",
 ]
+
+
+class MemberProposalRequest(CommandBase, MemberProposalBody):
+    """The staging request: the proposal plus the idempotency key and expected version every
+    command carries. Only the proposal body is stored and digested."""
 
 
 class MemberProposalResponse(BaseModel):

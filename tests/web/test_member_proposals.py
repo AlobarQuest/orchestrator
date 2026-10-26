@@ -4,11 +4,13 @@ import re
 import uuid
 
 from fastapi.testclient import TestClient
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
 
 from orchestrator.persistence.models import SdsMember, SdsMemberGrant, SdsMemberProposal
-from tests.api.test_lifecycle_api import HUMAN, SYSTEM, WORKER
+from tests.api.test_lifecycle_api import HUMAN, SYSTEM, VERIFIER, WORKER
+from tests.api.test_membership_api import OBSERVER
+from tests.architecture.test_membership_writers import WRITE_ROUTES
 
 BODY = {
     "summary": "enroll brain",
@@ -27,8 +29,8 @@ BODY = {
 def _stage(client: TestClient) -> str:
     response = client.post(
         "/api/v1/member-proposals",
-        headers={**SYSTEM, "Idempotency-Key": f"web-{uuid.uuid4().hex}"},
-        json=BODY,
+        headers=SYSTEM,
+        json={**BODY, "idempotency_key": f"web-{uuid.uuid4().hex}", "expected_version": 0},
     )
     assert response.status_code == 201, response.text
     return response.json()["id"]
@@ -159,3 +161,59 @@ def test_a_record_that_moved_after_the_page_rendered_is_refused(
         assert len(session.scalars(select(SdsMember)).all()) == 1
         row = session.get(SdsMemberProposal, uuid.UUID(first))
         assert row is not None and row.state == "staged"
+
+
+ROLE_HEADERS = {
+    "SYSTEM": SYSTEM,
+    "HUMAN": HUMAN,
+    "WORKER": WORKER,
+    "VERIFIER": VERIFIER,
+    "OBSERVER": OBSERVER,
+}
+
+
+def _counts(engine: Engine) -> tuple[int, int, str]:
+    with Session(engine) as session:
+        states = ",".join(sorted(session.scalars(select(SdsMemberProposal.state))))
+        return (
+            session.scalar(select(func.count()).select_from(SdsMember)) or 0,
+            session.scalar(select(func.count()).select_from(SdsMemberGrant)) or 0,
+            states,
+        )
+
+
+def test_each_write_route_refuses_every_other_role(
+    db_client: TestClient, migrated_engine: Engine
+) -> None:
+    """The role each write route requires (`WRITE_ROUTES`), proved by refusing all the others."""
+    assert set(WRITE_ROUTES.values()) <= set(ROLE_HEADERS)
+    proposal_id = _stage(db_client)
+    page = db_client.get(f"/review/member-proposals/{proposal_id}", headers=HUMAN).text
+    forms = {
+        "confirm": {**_form(page, proposal_id, "confirm"), "confirm": "yes"},
+        "withdraw": {**_form(page, proposal_id, "withdraw"), "confirm": "yes", "reason": "x"},
+    }
+    before = _counts(migrated_engine)
+    refusals = {"role_forbidden", "human_actor_required"}
+    for route, required in WRITE_ROUTES.items():
+        for role, headers in ROLE_HEADERS.items():
+            if role == required:
+                continue
+            path = route.replace("{proposal_id}", proposal_id)
+            if route.startswith("/api/"):
+                response = db_client.post(
+                    path,
+                    headers=headers,
+                    json={**BODY, "idempotency_key": f"role-{role}", "expected_version": 0},
+                )
+            else:
+                response = db_client.post(
+                    path,
+                    headers=headers,
+                    data=forms[route.rsplit("/", 1)[1]],
+                    follow_redirects=False,
+                )
+            assert response.status_code == 403, (route, role, response.status_code)
+            if route.startswith("/api/"):
+                assert response.json()["error"]["code"] in refusals, (route, role)
+    assert _counts(migrated_engine) == before

@@ -44,9 +44,12 @@ def stage_member_proposal(
     actor: ActorContext,
     body: MemberProposalBody,
     idempotency_key: str,
+    expected_version: int,
 ) -> SdsMemberProposal:
     """Hold a validated membership proposal for a person to confirm. SYSTEM only.
 
+    Staging creates a row, so there is no version of ours to state: `expected_version` must be 0.
+    The digest covers the proposal body only, never the key or the version.
     The same key with the same body replays the row; with a different body it is a conflict.
     """
     if actor.role is not ActorRole.SYSTEM or not actor.actor_id:
@@ -54,6 +57,13 @@ def stage_member_proposal(
             "role_forbidden",
             "only the system actor may stage a membership proposal",
             "a person changes membership by confirming a staged proposal",
+        )
+    if expected_version != 0:
+        raise DomainError(
+            "version_conflict",
+            "staging a member proposal requires expected version 0",
+            "reload",
+            current_version=0,
         )
     payload = body.model_dump(mode="json")
     digest = hashlib.sha256(

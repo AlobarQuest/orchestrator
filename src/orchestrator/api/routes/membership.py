@@ -1,11 +1,10 @@
-from typing import Annotated
-
-from fastapi import APIRouter, Header
+from fastapi import APIRouter
 
 from orchestrator.api.dependencies import ActorDep, SessionDep
 from orchestrator.api.routes.common import ERROR_RESPONSES
 from orchestrator.api.schemas.membership import (
     MemberProposalBody,
+    MemberProposalRequest,
     MemberProposalResponse,
     MembersResponse,
     MemberView,
@@ -18,8 +17,7 @@ router = APIRouter(prefix="/api/v1", responses=ERROR_RESPONSES)
 
 @router.post("/member-proposals", response_model=MemberProposalResponse, status_code=201)
 def create_member_proposal(
-    body: MemberProposalBody,
-    idempotency_key: Annotated[str, Header(min_length=1)],
+    body: MemberProposalRequest,
     actor: ActorDep,
     session: SessionDep,
 ) -> dict[str, object]:
@@ -28,7 +26,13 @@ def create_member_proposal(
     SYSTEM only (`stage_member_proposal` refuses every other role). Staging changes no member.
     """
     proposal = stage_member_proposal(
-        session, actor=actor, body=body, idempotency_key=idempotency_key
+        session,
+        actor=actor,
+        body=MemberProposalBody.model_validate(
+            body.model_dump(exclude={"idempotency_key", "expected_version"})
+        ),
+        idempotency_key=body.idempotency_key,
+        expected_version=body.expected_version,
     )
     session.commit()
     return {

@@ -32,8 +32,8 @@ BODY = {
 
 
 def _post(client: TestClient, headers: dict[str, str], key: str | None = None) -> object:
-    headers = {**headers, "Idempotency-Key": key or f"m-{uuid.uuid4().hex}"}
-    return client.post("/api/v1/member-proposals", headers=headers, json=BODY)
+    body = {**BODY, "idempotency_key": key or f"m-{uuid.uuid4().hex}", "expected_version": 0}
+    return client.post("/api/v1/member-proposals", headers=headers, json=body)
 
 
 def test_the_response_model_declares_exactly_the_pinned_fields() -> None:
@@ -66,14 +66,18 @@ def test_observer_cannot_stage(db_client: TestClient) -> None:
 
 
 def test_a_missing_idempotency_key_is_refused(db_client: TestClient) -> None:
-    response = db_client.post("/api/v1/member-proposals", headers=SYSTEM, json=BODY)
-    assert response.status_code == 422 or response.status_code == 400
+    response = db_client.post(
+        "/api/v1/member-proposals", headers=SYSTEM, json={**BODY, "expected_version": 0}
+    )
+    assert response.status_code == 422
 
 
 def test_a_refused_body_surfaces_its_code(db_client: TestClient) -> None:
     bad = {"summary": "s", "changes": [{"repository": "nope", "reason": "r"}]}
     response = db_client.post(
-        "/api/v1/member-proposals", headers={**SYSTEM, "Idempotency-Key": "bad"}, json=bad
+        "/api/v1/member-proposals",
+        headers=SYSTEM,
+        json={**bad, "idempotency_key": "bad", "expected_version": 0},
     )
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "member_repository_invalid"
@@ -152,3 +156,13 @@ def test_the_member_views_declare_exactly_the_pinned_fields() -> None:
 
 def test_reading_members_needs_authentication(db_client: TestClient) -> None:
     assert db_client.get("/api/v1/members").status_code == 401
+
+
+def test_a_nonzero_expected_version_is_refused(db_client: TestClient) -> None:
+    response = db_client.post(
+        "/api/v1/member-proposals",
+        headers=SYSTEM,
+        json={**BODY, "idempotency_key": "v", "expected_version": 3},
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "version_conflict"

@@ -33,7 +33,7 @@ case-insensitively.
    reason, and any apps and grants.
 2. Stage it with `sds-members stage <file.toml>`. It posts `POST /api/v1/member-proposals` as SYSTEM
    and prints the `/review/member-proposals/{id}` page. (The `sds-members` command ships with the
-   lane changes; until then post the same body to the API with the SYSTEM bearer, see
+   lane changes; until then post the same body, with `idempotency_key` and `expected_version: 0` added, to the API with the SYSTEM bearer, see
    `docs/operations/credentials.md`.)
 3. Open the printed page and read each change beside the record it would change. Confirm, or
    withdraw with a reason. Staging changes no member.

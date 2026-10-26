@@ -47,7 +47,9 @@ def body(*changes: dict[str, Any], summary: str = "enroll") -> MemberProposalBod
 
 
 def stage(session: Session, proposal: MemberProposalBody, key: str = "k1") -> SdsMemberProposal:
-    return stage_member_proposal(session, actor=SYSTEM, body=proposal, idempotency_key=key)
+    return stage_member_proposal(
+        session, actor=SYSTEM, body=proposal, idempotency_key=key, expected_version=0
+    )
 
 
 def add_member(session: Session, repository: str = "AlobarQuest/brain", **fields: Any) -> SdsMember:
@@ -87,9 +89,30 @@ def test_system_stages_a_proposal(migrated_engine: Engine) -> None:
 def test_only_system_may_stage(migrated_engine: Engine, role: ActorRole) -> None:
     with Session(migrated_engine) as session, pytest.raises(DomainError) as raised:
         stage_member_proposal(
-            session, actor=ActorContext("someone", role), body=body(), idempotency_key="k"
+            session,
+            actor=ActorContext("someone", role),
+            body=body(),
+            idempotency_key="k",
+            expected_version=0,
         )
     assert raised.value.code == "role_forbidden"
+
+
+def test_staging_requires_expected_version_zero(migrated_engine: Engine) -> None:
+    with Session(migrated_engine) as session, pytest.raises(DomainError) as raised:
+        stage_member_proposal(
+            session, actor=SYSTEM, body=body(), idempotency_key="k", expected_version=1
+        )
+    assert raised.value.code == "version_conflict"
+
+
+def test_the_digest_ignores_the_key_and_the_version(migrated_engine: Engine) -> None:
+    with Session(migrated_engine) as session:
+        first = stage(session, body(), key="a")
+        second = stage(session, body(), key="b")
+        assert first.payload_digest == second.payload_digest
+        assert "idempotency_key" not in first.payload
+        assert "expected_version" not in first.payload
 
 
 def test_same_key_same_body_replays(migrated_engine: Engine) -> None:

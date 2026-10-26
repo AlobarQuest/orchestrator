@@ -80,24 +80,11 @@ EXPECTED_VALUE_EXCEPTIONS = {
 }
 
 
-# A route that CREATES a subject states no version, because the subject does not exist yet, and
-# carries its idempotency key as the `Idempotency-Key` header rather than in the body. Staging a
-# membership proposal is that: it reads nothing of ours and changes no member. The header is
-# required here so the exception cannot become "this route states nothing".
-CREATING_ROUTES_WITH_HEADER_KEY = frozenset({"/api/v1/member-proposals"})
-
-
 def test_every_api_mutation_requires_idempotency_key_and_expected_version() -> None:
     document = TestClient(app).get("/openapi.json").json()
 
     for path, operations in document["paths"].items():
         if not path.startswith("/api/v1") or "post" not in operations:
-            continue
-        if path in CREATING_ROUTES_WITH_HEADER_KEY:
-            header = next(
-                p for p in operations["post"]["parameters"] if p["name"] == "idempotency-key"
-            )
-            assert header["in"] == "header" and header["required"], path
             continue
         schema = operations["post"]["requestBody"]["content"]["application/json"]["schema"]
         name = schema["$ref"].rsplit("/", 1)[-1]

@@ -1,13 +1,14 @@
 """Who may write the SDS member tables, and through which routes.
 
 Membership is explicit: no lane enrolls a repository. Only a human confirming a proposal on
-`/review` writes the member tables, and only `proposals.py` holds that code. Role refusal itself
-(SYSTEM stages, HUMAN decides, every other role is refused) is pinned behaviourally by
-`tests/services/test_member_proposals.py` and `tests/web/test_member_proposals.py`.
+`/review` writes the member tables, and only `proposals.py` holds that code. The role each route
+requires is pinned in `WRITE_ROUTES` and proved behaviourally by
+`tests/web/test_member_proposals.py::test_each_write_route_refuses_every_other_role`.
 """
 
 import ast
 import inspect
+from collections.abc import Callable
 from pathlib import Path
 
 from fastapi.routing import APIRoute
@@ -35,13 +36,21 @@ MAY_WRITE = frozenset({"services/membership/proposals.py"})
 WRITE_FUNCTIONS = frozenset(
     {"stage_member_proposal", "confirm_member_proposal", "withdraw_member_proposal"}
 )
-WRITE_ROUTES = frozenset(
-    {
-        "/api/v1/member-proposals",
-        "/review/member-proposals/{proposal_id}/confirm",
-        "/review/member-proposals/{proposal_id}/withdraw",
-    }
+# The route -> the one role it requires. The table is the contract; the web test hits each route
+# with every other role.
+WRITE_ROUTES = {
+    "/api/v1/member-proposals": "SYSTEM",
+    "/review/member-proposals/{proposal_id}/confirm": "HUMAN",
+    "/review/member-proposals/{proposal_id}/withdraw": "HUMAN",
+}
+
+# Member table names: raw SQL naming one is a write path the model checks cannot see.
+TABLE_NAMES = frozenset(
+    {"sds_members", "sds_member_grants", "sds_member_apps", "sds_member_proposals"}
 )
+# Where the table names may appear as string constants: the model that defines them.
+MAY_NAME_TABLES = frozenset({"persistence/models.py"})
+CORE_WRITES = frozenset({"update", "insert", "delete", "setattr"})
 
 
 def _modules() -> dict[str, ast.Module]:
@@ -65,6 +74,15 @@ def _names(tree: ast.AST, wanted: frozenset[str]) -> set[str]:
     return found
 
 
+def _callee(call: ast.Call) -> str | None:
+    """The called name, whether `update(...)` or `sa.update(...)`."""
+    if isinstance(call.func, ast.Name):
+        return call.func.id
+    if isinstance(call.func, ast.Attribute):
+        return call.func.attr
+    return None
+
+
 def _writes(tree: ast.AST) -> list[str]:
     """Constructions of, `session.add` of, and attribute assignments on the write models."""
     problems: list[str] = []
@@ -72,8 +90,17 @@ def _writes(tree: ast.AST) -> list[str]:
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
             if node.func.id in WRITE_MODELS:
                 problems.append(f"line {node.lineno}: constructs {node.func.id}")
+        if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("sqlalchemy"):
+            # An aliased import (`update as sa_update`) would hide the call from `_callee`.
+            problems.extend(
+                f"line {node.lineno}: imports {a.name}" for a in node.names if a.name in CORE_WRITES
+            )
+        if isinstance(node, ast.Call):
+            callee = _callee(node)
+            if callee in CORE_WRITES:
+                problems.append(f"line {node.lineno}: calls {callee}(...)")
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-            if node.func.attr in {"add", "add_all", "merge", "delete"} and node.args:
+            if node.func.attr in {"add", "add_all", "merge"} and node.args:
                 problems.append(f"line {node.lineno}: session.{node.func.attr}(...)")
     return problems
 
@@ -88,9 +115,22 @@ def _assigned_attributes(tree: ast.AST) -> list[str]:
     return [f"line {t.lineno}: assigns .{t.attr}" for t in targets if isinstance(t, ast.Attribute)]
 
 
+def _table_strings(tree: ast.AST) -> set[str]:
+    return {
+        word
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        for word in TABLE_NAMES
+        if word in node.value
+    }
+
+
 def _violations(modules: dict[str, ast.Module]) -> list[str]:
     problems: list[str] = []
     for relative, tree in modules.items():
+        tables = _table_strings(tree)
+        if tables and relative not in MAY_NAME_TABLES:
+            problems.append(f"{relative} names tables {sorted(tables)} in a string")
         named = _names(tree, ALL_MODELS)
         if not named or relative in {"persistence/models.py"}:
             continue
@@ -122,16 +162,83 @@ def test_the_writers_guard_sees_a_stray_write() -> None:
     assert len(_violations({"services/membership/members.py": reader})) == 3
 
 
-def _reaches_a_write(function: object) -> bool:
-    tree = ast.parse(inspect.getsource(function))  # type: ignore[arg-type]
-    return any(
-        isinstance(node, ast.Call)
-        and (
-            (isinstance(node.func, ast.Name) and node.func.id in WRITE_FUNCTIONS)
-            or (isinstance(node.func, ast.Attribute) and node.func.attr in WRITE_FUNCTIONS)
-        )
-        for node in ast.walk(tree)
+def test_the_writers_guard_sees_core_statements_and_raw_sql() -> None:
+    core = ast.parse(
+        "import sqlalchemy as sa\n"
+        "from orchestrator.persistence.models import SdsMember\n"
+        "def f(session):\n"
+        "    session.execute(update(SdsMember).values(state='x'))\n"
+        "    session.execute(sa.delete(SdsMember))\n"
+        "    session.execute(sa.insert(SdsMember))\n"
+        "    setattr(SdsMember, 'state', 'x')\n"
     )
+    found = _violations({"services/membership/members.py": core})
+    assert len(found) == 4, found
+    aliased = ast.parse(
+        "from sqlalchemy import update as sa_update\n"
+        "from orchestrator.persistence.models import SdsMember\n"
+    )
+    assert _violations({"services/membership/members.py": aliased}) == [
+        "services/membership/members.py line 1: imports update"
+    ]
+    raw = ast.parse("from sqlalchemy import text\nQ = text('UPDATE sds_members SET state = 1')\n")
+    assert _violations({"services/unrelated.py": raw}) == [
+        "services/unrelated.py names tables ['sds_members'] in a string"
+    ]
+    assert _violations({"persistence/models.py": raw}) == []
+
+
+def _calls(node: ast.AST) -> set[str]:
+    return {
+        name for call in ast.walk(node) if isinstance(call, ast.Call) if (name := _callee(call))
+    }
+
+
+def _reaches(module: ast.Module, entry: str) -> bool:
+    """Whether `entry` calls a write function, directly or through same-module helpers."""
+    local = {
+        node.name: node
+        for node in module.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    seen: set[str] = set()
+    pending = [entry]
+    while pending:
+        name = pending.pop()
+        if name in seen or name not in local:
+            continue
+        seen.add(name)
+        called = _calls(local[name])
+        if called & WRITE_FUNCTIONS:
+            return True
+        pending.extend(called & local.keys())
+    return False
+
+
+def _reaches_a_write(function: Callable[..., object]) -> bool:
+    module = inspect.getmodule(function)
+    assert module is not None
+    return _reaches(ast.parse(inspect.getsource(module)), function.__name__)
+
+
+def test_the_route_walk_follows_a_local_helper() -> None:
+    module = ast.parse(
+        "def helper(session):\n"
+        "    return stage_member_proposal(session)\n"
+        "def middle(session):\n"
+        "    return helper(session)\n"
+        "def endpoint(session):\n"
+        "    return middle(session)\n"
+        "def unrelated(session):\n"
+        "    return list_members(session)\n"
+        "def loop_a():\n"
+        "    return loop_b()\n"
+        "def loop_b():\n"
+        "    return loop_a()\n"
+    )
+    assert _reaches(module, "endpoint")
+    assert not _reaches(module, "unrelated")
+    assert not _reaches(module, "loop_a")  # a cycle ends
 
 
 def test_membership_write_routes_are_exactly_these() -> None:
@@ -146,4 +253,4 @@ def test_membership_write_routes_are_exactly_these() -> None:
     assert len(routes) > 50  # the walk found the app, not an empty shell
     reaching = {route.path for route in routes if _reaches_a_write(route.endpoint)}
 
-    assert reaching == WRITE_ROUTES
+    assert reaching == set(WRITE_ROUTES)
