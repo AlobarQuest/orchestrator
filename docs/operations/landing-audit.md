@@ -124,6 +124,20 @@ scripts/run-landing-ledger.sh --dry-run    # writes nothing; prints what it woul
 scripts/install-landing-ledger-launchd.sh  # daily at 07:30, operator-run
 ```
 
+### Which repositories it covers
+
+The ledger covers every repository this estate lands code in, and the launcher derives that list
+on each pass with `scripts/sds_scope.py ledger`; there is no list to edit. It's the union of:
+
+- **The factory targets:** every repository the account owns whose `factory-target.toml` on its
+  default branch declares `factory_target = true`.
+- **The inert population:** every repository change-manager's landing policy names as inert. The
+  inert lane lands Dependabot updates and the forks' upstream syncs under that policy, so the
+  forks are covered.
+
+To add a repository, declare it in one of those two places. If any declaration or the policy
+can't be read, the pass records nothing and exits 3. It never runs on a shorter list.
+
 | exit | meaning |
 |---|---|
 | 0 | everything was measured and nothing was found |
