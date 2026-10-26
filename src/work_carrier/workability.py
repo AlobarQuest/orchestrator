@@ -123,6 +123,8 @@ STANDING_OPERATIONAL_PACKAGES = frozenset(
         "rotation-github-finegrained-mirror",
         "rotation-bitbucket-mirror-token",
         "rotation-bws-tok-brain-ops",
+        "rotation-change-manager-full-bearer",
+        "rotation-bws-tok-content-mini",
     }
 )
 
