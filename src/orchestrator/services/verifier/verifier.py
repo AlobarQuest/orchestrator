@@ -1,9 +1,11 @@
 import uuid
+from dataclasses import dataclass
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
+from orchestrator.kernel.authority import normalize_authority
 from orchestrator.kernel.states import ActorRole, WorkUnitState
 from orchestrator.persistence.models import (
     Event,
@@ -16,12 +18,14 @@ from orchestrator.services.lifecycle.lifecycle import (
     TransitionCommand,
     transition_unit,
 )
+from orchestrator.services.lifecycle.rotation_claims import UNIT_CONSTRAINT, is_rotation_unit
 from orchestrator.services.verifier.evidence import (
     append_verifier_evidence,
     current_adjudication,
     current_evidence,
     record_adjudication,
 )
+from orchestrator.services.verifier.rotation_verification import rotation_step_verdict
 from orchestrator.services.verifier.verifier_criteria import load_required_criteria
 from orchestrator.services.verifier.verifier_evaluators import EvaluationStatus, evaluate_criterion
 from orchestrator.services.verifier.verifier_named_check import (
@@ -81,8 +85,9 @@ def verify_work_unit(session: Session, command: VerifyCommand) -> VerifierResult
         )
 
     criteria = load_required_criteria(session, unit, revision)
+    rotation = _rotation(command, unit, revision)
     evaluations = tuple(
-        _verify_criterion(session, command, unit, criterion) for criterion in criteria
+        _verify_criterion(session, command, unit, criterion, rotation) for criterion in criteria
     )
     evaluations = _stabilize_named_check_evaluations(
         session,
@@ -117,6 +122,7 @@ def _verify_criterion(
     command: VerifyCommand,
     unit: WorkUnit,
     criterion: PackageAcceptanceCriterion,
+    rotation: _Rotation | None,
 ) -> VerifierEvaluation:
     evidence = current_evidence(
         session,
@@ -125,6 +131,18 @@ def _verify_criterion(
         criterion.ac_id,
     )
     status, outcome, reason = evaluate_criterion(criterion, evidence)
+    if (
+        status == "judgment_required"
+        and rotation is not None
+        # A person's decision, recorded at /review before the verifier ran, is never replaced.
+        and current_adjudication(session, unit.work_package_revision_id, unit.id, criterion.ac_id)
+        is None
+    ):
+        status, outcome, reason = _rotation_step(criterion, evidence, rotation) or (
+            status,
+            outcome,
+            reason,
+        )
     if _is_trusted_named_check(criterion, evidence):
         assert evidence is not None
         binding_failure = validate_named_check_bindings(session, unit, criterion, evidence)
@@ -140,6 +158,48 @@ def _verify_criterion(
         outcome,
         reason,
     )
+
+
+@dataclass(frozen=True)
+class _Rotation:
+    """A rotation unit's executor and its unit's name in the adapter's plan."""
+
+    owner: str | None
+    unit_name: str | None
+
+
+def _rotation(
+    command: VerifyCommand, unit: WorkUnit, revision: WorkPackageRevision
+) -> _Rotation | None:
+    """Who may prove this unit's steps, or ``None`` when it isn't a rotation unit. An owner of
+    ``None`` (that executor unconfigured) matches no evidence's recorder."""
+    if not is_rotation_unit(unit, revision):
+        return None
+    owner = command.rotation_executors.owner(unit)
+    name = normalize_authority(unit.authority).constraints.get(UNIT_CONSTRAINT)
+    return _Rotation(owner, name if isinstance(name, str) else None)
+
+
+def _rotation_step(
+    criterion: PackageAcceptanceCriterion,
+    evidence: Evidence | None,
+    rotation: _Rotation,
+) -> tuple[EvaluationStatus, str | None, str] | None:
+    """A rotation unit's attested step, decided from the executor's own evidence (ADR-0055
+    amendment 14). ``None`` leaves the criterion with a person: evidence anyone else filed,
+    including the orchestrator's recovery, never decides it, and nothing here fails it."""
+    if evidence is None or evidence.payload is None or evidence.recorded_by != rotation.owner:
+        return None
+    refusal = rotation_step_verdict(
+        criterion.evidence_type,
+        criterion.evidence,
+        rotation.unit_name,
+        evidence.evidence_type,
+        evidence.payload,
+    )
+    if refusal is not None:
+        return ("judgment_required", None, refusal)
+    return ("passed", "passed", "the rotation executor's step evidence proves the criterion")
 
 
 def _record_evaluation(

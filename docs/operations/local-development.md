@@ -345,8 +345,8 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   things in two groups, and anything wired to those codes must be keyed per launcher.** Measured
   2026-08-29 by reading all seven headers, after HQ nearly shipped a universal rule that would have
   inverted the signal for three of them.
-  `run-landing-ledger.sh`, `run-deploy-watcher.sh` and `run-activation-sweep.sh`: **2 = something
-  was FOUND**, 3 = it could not be read or measured ("3 outranks 2: an incomplete pass cannot claim
+  `run-landing-ledger.sh`, `run-deploy-watcher.sh`, `run-activation-sweep.sh` and
+  `run-rotation-verifier.sh` (2026-10-26): **2 = something was FOUND**, 3 = it could not be read or measured ("3 outranks 2: an incomplete pass cannot claim
   it found everything there was to find").
   `run-estate-landing.sh`, `run-change-proposer.sh`, `run-work-carrier.sh`, `run-bump-proposer.sh`
   and `run-rotation-proposer.sh`: **2 = could not use its INPUTS**, 3 = something was found.

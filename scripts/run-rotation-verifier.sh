@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# One rotation-verifier pass: run `/verify` on every submitted rotation unit (ADR-0055 amendment 14).
+#
+# The orchestrator's verifier completes a rotation unit whose step evidence is clean, and the
+# completion hands the next unit its turn. Nothing ran the verifier on a schedule, so each unit
+# waited for a session to call it. This lane is that call, and nothing more: the verifier decides
+# every criterion, and a unit it can't prove goes to `awaiting_review` for a person.
+#
+# EXIT CODES:
+#   0  every submitted rotation unit completed, or none was submitted.
+#   1  the tool itself failed (a missing credential, an unusable URL).
+#   2  something was found: a unit went to a person.
+#   3  a unit could not be read or verified, so the answer is missing rather than clean.
+#
+# Usage:
+#   scripts/run-rotation-verifier.sh [--dry-run]
+# Install as a scheduled job with:
+#   scripts/install-rotation-verifier-launchd.sh
+set -uo pipefail
+
+# BWS UUID (value fetched at runtime; never stored in this repo). See .bws-secrets.toml.
+VERIFIER_BEARER_UUID="660d5846-abcb-4751-be86-b483012899eb"   # orchestrator-verifier VERIFIER bearer
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# ACTIVATION: these launchers run the working copy, so a merged change is live here only once it
+# is pulled. Best-effort: the helper prints one `[activation]` line and returns 0 whatever it finds.
+_SDS_ACTIVATE="$HOME/.claude/bin/activate-checkout.sh"
+if [ -r "$_SDS_ACTIVATE" ]; then
+    # shellcheck source=/dev/null
+    . "$_SDS_ACTIVATE"
+else
+    activate_checkout() {
+        echo "[activation] helper missing at $HOME/.claude/bin/activate-checkout.sh —" \
+             "this run is not activated"
+    }
+fi
+activate_checkout "$REPO_ROOT" "$0" "$@"
+
+# THE DEAD-MAN SWITCH, armed after activation (which may `exec`). The finding code 2 pings success:
+# the check answers whether this lane runs, and a unit waiting for a person is on `/review`.
+# shellcheck disable=SC1091
+source "$REPO_ROOT/scripts/sds-deadman.sh"
+sds_deadman_arm sds-rotation-verifier --finding 2 "$@"
+
+# shellcheck disable=SC1091
+source "$REPO_ROOT/scripts/sds-bws.sh"
+
+# SOURCED, not executed: `sds-token.sh` exports the value and prints nothing.
+if [ -z "${BWS_ACCESS_TOKEN:-}" ]; then
+  # shellcheck disable=SC1091
+  source "$REPO_ROOT/scripts/sds-token.sh"
+fi
+if [ -z "${BWS_ACCESS_TOKEN:-}" ]; then
+  echo "FATAL: BWS_ACCESS_TOKEN not available for the orchestrator credential" >&2
+  exit 1
+fi
+
+ORCHESTRATOR_API_URL="${ORCHESTRATOR_API_URL:-https://sds.alobar.net}"
+ORCHESTRATOR_API_CREDENTIAL_KEY_ID="orchestrator-verifier"
+ORCHESTRATOR_API_TOKEN="$(sds_bws_value "$VERIFIER_BEARER_UUID")"
+export ORCHESTRATOR_API_URL ORCHESTRATOR_API_CREDENTIAL_KEY_ID ORCHESTRATOR_API_TOKEN
+if [ -z "$ORCHESTRATOR_API_TOKEN" ]; then
+  echo "FATAL: could not read the verifier bearer from BWS" >&2
+  exit 1
+fi
+
+"$REPO_ROOT/.venv/bin/rotation-verifier" "$@"
+rc=$?
+
+# A code outside {0,1,2,3} is the program dying in a way it doesn't describe (127 is a missing
+# binary); report it as the tool failing rather than folding it to 0.
+case "$rc" in
+  0|1|2|3) exit "$rc" ;;
+  *) echo "FATAL: rotation-verifier exited $rc" >&2; exit 1 ;;
+esac

@@ -569,6 +569,9 @@ OUTBOUND_ALLOWLIST = {
     # Enforced by `system_permits` / `verifier_permits` / `anonymous_permits` and pinned by
     # tests/image_release/test_client_surface.py. Its egress is not the orchestrator's.
     Path("src/image_release/client.py"),
+    # ADR-0055 amendment 14. Three paths through the confined transport, as VERIFIER: the
+    # status ledger and one unit read, and `/verify`. Its egress is the orchestrator's own API.
+    Path("src/rotation_verifier/client.py"),
     # ADR-0055 decision 1. The credential-rotation executor PULLS its work: it is a separate
     # program in its own VM, and it reaches the orchestrator only as its WORKER identity. Its
     # reads are the ready queue, a unit, its package revision, history and evidence; its writes

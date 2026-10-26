@@ -81,9 +81,9 @@ HOSTED_AS: Final = {
 
 M = Actor.MACHINE
 # Two units, each claimed inside the live_estate window because each restarts the orchestrator,
-# with Devon's completion click between them, so nothing is retired until he has seen the new
-# value stored. The operator bearer's readers fetch the keeper when they run, so the keeper
-# readback verifies them and there is no human act.
+# so nothing is retired until the mint unit's evidence proves the new value stored and the
+# verifier has completed it (ADR-0055 amendment 14). The operator bearer's readers fetch the
+# keeper when they run, so the keeper readback verifies them and there is no human act.
 PLAN: Final = Plan(
     (
         UnitPlan(

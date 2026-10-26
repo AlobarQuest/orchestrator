@@ -34,7 +34,7 @@ from rotation_worker.registry import PACKAGES_REPOSITORY, REGISTRY_PATH, REGISTR
 from rotation_worker.values import Value
 from rotation_worker.worker import Setup, run_pass
 from tests._support.review_forms import decide_decomposition
-from tests.api.test_lifecycle_api import HUMAN, SYSTEM, WORKER
+from tests.api.test_lifecycle_api import HUMAN, SYSTEM, VERIFIER, WORKER
 from tests.api.test_observations_api import uptime_body
 from tests.rotation_worker.conftest import Origins
 from tests.rotation_worker.stores import MemoryStore
@@ -46,6 +46,18 @@ RUNTIME = 'runtime-fetch repo="orchestrator" ref="no program reads the canary; a
 PACKAGE_PATH = f"packages/rotation-{CREDENTIAL}/package.yaml"
 UNITS = {"mint": ["AC-001", "AC-002", "AC-003"], "store": ["AC-004", "AC-005"]}
 UNITS["retire"] = ["AC-006", "AC-007", "AC-008"]
+# Each criterion names its step as every standing package does; the two verify_consumers steps
+# also name their unit.
+STEPS = {
+    "AC-001": "mint",
+    "AC-002": "stage",
+    "AC-003": "verify_new",
+    "AC-004": "store",
+    "AC-005": "store unit's verify_consumers",
+    "AC-006": "retire unit's verify_consumers",
+    "AC-007": "retire_old",
+    "AC-008": "confirm_dead",
+}
 CAPABILITIES = {"operational_action": "allowed"}
 BUDGETS = {"max_attempts": 3, "max_llm_calls": None}
 
@@ -239,7 +251,10 @@ rotated_by_sds = true
                         "ac_id": ac,
                         "condition": f"{ac} holds",
                         "evidence_type": "external_attestation",
-                        "evidence": "external: the step's rotation-step/1 evidence",
+                        "evidence": (
+                            f"external: the {STEPS[ac]} step's rotation-step/1 evidence, "
+                            "filed by the rotation executor."
+                        ),
                         "approver": "devon",
                     }
                     for acs in UNITS.values()
@@ -321,6 +336,17 @@ rotated_by_sds = true
         )
         assert resolved.status_code == 200, resolved.text
 
+    def verify(self, unit_id: str) -> str:
+        """Run the verifier over a submitted unit, as the rotation-verifier lane does."""
+        version = self.version(unit_id)
+        verified = self.client.post(
+            f"/api/v1/work-units/{unit_id}/verify",
+            headers=VERIFIER,
+            json={"expected_version": version, "idempotency_key": f"verify-{unit_id}-{version}"},
+        )
+        assert verified.status_code == 200, verified.text
+        return cast(str, verified.json()["state"])
+
     def keeper(self) -> Value:
         return self.store.read(self.keeper_id)
 
@@ -354,15 +380,16 @@ def test_the_canary_rotates_through_three_units_and_one_human_act(estate: Estate
     assert estate.state(units["mint"]) == "submitted"
     assert estate.steps(units["mint"]) == ["mint", "stage", "verify_new"]
 
-    # Completing a unit hands off to the next (a person's click after the verifier); here the
-    # hand-off itself is resolved, which is what that completion does in its transaction.
-    estate.resolve(units["store"], "work_unit", {"note": "mint completed"})
+    # The verifier completes the unit from the executor's evidence, and the completion hands off
+    # to the next unit in the same transaction (ADR-0055 amendment 14).
+    assert estate.verify(units["mint"]) == "completed"
+    assert estate.state(units["store"]) == "ready"
     assert run_pass(estate.setup) == 1
     assert estate.steps(units["store"]) == ["store", "verify_consumers"]
     new = estate.keeper()
     assert not new.same_as(estate.original)
 
-    estate.resolve(units["retire"], "work_unit", {"note": "store completed"})
+    assert estate.verify(units["store"]) == "completed"
     assert estate.state(units["retire"]) == "draft"
     assert run_pass(estate.setup) == 0  # the human act still holds it
     print_ = new.fingerprint
@@ -382,9 +409,73 @@ def test_the_canary_rotates_through_three_units_and_one_human_act(estate: Estate
         "confirm_dead",
         "confirm_dead",
     ]
+    assert estate.verify(units["retire"]) == "completed"
     assert estate.provider.probe(estate.original) == 401
     assert estate.provider.probe(new) == 200
     assert estate.store.secrets.keys() == {estate.keeper_id}
+
+
+def test_evidence_another_identity_filed_leaves_the_unit_for_a_person(estate: Estate) -> None:
+    units = estate.decompose()
+    assert run_pass(estate.setup) == 1
+    assert estate.state(units["mint"]) == "submitted"
+
+    # The VM executor is now someone else, so the evidence `worker` filed is no executor's.
+    app = cast(FastAPI, estate.client.app)
+    moved = get_settings().model_copy(update={"rotation_executor_agent_id": "another-executor"})
+    app.dependency_overrides[get_settings] = lambda: moved
+
+    assert estate.verify(units["mint"]) == "awaiting_review"
+    assert estate.state(units["store"]) == "draft"
+
+
+def test_a_persons_decision_before_the_verifier_is_never_replaced(estate: Estate) -> None:
+    units = estate.decompose()
+    assert run_pass(estate.setup) == 1
+    mint = units["mint"]
+    with Session(estate.engine) as session:
+        filed = session.scalars(
+            select(Evidence).where(
+                Evidence.work_unit_id == uuid.UUID(mint), Evidence.ac_id == "AC-003"
+            )
+        ).first()
+        assert filed is not None
+        revision_id, evidence_id = str(filed.work_package_revision_id), str(filed.id)
+    rejected = estate.client.post(
+        f"/api/v1/work-units/{mint}/adjudications",
+        headers=HUMAN,
+        json={
+            "idempotency_key": "a-person-rejects-verify-new",
+            "expected_version": estate.version(mint),
+            "work_package_revision_id": revision_id,
+            "ac_id": "AC-003",
+            "outcome": "failed",
+            "rationale": "the probe target is wrong",
+            "failed_evidence_id": evidence_id,
+        },
+    )
+    assert rejected.status_code == 200, rejected.text
+
+    assert estate.verify(mint) != "completed"
+    assert estate.state(units["store"]) == "draft"
+
+
+def test_the_other_executors_evidence_leaves_the_unit_for_a_person(estate: Estate) -> None:
+    units = estate.decompose()
+    assert run_pass(estate.setup) == 1
+
+    # `worker` is now the Keychain instance, which owns only bws-machine-token units, so the
+    # evidence it filed on this fake-adapter unit is not its owner's.
+    app = cast(FastAPI, estate.client.app)
+    swapped = get_settings().model_copy(
+        update={
+            "rotation_executor_agent_id": "another-executor",
+            "rotation_keychain_executor_agent_id": "worker",
+        }
+    )
+    app.dependency_overrides[get_settings] = lambda: swapped
+
+    assert estate.verify(units["mint"]) == "awaiting_review"
 
 
 def test_a_unit_whose_envelope_lists_other_destinations_is_claimed_and_failed(

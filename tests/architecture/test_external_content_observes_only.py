@@ -268,6 +268,13 @@ CLASSIFICATION: dict[str, Row] = {
         frozenset({"/api/v1/package-intakes"}),
         cli=frozenset({"emit-intake-payload"}),
     ),
+    "rotation_verifier": Row(
+        Role.INTERNAL_LANE_ACTOR,
+        "ADR-0055 amendment 14: runs the orchestrator's verifier on each submitted rotation unit "
+        "as VERIFIER; the verifier decides every criterion from the executor's step evidence. "
+        "Reads only the status ledger and the unit",
+        frozenset({VERIFY}),
+    ),
     "image_release": Row(
         Role.INTERNAL_LANE_ACTOR,
         "ADR-0039 amendment 2026-10-05: the orchestrator's operator-run deploy step binds a "

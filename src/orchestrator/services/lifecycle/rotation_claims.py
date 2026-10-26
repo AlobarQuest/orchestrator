@@ -44,6 +44,8 @@ from orchestrator.reach_vocabulary import LIVE_ESTATE
 NON_HOSTED_CONSTRAINT = "touches_no_hosted_service"
 # The envelope constraint naming the executor adapter that runs the unit.
 ADAPTER_CONSTRAINT = "rotation_adapter"
+# The unit's name in its adapter's plan, for example `mint` or `retire`.
+UNIT_CONSTRAINT = "rotation_unit"
 # Adapters whose units only the Keychain instance may claim: the rotation executor's own adapter
 # names (`rotation_worker.adapters`), and the credentials they rotate live in the operator
 # machine's Keychain, which the VM instance can't reach.

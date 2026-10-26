@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from orchestrator.kernel.states import ActorContext, WorkUnitState
+from orchestrator.services.lifecycle.rotation_claims import NO_ROTATION_EXECUTORS, RotationExecutors
 from orchestrator.services.verifier.verifier_evaluators import EvaluationStatus
 
 VerificationResult = Literal["completed", "revision_required", "awaiting_review", "failed"]
@@ -14,6 +15,8 @@ class VerifyCommand:
     actor: ActorContext
     expected_version: int
     idempotency_key: str
+    # Whose evidence may prove a rotation unit's step (ADR-0055 amendment 14).
+    rotation_executors: RotationExecutors = NO_ROTATION_EXECUTORS
 
 
 @dataclass(frozen=True)
