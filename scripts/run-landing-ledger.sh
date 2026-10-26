@@ -110,14 +110,23 @@ fi
 # THE REPOSITORIES ARE DERIVED, NOT LISTED. The ledger covers every repository this estate lands
 # code in: the factory targets (each repository's own `factory-target.toml`) and the inert
 # population (change-manager's landing policy, which the inert lane lands under). A hand list here
-# drifted from both. `sds_scope` answers whole or not at all, so an unreadable source makes this
-# pass incomplete (exit 3) instead of recording a shorter list that reads as clean.
+# drifted from both.
+#
+# AN INCOMPLETE DERIVATION STILL RUNS, AND STILL SAYS SO. `sds_scope` exits 3 when part of the
+# answer couldn't be read, after printing every name it could determine. The passes below run on
+# those names, and the 3 is folded into this pass's answer, so the day is recorded where it can be
+# and the pass still reads as incomplete rather than clean. Any other non-zero code is the tool
+# failing (1) or not running at all (126, 127, 137), and is passed through verbatim.
 REPOSITORIES="$(cd "$REPO_ROOT" && SDS_SCOPE_GITHUB_TOKEN="$LANDING_LEDGER_GITHUB_TOKEN" \
   SDS_SCOPE_CHANGE_MANAGER_TOKEN="$CHANGE_MANAGER_READ_TOKEN" \
   "$REPO_ROOT/.venv/bin/python" -m scripts.sds_scope ledger)"
 scope_rc=$?
-if [ "$scope_rc" -ne 0 ] || [ -z "$REPOSITORIES" ]; then
-  echo "the ledger's repositories could not be derived (sds_scope exit $scope_rc); nothing was recorded" >&2
+if [ "$scope_rc" -ne 0 ] && [ "$scope_rc" -ne 3 ]; then
+  echo "the ledger's repositories could not be derived: sds_scope exited $scope_rc" >&2
+  exit "$scope_rc"
+fi
+if [ -z "$REPOSITORIES" ]; then
+  echo "the ledger's repositories could not be derived; nothing was recorded" >&2
   exit 3
 fi
 TARGETS=()
@@ -155,9 +164,10 @@ for rc in "$record_rc" "$audit_rc"; do
   esac
 done
 
-# The worst answer wins, and "could not measure" is worse than "found something".
+# The worst answer wins, and "could not measure" is worse than "found something". An incomplete
+# derivation (`scope_rc` 3) counts as not measuring the repositories it couldn't name.
 for rc in 1 3 2; do
-  if [ "$record_rc" -eq "$rc" ] || [ "$audit_rc" -eq "$rc" ]; then
+  if [ "$record_rc" -eq "$rc" ] || [ "$audit_rc" -eq "$rc" ] || [ "$scope_rc" -eq "$rc" ]; then
     exit "$rc"
   fi
 done

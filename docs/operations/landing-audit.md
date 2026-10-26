@@ -135,8 +135,12 @@ on each pass with `scripts/sds_scope.py ledger`; there is no list to edit. It's 
   inert lane lands Dependabot updates and the forks' upstream syncs under that policy, so the
   forks are covered.
 
-To add a repository, declare it in one of those two places. If any declaration or the policy
-can't be read, the pass records nothing and exits 3. It never runs on a shorter list.
+To add a repository, declare it in one of those two places. A newly covered repository's history
+starts seven days back; for more, run `.venv/bin/landing-ledger record --repository <owner/name>
+--days <N>` once by hand.
+
+If a declaration or the policy can't be read, the pass records and audits every repository it
+could name, lists each gap on stderr, and exits 3, so a partial day never reads as a clean one.
 
 | exit | meaning |
 |---|---|
