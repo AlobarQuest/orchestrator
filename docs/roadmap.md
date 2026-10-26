@@ -133,12 +133,10 @@ The numbers are that plan's, kept so its history can be found.
 
 1. **Where WS-P3.5 belongs.** Decided 2026-10-06: a separate rotation lane, not an input layer (see L1b
    above).
-2. **Whether every automated signal posts a tier-1 observation**, including signals handled
-   entirely outside the SDS. It's cheap; the cost is rows nobody reads.
-3. **Which existing signals have no tier-1 producer.** The 2026-08-27 enumeration is out of date:
-   `pin_watcher`, `tool_installer` and `revision_watcher` all post observations and weren't on it.
-   Of the surfaces it named, the daily portfolio scan and `high-power-actions.jsonl` still have no
-   producer. Re-enumerate before building producers one at a time.
+2. **Whether every automated signal posts a tier-1 observation.** Decided 2026-10-26: no. Every
+   signal needs a machine home, and an observation is one of three (ADR-0021 amendment 1).
+3. **Which existing signals have no tier-1 producer.** Re-measured 2026-10-26 and closed in ADR-0021
+   amendment 1.
 4. **Retire or lane `rate-shift-calculator`** (from plan decision 5). Its landing is `inert`, but
    nothing consumes the repository, and laning it would put the machine to work merging updates
    into a repository nobody uses.
