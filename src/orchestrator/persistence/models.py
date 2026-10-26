@@ -1708,6 +1708,10 @@ class SdsMember(UUIDPrimaryKey, Base):
     state_changed_by: Mapped[str] = mapped_column(String)
     state_reason: Mapped[str] = mapped_column(Text)
 
+    # Read-only: grants and apps are written by `services/membership/proposals.py` alone.
+    grants: Mapped[list[SdsMemberGrant]] = relationship(viewonly=True)
+    apps: Mapped[list[SdsMemberApp]] = relationship(viewonly=True)
+
 
 class SdsMemberGrant(Base):
     """One service's standing for one member."""

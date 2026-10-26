@@ -6,8 +6,19 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
 
-from orchestrator.api.schemas.membership import MemberProposalResponse
-from orchestrator.persistence.models import SdsMember, SdsMemberProposal
+from orchestrator.api.schemas.membership import (
+    GrantView,
+    MemberProposalResponse,
+    MembersResponse,
+    MemberView,
+)
+from orchestrator.persistence.models import (
+    MEMBER_SERVICES,
+    SdsMember,
+    SdsMemberApp,
+    SdsMemberGrant,
+    SdsMemberProposal,
+)
 from tests.api.test_lifecycle_api import HUMAN, SYSTEM, VERIFIER, WORKER
 
 OBSERVER = {"Authorization": "Bearer observer-token", "X-Credential-Key-Id": "observer-key"}
@@ -66,3 +77,78 @@ def test_a_refused_body_surfaces_its_code(db_client: TestClient) -> None:
     )
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "member_repository_invalid"
+
+
+def _seed_two_members(engine: Engine) -> None:
+    with Session(engine) as session:
+        for repository, state in (("Zed/zeta", "retired"), ("AlobarQuest/alpha", "member")):
+            member = SdsMember(
+                repository=repository,
+                owner="devon",
+                state=state,
+                state_changed_by="human:devon",
+                state_reason="seed",
+            )
+            session.add(member)
+            session.flush()
+            session.add(
+                SdsMemberGrant(
+                    member_id=member.id,
+                    service="rollouts",
+                    state="granted",
+                    seeded=True,
+                    set_by="human:devon",
+                    reason="watched",
+                )
+            )
+        alpha = session.scalar(select(SdsMember).where(SdsMember.repository == "AlobarQuest/alpha"))
+        assert alpha is not None
+        session.add(SdsMemberApp(member_id=alpha.id, name="alpha-web", health_url="https://a/h"))
+        session.commit()
+
+
+def test_observer_reads_every_member_with_seven_grants(
+    db_client: TestClient, migrated_engine: Engine
+) -> None:
+    _seed_two_members(migrated_engine)
+
+    response = db_client.get("/api/v1/members", headers=OBSERVER)
+
+    assert response.status_code == 200, response.text
+    members = response.json()["members"]
+    assert [m["repository"] for m in members] == ["AlobarQuest/alpha", "Zed/zeta"]
+    assert members[1]["state"] == "retired"
+    alpha = members[0]
+    assert set(alpha) == {
+        "repository",
+        "owner",
+        "state",
+        "working_copy",
+        "machine_local",
+        "apps",
+        "grants",
+    }
+    assert alpha["apps"] == [{"name": "alpha-web", "health_url": "https://a/h", "branch": "main"}]
+    assert list(alpha["grants"]) == list(MEMBER_SERVICES)
+    assert set(alpha["grants"]["rollouts"]) == {"state", "seeded", "set_by", "set_at", "reason"}
+    assert alpha["grants"]["rollouts"]["state"] == "granted"
+    assert alpha["grants"]["rollouts"]["seeded"] is True
+    assert alpha["grants"]["backups"]["state"] == "not_assessed"
+
+
+def test_the_member_views_declare_exactly_the_pinned_fields() -> None:
+    assert set(MemberView.model_fields) == {
+        "repository",
+        "owner",
+        "state",
+        "working_copy",
+        "machine_local",
+        "apps",
+        "grants",
+    }
+    assert set(GrantView.model_fields) == {"state", "seeded", "set_by", "set_at", "reason"}
+    assert set(MembersResponse.model_fields) == {"members"}
+
+
+def test_reading_members_needs_authentication(db_client: TestClient) -> None:
+    assert db_client.get("/api/v1/members").status_code == 401

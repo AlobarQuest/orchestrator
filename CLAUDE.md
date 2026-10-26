@@ -592,3 +592,7 @@ Placement rule: global CLAUDE.md §7.
   names a file (`tests/architecture/test_layer_manifest.py`). Place a new file in the manifest;
   never widen a pattern to quiet the guard. `make layer L=<id>` lists a layer's files. Detail:
   `docs/operations/architecture-guards.md`, "The layer manifest".
+- Only a human confirming a member proposal on `/review` writes the member tables
+  (`services/membership/proposals.py`), and `test_membership_writers.py` names every route that
+  may write them and the role each requires. The deploys service's wire value is
+  `rollouts` (word guards). Detail: `docs/operations/membership.md`.
