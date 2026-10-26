@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Template for the rotation-verifier LaunchAgent. Install with
+     scripts/install-rotation-verifier-launchd.sh, which substitutes __REPO_ROOT__ and __HOME__ and
+     writes ~/Library/LaunchAgents/com.devon.rotation-verifier.plist.
+
+     No secrets live here: the wrapper fetches the VERIFIER bearer from BWS at runtime.
+
+     EVERY TEN MINUTES, the rotation executors' own cadence: a unit that completes hands the next
+     unit its turn, so the gap between a unit's submit and its verification is time the next
+     unit can't start. A pass with nothing submitted is one ledger read.
+
+     The exit code is the report. launchd discards it, so read the log: 0 every submitted rotation
+     unit completed, 1 the tool failed, 2 a unit went to a person, 3 a unit could not be verified. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.devon.rotation-verifier</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__REPO_ROOT__/scripts/run-rotation-verifier.sh</string>
+    </array>
+
+    <key>StartInterval</key>
+    <integer>600</integer>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>__HOME__</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/rotation-verifier.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/rotation-verifier.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>

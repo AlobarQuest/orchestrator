@@ -178,6 +178,21 @@ TABLE: dict[str, Row] = {
     # SDS 1.1 item 5a: the deploy-time image binder, the one program ADR-0039's amendment lets
     # mint a post-deploy unit. It borrows from no other lane -- its git reads and its three
     # confined clients are its own -- so the exception cannot travel through an import.
+    # ADR-0055 amendment 14: runs `/verify` on submitted rotation units as VERIFIER, through the
+    # shared confined transport. It decides nothing, so it borrows no sibling's knowledge.
+    "rotation_verifier": _row(
+        "__future__",
+        "argparse",
+        "collections",
+        "dataclasses",
+        "estate_clients",
+        "httpx",
+        "os",
+        "re",
+        "sys",
+        "typing",
+        no_sibling_lanes=True,
+    ),
     "image_release": _row(
         "__future__",
         "collections",
