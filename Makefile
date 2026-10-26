@@ -93,6 +93,6 @@ export PYTEST_ADDOPTS ?= -n auto --dist loadgroup
 # lists one layer's. Outside the managed block so `code-standards sync` preserves it.
 .PHONY: layer layers
 layers:
-	@uv run --frozen python -m scripts.layers
+	@$(VENV_BIN)/python -m scripts.layers
 layer:
-	@uv run --frozen python -m scripts.layers $(L)
+	@$(VENV_BIN)/python -m scripts.layers $(L)

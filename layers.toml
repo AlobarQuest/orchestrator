@@ -1,4 +1,4 @@
-# Every tracked file in this repository belongs to exactly one layer.
+# Every file git tracks in this repository belongs to exactly one layer.
 # `tests/architecture/test_layer_manifest.py` fails on a file no layer claims or two layers claim.
 # List a layer's files with `make layer L=<id>`; see the counts with `make layers`.
 #
@@ -39,12 +39,9 @@ paths = [
   "tests/conftest.py",
   "tests/test_*.py",
   "tests/_support/**",
-  "tests/api/**",
-  "tests/web/**",
   "tests/kernel/**",
   "tests/persistence/**",
   "tests/identity/**",
-  "tests/cli/**",
   "tests/idempotency/**",
   "tests/protocol/**",
   "tests/services/__init__.py",
@@ -74,6 +71,22 @@ paths = [
   "docs/operations/migrations.md",
   "docs/decisions/0006-*.md",
   "docs/decisions/0051-*.md",
+  "tests/api/conftest.py",
+  "tests/api/test_api_errors.py",
+  "tests/api/test_auth.py",
+  "tests/api/test_health.py",
+  "tests/web/__init__.py",
+  "tests/web/conftest.py",
+  "tests/web/test_csrf.py",
+  "tests/web/test_queue.py",
+  "tests/web/test_unit_page_layout.py",
+  "tests/web/test_decision_surface.py",
+  "tests/cli/__init__.py",
+  "tests/cli/conftest.py",
+  "tests/cli/test_cli_contract.py",
+  "tests/cli/test_cli_errors.py",
+  "tests/cli/test_cli_http_parity.py",
+  "tests/cli/test_unexercised_commands_cli.py",
 ]
 
 [runtime]
@@ -101,6 +114,7 @@ paths = [
   "docs/operations/deploy.md",
   "docs/decisions/0046-*.md",
   "docs/decisions/0050-*.md",
+  ".github/workflows/release-image.yml",
 ]
 
 [intent]
@@ -165,6 +179,20 @@ paths = [
   "docs/decisions/0047-*.md",
   "docs/decisions/0052-*.md",
   "docs/decisions/0053-*.md",
+  "tests/api/test_change_record_work_api.py",
+  "tests/api/test_decomposition_api.py",
+  "tests/api/test_factory_policy_api.py",
+  "tests/api/test_follow_ups_api.py",
+  "tests/api/test_machine_intake_api.py",
+  "tests/api/test_package_intake_api.py",
+  "tests/api/test_staged_intake_api.py",
+  "tests/web/test_decomposition_review.py",
+  "tests/web/test_graduation_ledger_surface.py",
+  "tests/web/test_intake_form.py",
+  "tests/web/test_staged_intake.py",
+  "tests/cli/test_decomposition_cli.py",
+  "tests/cli/test_emit_intake_payload_cli.py",
+  "tests/cli/test_package_intake_cli.py",
 ]
 
 [execution]
@@ -202,7 +230,6 @@ paths = [
   "tests/services/test_reclaim.py",
   "tests/services/test_requeue.py",
   "tests/services/test_rotation_claims.py",
-  "tests/services/test_status_ledger.py",
   "tests/services/test_submission_binding_guard.py",
   "tests/contract/test_brief_consumer_compatibility.py",
   "tests/contract/test_capability_consumer_compatibility.py",
@@ -228,6 +255,19 @@ paths = [
   "docs/decisions/0008-*.md",
   "docs/decisions/0013-*.md",
   "docs/decisions/0015-*.md",
+  "tests/api/test_budget_enforcement_drill.py",
+  "tests/api/test_context_api.py",
+  "tests/api/test_cost_actuals_drill.py",
+  "tests/api/test_cost_actuals_route.py",
+  "tests/api/test_cost_actuals_schema.py",
+  "tests/api/test_dispatch_api.py",
+  "tests/api/test_lifecycle_api.py",
+  "tests/api/test_requeue_api.py",
+  "tests/api/test_runner_brief_api.py",
+  "tests/web/test_human_act_form.py",
+  "tests/web/test_human_actions.py",
+  "tests/cli/test_context_cli.py",
+  ".github/workflows/factory-runner-pilot.yml",
 ]
 
 [verification]
@@ -254,6 +294,10 @@ paths = [
   "tests/architecture/test_verifier_evaluation_flag.py",
   "tests/fixtures/named_check.py",
   "docs/operations/verifier.md",
+  "tests/api/test_evidence_supersede_route.py",
+  "tests/api/test_recover_evidence_api.py",
+  "tests/api/test_verifier_api.py",
+  "tests/web/test_adjudication_route.py",
 ]
 
 [release]
@@ -312,6 +356,29 @@ paths = [
   "docs/decisions/0004-*.md",
   "docs/decisions/0040-*.md",
   "docs/decisions/0048-*.md",
+  "tests/services/test_status_ledger.py",
+  "tests/api/test_consistency_api.py",
+  "tests/api/test_dead_letter_api.py",
+  "tests/api/test_deployment_observations_api.py",
+  "tests/api/test_evidence_pack_api.py",
+  "tests/api/test_image_release_end_to_end.py",
+  "tests/api/test_machine_activation_api.py",
+  "tests/api/test_observations_api.py",
+  "tests/api/test_reconciliation_detect_api.py",
+  "tests/api/test_release_artifacts_api.py",
+  "tests/api/test_release_evidence_pack_api.py",
+  "tests/api/test_slo_report_api.py",
+  "tests/api/test_status_ledger_api.py",
+  "tests/api/test_traceability_api.py",
+  "tests/api/test_tracker_bindings_api.py",
+  "tests/api/test_tracker_reconciliation_api.py",
+  "tests/web/test_evidence_pack.py",
+  "tests/web/test_reconciliation_resolution.py",
+  "tests/web/test_release_evidence_pack.py",
+  "tests/cli/test_slo_report_cli.py",
+  "tests/cli/test_status_ledger_cli.py",
+  ".github/workflows/attest-exit-criteria.yml",
+  ".github/workflows/attest-wave-exit.yml",
 ]
 
 [sensors]
@@ -356,6 +423,10 @@ paths = [
   "docs/decisions/0022-*.md",
   "docs/decisions/0030-*.md",
   "docs/decisions/0031-*.md",
+  "tests/api/test_activation_sweep_ingestion.py",
+  "tests/api/test_landing_ledger_ingestion.py",
+  "tests/api/test_recovery_floor_ingestion.py",
+  "tests/api/test_observer_role_confinement.py",
 ]
 
 [bridge]
@@ -392,6 +463,7 @@ paths = [
   "docs/decisions/0029-*.md",
   "docs/decisions/0033-*.md",
   "docs/decisions/0039-*.md",
+  "tests/api/test_bump_proposer_observation_ingest.py",
 ]
 
 [landing]
@@ -456,6 +528,11 @@ paths = [
   "docs/decisions/0041-*.md",
   "docs/decisions/0044-*.md",
   "docs/decisions/0045-*.md",
+  "tests/api/test_estate_landing_admission_api.py",
+  "tests/api/test_inert_landing_admission_api.py",
+  "tests/api/test_page_landing_source.py",
+  "tests/api/test_pr_merge_admission_api.py",
+  "tests/api/test_pr_merge_api.py",
 ]
 
 [rotation]
@@ -488,6 +565,12 @@ paths = [
   "docs/operations/rotation-proposer.md",
   "docs/decisions/0054-*.md",
   "docs/decisions/0055-*.md",
+  "tests/api/test_held_credentials_api.py",
+  "tests/api/test_m2m_identities_api.py",
+  "tests/api/test_rotation_claims_api.py",
+  "tests/api/test_rotation_proposer_observation_ingest.py",
+  "tests/api/test_rotation_worker_flow.py",
+  ".github/workflows/secret-fingerprint.yml",
 ]
 
 [fork]
@@ -540,7 +623,8 @@ paths = [
   "factory-target.toml",
   "CLAUDE.md",
   "RTK.md",
-  ".github/**",
+  ".github/workflows/quality.yml",
+  ".github/dependabot.yml",
 ]
 
 [records]

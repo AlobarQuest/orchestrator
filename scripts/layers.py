@@ -1,9 +1,9 @@
-"""Repository file -> layer, as a function of `layers.toml`.
+"""Tracked file -> layer, as a function of `layers.toml`.
 
 The orchestrator is worked on one layer at a time: the twelve units of ownership on the SDS layer
 map, plus tooling and config, and project records. `layers.toml` says which files make up each
 layer, by path pattern. This module reads it and answers two questions: which files belong to a
-layer, and which repository files belong to no layer or to more than one.
+layer, and which tracked files belong to no layer or to more than one.
 
 The second question is what keeps the map true. `tests/architecture/test_layer_manifest.py`
 fails on either answer being non-empty, so a new file must be placed when it is added rather than
@@ -45,17 +45,13 @@ def load(manifest: Path = MANIFEST) -> dict[str, Layer]:
     }
 
 
-def repository_files(root: Path = ROOT) -> list[str]:
-    """Tracked files plus untracked ones git does not ignore, so a new file is placed before it
-    is committed rather than failing only in CI."""
+def tracked_files(root: Path = ROOT) -> list[str]:
+    """Files git tracks. Untracked ones are left out, so local clutter can't redden the guard; a
+    new file is placed when it is added, or CI fails on it."""
     listing = subprocess.run(
-        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "--deduplicate"],
-        cwd=root,
-        capture_output=True,
-        text=True,
-        check=True,
+        ["git", "ls-files", "-z"], cwd=root, capture_output=True, text=True, check=True
     )
-    return sorted(set(listing.stdout.splitlines()))
+    return [path for path in listing.stdout.split("\0") if path]
 
 
 def assign(files: Iterable[str], layers: Mapping[str, Layer]) -> Assignment:
@@ -94,7 +90,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("layer", nargs="?", help="a layer id from layers.toml; omit for counts")
     args = parser.parse_args(argv)
     layers = load()
-    assignment = assign(repository_files(), layers)
+    assignment = assign(tracked_files(), layers)
     if args.layer is None:
         for layer in layers.values():
             print(f"{layer.id:<13} {len(assignment.layers[layer.id]):>4}  {layer.name}")

@@ -278,8 +278,8 @@ orchestrator can be worked on one layer at a time.
 - `make layers` prints each layer's file count. `make layer L=sensors` lists one layer's files,
   which is the scope to hand a session working on that layer.
 - `tests/architecture/test_layer_manifest.py` fails when a file belongs to no layer, when a file
-  belongs to two, or when a pattern matches no file. It reads untracked files that git doesn't
-  ignore as well as tracked ones, so a new file fails locally before it's committed.
+  belongs to two, or when a pattern matches no file. It reads only the files git tracks, so local
+  clutter can't redden it; a new file fails once it's added with `git add`.
 - To fix a failure, place the file in the layer the manifest's header rules give it. A source file
   belongs to its directory's layer. A test, fixture, launcher or operations page goes with the code
   it serves. A per-domain route and schema go with their domain's service. Never widen a pattern
