@@ -1659,3 +1659,110 @@ class StagedPackageIntake(UUIDPrimaryKey, Base):
     withdrawn_by: Mapped[str | None] = mapped_column(String)
     withdrawn_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     withdrawal_reason: Mapped[str | None] = mapped_column(Text)
+
+
+# The services a member can be granted, in the order the design lists them. `rollouts` is the
+# wire name for the deploy service (the word guards refuse the other spelling in code).
+MEMBER_SERVICES = (
+    "dependency_updates",
+    "security_patches",
+    "app_changes",
+    "backups",
+    "monitoring",
+    "rollouts",
+    "credential_rotation",
+)
+MEMBER_STATES = ("onboarding", "member", "retired")
+GRANT_STATES = ("not_assessed", "remediating", "granted", "not_applicable", "withdrawn")
+MEMBER_PROPOSAL_STATES = ("staged", "confirmed", "withdrawn")
+
+
+def _in_list(column: str, vocabulary: tuple[str, ...]) -> str:
+    return "{} IN ({})".format(column, ", ".join(f"'{member}'" for member in vocabulary))
+
+
+class SdsMember(UUIDPrimaryKey, Base):
+    """A repository the SDS maintains: who owns it, where its working copy lives, and its state."""
+
+    __tablename__ = "sds_members"
+    __table_args__ = (
+        Index("uq_sds_members_repository_lower", text("lower(repository)"), unique=True),
+        CheckConstraint(_in_list("state", MEMBER_STATES), name="ck_sds_members_state"),
+        CheckConstraint(
+            "NOT machine_local OR working_copy IS NOT NULL",
+            name="ck_sds_members_machine_local_working_copy",
+        ),
+        CheckConstraint("owner <> ''", name="ck_sds_members_owner"),
+        CheckConstraint("state_reason <> ''", name="ck_sds_members_state_reason"),
+    )
+
+    repository: Mapped[str] = mapped_column(String)
+    owner: Mapped[str] = mapped_column(String)
+    state: Mapped[str] = mapped_column(String)
+    working_copy: Mapped[str | None] = mapped_column(String)
+    machine_local: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    state_changed_by: Mapped[str] = mapped_column(String)
+    state_reason: Mapped[str] = mapped_column(Text)
+
+
+class SdsMemberGrant(Base):
+    """One service's standing for one member."""
+
+    __tablename__ = "sds_member_grants"
+    __table_args__ = (
+        CheckConstraint(_in_list("service", MEMBER_SERVICES), name="ck_sds_member_grants_service"),
+        CheckConstraint(_in_list("state", GRANT_STATES), name="ck_sds_member_grants_state"),
+        CheckConstraint("reason <> ''", name="ck_sds_member_grants_reason"),
+    )
+
+    member_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("sds_members.id"), primary_key=True)
+    service: Mapped[str] = mapped_column(String, primary_key=True)
+    state: Mapped[str] = mapped_column(String)
+    seeded: Mapped[bool] = mapped_column(Boolean)
+    set_by: Mapped[str] = mapped_column(String)
+    reason: Mapped[str] = mapped_column(Text)
+    set_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class SdsMemberApp(Base):
+    """An app a member serves. The name is unique across members: revision-watcher subjects are
+    keyed by name alone."""
+
+    __tablename__ = "sds_member_apps"
+    __table_args__ = (UniqueConstraint("name", name="uq_sds_member_apps_name"),)
+
+    member_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("sds_members.id"), primary_key=True)
+    name: Mapped[str] = mapped_column(String, primary_key=True)
+    health_url: Mapped[str] = mapped_column(String)
+    branch: Mapped[str] = mapped_column(String, default="main", server_default="main")
+
+
+class SdsMemberProposal(UUIDPrimaryKey, Base):
+    """A membership change a machine staged for a person to confirm."""
+
+    __tablename__ = "sds_member_proposals"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_sds_member_proposals_idempotency"),
+        CheckConstraint(
+            _in_list("state", MEMBER_PROPOSAL_STATES), name="ck_sds_member_proposals_state"
+        ),
+        # Only a staged row is undecided; a decided row says who decided it and when.
+        CheckConstraint(
+            "(state = 'staged') = (decided_by IS NULL AND decided_at IS NULL)",
+            name="ck_sds_member_proposals_decision",
+        ),
+    )
+
+    idempotency_key: Mapped[str] = mapped_column(String)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    payload_digest: Mapped[str] = mapped_column(String)
+    state: Mapped[str] = mapped_column(String)
+    staged_by: Mapped[str] = mapped_column(String)
+    staged_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    decided_by: Mapped[str | None] = mapped_column(String)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    decision_reason: Mapped[str | None] = mapped_column(Text)
