@@ -32,8 +32,9 @@ These came from the 2026-10-26 design conversation.
   project in an unknown state of development, or one that will never be in the SDS, is untouched until
   Devon says "now add this one". A declaration a session commits on Devon's decision counts as his
   grant; the requirement is that the grant is explicit, not that a particular person types it.
-- **Six services:** dependency updates, security patches, user-requested app changes, backups,
-  monitoring, and deploys.
+- **Seven services:** dependency updates, security patches, user-requested app changes, backups,
+  monitoring, deploys, and credential rotation. Rotation was added after the builder check found
+  that the rotation machinery the SDS already runs (ADR-0054, ADR-0055) fit none of the first six.
 - **Services switch on one at a time.** A member can have some services granted while others are
   still being remediated.
 - **Backups are part of the SDS.** For every member with data, the SDS must know that a backup
@@ -42,6 +43,13 @@ These came from the 2026-10-26 design conversation.
 - **Coolify and GitHub are platforms the SDS works through,** not parts of it.
 - **The forks, `factory-runner` and `project-standards` are members.** The SDS syncs, hardens, lands
   and installs the forks; `factory-runner` and `project-standards` receive inert-lane landings.
+- **`factory-runner` and `project-standards` are to get the app-changes service.** For
+  `factory-runner`, this reverses ADR-0015's "the runner may not maintain itself": callers pin the
+  runner to a full commit (verified 2026-10-26), so a merge to the runner changes nothing until a
+  caller's pin moves. Each still goes through readiness before the grant (see "Phase 1 seed").
+- **`vps-backup` is not a member for now.** Devon plans to split it into two backup systems, one
+  for the SDS and one for his personal machine and data; today's combined system stays outside the
+  SDS until that split.
 - **The member record lives in the orchestrator's database.** App Brain is Devon's own portfolio
   memory and won't hold client project data. A separate SDS Brain for user-facing questions may come
   later and is out of scope here.
@@ -118,7 +126,7 @@ Stored in the orchestrator's database, one row per member, keyed by the reposito
 Every state change records who made it and why. `granted`, `not_applicable` and `withdrawn` by Devon
 are human approvals in the orchestrator's existing approval model (Claude's call; see "Calls made").
 
-## The six services
+## The seven services
 
 Each service names what "granted" lets the SDS do, which lanes act under it today, and what its
 readiness must prove. Readiness detail for services after phase 1 is designed when that service's
@@ -132,6 +140,15 @@ phase starts; the table states the bar.
 | Backups | vps-backup, reported as `recovery_floor` observations | Every data store is a backup target, or the project is recorded as stateless; each target's runs are observed per target; a restore test covers it |
 | Monitoring | Healthchecks, alert-hub, the revision watcher | A health endpoint exists and something outside the app checks it; failures reach alert-hub |
 | Deploys | change-manager's deploy policy, the deploy watcher, the estate lander, the activation sweep for machine-local projects | The deploy mechanism is recorded; a landing that deploys is watched to an outcome; a machine-local project's working copy is swept (ADR-0030 treats that activation as a deploy) |
+| Credential rotation | The rotation proposer, the rotation executor's two instances, the rotation verifier, and the `.cred-consumers.toml` registries; infraops decides when a credential is due | Every credential the project issues or holds is in BWS, referenced by UUID in a `.bws-secrets.toml` manifest; each one the SDS rotates has a registry entry naming its keeper and every copy, with `rotated_by_sds` set; every scheduled reader has a machine read; the security scanner reports no BLOCK findings |
+
+For credential rotation, the grant belongs to the member whose credential it is, not to every
+repository that holds a copy (Claude's call). A registry row may name a copy in any repository,
+member or not, because a rotation that skips a holder strands it on a dead value (ADR-0055
+amendment 13). Today's registries name copies in three non-members: `vps-backup`,
+`github-to-bitbucket-mirror` and `factory-validation-kit-restart-recovery`. The guard therefore
+checks that every `rotated_by_sds` credential belongs to a member with rotation granted, and never
+that every copy's repository is a member.
 
 ## Onboarding
 
@@ -206,8 +223,8 @@ The order after phase 1 is Claude's call, ordered by risk; Devon can reorder it.
 3. **Monitoring.** No per-app uptime check exists anywhere.
 4. **Deploys.** The largest change: readiness currently refuses redeploying repositories.
 5. **Security patches.** Adds the missing vulnerability scanning.
-6. **Dependency updates, then app changes.** Both largely work; their phases fold their existing
-   checks into the per-service readiness model.
+6. **Dependency updates, credential rotation, then app changes.** All three largely work; their
+   phases fold their existing checks into the per-service readiness model.
 
 ### Phase 1 seed
 
@@ -222,7 +239,16 @@ Seeded grants record what already runs, so no lane loses coverage on the move:
 - **deploys:** granted for `change-manager` and `brain` (watched deploys), for the machine-local
   repositories the activation sweep binds, and for the forks tool_installer installs;
 - **security patches** for the forks (fork-sync review and fork-harden);
+- **credential rotation:** granted for the members that own a credential a registry marks
+  `rotated_by_sds`;
 - **everything else:** `not_assessed`.
+
+`factory-runner` and `project-standards` are seeded `remediating` for app changes, not `granted`,
+because neither has passed readiness and `factory-runner` declares `factory_target = false`
+(Claude's call). Their onboarding runs the October 18 procedure, which already covers inert
+repositories, and can proceed alongside phase 1. For `factory-runner` it ends by flipping its
+declaration and amending ADR-0015 to record the reversal and the pin evidence. Until then, the
+declaration stays authoritative and the consistency check reports no disagreement.
 
 Seeded grants are marked as seeded, not assessed, so a later readiness run can confirm or correct them.
 The seed also fills the links the moved lanes need: working-copy presence and machine-local
@@ -247,7 +273,9 @@ answer, per member, "configured and monitored" from data rather than prose. At m
 - per-target results in the run's observation, so one failing database names its project;
 - the restore test's list derived from the same target list, so it can't drift.
 
-Whether vps-backup becomes a member itself is open (see "Left open").
+Devon plans to split `vps-backup` into an SDS backup system and a personal one. Phase 2 builds on
+the SDS half, and whether that half becomes a member is decided then. Until the split, phase 2 can
+start only with the target list, since that's needed under either system.
 
 ## Constraints
 
@@ -288,20 +316,20 @@ These are Claude's calls, not Devon's decisions; check them while reading.
   repository's working copy.
 - **The mapping of per-repository lists to services,** including tool_installer as deploys.
 - **The write split:** humans grant; the system role assesses and reports.
+- **A rotation grant belongs to the credential's owner,** and copies may live in non-members.
+- **Rotation sits in phase 6** with dependency updates, because it already runs.
+- **`factory-runner` and `project-standards` start app changes as `remediating`,** onboarded by the
+  October 18 procedure, rather than seeded as granted.
 
 ## Left open
 
 For Devon:
 
-- Whether `vps-backup` is a member. It runs from its working copy on the operator machine, holds the
-  estate's backup logic, and appears in no SDS list today.
-- Whether `project-standards` gets the app-changes service (Devon is reconsidering it; ADR-0015
-  records it as a scope choice).
-- Whether `factory-runner` gets the app-changes service. The October 26 check found that callers pin
-  the runner to a full commit, so a merge to the runner changes nothing until a caller's pin moves;
-  what remains of ADR-0015's objection is that a runner bug can't deliver its own fix.
 - After phase 1: whether the member record becomes the source the two declarations are generated
   from, or stays a mirror checked against them.
+- At phase 2: whether the SDS half of `vps-backup` becomes a member.
+- A `factory-runner` bug can't deliver its own fix through the factory, so it's fixed by hand. This
+  was accepted with the grant; recorded here so the ADR-0015 amendment states it.
 
 For the builder:
 
