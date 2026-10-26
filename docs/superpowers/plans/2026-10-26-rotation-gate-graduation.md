@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.14, FastAPI, SQLAlchemy, pytest, httpx through `estate_clients.confined`, launchd.
 
-**Spec:** Devon's decisions, 2026-10-26 (this session): graduate the gate; all rotation adapters; a new single-purpose lane; coverage judged by parsing the executor's "N of N" note. Design brief: the exploration notes summarised under "Facts" in the following section. Precedent: ADR-0055 amendment 11.
+**Spec:** Devon's decisions, 2026-10-26 (this session): graduate the gate; all rotation adapters; a new single-purpose lane; coverage judged by parsing the executor's "n of m" note, with full coverage required before a person's revoke. Design brief: the exploration notes summarised under "Facts" in the following section. Precedent: ADR-0055 amendment 11.
 
 ## Global Constraints
 
@@ -36,7 +36,7 @@
 - **A `rotation.step` row on a non-rotation unit** must never pass an `external_attestation` criterion. Test in Task 1 (`test_non_rotation_unit_stays_judgment`).
 - **Evidence filed by anyone but the unit's owning executor**, including the other executor instance and a SYSTEM recovery, must stay with a person. Task 1 (`test_wrong_recorder_stays_judgment`, `test_recovered_row_stays_judgment`).
 - **Retire on an old value that was already refused** (`retire_old` with old `dead`) must pass, not fail. Task 1 (`test_retire_old_already_dead_passes`).
-- **A partial coverage note** ("0 of 1", the canary before attestation) must stay with a person. Task 1 (`test_partial_coverage_stays_judgment`).
+- **A partial coverage note before a person's revoke** ("1 of 2 …; the old value is live before the revoke") must stay with a person, while "2 of 10" on a mint unit passes. Task 1 (`test_partial_coverage_before_revoke_stays_judgment`, `test_partial_coverage_on_mint_passes`).
 - **The lane meeting a unit whose version moved** between its ledger read and its verify (a 409 or a domain refusal) must report it and go on to the next unit, not stop the pass. Task 3 (`test_version_conflict_skips_unit`).
 
 ---
@@ -56,9 +56,9 @@ Rules, every one required for `None`:
 2. The AC text matches the pattern in Facts; its step equals `payload["step"]`; when it names a unit, that equals `rotation_unit`.
 3. Exactly one `old` and one `new` fingerprint, with different `sha256_prefix`.
 4. No probe has outcome `indeterminate`. Every probe whose subject isn't `known_bad` has a `known_bad` probe on the same target with outcome `dead`.
-5. Per step: `verify_new` and `confirm_dead` need at least one non-control probe, each with `outcome == expected`. `retire_old`'s `old` probe may be `live` or `dead`. `confirm_dead` needs `new` live and `old` dead. `verify_consumers` needs the note to start with `N of N consumers hold or attest the new value` with equal N ≥ 1. Other steps (mint, stage, host, store, distribute) need rules 1–4 only.
+5. Per step: `verify_new` and `confirm_dead` need at least one non-control probe, each with `outcome == expected`. `retire_old`'s `old` probe may be `live` or `dead`. `confirm_dead` needs `new` live and `old` dead. `verify_consumers` needs the note to start with `n of m consumers hold or attest the new value` with 0 ≤ n ≤ m and m ≥ 1, and n == m when the note says the old value is live before the revoke (a person revokes next). Partial coverage before then is by design: `retire_old` refuses any consumer without the new value (`contract.py::_retire_old`). Devon chose this over "N of N only" on 2026-10-26 after the 13 completed rotations showed every mint and store unit filing partial coverage. Other steps (mint, stage, host, store, distribute) need rules 1–4 only.
 
-- [ ] **Step 1: Write the failing tests.** One passing case per step kind built from the payloads in production (drift-reporter retire: `verify_consumers` "10 of 10 …", `retire_old` with old live, `confirm_dead` with four probes). Fall-back cases, each asserting a non-`None` reason: `test_wrong_evidence_type`, `test_recovered_row_stays_judgment`, `test_step_mismatch`, `test_unit_mismatch`, `test_unparseable_ac_text`, `test_missing_control`, `test_indeterminate_probe`, `test_same_fingerprints`, `test_partial_coverage_stays_judgment` ("0 of 1 …"), `test_confirm_dead_old_live`. Plus `test_retire_old_already_dead_passes`.
+- [ ] **Step 1: Write the failing tests.** One passing case per step kind built from the payloads in production (drift-reporter retire: `verify_consumers` "10 of 10 …", `retire_old` with old live, `confirm_dead` with four probes). Fall-back cases, each asserting a non-`None` reason: `test_wrong_evidence_type`, `test_recovered_row_stays_judgment`, `test_step_mismatch`, `test_unit_mismatch`, `test_unparseable_ac_text`, `test_missing_control`, `test_indeterminate_probe`, `test_same_fingerprints`, `test_partial_coverage_before_revoke_stays_judgment`, `test_partial_coverage_on_mint_passes`, `test_coverage_note_unparseable`, `test_confirm_dead_old_live`. Plus `test_retire_old_already_dead_passes`.
 - [ ] **Step 2:** Run `pytest tests/services/test_rotation_verification.py -q`. Expected: FAIL, module not found.
 - [ ] **Step 3:** Implement. Register the step-name set and evidence type constant in `VOCABULARY_REGISTRY` (`tests/architecture/test_cross_boundary_vocabulary.py`) or mark them.
 - [ ] **Step 4:** Run the same tests. Expected: PASS.
