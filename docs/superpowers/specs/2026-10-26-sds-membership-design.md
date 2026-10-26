@@ -1,7 +1,7 @@
 # SDS membership and services: design
 
 - **Date:** 2026-10-26
-- **Status:** Draft for Devon's review
+- **Status:** Approved by Devon, 2026-10-26
 - **Builds on:** `2026-10-18-sds-target-onboarding-design.md` (approved), which this design generalizes
 - **Related:** ADR-0015 (factory targets), ADR-0021 and its amendment 1 (signal homes), ADR-0030
   (activation on the operator machine), `docs/operations/onboarding-a-target.md`
