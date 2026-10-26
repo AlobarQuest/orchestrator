@@ -51,6 +51,7 @@ def test_production_post_route_inventory_is_explicit() -> None:
         "/api/v1/package-intakes",
         # ADR-0006 amendment 1: SYSTEM stages, and only the /review confirm below registers.
         "/api/v1/staged-intakes",
+        "/api/v1/member-proposals",
         "/api/v1/package-intakes/{revision_id}/decomposition-proposals",
         "/api/v1/decomposition-proposals/{proposal_id}/require-revision",
         "/api/v1/work-units/{unit_id}/claim",
