@@ -588,3 +588,7 @@ Placement rule: global CLAUDE.md §7.
   it (`delete_branch_on_merge` would delete it). A tool row moves to or from `hardened` only with
   its plugin serving clone checked out on that branch in the same step. Detail:
   `docs/operations/fork-hardening.md`.
+- Every repository file belongs to exactly one layer in `layers.toml`, and every pattern there
+  names a file (`tests/architecture/test_layer_manifest.py`). Place a new file in the manifest;
+  never widen a pattern to quiet the guard. `make layer L=<id>` lists a layer's files. Detail:
+  `docs/operations/architecture-guards.md`, "The layer manifest".
