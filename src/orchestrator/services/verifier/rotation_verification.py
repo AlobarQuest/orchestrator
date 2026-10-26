@@ -18,7 +18,7 @@ from collections.abc import Mapping
 
 from pydantic import ValidationError
 
-from orchestrator.services.verifier.rotation_evidence import RotationStepEvidence
+from orchestrator.services.verifier.rotation_evidence import ProbeResult, RotationStepEvidence
 
 # The executor's evidence type (`rotation_worker/worker.py`), pinned by a contract test.
 ROTATION_STEP_EVIDENCE_TYPE = "rotation.step"
@@ -33,6 +33,8 @@ _CRITERION = re.compile(
 # The executor's coverage note (`rotation_worker/contract.py::_verify_consumers`).
 _COVERAGE = re.compile(r"^(?P<held>\d+) of (?P<total>\d+) consumers hold or attest the new value")
 _BEFORE_REVOKE = "the old value is live before the revoke"
+# confirm_dead files twice; only the second records the deletions (`contract.py::_confirm_dead`).
+_DELETED = "deleted "
 # Steps whose probes are the whole point: each needs at least one, answered as expected.
 _PROBED_STEPS = frozenset({"verify_new", "confirm_dead"})  # not-a-vocabulary: step-rule selector
 
@@ -93,26 +95,37 @@ def _step_rule(step: RotationStepEvidence) -> str | None:
             return f"{step.step} filed no probe"
         if any(p.outcome != p.expected for p in subjects):
             return f"a {step.step} probe answered other than expected"
+    if step.step == "verify_new" and any(p.subject != "new" for p in subjects):
+        return "verify_new probes only the new value"
     if step.step == "confirm_dead":
         answers = {(p.subject, p.outcome) for p in subjects}
         if not {("old", "dead"), ("new", "live")} <= answers:
             return "confirm_dead needs the old value refused and the new value live"
-    if step.step == "retire_old" and any(p.subject != "old" for p in subjects):
-        return "retire_old probes only the old value"
+        if not (step.note or "").startswith(_DELETED):
+            return "confirm_dead's evidence doesn't record the deletions"
+    if step.step == "retire_old" and (not subjects or any(p.subject != "old" for p in subjects)):
+        return "retire_old probes the old value, and only it"
     if step.step == "verify_consumers":
-        return _coverage(step.note or "")
+        return _coverage(step.note or "", subjects)
     return None
 
 
-def _coverage(note: str) -> str | None:
+def _coverage(note: str, subjects: list[ProbeResult]) -> str | None:
     counted = _COVERAGE.match(note)
     if counted is None:
         return "the consumer count is unreadable"
     held, total = int(counted["held"]), int(counted["total"])
     if total < 1 or held > total:
         return "the consumer count is inconsistent"
-    if _BEFORE_REVOKE in note and held != total:
-        # A person revokes next: every consumer must hold the new value first. Before then,
-        # partial coverage is by design, and retire_old refuses any consumer still missing.
+    if _BEFORE_REVOKE not in note:
+        # Partial coverage before the retire is by design: retire_old refuses any consumer
+        # still missing the new value.
+        return None
+    # A person revokes next: every consumer must hold the new value, and the old value must have
+    # answered live, or the confirm after the revoke would prove nothing (amendment 1).
+    if held != total:
         return f"{held} of {total} consumers hold the new value before the revoke"
+    live_old = [p for p in subjects if p.subject == "old" and p.outcome == p.expected == "live"]
+    if not subjects or len(live_old) != len(subjects):
+        return "the old value wasn't proven live before the revoke"
     return None

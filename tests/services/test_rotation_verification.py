@@ -219,13 +219,44 @@ def test_partial_coverage_on_mint_passes() -> None:
 
 def test_partial_coverage_before_revoke_stays_judgment() -> None:
     note = "1 of 2 consumers hold or attest the new value; the old value is live before the revoke"
-    payload = _with("verify_consumers", note=note)
+    payload = _with("verify_consumers", note=note, probes=OLD_LIVE)
     assert _verdict("verify_consumers", payload) is not None
 
 
+REVOKE_NEXT = (
+    "2 of 2 consumers hold or attest the new value; the old value is live before the revoke"
+)
+OLD_LIVE = [BAD, _probe("old", "live", "live", 200)]
+
+
 def test_full_coverage_before_revoke_passes() -> None:
-    note = "2 of 2 consumers hold or attest the new value; the old value is live before the revoke"
-    assert _verdict("verify_consumers", _with("verify_consumers", note=note)) is None
+    payload = _with("verify_consumers", note=REVOKE_NEXT, probes=OLD_LIVE)
+    assert _verdict("verify_consumers", payload) is None
+
+
+def test_before_revoke_without_the_old_value_probed() -> None:
+    assert _verdict("verify_consumers", _with("verify_consumers", note=REVOKE_NEXT)) is not None
+
+
+def test_before_revoke_with_the_old_value_already_dead() -> None:
+    probes = [BAD, _probe("old", "live", "dead", 401)]
+    payload = _with("verify_consumers", note=REVOKE_NEXT, probes=probes)
+    assert _verdict("verify_consumers", payload) is not None
+
+
+def test_retire_old_with_no_probe() -> None:
+    assert _verdict("retire_old", _with("retire_old", probes=[])) is not None
+
+
+def test_verify_new_probing_the_old_value() -> None:
+    payload = _with("verify_new", probes=[BAD, _probe("old", "live", "live", 200)])
+    assert _verdict("verify_new", payload) is not None
+
+
+def test_confirm_dead_first_filing_without_the_deletions() -> None:
+    payload = _with("confirm_dead")
+    del payload["note"]
+    assert _verdict("confirm_dead", payload) is not None
 
 
 @pytest.mark.parametrize(

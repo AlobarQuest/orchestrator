@@ -25,7 +25,13 @@ CRITERION = (
 
 
 def _payload(note: str) -> dict[str, object]:
+    target = "the provider"
+    probes = [
+        {"target": target, "subject": "known_bad", "expected": "dead", "outcome": "dead"},
+        {"target": target, "subject": "old", "expected": "live", "outcome": "live"},
+    ]
     return {
+        "probes": probes if BEFORE_REVOKE in note else [],
         "format": "rotation-step/1",
         "step": "verify_consumers",
         "fingerprints": [
@@ -49,6 +55,7 @@ def test_the_executor_still_writes_the_coverage_note_the_verifier_reads() -> Non
     source = inspect.getsource(contract)
     assert COVERAGE in source
     assert BEFORE_REVOKE in source
+    assert 'note="deleted " + ' in source
 
 
 def test_the_verifier_reads_the_executors_notes() -> None:

@@ -131,7 +131,13 @@ def _verify_criterion(
         criterion.ac_id,
     )
     status, outcome, reason = evaluate_criterion(criterion, evidence)
-    if status == "judgment_required" and rotation is not None:
+    if (
+        status == "judgment_required"
+        and rotation is not None
+        # A person's decision, recorded at /review before the verifier ran, is never replaced.
+        and current_adjudication(session, unit.work_package_revision_id, unit.id, criterion.ac_id)
+        is None
+    ):
         status, outcome, reason = _rotation_step(criterion, evidence, rotation) or (
             status,
             outcome,

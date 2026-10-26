@@ -1657,12 +1657,14 @@ Run over all 113 steps the 13 completed rotations filed, the machine's reading p
 2. **The floor stays human.** `external_attestation` stays in `JUDGMENT_TYPES` and
    `evaluate_criterion` is unchanged, so evidence on any other unit, evidence another identity
    filed, and a row the orchestrator recovered after a lapsed lease all still go to a person.
-   Nothing in the rotation branch fails a criterion: what it can't prove, a person decides.
-3. **Coverage.** verify_consumers passes on any well-formed "n of m" note, and needs n = m only
-   when a person revokes next. Partial coverage on a mint or store unit is by design (every one of
+   Nothing in the rotation branch fails a criterion: what it can't prove, a person decides. A
+   decision a person already recorded on the criterion, at `/review` before the verifier ran, is
+   never replaced.
+3. **Coverage.** verify_consumers passes on any well-formed "n of m" note, and needs n = m, with
+   the old value probed live, only when a person revokes next. Partial coverage on a mint or store unit is by design (every one of
    the 13 completed rotations filed some), and `retire_old` refuses any consumer still missing.
 4. **A lane drives it.** `rotation-verifier` runs every ten minutes as VERIFIER, reads the status
-   ledger's submitted units, and runs `/verify` on each whose envelope names a `rotation_unit`. The
+   ledger's submitted units and any a failed verification left in `verifying`, and runs `/verify` on each whose envelope names a `rotation_unit`. The
    executor never holds the VERIFIER bearer (decision 4).
 5. **What stays human:** every human act in a plan (console mints, revokes, attestations), each
    resolved at `/review`; the authority approval of any envelope `rotation_known_good` doesn't

@@ -43,7 +43,7 @@ def _is_rotation(unit: dict[str, Any]) -> bool:
 
 def run_pass(client: VerifierClient, *, dry_run: bool = False) -> list[Outcome]:
     outcomes: list[Outcome] = []
-    for row in client.submitted():
+    for row in client.pending():
         key = str(row.get("unit_key"))
         unit_id = str(row.get("unit_id"))
         try:
@@ -102,7 +102,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         client.close()
     for outcome in outcomes:
         print(f"{outcome.unit_key:<40}  {outcome.result:<16}  {outcome.detail}".rstrip())
-    print(f"\n{len(outcomes)} rotation unit(s) submitted")
+    print(f"\n{len(outcomes)} rotation unit(s) awaiting the verifier")
     return exit_code(outcomes)
 
 

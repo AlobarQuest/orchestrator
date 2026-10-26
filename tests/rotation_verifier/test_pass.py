@@ -28,8 +28,12 @@ class Orchestrator:
     def __call__(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
         if path == "/api/v1/status-ledger":
-            assert request.url.params["state"] == "submitted"
-            rows = [{"unit_id": i, "unit_key": u["unit_key"]} for i, u in self.units.items()]
+            state = request.url.params["state"]
+            rows = [
+                {"unit_id": i, "unit_key": u["unit_key"]}
+                for i, u in self.units.items()
+                if u.get("state", "submitted") == state
+            ]
             return httpx.Response(200, json=rows)
         unit_id = path.split("/")[4]
         if path.endswith("/verify"):
@@ -102,6 +106,17 @@ def test_version_conflict_skips_unit() -> None:
     ]
     assert "409 (version_conflict)" in next(o.detail for o in outcomes if o.result == "refused")
     assert exit_code(outcomes) == 3
+
+
+def test_a_unit_left_verifying_is_verified_again() -> None:
+    orchestrator = Orchestrator(
+        {ROTATION: {**_unit("a-retire"), "state": "verifying"}},
+        {ROTATION: httpx.Response(200, json={"state": "completed"})},
+    )
+
+    outcomes = run_pass(_client(orchestrator))
+
+    assert [(o.unit_key, o.result) for o in outcomes] == [("a-retire", "completed")]
 
 
 def test_a_dry_run_verifies_nothing() -> None:

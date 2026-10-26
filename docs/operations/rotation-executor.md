@@ -77,10 +77,14 @@ by the executor that owns the unit, and passes it when:
   one;
 - it holds one old and one new fingerprint, of different values;
 - every probe has a refused known-bad control on the same target, and none is indeterminate;
+- verify-new probes only the new value and retire-old only the old one;
 - verify-new and confirm-dead probes answered as expected, and confirm-dead shows the old value
-  refused and the new one live;
-- verify-consumers' note reads "n of m consumers hold or attest the new value", with n = m when
-  a person revokes next.
+  refused, the new one live, and records the deletions;
+- verify-consumers' note reads "n of m consumers hold or attest the new value", with n = m and the
+  old value probed live when a person revokes next.
+
+A decision a person already recorded on a criterion is never replaced, and the lane also retries a
+unit a failed verification left in `verifying`.
 
 A clean unit completes and hands the next unit its turn in the same transaction. Anything else
 goes to `awaiting_review`, where a person adjudicates and completes it as before; the verifier

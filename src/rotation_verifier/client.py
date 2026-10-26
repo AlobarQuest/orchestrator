@@ -18,6 +18,7 @@ UUID_SHAPE = r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}"
 _UNIT = re.compile(rf"^/api/v1/work-units/{UUID_SHAPE}$")
 _VERIFY = re.compile(rf"^/api/v1/work-units/{UUID_SHAPE}/verify$")
 USER_AGENT = "rotation-verifier/1 (+AlobarQuest/orchestrator)"
+PENDING_STATES = ("submitted", "verifying")
 TIMEOUT_SECONDS = 30.0
 
 
@@ -74,12 +75,16 @@ class VerifierClient:
     def close(self) -> None:
         self._client.close()
 
-    def submitted(self) -> list[dict[str, Any]]:
-        """The status ledger's submitted units."""
-        body = self._json("GET", LEDGER, params={"state": "submitted"})
-        if not isinstance(body, list):
-            raise VerifierCallError("the status ledger did not answer with a list")
-        return [row for row in body if isinstance(row, dict)]
+    def pending(self) -> list[dict[str, Any]]:
+        """The status ledger's units awaiting the verifier: submitted, and any a verification left
+        in `verifying` when it failed part-way (the verifier resumes from there)."""
+        rows: list[dict[str, Any]] = []
+        for state in PENDING_STATES:
+            body = self._json("GET", LEDGER, params={"state": state})
+            if not isinstance(body, list):
+                raise VerifierCallError("the status ledger did not answer with a list")
+            rows += [row for row in body if isinstance(row, dict)]
+        return rows
 
     def unit(self, unit_id: str) -> dict[str, Any]:
         body = self._json("GET", f"/api/v1/work-units/{unit_id}")

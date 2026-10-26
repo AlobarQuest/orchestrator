@@ -429,6 +429,55 @@ def test_evidence_another_identity_filed_leaves_the_unit_for_a_person(estate: Es
     assert estate.state(units["store"]) == "draft"
 
 
+def test_a_persons_decision_before_the_verifier_is_never_replaced(estate: Estate) -> None:
+    units = estate.decompose()
+    assert run_pass(estate.setup) == 1
+    mint = units["mint"]
+    with Session(estate.engine) as session:
+        filed = session.scalars(
+            select(Evidence).where(
+                Evidence.work_unit_id == uuid.UUID(mint), Evidence.ac_id == "AC-003"
+            )
+        ).first()
+        assert filed is not None
+        revision_id, evidence_id = str(filed.work_package_revision_id), str(filed.id)
+    rejected = estate.client.post(
+        f"/api/v1/work-units/{mint}/adjudications",
+        headers=HUMAN,
+        json={
+            "idempotency_key": "a-person-rejects-verify-new",
+            "expected_version": estate.version(mint),
+            "work_package_revision_id": revision_id,
+            "ac_id": "AC-003",
+            "outcome": "failed",
+            "rationale": "the probe target is wrong",
+            "failed_evidence_id": evidence_id,
+        },
+    )
+    assert rejected.status_code == 200, rejected.text
+
+    assert estate.verify(mint) != "completed"
+    assert estate.state(units["store"]) == "draft"
+
+
+def test_the_other_executors_evidence_leaves_the_unit_for_a_person(estate: Estate) -> None:
+    units = estate.decompose()
+    assert run_pass(estate.setup) == 1
+
+    # `worker` is now the Keychain instance, which owns only bws-machine-token units, so the
+    # evidence it filed on this fake-adapter unit is not its owner's.
+    app = cast(FastAPI, estate.client.app)
+    swapped = get_settings().model_copy(
+        update={
+            "rotation_executor_agent_id": "another-executor",
+            "rotation_keychain_executor_agent_id": "worker",
+        }
+    )
+    app.dependency_overrides[get_settings] = lambda: swapped
+
+    assert estate.verify(units["mint"]) == "awaiting_review"
+
+
 def test_a_unit_whose_envelope_lists_other_destinations_is_claimed_and_failed(
     estate: Estate,
 ) -> None:
