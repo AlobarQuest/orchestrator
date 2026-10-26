@@ -60,6 +60,7 @@ def mapped_submitted_unit(
     evidence_type: str = "pytest",
     ac_id: str = "ac-1",
     authority: AuthorityEnvelope = AUTHORITY,
+    evidence: str = "recorded evidence",
 ) -> WorkUnit:
     revision = register_revision(
         session,
@@ -97,7 +98,7 @@ def mapped_submitted_unit(
         ac_id=ac_id,
         condition=f"{ac_id} passes",
         evidence_type=evidence_type,
-        evidence="recorded evidence",
+        evidence=evidence,
         approver="verifier",
     )
     proposal = DecompositionProposal(

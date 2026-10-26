@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends
 
 from orchestrator.api.dependencies import ActorDep, SessionDep, SettingsDep
 from orchestrator.api.routes.common import ERROR_RESPONSES, github_app_credentials_for, raise_error
+from orchestrator.api.routes.lifecycle import rotation_executors
 from orchestrator.api.schemas.verifier import (
     AdjudicationCommand,
     AdjudicationResponse,
@@ -77,6 +78,7 @@ def verify(
     body: VerifyCommandModel,
     actor: ActorDep,
     session: SessionDep,
+    settings: SettingsDep,
 ) -> object:
     return verify_work_unit(
         session,
@@ -85,6 +87,7 @@ def verify(
             actor=actor,
             expected_version=body.expected_version,
             idempotency_key=body.idempotency_key,
+            rotation_executors=rotation_executors(settings),
         ),
     )
 
