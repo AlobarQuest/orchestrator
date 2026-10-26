@@ -83,8 +83,10 @@ def _verdict(
     criterion: str | None = None,
     unit: str | None = "retire",
     evidence_type: str = ROTATION_STEP_EVIDENCE_TYPE,
+    criterion_type: str = "external_attestation",
 ) -> str | None:
     return rotation_step_verdict(
+        criterion_type,
         criterion if criterion is not None else _criterion(step),
         unit,
         evidence_type,
@@ -112,7 +114,12 @@ def test_wrong_evidence_type() -> None:
 
 
 def test_recovered_row_stays_judgment() -> None:
-    assert _verdict("store", _with("store", recovery={"by": "system"})) is not None
+    reason = _verdict("store", _with("store", recovery={"by": "system"}))
+    assert reason is not None and "recovered" in reason
+
+
+def test_another_criterion_type_stays_judgment() -> None:
+    assert _verdict("store", criterion_type="human_review") is not None
 
 
 def test_a_payload_outside_the_schema_stays_judgment() -> None:
@@ -156,6 +163,17 @@ def test_a_control_on_another_target() -> None:
     elsewhere = {**BAD, "target": "another service"}
     payload = _with("verify_new", probes=[elsewhere, _probe("new", "live", "live", 200)])
     assert _verdict("verify_new", payload) is not None
+
+
+def test_indeterminate_retire_probe() -> None:
+    payload = _with("retire_old", probes=[BAD, _probe("old", "live", "indeterminate", 503)])
+    assert _verdict("retire_old", payload) is not None
+
+
+def test_an_accepted_control_beside_a_refused_one() -> None:
+    accepted = _probe("known_bad", "dead", "live", 200)
+    probes = [BAD, accepted, _probe("new", "live", "live", 200)]
+    assert _verdict("verify_new", _with("verify_new", probes=probes)) is not None
 
 
 def test_indeterminate_probe() -> None:

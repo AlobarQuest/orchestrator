@@ -22,6 +22,8 @@ from orchestrator.services.verifier.rotation_evidence import RotationStepEvidenc
 
 # The executor's evidence type (`rotation_worker/worker.py`), pinned by a contract test.
 ROTATION_STEP_EVIDENCE_TYPE = "rotation.step"
+# The only criterion type a rotation step decides: every standing package declares its steps so.
+ATTESTED_CRITERION_TYPE = "external_attestation"
 
 # Every standing rotation package states its evidence this way, one criterion per machine step.
 _CRITERION = re.compile(
@@ -36,12 +38,15 @@ _PROBED_STEPS = frozenset({"verify_new", "confirm_dead"})  # not-a-vocabulary: s
 
 
 def rotation_step_verdict(
+    criterion_type: str,
     criterion_evidence: str,
     rotation_unit: str | None,
     evidence_type: str,
     payload: Mapping[str, object],
 ) -> str | None:
     """``None`` when the evidence proves the criterion, else why it stays with a person."""
+    if criterion_type != ATTESTED_CRITERION_TYPE:
+        return f"a {criterion_type} criterion is not decided from rotation evidence"
     if evidence_type != ROTATION_STEP_EVIDENCE_TYPE:
         return f"{evidence_type} is not rotation step evidence"
     if "recovery" in payload:

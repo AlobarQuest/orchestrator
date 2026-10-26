@@ -54,7 +54,7 @@ def test_the_executor_still_writes_the_coverage_note_the_verifier_reads() -> Non
 def test_the_verifier_reads_the_executors_notes() -> None:
     def verdict(note: str) -> str | None:
         return rotation_step_verdict(
-            CRITERION, "verify", ROTATION_STEP_EVIDENCE_TYPE, _payload(note)
+            "external_attestation", CRITERION, "verify", ROTATION_STEP_EVIDENCE_TYPE, _payload(note)
         )
 
     assert verdict(_note(6, 0, revoke_next=True)) is None

@@ -158,19 +158,18 @@ def _verify_criterion(
 class _Rotation:
     """A rotation unit's executor and its unit's name in the adapter's plan."""
 
-    owner: str
+    owner: str | None
     unit_name: str | None
 
 
 def _rotation(
     command: VerifyCommand, unit: WorkUnit, revision: WorkPackageRevision
 ) -> _Rotation | None:
-    """Who may prove this unit's steps, or ``None`` when it isn't a rotation unit with an owner."""
+    """Who may prove this unit's steps, or ``None`` when it isn't a rotation unit. An owner of
+    ``None`` (that executor unconfigured) matches no evidence's recorder."""
     if not is_rotation_unit(unit, revision):
         return None
     owner = command.rotation_executors.owner(unit)
-    if owner is None:
-        return None
     name = normalize_authority(unit.authority).constraints.get(UNIT_CONSTRAINT)
     return _Rotation(owner, name if isinstance(name, str) else None)
 
@@ -183,12 +182,14 @@ def _rotation_step(
     """A rotation unit's attested step, decided from the executor's own evidence (ADR-0055
     amendment 14). ``None`` leaves the criterion with a person: evidence anyone else filed,
     including the orchestrator's recovery, never decides it, and nothing here fails it."""
-    if criterion.evidence_type != "external_attestation" or evidence is None:
-        return None
-    if evidence.recorded_by != rotation.owner or evidence.payload is None:
+    if evidence is None or evidence.payload is None or evidence.recorded_by != rotation.owner:
         return None
     refusal = rotation_step_verdict(
-        criterion.evidence, rotation.unit_name, evidence.evidence_type, evidence.payload
+        criterion.evidence_type,
+        criterion.evidence,
+        rotation.unit_name,
+        evidence.evidence_type,
+        evidence.payload,
     )
     if refusal is not None:
         return ("judgment_required", None, refusal)
