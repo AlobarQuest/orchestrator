@@ -37,6 +37,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: lts/*
+          # The runner's cached LTS patch can be older than an upstream's engine floor.
+          check-latest: true
       - name: Build
         run: python3 .github/scripts/fork_sync_review.py run build
       - name: Test

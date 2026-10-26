@@ -34,6 +34,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: lts/*
+          # The runner's cached LTS patch can be older than an upstream's engine floor.
+          check-latest: true
       # Install-time scripts never run in CI; the configured build runs what it needs.
       - name: Install
         run: npm ci --ignore-scripts
@@ -68,6 +70,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: lts/*
+          # The runner's cached LTS patch can be older than an upstream's engine floor.
+          check-latest: true
       - name: Fetch the head without checking it out
         env:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
