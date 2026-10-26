@@ -68,6 +68,7 @@ from orchestrator.services.membership.proposals import (
     confirm_member_proposal,
     member_proposal,
     proposal_preview,
+    read_digest,
     withdraw_member_proposal,
 )
 from orchestrator.services.reconciliation.reconciliation import (
@@ -842,6 +843,7 @@ def member_proposal_detail(
             "summary": proposal.payload.get("summary"),
             "seeded": bool(proposal.payload.get("seeded")),
             "changes": proposal_preview(session, proposal),
+            "digest": read_digest(session, proposal),
             "services": MEMBER_SERVICES,
             "idempotency_key": proposal.idempotency_key,
             "csrf_tokens": {

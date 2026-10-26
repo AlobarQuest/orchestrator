@@ -49,7 +49,7 @@
 <form method="post" action="/review/member-proposals/{{ proposal.id }}/confirm">
   <input type="hidden" name="csrf_token" value="{{ csrf_tokens.confirm_member_proposal }}">
   <input type="hidden" name="idempotency_key" value="{{ idempotency_key }}">
-  <input type="hidden" name="digest" value="{{ proposal.payload_digest }}">
+  <input type="hidden" name="digest" value="{{ digest }}">
   <button type="submit" name="confirm" value="yes">Apply these changes</button>
 </form>
 <details>

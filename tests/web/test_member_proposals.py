@@ -104,3 +104,58 @@ def test_an_unknown_proposal_is_404(db_client: TestClient) -> None:
     assert (
         db_client.get(f"/review/member-proposals/{uuid.uuid4()}", headers=HUMAN).status_code == 404
     )
+
+
+def test_machine_actor_post_is_refused(db_client: TestClient, migrated_engine: Engine) -> None:
+    proposal_id = _stage(db_client)
+    page = db_client.get(f"/review/member-proposals/{proposal_id}", headers=HUMAN)
+    for headers in (SYSTEM, WORKER):
+        confirm = db_client.post(
+            f"/review/member-proposals/{proposal_id}/confirm",
+            data={**_form(page.text, proposal_id, "confirm"), "confirm": "yes"},
+            headers=headers,
+            follow_redirects=False,
+        )
+        withdraw = db_client.post(
+            f"/review/member-proposals/{proposal_id}/withdraw",
+            data={**_form(page.text, proposal_id, "withdraw"), "confirm": "yes", "reason": "x"},
+            headers=headers,
+            follow_redirects=False,
+        )
+        assert confirm.status_code == 403 and withdraw.status_code == 403
+    with Session(migrated_engine) as session:
+        row = session.get(SdsMemberProposal, uuid.UUID(proposal_id))
+        assert row is not None and row.state == "staged"
+        assert session.scalars(select(SdsMember)).first() is None
+
+
+def test_a_record_that_moved_after_the_page_rendered_is_refused(
+    db_client: TestClient, migrated_engine: Engine
+) -> None:
+    first = _stage(db_client)
+    page = db_client.get(f"/review/member-proposals/{first}", headers=HUMAN)
+    fields = _form(page.text, first, "confirm")
+    # Another proposal creates the same repository after the first page was read.
+    second = _stage(db_client)
+    other = db_client.get(f"/review/member-proposals/{second}", headers=HUMAN)
+    done = db_client.post(
+        f"/review/member-proposals/{second}/confirm",
+        data={**_form(other.text, second, "confirm"), "confirm": "yes"},
+        headers=HUMAN,
+        follow_redirects=False,
+    )
+    assert done.status_code == 303
+
+    response = db_client.post(
+        f"/review/member-proposals/{first}/confirm",
+        data={**fields, "confirm": "yes"},
+        headers=HUMAN,
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "member_proposal_changed"
+    with Session(migrated_engine) as session:
+        assert len(session.scalars(select(SdsMember)).all()) == 1
+        row = session.get(SdsMemberProposal, uuid.UUID(first))
+        assert row is not None and row.state == "staged"

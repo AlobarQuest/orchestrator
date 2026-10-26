@@ -1,6 +1,8 @@
 """Staging a membership proposal: SYSTEM stages, and validation refuses what a confirm could not."""
 
 import uuid
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeout
 from typing import Any
 
 import pytest
@@ -20,6 +22,7 @@ from orchestrator.persistence.models import (
 )
 from orchestrator.services.membership.proposals import (
     confirm_member_proposal,
+    read_digest,
     stage_member_proposal,
     withdraw_member_proposal,
 )
@@ -221,7 +224,7 @@ HUMAN = ActorContext("devon", ActorRole.HUMAN)
 
 def confirm(session: Session, row: SdsMemberProposal, actor: ActorContext = HUMAN) -> Any:
     return confirm_member_proposal(
-        session, actor=actor, proposal_id=row.id, expected_digest=row.payload_digest
+        session, actor=actor, proposal_id=row.id, expected_digest=read_digest(session, row)
     )
 
 
@@ -385,6 +388,96 @@ def test_withdrawal_needs_a_reason_and_writes_nothing_to_the_record(
         assert withdrawn.state == "withdrawn" and withdrawn.decided_by == "devon"
         assert withdrawn.decision_reason == "not now"
         assert counts(session) == (0, 0, 0, 0)
-        with pytest.raises(DomainError) as again:
-            confirm(session, row)
-        assert again.value.code == "member_proposal_not_staged"
+        for decide in (
+            lambda: confirm(session, row),
+            lambda: withdraw_member_proposal(
+                session, actor=HUMAN, proposal_id=row.id, reason="again"
+            ),
+        ):
+            with pytest.raises(DomainError) as again:
+                decide()
+            assert again.value.code == "member_proposal_not_staged"
+
+
+def test_a_record_that_moved_since_the_page_was_read_is_refused(migrated_engine: Engine) -> None:
+    with Session(migrated_engine) as session:
+        add_member(session, "AlobarQuest/brain")
+        read = stage(
+            session, body({"repository": "AlobarQuest/brain", "reason": "r", "owner": "ann"}), "a"
+        )
+        moving = stage(
+            session, body({"repository": "AlobarQuest/brain", "reason": "r", "owner": "bob"}), "b"
+        )
+        digest = read_digest(session, read)
+        confirm(session, moving)
+        before = counts(session)
+
+        with pytest.raises(DomainError) as raised:
+            confirm_member_proposal(
+                session, actor=HUMAN, proposal_id=read.id, expected_digest=digest
+            )
+
+        assert raised.value.code == "member_proposal_changed"
+        assert counts(session) == before
+        assert session.get(SdsMemberProposal, read.id).state == "staged"  # type: ignore[union-attr]
+
+
+def test_confirmations_of_different_proposals_take_turns(migrated_engine: Engine) -> None:
+    """B, read before A decided, waits for A's transaction; once A commits B finds the record moved
+    and is refused cleanly, instead of overwriting A or meeting a unique index."""
+    with Session(migrated_engine) as setup:
+        brain = add_member(setup, "AlobarQuest/brain")
+        setup.add(grant(brain, "backups"))
+        a = stage(
+            setup,
+            body(
+                {
+                    "repository": "AlobarQuest/brain",
+                    "reason": "r",
+                    "grants": {"backups": {"state": "not_applicable", "reason": "moved"}},
+                }
+            ),
+            "a",
+        )
+        b = stage(
+            setup,
+            body(
+                {
+                    "repository": "AlobarQuest/brain",
+                    "reason": "r",
+                    "grants": {"backups": {"state": "withdrawn", "reason": "retire"}},
+                }
+            ),
+            "b",
+        )
+        a_id, b_id, b_digest = a.id, b.id, read_digest(setup, b)
+        setup.commit()
+
+    def confirm_b() -> str:
+        with Session(migrated_engine) as second:
+            try:
+                confirm_member_proposal(
+                    second, actor=HUMAN, proposal_id=b_id, expected_digest=b_digest
+                )
+            except DomainError as error:
+                second.rollback()
+                return error.code
+            second.commit()
+            return "applied"
+
+    with Session(migrated_engine) as first, ThreadPoolExecutor(max_workers=1) as pool:
+        confirm_member_proposal(
+            first,
+            actor=HUMAN,
+            proposal_id=a_id,
+            expected_digest=read_digest(first, first.get(SdsMemberProposal, a_id)),  # type: ignore[arg-type]
+        )
+        waiting = pool.submit(confirm_b)
+        with pytest.raises(FutureTimeout):
+            waiting.result(timeout=1.0)
+        first.commit()
+        assert waiting.result(timeout=10) == "member_proposal_changed"
+
+    with Session(migrated_engine) as check:
+        assert check.scalars(select(SdsMemberGrant.state)).one() == "not_applicable"
+        assert check.get(SdsMemberProposal, b_id).state == "staged"  # type: ignore[union-attr]

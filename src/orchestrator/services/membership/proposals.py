@@ -31,6 +31,10 @@ from orchestrator.services.membership.changes import GrantChange, MemberChange, 
 # instead of meeting the unique constraint as an unhandled IntegrityError.
 STAGING_LOCK_NAMESPACE: Final = 0x4D425231
 
+# "MBR2": one lock for the whole membership record. Decisions on different proposals read and write
+# the same members, so they take turns: the second validates against what the first left.
+RECORD_LOCK_NAMESPACE: Final = 0x4D425232
+
 _REPOSITORY: Final = re.compile(r"^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$")
 
 
@@ -98,8 +102,9 @@ def confirm_member_proposal(
     refused rather than applied blind.
     """
     _require_human(actor, "confirm")
+    _lock_record(session)
     proposal = _locked_staged(session, proposal_id)
-    if proposal.payload_digest != expected_digest:
+    if read_digest(session, proposal) != expected_digest:
         raise DomainError(
             "member_proposal_changed",
             "the proposal is not the one that was read",
@@ -122,6 +127,7 @@ def withdraw_member_proposal(
     """Retire a staged proposal a person decided against. It changes nothing in the record."""
     _require_human(actor, "withdraw")
     _require_text(reason, "reason")
+    _lock_record(session)
     proposal = _locked_staged(session, proposal_id)
     proposal.state = "withdrawn"
     proposal.decided_by = actor.actor_id
@@ -148,7 +154,9 @@ def proposal_preview(session: Session, proposal: SdsMemberProposal) -> list[dict
     rows = []
     for change in body.changes:
         member = session.scalar(
-            select(SdsMember).where(func.lower(SdsMember.repository) == change.repository.lower())
+            select(SdsMember)
+            .where(func.lower(SdsMember.repository) == change.repository.lower())
+            .execution_options(populate_existing=True)
         )
         grants = (
             {
@@ -198,6 +206,27 @@ def proposal_preview(session: Session, proposal: SdsMemberProposal) -> list[dict
     return rows
 
 
+def read_digest(session: Session, proposal: SdsMemberProposal) -> str:
+    """What a person read: the staged payload and the current values of the members it touches.
+
+    Confirmation compares it under the record lock, so a record that moved since the page was
+    rendered is refused rather than overwritten.
+    """
+    canonical = json.dumps(
+        {"payload": proposal.payload_digest, "preview": proposal_preview(session, proposal)},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def _lock_record(session: Session) -> None:
+    session.execute(
+        text("SELECT pg_advisory_xact_lock(:namespace, 0)"),
+        {"namespace": RECORD_LOCK_NAMESPACE},
+    )
+
+
 def _require_human(actor: ActorContext, verb: str) -> None:
     if actor.role is not ActorRole.HUMAN or not actor.actor_id:
         raise DomainError(
@@ -234,7 +263,9 @@ def _apply_change(
     actor: ActorContext,
 ) -> None:
     member = session.scalar(
-        select(SdsMember).where(func.lower(SdsMember.repository) == change.repository.lower())
+        select(SdsMember)
+        .where(func.lower(SdsMember.repository) == change.repository.lower())
+        .execution_options(populate_existing=True)
     )
     created = member is None
     fields: dict[str, Any] = {}
