@@ -26,7 +26,14 @@ When the embedded `ORCHESTRATOR_REGISTRY_BUNDLE` path is enabled, startup requir
 
 - `ORCHESTRATOR_M2M_CREDENTIALS`: JSON credential-key mappings with actor IDs and
   SHA-256 token hashes.
-- `ORCHESTRATOR_TRUSTED_PROXY_IPS`: a JSON list of direct trusted proxy peers.
+- `ORCHESTRATOR_TRUSTED_PROXY_IPS`: a JSON list of direct trusted proxy peers. In production
+  that's `coolify-proxy`'s address on the `coolify` network, which Docker assigns, so it can
+  change when the proxy is re-created or the host moves. When it no longer matches, every
+  `/review` page answers `{"error":{"code":"authentication_failed",...}}` after a successful
+  Alobar ID sign-in, and machine bearers keep working. The address can also pass to another
+  container; the proxy marker is then the only check left. To fix it, read the address with
+  `docker network inspect coolify`, set the variable, and restart the application. Found
+  2026-10-26: the move to OVH on 2026-10-23 changed it from `10.0.1.26` to `10.0.1.6`.
 - `ORCHESTRATOR_PROXY_MARKER`: the trusted proxy marker supplied at runtime.
 - `ORCHESTRATOR_EMAIL_TO_ACTOR`: JSON normalized-email to actor-ID mappings.
 - `ORCHESTRATOR_CSRF_SECRET`: at least 32 bytes of runtime secret material.
