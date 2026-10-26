@@ -40,6 +40,10 @@ in #521). Read it before starting; this plan argues from it.
   `coolify` (ws32 and ws34). The deploys service's wire value is therefore **`rollouts`** everywhere,
   in the orchestrator and in clients alike. Its human label "Deploys" appears only in the Jinja
   template and in docs.
+- **How a grant is approved:** the spec's "Calls made" says grants are approvals in the existing
+  `/review` model. `record_approval` accepts only work units, so this plan uses the staged-intake
+  form of a `/review` approval (a staged record a named human confirms) instead of an `Approval`
+  row. Devon was told this when the plan was handed over.
 - **Service vocabulary (wire values, in this order):** `dependency_updates`, `security_patches`,
   `app_changes`, `backups`, `monitoring`, `rollouts`, `credential_rotation`.
 - **Member states:** `onboarding`, `member`, `retired`.
@@ -377,8 +381,8 @@ Expected: FAIL; the route doesn't exist yet.
 - Add one invariant bullet to `CLAUDE.md`, below the managed block:
 
   > Only a human confirming a member proposal on `/review` writes the member tables
-  > (`services/membership/proposals.py`); SYSTEM may only stage one, and
-  > `test_membership_writers.py` holds both halves. The deploys service's wire value is
+  > (`services/membership/proposals.py`), and `test_membership_writers.py` names every route that
+  > may write them and the role each requires. The deploys service's wire value is
   > `rollouts` (word guards). Detail: `docs/operations/membership.md`.
 
 - [ ] **Step 5: Run the full gate**
@@ -442,8 +446,9 @@ git commit -m "feat(membership): read the record; guard the write split; ADR-005
   - `sds-members stage <file.toml>` reads `SDS_MEMBERS_SYSTEM_TOKEN` and prints the proposal id and
     `https://sds.alobar.net/review/member-proposals/<id>`. The key id is `orchestrator-system`.
   - `sds-members check` is added in Task 11.
-- `scripts/sds_scope.py <population> [service]`, where `population` is one of `ledger`, `checkouts`,
-  `bindable` or `granted`. It reads `SDS_SCOPE_ORCHESTRATOR_TOKEN`, with key id
+- `scripts/sds_scope.py <population> [service]`, where `population` is one of `ledger` (prints
+  `observed`), `checkouts` (prints `working_copies`), `bindable` or `granted` (prints `granted`
+  for the named service). It reads `SDS_SCOPE_ORCHESTRATOR_TOKEN`, with key id
   `orchestrator-observer`. It prints one value per line. It exits 0, or exits 3 with
   `sds-scope: <reason>` on stderr when the record is unreadable, the token is unset, or the
   population is empty.
@@ -520,11 +525,21 @@ source, for example "factory-target.toml declares factory_target = true" or "in 
 TOOLS". The `remediating` reason is "Devon decided 2026-10-26 (membership design); onboarding
 pending".
 
-**The dependency_updates rule:** grant it to every repository in the live inert landing population,
-and to each fork. Before writing the file, read the population with
-`bump_proposer.landing_policy.read_inert_landing`. If any of the 13 repositories outside the forks is
-missing from the population, set that repository's `dependency_updates` to `not_assessed` and list
-it in the pull request body for Devon. Don't guess.
+**The dependency_updates rule:** grant it to the union of three sources, and name the source in
+each grant's reason:
+- the live inert landing population, read with `bump_proposer.landing_policy.read_inert_landing`
+  (the inert lane and the bump proposer act only there);
+- the repositories in `deploy_watcher.workflows.ROLLOUT_WORKFLOWS` (`brain`, `change-manager`),
+  where the estate lander lands Dependabot updates under approved change records;
+- the five forks, where fork-sync brings in upstream releases.
+
+If one of the 13 repositories falls in none of the three, set its `dependency_updates` to
+`not_assessed` and list it in the pull request body for Devon. Don't guess, and don't trust the
+table over the sources.
+
+**The credential_rotation rule:** a repository owns a credential when its `.cred-consumers.toml`
+holds that credential's `[[credential]]` entry with `rotated_by_sds = true`. Those repositories are
+`rotation_worker.registry.REGISTRY_REPOSITORIES`, and Task 11 checks the same definition.
 
 - [ ] **Step 1: Write the failing test**
 
