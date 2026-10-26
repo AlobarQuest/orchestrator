@@ -99,9 +99,11 @@ Stored in the orchestrator's database, one row per member, keyed by the reposito
   hosted";
 - its data stores and their backup target labels in vps-backup, or "stateless";
 - its health endpoints, and the Healthchecks or alert-hub identifiers that watch it;
-- its deploy mechanism, using the vocabulary in `landing-lanes.md` (CI webhook, repository webhook,
-  host git integration, machine-local, manual);
-- whether it has a working copy on the operator machine.
+- each app's deploy mechanism, using the vocabulary in `landing-lanes.md` (CI webhook, repository
+  webhook, host git integration, manual). Deploy mechanism belongs to an app, not a repository:
+  `orchestrator` is both a hosted app deployed by hand and a working copy the lanes run from;
+- whether it has a working copy on the operator machine, and whether that working copy is what
+  runs (machine-local activation, ADR-0030).
 
 **Service grants**, one per service, each with a state:
 
@@ -155,6 +157,14 @@ Readiness can be rerun at any time against a member. A granted service whose che
 
 ## How lanes read scope
 
+**Lanes that act select by grant; lanes that only observe select by membership and links**
+(Claude's call). A lane that changes something (lands, dispatches, installs, rotates) acts only where
+its service is granted. A lane that only measures and reports (the activation sweep, the revision
+watcher, the landing ledger) may cover every member whose links say the measurement applies, granted
+or not, because observing a member acts on nothing and reporting an ungranted gap is useful. So the
+activation sweep covers members with a working copy, and the revision watcher covers members' apps
+with a revision-stamped health endpoint, without monitoring being granted.
+
 - The orchestrator serves the member record read-only to the machine roles that need it, as members
   filtered by service grant and by link (for example "members with deploys granted whose deploy
   mechanism is machine-local").
@@ -164,9 +174,12 @@ Readiness can be rerun at any time against a member. A granted service whose che
   produce the same population, or the differences are reported and Devon has ruled on each
   (anti-goal 2).
 - **Per-repository configuration stays where it is.** Lists that carry more than membership (the
-  rollout workflow transcriptions, tool_installer's tool definitions, the rotation registry, fork-sync
-  workflows) keep their data; a guard checks that every repository they name is a member with the
-  matching service granted.
+  rollout workflow transcriptions, tool_installer's tool definitions, fork-sync workflows) keep their
+  data; a guard checks that every repository they name is a member with the matching service
+  granted. The mapping (Claude's call): the rollout transcriptions are deploys; fork-sync is
+  dependency updates and security patches (an upstream release is a dependency of the fork, and its
+  review is a security gate); tool_installer is deploys, because installing on the operator machine
+  is a machine-local activation (ADR-0030).
 
 ## Relationship to the existing declarations
 
@@ -206,12 +219,16 @@ Seeded grants record what already runs, so no lane loses coverage on the move:
 - **app changes:** granted for the six repositories declaring `factory_target = true`;
 - **dependency updates:** granted for the inert population and for repositories where the bump
   proposer or Dependabot landing already acts;
-- **deploys:** granted for `change-manager` and `brain` (watched deploys) and for the machine-local
-  repositories the activation sweep covers;
+- **deploys:** granted for `change-manager` and `brain` (watched deploys), for the machine-local
+  repositories the activation sweep binds, and for the forks tool_installer installs;
 - **security patches** for the forks (fork-sync review and fork-harden);
 - **everything else:** `not_assessed`.
 
 Seeded grants are marked as seeded, not assessed, so a later readiness run can confirm or correct them.
+The seed also fills the links the moved lanes need: working-copy presence and machine-local
+activation for the sweep (from the activation sweep's lists and App Brain's landing answers), and
+apps with their health endpoints for the revision watcher (from its subject list). Devon approves
+the seed once, as a whole, before it's applied.
 
 ### Phase 1 lanes to move
 
@@ -238,8 +255,14 @@ Whether vps-backup becomes a member itself is open (see "Left open").
   inventories, an ingress POST route joins the idempotency matrix, migration ids stay within 32
   characters, OBSERVER stays confined to observations, and the word guards apply to new code.
 - Secrets never enter prompts, tool arguments, logs or records.
-- No lane may enroll a project (anti-goal 1). A guard test should assert that the member record has
-  exactly one writer path, the human-approved one.
+- No lane may enroll a project (anti-goal 1). Writes are split (Claude's call):
+  - **Only a human approval** may create a member, change its `state`, or set a grant to `granted`,
+    `not_applicable` or `withdrawn`.
+  - **The system role** may set `not_assessed` and `remediating`, record readiness results, and
+    report a granted service whose checks fail. It may never grant, and automatic withdrawal is
+    decided in each service's phase.
+  - A guard test asserts both halves, in the way `_confine_observer` confines OBSERVER: one positive
+    rule naming the routes each side may write, with unknown routes refused.
 - Scope reads fail closed: a lane that can't read the record reports itself incomplete.
 - Changes to the orchestrator reach production only through `deploy_orchestrator.py`, and lanes pick
   them up from the main tree as today.
@@ -260,6 +283,11 @@ These are Claude's calls, not Devon's decisions; check them while reading.
 - **The activation sweep counts as deploy machinery** for machine-local projects, following
   ADR-0030's framing of activation as a deployment.
 - **The two existing declarations stay authoritative through phase 1.**
+- **Acting lanes select by grant; observing lanes by membership and links.**
+- **Deploy mechanism is a property of each app,** and machine-local activation a property of the
+  repository's working copy.
+- **The mapping of per-repository lists to services,** including tool_installer as deploys.
+- **The write split:** humans grant; the system role assesses and reports.
 
 ## Left open
 
