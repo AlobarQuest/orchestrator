@@ -24,20 +24,8 @@ set -uo pipefail
 
 # BWS UUIDs (values fetched at runtime; never stored in this repo). See .bws-secrets.toml.
 OBSERVER_BEARER_UUID="f793576f-e9aa-4f9d-8089-b4a000b9e2d5"   # orchestrator-observer OBSERVER bearer
-
-# The repositories the ledger covers. Every repository this estate lands code in, including the
-# two with no gate installed -- a repository whose updates never land unattended is exactly the
-# one whose backlog of green updates is worth counting.
-REPOSITORIES=(
-  AlobarQuest/orchestrator
-  AlobarQuest/intent-packages
-  AlobarQuest/factory-runner
-  AlobarQuest/security-standards
-  AlobarQuest/infraops-mcp-server
-  AlobarQuest/change-manager
-  AlobarQuest/brain
-  AlobarQuest/project-standards
-)
+# The READ-scoped change-manager bearer, which reads the landing policy naming the inert population.
+CHANGE_MANAGER_READ_UUID="314f276d-55ca-4ddc-a24d-b4a3013508cd"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # ACTIVATION — a merged change is not live on this machine until the code is pulled. The estate's
@@ -68,9 +56,24 @@ source "$REPO_ROOT/scripts/sds-deadman.sh"
 sds_deadman_arm sds-landing-ledger --finding 2 "$@"
 
 
-# Load BWS_ACCESS_TOKEN from the Keychain via the approved helper (never a plaintext file).
-# shellcheck disable=SC1091
-source "$(dirname "${BASH_SOURCE[0]}")/sds-token.sh"
+# TWO BWS IDENTITIES, each read from its own Keychain item and never from an ambient
+# `BWS_ACCESS_TOKEN`: the observer bearer is in a project only the narrow `sds-operator` account can
+# read, and the change-manager bearer in one only the broad account can. One ambient value would
+# become both identities and neither fetch would work. The pattern is run-deploy-watcher.sh's.
+BROAD_IDENTITY="${BWS_ACCESS_TOKEN_BROAD:-$(/usr/bin/security find-generic-password \
+  -s 'Claude' -a 'BWS_ACCESS_TOKEN_VPS_BACKUP' -w 2>/dev/null || true)}"
+if [ -z "$BROAD_IDENTITY" ]; then
+  echo "FATAL: no BWS identity for the change-manager credential (Keychain service Claude," \
+       "account BWS_ACCESS_TOKEN_VPS_BACKUP)" >&2
+  exit 1
+fi
+NARROW_IDENTITY="${BWS_ACCESS_TOKEN_SDS:-$(/usr/bin/security find-generic-password \
+  -s 'Claude' -a 'BWS_ACCESS_TOKEN_SDS' -w 2>/dev/null || true)}"
+if [ -z "$NARROW_IDENTITY" ]; then
+  echo "FATAL: no BWS identity for the orchestrator observer credential (Keychain service Claude," \
+       "account BWS_ACCESS_TOKEN_SDS)" >&2
+  exit 1
+fi
 
 # `--color no` AND an environment with the forcing variables removed. FORCE_COLOR / CLICOLOR_FORCE
 # make `bws secret get` wrap its JSON in ANSI escapes even when stdout is a pipe, which breaks the
@@ -79,8 +82,17 @@ source "$(dirname "${BASH_SOURCE[0]}")/sds-token.sh"
 # shellcheck disable=SC1091
 source "$REPO_ROOT/scripts/sds-bws.sh"
 
-LANDING_LEDGER_TOKEN="$(sds_bws_value "$OBSERVER_BEARER_UUID")"
+LANDING_LEDGER_TOKEN="$(sds_bws_value "$OBSERVER_BEARER_UUID" "$NARROW_IDENTITY")"
 export LANDING_LEDGER_TOKEN
+CHANGE_MANAGER_READ_TOKEN="$(sds_bws_value "$CHANGE_MANAGER_READ_UUID" "$BROAD_IDENTITY")"
+if [ -z "$LANDING_LEDGER_TOKEN" ]; then
+  echo "FATAL: could not read the orchestrator observer credential from BWS" >&2
+  exit 1
+fi
+if [ -z "$CHANGE_MANAGER_READ_TOKEN" ]; then
+  echo "FATAL: could not read the change-manager READ credential from BWS" >&2
+  exit 1
+fi
 
 # THE GITHUB CREDENTIAL HAS NO BWS RECORD. The backfill was run by hand with an ad-hoc token, so
 # there is nothing to fetch by UUID and this falls back to the operator's own `gh` credential.
@@ -95,17 +107,39 @@ if [ -z "${LANDING_LEDGER_GITHUB_TOKEN:-}" ]; then
   exit 1
 fi
 
+# THE REPOSITORIES ARE DERIVED, NOT LISTED. The ledger covers every repository this estate lands
+# code in: the factory targets (each repository's own `factory-target.toml`) and the inert
+# population (change-manager's landing policy, which the inert lane lands under). A hand list here
+# drifted from both.
+#
+# AN INCOMPLETE DERIVATION STILL RUNS, AND STILL SAYS SO. `sds_scope` exits 3 when part of the
+# answer couldn't be read, after printing every name it could determine. The passes below run on
+# those names, and the 3 is folded into this pass's answer, so the day is recorded where it can be
+# and the pass still reads as incomplete rather than clean. Any other non-zero code is the tool
+# failing (1) or not running at all (126, 127, 137), and is passed through verbatim.
+REPOSITORIES="$(cd "$REPO_ROOT" && SDS_SCOPE_GITHUB_TOKEN="$LANDING_LEDGER_GITHUB_TOKEN" \
+  SDS_SCOPE_CHANGE_MANAGER_TOKEN="$CHANGE_MANAGER_READ_TOKEN" \
+  "$REPO_ROOT/.venv/bin/python" -m scripts.sds_scope ledger)"
+scope_rc=$?
+if [ "$scope_rc" -ne 0 ] && [ "$scope_rc" -ne 3 ]; then
+  echo "the ledger's repositories could not be derived: sds_scope exited $scope_rc" >&2
+  exit "$scope_rc"
+fi
+if [ -z "$REPOSITORIES" ]; then
+  echo "the ledger's repositories could not be derived; nothing was recorded" >&2
+  exit 3
+fi
 TARGETS=()
-for repository in "${REPOSITORIES[@]}"; do
+while IFS= read -r repository; do
   TARGETS+=(--repository "$repository")
-done
+done <<< "$REPOSITORIES"
 
 PASS_ID="$(date -u +%Y%m%dT%H%M%SZ)"
 LEDGER="$REPO_ROOT/.venv/bin/landing-ledger"
 
 # SEVEN DAYS, NOT THE THIRTY-DAY DEFAULT, and this is a correctness setting rather than a
 # preference. Recording costs about twelve GitHub requests per landing; the 2026-08-08 backfill
-# read thirty days across these eight repositories and exhausted the 5000/hour limit in one pass.
+# read thirty days across the eight repositories it covered then and exhausted the 5000/hour limit in one pass.
 # A daily job at that window would therefore run out partway through every morning, mark the later
 # repositories unavailable, and exit 3 forever -- a permanently red signal, which is a signal
 # nobody reads. Seven days is roughly ninety landings, survives a week of the machine being
@@ -130,9 +164,10 @@ for rc in "$record_rc" "$audit_rc"; do
   esac
 done
 
-# The worst answer wins, and "could not measure" is worse than "found something".
+# The worst answer wins, and "could not measure" is worse than "found something". An incomplete
+# derivation (`scope_rc` 3) counts as not measuring the repositories it couldn't name.
 for rc in 1 3 2; do
-  if [ "$record_rc" -eq "$rc" ] || [ "$audit_rc" -eq "$rc" ]; then
+  if [ "$record_rc" -eq "$rc" ] || [ "$audit_rc" -eq "$rc" ] || [ "$scope_rc" -eq "$rc" ]; then
     exit "$rc"
   fi
 done

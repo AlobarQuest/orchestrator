@@ -102,6 +102,8 @@ paths = [
   "scripts/compute_image_tags.py",
   "scripts/build_registry_bundle.py",
   "scripts/shape_registry_context.py",
+  "scripts/sds_scope.py",
+  "tests/scripts/test_sds_scope.py",
   ".bws-secrets.toml",
   ".cred-consumers.toml",
   "tests/scripts/test_compute_image_tags.py",
