@@ -88,3 +88,11 @@ fix:
 # `loadgroup` keeps tests marked with the same `xdist_group` on one worker, in order. Set
 # PYTEST_ADDOPTS yourself (even to empty) to override; a bare `pytest` stays serial.
 export PYTEST_ADDOPTS ?= -n auto --dist loadgroup
+
+# Work by layer (layers.toml). `make layers` counts every layer's files; `make layer L=sensors`
+# lists one layer's. Outside the managed block so `code-standards sync` preserves it.
+.PHONY: layer layers
+layers:
+	@uv run --frozen python -m scripts.layers
+layer:
+	@uv run --frozen python -m scripts.layers $(L)

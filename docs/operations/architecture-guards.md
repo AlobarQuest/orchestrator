@@ -267,3 +267,22 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   cause. Same family as the ruff 0.15→0.16 wording change — but note the difference, because it is
   the useful half: there the tool's output genuinely moved, here it did not and a per-repo config
   made it look as though it had. An observed behaviour is not yet a cause.
+
+## The layer manifest
+
+`layers.toml` assigns every file in the repository to one of fourteen layers: the twelve units of
+ownership on the SDS layer map, plus `tooling` (build, dependency, lint, CI and agent
+configuration) and `records` (plans, evidence, history and the roadmap). It exists so the
+orchestrator can be worked on one layer at a time.
+
+- `make layers` prints each layer's file count. `make layer L=sensors` lists one layer's files,
+  which is the scope to hand a session working on that layer.
+- `tests/architecture/test_layer_manifest.py` fails when a file belongs to no layer, when a file
+  belongs to two, or when a pattern matches no file. It reads untracked files that git doesn't
+  ignore as well as tracked ones, so a new file fails locally before it's committed.
+- To fix a failure, place the file in the layer the manifest's header rules give it. A source file
+  belongs to its directory's layer. A test, fixture, launcher or operations page goes with the code
+  it serves. A per-domain route and schema go with their domain's service. Never widen a pattern
+  just to quiet the guard.
+- Patterns use `PurePosixPath.full_match`, which needs Python 3.13 or later: `*` stays within one
+  path segment, and `**` spans any number.
