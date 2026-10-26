@@ -143,12 +143,15 @@ phase starts; the table states the bar.
 | Credential rotation | The rotation proposer, the rotation executor's two instances, the rotation verifier, and the `.cred-consumers.toml` registries; infraops decides when a credential is due | Every credential the project issues or holds is in BWS, referenced by UUID in a `.bws-secrets.toml` manifest; each one the SDS rotates has a registry entry naming its keeper and every copy, with `rotated_by_sds` set; every scheduled reader has a machine read; the security scanner reports no BLOCK findings |
 
 For credential rotation, the grant belongs to the member whose credential it is, not to every
-repository that holds a copy (Claude's call). A registry row may name a copy in any repository,
-member or not, because a rotation that skips a holder strands it on a dead value (ADR-0055
-amendment 13). Today's registries name copies in three non-members: `vps-backup`,
-`github-to-bitbucket-mirror` and `factory-validation-kit-restart-recovery`. The guard therefore
-checks that every `rotated_by_sds` credential belongs to a member with rotation granted, and never
-that every copy's repository is a member.
+repository whose code reads it (Claude's call). A registry's `runtime-fetch` rows name scripts that
+fetch a credential from BWS when they run; no value is stored in those repositories. The rows exist
+so the rotation executor waits until each reader has run on the new value before it retires the old
+one, so a reader may sit in any repository, member or not. Today's registries name readers in three
+non-members: `vps-backup` (its backup scripts post observations with the drift-reporter bearer),
+`github-to-bitbucket-mirror` (the mirror's GitHub and Bitbucket tokens), and
+`factory-validation-kit-restart-recovery`. The guard checks that every `rotated_by_sds` credential
+belongs to a member with rotation granted, and never that every reader's repository is a member.
+This changes nothing that runs today.
 
 ## Onboarding
 
@@ -328,8 +331,13 @@ For Devon:
 - After phase 1: whether the member record becomes the source the two declarations are generated
   from, or stays a mirror checked against them.
 - At phase 2: whether the SDS half of `vps-backup` becomes a member.
-- A `factory-runner` bug can't deliver its own fix through the factory, so it's fixed by hand. This
-  was accepted with the grant; recorded here so the ADR-0015 amendment states it.
+- **Recovering from a broken runner, without hand work.** Because callers pin the runner, a bug on
+  the runner's `main` is fixed by ordinary factory work, run by the pinned, working runner. The
+  remaining case is a broken runner whose pin has already moved to the callers. Devon wants a
+  mechanism for that case so it isn't fixed by hand. A likely shape: roll the callers' pin back to
+  the last good commit (the factory already lands caller-pin changes), then let the restored runner
+  dispatch the fix. Design it as its own piece of work before `factory-runner`'s app-changes grant
+  is approved, and have the ADR-0015 amendment reference it.
 
 For the builder:
 
