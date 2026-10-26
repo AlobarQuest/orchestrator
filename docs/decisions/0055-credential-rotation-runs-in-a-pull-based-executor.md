@@ -1612,3 +1612,74 @@ destination kind stays general so the next one is a registry entry.
   restart would strand a dispatched run before writing and again before restarting, then waits up
   to ten minutes for the route to report the new fingerprint. A copy that already reports it is
   not written again, so a retried unit restarts nothing.
+
+## Amendment 14 — A rotation unit's step evidence completes it (2026-10-26)
+
+**Status: accepted by Devon on 2026-10-26** ("I agree with your recommendation for graduating the
+gate"), with three decisions he made the same day: a separate lane drives the verifier, the
+graduation covers every rotation adapter, and consumer coverage is read from the executor's note,
+with full coverage required only before a person's revoke. It takes effect when the release that
+implements it is deployed and the `rotation-verifier` lane is installed.
+
+On 2026-10-26 the drift-reporter bearer's retire unit waited at `/review` for three adjudications
+and a completion click, every one of them a reading of evidence the executor had filed. The
+permission classifier refused each attempt to record them on Devon's behalf, and Devon declined to
+keep doing the clicks by hand. Amendment 11 left adjudication and the `AWAITING_REVIEW ->
+COMPLETED` gate untouched (its decision 5), and amendment 2's answer C left a deterministic
+rotation evidence type to "the later gate-graduation decision". This amendment is that decision.
+
+### What enforces the gate today
+
+Every standing rotation package states one `external_attestation` criterion per machine step,
+whose evidence is "the <step> step's rotation-step/1 evidence, filed by the rotation executor".
+`external_attestation` is a human-floored type (`verifier_evaluators.JUDGMENT_TYPES`), so the
+verifier reports each one `judgment_required` and the unit goes to `awaiting_review`. A person then
+adjudicates each criterion and records the completion.
+
+### Why the person adds nothing for a clean step
+
+What the person checks is a property of the payload: the step is the one the criterion names, the
+fingerprints are of two different values, each probe stands beside a refused known-bad control on
+the same target, and the probes answered as the step requires. The executor already refuses to
+file a step whose control was accepted or whose probe answered wrongly (`contract.py`), so a filed
+row is self-consistent by construction, and a person reading it adds no observation of their own.
+Run over all 113 steps the 13 completed rotations filed, the machine's reading passes every one.
+
+### Decision
+
+1. **The verifier decides a rotation step from its evidence.** When a criterion would go to a
+   person, the unit is a rotation unit (`is_rotation_unit`), the criterion is
+   `external_attestation`, and the current evidence was filed by the executor that owns the unit
+   (`RotationExecutors.owner`), the verifier asks `rotation_verification.rotation_step_verdict`.
+   A clean verdict is a verifier pass, recorded through the one adjudication path that may assert
+   it, and the unit completes by the verifier's existing `SUBMITTED -> COMPLETED` edge, resolving
+   the next unit's dependency in the same transaction.
+2. **The floor stays human.** `external_attestation` stays in `JUDGMENT_TYPES` and
+   `evaluate_criterion` is unchanged, so evidence on any other unit, evidence another identity
+   filed, and a row the orchestrator recovered after a lapsed lease all still go to a person.
+   Nothing in the rotation branch fails a criterion: what it can't prove, a person decides.
+3. **Coverage.** verify_consumers passes on any well-formed "n of m" note, and needs n = m only
+   when a person revokes next. Partial coverage on a mint or store unit is by design (every one of
+   the 13 completed rotations filed some), and `retire_old` refuses any consumer still missing.
+4. **A lane drives it.** `rotation-verifier` runs every ten minutes as VERIFIER, reads the status
+   ledger's submitted units, and runs `/verify` on each whose envelope names a `rotation_unit`. The
+   executor never holds the VERIFIER bearer (decision 4).
+5. **What stays human:** every human act in a plan (console mints, revokes, attestations), each
+   resolved at `/review`; the authority approval of any envelope `rotation_known_good` doesn't
+   recognise; and every unit the verifier sends to `awaiting_review`.
+
+### Alternatives
+
+- **A deterministic criterion type.** Packages would declare a new type, which means a vocabulary
+  change in both repositories and a re-approved revision of every standing package, for the same
+  reading this amendment does in the verifier.
+- **"N of N" coverage only.** It would have sent every mint and store unit back to a person.
+
+### Cost
+
+- Trust in a clean step moves from a person's reading to the executor's own report. That report
+  was already what the person read, and claim confinement still limits who may file it.
+- The criterion's condition text can say more than its step proves (a store step's condition
+  names the quarantine). The verifier checks what the step does, not the prose.
+- A rotation unit already at `awaiting_review` when this ships isn't revisited; it still needs a
+  person.

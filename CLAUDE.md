@@ -486,6 +486,13 @@ Placement rule: global CLAUDE.md §7.
   claim re-asks policy for a unit nobody approved, refusing `authority_approval_missing` or
   recording `authority.human_gate_not_required` (`services/intake/authority_gate.py`). Detail:
   `docs/operations/rotation-executor.md`.
+- A rotation unit's `external_attestation` criterion is decided by the verifier from the current
+  `rotation.step` evidence only when the unit is a rotation unit and the evidence was filed by its
+  owning executor (`RotationExecutors.owner`, passed in `VerifyCommand.rotation_executors`);
+  `rotation_verification.rotation_step_verdict` never fails a criterion, and anything else stays
+  with a person. The floor stays human: never add `external_attestation` to a deterministic set.
+  The `rotation-verifier` lane runs `/verify` as VERIFIER. Detail: ADR-0055 amendment 14,
+  `docs/operations/rotation-executor.md`.
 - A unit's completion satisfies, in `_perform_transition`'s transaction, the pending `work_unit`
   dependencies that require it `completed` (exact match); no other condition or kind. A human-act
   dependency is resolved only at `/review/dependencies/{id}/resolution`, whose detail is

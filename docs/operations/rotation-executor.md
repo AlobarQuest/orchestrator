@@ -65,6 +65,28 @@ the envelope (`authority_policy_unreadable` if the policy file can't be read), a
 records an `authority.human_gate_not_required` event, attributed to the executor, naming the
 pattern and the policy version.
 
+## Completing a unit
+
+A submitted rotation unit completes without a person when its evidence is clean (ADR-0055
+amendment 14). The `rotation-verifier` lane (`scripts/run-rotation-verifier.sh`, every ten
+minutes, as VERIFIER) runs `/verify` on each submitted unit whose envelope names a
+`rotation_unit`. For each criterion, the verifier reads the current `rotation.step` evidence filed
+by the executor that owns the unit, and passes it when:
+
+- the evidence's step is the one the criterion names, and so is its unit when the criterion names
+  one;
+- it holds one old and one new fingerprint, of different values;
+- every probe has a refused known-bad control on the same target, and none is indeterminate;
+- verify-new and confirm-dead probes answered as expected, and confirm-dead shows the old value
+  refused and the new one live;
+- verify-consumers' note reads "n of m consumers hold or attest the new value", with n = m when
+  a person revokes next.
+
+A clean unit completes and hands the next unit its turn in the same transaction. Anything else
+goes to `awaiting_review`, where a person adjudicates and completes it as before; the verifier
+never fails a rotation criterion. The lane's log is `~/Library/Logs/rotation-verifier.log`: exit 2
+means a unit went to a person, exit 3 that one couldn't be verified (its version moved, say).
+
 The runner brief can't serve a rotation unit, because a rotation unit has no
 `target_repository`. The executor reads its unit from `GET /api/v1/work-units/{id}` and its
 package revision from `GET /api/v1/package-intakes/{revision_id}`.

@@ -128,7 +128,8 @@ _RETIRE: Final = UnitPlan(
     ),
 )
 # Two units, each claimed inside the live_estate window because each restarts change-manager,
-# with Devon's completion click between them. Every reader is verified by its registry read.
+# with the verifier's completion of the first between them (ADR-0055 amendment 14). Every reader
+# is verified by its registry read.
 PLAN: Final = Plan((_MINT, _RETIRE))
 # The same units with a person attesting, at /review with the new value's fingerprint, the
 # readers no read can verify.

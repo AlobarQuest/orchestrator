@@ -78,8 +78,9 @@ KEYS: Final = "/keys"
 _KEY_BY_HASH: Final = re.compile(r"^/keys/[0-9a-f]{64}$")
 
 M = Actor.MACHINE
-# Two units with Devon's completion click between them, so nothing is revoked until he has seen
-# the new key stored. With no attested consumer there is no human act.
+# Two units, so nothing is revoked until the mint unit's evidence proves the new key stored and
+# the verifier has completed it (ADR-0055 amendment 14). With no attested consumer there is no
+# human act.
 PLAN: Final = Plan(
     (
         UnitPlan(
