@@ -27,6 +27,7 @@ from orchestrator.kernel.runner_authority import runner_authority_violation
 from orchestrator.kernel.states import WAIVER_RISK_CLASSES, ActorContext, ActorRole, WorkUnitState
 from orchestrator.kernel.transitions import TransitionGuards, authorize_transition
 from orchestrator.persistence.models import (
+    MEMBER_SERVICES,
     DecompositionProposal,
     Dependency,
     ReconciliationCondition,
@@ -62,6 +63,12 @@ from orchestrator.services.lifecycle.lifecycle import (
     TransitionCommand,
     transition_in_transaction,
     transition_unit,
+)
+from orchestrator.services.membership.proposals import (
+    confirm_member_proposal,
+    member_proposal,
+    proposal_preview,
+    withdraw_member_proposal,
 )
 from orchestrator.services.reconciliation.reconciliation import (
     ResolutionCommand,
@@ -812,6 +819,81 @@ def withdraw_staged_intake_route(
     withdraw_staged_intake(session, staged_id, reason, actor)
     session.commit()
     return RedirectResponse(f"/review/staged-intakes/{staged_id}", status_code=303)
+
+
+_CONFIRM_MEMBER_PROPOSAL = "confirm_member_proposal"
+_WITHDRAW_MEMBER_PROPOSAL = "withdraw_member_proposal"
+
+
+@router.get("/member-proposals/{proposal_id}", response_class=HTMLResponse)
+def member_proposal_detail(
+    request: Request, proposal_id: uuid.UUID, actor: ActorDep, session: SessionDep
+) -> HTMLResponse:
+    """A staged membership proposal: every change beside the record it would change, then the
+    buttons. The confirm form carries the digest of what was rendered, so a person confirms the
+    payload they read; each token binds this row, its key and one action."""
+    _human(actor)
+    proposal = member_proposal(session, proposal_id)
+    return _render(
+        request,
+        "member_proposal.html",
+        {
+            "proposal": proposal,
+            "summary": proposal.payload.get("summary"),
+            "seeded": bool(proposal.payload.get("seeded")),
+            "changes": proposal_preview(session, proposal),
+            "services": MEMBER_SERVICES,
+            "idempotency_key": proposal.idempotency_key,
+            "csrf_tokens": {
+                action: _issue_token(request, actor, proposal.id, action, proposal.idempotency_key)
+                for action in (_CONFIRM_MEMBER_PROPOSAL, _WITHDRAW_MEMBER_PROPOSAL)
+            }
+            if proposal.state == "staged"
+            else {},
+        },
+    )
+
+
+@router.post("/member-proposals/{proposal_id}/confirm")
+def confirm_member_proposal_route(
+    request: Request,
+    proposal_id: uuid.UUID,
+    actor: ActorDep,
+    session: SessionDep,
+    digest: Annotated[str, Form(min_length=1)],
+    idempotency_key: Annotated[str, Form()] = "",
+    csrf_token: Annotated[str, Form()] = "",
+    confirm: Annotated[str | None, Form()] = None,
+) -> RedirectResponse:
+    """Apply a staged membership proposal as the person pressing the button."""
+    _human(actor)
+    _require_form(
+        request, actor, proposal_id, _CONFIRM_MEMBER_PROPOSAL, csrf_token, idempotency_key, confirm
+    )
+    confirm_member_proposal(session, actor=actor, proposal_id=proposal_id, expected_digest=digest)
+    session.commit()
+    return RedirectResponse(f"/review/member-proposals/{proposal_id}", status_code=303)
+
+
+@router.post("/member-proposals/{proposal_id}/withdraw")
+def withdraw_member_proposal_route(
+    request: Request,
+    proposal_id: uuid.UUID,
+    actor: ActorDep,
+    session: SessionDep,
+    reason: Annotated[str, Form(min_length=1)],
+    idempotency_key: Annotated[str, Form()] = "",
+    csrf_token: Annotated[str, Form()] = "",
+    confirm: Annotated[str | None, Form()] = None,
+) -> RedirectResponse:
+    """Withdraw a staged membership proposal, with the person's reason."""
+    _human(actor)
+    _require_form(
+        request, actor, proposal_id, _WITHDRAW_MEMBER_PROPOSAL, csrf_token, idempotency_key, confirm
+    )
+    withdraw_member_proposal(session, actor=actor, proposal_id=proposal_id, reason=reason)
+    session.commit()
+    return RedirectResponse(f"/review/member-proposals/{proposal_id}", status_code=303)
 
 
 @router.get("/decomposition-proposals/{proposal_id}", response_class=HTMLResponse)

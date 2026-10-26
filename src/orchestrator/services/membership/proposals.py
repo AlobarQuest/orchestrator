@@ -9,20 +9,23 @@ import hashlib
 import json
 import re
 import uuid
-from typing import Final
+from datetime import UTC, datetime
+from typing import Any, Final
 
-from sqlalchemy import func, select, text
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import (
+    MEMBER_SERVICES,
+    Event,
     SdsMember,
     SdsMemberApp,
     SdsMemberGrant,
     SdsMemberProposal,
 )
-from orchestrator.services.membership.changes import MemberChange, MemberProposalBody
+from orchestrator.services.membership.changes import GrantChange, MemberChange, MemberProposalBody
 
 # "MBR1": serializes concurrent stagings of one idempotency key, so the loser replays the winner
 # instead of meeting the unique constraint as an unhandled IntegrityError.
@@ -79,6 +82,285 @@ def stage_member_proposal(
     session.add(proposal)
     session.flush()
     return proposal
+
+
+def confirm_member_proposal(
+    session: Session,
+    *,
+    actor: ActorContext,
+    proposal_id: uuid.UUID,
+    expected_digest: str,
+) -> SdsMemberProposal:
+    """Apply a staged proposal as the confirming person: every change or none.
+
+    The digest is the one the person read on the page. Validation runs again against the members
+    as they stand now, so a proposal staged before another confirmation moved the record is
+    refused rather than applied blind.
+    """
+    _require_human(actor, "confirm")
+    proposal = _locked_staged(session, proposal_id)
+    if proposal.payload_digest != expected_digest:
+        raise DomainError(
+            "member_proposal_changed",
+            "the proposal is not the one that was read",
+            "reload the page and read it again",
+        )
+    body = MemberProposalBody.model_validate(proposal.payload)
+    validate_changes(session, body.changes)
+    for change in body.changes:
+        _apply_change(session, proposal, body, change, actor)
+    proposal.state = "confirmed"
+    proposal.decided_by = actor.actor_id
+    proposal.decided_at = datetime.now(UTC)
+    session.flush()
+    return proposal
+
+
+def withdraw_member_proposal(
+    session: Session, *, actor: ActorContext, proposal_id: uuid.UUID, reason: str
+) -> SdsMemberProposal:
+    """Retire a staged proposal a person decided against. It changes nothing in the record."""
+    _require_human(actor, "withdraw")
+    _require_text(reason, "reason")
+    proposal = _locked_staged(session, proposal_id)
+    proposal.state = "withdrawn"
+    proposal.decided_by = actor.actor_id
+    proposal.decided_at = datetime.now(UTC)
+    proposal.decision_reason = reason
+    session.flush()
+    return proposal
+
+
+def member_proposal(session: Session, proposal_id: uuid.UUID) -> SdsMemberProposal:
+    """The proposal row, or `member_proposal_not_found` (a 404)."""
+    proposal = session.get(SdsMemberProposal, proposal_id)
+    if proposal is None:
+        raise DomainError("member_proposal_not_found", "member proposal does not exist", None)
+    return proposal
+
+
+def proposal_preview(session: Session, proposal: SdsMemberProposal) -> list[dict[str, Any]]:
+    """Each change beside the member as it stands now, for the page a person reads before deciding.
+
+    A cell is `{"old", "new", "reason"}`; `new` is None where the change leaves a field alone.
+    """
+    body = MemberProposalBody.model_validate(proposal.payload)
+    rows = []
+    for change in body.changes:
+        member = session.scalar(
+            select(SdsMember).where(func.lower(SdsMember.repository) == change.repository.lower())
+        )
+        grants = (
+            {
+                g.service: g.state
+                for g in session.scalars(
+                    select(SdsMemberGrant).where(SdsMemberGrant.member_id == member.id)
+                )
+            }
+            if member is not None
+            else {}
+        )
+        apps = (
+            sorted(
+                session.scalars(
+                    select(SdsMemberApp.name).where(SdsMemberApp.member_id == member.id)
+                )
+            )
+            if member is not None
+            else []
+        )
+        rows.append(
+            {
+                "repository": change.repository,
+                "reason": change.reason,
+                "creates": member is None,
+                "fields": {
+                    name: {"old": getattr(member, name, None), "new": getattr(change, name)}
+                    for name in ("state", "owner", "working_copy", "machine_local")
+                },
+                "apps": {
+                    "old": apps,
+                    "new": None
+                    if change.apps is None
+                    else [f"{a.name} ({a.health_url}, {a.branch})" for a in change.apps],
+                },
+                "grants": {
+                    service: {
+                        "old": grants.get(service, "not_assessed" if member is None else None),
+                        "new": named.state if named is not None else None,
+                        "reason": named.reason if named is not None else None,
+                    }
+                    for service in MEMBER_SERVICES
+                    for named in [dict(change.grants).get(service)]
+                },
+            }
+        )
+    return rows
+
+
+def _require_human(actor: ActorContext, verb: str) -> None:
+    if actor.role is not ActorRole.HUMAN or not actor.actor_id:
+        raise DomainError(
+            "human_actor_required",
+            f"a membership proposal is decided by a person, not to {verb} by a machine",
+            "decide it from /review/member-proposals/{id}",
+        )
+
+
+def _locked_staged(session: Session, proposal_id: uuid.UUID) -> SdsMemberProposal:
+    """The row under FOR UPDATE, re-read so a press that waited on the lock sees the new state."""
+    proposal = session.scalar(
+        select(SdsMemberProposal)
+        .where(SdsMemberProposal.id == proposal_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if proposal is None:
+        raise DomainError("member_proposal_not_found", "member proposal does not exist", None)
+    if proposal.state != "staged":
+        raise DomainError(
+            "member_proposal_not_staged",
+            f"a {proposal.state} member proposal cannot be decided again",
+            None,
+        )
+    return proposal
+
+
+def _apply_change(
+    session: Session,
+    proposal: SdsMemberProposal,
+    body: MemberProposalBody,
+    change: MemberChange,
+    actor: ActorContext,
+) -> None:
+    member = session.scalar(
+        select(SdsMember).where(func.lower(SdsMember.repository) == change.repository.lower())
+    )
+    created = member is None
+    fields: dict[str, Any] = {}
+    now = datetime.now(UTC)
+    if member is None:
+        # validate_changes guarantees a creation names both.
+        assert change.state is not None and change.owner is not None
+        member = SdsMember(
+            repository=change.repository,
+            owner=change.owner,
+            state=change.state,
+            working_copy=change.working_copy,
+            machine_local=bool(change.machine_local),
+            state_changed_by=actor.actor_id,
+            state_reason=change.reason,
+        )
+        session.add(member)
+        session.flush()
+        fields = {
+            name: {"old": None, "new": getattr(member, name)}
+            for name in ("state", "owner", "working_copy", "machine_local")
+        }
+    else:
+        for name in ("state", "owner", "working_copy", "machine_local"):
+            new = getattr(change, name)
+            old = getattr(member, name)
+            if new is not None and new != old:
+                fields[name] = {"old": old, "new": new}
+                setattr(member, name, new)
+        if "state" in fields:
+            member.state_changed_by = actor.actor_id
+            member.state_reason = change.reason
+        if fields:
+            member.updated_at = now
+    grants = _apply_grants(
+        session, member, change, created=created, seeded=body.seeded, actor=actor, now=now
+    )
+    apps = _replace_apps(session, member, change)
+    if apps is not None and not created:
+        member.updated_at = now
+    session.add(
+        Event(
+            actor_id=actor.actor_id,
+            action="member.created" if created else "member.changed",
+            subject_type="sds_member",
+            subject_id=member.id,
+            payload={
+                "proposal_id": str(proposal.id),
+                "repository": member.repository,
+                "reason": change.reason,
+                "fields": fields,
+                "grants": grants,
+                "apps": apps,
+            },
+            correlation_id=proposal.id,
+            idempotency_key=f"member-proposal:{proposal.id}:{member.id}",
+        )
+    )
+    session.flush()
+
+
+def _apply_grants(
+    session: Session,
+    member: SdsMember,
+    change: MemberChange,
+    *,
+    created: bool,
+    seeded: bool,
+    actor: ActorContext,
+    now: datetime,
+) -> dict[str, Any]:
+    """Write the grants a change names; a new member also gets every other service `not_assessed`,
+    so each member always has one row per service."""
+    grants: dict[str, Any] = {}
+    existing = {
+        row.service: row
+        for row in session.scalars(
+            select(SdsMemberGrant).where(SdsMemberGrant.member_id == member.id)
+        )
+    }
+    named_grants: dict[str, GrantChange] = {str(k): v for k, v in change.grants.items()}
+    for service in MEMBER_SERVICES:
+        named = named_grants.get(service)
+        if named is None and not created:
+            continue
+        state = named.state if named is not None else "not_assessed"
+        reason = named.reason if named is not None else "not assessed at creation"
+        row = existing.get(service)
+        if row is None:
+            session.add(
+                SdsMemberGrant(
+                    member_id=member.id,
+                    service=service,
+                    state=state,
+                    seeded=seeded,
+                    set_by=actor.actor_id,
+                    reason=reason,
+                    set_at=now,
+                )
+            )
+            grants[service] = {"old": None, "new": state, "reason": reason}
+        elif row.state != state or row.reason != reason:
+            grants[service] = {"old": row.state, "new": state, "reason": reason}
+            row.state, row.reason = state, reason
+            row.seeded, row.set_by, row.set_at = seeded, actor.actor_id, now
+    return grants
+
+
+def _replace_apps(
+    session: Session, member: SdsMember, change: MemberChange
+) -> dict[str, list[str]] | None:
+    """Replace the member's app list with the change's; `None` when the change leaves it alone."""
+    if change.apps is None:
+        return None
+    old = list(
+        session.scalars(select(SdsMemberApp.name).where(SdsMemberApp.member_id == member.id))
+    )
+    session.execute(delete(SdsMemberApp).where(SdsMemberApp.member_id == member.id))
+    session.flush()
+    session.add_all(
+        SdsMemberApp(
+            member_id=member.id, name=app.name, health_url=str(app.health_url), branch=app.branch
+        )
+        for app in change.apps
+    )
+    return {"old": sorted(old), "new": sorted(app.name for app in change.apps)}
 
 
 def validate_changes(session: Session, changes: list[MemberChange]) -> None:

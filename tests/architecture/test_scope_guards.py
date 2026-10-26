@@ -115,6 +115,8 @@ def test_production_post_route_inventory_is_explicit() -> None:
         "/review/intakes",
         "/review/staged-intakes/{staged_id}/confirm",
         "/review/staged-intakes/{staged_id}/withdraw",
+        "/review/member-proposals/{proposal_id}/confirm",
+        "/review/member-proposals/{proposal_id}/withdraw",
         "/review/units/{unit_id}/approval",
         "/review/units/{unit_id}/authority-approval",
         "/review/units/{unit_id}/review",
