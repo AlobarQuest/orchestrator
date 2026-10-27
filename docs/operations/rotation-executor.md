@@ -71,6 +71,23 @@ it never fails a unit. A pass that can't read the ledger logs `acts_unread` and 
 rather than resolve every open alert. The alerts it has sent are kept in
 `<state_dir>/announced-acts.json`; losing that file leaves an alert open until a person closes it.
 
+## A person's revoke is seen
+
+Where a plan has a person revoke the old value, the unit after the revoke (`confirm`) waits,
+unclaimed, until a fresh probe of the old value is refused beside a refused known-bad control
+(`revokes.py`, ADR-0055 amendment 15). While the old value still answers live, each pass sends a
+"Revoke the old … value" alert (see "When a rotation waits on you"), which is first sent only
+once `verify` completed, so it can't come early.
+
+A type whose old value keeps working for a while after the revoke declares how long
+(`Adapter.revoke_settles`: 75 minutes for a BWS machine token). The unit waits that long from the
+later of when the executor first saw the refusal and when a person recorded the revoke, for a
+decomposition that still holds the revoke as a human act. The first sighting is kept in
+`<state_dir>/revokes-observed.json`; losing it restarts the wait, never shortens it.
+
+A new decomposition carries no `external_system` dependency for a revoke: `confirm` depends only
+on `verify`.
+
 ## Decompose a rotation
 
 Each credential's plan (see "The plan a credential runs") fixes its decomposition. For each
@@ -631,13 +648,14 @@ The `bws-machine-token` adapter (`adapters/bws_machine_token.py`) runs these seg
    old value.
 3. **`verify`** (AC-004) reads every item back. It waits, unclaimed, until each scheduled reader
    has run since the switch, then proves the old token still logs in.
-4. **A human act revokes the old token** in the web app. Revoke it only after `verify` completes,
-   and resolve the act only after revoking: `confirm`'s 75 minutes count from the resolution.
+4. **A person revokes the old token** in the web app, once `verify` completes; an alert says when.
    For a token a long-running process holds (the infraops MCP server holds `ops-mini`'s), end
    every process started before the switch first: for the MCP server, every Claude Code session
-   started before `store`. Resolving the act attests it.
-5. **`confirm`** (AC-005) proves the old token refused and the new one live. Then it deletes the
-   staging and quarantine items.
+   started before `store`. Nothing needs recording: `confirm` sees the revoke (see "A person's
+   revoke is seen"). A decomposition approved with the revoke as a human act still has it to
+   resolve at `/review`, after revoking.
+5. **`confirm`** (AC-005) waits 75 minutes from the revoke being seen, then proves the old token
+   refused and the new one live, and deletes the staging and quarantine items.
 
 The probe is a fresh login: a new SDK client in a child process, with an empty throwaway `HOME`
 and the token on stdin.

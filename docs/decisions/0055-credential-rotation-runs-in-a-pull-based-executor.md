@@ -1876,3 +1876,14 @@ each a working system on its own:
      packages approved with a human mint act.
 
 New decompositions carry no `external_system` dependency for a mint or a revoke.
+
+### As built: increment 3 (2026-10-27)
+
+- **3a, notifications:** both instances announce every pending `external_system` act on their own
+  units, read from the status ledger, so today's decompositions are covered too. Each instance is
+  its own alert-hub sender (`rotation-executor`, `rotation-executor-keychain`); the path was
+  proved end to end from both on 2026-10-27.
+- **3b, the observed revoke:** the first sighting of the refusal is kept in the executor's state
+  directory, not beside staging and quarantine as the design said: it is not a secret, and a
+  store item would need `confirm_dead`'s cleanup changed. A lost record only lengthens the wait.
+

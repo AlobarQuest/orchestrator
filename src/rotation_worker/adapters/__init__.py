@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Final
 
@@ -73,6 +73,9 @@ class Adapter:
     wait: WaitReason | None = None
     # The units that wait, unclaimed, while another rotation is mid-overlap (`overlaps.py`).
     overlap_waits: frozenset[str] = frozenset()
+    # How long the old value may keep working after a person's revoke: the unit after the revoke
+    # waits this long from when the revoke was seen (`revokes.py`).
+    revoke_settles: timedelta = timedelta(0)
     # A credential type's: which steps its provider does by machine, from which each
     # credential's plan is derived (`plans.derive`, ADR-0055 amendment 15). `None` for a name
     # that pins one fixed plan. A type's `plan` is the one its packages approved before
@@ -158,6 +161,7 @@ ADAPTERS: Final[dict[str, Adapter]] = {
         store_kind="keychain",
         wait=bws_machine_token.wait_reason,
         overlap_waits=frozenset({"store"}),
+        revoke_settles=bws_machine_token.REVOKE_SETTLES,
         capabilities=Capabilities(machine_mint=False, machine_revoke=False),
     ),
     change_manager.ATTESTED_NAME: Adapter(

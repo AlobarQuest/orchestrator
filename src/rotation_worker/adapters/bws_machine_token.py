@@ -17,8 +17,8 @@ Keychain instance of the executor, on the machine whose Keychain holds the token
 * **The `verify` unit gates the person's revoke**, as the Bitbucket plan's does, and proves the
   old value live just before it.
 * **Confirm-dead waits out the exposure window.** A session that logged in before the revoke
-  keeps reading, so `confirm` is claimed no earlier than `REVOKE_SETTLES` after the person
-  recorded the revoke.
+  keeps reading, so `confirm` is claimed no earlier than `REVOKE_SETTLES` after the executor saw
+  the old token refused, or after the person recorded the revoke if later (`revokes.py`).
 * **Switches wait out the night.** The scheduled lanes read these tokens between 02:00 and
   07:35 New York time, so the `store` unit isn't claimed then.
 """
@@ -99,25 +99,7 @@ def wait_reason(unit: UnitPlan, history: Sequence[Mapping[str, Any]], now: datet
         local = now.astimezone(QUIET_ZONE).time()
         if QUIET_START <= local < QUIET_END:
             return "the scheduled lanes read these tokens until 07:35 New York time"
-    if unit.name == "confirm":
-        revoked = _revoked_at(history)
-        if revoked is None:
-            return "no revoke is recorded yet"
-        if now < revoked + REVOKE_SETTLES:
-            return f"a session from before the revoke may read until {revoked + REVOKE_SETTLES}"
     return None
-
-
-def _revoked_at(history: Sequence[Mapping[str, Any]]) -> datetime | None:
-    # The confirm unit's one human act is the revoke; a completed unit it waited on resolves
-    # with a `reason`, never a `command`.
-    found = [
-        datetime.fromisoformat(str(event["occurred_at"]))
-        for event in history
-        if event.get("action") == "dependency.resolved"
-        and ((event.get("payload") or {}).get("command") or {}).get("status") == "satisfied"
-    ]
-    return max(found) if found else None
 
 
 class BwsMachineTokenProvider:

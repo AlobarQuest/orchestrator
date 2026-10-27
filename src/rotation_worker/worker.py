@@ -65,6 +65,7 @@ from rotation_worker.readers import (
     ReadUnavailable,
 )
 from rotation_worker.registry import RegistryError, find_credential
+from rotation_worker.revokes import STILL_LIVE, ObservedRevokes, person_revokes_before, revoke_wait
 from rotation_worker.secret_store import SecretStore, StoreError
 from rotation_worker.values import Fingerprint, scrub
 
@@ -108,9 +109,11 @@ class Setup:
 def run_pass(setup: Setup) -> int:
     """Work every ready rotation unit once. Returns how many it submitted."""
     submitted = 0
+    # Acts the executor's own waits found due this pass (a revoke not yet seen).
+    due: dict[str, Act] = {}
     for unit_id in setup.client.ready_units():
         try:
-            submitted += _take(setup, unit_id)
+            submitted += _take(setup, unit_id, due)
         except TRANSIENT as error:
             # Nothing was decided about the unit: a claim refused (a shut window, a version that
             # moved), or a service that didn't answer. The next pass asks again.
@@ -122,7 +125,8 @@ def run_pass(setup: Setup) -> int:
             LOG.error("unit_not_worked", extra={"unit": unit_id, "reason": reason})
     if setup.notifier is not None:
         try:
-            setup.notifier.announce(*waiting_acts(setup))
+            acts, unread = waiting_acts(setup)
+            setup.notifier.announce({**acts, **due}, unread)
         except Exception as error:
             # An unread ledger says nothing about what is pending: announce nothing this pass,
             # rather than resolve every open alert. Never fails the pass.
@@ -168,7 +172,7 @@ def waiting_acts(setup: Setup) -> tuple[dict[str, Act], set[str]]:
     return acts, unread
 
 
-def _take(setup: Setup, unit_id: str) -> int:
+def _take(setup: Setup, unit_id: str, due: dict[str, Act] | None = None) -> int:
     unit = setup.client.unit(unit_id)
     if not is_rotation_unit(unit) or not _ours(setup, unit):
         return 0
@@ -195,6 +199,7 @@ def _take(setup: Setup, unit_id: str) -> int:
         return 0
     if (
         _adapter_waits(setup, approved, unit_id)
+        or _revoke_waits(setup, approved, unit_id, due if due is not None else {})
         or _overlap_waits(setup, approved, unit)
         or _restart_waits(setup, approved, held, unit_id)
     ):
@@ -299,6 +304,41 @@ def _adapter_waits(setup: Setup, approved: Approved, unit_id: str) -> bool:
     if reason is not None:
         LOG.info("unit_waiting", extra={"unit": unit_id, "reason": reason})
     return reason is not None
+
+
+def _revoke_waits(setup: Setup, approved: Approved, unit_id: str, due: dict[str, Act]) -> bool:
+    """Whether the unit after a person's revoke waits for the revoke to be seen, or for the old
+    value's sessions to end; a revoke not yet seen is announced (`revokes.py`)."""
+    if not person_revokes_before(approved.plan, approved.unit):
+        return False
+    rotation = approved.rotation
+    try:
+        quarantine = setup.store.find(rotation.work_project_id, rotation.quarantine_key)
+        old = setup.store.read(quarantine.id) if quarantine is not None else None
+        reason = revoke_wait(
+            _provider(setup, approved),
+            old,
+            ObservedRevokes(setup.state_dir),
+            f"{rotation.credential_id}/{rotation.occurrence}",
+            setup.client.history(unit_id),
+            approved.adapter.revoke_settles,
+            _now(),
+        )
+    except (*REFUSALS, StoreError, ConfigError) as error:
+        reason = f"the revoke can't be looked for: {scrub(str(error))}"
+    if reason is None:
+        return False
+    LOG.info("unit_waiting", extra={"unit": unit_id, "reason": reason})
+    if reason == STILL_LIVE:
+        key = f"rotation-revoke:{unit_id}"
+        due[key] = Act(
+            key,
+            f"Revoke the old {rotation.credential_id} value"[:TITLE_LIMIT],
+            "Every consumer has switched to the new value. Revoke the old one in its provider's "
+            "console; there is nothing to record, the executor sees the revoke itself.",
+            f"{_REVIEW}/{unit_id}",
+        )
+    return True
 
 
 def _overlap_waits(setup: Setup, approved: Approved, unit: Mapping[str, Any]) -> bool:
