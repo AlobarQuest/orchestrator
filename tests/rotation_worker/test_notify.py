@@ -12,6 +12,7 @@ import pytest
 
 from rotation_worker.contract import ContractError
 from rotation_worker.notify import ALERTS, Act, Notifier
+from rotation_worker.orchestrator_client import OrchestratorError
 from rotation_worker.secret_store import StoreError
 from rotation_worker.values import Value
 from rotation_worker.worker import Setup, run_pass, waiting_acts
@@ -37,7 +38,12 @@ class Hub:
         return Notifier(lambda: Value(TOKEN), state, httpx.MockTransport(self))
 
 
-ACT = Act("rotation-act:d1", "A rotation waits on you: x-confirm", "Revoke the old token.")
+ACT = Act(
+    "rotation-act:d1",
+    "A rotation waits on you: x-confirm",
+    "Revoke the old token.",
+    "https://sds.alobar.net/review/units/x",
+)
 
 
 def test_a_waiting_act_fires_with_the_sender_token_and_resolves_once_done(tmp_path: Path) -> None:
@@ -51,6 +57,7 @@ def test_a_waiting_act_fires_with_the_sender_token_and_resolves_once_done(tmp_pa
             "status": "firing",
             "title": "A rotation waits on you: x-confirm",
             "message": "Revoke the old token.",
+            "link": "https://sds.alobar.net/review/units/x",
         }
     ]
     assert hub.headers[0]["Authorization"] == f"Bearer {TOKEN}"
@@ -145,8 +152,16 @@ class Ledger:
         return []
 
 
-def _act(dependency: str, ref: str) -> dict[str, Any]:
-    return {"dependency_id": dependency, "kind": "external_system", "external_ref": ref}
+def _act(
+    dependency: str, ref: str | None, status: str = "pending", condition: str = "satisfied"
+) -> dict[str, Any]:
+    return {
+        "dependency_id": dependency,
+        "kind": "external_system",
+        "external_ref": ref,
+        "required_state_or_condition": condition,
+        "status": status,
+    }
 
 
 def _setup(ledger: object, notifier: Notifier | None = None, kind: str = "bws-secret") -> Setup:
@@ -162,17 +177,53 @@ def test_only_this_instance_s_rotation_units_blocked_on_a_person_are_announced()
     ledger.add("pat-store", "github-pat", _act("d1", "Devon mints a PAT"))
     ledger.add("bws-confirm", "bws-machine-token", _act("d2", "Devon revokes the token"))
     ledger.add("factory-unit", None, _act("d3", "someone approves"))
-    work = {"dependency_id": "d4", "kind": "work_unit", "external_ref": None}
+    work = {"dependency_id": "d4", "kind": "work_unit", "external_ref": None, "status": "pending"}
     ledger.add("pat-retire", "github-pat", work)
     ledger.add("canary-store", "fake")
-    acts = waiting_acts(_setup(ledger))
-    assert list(acts) == ["rotation-act:d1"]
-    assert acts["rotation-act:d1"].title == "A rotation waits on you: pat-store: title"
-    assert acts["rotation-act:d1"].message == (
-        "Devon mints a PAT. Record it on the unit's review page: "
-        "https://sds.alobar.net/review/units/pat-store"
+    ledger.add("misspelt", "github-pa", _act("d5", "an adapter nobody knows"))
+    ledger.add("pat-failed", "github-pat", _act("d6", "a recorded failure", status="failed"))
+    acts, unread = waiting_acts(_setup(ledger))
+    assert (list(acts), unread) == (["rotation-act:d1"], set())
+    assert acts["rotation-act:d1"] == Act(
+        "rotation-act:d1",
+        "A rotation waits on you: pat-store: title",
+        "Devon mints a PAT. Record it on the unit's review page.",
+        "https://sds.alobar.net/review/units/pat-store",
     )
-    assert list(waiting_acts(_setup(ledger, kind="keychain"))) == ["rotation-act:d2"]
+    assert list(waiting_acts(_setup(ledger, kind="keychain"))[0]) == ["rotation-act:d2"]
+
+
+def test_an_act_with_no_text_says_its_condition_and_a_long_title_fits() -> None:
+    ledger = Ledger()
+    ledger.add("x" * 300, "github-pat", _act("d1", None, condition="the PAT is minted"))
+    act = waiting_acts(_setup(ledger))[0]["rotation-act:d1"]
+    assert act.message.startswith("the PAT is minted.")
+    assert len(act.title) == 200
+
+
+def test_an_unreadable_unit_keeps_its_alert_open_and_others_are_announced(tmp_path: Path) -> None:
+    class Flaky(Ledger):
+        def unit(self, unit_id: str) -> dict[str, Any]:
+            if unit_id == "flaky":
+                raise OrchestratorError("the unit didn't answer")
+            return super().unit(unit_id)
+
+    ledger = Flaky()
+    ledger.add("flaky", "github-pat", _act("d1", "Devon mints a PAT"))
+    ledger.add("pat-store", "github-pat", _act("d2", "Devon mints another"))
+    hub = Hub()
+    notifier = hub.notifier(tmp_path)
+    notifier.announce({"rotation-act:d1": Act("rotation-act:d1", "t", "m")})
+    acts, unread = waiting_acts(_setup(ledger))
+    assert (list(acts), unread) == (["rotation-act:d2"], {"rotation-act:d1"})
+    notifier.announce(acts, unread)
+    notifier.announce({}, {"rotation-act:d1"})
+    # d1 was never resolved while unread; d2 was fired, then resolved once gone.
+    assert [(m["key"], m["status"]) for m in hub.sent] == [
+        ("rotation-act:d1", "firing"),
+        ("rotation-act:d2", "firing"),
+        ("rotation-act:d2", "resolved"),
+    ]
 
 
 def test_an_unread_ledger_announces_nothing_and_fails_no_pass(tmp_path: Path) -> None:
@@ -208,3 +259,9 @@ def test_the_client_may_send_nothing_but_an_alert(tmp_path: Path, method: str, p
     assert client is not None
     with pytest.raises(ContractError, match="alert-hub may not"):
         client.request(method, path)
+
+
+def test_a_state_file_that_can_t_be_written_raises_nothing(tmp_path: Path) -> None:
+    hub = Hub()
+    hub.notifier(tmp_path / "missing-directory").announce({ACT.key: ACT})
+    assert [m["status"] for m in hub.sent] == ["firing"]

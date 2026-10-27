@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Set
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
@@ -42,6 +42,7 @@ class Act:
     key: str
     title: str
     message: str
+    link: str | None = None
 
 
 class Notifier:
@@ -55,19 +56,24 @@ class Notifier:
         self._state = state_dir / STATE_FILE
         self._transport = transport
 
-    def announce(self, waiting: Mapping[str, Act]) -> None:
-        """Fire every act in `waiting`, and resolve every act announced before that isn't."""
+    def announce(self, waiting: Mapping[str, Act], unread: Set[str] = frozenset()) -> None:
+        """Fire every act in `waiting`, and resolve every act announced before that isn't,
+        except those in `unread`, whose units couldn't be read: they stay as they were."""
         announced = self._announced()
-        still_open = set()
+        still_open = set(announced & unread)
         client = self._client()
-        for key, act in waiting.items():
-            if self._send(client, act, "firing"):
-                still_open.add(key)
-            elif key in announced:
-                still_open.add(key)
-        for key in announced - waiting.keys():
-            if not self._send(client, Act(key, "Rotation act done", ""), "resolved"):
-                still_open.add(key)
+        try:
+            for key, act in waiting.items():
+                if self._send(client, act, "firing"):
+                    still_open.add(key)
+                elif key in announced:
+                    still_open.add(key)
+            for key in announced - waiting.keys() - unread:
+                if not self._send(client, Act(key, "Rotation act done", ""), "resolved"):
+                    still_open.add(key)
+        finally:
+            if client is not None:
+                client.close()
         self._save(still_open)
 
     def _client(self) -> ConfinedClient | None:
@@ -86,6 +92,8 @@ class Notifier:
             LOG.warning("notify_failed", extra={"reason": scrub(str(error))})
         except TransportFailure as failure:
             LOG.warning("notify_failed", extra={"reason": failure.error_type})
+        except ValueError as error:
+            LOG.warning("notify_failed", extra={"reason": type(error).__name__})
         return None
 
     def _send(self, client: ConfinedClient | None, act: Act, status: str) -> bool:
@@ -98,6 +106,7 @@ class Notifier:
             "status": status,
             "title": act.title,
             **({"message": act.message} if act.message else {}),
+            **({"link": act.link} if act.link else {}),
         }
         try:
             response = client.request("POST", ALERTS, json=payload)
@@ -118,4 +127,10 @@ class Notifier:
         return {key for key in keys if isinstance(key, str)} if isinstance(keys, list) else set()
 
     def _save(self, keys: set[str]) -> None:
-        self._state.write_text(json.dumps(sorted(keys)))
+        # Written aside and renamed, so a pass killed mid-write leaves the last whole record.
+        staged = self._state.with_suffix(".tmp")
+        try:
+            staged.write_text(json.dumps(sorted(keys)))
+            staged.replace(self._state)
+        except OSError as error:
+            LOG.warning("notify_state_unsaved", extra={"reason": scrub(str(error))})

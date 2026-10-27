@@ -60,7 +60,9 @@ At the end of each pass, each instance sends one alert-hub alert for every human
 rotation units waits on: a pending `external_system` dependency in the status ledger
 (`notify.py`, ADR-0055 amendment 15). The alert names the unit and the act's text, and links the
 unit's review page. It's keyed `rotation-act:<dependency id>` and resent each pass, so alert-hub
-repeats it until the act is resolved, and the next pass after that resolves it.
+repeats it until the act is resolved, and the next pass after that resolves it. To quiet one
+you'll do later, acknowledge it in alert-hub: a closed alert reopens on the next pass, because the
+act is still due. An act whose unit can't be read this pass is left as it was, never resolved.
 
 An instance sends nothing without `alert_hub_token_id`, its alert-hub sender token (the
 `rotation-executor` source's for the VM, in `Rotation / Admin`; `rotation-executor-keychain`'s for
