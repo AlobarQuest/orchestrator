@@ -24,8 +24,6 @@ set -uo pipefail
 
 # BWS UUIDs (values fetched at runtime; never stored in this repo). See .bws-secrets.toml.
 OBSERVER_BEARER_UUID="f793576f-e9aa-4f9d-8089-b4a000b9e2d5"   # orchestrator-observer OBSERVER bearer
-# The READ-scoped change-manager bearer, which reads the landing policy naming the inert population.
-CHANGE_MANAGER_READ_UUID="314f276d-55ca-4ddc-a24d-b4a3013508cd"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # ACTIVATION — a merged change is not live on this machine until the code is pulled. The estate's
@@ -56,17 +54,10 @@ source "$REPO_ROOT/scripts/sds-deadman.sh"
 sds_deadman_arm sds-landing-ledger --finding 2 "$@"
 
 
-# TWO BWS IDENTITIES, each read from its own Keychain item and never from an ambient
-# `BWS_ACCESS_TOKEN`: the observer bearer is in a project only the narrow `sds-operator` account can
-# read, and the change-manager bearer in one only the broad account can. One ambient value would
-# become both identities and neither fetch would work. The pattern is run-deploy-watcher.sh's.
-BROAD_IDENTITY="${BWS_ACCESS_TOKEN_BROAD:-$(/usr/bin/security find-generic-password \
-  -s 'Claude' -a 'BWS_ACCESS_TOKEN_VPS_BACKUP' -w 2>/dev/null || true)}"
-if [ -z "$BROAD_IDENTITY" ]; then
-  echo "FATAL: no BWS identity for the change-manager credential (Keychain service Claude," \
-       "account BWS_ACCESS_TOKEN_VPS_BACKUP)" >&2
-  exit 1
-fi
+# ONE BWS IDENTITY: the observer bearer is in a project only the narrow `sds-operator` account can
+# read, fetched from its own Keychain item and never from an ambient `BWS_ACCESS_TOKEN`. The
+# change-manager READ bearer this launcher used to fetch with a second, broad identity fed only the
+# scope derivation, which now asks the orchestrator for the member record.
 NARROW_IDENTITY="${BWS_ACCESS_TOKEN_SDS:-$(/usr/bin/security find-generic-password \
   -s 'Claude' -a 'BWS_ACCESS_TOKEN_SDS' -w 2>/dev/null || true)}"
 if [ -z "$NARROW_IDENTITY" ]; then
@@ -84,13 +75,8 @@ source "$REPO_ROOT/scripts/sds-bws.sh"
 
 LANDING_LEDGER_TOKEN="$(sds_bws_value "$OBSERVER_BEARER_UUID" "$NARROW_IDENTITY")"
 export LANDING_LEDGER_TOKEN
-CHANGE_MANAGER_READ_TOKEN="$(sds_bws_value "$CHANGE_MANAGER_READ_UUID" "$BROAD_IDENTITY")"
 if [ -z "$LANDING_LEDGER_TOKEN" ]; then
   echo "FATAL: could not read the orchestrator observer credential from BWS" >&2
-  exit 1
-fi
-if [ -z "$CHANGE_MANAGER_READ_TOKEN" ]; then
-  echo "FATAL: could not read the change-manager READ credential from BWS" >&2
   exit 1
 fi
 
@@ -107,18 +93,16 @@ if [ -z "${LANDING_LEDGER_GITHUB_TOKEN:-}" ]; then
   exit 1
 fi
 
-# THE REPOSITORIES ARE DERIVED, NOT LISTED. The ledger covers every repository this estate lands
-# code in: the factory targets (each repository's own `factory-target.toml`) and the inert
-# population (change-manager's landing policy, which the inert lane lands under). A hand list here
-# drifted from both.
+# THE REPOSITORIES ARE READ FROM THE MEMBER RECORD, NOT LISTED: the ledger covers the record's
+# `observed` population (docs/operations/membership.md). A hand list here drifted from the
+# declarations it was meant to follow.
 #
 # AN INCOMPLETE DERIVATION STILL RUNS, AND STILL SAYS SO. `sds_scope` exits 3 when part of the
 # answer couldn't be read, after printing every name it could determine. The passes below run on
 # those names, and the 3 is folded into this pass's answer, so the day is recorded where it can be
 # and the pass still reads as incomplete rather than clean. Any other non-zero code is the tool
 # failing (1) or not running at all (126, 127, 137), and is passed through verbatim.
-REPOSITORIES="$(cd "$REPO_ROOT" && SDS_SCOPE_GITHUB_TOKEN="$LANDING_LEDGER_GITHUB_TOKEN" \
-  SDS_SCOPE_CHANGE_MANAGER_TOKEN="$CHANGE_MANAGER_READ_TOKEN" \
+REPOSITORIES="$(cd "$REPO_ROOT" && SDS_SCOPE_ORCHESTRATOR_TOKEN="$LANDING_LEDGER_TOKEN" \
   "$REPO_ROOT/.venv/bin/python" -m scripts.sds_scope ledger)"
 scope_rc=$?
 if [ "$scope_rc" -ne 0 ] && [ "$scope_rc" -ne 3 ]; then
