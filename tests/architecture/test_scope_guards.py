@@ -51,6 +51,7 @@ def test_production_post_route_inventory_is_explicit() -> None:
         "/api/v1/package-intakes",
         # ADR-0006 amendment 1: SYSTEM stages, and only the /review confirm below registers.
         "/api/v1/staged-intakes",
+        "/api/v1/member-proposals",
         "/api/v1/package-intakes/{revision_id}/decomposition-proposals",
         "/api/v1/decomposition-proposals/{proposal_id}/require-revision",
         "/api/v1/work-units/{unit_id}/claim",
@@ -114,6 +115,8 @@ def test_production_post_route_inventory_is_explicit() -> None:
         "/review/intakes",
         "/review/staged-intakes/{staged_id}/confirm",
         "/review/staged-intakes/{staged_id}/withdraw",
+        "/review/member-proposals/{proposal_id}/confirm",
+        "/review/member-proposals/{proposal_id}/withdraw",
         "/review/units/{unit_id}/approval",
         "/review/units/{unit_id}/authority-approval",
         "/review/units/{unit_id}/review",
@@ -171,6 +174,7 @@ def test_production_get_route_inventory_is_explicit() -> None:
         # ADR-0055 amendment 9: the machine identities the process loaded, readable only by the
         # rotation executor, which rewrites the whole credentials setting when it rotates one.
         "/api/v1/m2m-identities",
+        "/api/v1/members",
         "/api/v1/held-credentials",
         "/api/v1/observations",
         "/api/v1/package-intakes/{revision_id}",

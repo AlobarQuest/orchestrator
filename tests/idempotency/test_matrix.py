@@ -46,6 +46,14 @@ NON_INGRESS_POST_ROUTES = frozenset(
         # submission finds the row withdrawn and returns it unchanged. Asserted in
         # tests/services/test_staged_intake.py by test_a_second_withdraw_changes_nothing.
         "/review/staged-intakes/{staged_id}/withdraw",
+        # Confirming locks the proposal row and applies it once; a second press finds it confirmed
+        # and is refused with nothing written. Asserted in tests/services/test_member_proposals.py
+        # by test_confirming_twice_is_refused.
+        "/review/member-proposals/{proposal_id}/confirm",
+        # Locks the row and stamps it withdrawn; a second press finds it decided and is refused
+        # (member_proposal_not_staged). Asserted in tests/services/test_member_proposals.py by
+        # test_withdrawal_needs_a_reason_and_writes_nothing_to_the_record, which withdraws twice.
+        "/review/member-proposals/{proposal_id}/withdraw",
         # Delegates to resolve_dependency_command, whose replay is covered by the
         # /api/v1/dependencies/{dependency_id}/resolve row. The key is minted per page render and
         # bound into the CSRF token, so a double-submitted form replays one key. Asserted in

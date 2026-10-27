@@ -244,6 +244,12 @@ COVERAGE_MATRIX: tuple[MatrixRow, ...] = (
         "tests/services/test_staged_intake.py::test_a_concurrent_duplicate_staging_writes_one_row",
     ),
     MatrixRow(
+        "member proposal",
+        "/api/v1/member-proposals",
+        ADVISORY_LOCK,
+        "tests/services/test_member_proposals.py::test_same_key_same_body_replays",
+    ),
+    MatrixRow(
         "decomposition proposal",
         "/api/v1/package-intakes/{revision_id}/decomposition-proposals",
         ROW_LOCK,

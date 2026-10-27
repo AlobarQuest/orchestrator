@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}Member proposal {{ proposal.id }}{% endblock %}
+{% block content %}
+{% set labels = {
+  "dependency_updates": "Dependency updates",
+  "security_patches": "Security patches",
+  "app_changes": "App changes",
+  "backups": "Backups",
+  "monitoring": "Monitoring",
+  "rollouts": "Deploys",
+  "credential_rotation": "Credential rotation"
+} %}
+{% macro cell(old, new) -%}
+  {%- if new is none -%}{{ old if old is not none else "—" }}{%- else -%}{{ old if old is not none else "—" }} → <strong>{{ new }}</strong>{%- endif -%}
+{%- endmacro %}
+<p><a href="/review">← Review queue</a></p>
+<h1>Membership proposal</h1>
+<p class="status">{{ summary }} · {{ proposal.state }}{% if seeded %} · seeded{% endif %}</p>
+<p class="meta">Staged by <code>{{ proposal.staged_by }}</code> at {{ proposal.staged_at }}. Nothing
+  changes in the member record until a person confirms it here.</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Repository</th><th>State</th><th>Owner</th><th>Links</th><th>Apps</th>
+      {% for service in services %}<th>{{ labels[service] }}</th>{% endfor %}
+    </tr>
+  </thead>
+  <tbody>
+  {% for change in changes %}
+    <tr>
+      <td><code>{{ change.repository }}</code>{% if change.creates %} (new){% endif %}<br>
+        <span class="meta">{{ change.reason }}</span></td>
+      <td>{{ cell(change.fields.state.old, change.fields.state.new) }}</td>
+      <td>{{ cell(change.fields.owner.old, change.fields.owner.new) }}</td>
+      <td>working copy: {{ cell(change.fields.working_copy.old, change.fields.working_copy.new) }}<br>
+        machine-local: {{ cell(change.fields.machine_local.old, change.fields.machine_local.new) }}</td>
+      <td>{% if change.apps.new is none %}{{ change.apps.old | join(", ") or "—" }}{% else %}{{ change.apps.old | join(", ") or "—" }} → <strong>{{ change.apps.new | join("; ") or "none" }}</strong>{% endif %}</td>
+      {% for service in services %}
+      {% set grant = change.grants[service] %}
+      <td>{{ cell(grant.old, grant.new) }}{% if grant.reason %}<br><span class="meta">{{ grant.reason }}</span>{% endif %}</td>
+      {% endfor %}
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+{% if csrf_tokens %}
+<form method="post" action="/review/member-proposals/{{ proposal.id }}/confirm">
+  <input type="hidden" name="csrf_token" value="{{ csrf_tokens.confirm_member_proposal }}">
+  <input type="hidden" name="idempotency_key" value="{{ idempotency_key }}">
+  <input type="hidden" name="digest" value="{{ digest }}">
+  <button type="submit" name="confirm" value="yes">Apply these changes</button>
+</form>
+<details>
+  <summary>Withdraw instead</summary>
+  <p class="meta">Withdrawing retires this proposal for good and changes nothing in the record.</p>
+  <form method="post" action="/review/member-proposals/{{ proposal.id }}/withdraw">
+    <input type="hidden" name="csrf_token" value="{{ csrf_tokens.withdraw_member_proposal }}">
+    <input type="hidden" name="idempotency_key" value="{{ idempotency_key }}">
+    <label for="withdraw-reason">Reason</label>
+    <textarea id="withdraw-reason" name="reason" required></textarea>
+    <button class="danger" type="submit" name="confirm" value="yes">Withdraw this proposal</button>
+  </form>
+</details>
+{% elif proposal.decided_by %}
+<p class="status">{{ proposal.state | capitalize }} by <code>{{ proposal.decided_by }}</code> at {{ proposal.decided_at }}{% if proposal.decision_reason %}: {{ proposal.decision_reason }}{% endif %}</p>
+{% endif %}
+{% endblock %}

@@ -993,3 +993,38 @@ def test_0040_adds_staged_package_intakes_with_its_checks_and_its_downgrade_drop
 
     command.upgrade(config, "head")
     assert "staged_package_intakes" in inspect(migrated_engine).get_table_names()
+
+
+def test_0042_creates_the_member_tables_and_refuses_bad_values(migrated_engine) -> None:
+    """The member tables' CHECKs and unique index hold at the database, not only in the service."""
+    config = alembic_config()
+    tables = {"sds_members", "sds_member_grants", "sds_member_apps", "sds_member_proposals"}
+    assert tables <= set(inspect(migrated_engine).get_table_names())
+
+    member = text(
+        "INSERT INTO sds_members (id, repository, owner, state, working_copy, machine_local, "
+        "state_changed_by, state_reason) VALUES (gen_random_uuid(), :repo, 'devon', :state, "
+        ":copy, :local, 'devon', 'because')"
+    )
+    good = {"repo": "AlobarQuest/brain", "state": "member", "copy": None, "local": False}
+    grant = text(
+        "INSERT INTO sds_member_grants (member_id, service, state, seeded, set_by, reason) "
+        "SELECT id, :service, 'granted', false, 'devon', 'because' FROM sds_members"
+    )
+    with migrated_engine.connect() as connection, connection.begin():
+        connection.execute(member, good)
+        for bad in (
+            {**good, "repo": "x/active", "state": "active"},
+            {**good, "repo": "x/local", "local": True},
+            {**good, "repo": "alobarquest/BRAIN"},
+        ):
+            with pytest.raises(IntegrityError), connection.begin_nested():
+                connection.execute(member, bad)
+        with pytest.raises(IntegrityError), connection.begin_nested():
+            connection.execute(grant, {"service": "deploys"})
+        connection.execute(grant, {"service": "rollouts"})
+
+    command.downgrade(config, "0041_rotation_proposer_obs")
+    assert not tables & set(inspect(migrated_engine).get_table_names())
+    command.upgrade(config, "head")
+    assert tables <= set(inspect(migrated_engine).get_table_names())

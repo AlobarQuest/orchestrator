@@ -13,6 +13,7 @@ from orchestrator.api.routes import (
     intake,
     landing,
     lifecycle,
+    membership,
     reconciliation,
     release,
     reporting,
@@ -45,6 +46,7 @@ API_ROUTERS = (
     reconciliation.router,
     verifier.router,
     rotation.router,
+    membership.router,
 )
 
 
