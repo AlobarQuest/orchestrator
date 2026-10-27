@@ -39,7 +39,6 @@ from rotation_worker.config import ConfigError
 from rotation_worker.contract import (
     HELD_KIND,
     ContractError,
-    HumanAct,
     Provider,
     Step,
     StepKind,
@@ -65,7 +64,7 @@ from rotation_worker.readers import (
     ReadUnavailable,
 )
 from rotation_worker.registry import RegistryError, find_credential
-from rotation_worker.revokes import STILL_LIVE, ObservedRevokes, person_revokes_before, revoke_wait
+from rotation_worker.revokes import ObservedRevokes, Revoke, person_revokes_beside, revoke_wait
 from rotation_worker.secret_store import SecretStore, StoreError
 from rotation_worker.values import Fingerprint, scrub
 
@@ -109,11 +108,10 @@ class Setup:
 def run_pass(setup: Setup) -> int:
     """Work every ready rotation unit once. Returns how many it submitted."""
     submitted = 0
-    # Acts the executor's own waits found due this pass (a revoke not yet seen).
-    due: dict[str, Act] = {}
+    found = PassActs()
     for unit_id in setup.client.ready_units():
         try:
-            submitted += _take(setup, unit_id, due)
+            submitted += _take(setup, unit_id, found)
         except TRANSIENT as error:
             # Nothing was decided about the unit: a claim refused (a shut window, a version that
             # moved), or a service that didn't answer. The next pass asks again.
@@ -123,10 +121,14 @@ def run_pass(setup: Setup) -> int:
             # on to the next unit rather than leaving every one behind it unworked.
             reason = scrub(f"{type(error).__name__}: {error}")
             LOG.error("unit_not_worked", extra={"unit": unit_id, "reason": reason})
+        else:
+            continue
+        # Nothing was learned of this unit's revoke: its alert stays as it was.
+        found.keep.add(_revoke_key(unit_id))
     if setup.notifier is not None:
         try:
             acts, unread = waiting_acts(setup)
-            setup.notifier.announce({**acts, **due}, unread)
+            setup.notifier.announce({**acts, **found.due}, unread | found.keep)
         except Exception as error:
             # An unread ledger says nothing about what is pending: announce nothing this pass,
             # rather than resolve every open alert. Never fails the pass.
@@ -172,7 +174,20 @@ def waiting_acts(setup: Setup) -> tuple[dict[str, Act], set[str]]:
     return acts, unread
 
 
-def _take(setup: Setup, unit_id: str, due: dict[str, Act] | None = None) -> int:
+@dataclass
+class PassActs:
+    """What the executor's own waits learned of a person's acts this pass: the acts now due, and
+    the keys of acts nothing could tell about, whose alerts stay as they were."""
+
+    due: dict[str, Act] = field(default_factory=dict)
+    keep: set[str] = field(default_factory=set)
+
+
+def _revoke_key(unit_id: str) -> str:
+    return f"rotation-revoke:{unit_id}"
+
+
+def _take(setup: Setup, unit_id: str, found: PassActs) -> int:
     unit = setup.client.unit(unit_id)
     if not is_rotation_unit(unit) or not _ours(setup, unit):
         return 0
@@ -197,16 +212,16 @@ def _take(setup: Setup, unit_id: str, due: dict[str, Act] | None = None) -> int:
     except REFUSALS as error:
         _refuse(setup, unit, scrub(str(error)))
         return 0
+    # Built before the claim: a provider that can't be built (an admin secret missing from the
+    # configuration) is the executor's fault, not the unit's, so no attempt is spent on it.
+    provider = _provider(setup, approved)
     if (
         _adapter_waits(setup, approved, unit_id)
-        or _revoke_waits(setup, approved, unit_id, due if due is not None else {})
+        or _revoke_waits(setup, approved, provider, unit_id, found)
         or _overlap_waits(setup, approved, unit)
         or _restart_waits(setup, approved, held, unit_id)
     ):
         return 0
-    # Built before the claim: a provider that can't be built (an admin secret missing from the
-    # configuration) is the executor's fault, not the unit's, so no attempt is spent on it.
-    provider = _provider(setup, approved)
     if isinstance(provider, GatedRestarts) and _writes(approved):
         try:
             busy = provider.readers_mid_run()
@@ -306,17 +321,20 @@ def _adapter_waits(setup: Setup, approved: Approved, unit_id: str) -> bool:
     return reason is not None
 
 
-def _revoke_waits(setup: Setup, approved: Approved, unit_id: str, due: dict[str, Act]) -> bool:
+def _revoke_waits(
+    setup: Setup, approved: Approved, provider: Provider, unit_id: str, found: PassActs
+) -> bool:
     """Whether the unit after a person's revoke waits for the revoke to be seen, or for the old
     value's sessions to end; a revoke not yet seen is announced (`revokes.py`)."""
-    if not person_revokes_before(approved.plan, approved.unit):
+    if not person_revokes_beside(approved.plan, approved.unit, -1):
         return False
     rotation = approved.rotation
+    key = _revoke_key(unit_id)
     try:
         quarantine = setup.store.find(rotation.work_project_id, rotation.quarantine_key)
         old = setup.store.read(quarantine.id) if quarantine is not None else None
-        reason = revoke_wait(
-            _provider(setup, approved),
+        state, reason = revoke_wait(
+            provider,
             old,
             ObservedRevokes(setup.state_dir),
             f"{rotation.credential_id}/{rotation.occurrence}",
@@ -324,20 +342,21 @@ def _revoke_waits(setup: Setup, approved: Approved, unit_id: str, due: dict[str,
             approved.adapter.revoke_settles,
             _now(),
         )
-    except (*REFUSALS, StoreError, ConfigError) as error:
-        reason = f"the revoke can't be looked for: {scrub(str(error))}"
-    if reason is None:
-        return False
-    LOG.info("unit_waiting", extra={"unit": unit_id, "reason": reason})
-    if reason == STILL_LIVE:
-        key = f"rotation-revoke:{unit_id}"
-        due[key] = Act(
+    except (*REFUSALS, StoreError) as error:
+        state, reason = Revoke.UNKNOWN, f"the revoke can't be looked for: {scrub(str(error))}"
+    if state is Revoke.LIVE:
+        found.due[key] = Act(
             key,
             f"Revoke the old {rotation.credential_id} value"[:TITLE_LIMIT],
             "Every consumer has switched to the new value. Revoke the old one in its provider's "
             "console; there is nothing to record, the executor sees the revoke itself.",
             f"{_REVIEW}/{unit_id}",
         )
+    elif state is Revoke.UNKNOWN:
+        found.keep.add(key)
+    if reason is None:
+        return False
+    LOG.info("unit_waiting", extra={"unit": unit_id, "reason": reason})
     return True
 
 
@@ -385,13 +404,7 @@ def _gates_retire(approved: Approved) -> bool:
 
 def _person_revokes_next(approved: Approved) -> bool:
     """Whether the segment straight after this unit is a person retiring the old value."""
-    segments = approved.plan.segments
-    following = segments[segments.index(approved.unit) + 1 :][:1]
-    return any(
-        isinstance(segment, HumanAct)
-        and any(step.kind is StepKind.RETIRE_OLD for step in segment.steps)
-        for segment in following
-    )
+    return person_revokes_beside(approved.plan, approved.unit, 1)
 
 
 def _consumer_reads(setup: Setup, approved: Approved) -> ConsumerReads:

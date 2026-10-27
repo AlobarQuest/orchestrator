@@ -17,6 +17,7 @@ import json
 import logging
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta
+from enum import StrEnum
 from pathlib import Path
 from typing import Any, Final
 
@@ -26,16 +27,28 @@ from rotation_worker.values import Value, scrub
 LOG = logging.getLogger("rotation_worker")
 STATE_FILE: Final = "revokes-observed.json"
 STILL_LIVE: Final = "the old value still answers live: it waits for the revoke"
+# A sighting older than this belongs to a rotation long finished.
+FORGET_AFTER: Final = timedelta(days=30)
 
 
-def person_revokes_before(plan: Plan, unit: UnitPlan) -> bool:
-    """Whether the segment straight before this unit is a person retiring the old value."""
+class Revoke(StrEnum):
+    """What a pass learned about a person's revoke."""
+
+    LIVE = "live"  # the old value still answers live: the revoke is due
+    SEEN = "seen"  # the old value is refused
+    UNKNOWN = "unknown"  # nothing could tell, this pass
+
+
+def person_revokes_beside(plan: Plan, unit: UnitPlan, offset: int) -> bool:
+    """Whether the segment `offset` away from this unit (1 after, -1 before) is a person retiring
+    the old value."""
     segments = plan.segments
-    before = segments[: segments.index(unit)][-1:]
-    return any(
-        isinstance(segment, HumanAct)
-        and any(step.kind is StepKind.RETIRE_OLD for step in segment.steps)
-        for segment in before
+    index = segments.index(unit) + offset
+    if not 0 <= index < len(segments):
+        return False
+    segment = segments[index]
+    return isinstance(segment, HumanAct) and any(
+        step.kind is StepKind.RETIRE_OLD for step in segment.steps
     )
 
 
@@ -60,17 +73,26 @@ class ObservedRevokes:
     def __init__(self, state_dir: Path) -> None:
         self._path = state_dir / STATE_FILE
 
-    def first(self, rotation: str, now: datetime) -> datetime:
+    def seen(self, rotation: str) -> datetime | None:
+        try:
+            return datetime.fromisoformat(self._read()[rotation])
+        except KeyError, TypeError, ValueError:
+            return None
+
+    def record(self, rotation: str, now: datetime) -> datetime:
         """The first sighting of `rotation`'s refusal, recording `now` if there is none yet."""
+        first = self.seen(rotation)
+        if first is not None:
+            return first
+        self._write({**self._read(), rotation: now.isoformat()}, now)
+        return now
+
+    def forget(self, rotation: str, now: datetime) -> None:
+        """A refusal the old value has since contradicted (it answered live): never count it."""
         seen = self._read()
         if rotation in seen:
-            try:
-                return datetime.fromisoformat(seen[rotation])
-            except TypeError, ValueError:
-                pass
-        seen[rotation] = now.isoformat()
-        self._write(seen)
-        return now
+            del seen[rotation]
+            self._write(seen, now)
 
     def _read(self) -> dict[str, Any]:
         try:
@@ -79,14 +101,26 @@ class ObservedRevokes:
             return {}
         return found if isinstance(found, dict) else {}
 
-    def _write(self, seen: Mapping[str, Any]) -> None:
+    def _write(self, seen: Mapping[str, Any], now: datetime) -> None:
+        kept = {
+            rotation: at
+            for rotation, at in seen.items()
+            if isinstance(at, str) and _recent(at, now)
+        }
         staged = self._path.with_suffix(".tmp")
         try:
-            staged.write_text(json.dumps(dict(seen), sort_keys=True))
+            staged.write_text(json.dumps(kept, sort_keys=True))
             staged.replace(self._path)
         except OSError as error:
             # Unrecorded, the next pass records its own sighting: the wait only grows.
             LOG.warning("revoke_unrecorded", extra={"reason": scrub(str(error))})
+
+
+def _recent(at: str, now: datetime) -> bool:
+    try:
+        return now - datetime.fromisoformat(at) < FORGET_AFTER
+    except TypeError, ValueError:
+        return False
 
 
 def revoke_wait(
@@ -97,24 +131,32 @@ def revoke_wait(
     history: Sequence[Mapping[str, Any]],
     settles: timedelta,
     now: datetime,
-) -> str | None:
-    """Why the unit after a person's revoke can't be claimed yet, or `None`.
+) -> tuple[Revoke, str | None]:
+    """What this pass knows of the revoke, and why the unit after it can't be claimed yet (`None`
+    once it can).
 
     `old` is the quarantined old value; without one there is nothing to probe, and the contract
-    decides what a missing quarantine means.
+    decides what a missing quarantine means. Inside a settling window already begun nothing is
+    probed; the probe that ends it is asked again before the claim.
     """
     if old is None:
-        return None
-    control = provider.probe(provider.known_bad())
-    if control not in provider.dead_statuses:
-        return f"the probe didn't refuse a known-bad value ({control})"
-    status = provider.probe(old)
-    if status == LIVE_STATUS:
-        return STILL_LIVE
-    if status not in provider.dead_statuses:
-        return f"the old value gave no answer to tell live from dead ({status})"
-    seen = first_seen.first(rotation, now)
-    since = max(seen, recorded_revoke(history) or seen)
-    if now < since + settles:
-        return f"a session from before the revoke may read until {since + settles}"
-    return None
+        return Revoke.SEEN, None
+    recorded = recorded_revoke(history)
+    first = first_seen.seen(rotation)
+    if first is None or now >= max(first, recorded or first) + settles:
+        control = provider.probe(provider.known_bad())
+        if control not in provider.dead_statuses:
+            return Revoke.UNKNOWN, f"the probe didn't refuse a known-bad value ({control})"
+        status = provider.probe(old)
+        if status == LIVE_STATUS:
+            first_seen.forget(rotation, now)
+            return Revoke.LIVE, STILL_LIVE
+        if status not in provider.dead_statuses:
+            return Revoke.UNKNOWN, f"the old value gave no answer to tell live from dead ({status})"
+        first = first_seen.record(rotation, now)
+    until = max(first, recorded or first) + settles
+    return Revoke.SEEN, _settling(until) if now < until else None
+
+
+def _settling(until: datetime) -> str:
+    return f"a session from before the revoke may read until {until}"

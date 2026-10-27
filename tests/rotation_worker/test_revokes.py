@@ -13,12 +13,23 @@ from rotation_worker import worker
 from rotation_worker.adapters import ADAPTERS, bitbucket, github_pat
 from rotation_worker.adapters import bws_machine_token as bws
 from rotation_worker.checks import Approved
-from rotation_worker.contract import Provider, Rotation
+from rotation_worker.contract import (
+    Actor,
+    HumanAct,
+    Plan,
+    Provider,
+    Rotation,
+    Step,
+    StepKind,
+    UnitPlan,
+)
 from rotation_worker.notify import Act
+from rotation_worker.orchestrator_client import OrchestratorError
 from rotation_worker.revokes import (
     STILL_LIVE,
     ObservedRevokes,
-    person_revokes_before,
+    Revoke,
+    person_revokes_beside,
     recorded_revoke,
     revoke_wait,
 )
@@ -53,7 +64,7 @@ def _wait(
     now: datetime = NOW,
     history: list[dict[str, Any]] | None = None,
     old: Value | None = OLD,
-) -> str | None:
+) -> tuple[Revoke, str | None]:
     provider = cast(Provider, probe)
     return revoke_wait(provider, old, seen, "c/2026-10-27", history or [], SETTLES, now)
 
@@ -64,32 +75,49 @@ def _recorded(at: datetime) -> dict[str, Any]:
 
 
 def test_only_a_unit_straight_after_a_person_s_revoke_looks_for_it() -> None:
-    assert person_revokes_before(bws.PLAN, bws.PLAN.unit("confirm"))
-    assert person_revokes_before(bitbucket.PLAN, bitbucket.PLAN.unit("confirm"))
-    assert not person_revokes_before(bws.PLAN, bws.PLAN.unit("verify"))
-    assert not person_revokes_before(bws.PLAN, bws.PLAN.unit("store"))
-    assert not person_revokes_before(github_pat.PLAN, github_pat.PLAN.unit("retire"))
+    assert person_revokes_beside(bws.PLAN, bws.PLAN.unit("confirm"), -1)
+    assert person_revokes_beside(bitbucket.PLAN, bitbucket.PLAN.unit("confirm"), -1)
+    assert not person_revokes_beside(bws.PLAN, bws.PLAN.unit("verify"), -1)
+    assert not person_revokes_beside(bws.PLAN, bws.PLAN.unit("store"), -1)
+    assert not person_revokes_beside(github_pat.PLAN, github_pat.PLAN.unit("retire"), -1)
+    # And the unit straight before the revoke is the one that gates it.
+    assert person_revokes_beside(bws.PLAN, bws.PLAN.unit("verify"), 1)
+    assert not person_revokes_beside(bws.PLAN, bws.PLAN.unit("confirm"), 1)
+
+
+def test_only_the_neighbouring_segment_counts() -> None:
+    confirm = UnitPlan("confirm", (Step(StepKind.CONFIRM_DEAD, Actor.MACHINE, "AC-001"),))
+    after = UnitPlan("after", (Step(StepKind.VERIFY_CONSUMERS, Actor.MACHINE, "AC-002"),))
+    revoke = HumanAct("revoke", (Step(StepKind.RETIRE_OLD, Actor.HUMAN),))
+    plan = Plan((revoke, confirm, after))
+    assert person_revokes_beside(plan, confirm, -1)
+    assert not person_revokes_beside(plan, after, -1)
+    # Off either end of the plan is no segment at all.
+    assert not person_revokes_beside(plan, after, 1)
+    assert not person_revokes_beside(Plan((confirm, revoke)), confirm, -1)
 
 
 def test_an_old_value_still_live_waits_for_the_revoke(tmp_path: Path) -> None:
     probe = Probe(old=200)
-    assert _wait(probe, ObservedRevokes(tmp_path)) == STILL_LIVE
+    assert _wait(probe, ObservedRevokes(tmp_path)) == (Revoke.LIVE, STILL_LIVE)
     # Beside the control, and nothing is recorded as seen.
     assert probe.asked == ["control", "old"]
-    assert not (tmp_path / "revokes-observed.json").exists()
+    assert ObservedRevokes(tmp_path).seen("c/2026-10-27") is None
 
 
 @pytest.mark.parametrize("control", [200, None, 503])
 def test_a_probe_that_doesn_t_refuse_its_control_proves_nothing(
     tmp_path: Path, control: int | None
 ) -> None:
-    reason = _wait(Probe(old=400, control=control), ObservedRevokes(tmp_path))
+    state, reason = _wait(Probe(old=400, control=control), ObservedRevokes(tmp_path))
+    assert state is Revoke.UNKNOWN
     assert reason == f"the probe didn't refuse a known-bad value ({control})"
 
 
 @pytest.mark.parametrize("old", [None, 503, 401])
-def test_an_answer_neither_live_nor_dead_waits(tmp_path: Path, old: int | None) -> None:
-    reason = _wait(Probe(old=old), ObservedRevokes(tmp_path))
+def test_an_answer_neither_live_nor_dead_tells_nothing(tmp_path: Path, old: int | None) -> None:
+    state, reason = _wait(Probe(old=old), ObservedRevokes(tmp_path))
+    assert state is Revoke.UNKNOWN
     assert reason == f"the old value gave no answer to tell live from dead ({old})"
 
 
@@ -97,44 +125,70 @@ def test_a_refused_old_value_waits_out_the_window_from_when_it_was_first_seen(
     tmp_path: Path,
 ) -> None:
     probe = Probe(old=400)
-    assert _wait(probe, ObservedRevokes(tmp_path)) is not None
+    assert _wait(probe, ObservedRevokes(tmp_path))[0] is Revoke.SEEN
     later = NOW + SETTLES - timedelta(seconds=1)
-    # A new instance reads the first sighting back: the window doesn't restart each pass.
-    assert _wait(probe, ObservedRevokes(tmp_path), later) is not None
-    assert _wait(probe, ObservedRevokes(tmp_path), NOW + SETTLES) is None
+    # A new instance reads the first sighting back: the window doesn't restart each pass, and
+    # nothing is probed inside it.
+    asked = len(probe.asked)
+    assert _wait(probe, ObservedRevokes(tmp_path), later) == (
+        Revoke.SEEN,
+        f"a session from before the revoke may read until {NOW + SETTLES}",
+    )
+    assert len(probe.asked) == asked
+    # The window's end is proved by a fresh probe, beside its control.
+    assert _wait(probe, ObservedRevokes(tmp_path), NOW + SETTLES) == (Revoke.SEEN, None)
+    assert probe.asked[asked:] == ["control", "old"]
+
+
+def test_a_refusal_the_old_value_later_contradicts_is_forgotten(tmp_path: Path) -> None:
+    seen = ObservedRevokes(tmp_path)
+    _wait(Probe(old=400), seen)
+    # Live again once the window ends: the earlier refusal never counts.
+    assert _wait(Probe(old=200), seen, NOW + SETTLES)[0] is Revoke.LIVE
+    assert seen.seen("c/2026-10-27") is None
+    revoked = NOW + timedelta(hours=5)
+    assert _wait(Probe(old=400), seen, revoked)[1] is not None
+    assert _wait(Probe(old=400), seen, revoked + SETTLES) == (Revoke.SEEN, None)
 
 
 def test_a_later_recorded_revoke_lengthens_the_wait(tmp_path: Path) -> None:
     probe = Probe(old=400)
     recorded = NOW + timedelta(minutes=30)
     history = [_recorded(recorded)]
-    assert _wait(probe, ObservedRevokes(tmp_path), NOW, history) is not None
-    assert _wait(probe, ObservedRevokes(tmp_path), NOW + SETTLES, history) is not None
-    assert _wait(probe, ObservedRevokes(tmp_path), recorded + SETTLES, history) is None
+    assert _wait(probe, ObservedRevokes(tmp_path), NOW, history)[1] is not None
+    assert _wait(probe, ObservedRevokes(tmp_path), NOW + SETTLES, history)[1] is not None
+    assert _wait(probe, ObservedRevokes(tmp_path), recorded + SETTLES, history)[1] is None
 
 
 def test_an_earlier_recorded_revoke_never_shortens_it(tmp_path: Path) -> None:
-    probe = Probe(old=400)
     history = [_recorded(NOW - timedelta(hours=3))]
-    assert _wait(probe, ObservedRevokes(tmp_path), NOW, history) is not None
+    assert _wait(Probe(old=400), ObservedRevokes(tmp_path), NOW, history)[1] is not None
 
 
 def test_a_lost_sighting_restarts_the_window(tmp_path: Path) -> None:
     probe = Probe(old=400)
     _wait(probe, ObservedRevokes(tmp_path))
     (tmp_path / "revokes-observed.json").write_text("{not json")
-    assert _wait(probe, ObservedRevokes(tmp_path), NOW + SETTLES) is not None
+    assert _wait(probe, ObservedRevokes(tmp_path), NOW + SETTLES)[1] is not None
+
+
+def test_sightings_of_long_finished_rotations_are_dropped(tmp_path: Path) -> None:
+    seen = ObservedRevokes(tmp_path)
+    seen.record("old/one", NOW)
+    seen.record("new/one", NOW + timedelta(days=31))
+    assert seen.seen("old/one") is None
+    assert seen.seen("new/one") == NOW + timedelta(days=31)
 
 
 def test_no_window_means_claimed_as_soon_as_the_refusal_is_seen(tmp_path: Path) -> None:
     provider = cast(Provider, Probe(old=400))
     seen = ObservedRevokes(tmp_path)
-    assert revoke_wait(provider, OLD, seen, "c/o", [], timedelta(0), NOW) is None
+    assert revoke_wait(provider, OLD, seen, "c/o", [], timedelta(0), NOW) == (Revoke.SEEN, None)
 
 
 def test_no_quarantine_leaves_it_to_the_contract(tmp_path: Path) -> None:
     probe = Probe(old=200)
-    assert _wait(probe, ObservedRevokes(tmp_path), old=None) is None
+    assert _wait(probe, ObservedRevokes(tmp_path), old=None) == (Revoke.SEEN, None)
     assert probe.asked == []
 
 
@@ -151,7 +205,7 @@ def test_only_a_person_s_recorded_act_counts_as_a_recorded_revoke() -> None:
 # ---- the worker's wait ------------------------------------------------------------------------
 
 
-def _approved(store: MemoryStore) -> Approved:
+def _approved(store: MemoryStore, unit: str = "confirm") -> Approved:
     rotation = Rotation("bws-tok-x", "2026-10-27-requested", "keeper", "work", ())
     store.put("work", rotation.quarantine_key, OLD)
     return cast(
@@ -159,79 +213,81 @@ def _approved(store: MemoryStore) -> Approved:
         SimpleNamespace(
             adapter=ADAPTERS[bws.NAME],
             plan=bws.PLAN,
-            unit=bws.PLAN.unit("confirm"),
+            unit=bws.PLAN.unit(unit),
             rotation=rotation,
             reads={},
         ),
     )
 
 
-def _setup(store: MemoryStore, tmp_path: Path) -> worker.Setup:
-    client = SimpleNamespace(history=lambda _unit: [])
-    return cast(worker.Setup, SimpleNamespace(store=store, state_dir=tmp_path, client=client))
+def _setup(store: MemoryStore, tmp_path: Path, client: object = None, **fields: Any) -> Any:
+    return SimpleNamespace(
+        store=store,
+        state_dir=tmp_path,
+        client=client or SimpleNamespace(history=lambda _unit: []),
+        **fields,
+    )
 
 
-def test_the_worker_announces_a_revoke_not_yet_seen(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def _revoke_waits(
+    tmp_path: Path, probe: Probe, unit: str = "confirm"
+) -> tuple[bool, worker.PassActs]:
     store = MemoryStore()
-    approved = _approved(store)
-    monkeypatch.setattr(worker, "_provider", lambda _setup, _approved: Probe(old=200))
-    due: dict[str, Act] = {}
-    assert worker._revoke_waits(_setup(store, tmp_path), approved, "u1", due) is True
-    assert list(due) == ["rotation-revoke:u1"]
-    assert due["rotation-revoke:u1"].title == "Revoke the old bws-tok-x value"
-    assert due["rotation-revoke:u1"].link == "https://sds.alobar.net/review/units/u1"
+    found = worker.PassActs()
+    setup = cast(worker.Setup, _setup(store, tmp_path))
+    waits = worker._revoke_waits(setup, _approved(store, unit), cast(Provider, probe), "u1", found)
+    return waits, found
 
 
-def test_the_worker_waits_silently_once_the_revoke_is_seen(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    store = MemoryStore()
-    approved = _approved(store)
-    monkeypatch.setattr(worker, "_provider", lambda _setup, _approved: Probe(old=400))
-    due: dict[str, Act] = {}
-    assert worker._revoke_waits(_setup(store, tmp_path), approved, "u1", due) is True
-    assert due == {}
+def test_the_worker_announces_a_revoke_not_yet_seen(tmp_path: Path) -> None:
+    waits, found = _revoke_waits(tmp_path, Probe(old=200))
+    assert waits is True
+    assert list(found.due) == ["rotation-revoke:u1"]
+    assert found.due["rotation-revoke:u1"].title == "Revoke the old bws-tok-x value"
+    assert found.due["rotation-revoke:u1"].link == "https://sds.alobar.net/review/units/u1"
+    assert found.keep == set()
+
+
+def test_the_worker_waits_without_an_alert_once_the_revoke_is_seen(tmp_path: Path) -> None:
+    waits, found = _revoke_waits(tmp_path, Probe(old=400))
+    assert waits is True
+    assert (found.due, found.keep) == ({}, set())
+
+
+def test_a_pass_that_can_t_tell_keeps_the_revoke_alert_as_it_was(tmp_path: Path) -> None:
+    waits, found = _revoke_waits(tmp_path, Probe(old=None))
+    assert waits is True
+    assert (found.due, found.keep) == ({}, {"rotation-revoke:u1"})
 
 
 def test_the_worker_doesn_t_look_for_a_revoke_before_a_unit_that_follows_none(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
-    store = MemoryStore()
-    approved = cast(
-        Approved, SimpleNamespace(**{**vars(_approved(store)), "unit": bws.PLAN.unit("verify")})
-    )
-    monkeypatch.setattr(worker, "_provider", lambda _setup, _approved: Probe(old=200))
-    assert worker._revoke_waits(_setup(store, tmp_path), approved, "u1", {}) is False
-
-
-def test_a_provider_that_can_t_be_built_waits_rather_than_fails(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from rotation_worker.config import ConfigError
-
-    def unbuildable(_setup: object, _approved: object) -> Provider:
-        raise ConfigError("no admin secret")
-
-    store = MemoryStore()
-    monkeypatch.setattr(worker, "_provider", unbuildable)
-    assert worker._revoke_waits(_setup(store, tmp_path), _approved(store), "u1", {}) is True
-
-
-def test_only_the_unit_straight_after_the_revoke_looks_for_it() -> None:
-    from rotation_worker.contract import Actor, HumanAct, Plan, Step, StepKind, UnitPlan
-
-    confirm = UnitPlan("confirm", (Step(StepKind.CONFIRM_DEAD, Actor.MACHINE, "AC-001"),))
-    after = UnitPlan("after", (Step(StepKind.VERIFY_CONSUMERS, Actor.MACHINE, "AC-002"),))
-    revoke = HumanAct("revoke", (Step(StepKind.RETIRE_OLD, Actor.HUMAN),))
-    plan = Plan((revoke, confirm, after))
-    assert person_revokes_before(plan, confirm)
-    assert not person_revokes_before(plan, after)
+    probe = Probe(old=200)
+    assert _revoke_waits(tmp_path, probe, unit="verify")[0] is False
+    assert probe.asked == []
 
 
 class KeychainMemory(MemoryStore):
     read_back_kind = "keychain"
+
+
+class Client:
+    def unit(self, unit_id: str) -> dict[str, Any]:
+        return {
+            "id": unit_id,
+            "work_package_revision_id": "r",
+            "authority": {"constraints": {"rotation_adapter": bws.NAME}},
+        }
+
+    def package_intake(self, revision: str) -> dict[str, Any]:
+        return {}
+
+    def history(self, unit_id: str) -> list[dict[str, Any]]:
+        return []
+
+    def claim(self, *arguments: Any) -> None:
+        raise AssertionError("a unit whose revoke isn't seen was claimed")
 
 
 def test_a_confirm_unit_whose_revoke_isn_t_seen_is_left_unclaimed_and_announced(
@@ -239,49 +295,30 @@ def test_a_confirm_unit_whose_revoke_isn_t_seen_is_left_unclaimed_and_announced(
 ) -> None:
     store = KeychainMemory()
     approved = _approved(store)
-
-    class Client:
-        def unit(self, unit_id: str) -> dict[str, Any]:
-            return {
-                "id": unit_id,
-                "work_package_revision_id": "r",
-                "authority": {"constraints": {"rotation_adapter": bws.NAME}},
-            }
-
-        def package_intake(self, revision: str) -> dict[str, Any]:
-            return {}
-
-        def history(self, unit_id: str) -> list[dict[str, Any]]:
-            return []
-
-        def claim(self, *arguments: Any) -> None:
-            raise AssertionError("a unit whose revoke isn't seen was claimed")
-
     monkeypatch.setattr(worker, "check_unit", lambda *_arguments: approved)
     monkeypatch.setattr(worker, "_held", lambda _setup, _approved: None)
     monkeypatch.setattr(worker, "_provider", lambda _setup, _approved: Probe(old=200))
-    setup = cast(
-        worker.Setup,
-        SimpleNamespace(
-            store=store, state_dir=tmp_path, client=Client(), mirror=None, work_project_id="work"
-        ),
-    )
-    due: dict[str, Act] = {}
-    assert worker._take(setup, "u1", due) == 0
-    assert list(due) == ["rotation-revoke:u1"]
+    setup = _setup(store, tmp_path, Client(), mirror=None, work_project_id="work")
+    found = worker.PassActs()
+    assert worker._take(cast(worker.Setup, setup), "u1", found) == 0
+    assert list(found.due) == ["rotation-revoke:u1"]
 
 
-def test_a_pass_announces_the_revokes_its_waits_found_due(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_pass_announces_its_waits_findings_and_keeps_what_it_couldn_t_tell(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     act = Act("rotation-revoke:u1", "Revoke the old x value", "m")
 
-    def take(_setup: object, _unit_id: str, due: dict[str, Act]) -> int:
-        due[act.key] = act
+    def take(_setup: object, unit_id: str, found: worker.PassActs) -> int:
+        if unit_id == "u3":
+            raise OrchestratorError("the unit didn't answer")
+        found.due[act.key] = act
+        found.keep.add("rotation-revoke:u2")
         return 0
 
     announced: list[tuple[dict[str, Act], set[str]]] = []
     notifier = SimpleNamespace(announce=lambda acts, unread: announced.append((acts, unread)))
-    client = SimpleNamespace(ready_units=lambda: ["u1"], active_units=lambda: [])
+    client = SimpleNamespace(ready_units=lambda: ["u1", "u3"], active_units=lambda: [])
     monkeypatch.setattr(worker, "_take", take)
-    setup = cast(worker.Setup, SimpleNamespace(client=client, notifier=notifier))
-    worker.run_pass(setup)
-    assert announced == [({act.key: act}, set())]
+    worker.run_pass(cast(worker.Setup, SimpleNamespace(client=client, notifier=notifier)))
+    assert announced == [({act.key: act}, {"rotation-revoke:u2", "rotation-revoke:u3"})]
