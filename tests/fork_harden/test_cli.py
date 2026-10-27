@@ -62,13 +62,17 @@ def test_the_command_exits_with_the_pass_code(
 ) -> None:
     monkeypatch.setattr(cli, "FORKS", (A,))
     monkeypatch.setattr(cli, "harden", _fake({"AlobarQuest/a": "held"}))
-    result = CliRunner().invoke(cli.app, ["run", "--push", "--cache", str(tmp_path)])
+    result = CliRunner().invoke(
+        cli.app, ["run", "--push", "--granted", "AlobarQuest/a", "--cache", str(tmp_path)]
+    )
     assert result.exit_code == cli.EXIT_HELD
     assert "AlobarQuest/a: held" in result.output
 
 
 def test_an_unknown_fork_is_refused(tmp_path: Path) -> None:
-    result = CliRunner().invoke(cli.app, ["run", "--fork", "x/y", "--cache", str(tmp_path)])
+    result = CliRunner().invoke(
+        cli.app, ["run", "--fork", "x/y", "--granted", "x/y", "--cache", str(tmp_path)]
+    )
     assert result.exit_code == 1
     assert "x/y has no hardening rule" in result.output
 
@@ -87,6 +91,81 @@ def test_a_path_that_is_not_utf8_is_printed_escaped(
 
     monkeypatch.setattr(cli, "FORKS", (A,))
     monkeypatch.setattr(cli, "harden", held)
-    result = CliRunner().invoke(cli.app, ["run", "--cache", str(tmp_path)])
+    result = CliRunner().invoke(
+        cli.app, ["run", "--granted", "AlobarQuest/a", "--cache", str(tmp_path)]
+    )
     assert result.exit_code == cli.EXIT_HELD
     assert "src/caf\\udce9.sh is not UTF-8 text" in result.output
+
+
+def _hardened_repositories(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    seen: list[str] = []
+
+    def fake_harden(repo: git.Repo, fork: Fork, *, push: bool) -> Outcome:
+        seen.append(fork.repository)
+        return Outcome(fork, "current")
+
+    monkeypatch.setattr(cli, "FORKS", (A, B))
+    monkeypatch.setattr(cli, "harden", fake_harden)
+    monkeypatch.setattr(git, "open_cache", lambda *_: None)
+    return seen
+
+
+def test_only_granted_forks_are_hardened(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    seen = _hardened_repositories(monkeypatch)
+    result = CliRunner().invoke(
+        cli.app, ["run", "--granted", "alobarquest/A", "--cache", str(tmp_path)]
+    )
+    assert seen == ["AlobarQuest/a"]
+    assert result.exit_code == cli.EXIT_UNREADABLE
+
+
+def test_an_ungranted_fork_is_skipped_and_exits_2(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    seen = _hardened_repositories(monkeypatch)
+    result = CliRunner().invoke(
+        cli.app, ["run", "--granted", "AlobarQuest/a", "--cache", str(tmp_path)]
+    )
+    assert seen == ["AlobarQuest/a"]
+    assert result.exit_code == cli.EXIT_UNREADABLE
+    assert "fork-harden: AlobarQuest/b is not granted security patches; skipped" in result.output
+
+
+def test_nothing_granted_hardens_nothing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    seen = _hardened_repositories(monkeypatch)
+    result = CliRunner().invoke(cli.app, ["run", "--cache", str(tmp_path)])
+    assert seen == []
+    assert result.exit_code == cli.EXIT_UNREADABLE
+
+
+def test_a_granted_name_without_rules_is_not_an_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    seen = _hardened_repositories(monkeypatch)
+    result = CliRunner().invoke(
+        cli.app,
+        [
+            "run",
+            "--granted", "AlobarQuest/a",
+            "--granted", "AlobarQuest/b",
+            "--granted", "AlobarQuest/rtk",
+            "--cache", str(tmp_path),
+        ],
+    )  # fmt: skip
+    assert seen == ["AlobarQuest/a", "AlobarQuest/b"]
+    assert result.exit_code == 0
+    assert "skipped" not in result.output
+
+
+def test_a_held_fork_outranks_a_skipped_one_and_the_skip_is_still_printed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(cli, "FORKS", (A, B))
+    monkeypatch.setattr(cli, "harden", _fake({"AlobarQuest/a": "held"}))
+    monkeypatch.setattr(git, "open_cache", lambda *_: None)
+    result = CliRunner().invoke(
+        cli.app, ["run", "--granted", "AlobarQuest/a", "--cache", str(tmp_path)]
+    )
+    assert result.exit_code == cli.EXIT_HELD
+    assert "fork-harden: AlobarQuest/b is not granted security patches; skipped" in result.output

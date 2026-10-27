@@ -284,7 +284,12 @@ def _apply_change(
     now = datetime.now(UTC)
     if member is None:
         # validate_changes guarantees a creation names both.
-        assert change.state is not None and change.owner is not None
+        if change.state is None or change.owner is None:
+            raise DomainError(
+                "member_creation_incomplete",
+                f"{change.repository} would be created without a state and an owner",
+                "name both",
+            )
         member = SdsMember(
             repository=change.repository,
             owner=change.owner,
@@ -504,11 +509,25 @@ def _check_apps_text(change: MemberChange) -> None:
         _require_text(app.branch, "app branch")
 
 
+_WORKING_COPY_SEGMENT: Final = re.compile(r"[A-Za-z0-9._-]+")
+
+
+def _is_one_segment(value: str) -> bool:
+    """The activation sweep joins the name into `$HOME/Projects/<name>`."""
+    return value not in {".", ".."} and _WORKING_COPY_SEGMENT.fullmatch(value) is not None
+
+
 def _check_working_copy(change: MemberChange, member: SdsMember | None) -> None:
     machine_local = change.machine_local
     if machine_local is None:
         machine_local = member.machine_local if member is not None else False
     working_copy = change.working_copy
+    if working_copy is not None and not _is_one_segment(working_copy):
+        raise DomainError(
+            "member_working_copy_invalid",
+            f"working copy {working_copy!r} is not a single directory name",
+            "name the directory under ~/Projects, not a path",
+        )
     if working_copy is None and member is not None:
         working_copy = member.working_copy
     if machine_local and not (working_copy and working_copy.strip()):

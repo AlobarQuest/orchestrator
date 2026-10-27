@@ -268,6 +268,12 @@ CLASSIFICATION: dict[str, Row] = {
         frozenset({"/api/v1/package-intakes"}),
         cli=frozenset({"emit-intake-payload"}),
     ),
+    "sds_members": Row(
+        Role.INTERNAL_LANE_ACTOR,
+        "ADR-0058: stages a proposed change to the SDS member record as SYSTEM, from a file a "
+        "person wrote. Staging changes no member; only a human confirmation on /review does",
+        frozenset({"/api/v1/member-proposals"}),
+    ),
     "rotation_verifier": Row(
         Role.INTERNAL_LANE_ACTOR,
         "ADR-0055 amendment 14: runs the orchestrator's verifier on each submitted rotation unit "
@@ -339,6 +345,11 @@ CLASSIFICATION: dict[str, Row] = {
         Role.NOT_AN_ORCHESTRATOR_WRITER,
         "ADR-0019 inc 4: proposes deploy change records to change-manager; the orchestrator is "
         "not its client",
+    ),
+    "membership_check": Row(
+        Role.NOT_AN_ORCHESTRATOR_WRITER,
+        "ADR-0058: compares the member record with the lists the lanes carry and reports; it only "
+        "reads the record, through sds_members' confined reader, and writes nothing anywhere",
     ),
     "estate_clients": Row(
         Role.NOT_AN_ORCHESTRATOR_WRITER,

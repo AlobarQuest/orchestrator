@@ -2,11 +2,11 @@
 # BOTH of ADR-0030's lanes, in one invocation over the operator machine's working copies.
 #
 #   sweep  one observation per enrolled working copy: what it will execute at its next start,
-#          and whether that is what was merged. Six checkouts, OBSERVER credential.
+#          and whether that is what was merged. One per member working copy, OBSERVER credential.
 #   bind   one release artifact binding per completed work unit whose landing this machine has
 #          actually pulled, AND the activation check that follows it: whether the artifact just
-#          bound is what the next start will execute. FOUR checkouts, SYSTEM credential -- see
-#          BINDABLE below for why the two hosted-application repositories are absent.
+#          bound is what the next start will execute. Only the machine-local members granted rollouts
+#          (`sds_scope bindable`), SYSTEM credential.
 #
 # THE ACTIVATION CHECK NEEDS NO NEW CREDENTIAL, and that is the answer to where it belongs. It is
 # recorded as a deployment observation, which only the SYSTEM actor may write -- and this lane
@@ -32,8 +32,8 @@
 #      WAITING is still not this: a unit whose landing is not yet pulled is the ordinary state
 #      between a unit completing and the next pull, and so is a SUPERSEDED artifact, whose window
 #      for being observed closed when HEAD moved past it.
-#   3  some checkout could not be measured, or a row could not be filed, so the answer is missing
-#      rather than clean. 3 outranks 2.
+#   3  some checkout could not be measured, the member record could not be read, or a row could
+#      not be filed, so the answer is missing rather than clean. 3 outranks 2.
 #
 # Usage:
 #   scripts/run-activation-sweep.sh [--dry-run]
@@ -51,77 +51,8 @@ set -uo pipefail
 OBSERVER_BEARER_UUID="f793576f-e9aa-4f9d-8089-b4a000b9e2d5"   # orchestrator-observer OBSERVER
 SYSTEM_BEARER_UUID="221a48d5-3f29-4898-b300-b4820140c880"     # orchestrator-system  SYSTEM
 
-# THE ENROLLED WORKING COPIES: the SDS targets. One condition, not two.
-#
-# CORRECTED 2026-08-24 on Devon's ruling. The list shipped with NINE entries under a rule --
-# "a repository is enrolled when its consumers begin a fresh process in the ordinary course" --
-# that NOBODY RATIFIED. ADR-0030 recorded that rule as Devon's; he decided only Q1 (watcher
-# first). Q2 was answered by HQ, which wrote "no decision needed from you"; the build session
-# then generalised HQ's list into that rule, which admitted `email-capture`, `FacelessTT` and
-# `~/.claude` -- none of them SDS repositories.
-#
-# WHAT THIS LIST IS NOT KEYED ON, since the answer changed under it on 2026-09-11 and the wrong
-# reading is the tidier one. It used to say membership WAS the factory-target declaration --
-# "`project-standards` declares `factory_target: false` and is therefore correctly absent;
-# `orchestrator` self-declares" -- and ADR-0015's amendment of that date made `orchestrator`
-# declare `factory_target = false` while leaving it on this list, which falsifies the rule as
-# stated. The two questions are genuinely different: the declaration answers MAY THE FACTORY BE
-# DISPATCHED WORK HERE, and this list answers WHOSE WORKING COPY ON THIS MACHINE IS WORTH
-# MEASURING AGAINST ITS UPSTREAM. A repository can be worth sweeping and be no target at all --
-# `orchestrator` is the proof, and eleven scheduled lanes run from its working copy.
-#
-# So the list is HAND-WRITTEN and the declaration does not derive it. `project-standards`'
-# absence is inherited from the 2026-08-24 pruning and now rests on nothing this comment can
-# state as a rule; it is a residual, not a decision, and the TODO below is where it is owed an
-# answer. Do NOT prune this list by the declaration: doing so drops `orchestrator` and silently
-# ends both the sweep and the machine-local release binding for the repository the lane was
-# built for.
-#
-# `orchestrator` IS ON THIS LIST, and it is on it for the working copy, not for its dispatch scope.
-# It was a factory target until 2026-09-11, not one until ADR-0015's amendment of 2026-10-07, and is
-# one again; this list stayed the same through all three, because what this sweep measures is the
-# state of a working copy against its upstream, which is true and useful for a repository whatever
-# its dispatch scope.
-#
-# An earlier draft of this list added a SECOND condition -- "something on this machine executes
-# from the working copy" -- and dropped `change-manager` and `brain` on it. That condition was
-# invented here and is not the estate's. It was also weaker than it looked: a build session's
-# first act is `git worktree add ... main`, which branches from the LOCAL default branch, so a
-# stale checkout of a hosted-application repository starts a session on stale code, and nothing
-# else watches those two. The measurement this sweep files is the state of a working copy
-# relative to its upstream, which is true and useful for every SDS target.
-#
-# TODO(scope-registry): this list is the FOURTH place the estate answers "which repos are in SDS
-# scope", after `factory-target.toml` (`PROJECT.md` frontmatter until 2026-09-11), the presence
-# of a caller workflow and `PROJECT.md`'s own `delivery_profile` -- and they already disagree.
-# ORCHESTRATOR_DISPATCH_ALLOWED_TARGET_REPOSITORIES was a fifth until 2026-09-15, when dispatch
-# admission began reading `factory-target.toml` instead (ADR-0015 amendment 4). It should be DERIVED
-# rather than written here; see the scope-registry spec. `project-standards`' absence above is
-# the first thing that derivation owes an answer for.
-CHECKOUTS=(
-  "$HOME/Projects/orchestrator"
-  "$HOME/Projects/intent-packages"
-  "$HOME/Projects/security-standards"
-  "$HOME/Projects/infraops-mcp-server"
-  "$HOME/Projects/change-manager"
-  "$HOME/Projects/brain"
-)
-
-# THE UNIT-CAUSED LANE'S CHECKOUTS ARE A STRICT SUBSET, and the two absentees are the whole point
-# of the distinction. `change-manager` and `brain` become live when a hosted application swaps a
-# container image -- the FIRST activation model, which already has its own release artifact with a
-# registry digest. Binding a machine-local artifact for either would assert that a working copy on
-# this machine is what serves them, which is false, and it is exactly the collapse the `kind`
-# discriminator exists to prevent. They are still SWEPT: what the sweep files is the state of a
-# working copy relative to its upstream, which is true and useful for every SDS target, and a
-# build session's `git worktree add ... main` branches from the LOCAL default branch whether or
-# not anything else runs from it.
-BINDABLE=(
-  "$HOME/Projects/orchestrator"
-  "$HOME/Projects/intent-packages"
-  "$HOME/Projects/security-standards"
-  "$HOME/Projects/infraops-mcp-server"
-)
+# THE ENROLLED WORKING COPIES come from the SDS member record (`sds_scope checkouts` and `bindable`),
+# not a list here; what each population means is in docs/operations/membership.md.
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # ACTIVATION — this job pulls itself before it runs, exactly as its siblings do (ADR-0031), and
@@ -130,7 +61,8 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # blind spot. Activation is best-effort and its failures are SILENT BY DESIGN -- the helper prints
 # one line and returns 0 whatever it finds -- so if it cannot pull, nothing is healed and the
 # sweep reports this checkout behind, which is the ADR-0031 control working. If it can pull, the
-# machine genuinely is current and saying so is true. The other eight are never touched.
+# machine genuinely is current and saying so is true. The population comes from the member record;
+# no working copy it does not name is ever touched.
 _SDS_ACTIVATE="$HOME/.claude/bin/activate-checkout.sh"
 if [ -r "$_SDS_ACTIVATE" ]; then
     # shellcheck source=/dev/null
@@ -193,16 +125,6 @@ if [ -z "${ACTIVATION_BIND_TOKEN:-}" ]; then
   exit 1
 fi
 
-TARGETS=()
-for path in "${CHECKOUTS[@]}"; do
-  TARGETS+=(--checkout "$path")
-done
-
-BIND_TARGETS=()
-for path in "${BINDABLE[@]}"; do
-  BIND_TARGETS+=(--checkout "$path")
-done
-
 # THE WORST OUTCOME WINS, and an UNRECOGNISED code is the worst of all.
 #
 # This script used to `exec` a single command, which kept the CLI's own code untouched. Two lanes
@@ -232,14 +154,45 @@ _record_outcome() {
   fi
 }
 
-"$REPO_ROOT/.venv/bin/activation-sweep" sweep "${TARGETS[@]}" "$@"
-_record_outcome "$?"
+# THE SCOPE COMES FROM THE MEMBER RECORD, one read per pass. `sds_scope` prints a population one
+# directory name per line and exits 0, or exits 3 printing nothing when the record could not be
+# read. A pass whose scope is unknown does not run -- it cannot claim a clean machine over a list it
+# does not have -- and counts as incomplete (3); the other pass still runs. Any other code is the
+# tool failing and is recorded verbatim, which `_rank` makes dominant.
+_scope_targets() {
+  local names rc
+  names="$(cd "$REPO_ROOT" && SDS_SCOPE_ORCHESTRATOR_TOKEN="$ACTIVATION_SWEEP_TOKEN" \
+    "$REPO_ROOT/.venv/bin/python" -m scripts.sds_scope "$1")"
+  rc=$?
+  if [ "$rc" -ne 0 ]; then
+    return "$rc"
+  fi
+  while IFS= read -r name; do
+    printf '%s\n' "--checkout" "$HOME/Projects/$name"
+  done <<< "$names"
+}
+
+TARGETS=()
+BIND_TARGETS=()
+
+if scope="$(_scope_targets checkouts)"; then
+  while IFS= read -r argument; do TARGETS+=("$argument"); done <<< "$scope"
+  "$REPO_ROOT/.venv/bin/activation-sweep" sweep "${TARGETS[@]}" "$@"
+  _record_outcome "$?"
+else
+  _record_outcome "$?"
+fi
 
 # THE BIND PASS RUNS SECOND, and unlike the work lane's pair the order is a preference rather than
 # a requirement: the two read different things and neither changes what the other sees. It is
 # second because the sweep is the control over ADR-0031 and should be filed even on a pass where
 # the orchestrator is unreachable.
-"$REPO_ROOT/.venv/bin/activation-sweep" bind "${BIND_TARGETS[@]}" "$@"
-_record_outcome "$?"
+if scope="$(_scope_targets bindable)"; then
+  while IFS= read -r argument; do BIND_TARGETS+=("$argument"); done <<< "$scope"
+  "$REPO_ROOT/.venv/bin/activation-sweep" bind "${BIND_TARGETS[@]}" "$@"
+  _record_outcome "$?"
+else
+  _record_outcome "$?"
+fi
 
 exit "$WORST_CODE"

@@ -457,6 +457,9 @@ OUTBOUND_ALLOWLIST = {
     # rule about
     # what may be registered is evaluated inside the orchestrator, in the transaction that
     # records it -- and the payload it sends is the emitter's own bytes, unedited.
+    # ADR-0058. Reads the member record and stages proposals; staging writes no member, so the
+    # client cannot enrol a repository. Two routes, held by tests/sds_members/test_client.py.
+    Path("src/sds_members/client.py"),
     Path("src/work_carrier/orchestrator_client.py"),
     # The third file of the same program, and the first of its three that speaks to neither
     # service. It makes ONE request -- a repository's own `factory-target.toml` on its default

@@ -171,6 +171,22 @@ def test_machine_local_needs_a_working_copy(migrated_engine: Engine) -> None:
         assert refused(session, body(change(machine_local=True))) == "member_working_copy_required"
 
 
+@pytest.mark.parametrize("working_copy", ["a/b", "..", ".", "x\ny", "has space", "/abs", " "])
+def test_a_working_copy_must_be_one_path_segment(
+    migrated_engine: Engine, working_copy: str
+) -> None:
+    with Session(migrated_engine) as session:
+        assert (
+            refused(session, body(change(working_copy=working_copy)))
+            == "member_working_copy_invalid"
+        )
+
+
+def test_a_single_segment_working_copy_is_accepted(migrated_engine: Engine) -> None:
+    with Session(migrated_engine) as session:
+        stage(session, body(change(working_copy="new-app_1.x", machine_local=True)))
+
+
 def test_machine_local_is_satisfied_by_the_existing_working_copy(migrated_engine: Engine) -> None:
     with Session(migrated_engine) as session:
         add_member(session, working_copy="/w/brain")
