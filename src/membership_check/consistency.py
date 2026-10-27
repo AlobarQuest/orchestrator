@@ -1,6 +1,6 @@
 """Does the member record agree with the declarations and the per-repository configuration lists?
 
-The record says which repositories the SDS maintains and which services each is granted. Seven
+The record says which repositories the SDS maintains and which services each is granted. Nine
 other places still say the same thing in their own words: each repository's `factory-target.toml`,
 change-manager's inert landing population, and the lists the rollout, tool, hardening, fork-sync
 and rotation lanes carry. This module compares them, so a repository added to one and not the
@@ -90,6 +90,8 @@ def check(
     hardened_forks: Iterable[str],
     synced_forks: Iterable[str],
     registry_repositories: Iterable[str],
+    rollbacks: Iterable[str],
+    standing_update_repositories: Iterable[str],
 ) -> Report:
     members = list(members)
     app_changes = _granted(members, "app_changes")
@@ -122,5 +124,12 @@ def check(
         registry_repositories,
         _granted(members, "credential_rotation"),
         "credential_rotation",
+    )
+    disagreements += _require("the rollback table", rollbacks, rollouts, "rollouts")
+    disagreements += _require(
+        "a standing dependency-update package",
+        standing_update_repositories,
+        updates,
+        "dependency_updates",
     )
     return Report(disagreements, list(declarations.gaps))

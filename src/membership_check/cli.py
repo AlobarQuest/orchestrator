@@ -13,6 +13,8 @@ from typing import Final
 import typer
 
 from bump_proposer.landing_policy import LandingPolicyError, read_inert_landing
+from bump_proposer.standing import StandingError, discover
+from change_proposer.criteria import _ROLLBACKS as ROLLBACKS
 from deploy_watcher.workflows import ROLLOUT_WORKFLOWS
 from fork_harden.rules import FORKS
 from fork_sync.gh import CommandFailed, subprocess_runner
@@ -69,6 +71,15 @@ def _spelled(names: Iterable[str], owned: list[str]) -> list[str]:
     return [spelling.get(name.lower(), name) for name in names]
 
 
+def _standing_update_repositories() -> tuple[list[str], list[str]]:
+    """Repositories with a standing dependency-update package; an unreadable checkout is a gap."""
+    try:
+        packages = discover()
+    except (StandingError, OSError) as error:
+        return [], [f"the packages checkout couldn't be read: {error}"]
+    return [package.target_repository for package in packages.values()], []
+
+
 @app.command()
 def main() -> None:
     """Compare the member record with the declarations and the configuration lists."""
@@ -96,6 +107,8 @@ def main() -> None:
         synced = forks(subprocess_runner)
     except (Unreadable, CommandFailed) as error:
         gaps.append(f"the fork-sync fork list couldn't be read: {error}")
+    standing, standing_gaps = _standing_update_repositories()
+    gaps += standing_gaps
     report = check(
         members,
         declarations=declarations,
@@ -105,6 +118,8 @@ def main() -> None:
         hardened_forks=_spelled([fork.repository for fork in FORKS], owned),
         synced_forks=_spelled(synced, owned),
         registry_repositories=_spelled(REGISTRY_REPOSITORIES, owned),
+        rollbacks=_spelled(ROLLBACKS, owned),
+        standing_update_repositories=_spelled(standing, owned),
     )
     for line in report.disagreements:
         typer.echo(line)
