@@ -295,7 +295,7 @@ rotated_by_sds = true
   repo = "orchestrator"
   ref = "scripts/run-fork-harden.sh"
   healthchecks_check = "sds-fork-hardening"
-  note = "launchd com.devon.fork-harden 03:00; Keychain Claude/BWS_ACCESS_TOKEN_SDS (sds-operator); Healthchecks check sds-fork-hardening"
+  note = "launchd com.devon.fork-harden 03:00; Keychain Claude/BWS_ACCESS_TOKEN_SDS (sds-operator); Healthchecks check sds-fork-hardening (an outcome alarm: a held or ungranted fork keeps it down, which delays retiring an old observer value until the pass exits 0)"
 
   [[credential.consumer]]
   kind = "runtime-fetch"

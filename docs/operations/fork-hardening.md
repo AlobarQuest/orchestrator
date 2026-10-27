@@ -49,10 +49,12 @@ Which forks are hardened comes from the SDS member record. The launcher asks
 `scripts.sds_scope granted security_patches` (observer bearer, narrow identity) and passes each name
 as `--granted`. A fork in `FORKS` that isn't granted is skipped, reported on stderr and exits 2; a
 granted name with no rules is normal (fork-sync covers it). If the grants can't be read the
-launcher exits 2 without hardening. `fork-harden run` with no `--granted` hardens nothing.
+launcher exits 2 without hardening; a missing narrow identity or an empty BWS read exits 1.
+`fork-harden run` with no `--granted` hardens nothing.
 
 Exit codes: 0 no fork held; 1 the tool failed; 2 a fork couldn't be read or pushed, a fork wasn't
-granted, or the grants couldn't be read (and none is held); 3 a fork is held. Every non-zero exit pings `/fail` with the report, so the check alerts.
+granted, or the grants couldn't be read (and none is held); 3 a fork is held. Every non-zero
+exit pings `/fail` with the report, so the check alerts.
 
 ## Clear a hold
 

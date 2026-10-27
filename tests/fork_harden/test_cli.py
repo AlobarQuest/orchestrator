@@ -156,3 +156,16 @@ def test_a_granted_name_without_rules_is_not_an_error(
     assert seen == ["AlobarQuest/a", "AlobarQuest/b"]
     assert result.exit_code == 0
     assert "skipped" not in result.output
+
+
+def test_a_held_fork_outranks_a_skipped_one_and_the_skip_is_still_printed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(cli, "FORKS", (A, B))
+    monkeypatch.setattr(cli, "harden", _fake({"AlobarQuest/a": "held"}))
+    monkeypatch.setattr(git, "open_cache", lambda *_: None)
+    result = CliRunner().invoke(
+        cli.app, ["run", "--granted", "AlobarQuest/a", "--cache", str(tmp_path)]
+    )
+    assert result.exit_code == cli.EXIT_HELD
+    assert "fork-harden: AlobarQuest/b is not granted security patches; skipped" in result.output

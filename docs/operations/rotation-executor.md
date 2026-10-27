@@ -349,6 +349,10 @@ or `observation_source` and `observation_subject` for one that posts an observat
 more than two minutes after the keeper's revision date shows up: a successful check whose
 `last_ping - last_duration` is that late, or an observation whose `observed_at` is.
 
+`sds-fork-hardening` is an outcome alarm: `run-fork-harden.sh` pings `/fail` on every non-zero
+exit, so a held or ungranted fork keeps the check down, and the `run-fork-harden.sh` row on the
+observer bearer then has no answer. Retiring an old observer value waits until that pass exits 0.
+
 - **Retire waits unclaimed.** A unit that retires the old value stays ready, spending no attempt,
   until every scheduled reader has switched. Each pass logs `unit_waiting` with the readers it
   waits for and the overlap's `until`. Two readers run on Sundays only, so a wait can last a week.

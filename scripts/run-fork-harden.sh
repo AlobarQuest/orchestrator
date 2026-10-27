@@ -17,7 +17,8 @@
 # EXIT CODES, the whole interface a scheduled run has (`fork_harden/cli.py`):
 #   0  no fork is held.
 #   1  the tool itself failed.
-#   2  a fork could not be read or pushed, and none is held.
+#   2  a fork could not be read or pushed, a `FORKS` entry the member record doesn't grant was
+#      skipped, or the grants could not be read; and none is held.
 #   3  a fork is held: its `hardened` did not move.
 # 1, 2 and 3 all ping `/fail`. The program's code is this script's code.
 #
@@ -29,8 +30,9 @@
 # docs/operations/credentials.md).
 #
 # SCOPE. Which forks to harden comes from the SDS member record: `sds_scope granted
-# security_patches`. A scope failure of any kind exits 2 without hardening and pings `/fail`; a
-# fork in `rules.FORKS` the record doesn't grant is skipped and exits 2 (`fork_harden/cli.py`).
+# security_patches`. A failed grant read exits 2 without hardening and pings `/fail`; a missing
+# narrow identity or an empty BWS read is the tool failing and exits 1. A fork in `rules.FORKS` the
+# record doesn't grant is skipped and exits 2 (`fork_harden/cli.py`).
 #
 # Usage:
 #   scripts/run-fork-harden.sh
