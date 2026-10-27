@@ -456,6 +456,7 @@ paths = [
   "scripts/check_change_record_field_compatibility.py",
   "tests/scripts/test_run_change_proposer.py",
   "tests/scripts/test_bridge_launchers.py",
+  "tests/architecture/test_bridge_edges.py",
   "docs/operations/dependency-remediation.md",
   "docs/operations/infra-lane-linkage.md",
   "docs/decisions/0019-*.md",

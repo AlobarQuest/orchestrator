@@ -59,6 +59,15 @@ def test_a_forbidden_write_never_reaches_the_transport() -> None:
     assert seen == []
 
 
+@pytest.mark.parametrize("method", ["PUT", "PATCH", "DELETE"])
+def test_the_write_route_takes_only_post(method: str) -> None:
+    """A write is a POST. Any other verb on the ingress is refused before the transport."""
+    client, seen = _seen_client()
+    with pytest.raises(ForbiddenEndpointError):
+        client._send(method, "/api/work-changes", json={})
+    assert seen == []
+
+
 def test_the_proposal_route_may_not_be_read() -> None:
     """The method is part of the key: a template-only allowlist that permitted the read would
     hand over the write with it."""

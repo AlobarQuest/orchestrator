@@ -87,7 +87,12 @@ def test_the_producer_cannot_write_to_any_lifecycle_route(path: str) -> None:
     assert not is_allowed_write(path)
 
 
-def test_the_only_write_is_the_proposal_ingress() -> None:
+def test_the_proposal_ingress_is_anchored() -> None:
+    """One of the producer's two writes, the proposal ingress, matched exactly.
+
+    The other write is the retirement route; its one read is the listing. The whole surface, per
+    service and per method, is stated once in `tests/architecture/test_bridge_edges.py`.
+    """
     assert is_allowed_write("/api/deploy-changes")
     # Anchored: a prefix, a suffix or a traversal is not the ingress.
     assert not is_allowed_write("/api/deploy-changes/1/approve")
@@ -95,13 +100,10 @@ def test_the_only_write_is_the_proposal_ingress() -> None:
     assert not is_allowed_write("/api/deploy-changes/../items/1/approve")
 
 
-def test_the_producer_has_no_read_surface_at_all() -> None:
-    """It writes one route and reads nothing.
-
-    A first version carried a `GET /api/items` helper for "reporting what is already routed". It
-    had ZERO callers, and a mutation pass showed its whole branch was untested — including its
-    error mapping. A dead function is a defect in this repository, and deleting it also made the
-    guard strictly tighter: every method on every path but the ingress is now refused.
+def test_the_producer_writes_nothing_outside_its_two_routes() -> None:
+    """It writes two routes, the proposal ingress and `/api/items/{id}/deploy-retirement`, and
+    reads one, `GET /api/items`. Neither the listing nor any other route is a write. The full
+    surface is in `tests/architecture/test_bridge_edges.py`.
     """
     assert not is_allowed_write("/api/items")
     assert not is_allowed_write("/api/events")
@@ -119,6 +121,20 @@ def test_a_forbidden_path_fails_before_a_request_is_built() -> None:
     client = ChangeManagerClient("tok", transport=httpx.MockTransport(explode))
     with pytest.raises(ForbiddenEndpointError):
         client._request("POST", "/api/items/1/approve")
+    client.close()
+
+
+@pytest.mark.parametrize("method", ["PUT", "PATCH", "DELETE"])
+@pytest.mark.parametrize("path", ["/api/deploy-changes", "/api/items/1/deploy-retirement"])
+def test_the_write_routes_take_only_post(method: str, path: str) -> None:
+    """A write is a POST. Any other verb on either write route is refused before the transport."""
+
+    def explode(request: httpx.Request) -> httpx.Response:  # pragma: no cover - must not run
+        raise AssertionError(f"a request left the process: {request.url}")
+
+    client = ChangeManagerClient("tok", transport=httpx.MockTransport(explode))
+    with pytest.raises(ForbiddenEndpointError):
+        client._request(method, path)
     client.close()
 
 
