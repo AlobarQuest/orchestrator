@@ -93,28 +93,7 @@ case " $* " in
 esac
 # shellcheck disable=SC1091
 source "$REPO_ROOT/scripts/sds-deadman.sh"
-if [ "$SUBMITTING" -eq 1 ]; then
-  sds_deadman_resolve "$CHECK_NAME"
-  if [ -z "$SDS_DEADMAN_PING_URL" ]; then
-    echo "[change-proposer] $SDS_DEADMAN_REASON — alerting disabled this run"
-  fi
-fi
-
-REPORT="$(mktemp "${TMPDIR:-/tmp}/change-proposer.XXXXXX")" || {
-  echo "FATAL: could not create the report file" >&2
-  sds_outcome_ping "/fail"
-  exit 1
-}
-trap 'rm -f "$REPORT"' EXIT
-sds_outcome_ping "/start"
-
-# Every failure before the program runs is the tool failing (exit 1), reported through the same
-# check with the reason as the ping body.
-tool_fail() {
-  echo "$1" | tee "$REPORT" >&2
-  sds_outcome_ping "/fail" "$REPORT"
-  exit 1
-}
+sds_outcome_begin "$CHECK_NAME" change-proposer "$SUBMITTING"
 
 # `--color no` AND an environment with the forcing variables removed. FORCE_COLOR /
 # CLICOLOR_FORCE make `bws secret get` wrap its JSON in ANSI escapes even when stdout is a
@@ -136,7 +115,7 @@ source "$REPO_ROOT/scripts/sds-bws.sh"
 if [ "$SUBMITTING" -eq 1 ]; then
   BROAD_IDENTITY="${BWS_ACCESS_TOKEN_BROAD:-$(/usr/bin/security find-generic-password \
     -s 'Claude' -a 'BWS_ACCESS_TOKEN_VPS_BACKUP' -w 2>/dev/null || true)}"
-  [ -n "$BROAD_IDENTITY" ] || tool_fail \
+  [ -n "$BROAD_IDENTITY" ] || sds_outcome_fail \
     "FATAL: no BWS identity for the change-manager credential (Keychain service Claude)"
   CHANGE_PROPOSER_CHANGE_MANAGER_TOKEN="$(sds_bws_value "$CHANGE_MANAGER_PROPOSE_UUID" "$BROAD_IDENTITY")"
   export CHANGE_PROPOSER_CHANGE_MANAGER_TOKEN
@@ -147,7 +126,7 @@ fi
 # and would exit 2 -- which is fail-closed but reports "unusable input" for what is actually a
 # credential failure. Name it here so the exit code means what this header says it means.
 if [ "$SUBMITTING" -eq 1 ] && [ -z "${CHANGE_PROPOSER_CHANGE_MANAGER_TOKEN:-}" ]; then
-  tool_fail "FATAL: could not read the propose-scoped change-manager credential from BWS"
+  sds_outcome_fail "FATAL: could not read the propose-scoped change-manager credential from BWS"
 fi
 
 # THE GITHUB CREDENTIAL HAS NO BWS RECORD, exactly as the rollout watcher's and the landing
@@ -159,16 +138,9 @@ if [ -z "${CHANGE_PROPOSER_GITHUB_TOKEN:-}" ]; then
   export CHANGE_PROPOSER_GITHUB_TOKEN
 fi
 if [ -z "${CHANGE_PROPOSER_GITHUB_TOKEN:-}" ]; then
-  tool_fail "FATAL: no GitHub token (set CHANGE_PROPOSER_GITHUB_TOKEN or run gh auth login)"
+  sds_outcome_fail "FATAL: no GitHub token (set CHANGE_PROPOSER_GITHUB_TOKEN or run gh auth login)"
 fi
 
-"$REPO_ROOT/.venv/bin/change-proposer" "$@" > "$REPORT" 2>&1
+"$REPO_ROOT/.venv/bin/change-proposer" "$@" > "$SDS_OUTCOME_REPORT" 2>&1
 rc=$?
-cat "$REPORT"
-if [ "$rc" -eq 0 ]; then
-  sds_outcome_ping ""
-else
-  echo "[change-proposer] exit $rc — reporting a failure"
-  sds_outcome_ping "/fail" "$REPORT"
-fi
-exit "$rc"
+sds_outcome_end "$rc"

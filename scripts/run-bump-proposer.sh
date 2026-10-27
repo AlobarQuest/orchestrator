@@ -116,28 +116,7 @@ case " $* " in
 esac
 # shellcheck disable=SC1091
 source "$REPO_ROOT/scripts/sds-deadman.sh"
-if [ "$SUBMITTING" -eq 1 ]; then
-  sds_deadman_resolve "$CHECK_NAME"
-  if [ -z "$SDS_DEADMAN_PING_URL" ]; then
-    echo "[bump-proposer] $SDS_DEADMAN_REASON — alerting disabled this run"
-  fi
-fi
-
-REPORT="$(mktemp "${TMPDIR:-/tmp}/bump-proposer.XXXXXX")" || {
-  echo "FATAL: could not create the report file" >&2
-  sds_outcome_ping "/fail"
-  exit 1
-}
-trap 'rm -f "$REPORT"' EXIT
-sds_outcome_ping "/start"
-
-# Every failure before the program runs is the tool failing (exit 1), reported through the same
-# check with the reason as the ping body.
-tool_fail() {
-  echo "$1" | tee "$REPORT" >&2
-  sds_outcome_ping "/fail" "$REPORT"
-  exit 1
-}
+sds_outcome_begin "$CHECK_NAME" bump-proposer "$SUBMITTING"
 
 # `--color no` AND an environment with the forcing variables removed. FORCE_COLOR /
 # CLICOLOR_FORCE make `bws secret get` wrap its JSON in ANSI escapes even when stdout is a
@@ -163,7 +142,7 @@ source "$REPO_ROOT/scripts/sds-bws.sh"
 # and has cost this estate a diagnosis more than once.
 BROAD_IDENTITY="${BWS_ACCESS_TOKEN_BROAD:-$(/usr/bin/security find-generic-password \
   -s 'Claude' -a 'BWS_ACCESS_TOKEN_VPS_BACKUP' -w 2>/dev/null || true)}"
-[ -n "$BROAD_IDENTITY" ] || tool_fail \
+[ -n "$BROAD_IDENTITY" ] || sds_outcome_fail \
   "FATAL: no broad BWS identity for the change-manager credentials (service Claude)"
 
 # FETCHED ON EVERY RUN, dry or writing. The landing policy is what this pass reports against, so
@@ -172,7 +151,7 @@ BROAD_IDENTITY="${BWS_ACCESS_TOKEN_BROAD:-$(/usr/bin/security find-generic-passw
 # the message names the credential that is actually missing.
 BUMP_PROPOSER_CHANGE_MANAGER_READ_TOKEN="$(sds_bws_value "$CHANGE_MANAGER_READ_UUID" "$BROAD_IDENTITY")"
 export BUMP_PROPOSER_CHANGE_MANAGER_READ_TOKEN
-[ -n "${BUMP_PROPOSER_CHANGE_MANAGER_READ_TOKEN:-}" ] || tool_fail \
+[ -n "${BUMP_PROPOSER_CHANGE_MANAGER_READ_TOKEN:-}" ] || sds_outcome_fail \
   "FATAL: could not read the READ-scoped change-manager credential from BWS (broad)"
 
 # ONLY FETCHED FOR A WRITING RUN. A dry run reports what it would do and sends nothing, so it
@@ -185,7 +164,7 @@ if [ "$SUBMITTING" -eq 1 ]; then
 
   SDS_IDENTITY="${BWS_ACCESS_TOKEN_SDS:-$(/usr/bin/security find-generic-password \
     -s 'Claude' -a 'BWS_ACCESS_TOKEN_SDS' -w 2>/dev/null || true)}"
-  [ -n "$SDS_IDENTITY" ] || tool_fail \
+  [ -n "$SDS_IDENTITY" ] || sds_outcome_fail \
     "FATAL: no narrow BWS identity for the observer bearer (service Claude)"
   ORCHESTRATOR_API_URL="${ORCHESTRATOR_API_URL:-https://sds.alobar.net}"
   ORCHESTRATOR_API_CREDENTIAL_KEY_ID="orchestrator-observer"
@@ -199,10 +178,10 @@ fi
 # message points at the identity that could not read, which is the question a 404 from `bws`
 # does not answer by itself.
 if [ "$SUBMITTING" -eq 1 ] && [ -z "${BUMP_PROPOSER_CHANGE_MANAGER_TOKEN:-}" ]; then
-  tool_fail "FATAL: could not read the propose-scoped change-manager credential from BWS (broad)"
+  sds_outcome_fail "FATAL: could not read the propose-scoped change-manager credential from BWS (broad)"
 fi
 if [ "$SUBMITTING" -eq 1 ] && [ -z "${ORCHESTRATOR_API_TOKEN:-}" ]; then
-  tool_fail "FATAL: could not read the orchestrator observer bearer from BWS (narrow)"
+  sds_outcome_fail "FATAL: could not read the orchestrator observer bearer from BWS (narrow)"
 fi
 
 # THE GITHUB CREDENTIAL HAS NO BWS RECORD, exactly as the deploy producer's and the ledger's do
@@ -214,16 +193,9 @@ if [ -z "${BUMP_PROPOSER_GITHUB_TOKEN:-}" ]; then
   export BUMP_PROPOSER_GITHUB_TOKEN
 fi
 if [ -z "${BUMP_PROPOSER_GITHUB_TOKEN:-}" ]; then
-  tool_fail "FATAL: no GitHub token (set BUMP_PROPOSER_GITHUB_TOKEN or run gh auth login)"
+  sds_outcome_fail "FATAL: no GitHub token (set BUMP_PROPOSER_GITHUB_TOKEN or run gh auth login)"
 fi
 
-"$REPO_ROOT/.venv/bin/bump-proposer" "$@" > "$REPORT" 2>&1
+"$REPO_ROOT/.venv/bin/bump-proposer" "$@" > "$SDS_OUTCOME_REPORT" 2>&1
 rc=$?
-cat "$REPORT"
-if [ "$rc" -eq 0 ]; then
-  sds_outcome_ping ""
-else
-  echo "[bump-proposer] exit $rc — reporting a failure"
-  sds_outcome_ping "/fail" "$REPORT"
-fi
-exit "$rc"
+sds_outcome_end "$rc"

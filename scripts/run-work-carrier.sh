@@ -145,28 +145,7 @@ for _arg in "$@"; do
 done
 # shellcheck disable=SC1091
 source "$REPO_ROOT/scripts/sds-deadman.sh"
-if [ "$_wants_register" -eq 1 ]; then
-  sds_deadman_resolve "$CHECK_NAME"
-  if [ -z "$SDS_DEADMAN_PING_URL" ]; then
-    echo "[work-carrier] $SDS_DEADMAN_REASON — alerting disabled this run"
-  fi
-fi
-
-REPORT="$(mktemp "${TMPDIR:-/tmp}/work-carrier.XXXXXX")" || {
-  echo "FATAL: could not create the report file" >&2
-  sds_outcome_ping "/fail"
-  exit 1
-}
-trap 'rm -f "$REPORT"' EXIT
-sds_outcome_ping "/start"
-
-# Every failure before the programs run is the tool failing (exit 1), reported through the same
-# check with the reason as the ping body.
-tool_fail() {
-  echo "$1" | tee "$REPORT" >&2
-  sds_outcome_ping "/fail" "$REPORT"
-  exit 1
-}
+sds_outcome_begin "$CHECK_NAME" work-carrier "$_wants_register"
 
 # `--color no` AND an environment with the forcing variables removed. FORCE_COLOR /
 # CLICOLOR_FORCE make `bws secret get` wrap its JSON in ANSI escapes even when stdout is a pipe,
@@ -176,7 +155,7 @@ source "$REPO_ROOT/scripts/sds-bws.sh"
 
 BROAD_IDENTITY="${BWS_ACCESS_TOKEN_BROAD:-$(/usr/bin/security find-generic-password \
   -s 'Claude' -a 'BWS_ACCESS_TOKEN_VPS_BACKUP' -w 2>/dev/null || true)}"
-[ -n "$BROAD_IDENTITY" ] || tool_fail \
+[ -n "$BROAD_IDENTITY" ] || sds_outcome_fail \
   "FATAL: no BWS identity for the change-manager credential (Keychain service Claude)"
 
 if [ -z "${CHANGE_MANAGER_TOKEN:-}" ]; then
@@ -187,7 +166,7 @@ fi
 # `set -e` is deliberately not used, so a failed fetch would otherwise leave this EMPTY and fall
 # through -- into an exit 2 that reports "unusable input" for what is actually a credential
 # failure. Name it here, so the exit code means what this header says it means.
-[ -n "${CHANGE_MANAGER_TOKEN:-}" ] || tool_fail \
+[ -n "${CHANGE_MANAGER_TOKEN:-}" ] || sds_outcome_fail \
   "FATAL: could not read the change-manager credential from BWS"
 
 # THE SYSTEM BEARER IS FETCHED ONLY FOR A PASS THAT WILL WRITE, and the gate is not tidiness. It
@@ -201,13 +180,13 @@ fi
 if [ "$_wants_register" -eq 1 ]; then
   SDS_IDENTITY="${BWS_ACCESS_TOKEN_SDS:-$(/usr/bin/security find-generic-password \
     -s 'Claude' -a 'BWS_ACCESS_TOKEN_SDS' -w 2>/dev/null || true)}"
-  [ -n "$SDS_IDENTITY" ] || tool_fail \
+  [ -n "$SDS_IDENTITY" ] || sds_outcome_fail \
     "FATAL: no BWS identity for the orchestrator credential (Keychain service Claude)"
   if [ -z "${WORK_CARRIER_ORCHESTRATOR_TOKEN:-}" ]; then
     WORK_CARRIER_ORCHESTRATOR_TOKEN="$(sds_bws_value "$ORCHESTRATOR_SYSTEM_UUID" "$SDS_IDENTITY")"
     export WORK_CARRIER_ORCHESTRATOR_TOKEN
   fi
-  [ -n "${WORK_CARRIER_ORCHESTRATOR_TOKEN:-}" ] || tool_fail \
+  [ -n "${WORK_CARRIER_ORCHESTRATOR_TOKEN:-}" ] || sds_outcome_fail \
     "FATAL: could not read the orchestrator system credential from BWS"
 fi
 
@@ -222,7 +201,7 @@ if [ "$_wants_register" -eq 1 ]; then
       "$BROAD_IDENTITY")"
     export WORK_WATCHER_CHANGE_MANAGER_TOKEN
   fi
-  [ -n "${WORK_WATCHER_CHANGE_MANAGER_TOKEN:-}" ] || tool_fail \
+  [ -n "${WORK_WATCHER_CHANGE_MANAGER_TOKEN:-}" ] || sds_outcome_fail \
     "FATAL: could not read the change-manager propose credential from BWS"
 else
   # A reporting pass lists with the bearer it already has. It cannot write whatever it holds:
@@ -304,23 +283,16 @@ if [ -z "${WORK_WATCHER_ORCHESTRATOR_TOKEN:-}" ]; then
   # and contributes NO exit code: nothing was found and nothing failed, so folding a 2 in here
   # would report an unusable pass for a phase this invocation was never entitled to run.
   echo "[SKIPPED]  the retirement phase needs an orchestrator credential this pass has not got" \
-    >> "$REPORT"
+    >> "$SDS_OUTCOME_REPORT"
 elif [ "$_wants_register" -eq 1 ]; then
-  "$REPO_ROOT/.venv/bin/work-watcher" --retire >> "$REPORT" 2>&1
+  "$REPO_ROOT/.venv/bin/work-watcher" --retire >> "$SDS_OUTCOME_REPORT" 2>&1
   _record_outcome "$?"
 else
-  "$REPO_ROOT/.venv/bin/work-watcher" >> "$REPORT" 2>&1
+  "$REPO_ROOT/.venv/bin/work-watcher" >> "$SDS_OUTCOME_REPORT" 2>&1
   _record_outcome "$?"
 fi
 
-"$REPO_ROOT/.venv/bin/work-carrier" "$@" >> "$REPORT" 2>&1
+"$REPO_ROOT/.venv/bin/work-carrier" "$@" >> "$SDS_OUTCOME_REPORT" 2>&1
 _record_outcome "$?"
 
-cat "$REPORT"
-if [ "$WORST_CODE" -eq 0 ]; then
-  sds_outcome_ping ""
-else
-  echo "[work-carrier] exit $WORST_CODE — reporting a failure"
-  sds_outcome_ping "/fail" "$REPORT"
-fi
-exit "$WORST_CODE"
+sds_outcome_end "$WORST_CODE"

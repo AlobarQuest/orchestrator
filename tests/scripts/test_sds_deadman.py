@@ -6,13 +6,14 @@ non-zero exit, which collapsed "the tool broke" into "the lane found something" 
 silence it was added to prevent: while a check sits failed on a standing finding, a lane that STOPS
 causes no state change at the alert channel.
 
-**THE TWO GROUPS OF LAUNCHERS DISAGREE ABOUT 2 AND 3, IN OPPOSITE DIRECTIONS.** The ledger, the
-deploy watcher and the activation sweep read 2 as found and 3 as could-not-be-read; the estate
-lander, the change proposer, the work carrier and the bump proposer read 2 as could-not-use-its-
-inputs and 3 as found. So a test that exercises one scheme proves the half that was already working
-and says nothing about the three launchers a universal rule would invert. Every case below is
-therefore driven from the code the launcher ITSELF declares, read out of its own source, and both
-schemes are present in every parametrisation by construction.
+**THE TWO GROUPS OF ARMED LAUNCHERS DISAGREE ABOUT 2 AND 3, IN OPPOSITE DIRECTIONS.** The ledger,
+the deploy watcher and the activation sweep read 2 as found and 3 as could-not-be-read; the estate
+lander and the rotation proposer read 2 as could-not-use-its-inputs and 3 as found. So a test that
+exercises one scheme proves the half that was already working and says nothing about the launchers
+a universal rule would invert. Every case below is therefore driven from the code the launcher
+ITSELF declares, read out of its own source, and
+`test_the_two_schemes_are_both_present_so_neither_test_above_is_vacuous` fails if the armed
+launchers stop covering both. Outcome-alarm launchers arm nothing and are not selected here.
 
 The REAL helper is sourced by a driver script whose `curl` and `bws` are stubs on a prepended PATH,
 so the resolve path executes exactly as it does in production -- one listing request, one match by

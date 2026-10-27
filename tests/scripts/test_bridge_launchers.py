@@ -224,6 +224,16 @@ def test_a_missing_credential_pings_fail_with_its_reason(tmp_path: Path, lane: L
     assert "found: subject" not in output
 
 
+@pytest.mark.parametrize("lane", LANES, ids=ids)
+def test_the_failure_line_is_printed_only_when_a_failure_is_pinged(
+    tmp_path: Path, lane: Lane
+) -> None:
+    _, _, bare = _run(tmp_path / "bare", lane, rc=3)
+    _, _, acting = _run(tmp_path / "acting", lane, lane.flag, rc=3)
+    assert "reporting a failure" not in bare
+    assert "exit 3 — reporting a failure" in acting
+
+
 def test_the_carrier_report_holds_both_programs_and_pings_the_worst_code(tmp_path: Path) -> None:
     rc, pings, _ = _run(tmp_path, CARRIER, "--register", rc=0, RC_WORK_WATCHER="3")
     assert rc == 3
@@ -237,12 +247,12 @@ def test_the_carrier_report_holds_both_programs_and_pings_the_worst_code(tmp_pat
 _INSTALL_CURL = """#!/usr/bin/env bash
 printf '%s\\n' "$*" >> "$CURL_ARGS"
 cat >> "$CURL_STDIN"
-printf '201'
+printf '%s' "${HC_STATUS:-201}"
 """
 
 
-@pytest.mark.parametrize("lane", LANES, ids=ids)
-def test_the_installer_upserts_its_check_to_alert_hub(tmp_path: Path, lane: Lane) -> None:
+def _install(tmp_path: Path, lane: Lane, **env_overrides: str) -> subprocess.CompletedProcess[str]:
+    """Run `lane`'s installer in a throwaway main tree with every outside call stubbed."""
     root = tmp_path / "tree"
     (root / "scripts").mkdir(parents=True)
     for name in (lane.installer, "sds-install.sh", "sds-bws.sh", lane.plist):
@@ -264,7 +274,7 @@ def test_the_installer_upserts_its_check_to_alert_hub(tmp_path: Path, lane: Lane
     stubs.mkdir()
     _executable(stubs / "curl", _INSTALL_CURL)
     _executable(stubs / "bws", _BWS)
-    _executable(stubs / "launchctl", "#!/bin/sh\n")
+    _executable(stubs / "launchctl", '#!/bin/sh\necho "$*" >> "$LAUNCHCTL_LOG"\n')
     _executable(stubs / "plutil", f"#!/bin/sh\necho '{packages}'\n")
     env = {
         "PATH": f"{stubs}:/usr/bin:/bin",
@@ -272,14 +282,21 @@ def test_the_installer_upserts_its_check_to_alert_hub(tmp_path: Path, lane: Lane
         "BWS_ACCESS_TOKEN_BROAD": "not-a-real-identity",
         "CURL_ARGS": str(tmp_path / "args"),
         "CURL_STDIN": str(tmp_path / "stdin"),
+        "LAUNCHCTL_LOG": str(tmp_path / "launchctl.log"),
+        **env_overrides,
     }
-    result = subprocess.run(
+    return subprocess.run(
         ["/bin/bash", str(root / "scripts" / lane.installer)],
         env=env,
         capture_output=True,
         text=True,
         check=False,
     )
+
+
+@pytest.mark.parametrize("lane", LANES, ids=ids)
+def test_the_installer_upserts_its_check_to_alert_hub(tmp_path: Path, lane: Lane) -> None:
+    result = _install(tmp_path, lane)
     assert result.returncode == 0, result.stderr
     assert f"Healthchecks check {lane.check} created" in result.stdout
     args = (tmp_path / "args").read_text()
@@ -292,3 +309,13 @@ def test_the_installer_upserts_its_check_to_alert_hub(tmp_path: Path, lane: Lane
     assert payload["grace"] == lane.grace
     for key, value in lane.cadence.items():
         assert payload[key] == value
+
+
+def test_an_installer_whose_upsert_fails_still_installs(tmp_path: Path) -> None:
+    """The pass still runs and logs without its check; rerunning the installer retries it."""
+    lane = LANES[1]
+    result = _install(tmp_path, lane, HC_STATUS="500")
+    assert result.returncode == 0, result.stderr
+    assert f"WARNING: Healthchecks check {lane.check} was not upserted" in result.stderr
+    assert "bootstrap" in (tmp_path / "launchctl.log").read_text()
+    assert (tmp_path / "home" / "Library" / "LaunchAgents" / lane.plist).exists()

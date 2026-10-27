@@ -401,8 +401,12 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
 
 ### #270
 
-- **A LANE'S DECLARED FINDING CODE PINGS ITS DEAD-MAN CHECK **SUCCESS**, NOT `/fail` — so "a
-  standing finding drives a permanently-red control" is false of every lane in this estate.**
+- **AN ARMED LANE'S DECLARED FINDING CODE PINGS ITS DEAD-MAN CHECK **SUCCESS**, NOT `/fail` — so
+  "a standing finding drives a permanently-red control" is false of every lane that arms the
+  switch.** The outcome-alarm lanes are the exception and work the other way: `run-fork-sync-watch.sh`,
+  `run-membership-check.sh`, `run-bump-proposer.sh`, `run-change-proposer.sh` and
+  `run-work-carrier.sh` ping `/fail` on every non-zero exit, so a standing finding keeps their
+  check down and pages once (ADR-0021 amendment 2).
   `sds_deadman_finish` (`scripts/sds-deadman.sh:141-153`) has three branches: `rc == 0` pings
   success; `rc == SDS_DEADMAN_FINDING_CODE` logs *"exit N is this lane's finding code — the pass
   ran and reported"* and pings **success**; everything else pings `/fail`. That is the whole point
@@ -413,7 +417,8 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   costing a decision its actual cost. The real cost of a permanent resident is narrower and a
   different kind of thing: the exit code is permanently the finding code, so nothing keyed on it
   can distinguish a NEW finding from the standing one without reading the log. When weighing what
-  a standing finding costs, read the launcher's `--finding` declaration before assuming a page.
+  a standing finding costs, read the launcher's `--finding` declaration before assuming a page;
+  a launcher with no declaration is an outcome alarm, and its finding does page.
 
 ### #271
 

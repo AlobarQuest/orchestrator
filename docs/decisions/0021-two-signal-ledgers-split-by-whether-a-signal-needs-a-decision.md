@@ -157,4 +157,9 @@ in the lane log only. Each is now an outcome alarm, like `sds-fork-sync-watch`:
 - The checks (`sds-bump-proposer`, `sds-change-proposer`, `sds-work-carrier`) deliver to the
   `alert-hub` channel, and each installer upserts its own.
 
-A pass that stops running still goes down after the grace, so each check also answers liveness.
+The trade-off is accepted, not overlooked. A check answers liveness only while it is up. A
+standing finding keeps it down after one page, and while it is down a lane that then stops running
+causes no state change, so nothing reports the stop until the finding clears. One Healthchecks check
+has one state, and the bridge layer design (`docs/superpowers/specs/2026-10-27-bridge-layer-design.md`)
+names alert noise as an anti-goal, so a page per pass and a second liveness check per lane were both
+rejected.
