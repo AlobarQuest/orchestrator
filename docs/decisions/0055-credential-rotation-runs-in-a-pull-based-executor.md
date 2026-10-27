@@ -1806,3 +1806,24 @@ Each increment ships on its own, and the system rotates every current credential
 - The plan stops being readable in one adapter file; it's read from the derivation, and each
   package records the plan it was generated with.
 - Every standing package needs one re-approved revision to move onto the derived plan.
+
+### As built: increment 1 (2026-10-27)
+
+- `plans.derive` builds a type's plan from `Adapter.capabilities` (machine mint, machine revoke,
+  hosted) and the credential's destinations. Run over the 13 credentials SDS rotates, it equals
+  the plan the approved package pins for 10. The other 3 (`github-finegrained-mirror` and two BWS
+  tokens) were approved with a `distribute` step that writes nothing, which the derivation leaves
+  out.
+- **The package's criteria choose the plan.** Each criterion's evidence names its step, so the
+  executor runs the derived plan when the approved package describes it step for step, and
+  otherwise the type's pre-derivation plan when the package describes that one. Anything else is
+  refused before the claim. No package needs a new revision for this increment, and no name
+  changes in `factory-policy.toml`: the type names were already recognised.
+- **A derived plan has no person attesting consumers** (decision 2 said "a person's attestation
+  only for a reader with no read"). An attestation would be a third kind of human act, which the
+  end state rules out, and the criteria can't show whether a package was approved with one. A
+  reader with no read is refused before the claim, as it was for every plan without an attesting
+  act, until its registry row names a read.
+- `orchestrator-distributed`, `change-manager-distributed` and `change-manager-attested` stay as
+  fixed-plan names for packages approved under them, until no package uses them.
+

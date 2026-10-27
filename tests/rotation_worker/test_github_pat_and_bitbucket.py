@@ -439,7 +439,7 @@ def test_the_verify_unit_gates_the_person_s_revoke() -> None:
 
     def gates(adapter: str, unit: str) -> bool:
         plan = ADAPTERS[adapter].plan
-        approved = SimpleNamespace(adapter=ADAPTERS[adapter], unit=plan.unit(unit))
+        approved = SimpleNamespace(adapter=ADAPTERS[adapter], plan=plan, unit=plan.unit(unit))
         return _gates_retire(cast(Approved, approved))
 
     assert gates("bitbucket", "verify")

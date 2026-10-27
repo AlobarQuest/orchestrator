@@ -59,6 +59,9 @@ def _from_store(constraints: Mapping[str, Any]) -> int | None:
     adapter = ADAPTERS.get(str(constraints.get(ADAPTER_KEY)))
     if adapter is None:
         return None
+    # A type's derived plan has the same units, in the same order, as the plan in `Adapter.plan`
+    # (`plans.derive` adds or drops steps, never units), so where a unit stands against the store
+    # reads the same from either.
     segments = adapter.plan.segments
     names = [segment.name for segment in segments]
     name = str(constraints.get(UNIT_KEY))
