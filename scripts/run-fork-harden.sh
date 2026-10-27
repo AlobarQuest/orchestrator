@@ -23,7 +23,14 @@
 #
 # CREDENTIALS. GitHub is read and written with the operator's own git credentials
 # (`gh auth git-credential`). The Healthchecks API key (BWS `51509d5e-…`) is read through the broad
-# machine account only to find the ping URL, and that read never gates the pass.
+# machine account only to find the ping URL, and that read never gates the pass. The observer
+# bearer (BWS `f793576f-…`) is read through the narrow `sds-operator` identity, from its own
+# Keychain item and its own variable, never an ambient `BWS_ACCESS_TOKEN` (the two-identity rule,
+# docs/operations/credentials.md).
+#
+# SCOPE. Which forks to harden comes from the SDS member record: `sds_scope granted
+# security_patches`. A scope failure of any kind exits 2 without hardening and pings `/fail`; a
+# fork in `rules.FORKS` the record doesn't grant is skipped and exits 2 (`fork_harden/cli.py`).
 #
 # Usage:
 #   scripts/run-fork-harden.sh
@@ -32,6 +39,7 @@
 set -uo pipefail
 
 CHECK_NAME="sds-fork-hardening"
+OBSERVER_BEARER_UUID="f793576f-e9aa-4f9d-8089-b4a000b9e2d5"   # orchestrator-observer OBSERVER bearer
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # ACTIVATION, as every lane does it: best-effort, one `[activation]` line, re-execs on a moved HEAD.
@@ -74,7 +82,37 @@ REPORT="$(mktemp "${TMPDIR:-/tmp}/fork-harden.XXXXXX")" || {
 }
 trap 'rm -f "$REPORT"' EXIT
 harden_ping "/start"
-"$REPO_ROOT/.venv/bin/fork-harden" run --push > "$REPORT" 2>&1
+
+# The grants, read before anything is hardened. Every failure here is reported through the same
+# check as a held fork, with the reason as the ping body.
+scope_fail() {
+    local code="${*: -1}"
+    echo "${*:1:$#-1}" | tee "$REPORT" >&2
+    harden_ping "/fail" "$REPORT"
+    exit "$code"
+}
+# shellcheck disable=SC1091
+source "$REPO_ROOT/scripts/sds-bws.sh"
+NARROW_IDENTITY="${BWS_ACCESS_TOKEN_SDS:-$(/usr/bin/security find-generic-password \
+  -s 'Claude' -a 'BWS_ACCESS_TOKEN_SDS' -w 2>/dev/null || true)}"
+[ -n "$NARROW_IDENTITY" ] || scope_fail \
+    "FATAL: no BWS identity for the observer credential (Keychain Claude/BWS_ACCESS_TOKEN_SDS)" 1
+OBSERVER_TOKEN="$(sds_bws_value "$OBSERVER_BEARER_UUID" "$NARROW_IDENTITY")"
+[ -n "$OBSERVER_TOKEN" ] || scope_fail \
+    "FATAL: could not read the orchestrator observer credential from BWS" 1
+GRANTED="$(cd "$REPO_ROOT" && SDS_SCOPE_ORCHESTRATOR_TOKEN="$OBSERVER_TOKEN" \
+    "$REPO_ROOT/.venv/bin/python" -m scripts.sds_scope granted security_patches 2>"$REPORT")"
+scope_rc=$?
+if [ "$scope_rc" -ne 0 ]; then
+    scope_fail "the forks granted security patches could not be read (sds_scope exited" \
+        "$scope_rc): nothing was hardened. $(cat "$REPORT")" 2
+fi
+GRANT_ARGS=()
+while IFS= read -r repository; do
+    [ -n "$repository" ] && GRANT_ARGS+=(--granted "$repository")
+done <<< "$GRANTED"
+
+"$REPO_ROOT/.venv/bin/fork-harden" run --push ${GRANT_ARGS[@]+"${GRANT_ARGS[@]}"} > "$REPORT" 2>&1
 rc=$?
 cat "$REPORT"
 if [ "$rc" -eq 0 ]; then

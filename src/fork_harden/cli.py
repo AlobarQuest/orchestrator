@@ -11,6 +11,10 @@ before the tool installer's 03:15. Exit codes, the whole interface a scheduled r
 
 GitHub is reached with the operator's own git credentials (`gh auth git-credential`), the login
 `fork-sync ack`, `scaffold` and `baseline` already push to forks with. No other credential.
+
+`run --granted <repository>` (repeated) names the forks the SDS member record grants
+`security_patches`; a fork in `rules.FORKS` that isn't named is skipped, reported on stderr, and
+makes the pass exit 2. A granted name with no rules is normal: fork-sync covers it.
 """
 
 from __future__ import annotations
@@ -72,14 +76,31 @@ def run_command(
     fork: Annotated[
         str | None, typer.Option("--fork", help="Only this fork, as owner/name.")
     ] = None,
+    granted: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--granted",
+            help="A repository the member record grants security patches; repeat per name.",
+        ),
+    ] = None,
     cache: Annotated[Path, typer.Option(help="Where the bare caches live.")] = DEFAULT_CACHE,
 ) -> None:
-    """One pass over every fork that has a rule. Without --push, nothing is written to GitHub."""
+    """One pass over every granted fork that has a rule. Without --push, nothing is written."""
     forks = FORKS if fork is None else tuple(f for f in FORKS if f.repository == fork)
     if fork is not None and not forks:
         typer.echo(f"{fork} has no hardening rule")
         raise typer.Exit(1)
+    allowed = {name.lower() for name in granted or ()}
+    skipped = [f for f in forks if f.repository.lower() not in allowed]
+    for ungranted in skipped:
+        typer.echo(
+            f"fork-harden: {ungranted.repository} is not granted security patches; skipped",
+            err=True,
+        )
+    forks = tuple(f for f in forks if f not in skipped)
     lines, code = run_pass(forks, cache, push=push)
+    if skipped and not code:
+        code = EXIT_UNREADABLE
     for line in lines:
         # A tree path that isn't UTF-8 is carried with surrogate escapes (`git.PATHS`); print it
         # escaped rather than let the encoder end the pass.

@@ -1,4 +1,4 @@
-"""The landing ledger and the activation sweep take their scope from the member record.
+"""The landing ledger, the activation sweep and fork-harden take their scope from the member record.
 
 Each launcher runs from a throwaway tree holding copies of its helper scripts and a fake
 `.venv/bin`: `python -m scripts.sds_scope <population>` is a stub that answers from the
@@ -16,7 +16,9 @@ from pathlib import Path
 
 LEDGER = Path("scripts/run-landing-ledger.sh")
 SWEEP = Path("scripts/run-activation-sweep.sh")
+HARDEN = Path("scripts/run-fork-harden.sh")
 OBSERVER_UUID = "f793576f-e9aa-4f9d-8089-b4a000b9e2d5"
+HEALTHCHECKS_KEY_UUID = "51509d5e-64f5-4781-ae82-b4ed00b644e1"
 
 _PYTHON = """#!/bin/bash
 if [ "$1" = "-c" ]; then exec "$REAL_PYTHON" "$@"; fi
@@ -171,3 +173,42 @@ def test_sweep_does_not_swallow_an_unrecognised_scope_failure(tmp_path: Path) ->
     )
     assert rc == 127
     assert [line.split()[1] for line in lane] == ["sweep"]
+
+
+def test_fork_harden_passes_each_granted_name(tmp_path: Path) -> None:
+    rc, scope, lane, bws = _run(
+        tmp_path, HARDEN, ["fork-harden"], FAKE_GRANTED="o/one\no/two", FAKE_LANE_RC="0"
+    )
+    assert rc == 0
+    assert scope == [f"granted token=value-of-{OBSERVER_UUID}"]
+    assert lane == ["fork-harden run --push --granted o/one --granted o/two"]
+    assert OBSERVER_UUID in bws
+    assert "314f276d-55ca-4ddc-a24d-b4a3013508cd" not in bws
+
+
+def test_fork_harden_reads_only_the_observer_bearer_and_the_ping_key(tmp_path: Path) -> None:
+    _, _, _, bws = _run(tmp_path, HARDEN, ["fork-harden"], FAKE_GRANTED="o/one")
+    assert set(bws) <= {OBSERVER_UUID, HEALTHCHECKS_KEY_UUID}
+    assert bws.count(OBSERVER_UUID) == 1
+
+
+def test_fork_harden_exits_2_without_hardening_when_scope_fails(tmp_path: Path) -> None:
+    rc, _, lane, _ = _run(
+        tmp_path, HARDEN, ["fork-harden"], FAKE_GRANTED="o/one", FAKE_GRANTED_RC="3"
+    )
+    assert rc == 2
+    assert lane == []
+
+
+def test_fork_harden_exits_2_without_hardening_when_scope_cannot_run(tmp_path: Path) -> None:
+    rc, _, lane, _ = _run(
+        tmp_path, HARDEN, ["fork-harden"], FAKE_GRANTED="o/one", FAKE_GRANTED_RC="127"
+    )
+    assert rc == 2
+    assert lane == []
+
+
+def test_fork_harden_passes_the_programs_exit_code_through(tmp_path: Path) -> None:
+    rc, _, lane, _ = _run(tmp_path, HARDEN, ["fork-harden"], FAKE_GRANTED="o/one", FAKE_LANE_RC="3")
+    assert rc == 3
+    assert len(lane) == 1

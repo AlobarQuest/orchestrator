@@ -293,6 +293,13 @@ rotated_by_sds = true
   [[credential.consumer]]
   kind = "runtime-fetch"
   repo = "orchestrator"
+  ref = "scripts/run-fork-harden.sh"
+  healthchecks_check = "sds-fork-hardening"
+  note = "launchd com.devon.fork-harden 03:00; Keychain Claude/BWS_ACCESS_TOKEN_SDS (sds-operator); Healthchecks check sds-fork-hardening"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
   ref = "scripts/run-landing-ledger.sh"
   healthchecks_check = "sds-landing-ledger"
   note = "launchd com.devon.landing-ledger 07:30; Keychain Claude/BWS_ACCESS_TOKEN_SDS (sds-operator); Healthchecks check sds-landing-ledger"
