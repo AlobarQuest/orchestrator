@@ -68,12 +68,13 @@ class ObservationCredentialError(ObservationError):
 
     Deliberately NOT an `ObservationWriteError`, for the reason `UnusableEndpointError` is not
     one: a refused credential is not one bad bump, it is every bump. Caught per pull request it
-    reports each one `unobserved` and exits with this lane's FINDING code -- which
-    `sds-deadman.sh` pings as SUCCESS, because a declared finding code means the pass ran and
-    reported. A revoked bearer would then propose nothing for as long as it stayed revoked while
-    the dead-man check read `up`, which is the permanently-quiet twin of a permanently-red
-    control. The sibling change-manager bearer never had that hazard, and not by design: its
-    first call happens BEFORE the loop, so it raises where nothing can absorb it.
+    would report each one `unobserved` and exit with this lane's FINDING code, as if each bump had
+    its own problem. The launcher pings `/fail` on that code too (an outcome alarm, ADR-0021
+    amendment 2), but the report would name N bumps rather than the one credential, and once the
+    check is down on it nothing new pages, so a revoked bearer would propose nothing for as long as
+    it stayed revoked behind a report that blames the bumps. The sibling change-manager bearer
+    never had that hazard, and not by design: its first call happens BEFORE the loop, so it raises
+    where nothing can absorb it.
     """
 
 

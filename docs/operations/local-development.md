@@ -404,10 +404,10 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
 - **AN ARMED LANE'S DECLARED FINDING CODE PINGS ITS DEAD-MAN CHECK **SUCCESS**, NOT `/fail` — so
   "a standing finding drives a permanently-red control" is false of every lane that arms the
   switch.** The outcome-alarm lanes are the exception and work the other way: `run-fork-sync-watch.sh`,
-  `run-membership-check.sh`, `run-bump-proposer.sh`, `run-change-proposer.sh` and
-  `run-work-carrier.sh` ping `/fail` on every non-zero exit, so a standing finding keeps their
+  `run-fork-harden.sh`, `run-membership-check.sh`, `run-bump-proposer.sh`, `run-change-proposer.sh`
+  and `run-work-carrier.sh` ping `/fail` on every non-zero exit, so a standing finding keeps their
   check down and pages once (ADR-0021 amendment 2).
-  `sds_deadman_finish` (`scripts/sds-deadman.sh:141-153`) has three branches: `rc == 0` pings
+  `sds_deadman_finish` (in `scripts/sds-deadman.sh`) has three branches: `rc == 0` pings
   success; `rc == SDS_DEADMAN_FINDING_CODE` logs *"exit N is this lane's finding code — the pass
   ran and reported"* and pings **success**; everything else pings `/fail`. That is the whole point
   of `--finding N`, and its own header says so — the check answers *is this lane alive*, never

@@ -9,8 +9,9 @@
 # THIS CHECK IS AN OUTCOME ALARM, AS `sds-fork-sync-watch` AND `sds-fork-hardening` ARE. A
 # disagreement is a lane about to act on a population the record doesn't hold, so every non-zero
 # exit pings `/fail` with the report as the body. A pass that stops pinging goes down after the
-# grace, so it is a liveness check too. The shared helper's outcome-alarm functions run the pass;
-# its arming is not used, because it pings success on a lane's finding code.
+# grace, so while the check is up it is a liveness check too (ADR-0021 amendment 2). The shared
+# helper's outcome-alarm functions run the pass; its arming is not used, because it pings success
+# on a lane's finding code.
 #
 # EXIT CODES, the whole interface a scheduled run has (`membership_check/cli.py`):
 #   0  the record and every list agree.

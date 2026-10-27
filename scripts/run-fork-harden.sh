@@ -9,10 +9,10 @@
 #
 # THIS CHECK IS AN OUTCOME ALARM, AS `sds-fork-sync-watch` IS. A held fork is a version Devon
 # isn't getting, so every non-zero exit pings `/fail` with the report as the body. A pass that
-# stops pinging goes down after the grace, so it is a liveness check too. Only the shared
-# helper's lookup of the ping URL by check name is reused; its arming is not, because it pings
-# success on a lane's finding code. A success ping carries the report too, so a rule upstream has
-# fixed ("can retire") is visible in the check's log.
+# stops pinging goes down after the grace, so while the check is up it is a liveness check too
+# (ADR-0021 amendment 2). The shared helper's outcome-alarm functions run the pass; its arming is
+# not used, because it pings success on a lane's finding code. A success ping carries the report
+# too, so a rule upstream has fixed ("can retire") is visible in the check's log.
 #
 # EXIT CODES, the whole interface a scheduled run has (`fork_harden/cli.py`):
 #   0  no fork is held.
@@ -60,67 +60,33 @@ activate_checkout "$REPO_ROOT" "$0" "$@"
 # The ping URL, resolved by exact check name after activation (an `exec` there would lose it).
 # shellcheck disable=SC1091
 source "$REPO_ROOT/scripts/sds-deadman.sh"
-sds_deadman_resolve "$CHECK_NAME"
-if [ -z "$SDS_DEADMAN_PING_URL" ]; then
-    echo "[harden] $SDS_DEADMAN_REASON — alerting disabled this run"
-fi
+# The grants are read before anything is hardened. Every failure before the program runs is
+# reported through the same check as a held fork, with the reason as the ping body
+# (`sds_outcome_fail`).
+sds_outcome_begin "$CHECK_NAME" fork-harden
 
-# One ping. The URL goes to curl on stdin as its config, never as an argument. `$1` is the suffix
-# (`/start`, empty for success, `/fail`); `$2`, when given, a file sent as the ping's body.
-harden_ping() {
-    [ -n "$SDS_DEADMAN_PING_URL" ] || return 0
-    local body=()
-    [ -n "${2:-}" ] && body=(--data-binary "@$2")
-    printf 'url = "%s%s"\n' "$SDS_DEADMAN_PING_URL" "$1" \
-        | curl -fsS --max-time 10 --config - ${body[@]+"${body[@]}"} >/dev/null 2>&1 \
-        || echo "[harden] ping '${1:-/}' failed (non-fatal)"
-    return 0
-}
-
-REPORT="$(mktemp "${TMPDIR:-/tmp}/fork-harden.XXXXXX")" || {
-    echo "FATAL: could not create the report file" >&2
-    harden_ping "/fail"
-    exit 1
-}
-trap 'rm -f "$REPORT"' EXIT
-harden_ping "/start"
-
-# The grants, read before anything is hardened. Every failure here is reported through the same
-# check as a held fork, with the reason as the ping body.
-scope_fail() {
-    local code="${*: -1}"
-    echo "${*:1:$#-1}" | tee "$REPORT" >&2
-    harden_ping "/fail" "$REPORT"
-    exit "$code"
-}
 # shellcheck disable=SC1091
 source "$REPO_ROOT/scripts/sds-bws.sh"
 NARROW_IDENTITY="${BWS_ACCESS_TOKEN_SDS:-$(/usr/bin/security find-generic-password \
   -s 'Claude' -a 'BWS_ACCESS_TOKEN_SDS' -w 2>/dev/null || true)}"
-[ -n "$NARROW_IDENTITY" ] || scope_fail \
-    "FATAL: no BWS identity for the observer credential (Keychain Claude/BWS_ACCESS_TOKEN_SDS)" 1
+[ -n "$NARROW_IDENTITY" ] || sds_outcome_fail \
+    "FATAL: no BWS identity for the observer credential (Keychain Claude/BWS_ACCESS_TOKEN_SDS)"
 OBSERVER_TOKEN="$(sds_bws_value "$OBSERVER_BEARER_UUID" "$NARROW_IDENTITY")"
-[ -n "$OBSERVER_TOKEN" ] || scope_fail \
-    "FATAL: could not read the orchestrator observer credential from BWS" 1
+[ -n "$OBSERVER_TOKEN" ] || sds_outcome_fail \
+    "FATAL: could not read the orchestrator observer credential from BWS"
 GRANTED="$(cd "$REPO_ROOT" && SDS_SCOPE_ORCHESTRATOR_TOKEN="$OBSERVER_TOKEN" \
-    "$REPO_ROOT/.venv/bin/python" -m scripts.sds_scope granted security_patches 2>"$REPORT")"
+    "$REPO_ROOT/.venv/bin/python" -m scripts.sds_scope granted security_patches \
+    2>"$SDS_OUTCOME_REPORT")"
 scope_rc=$?
 if [ "$scope_rc" -ne 0 ]; then
-    scope_fail "the forks granted security patches could not be read (sds_scope exited" \
-        "$scope_rc): nothing was hardened. $(cat "$REPORT")" 2
+    reason="the forks granted security patches could not be read (sds_scope exited $scope_rc)"
+    sds_outcome_fail "$reason: nothing was hardened. $(cat "$SDS_OUTCOME_REPORT")" 2
 fi
 GRANT_ARGS=()
 while IFS= read -r repository; do
     [ -n "$repository" ] && GRANT_ARGS+=(--granted "$repository")
 done <<< "$GRANTED"
 
-"$REPO_ROOT/.venv/bin/fork-harden" run --push ${GRANT_ARGS[@]+"${GRANT_ARGS[@]}"} > "$REPORT" 2>&1
-rc=$?
-cat "$REPORT"
-if [ "$rc" -eq 0 ]; then
-    harden_ping "" "$REPORT"
-else
-    echo "[harden] exit $rc — reporting a failure"
-    harden_ping "/fail" "$REPORT"
-fi
-exit "$rc"
+"$REPO_ROOT/.venv/bin/fork-harden" run --push ${GRANT_ARGS[@]+"${GRANT_ARGS[@]}"} \
+    > "$SDS_OUTCOME_REPORT" 2>&1
+sds_outcome_end "$?" --body-on-success

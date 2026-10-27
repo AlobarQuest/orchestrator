@@ -424,12 +424,13 @@ Placement rule: global CLAUDE.md §7.
 - `sds_deadman_finish` pings success for 0 and for the lane's declared `--finding` code; only other
   codes ping `/fail`, so the check answers liveness, never whether something was found. Detail:
   `docs/operations/local-development.md`.
-- The outcome-alarm launchers (`run-fork-sync-watch.sh`, `run-membership-check.sh`,
-  `run-bump-proposer.sh`, `run-change-proposer.sh`, `run-work-carrier.sh`) run through
-  `sds_outcome_begin`/`sds_outcome_end` in `scripts/sds-deadman.sh`: `/fail` with the report on
-  every non-zero exit, findings included, pinging only on the bridge lanes' acting run. They never
-  arm the dead-man switch, and a launcher that doesn't arm it must not contain the arming
-  function's name, which `test_sds_deadman.py` keys on. Detail: ADR-0021 amendment 2.
+- The outcome-alarm launchers (`run-fork-sync-watch.sh`, `run-fork-harden.sh`,
+  `run-membership-check.sh`, `run-bump-proposer.sh`, `run-change-proposer.sh`,
+  `run-work-carrier.sh`) run through `sds_outcome_begin`/`sds_outcome_end` in
+  `scripts/sds-deadman.sh`: `/fail` with the report on every non-zero exit, findings included,
+  pinging only on the bridge lanes' acting run. They never arm the dead-man switch, and a launcher
+  that doesn't arm it must not contain the arming function's name, which `test_sds_deadman.py`
+  keys on. Detail: ADR-0021 amendment 2.
 - The scheduled lanes run the main tree's working copy and `.venv` by absolute path: never check out
   a branch, edit, or run uv there while a pass may fire; edit in a worktree. Detail:
   `docs/operations/local-development.md`.

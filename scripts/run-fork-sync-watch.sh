@@ -13,10 +13,10 @@
 # helper (`scripts/sds-deadman.sh`) pings SUCCESS on a lane's finding code, because its question is
 # "did the lane run". This check's question is "is anything stuck", so a finding must page: every
 # non-zero exit pings `/fail` with the report as the body, which Healthchecks stores and shows. It
-# is still a liveness check too: a pass that stops pinging goes down after the grace, so the
-# helper's arming is not used here (it would turn every finding into a healthy ping). Its
-# outcome-alarm functions run the pass, finding the ping URL by check name: one API key in BWS,
-# nothing committed.
+# is a liveness check too while the check is up (ADR-0021 amendment 2): a pass that stops pinging
+# goes down after the grace, so the helper's arming is not used here (it would turn every finding
+# into a healthy ping). Its outcome-alarm functions run the pass, finding the ping URL by check
+# name: one API key in BWS, nothing committed.
 #
 # EXIT CODES, the whole interface a scheduled run has, in the LANDER group's vocabulary (the
 # inert landing lane is this watcher's sibling and the two are read side by side):

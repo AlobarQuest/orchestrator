@@ -178,12 +178,12 @@ sds_outcome_begin() {
     sds_outcome_ping "/start"
 }
 
-# `sds_outcome_fail <message>`: the tool failed before its program ran. The message becomes the
-# report and the `/fail` body, and the launcher exits 1.
+# `sds_outcome_fail <message> [code]`: the pass failed before its program ran. The message becomes
+# the report and the `/fail` body, and the launcher exits `[code]`, 1 (the tool failed) by default.
 sds_outcome_fail() {
     echo "$1" | tee "$SDS_OUTCOME_REPORT" >&2
     sds_outcome_ping "/fail" "$SDS_OUTCOME_REPORT"
-    exit 1
+    exit "${2:-1}"
 }
 
 # `sds_outcome_end <rc> [--body-on-success]`: copies the report to stdout (the lane log keeps it),

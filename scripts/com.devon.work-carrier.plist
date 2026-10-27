@@ -37,9 +37,9 @@
      capable, are the permissions sufficient -- and carries only a record that answers yes three
      times. A definite NO is a finding (3): the record can never be carried while the repository
      says what it says. An answer nobody could reach is unusable input (2): nothing is wrong with
-     the record. 2 outranks 3, and the dead-man switch treats 3 as this lane's finding code, so a
-     pass held on a NO reports and does not page while one held on an UNKNOWN does -- a lane that
-     cannot tell whether a repository opted in has stopped being able to do its job.
+     the record. 2 outranks 3 -- a lane that cannot tell whether a repository opted in has stopped
+     being able to do its job. The launcher is an outcome alarm (ADR-0021 amendment 2): both a pass
+     held on a NO and one held on an UNKNOWN ping `/fail` with the report, and the code says which.
 -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">

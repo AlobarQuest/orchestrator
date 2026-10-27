@@ -4,8 +4,11 @@ The bridge layer's four programs each pin their own routes in their own tests. T
 them in one place, per service: the change-manager and orchestrator routes each lane may send, the
 GitHub routes it may read, and the BWS secrets its launcher fetches. Every cell is checked against
 the lane's OWN predicates -- the functions its `ConfinedClient` asks before a request is built --
-over a corpus of the listed routes, their near misses and the lifecycle routes no lane may reach.
-A predicate that widens, or a row that drifts from the code, fails here.
+under every verb, over one corpus tried against every service column: each listed route, its
+trailing-slash and suffixed near misses, and named probes per service (change-manager lifecycle
+routes, orchestrator write routes no bridge lane holds, GitHub merge, listing and other-file
+routes). A predicate that widens to a route in that corpus, or a row that drifts from the code,
+fails here; a widening to a route outside it does not.
 
 A lane whose GitHub reads go through another package's reader (`bump_proposer` through
 `landing_ledger.github`, `change_proposer` through `deploy_watcher.github`) is pinned by naming that
@@ -117,7 +120,9 @@ LAUNCHERS: dict[str, tuple[str, ...]] = {
 # wider than its row.
 METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
 
-PROBES = frozenset(
+# Named probes, per service, for the routes a widening would most plausibly reach. The corpus is
+# their union, and every column is tried against all of it.
+CHANGE_MANAGER_PROBES = frozenset(
     {
         "/api/items/44/approve",
         "/api/items/44/claim",
@@ -133,6 +138,25 @@ PROBES = frozenset(
         "/api/items/../44/work-retirement",
     }
 )
+ORCHESTRATOR_PROBES = frozenset(
+    {
+        "/api/v1/work-units/44/pr-merge",
+        "/api/v1/work-units/44/claim",
+        "/api/v1/work-units/44/dispatch",
+        "/api/v1/approvals",
+        "/api/v1/observations",
+        "/api/v1/package-intakes/44",
+        "/api/v1/change-records/44/work/x",
+    }
+)
+GITHUB_PROBES = frozenset(
+    {
+        "/repos/o/r/pulls/44/merge",
+        "/repos/o/r/contents/other.toml",
+        "/repos/o/r/pulls",
+    }
+)
+PROBES = CHANGE_MANAGER_PROBES | ORCHESTRATOR_PROBES | GITHUB_PROBES
 
 
 def _listed_paths() -> frozenset[str]:
@@ -270,12 +294,14 @@ def test_work_watcher_lists_records_through_the_carriers_reader() -> None:
     assert "work_carrier.change_manager" in _imports("src/work_watcher/pipeline.py")
 
 
-_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE)
 
 
 @pytest.mark.parametrize("launcher", sorted(LAUNCHERS))
 def test_each_launcher_fetches_exactly_its_bearers(launcher: str) -> None:
-    named = set(_UUID.findall(Path(launcher).read_text(encoding="utf-8")))
+    # Launcher-level: the union of its lanes' bearers, so a bearer handed to the wrong lane of a
+    # shared launcher (work_carrier and work_watcher in run-work-carrier.sh) still passes.
+    named = {uuid.lower() for uuid in _UUID.findall(Path(launcher).read_text(encoding="utf-8"))}
     bearers = set().union(*(EDGES[lane].bearers for lane in LAUNCHERS[launcher]))
     assert named == bearers
 
@@ -311,4 +337,34 @@ def test_control_a_widened_predicate_fails_the_table(monkeypatch: pytest.MonkeyP
     )
     assert ("change_manager", "POST", "/api/items/44/approve", True) in disagreements(
         "work_watcher"
+    )
+
+
+def test_control_a_widened_orchestrator_predicate_fails_the_table(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The orchestrator column is compared too: widen the carry's write predicate and it fails."""
+    original = carrier_orchestrator.is_allowed_write
+    monkeypatch.setattr(
+        carrier_orchestrator,
+        "is_allowed_write",
+        lambda path: path == "/api/v1/work-units/44/pr-merge" or original(path),
+    )
+    assert ("orchestrator", "POST", "/api/v1/work-units/44/pr-merge", True) in disagreements(
+        "work_carrier"
+    )
+
+
+def test_control_a_widened_github_predicate_fails_the_table(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The GitHub column is compared too: widen the declaration reader and the table reports it."""
+    original = carrier_declaration.is_allowed
+    monkeypatch.setattr(
+        carrier_declaration,
+        "is_allowed",
+        lambda path: path == "/repos/o/r/contents/other.toml" or original(path),
+    )
+    assert ("github", "GET", "/repos/o/r/contents/other.toml", True) in disagreements(
+        "work_carrier"
     )

@@ -159,7 +159,11 @@ in the lane log only. Each is now an outcome alarm, like `sds-fork-sync-watch`:
 
 The trade-off is accepted, not overlooked. A check answers liveness only while it is up. A
 standing finding keeps it down after one page, and while it is down a lane that then stops running
-causes no state change, so nothing reports the stop until the finding clears. One Healthchecks check
-has one state, and the bridge layer design (`docs/superpowers/specs/2026-10-27-bridge-layer-design.md`)
-names alert noise as an anti-goal, so a page per pass and a second liveness check per lane were both
-rejected.
+causes no state change, so nothing reports the stop until the finding clears. The same holds for a
+new, different finding: while the check is down it causes no state change either, so alert-hub
+never receives it, and only the check's Healthchecks ping log holds its report. Both costs apply
+only while a finding stands, and findings are rare in the lane logs read on 2026-10-27:
+change-proposer 2 in about 1,394 passes, bump-proposer 1 in 58, the carrier 1 in 64. One
+Healthchecks check has one state, and the bridge layer design
+(`docs/superpowers/specs/2026-10-27-bridge-layer-design.md`) names alert noise as an anti-goal, so a
+page per pass and a second liveness check per lane were both rejected.

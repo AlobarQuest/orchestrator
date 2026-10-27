@@ -609,10 +609,10 @@ def run(argv: list[str] | None = None) -> int:
         # WHY 2 AND NOT 3, since something WAS found. Scope is the transcribed set, so a
         # repository falling out of it is this program losing an input rather than observing a
         # fact about a subject -- true whether or not the pass found anything, and true when
-        # there is not a single pull request anywhere to find anything about. The launcher's
-        # `--finding 3` follows from that reading rather than justifying it: exit 3 tells the
-        # dead-man switch the lane ran and reported, which is the right answer for a finding and
-        # the wrong one for a lane that no longer knows what it covers.
+        # there is not a single pull request anywhere to find anything about. The launcher, an
+        # outcome alarm, pings `/fail` on both codes (ADR-0021 amendment 2), so the code is what
+        # tells a reader a finding about a subject from a lane that no longer knows what it
+        # covers.
         #
         # AN UNREADABLE READ IS HERE TOO, and it differs from `_pass`'s `unreadable`, which is a
         # finding at 3. That one is a subject this pass could not consider; this one is the lane

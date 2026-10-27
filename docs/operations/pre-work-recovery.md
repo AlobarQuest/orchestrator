@@ -42,8 +42,10 @@ A `work` record is **stale** when it is pending or approved and either:
   asked for was never built.
 
 **How you find out.** The work watcher reports each one as a `[FINDING] … STALE: …` line in the
-work-carrier pass (`scripts/run-work-carrier.sh`, 07:05 daily). That pass then exits **3**, the
-lane's finding code. The dead-man check stays up; the log line is the signal. A record whose work
+work-carrier pass (`scripts/run-work-carrier.sh`, 07:05 daily). That pass then exits **3**, and
+the launcher, an outcome alarm, pings `sds-work-carrier`'s `/fail` with the pass's report as the
+body, which pages through alert-hub once; while the finding stands the check stays down and later
+passes page nothing new (ADR-0021 amendment 2). A record whose work
 the factory *did* build is retired automatically before it is looked at, so a factory landing never
 shows up as stale.
 

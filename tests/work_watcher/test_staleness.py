@@ -416,7 +416,7 @@ def test_a_refused_github_credential_makes_the_pass_unusable_not_quietly_finding
     status: int,
 ) -> None:
     """Review item 1: a revoked token or a rate limit is the credential failing, the same class as
-    a missing one. Per-record findings ping the dead-man as success and would never page."""
+    a missing one. Per-record findings would blame N records for one credential problem."""
     refused = GitHubCredentialRefused(f"GitHub answered {status}")
     code, out = _run(
         [], Source(record()), Reader({61: incomplete()}), GitHub({(REPO, 71): refused})
