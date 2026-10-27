@@ -1,0 +1,280 @@
+summary = "Seed the SDS member record with the 13 repositories it maintains today, reproducing the lists the lanes hold in code."
+seeded = true
+
+[[changes]]
+repository = "AlobarQuest/brain"
+reason = "Seeded from the lanes' present populations (membership design, phase 1)"
+state = "member"
+owner = "devon"
+working_copy = "brain"
+
+[[changes.apps]]
+name = "infra-brain"
+health_url = "https://infra-brain.devonwatkins.com/api/health"
+branch = "main"
+
+[[changes.apps]]
+name = "open-brain"
+health_url = "https://open-brain.devonwatkins.com/api/health"
+branch = "main"
+
+[[changes.apps]]
+name = "app-brain"
+health_url = "https://app-brain.devonwatkins.com/api/health"
+branch = "main"
+
+[[changes.apps]]
+name = "code-brain"
+health_url = "https://code-brain.devonwatkins.com/api/health"
+branch = "main"
+
+[changes.grants.app_changes]
+state = "granted"
+reason = "factory-target.toml declares factory_target = true"
+
+[changes.grants.dependency_updates]
+state = "granted"
+reason = "in deploy_watcher.workflows.ROLLOUT_WORKFLOWS (estate lander lands Dependabot updates under approved change records)"
+
+[changes.grants.rollouts]
+state = "granted"
+reason = "in deploy_watcher.workflows.ROLLOUT_WORKFLOWS (estate lander lands Dependabot updates under approved change records)"
+
+[[changes]]
+repository = "AlobarQuest/change-manager"
+reason = "Seeded from the lanes' present populations (membership design, phase 1)"
+state = "member"
+owner = "devon"
+working_copy = "change-manager"
+
+[[changes.apps]]
+name = "change-manager"
+health_url = "https://change-mgr.alobar.net/api/health"
+branch = "main"
+
+[changes.grants.app_changes]
+state = "granted"
+reason = "factory-target.toml declares factory_target = true"
+
+[changes.grants.dependency_updates]
+state = "granted"
+reason = "in deploy_watcher.workflows.ROLLOUT_WORKFLOWS (estate lander lands Dependabot updates under approved change records)"
+
+[changes.grants.rollouts]
+state = "granted"
+reason = "in deploy_watcher.workflows.ROLLOUT_WORKFLOWS (estate lander lands Dependabot updates under approved change records)"
+
+[changes.grants.credential_rotation]
+state = "granted"
+reason = "owns rotated_by_sds credentials in its .cred-consumers.toml (REGISTRY_REPOSITORIES)"
+
+[[changes]]
+repository = "AlobarQuest/orchestrator"
+reason = "Seeded from the lanes' present populations (membership design, phase 1)"
+state = "member"
+owner = "devon"
+working_copy = "orchestrator"
+machine_local = true
+
+[[changes.apps]]
+name = "orchestrator"
+health_url = "https://sds.alobar.net/health/live"
+branch = "main"
+
+[changes.grants.app_changes]
+state = "granted"
+reason = "factory-target.toml declares factory_target = true"
+
+[changes.grants.dependency_updates]
+state = "granted"
+reason = "in the inert landing population (landing policy 12)"
+
+[changes.grants.rollouts]
+state = "granted"
+reason = "machine-local activation in the activation sweep's BINDABLE set"
+
+[changes.grants.credential_rotation]
+state = "granted"
+reason = "owns rotated_by_sds credentials in its .cred-consumers.toml (REGISTRY_REPOSITORIES)"
+
+[[changes]]
+repository = "AlobarQuest/infraops-mcp-server"
+reason = "Seeded from the lanes' present populations (membership design, phase 1)"
+state = "member"
+owner = "devon"
+working_copy = "infraops-mcp-server"
+machine_local = true
+
+[changes.grants.app_changes]
+state = "granted"
+reason = "factory-target.toml declares factory_target = true"
+
+[changes.grants.dependency_updates]
+state = "granted"
+reason = "in the inert landing population (landing policy 12)"
+
+[changes.grants.rollouts]
+state = "granted"
+reason = "machine-local activation in the activation sweep's BINDABLE set"
+
+[changes.grants.credential_rotation]
+state = "granted"
+reason = "owns rotated_by_sds credentials in its .cred-consumers.toml (REGISTRY_REPOSITORIES)"
+
+[[changes]]
+repository = "AlobarQuest/intent-packages"
+reason = "Seeded from the lanes' present populations (membership design, phase 1)"
+state = "member"
+owner = "devon"
+working_copy = "intent-packages"
+machine_local = true
+
+[changes.grants.app_changes]
+state = "granted"
+reason = "factory-target.toml declares factory_target = true"
+
+[changes.grants.dependency_updates]
+state = "granted"
+reason = "in the inert landing population (landing policy 12)"
+
+[changes.grants.rollouts]
+state = "granted"
+reason = "machine-local activation in the activation sweep's BINDABLE set"
+
+[[changes]]
+repository = "AlobarQuest/security-standards"
+reason = "Seeded from the lanes' present populations (membership design, phase 1)"
+state = "member"
+owner = "devon"
+working_copy = "security-standards"
+machine_local = true
+
+[changes.grants.app_changes]
+state = "granted"
+reason = "factory-target.toml declares factory_target = true"
+
+[changes.grants.dependency_updates]
+state = "granted"
+reason = "in the inert landing population (landing policy 12)"
+
+[changes.grants.rollouts]
+state = "granted"
+reason = "machine-local activation in the activation sweep's BINDABLE set"
+
+[[changes]]
+repository = "AlobarQuest/factory-runner"
+reason = "Seeded from the lanes' present populations (membership design, phase 1)"
+state = "member"
+owner = "devon"
+
+[changes.grants.app_changes]
+state = "remediating"
+reason = "Devon decided 2026-10-26 (membership design); onboarding pending"
+
+[changes.grants.dependency_updates]
+state = "granted"
+reason = "in the inert landing population (landing policy 12)"
+
+[changes.grants.credential_rotation]
+state = "granted"
+reason = "owns rotated_by_sds credentials in its .cred-consumers.toml (REGISTRY_REPOSITORIES)"
+
+[[changes]]
+repository = "AlobarQuest/project-standards"
+reason = "Seeded from the lanes' present populations (membership design, phase 1)"
+state = "member"
+owner = "devon"
+
+[changes.grants.app_changes]
+state = "remediating"
+reason = "Devon decided 2026-10-26 (membership design); onboarding pending"
+
+[changes.grants.dependency_updates]
+state = "granted"
+reason = "in the inert landing population (landing policy 12)"
+
+[[changes]]
+repository = "AlobarQuest/rtk"
+reason = "Seeded from the lanes' present populations (membership design, phase 1)"
+state = "member"
+owner = "devon"
+
+[changes.grants.dependency_updates]
+state = "granted"
+reason = "in the inert landing population (landing policy 12); a fork: fork-sync brings upstream releases"
+
+[changes.grants.security_patches]
+state = "granted"
+reason = "a fork: fork-sync brings upstream releases"
+
+[changes.grants.rollouts]
+state = "granted"
+reason = "in tool_installer.tools.TOOLS"
+
+[[changes]]
+repository = "AlobarQuest/claude-octopus"
+reason = "Seeded from the lanes' present populations (membership design, phase 1)"
+state = "member"
+owner = "devon"
+
+[changes.grants.dependency_updates]
+state = "granted"
+reason = "in the inert landing population (landing policy 12); a fork: fork-sync brings upstream releases"
+
+[changes.grants.security_patches]
+state = "granted"
+reason = "a fork: fork-sync brings upstream releases"
+
+[changes.grants.rollouts]
+state = "granted"
+reason = "in tool_installer.tools.TOOLS"
+
+[[changes]]
+repository = "AlobarQuest/rea"
+reason = "Seeded from the lanes' present populations (membership design, phase 1)"
+state = "member"
+owner = "devon"
+
+[changes.grants.dependency_updates]
+state = "granted"
+reason = "in the inert landing population (landing policy 12); a fork: fork-sync brings upstream releases"
+
+[changes.grants.security_patches]
+state = "granted"
+reason = "a fork: fork-sync brings upstream releases"
+
+[changes.grants.rollouts]
+state = "granted"
+reason = "in tool_installer.tools.TOOLS"
+
+[[changes]]
+repository = "AlobarQuest/n8n-as-code"
+reason = "Seeded from the lanes' present populations (membership design, phase 1)"
+state = "member"
+owner = "devon"
+
+[changes.grants.dependency_updates]
+state = "granted"
+reason = "in the inert landing population (landing policy 12); a fork: fork-sync brings upstream releases"
+
+[changes.grants.security_patches]
+state = "granted"
+reason = "a fork: fork-sync brings upstream releases"
+
+[changes.grants.rollouts]
+state = "granted"
+reason = "in tool_installer.tools.TOOLS"
+
+[[changes]]
+repository = "AlobarQuest/n8n-manager"
+reason = "Seeded from the lanes' present populations (membership design, phase 1)"
+state = "member"
+owner = "devon"
+
+[changes.grants.dependency_updates]
+state = "granted"
+reason = "in the inert landing population (landing policy 12); a fork: fork-sync brings upstream releases"
+
+[changes.grants.security_patches]
+state = "granted"
+reason = "a fork: fork-sync brings upstream releases"

@@ -660,5 +660,6 @@ paths = [
   "src/sds_members/**",
   "tests/sds_members/**",
   "docs/operations/membership.md",
+  "docs/operations/membership-seed.toml",
   "docs/decisions/0058-*.md",
 ]
