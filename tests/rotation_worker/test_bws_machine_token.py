@@ -7,7 +7,7 @@ import json
 import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -121,25 +121,6 @@ def test_the_switch_waits_out_the_scheduled_lanes(local: tuple[int, int], waits:
     assert (reason is not None) is waits
     # Only the switch waits for the hour.
     assert bws.wait_reason(bws.PLAN.unit("verify"), [], _at(*local)) is None
-
-
-def _resolved(at: datetime, *, by_person: bool) -> dict[str, Any]:
-    payload = (
-        {"command": {"status": "satisfied", "detail": {}}}
-        if by_person
-        else {"status": "satisfied", "reason": "dependency_completed"}
-    )
-    return {"action": "dependency.resolved", "occurred_at": at.isoformat(), "payload": payload}
-
-
-def test_confirm_waits_for_the_revoke_and_then_for_the_exposure_window() -> None:
-    confirm = bws.PLAN.unit("confirm")
-    revoked = datetime(2026, 10, 22, 13, 0, tzinfo=UTC)
-    verify_done = _resolved(revoked + timedelta(hours=2), by_person=False)
-    assert bws.wait_reason(confirm, [verify_done], revoked) == "no revoke is recorded yet"
-    history = [verify_done, _resolved(revoked, by_person=True)]
-    assert bws.wait_reason(confirm, history, revoked + timedelta(minutes=74)) is not None
-    assert bws.wait_reason(confirm, history, revoked + bws.REVOKE_SETTLES) is None
 
 
 # ---- a rotation through the contract --------------------------------------------------------

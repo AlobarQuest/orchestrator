@@ -184,7 +184,7 @@ def test_the_other_instance_s_unit_is_left_unclaimed_without_reading_its_package
             raise AssertionError("the other instance's unit was claimed")
 
     setup = cast(Setup, SimpleNamespace(store=MemoryStore(), client=Client()))
-    assert worker._take(setup, "u1") == 0
+    assert worker._take(setup, "u1", worker.PassActs()) == 0
 
 
 # ---- where the keeper is --------------------------------------------------------------------
