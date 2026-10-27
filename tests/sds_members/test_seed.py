@@ -11,7 +11,6 @@ from pathlib import Path
 from deploy_watcher.workflows import ROLLOUT_WORKFLOWS
 from fork_harden.rules import FORKS
 from orchestrator.services.membership.changes import MemberChange, MemberProposalBody
-from revision_watcher.subjects import SUBJECTS
 from rotation_worker.registry import REGISTRY_REPOSITORIES
 from sds_members import populations
 from sds_members.client import SERVICES, App, Member
@@ -51,10 +50,6 @@ def test_seed_parses_and_matches_todays_lists() -> None:
     assert len({m.repository for m in members}) == 13
     assert all(m.owner == "devon" and m.state == "member" for m in members)
 
-    seeded = sorted(
-        (r, a.name, a.health_url, a.branch) for r, a in populations.app_subjects(members)
-    )
-    assert seeded == sorted((s.repository, s.name, s.health_url, s.branch) for s in SUBJECTS)
     assert set(populations.granted(members, "security_patches")) >= {f.repository for f in FORKS}
 
 

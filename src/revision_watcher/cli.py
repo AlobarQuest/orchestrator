@@ -38,6 +38,8 @@ from revision_watcher.orchestrator_client import (
     open_client,
 )
 from revision_watcher.record import revision_observation
+from revision_watcher.subjects import Subject, load_subjects
+from sds_members.client import MembersUnreadable
 
 EXIT_CLEAN = 0
 EXIT_TOOL_FAILED = 1
@@ -64,6 +66,7 @@ def _file_rows(result: Pass, client: OrchestratorClient) -> list[str]:
 
 def _measure(
     *,
+    subjects: tuple[Subject, ...],
     token: str,
     platform_url: str,
     platform_token: str,
@@ -91,11 +94,28 @@ def _measure(
         if estate_url and estate_key:
             landings = stack.enter_context(LandingReader(base_url=estate_url, key=estate_key))
         result = sweep(
-            applications=applications, reader=reader, platform=platform, landings=landings
+            subjects=subjects,
+            applications=applications,
+            reader=reader,
+            platform=platform,
+            landings=landings,
         )
     if platform is None:
         result.coverage_unmeasured = "no platform credential was configured"
     return result
+
+
+def _subjects(bearer: str, key_id: str, base_url: str) -> tuple[Subject, ...]:
+    """The member record's apps, or the incomplete exit when it cannot name any."""
+    try:
+        subjects = load_subjects(token=bearer, credential_key_id=key_id, base_url=base_url)
+    except MembersUnreadable as error:
+        typer.echo(f"[incomplete] the subjects could not be read: {error}", err=True)
+        raise typer.Exit(EXIT_INCOMPLETE) from error
+    if not subjects:
+        typer.echo("[incomplete] the member record names no subjects to watch", err=True)
+        raise typer.Exit(EXIT_INCOMPLETE)
+    return subjects
 
 
 @app.command()
@@ -114,7 +134,19 @@ def main(
     estate_url = os.environ.get("REVISION_WATCHER_ESTATE_URL", "").strip()
     estate_key = os.environ.get("REVISION_WATCHER_ESTATE_KEY", "").strip()
 
+    # The subjects are read from the member record with the same credential that files the rows, so
+    # it is needed on a dry run too.
+    base_url = os.environ.get("ORCHESTRATOR_API_URL", "").strip()
+    key_id = os.environ.get("ORCHESTRATOR_API_CREDENTIAL_KEY_ID", "").strip()
+    bearer = os.environ.get("ORCHESTRATOR_API_TOKEN", "").strip()
+    if not (base_url and key_id and bearer):
+        typer.echo("FATAL: the orchestrator credential is not configured.", err=True)
+        raise typer.Exit(EXIT_TOOL_FAILED)
+
+    subjects = _subjects(bearer, key_id, base_url)
+
     result = _measure(
+        subjects=subjects,
         token=token,
         platform_url=platform_url,
         platform_token=platform_token,
@@ -129,12 +161,6 @@ def main(
     if dry_run:
         typer.echo(f"dry run: {len(result.readings)} rows not filed")
     else:
-        base_url = os.environ.get("ORCHESTRATOR_API_URL", "").strip()
-        key_id = os.environ.get("ORCHESTRATOR_API_CREDENTIAL_KEY_ID", "").strip()
-        bearer = os.environ.get("ORCHESTRATOR_API_TOKEN", "").strip()
-        if not (base_url and key_id and bearer):
-            typer.echo("FATAL: the orchestrator credential is not configured.", err=True)
-            raise typer.Exit(EXIT_TOOL_FAILED)
         try:
             with open_client(base_url=base_url, credential_key_id=key_id, token=bearer) as client:
                 unfiled = _file_rows(result, client)

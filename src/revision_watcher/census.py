@@ -34,7 +34,7 @@ from revision_watcher.estate import (
     candidate_urls,
 )
 from revision_watcher.github import GitHubReader, GitHubUnreadable, branch_tip, relation
-from revision_watcher.subjects import SUBJECTS, Subject, revision_of
+from revision_watcher.subjects import Subject, revision_of
 
 CURRENT = "current"
 BEHIND = "behind"
@@ -242,15 +242,15 @@ def read_subject(
     )
 
 
-def undeclared_subjects(applications, platform) -> list[str]:
-    """Applications the platform runs, absent from the table, that answer with a revision.
+def undeclared_subjects(subjects, applications, platform) -> list[str]:
+    """Applications the platform runs, absent from the subjects, that answer with a revision.
 
     This is what keeps the declared table from rotting silently, and it reports only the case that
     matters: an application with no revision has not opted in, so listing it would bury the one
     that has under a dozen that never will.
     """
-    declared = {subject.health_url for subject in SUBJECTS}
-    named = {subject.name for subject in SUBJECTS}
+    declared = {subject.health_url for subject in subjects}
+    named = {subject.name for subject in subjects}
     found: list[str] = []
     for name, url in sorted(candidate_urls(platform.applications()).items()):
         if url in declared or name in named:
@@ -264,20 +264,22 @@ def undeclared_subjects(applications, platform) -> list[str]:
     return found
 
 
-def sweep(*, applications, reader: GitHubReader, platform=None, landings=None, now=None) -> Pass:
+def sweep(
+    *, subjects, applications, reader: GitHubReader, platform=None, landings=None, now=None
+) -> Pass:
     result = Pass(
         readings=[
             read_subject(
                 subject, applications=applications, reader=reader, landings=landings, now=now
             )
-            for subject in SUBJECTS
+            for subject in subjects
         ]
     )
     if platform is None:
         result.coverage_unmeasured = "no platform credential was configured"
         return result
     try:
-        result.undeclared = undeclared_subjects(applications, platform)
+        result.undeclared = undeclared_subjects(subjects, applications, platform)
     except UnreadablePlatform as error:
         result.coverage_unmeasured = str(error)
     return result

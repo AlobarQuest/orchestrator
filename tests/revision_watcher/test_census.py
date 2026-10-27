@@ -24,7 +24,7 @@ from revision_watcher.census import (
 )
 from revision_watcher.estate import ApplicationReader, PlatformReader
 from revision_watcher.github import GitHubReader
-from revision_watcher.subjects import SUBJECTS, Subject, revision_of
+from revision_watcher.subjects import Subject, revision_of
 from tests.revision_watcher.conftest import (
     ELSEWHERE,
     OLD,
@@ -37,6 +37,13 @@ from tests.revision_watcher.conftest import (
 )
 
 SUBJECT = Subject("app-brain", "https://app-brain.example/api/health", "AlobarQuest/brain")
+FIXTURE_SUBJECTS = (
+    SUBJECT,
+    Subject("code-brain", "https://code-brain.example/api/health", "AlobarQuest/brain"),
+    Subject(
+        "change-manager", "https://change-mgr.example/api/health", "AlobarQuest/change-manager"
+    ),
+)
 
 
 def _read(body, *, relations=None, branch_status=200) -> Reading:
@@ -172,7 +179,9 @@ def _sweep_with_platform(applications_running, bodies):
             transport=platform_transport(applications_running),
         ) as platform,
     ):
-        return sweep(applications=applications, reader=reader, platform=platform)
+        return sweep(
+            subjects=FIXTURE_SUBJECTS, applications=applications, reader=reader, platform=platform
+        )
 
 
 def test_an_undeclared_application_that_serves_a_revision_is_reported() -> None:
@@ -186,7 +195,7 @@ def test_an_undeclared_application_that_serves_a_revision_is_reported() -> None:
             }
         ],
         {
-            **{s.health_url.split("/")[2]: {"revision": TIP} for s in SUBJECTS},
+            **{s.health_url.split("/")[2]: {"revision": TIP} for s in FIXTURE_SUBJECTS},
             "newcomer.example": {"status": "ok", "revision": TIP},
         },
     )
@@ -206,7 +215,7 @@ def test_an_undeclared_application_with_NO_revision_is_not_reported() -> None:
             }
         ],
         {
-            **{s.health_url.split("/")[2]: {"revision": TIP} for s in SUBJECTS},
+            **{s.health_url.split("/")[2]: {"revision": TIP} for s in FIXTURE_SUBJECTS},
             "quiet.example": {"status": "ok"},
         },
     )
@@ -226,7 +235,7 @@ def test_a_STOPPED_application_is_not_a_coverage_gap() -> None:
             }
         ],
         {
-            **{s.health_url.split("/")[2]: {"revision": TIP} for s in SUBJECTS},
+            **{s.health_url.split("/")[2]: {"revision": TIP} for s in FIXTURE_SUBJECTS},
             "stopped.example": {"status": "ok", "revision": TIP},
         },
     )
@@ -241,11 +250,13 @@ def test_a_pass_with_no_platform_credential_says_coverage_went_unmeasured() -> N
         GitHubReader(token="fixture", transport=github_transport()) as reader,
         ApplicationReader(
             transport=application_transport(
-                {s.health_url.split("/")[2]: {"revision": TIP} for s in SUBJECTS}
+                {s.health_url.split("/")[2]: {"revision": TIP} for s in FIXTURE_SUBJECTS}
             )
         ) as applications,
     ):
-        result = sweep(applications=applications, reader=reader, platform=None)
+        result = sweep(
+            subjects=FIXTURE_SUBJECTS, applications=applications, reader=reader, platform=None
+        )
 
     assert result.coverage_unmeasured
 

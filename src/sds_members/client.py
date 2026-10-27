@@ -1,8 +1,8 @@
 """The confined reader and stager for the SDS member record.
 
-TWO ROUTES, AND NO OTHERS: `GET /api/v1/members` and `POST /api/v1/member-proposals`. Staging
-changes no member; only a person's confirmation on `/review` writes the record, so this program
-cannot enrol a repository however it is called.
+TWO ROUTES, AND NO OTHERS, EACH FOR ITS OWN CALLER: `GET /api/v1/members` and
+`POST /api/v1/member-proposals`. Staging changes no member; only a person's confirmation on
+`/review` writes the record, so this program cannot enrol a repository however it is called.
 
 **SERVICES AND MEMBER_STATES ARE COPIES.** This is a client and imports nothing from the
 orchestrator, so it keeps its own copy of the vocabularies; `tests/sds_members` holds them equal
@@ -16,7 +16,7 @@ member list.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Final
 
@@ -70,8 +70,13 @@ class Member:
     grants: Mapping[str, str]
 
 
-def _permits(method: str, path: str) -> bool:
-    return (method, path) in {("GET", _MEMBERS), ("POST", _PROPOSALS)}
+_READ: Final = ("GET", _MEMBERS)
+_STAGE: Final = ("POST", _PROPOSALS)
+
+
+def _permits(route: tuple[str, str]) -> Callable[[str, str], bool]:
+    """A client permits exactly the one route its caller needs, so reading cannot stage."""
+    return lambda method, path: (method, path) == route
 
 
 def _refuse(method: str, path: str) -> MembersUnreadable:
@@ -79,7 +84,11 @@ def _refuse(method: str, path: str) -> MembersUnreadable:
 
 
 def _client(
-    token: str, credential_key_id: str, base_url: str, transport: httpx.BaseTransport | None
+    token: str,
+    credential_key_id: str,
+    base_url: str,
+    transport: httpx.BaseTransport | None,
+    route: tuple[str, str],
 ) -> ConfinedClient:
     try:
         return ConfinedClient(
@@ -92,7 +101,7 @@ def _client(
                 "X-Credential-Key-Id": credential_key_id,
                 "Accept": "application/json",
             },
-            permits=_permits,
+            permits=_permits(route),
             refuse=_refuse,
         )
     except TransportFailure as failure:
@@ -124,7 +133,7 @@ def read_members(
     transport: httpx.BaseTransport | None = None,
 ) -> list[Member]:
     """Every member, retired included, as the orchestrator serves them."""
-    client = _client(token, credential_key_id, base_url, transport)
+    client = _client(token, credential_key_id, base_url, transport, _READ)
     try:
         try:
             response = client.request("GET", _MEMBERS)
@@ -160,7 +169,7 @@ def stage(
     transport: httpx.BaseTransport | None = None,
 ) -> dict[str, Any]:
     """Stage one proposal. The key travels in the body, as does the version staging requires (0)."""
-    client = _client(token, credential_key_id, base_url, transport)
+    client = _client(token, credential_key_id, base_url, transport, _STAGE)
     payload = {**body, "expected_version": 0, "idempotency_key": idempotency_key}
     try:
         try:

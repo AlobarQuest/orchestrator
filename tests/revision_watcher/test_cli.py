@@ -51,6 +51,7 @@ def _drive(monkeypatch, result: Pass, recorder: Any = None, argv: list[str] | No
     reason the case was not about. Found when that refactor landed and five tests reddened at once.
     """
     recorder = _Recorder() if recorder is None else recorder
+    monkeypatch.setattr(cli, "load_subjects", lambda **_: (SUBJECT,))
     monkeypatch.setattr(cli, "_measure", lambda **_: result)
     monkeypatch.setattr(cli, "open_client", lambda **_: recorder)
     return CliRunner(env=ENV).invoke(cli.app, argv or []), recorder
@@ -157,6 +158,7 @@ def test_a_missing_credential_is_the_TOOL_failing_rather_than_a_finding(
     """A broken tool sharing a code with an honest finding is a collision this estate has already
     paid for."""
 
+    monkeypatch.setattr(cli, "load_subjects", lambda **_: (SUBJECT,))
     monkeypatch.setattr(cli, "_measure", lambda **_: Pass(readings=[_reading(CURRENT)]))
     monkeypatch.setattr(cli, "open_client", lambda **_: _Recorder())
 

@@ -282,8 +282,9 @@ TABLE: dict[str, Row] = {
         no_sibling_lanes=True,
     ),
     # ADR-0002: it reads reality and files what it saw. The lanes import one another for DOMAIN
-    # knowledge and never for plumbing, and this one borrows neither. Measured when the table was
-    # built: it had a sibling ban and no dependency allowlist of its own.
+    # knowledge and never for plumbing. It reads its subjects from the member record through
+    # `sds_members`' confined reader, rather than writing a third copy of that client, so it does
+    # not carry `no_sibling_lanes`.
     "revision_watcher": _row(
         "__future__",
         "contextlib",
@@ -294,10 +295,10 @@ TABLE: dict[str, Row] = {
         "httpx",
         "json",
         "os",
+        "sds_members",
         "typer",
         "typing",
         "urllib",
-        no_sibling_lanes=True,
     ),
     # Its window predicate is the orchestrator's, deliberately COPIED -- see `window.py`.
     # ADR-0054 amendment 1: "it reuses bump_proposer's audited revise, publish and propose path,

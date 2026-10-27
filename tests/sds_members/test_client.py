@@ -99,15 +99,20 @@ def test_unusable_base_url_is_unreadable():
 def test_refuses_any_other_route():
     from sds_members import client
 
-    assert client._permits("GET", "/api/v1/members")
-    assert client._permits("POST", "/api/v1/member-proposals")
+    read, stage_route = client._READ, client._STAGE
+    assert client._permits(read)("GET", "/api/v1/members")
+    assert client._permits(stage_route)("POST", "/api/v1/member-proposals")
+    # Reading cannot stage, and staging cannot read.
+    assert not client._permits(read)(*stage_route)
+    assert not client._permits(stage_route)(*read)
     for method, path in [
         ("POST", "/api/v1/members"),
         ("GET", "/api/v1/member-proposals"),
         ("DELETE", "/api/v1/members"),
         ("GET", "/api/v1/work-units"),
     ]:
-        assert not client._permits(method, path)
+        assert not client._permits(read)(method, path)
+        assert not client._permits(stage_route)(method, path)
         assert isinstance(client._refuse(method, path), MembersUnreadable)
 
 
