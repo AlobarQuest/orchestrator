@@ -46,7 +46,11 @@ from landing_ledger.github import (
 )
 from landing_ledger.model import BranchStatus
 from landing_ledger.orchestrator_client import LedgerWriteError, OrchestratorClient
-from landing_ledger.record import is_known_defective_metadata_landing, landing_observation
+from landing_ledger.record import (
+    is_known_defective_metadata_landing,
+    is_known_undercounted_check_landing,
+    landing_observation,
+)
 
 app = typer.Typer(no_args_is_help=True)
 
@@ -154,7 +158,13 @@ def record_landings(
         # branch matches nothing ever again. In that world the ledger has lost its whole history
         # and six rows are the least of what is missing, so the check is deliberately not built:
         # it would make "audit this repository" assert a global property of the ledger.
-        if is_known_defective_metadata_landing(repository, sha):
+        #
+        # THE FOUR ROWS STORED WITH THEIR CHECKS UNDERCOUNTED are declined for the same reason and
+        # on the same premise, measured on 2026-10-27: the reader now derives checks those rows
+        # lack (`record.py::KNOWN_UNDERCOUNTED_CHECK_LANDINGS`).
+        if is_known_defective_metadata_landing(repository, sha) or (
+            is_known_undercounted_check_landing(repository, sha)
+        ):
             summary["exempt"] += 1
             continue
         try:
