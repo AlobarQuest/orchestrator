@@ -3,11 +3,16 @@
 from typing import Any
 
 import httpx
+import pytest
 from typer.testing import CliRunner
 
 from landing_ledger.cli import app, record_landings
 from landing_ledger.github import GitHubReader
 from landing_ledger.orchestrator_client import LedgerWriteError, OrchestratorClient
+from landing_ledger.record import (
+    KNOWN_UNDERCOUNTED_CHECK_LANDINGS,
+    is_known_undercounted_check_landing,
+)
 from tests.landing_ledger.test_github import REPO, gate_routes, reader_for
 
 
@@ -255,6 +260,70 @@ def test_a_write_run_carries_no_records_key() -> None:
 
     assert "records" not in summary
     assert summary["recorded"] == 1
+
+
+# ---------------------------------------------------------------------------------------------
+# The four rows stored with their checks undercounted, while checks were selected by the run's
+# `updated_at` rather than by when each job completed.
+# ---------------------------------------------------------------------------------------------
+
+ORDINARY = "e931db8d31debfb08fd8f8410a4778f33c437fc1"
+
+
+def _undercounted_routes(repository: str, exempt: str) -> dict[str, object]:
+    """`_exempt_routes`, moved to `repository`: one exempt landing with NO commit route (so a
+    read of it 404s into a skip) and one ordinary landing that must still be recorded."""
+    routes = {
+        path.replace(f"/repos/{REPO}", f"/repos/{repository}", 1): body
+        for path, body in _pass_routes().items()
+    }
+    routes[f"/repos/{repository}/branches/main"] = {"commit": {"sha": exempt}}
+    routes[f"/repos/{repository}/commits"] = [
+        {"sha": exempt, "parents": [{"sha": ORDINARY}]},
+        {"sha": ORDINARY, "parents": []},
+    ]
+    return routes
+
+
+@pytest.mark.parametrize(("repository", "commit"), sorted(KNOWN_UNDERCOUNTED_CHECK_LANDINGS))
+def test_an_undercounted_check_landing_is_not_re_recorded(repository: str, commit: str) -> None:
+    """The reader now counts the checks these stored rows lack: a different fact digest at an
+    immutable `source_reference`, so a re-record is an `observation_conflict` and exit 3."""
+    recorder = _Recorder()
+
+    summary = record_landings(
+        reader_for(_undercounted_routes(repository, commit)),
+        recorder,
+        repository=repository,
+        since="2026-08-01T00:00:00+00:00",
+        pages=1,
+        dry_run=False,
+    )
+
+    assert (summary["landings"], summary["recorded"]) == (2, 1)
+    assert (summary["exempt"], summary["skipped"]) == (1, 0)
+    assert [body["source_reference"] for body in recorder.bodies] == [
+        f"landing:{repository}@{ORDINARY}"
+    ]
+
+
+def test_the_undercounted_population_is_exactly_four_named_landings() -> None:
+    """A LITERAL ASSERTION, because the list IS the judgment: the parametrized test above derives
+    itself from the constant. Four rows, measured against production on 2026-10-27."""
+    assert KNOWN_UNDERCOUNTED_CHECK_LANDINGS == frozenset(
+        {
+            ("AlobarQuest/claude-octopus", "42c195ad83cc2074417f20663b32c2281b0e8b9a"),
+            ("AlobarQuest/n8n-as-code", "605d6b17e79a9341104701f077610ca7dc72f18b"),
+            ("AlobarQuest/orchestrator", "41b46cb81f0ea923b76b4fb7a41372093f27ec3a"),
+            ("AlobarQuest/orchestrator", "b658776895139bb5382adde11ce00b1f6a4374b8"),
+        }
+    )
+
+
+def test_the_undercounted_predicate_matches_nothing_of_an_unexpected_shape() -> None:
+    assert not is_known_undercounted_check_landing(None, None)
+    assert not is_known_undercounted_check_landing(["a"], {"b": 1})
+    assert not is_known_undercounted_check_landing(REPO, ORDINARY)
 
 
 def test_the_command_is_reachable_under_its_real_invocation() -> None:

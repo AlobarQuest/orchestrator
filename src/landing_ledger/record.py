@@ -179,6 +179,48 @@ def is_known_defective_metadata_landing(repository: Any, commit: Any) -> bool:
     return (repository, commit) in KNOWN_DEFECTIVE_METADATA_LANDINGS
 
 
+# THE FOUR LANDINGS STORED WITH THEIR CHECKS UNDERCOUNTED.
+#
+# Until 2026-10-27 `_checks_and_gate` kept a check only if its RUN's `updated_at` preceded the
+# landing. GitHub moves a completed run's `updated_at` after the fact with no re-run, so a run whose
+# jobs had all concluded before the merge could read as finishing after it, and its checks were
+# dropped. These four were recorded after such a bump: each stored row says `checks_observed: 0`
+# while three jobs had concluded before the landing. The reader now selects by each job's own
+# `completed_at` and derives those three checks.
+#
+# NAMED BY IDENTITY, NEVER BY DATE, for the reason the list above gives (ADR-0014). Measured on
+# 2026-10-27 by re-deriving every stored landing of the previous ten days across the thirteen
+# ledger repositories under the job-completion rule: it reproduced 254 of 258 stored rows, and
+# these are the other four.
+#
+# THIS LIST CAN NEVER BE SPENT, exactly as the list above cannot: the rows are immutable and
+# content-addressed, with no supersession path and no delete route.
+#
+# IT HAS ONE CONSUMER, `cli.py`'s record pass, which declines to re-record them -- a re-record
+# derives three more checks, a different fact digest at an identity that cannot move, and so an
+# `observation_conflict` and exit 3 every pass while they sit inside the window. THE AUDIT HAS
+# NOTHING TO WITHHOLD: all four rows have a `human` basis, which no detector re-reads for checks,
+# and a zero-check row raises no finding on any basis (only a failing check does).
+KNOWN_UNDERCOUNTED_CHECK_LANDINGS = frozenset(
+    {
+        ("AlobarQuest/claude-octopus", "42c195ad83cc2074417f20663b32c2281b0e8b9a"),
+        ("AlobarQuest/n8n-as-code", "605d6b17e79a9341104701f077610ca7dc72f18b"),
+        ("AlobarQuest/orchestrator", "41b46cb81f0ea923b76b4fb7a41372093f27ec3a"),
+        ("AlobarQuest/orchestrator", "b658776895139bb5382adde11ce00b1f6a4374b8"),
+    }
+)
+
+
+def is_known_undercounted_check_landing(repository: Any, commit: Any) -> bool:
+    """Whether this exact landing is one of the four stored with its checks undercounted.
+
+    `Any` and the `isinstance` pair for the reasons `is_known_defective_metadata_landing` gives.
+    """
+    if not isinstance(repository, str) or not isinstance(commit, str):
+        return False
+    return (repository, commit) in KNOWN_UNDERCOUNTED_CHECK_LANDINGS
+
+
 def is_machine(login: str | None) -> bool:
     return login is not None and login.endswith("[bot]")
 

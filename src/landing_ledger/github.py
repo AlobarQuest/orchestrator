@@ -276,6 +276,54 @@ def _landed_pull(reader: GitHubReader, repository: str, sha: str) -> dict[str, A
     return None
 
 
+def _completed_by(job: dict[str, Any], landed_at: datetime) -> bool:
+    """Whether this job attempt had concluded by the landing, by its own time, not its run's."""
+    completed = job.get("completed_at")
+    return (
+        job.get("conclusion") is not None
+        and completed is not None
+        and datetime.fromisoformat(completed) <= landed_at
+    )
+
+
+def _attempt(job: dict[str, Any]) -> int:
+    return int(job.get("run_attempt") or 1)
+
+
+def _all_attempts_jobs(reader: GitHubReader, repository: str, run_id: int) -> list[dict[str, Any]]:
+    # `filter=all`: every attempt's jobs in the one call. The default is the latest attempt only,
+    # so a re-run after the landing would REPLACE the attempt that informed it.
+    payload = reader.get(
+        f"/repos/{repository}/actions/runs/{run_id}/jobs", per_page=100, filter="all"
+    )
+    return list((payload or {}).get("jobs", []))
+
+
+def _qualifying_gate(
+    reader: GitHubReader, repository: str, run: dict[str, Any], landed_at: datetime
+) -> dict[str, Any] | None:
+    """The gate run as of its latest attempt that had wholly concluded by the landing, or None.
+
+    Returned as the run with its `conclusion` and `jobs` taken from THAT attempt. The run object
+    itself carries only its latest attempt's conclusion, so an earlier attempt's is read from that
+    attempt's own record -- exact GitHub data, one call, and only when a re-run followed.
+    """
+    by_attempt: dict[int, list[dict[str, Any]]] = {}
+    for job in _all_attempts_jobs(reader, repository, run["id"]):
+        by_attempt.setdefault(_attempt(job), []).append(job)
+    for number in sorted(by_attempt, reverse=True):
+        jobs = by_attempt[number]
+        if not all(_completed_by(job, landed_at) for job in jobs):
+            continue
+        if number == int(run.get("run_attempt") or 1):
+            conclusion = run.get("conclusion")
+        else:
+            record = reader.get(f"/repos/{repository}/actions/runs/{run['id']}/attempts/{number}")
+            conclusion = (record or {}).get("conclusion")
+        return {**run, "conclusion": conclusion, "jobs": jobs}
+    return None
+
+
 def _checks_and_gate(
     reader: GitHubReader,
     repository: str,
@@ -284,10 +332,17 @@ def _checks_and_gate(
 ) -> tuple[tuple[Check, ...], dict[str, Any] | None]:
     """Every job that had CONCLUDED at the head before the landing, plus the gate's own run.
 
-    Two filters, each load-bearing. Only `pull_request` runs count: the same head also carries
-    `push` runs of the same workflows, and counting both would double every name. Only runs whose
-    last update precedes the landing count: a run that concluded afterwards cannot have informed
-    it, and saying so is the difference between "what had concluded" and a reconstruction.
+    Only `pull_request` runs count: the same head also carries `push` runs of the same workflows,
+    and counting both would double every name.
+
+    ONLY JOBS THAT HAD CONCLUDED BY THE LANDING COUNT, AND THAT IS READ FROM EACH JOB'S OWN
+    `completed_at`, NEVER FROM THE RUN'S `updated_at`. GitHub moves a completed run's `updated_at`
+    after the fact with no re-run (change-manager #141: job completed 14:29:29Z, merged 14:29:37Z,
+    run `updated_at` later 14:41:30Z), so keying on it made a landing's facts depend on when it
+    was read -- a permanent `observation_conflict` for a row recorded before the bump, and
+    silently missing checks for one recorded after it. Per job name, the HIGHEST attempt that had
+    concluded by the landing is kept, so a re-run after the landing never replaces the attempt
+    that informed it. The gate counts by the same rule, as of the same kind of attempt.
 
     Job names, not workflow names -- branch protection matches jobs, and in intent-packages the
     workflow is `Quality` while the job is `Lint, type-check, and test`.
@@ -299,17 +354,20 @@ def _checks_and_gate(
     for run in runs:
         if run.get("event") != "pull_request":
             continue
-        updated = run.get("updated_at")
-        if updated is None or datetime.fromisoformat(updated) > landed_at:
-            continue
         if run.get("path") == GATE_PATH:
-            gate = run
+            gate = _qualifying_gate(reader, repository, run, landed_at)
             continue
-        jobs = reader.get(f"/repos/{repository}/actions/runs/{run['id']}/jobs", per_page=100)
-        for job in (jobs or {}).get("jobs", []):
-            if job.get("conclusion") is None:
+        kept: dict[str, dict[str, Any]] = {}
+        for job in _all_attempts_jobs(reader, repository, run["id"]):
+            if not _completed_by(job, landed_at):
                 continue
-            checks.append(Check(name=job["name"], conclusion=job["conclusion"], run=run["id"]))
+            held = kept.get(job["name"])
+            if held is None or _attempt(job) > _attempt(held):
+                kept[job["name"]] = job
+        checks.extend(
+            Check(name=job["name"], conclusion=job["conclusion"], run=run["id"])
+            for job in kept.values()
+        )
     return tuple(sorted(checks, key=lambda c: (c.name, c.run))), gate
 
 
@@ -318,27 +376,24 @@ def _gate_revision(reader: GitHubReader, repository: str, sha: str) -> str | Non
     return blob.get("sha") if isinstance(blob, dict) else None
 
 
-def _arm_outcome(reader: GitHubReader, repository: str, run_id: int, revision: str) -> str | None:
-    """What the gate's arming step concluded on this run, or None if it could not be found.
+def _arm_outcome(jobs: list[dict[str, Any]], revision: str) -> str | None:
+    """What the gate's arming step concluded in the qualifying attempt, or None if not found.
 
-    THIS IS A SECOND REQUEST AND THERE IS NO WAY AROUND IT. `_checks_and_gate` deliberately does
-    not fetch the gate run's jobs -- it identifies the gate and moves on, because the gate is not
-    one of the checks that verified the change. Whether the gate ACTED lives one level below the
-    run's own conclusion, in a step, so it costs one call per landing that has a gate at all.
-    ADR-0037's own text says the data is already fetched; it is not, and the cost is stated here
-    rather than discovered against the hourly limit the recording pass already runs close to.
+    Read from the jobs `_checks_and_gate` already fetched for the attempt that informed the
+    landing -- so no second request, and never a later re-run's steps. That fetch is made for every
+    gate run at the head, whatever its outcome, because whether the gate counts at all is decided
+    by when its job completed, which only the jobs say.
 
-    IT ASKS NOTHING WHEN THE REVISION IS NOT TRANSCRIBED. The step has no `id:`, so the only
+    NO NAME, NO ANSWER, WHEN THE REVISION IS NOT TRANSCRIBED. The step has no `id:`, so the only
     handle on it is the name the registry holds for these exact bytes -- with no entry there is
-    no name to look for, and a request that could not recognise its answer is a request not worth
-    making. `basis_of` treats that case as "the question could not be asked" rather than as "the
-    gate did not arm", which is what keeps an untranscribed revision reaching the audit.
+    nothing to recognise. `basis_of` treats that case as "the question could not be asked" rather
+    than as "the gate did not arm", which is what keeps an untranscribed revision reaching the
+    audit.
     """
     rule = rule_for(revision)
     if rule is None:
         return None
-    jobs = reader.get(f"/repos/{repository}/actions/runs/{run_id}/jobs", per_page=100)
-    for job in (jobs or {}).get("jobs", []):
+    for job in jobs:
         for step in job.get("steps") or ():
             if step.get("name") == rule.arm_step:
                 # `or "unknown"` mirrors the run's own conclusion above, and reserves None for
@@ -388,14 +443,10 @@ def read_landing(reader: GitHubReader, repository: str, base_ref: str, sha: str)
                 run=gate["id"],
                 outcome=outcome,
                 # ONLY WHEN THE RUN CONCLUDED CLEANLY, because nothing downstream can use the
-                # answer otherwise: the rule basis requires this same `success` first, so a
-                # request here would be spent on a landing already refused. It matters at this
-                # scale -- the gate workflow runs on EVERY pull request and its job is skipped
-                # for every author but the update bot, which is most landings in most passes.
+                # answer otherwise: the rule basis requires this same `success` first, and a
+                # step outcome beside a refused run would be a fact nothing reads.
                 arm_outcome=(
-                    _arm_outcome(reader, repository, gate["id"], revision)
-                    if outcome == "success"
-                    else None
+                    _arm_outcome(gate["jobs"], revision) if outcome == "success" else None
                 ),
             )
     # A squash carries both sets of trailers through verbatim, so the landing commit almost always
