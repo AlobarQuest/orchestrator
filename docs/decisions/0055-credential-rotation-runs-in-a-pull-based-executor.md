@@ -4,7 +4,7 @@
 - **Date:** 2026-10-08
 - **Decided by:** Devon, decisions recorded 2026-10-08 in
   `docs/superpowers/specs/2026-10-08-credential-rotation-requirements.md`. Accepted 2026-10-08 ("Yes, I accept ADR-0055").
-- **Amended:** 2026-10-27, amendment 15 proposed (one mechanism; a credential type is its provider). 2026-10-09, amendment 1 (increment 2's measurements; the Coolify token decision);
+- **Amended:** 2026-10-27, amendment 15 (one mechanism; a credential type is its provider). 2026-10-09, amendment 1 (increment 2's measurements; the Coolify token decision);
   2026-10-09, amendment 2 (increment 3's code read; where destinations are reviewed, which window
   applies at claim, and per-unit completion).
 - **Supersedes:** the parts of ADR-0054 named in "What this changes in ADR-0054".
@@ -1688,7 +1688,8 @@ Run over all 113 steps the 13 completed rotations filed, the machine's reading p
 
 ## Amendment 15 — One rotation mechanism, and a credential type is only its provider (2026-10-27)
 
-**Status: proposed 2026-10-27.** Devon set the direction the same day: "separate this process into
+**Status: accepted by Devon on 2026-10-27** ("amentment 15 approved"). It takes effect
+increment by increment, as each ships. Devon set the direction the same day: "separate this process into
 two pieces. One is the rotation mechanism, and the other is necessary customization for a cred
 type", with the end state "the human putting a new cred in the exact same temp BWS secret, and
 also revoking" the credentials a machine can't revoke. He chose that a person revokes only what no
