@@ -97,11 +97,11 @@ fi
 # `observed` population (docs/operations/membership.md). A hand list here drifted from the
 # declarations it was meant to follow.
 #
-# AN INCOMPLETE DERIVATION STILL RUNS, AND STILL SAYS SO. `sds_scope` exits 3 when part of the
-# answer couldn't be read, after printing every name it could determine. The passes below run on
-# those names, and the 3 is folded into this pass's answer, so the day is recorded where it can be
-# and the pass still reads as incomplete rather than clean. Any other non-zero code is the tool
-# failing (1) or not running at all (126, 127, 137), and is passed through verbatim.
+# AN INCOMPLETE DERIVATION RECORDS NOTHING, AND SAYS SO. `sds_scope` exits 3 with nothing on stdout
+# when the member record could not be read or the population is empty: there is no partial list.
+# The empty-list check below then exits 3, so the day reads as incomplete rather than clean. Any
+# other non-zero code is the tool failing (1) or not running at all (126, 127, 137), and is passed
+# through verbatim.
 REPOSITORIES="$(cd "$REPO_ROOT" && SDS_SCOPE_ORCHESTRATOR_TOKEN="$LANDING_LEDGER_TOKEN" \
   "$REPO_ROOT/.venv/bin/python" -m scripts.sds_scope ledger)"
 scope_rc=$?
