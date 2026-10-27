@@ -657,6 +657,8 @@ paths = [
   "tests/api/test_membership_api.py",
   "tests/web/test_member_proposals.py",
   "tests/architecture/test_membership_writers.py",
+  "src/sds_members/**",
+  "tests/sds_members/**",
   "docs/operations/membership.md",
   "docs/decisions/0058-*.md",
 ]
