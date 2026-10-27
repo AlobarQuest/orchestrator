@@ -138,7 +138,9 @@ class Harness:
             raise self.refusal
         plan_unit = self.adapter.plan.unit(unit["authority"]["constraints"]["rotation_unit"])
         entry = RegistryEntry("AlobarQuest/orchestrator", "c" * 40, {"rotated_by_sds": True})
-        return Approved(self.adapter, plan_unit, self.rotation, entry, self.reads)
+        return Approved(
+            self.adapter, self.adapter.plan, plan_unit, self.rotation, entry, self.reads
+        )
 
     def _registry(self, mirror: Any, credential_id: str) -> RegistryEntry:
         rotated = not self.handed_back

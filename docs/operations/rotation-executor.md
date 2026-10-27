@@ -16,8 +16,9 @@ Each pass, started by a systemd timer every five minutes, works every ready unit
    `source_path` is the directory on the machine that emitted it, so the executor never reads it. The
    credential's registry entry, read at its repository's `main`, must still say
    `rotated_by_sds = true` and name the adapter's provider. The registry's destinations, the
-   package's `profile_fields.destinations` and the envelope's `destinations` must be equal. A
-   refusal claims the unit and fails it with the reason, so it reaches the dead-letter report. A
+   package's `profile_fields.destinations` and the envelope's `destinations` must be equal. The
+   plan is the one the approved package's criteria describe, step for step (see "The plan a
+   credential runs"). A refusal claims the unit and fails it with the reason, so it reaches the dead-letter report. A
    git or network failure leaves the unit for the next pass.
 2. **It claims and starts the unit, then runs its steps** (`contract.py`). Before each step it
    renews the lease and reads the registry again.
@@ -29,23 +30,47 @@ The executor never trusts evidence: it re-derives where a rotation stands from B
 and the staging and quarantine secrets named `rotation/<credential>/<occurrence>/…` in
 `Rotation / Work`) and from probes.
 
+## The plan a credential runs
+
+A credential type (`openrouter`, `orchestrator`, `change-manager`, `github-pat`, `bitbucket`,
+`bws-machine-token`) declares only which steps its provider does by machine
+(`Adapter.capabilities`). The executor derives each credential's plan from that and the
+credential's registry row (`plans.derive`, ADR-0055 amendment 15):
+
+- **Mint and revoke** are machine units when the provider does them, and human acts otherwise.
+- **`host`** runs for a hosted type, before anything probes the new value.
+- **`distribute`** runs when a destination other than the keeper is written: an Actions secret, a
+  held copy, or a secret the type's store reads back.
+- **When a person revokes,** a `verify` unit checks every consumer straight before the revoke, and
+  a `confirm` unit follows it.
+- **No person attests a consumer.** A `runtime-fetch` reader whose registry row names no read is
+  refused before the claim until its row names one.
+
+Criteria are numbered AC-001 onward over the machine steps in order. `rotation_adapter` names the
+type. The approved package pins its plan: the executor runs the derived plan when the package's
+criteria describe it step for step, and otherwise the plan the type's packages were approved with
+before derivation (`Adapter.plan`), when they describe that one. A package that describes neither
+is refused before the claim. The names `orchestrator-distributed`, `change-manager-distributed`
+and `change-manager-attested` each pin one fixed plan, for packages approved under them; a new
+revision names the type instead.
+
 ## Decompose a rotation
 
-Each adapter fixes its decomposition (`adapters/`). For each unit, the decomposition proposal
-gives:
+Each credential's plan (see "The plan a credential runs") fixes its decomposition. For each
+unit, the decomposition proposal gives:
 
 - `required_capability: operational_action`, and `max_attempts` of three. Any other value is
   outside the rotation pattern, so the unit needs its own authority approval.
 - Envelope `constraints`:
-  - `rotation_adapter`: the adapter's name, for example `fake`.
-  - `rotation_unit`: the unit's name in the adapter's plan, for example `mint`.
+  - `rotation_adapter`: the type's name, for example `github-pat`, or `fake` for the canary.
+  - `rotation_unit`: the unit's name in the plan, for example `mint`.
   - `destinations`: the package's list, exactly (`rotation-worker compare-destinations` prints
     it).
   - `touches_no_hosted_service: true`, only on a unit that writes no hosted consumer.
   - `host_without_overlap: true`, only on the `orchestrator` adapter's `mint` unit, and only when
     the old value is another entry's current one (see "Host without an overlap").
-- `ac_mappings`: each step files against its own acceptance criterion, the `ac_id` the adapter's
-  plan names, so the package declares one criterion per machine step.
+- `ac_mappings`: each step files against its own acceptance criterion, the `ac_id` the plan
+  names, so the package declares one criterion per machine step, whose evidence names the step.
 - `dependencies`: each unit after the first depends on the one before it with
   `kind: work_unit`, `required_state_or_condition: completed`. Each human act in the plan is an
   `external_system` dependency on the unit after it, resolved at `/review` with the fingerprint

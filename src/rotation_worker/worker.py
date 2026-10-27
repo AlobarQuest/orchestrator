@@ -294,7 +294,7 @@ def _gates_retire(approved: Approved) -> bool:
 
 def _person_revokes_next(approved: Approved) -> bool:
     """Whether the segment straight after this unit is a person retiring the old value."""
-    segments = approved.adapter.plan.segments
+    segments = approved.plan.segments
     following = segments[segments.index(approved.unit) + 1 :][:1]
     return any(
         isinstance(segment, HumanAct)

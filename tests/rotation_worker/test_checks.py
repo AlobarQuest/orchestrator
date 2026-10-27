@@ -10,11 +10,13 @@ from typing import Any
 import pytest
 import yaml
 
+from rotation_worker.adapters import ADAPTERS, github_pat, orchestrator_bearer
 from rotation_worker.canonical import CanonicalError, package_hash
 from rotation_worker.checks import check_unit
-from rotation_worker.contract import ContractError, StepKind, UnitPlan
+from rotation_worker.contract import ContractError, Plan, StepKind, UnitPlan
 from rotation_worker.envelope import is_rotation_unit
 from rotation_worker.git_mirror import RepoMirror
+from rotation_worker.plans import derive
 from rotation_worker.readers import CheckRead
 from rotation_worker.registry import (
     PACKAGES_REPOSITORY,
@@ -62,7 +64,20 @@ def _registry(**changes: str) -> str:
     ).replace("\n        ", "\n")
 
 
-def _package(**fields: Any) -> dict[str, Any]:
+def _acceptance(plan: Plan) -> list[dict[str, str]]:
+    """One criterion per machine step, worded as a standing package words it."""
+    return [
+        {
+            "id": step.ac_id,
+            "evidence": f"external: the {step.kind} step's rotation-step/1 evidence, "
+            "filed by the rotation executor.",
+        }
+        for step in plan.steps()
+        if step.ac_id is not None
+    ]
+
+
+def _package(acceptance: list[dict[str, str]] | None = None, **fields: Any) -> dict[str, Any]:
     profile_fields = {
         "standing": True,
         "credential_id": "canary",
@@ -70,7 +85,8 @@ def _package(**fields: Any) -> dict[str, Any]:
         "destinations": DESTINATIONS,
         **fields,
     }
-    return {"profile": "non-software-operational", "profile_fields": profile_fields}
+    package = {"profile": "non-software-operational", "profile_fields": profile_fields}
+    return package if acceptance is None else {**package, "acceptance": acceptance}
 
 
 class World:
@@ -369,7 +385,7 @@ def test_both_of_the_orchestrator_adapter_s_units_write_the_hosted_service(world
             '  key = "ORCHESTRATOR_M2M_CREDENTIALS"\n  entry = "orchestrator-operator"\n',
         )
     )
-    world.publish(_package(destinations=destinations))
+    world.publish(_package(_acceptance(orchestrator_bearer.PLAN), destinations=destinations))
     intake = world.intake(acceptance_criteria=[{"ac_id": f"AC-00{n}"} for n in range(1, 10)])
     for unit in ("mint", "retire"):
         marked = world.unit(
@@ -412,7 +428,7 @@ def _orchestrator_world(world: World, reader_fields: str) -> tuple[dict[str, Any
             '  key = "ORCHESTRATOR_M2M_CREDENTIALS"\n  entry = "orchestrator-observer"\n',
         )
     )
-    world.publish(_package(destinations=destinations))
+    world.publish(_package(_acceptance(orchestrator_bearer.PLAN), destinations=destinations))
     intake = world.intake(acceptance_criteria=[{"ac_id": f"AC-00{n}"} for n in range(1, 10)])
     unit = world.unit(
         destinations=destinations,
@@ -512,3 +528,29 @@ def test_a_person_s_revoke_counts_a_held_copy_as_machine_verified() -> None:
 
     keeper = 'bws-secret uuid="00000000-0000-0000-0000-000000000000"'
     _check_human_retire_verifiable([keeper, HELD], bitbucket.PLAN, {}, MemoryStore())
+
+
+@pytest.mark.parametrize("approved_with", ["derived", "before derivation"])
+def test_a_type_runs_the_plan_its_package_s_criteria_describe(
+    world: World, approved_with: str
+) -> None:
+    reader = 'runtime-fetch repo="orchestrator" ref="scripts/run-x.sh"'
+    destinations = sorted([f'bws-secret uuid="{KEEPER}"', 'provider name="github"', reader])
+    world.registry(
+        _registry(provider='"github"').replace(
+            '  ref = "a person attests"\n',
+            '  ref = "scripts/run-x.sh"\n  healthchecks_check = "sds-x"\n',
+        )
+    )
+    capabilities = ADAPTERS["github-pat"].capabilities
+    assert capabilities is not None
+    derived = derive(capabilities, destinations, f'bws-secret uuid="{KEEPER}"', "bws-secret")
+    # No Actions copy, so the derived plan has no distribute step and differs from the PAT's.
+    assert derived != github_pat.PLAN
+    plan = derived if approved_with == "derived" else github_pat.PLAN
+    world.publish(_package(_acceptance(plan), destinations=destinations))
+    intake = world.intake(acceptance_criteria=[{"ac_id": f"AC-00{n}"} for n in range(1, 8)])
+    unit = world.unit(destinations=destinations, rotation_adapter="github-pat")
+    approved = world.check(unit, intake)
+    assert approved.plan == plan
+    assert approved.unit == plan.unit("store")

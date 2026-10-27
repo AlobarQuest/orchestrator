@@ -9,6 +9,9 @@ from intent-packages' and the registries' public git:
 * it is a standing rotation package for one credential and one occurrence;
 * that credential's registry entry, read at its repository's `main`, still hands it to the SDS
   (`rotated_by_sds = true`, R6) and names the adapter's provider;
+* the plan is the one the approved package's criteria describe, step for step: for a credential
+  type, the plan derived from its registry row (`plans.derive`), or the plan its packages were
+  approved with before derivation; for any other name, its one fixed plan;
 * the registry's destinations, the package's and the unit envelope's are exactly equal;
 * the keeper (the registry's `bws_uuid`, or a machine token's Keychain item) is one of them and
   is kept where this instance's store reads, every one fits a `rotation-step/1` row, and a unit
@@ -46,6 +49,7 @@ from rotation_worker.envelope import ADAPTER_KEY
 from rotation_worker.evidence import MAX_DESTINATION
 from rotation_worker.git_mirror import COMMIT_PATTERN as COMMIT
 from rotation_worker.git_mirror import MirrorError, RepoMirror
+from rotation_worker.plans import derive, select_plan
 from rotation_worker.readers import Read, scheduled_reads
 from rotation_worker.registry import (
     PACKAGES_REPOSITORY,
@@ -77,6 +81,9 @@ class Approved:
     """A unit the checks passed: its adapter, its segment of the plan, and the rotation."""
 
     adapter: Adapter
+    # The plan this credential runs, which the approved package's criteria describe. A type's
+    # `adapter.plan` is only its pre-derivation candidate: read this one.
+    plan: Plan
     unit: UnitPlan
     rotation: Rotation
     registry: RegistryEntry
@@ -102,12 +109,8 @@ def check_unit(
     adapter = ADAPTERS.get(str(constraints.get(ADAPTER_KEY)))
     if adapter is None:
         raise ContractError(f"no adapter named {constraints.get(ADAPTER_KEY)!r}")
-    unit = adapter.plan.unit(str(constraints.get(UNIT_KEY)))
-    criteria = {criterion.get("ac_id") for criterion in intake.get("acceptance_criteria", [])}
-    for step in unit.steps:
-        if step.ac_id not in criteria:
-            raise ContractError(f"the package has no {step.ac_id} for the {step.kind} step")
-    fields = _approved_package(intake, mirror)
+    document = _approved_package(intake, mirror)
+    fields = document["profile_fields"]
     credential_id = str(fields.get("credential_id"))
     packaged = standing_destinations(fields, credential_id, "the approved revision")
     entry = find_credential(mirror, credential_id)
@@ -121,18 +124,36 @@ def check_unit(
     if not (entry.destinations == packaged == enveloped):
         raise ContractError("the registry's, the package's and the envelope's destinations differ")
     keeper = _keeper_id(entry, packaged, store)
+    reads = scheduled_reads(entry.credential)
+    plan = _plan(adapter, entry, store, document.get("acceptance"))
+    unit = plan.unit(str(constraints.get(UNIT_KEY)))
+    criteria = {criterion.get("ac_id") for criterion in intake.get("acceptance_criteria", [])}
+    for step in unit.steps:
+        if step.ac_id not in criteria:
+            raise ContractError(f"the package has no {step.ac_id} for the {step.kind} step")
     _check_destination_fit(
-        packaged, adapter.plan, unit, marked_non_hosted=constraints.get(NON_HOSTED_KEY) is True
+        packaged, plan, unit, marked_non_hosted=constraints.get(NON_HOSTED_KEY) is True
     )
     without_overlap = _declared_without_overlap(constraints, unit)
-    reads = scheduled_reads(entry.credential)
-    _check_runtime_fetch_verifiable(packaged, adapter.plan, reads)
-    _check_human_retire_verifiable(packaged, adapter.plan, reads, store)
+    _check_runtime_fetch_verifiable(packaged, plan, reads)
+    _check_human_retire_verifiable(packaged, plan, reads, store)
     occurrence = fields.get("occurrence")
     if not isinstance(occurrence, str) or not occurrence.strip():
         raise ContractError("the approved revision names no occurrence")
     rotation = Rotation(credential_id, occurrence, keeper, work_project_id, tuple(packaged))
-    return Approved(adapter, unit, rotation, entry, reads, without_overlap)
+    return Approved(adapter, plan, unit, rotation, entry, reads, without_overlap)
+
+
+def _plan(
+    adapter: Adapter,
+    entry: RegistryEntry,
+    store: SecretStore,
+    acceptance: object,
+) -> Plan:
+    if adapter.capabilities is None:
+        return adapter.plan
+    derived = derive(adapter.capabilities, entry.destinations, entry.keeper, store.read_back_kind)
+    return select_plan((derived, adapter.plan), acceptance)
 
 
 def _keeper_id(entry: RegistryEntry, packaged: list[str], store: SecretStore) -> str:
@@ -157,6 +178,7 @@ def _declared_without_overlap(constraints: Mapping[str, Any], unit: UnitPlan) ->
 
 
 def _approved_package(package: Mapping[str, Any], mirror: RepoMirror) -> Mapping[str, Any]:
+    """The approved package document, read at its revision's commit and hash-checked."""
     if package.get("source_repository") != PACKAGES_REPOSITORY:
         raise ContractError("the revision isn't from intent-packages")
     # The intake's source_path is the package directory on whichever machine emitted it, which git
@@ -191,7 +213,7 @@ def _approved_package(package: Mapping[str, Any], mirror: RepoMirror) -> Mapping
     latest = approvals[-1] if isinstance(approvals, list) and approvals else None
     if not isinstance(latest, dict) or latest.get("approved_hash") != recomputed:
         raise ContractError("the revision isn't the package's latest approval at main")
-    return fields
+    return document
 
 
 def _local[T](read: Callable[..., T], *arguments: str) -> T:

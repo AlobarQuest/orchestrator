@@ -513,6 +513,13 @@ Placement rule: global CLAUDE.md §7.
   `GET /work-units/{id}`, never the runner brief. It reads the package at its `package_id`'s
   path: an intake's `source_path` is the emitting machine's directory, never a git path. Detail:
   `docs/operations/rotation-executor.md`.
+- A credential type's plan is `plans.derive` from `Adapter.capabilities` and the registry row's
+  destinations, criteria numbered over its machine steps; the approved package pins which plan
+  runs. The executor runs the derived plan, or the type's pre-derivation `Adapter.plan`, whichever
+  the package's criteria describe step for step (unit too, where named), and refuses otherwise;
+  read `Approved.plan`, never `adapter.plan`, for the plan a unit runs. A derived plan never has a
+  person attest a consumer. Detail: `docs/operations/rotation-executor.md`, "The
+  plan a credential runs".
 - The executor's Keychain instance (ADR-0055 amendment 12) keeps state in the login Keychain
   through `/usr/bin/security` (`secret_store.KeychainStore`): values only on stdin and stdout
   (`security -i`), items updated in place with `-U`, never re-created, and an update never

@@ -1,4 +1,6 @@
-"""Rotation adapters: a provider and a plan each, chosen by the envelope's `rotation_adapter`.
+"""Rotation adapters, chosen by the envelope's `rotation_adapter`: a credential type's provider
+and the capabilities its plan is derived from (`plans.derive`, ADR-0055 amendment 15), or a name
+that pins one fixed plan.
 
 An adapter's provider must be the one the credential's registry entry names, so an envelope can't
 point a credential at another provider's adapter. Each adapter runs on one instance of the
@@ -25,6 +27,7 @@ from rotation_worker.adapters import (
 from rotation_worker.contract import ContractError, Plan, Provider, Rotation, UnitPlan
 from rotation_worker.git_mirror import RepoMirror
 from rotation_worker.orchestrator_client import OrchestratorClient
+from rotation_worker.plans import Capabilities
 from rotation_worker.readers import Healthchecks
 from rotation_worker.secret_store import SecretStore
 
@@ -70,6 +73,11 @@ class Adapter:
     wait: WaitReason | None = None
     # The units that wait, unclaimed, while another rotation is mid-overlap (`overlaps.py`).
     overlap_waits: frozenset[str] = frozenset()
+    # A credential type's: which steps its provider does by machine, from which each
+    # credential's plan is derived (`plans.derive`, ADR-0055 amendment 15). `None` for a name
+    # that pins one fixed plan. A type's `plan` is the one its packages approved before
+    # derivation, run only for a package whose criteria still describe it.
+    capabilities: Capabilities | None = None
 
 
 def _change_manager(context: AdapterContext) -> Provider:
@@ -112,9 +120,13 @@ ADAPTERS: Final[dict[str, Adapter]] = {
         openrouter.NAME,
         openrouter.PLAN,
         lambda context: openrouter.build(context.store, context.admin_secret_id),
+        capabilities=Capabilities(machine_mint=True, machine_revoke=True),
     ),
     orchestrator_bearer.NAME: Adapter(
-        orchestrator_bearer.NAME, orchestrator_bearer.PLAN, _orchestrator
+        orchestrator_bearer.NAME,
+        orchestrator_bearer.PLAN,
+        _orchestrator,
+        capabilities=Capabilities(machine_mint=True, machine_revoke=True, hosted=True),
     ),
     orchestrator_bearer.DISTRIBUTED_NAME: Adapter(
         orchestrator_bearer.NAME, orchestrator_bearer.DISTRIBUTED_PLAN, _orchestrator
@@ -125,13 +137,20 @@ ADAPTERS: Final[dict[str, Adapter]] = {
         lambda context: github_pat.build_provider(
             rotation=context.rotation, orchestrator=context.orchestrator
         ),
+        capabilities=Capabilities(machine_mint=False, machine_revoke=True),
     ),
     bitbucket.NAME: Adapter(
         bitbucket.NAME,
         bitbucket.PLAN,
         lambda context: bitbucket.build_provider(credential=context.credential),
+        capabilities=Capabilities(machine_mint=False, machine_revoke=False),
     ),
-    change_manager.NAME: Adapter(change_manager.NAME, change_manager.PLAN, _change_manager),
+    change_manager.NAME: Adapter(
+        change_manager.NAME,
+        change_manager.PLAN,
+        _change_manager,
+        capabilities=Capabilities(machine_mint=True, machine_revoke=True, hosted=True),
+    ),
     bws_machine_token.NAME: Adapter(
         bws_machine_token.PROVIDER,
         bws_machine_token.PLAN,
@@ -139,6 +158,7 @@ ADAPTERS: Final[dict[str, Adapter]] = {
         store_kind="keychain",
         wait=bws_machine_token.wait_reason,
         overlap_waits=frozenset({"store"}),
+        capabilities=Capabilities(machine_mint=False, machine_revoke=False),
     ),
     change_manager.ATTESTED_NAME: Adapter(
         change_manager.NAME, change_manager.ATTESTED_PLAN, _change_manager
