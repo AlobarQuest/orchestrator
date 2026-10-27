@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One consistency pass over the SDS member record: `sds-members check` compares the record with
+# One consistency pass over the SDS member record: `membership-check` compares the record with
 # every repository's `factory-target.toml`, change-manager's inert landing population, and the
 # configuration lists the rollout, tool, hardening, fork-sync and rotation lanes carry (ADR-0058).
 #
@@ -12,7 +12,7 @@
 # grace, so it is a liveness check too. Only the shared helper's lookup of the ping URL by check
 # name is reused; its arming is not, because it pings success on a lane's finding code.
 #
-# EXIT CODES, the whole interface a scheduled run has (`sds_members/cli.py`):
+# EXIT CODES, the whole interface a scheduled run has (`membership_check/cli.py`):
 #   0  the record and every list agree.
 #   1  the tool itself failed (a missing credential, an unhandled error).
 #   2  at least one disagreement. Disagreements outrank gaps.
@@ -106,7 +106,7 @@ SDS_MEMBERS_GITHUB_TOKEN="${SDS_MEMBERS_GITHUB_TOKEN:-$(gh auth token 2>/dev/nul
     "FATAL: no GitHub credential. Set SDS_MEMBERS_GITHUB_TOKEN, or authenticate gh."
 export SDS_MEMBERS_OBSERVER_TOKEN SDS_MEMBERS_CHANGE_MANAGER_TOKEN SDS_MEMBERS_GITHUB_TOKEN
 
-"$REPO_ROOT/.venv/bin/sds-members" check > "$REPORT" 2>&1
+"$REPO_ROOT/.venv/bin/membership-check" > "$REPORT" 2>&1
 rc=$?
 cat "$REPORT"
 if [ "$rc" -eq 0 ]; then

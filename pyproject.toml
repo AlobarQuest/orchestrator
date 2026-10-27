@@ -95,6 +95,8 @@ fork-sync = "fork_sync.cli:app"
 fork-harden = "fork_harden.cli:app"
 # ADR-0058. Stage a change to the SDS member record for a person to confirm on /review.
 sds-members = "sds_members.cli:app"
+# ADR-0058. Daily: does the member record agree with the declarations and the lanes' lists.
+membership-check = "membership_check.cli:app"
 
 [dependency-groups]
 # ADR-0055: the credential-rotation executor's one added dependency, the BWS SDK, so values reach

@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
-# Install (or reinstall) the daily SDS membership consistency check (ADR-0058), and create its Healthchecks
+# Install (or reinstall) the daily SDS membership consistency check (ADR-0058), and upsert its Healthchecks
 # check.
 #
-# THE CHECK IS CREATED HERE, idempotently: `unique: ["name"]` makes a re-run return the existing
-# check (HTTP 200) rather than add one (201). Its settings:
+# THE CHECK IS UPSERTED HERE, idempotently: `unique: ["name"]` makes a re-run UPDATE the existing
+# check (HTTP 200) to the values below rather than add one (201). Its settings:
 #   name      sds-membership-check (the launcher finds its ping URL by this exact name)
 #   schedule  45 7 * * *, tz America/New_York (the plist's time, in launchd's local zone)
-#   grace     7200 seconds. A disagreement pings `/fail`, which alerts at once whatever the
-#             grace, so the grace only decides how soon a pass that STOPPED is reported, and how
-#             long a started pass may take. A pass reads one declaration per repository and takes
-#             a few minutes at most; two hours still reports a missed pass the same morning.
-#   channels  "*" (every integration that exists when the check is created).
+#   grace     14400 seconds, as for the other nightly SDS lanes. A disagreement pings `/fail`,
+#             which alerts at once whatever the grace, so the grace only decides how soon a pass
+#             that STOPPED is reported, and how long a started pass may take.
+#   channels  "alert-hub" (the alert-hub webhook; "*" would also attach email and deliver every
+#             failure twice).
 # Neither the API key nor the ping URL is printed: curl reads the key from stdin as its config
 # and the response, which carries the ping URL, is discarded for its status code. A failure to
-# create the check is reported and does not stop the install: the pass still runs and logs, and
-# rerunning this creates the check.
+# upsert the check is reported and does not stop the install: the pass still runs and logs, and
+# rerunning this retries it.
 #
 # Run it from the main tree (it refuses a linked worktree).
 #
@@ -41,8 +41,8 @@ TARGET="$HOME/Library/LaunchAgents/$LABEL.plist"
 source "$REPO_ROOT/scripts/sds-install.sh"
 sds_refuse_linked_worktree "$REPO_ROOT"
 
-if [ ! -x "$REPO_ROOT/.venv/bin/sds-members" ]; then
-  echo "FATAL: $REPO_ROOT/.venv/bin/sds-members is missing. Run: uv sync --frozen" >&2
+if [ ! -x "$REPO_ROOT/.venv/bin/membership-check" ]; then
+  echo "FATAL: $REPO_ROOT/.venv/bin/membership-check is missing. Run: uv sync --frozen" >&2
   exit 1
 fi
 
@@ -63,14 +63,14 @@ create_check() {
     return 0
   fi
   payload='{"name": "'"$CHECK_NAME"'", "schedule": "45 7 * * *", "tz": "America/New_York",'
-  payload+=' "grace": 7200, "channels": "*", "unique": ["name"],'
+  payload+=' "grace": 14400, "channels": "alert-hub", "unique": ["name"],'
   payload+=' "desc": "orchestrator scripts/run-membership-check.sh: the SDS membership'
   payload+=' consistency check (ADR-0058). /fail carries the report."}'
   status="$(printf 'header = "X-Api-Key: %s"\n' "$key" \
     | curl -sS --max-time 15 --config - -o /dev/null -w '%{http_code}' -X POST "$HC_API" \
       -H "Content-Type: application/json" --data-binary "$payload" 2>/dev/null || true)"
   case "$status" in
-    200) echo "Healthchecks check $CHECK_NAME already exists" ;;
+    200) echo "Healthchecks check $CHECK_NAME updated" ;;
     201) echo "Healthchecks check $CHECK_NAME created" ;;
     *) echo "WARNING: creating Healthchecks check $CHECK_NAME answered '${status:-nothing}'" >&2 ;;
   esac

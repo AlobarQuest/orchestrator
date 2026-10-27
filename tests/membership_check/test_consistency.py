@@ -11,10 +11,10 @@ from typer.testing import CliRunner
 
 from bump_proposer.landing_policy import InertLanding, LandingPolicyError
 from fork_sync.watch import Unreadable
+from membership_check import cli
+from membership_check.consistency import Report, Scope, canonical, check, factory_targets
 from pin_watcher.github import PinWatcherError
-from sds_members import cli
 from sds_members.client import SERVICES, Member
-from sds_members.consistency import Report, Scope, canonical, check, factory_targets
 from work_carrier.declaration import Declaration
 
 OWNED = ["AlobarQuest/orchestrator", "AlobarQuest/brain", "AlobarQuest/rtk", "AlobarQuest/notes"]
@@ -234,7 +234,7 @@ CLEAN = [_member("A/one", "app_changes", "dependency_updates")]
 
 
 def _invoke():
-    return CliRunner().invoke(cli.app, ["check"])
+    return CliRunner().invoke(cli.app, [])
 
 
 def test_check_exits_0_when_the_estate_agrees(monkeypatch):
@@ -246,7 +246,7 @@ def test_check_exits_2_on_a_disagreement_and_3_on_a_gap_only(monkeypatch):
     _wire(monkeypatch, members=[_member("A/one", "app_changes")])
     result = _invoke()
     assert result.exit_code == 2
-    assert "a/one" in result.stdout and "dependency_updates" in result.stdout
+    assert "A/one" in result.stdout and "dependency_updates" in result.stdout
 
     _wire(monkeypatch, members=CLEAN, policy_error=LandingPolicyError("503"))
     result = _invoke()
@@ -292,4 +292,24 @@ def test_a_missing_token_is_the_tool_failing(monkeypatch):
     _wire(monkeypatch, members=CLEAN)
     monkeypatch.delenv("SDS_MEMBERS_GITHUB_TOKEN")
     result = _invoke()
-    assert result.exit_code == 1 and "SDS_MEMBERS_GITHUB_TOKEN" in result.output
+    assert result.exit_code == 1 and "SDS_MEMBERS_GITHUB_TOKEN" in result.stderr
+
+
+def test_every_rules_lines_spell_a_repository_as_github_does(monkeypatch):
+    _wire(monkeypatch, members=[_member("A/one", "app_changes")], policy=("a/one",))
+    monkeypatch.setattr(cli, "TOOLS", (type("T", (), {"repository": "a/ONE"})(),))
+    result = _invoke()
+    assert result.exit_code == 2
+    assert "a/one" not in result.stdout.replace("A/one", "") and "a/ONE" not in result.stdout
+    assert all(line.startswith("A/one") for line in result.stdout.splitlines())
+
+
+def test_the_inert_lines_fall_back_to_the_policys_spelling_when_the_listing_failed(monkeypatch):
+    _wire(
+        monkeypatch,
+        members=[_member("A/one")],
+        policy=("a/one",),
+        listing_error=PinWatcherError("401"),
+    )
+    result = _invoke()
+    assert "a/one: the inert landing population" in result.stdout

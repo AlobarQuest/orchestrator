@@ -659,6 +659,8 @@ paths = [
   "tests/architecture/test_membership_writers.py",
   "src/sds_members/**",
   "tests/sds_members/**",
+  "src/membership_check/**",
+  "tests/membership_check/**",
   "tests/scripts/test_launcher_scope.py",
   "scripts/run-membership-check.sh",
   "scripts/install-membership-check-launchd.sh",

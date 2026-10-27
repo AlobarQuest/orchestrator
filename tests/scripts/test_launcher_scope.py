@@ -249,7 +249,7 @@ def _membership(tmp_path: Path, **fake: str) -> tuple[int, list[str], list[str],
     venv = root / ".venv" / "bin"
     venv.mkdir(parents=True)
     _executable(venv / "python", _REAL_PYTHON)
-    _executable(venv / "sds-members", _CHECK_PROGRAM)
+    _executable(venv / "membership-check", _CHECK_PROGRAM)
     stubs = tmp_path / "stubs"
     stubs.mkdir()
     _executable(stubs / "bws", _RECORDING_BWS)
@@ -295,7 +295,7 @@ def test_membership_check_hands_each_credential_to_the_program(tmp_path: Path) -
     rc, lane, bws, _ = _membership(tmp_path)
     assert rc == 0
     assert lane == [
-        f"args=check observer=value-of-{OBSERVER_UUID} "
+        f"args= observer=value-of-{OBSERVER_UUID} "
         f"change_manager=value-of-{CHANGE_MANAGER_UUID} github=gh-token"
     ]
     assert set(bws) == {OBSERVER_UUID, CHANGE_MANAGER_UUID, HEALTHCHECKS_KEY_UUID}
