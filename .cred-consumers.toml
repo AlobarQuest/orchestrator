@@ -492,6 +492,11 @@ disposition = "reissue"
   repo = "AlobarQuest/brain"
   name = "FACTORY_RUNNER_TOKEN"
 
+  [[credential.consumer]]
+  kind = "gh-actions-secret"
+  repo = "AlobarQuest/project-standards"
+  name = "FACTORY_RUNNER_TOKEN"
+
 # ── The rotation canary (ADR-0055 increment 4) ───────────────────────────────────
 # A throwaway credential with no real provider: the executor's fake adapter mints, probes
 # and revokes it inside the rotation-executor VM. It exists so the executor's whole path
