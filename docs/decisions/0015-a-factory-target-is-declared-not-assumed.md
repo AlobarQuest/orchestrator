@@ -417,3 +417,36 @@ binds only orchestrator releases.
   precedent did (Devon, 2026-10-07): the merge changes the repository, and the sweep that moves the
   working copy is a separate lane with its own timing.
 - **Caller-pin remediation units can now target this repository too.** That is in scope.
+
+## Amendment, 2026-10-27 — `project-standards` is a factory target again
+
+**Decided.** Devon decided on 2026-10-26, in the SDS membership design conversation, that
+`project-standards` gets the SDS app-changes service: "We should probably consider putting
+project-standards back into SDS. My thinking on that has changed", then "Lets add project-standards
+to SDS." The frame changed: the SDS is now a Dark Operations Factory that maintains every member
+project, with one member list and per-service grants
+(`docs/superpowers/specs/2026-10-26-sds-membership-design.md`, ADR-0058). The 2026-08-17 amendment's
+reason, that project-standards "is maintained through a different mechanism", no longer holds: the
+SDS is that mechanism. This reverses the 2026-08-17 reinstatement for `project-standards` only.
+Decision 1 stands for `factory-runner` until its broken-runner recovery mechanism is designed (the
+membership design, "Left open").
+
+**What the governance concern becomes.** The original decision named, and set aside, the risk that
+the artifact which measures the estate's conformance becomes modifiable by the process it measures.
+It stays gated as every target is: a package approval, a change record, an authority approval at
+`/review` on every unit (`project-standards` is not in `known_good`), verifier adjudication, and the
+landing lane's human-approved change record.
+
+**What was executed.**
+
+- `project-standards#54`: the readiness work (`delivery_profile: dependency-update`, behavior
+  evidence: it serves no site); `security-standards#80`: its `[[repo]]` consumer entry.
+- `project-standards#55`: `factory-target.toml` declares `true`, with the caller workflow at the
+  recommended pin and the secret-fingerprint report, in one change, so `runner.caller` never sees
+  one without the other.
+- The member record grants `project-standards` app changes, confirmed by Devon on `/review`.
+- `FACTORY_RUNNER_TOKEN`, `FACTORY_RUNNER_CREDENTIAL_KEY_ID` and `FACTORY_PR_TOKEN` set as Actions
+  secrets, with their copies registered in this repository's and factory-runner's
+  `.cred-consumers.toml`, and the rotation App installed on the repository.
+- Dispatch admission needs nothing else: since the 2026-09-15 amendment it reads the declaration
+  alone.
