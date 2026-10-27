@@ -6,6 +6,8 @@ entry point with every reader replaced, so nothing reaches GitHub, change-manage
 
 from __future__ import annotations
 
+from typing import TypedDict, Unpack, cast
+
 import pytest
 from typer.testing import CliRunner
 
@@ -71,8 +73,18 @@ def _member(repository: str, *granted: str, state: str = "member") -> Member:
     )
 
 
-def _check(members: list[Member], **sources: object) -> Report:
-    empty: dict[str, object] = {
+class _Sources(TypedDict, total=False):
+    declarations: Scope
+    inert: frozenset[str]
+    rollout_repositories: list[str]
+    tool_repositories: list[str]
+    hardened_forks: list[str]
+    synced_forks: list[str]
+    registry_repositories: list[str]
+
+
+def _check(members: list[Member], **sources: Unpack[_Sources]) -> Report:
+    empty: _Sources = {
         "declarations": Scope([]),
         "inert": frozenset(),
         "rollout_repositories": [],
@@ -81,7 +93,7 @@ def _check(members: list[Member], **sources: object) -> Report:
         "synced_forks": [],
         "registry_repositories": [],
     }
-    return check(members, **{**empty, **sources})  # type: ignore[arg-type]
+    return check(members, **{**empty, **sources})
 
 
 def test_an_agreeing_estate_is_clean():
@@ -121,17 +133,18 @@ RULES = [
 ]
 
 
-def _source(argument: str, repository: str) -> object:
+def _source(argument: str, repository: str) -> _Sources:
+    """One source, named by `argument`, naming `repository`."""
     if argument == "declarations":
-        return Scope([repository])
+        return {"declarations": Scope([repository])}
     if argument == "inert":
-        return frozenset({repository.lower()})
-    return [repository]
+        return {"inert": frozenset({repository.lower()})}
+    return cast(_Sources, {argument: [repository]})
 
 
 @pytest.mark.parametrize(("argument", "service"), RULES)
 def test_a_source_naming_a_repository_without_the_grant_is_a_disagreement(argument, service):
-    report = _check([_member("A/one")], **{argument: _source(argument, "A/one")})
+    report = _check([_member("A/one")], **_source(argument, "A/one"))
     assert any("a/one" in line.lower() and service in line for line in report.disagreements)
 
 
@@ -139,7 +152,7 @@ def test_a_source_naming_a_repository_without_the_grant_is_a_disagreement(argume
 def test_a_source_naming_a_repository_with_the_grant_agrees(argument, service):
     other = "dependency_updates" if service == "security_patches" else "security_patches"
     members = [_member("A/one", service, other)]
-    assert _check(members, **{argument: _source(argument, "A/one")}).disagreements == []
+    assert _check(members, **_source(argument, "A/one")).disagreements == []
 
 
 def test_a_granted_app_changes_member_must_declare_a_target():

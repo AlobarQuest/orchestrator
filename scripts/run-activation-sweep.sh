@@ -32,8 +32,8 @@
 #      WAITING is still not this: a unit whose landing is not yet pulled is the ordinary state
 #      between a unit completing and the next pull, and so is a SUPERSEDED artifact, whose window
 #      for being observed closed when HEAD moved past it.
-#   3  some checkout could not be measured, or a row could not be filed, so the answer is missing
-#      rather than clean. 3 outranks 2.
+#   3  some checkout could not be measured, the member record could not be read, or a row could
+#      not be filed, so the answer is missing rather than clean. 3 outranks 2.
 #
 # Usage:
 #   scripts/run-activation-sweep.sh [--dry-run]
@@ -61,7 +61,8 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # blind spot. Activation is best-effort and its failures are SILENT BY DESIGN -- the helper prints
 # one line and returns 0 whatever it finds -- so if it cannot pull, nothing is healed and the
 # sweep reports this checkout behind, which is the ADR-0031 control working. If it can pull, the
-# machine genuinely is current and saying so is true. The other eight are never touched.
+# machine genuinely is current and saying so is true. The population comes from the member record;
+# no working copy it does not name is ever touched.
 _SDS_ACTIVATE="$HOME/.claude/bin/activate-checkout.sh"
 if [ -r "$_SDS_ACTIVATE" ]; then
     # shellcheck source=/dev/null

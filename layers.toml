@@ -654,6 +654,7 @@ paths = [
   "src/orchestrator/api/routes/membership.py",
   "src/orchestrator/api/schemas/membership.py",
   "tests/services/test_member_proposals.py",
+  "tests/services/test_membership_vocabulary.py",
   "tests/api/test_membership_api.py",
   "tests/web/test_member_proposals.py",
   "tests/architecture/test_membership_writers.py",
