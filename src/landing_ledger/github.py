@@ -276,13 +276,23 @@ def _landed_pull(reader: GitHubReader, repository: str, sha: str) -> dict[str, A
     return None
 
 
+def _at_or_before(value: str | None, landed_at: datetime) -> bool:
+    return value is not None and datetime.fromisoformat(value) <= landed_at
+
+
 def _completed_by(job: dict[str, Any], landed_at: datetime) -> bool:
-    """Whether this job attempt had concluded by the landing, by its own time, not its run's."""
-    completed = job.get("completed_at")
+    """Whether this job attempt had concluded by the landing, by its own times, not its run's.
+
+    `created_at` as well as `completed_at`: a skipped job's row can be created AFTER its own
+    completion time (claude-octopus run 39798192207: `notify` skipped, completed 14:43:52Z,
+    created 14:50:00Z), so a read between the two would not see it and a later one would -- the
+    same moving facts this rule exists to stop. A job whose row did not exist at the landing
+    cannot have informed it.
+    """
     return (
         job.get("conclusion") is not None
-        and completed is not None
-        and datetime.fromisoformat(completed) <= landed_at
+        and _at_or_before(job.get("created_at"), landed_at)
+        and _at_or_before(job.get("completed_at"), landed_at)
     )
 
 
@@ -290,13 +300,36 @@ def _attempt(job: dict[str, Any]) -> int:
     return int(job.get("run_attempt") or 1)
 
 
+# GitHub's ceiling for one page. A full page means there may be another.
+PAGE = 100
+# How many pages of one run's jobs are read before the read REFUSES rather than truncates: a
+# thousand jobs across every attempt is far beyond any workflow here, and a list cut short would
+# be a different set of facts, so running past it fails the landing for a person to look at.
+MAX_JOB_PAGES = 10
+
+
 def _all_attempts_jobs(reader: GitHubReader, repository: str, run_id: int) -> list[dict[str, Any]]:
-    # `filter=all`: every attempt's jobs in the one call. The default is the latest attempt only,
-    # so a re-run after the landing would REPLACE the attempt that informed it.
-    payload = reader.get(
-        f"/repos/{repository}/actions/runs/{run_id}/jobs", per_page=100, filter="all"
+    """Every attempt's jobs for one run, every page of them, or a failed read.
+
+    `filter=all` because the default is the latest attempt only, so a re-run after the landing
+    would REPLACE the attempt that informed it. Paginated because `filter=all` multiplies the job
+    count by the attempts, and a silently truncated list is a different set of facts.
+    """
+    jobs: list[dict[str, Any]] = []
+    for page in range(1, MAX_JOB_PAGES + 1):
+        payload = reader.get(
+            f"/repos/{repository}/actions/runs/{run_id}/jobs",
+            per_page=PAGE,
+            filter="all",
+            page=page,
+        )
+        batch = list((payload or {}).get("jobs", []))
+        jobs.extend(batch)
+        if len(batch) < PAGE:
+            return jobs
+    raise LedgerError(
+        f"run {repository}#{run_id} has more than {MAX_JOB_PAGES * PAGE} jobs; refusing to truncate"
     )
-    return list((payload or {}).get("jobs", []))
 
 
 def _qualifying_gate(
@@ -305,8 +338,16 @@ def _qualifying_gate(
     """The gate run as of its latest attempt that had wholly concluded by the landing, or None.
 
     Returned as the run with its `conclusion` and `jobs` taken from THAT attempt. The run object
-    itself carries only its latest attempt's conclusion, so an earlier attempt's is read from that
+    carries only its latest attempt's conclusion, so an earlier attempt's is read from that
     attempt's own record -- exact GitHub data, one call, and only when a re-run followed.
+
+    A MISSING CONCLUSION IS A FAILED READ, NEVER A RECORDED `unknown`. GitHub sets a run's
+    conclusion seconds after its last job completes, so inside that gap a qualifying attempt has
+    none yet; and an attempt the jobs list just named cannot honestly be absent (404). Either,
+    recorded, would be `unknown` forever while a later read says otherwise -- so both raise, the
+    pass counts the landing skipped, and the next pass retries it. The conclusion is not derived
+    from the jobs instead: that would re-implement GitHub's own aggregation (a run whose jobs were
+    all skipped concludes `success`), which is a reconstruction this reader does not make.
     """
     by_attempt: dict[int, list[dict[str, Any]]] = {}
     for job in _all_attempts_jobs(reader, repository, run["id"]):
@@ -320,6 +361,10 @@ def _qualifying_gate(
         else:
             record = reader.get(f"/repos/{repository}/actions/runs/{run['id']}/attempts/{number}")
             conclusion = (record or {}).get("conclusion")
+        if conclusion is None:
+            raise LedgerError(
+                f"gate run {repository}#{run['id']} attempt {number} has no readable conclusion yet"
+            )
         return {**run, "conclusion": conclusion, "jobs": jobs}
     return None
 
@@ -355,7 +400,12 @@ def _checks_and_gate(
         if run.get("event") != "pull_request":
             continue
         if run.get("path") == GATE_PATH:
-            gate = _qualifying_gate(reader, repository, run, landed_at)
+            # THE NEWEST QUALIFYING GATE RUN, by run id rather than listing order: a run that does
+            # not qualify must never displace one that does, and of two that do, the newer is the
+            # latest gate verdict the landing could have been informed by.
+            candidate = _qualifying_gate(reader, repository, run, landed_at)
+            if candidate is not None and (gate is None or candidate["id"] > gate["id"]):
+                gate = candidate
             continue
         kept: dict[str, dict[str, Any]] = {}
         for job in _all_attempts_jobs(reader, repository, run["id"]):

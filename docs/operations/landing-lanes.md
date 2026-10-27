@@ -405,10 +405,12 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   handling are one change, not two.
 - **A LANDING'S CHECKS ARE THE JOB ATTEMPTS THAT HAD CONCLUDED BY THE MERGE, read from each job's
   own `completed_at`, never from the run's `updated_at`.** `_checks_and_gate` reads every
-  `pull_request` run's jobs with `filter=all` and keeps, per job name, the highest attempt whose
-  `conclusion` is set and whose `completed_at` is at or before `merged_at`; the gate run counts only
-  as of its latest attempt whose jobs had all concluded by then, with that attempt's conclusion
-  (`/attempts/{n}` when a re-run followed) and that attempt's arming step. GitHub moves a completed
+  `pull_request` run's jobs with `filter=all`, every page, and keeps, per job name, the highest
+  attempt whose `conclusion` is set and whose `created_at` and `completed_at` are both at or before
+  `merged_at` (a skipped job's row can be created after its own `completed_at`). The newest gate run
+  that qualifies counts, as of its latest attempt whose jobs had all concluded by then, with that
+  attempt's conclusion (`/attempts/{n}` when a re-run followed) and arming step; a conclusion not
+  yet readable is a failed read, retried next pass, never a recorded `unknown`. GitHub moves a completed
   run's `updated_at` after the fact with no re-run (change-manager #141: job done 14:29:29Z, merged
   14:29:37Z, run `updated_at` later 14:41:30Z), so the old run-level filter made the facts depend on
   when the landing was read: a row recorded before the bump drew a permanent `observation_conflict`,

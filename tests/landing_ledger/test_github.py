@@ -60,12 +60,24 @@ def _run(
     }
 
 
+# Before every completion in these fixtures. A job's row can be CREATED after its own
+# `completed_at` (a skipped job, measured on claude-octopus run 39798192207), so creation is a
+# separate fact and the tests that need a late one say so.
+CREATED = "2026-08-07T12:00:00Z"
+
+
 def _job(
-    name: str, conclusion: str | None, completed: str | None, attempt: int = 1, **extra: object
+    name: str,
+    conclusion: str | None,
+    completed: str | None,
+    attempt: int = 1,
+    created: str = CREATED,
+    **extra: object,
 ) -> dict[str, object]:
     return {
         "name": name,
         "conclusion": conclusion,
+        "created_at": created,
         "completed_at": completed,
         "run_attempt": attempt,
         **extra,
@@ -305,13 +317,14 @@ def gate_routes(**overrides: object) -> dict[str, object]:
         f"/repos/{REPO}/actions/runs/31179220691/jobs": {
             "jobs": [_job("Lint, type-check, and test", "success", "2026-08-07T12:41:48Z")]
         },
-        # The gate's OWN run, which `_checks_and_gate` identifies and does not read jobs for --
-        # ADR-0037 reads them separately, to learn whether the gate armed this landing.
+        # The gate's OWN run. Its jobs decide whether it counts at all (by when they completed)
+        # and, through the arming step, whether it armed this landing (ADR-0037).
         f"/repos/{REPO}/actions/runs/31179223805/jobs": {
             "jobs": [
                 {
                     "name": "Dependabot auto-merge",
                     "conclusion": "success",
+                    "created_at": CREATED,
                     "completed_at": "2026-08-07T12:41:10Z",
                     "run_attempt": 1,
                     "steps": [
@@ -677,6 +690,214 @@ def test_a_gate_re_run_after_the_landing_does_not_replace_the_attempt_that_armed
         "success",
         "success",
     )
+
+
+def test_a_job_completing_exactly_at_the_landing_counts() -> None:
+    routes = gate_routes(
+        **{Q_JOBS: {"jobs": [_job("Lint, type-check, and test", "success", MERGED_AT)]}}
+    )
+    landing = read_landing(reader_for(routes), REPO, "main", "e931db8d")
+
+    assert [c.name for c in landing.checks] == ["Lint, type-check, and test"]
+
+
+def test_a_skipped_job_whose_row_was_created_after_the_landing_is_excluded() -> None:
+    """claude-octopus run 39798192207: `notify` skipped, `completed_at` 14:43:52Z, `created_at`
+    14:50:00Z. A read between the two would not see the job and a later one would, so a job whose
+    row did not exist at the landing cannot count, whatever its `completed_at` says."""
+    routes = gate_routes(
+        **{
+            Q_JOBS: {
+                "jobs": [
+                    _job("Lint, type-check, and test", "success", "2026-08-07T12:42:00Z"),
+                    _job("notify", "skipped", "2026-08-07T12:41:00Z", created=LATE),
+                ]
+            }
+        }
+    )
+    landing = read_landing(reader_for(routes), REPO, "main", "e931db8d")
+
+    assert [c.name for c in landing.checks] == ["Lint, type-check, and test"]
+
+
+def test_a_gate_job_created_after_the_landing_does_not_qualify_its_attempt() -> None:
+    routes = gate_routes(
+        **{
+            GATE_JOBS: {
+                "jobs": [
+                    _job(
+                        "Dependabot auto-merge",
+                        "success",
+                        "2026-08-07T12:41:10Z",
+                        created=LATE,
+                        steps=[{"name": ARM_STEP, "conclusion": "success"}],
+                    )
+                ]
+            }
+        }
+    )
+    landing = read_landing(reader_for(routes), REPO, "main", "e931db8d")
+
+    assert landing.rule is None
+
+
+def test_every_page_of_a_jobs_read_is_read() -> None:
+    """A full page means there may be more: the read continues rather than truncating at 100."""
+    page_one = [_job(f"job {n:03}", "success", "2026-08-07T12:40:00Z") for n in range(100)]
+    page_two = [_job("job 100", "success", "2026-08-07T12:40:00Z")]
+    routes = gate_routes()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == Q_JOBS:
+            page = request.url.params.get("page", "1")
+            return httpx.Response(200, json={"jobs": page_one if page == "1" else page_two})
+        if request.url.path not in routes:
+            return httpx.Response(404, json=None)
+        return httpx.Response(200, json=routes[request.url.path])
+
+    reader = GitHubReader(token="fixture", transport=httpx.MockTransport(handler))
+    landing = read_landing(reader, REPO, "main", "e931db8d")
+
+    assert len(landing.checks) == 101
+    assert "job 100" in {c.name for c in landing.checks}
+
+
+def test_a_job_list_longer_than_the_page_ceiling_fails_the_read_rather_than_truncating() -> None:
+    full = [_job(f"job {n:03}", "success", "2026-08-07T12:40:00Z") for n in range(100)]
+    routes = gate_routes()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == Q_JOBS:
+            return httpx.Response(200, json={"jobs": full})
+        if request.url.path not in routes:
+            return httpx.Response(404, json=None)
+        return httpx.Response(200, json=routes[request.url.path])
+
+    reader = GitHubReader(token="fixture", transport=httpx.MockTransport(handler))
+
+    with pytest.raises(LedgerError):
+        read_landing(reader, REPO, "main", "e931db8d")
+
+
+def _gate_run_jobs(completed: str) -> dict[str, object]:
+    return {
+        "jobs": [
+            _job(
+                "Dependabot auto-merge",
+                "success",
+                completed,
+                steps=[{"name": ARM_STEP, "conclusion": "success"}],
+            )
+        ]
+    }
+
+
+@pytest.mark.parametrize(
+    ("newer_completed", "older_completed", "expected"),
+    [
+        ("2026-08-07T12:41:10Z", LATE, 31179223899),
+        (LATE, "2026-08-07T12:41:10Z", 31179223805),
+        ("2026-08-07T12:41:30Z", "2026-08-07T12:41:10Z", 31179223899),
+    ],
+)
+def test_of_two_gate_runs_at_one_head_the_newest_qualifying_one_counts(
+    newer_completed: str, older_completed: str, expected: int
+) -> None:
+    """Runs list newest first. A gate run that does not qualify must never displace one that
+    does, and of two that qualify the newer -- the higher run id, whatever the listing order --
+    is the latest gate verdict the landing could have been informed by."""
+    routes = gate_routes(
+        **_runs(
+            _run(31179223899, GATE, "pull_request", LATE, "success"),
+            _run(31179223856, "q.yml", "pull_request", "2026-08-07T12:42:02Z", "success"),
+            _run(31179223805, GATE, "pull_request", LATE, "success"),
+        ),
+        **{
+            f"/repos/{REPO}/actions/runs/31179223899/jobs": _gate_run_jobs(newer_completed),
+            GATE_JOBS: _gate_run_jobs(older_completed),
+        },
+    )
+    landing = read_landing(reader_for(routes), REPO, "main", "e931db8d")
+
+    assert landing.rule is not None
+    assert landing.rule.run == expected
+
+
+def test_a_qualifying_gate_run_not_yet_concluded_fails_the_read_rather_than_recording_unknown() -> (
+    None
+):
+    """The run's conclusion is set seconds after its last job completes. Recorded inside that gap
+    it would be `unknown` forever while a later read says `success`, so it is a failed read --
+    a skipped landing the next pass retries -- never a fact."""
+    routes = gate_routes(
+        **_runs(
+            {
+                **_run(31179223805, GATE, "pull_request", "2026-08-07T12:41:11Z", "x"),
+                "conclusion": None,
+            },
+            _run(31179223856, "q.yml", "pull_request", "2026-08-07T12:42:02Z", "success"),
+        )
+    )
+
+    with pytest.raises(LedgerError):
+        read_landing(reader_for(routes), REPO, "main", "e931db8d")
+
+
+def _rerun_gate_routes(attempt_record: object) -> dict[str, object]:
+    return gate_routes(
+        **_runs(
+            _run(31179223805, GATE, "pull_request", LATE, "failure", attempt=2),
+            _run(31179223856, "q.yml", "pull_request", "2026-08-07T12:42:02Z", "success"),
+        ),
+        **{
+            GATE_JOBS: {
+                "jobs": [
+                    _job("Dependabot auto-merge", "failure", LATE, 2),
+                    _job(
+                        "Dependabot auto-merge",
+                        "success",
+                        "2026-08-07T12:41:10Z",
+                        1,
+                        steps=[{"name": ARM_STEP, "conclusion": "success"}],
+                    ),
+                ]
+            },
+            f"/repos/{REPO}/actions/runs/31179223805/attempts/1": attempt_record,
+        },
+    )
+
+
+def test_an_unreadable_earlier_attempt_404_fails_the_read_rather_than_recording_unknown() -> None:
+    """An attempt the jobs list just named cannot honestly be absent; a 404 is a failed read."""
+    routes = _rerun_gate_routes({})
+    del routes[f"/repos/{REPO}/actions/runs/31179223805/attempts/1"]
+
+    with pytest.raises(LedgerError):
+        read_landing(reader_for(routes), REPO, "main", "e931db8d")
+
+
+def test_an_unreadable_earlier_attempt_5xx_fails_the_read() -> None:
+    routes = _rerun_gate_routes({})
+    attempt = f"/repos/{REPO}/actions/runs/31179223805/attempts/1"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == attempt:
+            return httpx.Response(502, json=None)
+        if request.url.path not in routes:
+            return httpx.Response(404, json=None)
+        return httpx.Response(200, json=routes[request.url.path])
+
+    reader = GitHubReader(token="fixture", transport=httpx.MockTransport(handler))
+
+    with pytest.raises(LedgerError):
+        read_landing(reader, REPO, "main", "e931db8d")
+
+
+def test_an_earlier_attempt_with_no_conclusion_fails_the_read() -> None:
+    routes = _rerun_gate_routes({"id": 31179223805, "run_attempt": 1, "conclusion": None})
+
+    with pytest.raises(LedgerError):
+        read_landing(reader_for(routes), REPO, "main", "e931db8d")
 
 
 def test_the_record_takes_the_full_sha_from_github_not_the_argument() -> None:
