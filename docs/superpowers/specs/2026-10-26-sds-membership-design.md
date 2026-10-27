@@ -339,6 +339,9 @@ For Devon:
   dispatch the fix. Design it as its own piece of work before `factory-runner`'s app-changes grant
   is approved, and have the ADR-0015 amendment reference it.
 
+- Further services beyond the seven. Devon listed 34 candidates on 2026-10-27; they are recorded,
+  grouped by area, in `docs/roadmap.md`, "Potential additional scope".
+
 For the builder:
 
 - Table and route names, the approval mechanics within the existing model, and the CLI or page

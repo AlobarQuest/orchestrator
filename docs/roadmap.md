@@ -126,6 +126,51 @@ These are in no fixed order.
 - Revisit the three build-scoped standing rules (infra separation waived, construction mode, build
   gates pre-authorized). They hold until 1.0 ships (Tier 3 item 19).
 
+## Potential additional scope
+
+Devon listed these on 2026-10-27 as possible additions to what the SDS does for its member projects.
+They are candidates, not decisions. Each would become a new service in the member record
+(`docs/superpowers/specs/2026-10-26-sds-membership-design.md`) or an extension of one of the seven,
+and would go through the same design, readiness and grant steps. Where the SDS already has a piece
+an item would build on, the table names it; a blank means nothing exists yet.
+
+| Area | Item | Builds on |
+|---|---|---|
+| Resilience and change safety | Restore testing and disaster recovery (RTO and RPO) | The backups service's readiness bar requires a restore test; `vps-backup`'s `verify-backup.sh` |
+| | Rollback procedures | change-manager's deploy policy carries a rollback plan per rollout |
+| | Staging environments | |
+| | Database maintenance and growth monitoring | |
+| | Data integrity checks | |
+| | Baseline test coverage and a regression harness | |
+| Incident handling | Incident response and on-call | alert-hub, and the monitoring service |
+| | Status page | |
+| | Postmortems | |
+| Expiry and lifecycle tracking | SSL/TLS certificate renewal | |
+| | Domain registration renewal | |
+| | Third-party API key and OAuth expiration tracking | The credential rotation service; infraops decides when a credential is due |
+| | Runtime and framework end-of-life tracking | |
+| | Third-party API deprecation tracking | |
+| | AI model deprecation and prompt regression monitoring | |
+| Security and access | User onboarding and offboarding | |
+| | MFA enforcement | |
+| | Access reviews | |
+| | Audit logging | |
+| | Secret scanning | The security-standards scanner and its session-end gate |
+| | Vulnerability scanning | The security patches service; fork-sync's security review |
+| | WAF, rate limiting and bot protection | |
+| | Email authentication (SPF, DKIM, DMARC) | |
+| Data governance and compliance | Dependency license compliance | |
+| | Data retention and purge policies | |
+| | Privacy requests (deletion and export) | |
+| Cost | Hosting and SaaS cost monitoring | |
+| | LLM token spend monitoring | Factory units' `max_llm_calls` budgets and cost actuals |
+| Operational knowledge | Asset inventory | The member record's links; App Brain |
+| | Runbooks | Each repository's `docs/operations/` pages |
+| Client service | Monthly client health reports | |
+| | Client exit and handoff | |
+| | Support desk and ticketing | |
+| | SLA management | |
+
 ## Open decisions
 
 Each entry is carried from §7 of the archived programme plan, where its full history is recorded.
