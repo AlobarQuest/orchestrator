@@ -135,6 +135,20 @@ sds_deadman_ping() {
     return 0
 }
 
+# An OUTCOME ping, for a lane that pings what its pass found rather than arming the dead-man switch.
+# `$1` is the suffix (`/start`, empty for success, `/fail`); `$2`, when given, a file sent as the
+# ping's body. Needs `SDS_DEADMAN_PING_URL`, which `sds_deadman_resolve` sets. The URL goes to curl
+# on stdin as its config, never as an argument. Does nothing on an empty URL; never fails the caller.
+sds_outcome_ping() {
+    [ -n "$SDS_DEADMAN_PING_URL" ] || return 0
+    local body=()
+    [ -n "${2:-}" ] && body=(--data-binary "@$2")
+    printf 'url = "%s%s"\n' "$SDS_DEADMAN_PING_URL" "$1" \
+        | curl -fsS --max-time 10 --config - ${body[@]+"${body[@]}"} >/dev/null 2>&1 \
+        || sds_deadman_log "ping '${1:-/}' failed (non-fatal)"
+    return 0
+}
+
 # THE EXIT HANDLER IS THE POINT. Every one of these launchers can `exit 1` on a missing credential
 # long before it reaches its program, and those are exactly the failures nobody currently sees. A
 # ping placed after the program would report only the failures the program itself survived.

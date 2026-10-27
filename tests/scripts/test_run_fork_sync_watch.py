@@ -128,8 +128,8 @@ printf '%s' "$HC_STATUS"
 """
 
 
-@pytest.mark.parametrize(("status", "said"), [("201", "created"), ("200", "already exists")])
-def test_the_installer_creates_the_check_without_exposing_the_key(
+@pytest.mark.parametrize(("status", "said"), [("201", "created"), ("200", "updated")])
+def test_the_upsert_passes_the_key_on_stdin_and_reports_created_or_updated(
     tmp_path: Path, status: str, said: str
 ) -> None:
     root = tmp_path / "tree"

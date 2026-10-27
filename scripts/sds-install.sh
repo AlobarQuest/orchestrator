@@ -25,3 +25,40 @@ sds_refuse_linked_worktree() {
     exit 1
   fi
 }
+
+# Upsert one Healthchecks check from a v3 API payload (JSON, with `"unique": ["name"]`), so a re-run
+# updates the check rather than adding another. Prints `created` (201) or `updated` (200) on stdout;
+# on anything else prints one WARNING line on stderr and returns non-zero. Neither the API key nor
+# the ping URL is printed: the key reaches curl on stdin as its config, and the response (which
+# carries the ping URL) is discarded for its status code.
+#
+# The caller decides whether a failure stops the install; the installers report it and carry on,
+# because the pass still runs and logs, and rerunning the installer retries the upsert.
+sds_upsert_check() {
+  local payload="$1" broad key status
+  broad="${BWS_ACCESS_TOKEN_BROAD:-$(/usr/bin/security find-generic-password \
+    -s 'Claude' -a 'BWS_ACCESS_TOKEN_VPS_BACKUP' -w 2>/dev/null || true)}"
+  if [ -z "$broad" ]; then
+    echo "WARNING: no broad BWS identity; the Healthchecks check was not upserted" >&2
+    return 1
+  fi
+  # shellcheck disable=SC1091
+  source "$(dirname "${BASH_SOURCE[0]}")/sds-bws.sh"
+  key="$(sds_bws_value "51509d5e-64f5-4781-ae82-b4ed00b644e1" "$broad" 2>/dev/null || true)"
+  if [ -z "$key" ]; then
+    echo "WARNING: the Healthchecks API key could not be read; the check was not upserted" >&2
+    return 1
+  fi
+  status="$(printf 'header = "X-Api-Key: %s"\n' "$key" \
+    | curl -sS --max-time 15 --config - -o /dev/null -w '%{http_code}' -X POST \
+      "https://healthcheck.alobar.net/api/v3/checks/" \
+      -H "Content-Type: application/json" --data-binary "$payload" 2>/dev/null || true)"
+  case "$status" in
+    200) echo "updated" ;;
+    201) echo "created" ;;
+    *)
+      echo "WARNING: upserting the Healthchecks check answered '${status:-nothing}'" >&2
+      return 1
+      ;;
+  esac
+}

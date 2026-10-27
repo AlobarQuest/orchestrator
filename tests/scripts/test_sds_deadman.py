@@ -295,3 +295,60 @@ def test_the_two_schemes_are_both_present_so_neither_test_above_is_vacuous() -> 
     codes = {code for _, code in declared_codes().values()}
 
     assert codes == {2, 3}
+
+
+# ---------------------------------------------------------------------------------------------
+# The outcome ping a lane that does not arm the switch shares.
+# ---------------------------------------------------------------------------------------------
+
+_OUTCOME_CURL = """#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$CURL_ARGS"
+cat >> "$CURL_STDIN"
+"""
+
+
+def _outcome(tmp_path: Path, url: str, call: str) -> tuple[str, str, str]:
+    stubs = tmp_path / "stubs"
+    stubs.mkdir()
+    curl = stubs / "curl"
+    curl.write_text(_OUTCOME_CURL)
+    curl.chmod(0o755)
+    report = tmp_path / "report.txt"
+    report.write_text("a finding\n")
+    driver = tmp_path / "driver.sh"
+    driver.write_text(
+        "set -uo pipefail\n"
+        f"source {HELPER.resolve()}\n"
+        f"SDS_DEADMAN_PING_URL={url!r}\n"
+        f"{call.format(report=report)}\n"
+        "echo rc=$?\n"
+    )
+    environment = dict(os.environ)
+    environment["PATH"] = f"{stubs}{os.pathsep}{environment['PATH']}"
+    environment["CURL_ARGS"] = str(tmp_path / "args")
+    environment["CURL_STDIN"] = str(tmp_path / "stdin")
+    completed = subprocess.run(
+        ["/bin/bash", str(driver)], capture_output=True, text=True, env=environment
+    )
+    args, stdin = tmp_path / "args", tmp_path / "stdin"
+    return (
+        args.read_text() if args.exists() else "",
+        stdin.read_text() if stdin.exists() else "",
+        completed.stdout + completed.stderr,
+    )
+
+
+def test_the_outcome_ping_sends_the_report_as_the_body_and_the_url_on_stdin(
+    tmp_path: Path,
+) -> None:
+    args, stdin, output = _outcome(tmp_path, PING_URL, 'sds_outcome_ping "/fail" "{report}"')
+    assert PING_URL not in args + output
+    assert stdin == f'url = "{PING_URL}/fail"\n'
+    assert f"--data-binary @{tmp_path / 'report.txt'}" in args
+    assert "rc=0" in output
+
+
+def test_the_outcome_ping_does_nothing_without_a_resolved_url(tmp_path: Path) -> None:
+    args, stdin, output = _outcome(tmp_path, "", 'sds_outcome_ping "/fail" "{report}"')
+    assert (args, stdin) == ("", "")
+    assert "rc=0" in output

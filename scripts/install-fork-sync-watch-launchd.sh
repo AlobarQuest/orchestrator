@@ -29,9 +29,6 @@ set -euo pipefail
 
 LABEL="com.devon.fork-sync-watch"
 CHECK_NAME="sds-fork-sync-watch"
-HC_API="https://healthcheck.alobar.net/api/v3/checks/"
-# The Healthchecks Management API key (read-write). Value fetched at runtime; never stored here.
-HC_KEY_UUID="51509d5e-64f5-4781-ae82-b4ed00b644e1"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TEMPLATE="$REPO_ROOT/scripts/$LABEL.plist"
 TARGET="$HOME/Library/LaunchAgents/$LABEL.plist"
@@ -48,32 +45,16 @@ fi
 
 # The check, before the agent, so it exists when the first pass pings.
 create_check() {
-  local broad key status payload
-  broad="${BWS_ACCESS_TOKEN_BROAD:-$(/usr/bin/security find-generic-password \
-    -s 'Claude' -a 'BWS_ACCESS_TOKEN_VPS_BACKUP' -w 2>/dev/null || true)}"
-  if [ -z "$broad" ]; then
-    echo "WARNING: no broad BWS identity; Healthchecks check $CHECK_NAME not created" >&2
-    return 0
-  fi
-  # shellcheck disable=SC1091
-  source "$REPO_ROOT/scripts/sds-bws.sh"
-  key="$(sds_bws_value "$HC_KEY_UUID" "$broad" 2>/dev/null || true)"
-  if [ -z "$key" ]; then
-    echo "WARNING: the Healthchecks API key could not be read; $CHECK_NAME not created" >&2
-    return 0
-  fi
+  local payload outcome
   payload='{"name": "'"$CHECK_NAME"'", "schedule": "55 * * * *", "tz": "America/New_York",'
   payload+=' "grace": 1800, "channels": "*", "unique": ["name"],'
   payload+=' "desc": "orchestrator scripts/run-fork-sync-watch.sh: the fork-sync stuck-lane'
   payload+=' alarm (ADR-0056 amendment 6). /fail carries the report."}'
-  status="$(printf 'header = "X-Api-Key: %s"\n' "$key" \
-    | curl -sS --max-time 15 --config - -o /dev/null -w '%{http_code}' -X POST "$HC_API" \
-      -H "Content-Type: application/json" --data-binary "$payload" 2>/dev/null || true)"
-  case "$status" in
-    200) echo "Healthchecks check $CHECK_NAME already exists" ;;
-    201) echo "Healthchecks check $CHECK_NAME created" ;;
-    *) echo "WARNING: creating Healthchecks check $CHECK_NAME answered '${status:-nothing}'" >&2 ;;
-  esac
+  if outcome="$(sds_upsert_check "$payload")"; then
+    echo "Healthchecks check $CHECK_NAME $outcome"
+  else
+    echo "WARNING: Healthchecks check $CHECK_NAME was not upserted" >&2
+  fi
 }
 create_check
 

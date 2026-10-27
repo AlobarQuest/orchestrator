@@ -60,34 +60,22 @@ if [ -z "$SDS_DEADMAN_PING_URL" ]; then
     echo "[watch] $SDS_DEADMAN_REASON — alerting disabled this run"
 fi
 
-# One ping. The URL goes to curl on stdin as its config, never as an argument. `$1` is the suffix
-# (`/start`, empty for success, `/fail`); `$2`, when given, a file sent as the ping's body.
-watch_ping() {
-    [ -n "$SDS_DEADMAN_PING_URL" ] || return 0
-    local body=()
-    [ -n "${2:-}" ] && body=(--data-binary "@$2")
-    printf 'url = "%s%s"\n' "$SDS_DEADMAN_PING_URL" "$1" \
-        | curl -fsS --max-time 10 --config - ${body[@]+"${body[@]}"} >/dev/null 2>&1 \
-        || echo "[watch] ping '${1:-/}' failed (non-fatal)"
-    return 0
-}
-
 # A template with X's, which BSD and GNU `mktemp` both take; `-t NAME` without them is BSD-only
 # (GNU refuses it, and the empty path then makes the pass's own redirect fail with exit 1).
 REPORT="$(mktemp "${TMPDIR:-/tmp}/fork-sync-watch.XXXXXX")" || {
     echo "FATAL: could not create the report file" >&2
-    watch_ping "/fail"
+    sds_outcome_ping "/fail"
     exit 1
 }
 trap 'rm -f "$REPORT"' EXIT
-watch_ping "/start"
+sds_outcome_ping "/start"
 "$REPO_ROOT/.venv/bin/fork-sync" watch > "$REPORT" 2>&1
 rc=$?
 cat "$REPORT"
 if [ "$rc" -eq 0 ]; then
-    watch_ping ""
+    sds_outcome_ping ""
 else
     echo "[watch] exit $rc — reporting a failure"
-    watch_ping "/fail" "$REPORT"
+    sds_outcome_ping "/fail" "$REPORT"
 fi
 exit "$rc"

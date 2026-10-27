@@ -58,31 +58,19 @@ if [ -z "$SDS_DEADMAN_PING_URL" ]; then
     echo "[membership] $SDS_DEADMAN_REASON — alerting disabled this run"
 fi
 
-# One ping. The URL goes to curl on stdin as its config, never as an argument. `$1` is the suffix
-# (`/start`, empty for success, `/fail`); `$2`, when given, a file sent as the ping's body.
-membership_ping() {
-    [ -n "$SDS_DEADMAN_PING_URL" ] || return 0
-    local body=()
-    [ -n "${2:-}" ] && body=(--data-binary "@$2")
-    printf 'url = "%s%s"\n' "$SDS_DEADMAN_PING_URL" "$1" \
-        | curl -fsS --max-time 10 --config - ${body[@]+"${body[@]}"} >/dev/null 2>&1 \
-        || echo "[membership] ping '${1:-/}' failed (non-fatal)"
-    return 0
-}
-
 REPORT="$(mktemp "${TMPDIR:-/tmp}/membership-check.XXXXXX")" || {
     echo "FATAL: could not create the report file" >&2
-    membership_ping "/fail"
+    sds_outcome_ping "/fail"
     exit 1
 }
 trap 'rm -f "$REPORT"' EXIT
-membership_ping "/start"
+sds_outcome_ping "/start"
 
 # Every failure before the check runs is the tool failing: reported through the same check, with
 # the reason as the ping body.
 tool_fail() {
     echo "$1" | tee "$REPORT" >&2
-    membership_ping "/fail" "$REPORT"
+    sds_outcome_ping "/fail" "$REPORT"
     exit 1
 }
 # shellcheck disable=SC1091
@@ -110,9 +98,9 @@ export SDS_MEMBERS_OBSERVER_TOKEN SDS_MEMBERS_CHANGE_MANAGER_TOKEN SDS_MEMBERS_G
 rc=$?
 cat "$REPORT"
 if [ "$rc" -eq 0 ]; then
-    membership_ping "" "$REPORT"
+    sds_outcome_ping "" "$REPORT"
 else
     echo "[membership] exit $rc — reporting a failure"
-    membership_ping "/fail" "$REPORT"
+    sds_outcome_ping "/fail" "$REPORT"
 fi
 exit "$rc"
