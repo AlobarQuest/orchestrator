@@ -142,6 +142,9 @@ Verify each schedule against its plist before writing it.
 - [ ] **Step 5: Run the script suites.** Run `.venv/bin/pytest tests/scripts tests/work_watcher/test_launcher_orchestration.py -q`.
   Expected: all pass. If `test_sds_deadman.py::test_the_two_schemes_are_both_present_so_neither_test_above_is_vacuous`
   fails, the remaining armed launchers no longer cover both groups; read it before changing anything.
+  Ten launchers stay armed: activation-sweep, deploy-watcher, estate-landing, inert-landing,
+  landing-ledger, pin-watcher, revision-watcher, rotation-proposer, rotation-verifier and
+  tool-installer.
 - [ ] **Step 6: Run `make check`.** Expected: green.
 - [ ] **Step 7: Commit.** `git commit -m "bridge launchers: findings ping /fail to alert-hub"`
 
@@ -176,7 +179,7 @@ report, not to paper over):
 | `bump_proposer` | `POST /api/work-changes`, `GET /api/items`, `GET /api/landing-policy` | `POST /api/v1/observations` | reads through `landing_ledger.github` | `acccb346-…`, `314f276d-…`, `f793576f-…` |
 | `change_proposer` | `POST /api/deploy-changes`, `POST /api/items/44/deploy-retirement`, `GET /api/items` | none | reads through `deploy_watcher.github` | `acccb346-…` |
 | `work_carrier` | `GET /api/items` | `POST /api/v1/package-intakes`, `GET /api/v1/change-records/44/work` | `GET /repos/o/r/contents/factory-target.toml` | `314f276d-…`, `221a48d5-…` |
-| `work_watcher` | `POST /api/items/44/work-retirement`, plus its listing read | `GET /api/v1/change-records/44/work` | `GET /repos/o/r/pulls/44` | `acccb346-…`, `314f276d-…`, `221a48d5-…` |
+| `work_watcher` | `POST /api/items/44/work-retirement`, `GET /api/items` (listed by `work_watcher/pipeline.py` through `work_carrier.change_manager`) | `GET /api/v1/change-records/44/work` | `GET /repos/o/r/pulls/44` | `acccb346-…`, `314f276d-…`, `221a48d5-…` |
 
 Use the full UUIDs from the launchers. A lane whose GitHub access goes through another package's
 reader is pinned by naming that import, not by probing.
@@ -245,10 +248,11 @@ reader is pinned by naming that import, not by probing.
 - [ ] **Step 1: Review.** Run `/code-review` on the branch diff; fix what holds up.
 - [ ] **Step 2: Open the pull request** (spec, plan and Part 1 together) and watch it with
   `gh pr checks --watch --interval 30`. Merge on green and confirm `state == MERGED`.
-- [ ] **Step 3: Install.** In the main tree, after it fast-forwards to the merge and while no bridge
-  pass is due (bump 06:50, carrier 07:05, change-proposer hourly), run the three bridge installers and
-  the two Task 1 installers per `docs/operations/local-development.md`. Each prints `created` or
-  `updated` for its check.
+- [ ] **Step 3: Install.** While no bridge pass is due (bump 06:50, carrier 07:05, change-proposer
+  hourly), `git pull` in the main tree (`docs/operations/local-development.md` #176; no new console
+  script, so no `uv sync`), then run the three bridge installers. Each prints `created` or `updated`
+  for its check. The membership-check and fork-sync-watch launchers pick up Task 1 by path; their
+  checks didn't change, so don't rerun their installers.
 - [ ] **Step 4: Prove it.** Read each check through the Healthchecks API (key in-process; print
   name, channels, schedule, status only) and confirm `alert-hub` routing. Run one acting
   `run-change-proposer.sh` pass and confirm its check received `/start` and the right outcome ping.
