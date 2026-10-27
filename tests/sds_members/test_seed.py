@@ -9,11 +9,14 @@ import re
 import tomllib
 from pathlib import Path
 
+from deploy_watcher.workflows import ROLLOUT_WORKFLOWS
 from fork_harden.rules import FORKS
 from orchestrator.services.membership.changes import MemberChange, MemberProposalBody
 from revision_watcher.subjects import SUBJECTS
+from rotation_worker.registry import REGISTRY_REPOSITORIES
 from sds_members import populations
 from sds_members.client import SERVICES, App, Member
+from tool_installer.tools import TOOLS
 
 ROOT = Path(__file__).resolve().parents[2]
 SEED = ROOT / "docs/operations/membership-seed.toml"
@@ -71,3 +74,19 @@ def test_every_named_grant_states_its_source() -> None:
         for grant in change.grants.values():
             assert grant.state in {"granted", "remediating"}
             assert grant.reason.strip()
+
+
+def test_seed_grants_match_their_code_sources() -> None:
+    members = _members()
+
+    def granted(service: str) -> set[str]:
+        return {r.lower() for r in populations.granted(members, service)}
+
+    assert {r.lower() for r in ROLLOUT_WORKFLOWS} | {
+        t.repository.lower() for t in TOOLS
+    } <= granted("rollouts")
+    assert {r.lower() for r in REGISTRY_REPOSITORIES} <= granted("credential_rotation")
+    forks = {
+        f"alobarquest/{n}" for n in ("rtk", "claude-octopus", "rea", "n8n-as-code", "n8n-manager")
+    }
+    assert forks <= granted("dependency_updates") & granted("security_patches")

@@ -38,7 +38,7 @@ reason = "in deploy_watcher.workflows.ROLLOUT_WORKFLOWS (estate lander lands Dep
 
 [changes.grants.rollouts]
 state = "granted"
-reason = "in deploy_watcher.workflows.ROLLOUT_WORKFLOWS (estate lander lands Dependabot updates under approved change records)"
+reason = "in deploy_watcher.workflows.ROLLOUT_WORKFLOWS (the deploy watcher watches each landing to an outcome)"
 
 [[changes]]
 repository = "AlobarQuest/change-manager"
@@ -62,7 +62,7 @@ reason = "in deploy_watcher.workflows.ROLLOUT_WORKFLOWS (estate lander lands Dep
 
 [changes.grants.rollouts]
 state = "granted"
-reason = "in deploy_watcher.workflows.ROLLOUT_WORKFLOWS (estate lander lands Dependabot updates under approved change records)"
+reason = "in deploy_watcher.workflows.ROLLOUT_WORKFLOWS (the deploy watcher watches each landing to an outcome)"
 
 [changes.grants.credential_rotation]
 state = "granted"
