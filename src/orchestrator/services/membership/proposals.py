@@ -122,8 +122,9 @@ def confirm_member_proposal(
         )
     body = MemberProposalBody.model_validate(proposal.payload)
     validate_changes(session, body.changes)
+    old_apps = _free_replaced_apps(session, body.changes)
     for change in body.changes:
-        _apply_change(session, proposal, body, change, actor)
+        _apply_change(session, proposal, body, change, actor, old_apps)
     proposal.state = "confirmed"
     proposal.decided_by = actor.actor_id
     proposal.decided_at = datetime.now(UTC)
@@ -271,6 +272,7 @@ def _apply_change(
     body: MemberProposalBody,
     change: MemberChange,
     actor: ActorContext,
+    old_apps: dict[str, list[str]],
 ) -> None:
     member = session.scalar(
         select(SdsMember)
@@ -313,8 +315,8 @@ def _apply_change(
     grants = _apply_grants(
         session, member, change, created=created, seeded=body.seeded, actor=actor, now=now
     )
-    apps = _replace_apps(session, member, change)
-    if apps is not None and not created:
+    apps = _replace_apps(session, member, change, old_apps.get(change.repository.lower(), []))
+    if (apps is not None or grants) and not created:
         member.updated_at = now
     session.add(
         Event(
@@ -384,20 +386,40 @@ def _apply_grants(
     return grants
 
 
+def _free_replaced_apps(session: Session, changes: list[MemberChange]) -> dict[str, list[str]]:
+    """Delete the apps of every existing member whose change replaces its list, before any change
+    applies: `_check_app_names` lets one member take a name another is giving up, which only holds
+    if the giver's rows are gone first. Returns the old names by case-folded repository, for the
+    events."""
+    freed: dict[str, list[str]] = {}
+    for change in changes:
+        if change.apps is None:
+            continue
+        member_id = session.scalar(
+            select(SdsMember.id).where(
+                func.lower(SdsMember.repository) == change.repository.lower()
+            )
+        )
+        if member_id is None:
+            continue
+        freed[change.repository.lower()] = list(
+            session.scalars(select(SdsMemberApp.name).where(SdsMemberApp.member_id == member_id))
+        )
+        session.execute(delete(SdsMemberApp).where(SdsMemberApp.member_id == member_id))
+    session.flush()
+    return freed
+
+
 def _replace_apps(
-    session: Session, member: SdsMember, change: MemberChange
+    session: Session, member: SdsMember, change: MemberChange, old: list[str]
 ) -> dict[str, list[str]] | None:
-    """Replace the member's app list with the change's; `None` when the change leaves it alone."""
+    """Write the change's app list (the old rows are already gone); `None` when it leaves the list
+    alone."""
     if change.apps is None:
         return None
-    old = list(
-        session.scalars(select(SdsMemberApp.name).where(SdsMemberApp.member_id == member.id))
-    )
-    session.execute(delete(SdsMemberApp).where(SdsMemberApp.member_id == member.id))
-    session.flush()
     session.add_all(
         SdsMemberApp(
-            member_id=member.id, name=app.name, health_url=str(app.health_url), branch=app.branch
+            member_id=member.id, name=app.name, health_url=app.health_url, branch=app.branch
         )
         for app in change.apps
     )
@@ -424,6 +446,7 @@ def validate_changes(session: Session, changes: list[MemberChange]) -> None:
             )
         if change.owner is not None:
             _require_text(change.owner, "owner")
+        _check_apps_text(change)
         _check_working_copy(change, member)
         _check_grants(session, change, member)
     _check_app_names(session, changes, members)
@@ -473,6 +496,12 @@ def _check_app_names(
     for name, member_id in rows:
         if member_id not in replacing:
             raise _app_taken(name)
+
+
+def _check_apps_text(change: MemberChange) -> None:
+    for app in change.apps or []:
+        _require_text(app.name, "app name")
+        _require_text(app.branch, "app branch")
 
 
 def _check_working_copy(change: MemberChange, member: SdsMember | None) -> None:

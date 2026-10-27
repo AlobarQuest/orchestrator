@@ -3,7 +3,7 @@ import nothing from `api`, and the API schema re-exports it."""
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, TypeAdapter, field_validator
 
 MemberState = Literal["onboarding", "member", "retired"]
 GrantState = Literal["not_assessed", "remediating", "granted", "not_applicable", "withdrawn"]
@@ -24,8 +24,16 @@ class _Strict(BaseModel):
 
 class MemberApp(_Strict):
     name: str
-    health_url: HttpUrl
+    health_url: str
     branch: str = "main"
+
+    @field_validator("health_url")
+    @classmethod
+    def _http_url(cls, value: str) -> str:
+        """Validate as an http(s) URL but keep the text as written: the revision watcher's list
+        must match it byte for byte, and `HttpUrl` would normalize `https://x.test` to `.../`."""
+        TypeAdapter(HttpUrl).validate_python(value)
+        return value
 
 
 class GrantChange(_Strict):

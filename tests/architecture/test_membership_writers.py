@@ -254,3 +254,21 @@ def test_membership_write_routes_are_exactly_these() -> None:
     reaching = {route.path for route in routes if _reaches_a_write(route.endpoint)}
 
     assert reaching == set(WRITE_ROUTES)
+
+
+def test_member_reads_return_no_orm_models() -> None:
+    """A returned ORM object could be mutated by its caller, past the writers guard."""
+    tree = _modules()["services/membership/members.py"]
+    assert _returns_orm_model(tree) == []
+    leaky = ast.parse("def list_members(s) -> list[SdsMember]:\n    return []\n")
+    assert _returns_orm_model(leaky) == ["list_members"]
+
+
+def _returns_orm_model(tree: ast.Module) -> list[str]:
+    return [
+        node.name
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and not node.name.startswith("_")
+        and (node.returns is None or "Sds" in ast.unparse(node.returns))
+    ]

@@ -504,3 +504,66 @@ def test_confirmations_of_different_proposals_take_turns(migrated_engine: Engine
     with Session(migrated_engine) as check:
         assert check.scalars(select(SdsMemberGrant.state)).one() == "not_applicable"
         assert check.get(SdsMemberProposal, b_id).state == "staged"  # type: ignore[union-attr]
+
+
+@pytest.mark.parametrize("order", ["giver_first", "taker_first"])
+def test_an_app_name_moves_between_members_in_either_change_order(
+    migrated_engine: Engine, order: str
+) -> None:
+    with Session(migrated_engine) as session:
+        giver = add_member(session, "P/giver")
+        add_member(session, "P/taker")
+        session.add(SdsMemberApp(member_id=giver.id, name="web", health_url="https://x.test/h"))
+        session.flush()
+        gives = {"repository": "P/giver", "reason": "r", "apps": []}
+        takes = {
+            "repository": "P/taker",
+            "reason": "r",
+            "apps": [{"name": "web", "health_url": "https://x.test"}],
+        }
+        changes = [gives, takes] if order == "giver_first" else [takes, gives]
+        confirm(session, stage(session, body(*changes)))
+        owners = session.execute(
+            select(SdsMember.repository)
+            .join(SdsMemberApp, SdsMemberApp.member_id == SdsMember.id)
+            .where(SdsMemberApp.name == "web")
+        ).all()
+        assert [r for (r,) in owners] == ["P/taker"]
+        events = {
+            e.payload["repository"]: e.payload["apps"]
+            for e in session.scalars(select(Event).where(Event.subject_type == "sds_member"))
+        }
+        assert events["P/giver"] == {"old": ["web"], "new": []}
+        assert events["P/taker"] == {"old": [], "new": ["web"]}
+
+
+def test_health_url_is_stored_as_written(migrated_engine: Engine) -> None:
+    with Session(migrated_engine) as session:
+        app = {"name": "web", "health_url": "https://x.test"}
+        confirm(session, stage(session, body(change(apps=[app]))))
+        assert session.scalar(select(SdsMemberApp.health_url)) == "https://x.test"
+
+
+def test_a_grants_only_change_touches_updated_at(migrated_engine: Engine) -> None:
+    with Session(migrated_engine) as session:
+        member = add_member(session)
+        before = member.updated_at
+        grant = {"backups": {"state": "granted", "reason": "ok"}}
+        confirm(
+            session,
+            stage(
+                session, body({"repository": "AlobarQuest/brain", "reason": "r", "grants": grant})
+            ),
+        )
+        session.refresh(member)
+        assert member.updated_at > before
+
+
+@pytest.mark.parametrize("field", ["name", "branch"])
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_a_blank_app_name_or_branch_is_refused(
+    migrated_engine: Engine, field: str, blank: str
+) -> None:
+    app = {"name": "web", "health_url": "https://x.test/h", field: blank}
+    with Session(migrated_engine) as session:
+        assert refused(session, body(change(apps=[app]))) == "member_text_blank"

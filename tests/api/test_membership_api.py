@@ -12,6 +12,7 @@ from orchestrator.api.schemas.membership import (
     MembersResponse,
     MemberView,
 )
+from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import (
     MEMBER_SERVICES,
     SdsMember,
@@ -19,6 +20,7 @@ from orchestrator.persistence.models import (
     SdsMemberGrant,
     SdsMemberProposal,
 )
+from orchestrator.services.membership.proposals import confirm_member_proposal, read_digest
 from tests.api.test_lifecycle_api import HUMAN, SYSTEM, VERIFIER, WORKER
 
 OBSERVER = {"Authorization": "Bearer observer-token", "X-Credential-Key-Id": "observer-key"}
@@ -166,3 +168,30 @@ def test_a_nonzero_expected_version_is_refused(db_client: TestClient) -> None:
     )
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "version_conflict"
+
+
+def test_a_health_url_round_trips_unchanged_through_confirm_and_read(
+    db_client: TestClient, migrated_engine: Engine
+) -> None:
+    app = {"name": "web", "health_url": "https://x.test", "branch": "main"}
+    change = {**BODY["changes"][0], "apps": [app]}
+    staged = db_client.post(
+        "/api/v1/member-proposals",
+        json={**BODY, "changes": [change], "idempotency_key": "k-url", "expected_version": 0},
+        headers=SYSTEM,
+    )
+    assert staged.status_code == 201, staged.text
+    with Session(migrated_engine) as session:
+        proposal = session.get(SdsMemberProposal, uuid.UUID(staged.json()["id"]))
+        assert proposal is not None
+        confirm_member_proposal(
+            session,
+            actor=ActorContext("devon", ActorRole.HUMAN),
+            proposal_id=proposal.id,
+            expected_digest=read_digest(session, proposal),
+        )
+        session.commit()
+
+    members = db_client.get("/api/v1/members", headers=OBSERVER).json()["members"]
+
+    assert members[0]["apps"] == [app]

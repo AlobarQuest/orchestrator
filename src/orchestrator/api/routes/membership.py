@@ -7,9 +7,8 @@ from orchestrator.api.schemas.membership import (
     MemberProposalRequest,
     MemberProposalResponse,
     MembersResponse,
-    MemberView,
 )
-from orchestrator.services.membership.members import list_members, member_record
+from orchestrator.services.membership.members import list_members
 from orchestrator.services.membership.proposals import stage_member_proposal
 
 router = APIRouter(prefix="/api/v1", responses=ERROR_RESPONSES)
@@ -51,6 +50,4 @@ def read_members(actor: ActorDep, session: SessionDep) -> MembersResponse:
     Any authenticated role may read, OBSERVER included; the write surface is the proposal routes.
     """
     del actor
-    return MembersResponse(
-        members=[MemberView.model_validate(member_record(m)) for m in list_members(session)]
-    )
+    return MembersResponse(members=list_members(session))
