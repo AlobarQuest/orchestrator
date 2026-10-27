@@ -54,6 +54,7 @@ from rotation_worker.git_mirror import MirrorError, RepoMirror
 from rotation_worker.github_actions import ActionsSecrets, FingerprintReports, RotationApp
 from rotation_worker.held import HeldSettings
 from rotation_worker.live_runs import stranded_by_a_restart
+from rotation_worker.notify import Act, Notifier
 from rotation_worker.orchestrator_client import Lease, OrchestratorClient, OrchestratorError
 from rotation_worker.overlaps import mid_overlap
 from rotation_worker.readers import (
@@ -69,6 +70,7 @@ from rotation_worker.values import Fingerprint, scrub
 
 LOG = logging.getLogger("rotation_worker")
 EVIDENCE_TYPE: Final = "rotation.step"
+_REVIEW: Final = "https://sds.alobar.net/review/units"
 MAX_REASON: Final = 400
 # A refusal: the unit itself is wrong, and a person must see it.
 REFUSALS: Final = (ContractError, RegistryError, DestinationError, ReadError)
@@ -97,6 +99,8 @@ class Setup:
     healthchecks: Healthchecks | None = None
     # The rotation GitHub App, which writes Actions secrets and reads their reports.
     github_app: RotationApp | None = None
+    # Tells a person when one of this instance's units waits on them (`notify.py`).
+    notifier: Notifier | None = None
 
 
 def run_pass(setup: Setup) -> int:
@@ -114,7 +118,36 @@ def run_pass(setup: Setup) -> int:
             # on to the next unit rather than leaving every one behind it unworked.
             reason = scrub(f"{type(error).__name__}: {error}")
             LOG.error("unit_not_worked", extra={"unit": unit_id, "reason": reason})
+    if setup.notifier is not None:
+        try:
+            setup.notifier.announce(waiting_acts(setup))
+        except Exception as error:
+            # An unread ledger says nothing about what is pending: announce nothing this pass,
+            # rather than resolve every open alert. Never fails the pass.
+            reason = scrub(f"{type(error).__name__}: {error}")
+            LOG.warning("acts_unread", extra={"reason": reason})
     return submitted
+
+
+def waiting_acts(setup: Setup) -> dict[str, Act]:
+    """Each human act one of this instance's rotation units waits on, keyed for alert-hub."""
+    acts: dict[str, Act] = {}
+    for row in setup.client.active_units():
+        pending = [b for b in row.get("blockers") or [] if b.get("kind") == "external_system"]
+        if not pending:
+            continue
+        unit = setup.client.unit(str(row["unit_id"]))
+        if not is_rotation_unit(unit) or not _ours(setup, unit):
+            continue
+        for blocker in pending:
+            key = f"rotation-act:{blocker['dependency_id']}"
+            acts[key] = Act(
+                key,
+                f"A rotation waits on you: {row.get('unit_title') or row.get('unit_key')}",
+                f"{blocker.get('external_ref')}. Record it on the unit's review page: "
+                f"{_REVIEW}/{row['unit_id']}",
+            )
+    return acts
 
 
 def _take(setup: Setup, unit_id: str) -> int:

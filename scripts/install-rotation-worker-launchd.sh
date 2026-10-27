@@ -49,6 +49,7 @@ SRC="$BASE/src"
 SERVICE="rotation-executor"
 BEARER="worker-bearer"
 HEALTHCHECKS_KEY="healthchecks-key"
+ALERT_HUB_TOKEN="alert-hub-token"
 
 if [ ! -d "$SRC/.git" ]; then
   git clone --quiet --no-checkout https://github.com/AlobarQuest/orchestrator.git "$SRC"
@@ -75,6 +76,10 @@ EOF
 # missing item. Devon creates it ("Install or update the Keychain instance").
 if /usr/bin/security find-generic-password -s "$SERVICE" -a "$HEALTHCHECKS_KEY" > /dev/null 2>&1; then
   echo "healthchecks_key_id = \"$HEALTHCHECKS_KEY\"" >> "$BASE/config.toml.new"
+fi
+# The same for the alert-hub sender token: without it, no act is announced.
+if /usr/bin/security find-generic-password -s "$SERVICE" -a "$ALERT_HUB_TOKEN" > /dev/null 2>&1; then
+  echo "alert_hub_token_id = \"$ALERT_HUB_TOKEN\"" >> "$BASE/config.toml.new"
 fi
 mv "$BASE/config.toml.new" "$BASE/config.toml"
 

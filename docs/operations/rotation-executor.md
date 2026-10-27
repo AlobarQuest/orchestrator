@@ -54,6 +54,21 @@ is refused before the claim. The names `orchestrator-distributed`, `change-manag
 and `change-manager-attested` each pin one fixed plan, for packages approved under them; a new
 revision names the type instead.
 
+## When a rotation waits on you
+
+At the end of each pass, each instance sends one alert-hub alert for every human act one of its own
+rotation units waits on: a pending `external_system` dependency in the status ledger
+(`notify.py`, ADR-0055 amendment 15). The alert names the unit and the act's text, and links the
+unit's review page. It's keyed `rotation-act:<dependency id>` and resent each pass, so alert-hub
+repeats it until the act is resolved, and the next pass after that resolves it.
+
+An instance sends nothing without `alert_hub_token_id`, its alert-hub sender token (the
+`rotation-executor` source's for the VM, in `Rotation / Admin`; `rotation-executor-keychain`'s for
+the Mac, in its Keychain). A send that fails is logged `notify_failed` and tried again next pass;
+it never fails a unit. A pass that can't read the ledger logs `acts_unread` and sends nothing,
+rather than resolve every open alert. The alerts it has sent are kept in
+`<state_dir>/announced-acts.json`; losing that file leaves an alert open until a person closes it.
+
 ## Decompose a rotation
 
 Each credential's plan (see "The plan a credential runs") fixes its decomposition. For each
@@ -180,6 +195,7 @@ expired, the node logged out and every write timed out before it connected (ADR-
    healthchecks_key_id = "f07b1368-f937-4287-baf1-b4ed00b6b274"
    github_app_id = "5383095"
    github_app_key_id = "80c752aa-866c-43dc-a9e2-b4e80102d444"
+   alert_hub_token_id = "<the rotation-executor sender's token, in Rotation / Admin>"
 
    [admin_secrets]
    openrouter = "<the OpenRouter management key's secret id, in Rotation / Admin>"
@@ -589,6 +605,13 @@ The steps, once such a key exists:
 3. Run the installer again. It names the item as `healthchecks_key_id` once the item exists.
 
 Without it, a unit whose reader names a check is refused at its checks.
+
+The instance announces acts (see "When a rotation waits on you") only once the Keychain item
+`rotation-executor`/`alert-hub-token` holds its alert-hub sender token, the
+`rotation-executor-keychain` source's, typed at the hidden prompt of
+`security add-generic-password -s rotation-executor -a alert-hub-token -T /usr/bin/security -w`.
+The installer names it in the configuration once the item exists, so run the installer again
+after creating it.
 
 To update, run the installer with the newer commit.
 

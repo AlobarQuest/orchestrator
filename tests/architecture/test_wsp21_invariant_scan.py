@@ -606,6 +606,11 @@ OUTBOUND_ALLOWLIST = {
     # store. Its client may send only `GET /api/v3/checks/`, pinned by
     # tests/rotation_worker/test_readers.py. Its egress is not the orchestrator's.
     Path("src/rotation_worker/readers.py"),
+    # ADR-0055 amendment 15, increment 3. The rotation executor tells a person a rotation waits on
+    # them through alert-hub, with its own sender token. Its client may send only
+    # `POST /v1/alerts`, pinned by tests/rotation_worker/test_notify.py. Its egress is not the
+    # orchestrator's.
+    Path("src/rotation_worker/notify.py"),
     # ADR-0055 increment 7. The rotation App mints a token for one repository with exactly the
     # permissions one purpose needs, writes that repository's one approved Actions secret, and
     # reads its secret-fingerprint report's job log (one hop to GitHub's log storage, which

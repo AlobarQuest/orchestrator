@@ -176,7 +176,8 @@ def test_only_the_client_spells_an_orchestrator_path() -> None:
 # and each adapter whose provider is reached over HTTP (its own path allowlist confines what it may
 # send). The orchestrator-bearer adapter probes the orchestrator with the bearer being rotated, and
 # the change-manager adapter probes change-manager with its. The rotation App's module writes and
-# reads Actions secrets, and the GitHub PAT and Bitbucket adapters probe their providers.
+# reads Actions secrets, and the GitHub PAT and Bitbucket adapters probe their providers. The
+# notifier posts to alert-hub's `/v1/alerts` alone.
 HTTP_CLIENTS = frozenset(
     {
         "orchestrator_client.py",
@@ -188,6 +189,7 @@ HTTP_CLIENTS = frozenset(
         "adapters/github_pat.py",
         "adapters/bitbucket.py",
         "readers.py",
+        "notify.py",
     }
 )
 
