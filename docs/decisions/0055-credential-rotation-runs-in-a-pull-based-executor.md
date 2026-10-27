@@ -1827,3 +1827,52 @@ Each increment ships on its own, and the system rotates every current credential
 - `orchestrator-distributed`, `change-manager-distributed` and `change-manager-attested` stay as
   fixed-plan names for packages approved under them, until no package uses them.
 
+
+### Increment 2 skipped (2026-10-27)
+
+Read side by side, the two hosted types share less than decision 3 assumed. Beyond the encoding,
+they differ in how a load is confirmed (the orchestrator reports what it loaded; change-manager can
+only be probed, through a container swap), in what a restart waits for (a dispatched run; a
+mid-run reader), and in their safety rules (a host with no overlap; a value another bearer holds).
+The shared skeleton is about 150 lines, and no remaining credential is a new hosted type. Devon
+agreed to skip it ("Skip 2 and move to inc 3"); it comes back if a new hosted type does.
+
+### Increment 3 design (2026-10-27)
+
+**A person's acts are announced, observed, and never clicked.** It ships as three pull requests,
+each a working system on its own:
+
+1. **Notifications.** When a unit waits on a person, the wait that holds it sends an alert-hub
+   alert (`POST /v1/alerts`, keyed `rotation:<credential>:<occurrence>:<act>`), resent each pass
+   (alert-hub dedups by key) and resolved when the act is observed. "Revoke the old value" is sent
+   only by the wait before `confirm`, which exists only after `verify` completed, so it can't come
+   early. Each executor instance is its own alert-hub sender. A send that fails is logged
+   `notify_failed`; it never fails a unit.
+2. **The revoke is observed.** `confirm` waits, unclaimed, until a fresh probe of the old value is
+   refused beside a refused known-bad control. A type's own wait after a revoke (BWS's 75 minutes,
+   amendment 1) counts from the first observed refusal, recorded beside the rotation's staging and
+   quarantine; losing the record restarts the count, so a loss only lengthens the wait. A
+   decomposition approved with the revoke as a human act still works: the act's resolution is a
+   second source for the same instant, and the earlier of the two is never used.
+3. **The inbox.** Each instance reads a secret named `rotation-inbox` in its own BWS project
+   (Devon, 2026-10-27: "Same name, two projects"). A BWS machine token goes to the Mac instance's
+   project, and anything else to the VM's; the notification names the project. Amendment 12's
+   decision 4 holds, so no BWS consumer token is ever where the VM can read it. The Mac instance
+   gains one BWS identity, scoped to its inbox project alone. Binding:
+   - The value belongs to the one rotation waiting on a person's mint. At most one person-minted
+     rotation is open across the estate: the proposer refuses to open another, and the executor
+     re-checks it from the status ledger, where both instances see every unit's
+     `rotation_adapter`.
+   - It binds only when `verify_new` answers live beside a refused known-bad control, the new
+     value reaches what the old one reaches (`same_identity`), and it matches no other keeper of
+     the same type in the store. Measured 2026-10-27: two of the four BWS machine tokens
+     (`ops-mini` and `content-mini`) see the same 4 projects and 125 secrets, so access alone
+     can't tell them apart, and the keeper comparison is what refuses one pasted for the other.
+     GitHub and Bitbucket name the account at `GET /user`.
+   - It writes the staging secret, then empties the inbox. A value that fails to bind stays where
+     it is, fails nothing and alerts only once it has failed on a later pass too. An inbox value
+     that differs from a staging value already written is reported, not acted on.
+   - `rotation/<credential>/<occurrence>/staging` and `rotation-worker stage` keep working for
+     packages approved with a human mint act.
+
+New decompositions carry no `external_system` dependency for a mint or a revoke.
