@@ -352,7 +352,11 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   and `run-rotation-proposer.sh`: **2 = could not use its INPUTS**, 3 = something was found.
   `run-fork-sync-watch.sh` (2026-10-24) uses the second group's codes (2 GitHub unreadable, 3 a
   fork stuck), and arms no dead-man switch: its check is an outcome alarm, so 1, 2 and 3 all ping
-  `/fail`.
+  `/fail`. The bridge launchers `run-bump-proposer.sh`, `run-change-proposer.sh` and
+  `run-work-carrier.sh` are outcome alarms too since 2026-10-27 (ADR-0021 amendment 2): on their
+  acting run (`--submit`, `--submit`, `--register`) they ping `/start`, then success on 0 or
+  `/fail` with the report on 1, 2, 3 or anything else, and their checks deliver to alert-hub. A
+  bare run pings nothing.
   0 and 1 agree everywhere (nothing found; the tool itself failed). So a consumer that treats
   non-zero as failure collapses "the tool broke" with "the lane found something" — which is exactly
   the collision each header exists to prevent, and which the first dead-man switch shipped with.

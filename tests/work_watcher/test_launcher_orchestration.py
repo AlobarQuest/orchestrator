@@ -52,6 +52,8 @@ def tree(tmp_path: Path) -> Path:
     (tmp_path / "scripts").mkdir()
     (tmp_path / ".venv" / "bin").mkdir(parents=True)
     shutil.copy(LAUNCHER, tmp_path / "scripts" / LAUNCHER.name)
+    # The outcome alarm's helper. `_no_bws` below leaves its ping URL unresolved, so nothing pings.
+    shutil.copy(LAUNCHER.parent / "sds-deadman.sh", tmp_path / "scripts" / "sds-deadman.sh")
     return tmp_path
 
 

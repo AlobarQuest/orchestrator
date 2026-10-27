@@ -177,10 +177,9 @@ sds_deadman_finish() {
 # thing that watches the lane: an operator inspecting a lane by hand would reset the timer of a
 # schedule that has in fact stopped, which is precisely the condition the switch exists to detect.
 #
-# THE RESIDUAL IS NAMED RATHER THAN PAPERED OVER. Three lanes spell their reporting mode as the
-# BARE invocation and their scheduled mode as `--submit` (`run-bump-proposer.sh`,
-# `run-estate-landing.sh`, `run-rotation-proposer.sh`), so a bare operator run of those still
-# pings. Keying on `--submit` instead would need per-launcher knowledge, and getting that wrong disables a lane's switch
+# THE RESIDUAL IS NAMED RATHER THAN PAPERED OVER. Two armed lanes spell their reporting mode as
+# the BARE invocation and their scheduled mode as `--submit` (`run-estate-landing.sh`,
+# `run-rotation-proposer.sh`), so a bare operator run of those still pings. Keying on `--submit` instead would need per-launcher knowledge, and getting that wrong disables a lane's switch
 # silently -- the quiet failure this whole file exists to end.
 sds_deadman_is_dry_run() {
     for argument in "$@"; do

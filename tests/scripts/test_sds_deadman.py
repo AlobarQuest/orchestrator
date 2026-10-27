@@ -265,10 +265,11 @@ def test_a_check_that_does_not_resolve_never_gates_the_lane(
 
 
 def test_every_launcher_that_arms_the_switch_declares_a_finding_code() -> None:
-    """THIRTEEN since the rotation verifier, and the number is asserted rather than derived so a
-    launcher that stopped arming the switch is a red build rather than a smaller count nobody
-    notices. Editing this literal is how adding a lane is recorded."""
-    assert len(declared_codes()) == len(launchers()) == 13
+    """TEN since the bridge launchers (bump proposer, change proposer, work carrier) became
+    outcome alarms, and the number is asserted rather than derived so a launcher that stopped
+    arming the switch is a red build rather than a smaller count nobody notices. Editing this
+    literal is how adding a lane is recorded."""
+    assert len(declared_codes()) == len(launchers()) == 10
 
 
 @pytest.mark.parametrize("launcher", [path.name for path in launchers()])
