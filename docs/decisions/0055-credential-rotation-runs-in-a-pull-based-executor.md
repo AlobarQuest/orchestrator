@@ -4,7 +4,7 @@
 - **Date:** 2026-10-08
 - **Decided by:** Devon, decisions recorded 2026-10-08 in
   `docs/superpowers/specs/2026-10-08-credential-rotation-requirements.md`. Accepted 2026-10-08 ("Yes, I accept ADR-0055").
-- **Amended:** 2026-10-09, amendment 1 (increment 2's measurements; the Coolify token decision);
+- **Amended:** 2026-10-27, amendment 15 proposed (one mechanism; a credential type is its provider). 2026-10-09, amendment 1 (increment 2's measurements; the Coolify token decision);
   2026-10-09, amendment 2 (increment 3's code read; where destinations are reviewed, which window
   applies at claim, and per-unit completion).
 - **Supersedes:** the parts of ADR-0054 named in "What this changes in ADR-0054".
@@ -1685,3 +1685,123 @@ Run over all 113 steps the 13 completed rotations filed, the machine's reading p
   names the quarantine). The verifier checks what the step does, not the prose.
 - A rotation unit already at `awaiting_review` when this ships isn't revisited; it still needs a
   person.
+
+## Amendment 15 — One rotation mechanism, and a credential type is only its provider (2026-10-27)
+
+**Status: proposed 2026-10-27.** Devon set the direction the same day: "separate this process into
+two pieces. One is the rotation mechanism, and the other is necessary customization for a cred
+type", with the end state "the human putting a new cred in the exact same temp BWS secret, and
+also revoking" the credentials a machine can't revoke. He chose that a person revokes only what no
+machine can ("Human revokes only what the machine can't").
+
+By 2026-10-27, SDS rotates 14 of the 25 registered credentials. Each new one still costs a design
+session, and the cost isn't in `contract.py`, which already implements every step once. It's in
+three places around it.
+
+### Where each credential is still custom
+
+1. **Plans are hand-written per adapter, with named variants.** Nine adapter names cover six
+   providers: `change-manager`, `change-manager-attested` and `change-manager-distributed` differ
+   only in steps the registry already determines. An Actions-secret destination adds `distribute`,
+   and a reader with no read adds a person's attestation. Choosing the variant by hand is how the
+   full bearer's first attempt (2026-10-26) ran the wrong adapter and spent an attempt.
+2. **Two providers carry the mechanism of hosting.** `change_manager.py` and
+   `orchestrator_bearer.py` (about 800 lines together) each write a Coolify variable, restart the
+   application and wait for it to load. Only the variable's encoding differs.
+3. **Onboarding a credential happens outside the code.** The full bearer took five pull requests
+   across four repositories: registry flags, a reader made verifiable, a work-carrier opt-in entry
+   (`STANDING_OPERATIONAL_PACKAGES`), a package revision whose occurrence had to match by hand, and
+   its approvals.
+
+And a person's part differs per credential: each human-minted value goes into a secret named for
+its credential and occurrence (`rotation/<credential>/<occurrence>/staging`), or a Keychain prompt
+on the Mac, and each human act is a separate click at `/review`. Nothing tells the person when an
+act is due.
+
+### End state
+
+**A person does at most two things for any credential, both outside SDS, and the same two every
+time:**
+
+1. **Put the new value in the inbox.** One fixed BWS secret, the same name for every credential
+   and every rotation. Only for a type whose provider can't mint by machine.
+2. **Revoke the old value in the provider's console.** Only for a type whose provider can't revoke
+   by machine.
+
+Everything else is the mechanism's: SDS tells the person when each act is due and which value it
+concerns, notices when it's done, and carries on. No `/review` click is part of a rotation.
+
+| Type | Mint | Revoke |
+|---|---|---|
+| OpenRouter key, change-manager and orchestrator bearers | machine | machine |
+| GitHub PAT (fine-grained or classic) | person: inbox | machine |
+| Bitbucket token, BWS machine token | person: inbox | person: console |
+| Anthropic and OpenAI keys, GitHub App private key | not yet measured | not yet measured |
+
+### Decision proposed
+
+1. **A credential type is a provider and a declaration.** The provider keeps today's methods
+   (`mint`, `probe`, `known_bad`, `revoke`) plus one new one, `same_identity(new, old)`, and
+   declares which of mint and revoke it does by machine and, for a hosted service, how its setting
+   encodes a value. Nothing else in a type is per-credential.
+2. **The plan is derived, never chosen.** From the type's declaration and the credential's registry
+   row (destinations, readers and their reads), one function builds the plan: human or machine
+   mint, `host` for a hosted type, `distribute` for Actions-secret and held destinations, a
+   person's attestation only for a reader with no read, human or machine revoke. The adapter names
+   reduce to one per type. Approved packages pin their criteria, so a rotation in flight keeps its
+   pinned plan, and the derived plan applies from each package's next revision.
+3. **Hosting is mechanism.** Writing a Coolify setting, restarting, refusing a shared `previous`,
+   and confirming the application loaded the new value move into the contract. A hosted type
+   supplies only its encoding.
+4. **The inbox replaces per-rotation staging names.** The executor reads the inbox each pass. A
+   value there belongs to the one rotation waiting on a person's mint; the executor moves it into
+   that rotation's staging secret only after `verify_new` answers live and `same_identity` holds
+   against the old value, then empties the inbox. With two rotations waiting on a mint, or a value
+   that fails either check, it binds nothing and reports. So the proposer opens at most one
+   person-minted rotation at a time.
+5. **A person's acts are observed, not clicked.** A human mint is no longer a dependency: the unit
+   after it waits, unclaimed, until the inbox is bound (the existing wait before the claim,
+   `worker.py::_take`). A human revoke is no longer a dependency either: `confirm` waits until a
+   fresh probe of the old value is refused, and type-specific waits (BWS's 75 minutes) count from
+   that observation. Until then, a revoke at the wrong time is caught as it is today: `confirm`
+   refuses while the old value is live, and `verify` must complete first.
+6. **SDS tells the person what to do.** When a rotation waits on a person, it sends an alert-hub
+   notification naming the act, the credential, how to find the value in the provider's console
+   (a per-type `console_hint` in the registry row), and nothing secret. When the act is observed,
+   the notification closes.
+7. **Onboarding is one registry row.** A row that names its type and sets `rotated_by_sds` is
+   enough: the standing package is generated from it, and the work carrier reads rotation packages
+   from the registry instead of `STANDING_OPERATIONAL_PACKAGES`. Approving the generated package
+   stays a person's act.
+
+### Open before building
+
+- **The inbox on the Mac.** Amendment 12 decision 4 keeps the Mac instance off BWS. Reading one
+  BWS secret needs a BWS identity on the Mac scoped to the inbox's project alone, which changes
+  that decision's threat model by one narrow identity. The alternative, a fixed Keychain item
+  filled through a prompt, isn't "the exact same BWS secret".
+- **`same_identity` per type.** Each type needs a discriminating answer to "is this value for the
+  same account and scope as the old one". For BWS machine tokens the obvious read (the projects a
+  login can see) has to be measured, because a wrong-account token logs in as well as the right
+  one.
+- **Observing a revoke without a race.** `confirm` already probes freshly; using that probe as the
+  trigger needs the same discrimination check for each human-revoked type.
+- **The notification path.** The executor has no outbound route to alert-hub today, and its
+  allowlist would gain one.
+
+### Increments
+
+1. Derive the plan; reduce the adapter names (executor only, behind new package revisions).
+2. Move hosting into the contract.
+3. The inbox, `same_identity`, and observed acts, with the alert-hub notification.
+4. Generated packages and registry-driven onboarding, proved by onboarding `bws-tok-ops-mini`
+   through it.
+
+Each increment ships on its own, and the system rotates every current credential between them.
+
+### Cost
+
+- One more BWS identity on the Mac (open item 1).
+- The plan stops being readable in one adapter file; it's read from the derivation, and each
+  package records the plan it was generated with.
+- Every standing package needs one re-approved revision to move onto the derived plan.
