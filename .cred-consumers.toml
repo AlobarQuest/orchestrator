@@ -300,6 +300,13 @@ rotated_by_sds = true
   [[credential.consumer]]
   kind = "runtime-fetch"
   repo = "orchestrator"
+  ref = "scripts/run-membership-check.sh"
+  healthchecks_check = "sds-membership-check"
+  note = "launchd com.devon.sds-membership-check 07:45; Keychain Claude/BWS_ACCESS_TOKEN_SDS (sds-operator); Healthchecks check sds-membership-check (an outcome alarm: any disagreement or unreadable source keeps it down, which delays retiring an old observer value until the pass exits 0)"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
   ref = "scripts/run-landing-ledger.sh"
   healthchecks_check = "sds-landing-ledger"
   note = "launchd com.devon.landing-ledger 07:30; Keychain Claude/BWS_ACCESS_TOKEN_SDS (sds-operator); Healthchecks check sds-landing-ledger"

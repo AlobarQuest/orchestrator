@@ -1,4 +1,5 @@
 """The landing ledger, the activation sweep and fork-harden take their scope from the member record.
+The membership check is an outcome alarm that reads the record itself.
 
 Each launcher runs from a throwaway tree holding copies of its helper scripts and a fake
 `.venv/bin`: `python -m scripts.sds_scope <population>` is a stub that answers from the
@@ -212,3 +213,116 @@ def test_fork_harden_passes_the_programs_exit_code_through(tmp_path: Path) -> No
     rc, _, lane, _ = _run(tmp_path, HARDEN, ["fork-harden"], FAKE_GRANTED="o/one", FAKE_LANE_RC="3")
     assert rc == 3
     assert len(lane) == 1
+
+
+MEMBERSHIP = Path("scripts/run-membership-check.sh")
+CHANGE_MANAGER_UUID = "314f276d-55ca-4ddc-a24d-b4a3013508cd"
+
+_CHECK_PROGRAM = """#!/bin/bash
+printf 'args=%s observer=%s change_manager=%s github=%s\\n' "$*" "$SDS_MEMBERS_OBSERVER_TOKEN" \\
+  "$SDS_MEMBERS_CHANGE_MANAGER_TOKEN" "$SDS_MEMBERS_GITHUB_TOKEN" >> "$LANE_LOG"
+echo "the report"
+exit "${FAKE_CHECK_RC:-0}"
+"""
+_REAL_PYTHON = """#!/bin/bash
+exec "$REAL_PYTHON" "$@"
+"""
+_RECORDING_BWS = """#!/bin/sh
+printf '%s\\n' "$3" >> "$BWS_LOG"
+if [ "$3" = "$FAKE_EMPTY_UUID" ]; then printf '{"value": ""}'; exit 0; fi
+printf '{"value": "value-of-%s"}' "$3"
+"""
+_PINGING_CURL = """#!/bin/sh
+case "$*" in
+  *"--config -"*) cat >> "$PING_LOG"; echo "body=$*" >> "$PING_LOG" ;;
+  *) printf '{"checks": [{"name": "sds-membership-check", "ping_url": "https://hc.test/p"}]}' ;;
+esac
+"""
+_GH = "#!/bin/sh\necho gh-token\n"
+
+
+def _membership(tmp_path: Path, **fake: str) -> tuple[int, list[str], list[str], list[str]]:
+    root = tmp_path / "tree"
+    (root / "scripts").mkdir(parents=True)
+    for name in (MEMBERSHIP.name, "sds-deadman.sh", "sds-bws.sh"):
+        shutil.copy(Path("scripts") / name, root / "scripts" / name)
+    venv = root / ".venv" / "bin"
+    venv.mkdir(parents=True)
+    _executable(venv / "python", _REAL_PYTHON)
+    _executable(venv / "sds-members", _CHECK_PROGRAM)
+    stubs = tmp_path / "stubs"
+    stubs.mkdir()
+    _executable(stubs / "bws", _RECORDING_BWS)
+    _executable(stubs / "curl", _PINGING_CURL)
+    _executable(stubs / "gh", _GH)
+    home = tmp_path / "home"
+    home.mkdir()
+    logs = {name: tmp_path / f"{name}.log" for name in ("lane", "bws", "ping")}
+    for log in logs.values():
+        log.write_text("")
+    env = {
+        "PATH": f"{stubs}:/usr/bin:/bin",
+        "HOME": str(home),
+        "REAL_PYTHON": sys.executable,
+        "BWS_ACCESS_TOKEN_SDS": "not-a-real-identity",
+        "BWS_ACCESS_TOKEN_BROAD": "not-a-real-identity",
+        "LANE_LOG": str(logs["lane"]),
+        "BWS_LOG": str(logs["bws"]),
+        "PING_LOG": str(logs["ping"]),
+        **fake,
+    }
+    result = subprocess.run(
+        [
+            "/usr/bin/env",
+            "-i",
+            *(f"{k}={v}" for k, v in env.items()),
+            "/bin/bash",
+            str(root / "scripts" / MEMBERSHIP.name),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return (
+        result.returncode,
+        logs["lane"].read_text().splitlines(),
+        logs["bws"].read_text().splitlines(),
+        logs["ping"].read_text().splitlines(),
+    )
+
+
+def test_membership_check_hands_each_credential_to_the_program(tmp_path: Path) -> None:
+    rc, lane, bws, _ = _membership(tmp_path)
+    assert rc == 0
+    assert lane == [
+        f"args=check observer=value-of-{OBSERVER_UUID} "
+        f"change_manager=value-of-{CHANGE_MANAGER_UUID} github=gh-token"
+    ]
+    assert set(bws) == {OBSERVER_UUID, CHANGE_MANAGER_UUID, HEALTHCHECKS_KEY_UUID}
+
+
+def test_membership_check_pings_start_then_success_with_the_report(tmp_path: Path) -> None:
+    _, _, _, pings = _membership(tmp_path)
+    urls = [line for line in pings if line.startswith("url =")]
+    assert urls == ['url = "https://hc.test/p/start"', 'url = "https://hc.test/p"']
+    assert any("--data-binary" in line for line in pings)
+
+
+def test_membership_check_pings_fail_with_the_report_on_every_nonzero_exit(tmp_path: Path) -> None:
+    for code in ("1", "2", "3"):
+        rc, _, _, pings = _membership(tmp_path / code, FAKE_CHECK_RC=code)
+        assert rc == int(code)
+        urls = [line for line in pings if line.startswith("url =")]
+        assert urls[-1] == 'url = "https://hc.test/p/fail"'
+        assert any("--data-binary" in line for line in pings)
+
+
+def test_membership_check_fails_without_running_when_a_credential_is_empty(tmp_path: Path) -> None:
+    rc, lane, _, pings = _membership(tmp_path, FAKE_EMPTY_UUID=CHANGE_MANAGER_UUID)
+    assert rc == 1
+    assert lane == []
+    assert [line for line in pings if line.startswith("url =")][-1].endswith('/fail"')
+
+
+def test_membership_check_never_arms_the_dead_man_switch() -> None:
+    assert "sds_deadman_arm" not in MEMBERSHIP.read_text()

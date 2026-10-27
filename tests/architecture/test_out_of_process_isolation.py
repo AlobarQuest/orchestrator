@@ -444,20 +444,31 @@ TABLE: dict[str, Row] = {
         "typing",
         no_sibling_lanes=True,
     ),
+    # `check` compares the record with the lists the other lanes carry, so it imports those lanes'
+    # own data and readers (their declarations, landing policy, fork list, rotation registry)
+    # rather than keeping a third copy of each. That makes this the one program that reuses
+    # siblings, so it does not carry `no_sibling_lanes`.
     "sds_members": _row(
         "__future__",
+        "bump_proposer",
         "collections",
         "dataclasses",
+        "deploy_watcher",
         "estate_clients",
+        "fork_harden",
+        "fork_sync",
         "hashlib",
         "httpx",
         "json",
         "os",
         "pathlib",
+        "pin_watcher",
+        "rotation_worker",
         "tomllib",
+        "tool_installer",
         "typer",
         "typing",
-        no_sibling_lanes=True,
+        "work_carrier",
     ),
     "tool_installer": _row(
         "__future__",

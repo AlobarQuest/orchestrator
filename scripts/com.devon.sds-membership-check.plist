@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Template for the SDS membership consistency check's LaunchAgent (ADR-0058). Install with
+     scripts/install-membership-check-launchd.sh, which substitutes __REPO_ROOT__ and __HOME__ and
+     writes ~/Library/LaunchAgents/com.devon.sds-membership-check.plist.
+
+     No secrets live here: the wrapper reads the observer and change-manager bearers and the
+     Healthchecks API key from BWS at run time, and GitHub from the operator's `gh` login.
+
+     DAILY AT 07:45 LOCAL, fifteen minutes after the landing ledger (07:30). RunAtLoad is false,
+     as for every lane. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.devon.sds-membership-check</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__REPO_ROOT__/scripts/run-membership-check.sh</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <dict><key>Hour</key><integer>7</integer><key>Minute</key><integer>45</integer></dict>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>__HOME__</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/sds-membership-check.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/sds-membership-check.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>
