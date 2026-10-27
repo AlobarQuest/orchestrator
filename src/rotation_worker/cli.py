@@ -38,6 +38,7 @@ from rotation_worker.destinations import DestinationError, parse, render
 from rotation_worker.git_mirror import MirrorError, RepoMirror
 from rotation_worker.github_actions import RotationApp
 from rotation_worker.logs import configure
+from rotation_worker.notify import Notifier
 from rotation_worker.orchestrator_client import OrchestratorClient
 from rotation_worker.readers import (
     Healthchecks,
@@ -123,6 +124,13 @@ def open_healthchecks(config: Config, store: SecretStore) -> Healthchecks | None
     return Healthchecks(lambda: store.read(key_id))
 
 
+def open_notifier(config: Config, store: SecretStore) -> Notifier | None:
+    if config.alert_hub_token_id is None:
+        return None
+    token_id = secret_id(config, config.alert_hub_token_id)
+    return Notifier(lambda: store.read(token_id), config.state_dir)
+
+
 def open_github_app(config: Config, store: SecretStore) -> RotationApp | None:
     app_id, key_id = config.github_app_id, config.github_app_key_id
     if app_id is None or key_id is None:
@@ -178,6 +186,7 @@ def build_setup(config: Config) -> Setup:
         executor_key_id=config.credential_key_id,
         healthchecks=open_healthchecks(config, store),
         github_app=open_github_app(config, store),
+        notifier=open_notifier(config, store),
     )
 
 

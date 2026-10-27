@@ -79,6 +79,9 @@ class Config:
     # `Rotation / Admin`. Both or neither; read only when a step writes or reads an Actions secret.
     github_app_id: str | None = None
     github_app_key_id: str | None = None
+    # This instance's alert-hub sender token: a BWS UUID, or a Keychain account name. Absent, no
+    # act is announced (ADR-0055 amendment 15, increment 3).
+    alert_hub_token_id: str | None = None
 
     @property
     def mirror_root(self) -> Path:
@@ -98,14 +101,9 @@ def load(path: Path) -> Config:
     for key in ("organization_id", "work_project_id"):
         if not UUID_PATTERN.fullmatch(_string(raw, key)):
             raise ConfigError(f"{key} must be a lowercase UUID")
-    bearer = raw.get("bearer_secret_id")
-    if bearer is not None and (not isinstance(bearer, str) or not UUID_PATTERN.fullmatch(bearer)):
-        raise ConfigError("bearer_secret_id must be a lowercase UUID")
-    healthchecks_key = raw.get("healthchecks_key_id")
-    if healthchecks_key is not None and (
-        not isinstance(healthchecks_key, str) or not UUID_PATTERN.fullmatch(healthchecks_key)
-    ):
-        raise ConfigError("healthchecks_key_id must be a lowercase UUID")
+    bearer = _optional_uuid(raw, "bearer_secret_id")
+    healthchecks_key = _optional_uuid(raw, "healthchecks_key_id")
+    alert_hub_token = _optional_uuid(raw, "alert_hub_token_id")
     app_id, app_key = _github_app(raw)
     admin_secrets = raw.get("admin_secrets", {})
     if not isinstance(admin_secrets, dict) or not all(
@@ -132,14 +130,22 @@ def load(path: Path) -> Config:
         healthchecks_key_id=healthchecks_key,
         github_app_id=app_id,
         github_app_key_id=app_key,
+        alert_hub_token_id=alert_hub_token,
     )
+
+
+def _optional_uuid(raw: dict[str, Any], key: str) -> str | None:
+    value = raw.get(key)
+    if value is not None and (not isinstance(value, str) or not UUID_PATTERN.fullmatch(value)):
+        raise ConfigError(f"{key} must be a lowercase UUID")
+    return value
 
 
 def _keychain(raw: dict[str, Any]) -> Config:
     named = [key for key in VM_ONLY if key in raw]
     if named:
         raise ConfigError(f"a Keychain executor names no {', '.join(named)}")
-    for key in ("work_project_id", "bearer_secret_id", "healthchecks_key_id"):
+    for key in ("work_project_id", "bearer_secret_id", "healthchecks_key_id", "alert_hub_token_id"):
         value = raw.get(key)
         if (value is not None or key == "work_project_id") and (
             not isinstance(value, str) or not KEYCHAIN_NAME.fullmatch(value)
@@ -159,6 +165,7 @@ def _keychain(raw: dict[str, Any]) -> Config:
         source_revision=revision,
         store="keychain",
         healthchecks_key_id=raw.get("healthchecks_key_id"),
+        alert_hub_token_id=raw.get("alert_hub_token_id"),
     )
 
 
