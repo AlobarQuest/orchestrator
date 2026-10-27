@@ -160,6 +160,10 @@ def test_a_unit_s_name_in_the_evidence_doesn_t_change_the_step_it_covers() -> No
         _criteria(bitbucket.PLAN)[:-1],
         [*_criteria(bitbucket.PLAN), {"id": "AC-005", "evidence": "a person reads the log"}],
         [*_criteria(bitbucket.PLAN), "AC-005"],
+        [*_criteria(bitbucket.PLAN), _criteria(bitbucket.PLAN)[0]],
+        [{**row, "id": None} for row in _criteria(bitbucket.PLAN)],
+        _criteria(bitbucket.PLAN, **{"AC-001": "external: the confirm unit's verify_new step's "
+                                     "rotation-step/1 evidence, filed by the rotation executor."}),
         _criteria(bitbucket.PLAN, **{"AC-002": "external: the mint step's rotation-step/1 "
                                      "evidence, filed by the rotation executor."}),
         _criteria(bitbucket.PLAN, **{"AC-002": "external: the shred step's rotation-step/1 "
@@ -221,3 +225,16 @@ def test_the_wait_before_a_person_s_revoke_reads_the_plan_that_runs() -> None:
     assert gates("verify")
     assert not gates("store")
     assert not gates("confirm")
+
+
+@pytest.mark.parametrize("name", [n for n, a in ADAPTERS.items() if a.capabilities is not None])
+@pytest.mark.parametrize("extra", [[], [ACTIONS], [HELD], [COPY], [KEYCHAIN_COPY]])
+def test_a_type_s_derived_plan_has_its_pinned_plan_s_units_in_order(
+    name: str, extra: list[str]
+) -> None:
+    """`overlaps._from_store` places a unit against the store from `Adapter.plan`, so the plan a
+    credential runs must have the same units, in the same order."""
+    adapter = ADAPTERS[name]
+    keeper = KEYCHAIN_KEEPER if adapter.store_kind == "keychain" else KEEPER
+    plan = derive(_capabilities(name), [keeper, *extra], keeper, adapter.store_kind)
+    assert [s.name for s in plan.segments] == [s.name for s in adapter.plan.segments]

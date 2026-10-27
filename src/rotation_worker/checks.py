@@ -81,7 +81,8 @@ class Approved:
     """A unit the checks passed: its adapter, its segment of the plan, and the rotation."""
 
     adapter: Adapter
-    # The plan this credential runs, which the approved package's criteria describe.
+    # The plan this credential runs, which the approved package's criteria describe. A type's
+    # `adapter.plan` is only its pre-derivation candidate: read this one.
     plan: Plan
     unit: UnitPlan
     rotation: Rotation

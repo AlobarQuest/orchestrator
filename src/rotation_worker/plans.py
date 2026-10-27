@@ -44,7 +44,7 @@ M, H = Actor.MACHINE, Actor.HUMAN
 # A package criterion's evidence names the step it covers; the verifier reads the same text
 # (`rotation_verification._CRITERION` in the orchestrator).
 _CRITERION: Final = re.compile(
-    r"^external: the (?:\w+ unit's )?(?P<step>\w+) step's rotation-step/1 evidence, "
+    r"^external: the (?:(?P<unit>\w+) unit's )?(?P<step>\w+) step's rotation-step/1 evidence, "
     r"filed by the rotation executor\.$"
 )
 
@@ -116,36 +116,60 @@ def _numbered(
     return numbered
 
 
-def criteria_steps(plan: Plan) -> dict[str, StepKind]:
-    """Each machine step's criterion and the step it covers."""
-    return {step.ac_id: step.kind for step in plan.steps() if step.ac_id is not None}
+def criteria_steps(plan: Plan) -> dict[str, tuple[str, StepKind]]:
+    """Each machine step's criterion, with the unit that holds it and the step it covers."""
+    return {
+        step.ac_id: (segment.name, step.kind)
+        for segment in plan.segments
+        if isinstance(segment, UnitPlan)
+        for step in segment.steps
+        if step.ac_id is not None
+    }
 
 
-def packaged_steps(acceptance: object) -> dict[str, StepKind] | None:
-    """What an approved package's criteria cover, by the step each one's evidence names; `None`
-    when any criterion isn't a rotation step's."""
+# A criterion's step, and its unit when the evidence names one.
+Covered = dict[str, tuple[str | None, StepKind]]
+
+
+def packaged_steps(acceptance: object) -> Covered | None:
+    """What an approved package's criteria cover, by the step (and unit, when named) each one's
+    evidence names; `None` when any criterion isn't a rotation step's, or an id is missing or
+    repeated."""
     if not isinstance(acceptance, list):
         return None
-    covered: dict[str, StepKind] = {}
+    covered: Covered = {}
     for criterion in acceptance:
         if not isinstance(criterion, Mapping):
             return None
+        ac_id = criterion.get("id")
         match = _CRITERION.fullmatch(str(criterion.get("evidence", "")))
-        if match is None or match["step"] not in StepKind._value2member_map_:
+        if not isinstance(ac_id, str) or ac_id in covered or match is None:
             return None
-        covered[str(criterion.get("id"))] = StepKind(match["step"])
+        if match["step"] not in StepKind._value2member_map_:
+            return None
+        covered[ac_id] = (match["unit"], StepKind(match["step"]))
     return covered
+
+
+def _describes(covered: Covered | None, plan: Plan) -> bool:
+    steps = criteria_steps(plan)
+    if covered is None or covered.keys() != steps.keys():
+        return False
+    return all(
+        kind == steps[ac_id][1] and unit in (None, steps[ac_id][0])
+        for ac_id, (unit, kind) in covered.items()
+    )
 
 
 def select_plan(candidates: Sequence[Plan], acceptance: Any) -> Plan:
     """The candidate whose criteria the approved package states exactly.
 
     The package pins its plan: it was approved with one criterion per machine step, so the plan
-    that runs is the one those criteria describe, and a package that describes none is refused
-    before the claim.
+    that runs is the one those criteria describe, step for step and, where a criterion names its
+    unit, unit for unit. A package that describes none is refused before the claim.
     """
     covered = packaged_steps(acceptance)
     for plan in candidates:
-        if criteria_steps(plan) == covered:
+        if _describes(covered, plan):
             return plan
     raise ContractError("the approved package's criteria describe no plan this type runs")

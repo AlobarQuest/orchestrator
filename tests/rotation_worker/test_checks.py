@@ -10,12 +10,13 @@ from typing import Any
 import pytest
 import yaml
 
-from rotation_worker.adapters import orchestrator_bearer
+from rotation_worker.adapters import ADAPTERS, github_pat, orchestrator_bearer
 from rotation_worker.canonical import CanonicalError, package_hash
 from rotation_worker.checks import check_unit
 from rotation_worker.contract import ContractError, Plan, StepKind, UnitPlan
 from rotation_worker.envelope import is_rotation_unit
 from rotation_worker.git_mirror import RepoMirror
+from rotation_worker.plans import derive
 from rotation_worker.readers import CheckRead
 from rotation_worker.registry import (
     PACKAGES_REPOSITORY,
@@ -527,3 +528,29 @@ def test_a_person_s_revoke_counts_a_held_copy_as_machine_verified() -> None:
 
     keeper = 'bws-secret uuid="00000000-0000-0000-0000-000000000000"'
     _check_human_retire_verifiable([keeper, HELD], bitbucket.PLAN, {}, MemoryStore())
+
+
+@pytest.mark.parametrize("approved_with", ["derived", "before derivation"])
+def test_a_type_runs_the_plan_its_package_s_criteria_describe(
+    world: World, approved_with: str
+) -> None:
+    reader = 'runtime-fetch repo="orchestrator" ref="scripts/run-x.sh"'
+    destinations = sorted([f'bws-secret uuid="{KEEPER}"', 'provider name="github"', reader])
+    world.registry(
+        _registry(provider='"github"').replace(
+            '  ref = "a person attests"\n',
+            '  ref = "scripts/run-x.sh"\n  healthchecks_check = "sds-x"\n',
+        )
+    )
+    capabilities = ADAPTERS["github-pat"].capabilities
+    assert capabilities is not None
+    derived = derive(capabilities, destinations, f'bws-secret uuid="{KEEPER}"', "bws-secret")
+    # No Actions copy, so the derived plan has no distribute step and differs from the PAT's.
+    assert derived != github_pat.PLAN
+    plan = derived if approved_with == "derived" else github_pat.PLAN
+    world.publish(_package(_acceptance(plan), destinations=destinations))
+    intake = world.intake(acceptance_criteria=[{"ac_id": f"AC-00{n}"} for n in range(1, 8)])
+    unit = world.unit(destinations=destinations, rotation_adapter="github-pat")
+    approved = world.check(unit, intake)
+    assert approved.plan == plan
+    assert approved.unit == plan.unit("store")
