@@ -442,6 +442,42 @@ def test_a_held_record_is_refused_end_to_end_from_the_member_record(
     assert "0 carried, 1 refused" in report.getvalue()
 
 
+def test_a_retired_members_hold_refuses_whatever_the_case_of_its_name(
+    checkout_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Kills: holds read only from live members, or keyed by the record's spelling uncased."""
+    import io
+
+    import work_carrier.cli as cli_module
+
+    rec, payload = _bump(checkout_root, "npm", "zod", "4.4.3")
+    runner, _ = runner_returning(payload)
+    original = cli_module.prepare
+    monkeypatch.setattr(cli_module, "prepare", lambda r, **kw: original(r, **kw, runner=runner))
+    members = [
+        replace(
+            member,
+            repository=member.repository.upper(),
+            state="retired",
+            holds=HOLDS[TARGET.casefold()],
+        )
+        if member.repository.casefold() == TARGET.casefold()
+        else member
+        for member in cli_module.read_members_from_environment()
+    ]
+    assert any(member.repository == TARGET.upper() for member in members)
+    report = io.StringIO()
+    code = run(
+        ["--checkout-root", str(checkout_root)],
+        source=_Source([rec]),
+        members=members,
+        out=report,
+    )
+    assert code == EXIT_FINDINGS
+    assert "version_ceiling_exceeded" in report.getvalue()
+    assert "0 carried, 1 refused" in report.getvalue()
+
+
 def test_the_emit_key_is_derived_so_two_passes_print_the_same_bytes() -> None:
     """A random key would make two passes over one unchanged queue look like two pieces of work."""
     assert emit_key(record()) == emit_key(record())

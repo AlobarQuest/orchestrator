@@ -1531,6 +1531,22 @@ def test_a_held_bump_is_skipped_and_nothing_is_written(
     assert hub.keys("firing") == []
 
 
+def test_a_hold_applies_whatever_the_case_of_the_members_name(
+    rig, monkeypatch, spine, hub, capsys
+) -> None:
+    """Kills: the holds keyed by the record's spelling uncased. The package names
+    `AlobarQuest/infraops-mcp-server` and the scope takes its spelling; the record's differs."""
+    estate, calls = rig
+    members = [_member(REPOSITORY.upper(), holds=(Hold("npm_and_yarn", "/", "zod", "3.99"),))]
+    monkeypatch.setattr(cli, "read_members_from_environment", lambda **_: members)
+    _serve(monkeypatch, pulls=[Pull(), LEFT_PAD])
+
+    assert run(["--submit"]) == EXIT_OK
+
+    assert "ceiling-exceeded" in capsys.readouterr().out
+    assert [p["package_id"] for p in estate.proposals] == [CREATED_ID]
+
+
 def test_a_hold_resolves_the_alert_its_bump_raised(rig, monkeypatch, hub) -> None:
     """Kills: a held skip that names the alert's key (holding it open) or raises it again."""
     _serve(monkeypatch, pulls=[Pull(number=77, dependency="zod", ecosystem="uv")])

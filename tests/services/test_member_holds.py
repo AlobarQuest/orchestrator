@@ -341,6 +341,10 @@ def test_a_staged_member_proposal_is_on_the_review_queue(migrated_engine: Engine
         ("1.", None),
         (">=1.2", None),
         ("^1.2", None),
+        ("1.2.abc", None),
+        ("3f1c2d4e5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d", None),
+        ("1.0.0a1", (1, 0, 0)),
+        ("2.0b2", (2, 0)),
     ],
 )
 def test_release_reads_the_leading_numeric_release(

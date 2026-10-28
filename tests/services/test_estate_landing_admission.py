@@ -17,9 +17,10 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from orchestrator.persistence.models import EstatePrMerge
+from orchestrator.persistence.models import EstatePrMerge, SdsMember
 from orchestrator.services.landing.change_record import ChangeRecordAnswer, WorkflowPin
 from orchestrator.services.landing.estate_landing_admission import (
     LANDING_AUTHOR_NOT_THE_UPDATE_BOT,
@@ -1308,6 +1309,25 @@ def test_a_bump_beyond_a_hold_is_refused_by_the_ceiling(migrated_session: Sessio
     assert answer.satisfied is False
     assert answer.refusals == (LANDING_VERSION_CEILING_EXCEEDED,)
     assert gateway.commit_reads == [(REPOSITORY, PR)]
+
+
+def test_a_retired_members_hold_still_refuses_and_its_name_is_case_folded(
+    migrated_session: Session,
+) -> None:
+    """Kills: `holds_for` skipping a retired member, or comparing the repository
+    case-sensitively (the member is `AlobarQuest/Change-Manager`, the pull request's
+    `alobarquest/change-manager`)."""
+    _hold_alembic(migrated_session)
+    member = migrated_session.scalars(
+        select(SdsMember).where(SdsMember.repository == HELD_MEMBER)
+    ).one()
+    member.state = "retired"
+    migrated_session.flush()
+    assert HELD_MEMBER != REPOSITORY
+
+    answer = _ask(migrated_session)
+
+    assert answer.refusals == (LANDING_VERSION_CEILING_EXCEEDED,)
 
 
 def test_a_group_with_one_held_member_is_refused(migrated_session: Session) -> None:

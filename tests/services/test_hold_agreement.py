@@ -43,6 +43,35 @@ VERSIONS = (
     "2..0",
     " 1.0",
     "^1.2",
+    "1.2.abc",
+    "3f1c2d4e5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d",
+    "f1c2d4e5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d3",
+    "3a1c2d4e5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d",
+    "1.0.0-rc.1",
+    "1.0.0a1",
+    "2.0b2",
+    "0.0.0-dev",
+)
+
+# What each copy must read, beyond agreeing: every legitimate spelling reads as its release, and a
+# commit SHA (which a SHA-pinned action bump carries) never reads as its leading digits.
+READS = (
+    ("2.0.54", (2, 0, 54)),
+    ("v1.2.3", (1, 2, 3)),
+    ("2.0.55rc1", (2, 0, 55)),
+    ("1.0.0-beta.1", (1, 0, 0)),
+    ("2.0.0+build.5", (2, 0, 0)),
+    ("1.2.3.post1", (1, 2, 3)),
+    ("0.0.0-dev", (0, 0, 0)),
+    ("1.0.0-rc.1", (1, 0, 0)),
+    ("4.4.3", (4, 4, 3)),
+    ("1.0.0a1", (1, 0, 0)),
+    ("2.0b2", (2, 0)),
+    ("1.0a1.dev0", (1, 0)),
+    ("1.2.abc", None),
+    ("3f1c2d4e5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d", None),
+    ("3a1c2d4e5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d", None),
+    ("f1c2d4e5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d3", None),
 )
 
 GROUPED = """bump the python group across 1 directory with 3 updates
@@ -157,6 +186,29 @@ def _fields(result: object) -> object:
 @pytest.mark.parametrize("version", VERSIONS)
 def test_both_copies_read_a_release_alike(version: str) -> None:
     assert service.release(version) == lane.release(version)
+
+
+@pytest.mark.parametrize(("version", "parsed"), READS)
+def test_both_copies_read_these_releases_as_expected(
+    version: str, parsed: tuple[int, ...] | None
+) -> None:
+    assert service.release(version) == parsed
+    assert lane.release(version) == parsed
+
+
+def test_a_sha_pinned_action_bump_breaches_a_hold_whatever_its_first_character() -> None:
+    """Kills: a SHA starting with a digit reading as that digit, so admitted under ceiling `4.2`."""
+    hold = Hold("github_actions", "/", "actions/checkout", "4.2")
+    for sha in (
+        "3f1c2d4e5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d",
+        "af1c2d4e5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d",
+    ):
+        assert service.exceeded(
+            [hold], REPO, (service.Bump("github_actions", "/", hold.dependency, sha),)
+        )
+        assert lane.exceeded(
+            [hold], REPO, (lane.Bump("github_actions", "/", hold.dependency, sha),)
+        )
 
 
 @pytest.mark.parametrize(("title", "message", "ecosystem"), MESSAGES)

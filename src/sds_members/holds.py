@@ -21,9 +21,15 @@ from dataclasses import dataclass, replace
 from typing import Final, Protocol
 
 _RELEASE: Final = re.compile(r"v?(\d+(?:\.\d+)*)")
-# What may follow a dot after the release: PEP 440's dotted pre-, post- and dev-release parts.
-# Anything else after a dot (`1.x`, `1.2.*`) is a wildcard or a typo, never a release.
-_DOTTED_SUFFIX: Final = re.compile(r"\.(?:post|dev|rc|a|b)")
+# What may follow the release: nothing, a `-` or `+` part (semver pre-release, build), PEP 440's
+# dotted pre-, post- and dev-release parts (`.post1`), or a pre-release word glued to the release
+# (`2.0.55rc1`, `2.0b2`); a part ends at its digits, then at the end or a `-`, `+` or `.`. Anything
+# else (`1.x`, `1.2.abc`, the rest of a commit SHA that starts with a digit) is never a release.
+_SUFFIX: Final = re.compile(
+    r"[-+]|\.?(?:post|dev|rc|a|b)\d*(?:[-+.]|\Z)"
+    r"|(?:alpha|beta|preview|pre|c)\d*(?:[-+.]|\Z)",
+    re.IGNORECASE,
+)
 
 # The lander's single-update title read, byte-identical to `landing_ledger.titles.BUMP_PATTERN`
 # and pinned to it: `bump <name> from <a> to <b>` at the end of the title.
@@ -55,18 +61,18 @@ def release(version: str) -> tuple[int, ...] | None:
     pre-release, build or post-release part (`2.0.55rc1`, `1.2.3-beta.1`, `1.2.3+b5`,
     `1.2.3.post1` all read as their release). Refused, so `None`: no leading digit (`latest`,
     `^1.2`, `>=1.2`, surrounding whitespace), a release that ends in a dot or doubles one (`1.`,
-    `2..0`), a wildcard (`1.x`, `1.2.*`, `1*`), anything else after a dot that is not a PEP 440
-    `.post`, `.dev`, `.rc`, `.a` or `.b` part, and a PEP 440 epoch (`1!2.0`), which would otherwise
-    read as release `(1,)` and compare low.
+    `2..0`), a wildcard (`1.x`, `1.2.*`, `1*`), a PEP 440 epoch (`1!2.0`), and anything else after
+    the release that `_SUFFIX` does not name (`1.2.abc`, a commit SHA such as `3f1c2d4e...`), each
+    of which would otherwise read as its leading digits and compare low.
 
-    Any other suffix is ignored, so a pre-release of a ceiling's own release reads as that release:
+    An admitted suffix is ignored, so a pre-release of a ceiling's own release reads as that release:
     `2.0.54-rc1` at ceiling `2.0.54` is admitted (the plan's Ruling 4, an accepted cost).
     """
     match = _RELEASE.match(version)
     if match is None:
         return None
     rest = version[match.end() :]
-    if rest.startswith(("!", "*")) or (rest.startswith(".") and not _DOTTED_SUFFIX.match(rest)):
+    if rest and not _SUFFIX.match(rest):
         return None
     return tuple(int(part) for part in match.group(1).split("."))
 
