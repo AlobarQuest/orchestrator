@@ -65,8 +65,8 @@ def release(version: str) -> tuple[int, ...] | None:
     the release that `_SUFFIX` does not name (`1.2.abc`, a commit SHA such as `3f1c2d4e...`), each
     of which would otherwise read as its leading digits and compare low.
 
-    An admitted suffix is ignored, so a pre-release of a ceiling's own release reads as that release:
-    `2.0.54-rc1` at ceiling `2.0.54` is admitted (the plan's Ruling 4, an accepted cost).
+    An admitted suffix is ignored, so a pre-release of a ceiling's own release reads as that
+    release: `2.0.54-rc1` at ceiling `2.0.54` is admitted (the plan's Ruling 4, an accepted cost).
     """
     match = _RELEASE.match(version)
     if match is None:
