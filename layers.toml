@@ -125,6 +125,7 @@ description = "Intent packages: how the orchestrator reads them, and the package
 paths = [
   "src/orchestrator/package_sources.py",
   "tests/contract/test_package_evidence_vocabulary_contract.py",
+  "tests/fixtures/intent-packages-envelopes/**",
   "tests/fixtures/intent-packages/**",
   "tests/fixtures/package_evidence_vocabulary.json",
 ]

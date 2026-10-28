@@ -56,7 +56,7 @@ class FactoryPolicyKnownGoodResponse(BaseModel):
     max_attempts: int
     max_llm_calls: int
     conformance_status: str
-    target_repositories: list[str]
+    target_repositories: list[str] | None
     command_prefixes: list[str]
 
 

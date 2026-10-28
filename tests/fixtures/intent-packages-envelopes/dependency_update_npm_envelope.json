@@ -1,0 +1,47 @@
+{
+  "budgets": {
+    "max_attempts": 3,
+    "max_llm_calls": 360
+  },
+  "capabilities": {
+    "command.run": "allowed",
+    "github.pr.create": "allowed",
+    "github.pr.merge": "allowed",
+    "orchestrator.claim": "allowed",
+    "orchestrator.evidence.write": "allowed",
+    "repo.edit": "allowed",
+    "repo.read": "allowed"
+  },
+  "change_class": "dependency-update",
+  "conformance": {
+    "accepted_standards": [],
+    "standards_touched": [
+      "project"
+    ],
+    "status": "green"
+  },
+  "constraints": {
+    "allowed_commands": [
+      "npm install zod@3.24.0 --save-exact",
+      "npm run build",
+      "npm ci",
+      "npx eslint .",
+      "npx prettier --check .",
+      "npm test",
+      "grep -q '\"zod\": \"3.24.0\"' package.json"
+    ],
+    "mutation_commands": [
+      "npm install zod@3.24.0 --save-exact",
+      "npm run build"
+    ],
+    "target_repository": "AlobarQuest/orchestrator",
+    "verify_commands": [
+      "npm ci",
+      "npx eslint .",
+      "npx prettier --check .",
+      "npm test",
+      "grep -q '\"zod\": \"3.24.0\"' package.json"
+    ],
+    "work_unit_id": "__WORK_UNIT_ID__"
+  }
+}

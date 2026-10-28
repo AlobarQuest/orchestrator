@@ -449,8 +449,10 @@ Placement rule: global CLAUDE.md §7.
   evidence, not only `src/`; the tracker adapter and routes stay because Wave 2's met bar attests
   them. History: `docs/history/claude-md-invariants-archive.md` #287.
 - The dependency-update budget lives in five places; `scripts/check_profile_budget_agreement.py`
-  holds `factory-policy.toml`'s known-good ceiling to intent-packages' `BUDGETS`. Raising the
-  pattern ceiling withholds a human gate: a standing-authority decision. History:
+  holds every `dependency-update` known-good pattern in `factory-policy.toml` (uv, npm, pip) to
+  intent-packages' `BUDGETS` and `CAPABILITIES`. A pattern's `target_repositories` is optional
+  (schema 9): absent, the member record's grant decides which repositories. Raising the pattern
+  ceiling withholds a human gate: a standing-authority decision. History:
   `docs/history/claude-md-invariants-archive.md` #291.
 - Dispatch admission reads the member record's grant for the unit's change class
   (`services/execution/target_grant.py`): `dependency_updates` for `dependency-update`, `app_changes`

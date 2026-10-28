@@ -25,7 +25,7 @@ def test_the_policy_surface_reports_the_version_and_every_reach_row(db_client: T
 
     assert response.status_code == 200
     body = response.json()
-    assert body["version"] == 8
+    assert body["version"] == 9
     # Served keys, model fields and report keys are one set: a response model drops what it does
     # not declare, and a field the report stopped producing must not linger in the model either.
     assert (

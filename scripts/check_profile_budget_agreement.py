@@ -68,7 +68,7 @@ PROFILE_REF = "main"
 POLICY_PATH = REPO_ROOT / "src" / "orchestrator" / "factory-policy.toml"
 TEST_PATH = REPO_ROOT / "tests" / "services" / "test_authority_known_good.py"
 
-PATTERN_NAME = "uv dependency pin bump into a named repository"
+CHANGE_CLASS = "dependency-update"
 BUDGET_KEYS = ("max_attempts", "max_llm_calls")
 
 
@@ -168,35 +168,55 @@ def _checked_capabilities(found: object, where: str) -> dict[str, str]:
     return dict(found)
 
 
-def _pattern_row() -> dict:
-    """The known-good pattern row, from the artifact production reads."""
+def _pattern_rows() -> list[dict]:
+    """Every known-good pattern for the dependency-update change class, from the artifact
+    production reads. Found by change class, not by name: uv, npm and pip each have one, and a
+    pattern added later is held to the profile the moment it exists."""
     try:
         document = tomllib.loads(POLICY_PATH.read_text(encoding="utf-8"))
     except (OSError, tomllib.TOMLDecodeError) as error:
         raise Unresolvable(f"cannot read {POLICY_PATH.name}: {error}") from error
 
     rows = (((document.get("reach") or {}).get("source_repository")) or {}).get("known_good") or []
-    matches = [row for row in rows if row.get("name") == PATTERN_NAME]
-    if len(matches) != 1:
+    matches = [row for row in rows if row.get("change_class") == CHANGE_CLASS]
+    if not matches:
         raise Unresolvable(
-            f"{POLICY_PATH.name} declares {len(matches)} patterns named {PATTERN_NAME!r}; "
-            "this check compares exactly one"
+            f"{POLICY_PATH.name} declares no pattern for change class {CHANGE_CLASS!r}; "
+            "this check compares every one"
         )
-    return matches[0]
+    return matches
 
 
-def pattern_budgets() -> dict[str, int]:
-    """The known-good pattern's declared ceilings."""
-    row = _pattern_row()
+def _agreed(read, what: str):
+    """The one value every pattern declares, or Unresolvable naming the patterns that differ."""
+    by_pattern = {row.get("name", "<unnamed>"): read(row) for row in _pattern_rows()}
+    distinct = {repr(value) for value in by_pattern.values()}
+    if len(distinct) != 1:
+        listing = "; ".join(f"{name}: {value}" for name, value in by_pattern.items())
+        raise Unresolvable(f"the {CHANGE_CLASS} patterns disagree on {what}: {listing}")
+    return next(iter(by_pattern.values()))
+
+
+def _row_budgets(row: dict) -> dict[str, int]:
     missing = [k for k in BUDGET_KEYS if not isinstance(row.get(k), int)]
     if missing:
-        raise Unresolvable(f"the pattern declares no integer {', '.join(missing)}")
+        raise Unresolvable(f"pattern {row.get('name')!r} declares no integer {', '.join(missing)}")
     return {k: row[k] for k in BUDGET_KEYS}
 
 
+def pattern_budgets() -> dict[str, int]:
+    """The known-good patterns' declared ceilings, which must be one value across all of them."""
+    return _agreed(_row_budgets, "budgets")
+
+
 def pattern_capabilities() -> dict[str, str]:
-    """The known-good pattern's declared capabilities."""
-    return _checked_capabilities(_pattern_row().get("capabilities"), "the pattern's capabilities")
+    """The known-good patterns' declared capabilities, one value across all of them."""
+    return _agreed(
+        lambda row: _checked_capabilities(
+            row.get("capabilities"), f"pattern {row.get('name')!r} capabilities"
+        ),
+        "capabilities",
+    )
 
 
 def test_constant_budgets() -> dict[str, int]:
@@ -225,7 +245,7 @@ def profile_capabilities(source: str) -> dict[str, str]:
 
 def _compare(label: str, pattern, constant, profile, constant_name: str, profile_name: str) -> bool:
     print(f"{label}:")
-    print(f"  pattern : factory-policy.toml {PATTERN_NAME!r} -> {pattern}")
+    print(f"  pattern : factory-policy.toml {CHANGE_CLASS!r} patterns -> {pattern}")
     print(f"  constant: {TEST_PATH.name} {constant_name} -> {constant}")
     print(f"  profile : {INTENT_PACKAGES_REPO}@{PROFILE_REF} {profile_name} -> {profile}")
     if pattern == constant == profile:

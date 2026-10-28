@@ -1039,7 +1039,7 @@ def test_a_recognised_rotation_unit_nobody_approved_is_claimed_and_leaves_the_tr
     assert event.payload["recognised_by"] == [
         "credential rotation unit of an approved standing package"
     ]
-    assert event.payload["policy_version"] == 8
+    assert event.payload["policy_version"] == 9
     assert event.payload["authority_fingerprint"] == unit.authority_fingerprint
     assert event.payload["claim_attempt"] == 1
 

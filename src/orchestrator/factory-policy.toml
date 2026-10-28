@@ -154,7 +154,7 @@
 # same objection and nothing else, and it never recognises `host_without_overlap`,
 # so a unit declaring that still needs a person's approval.
 
-version = 8
+version = 9
 
 [admission]
 rationale = """
@@ -195,12 +195,12 @@ a pin moves, a lockfile follows, a pull request opens, and the target
 repository's own named check decides whether it was right. Nothing outside that
 repository changes, the whole change is one revert away, and a person reading
 the envelope learns only which version string moved — which is ceremony, not
-review. Recognised narrowly on purpose: only uv tooling (pip's mutator is a
-sed expression and npm's is an install, and neither has run here yet), only the
-repository below, only a conformance claim that is green and waives nothing, and
-only budgets at or under the profile's own defaults. Widening any of those is an
-edit to this file, decided once, and never inferred from what was approved
-before.
+review. Recognised narrowly on purpose: only uv tooling (npm and pip have their
+own patterns below), only a conformance claim that is green and waives nothing,
+and only budgets at or under the profile's own defaults. It names no repository:
+since schema 9 the member record's grant decides which repositories a dependency
+update may reach, at admission. Widening any of those is an edit to this file,
+decided once, and never inferred from what was approved before.
 
 BUDGETS TRACK THE PROFILE'S DEFAULTS AND ARE HELD EQUAL TO THEM, which is what
 "at or under the profile's own defaults" above has always meant. `max_llm_calls`
@@ -221,16 +221,56 @@ intent-packages by `scripts/check_profile_budget_agreement.py`.
 """
 decided = "2026-08-01"
 change_class = "dependency-update"
-capabilities = { "command.run" = "allowed", "github.pr.create" = "allowed", "orchestrator.claim" = "allowed", "orchestrator.evidence.write" = "allowed", "repo.edit" = "allowed", "repo.read" = "allowed" }
+capabilities = { "command.run" = "allowed", "github.pr.create" = "allowed", "github.pr.merge" = "allowed", "orchestrator.claim" = "allowed", "orchestrator.evidence.write" = "allowed", "repo.edit" = "allowed", "repo.read" = "allowed" }
 max_attempts = 3
 max_llm_calls = 360
 conformance_status = "green"
-target_repositories = ["AlobarQuest/change-manager"]
 # `uv add` edits the manifest and `uv lock` resolves the tree; `uv lock --check`
 # is the verifier and shares the second prefix. `uv run` is deliberately absent:
 # it is a way to run any program at all, and the delivery profile that emits
 # these lists already forbids the one verifier that used it.
 command_prefixes = ["uv add", "uv lock"]
+
+[[reach.source_repository.known_good]]
+name = "npm dependency pin bump"
+rationale = """
+The npm shape of the same work as the uv pattern above: a pin moves, the install
+and the repository's own build, lint, format and test run, a pull request opens,
+and the target repository's named check decides. Its commands are exactly those
+the profile generates for npm: the install, the build, the lockfile install, the
+two linters, the test script and the grep that confirms the pin. Recognised on
+the same narrow terms as the uv pattern (a green conformance claim that waives
+nothing, budgets equal to the profile's) and, like it, names no repository: the
+member record's grant decides that at admission. The pattern carries the merge
+capability because the profile stamps it into every dependency-update envelope.
+"""
+decided = "2026-10-28"
+change_class = "dependency-update"
+capabilities = { "command.run" = "allowed", "github.pr.create" = "allowed", "github.pr.merge" = "allowed", "orchestrator.claim" = "allowed", "orchestrator.evidence.write" = "allowed", "repo.edit" = "allowed", "repo.read" = "allowed" }
+max_attempts = 3
+max_llm_calls = 360
+conformance_status = "green"
+command_prefixes = ["npm install", "npm run build", "npm ci", "npx eslint", "npx prettier", "npm test", "grep -q"]
+
+[[reach.source_repository.known_good]]
+name = "pip dependency pin bump"
+rationale = """
+The pip shape: a requirements file's pin is rewritten in place and a grep
+confirms it. Its two commands are exactly those the profile generates, the
+in-place rewrite and the whole-line match. The rewrite is a sed expression, which
+the uv pattern's rationale once held out as a reason not to recognise pip; it is
+recognised now because the command text is bounded twice: the prefix fixes the
+program and its mode, and the inertness rule refuses any shell control character
+outside the quoted expression. Same narrow terms and no repository list as the
+patterns above.
+"""
+decided = "2026-10-28"
+change_class = "dependency-update"
+capabilities = { "command.run" = "allowed", "github.pr.create" = "allowed", "github.pr.merge" = "allowed", "orchestrator.claim" = "allowed", "orchestrator.evidence.write" = "allowed", "repo.edit" = "allowed", "repo.read" = "allowed" }
+max_attempts = 3
+max_llm_calls = 360
+conformance_status = "green"
+command_prefixes = ["sed -i", "grep -qx"]
 
 [reach.live_estate]
 rationale = """

@@ -122,7 +122,7 @@ PACKAGED_ARTIFACT: Final[Path] = Path(__file__).parent / "factory-policy.toml"
 # narrowing the new version introduced, which is the permissive reading of a version skew. A new
 # version is therefore a coordinated change -- the loader learns it in the same commit that ships
 # the document at it and the code that reads its new field.
-SUPPORTED_SCHEMA_VERSIONS: Final[frozenset[int]] = frozenset({8})
+SUPPORTED_SCHEMA_VERSIONS: Final[frozenset[int]] = frozenset({9})
 
 # Why policy objects. These are the whole output vocabulary of this module.
 REACH_UNDECLARED: Final = "reach_undeclared"
@@ -149,10 +149,13 @@ _PATTERN_FIELDS = frozenset(
         "max_attempts",
         "max_llm_calls",
         "conformance_status",
-        "target_repositories",
         "command_prefixes",
     }
 )
+# Declared only when a pattern names the repositories it covers. Absent means the pattern raises no
+# objection about the repository; admission's grant term is what decides which repositories a
+# change class may reach. Present means a non-empty list, so an empty one cannot read as "none".
+_PATTERN_OPTIONAL_FIELDS = frozenset({"target_repositories"})
 
 # The one envelope shape schema 2 can describe: a unit that runs an ordered command list against
 # one repository. Every stored envelope of that shape carries exactly these constraint keys --
@@ -244,7 +247,7 @@ class KnownGoodPattern:
     max_attempts: int
     max_llm_calls: int
     conformance_status: str
-    target_repositories: frozenset[str]
+    target_repositories: frozenset[str] | None
     command_prefixes: tuple[tuple[str, ...], ...]
 
 
@@ -626,7 +629,9 @@ def _pattern_report(pattern: KnownGoodPattern) -> dict[str, Any]:
         "max_attempts": pattern.max_attempts,
         "max_llm_calls": pattern.max_llm_calls,
         "conformance_status": pattern.conformance_status,
-        "target_repositories": sorted(pattern.target_repositories),
+        "target_repositories": (
+            None if pattern.target_repositories is None else sorted(pattern.target_repositories)
+        ),
         "command_prefixes": [" ".join(prefix) for prefix in pattern.command_prefixes],
     }
 
@@ -745,7 +750,10 @@ def _constraints_recognised(
     # the totality claim above. It can only ever be this unit's own id.
     if constraints["work_unit_id"] != str(unit_id):
         return False
-    if constraints["target_repository"] not in pattern.target_repositories:
+    if (
+        pattern.target_repositories is not None
+        and constraints["target_repository"] not in pattern.target_repositories
+    ):
         return False
     return all(
         _commands_recognised(constraints[field], pattern.command_prefixes)
@@ -1018,9 +1026,12 @@ def _patterns(member: str, value: object) -> tuple[KnownGoodPattern, ...]:
 
 def _pattern(member: str, value: object) -> KnownGoodPattern:
     where = f"reach.{member}.known_good"
-    if not isinstance(value, dict) or set(value) != _PATTERN_FIELDS:
+    if not isinstance(value, dict) or set(value) - _PATTERN_OPTIONAL_FIELDS != _PATTERN_FIELDS:
         raise _invalid(
-            f"`[[{where}]]` must be a table declaring exactly " + ", ".join(sorted(_PATTERN_FIELDS))
+            f"`[[{where}]]` must be a table declaring exactly "
+            + ", ".join(sorted(_PATTERN_FIELDS))
+            + " and optionally "
+            + ", ".join(sorted(_PATTERN_OPTIONAL_FIELDS))
         )
     name = _text(where, "name", value["name"])
     return KnownGoodPattern(
@@ -1034,9 +1045,7 @@ def _pattern(member: str, value: object) -> KnownGoodPattern:
         conformance_status=_text(
             f"{where}.{name}", "conformance_status", value["conformance_status"]
         ),
-        target_repositories=frozenset(
-            _string_list(f"{where}.{name}", "target_repositories", value["target_repositories"])
-        ),
+        target_repositories=_optional_repositories(f"{where}.{name}", value),
         command_prefixes=_command_prefixes(f"{where}.{name}", value["command_prefixes"]),
     )
 
@@ -1097,6 +1106,12 @@ def _string_list(where: str, field: str, value: object) -> tuple[str, ...]:
         if not isinstance(entry, str) or not entry.strip():
             raise _invalid(f"`{where}.{field}` entries must be non-empty strings")
     return tuple(value)
+
+
+def _optional_repositories(where: str, pattern: Mapping[str, Any]) -> frozenset[str] | None:
+    if "target_repositories" not in pattern:
+        return None
+    return frozenset(_string_list(where, "target_repositories", pattern["target_repositories"]))
 
 
 def _command_prefixes(where: str, value: object) -> tuple[tuple[str, ...], ...]:
