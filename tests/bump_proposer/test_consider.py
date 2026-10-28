@@ -530,6 +530,45 @@ def test_a_uv_bump_of_a_held_dependency_is_skipped_whatever_its_version(ceiling)
     assert route.key == ""
 
 
+def _checkout(checks: tuple[Check, ...]) -> PendingUpdate:
+    return _pending(
+        "AlobarQuest/factory-runner",
+        28,
+        "chore(actions): bump actions/checkout from 4 to 7",
+        dependency="actions/checkout",
+        ecosystem="github_actions",
+        update_type=MAJOR,
+        checks=checks,
+        concluded_at=SETTLED,
+    )
+
+
+@pytest.mark.parametrize("ceiling", ["4", "7"])
+def test_a_held_bump_with_no_tooling_is_skipped_rather_than_alerted(ceiling) -> None:
+    """Kills: the no-tooling alert asked before the hold, raising an alert key a person already
+    answered. No version is read on that branch, so a hold at or past the bump skips it too."""
+    held = (Hold("github_actions", "/", "Actions/Checkout", ceiling),)
+
+    route = _consider(_checkout(FAILED), RULE, PACKAGES, NOW, holds=held)
+
+    assert route.action == "skip", route.detail
+    assert route.detail.startswith("ceiling-exceeded"), route.detail
+    assert "no tooling" in route.detail and ceiling in route.detail
+    assert route.key == ""
+
+
+def test_a_hold_on_another_dependency_leaves_the_no_tooling_alert() -> None:
+    """The control: only a hold on this dependency answers the alert."""
+    held = (
+        Hold("github_actions", "/", "astral-sh/setup-uv", "4"),
+        Hold("npm_and_yarn", "/", "actions/checkout", "4"),
+    )
+
+    route = _consider(_checkout(FAILED), RULE, PACKAGES, NOW, holds=held)
+
+    assert route.action == "alert", route.detail
+
+
 def test_a_held_pip_range_is_skipped_rather_than_alerted() -> None:
     """A held dependency's alert would ask a person a question the hold already answered."""
     held = (Hold("pip", "/", "setuptools", "83"),)

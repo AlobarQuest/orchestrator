@@ -189,3 +189,12 @@ greater than the ceiling's, or when either can't be parsed.
    nothing in a uv-managed repository.
 8. The close path (the PATCH to closed, as the dispatch App) is untested live until the first hold
    is placed.
+9. A hold covers only an update that names the dependency (Dependabot's `updated-dependencies`
+   list, the factory's `profile_fields`). A transitive move through a lockfile is never compared:
+   an update of fastapi that moves a held starlette, or a uv re-resolve, is not held.
+10. An estate lander pass asks only about pull requests whose change record is approved, so a held
+    pull request whose record isn't approved is never asked about and never closed. The hold still
+    stops it merging, since the admission refuses it whatever the record says.
+11. A docker or github_actions bump, for which the factory has no tooling, is skipped by the bump
+    proposer under any hold on its dependency, whatever its version: no version is read on that
+    branch, and the hold answers the alert it would otherwise raise.

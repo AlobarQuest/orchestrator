@@ -292,7 +292,11 @@ def _consider(
         # because an alert needs no versions and a docker tag rarely parses as one. Ruling 6:
         # every docker bump, passing or not, reaches the alert ONLY because the inert landing
         # policy excludes docker today; were docker permitted, a passing one would be the
-        # cascade's like any other ecosystem's.
+        # cascade's like any other ecosystem's. A hold is asked first: it is a person's decision
+        # about this dependency already, so the alert would only ask them again.
+        on_hold = _held_without_tooling(holds, update.ecosystem, update.dependency)
+        if on_hold is not None:
+            return on_hold
         route = _alert(
             pending,
             update.ecosystem,
@@ -361,6 +365,25 @@ def _held(
         "skip",
         f"ceiling-exceeded: the member record holds {ecosystem} {dependency} at {ceilings}, and "
         f"this bump moves it to {to_version}; it waits for the hold to be lifted",
+    )
+
+
+def _held_without_tooling(holds: tuple[Hold, ...], ecosystem: str, dependency: str) -> Route | None:
+    """A skip when the member record holds a dependency the factory has no tooling for, else None.
+
+    No version is read here (a docker tag rarely parses as one), so any hold on the dependency
+    skips it (`holding`, matched as `exceeded` matches). Like `_held`, it names no alert key, so
+    `alerts.sync` resolves a `dependency-bump:` alert raised before the hold.
+    """
+    bump = hold_matcher.Bump(ecosystem, None, dependency, "")
+    on_hold = hold_matcher.holding(holds, bump)
+    if not on_hold:
+        return None
+    ceilings = ", ".join(sorted({hold.ceiling for hold in on_hold}))
+    return Route(
+        "skip",
+        f"ceiling-exceeded: the member record holds {ecosystem} {dependency} at {ceilings}, and "
+        "the factory has no tooling for it; it waits for the hold to be lifted",
     )
 
 

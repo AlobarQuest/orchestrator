@@ -71,6 +71,11 @@ update, and staged like any other change: a `holds` list on the member's change,
   the spelling every path compares. A repository managed by uv gets `uv` updates, so a `pip` hold
   there covers nothing; check the ecosystem in the branch name of a Dependabot pull request
   (`dependabot/uv/...`) or in the repository's `.github/dependabot.yml`.
+- **Equivalent spellings of one dependency stage as separate holds.** `Flask_Cors` and `flask-cors`
+  are one pip package, and a hold under either applies to it (the matcher compares names by the
+  registry's rule), but they are stored as typed: two places make two holds, both of which apply,
+  and a lift must name the exact spelling that was staged. Read the member's `holds` before
+  lifting.
 
 For example, holding sqlalchemy and lifting an older hold in one change:
 
@@ -105,6 +110,15 @@ merge refuses a dependency-update unit past it; the bump proposer skips it and t
 For a uv dependency the factory's version is a floor, so on those three factory paths a hold on a
 uv dependency stops every update of it, whatever its version, until it is lifted. ADR-0028
 amendment 2 has the rule and its residuals.
+
+**A hold covers only an update that names the dependency**: Dependabot's `updated-dependencies`
+list, or a factory unit's `profile_fields`. A transitive move through a lockfile is never compared,
+so an update of fastapi that moves a held starlette, or a `uv lock` re-resolve, lands whatever the
+hold says. Hold the direct dependency that pulls it, or pin it in the manifest.
+
+**Deploy before pulling.** The lanes' member client (`sds_members.client`) requires `holds` on every
+member, and a record without it is unreadable, so a lane reading it stops. A release that adds a
+field the lanes read is deployed to the orchestrator before the main tree is pulled.
 
 `GET /api/v1/members` returns each member's `holds` (an empty list when it has none). Staged member
 proposals are listed first on the `/review` queue.
