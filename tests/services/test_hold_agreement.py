@@ -237,4 +237,4 @@ def test_both_copies_map_tooling_alike_and_cover_every_tooling_name() -> None:
 def test_the_package_id_read_is_the_lanes(package_id: str, repository: str) -> None:
     tooling = ecosystem_of(package_id, repository)
     expected = None if tooling is None else lane.TOOLING_TO_DEPENDABOT[tooling]
-    assert service._ecosystem_of_package_id(package_id, repository) == expected
+    assert service.ecosystem_of_package_id(package_id, repository) == expected

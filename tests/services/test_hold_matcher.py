@@ -12,9 +12,9 @@ from orchestrator.services.membership.holds import (
     TOOLING_TO_DEPENDABOT,
     Bump,
     HoldBreach,
-    _ecosystem_of_package_id,
     bumps_of,
     dependencies_of,
+    ecosystem_of_package_id,
     exceeded,
 )
 from orchestrator.services.membership.members import HoldView
@@ -283,4 +283,4 @@ def test_the_tooling_mapping_is_dependabot_spelling() -> None:
 def test_the_ecosystem_of_a_package_id(
     package_id: str, repository: str, ecosystem: str | None
 ) -> None:
-    assert _ecosystem_of_package_id(package_id, repository) == ecosystem
+    assert ecosystem_of_package_id(package_id, repository) == ecosystem

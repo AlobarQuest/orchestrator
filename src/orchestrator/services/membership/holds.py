@@ -16,8 +16,8 @@ bump's dependency with a hold's.
 moves) is copied beside the lanes' member client, since the lanes can't import the orchestrator
 and this copy can't import a lane. `tests/services/test_hold_agreement.py` runs both over one
 corpus and pins the title read to the lander's `BUMP_PATTERN`. The landing admissions call them
-through `terms.version_ceiling_term`. `_ecosystem_of_package_id` stays private-prefixed until the
-factory merge calls it (`test_unreachable_guards.py`).
+through `terms.version_ceiling_term`; the factory merge's admission (`pr_merge_admission`) reads
+a unit's ecosystem from its standing package id with `ecosystem_of_package_id`.
 """
 
 import re
@@ -274,7 +274,7 @@ def _greater(title_version: str, block_version: str) -> str:
     return title_version if title_release >= block_release else block_version
 
 
-def _ecosystem_of_package_id(package_id: str, repository: str) -> str | None:
+def ecosystem_of_package_id(package_id: str, repository: str) -> str | None:
     """The Dependabot ecosystem a standing package's id names, or `None` when it names none.
 
     The id is `<repo name>-<tooling>-<slug>`, read exactly as the lanes' `standing_identity`
