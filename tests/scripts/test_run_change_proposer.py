@@ -54,6 +54,7 @@ def _run(tmp_path: Path, *args: str) -> tuple[subprocess.CompletedProcess[str], 
         "PATH": f"{stubs}:/usr/bin:/bin",
         "HOME": str(home),
         "BWS_ACCESS_TOKEN_BROAD": "broad-stub",
+        "BWS_ACCESS_TOKEN_SDS": "narrow-stub",
         "STUB_LOG": str(tmp_path / "bws.log"),
         "CHILD_LOG": str(tmp_path / "child.log"),
     }

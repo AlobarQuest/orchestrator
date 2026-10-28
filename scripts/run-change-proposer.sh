@@ -24,7 +24,9 @@
 # EXIT CODES, the whole interface a scheduled run has:
 #   0  everything was measured and nothing was found.
 #   1  the tool itself failed (a missing or unreadable credential, an unhandled error).
-#   2  the tool ran but could not use its inputs: no scope resolved, a refused client, or a
+#   2  the tool ran but could not use its inputs: no scope resolved (including an unreadable
+#      member record -- scope is the repositories the record grants `rollouts`, narrowed to those
+#      with a transcribed workflow and rollback plan), a refused client, or a
 #      rollout workflow whose current bytes nobody has transcribed — the lane's own scope,
 #      which it could not establish. An unreadable read is here too: nothing was compared for
 #      that repository, which is never the same as agreeing.
@@ -120,6 +122,21 @@ if [ "$SUBMITTING" -eq 1 ]; then
   CHANGE_PROPOSER_CHANGE_MANAGER_TOKEN="$(sds_bws_value "$CHANGE_MANAGER_PROPOSE_UUID" "$BROAD_IDENTITY")"
   export CHANGE_PROPOSER_CHANGE_MANAGER_TOKEN
 fi
+
+# THE OBSERVER BEARER IS FETCHED ON EVERY RUN, dry or writing, because the member record is the
+# scope authority: which repositories this lane considers is read from it, so even a dry run needs
+# the read. It is the narrow read-only `sds-operator` identity's secret (project `SDS Operator`),
+# which the broad identity above cannot read, so it has its own Keychain item and its own variable.
+# It is exported only as `SDS_MEMBERS_OBSERVER_TOKEN`: this lane files no observation.
+OBSERVER_BEARER_UUID="${CHANGE_PROPOSER_OBSERVER_BWS_UUID:-f793576f-e9aa-4f9d-8089-b4a000b9e2d5}"
+SDS_IDENTITY="${BWS_ACCESS_TOKEN_SDS:-$(/usr/bin/security find-generic-password \
+  -s 'Claude' -a 'BWS_ACCESS_TOKEN_SDS' -w 2>/dev/null || true)}"
+[ -n "$SDS_IDENTITY" ] || sds_outcome_fail \
+  "FATAL: no narrow BWS identity for the observer bearer (service Claude)"
+SDS_MEMBERS_OBSERVER_TOKEN="$(sds_bws_value "$OBSERVER_BEARER_UUID" "$SDS_IDENTITY")"
+[ -n "$SDS_MEMBERS_OBSERVER_TOKEN" ] || sds_outcome_fail \
+  "FATAL: could not read the orchestrator observer bearer from BWS (narrow)"
+export SDS_MEMBERS_OBSERVER_TOKEN
 
 # `set -e` is deliberately not used here (the watcher's launcher does the same), so a failed
 # fetch would otherwise leave this EMPTY and fall through. The tool refuses an empty credential

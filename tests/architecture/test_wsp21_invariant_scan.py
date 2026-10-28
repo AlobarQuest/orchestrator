@@ -541,8 +541,10 @@ OUTBOUND_ALLOWLIST = {
     # where landing redeploys, POSTs to exactly two change-manager routes -- the proposal ingress
     # and a record's deploy-retirement -- and GETs one, the item listing. It cannot approve,
     # claim, post an outcome, hand off or sync, and that bound is enforced twice over: by the
-    # credential's scope at change-manager, and here in code before a request is built. The full
-    # surface is stated in tests/architecture/test_bridge_edges.py. Its egress is not the
+    # credential's scope at change-manager, and here in code before a request is built. It also
+    # reads the member record (`GET /api/v1/members`, through `sds_members.client`, listed below)
+    # for the `rollouts` grant that scopes the pass. The full surface is stated in
+    # tests/architecture/test_bridge_edges.py. Its egress is not the
     # orchestrator's.
     Path("src/change_proposer/change_manager.py"),
     # ADR-0030. The machine-activation sweep is a SEPARATE program (ADR-0002's shape), out of

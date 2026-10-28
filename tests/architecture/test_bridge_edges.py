@@ -78,9 +78,9 @@ EDGES: dict[str, Edge] = {
                 ("GET", "/api/items"),
             }
         ),
-        orchestrator=frozenset(),
+        orchestrator=frozenset({("GET", "/api/v1/members")}),
         github=frozenset(),  # through deploy_watcher.github: GITHUB_THROUGH
-        bearers=frozenset({PROPOSE_BEARER}),
+        bearers=frozenset({PROPOSE_BEARER, OBSERVER_BEARER}),
     ),
     "work_carrier": Edge(
         change_manager=frozenset({("GET", "/api/items")}),
@@ -234,7 +234,8 @@ PERMITS: dict[str, dict[str, Permits | None]] = {
     },
     "change_proposer": {
         "change_manager": lambda m, p: change_change_manager._permits(m, p),
-        "orchestrator": None,
+        # No client of its own: the member-record reader it imports.
+        "orchestrator": lambda m, p: members_client._permits(members_client._READ)(m, p),
         "github": None,
     },
     "work_carrier": {

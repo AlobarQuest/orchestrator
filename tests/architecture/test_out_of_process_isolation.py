@@ -137,6 +137,8 @@ TABLE: dict[str, Row] = {
         "httpx",
         "os",
         "re",
+        # The member record's grant is this lane's scope authority.
+        "sds_members",
         "sys",
         "typing",
     ),

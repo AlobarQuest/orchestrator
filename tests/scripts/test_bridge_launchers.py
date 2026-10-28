@@ -69,6 +69,7 @@ LANES = [
     ),
 ]
 CARRIER = LANES[2]
+CHANGE_PROPOSER = LANES[1]
 
 _CURL = """#!/usr/bin/env bash
 config=0
@@ -286,6 +287,41 @@ def test_an_acting_bump_proposer_whose_observer_bearer_is_unreadable_pings_fail(
     assert pings[1][0] == f"{PING_URL}/fail"
     assert "observer bearer" in pings[1][1]
     assert "found: subject" not in output
+
+
+def test_the_change_proposer_fetches_the_member_record_bearer_without_the_acting_flag(
+    tmp_path: Path,
+) -> None:
+    """The grant is the scope authority, so even a dry run needs the observer bearer."""
+    rc, _, output = _run(tmp_path, CHANGE_PROPOSER, rc=0)
+    assert rc == 0, output
+    assert OBSERVER_UUID in (tmp_path / "bws.log").read_text()
+    assert PROPOSE_UUID not in (tmp_path / "bws.log").read_text()
+
+
+def test_a_dry_run_change_proposer_whose_observer_bearer_is_unreadable_never_runs(
+    tmp_path: Path,
+) -> None:
+    """A dry run pings nothing, so the failure shows as the exit code and the message alone."""
+    env_log = tmp_path / "env.txt"
+    rc, pings, output = _run(
+        tmp_path, CHANGE_PROPOSER, BWS_FAIL_UUID=OBSERVER_UUID, ENV_LOG=str(env_log)
+    )
+    assert rc == 1, output
+    assert pings == []
+    assert "observer bearer" in output
+    assert "found: subject" not in output
+    assert not env_log.exists()
+
+
+@pytest.mark.parametrize("args", [(), ("--submit",)], ids=["dry-run", "submit"])
+def test_the_change_proposer_exports_the_member_bearer(
+    tmp_path: Path, args: tuple[str, ...]
+) -> None:
+    env_log = tmp_path / "env.txt"
+    rc, _, output = _run(tmp_path, CHANGE_PROPOSER, *args, ENV_LOG=str(env_log))
+    assert rc == 0, output
+    assert "SDS_MEMBERS_OBSERVER_TOKEN" in set(env_log.read_text().split())
 
 
 def _exported_names(tmp_path: Path, *args: str) -> set[str]:

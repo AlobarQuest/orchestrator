@@ -43,6 +43,7 @@ from deploy_watcher.workflows import (
     Attestation,
     attestation_for,
 )
+from sds_members.client import SERVICES, Member, MembersUnreadable
 
 PROPOSER = Path("src/change_proposer")
 ORCHESTRATOR = Path("src/orchestrator")
@@ -53,6 +54,34 @@ BRAIN = "alobarquest/brain"
 # `is_sha` gate would reject anything shorter, so a fixture that skipped it would be exercising a
 # shape production can never produce.
 UNTRANSCRIBED = "x" * 40
+
+
+def _member(repository: str, rollouts: str = "granted", state: str = "member") -> Member:
+    return Member(
+        repository=repository,
+        owner="devon",
+        state=state,
+        working_copy=None,
+        machine_local=False,
+        apps=(),
+        grants={service: "withdrawn" for service in SERVICES} | {"rollouts": rollouts},
+    )
+
+
+def _grant(monkeypatch, *repositories: str) -> list[Member]:
+    """The member record the pass reads, granting `rollouts` to exactly these."""
+    from change_proposer import cli as cli_module
+
+    members = [_member(name) for name in repositories]
+    monkeypatch.setattr(cli_module, "read_members_from_environment", lambda **_: members)
+    return members
+
+
+@pytest.fixture(autouse=True)
+def _every_transcribed_repository_is_granted(monkeypatch) -> list[Member]:
+    """The default record grants `rollouts` to both transcribed repositories; a test that is
+    about the grant overrides it with `_grant`."""
+    return _grant(monkeypatch, CM, BRAIN)
 
 
 def _attestation(level: str = ATTESTS_REVISION) -> Attestation:
@@ -101,9 +130,11 @@ def test_the_proposal_ingress_is_anchored() -> None:
 
 
 def test_the_producer_writes_nothing_outside_its_two_routes() -> None:
-    """It writes two routes, the proposal ingress and `/api/items/{id}/deploy-retirement`, and
-    reads one, `GET /api/items`. Neither the listing nor any other route is a write. The full
-    surface is in `tests/architecture/test_bridge_edges.py`.
+    """Of change-manager it writes two routes, the proposal ingress and
+    `/api/items/{id}/deploy-retirement`, and reads one, `GET /api/items`. Neither the listing nor
+    any other route is a write. It also reads the member record (`GET /api/v1/members`) through
+    `sds_members`, which is not change-manager. The full surface is in
+    `tests/architecture/test_bridge_edges.py`.
     """
     assert not is_allowed_write("/api/items")
     assert not is_allowed_write("/api/events")
@@ -253,8 +284,50 @@ def test_brains_rollback_plan_is_the_one_change_managers_policy_ratifies() -> No
 
 def test_every_in_scope_repository_has_both_halves() -> None:
     """Scope is the intersection, so a repository can never be considered with only one."""
-    for repository in _in_scope():
+    members = [_member(CM), _member(BRAIN)]
+    scope = _in_scope(members)
+    assert scope
+    for repository in scope:
         assert rollback_for(repository).steps
+
+
+def test_scope_is_rollouts_grant_with_workflow_and_rollback() -> None:
+    """All three halves: a transcribed repository with a rollback but no grant is out; a granted
+    one nobody transcribed is out; a withdrawn grant is out; the grant is matched case-folded."""
+    granted = _member("AlobarQuest/Change-Manager")
+    withdrawn = _member(BRAIN, rollouts="withdrawn")
+    untranscribed = _member("alobarquest/somewhere-else")
+    assert _in_scope([granted, withdrawn, untranscribed]) == [CM]
+    assert _in_scope([_member(CM, rollouts="withdrawn")]) == []
+    assert _in_scope([]) == []
+
+
+def test_an_unreadable_member_record_stops_the_pass(monkeypatch) -> None:
+    """Exit 2, and nothing is read from GitHub or proposed: no grants is not an empty population."""
+    from change_proposer import cli as cli_module
+
+    def unreadable(**_: object) -> list[Member]:
+        raise MembersUnreadable("SDS_MEMBERS_OBSERVER_TOKEN is not set")
+
+    def refused(token: str) -> None:  # pragma: no cover - must not run
+        raise AssertionError("the pass reached GitHub with no member record")
+
+    monkeypatch.setenv("CHANGE_PROPOSER_GITHUB_TOKEN", "gh")
+    monkeypatch.setattr(cli_module, "read_members_from_environment", unreadable)
+    monkeypatch.setattr(cli_module, "GitHubReader", refused)
+    assert cli_module.run([]) == cli_module.EXIT_UNUSABLE
+
+
+def test_naming_an_ungranted_repository_refuses(monkeypatch, capsys) -> None:
+    """Through `_resolve_scope`: exit 2 and a message that names the grant."""
+    from change_proposer import cli as cli_module
+
+    members = _grant(monkeypatch, CM)
+    assert cli_module._resolve_scope([BRAIN], members) is None
+    assert "rollouts" in capsys.readouterr().out
+    monkeypatch.setenv("CHANGE_PROPOSER_GITHUB_TOKEN", "gh")
+    assert cli_module.run(["--repository", BRAIN]) == cli_module.EXIT_UNUSABLE
+    assert cli_module._resolve_scope([CM.upper()], members) == [CM]
 
 
 # --- eligibility ---------------------------------------------------------------------------------
@@ -552,6 +625,17 @@ def test_a_dry_run_needs_no_change_manager_credential(monkeypatch) -> None:
     """The default is a dry run, so the destructive path needs a deliberate flag."""
     monkeypatch.delenv("CHANGE_PROPOSER_GITHUB_TOKEN", raising=False)
     assert run([]) == 2  # still needs GitHub, but never asks for change-manager
+
+
+def test_the_scope_sweep_still_audits_every_transcription(monkeypatch) -> None:
+    """The sweep asks whether the TRANSCRIPTION is current, a different question from who is
+    granted, so a pass that grants nothing still audits every rollout workflow."""
+    from change_proposer import cli as cli_module
+    from deploy_watcher.workflows import ROLLOUT_WORKFLOWS
+
+    _grant(monkeypatch)
+    rows = cli_module._scope_sweep(_Pulls({}, _any_transcribed_revision()))
+    assert {row.repository for row in rows} == set(ROLLOUT_WORKFLOWS)
 
 
 def test_an_out_of_scope_repository_is_refused(monkeypatch) -> None:
