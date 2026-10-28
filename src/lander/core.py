@@ -156,6 +156,7 @@ NOT_A_FINDING = frozenset(
         "would-update",
         "closed",
         "would-close",
+        "reopened",
     }
 )
 
@@ -180,6 +181,7 @@ REPORTED = (
     "would-update",
     "closed",
     "would-close",
+    "reopened",
 )
 
 
@@ -374,7 +376,7 @@ def _close_held(
     if not submit:
         return Outcome(repository, number, "would-close", detail)
     try:
-        client.close_held(
+        answered = client.close_held(
             repository,
             number,
             head_sha=head,
@@ -384,6 +386,11 @@ def _close_held(
         return Outcome(repository, number, "held", str(error))
     except OrchestratorError as error:
         return Outcome(repository, number, "error", str(error))
+    if answered.get("replayed") is True:
+        # Closed by an earlier pass and open again, so a person reopened it: their act, which the
+        # orchestrator answers from its record without closing it twice. Not `closed`, which would
+        # say every later pass closed it.
+        return Outcome(repository, number, "reopened", detail)
     return Outcome(repository, number, "closed", detail)
 
 

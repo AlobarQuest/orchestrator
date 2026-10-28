@@ -739,6 +739,8 @@ def test_the_summary_counts_every_status_so_its_parts_sum_to_what_was_considered
         # Bridge layer Part 4: a held bump the lane closed, or would close on an acting pass.
         "closed",
         "would-close",
+        # A held bump closed before and reopened by a person; the close is not repeated.
+        "reopened",
     }
     assert NOT_A_FINDING < set(REPORTED)
     assert "waiting" in NOT_A_FINDING

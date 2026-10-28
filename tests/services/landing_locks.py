@@ -1,4 +1,4 @@
-"""The two advisory locks the Dependabot lanes' acts take, held from a test's own connection.
+"""The advisory locks the Dependabot lanes' acts take, held from a test's own connection.
 
 Spelled out as LITERAL keys rather than through `lane_act._lock_repository`, so a test that holds
 one pins the key the act must take -- a helper shared with the code under test would move with it,
@@ -24,4 +24,12 @@ def hold_branch_update_lock(session: Session, repository: str) -> None:
     session.execute(
         text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
         {"key": f"estate_pr_branch_update:{repository}"},
+    )
+
+
+def hold_held_close_lock(session: Session, repository: str) -> None:
+    """Bridge layer Part 4: closing a held pull request, one per repository whichever lane asks."""
+    session.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
+        {"key": f"held_pr_close:{repository}"},
     )

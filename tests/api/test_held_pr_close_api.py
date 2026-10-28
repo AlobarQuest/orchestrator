@@ -48,3 +48,11 @@ def test_a_lane_nobody_named_is_unusable_input(db_client: TestClient) -> None:
     response = db_client.post(ROUTE, json=_body("factory"), headers=SYSTEM)
 
     assert response.status_code == 422
+
+
+def test_a_head_that_is_not_a_full_object_name_is_unusable_input(db_client: TestClient) -> None:
+    for head in ("G" * 40, HEAD.upper(), HEAD[:39]):
+        response = db_client.post(
+            ROUTE, json=_body("inert", expected_head_sha=head), headers=SYSTEM
+        )
+        assert response.status_code == 422, head

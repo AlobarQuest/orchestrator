@@ -32,6 +32,7 @@ fixed sentence, and closes without commenting again.
 
 from __future__ import annotations
 
+import re
 import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -345,8 +346,17 @@ def _ceilings(breaches: Sequence[HoldBreach]) -> tuple[Ceiling, ...]:
 
 def comment_body(ceilings: Sequence[Ceiling]) -> str:
     """The public comment: each held dependency and its ceiling, then the fixed sentence."""
-    lines = [f"- `{c.dependency}`: ceiling {c.ceiling}" for c in ceilings]
+    lines = [f"- {_code(c.dependency)}: ceiling {_code(c.ceiling)}" for c in ceilings]
     return "\n".join([*lines, "", LIFT_SENTENCE])
+
+
+def _code(text: str) -> str:
+    """`text` as one Markdown code span, whatever backticks it holds: the fence is one backtick
+    longer than its longest run, and padded so a backtick at either end is not read as fence."""
+    longest = max((len(run) for run in re.findall("`+", text)), default=0)
+    fence = "`" * (longest + 1)
+    padded = f" {text} " if text.startswith("`") or text.endswith("`") else text
+    return f"{fence}{padded}{fence}"
 
 
 def _replay(spent: Event, key: str) -> HeldCloseOutcome:

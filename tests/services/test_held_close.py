@@ -11,7 +11,8 @@ from typing import Any
 
 import httpx
 import pytest
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine, select, text
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
@@ -34,6 +35,7 @@ from orchestrator.services.landing.held_close import (
     HeldCloseCommand,
     close_estate_held_pull_request,
     close_inert_held_pull_request,
+    comment_body,
     held_close_key,
 )
 from orchestrator.services.landing.inert_landing_policy import InertLandingAnswer
@@ -54,6 +56,7 @@ from tests.services.inert_landing_doubles import (
     FakeInertPolicySource,
     rules,
 )
+from tests.services.landing_locks import hold_held_close_lock
 from tests.services.test_member_proposals import add_member, body, confirm, stage
 
 SYSTEM = ActorContext("orchestrator-system", ActorRole.SYSTEM)
@@ -213,7 +216,7 @@ def test_the_comment_names_each_held_dependency_and_ceiling_and_nothing_private(
     _close_inert(migrated_session, gateway)
 
     (comment,) = gateway.posted
-    assert comment == f"- `typer`: ceiling 0.20.5\n\n{LIFT_SENTENCE}"
+    assert comment == f"- `typer`: ceiling `0.20.5`\n\n{LIFT_SENTENCE}"
     assert "click" not in comment
     for private in (PRIVATE_REASON, "devon", "orchestrator-system"):
         assert private not in comment
@@ -557,3 +560,41 @@ def test_the_response_declares_every_field_of_the_outcome() -> None:
     from orchestrator.services.landing.held_close import HeldCloseOutcome
 
     assert set(HeldPrCloseResponse.model_fields) == set(HeldCloseOutcome.__dataclass_fields__)
+
+
+def test_a_close_waits_on_another_close_of_the_same_repository(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    """Two overlapping passes would otherwise both find no record and both comment in public."""
+    _hold(migrated_session, INERT_REPOSITORY, "typer", "0.20.5")
+    with Session(migrated_engine) as holder:
+        hold_held_close_lock(holder, INERT_REPOSITORY)
+        gateway = _typer_gateway()
+        with Session(migrated_engine) as blocked:
+            blocked.execute(text("SET LOCAL lock_timeout = '1s'"))
+            with pytest.raises(OperationalError):
+                _close_inert(blocked, gateway)
+        assert gateway.sent == [], "the close reached the remote while another held the lock"
+        assert gateway.posted == []
+        holder.rollback()
+
+    with Session(migrated_engine) as holder:
+        hold_held_close_lock(holder, "alobarquest/brain")
+        control = _typer_gateway()
+        with Session(migrated_engine) as free:
+            free.execute(text("SET LOCAL lock_timeout = '1s'"))
+            assert _close_inert(free, control).replayed is False
+        assert [act for act, _, _ in control.sent] == ["comment", "close"]
+        holder.rollback()
+
+
+@pytest.mark.parametrize(
+    ("dependency", "line"),
+    [
+        ("typer", "- `typer`: ceiling `0.20.5`"),
+        ("a`b", "- ``a`b``: ceiling `0.20.5`"),
+        ("`x``", "- ``` `x`` ```: ceiling `0.20.5`"),
+    ],
+)
+def test_a_backtick_in_a_name_cannot_break_out_of_its_code_span(dependency: str, line: str) -> None:
+    assert comment_body([Ceiling(dependency, "0.20.5")]).splitlines()[0] == line

@@ -40,7 +40,9 @@ class _Client:
         answer: dict[str, Any],
         update_error: Exception | None = None,
         close_error: Exception | None = None,
+        replayed: bool = False,
     ) -> None:
+        self.replayed = replayed
         self.answer = answer
         self.update_error = update_error
         self.close_error = close_error
@@ -72,7 +74,7 @@ class _Client:
         self.keys.append(head_sha)
         if self.close_error is not None:
             raise self.close_error
-        return {"commented": True, "replayed": False, "ceilings": []}
+        return {"commented": True, "replayed": self.replayed, "ceilings": []}
 
 
 def _status(module: Any, refusals: list[str], **extra: Any) -> str:
@@ -327,8 +329,18 @@ def test_a_refused_or_failed_close_is_a_finding(module: Any, error: Exception, s
 
 
 def test_closing_is_not_a_finding_and_names_no_held_status() -> None:
-    assert {"closed", "would-close"} <= core.NOT_A_FINDING
-    assert {"closed", "would-close"} <= set(core.REPORTED)
+    assert {"closed", "would-close", "reopened"} <= core.NOT_A_FINDING
+    assert {"closed", "would-close", "reopened"} <= set(core.REPORTED)
+
+
+@pytest.mark.parametrize("module", LANDERS)
+def test_a_close_answered_from_the_record_says_reopened_not_closed(module: Any) -> None:
+    """A person reopened a pull request an earlier pass closed; this pass closed nothing."""
+    client = _Client({"satisfied": False, "refusals": [CEILING], "head_sha": HEAD}, replayed=True)
+
+    [outcome] = module._pass(SUBJECT, client, True)
+
+    assert outcome.status == "reopened"
 
 
 @pytest.mark.parametrize("module", LANDERS)

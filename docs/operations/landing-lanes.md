@@ -629,8 +629,9 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   author the inert policy declares non-ecosystem); without the policy the term is asked.
 - **An acting lander pass closes a held pull request with a comment** (`POST
   /api/v1/held-pr-close`, `services/landing/held_close.py`) whenever the ceiling code is among the
-  refusals, beside any other; a dry run prints `would-close`, an acting pass `closed`, and neither
-  is a finding. The orchestrator re-composes the named lane's own admission in its transaction and
+  refusals, beside any other; a dry run prints `would-close`, an acting pass `closed` (or
+  `reopened` when the orchestrator answers from its record: a person reopened it), and none is a
+  finding. Closes serialise per repository on an advisory lock. The orchestrator re-composes the named lane's own admission in its transaction and
   closes only when it carries `landing_version_ceiling_exceeded` (never on
   `landing_dependency_list_unreadable`), the update bot opened the pull request, the repository is
   the lane's (the inert declaration; an identified change record for the deploying lane), the pull

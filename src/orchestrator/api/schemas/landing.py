@@ -371,7 +371,7 @@ class HeldPrCloseCommandModel(BaseModel):
     repository: str = Field(pattern=r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$", max_length=300)
     pull_request_number: int = Field(gt=0)
     idempotency_key: str = Field(min_length=1, max_length=400)
-    expected_head_sha: str = Field(min_length=40, max_length=40)
+    expected_head_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
 
 
 class HeldCeilingModel(BaseModel):
