@@ -37,7 +37,7 @@ from orchestrator.services.landing.estate_landing import (
     HttpEstateLandingSource,
 )
 from tests.services.estate_doubles import FakeEstateLandingSource
-from tests.services.target_doubles import declared_source, undeclared_source
+from tests.services.target_doubles import granted_source, ungranted_source
 from tests.services.test_change_window import OPEN, SHUT, FrozenClock
 from tests.services.test_dispatch import (
     FakeGitHubDispatcher,
@@ -74,7 +74,7 @@ def admit(
         settings(),
         FakeGitHubDispatcher([]),
         landing_source,
-        target_source=declared_source(),
+        grant_source=granted_source(),
     )
 
 
@@ -207,7 +207,7 @@ def test_declaring_live_estate_is_admitted_and_the_estate_is_never_consulted(
         FakeGitHubDispatcher([]),
         landing_source,
         FrozenClock(OPEN),
-        target_source=declared_source(),
+        grant_source=granted_source(),
     )
 
     assert record.reason_code is None
@@ -234,7 +234,7 @@ def test_declaring_live_estate_costs_the_window_that_declaring_it_is_for(
         FakeGitHubDispatcher([]),
         source(EstateAnswer(LANDING_REDEPLOYS)),
         FrozenClock(SHUT),
-        target_source=declared_source(),
+        grant_source=granted_source(),
     )
 
     assert record.reason_code == "outside_change_window"
@@ -303,7 +303,7 @@ def test_the_off_switch_outranks_an_estate_that_cannot_be_read(
         ),
         FakeGitHubDispatcher([]),
         landing_source,
-        target_source=declared_source(),
+        grant_source=granted_source(),
     )
 
     assert record.reason_code == "dispatch_disabled"
@@ -329,7 +329,7 @@ def test_the_estate_term_outranks_the_target_declaration(
         settings(),
         FakeGitHubDispatcher([]),
         source(EstateAnswer(LANDING_REDEPLOYS)),
-        target_source=undeclared_source(),
+        grant_source=ungranted_source(),
     )
 
     assert record.reason_code == REACH_CONTRADICTS_ESTATE

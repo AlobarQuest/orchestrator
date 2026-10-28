@@ -30,9 +30,9 @@ The target repository must have **both**:
 
 - a caller workflow at `.github/workflows/factory-runner-pilot.yml`, pinned to factory-runner's
   `RECOMMENDED_CALLER_PIN`; and
-- a `factory-target.toml` at its root declaring `factory_target = true` (ADR-0015). Until
-  2026-09-15 this was membership in `ORCHESTRATOR_DISPATCH_ALLOWED_TARGET_REPOSITORIES`, which
-  no longer exists.
+- a `dependency_updates` grant on its member record, confirmed on `/review` (ADR-0058). The
+  repository's `factory-target.toml` stays as `membership_check`'s companion declaration; admission
+  no longer reads it.
 
 Measured 2026-10-18: six repositories have both (orchestrator, intent-packages, change-manager,
 brain, security-standards and infraops-mcp-server). Making another repository a target is a

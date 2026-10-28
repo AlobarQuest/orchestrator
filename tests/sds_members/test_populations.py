@@ -46,6 +46,7 @@ MEMBERS = [
         grants={"rollouts": "remediating"},
     ),
     _member("A/three", "member", working_copy=None, grants={"backups": "granted"}),
+    _member("A/four", "member", grants={"backups": "withdrawn"}),
     _member(
         "A/gone",
         "retired",
@@ -58,7 +59,7 @@ MEMBERS = [
 
 
 def test_observed_is_onboarding_and_member_repositories():
-    assert observed(MEMBERS) == ["A/one", "A/two", "A/three"]
+    assert observed(MEMBERS) == ["A/one", "A/two", "A/three", "A/four"]
 
 
 def test_working_copies_skips_members_without_one():
@@ -71,6 +72,10 @@ def test_bindable_needs_both_machine_local_and_rollouts_granted():
 
 def test_granted_names_repositories_holding_the_service():
     assert granted(MEMBERS, "backups") == ["A/one", "A/three"]
+
+
+def test_granted_excludes_a_withdrawn_grant():
+    assert "A/four" not in granted(MEMBERS, "backups")
 
 
 def test_granted_refuses_an_unknown_service():

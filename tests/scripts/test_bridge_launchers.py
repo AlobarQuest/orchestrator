@@ -21,6 +21,7 @@ PING_URL = "https://hc.example/ping/abcdef"
 HEALTHCHECKS_KEY_UUID = "51509d5e-64f5-4781-ae82-b4ed00b644e1"
 # Fetched by all three, and only on an acting run.
 PROPOSE_UUID = "acccb346-4baa-43ec-a1d4-b4a400c048ee"
+OBSERVER_UUID = "f793576f-e9aa-4f9d-8089-b4a000b9e2d5"
 
 
 @dataclass(frozen=True)
@@ -68,6 +69,7 @@ LANES = [
     ),
 ]
 CARRIER = LANES[2]
+CHANGE_PROPOSER = LANES[1]
 
 _CURL = """#!/usr/bin/env bash
 config=0
@@ -89,13 +91,16 @@ printf '%s\\t%s\\n' "$url" "$(printf '%s' "$body" | tr '\\n' '|')" >> "$PING_LOG
 """
 # Answers every secret except the one named in BWS_FAIL_UUID, which reads as unreadable.
 _BWS = """#!/bin/sh
+[ -z "${BWS_LOG:-}" ] || printf '%s\\n' "$*" >> "$BWS_LOG"
 case " $* " in
     *" ${BWS_FAIL_UUID:-none} "*) exit 1 ;;
 esac
 printf '{"value": "not-a-real-key"}'
 """
 _GH = "#!/bin/sh\necho not-a-real-gh-token\n"
+# Records the NAMES of the variables it receives, never their values.
 _PROGRAM = """#!/bin/sh
+[ -z "${{ENV_LOG:-}}" ] || env | sed 's/=.*//' >> "$ENV_LOG"
 echo "{name} found: subject-{name}"
 exit "${{{variable}:-0}}"
 """
@@ -144,6 +149,7 @@ def _run(
         "BWS_ACCESS_TOKEN_SDS": "not-a-real-identity",
         "LISTING": json.dumps({"checks": [{"name": check or lane.check, "ping_url": PING_URL}]}),
         "PING_LOG": str(ping_log),
+        "BWS_LOG": str(tmp_path / "bws.log"),
         _rc_variable(lane.programs[-1]): str(rc),
         **env_overrides,
     }
@@ -240,6 +246,128 @@ def test_the_carrier_report_holds_both_programs_and_pings_the_worst_code(tmp_pat
     assert pings[1][0] == f"{PING_URL}/fail"
     assert "work-watcher found: subject-work-watcher" in pings[1][1]
     assert "work-carrier found: subject-work-carrier" in pings[1][1]
+
+
+def test_the_carrier_fetches_the_member_record_bearer_without_the_acting_flag(
+    tmp_path: Path,
+) -> None:
+    """The grant is the scope authority, so even a bare pass needs the observer bearer."""
+    rc, _, output = _run(tmp_path, CARRIER, rc=0)
+    assert rc == 0, output
+    assert OBSERVER_UUID in (tmp_path / "bws.log").read_text()
+
+
+@pytest.mark.parametrize("args", [(), ("--register",)], ids=["bare", "register"])
+def test_the_carrier_exports_the_member_bearer(tmp_path: Path, args: tuple[str, ...]) -> None:
+    env_log = tmp_path / "env.txt"
+    rc, _, output = _run(tmp_path, CARRIER, *args, rc=0, ENV_LOG=str(env_log))
+    assert rc == 0, output
+    assert "SDS_MEMBERS_OBSERVER_TOKEN" in set(env_log.read_text().split())
+
+
+def test_the_bump_proposer_fetches_the_member_record_bearer_without_the_acting_flag(
+    tmp_path: Path,
+) -> None:
+    """The grant is the scope authority, so even a dry run needs the observer bearer."""
+    rc, _, output = _run(tmp_path, LANES[0], rc=0)
+    assert rc == 0, output
+    assert OBSERVER_UUID in (tmp_path / "bws.log").read_text()
+
+
+def test_a_dry_run_bump_proposer_whose_observer_bearer_is_unreadable_never_runs(
+    tmp_path: Path,
+) -> None:
+    """A dry run pings nothing, so the failure shows as the exit code and the message alone."""
+    env_log = tmp_path / "env.txt"
+    rc, pings, output = _run(tmp_path, LANES[0], BWS_FAIL_UUID=OBSERVER_UUID, ENV_LOG=str(env_log))
+    assert rc == 1, output
+    assert pings == []
+    assert "observer bearer" in output
+    assert "found: subject" not in output
+    assert not env_log.exists()
+
+
+def test_an_acting_bump_proposer_whose_observer_bearer_is_unreadable_pings_fail(
+    tmp_path: Path,
+) -> None:
+    rc, pings, output = _run(tmp_path, LANES[0], "--submit", BWS_FAIL_UUID=OBSERVER_UUID)
+    assert rc == 1, output
+    assert pings[1][0] == f"{PING_URL}/fail"
+    assert "observer bearer" in pings[1][1]
+    assert "found: subject" not in output
+
+
+def test_the_change_proposer_fetches_the_member_record_bearer_without_the_acting_flag(
+    tmp_path: Path,
+) -> None:
+    """The grant is the scope authority, so even a dry run needs the observer bearer."""
+    rc, _, output = _run(tmp_path, CHANGE_PROPOSER, rc=0)
+    assert rc == 0, output
+    assert OBSERVER_UUID in (tmp_path / "bws.log").read_text()
+    assert PROPOSE_UUID not in (tmp_path / "bws.log").read_text()
+
+
+def test_a_dry_run_change_proposer_whose_observer_bearer_is_unreadable_never_runs(
+    tmp_path: Path,
+) -> None:
+    """A dry run pings nothing, so the failure shows as the exit code and the message alone."""
+    env_log = tmp_path / "env.txt"
+    rc, pings, output = _run(
+        tmp_path, CHANGE_PROPOSER, BWS_FAIL_UUID=OBSERVER_UUID, ENV_LOG=str(env_log)
+    )
+    assert rc == 1, output
+    assert pings == []
+    assert "observer bearer" in output
+    assert "found: subject" not in output
+    assert not env_log.exists()
+
+
+@pytest.mark.parametrize("args", [(), ("--submit",)], ids=["dry-run", "submit"])
+def test_the_change_proposer_exports_the_member_bearer(
+    tmp_path: Path, args: tuple[str, ...]
+) -> None:
+    env_log = tmp_path / "env.txt"
+    rc, _, output = _run(tmp_path, CHANGE_PROPOSER, *args, ENV_LOG=str(env_log))
+    assert rc == 0, output
+    assert "SDS_MEMBERS_OBSERVER_TOKEN" in set(env_log.read_text().split())
+
+
+def _exported_names(tmp_path: Path, *args: str) -> set[str]:
+    env_log = tmp_path / "env.txt"
+    rc, _, output = _run(tmp_path, LANES[0], *args, ENV_LOG=str(env_log))
+    assert rc == 0, output
+    return set(env_log.read_text().split())
+
+
+ORCHESTRATOR_API_NAMES = {
+    "ORCHESTRATOR_API_URL",
+    "ORCHESTRATOR_API_CREDENTIAL_KEY_ID",
+    "ORCHESTRATOR_API_TOKEN",
+}
+
+
+def test_a_dry_run_bump_proposer_exports_the_member_bearer_and_not_the_write_names(
+    tmp_path: Path,
+) -> None:
+    names = _exported_names(tmp_path)
+    assert "SDS_MEMBERS_OBSERVER_TOKEN" in names
+    assert not names & ORCHESTRATOR_API_NAMES
+
+
+def test_an_acting_bump_proposer_exports_the_member_bearer_and_the_write_names(
+    tmp_path: Path,
+) -> None:
+    names = _exported_names(tmp_path, "--submit")
+    assert "SDS_MEMBERS_OBSERVER_TOKEN" in names
+    assert ORCHESTRATOR_API_NAMES <= names
+
+
+def test_an_acting_carrier_whose_observer_bearer_is_unreadable_pings_fail(tmp_path: Path) -> None:
+    rc, pings, output = _run(tmp_path, CARRIER, "--register", BWS_FAIL_UUID=OBSERVER_UUID)
+    assert rc == 1, output
+    assert pings[1][0] == f"{PING_URL}/fail"
+    assert "observer credential" in pings[1][1]
+    assert "found: subject" not in output
 
 
 # ---- the installers' Healthchecks checks ------------------------------------------------------

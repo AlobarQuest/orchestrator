@@ -19,14 +19,15 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import re
 import subprocess
 import time
 from pathlib import Path
 
-import httpx
 import pytest
 
+from sds_members.client import SERVICES, Member, MembersUnreadable
 from work_carrier.change_manager import WorkRecord
 from work_carrier.cli import (
     EXIT_FINDINGS,
@@ -35,13 +36,6 @@ from work_carrier.cli import (
     EXIT_UNUSABLE,
     run,
     worst,
-)
-from work_carrier.declaration import (
-    FILENAME,
-    Declaration,
-    GitHubDeclarationSource,
-    is_allowed,
-    parse,
 )
 from work_carrier.prepare import emit_key
 from work_carrier.workability import (
@@ -54,6 +48,7 @@ from work_carrier.workability import (
     YES,
     Portfolio,
     assess,
+    grants_by_service,
     judge,
     load_portfolio,
     project_for,
@@ -93,19 +88,26 @@ def payload(target: str | None = TARGET) -> dict:
     return {"enforcement_snapshot": {"profile_fields": fields}}
 
 
-class _Declares:
-    def __init__(self, answer: Declaration) -> None:
-        self._answer = answer
-        self.asked: list[str] = []
+def member(repository: str = TARGET, *, state: str = "member", **grants: str) -> Member:
+    """One member-record row; a service not named is `not_assessed`."""
+    return Member(
+        repository=repository,
+        owner="devon",
+        state=state,
+        working_copy=None,
+        machine_local=False,
+        apps=(),
+        grants={service: grants.get(service, "not_assessed") for service in SERVICES},
+    )
 
-    def declaration(self, slug: str) -> Declaration:
-        self.asked.append(slug)
-        return self._answer
+
+def grants(*repositories: str, service: str = "app_changes") -> dict[str, frozenset[str]]:
+    """The per-service grant sets the carrier judges by, built the way the carrier builds them."""
+    return grants_by_service([member(r, **{service: "granted"}) for r in repositories])
 
 
-DECLARED_TRUE = Declaration(True, "factory-target.toml declares factory_target = true")
-DECLARED_FALSE = Declaration(False, "factory-target.toml declares factory_target = false")
-UNREADABLE = Declaration(None, "github rejected the read of the declaration: 403")
+GRANTED = grants(TARGET)
+NOT_GRANTED = grants()
 
 
 # -------------------------------------------------------------------------------------
@@ -113,14 +115,14 @@ UNREADABLE = Declaration(None, "github rejected the read of the declaration: 403
 # -------------------------------------------------------------------------------------
 
 
-def test_a_repository_that_opts_in_and_measures_clean_would_be_carried() -> None:
-    verdict = assess(TARGET, DECLARED_TRUE, portfolio(project()))
+def test_a_granted_repository_that_measures_clean_would_be_carried() -> None:
+    verdict = assess(TARGET, True, portfolio(project()))
     assert verdict.decision == WORKABLE
     assert [c.verdict for c in verdict.constraints] == [YES, YES, YES]
 
 
-def test_a_repository_that_declared_false_would_be_refused() -> None:
-    verdict = assess(TARGET, DECLARED_FALSE, portfolio(project()))
+def test_an_ungranted_repository_would_be_refused() -> None:
+    verdict = assess(TARGET, False, portfolio(project()))
     assert verdict.decision == NOT_WORKABLE
     assert verdict.constraints[0].verdict == NO
 
@@ -133,7 +135,7 @@ def test_a_capability_violation_would_be_refused_and_names_the_check() -> None:
     here rather than asserted to work.
     """
     rows = portfolio(project(**{"runner.caller": "violation"}))
-    verdict = assess(TARGET, DECLARED_TRUE, rows)
+    verdict = assess(TARGET, True, rows)
     assert verdict.decision == NOT_WORKABLE
     capable = verdict.constraints[1]
     assert capable.verdict == NO
@@ -142,7 +144,7 @@ def test_a_capability_violation_would_be_refused_and_names_the_check() -> None:
 
 def test_a_permission_violation_is_its_own_constraint_not_folded_into_capability() -> None:
     rows = portfolio(project(**{"factory.pat_access": "violation"}))
-    verdict = assess(TARGET, DECLARED_TRUE, rows)
+    verdict = assess(TARGET, True, rows)
     assert verdict.decision == NOT_WORKABLE
     assert verdict.constraints[1].verdict == YES
     assert verdict.constraints[2].verdict == NO
@@ -162,7 +164,7 @@ def test_a_repository_no_project_row_matches_cannot_be_decided_and_is_not_refuse
     as "not capable" would be a refusal manufactured from a bug, so it answers
     UNKNOWN — and the composition can never turn UNKNOWNs into a refusal.
     """
-    verdict = assess("AlobarQuest/never-heard-of-it", DECLARED_TRUE, portfolio(project()))
+    verdict = assess("AlobarQuest/never-heard-of-it", True, portfolio(project()))
     assert verdict.decision == UNDECIDED
     assert verdict.decision != NOT_WORKABLE
     assert [c.verdict for c in verdict.constraints] == [YES, UNKNOWN, UNKNOWN]
@@ -176,7 +178,7 @@ def test_two_projects_answering_to_one_name_cannot_be_decided_rather_than_picked
     found, why = project_for(rows, TARGET)
     assert found is None
     assert "more than one project" in why
-    assert assess(TARGET, DECLARED_TRUE, rows).decision == UNDECIDED
+    assert assess(TARGET, True, rows).decision == UNDECIDED
 
 
 def test_a_repository_the_sweep_never_measured_cannot_be_decided() -> None:
@@ -184,7 +186,7 @@ def test_a_repository_the_sweep_never_measured_cannot_be_decided() -> None:
     rows = portfolio(
         {"name": "infraops-mcp-server", "path": "/x/infraops-mcp-server", "factory": []}
     )
-    verdict = assess(TARGET, DECLARED_TRUE, rows)
+    verdict = assess(TARGET, True, rows)
     assert verdict.decision == UNDECIDED
     assert "recorded no factory checks" in verdict.constraints[1].detail
 
@@ -194,7 +196,7 @@ def test_a_check_the_sweep_did_not_record_cannot_be_decided() -> None:
     rows.projects[0]["factory"] = [
         row for row in rows.projects[0]["factory"] if row["id"] != "factory.landing_known"
     ]
-    verdict = assess(TARGET, DECLARED_TRUE, rows)
+    verdict = assess(TARGET, True, rows)
     assert verdict.constraints[1].verdict == UNKNOWN
     assert "factory.landing_known" in verdict.constraints[1].detail
 
@@ -210,7 +212,7 @@ def test_a_check_row_whose_status_is_not_a_string_cannot_be_decided() -> None:
     for row in rows.projects[0]["factory"]:
         if row["id"] == "factory.pat_access":
             row["status"] = None
-    verdict = assess(TARGET, DECLARED_TRUE, rows)
+    verdict = assess(TARGET, True, rows)
     assert verdict.decision == UNDECIDED
     assert verdict.constraints[2].verdict == UNKNOWN
     # NOT RECORDED, rather than recorded with a value nothing can read. Both reach UNKNOWN,
@@ -222,15 +224,9 @@ def test_a_check_row_whose_status_is_not_a_string_cannot_be_decided() -> None:
 
 def test_a_check_that_is_unknown_rather_than_passing_cannot_be_decided() -> None:
     rows = portfolio(project(**{"factory.landing_known": "unknown"}))
-    verdict = assess(TARGET, DECLARED_TRUE, rows)
+    verdict = assess(TARGET, True, rows)
     assert verdict.decision == UNDECIDED
     assert verdict.constraints[1].verdict == UNKNOWN
-
-
-def test_an_unreadable_declaration_cannot_be_decided_and_is_not_read_as_absence() -> None:
-    verdict = assess(TARGET, UNREADABLE, portfolio(project()))
-    assert verdict.decision == UNDECIDED
-    assert verdict.constraints[0].verdict == UNKNOWN
 
 
 # -------------------------------------------------------------------------------------
@@ -239,23 +235,23 @@ def test_an_unreadable_declaration_cannot_be_decided_and_is_not_read_as_absence(
 
 
 def test_a_definite_refusal_beside_an_unknown_still_refuses() -> None:
-    """Three-valued AND. A repository that answered `false` answered, whatever else is unknown.
+    """Three-valued AND. A repository the record does not grant answered, whatever else is unknown.
 
     The property that matters is the ASYMMETRY, and both halves are asserted here:
     a NO decides through an UNKNOWN, and UNKNOWNs alone never produce a refusal.
     """
-    verdict = assess("AlobarQuest/never-heard-of-it", DECLARED_FALSE, portfolio(project()))
+    verdict = assess("AlobarQuest/never-heard-of-it", False, portfolio(project()))
     assert verdict.decision == NOT_WORKABLE
 
 
 def test_no_combination_of_unknowns_produces_a_refusal() -> None:
-    verdict = assess("AlobarQuest/never-heard-of-it", UNREADABLE, portfolio())
+    verdict = assess("AlobarQuest/never-heard-of-it", True, portfolio())
     assert verdict.decision == UNDECIDED
-    assert all(c.verdict == UNKNOWN for c in verdict.constraints)
+    assert all(c.verdict == UNKNOWN for c in verdict.constraints[1:])
 
 
 def test_a_payload_naming_no_target_repository_is_nothing_to_judge_not_a_refusal() -> None:
-    verdict = assess(None, Declaration(None, "no repository to ask about"), portfolio(project()))
+    verdict = assess(None, False, portfolio(project()))
     assert verdict.decision == UNDECIDED
     assert verdict.repository is None
 
@@ -268,7 +264,7 @@ def test_a_payload_naming_no_target_repository_is_nothing_to_judge_not_a_refusal
 def test_pat_scope_being_permanently_unknown_does_not_stop_a_repository_being_carried() -> None:
     """Its own check says it is ALWAYS unknown, so a term requiring it passes nothing, ever."""
     rows = portfolio(project(**{"factory.pat_scope": "unknown"}))
-    assert assess(TARGET, DECLARED_TRUE, rows).decision == WORKABLE
+    assert assess(TARGET, True, rows).decision == WORKABLE
 
 
 def test_the_workflow_residual_is_named_on_every_repository_that_would_be_carried() -> None:
@@ -277,7 +273,7 @@ def test_the_workflow_residual_is_named_on_every_repository_that_would_be_carrie
     judge(
         [("change record 1", payload())],
         out,
-        source=_Declares(DECLARED_TRUE),
+        grants=GRANTED,
         portfolio=portfolio(project()),
     )
     text = out.getvalue()
@@ -291,7 +287,7 @@ def test_the_residual_is_not_claimed_about_a_repository_that_would_not_be_carrie
     judge(
         [("change record 1", payload())],
         out,
-        source=_Declares(DECLARED_FALSE),
+        grants=NOT_GRANTED,
         portfolio=portfolio(project()),
     )
     assert "pat_scope" not in out.getvalue()
@@ -330,7 +326,7 @@ def test_every_hop_to_the_target_repository_is_defensive(broken: dict) -> None:
 
 def test_the_report_names_the_age_of_the_capability_source() -> None:
     out = io.StringIO()
-    judge([], out, source=_Declares(DECLARED_TRUE), portfolio=portfolio(age_seconds=7200))
+    judge([], out, grants=GRANTED, portfolio=portfolio(age_seconds=7200))
     assert "2h old" in out.getvalue()
 
 
@@ -340,7 +336,7 @@ def test_a_missing_capability_source_is_named_rather_than_read_as_no_capability(
     loaded = load_portfolio(tmp_path / "absent.json")
     assert loaded.projects == ()
     assert "could not be read" in loaded.detail
-    assert assess(TARGET, DECLARED_TRUE, loaded).decision == UNDECIDED
+    assert assess(TARGET, True, loaded).decision == UNDECIDED
 
 
 def test_an_unreadable_capability_source_is_named_rather_than_raising(tmp_path: Path) -> None:
@@ -363,7 +359,53 @@ def test_the_age_is_measured_from_the_file_rather_than_from_a_field(tmp_path: Pa
     path.write_text(json.dumps({"projects": []}), encoding="utf-8")
     loaded = load_portfolio(path, now=time.time() + 86400 * 3)
     assert loaded.age_seconds is not None and loaded.age_seconds > 86400 * 2
-    assert "3d old" in loaded.detail
+    assert loaded.stale
+    assert "72h old" in loaded.detail
+
+
+def test_a_portfolio_older_than_the_limit_leaves_capability_undecided(
+    checkout_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two missed nightly scans is the most the capability source may be, and no more.
+
+    Past the limit the file is not read as an answer: the capability and permission terms are
+    UNKNOWN, so the record is held as UNDECIDED (exit 2) and never carried as workable.
+    """
+    path = tmp_path / "portfolio.json"
+    path.write_text(json.dumps({"projects": [project()]}), encoding="utf-8")
+    now = time.time()
+    os.utime(path, (now - 49 * 3600, now - 49 * 3600))
+    loaded = load_portfolio(path, now=now)
+
+    verdict = assess(TARGET, True, loaded)
+    assert verdict.decision == UNDECIDED
+    assert [c.verdict for c in verdict.constraints] == [YES, UNKNOWN, UNKNOWN]
+    assert "past the 48h limit" in verdict.constraints[1].detail
+
+    code, text, payloads = _carry(
+        checkout_root, monkeypatch, members=[member(app_changes="granted")], portfolio_rows=loaded
+    )
+    assert payloads == []
+    assert code == EXIT_UNUSABLE
+    assert "past the 48h limit" in text
+
+
+def test_a_portfolio_inside_the_limit_is_read(
+    checkout_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """47 hours is inside the limit, so the file is judged exactly as it is judged today."""
+    path = tmp_path / "portfolio.json"
+    path.write_text(json.dumps({"projects": [project()]}), encoding="utf-8")
+    now = time.time()
+    os.utime(path, (now - 47 * 3600, now - 47 * 3600))
+    loaded = load_portfolio(path, now=now)
+
+    assert assess(TARGET, True, loaded).decision == WORKABLE
+    code, _, payloads = _carry(
+        checkout_root, monkeypatch, members=[member(app_changes="granted")], portfolio_rows=loaded
+    )
+    assert code == EXIT_OK
+    assert len(payloads) == 1
 
 
 # -------------------------------------------------------------------------------------
@@ -386,8 +428,10 @@ def _emitting(emitted: dict):
     return runner
 
 
-class _Raises:
-    def declaration(self, slug: str) -> Declaration:
+class _BrokenGrants(dict):
+    """A grant table whose lookup raises, standing in for a defect inside the judge."""
+
+    def get(self, key, default=None):
         raise RuntimeError("the reader is broken")
 
 
@@ -419,7 +463,8 @@ def _carry(
     root: Path,
     monkeypatch: pytest.MonkeyPatch,
     *,
-    source,
+    members: list[Member],
+    judged_by: dict | None = None,
     portfolio_rows=None,
 ) -> tuple[int, str, list[dict]]:
     """Run a real `--register` carry with the judgment's inputs injected.
@@ -430,10 +475,10 @@ def _carry(
     """
     monkeypatch.setattr(
         "work_carrier.cli.judge_workability",
-        lambda subjects, out: judge(
+        lambda subjects, out, grants: judge(
             subjects,
             out,
-            source=source,
+            grants=grants if judged_by is None else judged_by,
             portfolio=portfolio(project()) if portfolio_rows is None else portfolio_rows,
         ),
     )
@@ -448,11 +493,13 @@ def _carry(
         lambda r, **kw: original(r, **kw, runner=_emitting(_emitted(r))),
     )
     writer = _Registrar()
-    code, text = _run_registering(root, rec, writer)
+    code, text = _run_registering(root, rec, writer, members)
     return code, text, writer.payloads
 
 
-def _run_registering(root: Path, rec: WorkRecord, writer) -> tuple[int, str]:
+def _run_registering(
+    root: Path, rec: WorkRecord, writer, members: list[Member] | None
+) -> tuple[int, str]:
     """The `run` call, behind an unannotated `writer`.
 
     The double is not an `OrchestratorClient` and pyright is right to say so: `run` takes
@@ -466,6 +513,7 @@ def _run_registering(root: Path, rec: WorkRecord, writer) -> tuple[int, str]:
         ["--checkout-root", str(root), "--register"],
         source=_Source([rec]),
         registrar=writer,
+        members=members,
         out=out,
     )
     return code, out.getvalue()
@@ -492,7 +540,9 @@ def test_all_three_yes_is_carried(checkout_root: Path, monkeypatch: pytest.Monke
     program that registers nothing, so this runs the same path with an estate that
     answers yes three times and asserts the record reached the writer.
     """
-    code, text, payloads = _carry(checkout_root, monkeypatch, source=_Declares(DECLARED_TRUE))
+    code, text, payloads = _carry(
+        checkout_root, monkeypatch, members=[member(app_changes="granted")]
+    )
 
     assert code == EXIT_OK
     assert len(payloads) == 1
@@ -500,7 +550,7 @@ def test_all_three_yes_is_carried(checkout_root: Path, monkeypatch: pytest.Monke
     assert "residual" in text, "the pat_scope residual belongs on the line that authorises work"
 
 
-def test_a_repository_that_has_not_opted_in_is_not_carried_and_the_reason_is_printed(
+def test_a_repository_the_record_does_not_grant_is_not_carried_and_the_reason_is_printed(
     checkout_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Devon's rule: without all three, it is useless to go forward.
@@ -509,13 +559,13 @@ def test_a_repository_that_has_not_opted_in_is_not_carried_and_the_reason_is_pri
     says what it says -- so it exits 3, a finding, which the launcher reports to alert-hub
     (ADR-0021 amendment 2) and which differs from the 2 an unreachable answer gets.
     """
-    code, text, payloads = _carry(checkout_root, monkeypatch, source=_Declares(DECLARED_FALSE))
+    code, text, payloads = _carry(checkout_root, monkeypatch, members=[member()])
 
     assert payloads == [], "a record that is not workable must never reach the writer"
     assert code == EXIT_FINDINGS
     assert NOT_WORKABLE in text
     assert "NOT CARRIED" in text
-    assert "factory_target = false" in text
+    assert "does not grant app_changes" in text
 
 
 def test_a_constraint_nobody_could_answer_holds_the_record_under_a_different_code(
@@ -529,7 +579,12 @@ def test_a_constraint_nobody_could_answer_holds_the_record_under_a_different_cod
     used one code for both would satisfy "it was not carried" and tell a reader the
     wrong thing about what to do.
     """
-    code, text, payloads = _carry(checkout_root, monkeypatch, source=_Declares(UNREADABLE))
+    code, text, payloads = _carry(
+        checkout_root,
+        monkeypatch,
+        members=[member(app_changes="granted")],
+        portfolio_rows=portfolio(),
+    )
 
     assert payloads == []
     assert code == EXIT_UNUSABLE
@@ -549,7 +604,12 @@ def test_a_judgment_that_raises_holds_the_record_and_reports_a_tool_failure(
     failed. Asserting the writer saw nothing is the half that discriminates: a guard that
     swallowed the error and returned WORKABLE would print the same failure line.
     """
-    code, text, payloads = _carry(checkout_root, monkeypatch, source=_Raises())
+    code, text, payloads = _carry(
+        checkout_root,
+        monkeypatch,
+        members=[member(app_changes="granted")],
+        judged_by=_BrokenGrants(),
+    )
 
     assert payloads == []
     assert code == EXIT_TOOL_FAILURE
@@ -572,7 +632,7 @@ def test_pat_scopes_permanent_unknown_does_not_prevent_a_carry(
     """
     rows = portfolio(project(**{"factory.pat_scope": "violation"}))
     code, text, payloads = _carry(
-        checkout_root, monkeypatch, source=_Declares(DECLARED_TRUE), portfolio_rows=rows
+        checkout_root, monkeypatch, members=[member(app_changes="granted")], portfolio_rows=rows
     )
 
     assert code == EXIT_OK
@@ -610,7 +670,7 @@ def test_a_subject_whose_line_cannot_be_written_is_held_rather_than_carried(
     decisions = judge(
         [("first", payload(TARGET)), ("second", payload(TARGET))],
         out,
-        source=_Declares(DECLARED_TRUE),
+        grants=GRANTED,
         portfolio=portfolio(project()),
     )
 
@@ -659,7 +719,7 @@ def test_the_carry_really_does_ask_the_real_judge(
 
     All of them replace `judge_workability`, so none can see that the carry reaches it at
     all. This runs the real one, with a record that really prepares and with this package's
-    fail-closed defaults: no portfolio and no credential, so nothing can be answered, so
+    fail-closed defaults: a grant but no portfolio, so nothing can be answered, so
     nothing is carried and the pass reports unusable input. The exit code is the half that
     discriminates — the block alone would still print if the decision were thrown away.
     """
@@ -671,7 +731,12 @@ def test_the_carry_really_does_ask_the_real_judge(
         cli_module, "prepare", lambda r, **kw: original(r, **kw, runner=_emitting(_emitted(r)))
     )
     out = io.StringIO()
-    code = run(["--checkout-root", str(checkout_root)], source=_Source([_record()]), out=out)
+    code = run(
+        ["--checkout-root", str(checkout_root)],
+        source=_Source([_record()]),
+        members=[member(app_changes="granted")],
+        out=out,
+    )
     assert "[WORKABILITY]" in out.getvalue()
     assert UNDECIDED in out.getvalue()
     assert code == EXIT_UNUSABLE
@@ -680,7 +745,7 @@ def test_the_carry_really_does_ask_the_real_judge(
 def test_an_empty_queue_still_says_the_check_ran(checkout_root: Path) -> None:
     """Silence would be indistinguishable from the check having been removed."""
     out = io.StringIO()
-    code = run(["--checkout-root", str(checkout_root)], source=_Source([]), out=out)
+    code = run(["--checkout-root", str(checkout_root)], source=_Source([]), members=[], out=out)
     assert code == EXIT_OK
     assert "no repository was judged" in out.getvalue()
 
@@ -692,355 +757,18 @@ def test_the_report_asks_about_the_package_target_and_never_the_records_reposito
 
     Measured against production 2026-09-11: `target_repository` is null on all seven
     work records and `package_source_repository` is `AlobarQuest/intent-packages` on
-    every one. Keying on either would judge every carry against a repository that opts
-    in and measures clean, so the check would pass everything forever.
+    every one. Keying on either would judge every carry against a repository that is granted
+    and measures clean, so the check would pass everything forever.
     """
-    asked = _Declares(DECLARED_TRUE)
-    judge([("change record 1", payload())], io.StringIO(), source=asked, portfolio=portfolio())
-    assert asked.asked == [TARGET]
-    assert "AlobarQuest/intent-packages" not in asked.asked
-
-
-# -------------------------------------------------------------------------------------
-# Reading the declaration itself
-# -------------------------------------------------------------------------------------
-
-
-def test_a_declaration_is_read_as_the_repositorys_own_answer() -> None:
-    answer = parse('factory_target = true\nfactory_target_reason = "a target"\n')
-    assert answer.target is True
-
-
-def test_a_declaration_that_says_false_is_a_different_answer_from_one_that_cannot_be_read() -> None:
-    assert parse('factory_target = false\nfactory_target_reason = "no"\n').target is False
-    assert parse("factory_target = not-toml [[[").target is None
-
-
-@pytest.mark.parametrize(
-    "text",
-    [
-        "",
-        'factory_target = "true"\nfactory_target_reason = "x"\n',
-        "factory_target = true\n",
-        'factory_target = true\nfactory_target_reason = "   "\n',
-    ],
-)
-def test_a_declaration_missing_either_key_or_carrying_the_wrong_type_cannot_be_read(
-    text: str,
-) -> None:
-    """Both keys are required, including the reason: a bare `true` becomes folklore."""
-    assert parse(text).target is None
-
-
-def _routed(
-    contents: httpx.Response | Exception, repository: httpx.Response | Exception
-) -> tuple[httpx.MockTransport, list[str]]:
-    """A transport that answers the two routes differently, and records what was asked.
-
-    The two are told apart by PATH rather than by call order, so a test cannot pass
-    because the reader happened to make the requests in the order the stub expected --
-    and the recorded list is what makes "the probe was never made" assertable.
-    """
-
-    seen: list[str] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(request.url.path)
-        answer = repository if request.url.path.endswith("/brain") else contents
-        if isinstance(answer, Exception):
-            raise answer
-        return answer
-
-    return httpx.MockTransport(handler), seen
-
-
-def _reader(transport: httpx.MockTransport) -> GitHubDeclarationSource:
-    return GitHubDeclarationSource(
-        token="t", base_url="https://example.invalid", transport=transport
-    )
-
-
-def test_an_absent_declaration_is_an_answer_once_the_repository_itself_answers() -> None:
-    """GitHub answers 404 three ways, and this is the one branch that returns a definite NO.
-
-    A definite NO decides through every UNKNOWN beside it, so the two states that are
-    otherwise indistinguishable from "has not opted in" -- a repository that does not
-    exist, and a private one this credential may not read -- are settled by one read of
-    the repository itself rather than named and left to the reader. This is the case
-    where that read ANSWERS, so the absence is the repository's own silence.
-    """
-
-    transport, seen = _routed(httpx.Response(404, json={}), httpx.Response(200, json={}))
-    answer = _reader(transport).declaration("AlobarQuest/brain")
-    assert answer.target is False
-    assert "has not opted in" in answer.detail
-    assert seen == [
-        "/repos/AlobarQuest/brain/contents/factory-target.toml",
-        "/repos/AlobarQuest/brain",
-    ]
-
-
-@pytest.mark.parametrize(
-    ("repository_status", "expected"),
-    [
-        (404, "does not exist or one this credential cannot see"),
-        (403, "not an answer either way"),
-        (429, "transient"),
-        (500, "transient"),
-        (502, "transient"),
-        (301, "renamed or moved"),
-    ],
-)
-def test_an_absence_the_repository_does_not_confirm_is_could_not_tell(
-    repository_status: int, expected: str
-) -> None:
-    """The behaviour change, and the whole reason the probe exists.
-
-    A slug nobody should have asked about and a private repository this credential
-    cannot see both 404 on the contents route, and both used to come back as a definite
-    "has not opted in" -- a refusal manufactured from a typo or a permission fault. The
-    repository does not answer, so there is no absence to report.
-
-    **THE VERDICT IS ONE THING AND THE DIAGNOSIS IS SEVERAL, and the parametrization
-    says so rather than pinning one sentence over all of them.** Every row answers
-    `None`; a `429` or a `502` is this estate's ordinary weather, and telling a reader
-    the repository does not exist would send him to check a name that is fine. That is
-    the same wrong-diagnosis defect this module exists to remove, one branch over.
-    """
-    transport, seen = _routed(
-        httpx.Response(404, json={}), httpx.Response(repository_status, json={})
-    )
-    answer = _reader(transport).declaration("AlobarQuest/brain")
-    assert answer.target is None
-    assert expected in answer.detail
-    assert len(seen) == 2
-
-
-def test_a_confirmed_absence_does_not_claim_the_credential_could_have_read_the_file() -> None:
-    """The one state the probe still cannot tell from an absence, named in the line.
-
-    `GET /repos/{slug}` needs only metadata; the contents route needs contents, and they
-    are separate permissions -- so a credential holding the first and not the second
-    answers 200 to the probe and 404 above for a PRIVATE repository, which is exactly the
-    shape of a confirmed absence. It is left that way deliberately: project-standards'
-    `_remote_contents` confirms the same fact by the same request, and a reader that grew
-    a third probe on its own would be the two drifting rather than the hole closing. What
-    must not happen is the LINE claiming more than was proved.
-    """
-    transport, _ = _routed(httpx.Response(404, json={}), httpx.Response(200, json={}))
-    detail = _reader(transport).declaration("AlobarQuest/brain").detail
-    assert "does NOT prove" in detail
-    assert "CONTENTS" in detail
-
-
-def test_a_redirect_on_the_declaration_is_a_rename_rather_than_a_malformed_file() -> None:
-    """A renamed repository used to be reported as a file that exists and is broken.
-
-    Redirects are not followed, so a 301 delivers GitHub's redirect envelope rather than
-    the file -- and it fell past both the 404 branch and the >= 400 branch into the
-    parser, which said `factory_target` must be a bool and got None. The verdict was
-    already "could not tell"; this asserts the sentence is true as well, and that the
-    reader did not go on to probe a repository it had been told nothing about.
-    """
-    transport, seen = _routed(httpx.Response(301, json={}), httpx.Response(200, json={}))
-    answer = _reader(transport).declaration("AlobarQuest/brain")
-    assert answer.target is None
-    assert "renamed or moved" in answer.detail
-    assert "factory_target" not in answer.detail
-    assert seen == ["/repos/AlobarQuest/brain/contents/factory-target.toml"]
-
-
-def test_the_probe_can_derive_its_path_only_because_the_guard_ends_at_the_file() -> None:
-    """The coupling that makes the derivation safe, asserted rather than assumed.
-
-    `_confirm_absence` strips `/contents/<file>` off a path `is_allowed` has admitted,
-    and `str.removesuffix` is a NO-OP when the suffix is absent -- so widening the route
-    guard past the file (a nested path, an optional directory segment) would silently
-    make the probe re-ask the contents route or ask for a directory, turning every
-    genuine absence into "could not tell" with nothing red. This reds on that edit, which
-    is what a second unfalsifiable pattern beside the first could not do.
-    """
-    from work_carrier.declaration import _ALLOWED
-
-    assert _ALLOWED.pattern.endswith(re.escape(f"/contents/{FILENAME}") + "$")
-
-
-def test_an_unreachable_repository_probe_is_could_not_tell_and_prints_no_request() -> None:
-    """The probe's own failure is the third state, not the absence by default."""
-
-    transport, _ = _routed(httpx.Response(404, json={}), httpx.ConnectError("no route"))
-    answer = _reader(transport).declaration("AlobarQuest/brain")
-    assert answer.target is None
-    assert "ConnectError" in answer.detail
-    assert "no route" not in answer.detail
-
-
-@pytest.mark.parametrize(
-    "contents",
-    [
-        pytest.param(None, id="transport-raised"),
-        pytest.param(500, id="server-error"),
-        pytest.param(429, id="rate-limited"),
-    ],
-)
-def test_a_transient_contents_failure_never_becomes_an_absence(contents: int | None) -> None:
-    """THE ORDERING RULE, and it is asserted by the probe NOT HAVING BEEN MADE.
-
-    project-standards' `_remote_contents` tests its diagnostic for 404 FIRST for this
-    reason: a contents call that failed for any other reason says nothing about whether
-    the file is there, and a repository probe that succeeds a moment later must not be
-    allowed to turn it into an absence. The repository here would answer 200 -- so a
-    reader that probed first, or probed on every failure, would report `False`.
-    """
-
-    failure = httpx.ConnectError("no route") if contents is None else httpx.Response(contents)
-    transport, seen = _routed(failure, httpx.Response(200, json={}))
-    answer = _reader(transport).declaration("AlobarQuest/brain")
-    assert answer.target is None
-    assert seen == ["/repos/AlobarQuest/brain/contents/factory-target.toml"]
-
-
-def test_the_probe_asks_the_bare_repository_route_and_nothing_else() -> None:
-    """What the probe sends, and that a refused slug sends nothing at all.
-
-    It does NOT discriminate the derivation, and saying so is the point: behind the
-    route guard, composing `/repos/{slug}` afresh would build the same request for every
-    slug that can reach the probe, so a control claiming otherwise would pass either way.
-    The derivation is chosen so that argument never has to be made -- on the repository
-    route a slug carrying a query builds an admissible PATH with the rest in the query,
-    which a path-only check admits, and the contents route being checked first is the
-    only reason that cannot happen here.
-    """
-
-    transport, seen = _routed(httpx.Response(404, json={}), httpx.Response(404, json={}))
-    assert _reader(transport).declaration("AlobarQuest/brain?ref=other").target is None
-    assert seen == []
-
-    asked: list[httpx.Request] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        asked.append(request)
-        return httpx.Response(404 if "contents" in request.url.path else 200, json={})
-
-    assert _reader(httpx.MockTransport(handler)).declaration("AlobarQuest/brain").target is False
-    assert asked[1].url.path == "/repos/AlobarQuest/brain"
-    assert asked[1].url.query == b""
-    assert asked[1].headers["accept"] == "application/vnd.github+json"
-
-
-@pytest.mark.parametrize("status", [401, 403, 429, 500])
-def test_a_github_refusal_is_could_not_tell_rather_than_has_not_opted_in(status: int) -> None:
-
-    source = GitHubDeclarationSource(
-        token="t",
-        base_url="https://example.invalid",
-        transport=httpx.MockTransport(lambda request: httpx.Response(status, json={})),
-    )
-    assert source.declaration("AlobarQuest/brain").target is None
-
-
-def test_an_unreachable_github_is_could_not_tell_rather_than_a_traceback() -> None:
-    """`httpx` raises three unrelated families and the third is a `ValueError`."""
-
-    def refuse(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("no route")
-
-    source = GitHubDeclarationSource(
-        token="t", base_url="https://example.invalid", transport=httpx.MockTransport(refuse)
-    )
-    answer = source.declaration("AlobarQuest/brain")
-    assert answer.target is None
-    assert "unreachable" in answer.detail
-    assert "no route" not in answer.detail
-
-
-def test_a_malformed_host_is_could_not_tell_rather_than_a_unicode_error() -> None:
-    """IDNA encoding of a doubled dot raises `UnicodeError`, which is neither httpx family."""
-    source = GitHubDeclarationSource(token="t", base_url="https://api..github.invalid")
-    answer = source.declaration("AlobarQuest/brain")
-    assert answer.target is None
-    assert "unreachable" in answer.detail
-
-
-def test_the_reader_asks_for_the_default_branch_and_the_raw_bytes() -> None:
-    """No `ref`, so the branch asked about is the one a change would land on."""
-
-    seen: list[httpx.Request] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(request)
-        return httpx.Response(200, text='factory_target = true\nfactory_target_reason = "x"\n')
-
-    source = GitHubDeclarationSource(
-        token="t", base_url="https://example.invalid", transport=httpx.MockTransport(handler)
-    )
-    assert source.declaration("AlobarQuest/brain").target is True
-    assert seen[0].url.params.get("ref") is None
-    assert seen[0].headers["accept"] == "application/vnd.github.raw"
-    assert is_allowed(seen[0].url.path)
-
-
-def test_the_declaration_is_read_from_github_rather_than_from_a_checkout(tmp_path: Path) -> None:
-    """A checkout is not a fresh source and must not become one by accident.
-
-    Measured 2026-09-11: seven of eight working trees on this machine did not carry
-    `factory-target.toml` hours after every declaration had landed, because nothing
-    pulls them — so a reader that fell back to the filesystem would report the five
-    repositories that declare `true` as not having opted in. The module names one
-    route, and this asserts it is a URL rather than a path.
-    """
-    source = Path("src/work_carrier/declaration.py").read_text(encoding="utf-8")
-    assert "api.github.com" in source
-    for filesystem in ("Path(", "open(", "read_text", "is_file", "exists()"):
-        assert filesystem not in source, filesystem
-
-
-def test_the_credential_is_read_from_the_environment_and_its_absence_is_not_a_refusal(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A machine with no GitHub credential reports "could not tell", never "not a target"."""
-    monkeypatch.delenv("WORK_CARRIER_GITHUB_TOKEN", raising=False)
     out = io.StringIO()
-    judge([("change record 1", payload())], out, portfolio=portfolio(project()))
-    text = out.getvalue()
-    assert UNDECIDED in text
-    assert NOT_WORKABLE not in text
-    assert "WORK_CARRIER_GITHUB_TOKEN" in text
-
-
-def test_a_credential_in_the_environment_is_never_printed(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("WORK_CARRIER_GITHUB_TOKEN", "ghp-not-a-real-secret-0123456789")
-    out = io.StringIO()
-    judge([], out, portfolio=portfolio())
-    assert "ghp-not-a-real-secret-0123456789" not in out.getvalue()
-
-
-def test_a_credential_that_makes_the_reader_raise_is_never_printed(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The ASCII case above cannot see this, and it is the one that reaches a log.
-
-    A token carrying a non-ASCII byte makes `httpx` raise while it encodes the
-    `Authorization` header -- inside the report's own broad guard, whose handler is
-    therefore holding an exception whose repr is `Bearer <token>` verbatim. The control
-    asserts the FAILURE PATH was taken as well as that the value is absent, or a report
-    that quietly succeeded would satisfy it.
-    """
-    secret = "ghp-not-a-real-secret-\u00ff\u0100"
-    monkeypatch.setenv("WORK_CARRIER_GITHUB_TOKEN", secret)
-    out = io.StringIO()
-    decisions = judge([("a record", payload(TARGET))], out, portfolio=portfolio(project()))
-    text = out.getvalue()
-    # THE GUARD FIRES BEFORE ANY SUBJECT IS REACHED, so the decisions list is empty and the
-    # PADDING is what answers for the record. It must pad with something that is not
-    # WORKABLE: a subject nobody judged is held, which is the whole difference between this
-    # guard and the one it replaced, whose "failed and changed nothing" was true of a report
-    # and would be a fail-open here.
-    assert decisions == (UNJUDGED,)
-    assert "the workability judgment failed" in text, text
-    assert secret not in text
-    assert "ghp-not-a-real-secret" not in text
-    assert "Bearer" not in text
+    decisions = judge(
+        [("change record 1", payload())],
+        out,
+        grants=grants("AlobarQuest/intent-packages"),
+        portfolio=portfolio(project()),
+    )
+    assert decisions == (NOT_WORKABLE,)
+    assert f"-> {TARGET}" in out.getvalue()
 
 
 def test_one_unjudgeable_subject_does_not_silence_the_rest(
@@ -1054,17 +782,17 @@ def test_one_unjudgeable_subject_does_not_silence_the_rest(
     halves are asserted: the failure is named AND the survivor is still judged.
     """
 
-    class _RaisesFor:
-        def declaration(self, slug: str) -> Declaration:
-            if slug == "AlobarQuest/broken":
+    class _RaisesFor(frozenset):
+        def __contains__(self, item: object) -> bool:
+            if item == "alobarquest/broken":
                 raise RuntimeError("the reader is broken")
-            return Declaration(True, "factory-target.toml declares factory_target = true")
+            return super().__contains__(item)
 
     out = io.StringIO()
     judge(
         [("first", payload("AlobarQuest/broken")), ("second", payload(TARGET))],
         out,
-        source=_RaisesFor(),
+        grants={**GRANTED, "app_changes": _RaisesFor({TARGET.lower()})},
         portfolio=portfolio(project()),
     )
     text = out.getvalue()
@@ -1074,13 +802,109 @@ def test_one_unjudgeable_subject_does_not_silence_the_rest(
     assert "second" in text, text
 
 
+def test_a_record_in_an_ungranted_repository_is_not_workable() -> None:
+    out = io.StringIO()
+    decisions = judge(
+        [("a record", payload("AlobarQuest/elsewhere"))],
+        out,
+        grants=GRANTED,
+        portfolio=portfolio(project("elsewhere")),
+    )
+    assert decisions == (NOT_WORKABLE,)
+
+
+def test_a_dependency_update_record_is_judged_by_dependency_updates() -> None:
+    """Granted only `dependency_updates`: a dependency-update record is workable, an app change
+    in the same repository is not -- the change class picks the service."""
+    only = grants(TARGET, service="dependency_updates")
+    dependency = {**payload(), "profile": "dependency-update"}
+    app_change = {**payload(), "profile": "software"}
+    decisions = judge(
+        [("dependency update", dependency), ("app change", app_change)],
+        io.StringIO(),
+        grants=only,
+        portfolio=portfolio(project()),
+    )
+    assert decisions == (WORKABLE, NOT_WORKABLE)
+
+
+def test_the_grant_check_folds_case() -> None:
+    folded = grants_by_service([member("AlobarQuest/Infraops-MCP-Server", app_changes="granted")])
+    decisions = judge(
+        [("a record", payload("alobarquest/infraops-mcp-server"))],
+        io.StringIO(),
+        grants=folded,
+        portfolio=portfolio(project()),
+    )
+    assert decisions == (WORKABLE,)
+
+
+@pytest.mark.parametrize("state", ["remediating", "withdrawn", "not_assessed"])
+def test_a_grant_that_is_not_granted_does_not_admit(state: str) -> None:
+    held = grants_by_service([member(app_changes=state)])
+    decisions = judge(
+        [("a record", payload())], io.StringIO(), grants=held, portfolio=portfolio(project())
+    )
+    assert decisions == (NOT_WORKABLE,)
+
+
+def test_a_retired_members_grant_does_not_admit() -> None:
+    retired = grants_by_service([member(state="retired", app_changes="granted")])
+    decisions = judge(
+        [("a record", payload())], io.StringIO(), grants=retired, portfolio=portfolio(project())
+    )
+    assert decisions == (NOT_WORKABLE,)
+
+
+def test_an_operational_record_needs_no_grant() -> None:
+    operational = {
+        "profile": "non-software-operational",
+        "package_id": "rotation-openrouter-generic",
+        "enforcement_snapshot": {
+            "profile_fields": {"standing": True},
+            "reach": ["external_system"],
+        },
+    }
+    decisions = judge(
+        [("rotation", operational)], io.StringIO(), grants=NOT_GRANTED, portfolio=portfolio()
+    )
+    assert decisions == ("OPERATIONAL",)
+
+
+def _unreadable(**_: object) -> list[Member]:
+    raise MembersUnreadable("the member record is unreachable: ConnectError")
+
+
+def test_an_unreadable_member_record_stops_the_pass_and_registers_nothing(
+    checkout_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("work_carrier.cli.read_members_from_environment", _unreadable)
+    writer = _Registrar()
+    code, text = _run_registering(checkout_root, _record(), writer, None)
+    assert code == EXIT_UNUSABLE
+    assert writer.payloads == []
+    assert "member record could not be read" in text
+    assert "unreachable" in text
+
+
+def test_an_unset_observer_token_stops_the_pass_and_registers_nothing(
+    checkout_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("SDS_MEMBERS_OBSERVER_TOKEN", raising=False)
+    writer = _Registrar()
+    code, text = _run_registering(checkout_root, _record(), writer, None)
+    assert code == EXIT_UNUSABLE
+    assert writer.payloads == []
+    assert "SDS_MEMBERS_OBSERVER_TOKEN" in text
+
+
 # -------------------------------------------------------------------------------------
-# The launcher passes the credential through
+# The launcher passes the credentials through
 # -------------------------------------------------------------------------------------
 
 
-def test_the_launcher_supplies_the_declaration_credential() -> None:
-    """A variable the program reads and the launcher never exports is a silent `cannot decide`."""
+def test_the_launcher_supplies_the_watchers_github_credential() -> None:
+    """A variable the watcher reads and the launcher never exports is a silent `cannot assess`."""
     launcher = Path("scripts/run-work-carrier.sh").read_text(encoding="utf-8")
     assert "WORK_CARRIER_GITHUB_TOKEN" in launcher
     assert "gh auth token" in launcher

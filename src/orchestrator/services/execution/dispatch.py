@@ -22,22 +22,21 @@ from orchestrator.kernel.authority import AuthorityEnvelope, normalize_authority
 from orchestrator.kernel.runner_authority import runner_authority_violation
 from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import DispatchRecord, Event, WorkPackageRevision, WorkUnit
-from orchestrator.services.execution.factory_target import FactoryTargetSource
 from orchestrator.services.execution.reach_admission import (
     change_window_refusal,
     estate_refusal,
     posture_refusal,
     reach_admission_refusal,
 )
+from orchestrator.services.execution.target_grant import TargetGrantSource, service_for_change_class
 from orchestrator.services.github_app import GitHubAppTokenError
 from orchestrator.services.intake.authority_gate import AuthorityGate, human_authority_gate
 from orchestrator.services.landing.estate_landing import EstateLandingSource
 
 ORCHESTRATOR_URL = "https://sds.alobar.net"
-# Why admission refused a target repository (ADR-0015). The repository did not declare itself a
-# target, or its declaration could not be read.
-TARGET_REPOSITORY_NOT_DECLARED = "target_repository_not_declared"
-TARGET_REPOSITORY_DECLARATION_UNREADABLE = "target_repository_declaration_unreadable"
+# Why admission refused a target repository (ADR-0058): the member record does not grant the
+# service that matches the unit's change class on it.
+TARGET_REPOSITORY_NOT_GRANTED = "target_repository_not_granted"
 
 
 @dataclass(frozen=True)
@@ -154,11 +153,11 @@ def dispatch_work_unit(
     landing_source: EstateLandingSource,
     clock: Clock | None = None,
     *,
-    target_source: FactoryTargetSource,
+    grant_source: TargetGrantSource,
 ) -> DispatchRecord:
     try:
         record = _dispatch_work_unit(
-            session, command, settings, dispatcher, landing_source, target_source, clock
+            session, command, settings, dispatcher, landing_source, grant_source, clock
         )
         session.commit()
         return record
@@ -173,7 +172,7 @@ def _dispatch_work_unit(
     settings: DispatchSettings,
     dispatcher: WorkflowDispatcher,
     landing_source: EstateLandingSource,
-    target_source: FactoryTargetSource,
+    grant_source: TargetGrantSource,
     clock: Clock | None,
 ) -> DispatchRecord:
     _authorize_dispatch_actor(command.actor)
@@ -213,7 +212,7 @@ def _dispatch_work_unit(
         reach_admission_refusal(revision),
         change_window_refusal(session, revision, clock),
         landing_source,
-        target_source,
+        grant_source,
         command.change_window_override,
     )
     repository = admission.target_repository
@@ -366,7 +365,7 @@ def _blocked_reason(
     reach_refusal: str | None,
     window_refusal: str | None,
     landing_source: EstateLandingSource,
-    target_source: FactoryTargetSource,
+    grant_source: TargetGrantSource,
     change_window_override: ChangeWindowOverride | None = None,
 ) -> AdmissionDecision:
     """Why this unit may not run, in the order the terms are cheapest to answer.
@@ -415,7 +414,7 @@ def _blocked_reason(
         return AdmissionDecision(estate_reason, target_repository)
     if unit.authority_approval_id is None and gate.refusals:
         return AdmissionDecision("authority_approval_missing", target_repository)
-    envelope_reason = _envelope_reason(unit, envelope, target_repository, target_source)
+    envelope_reason = _envelope_reason(unit, envelope, target_repository, grant_source)
     window, overridden = suppressed(window_refusal, change_window_override)
     return AdmissionDecision(
         envelope_reason or window,
@@ -434,7 +433,7 @@ def _envelope_reason(
     unit: WorkUnit,
     envelope: AuthorityEnvelope,
     target_repository: str,
-    target_source: FactoryTargetSource,
+    grant_source: TargetGrantSource,
 ) -> str | None:
     """The terms the envelope itself decides, for a unit already past the gates above.
 
@@ -477,11 +476,9 @@ def _envelope_reason(
         return "capability_outside_runner_vocabulary"
     if not target_repository:
         return "target_repository_missing"
-    declared = target_source.declaration_for(target_repository).target
-    if declared is None:
-        return TARGET_REPOSITORY_DECLARATION_UNREADABLE
-    if not declared:
-        return TARGET_REPOSITORY_NOT_DECLARED
+    service = service_for_change_class(_change_class(envelope, unit.required_capability))
+    if not grant_source.is_granted(target_repository, service):
+        return TARGET_REPOSITORY_NOT_GRANTED
     return _authority_violation_reason(unit, envelope) or _conformance_blocked_reason(envelope)
 
 

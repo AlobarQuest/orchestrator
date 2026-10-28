@@ -23,6 +23,7 @@ from bump_proposer.landing_policy import (
     parse,
     read_inert_landing,
 )
+from sds_members.client import SERVICES, Member, MembersUnreadable
 from tests.bump_proposer.test_landing_policy import LIVE
 
 REPOSITORY = "AlobarQuest/infraops-mcp-server"
@@ -183,6 +184,25 @@ class _Spine:
         return httpx.Response(self.status, json={"id": identifier, **payload})
 
 
+def _member(repository: str, dependency_updates: str = "granted", state: str = "member") -> Member:
+    return Member(
+        repository=repository,
+        owner="devon",
+        state=state,
+        working_copy=None,
+        machine_local=False,
+        apps=(),
+        grants={service: "withdrawn" for service in SERVICES}
+        | {"dependency_updates": dependency_updates},
+    )
+
+
+def _grant(monkeypatch, *repositories: str) -> None:
+    """The member record the pass reads, granting `dependency_updates` to exactly these."""
+    members = [_member(name) for name in repositories]
+    monkeypatch.setattr(cli, "read_members_from_environment", lambda **_: members)
+
+
 @pytest.fixture
 def spine():
     return _Spine()
@@ -226,6 +246,7 @@ def rig(checkout, monkeypatch, spine):
         ),
     )
     monkeypatch.setattr(cli, "read_inert_landing", lambda token, base_url: parse(LIVE))
+    _grant(monkeypatch, "AlobarQuest/infraops-mcp-server")
     monkeypatch.setattr(
         cli,
         "open_client",
@@ -834,3 +855,72 @@ def test_the_declared_field_set_is_EXACTLY_what_the_proposal_emits(rig, spine) -
 
     assert set(estate.proposals[0]) == set(cli.PROPOSAL_FIELDS)
     assert len(cli.PROPOSAL_FIELDS) == len(set(cli.PROPOSAL_FIELDS))
+
+
+def _second_package(checkout, repository: str, name: str) -> None:
+    directory = checkout / "packages" / name
+    directory.mkdir(parents=True)
+    (directory / "package.yaml").write_text(
+        SHELL.replace("AlobarQuest/infraops-mcp-server", repository), encoding="utf-8"
+    )
+
+
+def test_the_population_is_granted_repositories_with_a_standing_package(
+    rig, checkout, monkeypatch, capsys
+) -> None:
+    """Packages for A and B, the record grants A and C: only A is considered. C has no package and
+    B is not granted; both are told, and neither is a finding."""
+    _second_package(checkout, "AlobarQuest/ungranted-b", "ungranted-b-npm-zod")
+    _grant(monkeypatch, "AlobarQuest/infraops-mcp-server", "AlobarQuest/granted-c")
+
+    assert run([]) == EXIT_OK
+
+    out = capsys.readouterr().out
+    assert "[NO PACKAGE] AlobarQuest/granted-c" in out
+    assert "[NOT GRANTED] AlobarQuest/ungranted-b" in out
+    assert "ungranted-b#" not in out
+    assert "infraops-mcp-server#" in out
+
+
+@pytest.mark.parametrize("submit", [[], ["--submit"]])
+def test_an_unreadable_member_record_stops_the_pass(rig, monkeypatch, capsys, submit) -> None:
+    estate, calls = rig
+
+    def unreadable(**_):
+        raise MembersUnreadable("SDS_MEMBERS_OBSERVER_TOKEN is not set")
+
+    monkeypatch.setattr(cli, "read_members_from_environment", unreadable)
+
+    assert run(submit) == EXIT_UNUSABLE
+
+    assert "[UNUSABLE]" in capsys.readouterr().err
+    assert calls == [] and estate.proposals == [] and estate.records == []
+
+
+def test_naming_an_ungranted_repository_refuses(rig, checkout, monkeypatch, capsys) -> None:
+    estate, calls = rig
+    _second_package(checkout, "AlobarQuest/ungranted-b", "ungranted-b-npm-zod")
+
+    assert run(["--submit", "--repository", "AlobarQuest/ungranted-b"]) == EXIT_UNUSABLE
+
+    assert "does not grant dependency_updates" in capsys.readouterr().err
+    assert calls == [] and estate.proposals == []
+
+
+def test_the_grant_check_folds_case(rig, monkeypatch, capsys) -> None:
+    _grant(monkeypatch, "alobarquest/INFRAOPS-mcp-server")
+
+    assert run(["--repository", "ALOBARQUEST/infraops-mcp-server"]) == EXIT_OK
+
+    assert "infraops-mcp-server#" in capsys.readouterr().out
+
+
+def test_a_remediating_grant_leaves_an_empty_population_and_exits_unusable(
+    rig, monkeypatch, capsys
+) -> None:
+    members = [_member("AlobarQuest/infraops-mcp-server", dependency_updates="remediating")]
+    monkeypatch.setattr(cli, "read_members_from_environment", lambda **_: members)
+
+    assert run([]) == EXIT_UNUSABLE
+
+    assert "[NOT GRANTED]" in capsys.readouterr().out

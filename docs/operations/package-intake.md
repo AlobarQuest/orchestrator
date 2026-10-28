@@ -83,8 +83,12 @@ Exit codes: 0 clean, 1 tool failure, 2 unusable input, 3 a record needs a person
 carried is not a finding; one it could not prepare, or one the orchestrator refused, is.
 
 Before carrying, the pass judges each record (`src/work_carrier/workability.py`). A package with a
-target repository is carried only when the repository opts in, is capable, and the permissions
-suffice. A package that names no repository is held under exit 2, with one exception:
+target repository is carried only when the SDS member record grants that repository the service
+for the record's change class (`dependency_updates` for `dependency-update`, else `app_changes`;
+state `granted`, member not retired, case-folded), it is capable, and the permissions suffice. The
+member record is read first on every pass with the observer bearer (`SDS_MEMBERS_OBSERVER_TOKEN`,
+fetched by the launcher even on a bare run); when it cannot be read the pass exits 2 and registers
+nothing. `factory-target.toml` is no longer read. A package that names no repository is held under exit 2, with one exception:
 
 **Standing operational packages (ADR-0054).** A package whose `profile` is
 `non-software-operational` (for example, one rotation package per credential) is asked three other
@@ -92,7 +96,7 @@ questions, and each answers yes or no:
 
 - `profile_fields.standing` is `true`;
 - its id is in `STANDING_OPERATIONAL_PACKAGES` in `workability.py`. This is the opt-in, because
-  there is no repository to hold a `factory-target.toml`. Adding a package is a reviewed change to
+  there is no repository to hold a member-record grant. Adding a package is a reviewed change to
   the carrier;
 - its declared `reach` is non-empty and lies within `external_system`, `operator_machine` and
   `live_estate`.

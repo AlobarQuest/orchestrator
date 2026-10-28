@@ -59,7 +59,7 @@ changes from a traceback to the program's own error.
   for the IDNA case, which a mock transport cannot exercise.
 - Three clients stay outside it: `revision_watcher/estate.py`, `tracker_projection_adapter/tracker.py`
   and `deploy_watcher/transcription_currency.py`.
-- `work_carrier/declaration.py` stays outside it. It composes a GitHub path from authored text,
+- `membership_check/declaration.py` stays outside it. It composes a GitHub path from authored text,
   so it builds the request and checks the path httpx actually built, after dot-segment
   resolution; the shared client checks the path it was given. That check is stronger, and the
   shared client does not offer it.

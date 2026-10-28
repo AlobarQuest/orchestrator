@@ -16,8 +16,8 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 
+from membership_check.declaration import DeclarationSource
 from sds_members.client import Member
-from work_carrier.declaration import DeclarationSource
 
 
 @dataclass(frozen=True)

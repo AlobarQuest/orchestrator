@@ -1,9 +1,12 @@
 """Should the SDS work on this repository at all? Asked at the carry, and it DECIDES.
 
 Devon's rule, 2026-09-11: a repository is workable by the SDS when all three of
-these hold -- it OPTS IN (`factory-target.toml` declares `factory_target =
-true`), the conformance kit says it is CAPABLE, and the permissions needed to do
-the work are SUFFICIENT. "The intent was always to have SDS decide when starting
+these hold -- it is GRANTED (the SDS member record grants the service that
+covers the record's change class, in state `granted`, on a member that is not
+retired), the conformance kit says it is CAPABLE, and the permissions needed to
+do the work are SUFFICIENT. The grant replaced the repository's own
+`factory-target.toml` as the scope authority (bridge layer Part 2); the file is
+no longer read here. "The intent was always to have SDS decide when starting
 a work package to check and make sure it should."
 
 **IT USED TO ONLY REPORT, AND THAT INCREMENT'S SAFETY ARGUMENT IS NOW SPENT.** It
@@ -37,7 +40,7 @@ hard-coded by the producer, because that is where the packages live. The
 repository the factory would WORK IN is the approved package's own
 `profile_fields.target_repo`, carried into the intake payload's enforcement
 snapshot. Keying on either field the record carries would judge every carry
-against `intent-packages`, which opts in and is capable, so the check would pass
+against `intent-packages`, which is granted and capable, so the check would pass
 everything forever while looking like a gate.
 
 **A LOOKUP THAT FAILS IS NOT A REFUSAL.** `portfolio.json` keys projects by
@@ -69,7 +72,7 @@ The three repository questions have nothing to be asked of, so for this profile
 they are replaced, and each answers YES or NO, never UNKNOWN: the package
 declares itself STANDING (`profile_fields.standing is True`), its id is on
 `STANDING_OPERATIONAL_PACKAGES` (the opt-in, held here because there is no
-repository to hold a `factory-target.toml`), and its declared `reach` lies
+repository to hold a member-record grant), and its declared `reach` lies
 wholly within `OPERATIONAL_REACH`. All three YES is `OPERATIONAL`, which is
 carried; any NO is `NOT WORKABLE`, a finding. The branch keys on the PROFILE,
 never on the missing repository: a `dependency-update` package that names no
@@ -86,12 +89,17 @@ import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
-from work_carrier.declaration import Declaration, DeclarationSource, from_environment
+from sds_members.client import SERVICES, Member
+from sds_members.populations import granted as granted_repositories
+from sds_members.populations import service_for_change_class
 
 DEFAULT_PORTFOLIO = "~/.portfolio/portfolio.json"
 PORTFOLIO_ENV = "WORK_CARRIER_PORTFOLIO"
+# The nightly sweep writes the file at 03:00 and the carrier runs at 07:05, so 48 hours tolerates
+# one missed scan and refuses after two (ruling 5). A plain int with a real value and no off switch.
+PORTFOLIO_MAX_AGE_HOURS: Final = 48
 
 # The check ids the conformance kit publishes, mirrored from project-standards
 # `src/portfolio/factory_checks.py::FACTORY_CHECKS` and `onboard_checks`'
@@ -104,9 +112,9 @@ PERMISSION_CHECKS = ("factory.pat_access",)
 
 OPERATIONAL_PROFILE = "non-software-operational"
 
-# THE OPT-IN FOR WORK THAT HAS NO REPOSITORY. A repository opts in with its own
-# `factory-target.toml` (ADR-0015); a standing operational package has no repository
-# to hold that file, so its opt-in is declared HERE, beside the other literals this
+# THE OPT-IN FOR WORK THAT HAS NO REPOSITORY. A repository is granted in the SDS
+# member record; a standing operational package has no repository
+# to hold a grant, so its opt-in is declared HERE, beside the other literals this
 # program holds, and widening it is a reviewed diff to the lane that acts on it --
 # which is what a standing-authority change should cost. Not in intent-packages,
 # because a package that could opt itself in would be no opt-in at all.
@@ -198,7 +206,7 @@ class Workability:
         """Three-valued AND: a definite NO decides, and an UNKNOWN never can.
 
         A false term makes a conjunction false whatever else is unknown, so a
-        repository that has declared `factory_target = false` would be refused
+        repository the member record does not grant would be refused
         even if nothing could be learned about its capability -- it answered.
         What cannot happen is the reverse: no combination of UNKNOWNs produces a
         refusal, which is the property that keeps a mapping miss from becoming
@@ -219,6 +227,9 @@ class Portfolio:
     projects: tuple[dict[str, Any], ...]
     age_seconds: float | None
     detail: str
+    # Past PORTFOLIO_MAX_AGE_HOURS: the file is not read, so every capability and permission term
+    # is UNKNOWN for a reason that names the age, never a `pass` from a sweep that stopped running.
+    stale: bool = False
 
 
 def _describe_age(seconds: float) -> str:
@@ -240,13 +251,11 @@ def load_portfolio(path: Path | None = None, *, now: float | None = None) -> Por
     Measured 2026-09-11: the scan ran at 03:00 and recorded `runner.caller: pass`
     for a repository whose caller workflow had been deleted on the remote.
 
-    **NOTHING BOUNDS THAT AGE, AND SINCE THE ANSWER DECIDES, A STALE `pass` NOW
-    AUTHORISES.** The opt-in constraint was deliberately moved to a live GitHub
-    read for exactly this hazard; the other two still rest on this file. The age
-    is printed on the line that authorises the carry, which is the most this
-    module can do without inventing a threshold -- what age is too old is a
-    decision about the estate's scan cadence, and refusing on one would hold
-    every record on any morning the sweep had not run.
+    THE AGE IS BOUNDED. Past `PORTFOLIO_MAX_AGE_HOURS` the file is not read as an answer
+    at all: the result is `stale`, carries no projects, and every capability and permission
+    term is UNKNOWN, so a stale `pass` can no longer authorise a carry. The grant constraint
+    reads the live SDS member record and is unaffected. The age is still printed on the
+    line that authorises the carry.
     """
     resolved = path or Path(os.environ.get(PORTFOLIO_ENV) or DEFAULT_PORTFOLIO).expanduser()
     try:
@@ -254,6 +263,12 @@ def load_portfolio(path: Path | None = None, *, now: float | None = None) -> Por
         age = (now if now is not None else time.time()) - resolved.stat().st_mtime
     except OSError as error:
         return Portfolio((), None, f"{resolved} could not be read: {error}")
+    if age > PORTFOLIO_MAX_AGE_HOURS * 3600:
+        detail = (
+            f"{resolved.name} is {age / 3600:.0f}h old, past the {PORTFOLIO_MAX_AGE_HOURS}h "
+            f"limit, so it is not read ({_STALE_SOURCE})"
+        )
+        return Portfolio((), age, detail, stale=True)
     try:
         document = json.loads(raw)
     except ValueError as error:
@@ -293,6 +308,8 @@ def project_for(portfolio: Portfolio, repository: str) -> tuple[dict[str, Any] |
     resolved arbitrarily, because whichever was picked would be a guess about
     which repository the estate measured.
     """
+    if portfolio.stale:
+        return None, portfolio.detail
     wanted = repository.split("/")[-1].strip().lower()
     if not wanted:
         return None, f"{repository!r} names no repository"
@@ -338,7 +355,7 @@ def _from_checks(name: str, project: dict[str, Any], wanted: tuple[str, ...]) ->
     does not bite TODAY, and the reason is worth writing down rather than
     rediscovering: the kit marks `runner.caller` not-applicable exactly when a
     repository declares `factory_target = false`, so the two co-occur and the
-    definite NO on opt-in decides first. A check that became not-applicable for
+    definite NO on the grant decides first. A check that became not-applicable for
     some OTHER reason would hold a record under a code meaning "a later pass may
     carry it", which would be the same category error again.
 
@@ -369,16 +386,31 @@ def _from_checks(name: str, project: dict[str, Any], wanted: tuple[str, ...]) ->
     return Constraint(name, YES, f"{named} passes" if len(wanted) == 1 else f"{named} all pass")
 
 
-def _opt_in(declaration: Declaration) -> Constraint:
-    if declaration.target is None:
-        return Constraint("opts in", UNKNOWN, declaration.detail)
-    return Constraint("opts in", YES if declaration.target else NO, declaration.detail)
+def _granted(repository: str, granted: bool, service: str) -> Constraint:
+    if granted:
+        return Constraint("granted", YES, f"the member record grants {service} on {repository}")
+    return Constraint(
+        "granted",
+        NO,
+        f"the member record does not grant {service} on {repository} (absent, not `granted`, "
+        "or the member is retired)",
+    )
+
+
+def grants_by_service(members: list[Member]) -> dict[str, frozenset[str]]:
+    """Per service, the case-folded repositories whose grant is `granted` on a live member."""
+    return {
+        service: frozenset(name.lower() for name in granted_repositories(members, service))
+        for service in SERVICES
+    }
 
 
 def assess(
     repository: str | None,
-    declaration: Declaration,
+    granted: bool,
     portfolio: Portfolio,
+    *,
+    service: str = "app_changes",
 ) -> Workability:
     """The three constraints for one repository. Total, and it decides nothing."""
     if repository is None:
@@ -399,7 +431,7 @@ def assess(
         return Workability(
             None,
             tuple(
-                Constraint(name, UNKNOWN, unknown) for name in ("opts in", "capable", "permissions")
+                Constraint(name, UNKNOWN, unknown) for name in ("granted", "capable", "permissions")
             ),
         )
     project, why = project_for(portfolio, repository)
@@ -407,7 +439,7 @@ def assess(
         return Workability(
             repository,
             (
-                _opt_in(declaration),
+                _granted(repository, granted, service),
                 Constraint("capable", UNKNOWN, why),
                 Constraint("permissions", UNKNOWN, why),
             ),
@@ -415,7 +447,7 @@ def assess(
     return Workability(
         repository,
         (
-            _opt_in(declaration),
+            _granted(repository, granted, service),
             _from_checks("capable", project, CAPABILITY_CHECKS),
             _from_checks("permissions", project, PERMISSION_CHECKS),
         ),
@@ -503,19 +535,6 @@ def target_repository(payload: dict[str, Any]) -> str | None:
     return target.strip()
 
 
-def _declaration_for(repository: str | None, source: DeclarationSource | None) -> Declaration:
-    if repository is None:
-        return Declaration(None, "no repository to ask about")
-    if source is None:
-        return Declaration(
-            None,
-            "no GitHub credential, so the declaration could not be read; set "
-            "WORK_CARRIER_GITHUB_TOKEN (the checkout is NOT a substitute -- nothing pulls it, "
-            "and a stale tree reports a repository that has opted in as one that has not)",
-        )
-    return source.declaration(repository)
-
-
 _CONSEQUENCE = {
     NOT_WORKABLE: (
         "NOT CARRIED — a constraint answered no, so this record can never be carried while "
@@ -556,7 +575,7 @@ def judge(
     subjects: list[tuple[str, dict[str, Any]]],
     out,
     *,
-    source: DeclarationSource | None = None,
+    grants: dict[str, frozenset[str]],
     portfolio: Portfolio | None = None,
 ) -> tuple[str, ...]:
     """Decide, per subject, whether the carry may proceed -- and say why either way.
@@ -578,40 +597,28 @@ def judge(
     different question from a failure WITHIN one subject, which holds it -- see
     the ordering note in `_judge`.
 
-    `source` absent means OPEN ONE FROM THE ENVIRONMENT, which answers `None`
-    when this machine holds no GitHub credential -- and every repository then
-    reports "could not tell", which is honest, is not a refusal, and now holds
-    the record. A caller that injects a reader keeps it; one opened here is
-    closed here.
+    `grants` is `grants_by_service` over a member record the CALLER read: an unreadable
+    record is the caller's to stop on, because there is no honest per-subject answer to give
+    from a record nobody has.
     """
     decisions: list[str] = []
-    opened = None
     try:
-        if source is None:
-            opened = source = from_environment()
-        _judge(subjects, out, source, portfolio, decisions)
+        _judge(subjects, out, grants, portfolio, decisions)
     except Exception as error:  # noqa: BLE001 - see the docstring: it may not raise
-        # THE TYPE NAME ONLY, for the reason `declaration.py` gives one field
-        # over: the credential is read inside this guard and reaches an
-        # exception's repr by way of the client's own headers, and this stream is
-        # a log file nobody is watching when it is written. Measured: a
-        # non-ASCII `WORK_CARRIER_GITHUB_TOKEN` makes client construction raise a
-        # `UnicodeEncodeError` whose repr carries `Bearer <token>` verbatim.
+        # THE TYPE NAME ONLY: an exception's repr can carry a credential, and this
+        # stream is a log file nobody is watching when it is written.
         print(
             f"{_tag(_HEADER)} the workability judgment failed, so nothing it had not already "
             f"decided is carried: {type(error).__name__}",
             file=out,
         )
-    finally:
-        if opened is not None:
-            opened.close()
     return tuple(decisions) + (UNJUDGED,) * (len(subjects) - len(decisions))
 
 
 def _judge(
     subjects: list[tuple[str, dict[str, Any]]],
     out,
-    source: DeclarationSource | None,
+    grants: dict[str, frozenset[str]],
     portfolio: Portfolio | None,
     decisions: list[str],
 ) -> None:
@@ -639,7 +646,12 @@ def _judge(
                 verdict = assess_operational(payload)
             else:
                 repository = target_repository(payload)
-                verdict = assess(repository, _declaration_for(repository, source), loaded)
+                profile = payload.get("profile")
+                service = service_for_change_class(profile if isinstance(profile, str) else "")
+                held = repository is not None and repository.lower() in grants.get(
+                    service, frozenset()
+                )
+                verdict = assess(repository, held, loaded, service=service)
             # PRINTED BEFORE IT IS RECORDED, and the order is fail-closed rather
             # than tidy. Writing the line is part of answering: a record carried
             # under a reason that never finished printing is a carry nobody can

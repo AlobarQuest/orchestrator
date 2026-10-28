@@ -39,7 +39,7 @@ from orchestrator.services.lifecycle.claims import (
     renew_claim,
 )
 from tests.services.estate_doubles import inert_source
-from tests.services.target_doubles import declared_source
+from tests.services.target_doubles import granted_source
 from tests.services.test_claims import worker
 from tests.services.test_dispatch import (
     FakeGitHubDispatcher,
@@ -439,7 +439,7 @@ def test_the_off_switch_outranks_a_reach_policy_has_spoken_about(
         settings(),
         github,
         inert_source(),
-        target_source=declared_source(),
+        grant_source=granted_source(),
     )
     refused = dispatch_work_unit(
         migrated_session,
@@ -447,7 +447,7 @@ def test_the_off_switch_outranks_a_reach_policy_has_spoken_about(
         settings(enabled=False),
         github,
         inert_source(),
-        target_source=declared_source(),
+        grant_source=granted_source(),
     )
 
     assert (admitted.status, admitted.reason_code) == ("dispatched", None)

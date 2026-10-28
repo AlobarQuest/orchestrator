@@ -15,9 +15,9 @@ from bump_proposer.landing_policy import InertLanding, LandingPolicyError
 from fork_sync.watch import Unreadable
 from membership_check import cli
 from membership_check.consistency import Report, Scope, canonical, check, factory_targets
+from membership_check.declaration import Declaration
 from pin_watcher.github import PinWatcherError
 from sds_members.client import SERVICES, Member
-from work_carrier.declaration import Declaration
 
 OWNED = ["AlobarQuest/orchestrator", "AlobarQuest/brain", "AlobarQuest/rtk", "AlobarQuest/notes"]
 

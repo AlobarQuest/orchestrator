@@ -23,6 +23,10 @@ The wire value is what the API, the database and the code use. The label is for 
 `rollouts` is the Deploys service. The word guards (ADR-0051) refuse the other spelling in code under
 `src/orchestrator/`, so "Deploys" appears only in the review template and in documents.
 
+`change-proposer` selects the repositories granted `rollouts`, narrowed to those whose rollout
+workflow and rollback plan are transcribed; it reads the record once per pass and exits 2 when it
+cannot (`scripts/run-change-proposer.sh` fetches the observer bearer on every run, dry or acting).
+
 Grant states: `not_assessed`, `remediating`, `granted`, `not_applicable`, `withdrawn`. Member states:
 `onboarding`, `member`, `retired`. A repository is keyed `owner/name` as GitHub spells it, matched
 case-insensitively.

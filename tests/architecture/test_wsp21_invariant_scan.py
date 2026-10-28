@@ -383,12 +383,6 @@ OUTBOUND_ALLOWLIST = {
     # shape) would put that answer outside the transaction that records the admission decision.
     # The credential is READ-ONLY and App Brain scopes it to two read paths.
     Path("src/orchestrator/services/landing/estate_landing.py"),
-    # ADR-0015. Admission reads ONE file -- the target repository's own `factory-target.toml` --
-    # and, when that answers 404, the repository beneath it, so an absence is confirmed rather
-    # than believed. It writes nothing, borrows github_app.py's installation token, and replaced a
-    # hand-maintained allowlist; the read belongs inside the transaction that records the decision
-    # for the reason the two readers above give.
-    Path("src/orchestrator/services/execution/factory_target.py"),
     # ADR-0019 Increment 3. Admission asks change-manager one question about the pull request it
     # would land -- has this change been routed through the estate's record, and did somebody
     # approve it -- and writes nothing. Same justification as the two above: the answer decides an
@@ -461,10 +455,11 @@ OUTBOUND_ALLOWLIST = {
     # client cannot enrol a repository. Two routes, held by tests/sds_members/test_client.py.
     Path("src/sds_members/client.py"),
     Path("src/work_carrier/orchestrator_client.py"),
-    # The third file of the same program, and the first of its three that speaks to neither
-    # service. It makes ONE request -- a repository's own `factory-target.toml` on its default
-    # branch, GitHub's contents route -- to answer whether that repository has opted in to being
-    # worked on by the factory at all (ADR-0015). It is READ-ONLY by shape: one public method, one
+    # Now `membership_check`'s: the declaration reader, formerly the work carrier's third file and
+    # the first of its three that speaks to neither service. It makes ONE request -- a
+    # repository's own `factory-target.toml` on its default branch, GitHub's contents route -- to
+    # answer whether that repository has opted in to being worked on by the factory at all
+    # (ADR-0015). It is READ-ONLY by shape: one public method, one
     # anchored route, and a repository name that would compose anything else is refused before the
     # request leaves.
     #
@@ -474,7 +469,7 @@ OUTBOUND_ALLOWLIST = {
     # checkout's word would have reported all five repositories that declare `true` as not having
     # opted in, which is the answer inverted for the whole population and in the direction that
     # looks like a working refusal.
-    Path("src/work_carrier/declaration.py"),
+    Path("src/membership_check/declaration.py"),
     # ADR-0029. `work_watcher` is the work lane's watcher, a SEPARATE program that shares the
     # carry's invocation and runs before it. TWO files, one route each. The change-manager
     # one is the only MUTATING egress either work-lane program has, and it is one-directional
@@ -547,8 +542,10 @@ OUTBOUND_ALLOWLIST = {
     # where landing redeploys, POSTs to exactly two change-manager routes -- the proposal ingress
     # and a record's deploy-retirement -- and GETs one, the item listing. It cannot approve,
     # claim, post an outcome, hand off or sync, and that bound is enforced twice over: by the
-    # credential's scope at change-manager, and here in code before a request is built. The full
-    # surface is stated in tests/architecture/test_bridge_edges.py. Its egress is not the
+    # credential's scope at change-manager, and here in code before a request is built. It also
+    # reads the member record (`GET /api/v1/members`, through `sds_members.client`, listed above)
+    # for the `rollouts` grant that scopes the pass. The full surface is stated in
+    # tests/architecture/test_bridge_edges.py. Its egress is not the
     # orchestrator's.
     Path("src/change_proposer/change_manager.py"),
     # ADR-0030. The machine-activation sweep is a SEPARATE program (ADR-0002's shape), out of

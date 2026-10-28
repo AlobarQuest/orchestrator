@@ -64,8 +64,8 @@
 # success. The worst code of the two phases is this script's code.
 #
 # IT DECIDES WHETHER SDS SHOULD WORK ON EACH TARGET REPOSITORY AT ALL, AND HOLDS WHAT IT CANNOT
-# ANSWER YES FOR. A repository is workable when it opts in (`factory-target.toml`), the conformance
-# kit says it is capable, and the permissions are sufficient; a record whose repository fails any
+# ANSWER YES FOR. A repository is workable when the SDS member record grants it the service for the
+# record's change class, the conformance kit says it is capable, and the permissions are sufficient; a record whose repository fails any
 # of the three is NOT registered, with the reason printed. The check shipped reporting only so the
 # estate could see what it would refuse before anything refused on it -- it refused nothing, across
 # an empty approved queue and a hand assessment of all eight factory repositories, and this is the
@@ -75,7 +75,7 @@
 # definite NO is a FINDING (3): an approved record that can never be carried while the repository
 # says what it says, waiting on a person. An UNKNOWN is unusable input (2): nothing is wrong with
 # the record and a later pass may carry it. **2 OUTRANKS 3 in the ranking below**: a lane that
-# cannot tell whether a repository opted in is a lane that has stopped being able to do its job.
+# cannot tell whether a repository is granted is a lane that has stopped being able to do its job.
 #
 # A CARRIED RECORD IS NOT A FINDING, and neither is one merely prepared on a pass that was not
 # asked to register, nor one the carry finds it has ALREADY carried. Making any of them one
@@ -105,6 +105,10 @@ set -uo pipefail
 CHANGE_MANAGER_UUID="314f276d-55ca-4ddc-a24d-b4a3013508cd"
 # The orchestrator SYSTEM bearer, in the `SDS Operator` project.
 ORCHESTRATOR_SYSTEM_UUID="221a48d5-3f29-4898-b300-b4820140c880"
+# The orchestrator OBSERVER bearer, which reads the member record (`GET /api/v1/members`) the carry
+# judges every record by. Fetched on EVERY run, a bare one included: the grant is the scope
+# authority, so a pass that cannot read it carries nothing and exits 2.
+OBSERVER_UUID="f793576f-e9aa-4f9d-8089-b4a000b9e2d5"
 # ADR-0029. The PROPOSE-scoped change-manager bearer the retirement writes with, in the same
 # BWS project as the read bearer above and read by the same broad identity. The scope reaches
 # more than the retirement route; `work_watcher/change_manager.py` allowlists exactly one path,
@@ -220,25 +224,23 @@ else
 fi
 export WORK_WATCHER_ORCHESTRATOR_TOKEN="${WORK_CARRIER_ORCHESTRATOR_TOKEN:-}"
 
-# THE DECLARATION CREDENTIAL, and it is NOT from BWS -- it is `gh auth token`, the same source
-# the ledger, the deploy watcher and the change proposer use for their GitHub reads. The carry's
-# workability report asks each target repository for its own `factory-target.toml` (ADR-0015), on
-# GitHub rather than in the checkout: nothing pulls the working trees on this machine, so seven of
-# eight did not carry the file hours after every declaration had landed, and a reader that took the
-# checkout's word would report every repository that HAS opted in as one that has not.
-#
-# ABSENT IS NOT FATAL AND IS NO LONGER FREE. This header promises the bare invocation works on any
-# machine, and it still does: a missing GitHub credential makes every repository answer "could not
-# tell", so the pass runs, reports, carries nothing and exits 2. That is the honest outcome -- a
-# lane that cannot tell whether a repository opted in must not carry work into it -- and it is why
-# this stays a warning rather than a FATAL: the pass still says why. On the scheduled machine
-# `gh auth token` answers, so this is the shape an operator sees elsewhere, not here. `gh` not
-# being installed must not take the pass down either.
-#
-# THE WATCHER READS IT TOO (ruling B1): one GET of the pull request a live work record names, to
-# report a record whose pull request was closed or merged by hand. Same credential, same name --
-# a second variable would be a second name for one token. Absent, the watcher prints what it could
-# not assess and exits 2, for the same reason the carry does.
+# THE MEMBER-RECORD BEARER, for every run. Absent on a bare pass is not fatal here (the carry
+# stops with exit 2 and says why); a `--register` pass would have stopped already at its own
+# identity check above, so an empty token here is a failed fetch and is named as one.
+if [ -n "$SDS_IDENTITY" ] && [ -z "${SDS_MEMBERS_OBSERVER_TOKEN:-}" ]; then
+  SDS_MEMBERS_OBSERVER_TOKEN="$(sds_bws_value "$OBSERVER_UUID" "$SDS_IDENTITY")"
+fi
+export SDS_MEMBERS_OBSERVER_TOKEN="${SDS_MEMBERS_OBSERVER_TOKEN:-}"
+if [ "$_wants_register" -eq 1 ] && [ -z "$SDS_MEMBERS_OBSERVER_TOKEN" ]; then
+  sds_outcome_fail "FATAL: could not read the orchestrator observer credential from BWS"
+fi
+
+# THE GITHUB CREDENTIAL, and it is NOT from BWS -- it is `gh auth token`, the same source the
+# ledger, the deploy watcher and the change proposer use for their GitHub reads. ONLY THE WATCHER
+# READS IT (ruling B1): one GET of the pull request a live work record names, to report a record
+# whose pull request was closed or merged by hand. The carry no longer does; it judges scope by the
+# member record's grant. Absent, the watcher prints what it could not assess and exits 2, and
+# `gh` not being installed must not take the pass down.
 if [ -z "${WORK_CARRIER_GITHUB_TOKEN:-}" ]; then
   WORK_CARRIER_GITHUB_TOKEN="$(gh auth token 2>/dev/null || true)"
   export WORK_CARRIER_GITHUB_TOKEN

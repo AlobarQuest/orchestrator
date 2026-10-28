@@ -1,5 +1,9 @@
 """Does a repository say the factory may be dispatched work in it? (ADR-0015.)
 
+**NO LONGER AUTHORITY.** The SDS member record's grant decides scope (Part 2 of the bridge
+layer); the carrier and dispatch admission stopped reading this file. `membership_check` reads it
+to say whether the file still agrees with the record, so it lives here.
+
 The declaration lives in `factory-target.toml` at the repository root and is
 owned by the repository itself -- that is the whole point of ADR-0015, which
 rejected a list inside the kit "that the affected repository cannot see". This

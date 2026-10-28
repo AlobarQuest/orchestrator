@@ -32,12 +32,16 @@ what each rollout workflow actually attests, and the rollback plan from a transc
 plan. Both fail closed: bytes nobody classified, or a repository nobody wrote a plan for, produce
 a refusal and a finding rather than a guessed record.
 
-**SCOPE IS THE TRANSCRIBED SET, and that is a deliberate choice worth stating.** A repository is in
-scope when somebody has transcribed both its rollout workflow and its rollback plan. The estate's
-authority on *does landing redeploy* is App Brain, and the orchestrator's admission term reads it
-there -- but a transcription is a stronger, human-made statement than a classification, and asking
-App Brain here would put a third credential in this program to re-derive a fact the transcription
-already implies. If the two ever disagree, the admission term is the one that gates.
+**SCOPE IS THE MEMBER RECORD'S `rollouts` GRANT, NARROWED TO THE TRANSCRIBED SET.** A repository
+is in scope when the SDS member record grants it `rollouts` AND somebody has transcribed both its
+rollout workflow and its rollback plan. The grant is the authority on which repositories this lane
+works; the transcription is what makes a granted repository derivable at all, since a proposal's
+criteria and rollback plan are read from it and a guess is refused. A grant with no transcription
+is out of scope here, and `_scope_sweep` reports a transcription that has gone stale. The record
+is read once at the start of a pass; an unreadable record stops the pass (exit 2), because no
+grants to read is not an empty population. The estate's authority on *does landing redeploy* is
+App Brain, and the orchestrator's admission term reads it there; if the two ever disagree, the
+admission term is the one that gates.
 
 **AND IT IS A SET THAT CAN SHRINK WITHOUT ANYONE SAYING SO**, which is why every pass now begins
 by asking whether it still holds. The transcription keys on the BYTES of another repository's
@@ -75,6 +79,8 @@ from change_proposer.factory_marking import FACTORY_TITLE_PREFIX, factory_unit_i
 from deploy_watcher.github import GitHubReader, ReadError
 from deploy_watcher.transcription_currency import Row, audit
 from deploy_watcher.workflows import REGISTRY, ROLLOUT_WORKFLOWS, attestation_for
+from sds_members.client import Member, MembersUnreadable, read_members_from_environment
+from sds_members.populations import granted as granted_repositories
 
 
 class BlobSource(Protocol):
@@ -211,10 +217,18 @@ class Outcome:
     detail: str
 
 
-def _in_scope() -> list[str]:
-    """Repositories with BOTH a transcribed rollout workflow and a transcribed rollback plan."""
+def _in_scope(members: list[Member]) -> list[str]:
+    """Repositories granted `rollouts` that ALSO have a transcribed rollout workflow and rollback.
+
+    The grant is the authority; the transcription is what makes a granted repository derivable.
+    A grant with nothing transcribed is not proposable, and `_scope_sweep` audits the
+    transcriptions whoever is granted.
+    """
+    granted = {name.lower() for name in granted_repositories(members, "rollouts")}
     scope = []
     for repository in sorted(ROLLOUT_WORKFLOWS):
+        if repository.lower() not in granted:
+            continue
         try:
             rollback_for(repository)
         except CriteriaUnavailable:
@@ -522,17 +536,36 @@ def _retire_one(
     return Outcome(repository, number, "retired", f"item {item_id} status={retired.get('status')}")
 
 
-def _resolve_scope(requested: list[str] | None) -> list[str] | None:
+def _resolve_scope(requested: list[str] | None, members: list[Member]) -> list[str] | None:
     """The repositories to consider, or None when one was named that is out of scope."""
-    scope = _in_scope()
+    scope = _in_scope(members)
     if not requested:
         return scope
     wanted = {r.lower() for r in requested}
     unknown = wanted - set(scope)
     if unknown:
-        print(f"out of scope (no transcribed workflow or plan): {sorted(unknown)}")
+        print(
+            "out of scope (needs a `rollouts` grant in the member record, a transcribed "
+            f"rollout workflow and a transcribed rollback plan): {sorted(unknown)}"
+        )
         return None
     return [r for r in scope if r in wanted]
+
+
+def _read_members() -> list[Member] | None:
+    """The member record, read once before anything is judged or written, or None when unreadable.
+
+    An unreadable record is unusable input, never a smaller population: with no grants to read,
+    every repository would look ungranted.
+    """
+    try:
+        return read_members_from_environment()
+    except MembersUnreadable as error:
+        print(
+            f"[UNUSABLE] the member record could not be read, so nothing is proposed: {error}",
+            file=sys.stderr,
+        )
+        return None
 
 
 def run(argv: list[str] | None = None) -> int:
@@ -557,7 +590,8 @@ def run(argv: list[str] | None = None) -> int:
         print("CHANGE_PROPOSER_CHANGE_MANAGER_TOKEN is unset; --submit needs it", file=sys.stderr)
         return EXIT_UNUSABLE
 
-    scope = _resolve_scope(args.repository)
+    members = _read_members()
+    scope = None if members is None else _resolve_scope(args.repository, members)
     if scope is None:
         return EXIT_UNUSABLE
 

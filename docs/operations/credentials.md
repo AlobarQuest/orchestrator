@@ -229,7 +229,9 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   given its own copy (2026-08-29), so the holding set is now eight — see the #153 bullet.
   Neither set is derivable from the other.
   **Correction, 2026-09-15: the allowlist part no longer exists.** Dispatch admission reads the
-  target's own `factory-target.toml` instead (ADR-0015 amendment 4; driving-a-unit.md #301). The
+  target's own `factory-target.toml` instead (ADR-0015 amendment 4; driving-a-unit.md #301).
+  **Correction, 2026-10-28:** it now reads the member record's grant (ADR-0058 amendment); the
+  grant is admission's bound on the App's reach, replacing the declaration. The
   full ordered procedure, with the PAT access list as one step, is
   `docs/operations/onboarding-a-target.md`.
 
@@ -348,6 +350,8 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   That trigger had not fired as of 2026-09-02. **It fired on 2026-09-15**, when dispatch admission
   began reading the declaration (ADR-0015 amendment 4, and the bullet at the end of this file).
   Devon chose that with this ruling named, and did not re-decide the ruling itself.
+  Since 2026-10-28 the bound at admission is the member record's grant (ADR-0058 amendment), which
+  replaces the declaration there; the ruling holds because the call site is still bounded.
   Two facts that make narrowing safe should it ever be chosen, measured the same day so nobody
   re-establishes them: the out-of-process lanes read GitHub with Devon's PAT (`gh auth token`), not
   this App, so the ledger and audit are unaffected; and `claude-octopus`'s `upstream-sync.yml`
