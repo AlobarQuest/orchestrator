@@ -39,6 +39,7 @@ CREDENTIALS = {
     "WORK_CARRIER_ORCHESTRATOR_TOKEN": "system-bearer",
     "SDS_MEMBERS_OBSERVER_TOKEN": "observer-bearer",
     "WORK_WATCHER_CHANGE_MANAGER_TOKEN": "propose-bearer",
+    "SDS_BRIDGE_ALERT_TOKEN": "sender-token",
 }
 
 _STUB = """#!/usr/bin/env bash
@@ -87,6 +88,8 @@ def _run(tree: Path, *args: str, watcher: int = 0, carrier: int = 0, **env_overr
     env = {
         **os.environ,
         **CREDENTIALS,
+        # An acting pass creates this; never the real home's.
+        "WORK_WATCHER_STATE_DIR": str(tree / "alert-state"),
         "PATH": _no_bws(tree),
         **env_overrides,
         "INVOCATION_LOG": str(log),

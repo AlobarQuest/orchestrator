@@ -423,6 +423,48 @@ def test_an_acting_carrier_whose_observer_bearer_is_unreadable_pings_fail(tmp_pa
     assert "found: subject" not in output
 
 
+# ---- the work watcher's sender token (bridge Part 3, Ruling 8) --------------------------------
+
+
+def test_an_acting_carrier_fetches_and_exports_the_sender_token(tmp_path: Path) -> None:
+    """Only the acting watcher sends, so only an acting pass fetches it."""
+    env_log = tmp_path / "env.txt"
+    rc, _, output = _run(tmp_path, CARRIER, "--register", ENV_LOG=str(env_log))
+    assert rc == 0, output
+    assert "SDS_BRIDGE_ALERT_TOKEN" in set(env_log.read_text().split())
+    fetches = (tmp_path / "bws.log").read_text().splitlines()
+    assert any(f"secret get {ALERT_UUID} " in f"{line} " for line in fetches)
+
+
+def test_a_bare_carrier_neither_fetches_nor_exports_the_sender_token(tmp_path: Path) -> None:
+    env_log = tmp_path / "env.txt"
+    rc, _, output = _run(tmp_path, CARRIER, ENV_LOG=str(env_log))
+    assert rc == 0, output
+    assert "SDS_BRIDGE_ALERT_TOKEN" not in set(env_log.read_text().split())
+    assert ALERT_UUID not in (tmp_path / "bws.log").read_text()
+    assert not (tmp_path / "home" / "Library").exists()
+
+
+def test_an_acting_carrier_creates_the_watchers_state_directory(tmp_path: Path) -> None:
+    env_log = tmp_path / "env.txt"
+    rc, _, output = _run(tmp_path, CARRIER, "--register", ENV_LOG=str(env_log))
+    assert rc == 0, output
+    assert "WORK_WATCHER_STATE_DIR" in set(env_log.read_text().split())
+    state = tmp_path / "home" / "Library" / "Application Support" / "sds" / "work-watcher"
+    assert state.is_dir()
+
+
+def test_an_acting_carrier_whose_sender_token_is_unreadable_never_runs(tmp_path: Path) -> None:
+    env_log = tmp_path / "env.txt"
+    rc, pings, output = _run(
+        tmp_path, CARRIER, "--register", BWS_FAIL_UUID=ALERT_UUID, ENV_LOG=str(env_log)
+    )
+    assert rc == 1, output
+    assert pings[1][0] == f"{PING_URL}/fail"
+    assert "sds-bridge alert sender token" in pings[1][1]
+    assert not env_log.exists()
+
+
 # ---- the installers' Healthchecks checks ------------------------------------------------------
 
 _INSTALL_CURL = """#!/usr/bin/env bash

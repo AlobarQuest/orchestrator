@@ -110,8 +110,9 @@ EDGES: dict[str, Edge] = {
         ),
         orchestrator=frozenset({("GET", "/api/v1/change-records/44/work")}),
         github=frozenset({("GET", "/repos/o/r/pulls/44")}),
-        alert_hub=frozenset(),
-        bearers=frozenset({PROPOSE_BEARER, READ_BEARER, SYSTEM_BEARER}),
+        # through alert_hub_client: ALERT_HUB_THROUGH
+        alert_hub=frozenset({("POST", "/v1/alerts")}),
+        bearers=frozenset({PROPOSE_BEARER, READ_BEARER, SYSTEM_BEARER, SDS_BRIDGE_ALERT_BEARER}),
     ),
 }
 
@@ -124,6 +125,7 @@ GITHUB_THROUGH: dict[str, tuple[str, str]] = {
 # A lane sending alerts through the shared client: (its module, the client it imports).
 ALERT_HUB_THROUGH: dict[str, tuple[str, str]] = {
     "bump_proposer": ("src/bump_proposer/alerts.py", "alert_hub_client"),
+    "work_watcher": ("src/work_watcher/alerts.py", "alert_hub_client"),
 }
 
 LAUNCHERS: dict[str, tuple[str, ...]] = {
@@ -287,7 +289,7 @@ PERMITS: dict[str, dict[str, Permits | None]] = {
         ),
         "orchestrator": lambda m, p: watcher_orchestrator._permits(m, p),
         "github": lambda m, p: watcher_github._permits(m, p),
-        "alert_hub": None,
+        "alert_hub": _alert_hub_permits,
     },
 }
 

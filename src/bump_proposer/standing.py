@@ -52,10 +52,9 @@ from pathlib import Path
 from typing import Any, Final, Protocol
 
 from landing_ledger.titles import Bump
+from standing_identity import DEFAULT_CHECKOUT, PROFILE, ecosystem_of, yaml_scalar
 
-DEFAULT_CHECKOUT: Final = Path.home() / "Projects" / "intent-packages"
 PACKAGES_REPOSITORY: Final = "AlobarQuest/intent-packages"
-PROFILE: Final = "dependency-update"
 HASH_FIXTURE: Final = Path("tests") / "fixtures" / "package_hashes.json"
 COMMAND_TIMEOUT_SECONDS: Final = 120.0
 
@@ -123,28 +122,6 @@ def checkout_root() -> Path:
 def _interpreter(root: Path) -> Path:
     override = os.environ.get("BUMP_PROPOSER_PACKAGES_PYTHON")
     return Path(override) if override else root / ".venv" / "bin" / "python"
-
-
-def yaml_scalar(text: str, key: str) -> str | None:
-    """One top-level-ish scalar, read without a YAML parser.
-
-    This program's third-party surface is `httpx` and nothing else -- the isolation test says
-    so -- and pulling in a YAML library to read four values from a file whose shape is fixed
-    would widen it for no gain. The four values read here are all plain unquoted scalars in a
-    document this producer and `factory create` are the only writers of.
-    """
-    match = re.search(rf"^\s*{re.escape(key)}:\s*(\S.*?)\s*$", text, re.MULTILINE)
-    if match is None:
-        return None
-    value = match.group(1)
-    # QUOTES ARE STRIPPED, and they are not decoration. A version like `1.13` is a FLOAT in
-    # YAML and `4` is an INT, so every version this repository's packages carry that could be
-    # read as a number is written quoted -- and a reader that kept the quotes would compare
-    # `'1.13'` against `1.13` and conclude the standing package carries a different bump on
-    # every pass, revising it forever.
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
-        return value[1:-1]
-    return value
 
 
 def discover(root: Path | None = None) -> dict[tuple[str, str], StandingPackage]:
@@ -355,15 +332,10 @@ def remove_if_untracked(directory: Path, root: Path) -> bool:
 def other_ecosystem(package: StandingPackage, tooling: str) -> str | None:
     """The tooling ecosystem this package was created for, when it is not `tooling`.
 
-    A standing package states no ecosystem field; its id does (`<repo name>-<ecosystem>-<slug>`,
-    intent-packages' `standing_package_id`). A package whose id names no tooling ecosystem answers
-    None, and is revised as before.
+    A package whose id names no tooling ecosystem answers None, and is revised as before.
     """
-    name = package.target_repository.rsplit("/", 1)[-1].lower()
-    for other in TOOLING.values():
-        if other != tooling and package.package_id.startswith(f"{name}-{other}-"):
-            return other
-    return None
+    ecosystem = ecosystem_of(package.package_id, package.target_repository)
+    return ecosystem if ecosystem != tooling else None
 
 
 def write_versions(package: StandingPackage, bump: Bump) -> None:

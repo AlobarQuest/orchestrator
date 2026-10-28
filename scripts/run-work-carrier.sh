@@ -114,6 +114,10 @@ OBSERVER_UUID="f793576f-e9aa-4f9d-8089-b4a000b9e2d5"
 # more than the retirement route; `work_watcher/change_manager.py` allowlists exactly one path,
 # which is where that bound is asserted and tested.
 CHANGE_MANAGER_PROPOSE_UUID="acccb346-4baa-43ec-a1d4-b4a400c048ee"
+# The `sds-bridge` sender's alert-hub token (bridge Part 3), BWS `ALERT_HUB_SENDER_TOKEN_SDS_BRIDGE`
+# in `SDS Operator`, listed in `.bws-secrets.toml`. Only the watcher uses it, to hold one alert open
+# for a record whose work has a failed unit; the carry never does.
+SDS_BRIDGE_ALERT_UUID="b415d03b-f92d-46b1-8a9d-b4f10103df49"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # ACTIVATION — a merged change is not live on this machine until the code is pulled. The estate's
@@ -192,6 +196,21 @@ if [ "$_wants_register" -eq 1 ]; then
   fi
   [ -n "${WORK_CARRIER_ORCHESTRATOR_TOKEN:-}" ] || sds_outcome_fail \
     "FATAL: could not read the orchestrator system credential from BWS"
+fi
+
+# THE SENDER TOKEN, for a pass that will act, with the same narrow identity. Only an acting watcher
+# (`--retire`) sends, so a bare pass neither fetches it nor creates the state directory: it must
+# keep working on a machine that cannot read the `SDS Operator` project.
+if [ "$_wants_register" -eq 1 ]; then
+  if [ -z "${SDS_BRIDGE_ALERT_TOKEN:-}" ]; then
+    SDS_BRIDGE_ALERT_TOKEN="$(sds_bws_value "$SDS_BRIDGE_ALERT_UUID" "$SDS_IDENTITY")"
+  fi
+  [ -n "${SDS_BRIDGE_ALERT_TOKEN:-}" ] || sds_outcome_fail \
+    "FATAL: could not read the sds-bridge alert sender token from BWS (narrow)"
+  export SDS_BRIDGE_ALERT_TOKEN
+  export WORK_WATCHER_STATE_DIR="${WORK_WATCHER_STATE_DIR:-$HOME/Library/Application Support/sds/work-watcher}"
+  mkdir -p "$WORK_WATCHER_STATE_DIR" || sds_outcome_fail \
+    "FATAL: could not create the alert state directory $WORK_WATCHER_STATE_DIR"
 fi
 
 # THE RETIREMENT BEARER, and it is a THIRD secret rather than a third identity: the `propose`

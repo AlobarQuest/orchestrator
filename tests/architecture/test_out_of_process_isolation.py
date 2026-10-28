@@ -86,6 +86,17 @@ TABLE: dict[str, Row] = {
         no_sibling_lanes=True,
         library=True,
     ),
+    # What a standing dependency-update package covers, read from a checkout. Shared by the bump
+    # proposer and the work watcher so both key an alert on the same bump; imports no program.
+    "standing_identity": _row(
+        "__future__",
+        "dataclasses",
+        "pathlib",
+        "re",
+        "typing",
+        no_sibling_lanes=True,
+        library=True,
+    ),
     "activation_sweep": _row(
         "__future__",
         "dataclasses",
@@ -139,6 +150,8 @@ TABLE: dict[str, Row] = {
         "re",
         # The member record's grant is this lane's scope authority.
         "sds_members",
+        # Bridge Part 3: the package identity it shares with the work watcher.
+        "standing_identity",
         # Bridge Part 3: removing a package directory it created and could not commit.
         "shutil",
         "subprocess",
@@ -578,11 +591,19 @@ TABLE: dict[str, Row] = {
     # verdict; importing the function that derives it would make it a second implementation.
     "work_watcher": _row(
         "__future__",
+        # Bridge Part 3: one alert per failed unit, through the shared client.
+        "alert_hub_client",
         "argparse",
+        "collections",
+        "dataclasses",
         "estate_clients",
         "httpx",
         "os",
+        # The packages checkout the alert key is read from.
+        "pathlib",
         "re",
+        # The package identity it shares with the bump proposer.
+        "standing_identity",
         "sys",
         "typing",
         "work_carrier",

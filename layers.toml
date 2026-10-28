@@ -96,6 +96,8 @@ paths = [
   "src/estate_clients/**",
   "src/alert_hub_client/**",
   "tests/alert_hub_client/**",
+  "src/standing_identity/**",
+  "tests/standing_identity/**",
   "tests/estate_clients/**",
   "tests/architecture/test_release_workflow.py",
   "tests/fixtures/release_image_run_*.log",
