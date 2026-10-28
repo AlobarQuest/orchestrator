@@ -223,3 +223,18 @@ def test_a_long_key_is_shortened_with_a_digest_and_stays_distinct() -> None:
     assert one != two
     assert KEY_GRAMMAR.fullmatch(one)
     assert alert_key("p", "d" * 300 + "1") == one
+
+
+def test_a_refiring_client_does_not_wait_on_a_429(tmp_path: Path) -> None:
+    hub = Hub(httpx.Response(429, headers={"Retry-After": "7"}))
+    sleeps: list[float] = []
+    with pytest.raises(AlertHubError):
+        hub.alerts(tmp_path / "s.json", sleeps, refire=True).sync({"k:a": A})
+    assert sleeps == []
+    assert statuses(hub) == [("k:a", "firing")]
+
+
+def test_alert_key_accepts_a_lone_surrogate() -> None:
+    key = alert_key("p", "\ud800")
+    assert KEY_GRAMMAR.fullmatch(key)
+    assert key == alert_key("p", "\ud800")

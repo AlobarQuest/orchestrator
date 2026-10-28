@@ -14,7 +14,8 @@ Either way a remembered key that stops firing is sent `resolved` and forgotten, 
 * **A failed send is not remembered as sent** (a fire is retried next pass; a resolve stays
   remembered), and `sync` raises `AlertHubError` after saving the rest.
 * **A 429 is retried once** after `Retry-After` seconds (alert-hub sends none today, so a bounded
-  default stands in), then counts as a failure.
+  default stands in), then counts as a failure. A `refire` caller does not wait: it sends again
+  next pass anyway, so a 429 is an immediate failure.
 * **The token never leaves the request header.** Errors name the exception type and the status
   code, nothing the token store or `httpx` said.
 * **Keys follow alert-hub's grammar** (1-200 of `[A-Za-z0-9._:/-]`); `alert_key` builds one from
@@ -57,6 +58,19 @@ class AlertHubError(Exception):
     """An alert that could not be sent, or a state file that could not be kept."""
 
 
+class TokenUnreadable(AlertHubError):
+    """The sender token's store failed. Only the exception's type is kept: a store's own message
+    may hold the token."""
+
+
+class StateUnwritable(AlertHubError):
+    """The state file could not be written. `reason` is the operating system's account of it."""
+
+    def __init__(self, error: OSError) -> None:
+        super().__init__(f"state file unwritable: {type(error).__name__}")
+        self.reason = str(error)
+
+
 @dataclass(frozen=True)
 class Alert:
     title: str
@@ -72,7 +86,7 @@ def _encode(part: str) -> str:
         elif _PLAIN.fullmatch(char):
             out.append(char)
         else:
-            out.extend(f"_{byte:02X}" for byte in char.encode("utf-8"))
+            out.extend(f"_{byte:02X}" for byte in char.encode("utf-8", errors="surrogatepass"))
     return "".join(out)
 
 
@@ -102,6 +116,7 @@ class KeyedAlerts:
         severity: str = "warning",
         resolved_title: str = "Resolved",
         refuse: Callable[[str, str], Exception] | None = None,
+        logger: logging.Logger = LOG,
         transport: httpx.BaseTransport | None = None,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
@@ -114,6 +129,7 @@ class KeyedAlerts:
         self._refuse = refuse or (lambda method, path: AlertHubError(f"may not {method} {path}"))
         self._transport = transport
         self._sleep = sleep
+        self._log = logger
 
     def sync(self, firing: Mapping[str, Alert], unread: Set[str] = frozenset()) -> None:
         """Bring alert-hub in line with `firing`. Raises `AlertHubError` for any send or state
@@ -151,7 +167,7 @@ class KeyedAlerts:
         try:
             token = self._token()
         except Exception as error:  # a token store's failure; only its type is reported
-            raise AlertHubError(f"sender token unreadable: {type(error).__name__}") from None
+            raise TokenUnreadable(f"sender token unreadable: {type(error).__name__}") from None
         try:
             return ConfinedClient(
                 base_url=BASE_URL,
@@ -177,16 +193,16 @@ class KeyedAlerts:
         }
         try:
             response = client.request("POST", ALERTS, json=payload)
-            if response.status_code == RATE_LIMITED:
+            if response.status_code == RATE_LIMITED and not self._refire:
                 self._sleep(_retry_wait(response))
                 response = client.request("POST", ALERTS, json=payload)
         except TransportFailure as failure:
-            LOG.warning("notify_failed", extra={"key": key, "reason": failure.error_type})
+            self._log.warning("notify_failed", extra={"key": key, "reason": failure.error_type})
             return False
         if response.status_code != ACCEPTED:
-            LOG.warning("notify_failed", extra={"key": key, "status": response.status_code})
+            self._log.warning("notify_failed", extra={"key": key, "status": response.status_code})
             return False
-        LOG.info("notified", extra={"key": key, "status": status})
+        self._log.info("notified", extra={"key": key, "status": status})
         return True
 
     def _remembered(self) -> set[str]:
@@ -202,7 +218,7 @@ class KeyedAlerts:
             staged.write_text(json.dumps(sorted(keys)))
             staged.replace(self._state)
         except OSError as error:
-            raise AlertHubError(f"state file unwritable: {type(error).__name__}") from None
+            raise StateUnwritable(error) from None
 
 
 def _retry_wait(response: httpx.Response) -> float:

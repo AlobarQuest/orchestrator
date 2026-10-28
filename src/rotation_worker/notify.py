@@ -21,9 +21,16 @@ from typing import Final
 
 import httpx
 
-from alert_hub_client import ALERTS, Alert, AlertHubError, KeyedAlerts
-from estate_clients.confined import ConfinedClient
+from alert_hub_client import (
+    ALERTS,
+    Alert,
+    AlertHubError,
+    KeyedAlerts,
+    StateUnwritable,
+    TokenUnreadable,
+)
 from rotation_worker.contract import ContractError
+from rotation_worker.secret_store import StoreError
 from rotation_worker.values import Value, scrub
 
 LOG = logging.getLogger("rotation_worker")
@@ -51,12 +58,13 @@ class Notifier:
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         self._alerts = KeyedAlerts(
-            lambda: token().reveal(),
+            lambda: self._reveal(token),
             state_dir / STATE_FILE,
             user_agent=USER_AGENT,
             refire=True,
             resolved_title="Rotation act done",
             refuse=lambda method, path: ContractError(f"alert-hub may not {method} {path}"),
+            logger=LOG,
             transport=transport,
         )
 
@@ -66,12 +74,17 @@ class Notifier:
         firing = {key: Alert(act.title, act.message, act.link) for key, act in waiting.items()}
         try:
             self._alerts.sync(firing, unread)
+        except TokenUnreadable:
+            pass  # `_reveal` logged the store's reason
+        except StateUnwritable as error:
+            LOG.warning("notify_state_unsaved", extra={"reason": scrub(error.reason)})
         except AlertHubError as error:
             LOG.warning("notify_failed", extra={"reason": scrub(str(error))})
 
-    def _client(self) -> ConfinedClient | None:
+    @staticmethod
+    def _reveal(token: Callable[[], Value]) -> str:
         try:
-            return self._alerts.open_client()
-        except AlertHubError as error:
+            return token().reveal()
+        except StoreError as error:
             LOG.warning("notify_failed", extra={"reason": scrub(str(error))})
-            return None
+            raise
