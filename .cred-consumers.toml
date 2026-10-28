@@ -339,6 +339,13 @@ rotated_by_sds = true
   healthchecks_check = "sds-tool-installer"
   note = "launchd com.devon.tool-installer 03:15; Keychain Claude/BWS_ACCESS_TOKEN_SDS (sds-operator); Healthchecks check sds-tool-installer"
 
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "project-standards"
+  ref = "integrations/portfolio-scan.sh"
+  healthchecks_check = "portfolio-scan"
+  note = "launchd com.devon.portfolio-scan 03:00; Keychain Claude/BWS_ACCESS_TOKEN_SDS (sds-operator); Healthchecks check portfolio-scan (reads the member record to scope the Q2 sweep; exits 3 and pings /fail without it)"
+
 [[credential]]
 id = "orchestrator-drift-reporter-bearer"
 class = "orchestrator-m2m-bearer"

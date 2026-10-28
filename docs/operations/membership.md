@@ -56,6 +56,11 @@ shows the new comparison.
 `GET /api/v1/members` returns every member, retired included, with a grant for each of the seven
 services. Any authenticated role may read it, OBSERVER included.
 
+Outside the orchestrator, project-standards' nightly scan reads it with the OBSERVER bearer. Its Q2
+factory-capability sweep measures the members whose app-changes grant is `granted` or
+`remediating`, and an unreadable record fails the run (`portfolio-scan`) instead of measuring
+nothing quietly.
+
 ## The write split
 
 `tests/architecture/test_membership_writers.py` holds two rules: only `services/membership/proposals.py`
