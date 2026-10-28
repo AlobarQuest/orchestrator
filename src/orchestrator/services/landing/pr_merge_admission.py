@@ -81,7 +81,13 @@ from orchestrator.services.landing.estate_landing import (
     EstateLandingSource,
 )
 from orchestrator.services.lifecycle.lifecycle import verifier_decided_completion
-from orchestrator.services.membership.holds import Bump, ecosystem_of_package_id, exceeded
+from orchestrator.services.membership.holds import (
+    TOOLING_TO_DEPENDABOT,
+    Bump,
+    ecosystem_of_package_id,
+    exceeded,
+    holding,
+)
 from orchestrator.services.membership.members import holds_for
 from orchestrator.services.reconciliation.reconciliation import open_conditions
 
@@ -208,9 +214,16 @@ MERGE_VERSION_CEILING_EXCEEDED: Final = "merge_version_ceiling_exceeded"
 
 # The unit is a dependency update, its repository has holds, and what it bumps can't be read: the
 # revision's profile names no package or version, or its package id names no tooling this side
-# maps to an ecosystem. Never "not held" -- and distinct from the code above, because the fix is the
-# package's, not the hold's.
+# maps to an ecosystem. That last includes every non-standing dependency-update package, whose id
+# carries no tooling (`orchestrator-tzdata-bump`), so in a held repository each of those is refused
+# here. Never "not held" -- and distinct from the code above, because the fix is the package's or
+# the hold's, not a version's.
 MERGE_DEPENDENCY_BUMP_UNREADABLE: Final = "merge_dependency_bump_unreadable"
+
+# The ecosystem whose `to_version` is a floor, not the version that lands: intent-packages' uv
+# mutator runs `uv add '<pkg>>=<to_version>'` and its verifier is only `uv lock --check`, so the
+# resolver may land any newer release. npm and pip pin the exact version.
+_FLOOR_ECOSYSTEM: Final = TOOLING_TO_DEPENDABOT["uv"]
 
 
 @dataclass(frozen=True)
@@ -370,6 +383,16 @@ def _hold_term(
     from the standing package id's tooling, and its directory is unknown, so it matches a hold on
     any directory (Rulings 2 and 3). The holds are the repository the pull request lands into, the
     envelope's, as every other term here reads. The comparison is the matcher's and nobody else's.
+
+    **FOR UV, `to_version` IS A FLOOR.** The uv mutator asks for `>=<to_version>`, so what lands
+    can be any newer release, past any ceiling: a uv unit is refused when ANY hold names its
+    dependency, whatever its version. A follow-up that has intent-packages' uv mutator lock the
+    exact version would let uv compare like npm and pip, which pin exactly.
+
+    Residual exposure, recorded: for npm and pip, nothing cross-checks the version in the
+    envelope's `mutation_commands` against `profile_fields.to_version`. They agree because the
+    profile's `build_envelope` derives both from the same arguments; a hand-authored approved
+    envelope could install a different version than the one compared here.
     """
     if DEPENDENCY_UPDATE not in (change_class, revision.profile) or not target_repository:
         return _Term(True, ())
@@ -379,7 +402,11 @@ def _hold_term(
     bump = _bump_of(session, revision, target_repository)
     if bump is None:
         return _Term(False, (MERGE_DEPENDENCY_BUMP_UNREADABLE,))
-    if exceeded(holds, target_repository, (bump,)):
+    if bump.ecosystem == _FLOOR_ECOSYSTEM:
+        beyond = bool(holding(holds, bump))
+    else:
+        beyond = bool(exceeded(holds, target_repository, (bump,)))
+    if beyond:
         return _Term(False, (MERGE_VERSION_CEILING_EXCEEDED,))
     return _Term(True, ())
 

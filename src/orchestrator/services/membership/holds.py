@@ -147,6 +147,15 @@ def exceeded(
     )
 
 
+def holding(holds: Iterable[HeldDependency], bump: Bump) -> tuple[HeldDependency, ...]:
+    """Every hold on the bump's dependency, whatever either version says.
+
+    For a caller whose bump's version is not what lands (the factory path's uv floor), so any hold
+    on the dependency is a refusal. Matched exactly as `exceeded` matches: same ecosystem, the
+    registry's name rule, and a `None` directory matching a hold on any directory."""
+    return tuple(hold for hold in holds if _same_dependency(hold, bump))
+
+
 def _same_dependency(hold: HeldDependency, bump: Bump) -> bool:
     return (
         hold.ecosystem.lower() == bump.ecosystem.lower()

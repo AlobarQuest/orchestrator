@@ -16,6 +16,7 @@ from orchestrator.services.membership.holds import (
     dependencies_of,
     ecosystem_of_package_id,
     exceeded,
+    holding,
 )
 from orchestrator.services.membership.members import HoldView
 
@@ -114,6 +115,17 @@ def test_another_ecosystem_is_admitted() -> None:
 def test_pip_and_uv_names_compare_by_pep_503(name: str, ecosystem: str) -> None:
     held = _hold("sql-alchemy", ecosystem=ecosystem)
     assert len(exceeded([held], REPO, [_bump("3", name, ecosystem=ecosystem)])) == 1
+
+
+def test_holding_names_every_hold_on_the_dependency_whatever_the_versions() -> None:
+    """The uv floor's question: is the dependency held at all? Same name, ecosystem and directory
+    rules as `exceeded`, but a version below the ceiling still answers yes."""
+    below = Bump("uv", None, "SQLAlchemy", "1.0")
+    on_it = _hold(ecosystem="uv", directory="/sub")
+    others = (_hold("alembic", ecosystem="uv"), _hold(ecosystem="pip"))
+    assert holding((on_it, *others), below) == (on_it,)
+    assert holding(others, below) == ()
+    assert holding((on_it,), Bump("uv", "/", "sqlalchemy", "1.0")) == ()
 
 
 def test_npm_names_compare_lowercased_and_keep_their_scope() -> None:

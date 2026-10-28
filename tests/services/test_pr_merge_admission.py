@@ -1022,10 +1022,23 @@ def _bump_unit(
     return unit
 
 
-def _hold(session: Session, dependency: str = "typer", ceiling: str = "0.20.5") -> None:
+def _hold(
+    session: Session,
+    dependency: str = "typer",
+    ceiling: str = "0.20.5",
+    *,
+    ecosystem: str = "uv",
+    directory: str = "/",
+) -> None:
     """A hold confirmed the only way one is written: staged, then confirmed by a person."""
     add_member(session, TARGET)
-    hold = {"ecosystem": "uv", "dependency": dependency, "action": "place", "ceiling": ceiling}
+    hold = {
+        "ecosystem": ecosystem,
+        "directory": directory,
+        "dependency": dependency,
+        "action": "place",
+        "ceiling": ceiling,
+    }
     change: dict[str, Any] = {"repository": TARGET, "reason": "0.21 breaks us", "holds": [hold]}
     confirm(session, stage(session, body(change), f"hold:{dependency}"))
     session.commit()
@@ -1041,14 +1054,47 @@ def test_a_bump_beyond_a_hold_is_refused(migrated_session: Session) -> None:
     assert answer.refusals == ("merge_version_ceiling_exceeded",)
 
 
-def test_a_bump_within_a_hold_is_admitted(migrated_session: Session) -> None:
+def test_a_uv_bump_within_a_hold_is_still_refused(migrated_session: Session) -> None:
+    """uv's `to_version` is a floor (`uv add 'pkg>=<to_version>'`), so the resolver may land a
+    release above the ceiling: any hold on the dependency refuses, whatever the version."""
     _hold(migrated_session, ceiling="0.21.0")
-    unit = _bump_unit(migrated_session, "held-within")
+    unit = _bump_unit(migrated_session, "uv-held-within", to_version="0.20.4")
+
+    answer = _answer(migrated_session, unit)
+
+    assert answer.satisfied is False
+    assert answer.refusals == ("merge_version_ceiling_exceeded",)
+
+
+def test_a_uv_hold_in_any_directory_refuses(migrated_session: Session) -> None:
+    _hold(migrated_session, ceiling="9", directory="/tools")
+    unit = _bump_unit(migrated_session, "uv-held-subdirectory")
+
+    assert _answer(migrated_session, unit).refusals == ("merge_version_ceiling_exceeded",)
+
+
+@pytest.mark.parametrize(("tooling", "ecosystem"), [("npm", "npm_and_yarn"), ("pip", "pip")])
+def test_an_exact_bump_within_a_hold_is_admitted(
+    migrated_session: Session, tooling: str, ecosystem: str
+) -> None:
+    """npm and pip pin the exact version, so `to_version` is what lands and is compared."""
+    _hold(migrated_session, ceiling="0.21.0", ecosystem=ecosystem)
+    unit = _bump_unit(migrated_session, f"{tooling}-within", package_id=f"repo-{tooling}-typer")
 
     answer = _answer(migrated_session, unit)
 
     assert answer.satisfied is True
     assert answer.refusals == ()
+
+
+@pytest.mark.parametrize(("tooling", "ecosystem"), [("npm", "npm_and_yarn"), ("pip", "pip")])
+def test_an_exact_bump_beyond_a_hold_is_refused(
+    migrated_session: Session, tooling: str, ecosystem: str
+) -> None:
+    _hold(migrated_session, ecosystem=ecosystem)
+    unit = _bump_unit(migrated_session, f"{tooling}-beyond", package_id=f"repo-{tooling}-typer")
+
+    assert _answer(migrated_session, unit).refusals == ("merge_version_ceiling_exceeded",)
 
 
 def test_a_hold_on_another_dependency_admits_the_bump(migrated_session: Session) -> None:
