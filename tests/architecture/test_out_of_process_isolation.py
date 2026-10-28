@@ -494,6 +494,8 @@ TABLE: dict[str, Row] = {
         "json",
         "os",
         "pathlib",
+        # `holds.py`: the lanes' copy of the hold matcher reads titles and commit messages.
+        "re",
         "tomllib",
         "typer",
         "typing",

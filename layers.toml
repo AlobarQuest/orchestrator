@@ -662,6 +662,8 @@ paths = [
   "src/orchestrator/api/schemas/membership.py",
   "tests/services/test_member_proposals.py",
   "tests/services/test_member_holds.py",
+  "tests/services/test_hold_matcher.py",
+  "tests/services/test_hold_agreement.py",
   "tests/services/test_membership_vocabulary.py",
   "tests/api/test_membership_api.py",
   "tests/web/test_member_proposals.py",
