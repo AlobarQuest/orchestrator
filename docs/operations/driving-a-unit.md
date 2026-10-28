@@ -667,7 +667,7 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   (the full procedure is `docs/operations/onboarding-a-target.md`).
   Three things worth knowing before editing it. (1) **There are three readers of that file and one
   pin**: `tests/services/test_factory_target.py` holds this reader's parse to
-  `membership_check/declaration.py`'s over a table spanning all three answers; project-standards'
+  `work_carrier/declaration.py`'s over a table spanning all three answers; project-standards'
   `factory_target.py` is the third reader and nothing here pins it. (2) **A leftover
   `ORCHESTRATOR_DISPATCH_ALLOWED_TARGET_REPOSITORIES` in the environment is ignored**, not a boot
   failure: `pydantic-settings` reads only declared fields from the environment (measured

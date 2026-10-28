@@ -1,7 +1,7 @@
-"""`factory-target.toml` is read by the work carrier and project-standards, held to one case table.
+"""`factory-target.toml` is read by membership_check and project-standards, held to one case table.
 
 Admission no longer reads the file (ADR-0058): the member record's grant is its authority. The
-carrier's reader and project-standards'
+membership_check reader and project-standards'
 `portfolio.factory_target.parse_declaration` (which the conformance kit's `runner.caller` and
 `portfolio lint` read through) remain. Neither can import the other across the repository
 boundary, so each repository carries a byte-identical
@@ -19,7 +19,7 @@ from typing import Any
 
 import pytest
 
-from membership_check.declaration import parse as carrier_parse
+from membership_check.declaration import parse as membership_parse
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "factory_target_declarations.json"
 CONTRACT_SHA256 = "64d31a44f56c9a34b6bb5f24a143b046fb459a678f66b8e5c263a96ed3ae6469"
@@ -43,5 +43,5 @@ def test_the_case_table_covers_all_three_answers() -> None:
 
 
 @pytest.mark.parametrize("case", golden_cases(), ids=lambda case: case["name"])
-def test_the_work_carriers_reader_answers_what_the_table_says(case: dict[str, Any]) -> None:
-    assert carrier_parse(case["text"]).target is case["target"]
+def test_membership_checks_reader_answers_what_the_table_says(case: dict[str, Any]) -> None:
+    assert membership_parse(case["text"]).target is case["target"]

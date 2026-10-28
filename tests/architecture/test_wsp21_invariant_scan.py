@@ -455,10 +455,11 @@ OUTBOUND_ALLOWLIST = {
     # client cannot enrol a repository. Two routes, held by tests/sds_members/test_client.py.
     Path("src/sds_members/client.py"),
     Path("src/work_carrier/orchestrator_client.py"),
-    # The third file of the same program, and the first of its three that speaks to neither
-    # service. It makes ONE request -- a repository's own `factory-target.toml` on its default
-    # branch, GitHub's contents route -- to answer whether that repository has opted in to being
-    # worked on by the factory at all (ADR-0015). It is READ-ONLY by shape: one public method, one
+    # Now `membership_check`'s: the declaration reader, formerly the work carrier's third file and
+    # the first of its three that speaks to neither service. It makes ONE request -- a
+    # repository's own `factory-target.toml` on its default branch, GitHub's contents route -- to
+    # answer whether that repository has opted in to being worked on by the factory at all
+    # (ADR-0015). It is READ-ONLY by shape: one public method, one
     # anchored route, and a repository name that would compose anything else is refused before the
     # request leaves.
     #
@@ -542,7 +543,7 @@ OUTBOUND_ALLOWLIST = {
     # and a record's deploy-retirement -- and GETs one, the item listing. It cannot approve,
     # claim, post an outcome, hand off or sync, and that bound is enforced twice over: by the
     # credential's scope at change-manager, and here in code before a request is built. It also
-    # reads the member record (`GET /api/v1/members`, through `sds_members.client`, listed below)
+    # reads the member record (`GET /api/v1/members`, through `sds_members.client`, listed above)
     # for the `rollouts` grant that scopes the pass. The full surface is stated in
     # tests/architecture/test_bridge_edges.py. Its egress is not the
     # orchestrator's.

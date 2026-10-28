@@ -465,10 +465,10 @@ TABLE: dict[str, Row] = {
         library=True,
     ),
     # ADR-0058. Compares the member record with the lists the other lanes carry, so it imports
-    # those lanes' own data and readers (declarations, landing policy, fork list, rotation
-    # registry) rather than keeping a third copy of each. It reads the record through
-    # `sds_members`' confined client. That makes it a program that reuses siblings, so it does
-    # not carry `no_sibling_lanes`.
+    # those lanes' own data and readers (standing packages, landing policy, rollout
+    # workflows, fork list, rotation registry) rather than keeping a third copy of each. It
+    # reads the record through `sds_members`' confined client. That makes it a program that
+    # reuses siblings, so it does not carry `no_sibling_lanes`.
     "membership_check": _row(
         "__future__",
         "bump_proposer",
@@ -490,7 +490,6 @@ TABLE: dict[str, Row] = {
         "tool_installer",
         "typer",
         "typing",
-        "work_carrier",
     ),
     "tool_installer": _row(
         "__future__",

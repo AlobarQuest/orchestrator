@@ -521,8 +521,10 @@ def _lane(
         return None
 
     authored = {package.target_repository for package in packages.values()}
-    granted = {name.lower() for name in granted_repositories(members, "dependency_updates")}
+    spelling = {name.lower(): name for name in granted_repositories(members, "dependency_updates")}
+    granted = set(spelling)
     for name in sorted(granted - {name.lower() for name in authored}):
+        name = spelling[name]
         print(f"[NO PACKAGE] {name} is granted dependency_updates; no standing package targets it")
     for name in sorted(authored, key=str.lower):
         if name.lower() not in granted:

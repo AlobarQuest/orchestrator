@@ -876,7 +876,7 @@ def test_the_population_is_granted_repositories_with_a_standing_package(
     assert run([]) == EXIT_OK
 
     out = capsys.readouterr().out
-    assert "[NO PACKAGE] alobarquest/granted-c" in out
+    assert "[NO PACKAGE] AlobarQuest/granted-c" in out
     assert "[NOT GRANTED] AlobarQuest/ungranted-b" in out
     assert "ungranted-b#" not in out
     assert "infraops-mcp-server#" in out

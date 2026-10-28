@@ -44,9 +44,15 @@ Operations: `docs/operations/membership.md`.
 ## Amendment, 2026-10-28 — scope comes from the record (bridge layer, Part 2)
 
 Decision 6 is superseded for dispatch admission, which is the first consumer to move; the carrier
-and the proposers follow in the same part. Decision 1 of the bridge-layer design
-(`docs/superpowers/specs/2026-10-27-bridge-layer-design.md`) is implemented: the member record is
+and the proposers followed in the same part, so by merge all of them read the record. Decision 1 of the
+bridge-layer design (`docs/superpowers/specs/2026-10-27-bridge-layer-design.md`) is implemented: the member record is
 the authority for which repositories the factory may work in.
+
+The carrier selects the grant from the package's profile name and admission from the envelope's
+`change_class`. They agree because every factory-executable profile's `change_class` equals its
+name in intent-packages (`dependency_update.py` sets both to `dependency-update`). If that ever
+broke, admission, the binding gate, would refuse with `target_repository_not_granted`; it would
+never admit an ungranted repository.
 
 **What changed.** Admission refuses a unit unless the record grants the service matching the
 unit's change class on its target repository: `dependency_updates` for a `dependency-update` unit,

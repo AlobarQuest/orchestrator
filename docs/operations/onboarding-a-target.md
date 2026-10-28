@@ -164,7 +164,8 @@ by hand before you make it a target.
     and its `known_good` pattern (the one shape that skips a person's approval) names specific
     repositories in `target_repositories`. A new repository isn't in it, so each
     unit waits for an approval at `/review`. Adding the repository to `known_good` is a
-    standing-authority change.
+    standing-authority change. The member record's grant does not replace that list: it stays
+    hand-kept until bridge-layer Part 3.
 
 11. **Dry-run the envelope's commands against the repository.** Run them twice on a clean clone,
     prove the mutator produces a diff, and make sure the verifier exercises what the change could

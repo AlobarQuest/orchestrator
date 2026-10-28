@@ -257,6 +257,14 @@ def test_the_carrier_fetches_the_member_record_bearer_without_the_acting_flag(
     assert OBSERVER_UUID in (tmp_path / "bws.log").read_text()
 
 
+@pytest.mark.parametrize("args", [(), ("--register",)], ids=["bare", "register"])
+def test_the_carrier_exports_the_member_bearer(tmp_path: Path, args: tuple[str, ...]) -> None:
+    env_log = tmp_path / "env.txt"
+    rc, _, output = _run(tmp_path, CARRIER, *args, rc=0, ENV_LOG=str(env_log))
+    assert rc == 0, output
+    assert "SDS_MEMBERS_OBSERVER_TOKEN" in set(env_log.read_text().split())
+
+
 def test_the_bump_proposer_fetches_the_member_record_bearer_without_the_acting_flag(
     tmp_path: Path,
 ) -> None:
