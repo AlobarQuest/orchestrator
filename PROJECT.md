@@ -190,6 +190,7 @@ for their date and are not current policy.
 
 - [ ] (P2) install-fork-harden-launchd.sh and install-fork-sync-watch-launchd.sh upsert their Healthchecks checks with channels "*", which also attaches email and double-delivers every failure; use "alert-hub" per infraops healthchecks.md (found in the SDS membership phase 1 review) — added 2026-10-27
 - [ ] (P3) change_proposer retires proposed deploy records only within scope, so records for a repository whose `rollouts` grant is withdrawn are never retired by the lane — added 2026-10-28
+- [ ] (P3) intent-packages' uv mutator should lock the exact version (e.g. `uv lock --upgrade-package pkg==new`) so the factory merge can compare uv bumps like npm/pip instead of refusing every held uv dependency; changes envelope fingerprints (its own decision) — added 2026-10-28
 ## Future plans
 
 ## Known Non-obvious Invariants

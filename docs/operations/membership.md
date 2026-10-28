@@ -72,6 +72,28 @@ update, and staged like any other change: a `holds` list on the member's change,
   there covers nothing; check the ecosystem in the branch name of a Dependabot pull request
   (`dependabot/uv/...`) or in the repository's `.github/dependabot.yml`.
 
+For example, holding sqlalchemy and lifting an older hold in one change:
+
+```toml
+summary = "hold sqlalchemy, lift httpx"
+
+[[changes]]
+repository = "AlobarQuest/orchestrator"
+reason = "2.0.55 broke the build"   # becomes the hold's reason
+
+[[changes.holds]]
+action = "place"
+ecosystem = "uv"
+directory = "/"                     # optional; "/" when left out
+dependency = "sqlalchemy"
+ceiling = "2.0.54"                  # the highest release allowed
+
+[[changes.holds]]
+action = "lift"                     # names no ceiling
+ecosystem = "uv"
+dependency = "httpx"
+```
+
 To place or lift one: write the TOML, run `sds-members stage <file.toml>` (it prints the
 `/review/member-proposals/{id}` page), and confirm on that page as a person. A lift is staged and
 confirmed the same way; nothing else removes a hold, so only a person ends one.

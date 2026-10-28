@@ -118,7 +118,9 @@ anything but `>=` and `==`), a dependency already covered by a package in anothe
 alert whether or not they pass only because the inert landing policy excludes docker today; a
 permitted ecosystem's passing bump is the cascade's. Each holds one alert-hub alert, sender
 `sds-bridge`, keyed `dependency-bump:<repository>:<ecosystem>:<dependency>`, resolved by the first writing pass that no longer raises it: its pull request merged or closed, or (in an ecosystem the cascade lands) a re-run passed. A re-run that fails again but hasn't settled holds the key, neither resolved nor fired again. A repository still in the lane that a pass didn't read (GitHub could not answer, in scope through a standing package but not declared inert, or outside a `--repository` run) keeps its keys; a repository that left the lane (its `dependency_updates` grant withdrawn, or no longer declared inert with no standing package) has its keys resolved by the next writing pass that reaches its alerts (a pass with no repository in the lane stops first and sends nothing).
-Repositories that deploy on landing stay out of the lane until holds ship (Part 4).
+Repositories that deploy on landing stay out of the lane. Holds (amendment 2) were the
+precondition for admitting them, not the admission: widening the lane to them is its own
+decision.
 
 **Residual: the envelope's dependency is not bound to the package's.** The known-good command
 shapes bound each command's grammar, not which dependency it names: no shape ties the dependency in
@@ -156,15 +158,19 @@ greater than the ceiling's, or when either can't be parsed.
   (`factory_breaches`, one rule per matcher copy). Until intent-packages' uv mutator locks the
   exact version, which would let uv compare like npm and pip, a held uv dependency is never
   updated by the factory. Locking it changes the profile's fingerprints and is its own decision.
+- **Holds do not widen the bump proposer's lane.** Repositories that deploy on landing (brain,
+  change-manager among them) stay out of automatic bumps. Holds were the precondition for
+  admitting them; admitting them needs a `live_estate` known-good pattern, the grant's reach
+  and the change window, and is its own change and decision.
 - **Every path is classified.** `tests/architecture/test_hold_paths.py` lists each merge path
   (every `MERGE_EXEMPT_PATHS` entry) and each propose path as honouring the matcher, covered by an
   honouring gate, or not a bump, and fails on an unclassified merge path.
 
 **Residuals,** each accepted:
 
-1. A grouped update's title or a requirement-range title gives
-   no single version, so the version falls back to the commit's `updated-dependencies` block,
-   which can lag a later rewrite of the branch.
+1. A grouped update's title or a requirement-range title gives no single version, so the
+   version falls back to the commit's `updated-dependencies` block, which can lag a later
+   rewrite of the branch.
 2. The landers read the one commit the update bot authored. A person's commit pushed on top of
    Dependabot's is not read, so a version it sets is not compared. That commit is chosen by
    its author login alone (`author_login == UPDATE_BOT_LOGIN`, `terms._update_bot_message`),
