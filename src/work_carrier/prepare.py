@@ -35,6 +35,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from sds_members import holds as hold_matcher
+from sds_members.client import Hold
 from work_carrier.change_manager import WorkRecord
 from work_carrier.workability import target_repository
 
@@ -94,9 +96,16 @@ def emit_key(record: WorkRecord) -> str:
 
 
 def prepare(
-    record: WorkRecord, *, checkout_root: Path, runner=subprocess.run
+    record: WorkRecord,
+    *,
+    checkout_root: Path,
+    holds: dict[str, tuple[Hold, ...]],
+    runner=subprocess.run,
 ) -> Prepared | Refused:
-    """The whole carry for one record. Total: it returns a refusal rather than raising."""
+    """The whole carry for one record. Total: it returns a refusal rather than raising.
+
+    `holds` are the member record's holds, keyed by repository case-folded.
+    """
     path = package_path(checkout_root, record)
     if not path.is_dir():
         return Refused(
@@ -149,13 +158,15 @@ def prepare(
     if not isinstance(payload, dict):
         return Refused(record, "emitter_output_unreadable", "payload is not a JSON object")
 
-    disagreement = _disagreement(record, payload)
+    disagreement = _disagreement(record, payload, holds)
     if disagreement is not None:
         return disagreement
     return Prepared(record=record, package_path=path, payload=payload)
 
 
-def _disagreement(record: WorkRecord, payload: dict[str, Any]) -> Refused | None:
+def _disagreement(
+    record: WorkRecord, payload: dict[str, Any], holds: dict[str, tuple[Hold, ...]]
+) -> Refused | None:
     """Everything the built payload must agree with the record about, or None.
 
     Split out of `prepare` so each subject is one clause rather than a branch in a function that
@@ -202,13 +213,15 @@ def _disagreement(record: WorkRecord, payload: dict[str, Any]) -> Refused | None
             "the prepared payload names a different originating observation than the record "
             "that caused it",
         )
-    return _policy_disagreement(record, payload)
+    return _policy_disagreement(record, payload, holds)
 
 
 DEPENDENCY_UPDATE = "dependency-update"
 
 
-def _policy_disagreement(record: WorkRecord, payload: dict[str, Any]) -> Refused | None:
+def _policy_disagreement(
+    record: WorkRecord, payload: dict[str, Any], holds: dict[str, tuple[Hold, ...]]
+) -> Refused | None:
     """The fields change-manager's work policy approved on, against the package the carry works.
 
     The policy approves a standing dependency-update record on the RECORD's own
@@ -234,4 +247,62 @@ def _policy_disagreement(record: WorkRecord, payload: dict[str, Any]) -> Refused
             f"the approved record's change class is {DEPENDENCY_UPDATE!r} and the package's "
             f"profile is {payload.get('profile')!r}",
         )
-    return None
+    return _held(record, payload, holds)
+
+
+def _held(
+    record: WorkRecord, payload: dict[str, Any], holds: dict[str, tuple[Hold, ...]]
+) -> Refused | None:
+    """A dependency update that moves a dependency its repository holds past the ceiling.
+
+    The factory's merge refuses the same unit (`merge_version_ceiling_exceeded`); refusing here
+    stops it before an intake, a decomposition and a run are spent on it. Read as that merge term
+    reads it: either side declaring a dependency update is enough, the bump comes from the
+    package's `profile_fields` with its ecosystem from the standing package id, any directory
+    matches, and a uv version is a floor (its mutator asks for `>=`), so any hold on a uv
+    dependency refuses. A repository with no holds reads nothing more; in one with holds, a bump
+    this can't read is refused, never "not held". The matcher decides.
+    """
+    if DEPENDENCY_UPDATE not in (record.change_class, payload.get("profile")):
+        return None
+    repository = target_repository(payload)
+    held = holds.get(repository.casefold(), ()) if repository is not None else ()
+    if repository is None or not held:
+        return None
+    snapshot = payload.get("enforcement_snapshot")
+    fields = snapshot.get("profile_fields") if isinstance(snapshot, dict) else None
+    fields = fields if isinstance(fields, dict) else {}
+    dependency, to_version = fields.get("package"), fields.get("to_version")
+    package_id = payload.get("package_id")
+    ecosystem = (
+        hold_matcher.ecosystem_of_package_id(package_id, repository)
+        if isinstance(package_id, str)
+        else None
+    )
+    if (
+        ecosystem is None
+        or not isinstance(dependency, str)
+        or not dependency
+        or dependency != dependency.strip()
+        or not isinstance(to_version, str)
+    ):
+        return Refused(
+            record,
+            "dependency_bump_unreadable",
+            f"{repository} has holds and the package's ecosystem, dependency or version can't be "
+            "read, so it can't be shown to stay under them",
+        )
+    bump = hold_matcher.Bump(ecosystem, None, dependency, to_version)
+    if ecosystem == "uv":
+        breached = hold_matcher.holding(held, bump)
+    else:
+        breached = hold_matcher.exceeded(held, repository, (bump,))
+    if not breached:
+        return None
+    ceilings = ", ".join(sorted({hold.ceiling for hold in breached}))
+    return Refused(
+        record,
+        "version_ceiling_exceeded",
+        f"the member record holds {ecosystem} {dependency} in {repository} at {ceilings}, and "
+        f"this package moves it to {to_version}",
+    )

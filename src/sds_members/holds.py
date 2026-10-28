@@ -3,7 +3,9 @@
 The orchestrator decides holds for its admissions in `orchestrator.services.membership.holds`;
 the lanes (the bump proposer, the work carrier) can't import it, and it can't import them, so the
 matcher is copied here and `tests/services/test_hold_agreement.py` runs both copies over one
-corpus. Change one, change both. `exceeded` is the only place either side decides.
+corpus. Change one, change both. `exceeded` is the only place either side decides, and
+`holding` (any hold on a dependency, for a uv bump whose version is only a floor) the one
+exception.
 
 **A VERSION THAT CANNOT BE READ IS NEVER "BELOW THE CEILING".** `release` returns `None` for
 anything it cannot read, and `exceeded` treats that as beyond the ceiling. The holds come from the
@@ -128,6 +130,15 @@ def exceeded(
         for hold in held
         if _same_dependency(hold, bump) and _beyond(bump.to_version, hold.ceiling)
     )
+
+
+def holding(holds: Iterable[HeldDependency], bump: Bump) -> tuple[HeldDependency, ...]:
+    """Every hold on the bump's dependency, whatever either version says.
+
+    For a caller whose bump's version is not what lands (the factory path's uv floor), so any hold
+    on the dependency is a refusal. Matched exactly as `exceeded` matches: same ecosystem, the
+    registry's name rule, and a `None` directory matching a hold on any directory."""
+    return tuple(hold for hold in holds if _same_dependency(hold, bump))
 
 
 def _same_dependency(hold: HeldDependency, bump: Bump) -> bool:
@@ -255,3 +266,17 @@ def _greater(title_version: str, block_version: str) -> str:
         return ""
     title_release, block_release = _padded(title_release, block_release)
     return title_version if title_release >= block_release else block_version
+
+
+def ecosystem_of_package_id(package_id: str, repository: str) -> str | None:
+    """The Dependabot ecosystem a standing package's id names, or `None` when it names none.
+
+    The id is `<repo name>-<tooling>-<slug>`, read exactly as `standing_identity` reads it: from
+    after the repository's own name, since a name can hold a tooling word
+    (`pip-tools-npm-left-pad`). That is why the repository is an argument.
+    """
+    name = repository.rsplit("/", 1)[-1].lower()
+    for tooling, ecosystem in TOOLING_TO_DEPENDABOT.items():
+        if package_id.startswith(f"{name}-{tooling}-"):
+            return ecosystem
+    return None

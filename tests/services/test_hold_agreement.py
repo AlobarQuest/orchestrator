@@ -238,3 +238,24 @@ def test_the_package_id_read_is_the_lanes(package_id: str, repository: str) -> N
     tooling = ecosystem_of(package_id, repository)
     expected = None if tooling is None else lane.TOOLING_TO_DEPENDABOT[tooling]
     assert service.ecosystem_of_package_id(package_id, repository) == expected
+    assert lane.ecosystem_of_package_id(package_id, repository) == expected
+
+
+@pytest.mark.parametrize("hold", HOLDS)
+def test_both_copies_find_the_holds_on_a_dependency_alike(hold: Hold) -> None:
+    for directory in (None, "/", "/web", "/web/"):
+        for dependency in (hold.dependency, hold.dependency.upper(), *SPELLINGS):
+            for ecosystem in (hold.ecosystem, "docker"):
+                ours = service.Bump(ecosystem, directory, dependency, "0")
+                theirs = lane.Bump(ecosystem, directory, dependency, "0")
+                # Both return the hold objects they were given, so equal tuples are equal answers.
+                assert service.holding(HOLDS, ours) == lane.holding(HOLDS, theirs)
+
+
+def test_holding_finds_some_dependencies_and_not_others() -> None:
+    """Kills: two `holding` copies that agree only because both return nothing, or everything."""
+    found = {
+        bool(lane.holding(HOLDS, lane.Bump("pip", None, name, "0")))
+        for name in ("Flask_Cors", "other")
+    }
+    assert found == {True, False}

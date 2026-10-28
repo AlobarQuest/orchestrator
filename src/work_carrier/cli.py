@@ -398,6 +398,7 @@ def run(
         )
         return EXIT_UNUSABLE
     grants = grants_by_service(record)
+    holds = {member.repository.casefold(): member.holds for member in record}
 
     try:
         records = records_source.approved_work()
@@ -413,7 +414,7 @@ def run(
         # Per-record isolation, deliberately: one record that cannot be prepared must not stop
         # the others being carried, and there is nothing to roll back because nothing was
         # written. A pass is a report over the whole approved queue or it is not a report.
-        outcome = prepare(record, checkout_root=root)
+        outcome = prepare(record, checkout_root=root, holds=holds)
         if isinstance(outcome, Prepared):
             prepared.append(outcome)
         else:

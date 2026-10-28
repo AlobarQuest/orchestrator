@@ -111,7 +111,8 @@ from landing_ledger.github import (
 )
 from landing_ledger.model import PendingUpdate
 from landing_ledger.titles import Bump, bump_of
-from sds_members.client import Member, MembersUnreadable, read_members_from_environment
+from sds_members import holds as hold_matcher
+from sds_members.client import Hold, Member, MembersUnreadable, read_members_from_environment
 from sds_members.populations import granted as granted_repositories
 
 EXIT_OK: Final = 0
@@ -275,12 +276,14 @@ def _consider(
     rule: InertLanding,
     packages: dict[tuple[str, str], StandingPackage],
     now: datetime,
+    *,
+    holds: tuple[Hold, ...],
 ) -> Route:
     """Decide what this open pull request is, or say why it is nothing to do here.
 
     It routes the bump first (act, create or alert), then asks whether the cascade still has it.
     Asking in that order is what lets one rule hold an alert while a re-run's failure settles,
-    whichever route raised it.
+    whichever route raised it. `holds` are the member record's holds on this repository.
     """
     update = pending.update
     if update is not None and update.ecosystem is not None and update.ecosystem not in TOOLING:
@@ -330,8 +333,39 @@ def _consider(
     ecosystem = pending.update.ecosystem
     if ecosystem is None:
         return Route("skip", "unroutable: the branch names no ecosystem")
+    held = _held(holds, pending.repository, ecosystem, pending.update.dependency, bump.to_version)
+    if held is not None:
+        return held
     route = _route(pending, bump, TOOLING[ecosystem], operator=operator, packages=packages)
     return _gated(route, pending, rule, ecosystem, bump, now)
+
+
+def _held(
+    holds: tuple[Hold, ...], repository: str, ecosystem: str, dependency: str, to_version: str
+) -> Route | None:
+    """A skip when the member record holds this bump back, else None (bridge Part 4).
+
+    Asked before the route and before the cascade, so a held dependency is neither created,
+    proposed nor alerted, and it names no alert key: `alerts.sync` resolves a `dependency-bump:`
+    alert this lane raised for it before the hold. The matcher decides; nothing here compares
+    versions. FOR UV THE VERSION IS A FLOOR: the factory's uv mutator asks for `>=<to_version>`,
+    so its merge refuses a uv unit whenever any hold names the dependency, and a package proposed
+    here would only make a record the carrier refuses. The directory is unknown (`None`), so a
+    hold on any directory matches.
+    """
+    bump = hold_matcher.Bump(ecosystem, None, dependency, to_version)
+    if ecosystem == "uv":
+        breached = hold_matcher.holding(holds, bump)
+    else:
+        breached = hold_matcher.exceeded(holds, repository, (bump,))
+    if not breached:
+        return None
+    ceilings = ", ".join(sorted({hold.ceiling for hold in breached}))
+    return Route(
+        "skip",
+        f"ceiling-exceeded: the member record holds {ecosystem} {dependency} at {ceilings}, and "
+        f"this bump moves it to {to_version}; it waits for the hold to be lifted",
+    )
 
 
 def _gated(
@@ -601,6 +635,7 @@ def _repository_pass(
     root: Path,
     now: datetime,
     raised: alerts.Raised,
+    holds: tuple[Hold, ...],
 ) -> list[Outcome]:
     if not rule.declares(repository):
         # THE SUCCESSOR TO `no-cascade`, and the same fact asked of the holder rather than of a
@@ -631,7 +666,7 @@ def _repository_pass(
 
     outcomes: list[Outcome] = []
     for pending in sorted(pending_updates, key=lambda p: p.number):
-        route = _consider(pending, rule, packages, now)
+        route = _consider(pending, rule, packages, now, holds=holds)
         if route.action != "act":
             outcomes.append(_unacted(route, pending, raised, submitting=client is not None))
             continue
@@ -951,6 +986,7 @@ def run(argv: list[str] | None = None) -> int:
     if resolved is None:
         return EXIT_UNUSABLE
     packages, scope = resolved
+    held = {member.repository.casefold(): member.holds for member in members}
 
     client = None
     observer = None
@@ -980,6 +1016,7 @@ def run(argv: list[str] | None = None) -> int:
                         root,
                         now,
                         raised,
+                        held.get(repository.casefold(), ()),
                     )
                 )
     except (UnusableEndpointError, ObservationCredentialError, ChangeManagerError) as error:

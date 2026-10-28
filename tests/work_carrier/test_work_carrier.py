@@ -13,10 +13,12 @@ from __future__ import annotations
 
 import json
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
+from sds_members.client import Hold
 from work_carrier.change_manager import ChangeManagerError, WorkRecord
 from work_carrier.cli import EXIT_FINDINGS, EXIT_OK, EXIT_TOOL_FAILURE, EXIT_UNUSABLE, run
 from work_carrier.prepare import Prepared, Refused, emit_key, package_path, prepare
@@ -108,7 +110,7 @@ def test_the_carrier_invokes_the_emitter_with_options_it_actually_has(checkout_r
     tamper-evident approval chain, so the honest answer is an approval refusal. Getting that
     answer is what proves every argument name and flag spelling is one the CLI has.
     """
-    outcome = prepare(record(), checkout_root=checkout_root)
+    outcome = prepare(record(), checkout_root=checkout_root, holds={})
     assert isinstance(outcome, Refused)
     assert outcome.reason == "package_not_intakeable"
     assert "No such option" not in outcome.detail
@@ -123,7 +125,9 @@ def test_an_unapproved_package_is_refused_and_nothing_is_prepared(checkout_root:
     source = Path("tests/fixtures/intent-packages/ws32-draft-software")
     for path in source.iterdir():
         (draft / path.name).write_bytes(path.read_bytes())
-    outcome = prepare(record(package_id="ws32-draft-software"), checkout_root=checkout_root)
+    outcome = prepare(
+        record(package_id="ws32-draft-software"), checkout_root=checkout_root, holds={}
+    )
     assert isinstance(outcome, Refused)
     assert outcome.reason == "package_not_intakeable"
 
@@ -134,7 +138,7 @@ def test_an_unapproved_package_is_refused_and_nothing_is_prepared(checkout_root:
 
 
 def test_a_record_naming_no_checkout_is_refused(tmp_path: Path) -> None:
-    outcome = prepare(record(), checkout_root=tmp_path)
+    outcome = prepare(record(), checkout_root=tmp_path, holds={})
     assert isinstance(outcome, Refused)
     assert outcome.reason == "package_not_on_disk"
     assert "cannot author one" in outcome.detail
@@ -146,7 +150,7 @@ def test_a_revision_mismatch_is_refused_rather_than_substituted(checkout_root: P
     approved."""
     rec = record(package_revision=2)
     runner, _ = runner_returning({**payload_for(rec), "revision": 1})
-    outcome = prepare(rec, checkout_root=checkout_root, runner=runner)
+    outcome = prepare(rec, checkout_root=checkout_root, holds={}, runner=runner)
     assert isinstance(outcome, Refused)
     assert outcome.reason == "revision_mismatch"
 
@@ -156,7 +160,7 @@ def test_a_package_mismatch_is_refused(checkout_root: Path) -> None:
     owner's fork finds the same checkout. This is the check that makes that safe."""
     rec = record()
     runner, _ = runner_returning({**payload_for(rec), "package_id": "something-else"})
-    outcome = prepare(rec, checkout_root=checkout_root, runner=runner)
+    outcome = prepare(rec, checkout_root=checkout_root, holds={}, runner=runner)
     assert isinstance(outcome, Refused)
     assert outcome.reason == "package_mismatch"
 
@@ -168,14 +172,14 @@ def test_a_payload_that_does_not_name_the_change_record_is_refused(checkout_root
     payload = payload_for(rec)
     del payload["change_record_id"]
     runner, _ = runner_returning(payload)
-    outcome = prepare(rec, checkout_root=checkout_root, runner=runner)
+    outcome = prepare(rec, checkout_root=checkout_root, holds={}, runner=runner)
     assert isinstance(outcome, Refused)
     assert outcome.reason == "join_missing"
 
 
 def test_unreadable_emitter_output_is_refused(checkout_root: Path) -> None:
     runner, _ = runner_returning("not json at all")
-    outcome = prepare(record(), checkout_root=checkout_root, runner=runner)
+    outcome = prepare(record(), checkout_root=checkout_root, holds={}, runner=runner)
     assert isinstance(outcome, Refused)
     assert outcome.reason == "emitter_output_unreadable"
 
@@ -184,7 +188,7 @@ def test_a_missing_emitter_is_refused_not_raised(checkout_root: Path) -> None:
     def runner(command, **kwargs):
         raise FileNotFoundError(command[0])
 
-    outcome = prepare(record(), checkout_root=checkout_root, runner=runner)
+    outcome = prepare(record(), checkout_root=checkout_root, holds={}, runner=runner)
     assert isinstance(outcome, Refused)
     assert outcome.reason == "emitter_not_on_path"
 
@@ -193,7 +197,7 @@ def test_an_emitter_timeout_is_refused_not_raised(checkout_root: Path) -> None:
     def runner(command, **kwargs):
         raise subprocess.TimeoutExpired(command, 1)
 
-    outcome = prepare(record(), checkout_root=checkout_root, runner=runner)
+    outcome = prepare(record(), checkout_root=checkout_root, holds={}, runner=runner)
     assert isinstance(outcome, Refused)
     assert outcome.reason == "emitter_failed"
 
@@ -206,7 +210,7 @@ def test_an_emitter_timeout_is_refused_not_raised(checkout_root: Path) -> None:
 def test_a_prepared_payload_names_the_change_record(checkout_root: Path) -> None:
     rec = record()
     runner, seen = runner_returning(payload_for(rec))
-    outcome = prepare(rec, checkout_root=checkout_root, runner=runner)
+    outcome = prepare(rec, checkout_root=checkout_root, holds={}, runner=runner)
     assert isinstance(outcome, Prepared)
     assert outcome.payload["change_record_id"] == rec.change_record_id
     assert "--change-record" in seen[0]
@@ -217,7 +221,7 @@ def test_a_prepared_payload_names_the_originating_observation(checkout_root: Pat
     """ADR-0026 amendment 1. The flag is passed and the built payload agrees with the record."""
     rec = record(originating_observation_id=OBSERVATION)
     runner, seen = runner_returning(payload_for(rec))
-    outcome = prepare(rec, checkout_root=checkout_root, runner=runner)
+    outcome = prepare(rec, checkout_root=checkout_root, holds={}, runner=runner)
     assert isinstance(outcome, Prepared)
     assert outcome.payload["originating_observation_id"] == OBSERVATION
     assert "--originating-observation" in seen[0]
@@ -230,7 +234,7 @@ def test_no_observation_flag_is_passed_when_the_record_names_none(checkout_root:
     emitter name a cause that does not exist."""
     rec = record()
     runner, seen = runner_returning(payload_for(rec))
-    outcome = prepare(rec, checkout_root=checkout_root, runner=runner)
+    outcome = prepare(rec, checkout_root=checkout_root, holds={}, runner=runner)
     assert isinstance(outcome, Prepared)
     assert "--originating-observation" not in seen[0]
     assert "originating_observation_id" not in outcome.payload
@@ -243,7 +247,7 @@ def test_a_payload_naming_a_different_observation_is_refused(checkout_root: Path
     runner, _ = runner_returning(
         {**payload_for(rec), "originating_observation_id": "11111111-1111-1111-1111-111111111111"}
     )
-    outcome = prepare(rec, checkout_root=checkout_root, runner=runner)
+    outcome = prepare(rec, checkout_root=checkout_root, holds={}, runner=runner)
     assert isinstance(outcome, Refused)
     assert outcome.reason == "originating_observation_mismatch"
 
@@ -252,7 +256,7 @@ def test_a_payload_naming_a_cause_the_record_does_not_is_refused(checkout_root: 
     """The other direction. A carry must not file work under a cause its record never named."""
     rec = record()
     runner, _ = runner_returning({**payload_for(rec), "originating_observation_id": OBSERVATION})
-    outcome = prepare(rec, checkout_root=checkout_root, runner=runner)
+    outcome = prepare(rec, checkout_root=checkout_root, holds={}, runner=runner)
     assert isinstance(outcome, Refused)
     assert outcome.reason == "originating_observation_mismatch"
 
@@ -276,7 +280,7 @@ def test_a_record_the_package_disagrees_with_is_refused(
     if payload_profile is not None:
         payload["profile"] = payload_profile
     runner, _ = runner_returning(payload)
-    outcome = prepare(rec, checkout_root=checkout_root, runner=runner)
+    outcome = prepare(rec, checkout_root=checkout_root, holds={}, runner=runner)
     assert isinstance(outcome, Refused)
     assert outcome.reason == reason
 
@@ -288,7 +292,7 @@ def test_a_record_naming_the_target_with_no_package_target_is_refused(
     payload = payload_for(rec)
     payload["enforcement_snapshot"] = {"profile_fields": {}}
     runner, _ = runner_returning(payload)
-    outcome = prepare(rec, checkout_root=checkout_root, runner=runner)
+    outcome = prepare(rec, checkout_root=checkout_root, holds={}, runner=runner)
     assert isinstance(outcome, Refused)
     assert outcome.reason == "target_repository_mismatch"
 
@@ -307,7 +311,7 @@ def test_a_record_the_package_agrees_with_is_prepared(checkout_root: Path, overr
     rec = record(**overrides)
     payload = {**payload_for(rec), "profile": "dependency-update"}
     runner, _ = runner_returning(payload)
-    assert isinstance(prepare(rec, checkout_root=checkout_root, runner=runner), Prepared)
+    assert isinstance(prepare(rec, checkout_root=checkout_root, holds={}, runner=runner), Prepared)
 
 
 def test_a_mismatched_record_is_not_carried_and_is_a_finding(
@@ -342,6 +346,98 @@ def test_a_mismatched_record_is_not_carried_and_is_a_finding(
     out = report.getvalue()
     assert "target_repository_mismatch" in out
     assert "0 carried, 1 refused" in out
+
+
+# ---------------------------------------------------------------------------------------
+# Bridge Part 4: a dependency update past a hold in its target repository is refused
+# ---------------------------------------------------------------------------------------
+
+HOLDS = {
+    TARGET.casefold(): (Hold("npm_and_yarn", "/", "zod", "3.99"), Hold("uv", "/", "ruff", "1"))
+}
+
+
+def _bump(
+    checkout_root: Path, tooling: str, dependency: str, to_version, **overrides
+) -> tuple[WorkRecord, dict]:
+    """A standing dependency-update record and the payload its package emits."""
+    package_id = f"infraops-mcp-server-{tooling}-{dependency}"
+    (checkout_root / "intent-packages" / "packages" / package_id).mkdir(parents=True)
+    rec = record(**{"package_id": package_id, "change_class": "dependency-update", **overrides})
+    fields = {"target_repo": TARGET, "package": dependency, "to_version": to_version}
+    payload = {
+        **payload_for(rec),
+        "profile": "dependency-update",
+        "enforcement_snapshot": {"profile_fields": fields},
+    }
+    return rec, payload
+
+
+@pytest.mark.parametrize(
+    ("tooling", "dependency", "to_version", "holds", "reason"),
+    [
+        ("npm", "zod", "4.4.3", HOLDS, "version_ceiling_exceeded"),
+        ("npm", "Zod", "3.99.1", HOLDS, "version_ceiling_exceeded"),
+        # uv's version is a floor: the factory's mutator asks for `>=0.0.1`, so any hold refuses.
+        ("uv", "ruff", "0.0.1", HOLDS, "version_ceiling_exceeded"),
+        # In a repository with holds, a bump this can't read is never "not held".
+        ("npm", "zod", "latest", HOLDS, "version_ceiling_exceeded"),
+        ("npm", "zod", None, HOLDS, "dependency_bump_unreadable"),
+        ("cargo", "zod", "1", HOLDS, "dependency_bump_unreadable"),
+        # The controls.
+        ("npm", "zod", "3.99", HOLDS, None),
+        ("pip", "zod", "9", HOLDS, None),
+        ("npm", "zod", "4.4.3", {"alobarquest/other-repo": HOLDS[TARGET.casefold()]}, None),
+        ("npm", "zod", None, {}, None),
+    ],
+)
+def test_a_dependency_update_past_a_hold_is_refused(
+    checkout_root: Path, tooling, dependency, to_version, holds, reason
+) -> None:
+    rec, payload = _bump(checkout_root, tooling, dependency, to_version)
+    runner, _ = runner_returning(payload)
+    outcome = prepare(rec, checkout_root=checkout_root, holds=holds, runner=runner)
+    if reason is None:
+        assert isinstance(outcome, Prepared), outcome
+    else:
+        assert isinstance(outcome, Refused)
+        assert outcome.reason == reason, outcome.detail
+
+
+def test_a_record_that_is_not_a_dependency_update_ignores_holds(checkout_root: Path) -> None:
+    rec, payload = _bump(checkout_root, "npm", "zod", "4.4.3", change_class="software-change")
+    payload["profile"] = "software-change"
+    runner, _ = runner_returning(payload)
+    outcome = prepare(rec, checkout_root=checkout_root, holds=HOLDS, runner=runner)
+    assert isinstance(outcome, Prepared)
+
+
+def test_a_held_record_is_refused_end_to_end_from_the_member_record(
+    checkout_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Through `run`: the holds come from the member record the pass already read."""
+    import io
+
+    import work_carrier.cli as cli_module
+
+    rec, payload = _bump(checkout_root, "npm", "zod", "4.4.3")
+    runner, _ = runner_returning(payload)
+    original = cli_module.prepare
+    monkeypatch.setattr(cli_module, "prepare", lambda r, **kw: original(r, **kw, runner=runner))
+    members = [
+        replace(member, holds=HOLDS[TARGET.casefold()])
+        for member in cli_module.read_members_from_environment()
+    ]
+    report = io.StringIO()
+    code = run(
+        ["--checkout-root", str(checkout_root)],
+        source=_Source([rec]),
+        members=members,
+        out=report,
+    )
+    assert code == EXIT_FINDINGS
+    assert "version_ceiling_exceeded" in report.getvalue()
+    assert "0 carried, 1 refused" in report.getvalue()
 
 
 def test_the_emit_key_is_derived_so_two_passes_print_the_same_bytes() -> None:
