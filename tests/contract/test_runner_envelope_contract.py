@@ -73,7 +73,7 @@ from orchestrator.services.intake.package_intake import register_package_intake
 from orchestrator.services.intake.packages import record_approval
 from orchestrator.services.intake.runner_brief import runner_brief
 from tests.services.estate_doubles import inert_source
-from tests.services.target_doubles import declared_source
+from tests.services.target_doubles import granted_source
 from tests.services.test_decomposition import package_ac_ids
 from tests.services.test_package_intake import acceptance_criterion, human_actor, intake_command
 
@@ -567,7 +567,7 @@ def test_orchestrator_serves_the_verify_envelope_and_admits_it(
         _dispatch_settings(),
         github,
         inert_source(),
-        target_source=declared_source(),
+        grant_source=granted_source(),
     )
 
     assert record.status == "dispatched"
@@ -605,7 +605,7 @@ def test_orchestrator_serves_the_golden_envelope_and_admits_it(migrated_session:
         _dispatch_settings(),
         github,
         inert_source(),
-        target_source=declared_source(),
+        grant_source=granted_source(),
     )
 
     assert record.status == "dispatched"
@@ -646,7 +646,7 @@ def test_orchestrator_serves_the_edit_envelope_and_admits_it(migrated_session: S
         _dispatch_settings(),
         github,
         inert_source(),
-        target_source=declared_source(),
+        grant_source=granted_source(),
     )
 
     assert record.status == "dispatched"
@@ -721,7 +721,7 @@ def test_an_orchestrator_only_capability_is_refused_at_admission(
         _dispatch_settings(),
         FakeGitHubDispatcher(),
         inert_source(),
-        target_source=declared_source(),
+        grant_source=granted_source(),
     )
 
     assert record.reason_code == "capability_outside_runner_vocabulary"

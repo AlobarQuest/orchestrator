@@ -21,7 +21,7 @@ from orchestrator.services.execution.dispatch import (
     GitHubActionsDispatcher,
     dispatch_work_unit,
 )
-from orchestrator.services.execution.factory_target import GitHubFactoryTargetSource
+from orchestrator.services.execution.target_grant import MemberRecordGrants
 from orchestrator.services.github_app import token_provider_for
 from orchestrator.services.lifecycle.lifecycle import require_operator_actor
 
@@ -63,7 +63,7 @@ def dispatch_route(
         dispatch_settings,
         dispatcher,
         landing_source,
-        target_source=GitHubFactoryTargetSource(token_provider),
+        grant_source=MemberRecordGrants(session),
     )
 
 

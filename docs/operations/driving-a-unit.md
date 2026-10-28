@@ -651,6 +651,10 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
 
 ### #301
 
+- **Superseded 2026-10-28 (ADR-0058 amendment): admission reads the member record's grant, not the
+  file.** `services/execution/target_grant.py` replaced `factory_target.py`; the refusal is
+  `target_repository_not_granted`, and `tests/services/test_factory_target.py` is gone. The rest of
+  this bullet describes the estate between 2026-09-15 and that date.
 - **DISPATCH ADMISSION READS `factory-target.toml`, AND `ORCHESTRATOR_DISPATCH_ALLOWED_TARGET_REPOSITORIES`
   NO LONGER EXISTS** (ADR-0015 amendment 4, Devon, 2026-09-15). Every earlier bullet that names the
   allowlist as an onboarding step or an admission term describes the estate before that date.

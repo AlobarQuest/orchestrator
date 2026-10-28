@@ -435,7 +435,7 @@ Placement rule: global CLAUDE.md §7.
   a branch, edit, or run uv there while a pass may fire; edit in a worktree. Detail:
   `docs/operations/local-development.md`.
 - The dispatch App's installation reach is deliberately wider than its work; every App call site
-  must stay bounded by a declaration or allowlist check, since the ruling rests on that. Detail:
+  must stay bounded by a grant or allowlist check, since the ruling rests on that. Detail:
   `docs/operations/credentials.md`.
 - An envelope's verifier must exercise what the change could break (build, tests), not merely
   confirm the edit; use the profile's generated command list, never a hand-authored one. Detail:
@@ -452,10 +452,12 @@ Placement rule: global CLAUDE.md §7.
   holds `factory-policy.toml`'s known-good ceiling to intent-packages' `BUDGETS`. Raising the
   pattern ceiling withholds a human gate: a standing-authority decision. History:
   `docs/history/claude-md-invariants-archive.md` #291.
-- Dispatch admission reads `factory-target.toml` from the target's default branch
-  (`services/execution/factory_target.py`), refusing `target_repository_not_declared` /
-  `..._declaration_unreadable`; its parse is pinned to `work_carrier/declaration.py`. Detail:
-  `docs/operations/driving-a-unit.md`; full procedure: `docs/operations/onboarding-a-target.md`.
+- Dispatch admission reads the member record's grant for the unit's change class
+  (`services/execution/target_grant.py`): `dependency_updates` for `dependency-update`, `app_changes`
+  for every other class, only in state `granted` on a non-retired member, case-folded; otherwise
+  `target_repository_not_granted`. The lanes' copy of the mapping is held equal by
+  `test_target_grant.py`. Detail: `docs/operations/driving-a-unit.md`; full procedure:
+  `docs/operations/onboarding-a-target.md`.
 - Moving a rollout workflow is a paired change: re-transcribe it in
   `src/deploy_watcher/workflows.py` AND ratify the derived criteria plus the landing blob pin in
   change-manager's `app/deploy_policy.py`, or its records stay silently pending. Detail:

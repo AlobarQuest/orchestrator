@@ -450,3 +450,12 @@ landing lane's human-approved change record.
   `.cred-consumers.toml`, and the rotation App installed on the repository.
 - Dispatch admission needs nothing else: since the 2026-09-15 amendment it reads the declaration
   alone.
+
+## Amendment, 2026-10-28 — dispatch admission reads the member record's grant
+
+Amendment 2026-09-15 made the repository's own `factory-target.toml` admission's authority.
+ADR-0058's amendment of this date replaces that: admission reads the SDS member record's grant for
+the unit's change class and refuses as `target_repository_not_granted`. The file remains in each
+target repository because project-standards and the membership consistency check still read it; it
+is no longer what decides admission. The declaration-first principle of this ADR stands, with the
+record as the declaration.

@@ -23,7 +23,7 @@ from orchestrator.services.execution.reach_admission import (
     reach_admission_refusal,
 )
 from tests.services.estate_doubles import inert_source
-from tests.services.target_doubles import declared_source
+from tests.services.target_doubles import granted_source
 from tests.services.test_dispatch import (
     FakeGitHubDispatcher,
     dispatch_command,
@@ -120,7 +120,7 @@ def test_an_undeclared_reach_is_refused_and_a_declared_one_is_not(
         settings(),
         github,
         inert_source(),
-        target_source=declared_source(),
+        grant_source=granted_source(),
     )
     admitted = dispatch_work_unit(
         migrated_session,
@@ -128,7 +128,7 @@ def test_an_undeclared_reach_is_refused_and_a_declared_one_is_not(
         settings(),
         github,
         inert_source(),
-        target_source=declared_source(),
+        grant_source=granted_source(),
     )
 
     assert (refused.status, refused.reason_code) == ("blocked", REACH_UNDECLARED)

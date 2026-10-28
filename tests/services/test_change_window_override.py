@@ -48,7 +48,7 @@ from orchestrator.services.landing.pr_merge_admission import (
 from tests._support.posture import harness_policy
 from tests.services.change_record_doubles import approved_record_source
 from tests.services.estate_doubles import inert_source, redeploying_source
-from tests.services.target_doubles import declared_source
+from tests.services.target_doubles import granted_source
 from tests.services.test_change_window import OPEN, SHUT, FrozenClock
 from tests.services.test_dispatch import FakeGitHubDispatcher, ready_unit, settings
 from tests.services.test_pr_merge import (
@@ -98,7 +98,7 @@ def _start(
         github or FakeGitHubDispatcher([]),
         inert_source(),
         clock,
-        target_source=declared_source(),
+        grant_source=granted_source(),
     )
 
 
@@ -555,7 +555,7 @@ def test_a_recorded_start_override_grants_nothing_to_landing_the_pull_request(
         FakeGitHubDispatcher([]),
         inert_source(),
         FrozenClock(SHUT),
-        target_source=declared_source(),
+        grant_source=granted_source(),
     )
     assert _recorded(started) is not None
 

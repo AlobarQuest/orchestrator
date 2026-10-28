@@ -16,13 +16,11 @@ the runner may only mutate the repository it checked out. A process-global targe
 therefore misroute every fan-out unit — opening a PR against the wrong repository — rather
 than fail closed.
 
-Dispatch routes only to a repository that declares itself a factory target (ADR-0015): a
-`factory-target.toml` at its root, on its default branch, with `factory_target = true` and a
-non-empty `factory_target_reason`. Admission reads that file through the dispatch App's
-installation token. A repository that declares `false` or has no file is refused as
-`target_repository_not_declared`; a declaration that cannot be read is refused as
-`target_repository_declaration_unreadable`. A 404 counts as an absence only after the repository
-itself answers, so a mistyped or invisible repository reports the second refusal, not the first.
+Dispatch routes only to a repository the SDS member record grants (ADR-0058): `dependency_updates`
+for a `dependency-update` unit, `app_changes` for every other change class. Admission reads the
+record through the request's session; a repository with no member, a retired member, or a grant in
+any state but `granted` is refused as `target_repository_not_granted`. Repositories compare
+case-folded.
 
 Every target repository must host the caller workflow at `.github/workflows/` under the file
 name `ORCHESTRATOR_DISPATCH_WORKFLOW_ID`, and carry the `FACTORY_RUNNER_TOKEN`,
@@ -88,8 +86,8 @@ A work unit is dispatchable only when all of the following are true. `_blocked_r
 7. The unit capability and change class are named in the policy artifact's `[admission]` table.
 8. The envelope allows the unit's required capability, and names only capabilities the runner
    understands.
-9. The unit declares `authority.constraints.target_repository`, and that repository declares
-   itself a target in its own `factory-target.toml`.
+9. The unit declares `authority.constraints.target_repository`, and the member record grants that
+   repository the service matching the unit's change class.
 10. The envelope satisfies the runner's command rules.
 11. The unit's own conformance claim is green, or every touched standard is explicitly accepted in
     it.

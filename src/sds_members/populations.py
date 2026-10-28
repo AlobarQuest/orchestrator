@@ -7,6 +7,15 @@ from collections.abc import Iterable
 from sds_members.client import SERVICES, App, Member
 
 
+def service_for_change_class(change_class: str) -> str:
+    """The service whose grant admits work of this change class.
+
+    Held equal to `orchestrator.services.execution.target_grant.service_for_change_class` by
+    `tests/services/test_target_grant.py`; the lanes cannot import the orchestrator.
+    """
+    return "dependency_updates" if change_class == "dependency-update" else "app_changes"
+
+
 def _live(members: Iterable[Member]) -> list[Member]:
     return [m for m in members if m.state != "retired"]
 

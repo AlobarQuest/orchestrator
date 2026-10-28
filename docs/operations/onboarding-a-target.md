@@ -4,8 +4,8 @@ This page explains how to make a repository a factory target: a repository the o
 work units for, dispatches to factory-runner, and lands. It lists every step in order, says what
 checks each one, and names the refusal you see if a step is missing.
 
-A repository is a target only by its own declaration (ADR-0015). No setting in the orchestrator
-lists targets.
+A repository is a target only by the member record's grant (ADR-0058, which supersedes ADR-0015's
+file). No setting in the orchestrator lists targets.
 
 ## Before you start
 
@@ -57,8 +57,14 @@ by hand before you make it a target.
 
 ## Make the repository dispatchable
 
-1. **Declare the repository a target.** Commit `factory-target.toml` at the repository root on its
-   default branch:
+1. **Grant the service.** On `/review`, confirm a member proposal that grants the repository
+   `app_changes` (or `dependency_updates` for dependency-update work only). Admission refuses as
+   `target_repository_not_granted` until a person has confirmed it, and for a retired member or a
+   grant in any other state.
+
+   Also commit `factory-target.toml` at the repository root on its default branch. Admission no
+   longer reads it, but project-standards and the membership consistency check still do, and the
+   check reports a repository whose file disagrees with its grant:
 
    ```toml
    factory_target = true
@@ -66,12 +72,7 @@ by hand before you make it a target.
    ```
 
    Both keys are required. A file without a non-empty `factory_target_reason` reads as unreadable,
-   not as a declaration. Admission reads the file from GitHub with the dispatch App's token, never
-   from a checkout (`services/execution/factory_target.py`).
-
-   - A missing file or `factory_target = false` is refused as `target_repository_not_declared`.
-   - Anything else that stops a read, including a malformed file or a repository the App can't
-     see, is refused as `target_repository_declaration_unreadable`.
+   not as a declaration.
 
 2. **Add the caller workflow.** Copy project-standards'
    `src/portfolio/templates/factory-runner-caller.yml` to `.github/workflows/factory-runner-pilot.yml`.

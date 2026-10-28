@@ -20,7 +20,7 @@ from tests._support.seeding import register_ready_unit as seed_ready_unit
 from tests.api.test_lifecycle_api import AUTHORITY as BASE_AUTHORITY
 from tests.api.test_lifecycle_api import SYSTEM
 from tests.services.estate_doubles import FakeEstateLandingSource, inert_source
-from tests.services.target_doubles import FakeFactoryTargetSource, declared_source
+from tests.services.target_doubles import FakeGrantSource, granted_source
 
 # Admission's posture terms are the shipped policy's, plus the harness's fallback change class.
 pytestmark = pytest.mark.usefixtures("harness_posture")
@@ -61,8 +61,8 @@ def FakeEstateLandingSourceFactory(**_: object) -> FakeEstateLandingSource:
     return inert_source()
 
 
-def FakeFactoryTargetSourceFactory(*_: object, **__: object) -> FakeFactoryTargetSource:
-    return declared_source()
+def FakeMemberRecordGrantsFactory(*_: object, **__: object) -> FakeGrantSource:
+    return granted_source()
 
 
 @pytest.fixture
@@ -79,10 +79,8 @@ def dispatch_client(
     # anything already serving. Configured AND faked here for the same reason the workflow
     # client is: an unconfigured source refuses, which is the point of it.
     monkeypatch.setattr(common_routes, "HttpEstateLandingSource", FakeEstateLandingSourceFactory)
-    # ADR-0015: admission reads the target repository's own declaration from GitHub.
-    monkeypatch.setattr(
-        execution_routes, "GitHubFactoryTargetSource", FakeFactoryTargetSourceFactory
-    )
+    # ADR-0058: admission reads the member record's grant for the target repository.
+    monkeypatch.setattr(execution_routes, "MemberRecordGrants", FakeMemberRecordGrantsFactory)
     app = create_app(auth_config)
     mount_seeding_routes(app)
 

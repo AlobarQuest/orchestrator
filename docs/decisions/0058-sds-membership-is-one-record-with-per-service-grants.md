@@ -40,3 +40,46 @@ The detail is in the design spec. In summary:
   phase 1, with the agreement data in hand.
 
 Operations: `docs/operations/membership.md`.
+
+## Amendment, 2026-10-28 — scope comes from the record (bridge layer, Part 2)
+
+Decision 6 is superseded for dispatch admission, which is the first consumer to move; the carrier
+and the proposers follow in the same part. Decision 1 of the bridge-layer design
+(`docs/superpowers/specs/2026-10-27-bridge-layer-design.md`) is implemented: the member record is
+the authority for which repositories the factory may work in.
+
+**What changed.** Admission refuses a unit unless the record grants the service matching the
+unit's change class on its target repository: `dependency_updates` for a `dependency-update` unit,
+`app_changes` for every other class, including the fallback capability name used when an envelope
+carries no class. Only a `granted` grant on a member that is not retired counts, and repositories
+compare case-folded. The refusal is `target_repository_not_granted`, blocked like the term it
+replaces. `target_repository_not_declared` and `target_repository_declaration_unreadable` no longer
+exist; the record is read through the request's own session, so there is no longer an unreadable
+case, and admission makes no GitHub request for this term.
+
+**Rulings made while planning,** each with its cost if wrong
+(`docs/superpowers/plans/2026-10-28-bridge-p2-scope-from-the-record.md`):
+
+1. `factory-target.toml` stays in the target repositories but is no longer authority. Cost: one more
+   declaration to keep equal by hand until its remaining readers move; `membership_check` reports
+   disagreement daily.
+2. The approval-policy grant and the policy file's known-good `target_repositories` list move to
+   Part 3. Cost: intent-packages and policy keep gating by hand-kept lists until then.
+3. The watcher is unchanged: it retires a record only when every unit of its work is complete, so
+   its acting scope already follows from the carrier's. Cost: a stale report about an uncarried
+   record in an ungranted repository.
+4. A granted repository with no standing package is logged, not reported. Cost: none beyond Part
+   3's timing.
+5. The capability source's age limit is 48 hours: the portfolio scan runs daily at 03:00 and the
+   carrier at 07:05, so one missed scan is tolerated and two refuse. Cost: a carrier pass that holds
+   records after two missed scans, loudly.
+6. An unreadable record stops a lane with the lane's own code 2, not the scope module's 3. Either
+   way the alarm fires.
+7. The carrier keeps reading the portfolio scan's file, with the age limit. Cost: capability is up
+   to two days stale, never more.
+8. The other `membership_check` rows stay. Cost: they report dead configuration for a repository
+   nobody granted, which is still true.
+
+Admission and the lanes hold the change-class mapping separately, because the lanes run out of
+process; `tests/services/test_target_grant.py` holds the two equal over every class the policy
+admits.
