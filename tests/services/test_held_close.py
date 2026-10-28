@@ -549,3 +549,11 @@ def test_a_head_the_caller_did_not_read_is_not_closed(
 
     assert code == HELD_CLOSE_HEAD_MOVED
     _assert_untouched(gateway, migrated_engine)
+
+
+def test_the_response_declares_every_field_of_the_outcome() -> None:
+    """A `response_model` silently drops what it does not declare."""
+    from orchestrator.api.schemas.landing import HeldPrCloseResponse
+    from orchestrator.services.landing.held_close import HeldCloseOutcome
+
+    assert set(HeldPrCloseResponse.model_fields) == set(HeldCloseOutcome.__dataclass_fields__)
