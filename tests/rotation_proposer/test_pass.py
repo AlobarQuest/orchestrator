@@ -11,7 +11,7 @@ the right thing once and one that did it twice.
 from __future__ import annotations
 
 import json
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 
 import httpx
 import pytest
@@ -23,12 +23,24 @@ from bump_proposer.orchestrator_client import OrchestratorClient
 from rotation_proposer import cli
 from rotation_proposer.cli import EXIT_FINDINGS, EXIT_OK, EXIT_UNUSABLE, run
 from rotation_proposer.findings import Due, FindingsError, Unrecognised
+from rotation_worker.registry import RegistryEntry, RegistryError
 from tests.bump_proposer.test_pass import _Estate, _Spine
-from tests.rotation_proposer.test_standing import FakeLifecycle, write_package
+from tests.rotation_proposer.test_standing import DESTINATIONS, FakeLifecycle, write_package
 
 CREDENTIAL = "openrouter-generic"
 REQUESTED = Due(CREDENTIAL, "openrouter-key", "requested", "2026-10-07", "2026-10-07", True)
 AGE = Due(CREDENTIAL, "openrouter-key", "age", "2026-10-08", "2026-10-08", True)
+
+
+@dataclass(frozen=True)
+class _Entry(RegistryEntry):
+    """A registry row whose destinations the test states outright."""
+
+    listed: list[str] = field(default_factory=list)
+
+    @property
+    def destinations(self) -> list[str]:
+        return list(self.listed)
 
 
 class _Rig:
@@ -41,6 +53,22 @@ class _Rig:
         self.unrecognised: list[Unrecognised] = []
         self.published: list[str] = []
         self.user_agents: set[str] = set()
+        # The registry's destinations for the credential; a list differing from the package's
+        # is drift. `None` makes the registry unreadable.
+        self.registry: list[str] | None = list(DESTINATIONS)
+        # Each credential's registry class, where it isn't OpenRouter's.
+        self.classes: dict[str, str] = {}
+        self.registry_reads = 0
+
+    def entry(self, credential_id: str) -> RegistryEntry:
+        credential = {
+            "id": credential_id,
+            "class": self.classes.get(credential_id, "openrouter-key"),
+            "bws_uuid": "11111111-1111-4111-8111-111111111111",
+        }
+        return _Entry(
+            "AlobarQuest/infraops-mcp-server", "c" * 40, credential, list(self.registry or [])
+        )
 
     @property
     def package_yaml(self):
@@ -84,10 +112,21 @@ def rig(tmp_path, monkeypatch):
         return wrapped
 
     monkeypatch.setattr(cli, "read_due", lambda: (list(rig.due), list(rig.unrecognised)))
+    monkeypatch.setattr(cli, "default_mirror_root", lambda program: tmp_path / program)
+
+    def registry_entries(_mirror):
+        rig.registry_reads += 1
+        if rig.registry is None:
+            raise RegistryError(
+                "AlobarQuest/infraops-mcp-server: .cred-consumers.toml doesn't parse"
+            )
+        return {item.credential_id: rig.entry(item.credential_id) for item in rig.due}
+
+    monkeypatch.setattr(cli, "registry_entries", registry_entries)
     monkeypatch.setattr(cli, "require_clean", lambda root: None)
     monkeypatch.setattr(cli, "require_publishable", lambda root: None)
 
-    def commit(package, root):
+    def commit(package, root, *, generated=False):
         rig.published.append(package.package_id)
         return "c" * 40
 
@@ -265,6 +304,8 @@ def test_a_package_for_a_credential_never_handed_over_is_never_acted_on(rig, cap
 def test_a_handed_over_credential_with_no_package_is_a_finding(rig, capsys) -> None:
     """Handed over, so infraops refuses it; with no package nothing rotates it at all."""
     rig.due = [replace(LEGACY, handed_over=True)]
+    # An OpenAI key is no type the SDS rotates, so no package can be generated for it.
+    rig.classes["openai-project"] = "openai-key"
     assert run(["--submit"]) == EXIT_FINDINGS
     assert rig.acts() == ([], 0, 0, 0)
     assert not (rig.root / "packages" / "rotation-openai-project").exists()
@@ -542,3 +583,141 @@ def test_the_retirement_actor_is_the_work_watchers() -> None:
     from work_watcher.change_manager import RETIREMENT_ACTOR
 
     assert cli.RETIREMENT_ACTOR == RETIREMENT_ACTOR
+
+
+# ---- the registry's destinations, and a generated package (ADR-0055 amendment 15, increment 4) --
+
+DRIFTED = [*DESTINATIONS, 'runtime-fetch repo="orchestrator" ref="scripts/run-new-lane.sh"']
+
+
+def test_a_due_revision_carries_the_registry_s_destinations(rig, capsys) -> None:
+    rig.registry = list(DRIFTED)
+    assert run(["--submit"]) == EXIT_OK
+    text = rig.package_yaml.read_text()
+    assert all(f"'{destination}'" in text for destination in DRIFTED)
+    assert "revised" in capsys.readouterr().out
+
+
+def test_an_approved_revision_that_drifted_is_revised_not_proposed(rig, capsys) -> None:
+    """Kills: proposing a revision the executor would refuse at its first unit."""
+    run(["--submit"])
+    rig.approve_by_name()
+    rig.registry = list(DRIFTED)
+    capsys.readouterr()
+
+    assert run(["--submit"]) == EXIT_OK
+    assert rig.acts() == (["revise", "transition", "hash"] * 2, 2, 0, 2)
+    assert "run-new-lane.sh" in rig.package_yaml.read_text()
+    assert "revised" in capsys.readouterr().out
+    rig.approve_by_name()
+    assert run(["--submit"]) == EXIT_OK
+    assert [p["package_revision"] for p in rig.estate.proposals] == [3]
+
+
+def test_a_registry_that_can_t_be_read_writes_nothing(rig, capsys) -> None:
+    rig.registry = None
+    assert run(["--submit"]) == EXIT_FINDINGS
+    assert rig.acts() == ([], 0, 0, 0)
+    assert "the registry:" in capsys.readouterr().out
+
+
+GENERATED = "github-finegrained-new"
+
+
+def test_a_handed_over_credential_with_no_package_gets_one_generated(rig, capsys) -> None:
+    """Revision 1 from the registry row, observed first, written through intent-packages, taken
+    to review and published -- and nothing proposed until a named human approves it."""
+    rig.due = [Due(GENERATED, "github-pat-fine-grained", "age", "2026-07-01", "2026-07-01", True)]
+    rig.classes[GENERATED] = "github-pat-fine-grained"
+    assert run(["--submit"]) == EXIT_OK
+
+    lifecycle, observations, proposals, published = rig.acts()
+    assert (lifecycle, observations, proposals) == (["create-rotation", "transition", "hash"], 1, 0)
+    assert published == 1
+    text = (rig.root / "packages" / f"rotation-{GENERATED}" / "package.yaml").read_text()
+    assert "status: ready_for_review" in text and "created_by: rotation-proposer" in text
+    assert "generated" in capsys.readouterr().out
+
+
+def test_a_dry_run_says_it_would_generate_and_writes_nothing(rig, capsys) -> None:
+    rig.due = [Due(GENERATED, "github-pat-fine-grained", "age", "2026-07-01", "2026-07-01", True)]
+    rig.classes[GENERATED] = "github-pat-fine-grained"
+    assert run([]) == EXIT_OK
+    assert rig.acts() == ([], 0, 0, 0)
+    assert not (rig.root / "packages" / f"rotation-{GENERATED}").exists()
+    assert "would-generate" in capsys.readouterr().out
+
+
+def test_generation_refuses_an_unpublishable_checkout_before_writing_anything(
+    rig, monkeypatch, capsys
+) -> None:
+    """Kills: creating the package before asking whether its commit could be published."""
+
+    asked: list[object] = []
+
+    def unpublishable(root) -> None:
+        # The pass asks once before it reads anything; this refuses the ask before generating.
+        asked.append(root)
+        if len(asked) > 1:
+            raise shared.StandingError("the checkout is on a topic branch")
+
+    monkeypatch.setattr(cli, "require_publishable", unpublishable)
+    rig.due = [Due(GENERATED, "github-pat-fine-grained", "age", "2026-07-01", "2026-07-01", True)]
+    rig.classes[GENERATED] = "github-pat-fine-grained"
+    assert run(["--submit"]) == EXIT_FINDINGS
+    assert [call[0] for call in rig.lifecycle.calls] == []
+    assert not (rig.root / "packages" / f"rotation-{GENERATED}").exists()
+    assert "topic branch" in capsys.readouterr().out
+
+
+def test_a_finished_rotation_is_recorded_even_when_the_registry_changed_since(
+    rig, capsys, monkeypatch
+) -> None:
+    """Kills: drift revising a revision whose rotation already completed, which would skip
+    record-rotation and rotate the credential a second time."""
+    recorded = _proposed_and_built(rig, monkeypatch)
+    rig.registry = list(DRIFTED)
+    capsys.readouterr()
+
+    assert run(["--submit"]) == EXIT_OK
+    assert recorded == [CREDENTIAL]
+    assert len(rig.estate.proposals) == 1
+    assert "run-new-lane.sh" not in rig.package_yaml.read_text()
+
+
+def test_a_revision_with_an_open_record_is_never_revised_from_under_it(rig, capsys) -> None:
+    run(["--submit"])
+    rig.approve_by_name()
+    run(["--submit"])
+    rig.registry = list(DRIFTED)
+    capsys.readouterr()
+
+    assert run(["--submit"]) == EXIT_OK
+    assert rig.acts()[0] == ["revise", "transition", "hash"]
+    assert "run-new-lane.sh" not in rig.package_yaml.read_text()
+    assert "replayed" in capsys.readouterr().out
+
+
+def test_the_registry_is_read_once_per_pass(rig) -> None:
+    rig.due = [
+        REQUESTED,
+        Due(
+            "bitbucket-mirror-token", "atlassian-api-token", "age", "2026-07-01", "2026-07-01", True
+        ),
+    ]
+    rig.classes["bitbucket-mirror-token"] = "atlassian-api-token"
+    run([])
+    assert rig.registry_reads == 1
+
+
+def test_a_malformed_row_is_that_credential_s_finding_and_the_pass_goes_on(rig, capsys) -> None:
+    rig.due = [
+        Due(GENERATED, "github-pat-fine-grained", "age", "2026-07-01", "2026-07-01", True),
+        REQUESTED,
+    ]
+    rig.classes[GENERATED] = "github-pat-fine-grained"
+    rig.registry = ["not a destination"]
+    assert run([]) == EXIT_FINDINGS
+    out = capsys.readouterr().out
+    assert f"{GENERATED}  error" in out and "the registry:" in out
+    assert f"{CREDENTIAL}  would-advance" in out

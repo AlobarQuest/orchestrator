@@ -76,8 +76,12 @@ import argparse
 import json
 import os
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 
+from rotation_worker.git_mirror import MirrorError, RepoMirror, default_mirror_root
+from rotation_worker.registry import RegistryError, rotated_by_sds
+from rotation_worker.types import CLASS_TYPES
 from sds_members.client import Member, MembersUnreadable, read_members_from_environment
 from work_carrier.change_manager import (
     DEFAULT_BASE_URL,
@@ -102,6 +106,7 @@ from work_carrier.workability import (
     UNJUDGED,
     WORKABLE,
     grants_by_service,
+    is_operational,
 )
 from work_carrier.workability import judge as judge_workability
 
@@ -364,12 +369,47 @@ def _carry_all(
     return carried, unregistered
 
 
+def _prepare_all(pending: list[WorkRecord], root: Path) -> tuple[list[Prepared], list[Refused]]:
+    prepared: list[Prepared] = []
+    refused: list[Refused] = []
+    for record in pending:
+        # Per-record isolation, deliberately: one record that cannot be prepared must not stop
+        # the others being carried, and there is nothing to roll back because nothing was
+        # written. A pass is a report over the whole approved queue or it is not a report.
+        outcome = prepare(record, checkout_root=root)
+        if isinstance(outcome, Prepared):
+            prepared.append(outcome)
+        else:
+            refused.append(outcome)
+    return prepared, refused
+
+
+def _handed_over(prepared: list[Prepared], out) -> Mapping[str, str] | None:
+    """Each credential of a type the SDS rotates that the registry hands to it, with the
+    repository whose registry holds its row; read only when a rotation is waiting. `None` when
+    the registry can't be read, which holds every rotation undecided and nothing else."""
+    if not any(is_operational(item.payload) for item in prepared):
+        return {}
+    try:
+        rows = rotated_by_sds(RepoMirror(default_mirror_root("work-carrier")))
+    except (RegistryError, MirrorError) as error:
+        print(f"[WARNING] the credential registry could not be read: {error}", file=out)
+        return None
+    # A class with no type (the canary) is never carried, whatever its row says.
+    return {
+        credential_id: entry.repository
+        for credential_id, entry in rows.items()
+        if entry.credential.get("class") in CLASS_TYPES
+    }
+
+
 def run(
     argv: list[str],
     *,
     source: WorkRecordSource | None = None,
     registrar: OrchestratorClient | None = None,
     members: list[Member] | None = None,
+    rotated: Mapping[str, str] | None = None,
     out=sys.stdout,
 ) -> int:
     args = _parse_args(argv)
@@ -407,17 +447,7 @@ def run(
 
     pending, already_carried, unanswered = _records_to_carry(records, writer, out)
 
-    prepared: list[Prepared] = []
-    refused: list[Refused] = []
-    for record in pending:
-        # Per-record isolation, deliberately: one record that cannot be prepared must not stop
-        # the others being carried, and there is nothing to roll back because nothing was
-        # written. A pass is a report over the whole approved queue or it is not a report.
-        outcome = prepare(record, checkout_root=root)
-        if isinstance(outcome, Prepared):
-            prepared.append(outcome)
-        else:
-            refused.append(outcome)
+    prepared, refused = _prepare_all(pending, root)
 
     # JUDGED BEFORE ANYTHING IS CARRIED, and the order is the substance rather than the layout:
     # only a record the three constraints all answer YES for reaches the writer. Devon's rule --
@@ -425,6 +455,7 @@ def run(
     # "without all three, it seems useless to go forward". It runs on a bare pass too: a record
     # that cannot be carried cannot be carried whichever flag was given, so the answer and the
     # exit code do not depend on whether this pass was going to write.
+    rotated = rotated if rotated is not None else _handed_over(prepared, out)
     decisions = judge_workability(
         [
             (
@@ -436,6 +467,7 @@ def run(
         ],
         out,
         grants=grants,
+        rotated=rotated,
     )
     workable = [
         item for item, decision in zip(prepared, decisions, strict=True) if decision in _CARRIED

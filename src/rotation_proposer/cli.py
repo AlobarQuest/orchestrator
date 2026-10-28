@@ -7,7 +7,8 @@ this program carry the detection into the SDS the way `bump_proposer` carries a 
 
     infraops reports a credential due (`security-drift-cli cred-findings`)
       -> HERE, PASS 1: FILE THE OBSERVATION, revise the credential's standing package
-         `rotation-<credential_id>` so its new revision carries this occurrence, take it to
+         `rotation-<credential_id>` so its new revision carries this occurrence and the
+         registry's destinations (or generate the package, if it has none), take it to
          `ready_for_review`, publish the commit -- and STOP
       -> Devon approves that revision by name (no approval policy grants this profile)
       -> HERE, A LATER PASS: file the observation (it replays), propose a `work` record naming
@@ -49,7 +50,9 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final, NamedTuple
 
@@ -81,6 +84,7 @@ from rotation_proposer.findings import (
     read_due,
     record_rotation,
 )
+from rotation_proposer.generate import GenerateError, render
 from rotation_proposer.observation import ObservationUncomposable, rotation_observation
 from rotation_proposer.standing import (
     APPROVED,
@@ -90,9 +94,15 @@ from rotation_proposer.standing import (
     REVISABLE,
     RotationPackage,
     commit,
+    create,
     discover,
     to_review,
 )
+from rotation_worker.contract import ContractError
+from rotation_worker.destinations import DestinationError
+from rotation_worker.git_mirror import MirrorError, RepoMirror, default_mirror_root
+from rotation_worker.registry import RegistryEntry, RegistryError
+from rotation_worker.registry import credentials as registry_entries
 
 EXIT_OK: Final = 0
 EXIT_UNUSABLE: Final = 2
@@ -139,10 +149,14 @@ class Outcome:
     detail: str
 
 
-def _decide(package: RotationPackage, due: Due) -> tuple[str, str]:
+def _decide(package: RotationPackage, due: Due, destinations: list[str]) -> tuple[str, str]:
     """`(action, detail)`: `propose`, `advance`, or a status to report with nothing written."""
     label = f"{package.package_id} rev {package.revision} ({package.state})"
     if package.carries(due.occurrence):
+        if package.state == APPROVED and not package.lists(destinations):
+            # Proposed as it stands, the executor would refuse its first unit: drift reaches Devon
+            # as a revision to approve instead.
+            return _ADVANCE, f"{label}: its destinations differ from the registry's"
         if package.state == APPROVED:
             return _PROPOSE, label
         if package.state == DRAFT:
@@ -221,6 +235,15 @@ def _superseded(records: list[dict[str, Any]], package: RotationPackage) -> list
     return stranded
 
 
+def _recorded(records: list[dict[str, Any]], package: RotationPackage) -> bool:
+    """Whether any record, in any status, names this revision."""
+    return any(
+        row.get("package_id") == package.package_id
+        and row.get("package_revision") == package.revision
+        for row in records
+    )
+
+
 def _resolved(records: list[dict[str, Any]], package: RotationPackage) -> dict[str, Any] | None:
     """The record for this revision, if it has been resolved."""
     for row in records:
@@ -270,13 +293,19 @@ def _record(due: Due, row: dict[str, Any]) -> Outcome:
 def _act(
     package: RotationPackage,
     due: Due,
+    destinations: list[str],
     client: ChangeManagerClient | None,
     observer: OrchestratorClient | None,
     records: list[dict[str, Any]],
     root: Path,
 ) -> list[Outcome]:
-    action, detail = _decide(package, due)
+    action, detail = _decide(package, due, destinations)
     subject = due.credential_id
+    drifted = action == _ADVANCE and package.carries(due.occurrence) and package.state == APPROVED
+    if drifted and _recorded(records, package):
+        # A record already names this revision: its rotation is under way or done, so it is never
+        # revised from under it. The registry's change reaches the next rotation's revision.
+        action, detail = _PROPOSE, f"{detail}; a record already names this revision"
     if action not in {_PROPOSE, _ADVANCE}:
         # Reported on every path, not only when proposing: while a newer revision waits for
         # approval, an open record for an older one is still stranded, and still approvable.
@@ -295,7 +324,7 @@ def _act(
 
     if action == _ADVANCE:
         require_publishable(root)
-        package = to_review(package, due.occurrence, root)
+        package = to_review(package, due.occurrence, destinations, root)
         snapshot_hash(package, root)
         published = commit(package, root)
         return [
@@ -320,46 +349,79 @@ def _act(
     return outcomes + _superseded(records, package)
 
 
+def _generate(
+    entry: RegistryEntry,
+    due: Due,
+    observer: OrchestratorClient | None,
+    root: Path,
+) -> Outcome:
+    """Revision 1 of a missing package, generated from the registry row, to review."""
+    try:
+        rendered = render(entry, due.occurrence, datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"))
+    except GenerateError as error:
+        return Outcome(
+            due.credential_id,
+            "unlaned",
+            f"{due.occurrence} is due, the registry hands it to the SDS, and no standing package "
+            f"rotation-{due.credential_id} exists or can be generated: {error}",
+        )
+    if observer is None:
+        return Outcome(due.credential_id, "would-generate", f"rotation-{due.credential_id} rev 1")
+    observer.record_observation(rotation_observation(due))
+    require_publishable(root)
+    package = create(rendered, root)
+    package = to_review(package, due.occurrence, entry.destinations, root)
+    snapshot_hash(package, root)
+    published = commit(package, root, generated=True)
+    return Outcome(
+        due.credential_id,
+        "generated",
+        f"{package.package_id} rev 1, generated from the registry, carries {due.occurrence}, "
+        f"published {published[:12]}; awaiting a named human's approval",
+    )
+
+
+def _not_handed_over(item: Due, package: RotationPackage | None) -> Outcome:
+    """infraops still rotates it. A package for it is a misconfiguration: acting would put two
+    executors on one credential (ADR-0054), so it is reported and never acted on."""
+    if package is None:
+        return Outcome(item.credential_id, "legacy", f"{item.occurrence}: infraops rotates it")
+    return Outcome(
+        item.credential_id,
+        "not-handed-over",
+        f"{package.package_id} exists but the registry does not mark "
+        f"{item.credential_id} rotated_by_sds; infraops' window still owns it",
+    )
+
+
 def _pass(
     due: list[Due],
     packages: dict[str, RotationPackage],
     client: ChangeManagerClient | None,
     observer: OrchestratorClient | None,
     root: Path,
+    registry: Callable[[], dict[str, RegistryEntry]],
 ) -> list[Outcome]:
     records = client.work_records() if client is not None else []
     outcomes: list[Outcome] = []
     for item in due:
         package = packages.get(item.credential_id)
         if not item.handed_over:
-            # infraops still rotates it. A package for it is a misconfiguration: acting would put
-            # two executors on one credential (ADR-0054), so it is reported and never acted on.
-            if package is None:
-                outcomes.append(
-                    Outcome(item.credential_id, "legacy", f"{item.occurrence}: infraops rotates it")
-                )
-            else:
-                outcomes.append(
-                    Outcome(
-                        item.credential_id,
-                        "not-handed-over",
-                        f"{package.package_id} exists but the registry does not mark "
-                        f"{item.credential_id} rotated_by_sds; infraops' window still owns it",
-                    )
-                )
-            continue
-        if package is None:
-            outcomes.append(
-                Outcome(
-                    item.credential_id,
-                    "unlaned",
-                    f"{item.occurrence} is due, the registry hands it to the SDS, and no standing "
-                    f"package rotation-{item.credential_id} exists: nothing rotates it",
-                )
-            )
+            outcomes.append(_not_handed_over(item, package))
             continue
         try:
-            outcomes.extend(_act(package, item, client, observer, records, root))
+            entry = registry().get(item.credential_id)
+            if entry is None:
+                raise RegistryError(f"{item.credential_id}: no registry entry")
+            if package is None:
+                outcomes.append(_generate(entry, item, observer, root))
+                continue
+            outcomes.extend(
+                _act(package, item, entry.destinations, client, observer, records, root)
+            )
+        except (RegistryError, MirrorError, DestinationError, ContractError) as error:
+            # One malformed row is that credential's finding; the pass goes on to the rest.
+            outcomes.append(Outcome(item.credential_id, "error", f"the registry: {error}"))
         except (ObservationUncomposable, ObservationWriteError) as error:
             outcomes.append(Outcome(item.credential_id, "unobserved", str(error)))
         except StandingError as error:
@@ -369,6 +431,19 @@ def _pass(
         except ChangeManagerError as error:
             outcomes.append(Outcome(item.credential_id, "error", str(error)))
     return outcomes
+
+
+def _once(read: Callable[[], dict[str, RegistryEntry]]) -> Callable[[], dict[str, RegistryEntry]]:
+    """`read`, asked at most once per pass, and only when a handed-over credential is due. A
+    failure is asked again by the next credential, so each reports it."""
+    found: list[dict[str, RegistryEntry]] = []
+
+    def cached() -> dict[str, RegistryEntry]:
+        if not found:
+            found.append(read())
+        return found[0]
+
+    return cached
 
 
 def _report(outcomes: list[Outcome]) -> int:
@@ -482,7 +557,10 @@ def run(argv: list[str] | None = None) -> int:
                 token=credentials.orchestrator_token,
                 user_agent=USER_AGENT,
             )
-        outcomes.extend(_pass(due, packages, client, observer, root))
+        mirror = RepoMirror(default_mirror_root("rotation-proposer"))
+        outcomes.extend(
+            _pass(due, packages, client, observer, root, _once(lambda: registry_entries(mirror)))
+        )
     except (UnusableEndpointError, ObservationCredentialError, ChangeManagerError) as error:
         # "This pass could not use its inputs", not "this pass found something": a refused
         # identity or an unreachable service is every credential at once.

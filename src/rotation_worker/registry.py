@@ -109,6 +109,23 @@ def provider_entries(mirror: RepoMirror, provider: str) -> list[RegistryEntry]:
     return [entry for entry in _entries(mirror) if entry.credential.get("provider") == provider]
 
 
+def credentials(mirror: RepoMirror) -> dict[str, RegistryEntry]:
+    """Every registry entry, by credential id, read once. An id in two entries is refused, as
+    `find_credential` refuses it."""
+    found: dict[str, RegistryEntry] = {}
+    for entry in _entries(mirror):
+        credential_id = str(entry.credential.get("id"))
+        if credential_id in found:
+            raise RegistryError(f"{credential_id}: 2 registry entries, expected exactly 1")
+        found[credential_id] = entry
+    return found
+
+
+def rotated_by_sds(mirror: RepoMirror) -> dict[str, RegistryEntry]:
+    """Each entry whose credential the registry hands to the SDS, by credential id."""
+    return {cid: entry for cid, entry in credentials(mirror).items() if entry.rotated_by_sds}
+
+
 def _entries(mirror: RepoMirror) -> list[RegistryEntry]:
     found: list[RegistryEntry] = []
     for repository in REGISTRY_REPOSITORIES:
