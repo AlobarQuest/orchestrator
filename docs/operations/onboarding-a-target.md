@@ -164,7 +164,7 @@ by hand before you make it a target.
     `factory-policy.toml` carries one `known_good` pattern each for uv, npm and pip, and none names
     a repository: which repositories the change class may reach is decided by the member record's
     grant (`dependency_updates`) at admission, not by a list in the policy. Anything else (another
-    change class, a command outside the pattern's prefixes, a different capability or budget)
+    change class, a command that is not one of the pattern's exact command shapes, a different capability or budget)
     still waits for an approval at `/review`. Widening a pattern remains a standing-authority
     change.
 

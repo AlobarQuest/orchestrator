@@ -708,7 +708,7 @@ def test_a_rotation_pattern_declaring_an_unexpected_field_fails_closed(tmp_path:
 
 def test_a_rotation_pattern_may_not_share_a_name_with_a_command_pattern(tmp_path: Path) -> None:
     shipped = _shipped()
-    command_name = 'name = "uv dependency pin bump into a named repository"'
+    command_name = 'name = "uv dependency pin bump"'
     assert command_name in shipped and shipped.count(ROTATION_NAME) == 2  # control
     # Moved under the one row that also declares the command pattern, under that pattern's name.
     clash = shipped.replace(

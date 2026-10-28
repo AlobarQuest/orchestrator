@@ -177,8 +177,14 @@ def _pattern_rows() -> list[dict]:
     except (OSError, tomllib.TOMLDecodeError) as error:
         raise Unresolvable(f"cannot read {POLICY_PATH.name}: {error}") from error
 
-    rows = (((document.get("reach") or {}).get("source_repository")) or {}).get("known_good") or []
-    matches = [row for row in rows if row.get("change_class") == CHANGE_CLASS]
+    # Every reach row, not only source_repository: a dependency-update pattern declared under
+    # another member would otherwise escape the comparison.
+    matches = [
+        row
+        for member in (document.get("reach") or {}).values()
+        for row in (member.get("known_good") or [])
+        if row.get("change_class") == CHANGE_CLASS
+    ]
     if not matches:
         raise Unresolvable(
             f"{POLICY_PATH.name} declares no pattern for change class {CHANGE_CLASS!r}; "
@@ -189,7 +195,10 @@ def _pattern_rows() -> list[dict]:
 
 def _agreed(read, what: str):
     """The one value every pattern declares, or Unresolvable naming the patterns that differ."""
-    by_pattern = {row.get("name", "<unnamed>"): read(row) for row in _pattern_rows()}
+    rows = _pattern_rows()
+    if not rows:
+        raise Unresolvable(f"no {CHANGE_CLASS} pattern to compare")
+    by_pattern = {row.get("name", "<unnamed>"): read(row) for row in rows}
     distinct = {repr(value) for value in by_pattern.values()}
     if len(distinct) != 1:
         listing = "; ".join(f"{name}: {value}" for name, value in by_pattern.items())

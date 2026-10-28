@@ -58,6 +58,7 @@ class FactoryPolicyKnownGoodResponse(BaseModel):
     conformance_status: str
     target_repositories: list[str] | None
     command_prefixes: list[str]
+    command_shapes: list[str]
 
 
 class FactoryPolicyChangeWindowResponse(BaseModel):

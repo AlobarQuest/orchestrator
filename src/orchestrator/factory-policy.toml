@@ -188,7 +188,7 @@ to look decided.
 decided = "2026-08-01"
 
 [[reach.source_repository.known_good]]
-name = "uv dependency pin bump into a named repository"
+name = "uv dependency pin bump"
 rationale = """
 The one shape of work this factory has taken end to end, and the shape R2 names:
 a pin moves, a lockfile follows, a pull request opens, and the target
@@ -226,20 +226,27 @@ max_attempts = 3
 max_llm_calls = 360
 conformance_status = "green"
 # `uv add` edits the manifest and `uv lock` resolves the tree; `uv lock --check`
-# is the verifier and shares the second prefix. `uv run` is deliberately absent:
-# it is a way to run any program at all, and the delivery profile that emits
-# these lists already forbids the one verifier that used it.
-command_prefixes = ["uv add", "uv lock"]
+# is the verifier. Each is a whole-command SHAPE (a regular expression the entire
+# command must match), not a prefix: a package name or version is a bounded
+# character class, so no argument, source URL or second package can ride along.
+# `uv run` is deliberately absent: it is a way to run any program at all.
+command_shapes = [
+  'uv add( --frozen)?( --dev| --group [A-Za-z0-9_-]+| --optional [A-Za-z0-9_-]+)? \x27[A-Za-z0-9][A-Za-z0-9._-]*>=[0-9A-Za-z][0-9A-Za-z.+!_-]*\x27',
+  'uv lock',
+  'uv lock --check',
+]
 
 [[reach.source_repository.known_good]]
 name = "npm dependency pin bump"
 rationale = """
 The npm shape of the same work as the uv pattern above: a pin moves, the install
 and the repository's own build, lint, format and test run, a pull request opens,
-and the target repository's named check decides. Its commands are exactly those
-the profile generates for npm: the install, the build, the lockfile install, the
-two linters, the test script and the grep that confirms the pin. Recognised on
-the same narrow terms as the uv pattern (a green conformance claim that waives
+and the target repository's named check decides. Each command is a whole-command
+shape the profile's generator can emit: the install of ONE package at ONE version
+(a lowercase npm name and a version drawn from a bounded character set, so no
+second package, URL, tarball or flag can follow), the build, the lockfile install,
+the two linters, the test script, and the grep that confirms the pin. Recognised
+on the same narrow terms as the uv pattern (a green conformance claim that waives
 nothing, budgets equal to the profile's) and, like it, names no repository: the
 member record's grant decides that at admission. The pattern carries the merge
 capability because the profile stamps it into every dependency-update envelope.
@@ -250,19 +257,28 @@ capabilities = { "command.run" = "allowed", "github.pr.create" = "allowed", "git
 max_attempts = 3
 max_llm_calls = 360
 conformance_status = "green"
-command_prefixes = ["npm install", "npm run build", "npm ci", "npx eslint", "npx prettier", "npm test", "grep -q"]
+command_shapes = [
+  'npm install (@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*@[0-9A-Za-z][0-9A-Za-z.+!_-]* --save-exact( --save-dev)?',
+  'npm run build',
+  'npm ci',
+  'npx eslint \.',
+  'npx prettier --check \.',
+  'npm test',
+  'grep -q \x27"(@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*": "[0-9A-Za-z][0-9A-Za-z.+!_-]*"\x27 package\.json',
+]
 
 [[reach.source_repository.known_good]]
 name = "pip dependency pin bump"
 rationale = """
 The pip shape: a requirements file's pin is rewritten in place and a grep
-confirms it. Its two commands are exactly those the profile generates, the
-in-place rewrite and the whole-line match. The rewrite is a sed expression, which
-the uv pattern's rationale once held out as a reason not to recognise pip; it is
-recognised now because the command text is bounded twice: the prefix fixes the
-program and its mode, and the inertness rule refuses any shell control character
-outside the quoted expression. Same narrow terms and no repository list as the
-patterns above.
+confirms it. Its two commands are whole-command shapes the profile's generator
+emits: the in-place rewrite and the whole-line match. A sed script is a program,
+so a prefix would not bound it; what bounds it here is the shape. The package and
+the versions are bounded character sets that cannot express a slash, a space or
+a shell character, so the script cannot gain a second command or flag, and the
+file operand is only requirements.txt or requirements-dev.txt, so it cannot be
+pointed at a workflow or a system file. The inertness rule still applies on top.
+Same narrow terms and no repository list as the patterns above.
 """
 decided = "2026-10-28"
 change_class = "dependency-update"
@@ -270,7 +286,10 @@ capabilities = { "command.run" = "allowed", "github.pr.create" = "allowed", "git
 max_attempts = 3
 max_llm_calls = 360
 conformance_status = "green"
-command_prefixes = ["sed -i", "grep -qx"]
+command_shapes = [
+  'sed -i \x27s/\^[A-Za-z0-9][A-Za-z0-9._-]*==[0-9A-Za-z][0-9A-Za-z.+!_-]*\$/[A-Za-z0-9][A-Za-z0-9._-]*==[0-9A-Za-z][0-9A-Za-z.+!_-]*/\x27 (requirements|requirements-dev)\.txt',
+  'grep -qx \x27[A-Za-z0-9][A-Za-z0-9._-]*==[0-9A-Za-z][0-9A-Za-z.+!_-]*\x27 (requirements|requirements-dev)\.txt',
+]
 
 [reach.live_estate]
 rationale = """

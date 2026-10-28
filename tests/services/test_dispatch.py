@@ -1164,7 +1164,7 @@ def test_a_lifted_gate_leaves_a_record_that_is_not_an_approval(
         events = gate_events(reader, unit.id)
         assert len(events) == 1
         payload = events[0].payload
-        assert payload["recognised_by"] == ["uv dependency pin bump into a named repository"]
+        assert payload["recognised_by"] == ["uv dependency pin bump"]
         assert payload["policy_version"] == load_factory_policy().version
         assert payload["policy_source"] == "factory-policy.toml"
         stored = reader.get(WorkUnit, unit.id)

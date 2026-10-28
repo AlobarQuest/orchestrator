@@ -318,7 +318,7 @@ def test_every_dependency_update_pattern_is_held_to_the_profile() -> None:
     assert len(rows) >= 3
     assert all(row["change_class"] == "dependency-update" for row in rows)
     assert {row["name"] for row in rows} >= {
-        "uv dependency pin bump into a named repository",
+        "uv dependency pin bump",
         "npm dependency pin bump",
         "pip dependency pin bump",
     }
@@ -341,11 +341,39 @@ def test_one_pattern_with_other_budgets_fails_the_check(monkeypatch, capsys) -> 
     assert "pattern 2" in capsys.readouterr().err
 
 
-def test_no_dependency_update_pattern_is_unresolvable(monkeypatch) -> None:
+def test_no_dependency_update_pattern_is_unresolvable(monkeypatch, tmp_path) -> None:
+    """Reaches the real guard: a policy file with no dependency-update row at all."""
+    policy = tmp_path / "factory-policy.toml"
+    policy.write_text(
+        "version = 9\n[reach.source_repository]\n"
+        '[[reach.source_repository.known_good]]\nname = "other"\nchange_class = "x"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check, "POLICY_PATH", policy)
     monkeypatch.setattr(check, "fetch", _fetch(PROFILE_SOURCE))
-    monkeypatch.setattr(check, "_pattern_rows", _rows())
 
+    with pytest.raises(check.Unresolvable, match="no pattern for change class"):
+        check._pattern_rows()
     assert check.main() == 1
+
+
+def test_empty_input_to_the_agreement_check_is_refused(monkeypatch) -> None:
+    monkeypatch.setattr(check, "_pattern_rows", lambda: [])
+
+    with pytest.raises(check.Unresolvable, match="no dependency-update pattern"):
+        check.pattern_budgets()
+
+
+def test_a_pattern_under_another_reach_row_is_compared_too(monkeypatch, tmp_path) -> None:
+    policy = tmp_path / "factory-policy.toml"
+    policy.write_text(
+        "[reach.live_estate]\n[[reach.live_estate.known_good]]\n"
+        'name = "elsewhere"\nchange_class = "dependency-update"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check, "POLICY_PATH", policy)
+
+    assert [row["name"] for row in check._pattern_rows()] == ["elsewhere"]
 
 
 def test_agreeing_patterns_pass(monkeypatch) -> None:
