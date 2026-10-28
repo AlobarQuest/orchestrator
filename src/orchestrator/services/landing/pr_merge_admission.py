@@ -303,7 +303,7 @@ def admission_for(
         clock,
         change_window_override,
     )
-    held = _hold_term(session, unit, revision, envelope.change_class, target_repository)
+    held = _hold_term(session, revision, envelope.change_class, target_repository)
 
     refusals: list[str] = []
     if not completed:
@@ -355,7 +355,6 @@ class _Term:
 
 def _hold_term(
     session: Session,
-    unit: WorkUnit,
     revision: WorkPackageRevision,
     change_class: str | None,
     target_repository: str,
