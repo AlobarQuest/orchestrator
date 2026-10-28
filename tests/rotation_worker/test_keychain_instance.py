@@ -55,7 +55,9 @@ def test_a_keychain_configuration_names_keychain_accounts_and_no_root_token(
 @pytest.mark.parametrize(
     ("extra", "match"),
     [
-        ('organization_id = "11111111-1111-4111-8111-111111111111"\n', "names no organization_id"),
+        # The organization only names where the inbox is, so it comes with the inbox or not at all.
+        ('organization_id = "11111111-1111-4111-8111-111111111111"\n', "an inbox needs"),
+        ('inbox_token_id = "inbox-token"\n', "an inbox needs"),
         ('root_token_file = "/t"\n', "names no root_token_file"),
         ('coolify_url = "https://c"\n', "names no coolify_url"),
         ("[admin_secrets]\n", "names no admin_secrets"),

@@ -50,6 +50,10 @@ SERVICE="rotation-executor"
 BEARER="worker-bearer"
 HEALTHCHECKS_KEY="healthchecks-key"
 ALERT_HUB_TOKEN="alert-hub-token"
+INBOX_TOKEN="inbox-token"
+# Not secrets: the BWS organization, and the `rotation-inbox` secret in `Rotation / Inbox (Mac)`.
+ORGANIZATION_ID="aaff45ca-0bb5-4a93-9ed7-b3a400e8f633"
+INBOX_SECRET_ID="6b6c56a2-f14a-4597-b1fa-b4f100ce4284"
 
 if [ ! -d "$SRC/.git" ]; then
   git clone --quiet --no-checkout https://github.com/AlobarQuest/orchestrator.git "$SRC"
@@ -80,6 +84,14 @@ fi
 # The same for the alert-hub sender token: without it, no act is announced.
 if /usr/bin/security find-generic-password -s "$SERVICE" -a "$ALERT_HUB_TOKEN" > /dev/null 2>&1; then
   echo "alert_hub_token_id = \"$ALERT_HUB_TOKEN\"" >> "$BASE/config.toml.new"
+fi
+# And for the inbox identity's token: without it, a person's mint is staged by hand.
+if /usr/bin/security find-generic-password -s "$SERVICE" -a "$INBOX_TOKEN" > /dev/null 2>&1; then
+  {
+    echo "organization_id = \"$ORGANIZATION_ID\""
+    echo "inbox_secret_id = \"$INBOX_SECRET_ID\""
+    echo "inbox_token_id = \"$INBOX_TOKEN\""
+  } >> "$BASE/config.toml.new"
 fi
 mv "$BASE/config.toml.new" "$BASE/config.toml"
 

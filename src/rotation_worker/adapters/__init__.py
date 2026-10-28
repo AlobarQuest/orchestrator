@@ -56,6 +56,8 @@ class AdapterContext:
     # The credential's registry entry, for a provider that reads its own fields (Bitbucket's
     # probe account and workspace).
     credential: Mapping[str, Any] | None = None
+    # The BWS organization, for a provider that lists what a BWS token can see.
+    organization_id: str | None = None
 
 
 # Why a unit can't be claimed yet, from the unit, its history and the time; `None` means now.
@@ -157,7 +159,9 @@ ADAPTERS: Final[dict[str, Adapter]] = {
     bws_machine_token.NAME: Adapter(
         bws_machine_token.PROVIDER,
         bws_machine_token.PLAN,
-        lambda _context: bws_machine_token.BwsMachineTokenProvider(),
+        lambda context: bws_machine_token.BwsMachineTokenProvider(
+            organization_id=context.organization_id
+        ),
         store_kind="keychain",
         wait=bws_machine_token.wait_reason,
         overlap_waits=frozenset({"store"}),

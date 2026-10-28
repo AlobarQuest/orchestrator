@@ -7,8 +7,9 @@ Everything else it needs (its WORKER bearer) it reads from BWS with that token.
 On the operator machine (`store = "keychain"`, amendment 12) there is no root token: the
 executor's state is in the login Keychain. `work_project_id` is then the Keychain service its
 staging, quarantine and bearer items live under, and `bearer_secret_id` and
-`healthchecks_key_id` are account names under it. Nothing else applies: that instance reads no
-BWS project and reaches no hosted service.
+`healthchecks_key_id` are account names under it. It reaches no hosted service, and the one BWS
+secret it reads is its inbox, through an identity of its own whose token is the Keychain item
+`inbox_token_id` names (ADR-0055 amendment 15, increment 3c).
 """
 
 from __future__ import annotations
@@ -32,7 +33,6 @@ KEYCHAIN_NAME: Final = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 STORES: Final = ("bws", "keychain")
 # What only the VM instance's configuration may name.
 VM_ONLY: Final = (
-    "organization_id",
     "root_token_file",
     "admin_secrets",
     "coolify_url",
@@ -82,6 +82,11 @@ class Config:
     # This instance's alert-hub sender token: a BWS UUID, or a Keychain account name. Absent, no
     # act is announced (ADR-0055 amendment 15, increment 3).
     alert_hub_token_id: str | None = None
+    # The BWS secret a person pastes a new value into (`inbox.py`), and on the Keychain instance
+    # the Keychain account holding the token of the identity that reaches it. Absent, a person's
+    # mint is staged by hand.
+    inbox_secret_id: str | None = None
+    inbox_token_id: str | None = None
 
     @property
     def mirror_root(self) -> Path:
@@ -104,6 +109,8 @@ def load(path: Path) -> Config:
     bearer = _optional_uuid(raw, "bearer_secret_id")
     healthchecks_key = _optional_uuid(raw, "healthchecks_key_id")
     alert_hub_token = _optional_uuid(raw, "alert_hub_token_id")
+    if "inbox_token_id" in raw:
+        raise ConfigError("the VM's inbox is read with the root token: it names no inbox_token_id")
     app_id, app_key = _github_app(raw)
     admin_secrets = raw.get("admin_secrets", {})
     if not isinstance(admin_secrets, dict) or not all(
@@ -131,6 +138,7 @@ def load(path: Path) -> Config:
         github_app_id=app_id,
         github_app_key_id=app_key,
         alert_hub_token_id=alert_hub_token,
+        inbox_secret_id=_optional_uuid(raw, "inbox_secret_id"),
     )
 
 
@@ -145,19 +153,30 @@ def _keychain(raw: dict[str, Any]) -> Config:
     named = [key for key in VM_ONLY if key in raw]
     if named:
         raise ConfigError(f"a Keychain executor names no {', '.join(named)}")
-    for key in ("work_project_id", "bearer_secret_id", "healthchecks_key_id", "alert_hub_token_id"):
+    keychain_names = (
+        "work_project_id",
+        "bearer_secret_id",
+        "healthchecks_key_id",
+        "alert_hub_token_id",
+        "inbox_token_id",
+    )
+    for key in keychain_names:
         value = raw.get(key)
         if (value is not None or key == "work_project_id") and (
             not isinstance(value, str) or not KEYCHAIN_NAME.fullmatch(value)
         ):
             raise ConfigError(f"{key} is a Keychain name: letters, digits, '.', '_' or '-'")
+    inbox = [_optional_uuid(raw, key) for key in ("organization_id", "inbox_secret_id")]
+    named = [*inbox, raw.get("inbox_token_id")]
+    if any(value is None for value in named) and any(value is not None for value in named):
+        raise ConfigError("an inbox needs organization_id, inbox_secret_id and inbox_token_id")
     revision = _string(raw, "source_revision")
     if not REVISION_PATTERN.fullmatch(revision):
         raise ConfigError("source_revision must be 7 to 12 hex characters of the commit")
     return Config(
         orchestrator_url=_string(raw, "orchestrator_url"),
         credential_key_id=_string(raw, "credential_key_id"),
-        organization_id=None,
+        organization_id=inbox[0],
         work_project_id=_string(raw, "work_project_id"),
         bearer_secret_id=raw.get("bearer_secret_id"),
         root_token_file=None,
@@ -166,6 +185,8 @@ def _keychain(raw: dict[str, Any]) -> Config:
         store="keychain",
         healthchecks_key_id=raw.get("healthchecks_key_id"),
         alert_hub_token_id=raw.get("alert_hub_token_id"),
+        inbox_secret_id=inbox[1],
+        inbox_token_id=raw.get("inbox_token_id"),
     )
 
 

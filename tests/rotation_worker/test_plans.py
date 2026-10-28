@@ -238,3 +238,16 @@ def test_a_type_s_derived_plan_has_its_pinned_plan_s_units_in_order(
     keeper = KEYCHAIN_KEEPER if adapter.store_kind == "keychain" else KEEPER
     plan = derive(_capabilities(name), [keeper, *extra], keeper, adapter.store_kind)
     assert [s.name for s in plan.segments] == [s.name for s in adapter.plan.segments]
+
+
+def test_a_type_s_derived_plan_has_its_fixed_plan_s_units_and_acts_in_order() -> None:
+    # Code that reads another rotation's unit by name (`overlaps.py`, `inbox.py`) reads
+    # `Adapter.plan`, which holds only while derivation keeps the same segments.
+    from rotation_worker.adapters import ADAPTERS
+
+    for adapter in ADAPTERS.values():
+        if adapter.capabilities is None:
+            continue
+        derived = derive(adapter.capabilities, [], "keeper", adapter.store_kind)
+        names = [(type(s).__name__, s.name) for s in derived.segments]
+        assert names == [(type(s).__name__, s.name) for s in adapter.plan.segments], adapter

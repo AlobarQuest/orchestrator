@@ -425,15 +425,6 @@ class UnitRun:
             outcome = "indeterminate"
         return ProbeAnswer(target, subject, expected, status, outcome)
 
-    def accepts(self, new: Value) -> bool:
-        """Whether the provider's service accepts `new` right now, beside a refused control."""
-        provider = self.provider
-        control = self._answer(
-            provider.probe, provider.probe_target, provider.known_bad(), "known_bad", "dead"
-        )
-        answer = self._answer(provider.probe, provider.probe_target, new, "new", "live")
-        return control.outcome == "dead" and answer.outcome == "live"
-
     # ---- consumers --------------------------------------------------------------------------
 
     def unverified(self, new: Value) -> list[str]:
@@ -472,11 +463,17 @@ class UnitRun:
         if kind in HOSTED_KINDS:
             if not self.provider.hosts_destinations:
                 raise ContractError(f"this adapter can't reach a {kind} consumer")
-            return self.accepts(new)
+            return accepts(self.provider, new)
         secret_id = self.store.locate(consumer)
         if secret_id is not None:
             return self.store.read(secret_id).same_as(new)
         raise ContractError(f"no way to verify a {kind} consumer")
+
+
+def accepts(provider: Provider, new: Value) -> bool:
+    """Whether the provider's service accepts `new` right now, beside a refused control."""
+    control = provider.probe(provider.known_bad())
+    return control in provider.dead_statuses and provider.probe(new) == LIVE_STATUS
 
 
 def _fingerprints(new: Value, old: Value) -> tuple[tuple[Which, Fingerprint], ...]:

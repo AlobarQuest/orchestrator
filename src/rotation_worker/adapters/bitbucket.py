@@ -114,6 +114,15 @@ class BitbucketProvider:
     def probe_before_revoke(self, value: Value) -> int | None:
         return self.probe(value)
 
+    def same_identity(self, new: Value, old: Value) -> bool:
+        """Whether both values are the same account's, with the same workspace in reach.
+
+        The probe signs in with the registry's `probe_email`, so a token another Atlassian
+        account issued is refused there: both answering is the account check. `GET /2.0/user`
+        would name the account, but these tokens lack its scope (403, measured 2026-10-28).
+        """
+        return self.probe(new) == 200 and self.probe(old) == 200
+
     def host(self, new: Value, old: Value) -> str:
         raise ContractError("an Atlassian token has no hosted service to host it")
 

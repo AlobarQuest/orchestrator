@@ -88,6 +88,40 @@ decomposition that still holds the revoke as a human act. The first sighting is 
 A new decomposition carries no `external_system` dependency for a revoke: `confirm` depends only
 on `verify`.
 
+## A person's mint is taken from the inbox
+
+Where a plan has a person mint the new value, the unit after the mint (`store`) waits, unclaimed,
+until a value is staged for its rotation (`inbox.py`, ADR-0055 amendment 15, increment 3c). While
+it waits, each pass sends a "Create a new … value" alert naming the credential, its registry
+`provider_identity` and where to paste: the secret `rotation-inbox` in the BWS project
+`Rotation / Inbox` for a VM credential, or `Rotation / Inbox (Mac)` for a BWS machine token.
+
+To mint, create the value in the provider's console, paste it as the value of `rotation-inbox`,
+and clear the clipboard with `pbcopy < /dev/null`. Nothing else is needed. The next pass binds the
+value to the waiting rotation only when all of the following hold:
+
+- No other rotation waits on a person's mint, on either instance. Nothing in a value says which
+  credential it was made for, so with two waiting, nothing binds; `rotation-worker stage` (see
+  "Mint and stage a value by hand") still works for either.
+- It isn't the keeper's value, and the provider accepts it beside a refused known-bad value.
+- It is for the same account as the value it replaces: the same GitHub account id at `GET /user`;
+  a Bitbucket login with the registry's `probe_email` for both; for a BWS token, exactly the same
+  projects and secrets, each listed by a fresh login. For a GitHub PAT this checks the account
+  only, not its repository list or permissions: create it with the registry's
+  `replacement_scope`.
+- It is no other SDS-rotated keeper's value of the same type. Two BWS machine tokens can see
+  exactly the same projects (`ops-mini` and `content-mini` do), so only this refuses one pasted
+  for the other.
+
+A value that binds is written to the rotation's staging secret, and the inbox is set back to the
+word `empty`. A value that doesn't bind stays in the inbox and fails nothing. If the same value
+fails on a later pass too, an alert names why; replace it with the right value. An inbox value
+that differs from a value already staged is reported and left alone.
+
+An instance with no inbox configured waits for a value staged by hand, and its alert says so. The
+old value must still answer for the identity check, so after an early revoke (an exposure) or an
+expiry, stage by hand.
+
 ## Decompose a rotation
 
 Each credential's plan (see "The plan a credential runs") fixes its decomposition. For each
@@ -106,9 +140,10 @@ unit, the decomposition proposal gives:
 - `ac_mappings`: each step files against its own acceptance criterion, the `ac_id` the plan
   names, so the package declares one criterion per machine step, whose evidence names the step.
 - `dependencies`: each unit after the first depends on the one before it with
-  `kind: work_unit`, `required_state_or_condition: completed`. Each human act in the plan is an
-  `external_system` dependency on the unit after it, resolved at `/review` with the fingerprint
-  the act produced.
+  `kind: work_unit`, `required_state_or_condition: completed`. A human act adds no dependency: the
+  unit after a mint waits for the inbox, and the unit after a revoke waits for the revoke to be
+  seen. A decomposition approved earlier with a human act as an `external_system` dependency
+  still has it to resolve at `/review`.
 
 Once the decomposition is approved, a unit needs no authority approval of its own when the
 `rotation_known_good` pattern in `factory-policy.toml` recognises its envelope (ADR-0055
@@ -215,6 +250,7 @@ expired, the node logged out and every write timed out before it connected (ADR-
    github_app_id = "5383095"
    github_app_key_id = "80c752aa-866c-43dc-a9e2-b4e80102d444"
    alert_hub_token_id = "<the rotation-executor sender's token, in Rotation / Admin>"
+   inbox_secret_id = "<the rotation-inbox secret's id, in Rotation / Inbox>"
 
    [admin_secrets]
    openrouter = "<the OpenRouter management key's secret id, in Rotation / Admin>"
@@ -236,7 +272,8 @@ expired, the node logged out and every write timed out before it connected (ADR-
    "Scheduled readers" section). `github_app_id` and `github_app_key_id` name the rotation
    GitHub App and its private key in `Rotation / Admin`; they come together, and the executor
    reads the key only when a step writes an Actions secret or a wait reads a report ("Actions
-   secrets").
+   secrets"). `inbox_secret_id` is where a person pastes a value they minted, read with the root
+   ("A person's mint is taken from the inbox").
 
 3. Enable the timer: `orb -m rotation-executor -u root systemctl enable --now
    rotation-worker.timer`. Read its passes with `journalctl -u rotation-worker` (one JSON line per
@@ -263,7 +300,7 @@ executor. None is ever printed, passed as an argument, or kept on the Mac.
 | The OpenRouter management key | BWS secret `openrouter management key` in `Rotation / Admin`; its id in `config.toml`'s `admin_secrets` | The executor, from BWS, only while an `openrouter` unit mints or revokes |
 | The rotation GitHub App's private key (`alobar-sds-rotation`, App id 5383095) | BWS secret `rotation github app private key` in `Rotation / Admin`; its id in `config.toml` as `github_app_key_id` | The executor, from BWS, only while it writes an Actions secret or reads a report |
 | The production Coolify token (`read`, `write`, `deploy`; not `read:sensitive`) | BWS secret `rotation-coolify-token` in `Rotation / Coolify`; its id in `admin_secrets` as `orchestrator` and `change-manager` | The executor, from BWS, only while an `orchestrator` or `change-manager` unit hosts or retires |
-| The BWS projects | Bitwarden Secrets Manager | The root: write on `Rotation / Work` and `Rotation / Keepers`, read on `Rotation / Admin`, `Rotation / Coolify`, `Rotation / Executor` and `Rotation / Healthchecks`, nothing else. A consumer account: a direct read grant on each keeper secret it consumes, nothing else in `Rotation / Keepers` |
+| The BWS projects | Bitwarden Secrets Manager | The root: write on `Rotation / Work`, `Rotation / Keepers` and `Rotation / Inbox`, read on `Rotation / Admin`, `Rotation / Coolify`, `Rotation / Executor` and `Rotation / Healthchecks`, nothing else. A consumer account: a direct read grant on each keeper secret it consumes, nothing else in `Rotation / Keepers` |
 
 ### Create them
 
@@ -557,6 +594,10 @@ amendment 10).
 
 ### Mint and stage a value by hand
 
+A minted value normally goes in the inbox ("A person's mint is taken from the inbox"). Stage it by
+hand only when the inbox can't bind it: another rotation waits on a mint too, or the old value is
+already dead.
+
 1. In the provider's console, create the token. For `factory-pr-token`, create a new
    fine-grained PAT, never a regenerated one (regenerating kills the old value at once): its
    repository list is every factory target and factory-runner, and its permissions are the current
@@ -564,8 +605,9 @@ amendment 10).
    the registry's `replacement_scope`.
 2. In the Bitwarden console, in `Rotation / Work`, create the secret
    `rotation/<credential id>/<occurrence>/staging` and paste the value. Run `pbcopy < /dev/null`.
-3. At `/review`, resolve the human act with a note. The fingerprint is optional: `store`'s
-   verify-new proves the value works before anything depends on it.
+3. For a decomposition approved with the mint as a human act, resolve it at `/review` with a
+   note. The fingerprint is optional: `store`'s verify-new proves the value works before anything
+   depends on it.
 
 ## BWS machine tokens: the Keychain instance
 
@@ -632,17 +674,26 @@ The instance announces acts (see "When a rotation waits on you") only once the K
 The installer names it in the configuration once the item exists, so run the installer again
 after creating it.
 
+The instance takes a minted token from its inbox (see "A person's mint is taken from the inbox")
+only once the Keychain item `rotation-executor`/`inbox-token` holds the access token of the
+machine account `rotation-inbox-mac`, whose only grant is **Can read, write** on
+`Rotation / Inbox (Mac)`. The VM's root has no access to that project. Type the token at the
+hidden prompt of
+`security add-generic-password -s rotation-executor -a inbox-token -T /usr/bin/security -w`,
+and run the installer again: it then names the item as `inbox_token_id`, with the inbox secret's
+id and the organization. The instance logs in with that token only while a unit waits on a mint.
+
 To update, run the installer with the newer commit.
 
 ### The plan
 
 The `bws-machine-token` adapter (`adapters/bws_machine_token.py`) runs these segments in order:
 
-1. **A human act creates the token and stages it.** In the web app, create a new access token for
-   the same machine account. Then run `rotation-worker stage <credential> --occurrence
-   <occurrence> --config <the Mac configuration>` and paste the token at the hidden prompt. The
-   command checks the token's shape, writes the staging item, and prints only its fingerprint.
-   Resolve the act at `/review` with that fingerprint.
+1. **A person creates the token.** In the web app, create a new access token for the same machine
+   account, and paste it into `rotation-inbox` in `Rotation / Inbox (Mac)`; an alert says when.
+   By hand instead, run `rotation-worker stage <credential> --occurrence <occurrence> --config
+   <the Mac configuration>` and paste the token at the hidden prompt. That command checks the
+   token's shape, writes the staging item, and prints only its fingerprint.
 2. **`store`** (AC-001 to AC-003) proves the new token with a fresh login. Then it quarantines the
    keeper's old value, updates the keeper, and updates every other Keychain item that held the
    old value.

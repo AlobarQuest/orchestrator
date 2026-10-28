@@ -201,15 +201,28 @@ def _store(secrets: FakeSecrets) -> BwsStore:
 
 
 def _row(key: str, value: str, project: str = PROJECT) -> dict[str, Any]:
-    return {"key": key, "value": value, "note": "kept", "project_id": project}
+    return {
+        "key": key,
+        "value": value,
+        "note": "kept",
+        "project_id": project,
+        "organization_id": uuid.UUID(ORG),
+    }
 
 
-def test_write_keeps_the_key_note_and_project() -> None:
+def test_write_keeps_the_key_note_project_and_organization() -> None:
     secrets = FakeSecrets()
     sid = str(uuid.uuid4())
     secrets.rows[sid] = _row("keeper", "old-value")
-    _store(secrets).write(sid, Value("new-value"))
+    store = _store(secrets)
+    # The organization is the secret's own, so an identity that names none can still write.
+    store._organization_id = None
+    store.write(sid, Value("new-value"))
     assert secrets.updated == [(ORG, sid, "keeper", "new-value", "kept", [PROJECT])]
+    with pytest.raises(StoreError, match="names no organization"):
+        store.find(PROJECT, "keeper")
+    with pytest.raises(StoreError, match="names no organization"):
+        store.create(PROJECT, "rotation/x/staging", Value("v"))
 
 
 def test_find_matches_key_and_project_and_refuses_a_duplicate() -> None:

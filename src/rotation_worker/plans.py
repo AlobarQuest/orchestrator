@@ -116,6 +116,17 @@ def _numbered(
     return numbered
 
 
+def person_acts_beside(plan: Plan, unit: UnitPlan, offset: int, kind: StepKind) -> bool:
+    """Whether the segment `offset` away from this unit (1 after, -1 before) is a person's act
+    holding a `kind` step: a mint (`inbox.py`) or a revoke (`revokes.py`)."""
+    segments = plan.segments
+    index = segments.index(unit) + offset
+    if not 0 <= index < len(segments):
+        return False
+    segment = segments[index]
+    return isinstance(segment, HumanAct) and any(step.kind is kind for step in segment.steps)
+
+
 def criteria_steps(plan: Plan) -> dict[str, tuple[str, StepKind]]:
     """Each machine step's criterion, with the unit that holds it and the step it covers."""
     return {

@@ -321,4 +321,5 @@ def test_a_pass_announces_its_waits_findings_and_keeps_what_it_couldn_t_tell(
     client = SimpleNamespace(ready_units=lambda: ["u1", "u3"], active_units=lambda: [])
     monkeypatch.setattr(worker, "_take", take)
     worker.run_pass(cast(worker.Setup, SimpleNamespace(client=client, notifier=notifier)))
-    assert announced == [({act.key: act}, {"rotation-revoke:u2", "rotation-revoke:u3"})]
+    kept = {"rotation-revoke:u2", "rotation-revoke:u3", "rotation-mint:u3", "rotation-inbox:u3"}
+    assert announced == [({act.key: act}, kept)]

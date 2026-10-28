@@ -1886,4 +1886,17 @@ New decompositions carry no `external_system` dependency for a mint or a revoke.
 - **3b, the observed revoke:** the first sighting of the refusal is kept in the executor's state
   directory, not beside staging and quarantine as the design said: it is not a secret, and a
   store item would need `confirm_dead`'s cleanup changed. A lost record only lengthens the wait.
+- **3c, the inbox:** built as designed, with these differences:
+  - The executor names the inbox by secret id, not by name in a project, so the Keychain
+    instance's inbox identity needs no organization to search in. It still needs the
+    organization: `same_identity` for a BWS token lists projects and secrets, and listing takes
+    one. The Keychain instance's configuration names it beside the inbox, a non-secret id.
+  - An empty inbox holds the word `empty`, since BWS keeps no secret without a value.
+  - Bitbucket's `GET /2.0/user` answers 403 to these tokens (measured 2026-10-28), so its
+    `same_identity` is both values signing in with the registry's `probe_email`, which an
+    Atlassian token for another account fails.
+  - The proposer doesn't refuse to open a second person-minted rotation. The executor's own
+    count is the guard: with two waiting, nothing binds, and each can be staged by hand.
+  - `same_identity` is an optional provider method (`inbox.ConfirmsIdentity`), not a member of
+    `Provider`: only the person-minted types implement it, and a type without it binds nothing.
 
