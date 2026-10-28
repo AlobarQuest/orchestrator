@@ -59,9 +59,12 @@ update, and staged like any other change: a `holds` list on the member's change,
 - The ecosystem is Dependabot's spelling (`npm_and_yarn`, `pip`, `uv`, `docker`,
   `github_actions`). The tooling spellings `npm`, `yarn`, `pnpm` and `github-actions` are refused,
   since a hold typed with one would match no update.
-- The directory defaults to `/` and must start with `/`.
-- A place needs a ceiling whose release can be read (`2.0.54`, `v3.23.8`; not `latest` or `^1.2`),
-  and replaces the ceiling of an existing hold on the same key.
+- The ecosystem must be lowercase. No field may have leading or trailing whitespace: staging refuses
+  it rather than trimming, so the stored hold is exactly what was confirmed.
+- The directory defaults to `/`; any other must start with `/` and not end with one.
+- A place needs a ceiling whose release can be read (`2.0.54`, `v3.23.8`; not `latest`, `^1.2` or
+  a wildcard such as `1.x` or `1.2.*`), and replaces the ceiling of an existing hold on the same
+  key.
 - A lift needs an existing hold and deletes it on confirm.
 - The hold's reason is the change's `reason`; who set it is the person who confirmed.
 

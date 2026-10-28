@@ -157,7 +157,9 @@ def test_a_lift_that_names_a_ceiling_is_refused(migrated_engine: Engine) -> None
         assert refused(session, hold("lift", ceiling="2.0.54")) == "hold_lift_invalid"
 
 
-@pytest.mark.parametrize("ceiling", [None, "latest", "", "1!2.0", "2..0"])
+@pytest.mark.parametrize(
+    "ceiling", [None, "latest", "", "1!2.0", "2..0", "1.x", "1.2.*", "1.*", "1.2.x"]
+)
 def test_a_place_needs_a_parseable_ceiling(migrated_engine: Engine, ceiling: str | None) -> None:
     with Session(migrated_engine) as session:
         add_member(session, REPOSITORY)
@@ -184,6 +186,17 @@ def test_the_dependabot_spelling_is_accepted(migrated_engine: Engine) -> None:
         ({"dependency": " "}, "member_text_blank"),
         ({"ecosystem": ""}, "member_text_blank"),
         ({"directory": "sub"}, "hold_directory_invalid"),
+        ({"directory": "/sub/"}, "hold_directory_invalid"),
+        ({"directory": "//"}, "hold_directory_invalid"),
+        ({"ecosystem": " uv"}, "hold_text_padded"),
+        ({"ecosystem": "uv "}, "hold_text_padded"),
+        ({"directory": "/ "}, "hold_text_padded"),
+        ({"dependency": "sqlalchemy\t"}, "hold_text_padded"),
+        ({"dependency": " sqlalchemy"}, "hold_text_padded"),
+        ({"ceiling": "2.0.54 "}, "hold_text_padded"),
+        ({"ceiling": " 2.0.54"}, "hold_text_padded"),
+        ({"ecosystem": "UV"}, "hold_ecosystem_not_lowercase"),
+        ({"ecosystem": "Npm_and_yarn"}, "hold_ecosystem_not_lowercase"),
     ],
 )
 def test_a_malformed_hold_is_refused(
@@ -192,6 +205,32 @@ def test_a_malformed_hold_is_refused(
     with Session(migrated_engine) as session:
         add_member(session, REPOSITORY)
         assert refused(session, hold(**overrides)) == code
+
+
+@pytest.mark.parametrize("directory", ["/", "/frontend", "/apps/web"])
+def test_a_valid_hold_stages_and_confirms(migrated_engine: Engine, directory: str) -> None:
+    with Session(migrated_engine) as session:
+        add_member(session, REPOSITORY)
+        place(session, ecosystem="github_actions", directory=directory, dependency="actions/cache")
+        assert stored(session) == [("github_actions", directory, "actions/cache", "2.0.54")]
+
+
+def test_a_padded_hold_is_refused_at_confirm_too(migrated_engine: Engine) -> None:
+    """The confirm re-validates, so a payload that bypassed staging is refused before any write."""
+    with Session(migrated_engine) as session:
+        add_member(session, REPOSITORY)
+        row = stage(session, body(holds_change(hold())))
+        row.payload = {
+            **row.payload,
+            "changes": [
+                {**row.payload["changes"][0], "holds": [{**hold(), "dependency": "sqlalchemy "}]}
+            ],
+        }
+        session.flush()
+        with pytest.raises(DomainError) as raised:
+            confirm(session, row)
+        assert raised.value.code == "hold_text_padded"
+        assert stored(session) == []
 
 
 def test_one_key_twice_in_one_change_is_refused(migrated_engine: Engine) -> None:
@@ -263,7 +302,16 @@ def test_a_staged_member_proposal_is_on_the_review_queue(migrated_engine: Engine
         ("1.2.3+build.5", (1, 2, 3)),
         ("1.2.3.post1", (1, 2, 3)),
         ("10", (10,)),
-        (" 1.2 ", (1, 2)),
+        ("1.2.3.dev0", (1, 2, 3)),
+        ("1.2.3.rc1", (1, 2, 3)),
+        ("1.2.3.a1", (1, 2, 3)),
+        ("1.2.3.b2", (1, 2, 3)),
+        (" 1.2 ", None),
+        ("1.x", None),
+        ("1.2.*", None),
+        ("1.*", None),
+        ("1.2.X", None),
+        ("1*", None),
         ("latest", None),
         ("", None),
         ("v", None),

@@ -689,6 +689,25 @@ def _check_holds(session: Session, change: MemberChange, member: SdsMember | Non
     for hold in change.holds:
         _require_text(hold.ecosystem, "hold ecosystem")
         _require_text(hold.dependency, "hold dependency")
+        # Refused, not normalized: the stored hold must be exactly what the person confirmed.
+        for label, value in (
+            ("ecosystem", hold.ecosystem),
+            ("directory", hold.directory),
+            ("dependency", hold.dependency),
+            ("ceiling", hold.ceiling),
+        ):
+            if value is not None and value != value.strip():
+                raise DomainError(
+                    "hold_text_padded",
+                    f"hold {label} {value!r} has surrounding whitespace",
+                    f"write the {label} without leading or trailing spaces",
+                )
+        if hold.ecosystem != hold.ecosystem.lower():
+            raise DomainError(
+                "hold_ecosystem_not_lowercase",
+                f"hold ecosystem {hold.ecosystem!r} is not lowercase",
+                "spell it as Dependabot does, e.g. uv or npm_and_yarn",
+            )
         meant = MISSPELLED_ECOSYSTEMS.get(hold.ecosystem)
         if meant is not None:
             raise DomainError(
@@ -696,10 +715,12 @@ def _check_holds(session: Session, change: MemberChange, member: SdsMember | Non
                 f"{hold.ecosystem!r} is a tooling spelling; Dependabot calls it {meant!r}",
                 f"name the ecosystem {meant!r}",
             )
-        if not hold.directory.startswith("/"):
+        if hold.directory != "/" and (
+            not hold.directory.startswith("/") or hold.directory.endswith("/")
+        ):
             raise DomainError(
                 "hold_directory_invalid",
-                f"hold directory {hold.directory!r} does not start with /",
+                f"hold directory {hold.directory!r} must start with / and not end with one",
                 "name the directory as dependabot.yml does, e.g. / or /frontend",
             )
         key = _hold_key(hold)
