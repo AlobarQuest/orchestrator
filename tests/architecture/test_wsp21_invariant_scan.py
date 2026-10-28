@@ -367,6 +367,9 @@ OUTBOUND_ALLOWLIST = {
     # where a request goes -- each program passes in the paths it may reach -- and every module
     # that imports it is listed here on its own account.
     Path("src/estate_clients/confined.py"),
+    # Bridge Part 3: the one alert-hub client the lanes share. It may send only `POST /v1/alerts`
+    # with a per-sender token, pinned by tests/alert_hub_client/test_client.py.
+    Path("src/alert_hub_client/__init__.py"),
     Path("src/orchestrator/cli.py"),
     Path("src/orchestrator/services/execution/dispatch.py"),
     Path("src/orchestrator/services/github_app.py"),
@@ -607,8 +610,8 @@ OUTBOUND_ALLOWLIST = {
     Path("src/rotation_worker/readers.py"),
     # ADR-0055 amendment 15, increment 3. The rotation executor tells a person a rotation waits on
     # them through alert-hub, with its own sender token. Its client may send only
-    # `POST /v1/alerts`, pinned by tests/rotation_worker/test_notify.py. Its egress is not the
-    # orchestrator's.
+    # `POST /v1/alerts` (via `alert_hub_client`), pinned by
+    # tests/rotation_worker/test_notify.py. Its egress is not the orchestrator's.
     Path("src/rotation_worker/notify.py"),
     # ADR-0055 increment 7. The rotation App mints a token for one repository with exactly the
     # permissions one purpose needs, writes that repository's one approved Actions secret, and

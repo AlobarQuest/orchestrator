@@ -94,6 +94,8 @@ name = "Lane runtime and operations"
 description = "What keeps the lanes running and the orchestrator deployed: shared launcher helpers, credentials manifests, the deploy procedure and image build scripts."
 paths = [
   "src/estate_clients/**",
+  "src/alert_hub_client/**",
+  "tests/alert_hub_client/**",
   "tests/estate_clients/**",
   "tests/architecture/test_release_workflow.py",
   "tests/fixtures/release_image_run_*.log",

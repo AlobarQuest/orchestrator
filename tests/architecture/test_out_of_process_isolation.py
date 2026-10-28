@@ -68,6 +68,24 @@ def _row(*names: str, no_sibling_lanes: bool = False, library: bool = False) -> 
 # Every name below is a top-level import the program actually makes; the comments are the reasons
 # the non-obvious ones are here, carried over from the isolation modules that used to hold them.
 TABLE: dict[str, Row] = {
+    # The estate's one alert-hub client, shared by the lanes that tell a person something. It
+    # speaks only through `estate_clients` and imports no program.
+    "alert_hub_client": _row(
+        "__future__",
+        "collections",
+        "dataclasses",
+        "estate_clients",
+        "hashlib",
+        "httpx",
+        "json",
+        "logging",
+        "pathlib",
+        "re",
+        "time",
+        "typing",
+        no_sibling_lanes=True,
+        library=True,
+    ),
     "activation_sweep": _row(
         "__future__",
         "dataclasses",
@@ -322,6 +340,7 @@ TABLE: dict[str, Row] = {
     # dependency for it; `base64` carries the sealed value and Bitbucket's Basic auth.
     "rotation_worker": _row(
         "__future__",
+        "alert_hub_client",
         "argparse",
         "base64",
         "bitwarden_sdk",

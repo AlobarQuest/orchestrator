@@ -356,6 +356,11 @@ CLASSIFICATION: dict[str, Row] = {
         "ADR-0050: the confined transport the programs share. It names no service path; each "
         "program passes in the paths it may reach, and that program's row declares them",
     ),
+    "alert_hub_client": Row(
+        Role.NOT_AN_ORCHESTRATOR_WRITER,
+        "ADR-0050: the alert-hub client the lanes share (Bridge Part 3). It sends only "
+        "`POST /v1/alerts` to alert-hub and names no orchestrator path",
+    ),
     "lander": Row(
         Role.NOT_AN_ORCHESTRATOR_WRITER,
         "ADR-0038 amendment 1 (Tier 3 item 27): the body the two landing callers share. It "
