@@ -343,7 +343,7 @@ def _from_checks(name: str, project: dict[str, Any], wanted: tuple[str, ...]) ->
     carry it", which would be the same category error again.
 
     An EMPTY factory block means the sweep did not measure this repository at all
-    -- the kit scopes Q2 on the repository declaring a delivery profile -- and a
+    -- the kit measures Q2 only for members granted or remediating app changes -- and a
     check the scan recorded nothing for is the same answer one check down. Both
     are UNKNOWN: an unmeasured capability is not a demonstrated one, which is the
     fail-open the kit's own module says it must never produce.

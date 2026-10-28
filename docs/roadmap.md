@@ -185,11 +185,11 @@ The numbers are that plan's, kept so its history can be found.
 4. **Retire or lane `rate-shift-calculator`** (from plan decision 5). Its landing is `inert`, but
    nothing consumes the repository, and laning it would put the machine to work merging updates
    into a repository nobody uses.
-5. **The activation sweep's scope** (residual of plan decision 9). The sweep half was decided
-   2026-10-27: the sweep reads its checkouts and bindable set from the SDS member record (#523,
-   `docs/operations/membership.md`), and its own list and `TODO(scope-registry)` are gone. Still
-   open: the conformance kit scopes by each repository's `delivery_profile`, an answer nothing
-   derives from the member record.
+5. **The activation sweep's scope** (residual of plan decision 9). Decided 2026-10-28: the SDS
+   member record answers it. The activation sweep reads its checkouts and bindable set from the
+   record (#523), and the conformance kit's nightly Q2 sweep measures the members whose
+   app-changes grant is `granted` or `remediating`, instead of each repository's
+   `delivery_profile` (project-standards #57).
 6. **Retire the six daily scheduled `main` verification runs** (plan decision 11). The measurement
    that blocked this was taken on 2026-09-01: inert-lane landings fire push CI. Devon ruled on
    2026-09-02 to leave them for now. Revisiting is a judgment about sample size; don't re-take the
