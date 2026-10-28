@@ -915,7 +915,9 @@ def test_the_grant_check_folds_case(rig, monkeypatch, capsys) -> None:
     assert "infraops-mcp-server#" in capsys.readouterr().out
 
 
-def test_a_grant_that_is_not_granted_does_not_admit(rig, monkeypatch, capsys) -> None:
+def test_a_remediating_grant_leaves_an_empty_population_and_exits_unusable(
+    rig, monkeypatch, capsys
+) -> None:
     members = [_member("AlobarQuest/infraops-mcp-server", dependency_updates="remediating")]
     monkeypatch.setattr(cli, "read_members_from_environment", lambda **_: members)
 

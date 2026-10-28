@@ -97,7 +97,9 @@ esac
 printf '{"value": "not-a-real-key"}'
 """
 _GH = "#!/bin/sh\necho not-a-real-gh-token\n"
+# Records the NAMES of the variables it receives, never their values.
 _PROGRAM = """#!/bin/sh
+[ -z "${{ENV_LOG:-}}" ] || env | sed 's/=.*//' >> "$ENV_LOG"
 echo "{name} found: subject-{name}"
 exit "${{{variable}:-0}}"
 """
@@ -263,12 +265,57 @@ def test_the_bump_proposer_fetches_the_member_record_bearer_without_the_acting_f
     assert OBSERVER_UUID in (tmp_path / "bws.log").read_text()
 
 
-def test_a_bump_proposer_whose_observer_bearer_is_unreadable_pings_fail(tmp_path: Path) -> None:
+def test_a_dry_run_bump_proposer_whose_observer_bearer_is_unreadable_never_runs(
+    tmp_path: Path,
+) -> None:
+    """A dry run pings nothing, so the failure shows as the exit code and the message alone."""
+    env_log = tmp_path / "env.txt"
+    rc, pings, output = _run(tmp_path, LANES[0], BWS_FAIL_UUID=OBSERVER_UUID, ENV_LOG=str(env_log))
+    assert rc == 1, output
+    assert pings == []
+    assert "observer bearer" in output
+    assert "found: subject" not in output
+    assert not env_log.exists()
+
+
+def test_an_acting_bump_proposer_whose_observer_bearer_is_unreadable_pings_fail(
+    tmp_path: Path,
+) -> None:
     rc, pings, output = _run(tmp_path, LANES[0], "--submit", BWS_FAIL_UUID=OBSERVER_UUID)
     assert rc == 1, output
     assert pings[1][0] == f"{PING_URL}/fail"
     assert "observer bearer" in pings[1][1]
     assert "found: subject" not in output
+
+
+def _exported_names(tmp_path: Path, *args: str) -> set[str]:
+    env_log = tmp_path / "env.txt"
+    rc, _, output = _run(tmp_path, LANES[0], *args, ENV_LOG=str(env_log))
+    assert rc == 0, output
+    return set(env_log.read_text().split())
+
+
+ORCHESTRATOR_API_NAMES = {
+    "ORCHESTRATOR_API_URL",
+    "ORCHESTRATOR_API_CREDENTIAL_KEY_ID",
+    "ORCHESTRATOR_API_TOKEN",
+}
+
+
+def test_a_dry_run_bump_proposer_exports_the_member_bearer_and_not_the_write_names(
+    tmp_path: Path,
+) -> None:
+    names = _exported_names(tmp_path)
+    assert "SDS_MEMBERS_OBSERVER_TOKEN" in names
+    assert not names & ORCHESTRATOR_API_NAMES
+
+
+def test_an_acting_bump_proposer_exports_the_member_bearer_and_the_write_names(
+    tmp_path: Path,
+) -> None:
+    names = _exported_names(tmp_path, "--submit")
+    assert "SDS_MEMBERS_OBSERVER_TOKEN" in names
+    assert ORCHESTRATOR_API_NAMES <= names
 
 
 def test_an_acting_carrier_whose_observer_bearer_is_unreadable_pings_fail(tmp_path: Path) -> None:
