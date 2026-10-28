@@ -41,8 +41,20 @@ class GrantChange(_Strict):
     reason: str
 
 
+class HoldChange(_Strict):
+    """Place or lift one hold. A place names a ceiling and replaces any existing one for its key; a
+    lift names none and needs an existing hold. The reason is the enclosing change's."""
+
+    ecosystem: str
+    directory: str = "/"
+    dependency: str
+    ceiling: str | None = None
+    action: Literal["place", "lift"]
+
+
 class MemberChange(_Strict):
-    """One member's change. `None` means unchanged; `apps`, when given, replaces the whole list."""
+    """One member's change. `None` means unchanged; `apps`, when given, replaces the whole list.
+    `holds` names only the holds it places or lifts; every other hold stays."""
 
     repository: str
     reason: str
@@ -52,6 +64,7 @@ class MemberChange(_Strict):
     machine_local: bool | None = None
     apps: list[MemberApp] | None = None
     grants: dict[MemberService, GrantChange] = Field(default_factory=dict)
+    holds: list[HoldChange] = Field(default_factory=list)
 
 
 class MemberProposalBody(_Strict):

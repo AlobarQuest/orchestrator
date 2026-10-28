@@ -6,14 +6,17 @@ from pydantic import BaseModel
 from orchestrator.api.schemas.common import CommandBase
 from orchestrator.services.membership.changes import (
     GrantChange,
+    HoldChange,
     MemberApp,
     MemberChange,
     MemberProposalBody,
 )
-from orchestrator.services.membership.members import GrantView, MemberView
+from orchestrator.services.membership.members import GrantView, HoldView, MemberView
 
 __all__ = [
     "GrantChange",
+    "HoldChange",
+    "HoldView",
     "MemberApp",
     "MemberChange",
     "MemberProposalBody",

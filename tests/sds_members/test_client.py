@@ -7,6 +7,7 @@ import pytest
 
 from sds_members.client import (
     SERVICES,
+    Hold,
     MembersUnreadable,
     ProposalRefused,
     read_members,
@@ -33,6 +34,17 @@ WIRE = {
                 }
                 for service in SERVICES
             },
+            "holds": [
+                {
+                    "ecosystem": "uv",
+                    "directory": "/",
+                    "dependency": "sqlalchemy",
+                    "ceiling": "2.0.54",
+                    "reason": "r",
+                    "set_by": "devon",
+                    "set_at": None,
+                }
+            ],
         }
     ]
 }
@@ -61,6 +73,24 @@ def test_reads_members():
     assert member.repository == "A/one" and member.machine_local is True
     assert member.apps[0].name == "crm"
     assert member.grants["rollouts"] == "granted" and set(member.grants) == set(SERVICES)
+    assert member.holds == (Hold("uv", "/", "sqlalchemy", "2.0.54"),)
+
+
+def test_a_member_without_holds_is_unreadable():
+    """Fail closed: a server that dropped the key must not read as "nothing is held"."""
+    [wire] = WIRE["members"]
+    member = {key: value for key, value in wire.items() if key != "holds"}
+    with pytest.raises(MembersUnreadable):
+        _read(transport=_transport(lambda r: httpx.Response(200, json={"members": [member]})))
+
+
+@pytest.mark.parametrize(
+    "holds", [None, "x", [{"ecosystem": "uv"}], [{**WIRE["members"][0]["holds"][0], "ceiling": 3}]]
+)
+def test_malformed_holds_are_unreadable(holds):
+    member = {**WIRE["members"][0], "holds": holds}
+    with pytest.raises(MembersUnreadable):
+        _read(transport=_transport(lambda r: httpx.Response(200, json={"members": [member]})))
 
 
 @pytest.mark.parametrize("status", [302, 401, 500])

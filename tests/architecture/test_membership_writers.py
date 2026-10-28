@@ -18,7 +18,7 @@ from orchestrator.web import router as web_router
 
 SRC = Path(__file__).resolve().parents[2] / "src" / "orchestrator"
 
-WRITE_MODELS = frozenset({"SdsMember", "SdsMemberGrant", "SdsMemberApp"})
+WRITE_MODELS = frozenset({"SdsMember", "SdsMemberGrant", "SdsMemberApp", "SdsMemberHold"})
 PROPOSAL_MODEL = "SdsMemberProposal"
 ALL_MODELS = WRITE_MODELS | {PROPOSAL_MODEL}
 
@@ -46,7 +46,13 @@ WRITE_ROUTES = {
 
 # Member table names: raw SQL naming one is a write path the model checks cannot see.
 TABLE_NAMES = frozenset(
-    {"sds_members", "sds_member_grants", "sds_member_apps", "sds_member_proposals"}
+    {
+        "sds_members",
+        "sds_member_grants",
+        "sds_member_apps",
+        "sds_member_holds",
+        "sds_member_proposals",
+    }
 )
 # Where the table names may appear as string constants: the model that defines them.
 MAY_NAME_TABLES = frozenset({"persistence/models.py"})

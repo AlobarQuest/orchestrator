@@ -49,6 +49,25 @@ new state and a reason. Setting any state is a person's act, so a grant never mo
 confirmed proposal. A proposal that sets `seeded = true` marks its grants as recording what already
 runs rather than a fresh assessment.
 
+## Hold a dependency
+
+A hold is a version ceiling on one dependency of one member: "orchestrator's sqlalchemy stays at or
+below 2.0.54". It is keyed by ecosystem, directory and dependency, as Dependabot identifies an
+update, and staged like any other change: a `holds` list on the member's change, each entry a
+`place` (with a `ceiling`) or a `lift` (with none). The TOML shape is in `src/sds_members/cli.py`.
+
+- The ecosystem is Dependabot's spelling (`npm_and_yarn`, `pip`, `uv`, `docker`,
+  `github_actions`). The tooling spellings `npm`, `yarn`, `pnpm` and `github-actions` are refused,
+  since a hold typed with one would match no update.
+- The directory defaults to `/` and must start with `/`.
+- A place needs a ceiling whose release can be read (`2.0.54`, `v3.23.8`; not `latest` or `^1.2`),
+  and replaces the ceiling of an existing hold on the same key.
+- A lift needs an existing hold and deletes it on confirm.
+- The hold's reason is the change's `reason`; who set it is the person who confirmed.
+
+`GET /api/v1/members` returns each member's `holds` (an empty list when it has none). Staged member
+proposals are listed first on the `/review` queue.
+
 ## Where to confirm
 
 `/review/member-proposals/{id}`, as a signed-in person (HUMAN). The confirm button is bound to the
