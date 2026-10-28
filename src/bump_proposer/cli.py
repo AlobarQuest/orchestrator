@@ -347,17 +347,13 @@ def _held(
 
     Asked before the route and before the cascade, so a held dependency is neither created,
     proposed nor alerted, and it names no alert key: `alerts.sync` resolves a `dependency-bump:`
-    alert this lane raised for it before the hold. The matcher decides; nothing here compares
-    versions. FOR UV THE VERSION IS A FLOOR: the factory's uv mutator asks for `>=<to_version>`,
-    so its merge refuses a uv unit whenever any hold names the dependency, and a package proposed
-    here would only make a record the carrier refuses. The directory is unknown (`None`), so a
-    hold on any directory matches.
+    alert this lane raised for it before the hold. It asks the factory's question
+    (`factory_breaches`), since what it proposes is a bump the factory installs: a uv version is a
+    `>=` floor, so any hold on a uv dependency skips it, as the factory merge would refuse it. The
+    directory is unknown (`None`), so a hold on any directory matches.
     """
     bump = hold_matcher.Bump(ecosystem, None, dependency, to_version)
-    if ecosystem == "uv":
-        breached = hold_matcher.holding(holds, bump)
-    else:
-        breached = hold_matcher.exceeded(holds, repository, (bump,))
+    breached = hold_matcher.factory_breaches(holds, repository, bump)
     if not breached:
         return None
     ceilings = ", ".join(sorted({hold.ceiling for hold in breached}))

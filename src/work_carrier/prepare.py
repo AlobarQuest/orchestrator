@@ -96,16 +96,9 @@ def emit_key(record: WorkRecord) -> str:
 
 
 def prepare(
-    record: WorkRecord,
-    *,
-    checkout_root: Path,
-    holds: dict[str, tuple[Hold, ...]],
-    runner=subprocess.run,
+    record: WorkRecord, *, checkout_root: Path, runner=subprocess.run
 ) -> Prepared | Refused:
-    """The whole carry for one record. Total: it returns a refusal rather than raising.
-
-    `holds` are the member record's holds, keyed by repository case-folded.
-    """
+    """The whole carry for one record. Total: it returns a refusal rather than raising."""
     path = package_path(checkout_root, record)
     if not path.is_dir():
         return Refused(
@@ -158,15 +151,13 @@ def prepare(
     if not isinstance(payload, dict):
         return Refused(record, "emitter_output_unreadable", "payload is not a JSON object")
 
-    disagreement = _disagreement(record, payload, holds)
+    disagreement = _disagreement(record, payload)
     if disagreement is not None:
         return disagreement
     return Prepared(record=record, package_path=path, payload=payload)
 
 
-def _disagreement(
-    record: WorkRecord, payload: dict[str, Any], holds: dict[str, tuple[Hold, ...]]
-) -> Refused | None:
+def _disagreement(record: WorkRecord, payload: dict[str, Any]) -> Refused | None:
     """Everything the built payload must agree with the record about, or None.
 
     Split out of `prepare` so each subject is one clause rather than a branch in a function that
@@ -213,15 +204,13 @@ def _disagreement(
             "the prepared payload names a different originating observation than the record "
             "that caused it",
         )
-    return _policy_disagreement(record, payload, holds)
+    return _policy_disagreement(record, payload)
 
 
 DEPENDENCY_UPDATE = "dependency-update"
 
 
-def _policy_disagreement(
-    record: WorkRecord, payload: dict[str, Any], holds: dict[str, tuple[Hold, ...]]
-) -> Refused | None:
+def _policy_disagreement(record: WorkRecord, payload: dict[str, Any]) -> Refused | None:
     """The fields change-manager's work policy approved on, against the package the carry works.
 
     The policy approves a standing dependency-update record on the RECORD's own
@@ -247,22 +236,22 @@ def _policy_disagreement(
             f"the approved record's change class is {DEPENDENCY_UPDATE!r} and the package's "
             f"profile is {payload.get('profile')!r}",
         )
-    return _held(record, payload, holds)
+    return None
 
 
-def _held(
-    record: WorkRecord, payload: dict[str, Any], holds: dict[str, tuple[Hold, ...]]
-) -> Refused | None:
-    """A dependency update that moves a dependency its repository holds past the ceiling.
+def held_refusal(prepared: Prepared, holds: dict[str, tuple[Hold, ...]]) -> Refused | None:
+    """A prepared dependency update that moves a dependency its repository holds past the ceiling.
 
-    The factory's merge refuses the same unit (`merge_version_ceiling_exceeded`); refusing here
-    stops it before an intake, a decomposition and a run are spent on it. Read as that merge term
-    reads it: either side declaring a dependency update is enough, the bump comes from the
-    package's `profile_fields` with its ecosystem from the standing package id, any directory
-    matches, and a uv version is a floor (its mutator asks for `>=`), so any hold on a uv
-    dependency refuses. A repository with no holds reads nothing more; in one with holds, a bump
-    this can't read is refused, never "not held". The matcher decides.
+    `holds` are the member record's holds, keyed by repository case-folded. The factory's merge
+    refuses the same unit (`merge_version_ceiling_exceeded`); refusing here stops it before an
+    intake, a decomposition and a run are spent on it. Read as that merge term reads it: either
+    side declaring a dependency update is enough, the bump comes from the package's
+    `profile_fields` with its ecosystem from the standing package id, any directory matches, and
+    the comparison is `factory_breaches` (a uv version is a `>=` floor). A repository with no
+    holds reads nothing more; in one with holds, a bump this can't read is refused, never
+    "not held".
     """
+    record, payload = prepared.record, prepared.payload
     if DEPENDENCY_UPDATE not in (record.change_class, payload.get("profile")):
         return None
     repository = target_repository(payload)
@@ -293,10 +282,7 @@ def _held(
             "read, so it can't be shown to stay under them",
         )
     bump = hold_matcher.Bump(ecosystem, None, dependency, to_version)
-    if ecosystem == "uv":
-        breached = hold_matcher.holding(held, bump)
-    else:
-        breached = hold_matcher.exceeded(held, repository, (bump,))
+    breached = hold_matcher.factory_breaches(held, repository, bump)
     if not breached:
         return None
     ceilings = ", ".join(sorted({hold.ceiling for hold in breached}))

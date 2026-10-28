@@ -252,6 +252,37 @@ def test_both_copies_find_the_holds_on_a_dependency_alike(hold: Hold) -> None:
                 assert service.holding(HOLDS, ours) == lane.holding(HOLDS, theirs)
 
 
+@pytest.mark.parametrize("version", ("0.1", "0.15.9", "0.16.0", "0.17", "1", "99", "latest"))
+@pytest.mark.parametrize("hold", HOLDS)
+def test_both_copies_decide_a_factory_bump_alike(version: str, hold: Hold) -> None:
+    for ecosystem in ("uv", "UV", "pip", "npm_and_yarn", "github_actions"):
+        for dependency in (hold.dependency, *SPELLINGS):
+            ours = service.Bump(ecosystem, None, dependency, version)
+            theirs = lane.Bump(ecosystem, None, dependency, version)
+            assert _fields(service.factory_breaches(HOLDS, REPO, ours)) == _fields(
+                lane.factory_breaches(HOLDS, REPO, theirs)
+            )
+
+
+@pytest.mark.parametrize(
+    ("ecosystem", "dependency", "version", "breaches"),
+    [
+        # uv's version is a `>=` floor: below the ceiling still breaches.
+        ("uv", "ruff", "0.1", True),
+        ("uv", "other", "0.1", False),
+        # pip pins exactly: below the ceiling is admitted, beyond it breaches.
+        ("pip", "sqlalchemy", "2.0.1", False),
+        ("pip", "sqlalchemy", "2.0.55", True),
+    ],
+)
+def test_both_copies_apply_the_uv_floor_to_a_factory_bump(
+    ecosystem: str, dependency: str, version: str, breaches: bool
+) -> None:
+    for copy in (service, lane):
+        bump = copy.Bump(ecosystem, None, dependency, version)
+        assert bool(copy.factory_breaches(HOLDS, REPO, bump)) is breaches, copy.__name__
+
+
 def test_holding_finds_some_dependencies_and_not_others() -> None:
     """Kills: two `holding` copies that agree only because both return nothing, or everything."""
     found = {

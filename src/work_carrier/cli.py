@@ -94,7 +94,7 @@ from work_carrier.orchestrator_client import (
     OrchestratorClient,
     OrchestratorError,
 )
-from work_carrier.prepare import Prepared, Refused, prepare
+from work_carrier.prepare import Prepared, Refused, held_refusal, prepare
 from work_carrier.workability import (
     NOT_WORKABLE,
     OPERATIONAL,
@@ -414,7 +414,9 @@ def run(
         # Per-record isolation, deliberately: one record that cannot be prepared must not stop
         # the others being carried, and there is nothing to roll back because nothing was
         # written. A pass is a report over the whole approved queue or it is not a report.
-        outcome = prepare(record, checkout_root=root, holds=holds)
+        outcome = prepare(record, checkout_root=root)
+        ceiling = held_refusal(outcome, holds) if isinstance(outcome, Prepared) else None
+        outcome = ceiling or outcome
         if isinstance(outcome, Prepared):
             prepared.append(outcome)
         else:

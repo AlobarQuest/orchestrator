@@ -156,6 +156,36 @@ def holding(holds: Iterable[HeldDependency], bump: Bump) -> tuple[HeldDependency
     return tuple(hold for hold in holds if _same_dependency(hold, bump))
 
 
+# The ecosystem whose `to_version` is a floor, not the version that lands: intent-packages' uv
+# mutator runs `uv add '<pkg>>=<to_version>'`, so the resolver may land any newer release. npm and
+# pip pin the exact version.
+_FLOOR_ECOSYSTEM: Final = TOOLING_TO_DEPENDABOT["uv"]
+
+
+def factory_breaches(
+    holds: Iterable[HeldDependency], repository: str, bump: Bump
+) -> tuple[HoldBreach, ...]:
+    """Every hold breached by a bump the factory installs, whose uv version is a `>=` floor.
+
+    The one rule for every path that asks about a factory bump (the factory merge, the bump
+    proposer, the work carrier): a uv bump breaches every hold on its dependency, whatever its
+    version, since what lands can pass any ceiling; any other ecosystem is `exceeded`.
+    """
+    if bump.ecosystem.lower() != _FLOOR_ECOSYSTEM:
+        return exceeded(holds, repository, (bump,))
+    return tuple(
+        HoldBreach(
+            repository=repository,
+            ecosystem=hold.ecosystem,
+            directory=hold.directory,
+            dependency=hold.dependency,
+            ceiling=hold.ceiling,
+            version=bump.to_version,
+        )
+        for hold in holding(holds, bump)
+    )
+
+
 def _same_dependency(hold: HeldDependency, bump: Bump) -> bool:
     return (
         hold.ecosystem.lower() == bump.ecosystem.lower()
