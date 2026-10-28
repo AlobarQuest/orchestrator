@@ -666,6 +666,7 @@ paths = [
   "tests/services/test_member_holds.py",
   "tests/services/test_hold_matcher.py",
   "tests/services/test_hold_agreement.py",
+  "tests/architecture/test_hold_paths.py",
   "tests/services/test_membership_vocabulary.py",
   "tests/api/test_membership_api.py",
   "tests/web/test_member_proposals.py",

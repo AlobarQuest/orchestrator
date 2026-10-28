@@ -641,3 +641,15 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   `held-pr-close:<repository lowercased>#<number>` — the only key accepted — makes a replay touch
   GitHub no more; a close that fails after its comment records nothing, and the next call finds the
   sentence in the conversation and closes without commenting again.
+- **The factory side asks the same matcher through `factory_breaches`.** The factory merge
+  (`pr_merge_admission.py::_hold_term`) refuses a dependency-update unit whose revision's
+  `profile_fields` bump breaches a hold (`merge_version_ceiling_exceeded`) or can't be read in a
+  repository with holds (`merge_dependency_bump_unreadable`). The bump proposer skips a held bump
+  (`ceiling-exceeded`, no package, no proposal, no alert), and the work carrier refuses a held
+  record (`version_ceiling_exceeded`, `dependency_bump_unreadable`), which is a finding in that
+  lane. All three read a uv version as a `>=` floor, so a hold on a uv dependency stops every
+  factory update of it.
+- **Every merge and propose path is classified** in `tests/architecture/test_hold_paths.py`:
+  honours (names the function that calls the matcher), covered by an honouring gate, or not a bump.
+  A new `MERGE_EXEMPT_PATHS` entry fails until it is classified. The residuals are in ADR-0028
+  amendment 2.

@@ -67,6 +67,22 @@ update, and staged like any other change: a `holds` list on the member's change,
   key.
 - A lift needs an existing hold and deletes it on confirm.
 - The hold's reason is the change's `reason`; who set it is the person who confirmed.
+- **The ecosystem must be the one Dependabot uses for that repository's manifest**, since that is
+  the spelling every path compares. A repository managed by uv gets `uv` updates, so a `pip` hold
+  there covers nothing; check the ecosystem in the branch name of a Dependabot pull request
+  (`dependabot/uv/...`) or in the repository's `.github/dependabot.yml`.
+
+To place or lift one: write the TOML, run `sds-members stage <file.toml>` (it prints the
+`/review/member-proposals/{id}` page), and confirm on that page as a person. A lift is staged and
+confirmed the same way; nothing else removes a hold, so only a person ends one.
+
+What a hold stops: every path that lands or proposes a dependency bump asks it
+(`tests/architecture/test_hold_paths.py` lists each path and how). Both landers refuse a Dependabot
+pull request past the ceiling and close it with a comment; the factory merge refuses a
+dependency-update unit past it; the bump proposer skips it and the work carrier refuses its record.
+For a uv dependency the factory's version is a floor, so on those three factory paths a hold on a
+uv dependency stops every update of it, whatever its version, until it is lifted. ADR-0028
+amendment 2 has the rule and its residuals.
 
 `GET /api/v1/members` returns each member's `holds` (an empty list when it has none). Staged member
 proposals are listed first on the `/review` queue.

@@ -127,3 +127,57 @@ recognised for an envelope generated from an `httpx2` package. Today the human d
 approval covers it, because a person approves the units and their commands. Binding the two (the
 mutation's dependency equal to the package's) is a precondition for graduating decomposition
 approval.
+
+## Amendment 2 — 2026-10-28 (bridge layer Part 4: holds)
+
+**Status:** Accepted (Devon's decisions in `docs/superpowers/specs/2026-10-27-bridge-layer-design.md`,
+Part 4; rulings in `docs/superpowers/plans/2026-10-28-bridge-p4-holds.md`).
+
+**Every bump path honours the member record's holds** (ADR-0058 amendment 2), through one shared
+matcher: `services/membership/holds.py` in the orchestrator and `sds_members/holds.py` for the
+lanes, held equal by `tests/services/test_hold_agreement.py`. A bump is held when its release is
+greater than the ceiling's, or when either can't be parsed.
+
+- **Both landers** refuse a Dependabot pull request that moves a held dependency past its ceiling
+  (`landing_version_ceiling_exceeded`, an exception: it clears only when a person lifts the hold).
+  A dependency list that can't be read in a repository with holds is
+  `landing_dependency_list_unreadable`, a finding. A grouped update is refused when any member
+  exceeds a hold. A fork's upstream sync is not a bump and is exempt.
+- **The close act.** An acting lander pass closes a held pull request with one public comment
+  through `POST /api/v1/held-pr-close`, which re-composes the lane's admission and closes only on
+  the ceiling code, an update-bot author and the lane's own population.
+- **The factory merge** refuses a dependency-update unit whose revision's bump breaches a hold
+  (`merge_version_ceiling_exceeded`) or can't be read in a repository with holds
+  (`merge_dependency_bump_unreadable`). **The bump proposer** skips a held bump
+  (`ceiling-exceeded`) and **the work carrier** refuses a held record (`version_ceiling_exceeded`).
+- **For uv the factory's version is a floor.** The uv mutator asks for `>=<to_version>` and its
+  verifier is `uv lock --check`, so what lands can pass any ceiling. On the three factory paths
+  (merge, proposer, carrier) a uv bump breaches every hold on its dependency, whatever its version
+  (`factory_breaches`, one rule per matcher copy). Until intent-packages' uv mutator locks the
+  exact version, which would let uv compare like npm and pip, a held uv dependency is never
+  updated by the factory. Locking it changes the profile's fingerprints and is its own decision.
+- **Every path is classified.** `tests/architecture/test_hold_paths.py` lists each merge path
+  (every `MERGE_EXEMPT_PATHS` entry) and each propose path as honouring the matcher, covered by an
+  honouring gate, or not a bump, and fails on an unclassified merge path.
+
+**Residuals,** each accepted:
+
+1. A grouped update's title or a requirement-range title gives
+   no single version, so the version falls back to the commit's `updated-dependencies` block,
+   which can lag a later rewrite of the branch.
+2. The landers read the one commit the update bot authored. A person's commit pushed on top of
+   Dependabot's is not read, so a version it sets is not compared.
+3. A pre-release of the ceiling's own release (`2.0.54rc1` against `2.0.54`) is admitted: the
+   comparison is on the numeric release only.
+4. The carrier's hold refusal is a finding, alarming each pass while the record stays approved,
+   where the landers treat a hold as an exception. This diverges from the landers' ruling and is
+   to be revisited beside the concurrent carrier work.
+5. A dependency-update package whose tooling the factory path can't map (a non-standing
+   `*-bump` package) is refused as unreadable in a repository with holds.
+6. For npm and pip, nothing cross-checks the version in an envelope's `mutation_commands` against
+   `profile_fields.to_version`; they agree because the profile derives both from the same
+   arguments.
+7. A hold's ecosystem must be the one Dependabot uses for that repository: a `pip` hold covers
+   nothing in a uv-managed repository.
+8. The close path (the PATCH to closed, as the dispatch App) is untested live until the first hold
+   is placed.
