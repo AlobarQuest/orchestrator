@@ -50,6 +50,7 @@ until somebody writes an environment variable.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Final, Protocol
 from urllib.parse import quote
@@ -206,7 +207,7 @@ def _trailers(admission: EstateLandingAdmission) -> str:
 
 
 class GitHubEstatePullRequests:
-    """The real gateway. Seven calls, and two of them change anything.
+    """The real gateway. Eleven calls, and four of them change anything.
 
     Holds a token PROVIDER rather than a token, because an installation token expires within the
     hour and a long-lived process would otherwise carry a dead one. Nothing here logs, formats or
@@ -532,6 +533,72 @@ class GitHubEstatePullRequests:
             raise EstateGatewayError(f"request_error:{error.__class__.__name__}") from error
         if response.status_code != 202:
             raise EstateGatewayError("branch_update_status", response.status_code)
+
+    def comment_bodies(self, *, repository: str, number: int) -> tuple[str, ...]:
+        """Every comment's text on the pull request's conversation. Bridge layer Part 4.
+
+        Read before the held-close act comments, so a close that failed after its comment posted
+        does not comment twice on the next pass. Paged strictly: a short list that looked complete
+        would post the comment again.
+        """
+        rows = self._get_pages(f"{GITHUB_API_URL}/repos/{repository}/issues/{number}/comments")
+        bodies: list[str] = []
+        for row in rows:
+            body = row.get("body") if isinstance(row, dict) else None
+            if not isinstance(body, str):
+                raise EstateGatewayError("comments_response_invalid")
+            bodies.append(body)
+        return tuple(bodies)
+
+    def comment(self, *, repository: str, number: int, body: str) -> None:
+        """Post one comment on the pull request's conversation. Bridge layer Part 4.
+
+        A pull request's conversation is its issue's, so the path is the issue's; 201 is success.
+        """
+        self._send(
+            httpx.post,
+            f"{GITHUB_API_URL}/repos/{repository}/issues/{number}/comments",
+            {"body": body},
+            expected=201,
+            status_code="comment_status",
+        )
+
+    def close(self, *, repository: str, number: int) -> None:
+        """Close the pull request without landing it. Bridge layer Part 4.
+
+        Believed only when the answer says the pull request is now closed: a 200 naming any other
+        state is not the act having happened.
+        """
+        body = self._send(
+            httpx.patch,
+            f"{GITHUB_API_URL}/repos/{repository}/pulls/{number}",
+            {"state": "closed"},
+            expected=200,
+            status_code="close_status",
+        )
+        if not isinstance(body, dict) or body.get("state") != "closed":
+            raise EstateGatewayError("close_response_invalid")
+
+    def _send(
+        self,
+        method: Callable[..., httpx.Response],
+        url: str,
+        payload: dict[str, Any],
+        *,
+        expected: int,
+        status_code: str,
+    ) -> Any:
+        """One write, refusing any status but `expected`; the parsed body, or None without one."""
+        try:
+            response = method(url, headers=self._headers(), json=payload, timeout=self._timeout)
+        except (httpx.RequestError, httpx.InvalidURL, ValueError) as error:
+            raise EstateGatewayError(f"request_error:{error.__class__.__name__}") from error
+        if response.status_code != expected:
+            raise EstateGatewayError(status_code, response.status_code)
+        try:
+            return response.json()
+        except ValueError:
+            return None
 
 
 def _linked_login(account: Any) -> str | None:

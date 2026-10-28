@@ -627,3 +627,16 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
 - **The term is asked before each admission's early return** (the inert policy, the estate record),
   so the ceiling code is present whatever else refuses. **A fork's upstream sync is exempt** (an
   author the inert policy declares non-ecosystem); without the policy the term is asked.
+- **An acting lander pass closes a held pull request with a comment** (`POST
+  /api/v1/held-pr-close`, `services/landing/held_close.py`) whenever the ceiling code is among the
+  refusals, beside any other; a dry run prints `would-close`, an acting pass `closed`, and neither
+  is a finding. The orchestrator re-composes the named lane's own admission in its transaction and
+  closes only when it carries `landing_version_ceiling_exceeded` (never on
+  `landing_dependency_list_unreadable`), the update bot opened the pull request, the repository is
+  the lane's (the inert declaration; an identified change record for the deploying lane), the pull
+  request is open at the head the caller read, and the lane is switched on with its credentials.
+  The public comment names each held dependency and its ceiling and one fixed sentence, never the
+  hold's reason or who placed it. One `Event` (`landing.held_pull_request_closed`) keyed
+  `held-pr-close:<repository lowercased>#<number>` — the only key accepted — makes a replay touch
+  GitHub no more; a close that fails after its comment records nothing, and the next call finds the
+  sentence in the conversation and closes without commenting again.

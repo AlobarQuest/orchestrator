@@ -45,6 +45,8 @@ def test_what_the_writer_composes_is_what_the_reader_parses() -> None:
         branch_update_qualifies=False,
         rollout_base_matches_pin=True,
         branch_update_withheld_for_sibling=False,
+        ceiling_breaches=(),
+        update_bot_authored=True,
     )
 
     body = estate_pr_merge._trailers(admission)

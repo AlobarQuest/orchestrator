@@ -35,10 +35,18 @@ CEILING = "landing_version_ceiling_exceeded"
 
 
 class _Client:
-    def __init__(self, answer: dict[str, Any], update_error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        answer: dict[str, Any],
+        update_error: Exception | None = None,
+        close_error: Exception | None = None,
+    ) -> None:
         self.answer = answer
         self.update_error = update_error
+        self.close_error = close_error
         self.keys: list[str] = []
+        # The list a dry-run or a no-hold test asserts is EMPTY.
+        self.closed: list[tuple[str, int, str]] = []
 
     def admission(self, repository: str, pr_number: int) -> dict[str, Any]:
         return self.answer
@@ -56,6 +64,15 @@ class _Client:
         if self.update_error is not None:
             raise self.update_error
         return {}
+
+    def close_held(
+        self, repository: str, pr_number: int, *, head_sha: str, idempotency_key: str
+    ) -> dict[str, Any]:
+        self.closed.append((repository, pr_number, idempotency_key))
+        self.keys.append(head_sha)
+        if self.close_error is not None:
+            raise self.close_error
+        return {"commented": True, "replayed": False, "ceilings": []}
 
 
 def _status(module: Any, refusals: list[str], **extra: Any) -> str:
@@ -232,3 +249,93 @@ def test_each_lane_prints_its_OWN_preamble_and_deferral_line(
         "landing policy version 9",
         "1 open pull request(s) not-a-declared-author; they are not this lane's business",
     ]
+
+
+# ---- A held bump is closed (bridge layer Part 4, Ruling 7) ------------------------------------
+
+LANDERS = [estate, inert]
+CLOSE_KEY = "held-pr-close:alobarquest/x#7"
+
+
+@pytest.mark.parametrize("module", LANDERS)
+@pytest.mark.parametrize(
+    "refusals", [[CEILING], [CEILING, BEHIND, "landing_checks_not_clean"]], ids=["alone", "beside"]
+)
+def test_an_acting_pass_closes_a_held_bump_even_beside_other_refusals(
+    module: Any, refusals: list[str]
+) -> None:
+    client = _Client({"satisfied": False, "refusals": refusals, "head_sha": HEAD})
+
+    [outcome] = module._pass(SUBJECT, client, True)
+
+    assert outcome.status == "closed"
+    assert client.closed == [("alobarquest/x", 7, CLOSE_KEY)]
+    # The head the answer named, and no landing key: nothing was asked to land.
+    assert client.keys == [HEAD]
+
+
+@pytest.mark.parametrize("module", LANDERS)
+def test_a_dry_run_says_it_would_close_and_sends_nothing(module: Any) -> None:
+    client = _Client({"satisfied": False, "refusals": [CEILING], "head_sha": HEAD})
+
+    [outcome] = module._pass(SUBJECT, client, False)
+
+    assert outcome.status == "would-close"
+    assert client.closed == []
+
+
+@pytest.mark.parametrize("module", LANDERS)
+def test_no_ceiling_refusal_closes_nothing(module: Any) -> None:
+    client = _Client(
+        {"satisfied": False, "refusals": ["landing_dependency_list_unreadable"], "head_sha": HEAD}
+    )
+
+    [outcome] = module._pass(SUBJECT, client, True)
+
+    assert outcome.status == "held"
+    assert client.closed == []
+
+
+@pytest.mark.parametrize("module", LANDERS)
+def test_a_settled_held_bump_is_not_closed_again(module: Any) -> None:
+    """A closed pull request is no longer open, so the next pass reads it settled."""
+    client = _Client({"satisfied": False, "refusals": [CEILING, "landing_pull_request_not_open"]})
+
+    [outcome] = module._pass(SUBJECT, client, True)
+
+    assert outcome.status == "settled"
+    assert client.closed == []
+
+
+@pytest.mark.parametrize("module", LANDERS)
+@pytest.mark.parametrize(
+    ("error", "status"),
+    [
+        (core.LandingRefused("refused", "held_close_not_held"), "held"),
+        (core.OrchestratorError("unreachable"), "error"),
+    ],
+)
+def test_a_refused_or_failed_close_is_a_finding(module: Any, error: Exception, status: str) -> None:
+    client = _Client(
+        {"satisfied": False, "refusals": [CEILING], "head_sha": HEAD}, close_error=error
+    )
+
+    [outcome] = module._pass(SUBJECT, client, True)
+
+    assert outcome.status == status
+    assert status not in core.NOT_A_FINDING
+
+
+def test_closing_is_not_a_finding_and_names_no_held_status() -> None:
+    assert {"closed", "would-close"} <= core.NOT_A_FINDING
+    assert {"closed", "would-close"} <= set(core.REPORTED)
+
+
+@pytest.mark.parametrize("module", LANDERS)
+def test_a_held_answer_naming_no_head_is_unreadable_and_sends_nothing(module: Any) -> None:
+    client = _Client({"satisfied": False, "refusals": [CEILING]})
+
+    [outcome] = module._pass(SUBJECT, client, True)
+
+    assert outcome.status == "unreadable"
+    assert client.closed == []

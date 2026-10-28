@@ -17,6 +17,8 @@ from orchestrator.api.schemas.landing import (
     EstateLandingAdmissionResponse,
     EstatePrMergeCommandModel,
     EstatePrMergeResponse,
+    HeldPrCloseCommandModel,
+    HeldPrCloseResponse,
     InertBranchUpdateCommandModel,
     InertBranchUpdateResponse,
     InertLandingAdmissionResponse,
@@ -43,6 +45,12 @@ from orchestrator.services.landing.estate_pr_merge import (
     EstateMergeCommand,
     GitHubEstatePullRequests,
     land_estate_pull_request,
+)
+from orchestrator.services.landing.held_close import (
+    ESTATE,
+    HeldCloseCommand,
+    close_estate_held_pull_request,
+    close_inert_held_pull_request,
 )
 from orchestrator.services.landing.inert_landing_admission import inert_landing_admission
 from orchestrator.services.landing.inert_landing_policy import (
@@ -433,4 +441,49 @@ def pr_merge_route(
         landing_source,
         record_source,
         credentials is not None,
+    )
+
+
+@router.post("/held-pr-close", response_model=HeldPrCloseResponse)
+def held_pr_close_route(
+    body: HeldPrCloseCommandModel,
+    actor: ActorDep,
+    session: SessionDep,
+    settings: SettingsDep,
+    landing_source: LandingSourceDep,
+    record_source: ChangeRecordSourceDep,
+    policy_source: InertLandingPolicySourceDep,
+) -> object:
+    """Bridge layer Part 4: close an update-bot pull request a hold refuses, with a comment.
+
+    The same actor, switch and credentials as the named lane's landing, so a lane that may not land
+    may not close either. Which lane is the caller's to name; whether the pull request is that
+    lane's, and held, is the lane's own admission's, composed again in the act.
+    """
+    credentials = github_app_credentials_for(settings)
+    command = HeldCloseCommand(
+        repository=body.repository,
+        pr_number=body.pull_request_number,
+        actor=actor,
+        idempotency_key=body.idempotency_key,
+        expected_head_sha=body.expected_head_sha,
+    )
+    if body.lane == ESTATE:
+        return close_estate_held_pull_request(
+            session,
+            command,
+            GitHubEstatePullRequests(token_provider_for(credentials)),
+            landing_source,
+            record_source,
+            enabled=settings.estate_landing_enabled,
+            credentials_configured=credentials is not None,
+        )
+    return close_inert_held_pull_request(
+        session,
+        command,
+        GitHubInertPullRequests(token_provider_for(credentials)),
+        landing_source,
+        policy_source,
+        enabled=settings.inert_landing_enabled,
+        credentials_configured=credentials is not None,
     )

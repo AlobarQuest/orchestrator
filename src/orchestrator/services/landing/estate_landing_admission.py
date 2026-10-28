@@ -99,6 +99,7 @@ from orchestrator.services.landing.terms import (
     qualifies_for_branch_update,
     version_ceiling_term,
 )
+from orchestrator.services.membership.holds import HoldBreach
 from orchestrator.services.membership.members import HoldView, holds_for
 
 # The estate says landing on this repository changes nothing already serving: the inert lane's
@@ -213,6 +214,11 @@ class EstateLandingAdmission:
     # siblings would never stop. The rule lives outside this module and the route fills this in.
     # No default, so a constructor that forgot it would fail rather than serve a quiet false.
     branch_update_withheld_for_sibling: bool
+    # Bridge layer Part 4. What the close act needs and must not read a second time: each hold this
+    # update moves past its ceiling (empty unless `landing_version_ceiling_exceeded` refused), and
+    # whether the update bot opened the pull request (false when it could not be read).
+    ceiling_breaches: tuple[HoldBreach, ...]
+    update_bot_authored: bool
 
 
 def update_type_of(title: str) -> str | None:
@@ -333,6 +339,8 @@ def estate_landing_admission(
         ),
         rollout_base_matches_pin=remote.rollout_base_matches_pin,
         branch_update_withheld_for_sibling=False,
+        ceiling_breaches=remote.ceiling_breaches,
+        update_bot_authored=remote.update_bot_authored,
     )
 
 
@@ -480,6 +488,8 @@ class _RemoteTerms:
     head_sha: str | None
     # Carried up rather than recomputed: the blobs were read once, by the term that owns them.
     rollout_base_matches_pin: bool
+    ceiling_breaches: tuple[HoldBreach, ...] = ()
+    update_bot_authored: bool = False
 
 
 def _remote_terms(
@@ -505,7 +515,8 @@ def _remote_terms(
         refusals.append(LANDING_PULL_REQUEST_NOT_OPEN)
     if pull.base_ref != pull.default_branch:
         refusals.append(LANDING_BASE_NOT_DEFAULT_BRANCH)
-    if pull.author_login != UPDATE_BOT_LOGIN or not pull.author_is_bot:
+    bot = pull.author_login == UPDATE_BOT_LOGIN and pull.author_is_bot
+    if not bot:
         refusals.append(LANDING_AUTHOR_NOT_THE_UPDATE_BOT)
     if pull.mergeable_state == MERGEABLE_UNKNOWN:
         refusals.append(LANDING_MERGEABILITY_UNKNOWN)
@@ -516,13 +527,16 @@ def _remote_terms(
 
     # Bridge layer Part 4. Asked BEFORE the record's early return: a held update often has no
     # record (the proposer refuses it), and the close act keys on the ceiling code being present.
-    held = version_ceiling_term(repository, pull, holds, gateway)
+    ceiling = version_ceiling_term(repository, pull, holds, gateway)
+    held = ceiling.term
     refusals.extend(held.refusals)
 
     if conditions is None:
         # Already reported by the record term. Everything below is a condition this process was
         # not told, so it cannot be met and there is nothing further to say about it.
-        return _RemoteTerms(Term(False, tuple(refusals)), pull.head_sha, False)
+        return _RemoteTerms(
+            Term(False, tuple(refusals)), pull.head_sha, False, ceiling.breaches, bot
+        )
 
     fresh = freshness_term(
         repository,
@@ -540,8 +554,7 @@ def _remote_terms(
         pull.open
         and not pull.landed
         and pull.base_ref == pull.default_branch
-        and pull.author_login == UPDATE_BOT_LOGIN
-        and pull.author_is_bot
+        and bot
         and pull.mergeable_state != MERGEABLE_UNKNOWN
         and checks.met
         and fresh.met
@@ -549,7 +562,13 @@ def _remote_terms(
         and rollout.term.met
         and held.met
     )
-    return _RemoteTerms(Term(met, tuple(refusals)), pull.head_sha, rollout.base_matches_pin)
+    return _RemoteTerms(
+        Term(met, tuple(refusals)),
+        pull.head_sha,
+        rollout.base_matches_pin,
+        ceiling.breaches,
+        bot,
+    )
 
 
 def _bump_term(pull: EstatePullRequest, conditions: LandingConditions) -> Term:

@@ -74,6 +74,7 @@ class FakeOrchestrator:
         # ADR-0019 Increment 6. The list a refusal test asserts is EMPTY: an implementation that
         # asked and then reported the refusal would satisfy a status assertion and fail this.
         self.updated: list[tuple[str, int, str, str]] = []
+        self.closed: list[tuple[str, int, str]] = []
 
     def admission(self, repository: str, pr_number: int) -> dict[str, Any]:
         self.asked.append((repository, pr_number))
@@ -83,6 +84,10 @@ class FakeOrchestrator:
             (repository, pr_number),
             {"satisfied": False, "refusals": ["landing_record_absent"], "head_sha": None},
         )
+
+    def close_held(self, repository, pr_number, *, head_sha, idempotency_key):
+        self.closed.append((repository, pr_number, idempotency_key))
+        return {"commented": True, "replayed": False, "ceilings": []}
 
     def land(self, repository, pr_number, *, head_sha, idempotency_key):
         self.landed.append((repository, pr_number, head_sha, idempotency_key))
@@ -731,6 +736,9 @@ def test_the_summary_counts_every_status_so_its_parts_sum_to_what_was_considered
         # category, not a finding, and not `deliberate` -- it clears when that branch lands, not on
         # a clock.
         "waiting",
+        # Bridge layer Part 4: a held bump the lane closed, or would close on an acting pass.
+        "closed",
+        "would-close",
     }
     assert NOT_A_FINDING < set(REPORTED)
     assert "waiting" in NOT_A_FINDING

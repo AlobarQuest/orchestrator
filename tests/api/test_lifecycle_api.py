@@ -77,6 +77,10 @@ EXPECTED_VALUE_EXCEPTIONS = {
     # have to be added by hand.
     "/api/v1/inert-pr-merge": "expected_head_sha",
     "/api/v1/inert-pr-branch-update": "expected_head_sha",
+    # Bridge layer Part 4. A FIFTH entry, the same judgment again: closing a held pull request
+    # acts on a pull request in a foreign system, which has no version of ours, and names the head
+    # the caller read.
+    "/api/v1/held-pr-close": "expected_head_sha",
 }
 
 
@@ -93,17 +97,17 @@ def test_every_api_mutation_requires_idempotency_key_and_expected_version() -> N
         assert {"idempotency_key", expected} <= required, path
 
 
-def test_the_expected_value_exception_is_exactly_four_routes_wide() -> None:
+def test_the_expected_value_exception_is_exactly_five_routes_wide() -> None:
     """The exception states a judgment, so it needs its own cross-check.
 
     Emptying it would leave the test above green while protecting less, and adding an entry
     without a reason is how "every mutation states what it read" becomes "most do". Each named
     route must exist, and must genuinely lack a version of ours to state.
 
-    IT IS FOUR ROUTES SINCE ADR-0038 part 2, and the count is in the NAME so that growing it is an
-    edit somebody has to make on purpose. Every member is the same judgment about the same kind of
-    subject -- a pull request in a foreign system -- so what the exception covers has not widened,
-    only the number of lanes acting on that kind of subject. An entry naming a subject that DOES
+    IT IS FIVE ROUTES SINCE bridge layer Part 4, and the count is in the NAME so that growing it is
+    an edit somebody has to make on purpose. Every member is the same judgment about the same kind
+    of subject -- a pull request in a foreign system -- so what the exception covers has not
+    widened, only the number of acts on that kind of subject. An entry naming a subject that DOES
     have a version of ours would be the failure this test exists to make visible, and it would
     still have to be written by hand.
     """
@@ -114,6 +118,7 @@ def test_the_expected_value_exception_is_exactly_four_routes_wide() -> None:
         "/api/v1/estate-pr-branch-update": "expected_head_sha",
         "/api/v1/inert-pr-merge": "expected_head_sha",
         "/api/v1/inert-pr-branch-update": "expected_head_sha",
+        "/api/v1/held-pr-close": "expected_head_sha",
     }
     for path in EXPECTED_VALUE_EXCEPTIONS:
         assert path in document["paths"], f"the exception names a route that does not exist: {path}"

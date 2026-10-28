@@ -447,19 +447,19 @@ def test_the_repository_lock_actually_SERIALISES_two_landings(migrated_engine: E
     """
     from sqlalchemy.exc import OperationalError
 
-    from orchestrator.services.landing.lane_act import _lock_repository
+    from orchestrator.services.landing.lane_act import lock_repository
 
     with Session(migrated_engine) as first, Session(migrated_engine) as second:
-        _lock_repository(first, "estate_pr_merge", REPOSITORY)
+        lock_repository(first, "estate_pr_merge", REPOSITORY)
         second.execute(text("SET LOCAL lock_timeout = '1s'"))
         with pytest.raises(OperationalError):
-            _lock_repository(second, "estate_pr_merge", REPOSITORY)
+            lock_repository(second, "estate_pr_merge", REPOSITORY)
         second.rollback()
 
         # THE CONTROL. Without it this passes for a lock that blocks everything, including the
         # landings into other repositories it is supposed to leave alone.
         second.execute(text("SET LOCAL lock_timeout = '1s'"))
-        _lock_repository(second, "estate_pr_merge", "alobarquest/brain")
+        lock_repository(second, "estate_pr_merge", "alobarquest/brain")
         second.rollback()
         first.rollback()
 

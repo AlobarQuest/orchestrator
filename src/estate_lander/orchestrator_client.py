@@ -1,7 +1,8 @@
-"""The confined orchestrator surface for the lander. TWO paths, checked before the transport.
+"""The confined orchestrator surface for the lander. FOUR paths, checked before the transport.
 
-It asks whether a pull request may be landed and, when told to, asks for the landing or for the
-much smaller act of bringing a stale branch up to date with its base. It can reach nothing else --
+It asks whether a pull request may be landed and, when told to, asks for the landing, for the
+much smaller act of bringing a stale branch up to date with its base, or for a held bump to be
+closed with a comment. It can reach nothing else --
 not a work unit, not a decomposition, not an approval. The orchestrator's own role gate is the
 control; this is the statement of intent that makes a mistake in this program fail before a
 request leaves it.
@@ -44,6 +45,11 @@ _LAND = "/api/v1/estate-pr-merge"
 _BRANCH_UPDATE = "/api/v1/estate-pr-branch-update"
 
 
+# Bridge layer Part 4. The THIRD write: close an update-bot pull request a hold refuses, with a
+# comment. The orchestrator re-composes this lane's own admission and closes only on its answer.
+_CLOSE_HELD = "/api/v1/held-pr-close"
+
+
 class ForbiddenEndpointError(OrchestratorError):
     """This program tried to reach a path it is not allowed to reach."""
 
@@ -53,7 +59,7 @@ def is_allowed_read(path: str) -> bool:
 
 
 def is_allowed_write(path: str) -> bool:
-    return path in (_LAND, _BRANCH_UPDATE)
+    return path in (_LAND, _BRANCH_UPDATE, _CLOSE_HELD)
 
 
 def _permits(method: str, path: str) -> bool:
@@ -186,4 +192,32 @@ class OrchestratorClient:
             raise OrchestratorError("the branch-update response was not JSON") from error
         if not isinstance(body, dict):
             raise OrchestratorError("the branch-update response was not an object")
+        return body
+
+    def close_held(
+        self, repository: str, pr_number: int, *, head_sha: str, idempotency_key: str
+    ) -> dict[str, Any]:
+        """Ask for a held pull request to be closed with a comment, as THIS lane's.
+
+        The lane is this program's own literal, never a caller's: the orchestrator bounds the close
+        by the named lane's admission and population, so naming the other lane would be asking it
+        to judge a pull request by rules this program does not serve.
+        """
+        response = self._send(
+            "POST",
+            _CLOSE_HELD,
+            json={
+                "lane": "estate",
+                "repository": repository,
+                "pull_request_number": pr_number,
+                "expected_head_sha": head_sha,
+                "idempotency_key": idempotency_key,
+            },
+        )
+        try:
+            body = response.json()
+        except ValueError as error:
+            raise OrchestratorError("the close response was not JSON") from error
+        if not isinstance(body, dict):
+            raise OrchestratorError("the close response was not an object")
         return body

@@ -8,6 +8,7 @@ either admission can call them without importing the other.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Final
 
 from orchestrator.services.landing.interfaces import (
@@ -38,7 +39,7 @@ from orchestrator.services.landing.interfaces import (
     EstateReadGateway,
     Term,
 )
-from orchestrator.services.membership.holds import HeldDependency, bumps_of, exceeded
+from orchestrator.services.membership.holds import HeldDependency, HoldBreach, bumps_of, exceeded
 
 # The update bot's branch naming, from which the ecosystem is read: `dependabot/<ecosystem>/<rest>`.
 _BRANCH_PREFIX: Final = "dependabot/"
@@ -340,12 +341,26 @@ def ecosystem_exclusion_term(pull: EstatePullRequest, excluded: frozenset[str]) 
     return Term(True, ())
 
 
+@dataclass(frozen=True)
+class CeilingTerm:
+    """The hold term, with the breaches that refused it: the close act names each one in its
+    comment, and reads them off the composed answer rather than reading the update a second time.
+    Empty unless the term refused with `LANDING_VERSION_CEILING_EXCEEDED`."""
+
+    term: Term
+    breaches: tuple[HoldBreach, ...]
+
+
+# The term's answer for a subject it does not apply to, or one no hold reaches.
+NOT_HELD: Final = CeilingTerm(Term(True, ()), ())
+
+
 def version_ceiling_term(
     repository: str,
     pull: EstatePullRequest,
     holds: Sequence[HeldDependency],
     gateway: EstateReadGateway,
-) -> Term:
+) -> CeilingTerm:
     """Does this update move a dependency the member record holds past its ceiling?
 
     **A REPOSITORY WITH NO HOLDS IS NEVER READ.** The commit list is asked for only when there is a
@@ -359,8 +374,8 @@ def version_ceiling_term(
     matcher's (`membership.holds.exceeded`) and nobody else's.
     """
     if not holds:
-        return Term(True, ())
-    unreadable = Term(False, (LANDING_DEPENDENCY_LIST_UNREADABLE,))
+        return NOT_HELD
+    unreadable = CeilingTerm(Term(False, (LANDING_DEPENDENCY_LIST_UNREADABLE,)), ())
     ecosystem = ecosystem_of(pull.head_ref)
     if ecosystem is None:
         return unreadable
@@ -368,9 +383,10 @@ def version_ceiling_term(
     bumps = None if message is None else bumps_of(pull.title, message, ecosystem)
     if bumps is None:
         return unreadable
-    if exceeded(holds, repository, bumps):
-        return Term(False, (LANDING_VERSION_CEILING_EXCEEDED,))
-    return Term(True, ())
+    breaches = exceeded(holds, repository, bumps)
+    if breaches:
+        return CeilingTerm(Term(False, (LANDING_VERSION_CEILING_EXCEEDED,)), breaches)
+    return NOT_HELD
 
 
 def _update_bot_message(

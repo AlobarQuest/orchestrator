@@ -42,6 +42,7 @@ from lander.core import (
     REPORTED,
     SETTLED,
     Outcome,
+    held_status,
     landing_key,
     update_key,
 )
@@ -115,6 +116,7 @@ class FakeOrchestrator:
         # The list a refusal test asserts is EMPTY: an implementation that asked and then reported
         # the refusal would satisfy a status assertion and fail this.
         self.updated: list[tuple[str, int, str, str]] = []
+        self.closed: list[tuple[str, int, str]] = []
 
     def __enter__(self) -> FakeOrchestrator:
         return self
@@ -153,6 +155,13 @@ class FakeOrchestrator:
             "replayed": self._replayed,
         }
         return answered
+
+    def close_held(
+        self, repository: str, pr_number: int, *, head_sha: str, idempotency_key: str
+    ) -> dict[str, Any]:
+        self.closed.append((repository, pr_number, idempotency_key))
+        closed: dict[str, Any] = {"commented": True, "replayed": False, "ceilings": []}
+        return closed
 
 
 def _pull(number: int, *, author: str = BOT) -> dict[str, Any]:
@@ -918,8 +927,9 @@ def test_no_reported_status_is_a_substring_of_another() -> None:
     assert collisions == []
 
 
-# Bridge layer Part 4 (Ruling 6). A held bump clears only when Devon lifts the hold, so it is an
-# exception; a dependency list the orchestrator could not read is a finding, never a quiet refusal.
+# Bridge layer Part 4 (Rulings 6 and 7). A held bump clears only when Devon lifts the hold, so it is
+# an exception, and an acting pass closes it with a comment; a dependency list the orchestrator
+# could not read is a finding, never a quiet refusal, and is never closed.
 _CEILING = "landing_version_ceiling_exceeded"
 _LIST_UNREADABLE = "landing_dependency_list_unreadable"
 
@@ -927,13 +937,12 @@ _LIST_UNREADABLE = "landing_dependency_list_unreadable"
 @pytest.mark.parametrize(
     ("refusals", "status", "exit_code"),
     [
-        ((_CEILING,), "exception", EXIT_OK),
-        ((_CEILING, "landing_head_not_current_with_base"), "exception", EXIT_OK),
+        ((_CEILING,), "closed", EXIT_OK),
+        ((_CEILING, "landing_head_not_current_with_base"), "closed", EXIT_OK),
         ((_LIST_UNREADABLE,), "held", EXIT_FINDINGS),
-        ((_CEILING, _LIST_UNREADABLE), "held", EXIT_FINDINGS),
     ],
 )
-def test_a_hold_is_an_exception_and_an_unreadable_list_is_a_finding(
+def test_a_hold_is_closed_and_an_unreadable_list_is_a_finding(
     refusals: tuple[str, ...], status: str, exit_code: int
 ) -> None:
     client = FakeOrchestrator({(REPOSITORY, 1): _held(*refusals)})
@@ -942,4 +951,11 @@ def test_a_hold_is_an_exception_and_an_unreadable_list_is_a_finding(
 
     assert [o.status for o in outcomes] == [status]
     assert client.landed == []
+    assert len(client.closed) == (1 if status == "closed" else 0)
     assert report(outcomes, {}, 6) == exit_code
+
+
+def test_a_hold_is_still_an_exception_to_the_classifier() -> None:
+    """The close replaces the line, not the classification: were it ever skipped, the line would be
+    the exception it was before (`held_status` unchanged)."""
+    assert held_status(LANE, [_CEILING], rollout_base_matches_pin=False) == "exception"
