@@ -467,6 +467,7 @@ TABLE: dict[str, Row] = {
     "membership_check": _row(
         "__future__",
         "bump_proposer",
+        "change_proposer",
         "collections",
         "dataclasses",
         "deploy_watcher",

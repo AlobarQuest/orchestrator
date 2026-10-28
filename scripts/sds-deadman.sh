@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# The dead-man switch every scheduled SDS lane arms at the top of its pass.
+# The dead-man switch most scheduled SDS lanes arm at the top of their pass, and the outcome
+# alarm the rest use instead (`sds_outcome_begin` and its siblings, below).
 #
 # WHY THIS EXISTS. `launchd` discards a job's exit code. Every one of these launchers documents its
 # codes as "the whole interface a scheduled run has" and then hands them to something that throws
@@ -20,13 +21,13 @@
 # state change at the alert channel, which is exactly the silence being watched for.
 #
 # The code that means "found" is DIFFERENT IN THE TWO GROUPS OF LAUNCHERS, and 2 and 3 mean
-# opposite things between them: the ledger, the deploy watcher and the activation sweep read 2 as
-# found and 3 as could-not-be-read, while the estate lander, the change proposer, the work carrier
-# and the bump proposer read 2 as could-not-use-its-inputs and 3 as found. A universal rule here
-# would invert the signal for three of the seven -- a finding paging, and a blind pass reading as
-# healthy. So each launcher DECLARES its own code, from its own header, and this file holds no
-# table: a table here would be an eighth copy of a vocabulary that already lives in seven headers,
-# and it would be the copy nobody edits.
+# opposite things between them: among the armed lanes, the ledger, the deploy watcher and the
+# activation sweep read 2 as found and 3 as could-not-be-read, while the estate lander and the
+# rotation proposer read 2 as could-not-use-its-inputs and 3 as found. A universal rule here would
+# invert the signal for one group -- a finding paging, and a blind pass reading as healthy. So each
+# launcher DECLARES its own code, from its own header, and this file holds no table: a table here
+# would be one more copy of a vocabulary that already lives in the headers, and it would be the
+# copy nobody edits. An outcome-alarm lane declares no code: every non-zero exit pings `/fail`.
 # `tests/scripts/test_sds_deadman.py` reads each launcher's `EXIT CODES` block and asserts the
 # declared code is the one that block calls a finding, so the declaration cannot drift from the
 # prose it restates.
@@ -135,6 +136,77 @@ sds_deadman_ping() {
     return 0
 }
 
+# An OUTCOME ping, for a lane that pings what its pass found rather than arming the dead-man switch.
+# `$1` is the suffix (`/start`, empty for success, `/fail`); `$2`, when given, a file sent as the
+# ping's body. Needs `SDS_DEADMAN_PING_URL`, which `sds_deadman_resolve` sets. The URL goes to curl
+# on stdin as its config, never as an argument. Does nothing on an empty URL; never fails the caller.
+sds_outcome_ping() {
+    [ -n "$SDS_DEADMAN_PING_URL" ] || return 0
+    local body=()
+    [ -n "${2:-}" ] && body=(--data-binary "@$2")
+    printf 'url = "%s%s"\n' "$SDS_DEADMAN_PING_URL" "$1" \
+        | curl -fsS --max-time 10 --config - ${body[@]+"${body[@]}"} >/dev/null 2>&1 \
+        || sds_deadman_log "ping '${1:-/}' failed (non-fatal)"
+    return 0
+}
+
+# THE OUTCOME-ALARM PASS, shared by every launcher that pings what its pass found (ADR-0021
+# amendment 2): `sds_outcome_begin` before anything can fail, `sds_outcome_fail` for each failure
+# before the program runs, the program's output into `$SDS_OUTCOME_REPORT`, then `sds_outcome_end`.
+#
+# `sds_outcome_begin <check> <tag> [acting]`. Resolves the ping URL of `<check>` only when `acting`
+# is 1 (the default): a launcher whose reporting run is a person looking passes 0, and every ping
+# of that run is then a no-op. Creates the report, removes it on exit, and pings `/start`. `<tag>`
+# names the lane in its log lines and the report file. An unresolved check logs one line and never
+# stops the pass.
+sds_outcome_begin() {
+    local check="$1" acting="${3:-1}"
+    SDS_OUTCOME_TAG="$2"
+    if [ "$acting" -eq 1 ]; then
+        sds_deadman_resolve "$check"
+        if [ -z "$SDS_DEADMAN_PING_URL" ]; then
+            echo "[$SDS_OUTCOME_TAG] $SDS_DEADMAN_REASON — alerting disabled this run"
+        fi
+    fi
+    # A template with X's, which BSD and GNU `mktemp` both take; `-t NAME` without them is BSD-only.
+    SDS_OUTCOME_REPORT="$(mktemp "${TMPDIR:-/tmp}/$SDS_OUTCOME_TAG.XXXXXX")" || {
+        echo "FATAL: could not create the report file" >&2
+        sds_outcome_ping "/fail"
+        exit 1
+    }
+    trap 'rm -f "$SDS_OUTCOME_REPORT"' EXIT
+    sds_outcome_ping "/start"
+}
+
+# `sds_outcome_fail <message> [code]`: the pass failed before its program ran. The message becomes
+# the report and the `/fail` body, and the launcher exits `[code]`, 1 (the tool failed) by default.
+sds_outcome_fail() {
+    echo "$1" | tee "$SDS_OUTCOME_REPORT" >&2
+    sds_outcome_ping "/fail" "$SDS_OUTCOME_REPORT"
+    exit "${2:-1}"
+}
+
+# `sds_outcome_end <rc> [--body-on-success]`: copies the report to stdout (the lane log keeps it),
+# pings success on 0 (with the report as the body only when asked) or `/fail` with the report on
+# anything else, and exits `<rc>`.
+sds_outcome_end() {
+    local rc="$1"
+    cat "$SDS_OUTCOME_REPORT"
+    if [ "$rc" -eq 0 ]; then
+        if [ "${2:-}" = "--body-on-success" ]; then
+            sds_outcome_ping "" "$SDS_OUTCOME_REPORT"
+        else
+            sds_outcome_ping ""
+        fi
+    else
+        if [ -n "$SDS_DEADMAN_PING_URL" ]; then
+            echo "[$SDS_OUTCOME_TAG] exit $rc — reporting a failure"
+        fi
+        sds_outcome_ping "/fail" "$SDS_OUTCOME_REPORT"
+    fi
+    exit "$rc"
+}
+
 # THE EXIT HANDLER IS THE POINT. Every one of these launchers can `exit 1` on a missing credential
 # long before it reaches its program, and those are exactly the failures nobody currently sees. A
 # ping placed after the program would report only the failures the program itself survived.
@@ -163,10 +235,9 @@ sds_deadman_finish() {
 # thing that watches the lane: an operator inspecting a lane by hand would reset the timer of a
 # schedule that has in fact stopped, which is precisely the condition the switch exists to detect.
 #
-# THE RESIDUAL IS NAMED RATHER THAN PAPERED OVER. Three lanes spell their reporting mode as the
-# BARE invocation and their scheduled mode as `--submit` (`run-bump-proposer.sh`,
-# `run-estate-landing.sh`, `run-rotation-proposer.sh`), so a bare operator run of those still
-# pings. Keying on `--submit` instead would need per-launcher knowledge, and getting that wrong disables a lane's switch
+# THE RESIDUAL IS NAMED RATHER THAN PAPERED OVER. Two armed lanes spell their reporting mode as
+# the BARE invocation and their scheduled mode as `--submit` (`run-estate-landing.sh`,
+# `run-rotation-proposer.sh`), so a bare operator run of those still pings. Keying on `--submit` instead would need per-launcher knowledge, and getting that wrong disables a lane's switch
 # silently -- the quiet failure this whole file exists to end.
 sds_deadman_is_dry_run() {
     for argument in "$@"; do

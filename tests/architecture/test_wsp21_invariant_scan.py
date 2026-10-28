@@ -542,12 +542,14 @@ OUTBOUND_ALLOWLIST = {
     Path("src/deploy_watcher/change_manager.py"),
     Path("src/deploy_watcher/github.py"),
     Path("src/deploy_watcher/orchestrator.py"),
-    # ADR-0019 increment 4. The change PRODUCER is a SEPARATE program again, and the narrowest
-    # one yet: it reads GitHub for the open pull requests that would land on a repository where
-    # landing redeploys, and writes to exactly ONE change-manager route -- the proposal ingress.
-    # It cannot approve, claim, post an outcome, hand off, sync, or move any record's status, and
-    # that bound is enforced twice over: by the credential's scope at change-manager, and here in
-    # code before a request is built. Its egress is not the orchestrator's.
+    # ADR-0019 increment 4. The change PRODUCER is a SEPARATE program again: it reads GitHub
+    # (through deploy_watcher's reader) for the open pull requests that would land on a repository
+    # where landing redeploys, POSTs to exactly two change-manager routes -- the proposal ingress
+    # and a record's deploy-retirement -- and GETs one, the item listing. It cannot approve,
+    # claim, post an outcome, hand off or sync, and that bound is enforced twice over: by the
+    # credential's scope at change-manager, and here in code before a request is built. The full
+    # surface is stated in tests/architecture/test_bridge_edges.py. Its egress is not the
+    # orchestrator's.
     Path("src/change_proposer/change_manager.py"),
     # ADR-0030. The machine-activation sweep is a SEPARATE program (ADR-0002's shape), out of
     # process and on a clock. Its subject is local git on the operator machine, which it reads

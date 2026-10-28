@@ -49,8 +49,8 @@ class GitHubCredentialRefused(GitHubError):
     """GitHub refused the CREDENTIAL (401, or 403: revoked, expired, or rate-limited).
 
     Not a fact about any one pull request, so the caller must not report it per record: the same
-    class of failure as a missing token, and it has to reach the lane's unusable outcome so the
-    dead-man pages, where a per-record finding would ping success every night.
+    class of failure as a missing token, and it has to reach the lane's unusable outcome (exit 2),
+    where per-record findings would report N stale-record problems for one credential problem.
     """
 
 

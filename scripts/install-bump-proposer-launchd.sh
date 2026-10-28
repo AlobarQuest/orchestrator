@@ -12,10 +12,14 @@
 # the transcribed auto-merge cascade REFUSES, reading that gate rather than re-deciding it, and
 # only for repositories a standing package already targets. A pass ends at a queue for a human.
 #
-# IT COMMITS, AND IT DOES NOT PUSH. The pass leaves ~/Projects/intent-packages one commit ahead
-# of its upstream; a person pushes it. Nothing waits on that push -- the 07:05 carry reads the
-# checkout's working files -- but until it happens the revision has had no CI run. The activation
-# sweep carries the number as `ahead_by` in every row and does not classify it.
+# IT COMMITS AND PUBLISHES (ADR-0033). The pass pushes its commit to intent-packages' default
+# branch, so the revision gets CI and the `source_commit` an intake records exists off this
+# machine. A commit it could not publish is a finding (exit 3), and the checkout then refuses
+# further revisions (exit 2) until a person resolves it.
+#
+# ITS CHECK IS AN OUTCOME ALARM (ADR-0021 amendment 2). This upserts `sds-bump-proposer` to
+# alert-hub before loading the agent; every non-zero exit of a `--submit` pass pings `/fail` with
+# the report.
 #
 # THE JOB READS THE MAIN TREE'S WORKING COPY. `run-bump-proposer.sh` resolves its repository root
 # from its own path and runs `$REPO_ROOT/.venv/bin/bump-proposer`, so merging a change to that
@@ -46,6 +50,7 @@
 set -euo pipefail
 
 LABEL="com.devon.bump-proposer"
+CHECK_NAME="sds-bump-proposer"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TEMPLATE="$REPO_ROOT/scripts/$LABEL.plist"
 TARGET="$HOME/Library/LaunchAgents/$LABEL.plist"
@@ -67,6 +72,23 @@ if [ ! -x "$REPO_ROOT/.venv/bin/bump-proposer" ]; then
   echo "FATAL: $REPO_ROOT/.venv/bin/bump-proposer is missing. Run: uv sync --frozen" >&2
   exit 1
 fi
+
+# The check, before the agent, so it exists when the first pass pings. `channels` is "alert-hub"
+# (the alert-hub webhook; "*" would also attach email and deliver every failure twice). A failure to
+# upsert it is reported and does not stop the install: rerunning this retries it.
+create_check() {
+  local payload outcome
+  payload='{"name": "'"$CHECK_NAME"'", "schedule": "50 6 * * *", "tz": "America/New_York",'
+  payload+=' "grace": 14400, "channels": "alert-hub", "unique": ["name"],'
+  payload+=' "desc": "orchestrator scripts/run-bump-proposer.sh: the bump proposer, an outcome alarm'
+  payload+=' (ADR-0021 amendment 2). /fail carries the report."}'
+  if outcome="$(sds_upsert_check "$payload")"; then
+    echo "Healthchecks check $CHECK_NAME $outcome"
+  else
+    echo "WARNING: Healthchecks check $CHECK_NAME was not upserted" >&2
+  fi
+}
+create_check
 
 mkdir -p "$HOME/Library/LaunchAgents"
 sed -e "s|__REPO_ROOT__|$REPO_ROOT|g" -e "s|__HOME__|$HOME|g" "$TEMPLATE" > "$TARGET"

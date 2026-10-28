@@ -81,6 +81,8 @@ class _Sources(TypedDict, total=False):
     hardened_forks: list[str]
     synced_forks: list[str]
     registry_repositories: list[str]
+    rollbacks: list[str]
+    standing_update_repositories: list[str]
 
 
 def _check(members: list[Member], **sources: Unpack[_Sources]) -> Report:
@@ -92,6 +94,8 @@ def _check(members: list[Member], **sources: Unpack[_Sources]) -> Report:
         "hardened_forks": [],
         "synced_forks": [],
         "registry_repositories": [],
+        "rollbacks": [],
+        "standing_update_repositories": [],
     }
     return check(members, **{**empty, **sources})
 
@@ -116,6 +120,8 @@ def test_an_agreeing_estate_is_clean():
         hardened_forks=["A/one"],
         synced_forks=["A/one"],
         registry_repositories=["A/one"],
+        rollbacks=["a/one"],
+        standing_update_repositories=["A/ONE"],
     )
     assert report == Report([], [])
 
@@ -130,6 +136,8 @@ RULES = [
     ("synced_forks", "dependency_updates"),
     ("synced_forks", "security_patches"),
     ("registry_repositories", "credential_rotation"),
+    ("rollbacks", "rollouts"),
+    ("standing_update_repositories", "dependency_updates"),
 ]
 
 
@@ -194,6 +202,7 @@ def _wire(
     fork_list=(),
     fork_error=None,
     listing_error=None,
+    rollbacks=None,
 ):
     for name in (
         "SDS_MEMBERS_OBSERVER_TOKEN",
@@ -241,9 +250,31 @@ def _wire(
     monkeypatch.setattr(cli, "TOOLS", ())
     monkeypatch.setattr(cli, "FORKS", ())
     monkeypatch.setattr(cli, "REGISTRY_REPOSITORIES", ())
+    monkeypatch.setattr(cli, "ROLLBACKS", rollbacks or {})
 
 
 CLEAN = [_member("A/one", "app_changes", "dependency_updates")]
+
+
+@pytest.fixture(autouse=True)
+def packages_checkout(tmp_path, monkeypatch):
+    """An empty, readable packages checkout; never the real one."""
+    root = tmp_path / "intent-packages"
+    (root / "packages").mkdir(parents=True)
+    monkeypatch.setenv("BUMP_PROPOSER_PACKAGES_CHECKOUT", str(root))
+    return root
+
+
+def _standing_tree(root, *targets):
+    for number, target in enumerate(targets):
+        package = root / "packages" / f"pkg-{number}"
+        package.mkdir(parents=True)
+        (package / "package.yaml").write_text(
+            f"profile: dependency-update\nstanding: true\ntarget_repo: {target}\n"
+            f"package: dep{number}\nrevision: 1\n",
+            encoding="utf-8",
+        )
+    return root
 
 
 def _invoke():
@@ -326,3 +357,49 @@ def test_the_inert_lines_fall_back_to_the_policys_spelling_when_the_listing_fail
     )
     result = _invoke()
     assert "a/one: the inert landing population" in result.stdout
+
+
+def test_a_rollback_for_a_repository_without_rollouts_is_a_disagreement(monkeypatch):
+    _wire(monkeypatch, members=CLEAN, rollbacks={"a/one": object()})
+    result = _invoke()
+    assert result.exit_code == 2
+    assert "A/one: the rollback table names it" in result.stdout and "rollouts" in result.stdout
+
+
+def test_a_standing_package_for_a_repository_without_dependency_updates_is_a_disagreement(
+    monkeypatch, packages_checkout
+):
+    _standing_tree(packages_checkout, "a/two")
+    members = [*CLEAN, _member("A/two", "app_changes")]
+    _wire(monkeypatch, members=members, answers={"A/one": True, "A/two": True})
+    monkeypatch.setattr(cli, "repositories", lambda _r: ["A/one", "A/two"])
+    result = _invoke()
+    assert result.exit_code == 2
+    assert "A/two: a standing dependency-update package names it" in result.stdout
+
+
+def test_the_live_population_agrees(monkeypatch, packages_checkout):
+    _standing_tree(packages_checkout, "alobarquest/infraops-mcp-server")
+    members = [
+        _member("AlobarQuest/brain", "rollouts"),
+        _member("AlobarQuest/change-manager", "rollouts"),
+        _member("AlobarQuest/infraops-mcp-server", "dependency_updates"),
+    ]
+    _wire(
+        monkeypatch,
+        members=members,
+        answers={},
+        policy=(),
+        rollbacks={"alobarquest/brain": 1, "alobarquest/change-manager": 1},
+    )
+    owned = [m.repository for m in members]
+    monkeypatch.setattr(cli, "repositories", lambda _r: owned)
+    assert _invoke().exit_code == 0
+
+
+def test_an_unreadable_packages_checkout_is_a_gap_not_an_empty_list(monkeypatch, tmp_path):
+    _wire(monkeypatch, members=CLEAN)
+    monkeypatch.setenv("BUMP_PROPOSER_PACKAGES_CHECKOUT", str(tmp_path / "missing"))
+    result = _invoke()
+    assert result.exit_code == 3
+    assert "packages checkout couldn't be read" in result.stderr and result.stdout == ""

@@ -352,7 +352,11 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   and `run-rotation-proposer.sh`: **2 = could not use its INPUTS**, 3 = something was found.
   `run-fork-sync-watch.sh` (2026-10-24) uses the second group's codes (2 GitHub unreadable, 3 a
   fork stuck), and arms no dead-man switch: its check is an outcome alarm, so 1, 2 and 3 all ping
-  `/fail`.
+  `/fail`. The bridge launchers `run-bump-proposer.sh`, `run-change-proposer.sh` and
+  `run-work-carrier.sh` are outcome alarms too since 2026-10-27 (ADR-0021 amendment 2): on their
+  acting run (`--submit`, `--submit`, `--register`) they ping `/start`, then success on 0 or
+  `/fail` with the report on 1, 2, 3 or anything else, and their checks deliver to alert-hub. A
+  bare run pings nothing.
   0 and 1 agree everywhere (nothing found; the tool itself failed). So a consumer that treats
   non-zero as failure collapses "the tool broke" with "the lane found something" — which is exactly
   the collision each header exists to prevent, and which the first dead-man switch shipped with.
@@ -397,9 +401,13 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
 
 ### #270
 
-- **A LANE'S DECLARED FINDING CODE PINGS ITS DEAD-MAN CHECK **SUCCESS**, NOT `/fail` — so "a
-  standing finding drives a permanently-red control" is false of every lane in this estate.**
-  `sds_deadman_finish` (`scripts/sds-deadman.sh:141-153`) has three branches: `rc == 0` pings
+- **AN ARMED LANE'S DECLARED FINDING CODE PINGS ITS DEAD-MAN CHECK **SUCCESS**, NOT `/fail` — so
+  "a standing finding drives a permanently-red control" is false of every lane that arms the
+  switch.** The outcome-alarm lanes are the exception and work the other way: `run-fork-sync-watch.sh`,
+  `run-fork-harden.sh`, `run-membership-check.sh`, `run-bump-proposer.sh`, `run-change-proposer.sh`
+  and `run-work-carrier.sh` ping `/fail` on every non-zero exit, so a standing finding keeps their
+  check down and pages once (ADR-0021 amendment 2).
+  `sds_deadman_finish` (in `scripts/sds-deadman.sh`) has three branches: `rc == 0` pings
   success; `rc == SDS_DEADMAN_FINDING_CODE` logs *"exit N is this lane's finding code — the pass
   ran and reported"* and pings **success**; everything else pings `/fail`. That is the whole point
   of `--finding N`, and its own header says so — the check answers *is this lane alive*, never
@@ -409,7 +417,8 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   costing a decision its actual cost. The real cost of a permanent resident is narrower and a
   different kind of thing: the exit code is permanently the finding code, so nothing keyed on it
   can distinguish a NEW finding from the standing one without reading the log. When weighing what
-  a standing finding costs, read the launcher's `--finding` declaration before assuming a page.
+  a standing finding costs, read the launcher's `--finding` declaration before assuming a page;
+  a launcher with no declaration is an outcome alarm, and its finding does page.
 
 ### #271
 

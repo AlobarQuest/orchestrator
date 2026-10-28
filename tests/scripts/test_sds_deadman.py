@@ -6,13 +6,14 @@ non-zero exit, which collapsed "the tool broke" into "the lane found something" 
 silence it was added to prevent: while a check sits failed on a standing finding, a lane that STOPS
 causes no state change at the alert channel.
 
-**THE TWO GROUPS OF LAUNCHERS DISAGREE ABOUT 2 AND 3, IN OPPOSITE DIRECTIONS.** The ledger, the
-deploy watcher and the activation sweep read 2 as found and 3 as could-not-be-read; the estate
-lander, the change proposer, the work carrier and the bump proposer read 2 as could-not-use-its-
-inputs and 3 as found. So a test that exercises one scheme proves the half that was already working
-and says nothing about the three launchers a universal rule would invert. Every case below is
-therefore driven from the code the launcher ITSELF declares, read out of its own source, and both
-schemes are present in every parametrisation by construction.
+**THE TWO GROUPS OF ARMED LAUNCHERS DISAGREE ABOUT 2 AND 3, IN OPPOSITE DIRECTIONS.** The ledger,
+the deploy watcher and the activation sweep read 2 as found and 3 as could-not-be-read; the estate
+lander and the rotation proposer read 2 as could-not-use-its-inputs and 3 as found. So a test that
+exercises one scheme proves the half that was already working and says nothing about the launchers
+a universal rule would invert. Every case below is therefore driven from the code the launcher
+ITSELF declares, read out of its own source, and
+`test_the_two_schemes_are_both_present_so_neither_test_above_is_vacuous` fails if the armed
+launchers stop covering both. Outcome-alarm launchers arm nothing and are not selected here.
 
 The REAL helper is sourced by a driver script whose `curl` and `bws` are stubs on a prepended PATH,
 so the resolve path executes exactly as it does in production -- one listing request, one match by
@@ -265,10 +266,11 @@ def test_a_check_that_does_not_resolve_never_gates_the_lane(
 
 
 def test_every_launcher_that_arms_the_switch_declares_a_finding_code() -> None:
-    """THIRTEEN since the rotation verifier, and the number is asserted rather than derived so a
-    launcher that stopped arming the switch is a red build rather than a smaller count nobody
-    notices. Editing this literal is how adding a lane is recorded."""
-    assert len(declared_codes()) == len(launchers()) == 13
+    """TEN since the bridge launchers (bump proposer, change proposer, work carrier) became
+    outcome alarms, and the number is asserted rather than derived so a launcher that stopped
+    arming the switch is a red build rather than a smaller count nobody notices. Editing this
+    literal is how adding a lane is recorded."""
+    assert len(declared_codes()) == len(launchers()) == 10
 
 
 @pytest.mark.parametrize("launcher", [path.name for path in launchers()])
@@ -295,3 +297,60 @@ def test_the_two_schemes_are_both_present_so_neither_test_above_is_vacuous() -> 
     codes = {code for _, code in declared_codes().values()}
 
     assert codes == {2, 3}
+
+
+# ---------------------------------------------------------------------------------------------
+# The outcome ping a lane that does not arm the switch shares.
+# ---------------------------------------------------------------------------------------------
+
+_OUTCOME_CURL = """#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$CURL_ARGS"
+cat >> "$CURL_STDIN"
+"""
+
+
+def _outcome(tmp_path: Path, url: str, call: str) -> tuple[str, str, str]:
+    stubs = tmp_path / "stubs"
+    stubs.mkdir()
+    curl = stubs / "curl"
+    curl.write_text(_OUTCOME_CURL)
+    curl.chmod(0o755)
+    report = tmp_path / "report.txt"
+    report.write_text("a finding\n")
+    driver = tmp_path / "driver.sh"
+    driver.write_text(
+        "set -uo pipefail\n"
+        f"source {HELPER.resolve()}\n"
+        f"SDS_DEADMAN_PING_URL={url!r}\n"
+        f"{call.format(report=report)}\n"
+        "echo rc=$?\n"
+    )
+    environment = dict(os.environ)
+    environment["PATH"] = f"{stubs}{os.pathsep}{environment['PATH']}"
+    environment["CURL_ARGS"] = str(tmp_path / "args")
+    environment["CURL_STDIN"] = str(tmp_path / "stdin")
+    completed = subprocess.run(
+        ["/bin/bash", str(driver)], capture_output=True, text=True, env=environment
+    )
+    args, stdin = tmp_path / "args", tmp_path / "stdin"
+    return (
+        args.read_text() if args.exists() else "",
+        stdin.read_text() if stdin.exists() else "",
+        completed.stdout + completed.stderr,
+    )
+
+
+def test_the_outcome_ping_sends_the_report_as_the_body_and_the_url_on_stdin(
+    tmp_path: Path,
+) -> None:
+    args, stdin, output = _outcome(tmp_path, PING_URL, 'sds_outcome_ping "/fail" "{report}"')
+    assert PING_URL not in args + output
+    assert stdin == f'url = "{PING_URL}/fail"\n'
+    assert f"--data-binary @{tmp_path / 'report.txt'}" in args
+    assert "rc=0" in output
+
+
+def test_the_outcome_ping_does_nothing_without_a_resolved_url(tmp_path: Path) -> None:
+    args, stdin, output = _outcome(tmp_path, "", 'sds_outcome_ping "/fail" "{report}"')
+    assert (args, stdin) == ("", "")
+    assert "rc=0" in output

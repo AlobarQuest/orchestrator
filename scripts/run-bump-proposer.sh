@@ -59,6 +59,8 @@
 #      stranded by a bump that moved, a refused proposal, or a revision that was committed and
 #      could not be published (ADR-0033: a failed publish is a finding, not a warning; the line
 #      names the sha it stranded).
+# On a `--submit` run, 1, 2 and 3 all ping `/fail` with the report as the body, and 0 pings success.
+# The program's code is this script's code.
 #
 # BARE INVOCATION IS A DRY RUN. `--submit` separates reporting from writing, and this wrapper
 # must not supply it: an operator reaching for "just look at what it would do" would otherwise
@@ -98,19 +100,23 @@ OBSERVER_BEARER_UUID="${BUMP_PROPOSER_OBSERVER_BWS_UUID:-f793576f-e9aa-4f9d-8089
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export BUMP_PROPOSER_PACKAGES_CHECKOUT="${BUMP_PROPOSER_PACKAGES_CHECKOUT:-$HOME/Projects/intent-packages}"
 
-# THE DEAD-MAN SWITCH. `launchd` discards this script's exit code, so the codes documented above
-# reach nobody -- and this is the lane that proves it: it sat UNSCHEDULED for eight days with
-# nothing saying so. There is no `activate_checkout` here to arm after, so this is the first thing
-# the pass does. It reports and never gates -- every failure inside it logs a line and returns 0.
-#
-# ARMED BEFORE THE BWS BLOCK BELOW, deliberately. That block can `exit 1` on a Keychain item this
-# machine does not have, which is exactly the silent morning this switch exists to report; arming
-# after it would report only the failures the credential fetch survived. The helper reads its own
-# broad identity into a local variable rather than exporting `BWS_ACCESS_TOKEN`, so it cannot
-# satisfy -- or corrupt -- the fetch below.
+# THIS CHECK IS AN OUTCOME ALARM (ADR-0021 amendment 2), as `sds-fork-sync-watch`'s is. `launchd`
+# discards this script's exit code, so the codes above reach a person only through Healthchecks:
+# `/start` before the pass, then success on 0 or `/fail` on anything else, with the pass's report
+# as the body, which alert-hub delivers. A finding pages; a pass that stops pinging goes down after
+# the grace. Only a `--submit` run pings: a dry run is a person looking, and must neither page nor
+# reset the timer of a schedule that may have stopped. There is no `activate_checkout` here to
+# resolve after, so this is the first thing the pass does, BEFORE the BWS block below: that block
+# can `exit 1` on a Keychain item this machine does not have, and each of those exits now pings
+# `/fail` with its reason. An unresolved check logs one line and never stops the pass.
+CHECK_NAME="sds-bump-proposer"
+case " $* " in
+  *" --submit "*) SUBMITTING=1 ;;
+  *) SUBMITTING=0 ;;
+esac
 # shellcheck disable=SC1091
 source "$REPO_ROOT/scripts/sds-deadman.sh"
-sds_deadman_arm sds-bump-proposer --finding 3 "$@"
+sds_outcome_begin "$CHECK_NAME" bump-proposer "$SUBMITTING"
 
 # `--color no` AND an environment with the forcing variables removed. FORCE_COLOR /
 # CLICOLOR_FORCE make `bws secret get` wrap its JSON in ANSI escapes even when stdout is a
@@ -136,10 +142,8 @@ source "$REPO_ROOT/scripts/sds-bws.sh"
 # and has cost this estate a diagnosis more than once.
 BROAD_IDENTITY="${BWS_ACCESS_TOKEN_BROAD:-$(/usr/bin/security find-generic-password \
   -s 'Claude' -a 'BWS_ACCESS_TOKEN_VPS_BACKUP' -w 2>/dev/null || true)}"
-if [ -z "$BROAD_IDENTITY" ]; then
-  echo "FATAL: no broad BWS identity for the change-manager credentials (service Claude)" >&2
-  exit 1
-fi
+[ -n "$BROAD_IDENTITY" ] || sds_outcome_fail \
+  "FATAL: no broad BWS identity for the change-manager credentials (service Claude)"
 
 # FETCHED ON EVERY RUN, dry or writing. The landing policy is what this pass reports against, so
 # a dry run needs it; it is READ-scoped, so needing it surrenders nothing. Fetched BEFORE the
@@ -147,30 +151,21 @@ fi
 # the message names the credential that is actually missing.
 BUMP_PROPOSER_CHANGE_MANAGER_READ_TOKEN="$(sds_bws_value "$CHANGE_MANAGER_READ_UUID" "$BROAD_IDENTITY")"
 export BUMP_PROPOSER_CHANGE_MANAGER_READ_TOKEN
-if [ -z "${BUMP_PROPOSER_CHANGE_MANAGER_READ_TOKEN:-}" ]; then
-  echo "FATAL: could not read the READ-scoped change-manager credential from BWS (broad)" >&2
-  exit 1
-fi
+[ -n "${BUMP_PROPOSER_CHANGE_MANAGER_READ_TOKEN:-}" ] || sds_outcome_fail \
+  "FATAL: could not read the READ-scoped change-manager credential from BWS (broad)"
 
 # ONLY FETCHED FOR A WRITING RUN. A dry run reports what it would do and sends nothing, so it
 # must not need -- or touch -- a credential that could write. THE OBSERVER BEARER IS ON THIS SIDE
 # OF THAT LINE: filing an observation is a write, and a dry run proposes nothing, so it has no
 # cause to file.
-case " $* " in
-  *" --submit "*) NEEDS_CREDENTIAL=1 ;;
-  *) NEEDS_CREDENTIAL=0 ;;
-esac
-
-if [ "$NEEDS_CREDENTIAL" -eq 1 ]; then
+if [ "$SUBMITTING" -eq 1 ]; then
   BUMP_PROPOSER_CHANGE_MANAGER_TOKEN="$(sds_bws_value "$CHANGE_MANAGER_PROPOSE_UUID" "$BROAD_IDENTITY")"
   export BUMP_PROPOSER_CHANGE_MANAGER_TOKEN
 
   SDS_IDENTITY="${BWS_ACCESS_TOKEN_SDS:-$(/usr/bin/security find-generic-password \
     -s 'Claude' -a 'BWS_ACCESS_TOKEN_SDS' -w 2>/dev/null || true)}"
-  if [ -z "$SDS_IDENTITY" ]; then
-    echo "FATAL: no narrow BWS identity for the observer bearer (service Claude)" >&2
-    exit 1
-  fi
+  [ -n "$SDS_IDENTITY" ] || sds_outcome_fail \
+    "FATAL: no narrow BWS identity for the observer bearer (service Claude)"
   ORCHESTRATOR_API_URL="${ORCHESTRATOR_API_URL:-https://sds.alobar.net}"
   ORCHESTRATOR_API_CREDENTIAL_KEY_ID="orchestrator-observer"
   ORCHESTRATOR_API_TOKEN="$(sds_bws_value "$OBSERVER_BEARER_UUID" "$SDS_IDENTITY")"
@@ -182,26 +177,25 @@ fi
 # reporting "unusable input" for what is actually a credential failure. Named separately so the
 # message points at the identity that could not read, which is the question a 404 from `bws`
 # does not answer by itself.
-if [ "$NEEDS_CREDENTIAL" -eq 1 ] && [ -z "${BUMP_PROPOSER_CHANGE_MANAGER_TOKEN:-}" ]; then
-  echo "FATAL: could not read the propose-scoped change-manager credential from BWS (broad)" >&2
-  exit 1
+if [ "$SUBMITTING" -eq 1 ] && [ -z "${BUMP_PROPOSER_CHANGE_MANAGER_TOKEN:-}" ]; then
+  sds_outcome_fail "FATAL: could not read the propose-scoped change-manager credential from BWS (broad)"
 fi
-if [ "$NEEDS_CREDENTIAL" -eq 1 ] && [ -z "${ORCHESTRATOR_API_TOKEN:-}" ]; then
-  echo "FATAL: could not read the orchestrator observer bearer from BWS (narrow)" >&2
-  exit 1
+if [ "$SUBMITTING" -eq 1 ] && [ -z "${ORCHESTRATOR_API_TOKEN:-}" ]; then
+  sds_outcome_fail "FATAL: could not read the orchestrator observer bearer from BWS (narrow)"
 fi
 
 # THE GITHUB CREDENTIAL HAS NO BWS RECORD, exactly as the deploy producer's and the ledger's do
 # not. It falls back to `gh auth token`, an interactive login: a scheduled job resting on one
-# breaks the moment the login is re-issued, and nothing would say so but this script's exit 1.
-# That is a gap, not a design.
+# breaks the moment the login is re-issued. The scheduled run then pings `/fail` with the
+# reason (ADR-0021 amendment 2), but the source is still a gap, not a design.
 if [ -z "${BUMP_PROPOSER_GITHUB_TOKEN:-}" ]; then
   BUMP_PROPOSER_GITHUB_TOKEN="$(gh auth token 2>/dev/null || true)"
   export BUMP_PROPOSER_GITHUB_TOKEN
 fi
 if [ -z "${BUMP_PROPOSER_GITHUB_TOKEN:-}" ]; then
-  echo "FATAL: no GitHub token (set BUMP_PROPOSER_GITHUB_TOKEN or run gh auth login)" >&2
-  exit 1
+  sds_outcome_fail "FATAL: no GitHub token (set BUMP_PROPOSER_GITHUB_TOKEN or run gh auth login)"
 fi
 
-"$REPO_ROOT/.venv/bin/bump-proposer" "$@"
+"$REPO_ROOT/.venv/bin/bump-proposer" "$@" > "$SDS_OUTCOME_REPORT" 2>&1
+rc=$?
+sds_outcome_end "$rc"

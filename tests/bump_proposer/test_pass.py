@@ -753,8 +753,8 @@ def test_a_REFUSED_OBSERVER_CREDENTIAL_stops_the_pass_rather_than_marking_each_b
     A 500 is an orchestrator that would not take THIS bump: the pull request loses its row, the
     pass reports a finding, and a later pass may well succeed. A 401 is the CREDENTIAL, which is
     every bump and every pass after it -- and reported per bump it exits with this lane's finding
-    code, which `sds-deadman.sh` pings as SUCCESS. The lane would then propose nothing for as long
-    as the bearer stayed revoked while its dead-man check read `up`.
+    code, blaming every bump. The lane would then propose nothing for as long as the bearer stayed
+    revoked behind a report that names the bumps, not the credential.
     """
     _estate, _calls = rig
     spine.status = 401

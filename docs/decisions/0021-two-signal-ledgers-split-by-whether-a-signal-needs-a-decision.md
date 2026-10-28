@@ -139,3 +139,31 @@ is due to be turned off. The migration plan says OVH's daily backups and snapsho
 reaches the OVH host only over SSH, and no repository holds an OVH API credential. When the Hetzner
 host is turned off, the recovery floor loses its only whole-machine image signal. The `backup:`
 subjects cover the data, not the machine image.
+
+## Amendment 2 (2026-10-27): bridge-lane findings reach alert-hub through outcome alarms
+
+### Decision
+
+The bridge lanes' findings go to alert-hub, the home this ADR gives to "a person goes untold". The
+three bridge launchers (`run-bump-proposer.sh`, `run-change-proposer.sh`, `run-work-carrier.sh`)
+no longer arm the dead-man switch, which pinged success on a finding (exit 3) and left the finding
+in the lane log only. Each is now an outcome alarm, like `sds-fork-sync-watch`:
+
+- It pings `/start` before the program, then success on exit 0, or `/fail` with the pass's report
+  as the body on any non-zero exit: 1, 2, 3, or a code outside the vocabulary. A credential the
+  launcher can't read is exit 1 and pings `/fail` with its reason.
+- It pings only on its acting run (`--submit` for the two proposers, `--register` for the carry).
+  A bare run is a person looking and pings nothing.
+- The checks (`sds-bump-proposer`, `sds-change-proposer`, `sds-work-carrier`) deliver to the
+  `alert-hub` channel, and each installer upserts its own.
+
+The trade-off is accepted, not overlooked. A check answers liveness only while it is up. A
+standing finding keeps it down after one page, and while it is down a lane that then stops running
+causes no state change, so nothing reports the stop until the finding clears. The same holds for a
+new, different finding: while the check is down it causes no state change either, so alert-hub
+never receives it, and only the check's Healthchecks ping log holds its report. Both costs apply
+only while a finding stands, and findings are rare in the lane logs read on 2026-10-27:
+change-proposer 2 in about 1,394 passes, bump-proposer 1 in 58, the carrier 1 in 64. One
+Healthchecks check has one state, and the bridge layer design
+(`docs/superpowers/specs/2026-10-27-bridge-layer-design.md`) names alert noise as an anti-goal, so a
+page per pass and a second liveness check per lane were both rejected.

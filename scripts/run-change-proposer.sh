@@ -31,10 +31,11 @@
 #   3  something was found — including a pull request whose rollout workflow nobody has
 #      transcribed, which is the case that used to exit 0 in silence.
 # 2 OUTRANKS 3, the same rule the rollout watcher states in the opposite direction: a pass that
-# could not use some of its inputs cannot claim it found everything there was to find. Note what
-# that costs, because it is deliberate: 3 is this lane's `--finding` code and pings the dead-man
-# check ALIVE, where 2 pings /fail. A repository that has silently left the lane's scope is not a
-# finding about a subject; it is the lane no longer covering what it says it covers.
+# could not use some of its inputs cannot claim it found everything there was to find. A repository
+# that has silently left the lane's scope is not a finding about a subject; it is the lane no longer
+# covering what it says it covers.
+# On a `--submit` run, 1, 2 and 3 all ping `/fail` with the report as the body, and 0 pings success.
+# The program's code is this script's code.
 #
 # NOTHING HERE APPROVES. The credential is propose-scoped: change-manager refuses it every
 # route that could move a record's status, and since increment 5a it refuses APPROVAL to
@@ -78,14 +79,21 @@ else
 fi
 activate_checkout "$REPO_ROOT" "$0" "$@"
 
-# THE DEAD-MAN SWITCH. `launchd` discards this script's exit code, so the codes documented above
-# reach nobody: a pass that stops running, or that fails every hour, is silent. Armed AFTER
-# activation, because `activate_checkout` may `exec` and an `exec` does not fire an EXIT handler.
-# It reports and never gates -- every failure inside it logs a line and returns 0.
+# THIS CHECK IS AN OUTCOME ALARM (ADR-0021 amendment 2), as `sds-fork-sync-watch`'s is. `launchd`
+# discards this script's exit code, so the codes above reach a person only through Healthchecks:
+# `/start` before the pass, then success on 0 or `/fail` on anything else, with the pass's report
+# as the body, which alert-hub delivers. A finding pages; a pass that stops pinging goes down after
+# the grace. Only a `--submit` run pings: a dry run is a person looking, and must neither page nor
+# reset the timer of a schedule that may have stopped. Resolved AFTER activation, because
+# `activate_checkout` may `exec`. An unresolved check logs one line and never stops the pass.
+CHECK_NAME="sds-change-proposer"
+case " $* " in
+  *" --submit "*) SUBMITTING=1 ;;
+  *) SUBMITTING=0 ;;
+esac
 # shellcheck disable=SC1091
 source "$REPO_ROOT/scripts/sds-deadman.sh"
-sds_deadman_arm sds-change-proposer --finding 3 "$@"
-
+sds_outcome_begin "$CHECK_NAME" change-proposer "$SUBMITTING"
 
 # `--color no` AND an environment with the forcing variables removed. FORCE_COLOR /
 # CLICOLOR_FORCE make `bws secret get` wrap its JSON in ANSI escapes even when stdout is a
@@ -96,24 +104,19 @@ source "$REPO_ROOT/scripts/sds-bws.sh"
 # ONLY FETCHED FOR A WRITING RUN. A dry run reports what it would propose and sends nothing, so
 # it must not need -- or touch -- the credential that could write. Fetching unconditionally would
 # make the inspection path fail on a machine that cannot read the secret, which is precisely the
-# machine on which somebody most wants to inspect before granting it one.
-case " $* " in
-  *" --submit "*) NEEDS_CREDENTIAL=1 ;;
-  *) NEEDS_CREDENTIAL=0 ;;
-esac
+# machine on which somebody most wants to inspect before granting it one. `SUBMITTING` is set
+# above, beside the alarm, which keys on the same flag.
 
 # THE BROAD IDENTITY IS NEVER EXPORTED. The propose keeper is in `Rotation / Keepers`, which only the
 # broad machine account reads (a direct grant), so this launcher reads that account's token into a
 # local variable and hands it to the one `bws` call that needs it, as `run-estate-landing.sh` does.
 # It used to export it as `BWS_ACCESS_TOKEN`, which made it the identity of every process started
 # after it, the tool and `gh` included, though neither reads BWS.
-if [ "$NEEDS_CREDENTIAL" -eq 1 ]; then
+if [ "$SUBMITTING" -eq 1 ]; then
   BROAD_IDENTITY="${BWS_ACCESS_TOKEN_BROAD:-$(/usr/bin/security find-generic-password \
     -s 'Claude' -a 'BWS_ACCESS_TOKEN_VPS_BACKUP' -w 2>/dev/null || true)}"
-  if [ -z "$BROAD_IDENTITY" ]; then
-    echo "FATAL: no BWS identity for the change-manager credential (Keychain service Claude)" >&2
-    exit 1
-  fi
+  [ -n "$BROAD_IDENTITY" ] || sds_outcome_fail \
+    "FATAL: no BWS identity for the change-manager credential (Keychain service Claude)"
   CHANGE_PROPOSER_CHANGE_MANAGER_TOKEN="$(sds_bws_value "$CHANGE_MANAGER_PROPOSE_UUID" "$BROAD_IDENTITY")"
   export CHANGE_PROPOSER_CHANGE_MANAGER_TOKEN
 fi
@@ -122,22 +125,22 @@ fi
 # fetch would otherwise leave this EMPTY and fall through. The tool refuses an empty credential
 # and would exit 2 -- which is fail-closed but reports "unusable input" for what is actually a
 # credential failure. Name it here so the exit code means what this header says it means.
-if [ "$NEEDS_CREDENTIAL" -eq 1 ] && [ -z "${CHANGE_PROPOSER_CHANGE_MANAGER_TOKEN:-}" ]; then
-  echo "FATAL: could not read the propose-scoped change-manager credential from BWS" >&2
-  exit 1
+if [ "$SUBMITTING" -eq 1 ] && [ -z "${CHANGE_PROPOSER_CHANGE_MANAGER_TOKEN:-}" ]; then
+  sds_outcome_fail "FATAL: could not read the propose-scoped change-manager credential from BWS"
 fi
 
 # THE GITHUB CREDENTIAL HAS NO BWS RECORD, exactly as the rollout watcher's and the landing
 # ledger's do not. It falls back to `gh auth token`, an interactive login: a scheduled job
-# resting on one breaks the moment the login is re-issued, and nothing would say so but this
-# script's exit 1. That is a gap, not a design.
+# resting on one breaks the moment the login is re-issued. The scheduled run then pings `/fail`
+# with the reason (ADR-0021 amendment 2), but the source is still a gap, not a design.
 if [ -z "${CHANGE_PROPOSER_GITHUB_TOKEN:-}" ]; then
   CHANGE_PROPOSER_GITHUB_TOKEN="$(gh auth token 2>/dev/null || true)"
   export CHANGE_PROPOSER_GITHUB_TOKEN
 fi
 if [ -z "${CHANGE_PROPOSER_GITHUB_TOKEN:-}" ]; then
-  echo "FATAL: no GitHub token (set CHANGE_PROPOSER_GITHUB_TOKEN or run gh auth login)" >&2
-  exit 1
+  sds_outcome_fail "FATAL: no GitHub token (set CHANGE_PROPOSER_GITHUB_TOKEN or run gh auth login)"
 fi
 
-"$REPO_ROOT/.venv/bin/change-proposer" "$@"
+"$REPO_ROOT/.venv/bin/change-proposer" "$@" > "$SDS_OUTCOME_REPORT" 2>&1
+rc=$?
+sds_outcome_end "$rc"

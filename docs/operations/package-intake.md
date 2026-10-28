@@ -106,7 +106,8 @@ An HQ session works them.
 
 A second pass over an unchanged queue is a **replay**, not a second intake — the payload's
 idempotency key is derived from the record and its revision. Nothing marks a change record
-carried, so a record stays in the approved queue until a person resolves it in change-manager.
+carried, so a record stays in the approved queue until the work it caused is built; then the
+same pass's `work-watcher --retire` phase retires it (ADR-0029).
 
 ## By hand
 

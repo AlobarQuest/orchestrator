@@ -91,9 +91,9 @@ def test_a_REFUSED_CREDENTIAL_is_not_a_per_bump_failure() -> None:
     """Behaviour rather than taxonomy, and the consequence is what makes it matter.
 
     A per-bump error reports the bump `unobserved` and the pass exits with this lane's FINDING
-    code -- which `sds-deadman.sh` pings as SUCCESS, because a declared finding code means the
-    pass ran and reported. A revoked bearer is not one bad bump, it is every bump, so absorbing
-    it per pull request would leave the lane proposing nothing while its check read `up`.
+    code. A revoked bearer is not one bad bump, it is every bump, so absorbing it per pull request
+    would leave the lane proposing nothing behind a report that blames each bump, not the
+    credential.
     """
     assert not issubclass(ObservationCredentialError, ObservationWriteError)
 

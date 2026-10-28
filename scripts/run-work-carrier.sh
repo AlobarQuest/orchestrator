@@ -60,6 +60,8 @@
 #      newer revision's record superseded it, or while its Dependabot pull request was closed or
 #      merged by hand. Each needs a person, and a stale record needs a person to RETIRE it --
 #      the watcher reports it and holds no write that could.
+# On a `--register` run, 1, 2 and 3 all ping `/fail` with the report as the body, and 0 pings
+# success. The worst code of the two phases is this script's code.
 #
 # IT DECIDES WHETHER SDS SHOULD WORK ON EACH TARGET REPOSITORY AT ALL, AND HOLDS WHAT IT CANNOT
 # ANSWER YES FOR. A repository is workable when it opts in (`factory-target.toml`), the conformance
@@ -72,10 +74,8 @@
 # THE TWO WAYS TO BE HELD EXIT DIFFERENTLY, and the difference is what a reader is being told. A
 # definite NO is a FINDING (3): an approved record that can never be carried while the repository
 # says what it says, waiting on a person. An UNKNOWN is unusable input (2): nothing is wrong with
-# the record and a later pass may carry it. **2 OUTRANKS 3 in the ranking below**, and the
-# dead-man switch is armed `--finding 3` -- so a held-on-NO pass pings success and says so in the
-# log, while a held-on-UNKNOWN pass pings /fail. That is deliberate: a lane that cannot tell
-# whether a repository opted in is a lane that has stopped being able to do its job.
+# the record and a later pass may carry it. **2 OUTRANKS 3 in the ranking below**: a lane that
+# cannot tell whether a repository opted in is a lane that has stopped being able to do its job.
 #
 # A CARRIED RECORD IS NOT A FINDING, and neither is one merely prepared on a pass that was not
 # asked to register, nor one the carry finds it has ALREADY carried. Making any of them one
@@ -131,14 +131,21 @@ else
 fi
 activate_checkout "$REPO_ROOT" "$0" "$@"
 
-# THE DEAD-MAN SWITCH. `launchd` discards this script's exit code, so the codes documented above
-# reach nobody: a pass that stops running, or that fails every morning, is silent. Armed AFTER
-# activation, because `activate_checkout` may `exec` and an `exec` does not fire an EXIT handler.
-# It reports and never gates -- every failure inside it logs a line and returns 0.
+# THIS CHECK IS AN OUTCOME ALARM (ADR-0021 amendment 2), as `sds-fork-sync-watch`'s is. `launchd`
+# discards this script's exit code, so the codes above reach a person only through Healthchecks:
+# `/start` before the pass, then success on 0 or `/fail` on anything else, with both phases' report
+# as the body, which alert-hub delivers. A finding pages; a pass that stops pinging goes down after
+# the grace. Only a `--register` run pings: the bare form is a person looking, and must neither
+# page nor reset the timer of a schedule that may have stopped. Resolved AFTER activation, because
+# `activate_checkout` may `exec`. An unresolved check logs one line and never stops the pass.
+CHECK_NAME="sds-work-carrier"
+_wants_register=0
+for _arg in "$@"; do
+  if [ "$_arg" = "--register" ]; then _wants_register=1; fi
+done
 # shellcheck disable=SC1091
 source "$REPO_ROOT/scripts/sds-deadman.sh"
-sds_deadman_arm sds-work-carrier --finding 3 "$@"
-
+sds_outcome_begin "$CHECK_NAME" work-carrier "$_wants_register"
 
 # `--color no` AND an environment with the forcing variables removed. FORCE_COLOR /
 # CLICOLOR_FORCE make `bws secret get` wrap its JSON in ANSI escapes even when stdout is a pipe,
@@ -148,10 +155,8 @@ source "$REPO_ROOT/scripts/sds-bws.sh"
 
 BROAD_IDENTITY="${BWS_ACCESS_TOKEN_BROAD:-$(/usr/bin/security find-generic-password \
   -s 'Claude' -a 'BWS_ACCESS_TOKEN_VPS_BACKUP' -w 2>/dev/null || true)}"
-if [ -z "$BROAD_IDENTITY" ]; then
-  echo "FATAL: no BWS identity for the change-manager credential (Keychain service Claude)" >&2
-  exit 1
-fi
+[ -n "$BROAD_IDENTITY" ] || sds_outcome_fail \
+  "FATAL: no BWS identity for the change-manager credential (Keychain service Claude)"
 
 if [ -z "${CHANGE_MANAGER_TOKEN:-}" ]; then
   CHANGE_MANAGER_TOKEN="$(sds_bws_value "$CHANGE_MANAGER_UUID" "$BROAD_IDENTITY")"
@@ -161,10 +166,8 @@ fi
 # `set -e` is deliberately not used, so a failed fetch would otherwise leave this EMPTY and fall
 # through -- into an exit 2 that reports "unusable input" for what is actually a credential
 # failure. Name it here, so the exit code means what this header says it means.
-if [ -z "${CHANGE_MANAGER_TOKEN:-}" ]; then
-  echo "FATAL: could not read the change-manager credential from BWS" >&2
-  exit 1
-fi
+[ -n "${CHANGE_MANAGER_TOKEN:-}" ] || sds_outcome_fail \
+  "FATAL: could not read the change-manager credential from BWS"
 
 # THE SYSTEM BEARER IS FETCHED ONLY FOR A PASS THAT WILL WRITE, and the gate is not tidiness. It
 # is a canonical-mutation credential, and a pass that cannot use it should not hold it. Fetching
@@ -172,26 +175,19 @@ fi
 # any machine that cannot read the `SDS Operator` project -- which is every machine but this one
 # -- `run-work-carrier.sh` with no arguments would exit 1 on a credential it was never going to
 # send. Inspecting what would be registered must not require the right to register it.
-_wants_register=0
-for _arg in "$@"; do
-  if [ "$_arg" = "--register" ]; then _wants_register=1; fi
-done
+# `_wants_register` is set above, beside the alarm, which keys on the same flag.
 
 if [ "$_wants_register" -eq 1 ]; then
   SDS_IDENTITY="${BWS_ACCESS_TOKEN_SDS:-$(/usr/bin/security find-generic-password \
     -s 'Claude' -a 'BWS_ACCESS_TOKEN_SDS' -w 2>/dev/null || true)}"
-  if [ -z "$SDS_IDENTITY" ]; then
-    echo "FATAL: no BWS identity for the orchestrator credential (Keychain service Claude)" >&2
-    exit 1
-  fi
+  [ -n "$SDS_IDENTITY" ] || sds_outcome_fail \
+    "FATAL: no BWS identity for the orchestrator credential (Keychain service Claude)"
   if [ -z "${WORK_CARRIER_ORCHESTRATOR_TOKEN:-}" ]; then
     WORK_CARRIER_ORCHESTRATOR_TOKEN="$(sds_bws_value "$ORCHESTRATOR_SYSTEM_UUID" "$SDS_IDENTITY")"
     export WORK_CARRIER_ORCHESTRATOR_TOKEN
   fi
-  if [ -z "${WORK_CARRIER_ORCHESTRATOR_TOKEN:-}" ]; then
-    echo "FATAL: could not read the orchestrator system credential from BWS" >&2
-    exit 1
-  fi
+  [ -n "${WORK_CARRIER_ORCHESTRATOR_TOKEN:-}" ] || sds_outcome_fail \
+    "FATAL: could not read the orchestrator system credential from BWS"
 fi
 
 # THE RETIREMENT BEARER, and it is a THIRD secret rather than a third identity: the `propose`
@@ -205,10 +201,8 @@ if [ "$_wants_register" -eq 1 ]; then
       "$BROAD_IDENTITY")"
     export WORK_WATCHER_CHANGE_MANAGER_TOKEN
   fi
-  if [ -z "${WORK_WATCHER_CHANGE_MANAGER_TOKEN:-}" ]; then
-    echo "FATAL: could not read the change-manager propose credential from BWS" >&2
-    exit 1
-  fi
+  [ -n "${WORK_WATCHER_CHANGE_MANAGER_TOKEN:-}" ] || sds_outcome_fail \
+    "FATAL: could not read the change-manager propose credential from BWS"
 else
   # A reporting pass lists with the bearer it already has. It cannot write whatever it holds:
   # the watcher's write is gated on `--retire`, not on which credential is present.
@@ -288,16 +282,17 @@ if [ -z "${WORK_WATCHER_ORCHESTRATOR_TOKEN:-}" ]; then
   # Reporting pass on a machine that cannot read the orchestrator's project. Skipping is right
   # and contributes NO exit code: nothing was found and nothing failed, so folding a 2 in here
   # would report an unusable pass for a phase this invocation was never entitled to run.
-  echo "[SKIPPED]  the retirement phase needs an orchestrator credential this pass has not got"
+  echo "[SKIPPED]  the retirement phase needs an orchestrator credential this pass has not got" \
+    >> "$SDS_OUTCOME_REPORT"
 elif [ "$_wants_register" -eq 1 ]; then
-  "$REPO_ROOT/.venv/bin/work-watcher" --retire
+  "$REPO_ROOT/.venv/bin/work-watcher" --retire >> "$SDS_OUTCOME_REPORT" 2>&1
   _record_outcome "$?"
 else
-  "$REPO_ROOT/.venv/bin/work-watcher"
+  "$REPO_ROOT/.venv/bin/work-watcher" >> "$SDS_OUTCOME_REPORT" 2>&1
   _record_outcome "$?"
 fi
 
-"$REPO_ROOT/.venv/bin/work-carrier" "$@"
+"$REPO_ROOT/.venv/bin/work-carrier" "$@" >> "$SDS_OUTCOME_REPORT" 2>&1
 _record_outcome "$?"
 
-exit "$WORST_CODE"
+sds_outcome_end "$WORST_CODE"

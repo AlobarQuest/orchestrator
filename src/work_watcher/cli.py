@@ -226,7 +226,7 @@ def _staleness(
         state = github.state(repository, number)
     except GitHubCredentialRefused as error:
         # The CREDENTIAL failed, not this record: the same class as a missing token. Unusable,
-        # so the pass exits 2 and pages, instead of N quiet findings that ping success.
+        # so the pass exits 2 naming the credential, instead of N findings naming the records.
         return _Stale(note=f"; staleness not assessed: {error}", unusable=True)
     except GitHubError as error:
         return _Stale(finding=f"could not read {repository}#{number}: {error}")

@@ -67,7 +67,9 @@ def is_allowed_read(path: str) -> bool:
 
 
 def _permits(method: str, path: str) -> bool:
-    return is_allowed_read(path) if method == "GET" else is_allowed_write(path)
+    if method == "GET":
+        return is_allowed_read(path)
+    return method == "POST" and is_allowed_write(path)
 
 
 def _refuse(method: str, path: str) -> ForbiddenEndpointError:

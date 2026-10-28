@@ -506,8 +506,8 @@ def test_a_repository_that_has_not_opted_in_is_not_carried_and_the_reason_is_pri
     """Devon's rule: without all three, it is useless to go forward.
 
     A definite NO is a FINDING -- the record can never be carried while the repository
-    says what it says -- so it exits 3, which this lane's dead-man switch is armed to
-    treat as a pass that ran and reported rather than as a failure.
+    says what it says -- so it exits 3, a finding, which the launcher reports to alert-hub
+    (ADR-0021 amendment 2) and which differs from the 2 an unreachable answer gets.
     """
     code, text, payloads = _carry(checkout_root, monkeypatch, source=_Declares(DECLARED_FALSE))
 
