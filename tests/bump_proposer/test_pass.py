@@ -13,7 +13,8 @@ import functools
 import json
 import os
 import pathlib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -87,6 +88,7 @@ class Pull:
     ecosystem: str = "npm_and_yarn"
     update_type: str | None = "version-update:semver-major"
     conclusion: str = "failure"
+    completed_at: str = FAILED_LONG_AGO
 
 
 def _github(
@@ -164,7 +166,7 @@ def _github(
                             {
                                 "name": "Lint, type-check, and test",
                                 "conclusion": pull.conclusion,
-                                "completed_at": FAILED_LONG_AGO,
+                                "completed_at": pull.completed_at,
                             }
                         ]
                     },
@@ -1256,6 +1258,31 @@ def test_an_alert_fires_once_and_resolves_when_its_pull_request_closes(
     assert hub.keys("firing") == [_key("github__actions", "actions/checkout")]
 
     _serve(monkeypatch, pulls=[])
+    assert run(["--submit"]) == EXIT_OK
+
+    assert hub.keys("resolved") == [_key("github__actions", "actions/checkout")]
+
+
+def test_a_failure_that_has_not_settled_holds_its_alert(rig, monkeypatch, hub) -> None:
+    """Kills: resolving an open alert while a re-run fails again but hasn't settled -- it would
+    re-fire once settled, and alert-hub opens a second alert for one condition."""
+    _serve(monkeypatch, pulls=[_actions("failure")])
+    assert run(["--submit"]) == EXIT_OK
+
+    just_now = datetime.now(UTC).isoformat()
+    _serve(monkeypatch, pulls=[replace(_actions("failure"), completed_at=just_now)])
+    assert run(["--submit"]) == EXIT_OK
+
+    assert hub.keys("resolved") == []
+    assert hub.keys("firing") == [_key("github__actions", "actions/checkout")]
+
+
+def test_a_rerun_that_passes_resolves_its_alert(rig, monkeypatch, hub) -> None:
+    """The control: a green re-run is the condition cleared."""
+    _serve(monkeypatch, pulls=[_actions("failure")])
+    assert run(["--submit"]) == EXIT_OK
+
+    _serve(monkeypatch, pulls=[_actions("success")])
     assert run(["--submit"]) == EXIT_OK
 
     assert hub.keys("resolved") == [_key("github__actions", "actions/checkout")]

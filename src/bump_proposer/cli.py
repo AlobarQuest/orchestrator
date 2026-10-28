@@ -242,7 +242,8 @@ class Route:
     """What this pass does with one open pull request.
 
     `act` revises `package` (or, when it is None, creates one for `tooling`) to carry `bump`;
-    `alert` holds `key` open in alert-hub; `skip` and `ambiguous` only report `detail`.
+    `alert` holds `key` open in alert-hub; `skip` and `ambiguous` only report `detail`, except that
+    a `skip` naming a `key` holds that key as it is.
     """
 
     action: str
@@ -275,7 +276,18 @@ def _consider(
         # because an alert needs no versions and a docker tag rarely parses as one (Ruling 6:
         # docker is excluded from the cascade, so every docker bump, passing or not, is here).
         if rule.permits(update.ecosystem) and not _refused_by_the_checks(pending, now):
-            return Route("skip", _landing_detail(pending, update.ecosystem))
+            # A failure that hasn't settled (a re-run failing again) can't be decided yet, so an
+            # alert already open for it is HELD rather than resolved and re-fired next pass.
+            unsettled = any(check.conclusion in REFUSING_CONCLUSIONS for check in pending.checks)
+            return Route(
+                "skip",
+                _landing_detail(pending, update.ecosystem),
+                key=(
+                    alerts.key_for(pending.repository, update.ecosystem, update.dependency)
+                    if unsettled
+                    else ""
+                ),
+            )
         return _alert(
             pending,
             update.ecosystem,
@@ -556,7 +568,7 @@ def _repository_pass(
     records: list[dict[str, Any]],
     root: Path,
     now: datetime,
-    firing: dict[str, alerts.Alert],
+    raised: alerts.Raised,
 ) -> list[Outcome]:
     if not rule.declares(repository):
         # THE SUCCESSOR TO `no-cascade`, and the same fact asked of the holder rather than of a
@@ -588,20 +600,8 @@ def _repository_pass(
     outcomes: list[Outcome] = []
     for pending in sorted(pending_updates, key=lambda p: p.number):
         route = _consider(pending, rule, packages, now)
-        if route.action == "alert":
-            # Collected, and sent once the whole pass is read (`alerts.sync`): which keys stop
-            # firing is only known then. A dry run sends nothing.
-            firing[route.key] = alerts.alert_for(
-                repository, pending.number, pending.title, route.detail
-            )
-            status = "alerted" if client is not None else "would-alert"
-            outcomes.append(
-                Outcome(repository, pending.number, status, f"{route.key}: {route.detail}")
-            )
-            continue
         if route.action != "act":
-            status = "ambiguous" if route.action == "ambiguous" else "skipped"
-            outcomes.append(Outcome(repository, pending.number, status, route.detail))
+            outcomes.append(_unacted(route, pending, raised, submitting=client is not None))
             continue
         try:
             outcomes.extend(_act(route, pending, packages, client, observer, records, root))
@@ -618,6 +618,26 @@ def _repository_pass(
         except ChangeManagerError as error:
             outcomes.append(Outcome(repository, pending.number, "error", str(error)))
     return outcomes
+
+
+def _unacted(
+    route: Route, pending: PendingUpdate, raised: alerts.Raised, *, submitting: bool
+) -> Outcome:
+    """Report a route this pass does not act on, recording any alert key it raises or holds.
+
+    Alerts are collected, and sent once the whole pass is read (`alerts.sync`): which keys stop
+    firing is only known then. A dry run sends nothing.
+    """
+    if route.action == "alert":
+        raised.firing[route.key] = alerts.alert_for(
+            pending.repository, pending.number, pending.title, route.detail
+        )
+        status = "alerted" if submitting else "would-alert"
+        return Outcome(pending.repository, pending.number, status, f"{route.key}: {route.detail}")
+    if route.key:
+        raised.held.add(route.key)
+    status = "ambiguous" if route.action == "ambiguous" else "skipped"
+    return Outcome(pending.repository, pending.number, status, route.detail)
 
 
 def _lane(
@@ -665,12 +685,10 @@ def _lane(
             f"[NO PACKAGE] {spelling[name]} is granted dependency_updates; no standing package "
             "targets it and the landing policy does not declare it inert"
         )
-    for package in sorted(packages.values(), key=lambda p: p.target_repository.lower()):
-        if package.target_repository.lower() not in spelling:
-            print(
-                f"[NOT GRANTED] {package.target_repository} has a standing package; "
-                "the record does not grant it"
-            )
+    targeted = {package.target_repository for package in packages.values()}
+    for name in sorted(targeted, key=str.lower):
+        if name.lower() not in spelling:
+            print(f"[NOT GRANTED] {name} has a standing package; the record does not grant it")
     # A package's spelling wins where there is one, as before Part 3: it is what the package's
     # records and commits name.
     named = spelling | {
@@ -903,7 +921,7 @@ def run(argv: list[str] | None = None) -> int:
     client = None
     observer = None
     outcomes: list[Outcome] = []
-    firing: dict[str, alerts.Alert] = {}
+    raised = alerts.Raised()
     now = datetime.now(UTC)
     try:
         if args.submit:
@@ -927,7 +945,7 @@ def run(argv: list[str] | None = None) -> int:
                         records,
                         root,
                         now,
-                        firing,
+                        raised,
                     )
                 )
     except (UnusableEndpointError, ObservationCredentialError, ChangeManagerError) as error:
@@ -945,14 +963,14 @@ def run(argv: list[str] | None = None) -> int:
             observer.close()
 
     outcomes.extend(
-        _send_alerts(alert_token, firing, outcomes, args.repository, submit=args.submit)
+        _send_alerts(alert_token, raised, outcomes, args.repository, submit=args.submit)
     )
     return _report(outcomes, rule)
 
 
 def _send_alerts(
     token: str,
-    firing: dict[str, alerts.Alert],
+    raised: alerts.Raised,
     outcomes: list[Outcome],
     requested: list[str] | None,
     *,
@@ -963,7 +981,7 @@ def _send_alerts(
     if not submit:
         return []
     unreadable = {o.repository for o in outcomes if o.status == "unreadable"}
-    failure = alerts.sync(token, firing, unreadable=unreadable, requested=requested)
+    failure = alerts.sync(token, raised, unreadable=unreadable, requested=requested)
     return [] if failure is None else [Outcome("alert-hub", 0, "error", failure)]
 
 
