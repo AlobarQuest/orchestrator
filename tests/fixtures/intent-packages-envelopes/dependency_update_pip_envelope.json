@@ -1,0 +1,37 @@
+{
+  "budgets": {
+    "max_attempts": 3,
+    "max_llm_calls": 360
+  },
+  "capabilities": {
+    "command.run": "allowed",
+    "github.pr.create": "allowed",
+    "github.pr.merge": "allowed",
+    "orchestrator.claim": "allowed",
+    "orchestrator.evidence.write": "allowed",
+    "repo.edit": "allowed",
+    "repo.read": "allowed"
+  },
+  "change_class": "dependency-update",
+  "conformance": {
+    "accepted_standards": [],
+    "standards_touched": [
+      "project"
+    ],
+    "status": "green"
+  },
+  "constraints": {
+    "allowed_commands": [
+      "sed -i 's/^requests==2.31.0$/requests==2.32.0/' requirements.txt",
+      "grep -qx 'requests==2.32.0' requirements.txt"
+    ],
+    "mutation_commands": [
+      "sed -i 's/^requests==2.31.0$/requests==2.32.0/' requirements.txt"
+    ],
+    "target_repository": "AlobarQuest/orchestrator",
+    "verify_commands": [
+      "grep -qx 'requests==2.32.0' requirements.txt"
+    ],
+    "work_unit_id": "__WORK_UNIT_ID__"
+  }
+}

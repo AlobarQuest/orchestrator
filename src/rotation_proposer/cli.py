@@ -188,7 +188,8 @@ def _reasoning(package: RotationPackage) -> str:
 
 
 def _proposal(package: RotationPackage, observation_id: str) -> dict[str, Any]:
-    """The record's facts. Exactly `bump_proposer.cli.PROPOSAL_FIELDS`, which a test holds it to."""
+    """The record's facts. Exactly `bump_proposer.cli.WORK_RECORD_FIELDS`, which a test holds it
+    to: a rotation record names no target repository and no dependency-update change class."""
     return {
         "package_id": package.package_id,
         "package_revision": package.revision,

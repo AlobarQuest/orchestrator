@@ -27,10 +27,11 @@ it would be the correct-about-the-wrong-noun error this repository has made four
 
 **Nothing here is a substitute for the human authority approval.** The approval is the gate that
 remains, and one term below requires it to be bound to the unit's exact current fingerprint --
-the same binding `exact_authority_approval` enforces for readiness, and unconditionally, because
-the policy-pattern substitute that admission allows (ADR-0011) has no counterpart here: an
-envelope granting this capability matches no known-good pattern and falls to the human gate by
-totality (Increment 3).
+the same binding `exact_authority_approval` enforces for readiness, and unconditionally: the
+policy-pattern substitute that admission allows (ADR-0011) has no counterpart here. The
+dependency-update known-good patterns carry this capability, because the profile stamps it into
+every such envelope, so admission may recognise one without a person; this answer still requires
+a human authority approval bound to the unit's exact fingerprint before it says a unit may land.
 
 **What this answer INHERITS FROM NOTHING, said out loud rather than left to be discovered.** It is
 not admission and shares none of admission's environment gates: there is no target-repository

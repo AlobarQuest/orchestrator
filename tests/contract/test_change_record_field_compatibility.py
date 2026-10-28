@@ -58,6 +58,8 @@ class WorkChangeIn(BaseModel):
     actor: str
     note: str | None = None
     originating_observation_id: str | None = None
+    target_repository: str | None = None
+    change_class: str | None = None
 """
 
 # A stand-in for the row serializer and the listing route that hands it the rows.
@@ -73,6 +75,8 @@ def _item_dict(it: ChangeItem) -> dict:
         "package_revision": it.package_revision,
         "package_source_repository": it.package_source_repository,
         "originating_observation_id": it.originating_observation_id,
+        "target_repository": it.target_repository,
+        "change_class": it.change_class,
         "unrelated_key_other_callers_read": it.note,
     }
 

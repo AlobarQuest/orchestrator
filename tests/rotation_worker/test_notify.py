@@ -4,6 +4,7 @@ a failed unit or pass (ADR-0055 amendment 15, increment 3)."""
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any, cast
 
@@ -255,8 +256,7 @@ def test_a_pass_without_a_sender_token_reads_no_acts(caplog: pytest.LogCaptureFi
 
 @pytest.mark.parametrize(("method", "path"), [("GET", ALERTS), ("POST", "/admin/senders")])
 def test_the_client_may_send_nothing_but_an_alert(tmp_path: Path, method: str, path: str) -> None:
-    client = Hub().notifier(tmp_path)._client()
-    assert client is not None
+    client = Hub().notifier(tmp_path)._alerts.open_client()
     with pytest.raises(ContractError, match="alert-hub may not"):
         client.request(method, path)
 
@@ -265,3 +265,41 @@ def test_a_state_file_that_can_t_be_written_raises_nothing(tmp_path: Path) -> No
     hub = Hub()
     hub.notifier(tmp_path / "missing-directory").announce({ACT.key: ACT})
     assert [m["status"] for m in hub.sent] == ["firing"]
+
+
+class Captured(logging.Handler):
+    """Attached to the logger itself: another test may have reconfigured propagation."""
+
+    def __init__(self) -> None:
+        super().__init__(logging.WARNING)
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.records.append(record)
+
+
+def test_failures_are_logged_under_the_rotation_worker_events(tmp_path: Path) -> None:
+    def unreadable() -> Value:
+        raise StoreError("no item named sender")
+
+    logger = logging.getLogger("rotation_worker")
+    captured = Captured()
+    logger.addHandler(captured)
+    was_disabled, logger.disabled = logger.disabled, False
+    try:
+        Notifier(unreadable, tmp_path, httpx.MockTransport(Hub())).announce({ACT.key: ACT})
+        Hub().notifier(tmp_path / "missing-directory").announce({ACT.key: ACT})
+    finally:
+        logger.removeHandler(captured)
+        logger.disabled = was_disabled
+    events = {(r.name, r.getMessage()) for r in captured.records}
+    assert ("rotation_worker", "notify_failed") in events
+    assert ("rotation_worker", "notify_state_unsaved") in events
+    assert any("no item named sender" in str(getattr(r, "reason", "")) for r in captured.records)
+    assert TOKEN not in repr([r.__dict__ for r in captured.records])
+
+
+def test_a_429_is_an_immediate_failure_with_no_wait(tmp_path: Path) -> None:
+    hub = Hub(429)
+    hub.notifier(tmp_path).announce({ACT.key: ACT})
+    assert len(hub.sent) == 1

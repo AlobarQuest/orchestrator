@@ -22,6 +22,8 @@ HEALTHCHECKS_KEY_UUID = "51509d5e-64f5-4781-ae82-b4ed00b644e1"
 # Fetched by all three, and only on an acting run.
 PROPOSE_UUID = "acccb346-4baa-43ec-a1d4-b4a400c048ee"
 OBSERVER_UUID = "f793576f-e9aa-4f9d-8089-b4a000b9e2d5"
+# The bump proposer's `sds-bridge` alert sender token.
+ALERT_UUID = "b415d03b-f92d-46b1-8a9d-b4f10103df49"
 
 
 @dataclass(frozen=True)
@@ -362,12 +364,119 @@ def test_an_acting_bump_proposer_exports_the_member_bearer_and_the_write_names(
     assert ORCHESTRATOR_API_NAMES <= names
 
 
+@pytest.mark.parametrize("args", [(), ("--submit",)], ids=["dry-run", "submit"])
+def test_the_bump_proposer_fetches_and_exports_the_sender_token(
+    tmp_path: Path, args: tuple[str, ...]
+) -> None:
+    """Bridge Part 3: fetched with the narrow identity on every run, exported to the program."""
+    names = _exported_names(tmp_path, *args)
+    assert "SDS_BRIDGE_ALERT_TOKEN" in names
+    fetches = (tmp_path / "bws.log").read_text().splitlines()
+    assert any(f"secret get {ALERT_UUID} " in f"{line} " for line in fetches)
+
+
+def test_the_sender_token_uuid_is_the_one_the_manifest_lists() -> None:
+    """The launcher's default is the `.bws-secrets.toml` entry for the sds-bridge sender token."""
+    import re
+    import tomllib
+
+    manifest = tomllib.loads(Path(".bws-secrets.toml").read_text())
+    listed = {
+        entry["uuid"]
+        for entry in manifest["secret"]
+        if entry["name"] == "ALERT_HUB_SENDER_TOKEN_SDS_BRIDGE"
+    }
+    launcher = (Path("scripts") / LANES[0].launcher).read_text()
+    default = re.search(
+        r'SDS_BRIDGE_ALERT_UUID="\$\{BUMP_PROPOSER_ALERT_BWS_UUID:-([^}]+)\}"', launcher
+    )
+    assert default is not None
+    assert listed == {default.group(1)} == {ALERT_UUID}
+
+
+@pytest.mark.parametrize("args", [(), ("--submit",)], ids=["dry-run", "submit"])
+def test_the_bump_proposer_creates_and_exports_its_state_directory(
+    tmp_path: Path, args: tuple[str, ...]
+) -> None:
+    names = _exported_names(tmp_path, *args)
+    assert "BUMP_PROPOSER_STATE_DIR" in names
+    state = tmp_path / "home" / "Library" / "Application Support" / "sds" / "bump-proposer"
+    assert state.is_dir()
+
+
+@pytest.mark.parametrize("args", [(), ("--submit",)], ids=["dry-run", "submit"])
+def test_a_bump_proposer_whose_sender_token_is_unreadable_never_runs(
+    tmp_path: Path, args: tuple[str, ...]
+) -> None:
+    env_log = tmp_path / "env.txt"
+    rc, _, output = _run(tmp_path, LANES[0], *args, BWS_FAIL_UUID=ALERT_UUID, ENV_LOG=str(env_log))
+    assert rc == 1, output
+    assert "sds-bridge alert sender token" in output
+    assert not env_log.exists()
+
+
 def test_an_acting_carrier_whose_observer_bearer_is_unreadable_pings_fail(tmp_path: Path) -> None:
     rc, pings, output = _run(tmp_path, CARRIER, "--register", BWS_FAIL_UUID=OBSERVER_UUID)
     assert rc == 1, output
     assert pings[1][0] == f"{PING_URL}/fail"
     assert "observer credential" in pings[1][1]
     assert "found: subject" not in output
+
+
+# ---- the work watcher's sender token (bridge Part 3, Ruling 8) --------------------------------
+
+
+def test_an_acting_carrier_fetches_and_exports_the_sender_token(tmp_path: Path) -> None:
+    """Only the acting watcher sends, so only an acting pass fetches it."""
+    env_log = tmp_path / "env.txt"
+    rc, _, output = _run(tmp_path, CARRIER, "--register", ENV_LOG=str(env_log))
+    assert rc == 0, output
+    assert "SDS_BRIDGE_ALERT_TOKEN" in set(env_log.read_text().split())
+    fetches = (tmp_path / "bws.log").read_text().splitlines()
+    assert any(f"secret get {ALERT_UUID} " in f"{line} " for line in fetches)
+
+
+@pytest.mark.parametrize(
+    ("lane", "args"), [(CARRIER, ("--register",)), (LANES[0], ())], ids=["carrier", "proposer"]
+)
+def test_a_preset_sender_token_is_ignored_and_fetched(
+    tmp_path: Path, lane, args: tuple[str, ...]
+) -> None:
+    """Both launchers fetch the sender token whatever the environment holds; a value left in a
+    shell is never the one sent."""
+    rc, _, output = _run(tmp_path, lane, *args, SDS_BRIDGE_ALERT_TOKEN="preset-stale-value")
+    assert rc == 0, output
+    fetches = (tmp_path / "bws.log").read_text().splitlines()
+    assert any(f"secret get {ALERT_UUID} " in f"{line} " for line in fetches)
+
+
+def test_a_bare_carrier_neither_fetches_nor_exports_the_sender_token(tmp_path: Path) -> None:
+    env_log = tmp_path / "env.txt"
+    rc, _, output = _run(tmp_path, CARRIER, ENV_LOG=str(env_log))
+    assert rc == 0, output
+    assert "SDS_BRIDGE_ALERT_TOKEN" not in set(env_log.read_text().split())
+    assert ALERT_UUID not in (tmp_path / "bws.log").read_text()
+    assert not (tmp_path / "home" / "Library").exists()
+
+
+def test_an_acting_carrier_creates_the_watchers_state_directory(tmp_path: Path) -> None:
+    env_log = tmp_path / "env.txt"
+    rc, _, output = _run(tmp_path, CARRIER, "--register", ENV_LOG=str(env_log))
+    assert rc == 0, output
+    assert "WORK_WATCHER_STATE_DIR" in set(env_log.read_text().split())
+    state = tmp_path / "home" / "Library" / "Application Support" / "sds" / "work-watcher"
+    assert state.is_dir()
+
+
+def test_an_acting_carrier_whose_sender_token_is_unreadable_never_runs(tmp_path: Path) -> None:
+    env_log = tmp_path / "env.txt"
+    rc, pings, output = _run(
+        tmp_path, CARRIER, "--register", BWS_FAIL_UUID=ALERT_UUID, ENV_LOG=str(env_log)
+    )
+    assert rc == 1, output
+    assert pings[1][0] == f"{PING_URL}/fail"
+    assert "sds-bridge alert sender token" in pings[1][1]
+    assert not env_log.exists()
 
 
 # ---- the installers' Healthchecks checks ------------------------------------------------------

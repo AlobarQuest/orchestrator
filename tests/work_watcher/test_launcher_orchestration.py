@@ -14,9 +14,10 @@ reason the change was made:
 
 The REAL script is executed against STUB programs. `REPO_ROOT` resolves off `BASH_SOURCE`, so
 copying the script into a temporary tree whose `.venv/bin` holds two shell stubs makes the script
-invoke them exactly as it would invoke the real ones. Every credential the script would otherwise
-fetch is pre-set in the environment, which is the same `${VAR:-...}` escape hatch the script
-already offers -- so no BWS call is made and no secret is involved.
+invoke them exactly as it would invoke the real ones. Every credential the script offers a
+`${VAR:-...}` escape hatch for is pre-set in the environment. The alert sender token has none (an
+acting pass always fetches it), so the stub `bws` answers that one UUID with a placeholder and
+fails every other call -- no real BWS call is made and no secret is involved.
 """
 
 from __future__ import annotations
@@ -41,6 +42,9 @@ CREDENTIALS = {
     "WORK_WATCHER_CHANGE_MANAGER_TOKEN": "propose-bearer",
 }
 
+# The one secret an acting pass always fetches; the stub `bws` answers only this UUID.
+SENDER_TOKEN_UUID = "b415d03b-f92d-46b1-8a9d-b4f10103df49"
+
 _STUB = """#!/usr/bin/env bash
 echo "{name} $*" >> "$INVOCATION_LOG"
 exit {code}
@@ -55,6 +59,11 @@ def tree(tmp_path: Path) -> Path:
     shutil.copy(LAUNCHER, tmp_path / "scripts" / LAUNCHER.name)
     # The outcome alarm's helper. `_no_bws` below leaves its ping URL unresolved, so nothing pings.
     shutil.copy(LAUNCHER.parent / "sds-deadman.sh", tmp_path / "scripts" / "sds-deadman.sh")
+    # The BWS helper parses the stub's JSON with the tree's venv python.
+    shutil.copy(LAUNCHER.parent / "sds-bws.sh", tmp_path / "scripts" / "sds-bws.sh")
+    (tmp_path / ".venv" / "bin" / "python").symlink_to(
+        (Path.cwd() / ".venv" / "bin" / "python").resolve()
+    )
     return tmp_path
 
 
@@ -65,7 +74,8 @@ def _stub(tree: Path, name: str, code: int) -> None:
 
 
 def _no_bws(tree: Path) -> str:
-    """A PATH whose `bws` always fails, so no test can reach the real secret manager.
+    """A PATH whose `bws` fails every call but the sender token's, so no test can reach the real
+    secret manager.
 
     Needed for the skipped-watcher cases below: they leave the orchestrator bearer unset, and the
     script's own fallback would otherwise read this machine's Keychain and make a LIVE BWS call --
@@ -75,7 +85,11 @@ def _no_bws(tree: Path) -> str:
     stub_bin = tree / "stubbin"
     stub_bin.mkdir(exist_ok=True)
     bws = stub_bin / "bws"
-    bws.write_text("#!/usr/bin/env bash\nexit 1\n")
+    bws.write_text(
+        "#!/usr/bin/env bash\n"
+        f'[ "$1 $2 $3" = "secret get {SENDER_TOKEN_UUID}" ] || exit 1\n'
+        'echo \'{"value": "sender-token"}\'\n'
+    )
     bws.chmod(0o755)
     return f"{stub_bin}{os.pathsep}{os.environ['PATH']}"
 
@@ -87,6 +101,8 @@ def _run(tree: Path, *args: str, watcher: int = 0, carrier: int = 0, **env_overr
     env = {
         **os.environ,
         **CREDENTIALS,
+        # An acting pass creates this; never the real home's.
+        "WORK_WATCHER_STATE_DIR": str(tree / "alert-state"),
         "PATH": _no_bws(tree),
         **env_overrides,
         "INVOCATION_LOG": str(log),

@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any
 
 from work_carrier.change_manager import WorkRecord
+from work_carrier.workability import target_repository
 
 EMITTER = "orchestrator"
 EMIT_TIMEOUT_SECONDS = 120.0
@@ -200,5 +201,37 @@ def _disagreement(record: WorkRecord, payload: dict[str, Any]) -> Refused | None
             "originating_observation_mismatch",
             "the prepared payload names a different originating observation than the record "
             "that caused it",
+        )
+    return _policy_disagreement(record, payload)
+
+
+DEPENDENCY_UPDATE = "dependency-update"
+
+
+def _policy_disagreement(record: WorkRecord, payload: dict[str, Any]) -> Refused | None:
+    """The fields change-manager's work policy approved on, against the package the carry works.
+
+    The policy approves a standing dependency-update record on the RECORD's own
+    `target_repository` and `change_class`; the carry and the workability judgment act on the
+    PACKAGE's `profile_fields.target_repo` and `profile`. Nothing else compares the two, so a
+    record approved for one repository could carry a package aimed at another. Either field
+    absent on the record (every hand-proposed record) is no claim and refuses nothing.
+    """
+    claimed = record.target_repository
+    if claimed is not None:
+        worked = target_repository(payload)
+        if worked is None or worked.casefold() != claimed.casefold():
+            return Refused(
+                record,
+                "target_repository_mismatch",
+                f"the approved record names target repository {claimed!r} and the package "
+                f"works in {worked!r}; the policy approved the record, not the package",
+            )
+    if record.change_class == DEPENDENCY_UPDATE and payload.get("profile") != DEPENDENCY_UPDATE:
+        return Refused(
+            record,
+            "change_class_mismatch",
+            f"the approved record's change class is {DEPENDENCY_UPDATE!r} and the package's "
+            f"profile is {payload.get('profile')!r}",
         )
     return None

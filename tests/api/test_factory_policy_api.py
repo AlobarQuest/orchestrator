@@ -25,7 +25,7 @@ def test_the_policy_surface_reports_the_version_and_every_reach_row(db_client: T
 
     assert response.status_code == 200
     body = response.json()
-    assert body["version"] == 8
+    assert body["version"] == 9
     # Served keys, model fields and report keys are one set: a response model drops what it does
     # not declare, and a field the report stopped producing must not linger in the model either.
     assert (
@@ -110,7 +110,8 @@ def test_the_policy_surface_serves_the_known_good_patterns_a_row_declares(
 
     assert rows["live_estate"]["known_good"] == []
     pattern = rows["source_repository"]["known_good"][0]
-    assert pattern["command_prefixes"] == ["uv add", "uv lock"]
+    assert pattern["command_prefixes"] == []
+    assert "uv lock --check" in pattern["command_shapes"]
     assert pattern["change_class"] == "dependency-update"
     assert pattern["rationale"] and pattern["decided"] and pattern["capabilities"]
 

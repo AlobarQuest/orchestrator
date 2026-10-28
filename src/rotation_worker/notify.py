@@ -3,7 +3,8 @@
 A rotation unit blocked on a human act (a console mint, a revoke) waits silently unless someone
 looks. Each pass, the executor sends one alert-hub alert per act its own units wait on, keyed by
 the act's dependency, and resolves it once the act is no longer pending. alert-hub dedups by key,
-so resending an open act every pass costs nothing and lets alert-hub repeat it on its own schedule.
+so resending an open act every pass costs nothing and lets alert-hub repeat it on its own schedule
+(`refire`: the shared client, `alert_hub_client`, would otherwise fire a key once).
 
 A send never fails a unit or a pass: an alert that can't be sent is logged `notify_failed` and
 tried again next pass. The keys sent as firing are kept in the state directory, so a later pass
@@ -12,7 +13,6 @@ knows what to resolve; losing that file only leaves an alert open until a person
 
 from __future__ import annotations
 
-import json
 import logging
 from collections.abc import Callable, Mapping, Set
 from dataclasses import dataclass
@@ -21,18 +21,23 @@ from typing import Final
 
 import httpx
 
-from estate_clients.confined import ConfinedClient, TransportFailure
+from alert_hub_client import (
+    ALERTS,
+    Alert,
+    AlertHubError,
+    KeyedAlerts,
+    StateUnwritable,
+    TokenUnreadable,
+)
 from rotation_worker.contract import ContractError
 from rotation_worker.secret_store import StoreError
 from rotation_worker.values import Value, scrub
 
 LOG = logging.getLogger("rotation_worker")
-BASE_URL: Final = "https://alerts.alobar.net"
-ALERTS: Final = "/v1/alerts"
 USER_AGENT: Final = "rotation-worker/1 (+AlobarQuest/orchestrator)"
-TIMEOUT_SECONDS: Final = 10.0
-ACCEPTED: Final = 202
 STATE_FILE: Final = "announced-acts.json"
+
+__all__ = ["ALERTS", "STATE_FILE", "USER_AGENT", "Act", "Notifier"]
 
 
 @dataclass(frozen=True)
@@ -52,85 +57,34 @@ class Notifier:
         state_dir: Path,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
-        self._token = token
-        self._state = state_dir / STATE_FILE
-        self._transport = transport
+        self._alerts = KeyedAlerts(
+            lambda: self._reveal(token),
+            state_dir / STATE_FILE,
+            user_agent=USER_AGENT,
+            refire=True,
+            resolved_title="Rotation act done",
+            refuse=lambda method, path: ContractError(f"alert-hub may not {method} {path}"),
+            logger=LOG,
+            transport=transport,
+        )
 
     def announce(self, waiting: Mapping[str, Act], unread: Set[str] = frozenset()) -> None:
         """Fire every act in `waiting`, and resolve every act announced before that isn't,
         except those in `unread`, whose units couldn't be read: they stay as they were."""
-        announced = self._announced()
-        still_open = set(announced & unread)
-        client = self._client()
+        firing = {key: Alert(act.title, act.message, act.link) for key, act in waiting.items()}
         try:
-            for key, act in waiting.items():
-                if self._send(client, act, "firing"):
-                    still_open.add(key)
-                elif key in announced:
-                    still_open.add(key)
-            for key in announced - waiting.keys() - unread:
-                if not self._send(client, Act(key, "Rotation act done", ""), "resolved"):
-                    still_open.add(key)
-        finally:
-            if client is not None:
-                client.close()
-        self._save(still_open)
+            self._alerts.sync(firing, unread)
+        except TokenUnreadable:
+            pass  # `_reveal` logged the store's reason
+        except StateUnwritable as error:
+            LOG.warning("notify_state_unsaved", extra={"reason": scrub(error.reason)})
+        except AlertHubError as error:
+            LOG.warning("notify_failed", extra={"reason": scrub(str(error))})
 
-    def _client(self) -> ConfinedClient | None:
+    @staticmethod
+    def _reveal(token: Callable[[], Value]) -> str:
         try:
-            token = self._token()
-            return ConfinedClient(
-                base_url=BASE_URL,
-                user_agent=USER_AGENT,
-                headers={"Authorization": f"Bearer {token.reveal()}"},
-                timeout=TIMEOUT_SECONDS,
-                permits=lambda method, path: (method, path) == ("POST", ALERTS),
-                refuse=lambda method, path: ContractError(f"alert-hub may not {method} {path}"),
-                transport=self._transport,
-            )
+            return token().reveal()
         except StoreError as error:
             LOG.warning("notify_failed", extra={"reason": scrub(str(error))})
-        except TransportFailure as failure:
-            LOG.warning("notify_failed", extra={"reason": failure.error_type})
-        except ValueError as error:
-            LOG.warning("notify_failed", extra={"reason": type(error).__name__})
-        return None
-
-    def _send(self, client: ConfinedClient | None, act: Act, status: str) -> bool:
-        if client is None:
-            return False
-        payload = {
-            "key": act.key,
-            "severity": "warning",
-            "kind": "alert",
-            "status": status,
-            "title": act.title,
-            **({"message": act.message} if act.message else {}),
-            **({"link": act.link} if act.link else {}),
-        }
-        try:
-            response = client.request("POST", ALERTS, json=payload)
-        except TransportFailure as failure:
-            LOG.warning("notify_failed", extra={"key": act.key, "reason": failure.error_type})
-            return False
-        if response.status_code != ACCEPTED:
-            LOG.warning("notify_failed", extra={"key": act.key, "status": response.status_code})
-            return False
-        LOG.info("notified", extra={"key": act.key, "status": status})
-        return True
-
-    def _announced(self) -> set[str]:
-        try:
-            keys = json.loads(self._state.read_text())
-        except OSError, ValueError:
-            return set()
-        return {key for key in keys if isinstance(key, str)} if isinstance(keys, list) else set()
-
-    def _save(self, keys: set[str]) -> None:
-        # Written aside and renamed, so a pass killed mid-write leaves the last whole record.
-        staged = self._state.with_suffix(".tmp")
-        try:
-            staged.write_text(json.dumps(sorted(keys)))
-            staged.replace(self._state)
-        except OSError as error:
-            LOG.warning("notify_state_unsaved", extra={"reason": scrub(str(error))})
+            raise

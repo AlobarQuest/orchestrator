@@ -29,6 +29,15 @@ incomplete is not a finding: that is what an approved queue IS, and reporting it
 control red for every record waiting its turn. A record with no work at all is not a finding
 either -- it has not been carried yet, which is the carry's business and not this pass's.
 
+**A FAILED UNIT IS TOLD TO A PERSON, NOT REPORTED AS A FINDING** (bridge Part 3, Ruling 8). A
+record whose work has a `failed` unit stays `[WAITING]` here, and an acting pass (`--retire`) holds
+one alert-hub alert open for it, keyed `dependency-unit-failed:...`, never the bump proposer's key
+(`work_watcher/alerts.py`). It resolves when the record leaves the approved queue (retired) or a
+newer revision supersedes it. Only a standing dependency-update package alerts; rotation and
+app-change records never do. An acting pass without `SDS_BRIDGE_ALERT_TOKEN` exits 2, and alert-hub
+refusing an alert is a finding, and so is a record's package the checkout cannot read (its key
+is unknown, so every open alert is held that pass). A bare pass sends nothing and writes no state.
+
 A finding is a record this pass could not get an answer about, a retirement change-manager
 refused, and -- since ruling B1 (Devon, 2026-09-27) -- a STALE record: one pending or approved while
 a newer revision's record has superseded it, or while the Dependabot pull request it names was
@@ -46,8 +55,10 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from pathlib import Path
 from typing import Protocol
 
+from standing_identity import DEFAULT_CHECKOUT, PackageUnreadable, read_identity
 from work_carrier.change_manager import (
     DEFAULT_BASE_URL as CHANGE_MANAGER_DEFAULT_BASE_URL,
 )
@@ -58,6 +69,7 @@ from work_carrier.change_manager import (
     WorkRecord,
     WorkRecordSource,
 )
+from work_watcher import alerts as alert_lane
 from work_watcher.change_manager import (
     ChangeManagerError,
     RetirementClient,
@@ -148,6 +160,26 @@ class PipelineSource(WorkRecordSource, Protocol):
     """The carry's listing plus the whole pipeline, which the staleness report reads."""
 
     def work_pipeline(self) -> Pipeline: ...
+
+
+def _packages_checkout() -> Path:
+    return Path(os.environ.get("WORK_WATCHER_PACKAGES_CHECKOUT") or DEFAULT_CHECKOUT)
+
+
+def _raising(alerts: alert_lane.AlertSink | None, packages: Path | None) -> _Raising | None:
+    sink = alerts if alerts is not None else alert_lane.from_environment()
+    return None if sink is None else _Raising(packages or _packages_checkout(), sink)
+
+
+def _send_alerts(raising: _Raising | None, out) -> list[str]:
+    """Send what the pass raised. A failure is a finding: alert-hub did not take the alert."""
+    if raising is None:
+        return []
+    failure = raising.send()
+    if failure is None:
+        return raising.findings
+    print(f"[FINDING]  {failure}", file=out)
+    return [*raising.findings, failure]
 
 
 def _github() -> PullRequestReader | None:
@@ -245,6 +277,66 @@ def _staleness(
     return _Stale(note=f"; {repository}#{number} is open")
 
 
+class _Raising:
+    """The alerts one acting pass raises (Ruling 8), keyed `dependency-unit-failed:...`.
+
+    The key needs the repository, ecosystem and dependency of the record's standing package, which
+    the record does not carry; they are read from the packages checkout, and only for a record
+    that has a failed unit or could not be read. A package that can't be read holds every key.
+    """
+
+    def __init__(self, packages: Path, sink: alert_lane.AlertSink) -> None:
+        self._packages = packages
+        self._sink = sink
+        self.raised = alert_lane.Raised()
+        self.findings: list[str] = []
+
+    def send(self) -> str | None:
+        """Bring alert-hub in line with what this pass raised. Answers why it could not."""
+        raised = self.raised
+        return self._sink.sync(raised.firing, raised.held, raised.hold_all)
+
+    def _key(self, record: WorkRecord, out) -> str | None:
+        try:
+            identity = read_identity(self._packages, record.package_id)
+        except PackageUnreadable as error:
+            # A FINDING: a package that can never be read (moved out of `packages/`) would
+            # otherwise freeze every resolve indefinitely and page nobody. The remembered keys
+            # stay held this pass, so nothing resolves or re-fires on a guess.
+            finding = (
+                f"package {record.package_id} of change record {record.change_record_id} is "
+                f"unreadable in the packages checkout ({error}); its alert key is unknown, so "
+                "every open alert is held"
+            )
+            print(f"[FINDING]  {finding}", file=out)
+            self.findings.append(finding)
+            self.raised.hold_all = True
+            return None
+        if identity is None:
+            return None
+        return alert_lane.key_for(identity)
+
+    def hold(self, record: WorkRecord, out) -> None:
+        key = self._key(record, out)
+        if key is not None:
+            self.raised.held.add(key)
+
+    def fail(
+        self,
+        record: WorkRecord,
+        states: tuple[str, ...],
+        pipeline: tuple[PipelineRecord, ...],
+        out,
+    ) -> None:
+        if superseded_by(record.package_id, record.package_revision, pipeline) is not None:
+            return
+        key = self._key(record, out)
+        if key is not None:
+            self.raised.firing[key] = alert_lane.failed_unit_alert(
+                record.change_record_id, record.package_id, states
+            )
+
+
 def _consider(
     record: WorkRecord,
     reader: OrchestratorClient,
@@ -252,6 +344,7 @@ def _consider(
     out,
     pipeline: tuple[PipelineRecord, ...] = (),
     github: PullRequestReader | None = None,
+    raising: _Raising | None = None,
 ) -> tuple[bool, str | None, bool]:
     """Report one record, and retire it when its work is done and this pass was asked to.
 
@@ -267,9 +360,13 @@ def _consider(
         answer = reader.work_for(record.change_record_id)
     except OrchestratorError as error:
         print(f"[FINDING]  {label}: {error}", file=out)
+        if raising is not None:
+            raising.hold(record, out)
         return False, str(error), False
 
     if not answer.all_units_completed:
+        if raising is not None and "failed" in answer.unit_states:
+            raising.fail(record, answer.unit_states, pipeline, out)
         # COMPLETION FIRST, STALENESS SECOND, and the order is the whole rule: a record whose
         # work the factory built is retired above even though its pull request is now closed.
         states = ", ".join(answer.unit_states) or "no units yet"
@@ -363,6 +460,8 @@ def run(
     reader: OrchestratorClient | None = None,
     retirer: RetirementClient | None = None,
     github: PullRequestReader | None = None,
+    alerts: alert_lane.AlertSink | None = None,
+    packages: Path | None = None,
     out=sys.stdout,
 ) -> int:
     args = _parse_args(argv)
@@ -386,6 +485,12 @@ def run(
         print("[UNUSABLE] WORK_WATCHER_CHANGE_MANAGER_TOKEN is not set", file=out)
         return EXIT_UNUSABLE
 
+    # Alerts are sent by an acting pass only; a bare one sends nothing and writes no state.
+    raising = _raising(alerts, packages) if args.retire else None
+    if args.retire and raising is None:
+        print(f"[UNUSABLE] {alert_lane.TOKEN_ENV} is not set", file=out)
+        return EXIT_UNUSABLE
+
     try:
         records = records_source.approved_work()
     except ListingError as error:
@@ -400,7 +505,9 @@ def run(
     unusable = False
     findings: list[str] = list(listing_findings)
     for record in records:
-        moved, finding, blind = _consider(record, work_reader, writer, out, pipeline, pull_requests)
+        moved, finding, blind = _consider(
+            record, work_reader, writer, out, pipeline, pull_requests, raising
+        )
         retired += 1 if moved else 0
         unusable = unusable or blind
         if finding is not None:
@@ -413,10 +520,18 @@ def run(
         if finding is not None:
             findings.append(finding)
 
+    findings += _send_alerts(raising, out)
+
+    return _conclude(len(records), retired, findings, len(pending), unusable, out)
+
+
+def _conclude(
+    approved: int, retired: int, findings: list[str], pending: int, unusable: bool, out
+) -> int:
     stale = sum(1 for finding in findings if finding.startswith("STALE:"))
     print(
-        f"\n{len(records)} approved, {retired} retired, {len(findings)} findings "
-        f"({stale} stale, {len(pending)} pending).",
+        f"\n{approved} approved, {retired} retired, {len(findings)} findings "
+        f"({stale} stale, {pending} pending).",
         file=out,
     )
     if unusable:

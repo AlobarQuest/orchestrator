@@ -91,3 +91,39 @@ A policy-approved revision reaches a human three more times before any code is w
 - **This does not make signals become work.** The producer here is mechanical because a
   cascade-refused bump *is* its own work statement. Signals needing diagnosis remain unserved, and
   that gap is unchanged by this decision.
+
+## Amendment 1 — 2026-10-28 (bridge layer Part 3)
+
+**Status:** Accepted (Devon's decisions in `docs/superpowers/specs/2026-10-27-bridge-layer-design.md`,
+Part 3).
+
+**The producer creates the standing package.** A failed Dependabot bump in an inert repository that
+the SDS member record grants `dependency_updates`, with no standing package for its dependency, gets
+one: `bump_proposer` runs intent-packages' `create-standing` (a draft at revision 1 already carrying
+the bump), then the same transition, policy approval, hash, commit, publish and proposal as a
+revision. The package's `standing: true` is still the author's statement; `create-standing` is that
+author. Consequence 2 above ("authored once, per repository and ecosystem") is now done by the
+producer for npm, pip and uv.
+
+**Merging is in scope.** A created package carries no `human_review` criterion and no "merging is
+left for a person" text, so the factory's landing lane may merge the unit's pull request. Its reach
+stays `[source_repository]`.
+
+**What a person still decides.** "What still gates the lane" item 1 changes: change-manager's work
+policy approves a conforming record (ADR-0025 amendment 1), and a person approves every other one.
+The producer alerts, rather than creates, for a bump it cannot route: an ecosystem with no tooling
+profile, a requirement range its tooling's mutation can't carry (any range in pip or npm; in uv
+anything but `>=` and `==`), a dependency already covered by a package in another ecosystem
+(discovery holds one package per repository and dependency), and every docker bump. Docker bumps
+alert whether or not they pass only because the inert landing policy excludes docker today; a
+permitted ecosystem's passing bump is the cascade's. Each holds one alert-hub alert, sender
+`sds-bridge`, keyed `dependency-bump:<repository>:<ecosystem>:<dependency>`, resolved by the first writing pass that no longer raises it: its pull request merged or closed, or (in an ecosystem the cascade lands) a re-run passed. A re-run that fails again but hasn't settled holds the key, neither resolved nor fired again. A repository still in the lane that a pass didn't read (GitHub could not answer, in scope through a standing package but not declared inert, or outside a `--repository` run) keeps its keys; a repository that left the lane (its `dependency_updates` grant withdrawn, or no longer declared inert with no standing package) has its keys resolved by the next writing pass that reaches its alerts (a pass with no repository in the lane stops first and sends nothing).
+Repositories that deploy on landing stay out of the lane until holds ship (Part 4).
+
+**Residual: the envelope's dependency is not bound to the package's.** The known-good command
+shapes bound each command's grammar, not which dependency it names: no shape ties the dependency in
+a unit's mutation command to the package's `profile_fields.package`, so `uv add 'other>=1'` is
+recognised for an envelope generated from an `httpx2` package. Today the human decomposition
+approval covers it, because a person approves the units and their commands. Binding the two (the
+mutation's dependency equal to the package's) is a precondition for graduating decomposition
+approval.

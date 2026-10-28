@@ -361,8 +361,12 @@ Placement rule: global CLAUDE.md §7.
 - `deploy_watcher` derives a unit from the merge commit's `SDS-Unit:` trailer, confirmed against
   `pr_merge` history; the change record only names which pull request to watch, and any status
   suffices. Detail: `docs/operations/landing-lanes.md`.
-- A `work`-source change record's status moves only by a human click: `bump_proposer` is
-  propose-and-read and change-manager refuses status routes for the `propose` scope (ADR-0028).
+- change-manager's work policy approves a `work` record (as `work-policy`) only when it is a
+  standing dependency-update package (`change_class` `dependency-update`, source repository
+  intent-packages, risk `caution`) whose `target_repository` is on its inert list; a person moves
+  every other one. No producer credential moves a status: `bump_proposer` is propose-and-read and
+  the `propose` scope refuses status routes. `bump_proposer` creates a missing package for an inert
+  repository's failed npm, pip or uv bump and alerts (`dependency_bump_key`) on what it can't route.
   Detail: `docs/operations/landing-lanes.md`.
 - `rotation_proposer` never approves a package revision. A pass that revises a standing rotation
   package to `ready_for_review` proposes nothing, and the first pass after a named human approves
@@ -449,8 +453,10 @@ Placement rule: global CLAUDE.md §7.
   evidence, not only `src/`; the tracker adapter and routes stay because Wave 2's met bar attests
   them. History: `docs/history/claude-md-invariants-archive.md` #287.
 - The dependency-update budget lives in five places; `scripts/check_profile_budget_agreement.py`
-  holds `factory-policy.toml`'s known-good ceiling to intent-packages' `BUDGETS`. Raising the
-  pattern ceiling withholds a human gate: a standing-authority decision. History:
+  holds every `dependency-update` known-good pattern in `factory-policy.toml` (uv, npm, pip) to
+  intent-packages' `BUDGETS` and `CAPABILITIES`. A pattern's `target_repositories` is optional
+  (schema 9): absent, the member record's grant decides which repositories. Raising the pattern
+  ceiling withholds a human gate: a standing-authority decision. History:
   `docs/history/claude-md-invariants-archive.md` #291.
 - Dispatch admission reads the member record's grant for the unit's change class
   (`services/execution/target_grant.py`): `dependency_updates` for `dependency-update`, `app_changes`

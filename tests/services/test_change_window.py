@@ -64,7 +64,7 @@ DECIDED = 'decided = "2026-08-01"'
 # overlap, which is exactly the composition case §7 below needs and exactly the arrangement the
 # shipped artifact avoids.
 WINDOWED = f"""
-version = 8
+version = 9
 {ADMISSION}
 [reach.source_repository]
 rationale = "repository only"

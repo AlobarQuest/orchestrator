@@ -24,6 +24,7 @@ CAPABILITIES_SOURCE = (
     "CAPABILITIES: dict[str, str] = {\n"
     '    "command.run": "allowed",\n'
     '    "github.pr.create": "allowed",\n'
+    '    "github.pr.merge": "allowed",\n'
     '    "orchestrator.claim": "allowed",\n'
     '    "orchestrator.evidence.write": "allowed",\n'
     '    "repo.edit": "allowed",\n'
@@ -165,6 +166,7 @@ def test_the_gate_runs_the_script_this_module_tests() -> None:
 CAPABILITIES = {
     "command.run": "allowed",
     "github.pr.create": "allowed",
+    "github.pr.merge": "allowed",
     "orchestrator.claim": "allowed",
     "orchestrator.evidence.write": "allowed",
     "repo.edit": "allowed",
@@ -201,7 +203,7 @@ def test_it_fires_when_the_pattern_declares_a_capability_the_profile_does_not(
     """The widening direction: a subset match against a larger pattern recognises more."""
     monkeypatch.setattr(check, "fetch", _fetch(PROFILE_SOURCE))
     monkeypatch.setattr(
-        check, "pattern_capabilities", lambda: {**CAPABILITIES, "github.pr.merge": "allowed"}
+        check, "pattern_capabilities", lambda: {**CAPABILITIES, "infra.write": "allowed"}
     )
 
     assert check.main() == 1
@@ -296,3 +298,86 @@ def test_the_ref_this_check_sends_is_a_literal_and_needs_no_encoding() -> None:
     """
     assert check.PROFILE_REF == "main"
     assert "{" not in check.PROFILE_PATH
+
+
+def _rows(*overrides: dict):
+    """Dependency-update pattern rows as the artifact declares them, each with overrides."""
+    base = {
+        "change_class": "dependency-update",
+        "max_attempts": 3,
+        "max_llm_calls": 360,
+        "capabilities": dict(CAPABILITIES),
+    }
+    return lambda: [{**base, "name": f"pattern {n}", **o} for n, o in enumerate(overrides)]
+
+
+def test_every_dependency_update_pattern_is_held_to_the_profile() -> None:
+    """The npm and pip patterns are compared too, not only the uv one found by name."""
+    rows = check._pattern_rows()
+
+    assert len(rows) >= 3
+    assert all(row["change_class"] == "dependency-update" for row in rows)
+    assert {row["name"] for row in rows} >= {
+        "uv dependency pin bump",
+        "npm dependency pin bump",
+        "pip dependency pin bump",
+    }
+
+
+def test_one_pattern_with_other_capabilities_fails_the_check(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(check, "fetch", _fetch(PROFILE_SOURCE))
+    stale = {k: v for k, v in CAPABILITIES.items() if k != "github.pr.merge"}
+    monkeypatch.setattr(check, "_pattern_rows", _rows({}, {}, {"capabilities": stale}))
+
+    assert check.main() == 1
+    assert "pattern 2" in capsys.readouterr().err
+
+
+def test_one_pattern_with_other_budgets_fails_the_check(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(check, "fetch", _fetch(PROFILE_SOURCE))
+    monkeypatch.setattr(check, "_pattern_rows", _rows({}, {}, {"max_llm_calls": 361}))
+
+    assert check.main() == 1
+    assert "pattern 2" in capsys.readouterr().err
+
+
+def test_no_dependency_update_pattern_is_unresolvable(monkeypatch, tmp_path) -> None:
+    """Reaches the real guard: a policy file with no dependency-update row at all."""
+    policy = tmp_path / "factory-policy.toml"
+    policy.write_text(
+        "version = 9\n[reach.source_repository]\n"
+        '[[reach.source_repository.known_good]]\nname = "other"\nchange_class = "x"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check, "POLICY_PATH", policy)
+    monkeypatch.setattr(check, "fetch", _fetch(PROFILE_SOURCE))
+
+    with pytest.raises(check.Unresolvable, match="no pattern for change class"):
+        check._pattern_rows()
+    assert check.main() == 1
+
+
+def test_empty_input_to_the_agreement_check_is_refused(monkeypatch) -> None:
+    monkeypatch.setattr(check, "_pattern_rows", lambda: [])
+
+    with pytest.raises(check.Unresolvable, match="no dependency-update pattern"):
+        check.pattern_budgets()
+
+
+def test_a_pattern_under_another_reach_row_is_compared_too(monkeypatch, tmp_path) -> None:
+    policy = tmp_path / "factory-policy.toml"
+    policy.write_text(
+        "[reach.live_estate]\n[[reach.live_estate.known_good]]\n"
+        'name = "elsewhere"\nchange_class = "dependency-update"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check, "POLICY_PATH", policy)
+
+    assert [row["name"] for row in check._pattern_rows()] == ["elsewhere"]
+
+
+def test_agreeing_patterns_pass(monkeypatch) -> None:
+    monkeypatch.setattr(check, "fetch", _fetch(PROFILE_SOURCE))
+    monkeypatch.setattr(check, "_pattern_rows", _rows({}, {}, {}))
+
+    assert check.main() == 0

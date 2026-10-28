@@ -86,6 +86,8 @@ RECORD_FIELDS: Final = (
     "reasoning",
     "decided_by",
     "originating_observation_id",
+    "target_repository",
+    "change_class",
 )
 
 
@@ -126,6 +128,13 @@ class WorkRecord:
     # contract existed, they carry null, and nothing back-fills them (ADR-0014). Requiring it
     # would refuse work a person has already approved, permanently, with no repair.
     originating_observation_id: str | None = None
+    # What change-manager's work policy APPROVED ON: it decides on the record's own
+    # `target_repository` and `change_class`, while the carry works in the package's
+    # `profile_fields.target_repo`. `prepare` refuses a record whose fields disagree with the
+    # package it names. Optional because a hand-proposed record carries neither, and absent and
+    # null are one answer here, as for the observation above.
+    target_repository: str | None = None
+    change_class: str | None = None
 
 
 class WorkRecordSource(Protocol):
@@ -234,6 +243,8 @@ def _record(row: dict[str, Any]) -> WorkRecord:
         raise ChangeManagerError(
             f"change record {change_record_id} names an unusable originating observation"
         )
+    target = _optional_text(row.get("target_repository"), "target_repository", change_record_id)
+    change_class = _optional_text(row.get("change_class"), "change_class", change_record_id)
     return WorkRecord(
         change_record_id=change_record_id,
         package_id=package_id,
@@ -242,4 +253,20 @@ def _record(row: dict[str, Any]) -> WorkRecord:
         reasoning=str(row.get("reasoning") or ""),
         decided_by=row.get("decided_by") if isinstance(row.get("decided_by"), str) else None,
         originating_observation_id=observation,
+        target_repository=target,
+        change_class=change_class,
     )
+
+
+def _optional_text(value: object, key: str, change_record_id: int) -> str | None:
+    """A field that may be absent or null, and is otherwise a string -- never coerced.
+
+    A non-string is refused rather than read as absent: absent means "the policy approved on
+    nothing here", and reading a malformed value that way would skip the agreement check in
+    `prepare` for exactly the record it exists to catch.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ChangeManagerError(f"change record {change_record_id} names an unusable {key}")
+    return value

@@ -461,3 +461,159 @@ def test_the_checkout_is_read_without_a_fetch(tmp_path, monkeypatch) -> None:
         ("git", "rev-parse", "--abbrev-ref", "HEAD"),
         ("git", "rev-list", "--count", "origin/main..HEAD"),
     ]
+
+
+# --- creating a standing package (bridge Part 3) -------------------------------------------
+
+
+def test_create_runs_create_standing_and_answers_the_package_discovery_finds(
+    tmp_path, monkeypatch
+) -> None:
+    ran: list[tuple[str, ...]] = []
+
+    def lifecycle(root, *args):
+        ran.append(args)
+        _write(
+            root,
+            "infraops-mcp-server-npm-left-pad",
+            dependency="left-pad",
+            from_version="'1.0.0'",
+            to_version="'2.0.0'",
+        )
+        return "packages/infraops-mcp-server-npm-left-pad\n"
+
+    monkeypatch.setattr(standing, "lifecycle", lifecycle)
+    (tmp_path / "packages").mkdir()
+
+    package = standing.create(
+        tmp_path,
+        "AlobarQuest/infraops-mcp-server",
+        "npm",
+        "left-pad",
+        Bump("1.0.0", "2.0.0", "semver-major"),
+    )
+
+    assert ran == [
+        (
+            "create-standing",
+            "--target-repo",
+            "AlobarQuest/infraops-mcp-server",
+            "--package",
+            "left-pad",
+            "--ecosystem",
+            "npm",
+            "--from",
+            "1.0.0",
+            "--to",
+            "2.0.0",
+            "--out",
+            "packages",
+        )
+    ]
+    assert package.package_id == "infraops-mcp-server-npm-left-pad"
+    assert package.carries(Bump("1.0.0", "2.0.0", "semver-major"))
+    assert package.state == "draft" and package.revision == 1
+
+
+def test_create_refuses_a_directory_discovery_does_not_find_under_that_dependency(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(standing, "lifecycle", lambda root, *args: "packages/somewhere-else\n")
+    (tmp_path / "packages").mkdir()
+
+    with pytest.raises(StandingError, match="discovery does not find it"):
+        standing.create(tmp_path, "AlobarQuest/infraops-mcp-server", "npm", "left-pad", BUMP)
+
+
+@pytest.mark.parametrize(
+    ("package_id", "tooling", "expected"),
+    [
+        ("infraops-mcp-server-npm-zod", "npm", None),
+        ("infraops-mcp-server-npm-zod", "uv", "npm"),
+        ("infraops-mcp-server-pip-zod", "npm", "pip"),
+        # An id that names no tooling ecosystem is revised as before.
+        ("zod-standing", "pip", None),
+    ],
+)
+def test_other_ecosystem_reads_the_package_id(package_id, tooling, expected, tmp_path) -> None:
+    _write(tmp_path, package_id)
+    package = discover(tmp_path)[("alobarquest/infraops-mcp-server", "zod")]
+    assert standing.other_ecosystem(package, tooling) == expected
+
+
+def _git(cwd: Path, *args: str) -> str:
+    import subprocess
+
+    return subprocess.run(
+        ["git", *args], cwd=cwd, check=True, capture_output=True, text=True
+    ).stdout
+
+
+def test_publishing_a_created_package_commits_its_new_directory(tmp_path) -> None:
+    """The commit adds the new directory: `git add` of the fixed paths stages untracked files, so
+    a package `create-standing` just wrote is in the published commit. Real git, a bare origin."""
+    origin = tmp_path / "origin.git"
+    _git(tmp_path, "init", "-q", "--bare", "-b", "main", str(origin))
+    root = tmp_path / "checkout"
+    _git(tmp_path, "clone", "-q", str(origin), str(root))
+    for setting in (("user.name", "t"), ("user.email", "t@example.invalid")):
+        _git(root, "config", *setting)
+    (root / "tests" / "fixtures").mkdir(parents=True)
+    (root / standing.HASH_FIXTURE).write_text("{}\n")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", "seed")
+    _git(root, "push", "-q", "origin", "main")
+
+    directory = _write(root, "infraops-mcp-server-npm-left-pad", dependency="left-pad")
+    (directory / "lineage.yaml").write_text("revisions: []\n")
+    (root / standing.HASH_FIXTURE).write_text('{"x": "y"}\n')
+    package = discover(root)[("alobarquest/infraops-mcp-server", "left-pad")]
+
+    head = standing.publish(package, 1, "create", root)
+
+    committed = set(_git(root, "show", "--name-only", "--format=", head).split())
+    assert committed == {
+        "packages/infraops-mcp-server-npm-left-pad/package.yaml",
+        "packages/infraops-mcp-server-npm-left-pad/lineage.yaml",
+        str(standing.HASH_FIXTURE),
+    }
+    assert _git(root, "rev-parse", "origin/main").strip() == head
+    assert _git(root, "status", "--porcelain") == ""
+
+
+def _repository(tmp_path: Path) -> Path:
+    root = tmp_path / "checkout"
+    root.mkdir()
+    _git(root, "init", "-q", "-b", "main")
+    for setting in (("user.name", "t"), ("user.email", "t@example.invalid")):
+        _git(root, "config", *setting)
+    return root
+
+
+def test_an_untracked_package_directory_is_removed(tmp_path) -> None:
+    root = _repository(tmp_path)
+    directory = _write(root, "infraops-mcp-server-npm-left-pad", dependency="left-pad")
+
+    assert standing.remove_if_untracked(directory, root) is True
+    assert not directory.exists()
+
+
+def test_a_tracked_package_directory_is_never_removed(tmp_path) -> None:
+    root = _repository(tmp_path)
+    directory = _write(root, "infraops-mcp-server-npm-zod")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", "a package somebody committed")
+    (directory / "lineage.yaml").write_text("untracked beside a tracked file\n")
+
+    assert standing.remove_if_untracked(directory, root) is False
+    assert (directory / "package.yaml").exists() and (directory / "lineage.yaml").exists()
+
+
+def test_nothing_outside_the_packages_directory_is_removed(tmp_path) -> None:
+    root = _repository(tmp_path)
+    elsewhere = root / "notes"
+    elsewhere.mkdir()
+
+    assert standing.remove_if_untracked(elsewhere, root) is False
+    assert standing.remove_if_untracked(root / "packages", root) is False
+    assert elsewhere.exists()

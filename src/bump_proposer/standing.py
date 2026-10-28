@@ -44,6 +44,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -51,10 +52,9 @@ from pathlib import Path
 from typing import Any, Final, Protocol
 
 from landing_ledger.titles import Bump
+from standing_identity import DEFAULT_CHECKOUT, PROFILE, ecosystem_of, yaml_scalar
 
-DEFAULT_CHECKOUT: Final = Path.home() / "Projects" / "intent-packages"
 PACKAGES_REPOSITORY: Final = "AlobarQuest/intent-packages"
-PROFILE: Final = "dependency-update"
 HASH_FIXTURE: Final = Path("tests") / "fixtures" / "package_hashes.json"
 COMMAND_TIMEOUT_SECONDS: Final = 120.0
 
@@ -74,6 +74,14 @@ PUBLISH_COMMAND: Final = "git push origin main"
 # second spelling of `main` here would be the one place that refusal could silently stop
 # describing the command it guards.
 _PUBLISHED_BRANCH: Final = PUBLISH_COMMAND.split()[-1]
+
+# Bridge Part 3. Dependabot's ecosystem (the second segment of its branch) for each ecosystem
+# intent-packages' `create-standing` has a tooling profile for, mapped to that profile's name. Every
+# other ecosystem has no tooling, and a bump in it is alerted rather than created.
+TOOLING: Final = {"npm_and_yarn": "npm", "pip": "pip", "uv": "uv"}
+
+# Where `create-standing` writes, relative to the checkout: the directory `discover` reads.
+_PACKAGES_DIRECTORY: Final = "packages"
 
 _FROM_LINE: Final = re.compile(r"^(\s*from_version:).*$", re.MULTILINE)
 _TO_LINE: Final = re.compile(r"^(\s*to_version:).*$", re.MULTILINE)
@@ -116,28 +124,6 @@ def _interpreter(root: Path) -> Path:
     return Path(override) if override else root / ".venv" / "bin" / "python"
 
 
-def yaml_scalar(text: str, key: str) -> str | None:
-    """One top-level-ish scalar, read without a YAML parser.
-
-    This program's third-party surface is `httpx` and nothing else -- the isolation test says
-    so -- and pulling in a YAML library to read four values from a file whose shape is fixed
-    would widen it for no gain. The four values read here are all plain unquoted scalars in a
-    document this producer and `factory create` are the only writers of.
-    """
-    match = re.search(rf"^\s*{re.escape(key)}:\s*(\S.*?)\s*$", text, re.MULTILINE)
-    if match is None:
-        return None
-    value = match.group(1)
-    # QUOTES ARE STRIPPED, and they are not decoration. A version like `1.13` is a FLOAT in
-    # YAML and `4` is an INT, so every version this repository's packages carry that could be
-    # read as a number is written quoted -- and a reader that kept the quotes would compare
-    # `'1.13'` against `1.13` and conclude the standing package carries a different bump on
-    # every pass, revising it forever.
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
-        return value[1:-1]
-    return value
-
-
 def discover(root: Path | None = None) -> dict[tuple[str, str], StandingPackage]:
     """Every standing dependency-update package in the checkout, keyed on what it covers.
 
@@ -146,7 +132,7 @@ def discover(root: Path | None = None) -> dict[tuple[str, str], StandingPackage]
     lane, and adding it to the lane is authoring one -- not editing a list here.
     """
     root = root or checkout_root()
-    base = root / "packages"
+    base = root / _PACKAGES_DIRECTORY
     if not base.is_dir():
         raise StandingError(f"no packages directory in the checkout at {root}")
     found: dict[tuple[str, str], StandingPackage] = {}
@@ -285,6 +271,73 @@ def require_publishable(root: Path) -> None:
         )
 
 
+def create(
+    root: Path, repository: str, tooling: str, dependency: str, bump: Bump
+) -> StandingPackage:
+    """Write a draft standing package carrying this bump, through intent-packages' own
+    `create-standing`, and answer it as discovery now reads it.
+
+    The draft already carries the bump, so `advance` takes it straight to `transition` and
+    `approve`. `create-standing` refuses an existing directory, so a second package for a
+    dependency whose id collides is a refusal, never an overwrite.
+    """
+    printed = lifecycle(
+        root,
+        "create-standing",
+        "--target-repo",
+        repository,
+        "--package",
+        dependency,
+        "--ecosystem",
+        tooling,
+        "--from",
+        bump.from_version,
+        "--to",
+        bump.to_version,
+        "--out",
+        _PACKAGES_DIRECTORY,
+    ).strip()
+    package = discover(root).get((repository.lower(), dependency))
+    if package is None or not printed or Path(printed).name != package.package_id:
+        if printed:
+            remove_if_untracked(root / printed, root)
+        raise StandingError(
+            f"create-standing printed {printed or 'nothing'!r}, and discovery does not find it "
+            f"as the standing package for {repository} {dependency}"
+        )
+    return package
+
+
+def remove_if_untracked(directory: Path, root: Path) -> bool:
+    """Remove a package directory this program created and never committed. Answers whether it
+    did.
+
+    Only a directory inside the checkout's `packages/` that git tracks NO file under is removed:
+    a path holding anything committed is somebody's package, and is never touched.
+    """
+    base = (root / _PACKAGES_DIRECTORY).resolve()
+    target = directory.resolve()
+    if target.parent != base or not target.is_dir():
+        return False
+    try:
+        tracked = _run(root, ["git", "ls-files", "--", str(target.relative_to(root.resolve()))])
+    except StandingError:
+        return False  # unasked is not untracked
+    if tracked.strip():
+        return False
+    shutil.rmtree(target)
+    return True
+
+
+def other_ecosystem(package: StandingPackage, tooling: str) -> str | None:
+    """The tooling ecosystem this package was created for, when it is not `tooling`.
+
+    A package whose id names no tooling ecosystem answers None, and is revised as before.
+    """
+    ecosystem = ecosystem_of(package.package_id, package.target_repository)
+    return ecosystem if ecosystem != tooling else None
+
+
 def write_versions(package: StandingPackage, bump: Bump) -> None:
     """Write the two per-bump values, and nothing else in the document."""
     path = package.path / "package.yaml"
@@ -388,12 +441,11 @@ def commit(package: StandingPackage, bump: Bump, root: Path) -> str:
     message = (
         f"{package.package_id} rev {package.revision}: "
         f"{package.dependency} {bump.from_version} to {bump.to_version}\n\n"
-        "Written by bump-proposer (ADR-0028). The auto-merge cascade refuses this bump\n"
-        "(ADR-0016), so it becomes factory work: the standing package's revision carries\n"
+        "Written by bump-proposer (ADR-0028). The auto-merge cascade does not land this\n"
+        "bump (ADR-0016), so it becomes factory work: the standing package's revision carries\n"
         "it, and the revision is approved by conformance to approval-policy.toml rather\n"
-        "than by a named human. A person still approves the work record this producer\n"
-        "writes in change-manager, and the decomposition and the authority envelope after\n"
-        "that.\n"
+        "than by a named human. The work record this producer writes in change-manager is\n"
+        "approved by its work policy when it conforms, and by a person otherwise.\n"
     )
     return publish(package, package.revision, message, root)
 

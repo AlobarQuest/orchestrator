@@ -160,12 +160,13 @@ by hand before you make it a target.
 
 ## Prepare the first unit
 
-10. **Expect a human authority approval on every unit.** `factory-policy.toml` admission is global,
-    and its `known_good` pattern (the one shape that skips a person's approval) names specific
-    repositories in `target_repositories`. A new repository isn't in it, so each
-    unit waits for an approval at `/review`. Adding the repository to `known_good` is a
-    standing-authority change. The member record's grant does not replace that list: it stays
-    hand-kept until bridge-layer Part 3.
+10. **A dependency-update envelope needs no authority approval in any repository.**
+    `factory-policy.toml` carries one `known_good` pattern each for uv, npm and pip, and none names
+    a repository: which repositories the change class may reach is decided by the member record's
+    grant (`dependency_updates`) at admission, not by a list in the policy. Anything else (another
+    change class, a command that is not one of the pattern's exact command shapes, a different capability or budget)
+    still waits for an approval at `/review`. Widening a pattern remains a standing-authority
+    change.
 
 11. **Dry-run the envelope's commands against the repository.** Run them twice on a clean clone,
     prove the mutator produces a diff, and make sure the verifier exercises what the change could

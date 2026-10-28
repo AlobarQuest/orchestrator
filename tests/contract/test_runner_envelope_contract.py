@@ -527,7 +527,7 @@ def test_the_shipped_pattern_recognises_the_verify_envelope() -> None:
     )
 
     assert recognition.refusals == ()
-    assert recognition.recognised_by == ("uv dependency pin bump into a named repository",)
+    assert recognition.recognised_by == ("uv dependency pin bump",)
 
 
 def test_orchestrator_serves_the_verify_envelope_and_admits_it(

@@ -257,6 +257,93 @@ def test_a_payload_naming_a_cause_the_record_does_not_is_refused(checkout_root: 
     assert outcome.reason == "originating_observation_mismatch"
 
 
+@pytest.mark.parametrize(
+    ("overrides", "payload_profile", "reason"),
+    [
+        ({"target_repository": "AlobarQuest/other-repo"}, None, "target_repository_mismatch"),
+        ({"change_class": "dependency-update"}, "software-change", "change_class_mismatch"),
+        ({"change_class": "dependency-update"}, None, "change_class_mismatch"),
+    ],
+)
+def test_a_record_the_package_disagrees_with_is_refused(
+    checkout_root: Path, overrides: dict, payload_profile: str | None, reason: str
+) -> None:
+    """change-manager's work policy approves on the RECORD's target repository and change
+    class; the carry works the PACKAGE's. A record approved for one repository must not carry a
+    package aimed at another."""
+    rec = record(**overrides)
+    payload = payload_for(rec)
+    if payload_profile is not None:
+        payload["profile"] = payload_profile
+    runner, _ = runner_returning(payload)
+    outcome = prepare(rec, checkout_root=checkout_root, runner=runner)
+    assert isinstance(outcome, Refused)
+    assert outcome.reason == reason
+
+
+def test_a_record_naming_the_target_with_no_package_target_is_refused(
+    checkout_root: Path,
+) -> None:
+    rec = record(target_repository=TARGET)
+    payload = payload_for(rec)
+    payload["enforcement_snapshot"] = {"profile_fields": {}}
+    runner, _ = runner_returning(payload)
+    outcome = prepare(rec, checkout_root=checkout_root, runner=runner)
+    assert isinstance(outcome, Refused)
+    assert outcome.reason == "target_repository_mismatch"
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {},
+        {"target_repository": TARGET.lower(), "change_class": "dependency-update"},
+        {"target_repository": TARGET, "change_class": "software-change"},
+    ],
+)
+def test_a_record_the_package_agrees_with_is_prepared(checkout_root: Path, overrides: dict) -> None:
+    """The control: absent fields claim nothing, and a matching repository (case-folded) and
+    class are carried."""
+    rec = record(**overrides)
+    payload = {**payload_for(rec), "profile": "dependency-update"}
+    runner, _ = runner_returning(payload)
+    assert isinstance(prepare(rec, checkout_root=checkout_root, runner=runner), Prepared)
+
+
+def test_a_mismatched_record_is_not_carried_and_is_a_finding(
+    checkout_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End to end through the real reader: a served record whose target disagrees with its
+    package exits as a finding, the outcome an ungranted repository has, and is not carried."""
+    import io
+
+    import httpx
+
+    import work_carrier.cli as cli_module
+    from work_carrier.change_manager import HttpWorkRecordSource
+
+    rec = record(target_repository="AlobarQuest/other-repo")
+    runner, _ = runner_returning(payload_for(rec))
+    row = {
+        **_approved_row(id=rec.change_record_id),
+        "target_repository": "AlobarQuest/other-repo",
+        "change_class": "dependency-update",
+    }
+    source = HttpWorkRecordSource(
+        base_url="https://example.invalid",
+        token="t",
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json=[row])),
+    )
+    original = cli_module.prepare
+    monkeypatch.setattr(cli_module, "prepare", lambda r, **kw: original(r, **kw, runner=runner))
+    report = io.StringIO()
+    code = run(["--checkout-root", str(checkout_root)], source=source, out=report)
+    assert code == EXIT_FINDINGS
+    out = report.getvalue()
+    assert "target_repository_mismatch" in out
+    assert "0 carried, 1 refused" in out
+
+
 def test_the_emit_key_is_derived_so_two_passes_print_the_same_bytes() -> None:
     """A random key would make two passes over one unchanged queue look like two pieces of work."""
     assert emit_key(record()) == emit_key(record())
@@ -561,6 +648,24 @@ def test_an_unusable_originating_observation_is_refused_rather_than_coerced(valu
     with pytest.raises(ChangeManagerError) as raised:
         _served(_approved_row(originating_observation_id=value)).approved_work()
     assert str(raised.value).endswith("names an unusable originating observation")
+
+
+def test_a_row_naming_its_policy_fields_carries_them() -> None:
+    row = _approved_row(target_repository=TARGET, change_class="dependency-update")
+    record_read = _served(row).approved_work()[0]
+    assert (record_read.target_repository, record_read.change_class) == (
+        TARGET,
+        "dependency-update",
+    )
+    absent = _served(_approved_row()).approved_work()[0]
+    assert (absent.target_repository, absent.change_class) == (None, None)
+
+
+@pytest.mark.parametrize("key", ["target_repository", "change_class"])
+def test_an_unusable_policy_field_is_refused_rather_than_read_as_absent(key: str) -> None:
+    with pytest.raises(ChangeManagerError) as raised:
+        _served(_approved_row(**{key: 9})).approved_work()
+    assert str(raised.value).endswith(f"names an unusable {key}")
 
 
 def test_the_declared_read_fields_are_the_ones_the_parse_actually_reads() -> None:

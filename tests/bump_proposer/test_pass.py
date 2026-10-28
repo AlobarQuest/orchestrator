@@ -9,14 +9,18 @@ identical either way and is exactly what a producer that revised twice would als
 
 from __future__ import annotations
 
+import functools
 import json
 import os
 import pathlib
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 
 import httpx
 import pytest
 
-from bump_proposer import cli, standing
+from alert_hub_client import KeyedAlerts
+from bump_proposer import alerts, cli, standing
 from bump_proposer.cli import EXIT_FINDINGS, EXIT_OK, EXIT_UNUSABLE, run
 from bump_proposer.landing_policy import (
     LandingPolicyError,
@@ -27,6 +31,8 @@ from sds_members.client import SERVICES, Member, MembersUnreadable
 from tests.bump_proposer.test_landing_policy import LIVE
 
 REPOSITORY = "AlobarQuest/infraops-mcp-server"
+# Taken before any rig replaces it, for the test that needs a real clean-checkout refusal.
+REAL_REQUIRE_CLEAN = standing.require_clean
 
 # The zod pull request's checks CONCLUDED AGAINST IT, long enough ago to have settled. Since
 # ADR-0034 that is the only thing that keeps a bump in this lane -- the declared rule permits an
@@ -68,19 +74,43 @@ def checkout(tmp_path, monkeypatch):
     monkeypatch.setenv("ORCHESTRATOR_API_URL", "https://sds.example.net")
     monkeypatch.setenv("ORCHESTRATOR_API_CREDENTIAL_KEY_ID", "orchestrator-observer")
     monkeypatch.setenv("ORCHESTRATOR_API_TOKEN", "observer")
+    # Bridge Part 3. The sds-bridge sender token, and where the keys this lane fired are kept.
+    monkeypatch.setenv("SDS_BRIDGE_ALERT_TOKEN", "sender")
+    monkeypatch.setenv("BUMP_PROPOSER_STATE_DIR", str(tmp_path / "state"))
     return tmp_path
+
+
+@dataclass(frozen=True)
+class Pull:
+    """One open update-bot pull request as the stub serves it."""
+
+    number: int = 71
+    title: str = "build(deps): bump zod from 3.25.76 to 4.4.3"
+    dependency: str = "zod"
+    ecosystem: str = "npm_and_yarn"
+    update_type: str | None = "version-update:semver-major"
+    conclusion: str = "failure"
+    completed_at: str = FAILED_LONG_AGO
 
 
 def _github(
     title: str = "build(deps): bump zod from 3.25.76 to 4.4.3",
     update_type: str | None = "version-update:semver-major",
+    *,
+    pulls: list[Pull] | None = None,
+    unreadable: bool = False,
 ):
-    trailer = (
-        "build(deps): bump zod\n\n---\nupdated-dependencies:\n- dependency-name: zod\n"
-        f"  update-type: {update_type}\n...\n"
-        if update_type
-        else "build(deps): bump zod\n"
-    )
+    served = pulls if pulls is not None else [Pull(title=title, update_type=update_type)]
+    by_number = {pull.number: pull for pull in served}
+
+    def trailer(pull: Pull) -> str:
+        return (
+            f"build(deps): bump {pull.dependency}\n\n---\nupdated-dependencies:\n"
+            f"- dependency-name: {pull.dependency}\n  update-type: {pull.update_type}\n...\n"
+            if pull.update_type
+            else f"build(deps): bump {pull.dependency}\n\n---\nupdated-dependencies:\n"
+            f"- dependency-name: {pull.dependency}\n...\n"
+        )
 
     def handler(request: httpx.Request) -> httpx.Response:
         path = request.url.path
@@ -91,45 +121,72 @@ def _github(
         # path falls through to the 404 below -- which is the assertion: a pass that went back to
         # asking GitHub for that file would fail here rather than quietly working.
         if path == f"/repos/{REPOSITORY}/pulls":
-            return httpx.Response(200, json=[{"number": 71, "user": {"login": "dependabot[bot]"}}])
-        if path == f"/repos/{REPOSITORY}/pulls/71":
+            if unreadable:
+                return httpx.Response(500, json={})
             return httpx.Response(
                 200,
-                json={
-                    "number": 71,
-                    "title": title,
-                    "created_at": "2026-08-01T00:00:00+00:00",
-                    "auto_merge": None,
-                    "head": {"sha": "b" * 40, "ref": "dependabot/npm_and_yarn/zod-4.4.3"},
-                },
+                json=[{"number": n, "user": {"login": "dependabot[bot]"}} for n in by_number],
             )
-        if path == f"/repos/{REPOSITORY}/commits/{'b' * 40}":
-            return httpx.Response(200, json={"commit": {"message": trailer}})
-        if path == f"/repos/{REPOSITORY}/actions/runs":
-            return httpx.Response(
-                200,
-                json={
-                    "workflow_runs": [
-                        {"id": 1, "event": "pull_request", "path": ".github/workflows/quality.yml"}
-                    ]
-                },
-            )
-        if path == f"/repos/{REPOSITORY}/actions/runs/1/jobs":
-            return httpx.Response(
-                200,
-                json={
-                    "jobs": [
-                        {
-                            "name": "Lint, type-check, and test",
-                            "conclusion": "failure",
-                            "completed_at": FAILED_LONG_AGO,
-                        }
-                    ]
-                },
-            )
+        for number, pull in by_number.items():
+            head = f"{number:040d}"
+            if path == f"/repos/{REPOSITORY}/pulls/{number}":
+                return httpx.Response(
+                    200,
+                    json={
+                        "number": number,
+                        "title": pull.title,
+                        "created_at": "2026-08-01T00:00:00+00:00",
+                        "auto_merge": None,
+                        "head": {
+                            "sha": head,
+                            "ref": f"dependabot/{pull.ecosystem}/{pull.dependency}-x",
+                        },
+                    },
+                )
+            if path == f"/repos/{REPOSITORY}/commits/{head}":
+                return httpx.Response(200, json={"commit": {"message": trailer(pull)}})
+            if path == f"/repos/{REPOSITORY}/actions/runs" and request.url.params.get(
+                "head_sha"
+            ) in (head, None):
+                return httpx.Response(
+                    200,
+                    json={
+                        "workflow_runs": [
+                            {
+                                "id": number,
+                                "event": "pull_request",
+                                "path": ".github/workflows/quality.yml",
+                            }
+                        ]
+                    },
+                )
+            if path == f"/repos/{REPOSITORY}/actions/runs/{number}/jobs":
+                return httpx.Response(
+                    200,
+                    json={
+                        "jobs": [
+                            {
+                                "name": "Lint, type-check, and test",
+                                "conclusion": pull.conclusion,
+                                "completed_at": pull.completed_at,
+                            }
+                        ]
+                    },
+                )
         return httpx.Response(404, json={})
 
     return handler
+
+
+def _serve(monkeypatch, **kwargs) -> None:
+    """Point the pass's GitHub reader at a stub serving `kwargs` (see `_github`)."""
+    monkeypatch.setattr(
+        cli,
+        "GitHubReader",
+        lambda **kw: __import__("landing_ledger.github", fromlist=["GitHubReader"]).GitHubReader(
+            token="gh", transport=httpx.MockTransport(_github(**kwargs))
+        ),
+    )
 
 
 class _Estate:
@@ -208,14 +265,56 @@ def spine():
     return _Spine()
 
 
+class _Hub:
+    """alert-hub: records every alert sent, answering 202 (or `status`)."""
+
+    def __init__(self):
+        self.sent: list[dict] = []
+        self.status = 202
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/alerts"
+        assert request.headers["Authorization"] == "Bearer sender"
+        self.sent.append(json.loads(request.content))
+        return httpx.Response(self.status, json={})
+
+    def keys(self, status: str) -> list[str]:
+        return [alert["key"] for alert in self.sent if alert["status"] == status]
+
+
 @pytest.fixture
-def rig(checkout, monkeypatch, spine):
+def hub():
+    return _Hub()
+
+
+def _create_standing(checkout, args) -> str:
+    """What `create-standing` writes: a draft standing package at revision 1 carrying the bump."""
+    options = dict(zip(args[1::2], args[2::2], strict=True))
+    name = options["--target-repo"].rsplit("/", 1)[-1].lower()
+    slug = options["--package"].lower().replace("/", "-").replace("@", "").replace(".", "-")
+    directory = checkout / options["--out"] / f"{name}-{options['--ecosystem']}-{slug}"
+    directory.mkdir(parents=True)
+    (directory / "package.yaml").write_text(
+        SHELL.replace("infraops-mcp-server-npm-zod", directory.name)
+        .replace("AlobarQuest/infraops-mcp-server", options["--target-repo"])
+        .replace("package: zod", f"package: {options['--package']}")
+        .replace("from_version: unassigned", f"from_version: '{options['--from']}'")
+        .replace("to_version: unassigned", f"to_version: '{options['--to']}'"),
+        encoding="utf-8",
+    )
+    return f"{options['--out']}/{directory.name}\n"
+
+
+@pytest.fixture
+def rig(checkout, monkeypatch, spine, hub):
     estate = _Estate()
     calls: list[tuple[str, ...]] = []
 
     def lifecycle(root, *args):
         calls.append(args)
-        path = checkout / "packages" / "infraops-mcp-server-npm-zod" / "package.yaml"
+        if args[0] == "create-standing":
+            return _create_standing(checkout, args)
+        path = pathlib.Path(args[1]) / "package.yaml"
         if args[0] == "hash":
             return "a" * 64 + "\n"
         text = path.read_text()
@@ -237,7 +336,9 @@ def rig(checkout, monkeypatch, spine):
     for module in (standing, cli):
         monkeypatch.setattr(module, "require_clean", lambda root: None)
         monkeypatch.setattr(module, "require_publishable", lambda root: None)
-        monkeypatch.setattr(module, "commit", lambda package, bump, root: "c" * 40)
+        monkeypatch.setattr(
+            module, "commit", lambda package, bump, root: calls.append(("commit",)) or "c" * 40
+        )
     monkeypatch.setattr(
         cli,
         "GitHubReader",
@@ -266,13 +367,18 @@ def rig(checkout, monkeypatch, spine):
             "bump_proposer.change_manager", fromlist=["ChangeManagerClient"]
         ).ChangeManagerClient(token, transport=httpx.MockTransport(estate.handler)),
     )
+    monkeypatch.setattr(
+        alerts,
+        "KeyedAlerts",
+        functools.partial(KeyedAlerts, transport=httpx.MockTransport(hub.handler)),
+    )
     return estate, calls
 
 
 def test_a_first_pass_advances_the_package_and_proposes_the_record(rig, capsys) -> None:
     estate, calls = rig
     assert run(["--submit"]) == EXIT_OK
-    assert [c[0] for c in calls] == ["transition", "approve", "hash"]
+    assert [c[0] for c in calls] == ["transition", "approve", "hash", "commit"]
     assert len(estate.proposals) == 1
     assert estate.proposals[0]["package_revision"] == 1
     assert "proposed" in capsys.readouterr().out
@@ -343,7 +449,7 @@ def test_a_package_carrying_the_bump_but_not_yet_approved_is_still_advanced(
 
     assert run(["--submit"]) == EXIT_OK
 
-    assert [c[0] for c in calls] == ["transition", "approve", "hash"]
+    assert [c[0] for c in calls] == ["transition", "approve", "hash", "commit"]
     assert len(estate.proposals) == 1
 
 
@@ -461,7 +567,7 @@ def test_the_bump_moving_under_a_stable_pull_request_advances_and_reports_the_st
     )
     assert run(["--submit"]) == EXIT_FINDINGS
 
-    assert [c[0] for c in calls] == ["revise", "transition", "approve", "hash"]
+    assert [c[0] for c in calls] == ["revise", "transition", "approve", "hash", "commit"]
     assert [r["package_revision"] for r in estate.records] == [1, 2]
     out = capsys.readouterr().out
     assert "superseded" in out and "record 1" in out
@@ -472,9 +578,9 @@ def test_an_unclassifiable_bump_is_reported_by_name_and_is_not_a_finding(
 ) -> None:
     """Kills: putting `skipped` in FINDING_STATUSES.
 
-    A requirement range can never be classified by any rule about update types, so a control
-    that reported it every night would be permanently red -- which is how a control stops being
-    read. It is named in the output and it is not a finding.
+    A requirement range of more than one clause states no single delta, so a control that
+    reported it every night would be permanently red -- which is how a control stops being read.
+    It is named in the output and it is not a finding.
     """
     estate, calls = rig
     monkeypatch.setattr(
@@ -484,7 +590,7 @@ def test_an_unclassifiable_bump_is_reported_by_name_and_is_not_a_finding(
             token="gh",
             transport=httpx.MockTransport(
                 _github(
-                    title="chore(deps): update zod requirement from >=3.0.0 to >=4.0.0",
+                    title="chore(deps): update zod requirement from >=3.0,<4 to >=3.0,<5",
                     update_type=None,
                 )
             ),
@@ -924,3 +1030,468 @@ def test_a_remediating_grant_leaves_an_empty_population_and_exits_unusable(
     assert run([]) == EXIT_UNUSABLE
 
     assert "[NOT GRANTED]" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------------------------
+# Bridge Part 3. A failed bump with tooling and no standing package gets one created; a bump the
+# factory can't route sends one keyed alert, which resolves when its pull request is gone.
+# ---------------------------------------------------------------------------------------------
+
+LEFT_PAD = Pull(
+    number=72,
+    title="build(deps): bump left-pad from 1.0.0 to 2.0.0",
+    dependency="left-pad",
+)
+CREATED_ID = "infraops-mcp-server-npm-left-pad"
+
+
+def _key(ecosystem: str, dependency: str) -> str:
+    return f"dependency-bump:alobarquest/infraops-mcp-server:{ecosystem}:{dependency}"
+
+
+def _record_proposals_in(calls, estate, monkeypatch) -> None:
+    handler = estate.handler
+
+    def recording(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            calls.append(("propose",))
+        return handler(request)
+
+    monkeypatch.setattr(estate, "handler", recording)
+
+
+def test_a_failed_bump_without_a_package_creates_one_then_proposes(
+    rig, monkeypatch, capsys
+) -> None:
+    estate, calls = rig
+    _record_proposals_in(calls, estate, monkeypatch)
+    _serve(monkeypatch, pulls=[LEFT_PAD])
+
+    assert run(["--submit"]) == EXIT_OK
+
+    assert [c[0] for c in calls] == [
+        "create-standing",
+        "transition",
+        "approve",
+        "hash",
+        "commit",
+        "propose",
+    ]
+    assert calls[0] == (
+        "create-standing",
+        "--target-repo",
+        "AlobarQuest/infraops-mcp-server",
+        "--package",
+        "left-pad",
+        "--ecosystem",
+        "npm",
+        "--from",
+        "1.0.0",
+        "--to",
+        "2.0.0",
+        "--out",
+        "packages",
+    )
+    assert [(p["package_id"], p["package_revision"]) for p in estate.proposals] == [(CREATED_ID, 1)]
+    out = capsys.readouterr().out
+    assert "created" in out and CREATED_ID in out
+
+
+def test_a_created_package_is_not_created_twice(rig, monkeypatch) -> None:
+    """The second pass finds the package the first one created and replays."""
+    estate, calls = rig
+    _serve(monkeypatch, pulls=[LEFT_PAD])
+    assert run(["--submit"]) == EXIT_OK
+    calls.clear()
+
+    assert run(["--submit"]) == EXIT_OK
+
+    assert calls == []
+    assert len(estate.records) == 1
+
+
+def _range_pull(ecosystem: str, operator: str, dependency: str = "left-pad") -> Pull:
+    return Pull(
+        number=73,
+        title=(
+            f"chore(deps): update {dependency} requirement from {operator}1.2.0 to {operator}1.3.0"
+        ),
+        dependency=dependency,
+        ecosystem=ecosystem,
+        update_type=None,
+    )
+
+
+@pytest.mark.parametrize("operator", [">=", "=="])
+def test_a_failed_uv_range_it_can_carry_creates_a_package_with_its_bare_versions(
+    rig, monkeypatch, operator
+) -> None:
+    estate, calls = rig
+    _serve(monkeypatch, pulls=[_range_pull("uv", operator)])
+
+    assert run(["--submit"]) == EXIT_OK
+
+    assert calls[0][calls[0].index("--ecosystem") + 1] == "uv"
+    assert calls[0][calls[0].index("--from") + 1] == "1.2.0"
+    assert calls[0][calls[0].index("--to") + 1] == "1.3.0"
+    assert len(estate.proposals) == 1
+
+
+@pytest.mark.parametrize(
+    ("ecosystem", "tooling", "operator"),
+    [
+        # uv's discovery reads `==` and `>=` pins only.
+        ("uv", "uv", "~="),
+        # npm installs `--save-exact`, so any range would become an exact pin.
+        ("npm_and_yarn", "npm", ">="),
+        ("npm_and_yarn", "npm", "^"),
+        ("npm_and_yarn", "npm", "~"),
+        # pip's mutation rewrites `==` lines only.
+        ("pip", "pip", ">="),
+    ],
+)
+def test_a_range_its_tooling_cannot_carry_alerts(
+    rig, monkeypatch, hub, ecosystem, tooling, operator
+) -> None:
+    estate, calls = rig
+    _serve(monkeypatch, pulls=[_range_pull(ecosystem, operator)])
+
+    assert run(["--submit"]) == EXIT_OK
+
+    assert calls == [] and estate.proposals == []
+    assert hub.keys("firing") == [_key(tooling, "left-pad")]
+
+
+def test_a_pip_range_bump_alerts(rig, monkeypatch, hub, capsys) -> None:
+    """Review focus 5: pip's mutation command matches `==` lines only, so a range never becomes a
+    package whose mutation can't apply."""
+    estate, calls = rig
+    _serve(
+        monkeypatch,
+        pulls=[
+            Pull(
+                number=74,
+                title="chore(deps): update requests requirement from >=2.31.0 to >=2.32.0",
+                dependency="requests",
+                ecosystem="pip",
+                update_type=None,
+            )
+        ],
+    )
+
+    assert run(["--submit"]) == EXIT_OK
+
+    assert calls == [] and estate.proposals == []
+    assert hub.keys("firing") == [_key("pip", "requests")]
+    assert "alerted" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("conclusion", ["success", "failure"])
+def test_a_docker_bump_alerts_whether_or_not_it_passes(rig, monkeypatch, hub, conclusion) -> None:
+    """Ruling 6: the cascade excludes docker and nothing else handles it."""
+    estate, calls = rig
+    _serve(
+        monkeypatch,
+        pulls=[
+            Pull(
+                number=75,
+                title="chore(deps): bump python from 3.12-slim to 3.14-slim",
+                dependency="python",
+                ecosystem="docker",
+                update_type=None,
+                conclusion=conclusion,
+            )
+        ],
+    )
+
+    assert run(["--submit"]) == EXIT_OK
+
+    assert calls == [] and estate.proposals == []
+    assert hub.keys("firing") == [_key("docker", "python")]
+
+
+def _actions(conclusion: str) -> Pull:
+    return Pull(
+        number=76,
+        title="chore(actions): bump actions/checkout from 4 to 7",
+        dependency="actions/checkout",
+        ecosystem="github_actions",
+        conclusion=conclusion,
+    )
+
+
+def test_a_github_actions_failure_alerts(rig, monkeypatch, hub) -> None:
+    estate, calls = rig
+    _serve(monkeypatch, pulls=[_actions("failure")])
+
+    assert run(["--submit"]) == EXIT_OK
+
+    assert calls == [] and estate.proposals == []
+    assert hub.keys("firing") == [_key("github__actions", "actions/checkout")]
+
+
+def test_a_passing_github_actions_bump_is_left_to_the_cascade(rig, monkeypatch, hub) -> None:
+    """The control: no tooling is not by itself an alert, a bump the cascade lands is nothing."""
+    _serve(monkeypatch, pulls=[_actions("success")])
+
+    assert run(["--submit"]) == EXIT_OK
+
+    assert hub.sent == []
+
+
+def test_a_second_ecosystem_for_one_dependency_alerts_not_creates(
+    rig, monkeypatch, hub, capsys
+) -> None:
+    """Review focus 2: discovery keys on (repository, dependency) and refuses a duplicate, so a
+    second package for zod would stop every later pass."""
+    estate, calls = rig
+    _serve(monkeypatch, pulls=[Pull(number=77, dependency="zod", ecosystem="uv")])
+
+    assert run(["--submit"]) == EXIT_OK
+
+    assert calls == [] and estate.proposals == []
+    assert hub.keys("firing") == [_key("uv", "zod")]
+    assert "infraops-mcp-server-npm-zod" in capsys.readouterr().out
+
+
+def test_the_proposal_carries_target_repository_and_change_class(rig) -> None:
+    estate, _calls = rig
+
+    assert run(["--submit"]) == EXIT_OK
+
+    proposal = estate.proposals[0]
+    assert proposal["target_repository"] == "AlobarQuest/infraops-mcp-server"
+    assert proposal["change_class"] == "dependency-update"
+
+
+def test_a_dry_run_reports_would_create_and_would_alert_and_writes_nothing(
+    rig, checkout, monkeypatch, hub, spine, capsys
+) -> None:
+    estate, calls = rig
+    monkeypatch.delenv("SDS_BRIDGE_ALERT_TOKEN")
+    _serve(monkeypatch, pulls=[LEFT_PAD, _actions("failure")])
+
+    assert run([]) == EXIT_OK
+
+    out = capsys.readouterr().out
+    assert "would-create" in out and "would-alert" in out
+    assert calls == [] and estate.proposals == [] and spine.posted == [] and hub.sent == []
+    assert not (checkout / "packages" / CREATED_ID).exists()
+    assert not (checkout / "state").exists()
+
+
+def test_an_alert_fires_once_and_resolves_when_its_pull_request_closes(
+    rig, monkeypatch, hub
+) -> None:
+    _serve(monkeypatch, pulls=[_actions("failure")])
+    assert run(["--submit"]) == EXIT_OK
+    assert run(["--submit"]) == EXIT_OK
+    assert hub.keys("firing") == [_key("github__actions", "actions/checkout")]
+
+    _serve(monkeypatch, pulls=[])
+    assert run(["--submit"]) == EXIT_OK
+
+    assert hub.keys("resolved") == [_key("github__actions", "actions/checkout")]
+
+
+def test_a_failure_that_has_not_settled_holds_its_alert(rig, monkeypatch, hub) -> None:
+    """Kills: resolving an open alert while a re-run fails again but hasn't settled -- it would
+    re-fire once settled, and alert-hub opens a second alert for one condition."""
+    _serve(monkeypatch, pulls=[_actions("failure")])
+    assert run(["--submit"]) == EXIT_OK
+
+    just_now = datetime.now(UTC).isoformat()
+    _serve(monkeypatch, pulls=[replace(_actions("failure"), completed_at=just_now)])
+    assert run(["--submit"]) == EXIT_OK
+
+    assert hub.keys("resolved") == []
+    assert hub.keys("firing") == [_key("github__actions", "actions/checkout")]
+
+
+PIP_RANGE = Pull(
+    number=74,
+    title="chore(deps): update requests requirement from >=2.31.0 to >=2.32.0",
+    dependency="requests",
+    ecosystem="pip",
+    update_type=None,
+)
+SECOND_ECOSYSTEM = Pull(number=77, dependency="zod", ecosystem="uv")
+
+
+@pytest.mark.parametrize(
+    ("pull", "key"),
+    [(PIP_RANGE, _key("pip", "requests")), (SECOND_ECOSYSTEM, _key("uv", "zod"))],
+    ids=["pip-range", "second-ecosystem"],
+)
+def test_an_unsettled_rerun_holds_every_kind_of_alert(rig, monkeypatch, hub, pull, key) -> None:
+    """The hold is one rule after routing, not a no-tooling special case."""
+    _serve(monkeypatch, pulls=[pull])
+    assert run(["--submit"]) == EXIT_OK
+
+    just_now = datetime.now(UTC).isoformat()
+    _serve(monkeypatch, pulls=[replace(pull, completed_at=just_now)])
+    assert run(["--submit"]) == EXIT_OK
+    _serve(monkeypatch, pulls=[pull])
+    assert run(["--submit"]) == EXIT_OK
+
+    assert hub.keys("resolved") == []
+    assert hub.keys("firing") == [key]
+
+
+def test_a_rerun_that_passes_resolves_its_alert(rig, monkeypatch, hub) -> None:
+    """The control: a green re-run is the condition cleared."""
+    _serve(monkeypatch, pulls=[_actions("failure")])
+    assert run(["--submit"]) == EXIT_OK
+
+    _serve(monkeypatch, pulls=[_actions("success")])
+    assert run(["--submit"]) == EXIT_OK
+
+    assert hub.keys("resolved") == [_key("github__actions", "actions/checkout")]
+
+
+def test_an_unreadable_repository_keeps_its_alerts(rig, monkeypatch, hub) -> None:
+    """Kills: resolving every remembered key the pass did not see. A GitHub failure is not the
+    pull request closing."""
+    _serve(monkeypatch, pulls=[_actions("failure")])
+    assert run(["--submit"]) == EXIT_OK
+
+    _serve(monkeypatch, unreadable=True)
+    assert run(["--submit"]) == EXIT_FINDINGS
+
+    assert hub.keys("resolved") == []
+
+
+def _remember(checkout, *keys: str) -> None:
+    state = checkout / "state"
+    state.mkdir(exist_ok=True)
+    (state / alerts.STATE_FILE).write_text(json.dumps(sorted(keys)))
+
+
+OTHER_KEY = "dependency-bump:alobarquest/factory-runner:docker:python"
+
+
+def test_a_run_narrowed_to_one_repository_leaves_the_others_alerts(
+    rig, checkout, monkeypatch, hub
+) -> None:
+    _remember(checkout, OTHER_KEY)
+    _serve(monkeypatch, pulls=[])
+
+    assert run(["--submit", "--repository", "AlobarQuest/infraops-mcp-server"]) == EXIT_OK
+
+    assert hub.keys("resolved") == []
+
+
+def test_a_full_run_resolves_a_key_no_repository_raises_any_more(
+    rig, checkout, monkeypatch, hub
+) -> None:
+    """The control for the narrowed run: the same remembered key IS resolved by a full pass."""
+    _remember(checkout, OTHER_KEY)
+    _serve(monkeypatch, pulls=[])
+
+    assert run(["--submit"]) == EXIT_OK
+
+    assert hub.keys("resolved") == [OTHER_KEY]
+
+
+def test_an_alert_hub_failure_is_a_finding(rig, monkeypatch, hub, capsys) -> None:
+    hub.status = 500
+    _serve(monkeypatch, pulls=[_actions("failure")])
+
+    assert run(["--submit"]) == EXIT_FINDINGS
+
+    assert "alert-hub" in capsys.readouterr().out
+
+
+def test_submitting_without_the_sender_token_is_unusable(rig, monkeypatch, hub, capsys) -> None:
+    estate, calls = rig
+    monkeypatch.delenv("SDS_BRIDGE_ALERT_TOKEN")
+
+    assert run(["--submit"]) == EXIT_UNUSABLE
+
+    assert calls == [] and estate.proposals == [] and hub.sent == []
+    assert "SDS_BRIDGE_ALERT_TOKEN" in capsys.readouterr().err
+
+
+def test_a_granted_inert_repository_with_no_package_is_in_the_lane(
+    rig, checkout, monkeypatch, capsys
+) -> None:
+    """Scope is the grant now that a package can be created: removing the only package leaves the
+    repository in the lane, and its failed bump creates one."""
+    estate, calls = rig
+    for path in sorted((checkout / "packages").rglob("*"), reverse=True):
+        path.unlink() if path.is_file() else path.rmdir()
+
+    assert run(["--submit"]) == EXIT_OK
+
+    assert calls[0][0] == "create-standing"
+    assert "[NO PACKAGE]" not in capsys.readouterr().out
+
+
+def test_a_granted_repository_not_declared_inert_with_no_package_is_told_not_found(
+    rig, monkeypatch, capsys
+) -> None:
+    """Ruling 1: Part 3 is inert-only. A granted deploying repository with no package is out of
+    the lane and is not a finding (with a package it is `not-declared-inert`, as before)."""
+    _grant(monkeypatch, "AlobarQuest/infraops-mcp-server", "AlobarQuest/brain")
+
+    assert run([]) == EXIT_OK
+
+    out = capsys.readouterr().out
+    assert "[NO PACKAGE] AlobarQuest/brain" in out
+    assert "brain#" not in out
+
+
+def _git(cwd, *args: str) -> str:
+    import subprocess
+
+    return subprocess.run(
+        ["git", *args], cwd=cwd, check=True, capture_output=True, text=True
+    ).stdout
+
+
+def test_a_refused_approval_after_create_leaves_a_checkout_the_next_pass_accepts(
+    rig, checkout, monkeypatch, capsys
+) -> None:
+    """Kills: leaving the created directory behind. Untracked, it would make `require_clean`
+    refuse every later `--submit` pass until a person cleaned the checkout."""
+    estate, calls = rig
+    _git(checkout, "init", "-q", "-b", "main")
+    for setting in (("user.name", "t"), ("user.email", "t@example.invalid")):
+        _git(checkout, "config", *setting)
+    (checkout / ".gitignore").write_text("state/\n")
+    _git(checkout, "add", "-A")
+    _git(checkout, "commit", "-q", "-m", "seed")
+    for module in (standing, cli):
+        monkeypatch.setattr(module, "require_clean", REAL_REQUIRE_CLEAN)
+    _serve(monkeypatch, pulls=[LEFT_PAD])
+    stub = standing.lifecycle
+
+    def refuse_approval(root, *args):
+        if args[0] == "approve":
+            raise standing.StandingError("approve --by-policy refused: member record unreadable")
+        return stub(root, *args)
+
+    monkeypatch.setattr(standing, "lifecycle", refuse_approval)
+    assert run(["--submit"]) == EXIT_FINDINGS
+    assert not (checkout / "packages" / CREATED_ID).exists()
+    assert _git(checkout, "status", "--porcelain") == ""
+    assert estate.proposals == []
+
+    monkeypatch.setattr(standing, "lifecycle", stub)
+    capsys.readouterr()
+    assert run(["--submit"]) == EXIT_OK
+    assert [(p["package_id"], p["package_revision"]) for p in estate.proposals] == [(CREATED_ID, 1)]
+
+
+def test_a_repository_not_declared_inert_keeps_its_alerts(rig, checkout, monkeypatch, hub) -> None:
+    """A repository with a package that the landing policy stops declaring inert is not read, so
+    its remembered keys stay as they were."""
+    remembered = _key("docker", "python")
+    _remember(checkout, remembered)
+    document = json.loads(json.dumps(LIVE))
+    document["inert_landing"]["repositories"].remove("alobarquest/infraops-mcp-server")
+    monkeypatch.setattr(cli, "read_inert_landing", lambda token, base_url: parse(document))
+
+    assert run(["--submit"]) == EXIT_FINDINGS
+
+    assert hub.keys("resolved") == []

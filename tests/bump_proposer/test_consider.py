@@ -142,9 +142,8 @@ LIVE_POPULATION = [
         FAILED,
         "candidate",
     ),
-    # Refused by the checks and OUTSIDE the lane anyway: nobody has authored a standing package
-    # for either action. Not a finding -- scope is the authored set, and authoring one is the act
-    # that changes it.
+    # Refused by the checks, and the factory has no tooling for an action: since bridge Part 3
+    # each holds one alert open for a person.
     (
         "checkout",
         "AlobarQuest/factory-runner",
@@ -154,7 +153,7 @@ LIVE_POPULATION = [
         "github_actions",
         MAJOR,
         FAILED,
-        "unlaned",
+        "alert",
     ),
     (
         "setup-uv",
@@ -165,12 +164,10 @@ LIVE_POPULATION = [
         "github_actions",
         MAJOR,
         FAILED,
-        "unlaned",
+        "alert",
     ),
-    # A docker tag that does not parse as semver, so the bot declares no update type and the
-    # title states no single delta. The declaration excludes `docker` outright, so this would be
-    # refused even green -- but it never reaches that question, because a revision of a standing
-    # package carries two versions and this states none.
+    # A docker tag that does not parse as semver. The declaration excludes `docker` outright and
+    # the factory has no docker tooling, so it alerts whatever its title says (Ruling 6).
     (
         "python",
         "AlobarQuest/orchestrator",
@@ -180,7 +177,7 @@ LIVE_POPULATION = [
         "docker",
         None,
         MIXED,
-        "unclassifiable",
+        "alert",
     ),
 ]
 
@@ -198,21 +195,24 @@ def test_the_live_population_is_classified_as_measured(case) -> None:
         checks=checks,
         concluded_at=SETTLED,
     )
-    package, bump, detail = _consider(pending, RULE, PACKAGES, NOW)
+    route = _consider(pending, RULE, PACKAGES, NOW)
     if expected == "candidate":
-        assert package is not None and bump is not None, detail
-    elif expected == "unlaned":
-        assert package is None and detail.startswith("unlaned"), detail
+        assert route.action == "act" and route.package is not None, route.detail
     else:
-        assert package is None and detail.startswith("unclassifiable"), detail
+        assert route.action == "alert", route.detail
+        expected_key = f"{repository.lower()}:{_encoded(ecosystem)}:{dependency}"
+        assert route.key == f"dependency-bump:{expected_key}"
 
 
-def test_a_bump_with_no_standing_package_is_unlaned() -> None:
-    """Not a finding. Scope is the authored set, and authoring one is what changes it.
+def _encoded(ecosystem: str) -> str:
+    return ecosystem.replace("_", "__")
 
-    Its checks must have SETTLED AGAINST IT to get this far, which they did not need to before
-    ADR-0034 -- the declaration permits an npm major on its type, so nothing but the outcome
-    keeps a bump in this lane, and a green one is answered a step earlier by the lane itself.
+
+def test_a_bump_with_no_standing_package_is_routed_to_creation() -> None:
+    """Bridge Part 3: a package is created for it, in its ecosystem's tooling.
+
+    Its checks must have SETTLED AGAINST IT to get this far -- the declaration permits an npm
+    major on its type, so nothing but the outcome keeps a bump in this lane.
     """
     pending = _pending(
         "AlobarQuest/infraops-mcp-server",
@@ -224,8 +224,8 @@ def test_a_bump_with_no_standing_package_is_unlaned() -> None:
         checks=FAILED,
         concluded_at=SETTLED,
     )
-    package, bump, detail = _consider(pending, RULE, PACKAGES, NOW)
-    assert package is None and detail.startswith("unlaned")
+    route = _consider(pending, RULE, PACKAGES, NOW)
+    assert (route.action, route.package, route.tooling) == ("act", None, "npm"), route.detail
 
 
 def test_a_title_and_a_trailer_that_disagree_are_ambiguous() -> None:
@@ -243,8 +243,8 @@ def test_a_title_and_a_trailer_that_disagree_are_ambiguous() -> None:
         ecosystem="npm_and_yarn",
         update_type=MINOR,
     )
-    package, bump, detail = _consider(pending, RULE, PACKAGES, NOW)
-    assert package is None and detail.startswith("ambiguous"), detail
+    route = _consider(pending, RULE, PACKAGES, NOW)
+    assert route.action == "ambiguous" and route.detail.startswith("ambiguous"), route.detail
 
 
 def test_a_classifiable_title_with_no_trailer_is_ambiguous() -> None:
@@ -258,8 +258,8 @@ def test_a_classifiable_title_with_no_trailer_is_ambiguous() -> None:
         ecosystem=None,
         update_type=None,
     )
-    package, bump, detail = _consider(pending, RULE, PACKAGES, NOW)
-    assert package is None and detail.startswith("ambiguous"), detail
+    route = _consider(pending, RULE, PACKAGES, NOW)
+    assert route.action == "ambiguous" and route.detail.startswith("ambiguous"), route.detail
 
 
 # ---------------------------------------------------------------------------------------------
@@ -297,10 +297,10 @@ def test_a_settled_failure_is_still_this_lanes_subject_under_the_outcome_rule() 
     """
     pending = _zod(checks=FAILED, concluded_at=SETTLED)
 
-    package, bump, detail = _consider(pending, RULE, PACKAGES, NOW)
+    route = _consider(pending, RULE, PACKAGES, NOW)
 
-    assert package is not None and bump is not None, detail
-    assert bump.kind == "semver-major"
+    assert route.action == "act" and route.package is not None, route.detail
+    assert route.bump is not None and route.bump.kind == "semver-major"
 
 
 def test_the_same_bump_passing_its_checks_is_left_to_the_cascade() -> None:
@@ -312,10 +312,10 @@ def test_the_same_bump_passing_its_checks_is_left_to_the_cascade() -> None:
     """
     pending = _zod(checks=PASSED, concluded_at=SETTLED)
 
-    package, _, detail = _consider(pending, RULE, PACKAGES, NOW)
+    route = _consider(pending, RULE, PACKAGES, NOW)
 
-    assert package is None
-    assert "permits" in detail and "have passed" in detail, detail
+    assert route.action == "skip"
+    assert "permits" in route.detail and "have passed" in route.detail, route.detail
 
 
 def test_a_failure_that_has_not_settled_belongs_to_neither_lane_yet() -> None:
@@ -325,10 +325,10 @@ def test_a_failure_that_has_not_settled_belongs_to_neither_lane_yet() -> None:
     re-run that then goes green strands the record as superseded with a human approval spent."""
     pending = _zod(checks=FAILED, concluded_at=JUST_CONCLUDED)
 
-    package, _, detail = _consider(pending, RULE, PACKAGES, NOW)
+    route = _consider(pending, RULE, PACKAGES, NOW)
 
-    assert package is None
-    assert "have not concluded against it" in detail, detail
+    assert route.action == "skip"
+    assert "have not concluded against it" in route.detail, route.detail
 
 
 def test_a_pull_request_whose_checks_have_not_concluded_at_all_is_not_taken() -> None:
@@ -336,15 +336,17 @@ def test_a_pull_request_whose_checks_have_not_concluded_at_all_is_not_taken() ->
     means waiting: a pass that skips it costs a pass, and the next one picks it up."""
     pending = _zod()
 
-    package, _, detail = _consider(pending, RULE, PACKAGES, NOW)
+    route = _consider(pending, RULE, PACKAGES, NOW)
 
-    assert package is None
-    assert "have not concluded against it" in detail, detail
+    assert route.action == "skip"
+    assert "have not concluded against it" in route.detail, route.detail
 
 
-def test_an_excluded_ecosystem_is_this_lanes_subject_however_green_its_checks() -> None:
+def test_an_excluded_ecosystem_alerts_however_green_its_checks() -> None:
     """THE ONE CELL WHERE THE DECLARATION AND "the checks decide" DISAGREE, and it has no open
-    subject today, which is why it is stated rather than measured.
+    subject today, which is why it is stated rather than measured. Since bridge Part 3 the factory
+    has no docker tooling, so the answer is an alert, even with a package naming the dependency
+    (Ruling 6).
 
     `docker` is excluded because the required checks do not exercise what changed: a tag is not
     semver, so the version number promises nothing, and nothing RUNS the built image -- a package
@@ -372,9 +374,9 @@ def test_an_excluded_ecosystem_is_this_lanes_subject_however_green_its_checks() 
         "postgres", from_version="16.2", to_version="17.0"
     )
 
-    package, bump, detail = _consider(pending, RULE, packages, NOW)
+    route = _consider(pending, RULE, packages, NOW)
 
-    assert package is not None and bump is not None, detail
+    assert route.action == "alert", route.detail
 
 
 def test_the_exclusion_is_what_decides_that_and_not_the_ecosystems_name() -> None:
@@ -399,30 +401,66 @@ def test_the_exclusion_is_what_decides_that_and_not_the_ecosystems_name() -> Non
         "postgres", from_version="16.2", to_version="17.0"
     )
 
-    package, _, detail = _consider(pending, RULE, packages, NOW)
+    route = _consider(pending, RULE, packages, NOW)
 
-    assert package is None
-    assert "permits" in detail and "have passed" in detail, detail
+    assert route.action == "skip"
+    assert "permits" in route.detail and "have passed" in route.detail, route.detail
 
 
-def test_a_requirement_range_stays_unclassifiable_under_the_outcome_rule() -> None:
-    """CONTROL 2, the producer's half. The cascade now PERMITS these -- that is the whole point
-    of ADR-0034 -- but this lane still cannot describe one: a range states no single delta, so
-    there are no two versions for a package revision to carry. Unchanged, and not a finding."""
-    pending = _pending(
+def _range(ecosystem: str, checks: tuple[Check, ...]) -> PendingUpdate:
+    return _pending(
         "AlobarQuest/infraops-mcp-server",
         69,
         "chore(deps-dev): update setuptools requirement from >=83.0.0 to >=84.0.0",
         dependency="setuptools",
-        ecosystem="uv",
+        ecosystem=ecosystem,
         update_type=None,
-        checks=PASSED,
+        checks=checks,
         concluded_at=SETTLED,
     )
 
-    package, _, detail = _consider(pending, RULE, PACKAGES, NOW)
 
-    assert package is None and detail.startswith("unclassifiable"), detail
+def test_a_passing_requirement_range_is_left_to_the_cascade() -> None:
+    """CONTROL 2, the producer's half. The cascade PERMITS a range (ADR-0034), so a green one is
+    the cascade's, exactly as a green plain bump is."""
+    route = _consider(_range("uv", PASSED), RULE, PACKAGES, NOW)
+
+    assert route.action == "skip" and "have passed" in route.detail, route.detail
+
+
+def test_a_failed_requirement_range_in_uv_carries_its_bare_versions() -> None:
+    """Ruling 7: a single-clause range names two versions, and those are what a revision
+    carries."""
+    route = _consider(_range("uv", FAILED), RULE, PACKAGES, NOW)
+
+    assert route.action == "act" and route.tooling == "uv", route.detail
+    assert route.bump is not None
+    assert (route.bump.from_version, route.bump.to_version) == ("83.0.0", "84.0.0")
+
+
+def test_a_failed_requirement_range_in_pip_alerts() -> None:
+    """Review focus 5: pip's mutation rewrites `==` lines only."""
+    route = _consider(_range("pip", FAILED), RULE, PACKAGES, NOW)
+
+    assert route.action == "alert", route.detail
+    assert route.key == "dependency-bump:alobarquest/infraops-mcp-server:pip:setuptools"
+
+
+def test_a_multi_clause_range_stays_unclassifiable() -> None:
+    pending = _pending(
+        "AlobarQuest/infraops-mcp-server",
+        70,
+        "chore(deps): update httpx requirement from <0.30,>=0.29 to >=0.29,<0.31",
+        dependency="httpx",
+        ecosystem="uv",
+        update_type=None,
+        checks=FAILED,
+        concluded_at=SETTLED,
+    )
+
+    route = _consider(pending, RULE, PACKAGES, NOW)
+
+    assert route.action == "skip" and route.detail.startswith("unclassifiable"), route.detail
 
 
 CANCELLED = (Check(name="Quality", conclusion="cancelled", run=1),)
@@ -439,7 +477,7 @@ def test_a_conclusion_that_is_no_verdict_does_not_hand_the_bump_to_the_factory(c
     the cascade's answer mints a package revision that cannot be unminted, and the bump lands by
     itself the moment somebody re-runs the job green.
     """
-    package, _, detail = _consider(_zod(checks=checks, concluded_at=SETTLED), RULE, PACKAGES, NOW)
+    route = _consider(_zod(checks=checks, concluded_at=SETTLED), RULE, PACKAGES, NOW)
 
-    assert package is None
-    assert "have not concluded against it" in detail, detail
+    assert route.action == "skip"
+    assert "have not concluded against it" in route.detail, route.detail
