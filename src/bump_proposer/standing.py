@@ -75,6 +75,14 @@ PUBLISH_COMMAND: Final = "git push origin main"
 # describing the command it guards.
 _PUBLISHED_BRANCH: Final = PUBLISH_COMMAND.split()[-1]
 
+# Bridge Part 3. Dependabot's ecosystem (the second segment of its branch) for each ecosystem
+# intent-packages' `create-standing` has a tooling profile for, mapped to that profile's name. Every
+# other ecosystem has no tooling, and a bump in it is alerted rather than created.
+TOOLING: Final = {"npm_and_yarn": "npm", "pip": "pip", "uv": "uv"}
+
+# Where `create-standing` writes, relative to the checkout: the directory `discover` reads.
+_PACKAGES_DIRECTORY: Final = "packages"
+
 _FROM_LINE: Final = re.compile(r"^(\s*from_version:).*$", re.MULTILINE)
 _TO_LINE: Final = re.compile(r"^(\s*to_version:).*$", re.MULTILINE)
 
@@ -146,7 +154,7 @@ def discover(root: Path | None = None) -> dict[tuple[str, str], StandingPackage]
     lane, and adding it to the lane is authoring one -- not editing a list here.
     """
     root = root or checkout_root()
-    base = root / "packages"
+    base = root / _PACKAGES_DIRECTORY
     if not base.is_dir():
         raise StandingError(f"no packages directory in the checkout at {root}")
     found: dict[tuple[str, str], StandingPackage] = {}
@@ -285,6 +293,55 @@ def require_publishable(root: Path) -> None:
         )
 
 
+def create(
+    root: Path, repository: str, tooling: str, dependency: str, bump: Bump
+) -> StandingPackage:
+    """Write a draft standing package carrying this bump, through intent-packages' own
+    `create-standing`, and answer it as discovery now reads it.
+
+    The draft already carries the bump, so `advance` takes it straight to `transition` and
+    `approve`. `create-standing` refuses an existing directory, so a second package for a
+    dependency whose id collides is a refusal, never an overwrite.
+    """
+    printed = lifecycle(
+        root,
+        "create-standing",
+        "--target-repo",
+        repository,
+        "--package",
+        dependency,
+        "--ecosystem",
+        tooling,
+        "--from",
+        bump.from_version,
+        "--to",
+        bump.to_version,
+        "--out",
+        _PACKAGES_DIRECTORY,
+    ).strip()
+    package = discover(root).get((repository.lower(), dependency))
+    if package is None or not printed or Path(printed).name != package.package_id:
+        raise StandingError(
+            f"create-standing printed {printed or 'nothing'!r}, and discovery does not find it "
+            f"as the standing package for {repository} {dependency}"
+        )
+    return package
+
+
+def other_ecosystem(package: StandingPackage, tooling: str) -> str | None:
+    """The tooling ecosystem this package was created for, when it is not `tooling`.
+
+    A standing package states no ecosystem field; its id does (`<repo name>-<ecosystem>-<slug>`,
+    intent-packages' `standing_package_id`). A package whose id names no tooling ecosystem answers
+    None, and is revised as before.
+    """
+    name = package.target_repository.rsplit("/", 1)[-1].lower()
+    for other in TOOLING.values():
+        if other != tooling and package.package_id.startswith(f"{name}-{other}-"):
+            return other
+    return None
+
+
 def write_versions(package: StandingPackage, bump: Bump) -> None:
     """Write the two per-bump values, and nothing else in the document."""
     path = package.path / "package.yaml"
@@ -388,12 +445,11 @@ def commit(package: StandingPackage, bump: Bump, root: Path) -> str:
     message = (
         f"{package.package_id} rev {package.revision}: "
         f"{package.dependency} {bump.from_version} to {bump.to_version}\n\n"
-        "Written by bump-proposer (ADR-0028). The auto-merge cascade refuses this bump\n"
-        "(ADR-0016), so it becomes factory work: the standing package's revision carries\n"
+        "Written by bump-proposer (ADR-0028). The auto-merge cascade does not land this\n"
+        "bump (ADR-0016), so it becomes factory work: the standing package's revision carries\n"
         "it, and the revision is approved by conformance to approval-policy.toml rather\n"
-        "than by a named human. A person still approves the work record this producer\n"
-        "writes in change-manager, and the decomposition and the authority envelope after\n"
-        "that.\n"
+        "than by a named human. The work record this producer writes in change-manager is\n"
+        "approved by its work policy when it conforms, and by a person otherwise.\n"
     )
     return publish(package, package.revision, message, root)
 

@@ -2,7 +2,8 @@
 
 The bridge layer's four programs each pin their own routes in their own tests. This table states
 them in one place, per service: the change-manager and orchestrator routes each lane may send, the
-GitHub routes it may read, and the BWS secrets its launcher fetches. Every cell is checked against
+GitHub routes it may read, the alert-hub routes it may send, and the BWS secrets its launcher
+fetches. Every cell is checked against
 the lane's OWN predicates -- the functions its `ConfinedClient` asks before a request is built --
 under every verb, over one corpus tried against every service column: each listed route, its
 trailing-slash and suffixed near misses, and named probes per service (change-manager lifecycle
@@ -26,6 +27,7 @@ from unittest import mock
 
 import pytest
 
+import alert_hub_client
 from bump_proposer import change_manager as bump_change_manager
 from bump_proposer import landing_policy as bump_landing_policy
 from bump_proposer import orchestrator_client as bump_orchestrator
@@ -47,6 +49,9 @@ PROPOSE_BEARER = "acccb346-4baa-43ec-a1d4-b4a400c048ee"
 READ_BEARER = "314f276d-55ca-4ddc-a24d-b4a3013508cd"
 OBSERVER_BEARER = "f793576f-e9aa-4f9d-8089-b4a000b9e2d5"
 SYSTEM_BEARER = "221a48d5-3f29-4898-b300-b4820140c880"
+# The `sds-bridge` alert sender token (bridge Part 3). A placeholder UUID until the ship step
+# replaces it in the launcher and here.
+SDS_BRIDGE_ALERT_BEARER = "00000000-0000-0000-0000-000000000000"
 
 
 @dataclass(frozen=True)
@@ -54,6 +59,7 @@ class Edge:
     change_manager: frozenset[Route]
     orchestrator: frozenset[Route]
     github: frozenset[Route]
+    alert_hub: frozenset[Route]
     bearers: frozenset[str]
 
 
@@ -68,7 +74,9 @@ EDGES: dict[str, Edge] = {
         ),
         orchestrator=frozenset({("POST", "/api/v1/observations"), ("GET", "/api/v1/members")}),
         github=frozenset(),  # through landing_ledger.github: GITHUB_THROUGH
-        bearers=frozenset({PROPOSE_BEARER, READ_BEARER, OBSERVER_BEARER}),
+        # through alert_hub_client: ALERT_HUB_THROUGH
+        alert_hub=frozenset({("POST", "/v1/alerts")}),
+        bearers=frozenset({PROPOSE_BEARER, READ_BEARER, OBSERVER_BEARER, SDS_BRIDGE_ALERT_BEARER}),
     ),
     "change_proposer": Edge(
         change_manager=frozenset(
@@ -80,6 +88,7 @@ EDGES: dict[str, Edge] = {
         ),
         orchestrator=frozenset({("GET", "/api/v1/members")}),
         github=frozenset(),  # through deploy_watcher.github: GITHUB_THROUGH
+        alert_hub=frozenset(),
         bearers=frozenset({PROPOSE_BEARER, OBSERVER_BEARER}),
     ),
     "work_carrier": Edge(
@@ -92,6 +101,7 @@ EDGES: dict[str, Edge] = {
             }
         ),
         github=frozenset(),
+        alert_hub=frozenset(),
         bearers=frozenset({READ_BEARER, SYSTEM_BEARER, OBSERVER_BEARER}),
     ),
     "work_watcher": Edge(
@@ -101,6 +111,7 @@ EDGES: dict[str, Edge] = {
         ),
         orchestrator=frozenset({("GET", "/api/v1/change-records/44/work")}),
         github=frozenset({("GET", "/repos/o/r/pulls/44")}),
+        alert_hub=frozenset(),
         bearers=frozenset({PROPOSE_BEARER, READ_BEARER, SYSTEM_BEARER}),
     ),
 }
@@ -109,6 +120,11 @@ EDGES: dict[str, Edge] = {
 GITHUB_THROUGH: dict[str, tuple[str, str]] = {
     "bump_proposer": ("src/bump_proposer/cli.py", "landing_ledger.github"),
     "change_proposer": ("src/change_proposer/cli.py", "deploy_watcher.github"),
+}
+
+# A lane sending alerts through the shared client: (its module, the client it imports).
+ALERT_HUB_THROUGH: dict[str, tuple[str, str]] = {
+    "bump_proposer": ("src/bump_proposer/alerts.py", "alert_hub_client"),
 }
 
 LAUNCHERS: dict[str, tuple[str, ...]] = {
@@ -159,14 +175,22 @@ GITHUB_PROBES = frozenset(
         "/repos/o/r/pulls",
     }
 )
-PROBES = CHANGE_MANAGER_PROBES | ORCHESTRATOR_PROBES | GITHUB_PROBES
+ALERT_HUB_PROBES = frozenset(
+    {
+        "/v1/alerts/44",
+        "/v1/alerts/44/ack",
+        "/v1/sources",
+        "/v1/channels",
+    }
+)
+PROBES = CHANGE_MANAGER_PROBES | ORCHESTRATOR_PROBES | GITHUB_PROBES | ALERT_HUB_PROBES
 
 
 def _listed_paths() -> frozenset[str]:
     return frozenset(
         path
         for edge in EDGES.values()
-        for column in (edge.change_manager, edge.orchestrator, edge.github)
+        for column in (edge.change_manager, edge.orchestrator, edge.github, edge.alert_hub)
         for _, path in column
     )
 
@@ -204,6 +228,13 @@ _landing_policy_permits = _captured_permits(
     lambda: bump_landing_policy.read_inert_landing("token"),
     bump_landing_policy.LandingPolicyError,
 )
+_alert_hub_permits = _captured_permits(
+    alert_hub_client,
+    lambda: alert_hub_client.KeyedAlerts(
+        lambda: "token", Path("unused.json"), user_agent="edges/1"
+    ).open_client(),
+    alert_hub_client.AlertHubError,
+)
 _listing_permits = _captured_permits(
     carrier_change_manager,
     lambda: carrier_change_manager.HttpWorkRecordSource(
@@ -231,12 +262,14 @@ PERMITS: dict[str, dict[str, Permits | None]] = {
             lambda m, p: members_client._permits(members_client._READ)(m, p),
         ),
         "github": None,
+        "alert_hub": _alert_hub_permits,
     },
     "change_proposer": {
         "change_manager": lambda m, p: change_change_manager._permits(m, p),
         # No client of its own: the member-record reader it imports.
         "orchestrator": lambda m, p: members_client._permits(members_client._READ)(m, p),
         "github": None,
+        "alert_hub": None,
     },
     "work_carrier": {
         "change_manager": _listing_permits,
@@ -246,6 +279,7 @@ PERMITS: dict[str, dict[str, Permits | None]] = {
             lambda m, p: members_client._permits(members_client._READ)(m, p),
         ),
         "github": None,
+        "alert_hub": None,
     },
     "work_watcher": {
         "change_manager": _either(
@@ -254,6 +288,7 @@ PERMITS: dict[str, dict[str, Permits | None]] = {
         ),
         "orchestrator": lambda m, p: watcher_orchestrator._permits(m, p),
         "github": lambda m, p: watcher_github._permits(m, p),
+        "alert_hub": None,
     },
 }
 
@@ -265,6 +300,7 @@ def disagreements(lane: str) -> frozenset[tuple[str, str, str, bool]]:
         "change_manager": edge.change_manager,
         "orchestrator": edge.orchestrator,
         "github": edge.github,
+        "alert_hub": edge.alert_hub,
     }
     found: set[tuple[str, str, str, bool]] = set()
     for service, listed in rows.items():
@@ -294,6 +330,25 @@ def test_a_lane_without_its_own_github_reader_reads_through_the_named_one(lane: 
     source, reader = GITHUB_THROUGH[lane]
     assert EDGES[lane].github == frozenset()
     assert reader in _imports(source)
+
+
+@pytest.mark.parametrize("lane", sorted(ALERT_HUB_THROUGH))
+def test_a_lane_that_alerts_does_so_through_the_shared_client(lane: str) -> None:
+    source, client = ALERT_HUB_THROUGH[lane]
+    assert client in {name.split(".")[0] for name in _imports(source)}
+    assert EDGES[lane].alert_hub == frozenset({("POST", alert_hub_client.ALERTS)})
+
+
+def test_only_the_named_modules_import_the_alert_client() -> None:
+    """A lane module importing `alert_hub_client` outside `ALERT_HUB_THROUGH` would send alerts
+    the table doesn't state."""
+    importers = {
+        str(path)
+        for lane in EDGES
+        for path in sorted(Path("src", lane).rglob("*.py"))
+        if "alert_hub_client" in {name.split(".")[0] for name in _imports(str(path))}
+    }
+    assert importers == {source for source, _ in ALERT_HUB_THROUGH.values()}
 
 
 def test_work_watcher_lists_records_through_the_carriers_reader() -> None:
@@ -359,6 +414,19 @@ def test_control_a_widened_orchestrator_predicate_fails_the_table(
     assert ("orchestrator", "POST", "/api/v1/work-units/44/pr-merge", True) in disagreements(
         "work_carrier"
     )
+
+
+def test_control_a_widened_alert_hub_predicate_fails_the_table(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The alert-hub column is compared too: move the client's one route and the table fails.
+
+    The captured predicate reads `ALERTS` from its module when it runs, so this changes the code
+    under test, not the table."""
+    monkeypatch.setattr(alert_hub_client, "ALERTS", "/v1/sources")
+    found = disagreements("bump_proposer")
+    assert ("alert_hub", "POST", "/v1/sources", True) in found
+    assert ("alert_hub", "POST", "/v1/alerts", False) in found
 
 
 def test_control_a_widened_github_predicate_fails_the_table(

@@ -360,6 +360,9 @@ HTTP_CLIENTS = {
     # that does must be in the allowlist below like any other; without this entry the package
     # would be a way past the per-file chokepoint.
     "estate_clients",
+    # Bridge Part 3: the lanes' one alert-hub client. Importing it is sending alerts, so every
+    # module that does is listed below on its own account, like `estate_clients`.
+    "alert_hub_client",
 }
 
 OUTBOUND_ALLOWLIST = {
@@ -613,6 +616,10 @@ OUTBOUND_ALLOWLIST = {
     # `POST /v1/alerts` (via `alert_hub_client`), pinned by
     # tests/rotation_worker/test_notify.py. Its egress is not the orchestrator's.
     Path("src/rotation_worker/notify.py"),
+    # Bridge Part 3. The bump proposer holds one alert open per bump it cannot route, as the
+    # `sds-bridge` sender. Its client may send only `POST /v1/alerts` (via `alert_hub_client`),
+    # pinned by tests/architecture/test_bridge_edges.py. Its egress is not the orchestrator's.
+    Path("src/bump_proposer/alerts.py"),
     # ADR-0055 increment 7. The rotation App mints a token for one repository with exactly the
     # permissions one purpose needs, writes that repository's one approved Actions secret, and
     # reads its secret-fingerprint report's job log (one hop to GitHub's log storage, which

@@ -18,7 +18,7 @@ import pytest
 
 from bump_proposer import standing as shared
 from bump_proposer.change_manager import ChangeManagerClient
-from bump_proposer.cli import PROPOSAL_FIELDS
+from bump_proposer.cli import WORK_RECORD_FIELDS
 from bump_proposer.orchestrator_client import OrchestratorClient
 from rotation_proposer import cli
 from rotation_proposer.cli import EXIT_FINDINGS, EXIT_OK, EXIT_UNUSABLE, run
@@ -146,7 +146,7 @@ def test_the_pass_after_devon_approves_proposes_naming_the_first_observation(rig
     assert run(["--submit"]) == EXIT_OK
     assert rig.acts() == (["revise", "transition", "hash"], 2, 1, 1)
     proposal = rig.estate.proposals[0]
-    assert tuple(proposal) == PROPOSAL_FIELDS
+    assert tuple(proposal) == WORK_RECORD_FIELDS
     assert (proposal["package_id"], proposal["package_revision"], proposal["actor"]) == (
         f"rotation-{CREDENTIAL}",
         2,

@@ -6,11 +6,18 @@
 # pass reading a registry with no subject.
 #
 # WHAT A WRITING PASS ACTUALLY DOES, because it is more than the siblings do. It edits two
-# lines of a standing package in the intent-packages checkout, takes the revision through
-# that repository's audited lifecycle, re-pins its hash fixture, COMMITS the three files,
-# PUBLISHES that commit to the authoring repository's default branch (ADR-0033), and proposes
-# a work record in change-manager. It does not approve the record: a person does that, which
-# is the decision ADR-0028 keeps and the one this producer sits on the other side of.
+# lines of a standing package in the intent-packages checkout -- or, for a failed bump in an
+# inert repository that no package covers yet, creates the package (bridge Part 3) -- takes the
+# revision through that repository's audited lifecycle, re-pins its hash fixture, COMMITS the
+# files, PUBLISHES that commit to the authoring repository's default branch (ADR-0033), and
+# proposes a work record in change-manager naming the target repository and the
+# `dependency-update` change class. It cannot approve the record: change-manager's work policy
+# approves one that conforms (ADR-0025 amendment), and a person decides every other one.
+#
+# A bump it cannot route -- no tooling for its ecosystem, a pip requirement range, a dependency a
+# package in another ecosystem already covers, and every docker bump -- holds one keyed alert
+# open in alert-hub as the `sds-bridge` sender, resolved once its pull request merges or closes.
+# The keys it has fired are kept in `~/Library/Application Support/sds/bump-proposer/`.
 #
 # PUBLISHING IS THE COMMIT FINISHED, NOT A SECOND ACT. Until ADR-0033 the pass stopped at the
 # commit and nobody was told to move the branch, so the revision got no CI, the `source_commit`
@@ -52,8 +59,8 @@
 #      repository, so a rule this pass cannot read stops the pass rather than one repository.
 #      An absent declaration is a REFUSAL and not a waiver: it is a version that did not decide
 #      the question, and this pass will not guess what it would have decided).
-#   3  something was found -- a standing package targeting a repository the landing policy does
-#      not declare inert, a pull request whose title and update trailer disagree, a bump whose
+#   3  something was found -- an alert alert-hub would not take, a standing package targeting a
+#      repository the landing policy does not declare inert, a pull request whose title and update trailer disagree, a bump whose
 #      CAUSE COULD NOT BE FILED (G1+G2: the observation is the cause a proposal names, so a bump
 #      that cannot be stated is reported `unobserved` and nothing is proposed for it), a record
 #      stranded by a bump that moved, a refused proposal, or a revision that was committed and
@@ -96,6 +103,11 @@ CHANGE_MANAGER_READ_UUID="${BUMP_PROPOSER_READ_BWS_UUID:-314f276d-55ca-4ddc-a24d
 # It is the same bearer every observe-and-report lane holds, by design, which is why the three
 # variables exported for it below are the estate-wide spelling rather than a `BUMP_PROPOSER_` one.
 OBSERVER_BEARER_UUID="${BUMP_PROPOSER_OBSERVER_BWS_UUID:-f793576f-e9aa-4f9d-8089-b4a000b9e2d5}"
+
+# The `sds-bridge` sender's alert-hub token (bridge Part 3), in `SDS Operator` beside the observer
+# bearer. PLACEHOLDER: the ship step replaces this UUID with the secret the sender's registration
+# stores; until then the fetch below fails and the pass stops before it runs.
+SDS_BRIDGE_ALERT_UUID="${BUMP_PROPOSER_ALERT_BWS_UUID:-00000000-0000-0000-0000-000000000000}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export BUMP_PROPOSER_PACKAGES_CHECKOUT="${BUMP_PROPOSER_PACKAGES_CHECKOUT:-$HOME/Projects/intent-packages}"
@@ -168,6 +180,16 @@ OBSERVER_BEARER="$(sds_bws_value "$OBSERVER_BEARER_UUID" "$SDS_IDENTITY")"
   "FATAL: could not read the orchestrator observer bearer from BWS (narrow)"
 SDS_MEMBERS_OBSERVER_TOKEN="$OBSERVER_BEARER"
 export SDS_MEMBERS_OBSERVER_TOKEN
+
+# THE SENDER TOKEN IS FETCHED ON EVERY RUN, with the same narrow identity. Only a writing pass
+# sends, but a dry run that skipped the fetch would hide a missing token until the morning pass.
+SDS_BRIDGE_ALERT_TOKEN="$(sds_bws_value "$SDS_BRIDGE_ALERT_UUID" "$SDS_IDENTITY")"
+[ -n "$SDS_BRIDGE_ALERT_TOKEN" ] || sds_outcome_fail \
+  "FATAL: could not read the sds-bridge alert sender token from BWS (narrow)"
+export SDS_BRIDGE_ALERT_TOKEN
+export BUMP_PROPOSER_STATE_DIR="${BUMP_PROPOSER_STATE_DIR:-$HOME/Library/Application Support/sds/bump-proposer}"
+mkdir -p "$BUMP_PROPOSER_STATE_DIR" || sds_outcome_fail \
+  "FATAL: could not create the alert state directory $BUMP_PROPOSER_STATE_DIR"
 
 # ONLY FETCHED FOR A WRITING RUN. A dry run reports what it would do and sends nothing, so it
 # must not need -- or touch -- a credential that could write.

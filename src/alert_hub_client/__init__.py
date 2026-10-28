@@ -105,6 +105,26 @@ def alert_key(*parts: str) -> str:
     return f"{key[: MAX_KEY - _DIGEST_CHARS - 1]}-{digest}"
 
 
+# Ruling 5 of bridge Part 3: one key grammar for a dependency bump, shared by both lanes that alert
+# on one (the bump proposer and the work watcher). It lives here, beside `alert_key`, because both
+# import this module and neither may import the other.
+DEPENDENCY_BUMP: Final = "dependency-bump"
+
+
+def dependency_bump_key(repository: str, ecosystem: str, dependency: str) -> str:
+    """`dependency-bump:<repository lowercased>:<ecosystem>:<dependency>`, through `alert_key`.
+
+    `ecosystem` is the tooling name (`npm`, `pip`, `uv`) for an ecosystem the factory has a profile
+    for, and Dependabot's own branch segment (`docker`, `github_actions`) for one it has not.
+    """
+    return alert_key(DEPENDENCY_BUMP, repository.lower(), ecosystem, dependency)
+
+
+def dependency_bump_prefix(repository: str) -> str:
+    """The start every `dependency_bump_key` for this repository shares."""
+    return alert_key(DEPENDENCY_BUMP, repository.lower()) + ":"
+
+
 class KeyedAlerts:
     def __init__(
         self,
@@ -162,6 +182,11 @@ class KeyedAlerts:
         self._save(keep)
         if failures:
             raise AlertHubError(f"{failures} alert(s) not sent")
+
+    def remembered(self) -> set[str]:
+        """The keys the state file holds as firing, which is what a caller needs to name `unread`
+        keys it can't otherwise list (a source it couldn't read this pass)."""
+        return self._remembered()
 
     def open_client(self) -> ConfinedClient:
         try:

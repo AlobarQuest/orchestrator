@@ -22,6 +22,8 @@ HEALTHCHECKS_KEY_UUID = "51509d5e-64f5-4781-ae82-b4ed00b644e1"
 # Fetched by all three, and only on an acting run.
 PROPOSE_UUID = "acccb346-4baa-43ec-a1d4-b4a400c048ee"
 OBSERVER_UUID = "f793576f-e9aa-4f9d-8089-b4a000b9e2d5"
+# The bump proposer's `sds-bridge` alert sender token. A placeholder until the ship step.
+ALERT_UUID = "00000000-0000-0000-0000-000000000000"
 
 
 @dataclass(frozen=True)
@@ -360,6 +362,38 @@ def test_an_acting_bump_proposer_exports_the_member_bearer_and_the_write_names(
     names = _exported_names(tmp_path, "--submit")
     assert "SDS_MEMBERS_OBSERVER_TOKEN" in names
     assert ORCHESTRATOR_API_NAMES <= names
+
+
+@pytest.mark.parametrize("args", [(), ("--submit",)], ids=["dry-run", "submit"])
+def test_the_bump_proposer_fetches_and_exports_the_sender_token(
+    tmp_path: Path, args: tuple[str, ...]
+) -> None:
+    """Bridge Part 3: fetched with the narrow identity on every run, exported to the program."""
+    names = _exported_names(tmp_path, *args)
+    assert "SDS_BRIDGE_ALERT_TOKEN" in names
+    fetches = (tmp_path / "bws.log").read_text().splitlines()
+    assert any(f"secret get {ALERT_UUID} " in f"{line} " for line in fetches)
+
+
+@pytest.mark.parametrize("args", [(), ("--submit",)], ids=["dry-run", "submit"])
+def test_the_bump_proposer_creates_and_exports_its_state_directory(
+    tmp_path: Path, args: tuple[str, ...]
+) -> None:
+    names = _exported_names(tmp_path, *args)
+    assert "BUMP_PROPOSER_STATE_DIR" in names
+    state = tmp_path / "home" / "Library" / "Application Support" / "sds" / "bump-proposer"
+    assert state.is_dir()
+
+
+@pytest.mark.parametrize("args", [(), ("--submit",)], ids=["dry-run", "submit"])
+def test_a_bump_proposer_whose_sender_token_is_unreadable_never_runs(
+    tmp_path: Path, args: tuple[str, ...]
+) -> None:
+    env_log = tmp_path / "env.txt"
+    rc, _, output = _run(tmp_path, LANES[0], *args, BWS_FAIL_UUID=ALERT_UUID, ENV_LOG=str(env_log))
+    assert rc == 1, output
+    assert "sds-bridge alert sender token" in output
+    assert not env_log.exists()
 
 
 def test_an_acting_carrier_whose_observer_bearer_is_unreadable_pings_fail(tmp_path: Path) -> None:

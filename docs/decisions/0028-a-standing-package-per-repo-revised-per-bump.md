@@ -91,3 +91,29 @@ A policy-approved revision reaches a human three more times before any code is w
 - **This does not make signals become work.** The producer here is mechanical because a
   cascade-refused bump *is* its own work statement. Signals needing diagnosis remain unserved, and
   that gap is unchanged by this decision.
+
+## Amendment 1 — 2026-10-28 (bridge layer Part 3)
+
+**Status:** Accepted (Devon's decisions in `docs/superpowers/specs/2026-10-27-bridge-layer-design.md`,
+Part 3).
+
+**The producer creates the standing package.** A failed Dependabot bump in an inert repository that
+the SDS member record grants `dependency_updates`, with no standing package for its dependency, gets
+one: `bump_proposer` runs intent-packages' `create-standing` (a draft at revision 1 already carrying
+the bump), then the same transition, policy approval, hash, commit, publish and proposal as a
+revision. The package's `standing: true` is still the author's statement; `create-standing` is that
+author. Consequence 2 above ("authored once, per repository and ecosystem") is now done by the
+producer for npm, pip and uv.
+
+**Merging is in scope.** A created package carries no `human_review` criterion and no "merging is
+left for a person" text, so the factory's landing lane may merge the unit's pull request. Its reach
+stays `[source_repository]`.
+
+**What a person still decides.** "What still gates the lane" item 1 changes: change-manager's work
+policy approves a conforming record (ADR-0025 amendment 1), and a person approves every other one.
+The producer alerts, rather than creates, for a bump it cannot route: an ecosystem with no tooling
+profile, a pip requirement range (pip's mutation rewrites `==` lines only), a dependency already
+covered by a package in another ecosystem (discovery holds one package per repository and
+dependency), and every docker bump. Each holds one alert-hub alert, sender `sds-bridge`, keyed
+`dependency-bump:<repository>:<ecosystem>:<dependency>`, until its pull request merges or closes.
+Repositories that deploy on landing stay out of the lane until holds ship (Part 4).

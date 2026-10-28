@@ -6,13 +6,18 @@ factory. ADR-0026 built the record and the carry. ADR-0028 made the package a st
 revised per bump. Nothing produced the record, so the lane held zero of them. This is that
 producer:
 
-    Dependabot opens a major bump
-      -> the declared landing rule does not cover it
-      -> HERE: FILE THE OBSERVATION stating the bump, then revise the standing package,
-         approve the revision by policy, publish the commit that carries it (ADR-0033),
-         propose a record naming that observation as its cause
-      -> a human approves the record in change-manager
+    Dependabot opens a bump and its required checks fail
+      -> the declared landing rule does not land it
+      -> HERE: FILE THE OBSERVATION stating the bump, then revise the standing package (or,
+         since bridge Part 3, create it), approve the revision by policy, publish the commit
+         that carries it (ADR-0033), propose a record naming that observation as its cause
+      -> change-manager's work policy approves a conforming record (ADR-0025 amendment 1);
+         a person approves any other
       -> the carry registers an intake -> decomposition -> envelope -> dispatch
+
+A bump it cannot route -- no tooling for the ecosystem, a pip requirement range, a dependency a
+package in another ecosystem already covers, every docker bump -- holds one alert-hub alert open
+instead (`bump_proposer.alerts`).
 
 **WHY THIS PRODUCER IS MECHANICAL AND OTHERS ARE NOT.** A cascade-refused bump IS its own work
 statement: the title states the delta, and ADR-0016 already decided that such bumps go to the
@@ -36,11 +41,13 @@ refuses every status-moving route, and this program's own change-manager client 
 two-path surface. Its SECOND client is narrower still: the orchestrator one names exactly one
 route, the observation ingest, and the credential behind it can neither transition a unit nor
 create work.
-The human decision ADR-0028 keeps is the record, and this producer is on the other side of it.
+Whoever approves the record -- change-manager's work policy or a person -- this producer is on
+the other side of that decision.
 
 **ITS POPULATION IS THE MEMBER RECORD'S GRANT.** A repository is considered when the member record
-grants it `dependency_updates` and a standing package targets it. The record is read once, before
-anything else, as the observer; an unreadable one is exit 2, never a smaller population.
+grants it `dependency_updates` and the landing policy declares it inert or a standing package
+targets it. The record is read once, before anything else, as the observer; an unreadable one is
+exit 2, never a smaller population.
 
 **A REPEAT PASS IS A REPLAY, in both halves.** A standing package whose tip revision already
 carries this bump is not revised again; change-manager answers 200 for an identical proposal.
@@ -57,6 +64,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final, NamedTuple
 
+from bump_proposer import alerts
 from bump_proposer.change_manager import (
     DEFAULT_BASE_URL,
     ChangeManagerClient,
@@ -78,16 +86,20 @@ from bump_proposer.orchestrator_client import (
 )
 from bump_proposer.standing import (
     PACKAGES_REPOSITORY,
+    TOOLING,
     StandingError,
     StandingPackage,
     advance,
     checkout_root,
     commit,
+    create,
     discover,
+    other_ecosystem,
     require_clean,
     require_publishable,
     snapshot_hash,
 )
+from bump_proposer.titles import range_bump_of
 from landing_ledger.audit import REFUSING_CONCLUSIONS, is_green
 from landing_ledger.github import (
     UPSTREAM_AUTHOR,
@@ -119,7 +131,12 @@ RISK: Final = "caution"
 #
 # `tests/bump_proposer/test_pass.py` holds it to what `_proposal` actually returns, so the
 # declaration cannot drift from the payload it describes.
-PROPOSAL_FIELDS: Final = (
+#
+# Two parts. `WORK_RECORD_FIELDS` is what every standing-package producer sends (the rotation
+# proposer sends exactly these). The bump proposer adds the two change-manager's work policy reads
+# to approve a standing dependency-update record (bridge Part 3, Rulings 1-2) -- neither is an
+# asserted field there, so adding them to a pending record's replay changes no stored payload.
+WORK_RECORD_FIELDS: Final = (
     "package_id",
     "package_revision",
     "package_source_repository",
@@ -128,6 +145,8 @@ PROPOSAL_FIELDS: Final = (
     "actor",
     "originating_observation_id",
 )
+PROPOSAL_FIELDS: Final = (*WORK_RECORD_FIELDS, "target_repository", "change_class")
+CHANGE_CLASS: Final = "dependency-update"
 
 # How long a concluded failure must stand before this producer reads it as the cascade's answer.
 #
@@ -147,15 +166,11 @@ FAILURE_SETTLE_SECONDS: Final = 3600
 
 # What makes a pass a FINDING rather than a clean run.
 #
-# `unclassifiable` and `unlaned` are deliberately ABSENT. A requirement-range bump states no
-# single delta -- the estate has already ruled that a refusal nothing can ever clear is an
-# exception rather than a finding, and the control that reports it forever stops being read.
-# NOTE WHY it cannot be cleared, because that reason changed on 2026-08-28 and the outcome did
-# not: the cascade now PERMITS a range (ADR-0034), so it is no longer refused there -- but a
-# revision of a standing package carries two versions, and a range names none, so this producer
-# still cannot describe one. `unlaned` is the same shape one level up: a bump for a dependency
-# nobody has authored a standing package for is outside this lane by construction, and authoring
-# one is the act that changes it.
+# `unclassifiable` is deliberately ABSENT. A title with no single delta (a multi-clause range, a
+# grouped bump) is a refusal nothing can ever clear, which the estate rules an exception rather
+# than a finding: the control that reports it forever stops being read. So are `would-create`,
+# `created`, `would-alert` and `alerted` (bridge Part 3): a created package and an alert held open
+# are this lane's ordinary output, and the alert is what tells a person.
 FINDING_STATUSES: Final = frozenset(
     {
         "error",
@@ -222,13 +237,52 @@ def _refused_by_the_checks(pending: PendingUpdate, now: datetime) -> bool:
     return any(check.conclusion in REFUSING_CONCLUSIONS for check in pending.checks)
 
 
+@dataclass(frozen=True)
+class Route:
+    """What this pass does with one open pull request.
+
+    `act` revises `package` (or, when it is None, creates one for `tooling`) to carry `bump`;
+    `alert` holds `key` open in alert-hub; `skip` and `ambiguous` only report `detail`.
+    """
+
+    action: str
+    detail: str
+    bump: Bump | None = None
+    package: StandingPackage | None = None
+    tooling: str = ""
+    key: str = ""
+
+
+def _alert(pending: PendingUpdate, ecosystem: str, dependency: str, why: str) -> Route:
+    return Route(
+        "alert",
+        f"{why}; a person decides it",
+        key=alerts.key_for(pending.repository, ecosystem, dependency),
+    )
+
+
 def _consider(
     pending: PendingUpdate,
     rule: InertLanding,
     packages: dict[tuple[str, str], StandingPackage],
     now: datetime,
-) -> tuple[StandingPackage, Bump, str] | tuple[None, None, str]:
+) -> Route:
     """Decide what this open pull request is, or say why it is nothing to do here."""
+    update = pending.update
+    if update is not None and update.ecosystem is not None and update.ecosystem not in TOOLING:
+        # NO TOOLING (bridge Part 3). The factory has no profile for this ecosystem, so a bump the
+        # cascade will not land has no route but a person -- asked before the title is read,
+        # because an alert needs no versions and a docker tag rarely parses as one (Ruling 6:
+        # docker is excluded from the cascade, so every docker bump, passing or not, is here).
+        if rule.permits(update.ecosystem) and not _refused_by_the_checks(pending, now):
+            return Route("skip", _landing_detail(pending, update.ecosystem))
+        return _alert(
+            pending,
+            update.ecosystem,
+            update.dependency,
+            f"the factory has no tooling for {update.ecosystem} bumps of {update.dependency}",
+        )
+
     bump = bump_of(pending.title)
     declared_by_title = bump.declared if bump is not None else None
     declared_by_bot = pending.update.update_type if pending.update is not None else None
@@ -240,18 +294,23 @@ def _consider(
         # and the trailer go stale). When they disagree, the pull request either states a delta
         # the gate did not see or the reverse, and one of those two directions means the gate
         # is about to merge something this producer is proposing as work.
-        return (
-            None,
-            None,
+        return Route(
+            "ambiguous",
             (
                 f"ambiguous: the title declares {declared_by_title or 'no delta'} and the "
                 f"update trailer declares {declared_by_bot or 'no delta'}"
             ),
         )
+    ranged = False
     if bump is None:
-        return None, None, "unclassifiable: the title states no single version delta"
+        # A single-clause requirement range (Ruling 7), parsed only once title and trailer have
+        # agreed there is no plain delta: the bot declares no update type for a range.
+        bump = range_bump_of(pending.title)
+        ranged = True
+    if bump is None:
+        return Route("skip", "unclassifiable: the title states no single version delta")
 
-    assert pending.update is not None  # implied by declared_by_bot == declared_by_title != None
+    assert pending.update is not None  # a parsed title with no trailer is ambiguous above
     ecosystem = pending.update.ecosystem
     # PERMITTED IS NOT THE SAME QUESTION AS LANDED, and it stopped being a usable proxy for it on
     # 2026-08-28. While the rule was a cascade over update types, "the estate permits this" and
@@ -265,19 +324,54 @@ def _consider(
     # move -- and `permits` no longer takes the update type, because the declaration states no
     # condition on one and passing it an argument it ignores would describe a rule nobody holds.
     if rule.permits(ecosystem) and not _refused_by_the_checks(pending, now):
-        answer = "have passed" if is_green(pending) else "have not concluded against it"
-        return (
-            None,
-            None,
-            f"the landing policy permits a {bump.kind} of a {ecosystem} dependency "
-            f"and its checks {answer}",
-        )
+        return Route("skip", _landing_detail(pending, ecosystem, bump))
+    if ecosystem is None:
+        return Route("skip", "unroutable: the branch names no ecosystem")
 
-    key = (pending.repository.lower(), pending.update.dependency)
-    package = packages.get(key)
-    if package is None:
-        return None, None, f"unlaned: no standing package covers {pending.update.dependency}"
-    return package, bump, f"{pending.update.dependency} {bump.from_version} to {bump.to_version}"
+    return _route(pending, bump, TOOLING[ecosystem], ranged=ranged, packages=packages)
+
+
+def _route(
+    pending: PendingUpdate,
+    bump: Bump,
+    tooling: str,
+    *,
+    ranged: bool,
+    packages: dict[tuple[str, str], StandingPackage],
+) -> Route:
+    """Where a failed bump with tooling goes: its package, a new package, or an alert."""
+    assert pending.update is not None
+    dependency = pending.update.dependency
+    if ranged and tooling == "pip":
+        # Review focus 5: pip's mutation command rewrites `==` lines only, so a package for a
+        # range would carry a mutation that cannot apply.
+        return _alert(pending, tooling, dependency, f"a pip requirement range of {dependency}")
+    package = packages.get((pending.repository.lower(), dependency))
+    if package is not None:
+        other = other_ecosystem(package, tooling)
+        if other is not None:
+            # Review focus 2: discovery keys on (repository, dependency) and refuses a duplicate,
+            # so a second package for this pair would stop every later pass.
+            return _alert(
+                pending,
+                tooling,
+                dependency,
+                f"{dependency} is already covered by {package.package_id} ({other}), and one "
+                f"standing package per dependency is all discovery can hold",
+            )
+    return Route(
+        "act",
+        f"{dependency} {bump.from_version} to {bump.to_version}",
+        bump=bump,
+        package=package,
+        tooling=tooling,
+    )
+
+
+def _landing_detail(pending: PendingUpdate, ecosystem: str | None, bump: Bump | None = None) -> str:
+    answer = "have passed" if is_green(pending) else "have not concluded against it"
+    what = f"a {bump.kind}" if bump is not None else "a bump"
+    return f"the landing policy permits {what} of a {ecosystem} dependency and its checks {answer}"
 
 
 def _reasoning(package: StandingPackage, bump: Bump, pending: PendingUpdate) -> str:
@@ -327,6 +421,8 @@ def _proposal(
         "reasoning": _reasoning(package, bump, pending),
         "actor": ACTOR,
         "originating_observation_id": observation_id,
+        "target_repository": package.target_repository,
+        "change_class": CHANGE_CLASS,
     }
 
 
@@ -362,16 +458,29 @@ def _superseded(records: list[dict[str, Any]], package: StandingPackage) -> list
 
 
 def _act(
-    package: StandingPackage,
-    bump: Bump,
+    route: Route,
     pending: PendingUpdate,
+    packages: dict[tuple[str, str], StandingPackage],
     client: ChangeManagerClient | None,
     observer: OrchestratorClient | None,
     records: list[dict[str, Any]],
     root: Path,
 ) -> list[Outcome]:
     subject = pending.repository
+    bump, package = route.bump, route.package
+    assert bump is not None and pending.update is not None  # an `act` route carries its bump
+    dependency = pending.update.dependency
     if client is None:
+        if package is None:
+            return [
+                Outcome(
+                    subject,
+                    pending.number,
+                    "would-create",
+                    f"a {route.tooling} standing package for {dependency}: "
+                    f"{bump.from_version} to {bump.to_version}",
+                )
+            ]
         state = "would-replay" if package.carries(bump) and package.approved else "would-advance"
         return [
             Outcome(
@@ -397,7 +506,17 @@ def _act(
         )
     observation_id = observer.record_observation(bump_observation(pending, bump))
 
+    outcomes: list[Outcome] = []
     published: str | None = None
+    if package is None:
+        # Bridge Part 3. No standing package covers this dependency, so this pass creates one
+        # carrying the bump -- after the observation, like every other mint, and behind the same
+        # publish guard. Remembered at once, so a second pull request for the same dependency in
+        # this pass finds it rather than creating it again.
+        require_publishable(root)
+        package = create(root, subject, route.tooling, dependency, bump)
+        packages[(subject.lower(), dependency)] = package
+        outcomes.append(Outcome(subject, pending.number, "created", package.package_id))
     if not (package.carries(bump) and package.approved):
         # ASKED AGAIN, PER UNIT, and not only once at the top of the pass. A refused publish is
         # caught per pull request and the pass goes on, so the residue this pass just created
@@ -422,7 +541,7 @@ def _act(
     )
     if published is not None:
         detail = f"{detail} published {published[:12]}"
-    outcomes = [Outcome(subject, pending.number, "proposed" if created else "replayed", detail)]
+    outcomes.append(Outcome(subject, pending.number, "proposed" if created else "replayed", detail))
     outcomes.extend(_superseded(records, package))
     return outcomes
 
@@ -437,6 +556,7 @@ def _repository_pass(
     records: list[dict[str, Any]],
     root: Path,
     now: datetime,
+    firing: dict[str, alerts.Alert],
 ) -> list[Outcome]:
     if not rule.declares(repository):
         # THE SUCCESSOR TO `no-cascade`, and the same fact asked of the holder rather than of a
@@ -467,13 +587,24 @@ def _repository_pass(
 
     outcomes: list[Outcome] = []
     for pending in sorted(pending_updates, key=lambda p: p.number):
-        package, bump, detail = _consider(pending, rule, packages, now)
-        if package is None or bump is None:
-            status = "ambiguous" if detail.startswith("ambiguous") else "skipped"
-            outcomes.append(Outcome(repository, pending.number, status, detail))
+        route = _consider(pending, rule, packages, now)
+        if route.action == "alert":
+            # Collected, and sent once the whole pass is read (`alerts.sync`): which keys stop
+            # firing is only known then. A dry run sends nothing.
+            firing[route.key] = alerts.alert_for(
+                repository, pending.number, pending.title, route.detail
+            )
+            status = "alerted" if client is not None else "would-alert"
+            outcomes.append(
+                Outcome(repository, pending.number, status, f"{route.key}: {route.detail}")
+            )
+            continue
+        if route.action != "act":
+            status = "ambiguous" if route.action == "ambiguous" else "skipped"
+            outcomes.append(Outcome(repository, pending.number, status, route.detail))
             continue
         try:
-            outcomes.extend(_act(package, bump, pending, client, observer, records, root))
+            outcomes.extend(_act(route, pending, packages, client, observer, records, root))
         except (ObservationUncomposable, ObservationWriteError) as error:
             # ONE STATUS FOR BOTH, because the consequence is identical and it is the consequence
             # a reader acts on: this bump has no cause on record, so nothing was proposed for it.
@@ -490,21 +621,27 @@ def _repository_pass(
 
 
 def _lane(
-    root: Path, *, submit: bool, requested: list[str] | None, members: list[Member]
+    root: Path,
+    *,
+    submit: bool,
+    requested: list[str] | None,
+    members: list[Member],
+    rule: InertLanding,
 ) -> tuple[dict[tuple[str, str], StandingPackage], list[str]] | None:
-    """The standing packages and the repositories they cover, or None when there is no lane.
+    """The standing packages and the repositories this pass reads, or None when there is no lane.
 
-    **SCOPE IS THE MEMBER RECORD'S GRANT, CARRIED BY A STANDING PACKAGE.** A repository is in this
-    lane when the record grants it `dependency_updates` AND somebody authored a standing package
-    targeting it; neither alone is enough, because the grant says the estate wants the service and
-    the package is what the service revises. Repositories are compared case-folded, the record
-    holding GitHub's spelling and a package whatever its author typed.
+    **SCOPE IS THE MEMBER RECORD'S GRANT.** A repository is in this lane when the record grants it
+    `dependency_updates` and either the landing policy declares it inert (bridge Part 3: a failed
+    bump there gets a standing package created) or a standing package already targets it (which
+    `_repository_pass` reports `not-declared-inert` when the declaration doesn't name it).
+    Repositories are compared case-folded, the record holding GitHub's spelling and a package
+    whatever its author typed.
 
-    The two ways to fall short are told apart and neither is a finding. A granted repository with
-    no package is `[NO PACKAGE]`: until packages exist for the granted estate it would alert daily,
+    The two ways to fall short are told apart and neither is a finding. A granted repository that
+    is neither is `[NO PACKAGE]`: Part 3 creates packages for inert repositories only (Ruling 1),
     and the grant is not a defect. A package for an ungranted repository is `[NOT GRANTED]`: it is
-    not acted on, and `membership_check` already reports it. Naming such a repository with
-    `--repository` is a refusal, not a smaller run.
+    not acted on, and `membership_check` already reports it. Naming either with `--repository` is
+    a refusal, not a smaller run.
     """
     try:
         packages = discover(root)
@@ -520,32 +657,47 @@ def _lane(
         print(str(error), file=sys.stderr)
         return None
 
-    authored = {package.target_repository for package in packages.values()}
+    authored = {package.target_repository.lower() for package in packages.values()}
     spelling = {name.lower(): name for name in granted_repositories(members, "dependency_updates")}
-    granted = set(spelling)
-    for name in sorted(granted - {name.lower() for name in authored}):
-        name = spelling[name]
-        print(f"[NO PACKAGE] {name} is granted dependency_updates; no standing package targets it")
-    for name in sorted(authored, key=str.lower):
-        if name.lower() not in granted:
-            print(f"[NOT GRANTED] {name} has a standing package; the record does not grant it")
-    scope = sorted(name for name in authored if name.lower() in granted)
+    in_lane = {name for name in spelling if name in authored or rule.declares(name)}
+    for name in sorted(set(spelling) - in_lane):
+        print(
+            f"[NO PACKAGE] {spelling[name]} is granted dependency_updates; no standing package "
+            "targets it and the landing policy does not declare it inert"
+        )
+    for package in sorted(packages.values(), key=lambda p: p.target_repository.lower()):
+        if package.target_repository.lower() not in spelling:
+            print(
+                f"[NOT GRANTED] {package.target_repository} has a standing package; "
+                "the record does not grant it"
+            )
+    # A package's spelling wins where there is one, as before Part 3: it is what the package's
+    # records and commits name.
+    named = spelling | {
+        package.target_repository.lower(): package.target_repository
+        for package in packages.values()
+    }
+    scope = sorted(named[name] for name in in_lane)
     if requested:
         wanted = {name.lower() for name in requested}
-        unknown = wanted - {name.lower() for name in authored}
-        if unknown:
-            print(f"no standing package targets {sorted(unknown)}", file=sys.stderr)
-            return None
-        ungranted = wanted - granted
+        ungranted = wanted - set(spelling)
         if ungranted:
             print(
                 f"the member record does not grant dependency_updates to {sorted(ungranted)}",
                 file=sys.stderr,
             )
             return None
+        unknown = wanted - in_lane
+        if unknown:
+            print(
+                f"no standing package targets {sorted(unknown)} and the landing policy does not "
+                "declare it inert",
+                file=sys.stderr,
+            )
+            return None
         scope = [name for name in scope if name.lower() in wanted]
     if not scope:
-        print("no granted repository has a standing package; nothing in this lane", file=sys.stderr)
+        print("no granted repository is in this lane; nothing to do", file=sys.stderr)
         return None
     return packages, scope
 
@@ -593,7 +745,7 @@ def _report(outcomes: list[Outcome], rule: InertLanding) -> int:
         subject = f"{outcome.repository}#{outcome.number or '-'}"
         print(f"{subject}  {outcome.status:<19} {outcome.detail}")
     findings = [o for o in outcomes if o.status in FINDING_STATUSES]
-    proposed = [o for o in outcomes if o.status in {"proposed", "would-advance"}]
+    proposed = [o for o in outcomes if o.status in {"proposed", "would-advance", "would-create"}]
     print(
         f"\n{len(outcomes)} considered, {len(proposed)} to propose, {len(findings)} findings "
         f"(landing policy version {rule.version})"
@@ -617,6 +769,7 @@ class _Credentials(NamedTuple):
     orchestrator_url: str
     orchestrator_key_id: str
     orchestrator_token: str
+    alert_token: str
 
 
 def _credentials(*, submit: bool) -> _Credentials | None:
@@ -655,6 +808,8 @@ def _credentials(*, submit: bool) -> _Credentials | None:
     # sets this; the guard is for the shell that did not.
     OBSERVER_KEY_ID: Final = "orchestrator-observer"
     observer_token = os.environ.get("ORCHESTRATOR_API_TOKEN", "")
+    # Bridge Part 3: the `sds-bridge` sender's alert-hub token. Only a writing pass sends.
+    alert_token = os.environ.get("SDS_BRIDGE_ALERT_TOKEN", "")
 
     missing = ""
     if not github:
@@ -675,11 +830,22 @@ def _credentials(*, submit: bool) -> _Credentials | None:
             f"{OBSERVER_KEY_ID!r}; this producer files observations as the observer and "
             "attribution cannot be corrected once written"
         )
+    elif submit and not alert_token:
+        # Refused before anything is minted, like the observer: a pass that could not tell a
+        # person about a bump it can't route would leave that bump silent.
+        missing = "SDS_BRIDGE_ALERT_TOKEN is unset; --submit needs it to send alerts"
     if missing:
         print(missing, file=sys.stderr)
         return None
     return _Credentials(
-        github, change_manager, read, url, observer_url, observer_key_id, observer_token
+        github,
+        change_manager,
+        read,
+        url,
+        observer_url,
+        observer_key_id,
+        observer_token,
+        alert_token,
     )
 
 
@@ -719,6 +885,7 @@ def run(argv: list[str] | None = None) -> int:
         orchestrator_url,
         orchestrator_key_id,
         orchestrator_token,
+        alert_token,
     ) = resolved_credentials
 
     rule = _declared_rule(read_token, base_url=cm_url or DEFAULT_BASE_URL)
@@ -726,7 +893,9 @@ def run(argv: list[str] | None = None) -> int:
         return EXIT_UNUSABLE
 
     root = checkout_root()
-    resolved = _lane(root, submit=args.submit, requested=args.repository, members=members)
+    resolved = _lane(
+        root, submit=args.submit, requested=args.repository, members=members, rule=rule
+    )
     if resolved is None:
         return EXIT_UNUSABLE
     packages, scope = resolved
@@ -734,6 +903,7 @@ def run(argv: list[str] | None = None) -> int:
     client = None
     observer = None
     outcomes: list[Outcome] = []
+    firing: dict[str, alerts.Alert] = {}
     now = datetime.now(UTC)
     try:
         if args.submit:
@@ -748,7 +918,16 @@ def run(argv: list[str] | None = None) -> int:
             for repository in scope:
                 outcomes.extend(
                     _repository_pass(
-                        reader, repository, rule, packages, client, observer, records, root, now
+                        reader,
+                        repository,
+                        rule,
+                        packages,
+                        client,
+                        observer,
+                        records,
+                        root,
+                        now,
+                        firing,
                     )
                 )
     except (UnusableEndpointError, ObservationCredentialError, ChangeManagerError) as error:
@@ -765,7 +944,27 @@ def run(argv: list[str] | None = None) -> int:
         if observer is not None:
             observer.close()
 
+    outcomes.extend(
+        _send_alerts(alert_token, firing, outcomes, args.repository, submit=args.submit)
+    )
     return _report(outcomes, rule)
+
+
+def _send_alerts(
+    token: str,
+    firing: dict[str, alerts.Alert],
+    outcomes: list[Outcome],
+    requested: list[str] | None,
+    *,
+    submit: bool,
+) -> list[Outcome]:
+    """Send the pass's alerts once every repository is read; a failure is a finding. A dry run
+    sends nothing and writes no state file."""
+    if not submit:
+        return []
+    unreadable = {o.repository for o in outcomes if o.status == "unreadable"}
+    failure = alerts.sync(token, firing, unreadable=unreadable, requested=requested)
+    return [] if failure is None else [Outcome("alert-hub", 0, "error", failure)]
 
 
 def main() -> None:

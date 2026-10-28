@@ -238,3 +238,20 @@ def test_alert_key_accepts_a_lone_surrogate() -> None:
     key = alert_key("p", "\ud800")
     assert KEY_GRAMMAR.fullmatch(key)
     assert key == alert_key("p", "\ud800")
+
+
+def test_remembered_lists_the_keys_the_state_file_holds(tmp_path: Path) -> None:
+    hub = Hub()
+    alerts = hub.alerts(tmp_path / "s.json")
+    assert alerts.remembered() == set()
+    alerts.sync({"k:a": A, "k:b": A})
+    assert alerts.remembered() == {"k:a", "k:b"}
+
+
+def test_the_dependency_bump_key_follows_ruling_5() -> None:
+    from alert_hub_client import dependency_bump_key, dependency_bump_prefix
+
+    key = dependency_bump_key("AlobarQuest/Infraops-MCP-Server", "npm", "@types/node")
+    assert key == "dependency-bump:alobarquest/infraops-mcp-server:npm:_40types/node"
+    assert key.startswith(dependency_bump_prefix("alobarquest/infraops-mcp-server"))
+    assert not key.startswith(dependency_bump_prefix("alobarquest/infraops-mcp"))

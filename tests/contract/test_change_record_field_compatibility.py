@@ -58,6 +58,8 @@ class WorkChangeIn(BaseModel):
     actor: str
     note: str | None = None
     originating_observation_id: str | None = None
+    target_repository: str | None = None
+    change_class: str | None = None
 """
 
 # A stand-in for the row serializer and the listing route that hands it the rows.

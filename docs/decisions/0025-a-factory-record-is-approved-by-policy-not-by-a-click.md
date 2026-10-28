@@ -89,3 +89,29 @@ the abstract.
 - **The estate lander is unaffected.** It asks only about `approved` records
   (`_ASK_ABOUT = {"approved"}`), so factory records entering that state join the same nightly
   report as any other, with the same suppression rules.
+
+## Amendment 1 — 2026-10-28 (bridge layer Part 3)
+
+**Status:** Accepted (Devon's decisions in `docs/superpowers/specs/2026-10-27-bridge-layer-design.md`,
+Part 3; Rulings 1-2 of `docs/superpowers/plans/2026-10-28-bridge-p3-automatic-bumps.md`).
+
+Policy approval reaches the `work` pipeline, for one shape of record only. change-manager approves a
+`work` record by its work policy, as actor `work-policy`, when the record is a standing
+dependency-update package: `change_class` `dependency-update`, `package_source_repository`
+`AlobarQuest/intent-packages`, risk `caution`, and a `target_repository` on change-manager's own
+inert list. Every other `work` record (a rotation, an app change, a deploying repository, a record
+missing either field) stays pending for a person.
+
+- **Inert repositories only (Ruling 1).** No repository whose default-branch landing redeploys is
+  reached; that waits for holds (Part 4).
+- **Keyed on the inert list, not the grant (Ruling 2).** change-manager can't read the SDS member
+  record. Every inert repository is granted `dependency_updates` today, and dispatch admission checks
+  the grant again, so a record for a repository whose grant was withdrawn is approved and then
+  refused at admission.
+- **The source-level property is unchanged.** `work` is not added to the sources approved wholesale:
+  a source-wide policy would make rotation and app-change records unapprovable by anyone. The policy
+  is per record.
+
+The producer is `bump_proposer`, which sends `target_repository` and `change_class` on every
+proposal. Neither field is asserted, so a replay that adds them to an earlier pending record changes
+no stored payload and lets the policy approve it.

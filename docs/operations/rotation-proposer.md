@@ -70,7 +70,7 @@ For a due credential whose package is `rotation-<credential_id>`:
      comparison (`src/rotation_worker/compare.py`).
 4. **The next pass.** File the observation again. It replays and returns the same id. Then propose
    the `work` record with the propose-scoped bearer. The record names the approved revision and
-   that observation, with `bump_proposer`'s asserted fields (`PROPOSAL_FIELDS`). Later passes
+   that observation, with `bump_proposer`'s asserted fields (`WORK_RECORD_FIELDS`). Later passes
    replay it.
 5. **The pass after the rotation completes.** The work watcher retires the record once every unit
    it caused has completed: `resolved`, decided by `work-watcher`. Seeing that, the pass runs

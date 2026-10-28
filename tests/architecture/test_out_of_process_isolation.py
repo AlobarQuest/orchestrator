@@ -119,6 +119,8 @@ TABLE: dict[str, Row] = {
     # registry -- which now comes from change-manager.
     "bump_proposer": _row(
         "__future__",
+        # Bridge Part 3: one alert per bump it cannot route, through the shared client.
+        "alert_hub_client",
         "argparse",
         # ADR-0033. `_run` takes a `Sequence[str]` so it accepts the split of the publish
         # command's literal spelling, which `list`'s invariance refuses.
