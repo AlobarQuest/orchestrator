@@ -419,6 +419,15 @@ TABLE: dict[str, Row] = {
         "subprocess",
         "sys",
         "typing",
+        # ADR-0055 amendment 15, increment 4: a generated package's `created_at`, the rendered
+        # package handed to intent-packages' `create-rotation` through a temporary file, and a
+        # package's destination list read back.
+        "datetime",
+        "tempfile",
+        "yaml",
+        # The registry, the derived plan and each type's declaration, never a provider: the
+        # generator imports `rotation_worker.types`, which names no network client.
+        "rotation_worker",
     ),
     # The fork onboarding tool. Operator-run, never scheduled. It reuses two sibling readers rather
     # than writing third copies (`revision_watcher`'s App Brain landing reader, and
@@ -582,6 +591,11 @@ TABLE: dict[str, Row] = {
         # The member record is the scope authority; the carrier reads it through that library.
         "re",
         "sds_members",
+        # ADR-0055 amendment 15, increment 4: a standing rotation package opts in through its
+        # credential's registry row, read with the executor's registry reader, as the membership
+        # check reads it; `collections` is its `Mapping`.
+        "rotation_worker",
+        "collections",
         "subprocess",
         "sys",
         # The capability source's age report.

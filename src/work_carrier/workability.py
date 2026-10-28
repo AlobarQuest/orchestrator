@@ -72,10 +72,11 @@ QUESTIONS (ADR-0054 increment 2).** A `non-software-operational` package -- a
 credential rotation, one standing package per credential -- names no repository,
 because there is none: an HQ session works its units, and no runner ever does.
 The three repository questions have nothing to be asked of, so for this profile
-they are replaced, and each answers YES or NO, never UNKNOWN: the package
-declares itself STANDING (`profile_fields.standing is True`), its id is on
-`STANDING_OPERATIONAL_PACKAGES` (the opt-in, held here because there is no
-repository to hold a member-record grant), and its declared `reach` lies
+they are replaced, and each answers YES or NO, except the opt-in when the
+registry can't be read, which is UNKNOWN and holds that record alone: the package
+declares itself STANDING (`profile_fields.standing is True`), its credential
+opts in (its registry row sets `rotated_by_sds` and the member record grants
+`credential_rotation` on the repository holding that row), and its declared `reach` lies
 wholly within `OPERATIONAL_REACH`. All three YES is `OPERATIONAL`, which is
 carried; any NO is `NOT WORKABLE`, a finding. The branch keys on the PROFILE,
 never on the missing repository: a `dependency-update` package that names no
@@ -90,6 +91,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
@@ -115,29 +117,14 @@ PERMISSION_CHECKS = ("factory.pat_access",)
 
 OPERATIONAL_PROFILE = "non-software-operational"
 
-# THE OPT-IN FOR WORK THAT HAS NO REPOSITORY. A repository is granted in the SDS
-# member record; a standing operational package has no repository
-# to hold a grant, so its opt-in is declared HERE, beside the other literals this
-# program holds, and widening it is a reviewed diff to the lane that acts on it --
-# which is what a standing-authority change should cost. Not in intent-packages,
-# because a package that could opt itself in would be no opt-in at all.
-STANDING_OPERATIONAL_PACKAGES = frozenset(
-    {
-        "rotation-openrouter-generic",
-        "rotation-orchestrator-operator-bearer",
-        "rotation-orchestrator-observer-bearer",
-        "rotation-orchestrator-drift-reporter-bearer",
-        "rotation-change-manager-observe-bearer",
-        "rotation-change-manager-read-bearer",
-        "rotation-change-manager-propose-bearer",
-        "rotation-factory-pr-token",
-        "rotation-github-finegrained-mirror",
-        "rotation-bitbucket-mirror-token",
-        "rotation-bws-tok-brain-ops",
-        "rotation-change-manager-full-bearer",
-        "rotation-bws-tok-content-mini",
-    }
-)
+# THE OPT-IN FOR WORK THAT HAS NO REPOSITORY. A standing rotation package names no repository, so
+# no grant on one can carry it. Its credential's registry row is the opt-in instead: the row sets
+# `rotated_by_sds`, and the member record grants `credential_rotation` on the repository whose
+# registry holds the row (ADR-0055 amendment 15, increment 4). Both are reviewed records, and
+# widening either is a reviewed diff or a person's confirmation on /review -- what a
+# standing-authority change should cost. Never in intent-packages: a package that could opt itself
+# in would be no opt-in at all.
+CREDENTIAL_ROTATION: Final = "credential_rotation"
 
 # Mirrored from `orchestrator.reach_vocabulary` (this program imports nothing from the
 # orchestrator); `tests/work_carrier` pins it as a subset of that vocabulary. Every
@@ -478,14 +465,47 @@ def _standing(fields: object) -> Constraint:
     )
 
 
-def _allowlisted(package_id: object) -> Constraint:
-    if isinstance(package_id, str) and package_id in STANDING_OPERATIONAL_PACKAGES:
-        return Constraint("opts in", YES, f"{package_id} is a declared standing package")
+def _opted_in(
+    package_id: object,
+    fields: object,
+    rotated: Mapping[str, str] | None,
+    grants: Mapping[str, frozenset[str]],
+) -> Constraint:
+    credential = fields.get("credential_id") if isinstance(fields, dict) else None
+    if not isinstance(credential, str) or package_id != f"rotation-{credential}":
+        return Constraint(
+            "opts in",
+            NO,
+            f"{package_id!r} is not a standing rotation package named for its credential "
+            f"({credential!r}), the one kind of package with no repository that is carried",
+        )
+    if rotated is None:
+        return Constraint(
+            "opts in",
+            UNKNOWN,
+            "the credential registry couldn't be read this pass, so whether it hands "
+            f"{credential} to the SDS is unknown",
+        )
+    repository = rotated.get(credential)
+    if repository is None:
+        return Constraint(
+            "opts in",
+            NO,
+            f"no registry row hands {credential} to the SDS (rotated_by_sds), which is where a "
+            "credential opts in",
+        )
+    if repository.lower() not in grants.get(CREDENTIAL_ROTATION, frozenset()):
+        return Constraint(
+            "opts in",
+            NO,
+            f"the member record does not grant {CREDENTIAL_ROTATION} on {repository}, whose "
+            f"registry hands {credential} to the SDS",
+        )
     return Constraint(
         "opts in",
-        NO,
-        f"{package_id!r} is not in work_carrier.workability.STANDING_OPERATIONAL_PACKAGES, "
-        "which is where a package with no repository opts in",
+        YES,
+        f"{repository}'s registry hands {credential} to the SDS, and the member record grants "
+        f"{CREDENTIAL_ROTATION} on it",
     )
 
 
@@ -506,15 +526,18 @@ def _reach(snapshot: object) -> Constraint:
     return Constraint("reach", YES, ", ".join(sorted(set(reach))))
 
 
-def assess_operational(payload: dict[str, Any]) -> Workability:
-    """The three operational checks for a standing package. Total, and asks no network."""
+def assess_operational(
+    payload: dict[str, Any],
+    rotated: Mapping[str, str] | None,
+    grants: Mapping[str, frozenset[str]],
+) -> Workability:
+    """The three operational checks for a standing package. Total, and asks no network: the
+    registry rows handed to the SDS (`rotated`, credential to repository; `None` when the
+    registry couldn't be read) and the grants are read by the caller."""
     snapshot = payload.get("enforcement_snapshot")
     fields = snapshot.get("profile_fields") if isinstance(snapshot, dict) else None
-    return Workability(
-        None,
-        (_standing(fields), _allowlisted(payload.get("package_id")), _reach(snapshot)),
-        operational=True,
-    )
+    opted_in = _opted_in(payload.get("package_id"), fields, rotated, grants)
+    return Workability(None, (_standing(fields), opted_in, _reach(snapshot)), operational=True)
 
 
 def target_repository(payload: dict[str, Any]) -> str | None:
@@ -579,6 +602,7 @@ def judge(
     out,
     *,
     grants: dict[str, frozenset[str]],
+    rotated: Mapping[str, str] | None = None,
     portfolio: Portfolio | None = None,
 ) -> tuple[str, ...]:
     """Decide, per subject, whether the carry may proceed -- and say why either way.
@@ -606,7 +630,7 @@ def judge(
     """
     decisions: list[str] = []
     try:
-        _judge(subjects, out, grants, portfolio, decisions)
+        _judge(subjects, out, grants, rotated, portfolio, decisions)
     except Exception as error:  # noqa: BLE001 - see the docstring: it may not raise
         # THE TYPE NAME ONLY: an exception's repr can carry a credential, and this
         # stream is a log file nobody is watching when it is written.
@@ -622,6 +646,7 @@ def _judge(
     subjects: list[tuple[str, dict[str, Any]]],
     out,
     grants: dict[str, frozenset[str]],
+    rotated: Mapping[str, str] | None,
     portfolio: Portfolio | None,
     decisions: list[str],
 ) -> None:
@@ -646,7 +671,7 @@ def _judge(
         # it is what the exit-code argument rests on.
         try:
             if is_operational(payload):
-                verdict = assess_operational(payload)
+                verdict = assess_operational(payload, rotated, grants)
             else:
                 repository = target_repository(payload)
                 profile = payload.get("profile")

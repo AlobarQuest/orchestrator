@@ -20,7 +20,6 @@ import argparse
 import hashlib
 import json
 import logging
-import os
 import re
 import secrets
 import sys
@@ -35,7 +34,7 @@ from rotation_worker.compare import Comparison, report
 from rotation_worker.config import DEFAULT_PATH, Config, ConfigError, load, read_root_token
 from rotation_worker.contract import Rotation
 from rotation_worker.destinations import DestinationError, parse, render
-from rotation_worker.git_mirror import MirrorError, RepoMirror
+from rotation_worker.git_mirror import MirrorError, RepoMirror, default_mirror_root
 from rotation_worker.github_actions import RotationApp
 from rotation_worker.inbox import Inbox
 from rotation_worker.logs import configure
@@ -71,11 +70,6 @@ BWS_TOKEN: Final = re.compile(
 )
 BEARER_BYTES: Final = 48
 LOG = logging.getLogger("rotation_worker")
-
-
-def default_mirror_root() -> Path:
-    cache = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
-    return Path(cache) / "rotation-worker" / "mirrors"
 
 
 def compare_destinations(credential_id: str, mirror: RepoMirror) -> int:

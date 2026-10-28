@@ -14,9 +14,11 @@ from rotation_worker.registry import (
     REGISTRY_PATH,
     REGISTRY_REPOSITORIES,
     RegistryError,
+    credentials,
     find_credential,
     latest_package_destinations,
     package_path,
+    rotated_by_sds,
 )
 from tests.rotation_worker.conftest import Origins
 
@@ -222,3 +224,25 @@ def test_the_entry_point_parses_its_arguments(
 def test_the_default_mirror_root_follows_xdg(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
     assert cli.default_mirror_root() == tmp_path / "rotation-worker" / "mirrors"
+
+
+def test_a_credential_in_two_registries_is_refused_when_all_are_read(
+    origins: Origins, mirror: RepoMirror
+) -> None:
+    row = (
+        '[[credential]]\nid = "twice"\nprovider = "p"\n'
+        'bws_uuid = "11111111-1111-4111-8111-111111111111"\nrotated_by_sds = true\n'
+    )
+    for repository in REGISTRY_REPOSITORIES:
+        origins.commit(
+            repository,
+            {
+                ".cred-consumers.toml": row
+                if "orchestrator" in repository or "change-manager" in repository
+                else ""
+            },
+        )
+    with pytest.raises(RegistryError, match="twice: 2 registry entries"):
+        credentials(mirror)
+    with pytest.raises(RegistryError, match="twice: 2 registry entries"):
+        rotated_by_sds(mirror)

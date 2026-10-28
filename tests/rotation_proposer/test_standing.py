@@ -7,10 +7,12 @@ is asserted by reading the origin rather than by counting calls.
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
 from bump_proposer import standing as shared
 from bump_proposer.standing import StandingError
@@ -31,7 +33,13 @@ profile_fields:
   standing: {standing}
   credential_id: {credential_id}
   occurrence: {occurrence}
-"""
+  destinations:
+{destinations}"""
+# What the registry lists for the default package: the same, so nothing has drifted.
+DESTINATIONS = (
+    'bws-secret uuid="11111111-1111-4111-8111-111111111111"',
+    'provider name="openrouter"',
+)
 
 
 def write_package(
@@ -44,6 +52,7 @@ def write_package(
     profile: str = "non-software-operational",
     standing_flag: str = "true",
     occurrence: str = "'unassigned'",
+    destinations: tuple[str, ...] = DESTINATIONS,
 ) -> Path:
     directory = root / "packages" / (package_id or f"rotation-{credential_id}")
     directory.mkdir(parents=True)
@@ -56,6 +65,7 @@ def write_package(
             standing=standing_flag,
             credential_id=credential_id,
             occurrence=occurrence,
+            destinations="".join(f"  - '{d}'\n" for d in destinations),
         ),
         encoding="utf-8",
     )
@@ -74,6 +84,14 @@ class FakeLifecycle:
         self.calls.append(args)
         if args[0] == "hash":
             return "a" * 64 + "\n"
+        if args[0] == "create-rotation":
+            # intent-packages writes the rendered package as a draft revision 1 and validates it.
+            rendered = json.loads(Path(args[1]).read_text())
+            directory = Path(args[3]) / rendered["package_id"]
+            directory.mkdir(parents=True)
+            (directory / "package.yaml").write_text(yaml.safe_dump(rendered, sort_keys=False))
+            (directory / "lineage.yaml").write_text("current_state: draft\n")
+            return f"{directory}\n"
         path = Path(args[1]) / "package.yaml"
         text = path.read_text()
         status = text.split("status: ")[1].split("\n")[0]
@@ -170,7 +188,7 @@ def test_an_approved_tip_is_revised_written_and_taken_to_review_and_no_further(
     revise (it would rewrite an APPROVED revision in place), and skipping the transition."""
     write_package(tmp_path, occurrence="'2025-01-02-age'")
     package = discover(tmp_path)["openrouter-generic"]
-    result = to_review(package, "2026-10-07-requested", tmp_path)
+    result = to_review(package, "2026-10-07-requested", DESTINATIONS, tmp_path)
     assert [call[0] for call in lifecycle.calls] == ["revise", "transition"]
     assert lifecycle.calls[1][2:] == ("--to", "ready_for_review")
     assert (result.revision, result.state, result.occurrence) == (
@@ -183,7 +201,7 @@ def test_an_approved_tip_is_revised_written_and_taken_to_review_and_no_further(
 def test_a_draft_is_written_over_without_spending_a_revision(tmp_path, lifecycle) -> None:
     write_package(tmp_path, status="draft")
     package = discover(tmp_path)["openrouter-generic"]
-    result = to_review(package, "2025-01-02-age", tmp_path)
+    result = to_review(package, "2025-01-02-age", DESTINATIONS, tmp_path)
     assert [call[0] for call in lifecycle.calls] == ["transition"]
     assert (result.revision, result.occurrence) == (1, "2025-01-02-age")
 
@@ -192,7 +210,7 @@ def test_a_draft_already_carrying_the_occurrence_is_only_transitioned(tmp_path, 
     """The crash between the write and the transition: resumed, not revised again."""
     write_package(tmp_path, status="draft", occurrence="'2025-01-02-age'")
     package = discover(tmp_path)["openrouter-generic"]
-    to_review(package, "2025-01-02-age", tmp_path)
+    to_review(package, "2025-01-02-age", DESTINATIONS, tmp_path)
     assert [call[0] for call in lifecycle.calls] == ["transition"]
 
 
@@ -257,7 +275,9 @@ def test_a_revision_reaches_the_origin_and_the_checkout_stays_publishable(
     origin, checkout = published_checkout
     shared.require_clean(checkout)
     shared.require_publishable(checkout)
-    package = to_review(discover(checkout)["openrouter-generic"], "2026-10-07-requested", checkout)
+    package = to_review(
+        discover(checkout)["openrouter-generic"], "2026-10-07-requested", DESTINATIONS, checkout
+    )
     shared.snapshot_hash(package, checkout)
     sha = commit(package, checkout)
 
@@ -284,7 +304,9 @@ def test_a_refused_publish_names_the_commit_it_stranded(published_checkout, life
     _git(other, "commit", "-q", "-m", "elsewhere")
     _git(other, "push", "-q", "origin", "main")
 
-    package = to_review(discover(checkout)["openrouter-generic"], "2025-01-02-age", checkout)
+    package = to_review(
+        discover(checkout)["openrouter-generic"], "2025-01-02-age", DESTINATIONS, checkout
+    )
     shared.snapshot_hash(package, checkout)
     with pytest.raises(StandingError, match="is committed as [0-9a-f]{12} and unpublished"):
         commit(package, checkout)
@@ -299,3 +321,51 @@ def test_the_push_literal_lives_only_in_the_shared_module() -> None:
     for path in Path("src/rotation_proposer").rglob("*.py"):
         assert shared.PUBLISH_COMMAND not in path.read_text(), path
     assert standing.shared is shared
+
+
+def test_the_registry_s_destinations_replace_the_package_s_and_nothing_else(tmp_path) -> None:
+    directory = write_package(tmp_path)
+    before = (directory / "package.yaml").read_text()
+    package = discover(tmp_path)["openrouter-generic"]
+    standing.write_destinations(package, ['provider name="openrouter"', 'runtime-fetch repo="r"'])
+
+    after = (directory / "package.yaml").read_text()
+    assert after.endswith(
+        "  destinations:\n  - 'provider name=\"openrouter\"'\n  - 'runtime-fetch repo=\"r\"'\n"
+    )
+    assert after.split("  destinations:")[0] == before.split("  destinations:")[0]
+    assert discover(tmp_path)["openrouter-generic"].lists(
+        ['runtime-fetch repo="r"', 'provider name="openrouter"']
+    )
+
+
+def test_a_destination_holding_a_single_quote_is_refused_not_escaped(tmp_path) -> None:
+    write_package(tmp_path)
+    package = discover(tmp_path)["openrouter-generic"]
+    with pytest.raises(StandingError, match="single quote"):
+        standing.write_destinations(package, ['runtime-fetch repo="o\'brien"'])
+
+
+def test_a_package_with_no_destinations_list_is_refused(tmp_path) -> None:
+    directory = write_package(tmp_path)
+    path = directory / "package.yaml"
+    path.write_text(path.read_text().split("  destinations:")[0])
+    package = discover(tmp_path)["openrouter-generic"]
+    with pytest.raises(StandingError, match="expected one destinations list, found 0"):
+        standing.write_destinations(package, ['provider name="openrouter"'])
+
+
+def test_an_item_folded_onto_continuation_lines_is_replaced_whole(tmp_path) -> None:
+    """A generated package is written by a YAML writer that folds a long item onto indented
+    continuation lines; replacing only its first line would leave the rest behind."""
+    directory = write_package(tmp_path)
+    path = directory / "package.yaml"
+    folded = (
+        '  - coolify-env-hash instance="prod" resource_type="application" uuid="eqj5"\n'
+        '    key="ORCHESTRATOR_M2M_CREDENTIALS" entry="orchestrator-observer"\n'
+        '  - provider name="orchestrator"\n'
+    )
+    path.write_text(path.read_text().split("  destinations:\n")[0] + "  destinations:\n" + folded)
+    package = discover(tmp_path)["openrouter-generic"]
+    standing.write_destinations(package, ['provider name="orchestrator"'])
+    assert path.read_text().endswith("  destinations:\n  - 'provider name=\"orchestrator\"'\n")

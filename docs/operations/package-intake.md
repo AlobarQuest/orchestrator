@@ -95,9 +95,12 @@ nothing. `factory-target.toml` is no longer read. A package that names no reposi
 questions, and each answers yes or no:
 
 - `profile_fields.standing` is `true`;
-- its id is in `STANDING_OPERATIONAL_PACKAGES` in `workability.py`. This is the opt-in, because
-  there is no repository to hold a member-record grant. Adding a package is a reviewed change to
-  the carrier;
+- its credential opts in: the package is named `rotation-<credential_id>`, the credential's
+  registry row sets `rotated_by_sds`, and the member record grants `credential_rotation` on the
+  repository whose `.cred-consumers.toml` holds that row (ADR-0055 amendment 15, increment 4).
+  There is no repository to grant the package itself, so the credential's registry row is the
+  opt-in. The carrier reads the registries only when an approved record is such a package; an
+  unreadable registry carries nothing and exits 2;
 - its declared `reach` is non-empty and lies within `external_system`, `operator_machine` and
   `live_estate`.
 
