@@ -436,6 +436,20 @@ def test_an_acting_carrier_fetches_and_exports_the_sender_token(tmp_path: Path) 
     assert any(f"secret get {ALERT_UUID} " in f"{line} " for line in fetches)
 
 
+@pytest.mark.parametrize(
+    ("lane", "args"), [(CARRIER, ("--register",)), (LANES[0], ())], ids=["carrier", "proposer"]
+)
+def test_a_preset_sender_token_is_ignored_and_fetched(
+    tmp_path: Path, lane, args: tuple[str, ...]
+) -> None:
+    """Both launchers fetch the sender token whatever the environment holds; a value left in a
+    shell is never the one sent."""
+    rc, _, output = _run(tmp_path, lane, *args, SDS_BRIDGE_ALERT_TOKEN="preset-stale-value")
+    assert rc == 0, output
+    fetches = (tmp_path / "bws.log").read_text().splitlines()
+    assert any(f"secret get {ALERT_UUID} " in f"{line} " for line in fetches)
+
+
 def test_a_bare_carrier_neither_fetches_nor_exports_the_sender_token(tmp_path: Path) -> None:
     env_log = tmp_path / "env.txt"
     rc, _, output = _run(tmp_path, CARRIER, ENV_LOG=str(env_log))

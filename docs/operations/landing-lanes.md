@@ -374,8 +374,11 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   package in another ecosystem, and every docker bump (only because the inert landing policy
   excludes docker). A key fires once, is kept in
   `~/Library/Application Support/sds/bump-proposer/alerts.json`, and is resolved by the first writing pass that no longer raises it: its pull request merged or closed, or (in an ecosystem the cascade lands) a re-run passed. A re-run that fails again but hasn't settled holds the key, neither resolved nor fired again. A
-  repository the pass didn't read (unreadable, not declared inert, or outside a `--repository`
-  run) keeps its keys. An approval refused after a package was created removes that uncommitted
+  repository still in the lane that the pass didn't read (unreadable, in scope through a standing
+  package but not declared inert, or outside a `--repository` run) keeps its keys; one that left
+  the lane (its `dependency_updates` grant withdrawn, or no longer declared inert with no standing
+  package) has its keys resolved by the next writing pass that reaches its alerts (a pass with no
+  repository in the lane stops first and sends nothing). An approval refused after a package was created removes that uncommitted
   package directory, so the next pass's clean-checkout check still passes. A dry run sends nothing and writes no state.
   `--submit` refuses to start without `SDS_BRIDGE_ALERT_TOKEN`, which the launcher fetches from
   `SDS Operator` with the narrow identity on every run.

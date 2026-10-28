@@ -8,9 +8,13 @@ longer raises it: its pull request has merged or closed, or (for an ecosystem th
 a re-run passed. A re-run failing again but not yet settled holds the key (`Raised.held`), so it
 neither resolves nor fires twice.
 
-A key is never resolved for a repository this pass did not read: one GitHub could not answer, one
-the landing policy doesn't declare inert, or one outside a `--repository`-narrowed run. A dry run
-never reaches this module, so it sends nothing and writes no state file.
+A key is neither resolved nor fired again for a repository still in the lane that this pass did
+not read: one GitHub could not answer, one in scope through a standing package that the landing
+policy doesn't declare inert, or one outside a `--repository`-narrowed run. A repository that has
+left the lane altogether -- its `dependency_updates` grant withdrawn, or no longer declared inert
+with no standing package targeting it -- produces nothing, so a writing pass resolves its keys (a
+pass that stops first, e.g. with no repository left in the lane, sends nothing at all). A dry
+run never reaches this module, so it sends nothing and writes no state file.
 """
 
 from __future__ import annotations
@@ -69,9 +73,10 @@ def sync(
 ) -> str | None:
     """Bring alert-hub in line with `raised`. Answers why it could not, or None.
 
-    `unreadable` are repositories whose pull requests this pass did not read; `requested`, when
-    given, are the only repositories this pass read at all. Every remembered key outside what was
-    read stays as it was.
+    `unreadable` are repositories in the lane whose pull requests this pass did not read;
+    `requested`, when given, are the only repositories this pass read at all. Their keys, and with
+    `requested` every key outside it, stay as they were. Every other remembered key this pass did
+    not raise is resolved, including the keys of a repository that has left the lane.
     """
     directory = state_dir()
     alerts = KeyedAlerts(

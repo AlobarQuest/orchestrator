@@ -200,11 +200,11 @@ fi
 
 # THE SENDER TOKEN, for a pass that will act, with the same narrow identity. Only an acting watcher
 # (`--retire`) sends, so a bare pass neither fetches it nor creates the state directory: it must
-# keep working on a machine that cannot read the `SDS Operator` project.
+# keep working on a machine that cannot read the `SDS Operator` project. Always fetched, never
+# taken from the environment, as `run-bump-proposer.sh` does: a stale value left in a shell would
+# otherwise send under a token BWS no longer holds.
 if [ "$_wants_register" -eq 1 ]; then
-  if [ -z "${SDS_BRIDGE_ALERT_TOKEN:-}" ]; then
-    SDS_BRIDGE_ALERT_TOKEN="$(sds_bws_value "$SDS_BRIDGE_ALERT_UUID" "$SDS_IDENTITY")"
-  fi
+  SDS_BRIDGE_ALERT_TOKEN="$(sds_bws_value "$SDS_BRIDGE_ALERT_UUID" "$SDS_IDENTITY")"
   [ -n "${SDS_BRIDGE_ALERT_TOKEN:-}" ] || sds_outcome_fail \
     "FATAL: could not read the sds-bridge alert sender token from BWS (narrow)"
   export SDS_BRIDGE_ALERT_TOKEN

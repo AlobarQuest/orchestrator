@@ -1014,8 +1014,9 @@ def _send_alerts(
     sends nothing and writes no state file."""
     if not submit:
         return []
-    # Repositories this pass did not read: GitHub could not answer, or the landing policy doesn't
-    # declare them inert. Their remembered keys are neither resolved nor fired again.
+    # Repositories in the lane this pass did not read: GitHub could not answer, or the landing
+    # policy doesn't declare them inert. Their remembered keys are neither resolved nor fired again;
+    # a repository that left the lane has no outcome, so its keys are resolved.
     unread_statuses = {"unreadable", "not-declared-inert"}  # not-a-vocabulary: two local statuses
     unreadable = {o.repository for o in outcomes if o.status in unread_statuses}
     failure = alerts.sync(token, raised, unreadable=unreadable, requested=requested)

@@ -776,7 +776,8 @@ def _commands_recognised(value: object, pattern: KnownGoodPattern) -> bool:
 
 
 def _command(command: str, pattern: KnownGoodPattern) -> bool:
-    """Whether one command is inert and begins with a declared prefix.
+    """Whether one command is inert and is bounded by the pattern: when the pattern declares
+    shapes, the whole command matches one of them; otherwise it begins with a declared prefix.
 
     Both halves are load-bearing and neither is sufficient. A prefix alone bounds only the first
     tokens, and ``uv add x && rm -rf /`` begins with ``uv add``. Inertness alone bounds only the

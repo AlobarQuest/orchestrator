@@ -33,15 +33,18 @@ attempt. A refusal here costs nothing; the same refusal at dispatch wastes the
 design, and at the final push wastes the unit.
 
 **THE REPOSITORY IS THE PACKAGE'S, NOT THE RECORD'S, and getting that wrong makes
-the whole check decorative.** A `work` change record's `target_repository` is
-`None` on every row that exists (measured 2026-09-11, all seven), and its
+the whole check decorative.** A `work` change record's
 `package_source_repository` is `AlobarQuest/intent-packages` for every one --
-hard-coded by the producer, because that is where the packages live. The
-repository the factory would WORK IN is the approved package's own
-`profile_fields.target_repo`, carried into the intake payload's enforcement
-snapshot. Keying on either field the record carries would judge every carry
-against `intent-packages`, which is granted and capable, so the check would pass
-everything forever while looking like a gate.
+hard-coded by the producer, because that is where the packages live -- and its
+`target_repository` is set only by a producer that sends one (a hand-proposed
+record carries none). The repository the factory would WORK IN is the approved
+package's own `profile_fields.target_repo`, carried into the intake payload's
+enforcement snapshot, and that is what is judged here. Keying on
+`package_source_repository` would judge every carry against `intent-packages`,
+which is granted and capable, so the check would pass everything forever while
+looking like a gate. Where the record does name a `target_repository` or a
+`dependency-update` change class -- the fields change-manager's work policy
+approves on -- `prepare` refuses the record unless the package agrees.
 
 **A LOOKUP THAT FAILS IS NOT A REFUSAL.** `portfolio.json` keys projects by
 DIRECTORY NAME while a repository is named `owner/repo`, so the mapping is a

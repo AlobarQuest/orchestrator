@@ -117,5 +117,13 @@ anything but `>=` and `==`), a dependency already covered by a package in anothe
 (discovery holds one package per repository and dependency), and every docker bump. Docker bumps
 alert whether or not they pass only because the inert landing policy excludes docker today; a
 permitted ecosystem's passing bump is the cascade's. Each holds one alert-hub alert, sender
-`sds-bridge`, keyed `dependency-bump:<repository>:<ecosystem>:<dependency>`, resolved by the first writing pass that no longer raises it: its pull request merged or closed, or (in an ecosystem the cascade lands) a re-run passed. A re-run that fails again but hasn't settled holds the key, neither resolved nor fired again.
+`sds-bridge`, keyed `dependency-bump:<repository>:<ecosystem>:<dependency>`, resolved by the first writing pass that no longer raises it: its pull request merged or closed, or (in an ecosystem the cascade lands) a re-run passed. A re-run that fails again but hasn't settled holds the key, neither resolved nor fired again. A repository still in the lane that a pass didn't read (GitHub could not answer, in scope through a standing package but not declared inert, or outside a `--repository` run) keeps its keys; a repository that left the lane (its `dependency_updates` grant withdrawn, or no longer declared inert with no standing package) has its keys resolved by the next writing pass that reaches its alerts (a pass with no repository in the lane stops first and sends nothing).
 Repositories that deploy on landing stay out of the lane until holds ship (Part 4).
+
+**Residual: the envelope's dependency is not bound to the package's.** The known-good command
+shapes bound each command's grammar, not which dependency it names: no shape ties the dependency in
+a unit's mutation command to the package's `profile_fields.package`, so `uv add 'other>=1'` is
+recognised for an envelope generated from an `httpx2` package. Today the human decomposition
+approval covers it, because a person approves the units and their commands. Binding the two (the
+mutation's dependency equal to the package's) is a precondition for graduating decomposition
+approval.

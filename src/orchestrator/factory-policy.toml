@@ -231,7 +231,7 @@ conformance_status = "green"
 # character class, so no argument, source URL or second package can ride along.
 # `uv run` is deliberately absent: it is a way to run any program at all.
 command_shapes = [
-  'uv add( --frozen)?( --dev| --group [A-Za-z0-9_-]+| --optional [A-Za-z0-9_-]+)? \x27[A-Za-z0-9][A-Za-z0-9._-]*>=[0-9A-Za-z][0-9A-Za-z.+!_-]*\x27',
+  'uv add( --frozen)?( --dev| --group [A-Za-z0-9][A-Za-z0-9_-]*| --optional [A-Za-z0-9][A-Za-z0-9_-]*)? \x27[A-Za-z0-9][A-Za-z0-9._-]*>=[0-9A-Za-z][0-9A-Za-z.+!_-]*\x27',
   'uv lock',
   'uv lock --check',
 ]
@@ -287,7 +287,7 @@ max_attempts = 3
 max_llm_calls = 360
 conformance_status = "green"
 command_shapes = [
-  'sed -i \x27s/\^[A-Za-z0-9][A-Za-z0-9._-]*==[0-9A-Za-z][0-9A-Za-z.+!_-]*\$/[A-Za-z0-9][A-Za-z0-9._-]*==[0-9A-Za-z][0-9A-Za-z.+!_-]*/\x27 (requirements|requirements-dev)\.txt',
+  'sed -i \x27s/\^(?P<package>[A-Za-z0-9][A-Za-z0-9._-]*)==[0-9A-Za-z][0-9A-Za-z.+!_-]*\$/(?P=package)==[0-9A-Za-z][0-9A-Za-z.+!_-]*/\x27 (requirements|requirements-dev)\.txt',
   'grep -qx \x27[A-Za-z0-9][A-Za-z0-9._-]*==[0-9A-Za-z][0-9A-Za-z.+!_-]*\x27 (requirements|requirements-dev)\.txt',
 ]
 
