@@ -24,10 +24,15 @@ same checkout: both lanes commit to it, and each refuses to start on the other's
 
 from __future__ import annotations
 
+import json
 import re
+import tempfile
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
+
+import yaml
 
 from bump_proposer import standing as shared
 from bump_proposer.standing import StandingError
@@ -36,6 +41,11 @@ PROFILE: Final = "non-software-operational"
 PACKAGE_PREFIX: Final = "rotation-"
 
 _OCCURRENCE_LINE: Final = re.compile(r"^(\s*occurrence:).*$", re.MULTILINE)
+# `profile_fields.destinations`: the key at two spaces and its items, quoted or not, each with
+# the continuation lines a YAML writer folds a long item onto.
+_DESTINATIONS_BLOCK: Final = re.compile(
+    r"^(  destinations:\n)((?:  - .*\n(?:    .*\n)*)*)", re.MULTILINE
+)
 
 DRAFT: Final = "draft"
 APPROVED: Final = "approved"
@@ -58,16 +68,22 @@ class RotationPackage:
     revision: int
     state: str
     occurrence: str
+    # `profile_fields.destinations`, as listed; empty when the package lists none.
+    destinations: tuple[str, ...] = ()
 
     def carries(self, occurrence: str) -> bool:
         return self.occurrence == occurrence
+
+    def lists(self, destinations: Sequence[str]) -> bool:
+        """Whether the package lists exactly these destinations, in any order."""
+        return sorted(self.destinations) == sorted(destinations)
 
 
 def discover(root: Path) -> dict[str, RotationPackage]:
     """Every standing rotation package in the checkout, keyed on the credential it stands for.
 
-    **SCOPE IS THE AUTHORED SET.** A credential nobody has authored a package for is outside this
-    lane, and authoring one -- never this program -- is what brings it in.
+    A credential the registry hands to the SDS with no package here gets one generated when it
+    first comes due (`create`, ADR-0055 amendment 15, increment 4).
     """
     base = root / "packages"
     if not base.is_dir():
@@ -101,8 +117,18 @@ def discover(root: Path) -> dict[str, RotationPackage]:
             revision=int(revision),
             state=shared.yaml_scalar(text, "status") or "",
             occurrence=shared.yaml_scalar(text, "occurrence") or "",
+            destinations=_destinations(text),
         )
     return found
+
+
+def _destinations(text: str) -> tuple[str, ...]:
+    try:
+        fields = (yaml.safe_load(text) or {}).get("profile_fields") or {}
+    except yaml.YAMLError:
+        return ()
+    listed = fields.get("destinations") if isinstance(fields, dict) else None
+    return tuple(str(d) for d in listed) if isinstance(listed, list) else ()
 
 
 def write_occurrence(package: RotationPackage, occurrence: str) -> None:
@@ -120,6 +146,37 @@ def write_occurrence(package: RotationPackage, occurrence: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
+def write_destinations(package: RotationPackage, destinations: Sequence[str]) -> None:
+    """Write the registry's destination list over the package's, and nothing else.
+
+    Each is single-quoted, as authored packages quote them, since a destination holds double
+    quotes; one holding a single quote is refused rather than escaped.
+    """
+    if any("'" in destination for destination in destinations):
+        raise StandingError(f"{package.package_id}: a destination holds a single quote")
+    path = package.path / "package.yaml"
+    text = path.read_text(encoding="utf-8")
+    listed = "".join(f"  - '{destination}'\n" for destination in destinations)
+    text, count = _DESTINATIONS_BLOCK.subn(lambda match: match.group(1) + listed, text)
+    if count != 1:
+        raise StandingError(f"{package.package_id}: expected one destinations list, found {count}")
+    path.write_text(text, encoding="utf-8")
+
+
+def create(rendered: dict[str, Any], root: Path) -> RotationPackage:
+    """Write revision 1 of a generated package, as a draft, through intent-packages, which
+    validates it and begins its lineage (`create-rotation`)."""
+    credential_id = str(rendered["profile_fields"]["credential_id"])
+    with tempfile.TemporaryDirectory(prefix="rotation-proposer-") as staging:
+        source = Path(staging) / "package.json"
+        source.write_text(json.dumps(rendered), encoding="utf-8")
+        shared.lifecycle(root, "create-rotation", str(source), "--out", str(root / "packages"))
+    created = discover(root).get(credential_id)
+    if created is None:
+        raise StandingError(f"rotation-{credential_id} wasn't written")
+    return created
+
+
 def reread(package: RotationPackage, root: Path) -> RotationPackage:
     """The same package as it stands now. Every lifecycle command rewrites the file."""
     fresh = discover(root).get(package.credential_id)
@@ -128,21 +185,25 @@ def reread(package: RotationPackage, root: Path) -> RotationPackage:
     return fresh
 
 
-def to_review(package: RotationPackage, occurrence: str, root: Path) -> RotationPackage:
-    """Take the package to a revision carrying this occurrence, in review -- and never past it.
+def to_review(
+    package: RotationPackage, occurrence: str, destinations: Sequence[str], root: Path
+) -> RotationPackage:
+    """Take the package to a revision carrying this occurrence and the registry's destinations,
+    in review -- and never past it.
 
     Resumable from any point a previous pass could have stopped at, which is why the state is
     re-read between steps: a crash between the write and `transition` leaves a draft that already
-    carries the occurrence and needs only transitioning.
+    carries both and needs only transitioning.
     """
     current = package
-    if not current.carries(occurrence):
+    if not current.carries(occurrence) or not current.lists(destinations):
         if current.state != DRAFT:
             # A draft has never been approved, so its revision number is still free and writing
             # over it is correct. Anything else gets a new revision.
             shared.lifecycle(root, "revise", str(current.path))
             current = reread(current, root)
         write_occurrence(current, occurrence)
+        write_destinations(current, destinations)
         current = reread(current, root)
     if current.state == DRAFT:
         # `transition` re-snapshots the revision hash, which makes the edit part of the revision.
@@ -151,12 +212,18 @@ def to_review(package: RotationPackage, occurrence: str, root: Path) -> Rotation
     return current
 
 
-def commit(package: RotationPackage, root: Path) -> str:
+def commit(package: RotationPackage, root: Path, *, generated: bool = False) -> str:
     """Commit and publish the revision through `bump_proposer`'s one publishing act (ADR-0033)."""
+    made = (
+        "The package is generated from the credential's registry row and its type's derived\n"
+        "plan (ADR-0055 amendment 15, increment 4)."
+        if generated
+        else "The revision carries the rotation and the registry's destinations."
+    )
     message = (
         f"{package.package_id} rev {package.revision}: rotate for {package.occurrence}\n\n"
         "Written by rotation-proposer (ADR-0054). infraops reports this credential due for\n"
-        "rotation, so the standing package's new revision carries the rotation. The revision\n"
+        f"rotation. {made} The revision\n"
         "is NOT approved: no approval policy grants this profile, and a named human approves\n"
         "it before the proposer writes the work record a person then approves in\n"
         "change-manager.\n"

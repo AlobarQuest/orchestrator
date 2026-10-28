@@ -25,6 +25,13 @@ TIMEOUT_SECONDS: Final = 120.0
 Runner = Callable[[Sequence[str]], subprocess.CompletedProcess[bytes]]
 
 
+def default_mirror_root(program: str = "rotation-worker") -> Path:
+    """Where a program keeps its mirrors. Each program has its own: two scheduled passes fetching
+    into one bare clone race on its ref lock."""
+    cache = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
+    return Path(cache) / program / "mirrors"
+
+
 class MirrorError(RuntimeError):
     """git could not answer, so nothing that depends on the answer may proceed."""
 

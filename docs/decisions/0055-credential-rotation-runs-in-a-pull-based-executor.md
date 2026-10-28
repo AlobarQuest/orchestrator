@@ -1900,3 +1900,55 @@ New decompositions carry no `external_system` dependency for a mint or a revoke.
   - `same_identity` is an optional provider method (`inbox.ConfirmsIdentity`), not a member of
     `Provider`: only the person-minted types implement it, and a type without it binds nothing.
 
+
+### Increment 4 design (2026-10-28)
+
+Devon, 2026-10-28: the scope as written, with handing over `bws-tok-ops-mini-20260730` as the
+proof; generated decompositions are the next increment. It waited for the bridge layer's member
+record work (#537, #538), which kept the work carrier's list of standing packages because a package
+has no repository to grant.
+
+1. **A registry `class` names its type.** One table (`rotation_worker.types.CLASS_TYPES`)
+   maps each class to a type declared in the same module, which the adapters read their capabilities from. A class without an entry is a type the SDS
+   doesn't rotate, and nothing is generated for it.
+2. **The opt-in is the registry and the member record.** The work carrier carries a standing
+   rotation package when its credential's registry row sets `rotated_by_sds` and the member record
+   grants `credential_rotation` on the repository holding that row. Both are reviewed records, so
+   the list in the carrier's code goes. The membership check already holds every registry
+   repository granted.
+3. **The proposer writes the registry's destinations.** A revision it writes for a due credential
+   carries the registry's destination list, not the previous revision's. An approved revision whose
+   destinations differ from the registry is revised again rather than proposed, so drift reaches
+   Devon as a revision to approve instead of a unit the executor refuses.
+4. **The proposer generates a missing package.** A due credential that the registry hands to the
+   SDS, with no standing package, gets revision 1 generated from its row and its type's derived
+   plan (`plans.derive`): reach, authority and one criterion per machine step follow from the
+   type's capabilities and its store, and the prose from one template. `intent-packages`
+   validates and writes it with its first lineage entry. Devon approves it by name, as every
+   revision. The proposer sees only due credentials, so a newly flagged credential gets its package
+   when it first comes due.
+5. **Approved wording is never rewritten.** Only a new package is generated; an existing package
+   is revised only for its occurrence and destinations.
+
+Measured before building: rendered for each of the 16 standing packages' registry rows, the
+generator's criteria describe the derived plan for all 15 rotated types (the canary is no type),
+and for the 11 packages already on derived plans they are the approved criteria by
+`select_plan`'s reading. The 4 others (three BWS tokens and the mirror PAT) run pinned
+pre-derivation plans and are never regenerated.
+
+### As built: increment 4 (2026-10-28)
+
+- **The type declaration moved out of the adapters.** `rotation_worker/types.py` holds each type's
+  capabilities and store (`TYPES`) and the registry `class` table (`CLASS_TYPES`); the adapters read
+  theirs from it. The proposer imports it, the plan and the registry, never a provider: the
+  out-of-process guards refuse a proposer that reaches a provider's network client.
+- **A record pins its revision.** Drift never revises a revision a change record already names: its
+  rotation is under way or done, and revising would skip `record-rotation` and rotate the
+  credential again. The registry's change reaches the next rotation's revision.
+- **Reach follows the destinations too.** A type that doesn't host is still `live_estate`, with
+  `infra_mutation` allowed, when a destination is a Coolify setting (a held copy).
+- **The carrier carries only a type the SDS rotates.** The canary's row sets `rotated_by_sds` but
+  its class has no type, so it is never carried, as the list it replaces never named it. An
+  unreadable registry holds each rotation record undecided and carries everything else.
+- **Each program has its own mirrors** (`git_mirror.default_mirror_root(program)`), so the
+  proposer and the carrier don't race the executor's fetches.

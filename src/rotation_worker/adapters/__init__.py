@@ -30,6 +30,7 @@ from rotation_worker.orchestrator_client import OrchestratorClient
 from rotation_worker.plans import Capabilities
 from rotation_worker.readers import Healthchecks
 from rotation_worker.secret_store import SecretStore
+from rotation_worker.types import TYPES
 
 
 @dataclass(frozen=True)
@@ -125,13 +126,13 @@ ADAPTERS: Final[dict[str, Adapter]] = {
         openrouter.NAME,
         openrouter.PLAN,
         lambda context: openrouter.build(context.store, context.admin_secret_id),
-        capabilities=Capabilities(machine_mint=True, machine_revoke=True),
+        capabilities=TYPES[openrouter.NAME].capabilities,
     ),
     orchestrator_bearer.NAME: Adapter(
         orchestrator_bearer.NAME,
         orchestrator_bearer.PLAN,
         _orchestrator,
-        capabilities=Capabilities(machine_mint=True, machine_revoke=True, hosted=True),
+        capabilities=TYPES[orchestrator_bearer.NAME].capabilities,
     ),
     orchestrator_bearer.DISTRIBUTED_NAME: Adapter(
         orchestrator_bearer.NAME, orchestrator_bearer.DISTRIBUTED_PLAN, _orchestrator
@@ -142,19 +143,19 @@ ADAPTERS: Final[dict[str, Adapter]] = {
         lambda context: github_pat.build_provider(
             rotation=context.rotation, orchestrator=context.orchestrator
         ),
-        capabilities=Capabilities(machine_mint=False, machine_revoke=True),
+        capabilities=TYPES[github_pat.NAME].capabilities,
     ),
     bitbucket.NAME: Adapter(
         bitbucket.NAME,
         bitbucket.PLAN,
         lambda context: bitbucket.build_provider(credential=context.credential),
-        capabilities=Capabilities(machine_mint=False, machine_revoke=False),
+        capabilities=TYPES[bitbucket.NAME].capabilities,
     ),
     change_manager.NAME: Adapter(
         change_manager.NAME,
         change_manager.PLAN,
         _change_manager,
-        capabilities=Capabilities(machine_mint=True, machine_revoke=True, hosted=True),
+        capabilities=TYPES[change_manager.NAME].capabilities,
     ),
     bws_machine_token.NAME: Adapter(
         bws_machine_token.PROVIDER,
@@ -162,11 +163,11 @@ ADAPTERS: Final[dict[str, Adapter]] = {
         lambda context: bws_machine_token.BwsMachineTokenProvider(
             organization_id=context.organization_id
         ),
-        store_kind="keychain",
+        store_kind=TYPES[bws_machine_token.NAME].store_kind,
         wait=bws_machine_token.wait_reason,
         overlap_waits=frozenset({"store"}),
         revoke_settles=bws_machine_token.REVOKE_SETTLES,
-        capabilities=Capabilities(machine_mint=False, machine_revoke=False),
+        capabilities=TYPES[bws_machine_token.NAME].capabilities,
     ),
     change_manager.ATTESTED_NAME: Adapter(
         change_manager.NAME, change_manager.ATTESTED_PLAN, _change_manager

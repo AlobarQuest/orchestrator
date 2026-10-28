@@ -475,10 +475,11 @@ def _carry(
     """
     monkeypatch.setattr(
         "work_carrier.cli.judge_workability",
-        lambda subjects, out, grants: judge(
+        lambda subjects, out, grants, rotated: judge(
             subjects,
             out,
             grants=grants if judged_by is None else judged_by,
+            rotated=rotated,
             portfolio=portfolio(project()) if portfolio_rows is None else portfolio_rows,
         ),
     )
@@ -856,17 +857,22 @@ def test_a_retired_members_grant_does_not_admit() -> None:
     assert decisions == (NOT_WORKABLE,)
 
 
-def test_an_operational_record_needs_no_grant() -> None:
+def test_an_operational_record_needs_only_its_registry_s_rotation_grant() -> None:
     operational = {
         "profile": "non-software-operational",
         "package_id": "rotation-openrouter-generic",
         "enforcement_snapshot": {
-            "profile_fields": {"standing": True},
+            "profile_fields": {"standing": True, "credential_id": "openrouter-generic"},
             "reach": ["external_system"],
         },
     }
+    registry = "AlobarQuest/infraops-mcp-server"
     decisions = judge(
-        [("rotation", operational)], io.StringIO(), grants=NOT_GRANTED, portfolio=portfolio()
+        [("rotation", operational)],
+        io.StringIO(),
+        grants=grants(registry, service="credential_rotation"),
+        rotated={"openrouter-generic": registry},
+        portfolio=portfolio(),
     )
     assert decisions == ("OPERATIONAL",)
 

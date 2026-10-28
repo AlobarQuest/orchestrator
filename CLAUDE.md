@@ -376,7 +376,13 @@ Placement rule: global CLAUDE.md §7.
   which infraops' 04:00 window then refuses; a package without that flag is a finding and is never
   acted on. Its one write to infraops is `security-drift-cli record-rotation`, made only when the
   record for the approved revision is `resolved` by `work-watcher` and the trigger isn't an
-  exposure. Detail:
+  exposure. A revision it writes carries the registry's destinations; an approved revision that
+  differs from the registry is revised, never proposed; and a due, handed-over credential with no
+  package gets revision 1 generated from its row and its `class`'s type (`generate.py`,
+  `CLASS_TYPES`), validated and written by intent-packages' `create-rotation`. The work
+  carrier carries a standing rotation package only when its credential's registry row sets
+  `rotated_by_sds` and the member record grants `credential_rotation` on that registry's
+  repository. Detail:
   `docs/operations/rotation-proposer.md`.
 - change-manager's `resolved` is terminal by design and will not be made recoverable; `reactivate`
   applies only to `wontfix`. Do not re-propose recoverability. History:

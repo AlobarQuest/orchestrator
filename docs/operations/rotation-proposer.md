@@ -43,10 +43,12 @@ not know is reported `unrecognised`, which is a finding.
 For a due credential whose package is `rotation-<credential_id>`:
 
 1. **First pass.** File the observation (`rotation_proposer` / `rotation_due` / subject
-   `credential`). Then `revise` the package, write the quoted `occurrence:` line,
-   `transition --to ready_for_review`, re-pin the hash fixture, commit, and publish. The publish
-   goes through `bump_proposer.standing.publish`, which is the one publishing act. Nothing is
-   proposed. The line reads `revised`.
+   `credential`). Then `revise` the package, write the quoted `occurrence:` line and the
+   registry's destination list, `transition --to ready_for_review`, re-pin the hash fixture,
+   commit, and publish. The publish goes through `bump_proposer.standing.publish`, which is the
+   one publishing act. Nothing is proposed. The line reads `revised`. A credential with no
+   package gets one generated instead (see "A package generated from the registry"), and the
+   line reads `generated`.
 2. **Passes while it waits.** The pass writes nothing and reports `awaiting-approval`.
 3. **Devon approves the revision by name**, in the packages checkout, and publishes that commit.
    No approval policy grants this profile, and this program never runs `approve`. The approval
@@ -57,18 +59,21 @@ For a due credential whose package is `rotation-<credential_id>`:
    - **Read its change against the last approved revision**, not the proposer's latest commit:
      the baseline is the `commit` of the latest entry under `approvals:` in the package's
      `lineage.yaml` (`git diff <that commit> -- packages/rotation-<credential_id>/package.yaml`).
-     The proposer carries the list forward unchanged, so any change in it was written by an author.
+     The proposer writes the registry's list, so a change in it is a change to the registry since
+     that approval: read it as a change to what the rotation will write.
    - **Compare it with the registry.** Run
      `.venv/bin/rotation-worker compare-destinations <credential_id>`. It fetches intent-packages
      and the four registry repositories into its own mirrors (`~/.cache/rotation-worker/mirrors`),
      and prints the registry's destinations as a package lists them, then compares them with the
      package's, both at `main`: `both`, `registry` (missing from the package) or `package` (not in
-     the registry) on each line, then the verdict. Exit 0 means equal; 1 means different, so fix
-     the package before approving; 2 means it couldn't read one of them, including a package with
-     no destinations yet (the registry's list is still printed, to copy in). A difference found later makes the executor refuse at
-     its first claim, after ADR-0052's supersede has closed. The command is the executor's own
-     comparison (`src/rotation_worker/compare.py`).
-4. **The next pass.** File the observation again. It replays and returns the same id. Then propose
+     the registry) on each line, then the verdict. Exit 0 means equal; 1 means the registry
+     changed after the revision was written, and the next pass revises it again; 2 means it
+     couldn't read one of them. The command is the executor's own comparison
+     (`src/rotation_worker/compare.py`).
+4. **The next pass.** If the registry's destinations changed since the approved revision was
+   written, the pass revises it again instead of proposing (step 1), because the executor would
+   refuse the first unit of a package that differs from the registry. Otherwise it files the
+   observation again. It replays and returns the same id. Then it proposes
    the `work` record with the propose-scoped bearer. The record names the approved revision and
    that observation, with `bump_proposer`'s asserted fields (`WORK_RECORD_FIELDS`). Later passes
    replay it.
@@ -101,15 +106,38 @@ same pass.
   Set the flag in the credential's `.cred-consumers.toml`, and only when no legacy rotation of it is
   in flight.
 - **`unlaned`** (a finding): the registry hands the credential to the SDS, so infraops' window
-  refuses it, but no standing package exists, so nothing rotates it. This program never authors
-  one. Authoring `rotation-<credential_id>` brings the credential into the lane.
+  refuses it, but no standing package exists and none can be generated: its registry `class`
+  names no type the SDS rotates (`rotation_worker.types.CLASS_TYPES`).
 
 Every finding carries `rotated_by_sds` from infraops' `cred-findings`. A finding without it (an
 infraops older than the handover) stops the whole pass with exit 2.
 
-## Authoring a standing rotation package
+## A package generated from the registry
 
-Use the `non-software-operational` profile, name the package `rotation-<credential_id>`, and set
+A due credential whose registry row sets `rotated_by_sds`, with no standing package, gets revision
+1 generated (`src/rotation_proposer/generate.py`, ADR-0055 amendment 15, increment 4). Its type is
+its registry `class`, through `CLASS_TYPES`; everything the executor reads follows from that
+type's capabilities and the row:
+
+- **Criteria:** one per machine step of the derived plan (`plans.derive`), numbered as the plan
+  numbers them, with the evidence text the executor's `select_plan` and the verifier read.
+- **Reach:** `external_system`, plus `operator_machine` for a credential the Mac keeps and
+  `live_estate` for a hosted service.
+- **Authority:** reading and writing secrets, minting and revoking where the provider does them
+  by machine, and changing infrastructure for a hosted service; the rest is prohibited.
+- **Destinations and occurrence:** the row's destinations and the due occurrence.
+
+intent-packages' `create-rotation` validates it and writes it with its first lineage entry; the
+proposer then takes it to `ready_for_review` and publishes it like any revision, and Devon
+approves it by name. The proposer sees only due credentials, so a newly flagged credential gets
+its package when it first comes due. Onboarding a credential is therefore its registry row: a
+`class` the SDS rotates and `rotated_by_sds = true`, in a registry repository the member record
+grants `credential_rotation`.
+
+## Authoring a standing rotation package by hand
+
+Generation covers every type in `CLASS_TYPES`. To author one by hand instead, use the
+`non-software-operational` profile, name the package `rotation-<credential_id>`, and set
 these `profile_fields`: `standing: true`, `credential_id: <registry id>`, `occurrence`
 (quoted), and `destinations`, the credential's full destination list. Copy the list from
 `rotation-worker compare-destinations <credential_id>`, which prints each registry destination in
