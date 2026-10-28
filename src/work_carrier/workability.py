@@ -89,7 +89,7 @@ import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 from sds_members.client import SERVICES, Member
 from sds_members.populations import granted as granted_repositories
@@ -97,6 +97,9 @@ from sds_members.populations import service_for_change_class
 
 DEFAULT_PORTFOLIO = "~/.portfolio/portfolio.json"
 PORTFOLIO_ENV = "WORK_CARRIER_PORTFOLIO"
+# The nightly sweep writes the file at 03:00 and the carrier runs at 07:05, so 48 hours tolerates
+# one missed scan and refuses after two (ruling 5). A plain int with a real value and no off switch.
+PORTFOLIO_MAX_AGE_HOURS: Final = 48
 
 # The check ids the conformance kit publishes, mirrored from project-standards
 # `src/portfolio/factory_checks.py::FACTORY_CHECKS` and `onboard_checks`'
@@ -224,6 +227,9 @@ class Portfolio:
     projects: tuple[dict[str, Any], ...]
     age_seconds: float | None
     detail: str
+    # Past PORTFOLIO_MAX_AGE_HOURS: the file is not read, so every capability and permission term
+    # is UNKNOWN for a reason that names the age, never a `pass` from a sweep that stopped running.
+    stale: bool = False
 
 
 def _describe_age(seconds: float) -> str:
@@ -245,13 +251,11 @@ def load_portfolio(path: Path | None = None, *, now: float | None = None) -> Por
     Measured 2026-09-11: the scan ran at 03:00 and recorded `runner.caller: pass`
     for a repository whose caller workflow had been deleted on the remote.
 
-    **NOTHING BOUNDS THAT AGE, AND SINCE THE ANSWER DECIDES, A STALE `pass` NOW
-    AUTHORISES.** The grant constraint reads the live SDS member record; the
-    other two still rest on this file. The age
-    is printed on the line that authorises the carry, which is the most this
-    module can do without inventing a threshold -- what age is too old is a
-    decision about the estate's scan cadence, and refusing on one would hold
-    every record on any morning the sweep had not run.
+    THE AGE IS BOUNDED. Past `PORTFOLIO_MAX_AGE_HOURS` the file is not read as an answer
+    at all: the result is `stale`, carries no projects, and every capability and permission
+    term is UNKNOWN, so a stale `pass` can no longer authorise a carry. The grant constraint
+    reads the live SDS member record and is unaffected. The age is still printed on the
+    line that authorises the carry.
     """
     resolved = path or Path(os.environ.get(PORTFOLIO_ENV) or DEFAULT_PORTFOLIO).expanduser()
     try:
@@ -259,6 +263,12 @@ def load_portfolio(path: Path | None = None, *, now: float | None = None) -> Por
         age = (now if now is not None else time.time()) - resolved.stat().st_mtime
     except OSError as error:
         return Portfolio((), None, f"{resolved} could not be read: {error}")
+    if age > PORTFOLIO_MAX_AGE_HOURS * 3600:
+        detail = (
+            f"{resolved.name} is {age / 3600:.0f}h old, past the {PORTFOLIO_MAX_AGE_HOURS}h "
+            f"limit, so it is not read ({_STALE_SOURCE})"
+        )
+        return Portfolio((), age, detail, stale=True)
     try:
         document = json.loads(raw)
     except ValueError as error:
@@ -298,6 +308,8 @@ def project_for(portfolio: Portfolio, repository: str) -> tuple[dict[str, Any] |
     resolved arbitrarily, because whichever was picked would be a guess about
     which repository the estate measured.
     """
+    if portfolio.stale:
+        return None, portfolio.detail
     wanted = repository.split("/")[-1].strip().lower()
     if not wanted:
         return None, f"{repository!r} names no repository"

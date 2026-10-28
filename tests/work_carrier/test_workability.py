@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import re
 import subprocess
 import time
@@ -358,7 +359,53 @@ def test_the_age_is_measured_from_the_file_rather_than_from_a_field(tmp_path: Pa
     path.write_text(json.dumps({"projects": []}), encoding="utf-8")
     loaded = load_portfolio(path, now=time.time() + 86400 * 3)
     assert loaded.age_seconds is not None and loaded.age_seconds > 86400 * 2
-    assert "3d old" in loaded.detail
+    assert loaded.stale
+    assert "72h old" in loaded.detail
+
+
+def test_a_portfolio_older_than_the_limit_leaves_capability_undecided(
+    checkout_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two missed nightly scans is the most the capability source may be, and no more.
+
+    Past the limit the file is not read as an answer: the capability and permission terms are
+    UNKNOWN, so the record is held as UNDECIDED (exit 2) and never carried as workable.
+    """
+    path = tmp_path / "portfolio.json"
+    path.write_text(json.dumps({"projects": [project()]}), encoding="utf-8")
+    now = time.time()
+    os.utime(path, (now - 49 * 3600, now - 49 * 3600))
+    loaded = load_portfolio(path, now=now)
+
+    verdict = assess(TARGET, True, loaded)
+    assert verdict.decision == UNDECIDED
+    assert [c.verdict for c in verdict.constraints] == [YES, UNKNOWN, UNKNOWN]
+    assert "past the 48h limit" in verdict.constraints[1].detail
+
+    code, text, payloads = _carry(
+        checkout_root, monkeypatch, members=[member(app_changes="granted")], portfolio_rows=loaded
+    )
+    assert payloads == []
+    assert code == EXIT_UNUSABLE
+    assert "past the 48h limit" in text
+
+
+def test_a_portfolio_inside_the_limit_is_read(
+    checkout_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """47 hours is inside the limit, so the file is judged exactly as it is judged today."""
+    path = tmp_path / "portfolio.json"
+    path.write_text(json.dumps({"projects": [project()]}), encoding="utf-8")
+    now = time.time()
+    os.utime(path, (now - 47 * 3600, now - 47 * 3600))
+    loaded = load_portfolio(path, now=now)
+
+    assert assess(TARGET, True, loaded).decision == WORKABLE
+    code, _, payloads = _carry(
+        checkout_root, monkeypatch, members=[member(app_changes="granted")], portfolio_rows=loaded
+    )
+    assert code == EXIT_OK
+    assert len(payloads) == 1
 
 
 # -------------------------------------------------------------------------------------
