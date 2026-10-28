@@ -314,6 +314,116 @@ buys nothing except that the first attempt is still allowed to finish.
 decided = "2026-08-02"
 minutes = 30
 
+# THE THREE dependency-update PATTERNS BELOW ARE COPIES of the source_repository
+# ones above (same names, capabilities, budgets, shapes) and the two sets must move
+# together; `test_source_and_live_estate_dependency_patterns_are_equal` holds them
+# identical. A repository that redeploys on landing reaches live_estate, and without
+# these its bumps would draw a human gate the source_repository ones do not.
+
+[[reach.live_estate.known_good]]
+name = "uv dependency pin bump"
+rationale = """
+The one shape of work this factory has taken end to end, and the shape R2 names:
+a pin moves, a lockfile follows, a pull request opens, and the target
+repository's own named check decides whether it was right. Nothing outside that
+repository changes, the whole change is one revert away, and a person reading
+the envelope learns only which version string moved — which is ceremony, not
+review. Recognised narrowly on purpose: only uv tooling (npm and pip have their
+own patterns below), only a conformance claim that is green and waives nothing,
+and only budgets at or under the profile's own defaults. It names no repository:
+since schema 9 the member record's grant decides which repositories a dependency
+update may reach, at admission. Widening any of those is an edit to this file,
+decided once, and never inferred from what was approved before.
+
+BUDGETS TRACK THE PROFILE'S DEFAULTS AND ARE HELD EQUAL TO THEM, which is what
+"at or under the profile's own defaults" above has always meant. `max_llm_calls`
+read 4 from 2026-08-01 until 2026-09-06 because that WAS the profile default
+when this pattern was written; it has since been 120, 240 and 360, and nothing
+compared the two. `_within` is `envelope <= ceiling`, so from the moment the
+profile passed 4 this pattern recognised nothing at all and every uv pin bump
+drew `authority_envelope_novel` — ADR-0011 accepted, its mechanism inert for
+eighteen days, failing closed so nothing unsafe happened and nothing said so.
+
+EQUALITY, not a floor, and the direction is the opposite of the one that governs
+`max_llm_calls` in intent-packages — deliberately. There, over-provisioning is
+free and the number is a floor under the recoverable/unrecoverable gate ordering.
+Here the number decides what a HUMAN still looks at, and a ceiling above the
+profile's default would recognise an envelope no profile emits — widening the
+recognised shape, which the paragraph above forbids without an edit. Held to
+intent-packages by `scripts/check_profile_budget_agreement.py`.
+"""
+decided = "2026-08-01"
+change_class = "dependency-update"
+capabilities = { "command.run" = "allowed", "github.pr.create" = "allowed", "github.pr.merge" = "allowed", "orchestrator.claim" = "allowed", "orchestrator.evidence.write" = "allowed", "repo.edit" = "allowed", "repo.read" = "allowed" }
+max_attempts = 3
+max_llm_calls = 360
+conformance_status = "green"
+# `uv add` edits the manifest and `uv lock` resolves the tree; `uv lock --check`
+# is the verifier. Each is a whole-command SHAPE (a regular expression the entire
+# command must match), not a prefix: a package name or version is a bounded
+# character class, so no argument, source URL or second package can ride along.
+# `uv run` is deliberately absent: it is a way to run any program at all.
+command_shapes = [
+  'uv add( --frozen)?( --dev| --group [A-Za-z0-9][A-Za-z0-9_-]*| --optional [A-Za-z0-9][A-Za-z0-9_-]*)? \x27[A-Za-z0-9][A-Za-z0-9._-]*>=[0-9A-Za-z][0-9A-Za-z.+!_-]*\x27',
+  'uv lock',
+  'uv lock --check',
+]
+
+[[reach.live_estate.known_good]]
+name = "npm dependency pin bump"
+rationale = """
+The npm shape of the same work as the uv pattern above: a pin moves, the install
+and the repository's own build, lint, format and test run, a pull request opens,
+and the target repository's named check decides. Each command is a whole-command
+shape the profile's generator can emit: the install of ONE package at ONE version
+(a lowercase npm name and a version drawn from a bounded character set, so no
+second package, URL, tarball or flag can follow), the build, the lockfile install,
+the two linters, the test script, and the grep that confirms the pin. Recognised
+on the same narrow terms as the uv pattern (a green conformance claim that waives
+nothing, budgets equal to the profile's) and, like it, names no repository: the
+member record's grant decides that at admission. The pattern carries the merge
+capability because the profile stamps it into every dependency-update envelope.
+"""
+decided = "2026-10-28"
+change_class = "dependency-update"
+capabilities = { "command.run" = "allowed", "github.pr.create" = "allowed", "github.pr.merge" = "allowed", "orchestrator.claim" = "allowed", "orchestrator.evidence.write" = "allowed", "repo.edit" = "allowed", "repo.read" = "allowed" }
+max_attempts = 3
+max_llm_calls = 360
+conformance_status = "green"
+command_shapes = [
+  'npm install (@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*@[0-9A-Za-z][0-9A-Za-z.+!_-]* --save-exact( --save-dev)?',
+  'npm run build',
+  'npm ci',
+  'npx eslint \.',
+  'npx prettier --check \.',
+  'npm test',
+  'grep -q \x27"(@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*": "[0-9A-Za-z][0-9A-Za-z.+!_-]*"\x27 package\.json',
+]
+
+[[reach.live_estate.known_good]]
+name = "pip dependency pin bump"
+rationale = """
+The pip shape: a requirements file's pin is rewritten in place and a grep
+confirms it. Its two commands are whole-command shapes the profile's generator
+emits: the in-place rewrite and the whole-line match. A sed script is a program,
+so a prefix would not bound it; what bounds it here is the shape. The package and
+the versions are bounded character sets that cannot express a slash, a space or
+a shell character, so the script cannot gain a second command or flag, and the
+file operand is only requirements.txt or requirements-dev.txt, so it cannot be
+pointed at a workflow or a system file. The inertness rule still applies on top.
+Same narrow terms and no repository list as the patterns above.
+"""
+decided = "2026-10-28"
+change_class = "dependency-update"
+capabilities = { "command.run" = "allowed", "github.pr.create" = "allowed", "github.pr.merge" = "allowed", "orchestrator.claim" = "allowed", "orchestrator.evidence.write" = "allowed", "repo.edit" = "allowed", "repo.read" = "allowed" }
+max_attempts = 3
+max_llm_calls = 360
+conformance_status = "green"
+command_shapes = [
+  'sed -i \x27s/\^(?P<package>[A-Za-z0-9][A-Za-z0-9._-]*)==[0-9A-Za-z][0-9A-Za-z.+!_-]*\$/(?P=package)==[0-9A-Za-z][0-9A-Za-z.+!_-]*/\x27 (requirements|requirements-dev)\.txt',
+  'grep -qx \x27[A-Za-z0-9][A-Za-z0-9._-]*==[0-9A-Za-z][0-9A-Za-z.+!_-]*\x27 (requirements|requirements-dev)\.txt',
+]
+
 [[reach.live_estate.rotation_known_good]]
 name = "credential rotation unit of an approved standing package"
 rationale = """
