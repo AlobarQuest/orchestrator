@@ -21,6 +21,8 @@ HOLDS = (
     Hold("npm_and_yarn", "/web", "@types/node", "20"),
     Hold("github_actions", "/", "actions/checkout", "4.2"),
     Hold("pip", "/", "broken", "2.x"),
+    Hold("pip", "/", "flask-cors", "4"),
+    Hold("npm_and_yarn", "/", "lodash-es", "4"),
 )
 REPO = "AlobarQuest/brain"
 
@@ -81,6 +83,49 @@ updated-dependencies:
 """
 
 # (title, commit message, ecosystem)
+# Spellings PEP 503 equates with `flask-cors` and npm does not equate with `lodash-es`: a copy
+# that case-folds pip names instead of normalising them, or normalises npm names, disagrees here.
+SPELLINGS = (
+    "Flask_Cors",
+    "flask.cors",
+    "flask_cors",
+    "FLASK--CORS",
+    "lodash_es",
+    "Lodash.ES",
+    "other",
+)
+
+# A single update whose block lags its rewritten pull request (block 0.16.2, see below).
+LAGGING = SINGLE.replace("0.16.0", "0.16.2")
+
+# (title, commit message, ecosystem, expected): `None` unreadable, else whether a hold breaches.
+# Each of these is decided by both copies against an expected answer, not only against each other.
+DECIDED = (
+    # A subdirectory single update: the title's 0.16.1 beats the lagging block's 0.16.0 (> 0.16.0).
+    ("chore(deps-dev): bump ruff from 0.15.22 to 0.16.1 in /tools", SINGLE, "uv", True),
+    # A title lower than its block: the block's 0.16.2 stands, beyond Ruff's 0.16.0.
+    ("chore(deps-dev): bump ruff from 0.15.22 to 0.15.9", LAGGING, "uv", True),
+    # Title readable, block version not: the version is unreadable, so a hold breaches.
+    ("bump ruff from 0.15.22 to 0.15.9", SINGLE.replace("0.16.0", "latest"), "uv", True),
+    # A blank line inside a block: the list is unreadable, never cut short before sqlalchemy.
+    (
+        "x",
+        "---\nupdated-dependencies:\n- dependency-name: alembic\n  dependency-version: 1\n\n"
+        "- dependency-name: sqlalchemy\n  dependency-version: 3\n...\n",
+        "pip",
+        None,
+    ),
+    # A block the message ends before closing.
+    (
+        "x",
+        "---\nupdated-dependencies:\n- dependency-name: alembic\n  dependency-version: 1\n",
+        "pip",
+        None,
+    ),
+    # Under the ceiling, read in full: admitted.
+    ("chore(deps-dev): bump ruff from 0.15.22 to 0.15.30 in /", SINGLE, "uv", False),
+)
+
 MESSAGES = (
     ("bump the python group across 1 directory with 3 updates", GROUPED, "pip"),
     ("chore(deps-dev): bump ruff from 0.15.22 to 0.16.1", SINGLE, "uv"),
@@ -98,6 +143,7 @@ MESSAGES = (
     ("x", "---\nupdated-dependencies:\n- dependency-name: a\n  dependency-name: b\n...\n", "pip"),
     ("x", "---\nupdated-dependencies:\n- dependency-name: a\n  junk\n...\n", "pip"),
     ("x", "---\nupdated-dependencies:\n- dependency-name: sqlalchemy\n...\n", "pip"),
+    *((title, message, ecosystem) for title, message, ecosystem, _ in DECIDED),
 )
 
 
@@ -129,11 +175,29 @@ def test_both_copies_read_a_message_alike(title: str, message: str, ecosystem: s
         )
 
 
+@pytest.mark.parametrize(("title", "message", "ecosystem", "expected"), DECIDED)
+def test_both_copies_decide_these_messages_as_expected(
+    title: str, message: str, ecosystem: str, expected: bool | None
+) -> None:
+    ours, theirs = (
+        service._bumps_of(title, message, ecosystem),
+        lane.bumps_of(title, message, ecosystem),
+    )
+    if expected is None:
+        assert ours is None
+        assert theirs is None
+        return
+    assert ours is not None
+    assert theirs is not None
+    assert bool(service._exceeded(HOLDS, REPO, ours)) is expected
+    assert bool(lane.exceeded(HOLDS, REPO, theirs)) is expected
+
+
 @pytest.mark.parametrize("version", VERSIONS)
 @pytest.mark.parametrize("hold", HOLDS)
 def test_both_copies_decide_a_bump_alike(version: str, hold: Hold) -> None:
     for directory in (None, "/", "/web", "/web/"):
-        for dependency in (hold.dependency, hold.dependency.upper(), "other"):
+        for dependency in (hold.dependency, hold.dependency.upper(), *SPELLINGS):
             ours = (service.Bump(hold.ecosystem, directory, dependency, version),)
             theirs = (lane.Bump(hold.ecosystem, directory, dependency, version),)
             assert _fields(service._exceeded([hold], REPO, ours)) == _fields(

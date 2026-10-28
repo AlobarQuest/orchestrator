@@ -27,10 +27,13 @@ _DOTTED_SUFFIX: Final = re.compile(r"\.(?:post|dev|rc|a|b)")
 # and pinned to it: `bump <name> from <a> to <b>` at the end of the title.
 BUMP_PATTERN: Final = r"\bfrom v?(\d[\d.]*) to v?(\d[\d.]*)$"
 _TITLE_BUMP: Final = re.compile(BUMP_PATTERN)
+# The suffix Dependabot adds to a single update's title outside the root directory
+# (`bump ruff from 0.15.22 to 0.16.1 in /tools`), which the lander's `$` anchor refuses.
+_TITLE_DIRECTORY: Final = re.compile(r"\s+in\s+/\S*$")
 
 _BLOCK_HEADER: Final = "updated-dependencies:"
 # not-a-vocabulary: the lines that end a YAML block, not values any system exchanges
-_BLOCK_ENDS: Final = frozenset({"...", "---", ""})
+_BLOCK_ENDS: Final = frozenset({"...", "---"})
 _ENTRY: Final = re.compile(r"^\s*-\s+([\w-]+):\s*(.*?)\s*$")
 _FIELD: Final = re.compile(r"^\s+([\w-]+):\s*(.*?)\s*$")
 
@@ -53,6 +56,9 @@ def release(version: str) -> tuple[int, ...] | None:
     `2..0`), a wildcard (`1.x`, `1.2.*`, `1*`), anything else after a dot that is not a PEP 440
     `.post`, `.dev`, `.rc`, `.a` or `.b` part, and a PEP 440 epoch (`1!2.0`), which would otherwise
     read as release `(1,)` and compare low.
+
+    Any other suffix is ignored, so a pre-release of a ceiling's own release reads as that release:
+    `2.0.54-rc1` at ceiling `2.0.54` is admitted (the plan's Ruling 4, an accepted cost).
     """
     match = _RELEASE.match(version)
     if match is None:
@@ -151,8 +157,15 @@ def _beyond(version: str, ceiling: str) -> bool:
     ours, limit = release(version), release(ceiling)
     if ours is None or limit is None:
         return True
-    width = max(len(ours), len(limit))
-    return ours + (0,) * (width - len(ours)) > limit + (0,) * (width - len(limit))
+    ours, limit = _padded(ours, limit)
+    return ours > limit
+
+
+def _padded(
+    left: tuple[int, ...], right: tuple[int, ...]
+) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    width = max(len(left), len(right))
+    return left + (0,) * (width - len(left)), right + (0,) * (width - len(right))
 
 
 def dependencies_of(commit_message: str, ecosystem: str) -> tuple[Bump, ...] | None:
@@ -160,9 +173,10 @@ def dependencies_of(commit_message: str, ecosystem: str) -> tuple[Bump, ...] | N
     no block this can read.
 
     A small line parser, not a YAML library: `- key: value` opens an entry, an indented
-    `key: value` adds to it, and `...`, `---` or a blank line ends the block. Anything else inside
-    a block, a key twice in one entry, an entry with no `dependency-name` or a block with no
-    entries makes the whole message unreadable. Every block in the message is read. Quotes around
+    `key: value` adds to it, and only `...` or `---` ends the block. Anything else inside a block
+    (a blank line included), a block the message ends before closing, a key twice in one entry, an
+    entry with no `dependency-name` or a block with no entries makes the whole message unreadable,
+    so a list is never silently cut short. Every block in the message is read. Quotes around
     a value are stripped. An entry with no `dependency-version` reads as version `""`, which
     `release` can't read, so it breaches any hold on its dependency.
     """
@@ -187,7 +201,7 @@ def dependencies_of(commit_message: str, ecosystem: str) -> tuple[Bump, ...] | N
             else:
                 return None
             index += 1
-        if not block:
+        if index == len(lines) or not block:
             return None
         entries.extend(block)
     if not found or any(not entry.get("dependency-name") for entry in entries):
@@ -215,14 +229,29 @@ def bumps_of(title: str, commit_message: str, ecosystem: str) -> tuple[Bump, ...
 
     The title is the fresh source: Dependabot rewrites a pull request in place and its trailer can
     lag (`estate_landing_admission.update_type_of`). So a single update takes its name from the
-    block and its version from the title when the lander's title read matches; when it doesn't (a
-    requirement range, a subdirectory suffix) the block's version stands. A grouped update's title
-    names no versions, so both come from the block. `None` when the block can't be read.
+    block, and its version is the GREATER of the title's and the block's, by `release`; when either
+    can't be read the version is `""`, which breaches any hold on it. A trailing ` in /<path>` is
+    stripped from the title before the lander's read; the directory is still read only from the
+    block, never narrowed from the title.
+
+    Residual exposures, recorded: a requirement-range title (`requirement from >=0.15 to >=0.16`)
+    doesn't match, so the block's version stands and can lag a rewrite. A grouped update's title
+    names no versions and nothing fresher than the block exists, so if the block lags, a group can
+    be admitted at a stale version. `None` when the block can't be read.
     """
     bumps = dependencies_of(commit_message, ecosystem)
     if bumps is None or len(bumps) != 1:
         return bumps
-    match = _TITLE_BUMP.search(title.strip())
+    match = _TITLE_BUMP.search(_TITLE_DIRECTORY.sub("", title.strip()))
     if match is None:
         return bumps
-    return (replace(bumps[0], to_version=match.group(2)),)
+    return (replace(bumps[0], to_version=_greater(match.group(2), bumps[0].to_version)),)
+
+
+def _greater(title_version: str, block_version: str) -> str:
+    """The greater of two versions by release, or `""` when either can't be read."""
+    title_release, block_release = release(title_version), release(block_version)
+    if title_release is None or block_release is None:
+        return ""
+    title_release, block_release = _padded(title_release, block_release)
+    return title_version if title_release >= block_release else block_version
