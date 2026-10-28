@@ -31,11 +31,12 @@ either -- it has not been carried yet, which is the carry's business and not thi
 
 **A FAILED UNIT IS TOLD TO A PERSON, NOT REPORTED AS A FINDING** (bridge Part 3, Ruling 8). A
 record whose work has a `failed` unit stays `[WAITING]` here, and an acting pass (`--retire`) holds
-one alert-hub alert open for it, keyed as the bump proposer keys the same bump
+one alert-hub alert open for it, keyed `dependency-unit-failed:...`, never the bump proposer's key
 (`work_watcher/alerts.py`). It resolves when the record leaves the approved queue (retired) or a
 newer revision supersedes it. Only a standing dependency-update package alerts; rotation and
 app-change records never do. An acting pass without `SDS_BRIDGE_ALERT_TOKEN` exits 2, and alert-hub
-refusing an alert is a finding. A bare pass sends nothing and writes no state.
+refusing an alert is a finding, and so is a record's package the checkout cannot read (its key
+is unknown, so every open alert is held that pass). A bare pass sends nothing and writes no state.
 
 A finding is a record this pass could not get an answer about, a retirement change-manager
 refused, and -- since ruling B1 (Devon, 2026-09-27) -- a STALE record: one pending or approved while
@@ -172,11 +173,13 @@ def _raising(alerts: alert_lane.AlertSink | None, packages: Path | None) -> _Rai
 
 def _send_alerts(raising: _Raising | None, out) -> list[str]:
     """Send what the pass raised. A failure is a finding: alert-hub did not take the alert."""
-    failure = raising.send() if raising is not None else None
-    if failure is None:
+    if raising is None:
         return []
+    failure = raising.send()
+    if failure is None:
+        return raising.findings
     print(f"[FINDING]  {failure}", file=out)
-    return [failure]
+    return [*raising.findings, failure]
 
 
 def _github() -> PullRequestReader | None:
@@ -275,7 +278,7 @@ def _staleness(
 
 
 class _Raising:
-    """The alerts one acting pass raises (Ruling 8), keyed as the bump proposer keys the bump.
+    """The alerts one acting pass raises (Ruling 8), keyed `dependency-unit-failed:...`.
 
     The key needs the repository, ecosystem and dependency of the record's standing package, which
     the record does not carry; they are read from the packages checkout, and only for a record
@@ -286,6 +289,7 @@ class _Raising:
         self._packages = packages
         self._sink = sink
         self.raised = alert_lane.Raised()
+        self.findings: list[str] = []
 
     def send(self) -> str | None:
         """Bring alert-hub in line with what this pass raised. Answers why it could not."""
@@ -296,11 +300,16 @@ class _Raising:
         try:
             identity = read_identity(self._packages, record.package_id)
         except PackageUnreadable as error:
-            print(
-                f"[UNASSESSED] change record {record.change_record_id}: package "
-                f"{record.package_id} unreadable ({error}); alerts held",
-                file=out,
+            # A FINDING: a package that can never be read (moved out of `packages/`) would
+            # otherwise freeze every resolve indefinitely and page nobody. The remembered keys
+            # stay held this pass, so nothing resolves or re-fires on a guess.
+            finding = (
+                f"package {record.package_id} of change record {record.change_record_id} is "
+                f"unreadable in the packages checkout ({error}); its alert key is unknown, so "
+                "every open alert is held"
             )
+            print(f"[FINDING]  {finding}", file=out)
+            self.findings.append(finding)
             self.raised.hold_all = True
             return None
         if identity is None:

@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
+_PACKAGE_ID: Final = re.compile(r"[a-z0-9][a-z0-9._-]*")
 PROFILE: Final = "dependency-update"
 # The tooling names intent-packages' `create-standing` has a profile for.
 TOOLING_NAMES: Final = ("npm", "pip", "uv")
@@ -38,10 +39,10 @@ class BumpIdentity:
 def yaml_scalar(text: str, key: str) -> str | None:
     """One top-level-ish scalar, read without a YAML parser.
 
-    This program's third-party surface is `httpx` and nothing else -- the isolation test says
-    so -- and pulling in a YAML library to read four values from a file whose shape is fixed
-    would widen it for no gain. The four values read here are all plain unquoted scalars in a
-    document this producer and `factory create` are the only writers of.
+    This library imports only the standard library -- the isolation test says so -- and pulling in
+    a YAML library to read a few values from a file whose shape is fixed would widen that for no
+    gain. The values read are plain scalars in a document `factory create` and the bump proposer
+    are the only writers of.
     """
     match = re.search(rf"^\s*{re.escape(key)}:\s*(\S.*?)\s*$", text, re.MULTILINE)
     if match is None:
@@ -73,11 +74,13 @@ def read_identity(root: Path, package_id: str) -> BumpIdentity | None:
     or an id that names no tooling. A file that cannot be read raises `PackageUnreadable`, which is
     a different answer: the caller knows nothing about this package.
     """
-    if Path(package_id).name != package_id or package_id in {"", ".", ".."}:
+    # A package id of any other shape is not one intent-packages would have created, so it is
+    # "definitely not a standing package" (None), never an unreadable one.
+    if not _PACKAGE_ID.fullmatch(package_id):
         return None
     try:
         text = (root / PACKAGES_DIRECTORY / package_id / "package.yaml").read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as error:
+    except (OSError, ValueError) as error:
         raise PackageUnreadable(type(error).__name__) from None
     if yaml_scalar(text, "profile") != PROFILE or yaml_scalar(text, "standing") != "true":
         return None

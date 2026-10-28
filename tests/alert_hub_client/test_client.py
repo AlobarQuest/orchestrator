@@ -255,3 +255,14 @@ def test_the_dependency_bump_key_follows_ruling_5() -> None:
     assert key == "dependency-bump:alobarquest/infraops-mcp-server:npm:_40types/node"
     assert key.startswith(dependency_bump_prefix("alobarquest/infraops-mcp-server"))
     assert not key.startswith(dependency_bump_prefix("alobarquest/infraops-mcp"))
+
+
+def test_the_unit_failed_key_has_its_own_prefix_and_the_same_encoding() -> None:
+    from alert_hub_client import dependency_bump_key, dependency_unit_failed_key
+
+    bump = dependency_bump_key("AlobarQuest/Infraops-MCP-Server", "npm", "@types/node")
+    failed = dependency_unit_failed_key("AlobarQuest/Infraops-MCP-Server", "npm", "@types/node")
+
+    assert failed == "dependency-unit-failed:alobarquest/infraops-mcp-server:npm:_40types/node"
+    assert failed != bump
+    assert failed.split(":", 1)[1] == bump.split(":", 1)[1]

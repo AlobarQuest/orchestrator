@@ -1,10 +1,11 @@
 """The failed units this lane tells a person about, through alert-hub (bridge Part 3, Ruling 8).
 
 A record in the approved queue whose work has a `failed` unit holds one alert open, keyed exactly
-as the bump proposer keys the same bump (`dependency_bump_key`, Ruling 5). A failed unit stays
-failed until a person retries or cancels it, so the alert is true while it lasts. The key fires
-once and resolves on the first acting pass that no longer raises it: the record was retired, or a
-newer revision superseded it.
+`dependency-unit-failed:<repository>:<ecosystem>:<dependency>` (`dependency_unit_failed_key`), a
+prefix of its own so the bump proposer's key for the same bump can never collide with it. A
+failed unit stays failed until a person retries or cancels it, so the alert is true while it
+lasts. The key fires once and resolves on the first acting pass that no longer raises it: the
+record was retired, or a newer revision superseded it.
 
 A key is never resolved by a pass that could not read it: a record whose work the orchestrator
 would not answer about holds its key (`Raised.held`), and a package this pass could not read holds
@@ -22,7 +23,7 @@ from typing import Final, Protocol
 
 import httpx
 
-from alert_hub_client import Alert, AlertHubError, KeyedAlerts, dependency_bump_key
+from alert_hub_client import Alert, AlertHubError, KeyedAlerts, dependency_unit_failed_key
 from standing_identity import BumpIdentity
 
 USER_AGENT: Final = "work-watcher/1 (+AlobarQuest/orchestrator)"
@@ -48,7 +49,7 @@ class AlertSink(Protocol):
 
 
 def key_for(identity: BumpIdentity) -> str:
-    return dependency_bump_key(identity.repository, identity.ecosystem, identity.dependency)
+    return dependency_unit_failed_key(identity.repository, identity.ecosystem, identity.dependency)
 
 
 def failed_unit_alert(change_record_id: int, package_id: str, states: tuple[str, ...]) -> Alert:

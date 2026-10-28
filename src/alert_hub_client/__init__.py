@@ -120,6 +120,20 @@ def dependency_bump_key(repository: str, ecosystem: str, dependency: str) -> str
     return alert_key(DEPENDENCY_BUMP, repository.lower(), ecosystem, dependency)
 
 
+DEPENDENCY_UNIT_FAILED: Final = "dependency-unit-failed"
+
+
+def dependency_unit_failed_key(repository: str, ecosystem: str, dependency: str) -> str:
+    """`dependency-unit-failed:<repository lowercased>:<ecosystem>:<dependency>`.
+
+    The work watcher's key for a bump whose built work has a failed unit. It is a sibling of
+    `dependency_bump_key` with its own prefix, so it can never equal the bump proposer's key for
+    the same bump: the two lanes keep separate state files, and one lane's `resolved` must not
+    close the alert the other still needs.
+    """
+    return alert_key(DEPENDENCY_UNIT_FAILED, repository.lower(), ecosystem, dependency)
+
+
 def dependency_bump_prefix(repository: str) -> str:
     """The start every `dependency_bump_key` for this repository shares."""
     return alert_key(DEPENDENCY_BUMP, repository.lower()) + ":"

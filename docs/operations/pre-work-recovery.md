@@ -52,8 +52,8 @@ shows up as stale.
 **A failed unit is told to you through alert-hub, not through this exit code.** When the work built
 for a standing dependency-update record has a `failed` unit, the acting watcher pass
 (`work-watcher --retire`) holds one alert open as the `sds-bridge` sender, keyed
-`dependency-bump:<repository>:<ecosystem>:<dependency>`, the same key the bump proposer uses for
-the same bump. The unit prints as `[WAITING] … failed` and is not a finding. The alert fires once,
+`dependency-unit-failed:<repository>:<ecosystem>:<dependency>`, a prefix of its own so it never
+collides with the bump proposer's `dependency-bump:` key for the same bump. The unit prints as `[WAITING] … failed` and is not a finding. The alert fires once,
 and resolves when the record is retired or a newer revision supersedes it; a pass that could not
 read a record's work, or the record's package in the intent-packages checkout, holds the open
 alerts rather than resolving them. Rotation and app-change records never alert. A bare pass sends
