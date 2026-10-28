@@ -6,7 +6,8 @@ For each ready unit whose envelope names a rotation adapter, in order:
    failure (git or the network) leaves the unit for the next pass. A refusal is a finding about
    the unit itself, so the executor claims it and fails it with the reason, where the dead-letter
    report shows it to a person.
-2. **Wait, unclaimed, for the scheduled readers** (`readers.py`). Each one is read before any
+2. **Wait, unclaimed, for a person's mint**, taking the value from the inbox once it binds
+   (`inbox.py`), and **for the scheduled readers** (`readers.py`). Each one is read before any
    unit that verifies consumers is claimed, so a reader the registry names wrongly is refused
    here. A unit that retires the old value stays ready, spending nothing, until every reader has
    run since the keeper was written: some run weekly, which no lease could wait out. Each pass
@@ -40,6 +41,7 @@ from rotation_worker.contract import (
     HELD_KIND,
     ContractError,
     Provider,
+    Rotation,
     Step,
     StepKind,
     UnitRun,
@@ -52,10 +54,18 @@ from rotation_worker.evidence import StepEvidence
 from rotation_worker.git_mirror import MirrorError, RepoMirror
 from rotation_worker.github_actions import ActionsSecrets, FingerprintReports, RotationApp
 from rotation_worker.held import HeldSettings
+from rotation_worker.inbox import (
+    INBOX_PROJECTS,
+    Inbox,
+    Refusals,
+    bind,
+    other_mints,
+)
 from rotation_worker.live_runs import stranded_by_a_restart
 from rotation_worker.notify import Act, Notifier
 from rotation_worker.orchestrator_client import Lease, OrchestratorClient, OrchestratorError
 from rotation_worker.overlaps import mid_overlap
+from rotation_worker.plans import person_acts_beside
 from rotation_worker.readers import (
     ConsumerReads,
     Healthchecks,
@@ -63,10 +73,10 @@ from rotation_worker.readers import (
     ReadError,
     ReadUnavailable,
 )
-from rotation_worker.registry import RegistryError, find_credential
+from rotation_worker.registry import RegistryError, find_credential, provider_entries
 from rotation_worker.revokes import ObservedRevokes, Revoke, person_revokes_beside, revoke_wait
 from rotation_worker.secret_store import SecretStore, StoreError
-from rotation_worker.values import Fingerprint, scrub
+from rotation_worker.values import Fingerprint, Value, scrub
 
 LOG = logging.getLogger("rotation_worker")
 EVIDENCE_TYPE: Final = "rotation.step"
@@ -103,6 +113,10 @@ class Setup:
     github_app: RotationApp | None = None
     # Tells a person when one of this instance's units waits on them (`notify.py`).
     notifier: Notifier | None = None
+    # Where a person pastes a value they minted (`inbox.py`); absent, they stage it by hand.
+    inbox: Inbox | None = None
+    # The BWS organization, which a provider lists a token's reach in.
+    organization_id: str | None = None
 
 
 def run_pass(setup: Setup) -> int:
@@ -123,8 +137,8 @@ def run_pass(setup: Setup) -> int:
             LOG.error("unit_not_worked", extra={"unit": unit_id, "reason": reason})
         else:
             continue
-        # Nothing was learned of this unit's revoke: its alert stays as it was.
-        found.keep.add(_revoke_key(unit_id))
+        # Nothing was learned of this unit's acts: their alerts stay as they were.
+        found.keep |= {_revoke_key(unit_id), _mint_key(unit_id), _inbox_key(unit_id)}
     if setup.notifier is not None:
         try:
             acts, unread = waiting_acts(setup)
@@ -187,6 +201,14 @@ def _revoke_key(unit_id: str) -> str:
     return f"rotation-revoke:{unit_id}"
 
 
+def _mint_key(unit_id: str) -> str:
+    return f"rotation-mint:{unit_id}"
+
+
+def _inbox_key(unit_id: str) -> str:
+    return f"rotation-inbox:{unit_id}"
+
+
 def _take(setup: Setup, unit_id: str, found: PassActs) -> int:
     unit = setup.client.unit(unit_id)
     if not is_rotation_unit(unit) or not _ours(setup, unit):
@@ -216,7 +238,8 @@ def _take(setup: Setup, unit_id: str, found: PassActs) -> int:
     # configuration) is the executor's fault, not the unit's, so no attempt is spent on it.
     provider = _provider(setup, approved)
     if (
-        _adapter_waits(setup, approved, unit_id)
+        _mint_waits(setup, approved, provider, unit, found)
+        or _adapter_waits(setup, approved, unit_id)
         or _revoke_waits(setup, approved, provider, unit_id, found)
         or _overlap_waits(setup, approved, unit)
         or _restart_waits(setup, approved, held, unit_id)
@@ -280,6 +303,7 @@ def _provider(setup: Setup, approved: Approved) -> Provider:
             healthchecks=setup.healthchecks,
             host_without_overlap=approved.host_without_overlap,
             credential=approved.registry.credential,
+            organization_id=setup.organization_id,
         )
     )
 
@@ -319,6 +343,138 @@ def _adapter_waits(setup: Setup, approved: Approved, unit_id: str) -> bool:
     if reason is not None:
         LOG.info("unit_waiting", extra={"unit": unit_id, "reason": reason})
     return reason is not None
+
+
+def _mint_waits(
+    setup: Setup,
+    approved: Approved,
+    provider: Provider,
+    unit: Mapping[str, Any],
+    found: PassActs,
+) -> bool:
+    """Whether the unit after a person's mint waits for the value; one pasted into the inbox is
+    staged for it once it binds, and the inbox emptied (`inbox.py`)."""
+    if not person_acts_beside(approved.plan, approved.unit, -1, StepKind.MINT):
+        return False
+    rotation, unit_id = approved.rotation, str(unit["id"])
+    staged = setup.store.find(rotation.work_project_id, rotation.staging_key)
+    if setup.inbox is None:
+        if staged is None:
+            found.due[_mint_key(unit_id)] = _mint_act(setup, approved, unit_id)
+            LOG.info("unit_waiting", extra={"unit": unit_id, "reason": "nothing staged yet"})
+        return staged is None
+    try:
+        new = setup.inbox.read()
+    except StoreError as error:
+        LOG.warning("inbox_unread", extra={"unit": unit_id, "reason": scrub(str(error))})
+        found.keep |= {_mint_key(unit_id), _inbox_key(unit_id)}
+        return staged is None
+    if staged is not None:
+        if new is not None:
+            _tidy(setup, setup.inbox, new, staged.id, rotation, unit_id, found)
+        return False
+    if new is None:
+        found.due[_mint_key(unit_id)] = _mint_act(setup, approved, unit_id)
+        LOG.info("unit_waiting", extra={"unit": unit_id, "reason": "the inbox is empty"})
+        return True
+    return _bind_inbox(setup, setup.inbox, approved, provider, unit, new, found)
+
+
+def _bind_inbox(
+    setup: Setup,
+    inbox: Inbox,
+    approved: Approved,
+    provider: Provider,
+    unit: Mapping[str, Any],
+    new: Value,
+    found: PassActs,
+) -> bool:
+    """Bind the inbox's value to the rotation, or say why not. Returns whether the unit waits."""
+    rotation, unit_id = approved.rotation, str(unit["id"])
+    try:
+        reason = bind(
+            new,
+            rotation=rotation,
+            store=setup.store,
+            provider=provider,
+            others_waiting=other_mints(setup.client, str(unit["work_package_revision_id"])),
+            other_keepers=lambda: _other_keepers(setup, approved),
+        )
+    except (*REFUSALS, *TRANSIENT) as error:
+        # Nothing was decided about the value; it stays, and the person is told why.
+        reason = f"it couldn't be checked: {scrub(str(error))}"
+    if reason is None:
+        LOG.info("inbox_bound", extra={"unit": unit_id, "fingerprint": str(new.fingerprint)})
+        # A failure here leaves the inbox holding what is staged, which the next pass empties.
+        inbox.empty()
+        return False
+    found.due[_mint_key(unit_id)] = _mint_act(setup, approved, unit_id)
+    if Refusals(setup.state_dir).again(new):
+        found.due[_inbox_key(unit_id)] = Act(
+            _inbox_key(unit_id),
+            f"The value in the inbox isn't taken for {rotation.credential_id}"[:TITLE_LIMIT],
+            f"It stays in the inbox, unused: {reason}.",
+            f"{_REVIEW}/{unit_id}",
+        )
+    LOG.info("unit_waiting", extra={"unit": unit_id, "reason": f"the inbox value: {reason}"})
+    return True
+
+
+def _tidy(
+    setup: Setup,
+    inbox: Inbox,
+    new: Value,
+    staged_id: str,
+    rotation: Rotation,
+    unit_id: str,
+    found: PassActs,
+) -> None:
+    """Empty an inbox still holding the value staged from it; report one holding any other."""
+    if new.same_as(setup.store.read(staged_id)):
+        inbox.empty()
+        return
+    found.due[_inbox_key(unit_id)] = Act(
+        _inbox_key(unit_id),
+        f"The inbox holds a second value for {rotation.credential_id}"[:TITLE_LIMIT],
+        "A value is already staged for this rotation, so the one in the inbox is left unused. "
+        "Clear it, or put back the word empty, if it was pasted by mistake.",
+        f"{_REVIEW}/{unit_id}",
+    )
+
+
+def _mint_act(setup: Setup, approved: Approved, unit_id: str) -> Act:
+    credential = approved.registry.credential
+    where = credential.get("provider_identity")
+    project = INBOX_PROJECTS.get(setup.store.read_back_kind, "its inbox project")
+    if setup.inbox is None:
+        how = (
+            "This executor has no inbox: stage the value by hand with rotation-worker stage. "
+            'See "Mint and stage a value by hand" in the rotation executor runbook.'
+        )
+    else:
+        how = (
+            f"Paste the new value into the secret rotation-inbox in the BWS project {project}. "
+            "There is nothing to record: the executor checks it and takes it from there."
+        )
+    return Act(
+        _mint_key(unit_id),
+        f"Create a new {approved.rotation.credential_id} value"[:TITLE_LIMIT],
+        (f"It is {where}. " if isinstance(where, str) else "") + how,
+        f"{_REVIEW}/{unit_id}",
+    )
+
+
+def _other_keepers(setup: Setup, approved: Approved) -> list[tuple[str, Value]]:
+    """Each other SDS-rotated credential of this type whose keeper this instance reads."""
+    found = []
+    for entry in provider_entries(setup.mirror, approved.adapter.provider_name):
+        credential = str(entry.credential.get("id"))
+        if credential == approved.rotation.credential_id or not entry.rotated_by_sds:
+            continue
+        secret_id = setup.store.locate(parse(entry.keeper))
+        if secret_id is not None:
+            found.append((credential, setup.store.read(secret_id)))
+    return found
 
 
 def _revoke_waits(

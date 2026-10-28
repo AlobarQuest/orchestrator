@@ -161,6 +161,12 @@ class GitHubPatProvider:
     def probe_before_revoke(self, value: Value) -> int | None:
         return self.probe(value)
 
+    def same_identity(self, new: Value, old: Value) -> bool:
+        """Whether both values are the same GitHub account's: `/user`'s numeric id, which a
+        rename keeps (`inbox.py`)."""
+        new_id = self._user_id(new)
+        return new_id is not None and new_id == self._user_id(old)
+
     def host(self, new: Value, old: Value) -> str:
         raise ContractError("a GitHub PAT has no hosted service to host it")
 
@@ -192,6 +198,15 @@ class GitHubPatProvider:
             raise ContractError(f"GitHub's revoke answered HTTP {response.status_code}")
         self._revoked.add(bearer_hash(value))
         return "GitHub accepted the revoke of the quarantined value itself (202)"
+
+    def _user_id(self, value: Value) -> int | None:
+        headers = {"Authorization": f"Bearer {value.reveal()}"}
+        try:
+            response = self._probe.request("GET", PROBE_PATH, headers=headers)
+            found = response.json().get("id") if response.status_code == 200 else None
+        except TransportFailure, ValueError, AttributeError:
+            return None
+        return found if isinstance(found, int) and not isinstance(found, bool) else None
 
     def _ask(self, value: Value) -> int | None:
         headers = {"Authorization": f"Bearer {value.reveal()}"}

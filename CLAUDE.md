@@ -530,6 +530,15 @@ Placement rule: global CLAUDE.md §7.
   adapters (`Adapter.store_kind`). A store reads back its own kind (`SecretStore.locate`); any
   other `keychain` destination stays person-attested. Detail:
   `docs/operations/rotation-executor.md`.
+- A person's mint reaches a rotation only through its instance's `rotation-inbox` BWS secret or a
+  staging secret written by hand: the unit after the mint waits, unclaimed, until one is staged
+  (`worker._mint_waits`). The inbox binds a value only while no other rotation on either
+  instance waits on a mint, and only after the provider accepts it beside a refused control,
+  `same_identity` (same account, not scope) holds against the keeper, and no other SDS-rotated
+  keeper of its type holds it;
+  it writes staging before emptying the inbox. The Keychain instance reads its inbox with its
+  own narrow BWS identity, which the VM's root can't reach. Detail:
+  `docs/operations/rotation-executor.md`, "A person's mint is taken from the inbox".
 - A scheduled `runtime-fetch` reader is verified by the read its registry row names
   (`healthchecks_check`, or `observation_source` with `observation_subject`, beside `note`), never
   by a person; a unit that retires waits unclaimed until every such reader has run since the

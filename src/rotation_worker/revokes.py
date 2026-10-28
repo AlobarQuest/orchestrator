@@ -21,7 +21,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Final
 
-from rotation_worker.contract import LIVE_STATUS, HumanAct, Plan, Provider, StepKind, UnitPlan
+from rotation_worker.contract import LIVE_STATUS, Plan, Provider, StepKind, UnitPlan
+from rotation_worker.plans import person_acts_beside
 from rotation_worker.values import Value, scrub
 
 LOG = logging.getLogger("rotation_worker")
@@ -42,14 +43,7 @@ class Revoke(StrEnum):
 def person_revokes_beside(plan: Plan, unit: UnitPlan, offset: int) -> bool:
     """Whether the segment `offset` away from this unit (1 after, -1 before) is a person retiring
     the old value."""
-    segments = plan.segments
-    index = segments.index(unit) + offset
-    if not 0 <= index < len(segments):
-        return False
-    segment = segments[index]
-    return isinstance(segment, HumanAct) and any(
-        step.kind is StepKind.RETIRE_OLD for step in segment.steps
-    )
+    return person_acts_beside(plan, unit, offset, StepKind.RETIRE_OLD)
 
 
 def recorded_revoke(history: Sequence[Mapping[str, Any]]) -> datetime | None:

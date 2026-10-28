@@ -26,6 +26,7 @@ Keychain instance of the executor, on the machine whose Keychain holds the token
 from __future__ import annotations
 
 import base64
+import re
 import secrets
 import string
 import subprocess
@@ -91,6 +92,25 @@ else:
     print("live")
 """
 _ANSWERS: Final = {"live": 200, "refused": 400}
+DIGEST: Final = re.compile(r"^[0-9a-f]{64}$")
+# Run in the child: logs in and prints a digest of every project and secret the token can see.
+_REACH: Final = """
+import hashlib
+import sys
+from bitwarden_sdk import BitwardenClient
+organization, token = sys.stdin.read().split("\\n", 1)
+client = BitwardenClient()
+try:
+    client.auth().login_access_token(token)
+    projects = client.projects().list(organization)
+    secrets = client.secrets().list(organization)
+    ids = sorted("project " + str(p.id) for p in projects.data.data)
+    ids += sorted("secret " + str(s.id) for s in secrets.data.data)
+except Exception:
+    print("unreadable")
+else:
+    print(hashlib.sha256("\\n".join(ids).encode()).hexdigest())
+"""
 
 
 def wait_reason(unit: UnitPlan, history: Sequence[Mapping[str, Any]], now: datetime) -> str | None:
@@ -109,8 +129,11 @@ class BwsMachineTokenProvider:
     dead_statuses = frozenset({400})
     hosts_destinations = False
 
-    def __init__(self, interpreter: str = sys.executable) -> None:
+    def __init__(
+        self, interpreter: str = sys.executable, organization_id: str | None = None
+    ) -> None:
         self._interpreter = interpreter
+        self._organization_id = organization_id
 
     def mint(self) -> Value:
         raise ContractError("a person creates a BWS access token, in the web app")
@@ -122,11 +145,35 @@ class BwsMachineTokenProvider:
         return Value(f"0.{uuid.uuid4()}.{secret}:{key}")
 
     def probe(self, value: Value) -> int | None:
+        answer = self._fresh(_LOGIN, value.reveal())
+        return _ANSWERS.get(answer) if answer is not None else None
+
+    def probe_before_revoke(self, value: Value) -> int | None:
+        return self.probe(value)
+
+    def same_identity(self, new: Value, old: Value) -> bool:
+        """Whether both tokens see exactly the same projects and secrets (`inbox.py`).
+
+        Two machine accounts can see the same set (`ops-mini` and `content-mini` did, measured
+        2026-10-27), so this refuses a token for another kind of account, and the inbox's keeper
+        comparison refuses one pasted for its twin.
+        """
+        if self._organization_id is None:
+            raise ContractError("no organization is configured to list what a token can see")
+        reach = [self._fresh(_REACH, f"{self._organization_id}\n{v.reveal()}") for v in (new, old)]
+        # Only a digest counts: a child that died before printing answers "" for both.
+        return (
+            reach[0] is not None and DIGEST.fullmatch(reach[0]) is not None and reach[0] == reach[1]
+        )
+
+    def _fresh(self, script: str, stdin: str) -> str | None:
+        """What `script` prints, run in a child with a new SDK client and an empty, throwaway
+        `HOME` (amendment 1); `None` if it doesn't answer in time."""
         with tempfile.TemporaryDirectory(prefix="rotation-login-") as home:
             try:
                 answer = subprocess.run(
-                    [self._interpreter, "-I", "-c", _LOGIN],
-                    input=value.reveal(),
+                    [self._interpreter, "-I", "-c", script],
+                    input=stdin,
                     capture_output=True,
                     text=True,
                     timeout=LOGIN_TIMEOUT_SECONDS,
@@ -135,10 +182,7 @@ class BwsMachineTokenProvider:
                 )
             except subprocess.TimeoutExpired:
                 return None
-        return _ANSWERS.get(answer.stdout.strip())
-
-    def probe_before_revoke(self, value: Value) -> int | None:
-        return self.probe(value)
+        return answer.stdout.strip()
 
     def host(self, new: Value, old: Value) -> str:
         raise ContractError("a BWS access token has no hosted service to host it")

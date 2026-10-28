@@ -643,10 +643,24 @@ def test_the_unit_before_a_person_s_revoke_proves_the_old_value_live(
 
     monkeypatch.setattr(worker, "UnitRun", Recorded)
     h.adapter = replace(h.adapter, plan=bws_machine_token.PLAN)
+    # The person's mint is staged: the store unit after it waits for nothing.
+    h.store.put(WORK, h.rotation.staging_key, Value("a-staged-new-value"))
     for unit_id, name in (("u1", "store"), ("u2", "verify"), ("u3", "confirm")):
         h.add(unit_id, name)
     assert run_pass(h.setup()) == 3
     assert runs == [False, True, False]
+
+
+def test_the_unit_after_a_person_s_mint_waits_unclaimed_until_a_value_is_staged(
+    h: Harness,
+) -> None:
+    # Claimed with nothing staged, it would fail and spend an attempt (`inbox.py`).
+    from rotation_worker.adapters import bws_machine_token
+
+    h.adapter = replace(h.adapter, plan=bws_machine_token.PLAN)
+    h.add("u1", "store")
+    assert run_pass(h.setup()) == 0
+    assert h.client.calls == []
 
 
 # ---- held copies (ADR-0055 amendment 13) -------------------------------------------------------

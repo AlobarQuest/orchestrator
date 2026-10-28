@@ -81,12 +81,14 @@ class SecretStore(Protocol):
 
 
 class BwsStore:
-    """The root's view of BWS: one organization, every call checked for success."""
+    """One BWS identity's view: the root's, of one organization, or the Keychain instance's
+    inbox identity's, which names no organization and only reads and writes one secret by id.
+    Every call is checked for success."""
 
     _sleep: Callable[[float], None] = staticmethod(time.sleep)
     read_back_kind = "bws-secret"
 
-    def __init__(self, organization_id: str, access_token: Value) -> None:
+    def __init__(self, organization_id: str | None, access_token: Value) -> None:
         from bitwarden_sdk import BitwardenClient
 
         self._organization_id = organization_id
@@ -113,7 +115,8 @@ class BwsStore:
         return revised
 
     def find(self, project_id: str, key: str) -> StoredSecret | None:
-        listed = self._call(lambda: self._client.secrets().list(self._organization_id))
+        organization = self._organization()
+        listed = self._call(lambda: self._client.secrets().list(organization))
         matches = [
             entry
             for entry in listed.data
@@ -128,21 +131,23 @@ class BwsStore:
     def create(self, project_id: str, key: str, value: Value) -> StoredSecret:
         # A 5xx can come after BWS created the secret, so a retry looks for it first: creating it
         # twice would leave two secrets with one name, which `find` refuses from then on.
+        organization = UUID(self._organization())
         created = self._call(
             lambda: self._client.secrets().create(
-                UUID(self._organization_id), key, value.reveal(), None, [UUID(project_id)]
+                organization, key, value.reveal(), None, [UUID(project_id)]
             ),
             recover=lambda: self.find(project_id, key),
         )
         return StoredSecret(str(created.id), key, project_id)
 
     def write(self, secret_id: str, value: Value) -> None:
-        # `update` replaces every field, so the key, note and project are read back first.
+        # `update` replaces every field, so the key, note, project and organization are read
+        # back first.
         current = self._call(lambda: self._client.secrets().get(secret_id))
         projects = [current.project_id] if current.project_id is not None else None
         self._call(
             lambda: self._client.secrets().update(
-                self._organization_id,
+                str(current.organization_id),
                 secret_id,
                 current.key,
                 value.reveal(),
@@ -159,8 +164,14 @@ class BwsStore:
         )
 
     def _listed(self, secret_id: str) -> bool:
-        listed = self._call(lambda: self._client.secrets().list(self._organization_id))
+        organization = self._organization()
+        listed = self._call(lambda: self._client.secrets().list(organization))
         return any(str(entry.id) == secret_id for entry in listed.data)
+
+    def _organization(self) -> str:
+        if self._organization_id is None:
+            raise StoreError("this BWS identity names no organization to list or create in")
+        return self._organization_id
 
     def _call(self, request: Any, *, recover: Callable[[], Any] | None = None) -> Any:
         """`request`'s data, retrying a transient refusal. Before each retry, `recover` may
