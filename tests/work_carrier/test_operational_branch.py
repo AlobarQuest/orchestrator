@@ -15,8 +15,7 @@ import pytest
 
 from orchestrator.reach_vocabulary import REACH_VOCABULARY
 from tests.work_carrier.test_workability import (
-    DECLARED_TRUE,
-    _Declares,
+    GRANTED,
     _emitting,
     _record,
     _Registrar,
@@ -107,16 +106,30 @@ def test_the_allowlist_and_reach_set_agree_with_the_orchestrators_vocabulary() -
     assert STANDING in STANDING_OPERATIONAL_PACKAGES
 
 
-def _judge(payload: dict) -> tuple[str, str, _Declares]:
-    source = _Declares(DECLARED_TRUE)
+class _Asked(dict):
+    """The grant table, remembering whether anything looked a service up in it."""
+
+    asked: list[str]
+
+    def __init__(self, table: dict) -> None:
+        super().__init__(table)
+        self.asked = []
+
+    def get(self, key, default=None):
+        self.asked.append(key)
+        return super().get(key, default)
+
+
+def _judge(payload: dict) -> tuple[str, str, _Asked]:
+    source = _Asked(GRANTED)
     out = io.StringIO()
-    (decision,) = judge([("subject", payload)], out, source=source, portfolio=portfolio(project()))
+    (decision,) = judge([("subject", payload)], out, grants=source, portfolio=portfolio(project()))
     return decision, out.getvalue(), source
 
 
-def test_the_operational_branch_asks_github_nothing_and_says_no_runner() -> None:
+def test_the_operational_branch_asks_the_grants_nothing_and_says_no_runner() -> None:
     """A `target_repo` is planted (the profile's closed schema forbids one) so that a branch
-    which still read the declaration would be seen asking; with none, nothing would be asked
+    which still consulted the grants would be seen asking; with none, nothing would be asked
     either way and the assertion could not discriminate."""
     payload = operational()
     payload["enforcement_snapshot"]["profile_fields"]["target_repo"] = "AlobarQuest/somewhere"
@@ -124,7 +137,7 @@ def test_the_operational_branch_asks_github_nothing_and_says_no_runner() -> None
     decision, text, source = _judge(payload)
 
     assert decision == OPERATIONAL
-    assert source.asked == [], "an operational package has no repository to read a declaration of"
+    assert source.asked == [], "an operational package has no repository to look a grant up for"
     assert OPERATIONAL_RESIDUAL in text
     assert PAT_SCOPE_RESIDUAL not in text
 
@@ -180,8 +193,8 @@ def _carry(
     monkeypatch.setattr(
         cli_module,
         "judge_workability",
-        lambda subjects, out: judge(
-            subjects, out, source=_Declares(DECLARED_TRUE), portfolio=portfolio(project())
+        lambda subjects, out, grants: judge(
+            subjects, out, grants=grants, portfolio=portfolio(project())
         ),
     )
     original = prepare_module.prepare
@@ -191,7 +204,7 @@ def _carry(
         lambda r, **kw: original(r, **kw, runner=_emitting(emitted)),
     )
     writer = _Registrar()
-    code, text = _run_registering(root, rec, writer)
+    code, text = _run_registering(root, rec, writer, [])
     return code, text, writer.payloads
 
 

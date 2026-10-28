@@ -10,9 +10,15 @@ the old design, it is the mode in which the lane is inspected: a person can read
 registered without anything being. **A HELD RECORD PRINTS ITS REASON AND NOT ITS PAYLOAD**, in
 this mode as in the other -- "not carried" means not carried whichever flag was given, and a
 payload printed under a heading saying it would be registered would be false. On a machine with
-no GitHub credential and no capability file that is EVERY record with a target repository, which
-is the honest reading of "this pass cannot tell whether any of this work belongs where it is
-going"; a standing operational package asks neither, so it is judged the same anywhere.
+no capability file that is EVERY record with a target repository, which is the honest reading of
+"this pass cannot tell whether any of this work belongs where it is going"; a standing
+operational package asks neither, so it is judged the same anywhere.
+
+**THE MEMBER RECORD IS READ FIRST, ON EVERY PASS, AND UNREADABLE STOPS IT.** The grant is the scope
+authority: a record is carried only into a repository the SDS member record grants the service for
+its change class (`dependency_updates` for `dependency-update`, else `app_changes`). Read with the
+observer bearer (`SDS_MEMBERS_OBSERVER_TOKEN`) even on a bare pass; when it cannot be read the pass
+exits 2 and registers nothing.
 
 **WITH `--register`, THE LAST STEP IS NO LONGER A HUMAN PASTE.** ADR-0027 removed the
 `ActorRole.HUMAN` requirement from intake registration, having found that the gate was
@@ -44,7 +50,7 @@ was already being built. The orchestrator can answer the question directly (ADR-
 `GET /api/v1/change-records/{id}/work`), so the carry asks rather than being told.
 
 **IT ASKS WHETHER THE SDS SHOULD WORK ON THE TARGET REPOSITORY AT ALL, AND REFUSES.** A record is
-carried only when all three of Devon's constraints answer yes -- the repository opts in, the
+carried only when all three of Devon's constraints answer yes -- the repository is granted, the
 conformance kit says it is capable, the permissions are sufficient -- and anything else is not
 carried, with the reason on the line. The check landed reporting only, so the estate could see
 what it would refuse before it refused anything; it refused nothing across an empty queue and all
@@ -72,6 +78,7 @@ import os
 import sys
 from pathlib import Path
 
+from sds_members.client import Member, MembersUnreadable, read_members_from_environment
 from work_carrier.change_manager import (
     DEFAULT_BASE_URL,
     ChangeManagerError,
@@ -94,6 +101,7 @@ from work_carrier.workability import (
     UNDECIDED,
     UNJUDGED,
     WORKABLE,
+    grants_by_service,
 )
 from work_carrier.workability import judge as judge_workability
 
@@ -361,6 +369,7 @@ def run(
     *,
     source: WorkRecordSource | None = None,
     registrar: OrchestratorClient | None = None,
+    members: list[Member] | None = None,
     out=sys.stdout,
 ) -> int:
     args = _parse_args(argv)
@@ -376,6 +385,19 @@ def run(
     writer, refusal = _writer_for(args, registrar, out)
     if refusal is not None:
         return refusal
+
+    # READ ONCE, BEFORE ANYTHING IS JUDGED OR REGISTERED. An unreadable member record is "unusable
+    # input" and never a smaller population: with no grants to judge by, every record would be
+    # NOT WORKABLE, which reads as a finding about each repository instead of the one fault.
+    try:
+        record = members if members is not None else read_members_from_environment()
+    except MembersUnreadable as error:
+        print(
+            f"[UNUSABLE] the member record could not be read, so nothing is carried: {error}",
+            file=out,
+        )
+        return EXIT_UNUSABLE
+    grants = grants_by_service(record)
 
     try:
         records = records_source.approved_work()
@@ -399,7 +421,7 @@ def run(
 
     # JUDGED BEFORE ANYTHING IS CARRIED, and the order is the substance rather than the layout:
     # only a record the three constraints all answer YES for reaches the writer. Devon's rule --
-    # "is the repo opted in, is the repo capable, do we have the needed perms to do it" and
+    # "is the repo granted, is the repo capable, do we have the needed perms to do it" and
     # "without all three, it seems useless to go forward". It runs on a bare pass too: a record
     # that cannot be carried cannot be carried whichever flag was given, so the answer and the
     # exit code do not depend on whether this pass was going to write.
@@ -413,6 +435,7 @@ def run(
             for item in prepared
         ],
         out,
+        grants=grants,
     )
     workable = [
         item for item, decision in zip(prepared, decisions, strict=True) if decision in _CARRIED

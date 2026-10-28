@@ -16,6 +16,7 @@ member list.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Final
@@ -27,6 +28,9 @@ from estate_clients.confined import ConfinedClient, TransportFailure, error_deta
 DEFAULT_BASE_URL: Final = "https://sds.alobar.net"
 USER_AGENT: Final = "sds-members/1 (+AlobarQuest/orchestrator)"
 TIMEOUT_SECONDS: Final = 60.0
+# The observer bearer a scheduled lane reads the record with; its launcher exports it.
+OBSERVER_TOKEN_ENV: Final = "SDS_MEMBERS_OBSERVER_TOKEN"
+OBSERVER_KEY_ID: Final = "orchestrator-observer"
 
 _MEMBERS: Final = "/api/v1/members"
 _PROPOSALS: Final = "/api/v1/member-proposals"
@@ -157,6 +161,18 @@ def read_members(
             ) from None
     finally:
         client.close()
+
+
+def read_members_from_environment(*, transport: httpx.BaseTransport | None = None) -> list[Member]:
+    """`read_members` as the observer, with the bearer the launcher exported.
+
+    An unset or empty variable is `MembersUnreadable`, never an empty record: a lane that cannot
+    read the grants must stop, not act on a smaller population.
+    """
+    token = os.environ.get(OBSERVER_TOKEN_ENV, "")
+    if not token:
+        raise MembersUnreadable(f"{OBSERVER_TOKEN_ENV} is not set")
+    return read_members(token=token, credential_key_id=OBSERVER_KEY_ID, transport=transport)
 
 
 def stage(

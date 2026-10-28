@@ -19,7 +19,7 @@ from typing import Any
 
 import pytest
 
-from work_carrier.declaration import parse as carrier_parse
+from membership_check.declaration import parse as carrier_parse
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "factory_target_declarations.json"
 CONTRACT_SHA256 = "64d31a44f56c9a34b6bb5f24a143b046fb459a678f66b8e5c263a96ed3ae6469"

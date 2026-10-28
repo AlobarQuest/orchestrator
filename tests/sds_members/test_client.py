@@ -10,6 +10,7 @@ from sds_members.client import (
     MembersUnreadable,
     ProposalRefused,
     read_members,
+    read_members_from_environment,
     stage,
 )
 
@@ -163,3 +164,26 @@ def test_service_copy_equals_the_orchestrators():
 
     assert tuple(MEMBER_SERVICES) == SERVICES
     assert tuple(MEMBER_STATES) == client.MEMBER_STATES
+
+
+def test_read_members_from_environment_refuses_without_a_token(monkeypatch):
+    monkeypatch.delenv("SDS_MEMBERS_OBSERVER_TOKEN", raising=False)
+    with pytest.raises(MembersUnreadable, match="SDS_MEMBERS_OBSERVER_TOKEN"):
+        read_members_from_environment(transport=_transport(lambda request: httpx.Response(500)))
+    monkeypatch.setenv("SDS_MEMBERS_OBSERVER_TOKEN", "")
+    with pytest.raises(MembersUnreadable):
+        read_members_from_environment()
+
+
+def test_read_members_from_environment_uses_the_observer_key_id(monkeypatch):
+    monkeypatch.setenv("SDS_MEMBERS_OBSERVER_TOKEN", "bearer-value")
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["key"] = request.headers["x-credential-key-id"]
+        seen["auth"] = request.headers["authorization"]
+        return httpx.Response(200, json=WIRE)
+
+    [member] = read_members_from_environment(transport=_transport(handler))
+    assert seen == {"key": "orchestrator-observer", "auth": "Bearer bearer-value"}
+    assert member.repository == "A/one"

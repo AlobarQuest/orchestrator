@@ -32,9 +32,9 @@ from bump_proposer import orchestrator_client as bump_orchestrator
 from change_proposer import change_manager as change_change_manager
 from estate_clients.confined import TransportFailure
 from scripts.layers import load
+from sds_members import client as members_client
 from tests.architecture.test_external_content_observes_only import CLASSIFICATION
 from work_carrier import change_manager as carrier_change_manager
-from work_carrier import declaration as carrier_declaration
 from work_carrier import orchestrator_client as carrier_orchestrator
 from work_watcher import change_manager as watcher_change_manager
 from work_watcher import github as watcher_github
@@ -88,10 +88,11 @@ EDGES: dict[str, Edge] = {
             {
                 ("POST", "/api/v1/package-intakes"),
                 ("GET", "/api/v1/change-records/44/work"),
+                ("GET", "/api/v1/members"),
             }
         ),
-        github=frozenset({("GET", "/repos/o/r/contents/factory-target.toml")}),
-        bearers=frozenset({READ_BEARER, SYSTEM_BEARER}),
+        github=frozenset(),
+        bearers=frozenset({READ_BEARER, SYSTEM_BEARER, OBSERVER_BEARER}),
     ),
     "work_watcher": Edge(
         # The listing is work_carrier's reader, which work_watcher/pipeline.py imports.
@@ -147,6 +148,8 @@ ORCHESTRATOR_PROBES = frozenset(
         "/api/v1/observations",
         "/api/v1/package-intakes/44",
         "/api/v1/change-records/44/work/x",
+        "/api/v1/members/44",
+        "/api/v1/member-proposals",
     }
 )
 GITHUB_PROBES = frozenset(
@@ -214,12 +217,6 @@ def _either(*predicates: Permits) -> Permits:
     return lambda method, path: any(predicate(method, path) for predicate in predicates)
 
 
-def _declaration_permits(method: str, path: str) -> bool:
-    # The module's predicate is path-only because its one request is built with "GET" in place;
-    # the method half here is that literal, not a rule the module states.
-    return method == "GET" and carrier_declaration.is_allowed(path)
-
-
 # Each adapter looks its predicate up through the module at call time, so a monkeypatch of the
 # module's function reaches it. `None` is a service the lane has no client for: it permits nothing.
 PERMITS: dict[str, dict[str, Permits | None]] = {
@@ -238,8 +235,12 @@ PERMITS: dict[str, dict[str, Permits | None]] = {
     },
     "work_carrier": {
         "change_manager": _listing_permits,
-        "orchestrator": lambda m, p: carrier_orchestrator._permits(m, p),
-        "github": _declaration_permits,
+        # The carrier's own client and the member-record reader it imports: two clients, one lane.
+        "orchestrator": _either(
+            lambda m, p: carrier_orchestrator._permits(m, p),
+            lambda m, p: members_client._permits(members_client._READ)(m, p),
+        ),
+        "github": None,
     },
     "work_watcher": {
         "change_manager": _either(
@@ -358,13 +359,13 @@ def test_control_a_widened_orchestrator_predicate_fails_the_table(
 def test_control_a_widened_github_predicate_fails_the_table(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The GitHub column is compared too: widen the declaration reader and the table reports it."""
-    original = carrier_declaration.is_allowed
+    """The GitHub column is compared too: widen the watcher's reader and it reports it."""
+    original = watcher_github.is_allowed_read
     monkeypatch.setattr(
-        carrier_declaration,
-        "is_allowed",
+        watcher_github,
+        "is_allowed_read",
         lambda path: path == "/repos/o/r/contents/other.toml" or original(path),
     )
     assert ("github", "GET", "/repos/o/r/contents/other.toml", True) in disagreements(
-        "work_carrier"
+        "work_watcher"
     )

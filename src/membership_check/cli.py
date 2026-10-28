@@ -20,11 +20,11 @@ from fork_harden.rules import FORKS
 from fork_sync.gh import CommandFailed, subprocess_runner
 from fork_sync.watch import Unreadable, forks
 from membership_check.consistency import Scope, canonical, check, factory_targets
+from membership_check.declaration import GitHubDeclarationSource
 from pin_watcher.github import GitHubReader, PinWatcherError, repositories
 from rotation_worker.registry import REGISTRY_REPOSITORIES
 from sds_members.client import MembersUnreadable, read_members
 from tool_installer.tools import TOOLS
-from work_carrier.declaration import GitHubDeclarationSource
 
 OBSERVER_TOKEN_VARIABLE: Final = "SDS_MEMBERS_OBSERVER_TOKEN"
 OBSERVER_KEY_ID: Final = "orchestrator-observer"

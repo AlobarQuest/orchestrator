@@ -458,6 +458,7 @@ TABLE: dict[str, Row] = {
         "typer",
         "typing",
         no_sibling_lanes=True,
+        library=True,
     ),
     # ADR-0058. Compares the member record with the lists the other lanes carry, so it imports
     # those lanes' own data and readers (declarations, landing policy, fork list, rotation
@@ -473,10 +474,15 @@ TABLE: dict[str, Row] = {
         "deploy_watcher",
         "fork_harden",
         "fork_sync",
+        # `declaration.py`, moved here from the carrier: it reads each repository's
+        # `factory-target.toml` from GitHub, which this program compares with the record.
+        "httpx",
         "os",
         "pin_watcher",
+        "re",
         "rotation_worker",
         "sds_members",
+        "tomllib",
         "tool_installer",
         "typer",
         "typing",
@@ -532,12 +538,13 @@ TABLE: dict[str, Row] = {
         "pathlib",
         # For the read allowlist's anchored path template: the path carries an id, so what has to
         # be asserted is a TEMPLATE, and a hand-rolled split-and-check is a parser nobody reviews.
+        # The member record is the scope authority; the carrier reads it through that library.
         "re",
+        "sds_members",
         "subprocess",
         "sys",
-        # The declaration reader's own age report and the TOML the repository declares it in.
+        # The capability source's age report.
         "time",
-        "tomllib",
         "typing",
     ),
     # The listing is the carry's, deliberately: one question, one parse, and one place where the

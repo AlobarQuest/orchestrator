@@ -468,7 +468,7 @@ OUTBOUND_ALLOWLIST = {
     # checkout's word would have reported all five repositories that declare `true` as not having
     # opted in, which is the answer inverted for the whole population and in the direction that
     # looks like a working refusal.
-    Path("src/work_carrier/declaration.py"),
+    Path("src/membership_check/declaration.py"),
     # ADR-0029. `work_watcher` is the work lane's watcher, a SEPARATE program that shares the
     # carry's invocation and runs before it. TWO files, one route each. The change-manager
     # one is the only MUTATING egress either work-lane program has, and it is one-directional

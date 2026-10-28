@@ -21,6 +21,7 @@ PING_URL = "https://hc.example/ping/abcdef"
 HEALTHCHECKS_KEY_UUID = "51509d5e-64f5-4781-ae82-b4ed00b644e1"
 # Fetched by all three, and only on an acting run.
 PROPOSE_UUID = "acccb346-4baa-43ec-a1d4-b4a400c048ee"
+OBSERVER_UUID = "f793576f-e9aa-4f9d-8089-b4a000b9e2d5"
 
 
 @dataclass(frozen=True)
@@ -89,6 +90,7 @@ printf '%s\\t%s\\n' "$url" "$(printf '%s' "$body" | tr '\\n' '|')" >> "$PING_LOG
 """
 # Answers every secret except the one named in BWS_FAIL_UUID, which reads as unreadable.
 _BWS = """#!/bin/sh
+[ -z "${BWS_LOG:-}" ] || printf '%s\\n' "$*" >> "$BWS_LOG"
 case " $* " in
     *" ${BWS_FAIL_UUID:-none} "*) exit 1 ;;
 esac
@@ -144,6 +146,7 @@ def _run(
         "BWS_ACCESS_TOKEN_SDS": "not-a-real-identity",
         "LISTING": json.dumps({"checks": [{"name": check or lane.check, "ping_url": PING_URL}]}),
         "PING_LOG": str(ping_log),
+        "BWS_LOG": str(tmp_path / "bws.log"),
         _rc_variable(lane.programs[-1]): str(rc),
         **env_overrides,
     }
@@ -240,6 +243,23 @@ def test_the_carrier_report_holds_both_programs_and_pings_the_worst_code(tmp_pat
     assert pings[1][0] == f"{PING_URL}/fail"
     assert "work-watcher found: subject-work-watcher" in pings[1][1]
     assert "work-carrier found: subject-work-carrier" in pings[1][1]
+
+
+def test_the_carrier_fetches_the_member_record_bearer_without_the_acting_flag(
+    tmp_path: Path,
+) -> None:
+    """The grant is the scope authority, so even a bare pass needs the observer bearer."""
+    rc, _, output = _run(tmp_path, CARRIER, rc=0)
+    assert rc == 0, output
+    assert OBSERVER_UUID in (tmp_path / "bws.log").read_text()
+
+
+def test_an_acting_carrier_whose_observer_bearer_is_unreadable_pings_fail(tmp_path: Path) -> None:
+    rc, pings, output = _run(tmp_path, CARRIER, "--register", BWS_FAIL_UUID=OBSERVER_UUID)
+    assert rc == 1, output
+    assert pings[1][0] == f"{PING_URL}/fail"
+    assert "observer credential" in pings[1][1]
+    assert "found: subject" not in output
 
 
 # ---- the installers' Healthchecks checks ------------------------------------------------------

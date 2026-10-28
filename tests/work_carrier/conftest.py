@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from work_carrier.declaration import Declaration
+from sds_members.client import SERVICES, Member
 
 FIXTURE_PACKAGE = "ws32-approved-software"
 
@@ -26,6 +26,7 @@ FIXTURE_PACKAGE = "ws32-approved-software"
 def isolated_workability_inputs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("WORK_CARRIER_PORTFOLIO", str(tmp_path / "no-portfolio.json"))
     monkeypatch.delenv("WORK_CARRIER_GITHUB_TOKEN", raising=False)
+    monkeypatch.delenv("SDS_MEMBERS_OBSERVER_TOKEN", raising=False)
 
 
 @pytest.fixture(autouse=True)
@@ -53,7 +54,7 @@ def workable_target(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     permissive estate is declared by whoever wants it.
 
     It supplies INPUTS rather than a stubbed judge: a real `portfolio.json` with every check the
-    constraints read passing, and a declaration source that answers `true` without a network. The
+    constraints read passing, and a member record that grants the target (no network). The
     composition under test is therefore the real one, and it answers yes because the estate says
     yes. The refusals themselves are exercised in `test_workability.py`.
     """
@@ -83,24 +84,19 @@ def workable_target(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     )
     monkeypatch.setenv("WORK_CARRIER_PORTFOLIO", str(portfolio))
     monkeypatch.setattr(
-        "work_carrier.workability.from_environment",
-        lambda **_: _Declares(
-            Declaration(True, "factory-target.toml declares factory_target = true")
-        ),
+        "work_carrier.cli.read_members_from_environment",
+        lambda **_: [
+            Member(
+                repository="AlobarQuest/infraops-mcp-server",
+                owner="devon",
+                state="member",
+                working_copy=None,
+                machine_local=False,
+                apps=(),
+                grants={service: "granted" for service in SERVICES},
+            )
+        ],
     )
-
-
-class _Declares:
-    """A declaration source that answers without a network, and closes like the real one."""
-
-    def __init__(self, answer: Declaration) -> None:
-        self._answer = answer
-
-    def declaration(self, slug: str) -> Declaration:
-        return self._answer
-
-    def close(self) -> None:
-        return None
 
 
 @pytest.fixture()

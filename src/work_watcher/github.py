@@ -22,14 +22,13 @@ from typing import Final
 import httpx
 
 from estate_clients.confined import ConfinedClient, TransportFailure
-from work_carrier.declaration import TOKEN_ENV
 
 API: Final = "https://api.github.com"
 USER_AGENT: Final = "work-watcher/1 (+AlobarQuest/orchestrator)"
 TIMEOUT_SECONDS: Final = 30.0
 
-# Re-exported so the CLI names the variable it reads without spelling it a second time.
-GITHUB_TOKEN_ENV: Final = TOKEN_ENV
+# The launcher exports one GitHub credential for this lane and the carrier before it.
+GITHUB_TOKEN_ENV: Final = "WORK_CARRIER_GITHUB_TOKEN"
 
 OPEN: Final = "open"
 CLOSED: Final = "closed"
