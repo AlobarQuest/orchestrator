@@ -15,7 +15,7 @@ from landing_ledger.titles import BUMP_PATTERN, Bump, bump_of
 def test_a_range_bump_is_classified() -> None:
     bump = range_bump_of("chore(deps): update zod requirement from >=1.2.0 to >=1.3.0")
 
-    assert bump == Bump(from_version="1.2.0", to_version="1.3.0", kind="semver-minor")
+    assert bump == (">=", Bump(from_version="1.2.0", to_version="1.3.0", kind="semver-minor"))
 
 
 @pytest.mark.parametrize(
@@ -23,23 +23,29 @@ def test_a_range_bump_is_classified() -> None:
     [
         (
             "chore(deps-dev): update setuptools requirement from >=83.0.0 to >=84.0.0",
-            Bump("83.0.0", "84.0.0", "semver-major"),
+            (">=", Bump("83.0.0", "84.0.0", "semver-major")),
         ),
         (
             "chore(deps): update pyjwt[crypto] requirement from >=2.8 to >=2.13.0",
-            Bump("2.8", "2.13.0", "semver-minor"),
+            (">=", Bump("2.8", "2.13.0", "semver-minor")),
         ),
         (
             "build(deps): update react requirement from ^18.2.0 to ^19.0.0",
-            Bump("18.2.0", "19.0.0", "semver-major"),
+            ("^", Bump("18.2.0", "19.0.0", "semver-major")),
         ),
         (
             "build(deps): update lodash requirement from ~4.17.20 to ~4.17.21",
-            Bump("4.17.20", "4.17.21", "semver-patch"),
+            ("~", Bump("4.17.20", "4.17.21", "semver-patch")),
+        ),
+        (
+            "chore(deps): update attrs requirement from ~=23.1 to ~=24.2",
+            ("~=", Bump("23.1", "24.2", "semver-major")),
         ),
     ],
 )
-def test_single_operator_ranges_give_their_bare_versions(title: str, expected: Bump) -> None:
+def test_single_operator_ranges_give_their_bare_versions(
+    title: str, expected: tuple[str, Bump]
+) -> None:
     assert range_bump_of(title) == expected
 
 

@@ -15,9 +15,9 @@ producer:
          a person approves any other
       -> the carry registers an intake -> decomposition -> envelope -> dispatch
 
-A bump it cannot route -- no tooling for the ecosystem, a pip requirement range, a dependency a
-package in another ecosystem already covers, every docker bump -- holds one alert-hub alert open
-instead (`bump_proposer.alerts`).
+A bump it cannot route -- no tooling for the ecosystem, a range its tooling cannot carry, a
+dependency a package in another ecosystem already covers, every docker bump -- holds one alert-hub
+alert open instead (`bump_proposer.alerts`).
 
 **WHY THIS PRODUCER IS MECHANICAL AND OTHERS ARE NOT.** A cascade-refused bump IS its own work
 statement: the title states the delta, and ADR-0016 already decided that such bumps go to the
@@ -95,6 +95,7 @@ from bump_proposer.standing import (
     create,
     discover,
     other_ecosystem,
+    remove_if_untracked,
     require_clean,
     require_publishable,
     snapshot_hash,
@@ -262,38 +263,40 @@ def _alert(pending: PendingUpdate, ecosystem: str, dependency: str, why: str) ->
     )
 
 
+# The requirement-range operators each tooling profile's mutation can carry (Ruling 7, Review
+# focus 5). pip's mutation rewrites `==` lines only, so no range; uv's discovery reads `==` and
+# `>=` pins; npm installs with `--save-exact`, which turns any range into an exact pin, so none.
+# A range with any other operator alerts rather than becoming a package whose mutation can't apply.
+RANGE_OPERATORS: Final = {"pip": frozenset(), "uv": frozenset({">=", "=="}), "npm": frozenset()}
+
+
 def _consider(
     pending: PendingUpdate,
     rule: InertLanding,
     packages: dict[tuple[str, str], StandingPackage],
     now: datetime,
 ) -> Route:
-    """Decide what this open pull request is, or say why it is nothing to do here."""
+    """Decide what this open pull request is, or say why it is nothing to do here.
+
+    It routes the bump first (act, create or alert), then asks whether the cascade still has it.
+    Asking in that order is what lets one rule hold an alert while a re-run's failure settles,
+    whichever route raised it.
+    """
     update = pending.update
     if update is not None and update.ecosystem is not None and update.ecosystem not in TOOLING:
         # NO TOOLING (bridge Part 3). The factory has no profile for this ecosystem, so a bump the
         # cascade will not land has no route but a person -- asked before the title is read,
-        # because an alert needs no versions and a docker tag rarely parses as one (Ruling 6:
-        # docker is excluded from the cascade, so every docker bump, passing or not, is here).
-        if rule.permits(update.ecosystem) and not _refused_by_the_checks(pending, now):
-            # A failure that hasn't settled (a re-run failing again) can't be decided yet, so an
-            # alert already open for it is HELD rather than resolved and re-fired next pass.
-            unsettled = any(check.conclusion in REFUSING_CONCLUSIONS for check in pending.checks)
-            return Route(
-                "skip",
-                _landing_detail(pending, update.ecosystem),
-                key=(
-                    alerts.key_for(pending.repository, update.ecosystem, update.dependency)
-                    if unsettled
-                    else ""
-                ),
-            )
-        return _alert(
+        # because an alert needs no versions and a docker tag rarely parses as one. Ruling 6:
+        # every docker bump, passing or not, reaches the alert ONLY because the inert landing
+        # policy excludes docker today; were docker permitted, a passing one would be the
+        # cascade's like any other ecosystem's.
+        route = _alert(
             pending,
             update.ecosystem,
             update.dependency,
             f"the factory has no tooling for {update.ecosystem} bumps of {update.dependency}",
         )
+        return _gated(route, pending, rule, update.ecosystem, None, now)
 
     bump = bump_of(pending.title)
     declared_by_title = bump.declared if bump is not None else None
@@ -313,34 +316,48 @@ def _consider(
                 f"update trailer declares {declared_by_bot or 'no delta'}"
             ),
         )
-    ranged = False
+    operator = None
     if bump is None:
         # A single-clause requirement range (Ruling 7), parsed only once title and trailer have
         # agreed there is no plain delta: the bot declares no update type for a range.
-        bump = range_bump_of(pending.title)
-        ranged = True
+        ranged = range_bump_of(pending.title)
+        if ranged is not None:
+            operator, bump = ranged
     if bump is None:
         return Route("skip", "unclassifiable: the title states no single version delta")
 
     assert pending.update is not None  # a parsed title with no trailer is ambiguous above
     ecosystem = pending.update.ecosystem
-    # PERMITTED IS NOT THE SAME QUESTION AS LANDED, and it stopped being a usable proxy for it on
-    # 2026-08-28. While the rule was a cascade over update types, "the estate permits this" and
-    # "the estate lands this" picked out the same set, because everything it refused it refused on
-    # the declaration alone. ADR-0034 moved the split onto the OUTCOME -- anything not excluded is
-    # permitted and the required checks decide the rest -- so a bump whose checks FAIL is now
-    # permitted and unlandable at once, and this lane's subject is the second half. Reading
-    # `permits` alone here would EMPTY the factory's queue rather than narrow it to the failures
-    # ADR-0034 assigns to it, which is the opposite of what that decision says. The declaration
-    # ADR-0038 moved to change-manager is that same rule, so this reading is unchanged by the
-    # move -- and `permits` no longer takes the update type, because the declaration states no
-    # condition on one and passing it an argument it ignores would describe a rule nobody holds.
-    if rule.permits(ecosystem) and not _refused_by_the_checks(pending, now):
-        return Route("skip", _landing_detail(pending, ecosystem, bump))
     if ecosystem is None:
         return Route("skip", "unroutable: the branch names no ecosystem")
+    route = _route(pending, bump, TOOLING[ecosystem], operator=operator, packages=packages)
+    return _gated(route, pending, rule, ecosystem, bump, now)
 
-    return _route(pending, bump, TOOLING[ecosystem], ranged=ranged, packages=packages)
+
+def _gated(
+    route: Route,
+    pending: PendingUpdate,
+    rule: InertLanding,
+    ecosystem: str,
+    bump: Bump | None,
+    now: datetime,
+) -> Route:
+    """`route`, unless the cascade still has this bump.
+
+    PERMITTED IS NOT THE SAME QUESTION AS LANDED, and it stopped being a usable proxy for it on
+    2026-08-28. ADR-0034 moved the split onto the OUTCOME -- anything not excluded is permitted and
+    the required checks decide the rest -- so a bump whose checks FAIL is permitted and unlandable
+    at once, and this lane's subject is the second half. Reading `permits` alone would EMPTY the
+    factory's queue. The declaration ADR-0038 moved to change-manager is that same rule.
+
+    A failure that hasn't settled (a re-run failing again) can't be decided yet, so the key of an
+    alert the route would raise is HELD: neither resolved now nor fired again once it settles.
+    """
+    if not rule.permits(ecosystem) or _refused_by_the_checks(pending, now):
+        return route
+    unsettled = any(check.conclusion in REFUSING_CONCLUSIONS for check in pending.checks)
+    held = route.key if route.action == "alert" and unsettled else ""
+    return Route("skip", _landing_detail(pending, ecosystem, bump), key=held)
 
 
 def _route(
@@ -348,16 +365,21 @@ def _route(
     bump: Bump,
     tooling: str,
     *,
-    ranged: bool,
+    operator: str | None,
     packages: dict[tuple[str, str], StandingPackage],
 ) -> Route:
     """Where a failed bump with tooling goes: its package, a new package, or an alert."""
     assert pending.update is not None
     dependency = pending.update.dependency
-    if ranged and tooling == "pip":
-        # Review focus 5: pip's mutation command rewrites `==` lines only, so a package for a
-        # range would carry a mutation that cannot apply.
-        return _alert(pending, tooling, dependency, f"a pip requirement range of {dependency}")
+    if operator is not None and operator not in RANGE_OPERATORS[tooling]:
+        # Review focus 5: a package for this range would carry a mutation that cannot apply.
+        return _alert(
+            pending,
+            tooling,
+            dependency,
+            f"a {tooling} requirement range ({operator}) of {dependency}, which the {tooling} "
+            "mutation cannot carry",
+        )
     package = packages.get((pending.repository.lower(), dependency))
     if package is not None:
         other = other_ecosystem(package, tooling)
@@ -519,26 +541,36 @@ def _act(
     observation_id = observer.record_observation(bump_observation(pending, bump))
 
     outcomes: list[Outcome] = []
-    published: str | None = None
-    if package is None:
-        # Bridge Part 3. No standing package covers this dependency, so this pass creates one
-        # carrying the bump -- after the observation, like every other mint, and behind the same
-        # publish guard. Remembered at once, so a second pull request for the same dependency in
-        # this pass finds it rather than creating it again.
-        require_publishable(root)
-        package = create(root, subject, route.tooling, dependency, bump)
-        packages[(subject.lower(), dependency)] = package
-        outcomes.append(Outcome(subject, pending.number, "created", package.package_id))
-    if not (package.carries(bump) and package.approved):
-        # ASKED AGAIN, PER UNIT, and not only once at the top of the pass. A refused publish is
-        # caught per pull request and the pass goes on, so the residue this pass just created
-        # would otherwise be invisible to the guard that exists to stop a revision being stacked
-        # on it -- and every later unit would mint another revision number, which cannot be
-        # unminted, and commit another local commit refused the same way.
-        require_publishable(root)
-        package = advance(package, bump, root)
-        snapshot_hash(package, root)
-        published = commit(package, bump, root)
+    key = (subject.lower(), dependency)
+    created_here = package is None
+    try:
+        if package is None:
+            # Bridge Part 3. No standing package covers this dependency, so this pass creates
+            # one carrying the bump -- after the observation, like every other mint, and behind
+            # the same publish guard. Remembered at once, so a second pull request for the same
+            # dependency in this pass finds it rather than creating it again.
+            require_publishable(root)
+            package = create(root, subject, route.tooling, dependency, bump)
+            packages[key] = package
+            outcomes.append(Outcome(subject, pending.number, "created", package.package_id))
+        published = None
+        if not (package.carries(bump) and package.approved):
+            # ASKED AGAIN, PER UNIT, and not only once at the top of the pass. A refused publish
+            # is caught per pull request and the pass goes on, so the residue this pass just
+            # created would otherwise be invisible to the guard that exists to stop a revision
+            # being stacked on it -- and every later unit would mint another revision number,
+            # which cannot be unminted, and commit another local commit refused the same way.
+            require_publishable(root)
+            package = advance(package, bump, root)
+            snapshot_hash(package, root)
+            published = commit(package, bump, root)
+    except Exception:
+        # A package this pass created and could not commit (an approval refused, say) would be
+        # an untracked directory that `require_clean` refuses on every later pass. It is this
+        # program's own and nothing else holds it, so it goes; a committed one is left alone.
+        if created_here and key in packages:
+            remove_if_untracked(packages.pop(key).path, root)
+        raise
 
     record, created = client.propose(_proposal(package, bump, pending, observation_id))
     # THE SHA IS REPORTED BECAUSE THE PASS IS THE ONLY THING THAT KNOWS IT. `source_commit` on
@@ -873,8 +905,10 @@ def run(argv: list[str] | None = None) -> int:
         "--submit",
         action="store_true",
         help=(
-            "actually revise, approve and propose. Without it the pass is a dry run: it "
-            "writes nothing, commits nothing and touches no credential that could."
+            "actually create or revise, approve, propose and send alerts. Without it the pass "
+            "is a dry run: it commits, proposes and sends nothing and needs no credential that "
+            "writes to change-manager or the orchestrator (the launcher still fetches the alert "
+            "sender token, which a dry run never uses)."
         ),
     )
     parser.add_argument(
@@ -980,7 +1014,10 @@ def _send_alerts(
     sends nothing and writes no state file."""
     if not submit:
         return []
-    unreadable = {o.repository for o in outcomes if o.status == "unreadable"}
+    # Repositories this pass did not read: GitHub could not answer, or the landing policy doesn't
+    # declare them inert. Their remembered keys are neither resolved nor fired again.
+    unread_statuses = {"unreadable", "not-declared-inert"}  # not-a-vocabulary: two local statuses
+    unreadable = {o.repository for o in outcomes if o.status in unread_statuses}
     failure = alerts.sync(token, raised, unreadable=unreadable, requested=requested)
     return [] if failure is None else [Outcome("alert-hub", 0, "error", failure)]
 

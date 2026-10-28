@@ -21,11 +21,13 @@ _RANGE: Final = re.compile(
 )
 
 
-def range_bump_of(title: str) -> Bump | None:
-    """The two bare versions and the kind of change a single-clause range title states."""
+def range_bump_of(title: str) -> tuple[str, Bump] | None:
+    """The operator, and the two bare versions and kind of change, a single-clause range title
+    states. Which operators a tooling profile can carry is the caller's question."""
     match = _RANGE.search(title.strip())
     if match is None or match.group(1) != match.group(3):
         return None
     # Classified by the shared parser, so a range bump's kind is the same answer a plain bump of
     # the same two versions gets.
-    return bump_of(f"from {match.group(2)} to {match.group(4)}")
+    bump = bump_of(f"from {match.group(2)} to {match.group(4)}")
+    return None if bump is None else (match.group(1), bump)

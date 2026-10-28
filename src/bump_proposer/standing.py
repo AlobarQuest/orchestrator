@@ -44,6 +44,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -321,11 +322,34 @@ def create(
     ).strip()
     package = discover(root).get((repository.lower(), dependency))
     if package is None or not printed or Path(printed).name != package.package_id:
+        if printed:
+            remove_if_untracked(root / printed, root)
         raise StandingError(
             f"create-standing printed {printed or 'nothing'!r}, and discovery does not find it "
             f"as the standing package for {repository} {dependency}"
         )
     return package
+
+
+def remove_if_untracked(directory: Path, root: Path) -> bool:
+    """Remove a package directory this program created and never committed. Answers whether it
+    did.
+
+    Only a directory inside the checkout's `packages/` that git tracks NO file under is removed:
+    a path holding anything committed is somebody's package, and is never touched.
+    """
+    base = (root / _PACKAGES_DIRECTORY).resolve()
+    target = directory.resolve()
+    if target.parent != base or not target.is_dir():
+        return False
+    try:
+        tracked = _run(root, ["git", "ls-files", "--", str(target.relative_to(root.resolve()))])
+    except StandingError:
+        return False  # unasked is not untracked
+    if tracked.strip():
+        return False
+    shutil.rmtree(target)
+    return True
 
 
 def other_ecosystem(package: StandingPackage, tooling: str) -> str | None:

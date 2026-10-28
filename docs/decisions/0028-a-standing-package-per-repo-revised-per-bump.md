@@ -112,8 +112,10 @@ stays `[source_repository]`.
 **What a person still decides.** "What still gates the lane" item 1 changes: change-manager's work
 policy approves a conforming record (ADR-0025 amendment 1), and a person approves every other one.
 The producer alerts, rather than creates, for a bump it cannot route: an ecosystem with no tooling
-profile, a pip requirement range (pip's mutation rewrites `==` lines only), a dependency already
-covered by a package in another ecosystem (discovery holds one package per repository and
-dependency), and every docker bump. Each holds one alert-hub alert, sender `sds-bridge`, keyed
-`dependency-bump:<repository>:<ecosystem>:<dependency>`, until its pull request merges or closes.
+profile, a requirement range its tooling's mutation can't carry (any range in pip or npm; in uv
+anything but `>=` and `==`), a dependency already covered by a package in another ecosystem
+(discovery holds one package per repository and dependency), and every docker bump. Docker bumps
+alert whether or not they pass only because the inert landing policy excludes docker today; a
+permitted ecosystem's passing bump is the cascade's. Each holds one alert-hub alert, sender
+`sds-bridge`, keyed `dependency-bump:<repository>:<ecosystem>:<dependency>`, resolved by the first writing pass that no longer raises it: its pull request merged or closed, or (in an ecosystem the cascade lands) a re-run passed. A re-run that fails again but hasn't settled holds the key, neither resolved nor fired again.
 Repositories that deploy on landing stay out of the lane until holds ship (Part 4).

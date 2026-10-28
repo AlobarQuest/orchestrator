@@ -105,9 +105,9 @@ missing either field) stays pending for a person.
 - **Inert repositories only (Ruling 1).** No repository whose default-branch landing redeploys is
   reached; that waits for holds (Part 4).
 - **Keyed on the inert list, not the grant (Ruling 2).** change-manager can't read the SDS member
-  record. Every inert repository is granted `dependency_updates` today, and dispatch admission checks
-  the grant again, so a record for a repository whose grant was withdrawn is approved and then
-  refused at admission.
+  record. `membership_check` reports any inert repository the record does not grant
+  `dependency_updates`, and dispatch admission checks the grant again, so a record for a repository
+  whose grant was withdrawn is approved and then refused at admission.
 - **The source-level property is unchanged.** `work` is not added to the sources approved wholesale:
   a source-wide policy would make rotation and app-change records unapprovable by anyone. The policy
   is per record.

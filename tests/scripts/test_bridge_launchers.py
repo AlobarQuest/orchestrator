@@ -22,8 +22,8 @@ HEALTHCHECKS_KEY_UUID = "51509d5e-64f5-4781-ae82-b4ed00b644e1"
 # Fetched by all three, and only on an acting run.
 PROPOSE_UUID = "acccb346-4baa-43ec-a1d4-b4a400c048ee"
 OBSERVER_UUID = "f793576f-e9aa-4f9d-8089-b4a000b9e2d5"
-# The bump proposer's `sds-bridge` alert sender token. A placeholder until the ship step.
-ALERT_UUID = "00000000-0000-0000-0000-000000000000"
+# The bump proposer's `sds-bridge` alert sender token.
+ALERT_UUID = "b415d03b-f92d-46b1-8a9d-b4f10103df49"
 
 
 @dataclass(frozen=True)
@@ -373,6 +373,25 @@ def test_the_bump_proposer_fetches_and_exports_the_sender_token(
     assert "SDS_BRIDGE_ALERT_TOKEN" in names
     fetches = (tmp_path / "bws.log").read_text().splitlines()
     assert any(f"secret get {ALERT_UUID} " in f"{line} " for line in fetches)
+
+
+def test_the_sender_token_uuid_is_the_one_the_manifest_lists() -> None:
+    """The launcher's default is the `.bws-secrets.toml` entry for the sds-bridge sender token."""
+    import re
+    import tomllib
+
+    manifest = tomllib.loads(Path(".bws-secrets.toml").read_text())
+    listed = {
+        entry["uuid"]
+        for entry in manifest["secret"]
+        if entry["name"] == "ALERT_HUB_SENDER_TOKEN_SDS_BRIDGE"
+    }
+    launcher = (Path("scripts") / LANES[0].launcher).read_text()
+    default = re.search(
+        r'SDS_BRIDGE_ALERT_UUID="\$\{BUMP_PROPOSER_ALERT_BWS_UUID:-([^}]+)\}"', launcher
+    )
+    assert default is not None
+    assert listed == {default.group(1)} == {ALERT_UUID}
 
 
 @pytest.mark.parametrize("args", [(), ("--submit",)], ids=["dry-run", "submit"])

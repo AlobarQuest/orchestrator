@@ -579,3 +579,41 @@ def test_publishing_a_created_package_commits_its_new_directory(tmp_path) -> Non
     }
     assert _git(root, "rev-parse", "origin/main").strip() == head
     assert _git(root, "status", "--porcelain") == ""
+
+
+def _repository(tmp_path: Path) -> Path:
+    root = tmp_path / "checkout"
+    root.mkdir()
+    _git(root, "init", "-q", "-b", "main")
+    for setting in (("user.name", "t"), ("user.email", "t@example.invalid")):
+        _git(root, "config", *setting)
+    return root
+
+
+def test_an_untracked_package_directory_is_removed(tmp_path) -> None:
+    root = _repository(tmp_path)
+    directory = _write(root, "infraops-mcp-server-npm-left-pad", dependency="left-pad")
+
+    assert standing.remove_if_untracked(directory, root) is True
+    assert not directory.exists()
+
+
+def test_a_tracked_package_directory_is_never_removed(tmp_path) -> None:
+    root = _repository(tmp_path)
+    directory = _write(root, "infraops-mcp-server-npm-zod")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", "a package somebody committed")
+    (directory / "lineage.yaml").write_text("untracked beside a tracked file\n")
+
+    assert standing.remove_if_untracked(directory, root) is False
+    assert (directory / "package.yaml").exists() and (directory / "lineage.yaml").exists()
+
+
+def test_nothing_outside_the_packages_directory_is_removed(tmp_path) -> None:
+    root = _repository(tmp_path)
+    elsewhere = root / "notes"
+    elsewhere.mkdir()
+
+    assert standing.remove_if_untracked(elsewhere, root) is False
+    assert standing.remove_if_untracked(root / "packages", root) is False
+    assert elsewhere.exists()

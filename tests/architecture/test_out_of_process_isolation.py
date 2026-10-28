@@ -139,6 +139,8 @@ TABLE: dict[str, Row] = {
         "re",
         # The member record's grant is this lane's scope authority.
         "sds_members",
+        # Bridge Part 3: removing a package directory it created and could not commit.
+        "shutil",
         "subprocess",
         "sys",
         "typing",

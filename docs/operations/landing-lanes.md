@@ -366,14 +366,17 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   policy declares inert or that a standing package targets. For a failed bump in an ecosystem with
   tooling (`npm_and_yarn` → `npm`, `pip`, `uv`) and no package for its dependency, it runs
   intent-packages' `create-standing` and then the usual transition, policy approval, hash, commit,
-  publish and proposal; a single-clause requirement range (`from >=1.2.0 to >=1.3.0`) carries its
-  bare versions. It sends one alert-hub alert (sender `sds-bridge`, key
+  publish and proposal; a single-clause uv range with `>=` or `==` carries its bare versions. It
+  sends one alert-hub alert (sender `sds-bridge`, key
   `dependency-bump:<repository lowercased>:<ecosystem>:<dependency>`, built by
-  `alert_hub_client.dependency_bump_key`) instead for a failed bump with no tooling, a pip range,
-  a dependency already covered by a package in another ecosystem, and every docker bump. A key
-  fires once, is kept in `~/Library/Application Support/sds/bump-proposer/alerts.json`, and is
-  resolved by the first writing pass that no longer raises it; a repository the pass could not read,
-  or one outside a `--repository` run, keeps its keys. A dry run sends nothing and writes no state.
+  `alert_hub_client.dependency_bump_key`) instead for a failed bump with no tooling, any other
+  range (pip and npm ranges, uv ranges other than `>=`/`==`), a dependency already covered by a
+  package in another ecosystem, and every docker bump (only because the inert landing policy
+  excludes docker). A key fires once, is kept in
+  `~/Library/Application Support/sds/bump-proposer/alerts.json`, and is resolved by the first writing pass that no longer raises it: its pull request merged or closed, or (in an ecosystem the cascade lands) a re-run passed. A re-run that fails again but hasn't settled holds the key, neither resolved nor fired again. A
+  repository the pass didn't read (unreadable, not declared inert, or outside a `--repository`
+  run) keeps its keys. An approval refused after a package was created removes that uncommitted
+  package directory, so the next pass's clean-checkout check still passes. A dry run sends nothing and writes no state.
   `--submit` refuses to start without `SDS_BRIDGE_ALERT_TOKEN`, which the launcher fetches from
   `SDS Operator` with the narrow identity on every run.
 

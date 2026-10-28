@@ -31,6 +31,8 @@ from sds_members.client import SERVICES, Member, MembersUnreadable
 from tests.bump_proposer.test_landing_policy import LIVE
 
 REPOSITORY = "AlobarQuest/infraops-mcp-server"
+# Taken before any rig replaces it, for the test that needs a real clean-checkout refusal.
+REAL_REQUIRE_CLEAN = standing.require_clean
 
 # The zod pull request's checks CONCLUDED AGAINST IT, long enough ago to have settled. Since
 # ADR-0034 that is the only thing that keeps a bump in this lane -- the declared rule permits an
@@ -1108,27 +1110,56 @@ def test_a_created_package_is_not_created_twice(rig, monkeypatch) -> None:
     assert len(estate.records) == 1
 
 
-def test_a_failed_range_bump_in_npm_creates_a_package_with_its_bare_versions(
-    rig, monkeypatch
+def _range_pull(ecosystem: str, operator: str, dependency: str = "left-pad") -> Pull:
+    return Pull(
+        number=73,
+        title=(
+            f"chore(deps): update {dependency} requirement from {operator}1.2.0 to {operator}1.3.0"
+        ),
+        dependency=dependency,
+        ecosystem=ecosystem,
+        update_type=None,
+    )
+
+
+@pytest.mark.parametrize("operator", [">=", "=="])
+def test_a_failed_uv_range_it_can_carry_creates_a_package_with_its_bare_versions(
+    rig, monkeypatch, operator
 ) -> None:
     estate, calls = rig
-    _serve(
-        monkeypatch,
-        pulls=[
-            Pull(
-                number=73,
-                title="chore(deps): update left-pad requirement from >=1.2.0 to >=1.3.0",
-                dependency="left-pad",
-                update_type=None,
-            )
-        ],
-    )
+    _serve(monkeypatch, pulls=[_range_pull("uv", operator)])
 
     assert run(["--submit"]) == EXIT_OK
 
+    assert calls[0][calls[0].index("--ecosystem") + 1] == "uv"
     assert calls[0][calls[0].index("--from") + 1] == "1.2.0"
     assert calls[0][calls[0].index("--to") + 1] == "1.3.0"
     assert len(estate.proposals) == 1
+
+
+@pytest.mark.parametrize(
+    ("ecosystem", "tooling", "operator"),
+    [
+        # uv's discovery reads `==` and `>=` pins only.
+        ("uv", "uv", "~="),
+        # npm installs `--save-exact`, so any range would become an exact pin.
+        ("npm_and_yarn", "npm", ">="),
+        ("npm_and_yarn", "npm", "^"),
+        ("npm_and_yarn", "npm", "~"),
+        # pip's mutation rewrites `==` lines only.
+        ("pip", "pip", ">="),
+    ],
+)
+def test_a_range_its_tooling_cannot_carry_alerts(
+    rig, monkeypatch, hub, ecosystem, tooling, operator
+) -> None:
+    estate, calls = rig
+    _serve(monkeypatch, pulls=[_range_pull(ecosystem, operator)])
+
+    assert run(["--submit"]) == EXIT_OK
+
+    assert calls == [] and estate.proposals == []
+    assert hub.keys("firing") == [_key(tooling, "left-pad")]
 
 
 def test_a_pip_range_bump_alerts(rig, monkeypatch, hub, capsys) -> None:
@@ -1277,6 +1308,36 @@ def test_a_failure_that_has_not_settled_holds_its_alert(rig, monkeypatch, hub) -
     assert hub.keys("firing") == [_key("github__actions", "actions/checkout")]
 
 
+PIP_RANGE = Pull(
+    number=74,
+    title="chore(deps): update requests requirement from >=2.31.0 to >=2.32.0",
+    dependency="requests",
+    ecosystem="pip",
+    update_type=None,
+)
+SECOND_ECOSYSTEM = Pull(number=77, dependency="zod", ecosystem="uv")
+
+
+@pytest.mark.parametrize(
+    ("pull", "key"),
+    [(PIP_RANGE, _key("pip", "requests")), (SECOND_ECOSYSTEM, _key("uv", "zod"))],
+    ids=["pip-range", "second-ecosystem"],
+)
+def test_an_unsettled_rerun_holds_every_kind_of_alert(rig, monkeypatch, hub, pull, key) -> None:
+    """The hold is one rule after routing, not a no-tooling special case."""
+    _serve(monkeypatch, pulls=[pull])
+    assert run(["--submit"]) == EXIT_OK
+
+    just_now = datetime.now(UTC).isoformat()
+    _serve(monkeypatch, pulls=[replace(pull, completed_at=just_now)])
+    assert run(["--submit"]) == EXIT_OK
+    _serve(monkeypatch, pulls=[pull])
+    assert run(["--submit"]) == EXIT_OK
+
+    assert hub.keys("resolved") == []
+    assert hub.keys("firing") == [key]
+
+
 def test_a_rerun_that_passes_resolves_its_alert(rig, monkeypatch, hub) -> None:
     """The control: a green re-run is the condition cleared."""
     _serve(monkeypatch, pulls=[_actions("failure")])
@@ -1378,3 +1439,59 @@ def test_a_granted_repository_not_declared_inert_with_no_package_is_told_not_fou
     out = capsys.readouterr().out
     assert "[NO PACKAGE] AlobarQuest/brain" in out
     assert "brain#" not in out
+
+
+def _git(cwd, *args: str) -> str:
+    import subprocess
+
+    return subprocess.run(
+        ["git", *args], cwd=cwd, check=True, capture_output=True, text=True
+    ).stdout
+
+
+def test_a_refused_approval_after_create_leaves_a_checkout_the_next_pass_accepts(
+    rig, checkout, monkeypatch, capsys
+) -> None:
+    """Kills: leaving the created directory behind. Untracked, it would make `require_clean`
+    refuse every later `--submit` pass until a person cleaned the checkout."""
+    estate, calls = rig
+    _git(checkout, "init", "-q", "-b", "main")
+    for setting in (("user.name", "t"), ("user.email", "t@example.invalid")):
+        _git(checkout, "config", *setting)
+    (checkout / ".gitignore").write_text("state/\n")
+    _git(checkout, "add", "-A")
+    _git(checkout, "commit", "-q", "-m", "seed")
+    for module in (standing, cli):
+        monkeypatch.setattr(module, "require_clean", REAL_REQUIRE_CLEAN)
+    _serve(monkeypatch, pulls=[LEFT_PAD])
+    stub = standing.lifecycle
+
+    def refuse_approval(root, *args):
+        if args[0] == "approve":
+            raise standing.StandingError("approve --by-policy refused: member record unreadable")
+        return stub(root, *args)
+
+    monkeypatch.setattr(standing, "lifecycle", refuse_approval)
+    assert run(["--submit"]) == EXIT_FINDINGS
+    assert not (checkout / "packages" / CREATED_ID).exists()
+    assert _git(checkout, "status", "--porcelain") == ""
+    assert estate.proposals == []
+
+    monkeypatch.setattr(standing, "lifecycle", stub)
+    capsys.readouterr()
+    assert run(["--submit"]) == EXIT_OK
+    assert [(p["package_id"], p["package_revision"]) for p in estate.proposals] == [(CREATED_ID, 1)]
+
+
+def test_a_repository_not_declared_inert_keeps_its_alerts(rig, checkout, monkeypatch, hub) -> None:
+    """A repository with a package that the landing policy stops declaring inert is not read, so
+    its remembered keys stay as they were."""
+    remembered = _key("docker", "python")
+    _remember(checkout, remembered)
+    document = json.loads(json.dumps(LIVE))
+    document["inert_landing"]["repositories"].remove("alobarquest/infraops-mcp-server")
+    monkeypatch.setattr(cli, "read_inert_landing", lambda token, base_url: parse(document))
+
+    assert run(["--submit"]) == EXIT_FINDINGS
+
+    assert hub.keys("resolved") == []
