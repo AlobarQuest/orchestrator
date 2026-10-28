@@ -161,16 +161,16 @@ def test_both_copies_read_a_release_alike(version: str) -> None:
 
 @pytest.mark.parametrize(("title", "message", "ecosystem"), MESSAGES)
 def test_both_copies_read_a_message_alike(title: str, message: str, ecosystem: str) -> None:
-    assert _fields(service._dependencies_of(message, ecosystem)) == _fields(
+    assert _fields(service.dependencies_of(message, ecosystem)) == _fields(
         lane.dependencies_of(message, ecosystem)
     )
     ours, theirs = (
-        service._bumps_of(title, message, ecosystem),
+        service.bumps_of(title, message, ecosystem),
         lane.bumps_of(title, message, ecosystem),
     )
     assert _fields(ours) == _fields(theirs)
     if ours is not None and theirs is not None:
-        assert _fields(service._exceeded(HOLDS, REPO, ours)) == _fields(
+        assert _fields(service.exceeded(HOLDS, REPO, ours)) == _fields(
             lane.exceeded(HOLDS, REPO, theirs)
         )
 
@@ -180,7 +180,7 @@ def test_both_copies_decide_these_messages_as_expected(
     title: str, message: str, ecosystem: str, expected: bool | None
 ) -> None:
     ours, theirs = (
-        service._bumps_of(title, message, ecosystem),
+        service.bumps_of(title, message, ecosystem),
         lane.bumps_of(title, message, ecosystem),
     )
     if expected is None:
@@ -189,7 +189,7 @@ def test_both_copies_decide_these_messages_as_expected(
         return
     assert ours is not None
     assert theirs is not None
-    assert bool(service._exceeded(HOLDS, REPO, ours)) is expected
+    assert bool(service.exceeded(HOLDS, REPO, ours)) is expected
     assert bool(lane.exceeded(HOLDS, REPO, theirs)) is expected
 
 
@@ -200,7 +200,7 @@ def test_both_copies_decide_a_bump_alike(version: str, hold: Hold) -> None:
         for dependency in (hold.dependency, hold.dependency.upper(), *SPELLINGS):
             ours = (service.Bump(hold.ecosystem, directory, dependency, version),)
             theirs = (lane.Bump(hold.ecosystem, directory, dependency, version),)
-            assert _fields(service._exceeded([hold], REPO, ours)) == _fields(
+            assert _fields(service.exceeded([hold], REPO, ours)) == _fields(
                 lane.exceeded([hold], REPO, theirs)
             )
 

@@ -109,7 +109,9 @@ from orchestrator.services.landing.terms import (
     ecosystem_exclusion_term,
     freshness_term,
     qualifies_for_branch_update,
+    version_ceiling_term,
 )
+from orchestrator.services.membership.members import HoldView, holds_for
 
 # The estate says landing on this repository's default branch DOES change something already
 # serving -- so this is the wrong lane for it, and the right one exists. Its own refusal rather
@@ -219,7 +221,9 @@ def inert_landing_admission(
 
     estate = _inert_estate_term(repository, landing_source)
     policy = _policy_term(repository, policy_source)
-    remote = _remote_terms(repository, pr_number, policy.rules, gateway)
+    remote = _remote_terms(
+        repository, pr_number, policy.rules, holds_for(session, repository), gateway
+    )
 
     refusals.extend(estate.refusals)
     refusals.extend(policy.term.refusals)
@@ -325,6 +329,7 @@ def _remote_terms(
     repository: str,
     pr_number: int,
     rules: InertLandingRules | None,
+    holds: tuple[HoldView, ...],
     gateway: EstateReadGateway,
 ) -> _RemoteTerms:
     """Every question only GitHub can answer, asked at the moment the answer has to be true.
@@ -349,6 +354,14 @@ def _remote_terms(
     else:
         checks = checks_term(repository, pull, gateway)
         refusals.extend(checks.refusals)
+
+    # Bridge layer Part 4. Asked BEFORE the policy's own early return, because the close act keys
+    # on the ceiling code being present whatever else refuses. A wholesale author (Ruling 8: a
+    # fork's upstream sync is someone else's release, not a bump) is never asked, and never has
+    # its commits read; without the rules nobody can say an author is wholesale, so it is asked.
+    wholesale = rules is not None and not rules.ecosystem_scoped(pull.author_login)
+    held = Term(True, ()) if wholesale else version_ceiling_term(repository, pull, holds, gateway)
+    refusals.extend(held.refusals)
 
     if rules is None:
         # Already reported by the policy term. Everything below is a condition this process was
@@ -383,7 +396,6 @@ def _remote_terms(
     # reader can see and split, instead of silently acquiring a landing method nobody chose. The
     # direction of the mistake, if it is ever made, is a merge commit where a squash would have
     # done -- untidy, and not a landing that should not have happened.
-    wholesale = not rules.ecosystem_scoped(pull.author_login)
     if wholesale:
         ecosystem = Term(True, ())
     else:
@@ -408,6 +420,7 @@ def _remote_terms(
         and author.met
         and fresh.met
         and ecosystem.met
+        and held.met
     )
     return _RemoteTerms(Term(met, tuple(refusals)), pull.head_sha, merge_method)
 

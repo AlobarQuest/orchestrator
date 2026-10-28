@@ -12,11 +12,12 @@ non-lowercase ecosystem and a malformed directory, but name equivalence (PEP 503
 case-folded, runs of `-_.` equal; lowercase for npm) is the matcher's to apply when it compares a
 bump's dependency with a hold's.
 
-**TWO COPIES, ONE ANSWER.** The matcher below (`_exceeded`, with `_bumps_of` reading what an update
+**TWO COPIES, ONE ANSWER.** The matcher below (`exceeded`, with `bumps_of` reading what an update
 moves) is copied beside the lanes' member client, since the lanes can't import the orchestrator
 and this copy can't import a lane. `tests/services/test_hold_agreement.py` runs both over one
-corpus and pins the title read to the lander's `BUMP_PATTERN`. The functions stay
-private-prefixed until the first admission calls them (`test_unreachable_guards.py`).
+corpus and pins the title read to the lander's `BUMP_PATTERN`. The landing admissions call them
+through `terms.version_ceiling_term`. `_ecosystem_of_package_id` stays private-prefixed until the
+factory merge calls it (`test_unreachable_guards.py`).
 """
 
 import re
@@ -121,7 +122,7 @@ class HeldDependency(Protocol):
     def ceiling(self) -> str: ...
 
 
-def _exceeded(
+def exceeded(
     holds: Iterable[HeldDependency], repository: str, bumps: Iterable[Bump]
 ) -> tuple[HoldBreach, ...]:
     """Every (bump, hold) pair where the bump moves the held dependency beyond its ceiling.
@@ -184,7 +185,7 @@ def _padded(
     return left + (0,) * (width - len(left)), right + (0,) * (width - len(right))
 
 
-def _dependencies_of(commit_message: str, ecosystem: str) -> tuple[Bump, ...] | None:
+def dependencies_of(commit_message: str, ecosystem: str) -> tuple[Bump, ...] | None:
     """Every dependency Dependabot's `updated-dependencies` block names, or `None` when there is
     no block this can read.
 
@@ -239,7 +240,7 @@ def _unquote(value: str) -> str:
     return value
 
 
-def _bumps_of(title: str, commit_message: str, ecosystem: str) -> tuple[Bump, ...] | None:
+def bumps_of(title: str, commit_message: str, ecosystem: str) -> tuple[Bump, ...] | None:
     """What an update moves: the block's dependencies, with a single update's version taken from
     the title.
 
@@ -255,7 +256,7 @@ def _bumps_of(title: str, commit_message: str, ecosystem: str) -> tuple[Bump, ..
     names no versions and nothing fresher than the block exists, so if the block lags, a group can
     be admitted at a stale version. `None` when the block can't be read.
     """
-    bumps = _dependencies_of(commit_message, ecosystem)
+    bumps = dependencies_of(commit_message, ecosystem)
     if bumps is None or len(bumps) != 1:
         return bumps
     match = _TITLE_BUMP.search(_TITLE_DIRECTORY.sub("", title.strip()))

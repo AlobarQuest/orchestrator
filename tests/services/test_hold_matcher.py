@@ -12,10 +12,10 @@ from orchestrator.services.membership.holds import (
     TOOLING_TO_DEPENDABOT,
     Bump,
     HoldBreach,
-    _bumps_of,
-    _dependencies_of,
     _ecosystem_of_package_id,
-    _exceeded,
+    bumps_of,
+    dependencies_of,
+    exceeded,
 )
 from orchestrator.services.membership.members import HoldView
 
@@ -54,12 +54,12 @@ def _bump(
 
 @pytest.mark.parametrize("version", ["2.0.53", "2.0.54", "1.9", "2.0.54.0", "v2.0.54", "2.0.54+b1"])
 def test_at_or_below_the_ceiling_is_admitted(version: str) -> None:
-    assert _exceeded([_hold()], REPO, [_bump(version)]) == ()
+    assert exceeded([_hold()], REPO, [_bump(version)]) == ()
 
 
 @pytest.mark.parametrize("version", ["2.0.55", "2.1", "3", "2.0.54.1", "v2.0.55rc1"])
 def test_above_the_ceiling_breaches(version: str) -> None:
-    assert _exceeded([_hold()], REPO, [_bump(version)]) == (
+    assert exceeded([_hold()], REPO, [_bump(version)]) == (
         HoldBreach(
             repository=REPO,
             ecosystem="pip",
@@ -73,38 +73,38 @@ def test_above_the_ceiling_breaches(version: str) -> None:
 
 @pytest.mark.parametrize("version", ["latest", "", "1!2.0", "2.x", "^2.0.55"])
 def test_an_unreadable_version_on_a_held_dependency_breaches(version: str) -> None:
-    assert len(_exceeded([_hold()], REPO, [_bump(version)])) == 1
+    assert len(exceeded([_hold()], REPO, [_bump(version)])) == 1
 
 
 def test_an_unreadable_ceiling_breaches_every_bump_of_its_dependency() -> None:
-    assert len(_exceeded([_hold(ceiling="2.x")], REPO, [_bump("0.1")])) == 1
+    assert len(exceeded([_hold(ceiling="2.x")], REPO, [_bump("0.1")])) == 1
 
 
 def test_an_unreadable_version_on_an_unheld_dependency_is_admitted() -> None:
-    assert _exceeded([_hold()], REPO, [_bump("latest", "alembic")]) == ()
+    assert exceeded([_hold()], REPO, [_bump("latest", "alembic")]) == ()
 
 
 def test_no_holds_admits_everything() -> None:
-    assert _exceeded([], REPO, [_bump("99")]) == ()
+    assert exceeded([], REPO, [_bump("99")]) == ()
 
 
 def test_a_bump_with_no_directory_matches_a_hold_on_any_directory() -> None:
     hold = _hold(directory="/services/api")
-    assert len(_exceeded([hold], REPO, [_bump("3", directory=None)])) == 1
+    assert len(exceeded([hold], REPO, [_bump("3", directory=None)])) == 1
 
 
 def test_a_bump_in_another_directory_is_admitted() -> None:
     hold = _hold(directory="/services/api")
-    assert _exceeded([hold], REPO, [_bump("3", directory="/")]) == ()
+    assert exceeded([hold], REPO, [_bump("3", directory="/")]) == ()
 
 
 def test_a_trailing_slash_on_the_bump_directory_matches() -> None:
     hold = _hold(directory="/services/api")
-    assert len(_exceeded([hold], REPO, [_bump("3", directory="/services/api/")])) == 1
+    assert len(exceeded([hold], REPO, [_bump("3", directory="/services/api/")])) == 1
 
 
 def test_another_ecosystem_is_admitted() -> None:
-    assert _exceeded([_hold()], REPO, [_bump("3", ecosystem="uv")]) == ()
+    assert exceeded([_hold()], REPO, [_bump("3", ecosystem="uv")]) == ()
 
 
 @pytest.mark.parametrize(
@@ -113,24 +113,23 @@ def test_another_ecosystem_is_admitted() -> None:
 @pytest.mark.parametrize("ecosystem", ["pip", "uv"])
 def test_pip_and_uv_names_compare_by_pep_503(name: str, ecosystem: str) -> None:
     held = _hold("sql-alchemy", ecosystem=ecosystem)
-    assert len(_exceeded([held], REPO, [_bump("3", name, ecosystem=ecosystem)])) == 1
+    assert len(exceeded([held], REPO, [_bump("3", name, ecosystem=ecosystem)])) == 1
 
 
 def test_npm_names_compare_lowercased_and_keep_their_scope() -> None:
     hold = _hold("@types/node", "20", ecosystem="npm_and_yarn")
     assert (
-        len(_exceeded([hold], REPO, [_bump("22.1.0", "@Types/Node", ecosystem="npm_and_yarn")]))
-        == 1
+        len(exceeded([hold], REPO, [_bump("22.1.0", "@Types/Node", ecosystem="npm_and_yarn")])) == 1
     )
     # An npm name is not PEP 503 normalised: `_` and `-` are different packages there.
     other = _hold("lodash_es", "1", ecosystem="npm_and_yarn")
-    assert _exceeded([other], REPO, [_bump("9", "lodash-es", ecosystem="npm_and_yarn")]) == ()
+    assert exceeded([other], REPO, [_bump("9", "lodash-es", ecosystem="npm_and_yarn")]) == ()
 
 
 def test_other_ecosystems_compare_names_lowercased() -> None:
     hold = _hold("actions/checkout", "4", ecosystem="github_actions")
     assert (
-        len(_exceeded([hold], REPO, [_bump("5", "Actions/Checkout", ecosystem="github_actions")]))
+        len(exceeded([hold], REPO, [_bump("5", "Actions/Checkout", ecosystem="github_actions")]))
         == 1
     )
 
@@ -193,7 +192,7 @@ updated-dependencies:
 
 
 def test_a_grouped_message_reads_every_member() -> None:
-    assert _dependencies_of(GROUPED, "pip") == (
+    assert dependencies_of(GROUPED, "pip") == (
         Bump("pip", None, "alembic", "1.18.0"),
         Bump("pip", None, "sqlalchemy", "2.1.6"),
         Bump("pip", None, "httpx", "0.28.1"),
@@ -201,17 +200,17 @@ def test_a_grouped_message_reads_every_member() -> None:
 
 
 def test_a_grouped_message_with_one_held_member_breaches() -> None:
-    bumps = _bumps_of(
+    bumps = bumps_of(
         "chore(deps): bump the python group across 1 directory with 3 updates", GROUPED, "pip"
     )
     assert bumps is not None
-    breaches = _exceeded([_hold()], REPO, bumps)
+    breaches = exceeded([_hold()], REPO, bumps)
     assert [b.dependency for b in breaches] == ["sqlalchemy"]
     assert breaches[0].version == "2.1.6"
 
 
 def test_the_directory_is_read_when_the_block_carries_it() -> None:
-    assert _dependencies_of(WITH_DIRECTORY, "npm_and_yarn") == (
+    assert dependencies_of(WITH_DIRECTORY, "npm_and_yarn") == (
         Bump("npm_and_yarn", "/web", "@types/node", "22.1.0"),
         Bump("npm_and_yarn", "/", "react", "19.0.0"),
     )
@@ -231,38 +230,38 @@ def test_the_directory_is_read_when_the_block_carries_it() -> None:
     ],
 )
 def test_a_message_with_no_readable_block_returns_none(message: str) -> None:
-    assert _dependencies_of(message, "pip") is None
+    assert dependencies_of(message, "pip") is None
 
 
 def test_a_block_without_a_version_reads_an_empty_version_which_a_hold_refuses() -> None:
     message = "---\nupdated-dependencies:\n- dependency-name: sqlalchemy\n...\n"
-    bumps = _dependencies_of(message, "pip")
+    bumps = dependencies_of(message, "pip")
     assert bumps == (Bump("pip", None, "sqlalchemy", ""),)
-    assert len(_exceeded([_hold()], REPO, bumps or ())) == 1
+    assert len(exceeded([_hold()], REPO, bumps or ())) == 1
 
 
 def test_a_single_update_takes_its_version_from_the_title() -> None:
     # The block lags a rewritten pull request (0.16.0); the title tracked it (0.16.1).
     title = "chore(deps-dev): bump ruff from 0.15.22 to 0.16.1"
-    assert _bumps_of(title, SINGLE, "pip") == (Bump("pip", None, "ruff", "0.16.1"),)
+    assert bumps_of(title, SINGLE, "pip") == (Bump("pip", None, "ruff", "0.16.1"),)
     hold = _hold("ruff", "0.16.0")
-    assert len(_exceeded([hold], REPO, _bumps_of(title, SINGLE, "pip") or ())) == 1
+    assert len(exceeded([hold], REPO, bumps_of(title, SINGLE, "pip") or ())) == 1
 
 
 def test_a_single_update_whose_title_does_not_read_falls_back_to_the_block() -> None:
     title = "chore(deps): bump ruff requirement from >=0.15 to >=0.16"
-    assert _bumps_of(title, SINGLE, "pip") == (Bump("pip", None, "ruff", "0.16.0"),)
+    assert bumps_of(title, SINGLE, "pip") == (Bump("pip", None, "ruff", "0.16.0"),)
 
 
 def test_a_grouped_update_takes_both_from_the_block() -> None:
     title = "chore(deps): bump the python group across 1 directory with 3 updates"
-    bumps = _bumps_of(title, GROUPED, "pip")
+    bumps = bumps_of(title, GROUPED, "pip")
     assert bumps is not None
     assert [b.to_version for b in bumps] == ["1.18.0", "2.1.6", "0.28.1"]
 
 
 def test_no_block_is_none_whatever_the_title_says() -> None:
-    assert _bumps_of("bump ruff from 0.15.22 to 0.16.1", "no trailer", "pip") is None
+    assert bumps_of("bump ruff from 0.15.22 to 0.16.1", "no trailer", "pip") is None
 
 
 def test_the_tooling_mapping_is_dependabot_spelling() -> None:

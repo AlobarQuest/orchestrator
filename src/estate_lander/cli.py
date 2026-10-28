@@ -114,7 +114,12 @@ LANE = Lane(
     # single delta, so no rule about update types applies to it -- decided in ADR-0018 and
     # deliberately left, which is what makes it an exception rather than a defect. It waits on a
     # person, forever, and no pass of this program will ever change that.
-    exception=frozenset({"landing_update_type_unparseable"}),
+    #
+    # `landing_version_ceiling_exceeded` (bridge layer Part 4) is the same class: a hold in the SDS
+    # member record clears only when a person lifts it. Its sibling
+    # `landing_dependency_list_unreadable` is deliberately NOT here -- an unreadable input stops
+    # loudly, as a finding.
+    exception=frozenset({"landing_update_type_unparseable", "landing_version_ceiling_exceeded"}),
     # ADR-0019 Increment 6 and ADR-0045. The branch-update act's refusals that say only *the
     # answer moved between the read and the request*. `landing_mergeability_unknown` in particular
     # is ordinary rather than exotic: the platform answers `unknown` while it works.

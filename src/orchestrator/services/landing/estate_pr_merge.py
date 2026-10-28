@@ -428,14 +428,17 @@ class GitHubEstatePullRequests:
             if not isinstance(sha, str) or not sha:
                 raise EstateGatewayError("commits_response_invalid")
             commit = row.get("commit")
-            verification = commit.get("verification") if isinstance(commit, dict) else None
+            commit = commit if isinstance(commit, dict) else {}
+            verification = commit.get("verification")
             verified = verification.get("verified") if isinstance(verification, dict) else None
+            message = commit.get("message")
             commits.append(
                 PullRequestCommit(
                     sha=sha,
                     author_login=_linked_login(row.get("author")),
                     committer_login=_linked_login(row.get("committer")),
                     verified=verified is True,
+                    message=message if isinstance(message, str) else None,
                 )
             )
         return tuple(commits)

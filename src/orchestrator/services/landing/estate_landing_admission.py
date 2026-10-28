@@ -97,7 +97,9 @@ from orchestrator.services.landing.terms import (
     ecosystem_exclusion_term,
     freshness_term,
     qualifies_for_branch_update,
+    version_ceiling_term,
 )
+from orchestrator.services.membership.members import HoldView, holds_for
 
 # The estate says landing on this repository changes nothing already serving: the inert lane's
 # population, not this one's.
@@ -298,7 +300,9 @@ def estate_landing_admission(
     pace = _pace_term(session, repository, now)
 
     conditions = record.conditions
-    remote = _remote_terms(repository, pr_number, conditions, gateway)
+    remote = _remote_terms(
+        repository, pr_number, conditions, holds_for(session, repository), gateway
+    )
 
     refusals.extend(estate.refusals)
     refusals.extend(record.term.refusals)
@@ -482,6 +486,7 @@ def _remote_terms(
     repository: str,
     pr_number: int,
     conditions: LandingConditions | None,
+    holds: tuple[HoldView, ...],
     gateway: EstateReadGateway,
 ) -> _RemoteTerms:
     """Every question only GitHub can answer, asked at the moment the answer has to be true.
@@ -508,6 +513,11 @@ def _remote_terms(
     else:
         checks = checks_term(repository, pull, gateway)
         refusals.extend(checks.refusals)
+
+    # Bridge layer Part 4. Asked BEFORE the record's early return: a held update often has no
+    # record (the proposer refuses it), and the close act keys on the ceiling code being present.
+    held = version_ceiling_term(repository, pull, holds, gateway)
+    refusals.extend(held.refusals)
 
     if conditions is None:
         # Already reported by the record term. Everything below is a condition this process was
@@ -537,6 +547,7 @@ def _remote_terms(
         and fresh.met
         and kind.met
         and rollout.term.met
+        and held.met
     )
     return _RemoteTerms(Term(met, tuple(refusals)), pull.head_sha, rollout.base_matches_pin)
 

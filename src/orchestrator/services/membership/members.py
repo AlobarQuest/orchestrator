@@ -131,6 +131,19 @@ def list_members(session: Session) -> list[MemberView]:
     return views
 
 
+def holds_for(session: Session, repository: str) -> tuple[HoldView, ...]:
+    """The holds on one repository, compared case-folded, whatever the member's state: a hold is
+    a person's statement about a dependency, and a retired member's still applies to anything that
+    would land there."""
+    wanted = repository.lower()
+    return tuple(
+        hold
+        for member in list_members(session)
+        if member.repository.lower() == wanted
+        for hold in member.holds
+    )
+
+
 def staged_member_proposals(session: Session) -> tuple[StagedProposalView, ...]:
     """Every member proposal a machine staged and no person has decided, oldest first."""
     rows = session.scalars(

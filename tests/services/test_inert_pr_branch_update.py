@@ -446,9 +446,12 @@ def test_the_callers_EXCEPTION_set_is_exactly_the_refusal_current_policy_never_c
     Set equality: a member ADDED and pinned to nothing is the same hole one element over.
     """
     from inert_lander.cli import LANE
-    from orchestrator.services.landing.interfaces import LANDING_ECOSYSTEM_EXCLUDED
+    from orchestrator.services.landing.interfaces import (
+        LANDING_ECOSYSTEM_EXCLUDED,
+        LANDING_VERSION_CEILING_EXCEEDED,
+    )
 
-    assert LANE.exception == {LANDING_ECOSYSTEM_EXCLUDED}
+    assert LANE.exception == {LANDING_ECOSYSTEM_EXCLUDED, LANDING_VERSION_CEILING_EXCEEDED}
 
 
 def test_the_caller_composes_the_key_THIS_TEST_FILE_IS_WRITTEN_AGAINST() -> None:

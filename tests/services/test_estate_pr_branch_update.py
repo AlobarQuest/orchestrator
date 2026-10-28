@@ -55,12 +55,14 @@ from orchestrator.services.landing.interfaces import (
     LANDING_CHECKS_IN_FLIGHT,
     LANDING_CHECKS_NOT_CLEAN,
     LANDING_CHECKS_VERDICT_UNREADABLE,
+    LANDING_DEPENDENCY_LIST_UNREADABLE,
     LANDING_HEAD_NOT_CURRENT_WITH_BASE,
     LANDING_MERGEABILITY_UNRECOGNISED,
     LANDING_OUTSIDE_CHANGE_WINDOW,
     LANDING_PACE_EXHAUSTED,
     LANDING_PULL_REQUEST_CONFLICTED,
     LANDING_ROLLOUT_MOVED,
+    LANDING_VERSION_CEILING_EXCEEDED,
     EstateGatewayError,
 )
 from orchestrator.services.landing.terms import (
@@ -216,6 +218,17 @@ def test_the_remainder_is_a_CATEGORY_and_not_a_COUNT() -> None:
     assert not qualifies_for_branch_update(
         (LANDING_HEAD_NOT_CURRENT_WITH_BASE, LANDING_CHECKS_NOT_CLEAN),
         rollout_base_matches_pin=False,
+    )
+
+
+@pytest.mark.parametrize(
+    "hold", [LANDING_VERSION_CEILING_EXCEEDED, LANDING_DEPENDENCY_LIST_UNREADABLE]
+)
+def test_a_held_bump_is_never_freshened(hold: str) -> None:
+    """A hold clears only when Devon lifts it, and an unreadable list says nothing a fresher base
+    changes, so a build spent on either branch buys nothing."""
+    assert not qualifies_for_branch_update(
+        (LANDING_HEAD_NOT_CURRENT_WITH_BASE, hold), rollout_base_matches_pin=True
     )
 
 
@@ -520,7 +533,9 @@ def test_the_exception_the_lander_suppresses_beside_is_exactly_the_one_composed_
     """
     from estate_lander.cli import LANE
 
-    assert LANE.exception == frozenset({LANDING_UPDATE_TYPE_UNPARSEABLE})
+    assert LANE.exception == frozenset(
+        {LANDING_UPDATE_TYPE_UNPARSEABLE, LANDING_VERSION_CEILING_EXCEEDED}
+    )
 
 
 def test_the_two_copies_of_the_freshness_criterion_AGREE_POINTWISE() -> None:
@@ -1305,6 +1320,23 @@ def test_verification_is_true_only_when_the_platform_says_true(monkeypatch) -> N
     commits = _reader(monkeypatch, pages).pull_request_commits(repository=REPOSITORY, number=PR)
 
     assert [c.verified for c in commits] == [True, False, False, False]
+
+
+def test_each_commit_carries_its_message_and_an_unreadable_one_reads_as_None(
+    monkeypatch,
+) -> None:
+    """The message holds the update bot's dependency list, which the hold term reads. A row with no
+    readable message is still a commit for the sibling rule, so it reads as unread, not as text."""
+    readable = _commit_row("with-message")
+    readable["commit"]["message"] = "bump typer\n\n---\nupdated-dependencies:\n..."
+    no_message = _commit_row("no-message")
+    not_text = _commit_row("not-text")
+    not_text["commit"]["message"] = 7
+    pages = _Pages({1: httpx.Response(200, json=[readable, no_message, not_text])})
+
+    commits = _reader(monkeypatch, pages).pull_request_commits(repository=REPOSITORY, number=PR)
+
+    assert [c.message for c in commits] == [readable["commit"]["message"], None, None]
 
 
 def test_a_commit_row_with_no_sha_raises(monkeypatch) -> None:

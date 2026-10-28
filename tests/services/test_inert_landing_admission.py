@@ -50,6 +50,7 @@ from orchestrator.services.landing.interfaces import (
     LANDING_CHECKS_IN_FLIGHT,
     LANDING_CHECKS_NOT_CLEAN,
     LANDING_CHECKS_VERDICT_UNREADABLE,
+    LANDING_DEPENDENCY_LIST_UNREADABLE,
     LANDING_ECOSYSTEM_EXCLUDED,
     LANDING_ECOSYSTEM_UNREADABLE,
     LANDING_ESTATE_SOURCE_UNCONFIGURED,
@@ -63,16 +64,21 @@ from orchestrator.services.landing.interfaces import (
     LANDING_PULL_REQUEST_CONFLICTED,
     LANDING_PULL_REQUEST_NOT_OPEN,
     LANDING_PULL_REQUEST_UNREADABLE,
+    LANDING_VERSION_CEILING_EXCEEDED,
     MERGE_COMMIT,
     SQUASH,
     EstateGatewayError,
+    PullRequestCommit,
 )
 from tests.services.estate_doubles import FakeEstateLandingSource
 from tests.services.estate_landing_doubles import (
     HEAD,
     FakeEstateGateway,
+    dependabot_commit,
+    foreign_commit,
     pull_request,
     run,
+    trailer,
 )
 from tests.services.inert_landing_doubles import (
     EXCLUDED_ECOSYSTEM,
@@ -84,6 +90,7 @@ from tests.services.inert_landing_doubles import (
     FakeInertPolicySource,
     rules,
 )
+from tests.services.test_member_holds import place_hold
 
 PR = 3
 DOCKER_BRANCH = f"dependabot/{EXCLUDED_ECOSYSTEM}/python-3.14-slim"
@@ -996,3 +1003,184 @@ def test_an_unreadable_pull_request_still_names_a_real_landing_method(
 
     assert answer.satisfied is False
     assert answer.merge_method == SQUASH
+
+
+# ---------------------------------------------------------------------------------------------
+# Bridge layer Part 4: a hold in the member record caps how far a dependency may move.
+#
+# The ceiling is an exception (it clears only when Devon lifts the hold); a dependency list this
+# cannot read, in a repository with holds, refuses by its own name and is never "not held".
+# ---------------------------------------------------------------------------------------------
+
+# Spelled as GitHub spells it, so the member record's case-fold is exercised against the folded
+# repository the admission asks about.
+HELD_MEMBER = "AlobarQuest/Orchestrator"
+TYPER_TITLE = "build(deps): bump typer from 0.20.0 to 0.21.0"
+GROUP_TITLE = "build(deps): bump the python group with 2 updates"
+
+
+def _hold_typer(session: Session, ceiling: str = "0.20.5") -> None:
+    place_hold(session, HELD_MEMBER, ecosystem="uv", dependency="typer", ceiling=ceiling)
+
+
+def _typer_gateway(
+    *,
+    title: str = TYPER_TITLE,
+    commits: tuple[PullRequestCommit, ...] | None = None,
+    behind: int = 0,
+    commits_error: EstateGatewayError | None = None,
+) -> FakeEstateGateway:
+    return FakeEstateGateway(
+        pull=pull_request(number=PR, head_ref=UV_BRANCH, title=title),
+        behind=behind,
+        commits={
+            PR: (
+                commits
+                if commits is not None
+                else (dependabot_commit(HEAD, trailer(("typer", "0.21.0"), title=title)),)
+            )
+        },
+        commits_error={PR: commits_error} if commits_error is not None else None,
+    )
+
+
+def test_a_bump_beyond_a_hold_is_refused_by_the_ceiling(migrated_session: Session) -> None:
+    _hold_typer(migrated_session)
+    gateway = _typer_gateway()
+
+    answer = _answer(migrated_session, gateway=gateway)
+
+    assert answer.satisfied is False
+    assert answer.refusals == (LANDING_VERSION_CEILING_EXCEEDED,)
+    assert gateway.commit_reads == [(INERT_REPOSITORY, PR)]
+
+
+def test_a_held_bump_behind_its_base_is_not_freshened(migrated_session: Session) -> None:
+    """Freshening spends a build on a branch that cannot land until the hold is lifted."""
+    _hold_typer(migrated_session)
+
+    answer = _answer(migrated_session, gateway=_typer_gateway(behind=1))
+
+    assert set(answer.refusals) == {
+        LANDING_VERSION_CEILING_EXCEEDED,
+        LANDING_HEAD_NOT_CURRENT_WITH_BASE,
+    }
+    assert answer.branch_update_qualifies is False
+
+
+def test_a_group_with_one_held_member_is_refused(migrated_session: Session) -> None:
+    _hold_typer(migrated_session)
+    message = trailer(("click", "8.2.0"), ("typer", "0.21.0"), title=GROUP_TITLE)
+    gateway = _typer_gateway(title=GROUP_TITLE, commits=(dependabot_commit(HEAD, message),))
+
+    answer = _answer(migrated_session, gateway=gateway)
+
+    assert answer.refusals == (LANDING_VERSION_CEILING_EXCEEDED,)
+
+
+def test_a_bump_up_to_the_ceiling_is_admitted(migrated_session: Session) -> None:
+    _hold_typer(migrated_session, ceiling="0.21.0")
+    gateway = _typer_gateway()
+
+    answer = _answer(migrated_session, gateway=gateway)
+
+    assert answer.satisfied is True
+    assert answer.refusals == ()
+    assert gateway.commit_reads == [(INERT_REPOSITORY, PR)]
+
+
+def test_the_list_is_read_from_the_update_bots_commit_after_a_branch_update(
+    migrated_session: Session,
+) -> None:
+    """The lane's own branch update puts a merge commit at the head; the list is still the bot's."""
+    _hold_typer(migrated_session)
+    commits = (
+        dependabot_commit("bot-commit", trailer(("typer", "0.21.0"), title=TYPER_TITLE)),
+        foreign_commit(HEAD),
+    )
+
+    answer = _answer(migrated_session, gateway=_typer_gateway(commits=commits))
+
+    assert answer.refusals == (LANDING_VERSION_CEILING_EXCEEDED,)
+
+
+@pytest.mark.parametrize(
+    "gateway",
+    [
+        _typer_gateway(commits=(dependabot_commit(HEAD, "bump typer, no trailer"),)),
+        _typer_gateway(commits=(dependabot_commit(HEAD, None),)),
+        _typer_gateway(commits=(foreign_commit(HEAD),)),
+        _typer_gateway(
+            commits=(
+                dependabot_commit("one", trailer(("typer", "0.21.0"))),
+                dependabot_commit(HEAD, trailer(("typer", "0.21.0"))),
+            )
+        ),
+        _typer_gateway(commits_error=EstateGatewayError("commits_list_truncated")),
+    ],
+    ids=["no-block", "no-message", "no-bot-commit", "two-bot-commits", "read-failed"],
+)
+def test_a_list_that_cannot_be_read_in_a_held_repository_is_refused_by_its_own_name(
+    migrated_session: Session, gateway: FakeEstateGateway
+) -> None:
+    _hold_typer(migrated_session)
+
+    answer = _answer(migrated_session, gateway=gateway)
+
+    assert answer.satisfied is False
+    assert answer.refusals == (LANDING_DEPENDENCY_LIST_UNREADABLE,)
+
+
+def test_a_repository_without_holds_never_reads_the_commit_message(
+    migrated_session: Session,
+) -> None:
+    """A hold on ANOTHER member is not a hold here."""
+    place_hold(
+        migrated_session, "AlobarQuest/brain", ecosystem="uv", dependency="typer", ceiling="0.1"
+    )
+    gateway = _typer_gateway()
+
+    answer = _answer(migrated_session, gateway=gateway)
+
+    assert answer.satisfied is True
+    assert gateway.commit_reads == []
+
+
+def test_a_wholesale_upstream_sync_is_not_asked_about_holds(migrated_session: Session) -> None:
+    """Ruling 8: a fork's upstream sync is somebody else's release, not a dependency bump."""
+    _hold_typer(migrated_session, ceiling="0.1")
+    gateway = FakeEstateGateway(
+        pull=pull_request(number=PR, head_ref=SYNC_BRANCH, author_login=SYNC_BOT)
+    )
+
+    answer = _answer(
+        migrated_session,
+        gateway=gateway,
+        policy_source=FakeInertPolicySource(
+            InertLandingAnswer(
+                rules(
+                    permitted_authors=frozenset({UPDATE_BOT, SYNC_BOT}),
+                    non_ecosystem_authors=frozenset({SYNC_BOT}),
+                )
+            )
+        ),
+    )
+
+    assert answer.satisfied is True
+    assert gateway.commit_reads == []
+
+
+def test_a_held_bump_names_the_ceiling_even_when_the_policy_cannot_be_read(
+    migrated_session: Session,
+) -> None:
+    """Whether the author is a wholesale one is unknown without the rules, so the hold is asked:
+    the close act keys on the ceiling code being present, whatever else refuses."""
+    _hold_typer(migrated_session)
+
+    answer = _answer(
+        migrated_session,
+        gateway=_typer_gateway(),
+        policy_source=FakeInertPolicySource(InertLandingAnswer(None, "source_unreadable")),
+    )
+
+    assert LANDING_VERSION_CEILING_EXCEEDED in answer.refusals

@@ -45,6 +45,27 @@ def place(session: Session, key: str = "place", **overrides: Any) -> None:
     confirm(session, stage(session, body(holds_change(hold(**overrides))), key))
 
 
+def place_hold(
+    session: Session,
+    repository: str,
+    *,
+    ecosystem: str,
+    dependency: str,
+    ceiling: str,
+    directory: str = "/",
+) -> None:
+    """A member holding one dependency, written the only way a hold is: confirmed by a person."""
+    add_member(session, repository)
+    change = {
+        "repository": repository,
+        "reason": "held for a test",
+        "holds": [
+            hold(ecosystem=ecosystem, dependency=dependency, ceiling=ceiling, directory=directory)
+        ],
+    }
+    confirm(session, stage(session, body(change), f"hold:{repository}:{dependency}"))
+
+
 def stored(session: Session) -> list[tuple[str, str, str, str]]:
     return [
         (row.ecosystem, row.directory, row.dependency, row.ceiling)

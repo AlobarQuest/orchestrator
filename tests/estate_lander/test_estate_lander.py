@@ -35,6 +35,7 @@ from lander.core import (
     NOT_A_FINDING,
     REPORTED,
     Outcome,
+    held_status,
     landing_key,
     update_key,
 )
@@ -1378,3 +1379,27 @@ def test_no_reported_status_is_a_substring_of_another() -> None:
     """
     collisions = [(a, b) for a in REPORTED for b in REPORTED if a != b and a in b]
     assert collisions == []
+
+
+# Bridge layer Part 4 (Ruling 6). A held bump clears only when Devon lifts the hold, so it is an
+# exception; a dependency list the orchestrator could not read is a finding, never a quiet refusal.
+_CEILING = "landing_version_ceiling_exceeded"
+_LIST_UNREADABLE = "landing_dependency_list_unreadable"
+
+
+@pytest.mark.parametrize(
+    ("refusals", "status", "exit_code"),
+    [
+        ([_CEILING], "exception", EXIT_OK),
+        ([_PACE, _BEHIND, _CEILING], "exception", EXIT_OK),
+        ([_LIST_UNREADABLE], "held", EXIT_FINDINGS),
+        ([_CEILING, _LIST_UNREADABLE], "held", EXIT_FINDINGS),
+    ],
+)
+def test_a_hold_is_an_exception_and_an_unreadable_list_is_a_finding(
+    refusals: list[str], status: str, exit_code: int
+) -> None:
+    verdict = held_status(LANE, refusals, rollout_base_matches_pin=False)
+
+    assert verdict == status
+    assert report([Outcome(REPOSITORY, 48, verdict, "")]) == exit_code

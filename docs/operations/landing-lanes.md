@@ -603,3 +603,27 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   it. The remedy is a person re-running the checks on that one branch. **Do not write a test
   asserting that every holding member clears on its own** — three of them demonstrably need not,
   and a test saying otherwise would pin a claim the design explicitly declines to make.
+
+### Holds (bridge layer Part 4)
+
+- **Both landing admissions refuse a Dependabot update that moves a held dependency past its
+  ceiling.** Holds live in the SDS member record (`sds_member_holds`, written only when a person
+  confirms a member proposal on `/review`) and are read in-process through
+  `services/membership/members.py::holds_for`, case-folded on the repository and whatever the
+  member's state. `terms.version_ceiling_term` is the one term; the comparison is
+  `services/membership/holds.py::exceeded`.
+- **A repository with no holds never reads a commit message.** With holds, the term reads the pull
+  request's commits (`pull_request_commits`, now on `EstateReadGateway`) and takes the message of
+  the ONE commit the update bot authored — never the head's, which after the lane's branch update is
+  a merge commit naming nothing. A grouped update is refused when any member exceeds a hold; a
+  single update's version is the greater of its title's and its block's.
+- **Two codes.** `landing_version_ceiling_exceeded` is an **exception** in both landers (it clears
+  only when a person lifts the hold), so a held pull request is quiet, its freshness refusal is
+  suppressed, and it is never freshened (`qualifies_for_branch_update` treats it as a real
+  condition). `landing_dependency_list_unreadable` — no single update-bot commit, no message, no
+  readable `updated-dependencies` block, an unreadable branch ecosystem, or a failed read — is in
+  neither lander's set, so it is a **finding** (exit 3), and the sibling rule counts it as a read
+  failure. Neither is ever read as "not held".
+- **The term is asked before each admission's early return** (the inert policy, the estate record),
+  so the ceiling code is present whatever else refuses. **A fork's upstream sync is exempt** (an
+  author the inert policy declares non-ecosystem); without the policy the term is asked.

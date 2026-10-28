@@ -177,6 +177,16 @@ LANDING_ECOSYSTEM_UNREADABLE: Final = "landing_ecosystem_unreadable"
 # Whether the rollout this landing would cause is still the one the record's criteria describe.
 LANDING_ROLLOUT_MOVED: Final = "landing_rollout_moved"
 
+# A hold in the SDS member record (bridge layer Part 4): the update moves a held dependency past
+# its ceiling. An EXCEPTION in both landers -- it clears only when a person lifts the hold. Never
+# spelled with "held", which is a lander status meaning finding.
+LANDING_VERSION_CEILING_EXCEEDED: Final = "landing_version_ceiling_exceeded"
+# The repository has holds and the update bot's dependency list could not be read (no single
+# update-bot commit, no message, no readable `updated-dependencies` block, an unreadable branch
+# ecosystem, or a failed read). Never "not held": it refuses, and the landers report it as a
+# finding, because an input that cannot be read stops loudly.
+LANDING_DEPENDENCY_LIST_UNREADABLE: Final = "landing_dependency_list_unreadable"
+
 # Something already landed into this repository during the hours now open. One per repository per
 # occurrence, so a night's blast radius is bounded by a rule rather than by a side effect.
 LANDING_PACE_EXHAUSTED: Final = "landing_pace_exhausted"
@@ -316,6 +326,10 @@ class EstateReadGateway(Protocol):
 
     def head_check_runs(self, *, repository: str, head_sha: str) -> tuple[HeadCheckRun, ...]: ...
 
+    def pull_request_commits(
+        self, *, repository: str, number: int
+    ) -> tuple[PullRequestCommit, ...]: ...
+
 
 @dataclass(frozen=True)
 class OpenPullRequest:
@@ -340,28 +354,30 @@ class PullRequestCommit:
     `None` when an address links to no account. None is carried as None rather than defaulted to an
     empty string, because "no linked account" is its own answer to the ownership question and must
     not read as "an account with an empty name".
+
+    `message` is the commit message, where the update bot writes its `updated-dependencies` list
+    (read by `terms.version_ceiling_term`); `None` when the row carried none it could read.
     """
 
     sha: str
     author_login: str | None
     committer_login: str | None
     verified: bool
+    message: str | None = None
 
 
 class SiblingReadGateway(EstateReadGateway, Protocol):
-    """The composed answer's reads plus the two the sibling rule adds. ADR-0045.
+    """The composed answer's reads plus the one the sibling rule adds. ADR-0045.
 
-    A narrower protocol than a widened `EstateReadGateway`, deliberately: the unit-bound landing
-    path shares that base and nothing on it asks about siblings, so its fakes grow nothing. The two
-    branch-update acts take this one. It lives here, beside the shared read shapes, because this
-    module imports nothing from either lane, so every party can reach it without an import cycle.
+    A narrower protocol than a widened `EstateReadGateway`, deliberately: the composed answer never
+    lists a repository's other pull requests, so its fakes need not. (`pull_request_commits` was
+    here too until the hold term needed the update bot's commit message, and moved to the base.)
+    The two branch-update acts take this one. It lives here, beside the shared read shapes, because
+    this module imports nothing from either lane, so every party can reach it without an import
+    cycle.
     """
 
     def open_pull_requests(self, *, repository: str) -> tuple[OpenPullRequest, ...]: ...
-
-    def pull_request_commits(
-        self, *, repository: str, number: int
-    ) -> tuple[PullRequestCommit, ...]: ...
 
 
 @dataclass(frozen=True)

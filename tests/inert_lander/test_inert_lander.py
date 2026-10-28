@@ -916,3 +916,30 @@ def test_no_reported_status_is_a_substring_of_another() -> None:
     """
     collisions = [(a, b) for a in REPORTED for b in REPORTED if a != b and a in b]
     assert collisions == []
+
+
+# Bridge layer Part 4 (Ruling 6). A held bump clears only when Devon lifts the hold, so it is an
+# exception; a dependency list the orchestrator could not read is a finding, never a quiet refusal.
+_CEILING = "landing_version_ceiling_exceeded"
+_LIST_UNREADABLE = "landing_dependency_list_unreadable"
+
+
+@pytest.mark.parametrize(
+    ("refusals", "status", "exit_code"),
+    [
+        ((_CEILING,), "exception", EXIT_OK),
+        ((_CEILING, "landing_head_not_current_with_base"), "exception", EXIT_OK),
+        ((_LIST_UNREADABLE,), "held", EXIT_FINDINGS),
+        ((_CEILING, _LIST_UNREADABLE), "held", EXIT_FINDINGS),
+    ],
+)
+def test_a_hold_is_an_exception_and_an_unreadable_list_is_a_finding(
+    refusals: tuple[str, ...], status: str, exit_code: int
+) -> None:
+    client = FakeOrchestrator({(REPOSITORY, 1): _held(*refusals)})
+
+    outcomes = _pass([(REPOSITORY, 1)], client, True)
+
+    assert [o.status for o in outcomes] == [status]
+    assert client.landed == []
+    assert report(outcomes, {}, 6) == exit_code
