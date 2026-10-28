@@ -69,14 +69,27 @@ Each is a builder's call the spec left open, recorded with its cost if wrong.
 6. **The unreadable-record exit is the lane's own code 2, not `sds_scope`'s 3.** The spec quotes
    `sds_scope`; the CLAUDE.md invariant says codes are per launcher, and 2 means "unusable input" in
    all three lanes' headers. Either way Part 1's alarm fires.
+7. **The carrier keeps reading `portfolio.json`, with an age limit.** The spec offers "the
+   conformance kit's own result with a stated age limit", and the file's `factory` block is that
+   result: project-standards' portfolio scan writes the conformance checks
+   (`runner.caller`, `factory.secrets`, `factory.landing_known`, `factory.pat_access`) into it.
+   Reading the checks live would re-implement the kit here. Cost if wrong: capability is up to two
+   days stale, never stale beyond that.
+8. **The other `membership_check` rows stay.** `ROLLOUT_WORKFLOWS` against `rollouts` and
+   `_ROLLBACKS` against `rollouts` now report dead configuration (a transcription or rollback for a
+   repository nobody granted) or a grant with no transcription, which is still worth a daily row.
+   Only Ruling 1 touches that module's rows, and it keeps them too.
+9. **`sds_members` becomes a library row.** Its isolation row already forbids sibling programs; with
+   `library=True` added, the three lanes can import it and keep their own `no_sibling_lanes`.
 
 ## Review focus
 
 1. **Case mismatch.** An envelope or record naming `alobarquest/brain` when the member record says
    `AlobarQuest/brain` must count as granted. Pinned in Tasks 1 and 2.
 2. **A grant that isn't `granted`.** `remediating`, `withdrawn`, `not_assessed`, or a retired member
-   must not admit or carry. Pinned in Task 1 (the lane side is already pinned in
-   `tests/sds_members`).
+   must not admit or carry. Pinned in Task 1; the lane side is pinned by
+   `tests/sds_members/test_populations.py` (`remediating` and `retired` fixtures), and Task 2 adds
+   `withdrawn`.
 3. **A unit with no `change_class`.** Admission falls back to `required_capability` (a capability
    name such as `repo.edit`), which maps to `app_changes`. Pinned in Task 1.
 4. **An unreadable record.** Token unset, a 500, or a malformed body must stop the pass with code 2
@@ -99,7 +112,8 @@ Each is a builder's call the spec left open, recorded with its cost if wrong.
 - Docs: `docs/decisions/0058-*.md` (amendment), `docs/decisions/0015-*.md` (amendment pointing to
   it), `CLAUDE.md` (rewrite the "Dispatch admission reads `factory-target.toml`" bullet),
   `docs/operations/dispatch.md`, `docs/operations/driving-a-unit.md`,
-  `docs/operations/onboarding-a-target.md` (step 1 and the known-good section), `layers.toml`
+  `docs/operations/onboarding-a-target.md` (step 1 and the known-good section),
+  `docs/operations/credentials.md` (the dispatch App's reach ruling), `layers.toml`
 
 **Interfaces:**
 - Produces (orchestrator): `service_for_change_class(change_class: str) -> str` returning
@@ -134,8 +148,9 @@ Each is a builder's call the spec left open, recorded with its cost if wrong.
   Expected: FAIL (module not found, old reasons).
 - [ ] **Step 4: Implement.** `target_grant.py` as above. In `dispatch.py::_envelope_reason`, replace
   the declaration read after `target_repository_missing` with the grant check, using
-  `_change_class(envelope, unit.required_capability)`; delete both old constants. Keep the new reason
-  in whichever of blocked or skipped the old ones were. The route builds `MemberRecordGrants(session)`.
+  `_change_class(envelope, unit.required_capability)`; delete both old constants. The new reason is
+  blocked, as the old ones were (`_is_skipped_reason` lists only the window and the off switch). The
+  route builds `MemberRecordGrants(session)`.
   Add `service_for_change_class` to `populations.py`.
 - [ ] **Step 5: Run to verify they pass.** Same command. Expected: PASS.
 - [ ] **Step 6: Retire the declaration pins.** Delete `tests/services/test_factory_target.py`. In
@@ -143,12 +158,16 @@ Each is a builder's call the spec left open, recorded with its cost if wrong.
   agreement; if the file also pins the parser to project-standards' copy, keep that pin and point it
   at `membership_check.declaration.parse` (created in Task 2 — so in this task, leave that one test
   importing `work_carrier.declaration` and let Task 2 repoint it).
-- [ ] **Step 7: Docs.** The ADR-0058 amendment records decision 1 as implemented and Rulings 1, 2, 3
-  and 6 with their costs. ADR-0015 gets a one-paragraph amendment pointing to it. Rewrite the
+- [ ] **Step 7: Docs.** The ADR-0058 amendment records decision 1 as implemented and Rulings 1 to 8
+  with their costs. ADR-0015 gets a one-paragraph amendment pointing to it. Rewrite the
   CLAUDE.md admission bullet as the rule now stands (admission reads the member record's grant for
   the unit's change class, `target_repository_not_granted`, mapping held equal to the lanes' by
   `test_target_grant.py`). Onboarding step 1 becomes "grant the service on `/review`", keeping the
   `factory-target.toml` commit because project-standards and `membership_check` still read it.
+  In `credentials.md`, the ruling that the dispatch App's wide installation reach is safe because
+  every call site is bounded names the grant as admission's bound, replacing the declaration, and
+  the CLAUDE.md bullet on that ruling changes "a declaration or allowlist check" to "a grant or
+  allowlist check".
 - [ ] **Step 8: `make check`, then commit.**
   `git commit -m "Admission reads the member record's grant, not factory-target.toml"`
 
@@ -201,9 +220,11 @@ Each is a builder's call the spec left open, recorded with its cost if wrong.
 - [ ] **Step 5: Edges and isolation.** In `test_bridge_edges.py`, the carrier's row gains
   `("GET", "/api/v1/members")` and the observer bearer, its GitHub column empties, and its
   orchestrator predicate becomes the union of its own client's and `sds_members.client`'s. Repoint
-  `test_control_a_widened_github_predicate_fails_the_table` at the watcher's GitHub predicate. Add
-  `sds_members` to the carrier's isolation row. Point `membership_check` and its tests at
-  `membership_check.declaration`.
+  `test_control_a_widened_github_predicate_fails_the_table` at the watcher's GitHub predicate. Mark
+  the `sds_members` isolation row `library=True` (Ruling 9) and add `sds_members` to the carrier's
+  row. Point `membership_check` and its tests at `membership_check.declaration`. In
+  `tests/sds_members/test_populations.py`, add a `withdrawn` grant to the fixture and assert
+  `granted` excludes it.
 - [ ] **Step 6: `make check`, then commit.**
   `git commit -m "work-carrier: carry by the member record's grant"`
 
