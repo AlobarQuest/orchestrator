@@ -38,6 +38,10 @@ route, the observation ingest, and the credential behind it can neither transiti
 create work.
 The human decision ADR-0028 keeps is the record, and this producer is on the other side of it.
 
+**ITS POPULATION IS THE MEMBER RECORD'S GRANT.** A repository is considered when the member record
+grants it `dependency_updates` and a standing package targets it. The record is read once, before
+anything else, as the observer; an unreadable one is exit 2, never a smaller population.
+
 **A REPEAT PASS IS A REPLAY, in both halves.** A standing package whose tip revision already
 carries this bump is not revised again; change-manager answers 200 for an identical proposal.
 So the pass is safe to schedule, and a second run over an unchanged estate writes nothing.
@@ -94,6 +98,8 @@ from landing_ledger.github import (
 )
 from landing_ledger.model import PendingUpdate
 from landing_ledger.titles import Bump, bump_of
+from sds_members.client import Member, MembersUnreadable, read_members_from_environment
+from sds_members.populations import granted as granted_repositories
 
 EXIT_OK: Final = 0
 EXIT_UNUSABLE: Final = 2
@@ -484,13 +490,21 @@ def _repository_pass(
 
 
 def _lane(
-    root: Path, *, submit: bool, requested: list[str] | None
+    root: Path, *, submit: bool, requested: list[str] | None, members: list[Member]
 ) -> tuple[dict[tuple[str, str], StandingPackage], list[str]] | None:
     """The standing packages and the repositories they cover, or None when there is no lane.
 
-    **SCOPE IS THE AUTHORED SET.** A repository is in this lane because somebody authored a
-    standing package targeting it, exactly as the deploy producer's scope is the set somebody
-    transcribed. There is no list here to edit and none to forget to edit.
+    **SCOPE IS THE MEMBER RECORD'S GRANT, CARRIED BY A STANDING PACKAGE.** A repository is in this
+    lane when the record grants it `dependency_updates` AND somebody authored a standing package
+    targeting it; neither alone is enough, because the grant says the estate wants the service and
+    the package is what the service revises. Repositories are compared case-folded, the record
+    holding GitHub's spelling and a package whatever its author typed.
+
+    The two ways to fall short are told apart and neither is a finding. A granted repository with
+    no package is `[NO PACKAGE]`: until packages exist for the granted estate it would alert daily,
+    and the grant is not a defect. A package for an ungranted repository is `[NOT GRANTED]`: it is
+    not acted on, and `membership_check` already reports it. Naming such a repository with
+    `--repository` is a refusal, not a smaller run.
     """
     try:
         packages = discover(root)
@@ -506,16 +520,30 @@ def _lane(
         print(str(error), file=sys.stderr)
         return None
 
-    scope = sorted({package.target_repository for package in packages.values()})
+    authored = {package.target_repository for package in packages.values()}
+    granted = {name.lower() for name in granted_repositories(members, "dependency_updates")}
+    for name in sorted(granted - {name.lower() for name in authored}):
+        print(f"[NO PACKAGE] {name} is granted dependency_updates; no standing package targets it")
+    for name in sorted(authored, key=str.lower):
+        if name.lower() not in granted:
+            print(f"[NOT GRANTED] {name} has a standing package; the record does not grant it")
+    scope = sorted(name for name in authored if name.lower() in granted)
     if requested:
         wanted = {name.lower() for name in requested}
-        unknown = wanted - {name.lower() for name in scope}
+        unknown = wanted - {name.lower() for name in authored}
         if unknown:
             print(f"no standing package targets {sorted(unknown)}", file=sys.stderr)
             return None
+        ungranted = wanted - granted
+        if ungranted:
+            print(
+                f"the member record does not grant dependency_updates to {sorted(ungranted)}",
+                file=sys.stderr,
+            )
+            return None
         scope = [name for name in scope if name.lower() in wanted]
     if not scope:
-        print("no standing packages in the checkout; nothing is in this lane", file=sys.stderr)
+        print("no granted repository has a standing package; nothing in this lane", file=sys.stderr)
         return None
     return packages, scope
 
@@ -671,6 +699,16 @@ def run(argv: list[str] | None = None) -> int:
     resolved_credentials = _credentials(submit=args.submit)
     if resolved_credentials is None:
         return EXIT_UNUSABLE
+    # READ ONCE, BEFORE ANYTHING IS JUDGED OR WRITTEN. An unreadable record is unusable input, never
+    # a smaller population: with no grants to read, every package would look ungranted.
+    try:
+        members = read_members_from_environment()
+    except MembersUnreadable as error:
+        print(
+            f"[UNUSABLE] the member record could not be read, so nothing is proposed: {error}",
+            file=sys.stderr,
+        )
+        return EXIT_UNUSABLE
     (
         github_token,
         cm_token,
@@ -686,7 +724,7 @@ def run(argv: list[str] | None = None) -> int:
         return EXIT_UNUSABLE
 
     root = checkout_root()
-    resolved = _lane(root, submit=args.submit, requested=args.repository)
+    resolved = _lane(root, submit=args.submit, requested=args.repository, members=members)
     if resolved is None:
         return EXIT_UNUSABLE
     packages, scope = resolved

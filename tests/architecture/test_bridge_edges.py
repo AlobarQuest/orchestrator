@@ -66,7 +66,7 @@ EDGES: dict[str, Edge] = {
                 ("GET", "/api/landing-policy"),
             }
         ),
-        orchestrator=frozenset({("POST", "/api/v1/observations")}),
+        orchestrator=frozenset({("POST", "/api/v1/observations"), ("GET", "/api/v1/members")}),
         github=frozenset(),  # through landing_ledger.github: GITHUB_THROUGH
         bearers=frozenset({PROPOSE_BEARER, READ_BEARER, OBSERVER_BEARER}),
     ),
@@ -225,7 +225,11 @@ PERMITS: dict[str, dict[str, Permits | None]] = {
             lambda m, p: bump_change_manager._permits(m, p),
             _landing_policy_permits,
         ),
-        "orchestrator": lambda m, p: bump_orchestrator._permits(m, p),
+        # The lane's own observation client and the member-record reader it imports.
+        "orchestrator": _either(
+            lambda m, p: bump_orchestrator._permits(m, p),
+            lambda m, p: members_client._permits(members_client._READ)(m, p),
+        ),
         "github": None,
     },
     "change_proposer": {

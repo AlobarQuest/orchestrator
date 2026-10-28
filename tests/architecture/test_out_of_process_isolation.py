@@ -117,6 +117,8 @@ TABLE: dict[str, Row] = {
         "os",
         "pathlib",
         "re",
+        # The member record's grant is this lane's scope authority.
+        "sds_members",
         "subprocess",
         "sys",
         "typing",

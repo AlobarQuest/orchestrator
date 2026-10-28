@@ -254,6 +254,23 @@ def test_the_carrier_fetches_the_member_record_bearer_without_the_acting_flag(
     assert OBSERVER_UUID in (tmp_path / "bws.log").read_text()
 
 
+def test_the_bump_proposer_fetches_the_member_record_bearer_without_the_acting_flag(
+    tmp_path: Path,
+) -> None:
+    """The grant is the scope authority, so even a dry run needs the observer bearer."""
+    rc, _, output = _run(tmp_path, LANES[0], rc=0)
+    assert rc == 0, output
+    assert OBSERVER_UUID in (tmp_path / "bws.log").read_text()
+
+
+def test_a_bump_proposer_whose_observer_bearer_is_unreadable_pings_fail(tmp_path: Path) -> None:
+    rc, pings, output = _run(tmp_path, LANES[0], "--submit", BWS_FAIL_UUID=OBSERVER_UUID)
+    assert rc == 1, output
+    assert pings[1][0] == f"{PING_URL}/fail"
+    assert "observer bearer" in pings[1][1]
+    assert "found: subject" not in output
+
+
 def test_an_acting_carrier_whose_observer_bearer_is_unreadable_pings_fail(tmp_path: Path) -> None:
     rc, pings, output = _run(tmp_path, CARRIER, "--register", BWS_FAIL_UUID=OBSERVER_UUID)
     assert rc == 1, output

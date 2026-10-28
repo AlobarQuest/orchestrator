@@ -154,21 +154,30 @@ export BUMP_PROPOSER_CHANGE_MANAGER_READ_TOKEN
 [ -n "${BUMP_PROPOSER_CHANGE_MANAGER_READ_TOKEN:-}" ] || sds_outcome_fail \
   "FATAL: could not read the READ-scoped change-manager credential from BWS (broad)"
 
+# THE OBSERVER BEARER IS FETCHED ON EVERY RUN, dry or writing, because the member record is the
+# scope authority: which repositories this lane considers is read from it, so even a dry run needs
+# the read. It is exported as `SDS_MEMBERS_OBSERVER_TOKEN` always, and as the estate-wide
+# `ORCHESTRATOR_API_*` trio only for a writing run, since filing an observation is a write and a
+# dry run proposes nothing, so it has no cause to file. One fetch serves both names.
+SDS_IDENTITY="${BWS_ACCESS_TOKEN_SDS:-$(/usr/bin/security find-generic-password \
+  -s 'Claude' -a 'BWS_ACCESS_TOKEN_SDS' -w 2>/dev/null || true)}"
+[ -n "$SDS_IDENTITY" ] || sds_outcome_fail \
+  "FATAL: no narrow BWS identity for the observer bearer (service Claude)"
+OBSERVER_BEARER="$(sds_bws_value "$OBSERVER_BEARER_UUID" "$SDS_IDENTITY")"
+[ -n "$OBSERVER_BEARER" ] || sds_outcome_fail \
+  "FATAL: could not read the orchestrator observer bearer from BWS (narrow)"
+SDS_MEMBERS_OBSERVER_TOKEN="$OBSERVER_BEARER"
+export SDS_MEMBERS_OBSERVER_TOKEN
+
 # ONLY FETCHED FOR A WRITING RUN. A dry run reports what it would do and sends nothing, so it
-# must not need -- or touch -- a credential that could write. THE OBSERVER BEARER IS ON THIS SIDE
-# OF THAT LINE: filing an observation is a write, and a dry run proposes nothing, so it has no
-# cause to file.
+# must not need -- or touch -- a credential that could write.
 if [ "$SUBMITTING" -eq 1 ]; then
   BUMP_PROPOSER_CHANGE_MANAGER_TOKEN="$(sds_bws_value "$CHANGE_MANAGER_PROPOSE_UUID" "$BROAD_IDENTITY")"
   export BUMP_PROPOSER_CHANGE_MANAGER_TOKEN
 
-  SDS_IDENTITY="${BWS_ACCESS_TOKEN_SDS:-$(/usr/bin/security find-generic-password \
-    -s 'Claude' -a 'BWS_ACCESS_TOKEN_SDS' -w 2>/dev/null || true)}"
-  [ -n "$SDS_IDENTITY" ] || sds_outcome_fail \
-    "FATAL: no narrow BWS identity for the observer bearer (service Claude)"
   ORCHESTRATOR_API_URL="${ORCHESTRATOR_API_URL:-https://sds.alobar.net}"
   ORCHESTRATOR_API_CREDENTIAL_KEY_ID="orchestrator-observer"
-  ORCHESTRATOR_API_TOKEN="$(sds_bws_value "$OBSERVER_BEARER_UUID" "$SDS_IDENTITY")"
+  ORCHESTRATOR_API_TOKEN="$OBSERVER_BEARER"
   export ORCHESTRATOR_API_URL ORCHESTRATOR_API_CREDENTIAL_KEY_ID ORCHESTRATOR_API_TOKEN
 fi
 
@@ -179,9 +188,6 @@ fi
 # does not answer by itself.
 if [ "$SUBMITTING" -eq 1 ] && [ -z "${BUMP_PROPOSER_CHANGE_MANAGER_TOKEN:-}" ]; then
   sds_outcome_fail "FATAL: could not read the propose-scoped change-manager credential from BWS (broad)"
-fi
-if [ "$SUBMITTING" -eq 1 ] && [ -z "${ORCHESTRATOR_API_TOKEN:-}" ]; then
-  sds_outcome_fail "FATAL: could not read the orchestrator observer bearer from BWS (narrow)"
 fi
 
 # THE GITHUB CREDENTIAL HAS NO BWS RECORD, exactly as the deploy producer's and the ledger's do
