@@ -166,7 +166,9 @@ greater than the ceiling's, or when either can't be parsed.
    no single version, so the version falls back to the commit's `updated-dependencies` block,
    which can lag a later rewrite of the branch.
 2. The landers read the one commit the update bot authored. A person's commit pushed on top of
-   Dependabot's is not read, so a version it sets is not compared.
+   Dependabot's is not read, so a version it sets is not compared. That commit is chosen by
+   its author login alone (`author_login == UPDATE_BOT_LOGIN`, `terms._update_bot_message`),
+   not by the pull request author term's verified-bot check (`author_is_bot`).
 3. A pre-release of the ceiling's own release (`2.0.54rc1` against `2.0.54`) is admitted: the
    comparison is on the numeric release only.
 4. The carrier's hold refusal is a finding, alarming each pass while the record stays approved,

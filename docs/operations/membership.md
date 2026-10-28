@@ -78,8 +78,8 @@ confirmed the same way; nothing else removes a hold, so only a person ends one.
 
 What a hold stops: every path that lands or proposes a dependency bump asks it
 (`tests/architecture/test_hold_paths.py` lists each path and how). Both landers refuse a Dependabot
-pull request past the ceiling and close it with a comment; the factory merge refuses a
-dependency-update unit past it; the bump proposer skips it and the work carrier refuses its record.
+pull request past the ceiling, and an acting lander pass closes it with a comment; the factory
+merge refuses a dependency-update unit past it; the bump proposer skips it and the work carrier refuses its record.
 For a uv dependency the factory's version is a floor, so on those three factory paths a hold on a
 uv dependency stops every update of it, whatever its version, until it is lifted. ADR-0028
 amendment 2 has the rule and its residuals.
