@@ -16,6 +16,7 @@ from __future__ import annotations
 import dataclasses
 import uuid
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 from sqlalchemy import select
@@ -38,7 +39,11 @@ from orchestrator.persistence.models import (
     WorkUnit,
 )
 from orchestrator.reach_vocabulary import LIVE_ESTATE
-from orchestrator.services.intake.packages import record_approval
+from orchestrator.services.intake.packages import (
+    record_approval,
+    register_approved_unit,
+    register_revision,
+)
 from orchestrator.services.landing.pr_merge_admission import (
     MERGE_CAPABILITY,
     admission_for,
@@ -66,6 +71,7 @@ from tests.services.estate_doubles import (
     redeploying_source,
 )
 from tests.services.test_adjudications import FROM_EVALUATION, add_criterion
+from tests.services.test_member_proposals import add_member, body, confirm, stage
 from tests.services.test_verifier_decided_completion import VERIFIER, _decide
 
 OBSERVED_TYPE = VERIFIER_NAMED_CHECK_EVIDENCE_TYPE
@@ -924,3 +930,244 @@ def test_the_loader_refuses_a_unit_that_does_not_exist(migrated_session: Session
         pr_merge_admission(migrated_session, uuid.uuid4(), inert_source(), no_record_source())
 
     assert error.value.code == "work_unit_not_found"
+
+
+# ---------------------------------------------------------------------------------------------
+# Holds (bridge layer Part 4, Ruling 10): a dependency-update unit whose bump goes past a ceiling
+# the member record holds is not landed by the factory either.
+# ---------------------------------------------------------------------------------------------
+
+_NO_FIELDS: dict[str, Any] = {}
+
+
+def _dependency_update_envelope() -> AuthorityEnvelope:
+    commands = ["uv lock --upgrade-package typer", "uv lock --check"]
+    return AuthorityEnvelope(
+        capabilities={
+            "repo.edit": "allowed",
+            "command.run": "allowed",
+            MERGE_CAPABILITY: "allowed",
+        },
+        budgets=AuthorityBudgets(max_attempts=3, max_llm_calls=60),
+        constraints={
+            "target_repository": TARGET,
+            "allowed_commands": commands,
+            "mutation_commands": commands[:1],
+        },
+        change_class="dependency-update",
+    )
+
+
+def _bump_unit(
+    session: Session,
+    key: str,
+    *,
+    package_id: str = "repo-uv-typer",
+    to_version: object = "0.21.0",
+    profile: str | None = "dependency-update",
+    profile_fields: dict[str, Any] | None = None,
+    envelope: AuthorityEnvelope | None = None,
+) -> WorkUnit:
+    """A ready unit under its own revision, whose snapshot carries the dependency-update profile's
+    fields. Each key gets its own package id and content hash: revisions are append-only."""
+    fields = (
+        {
+            "target_repo": TARGET,
+            "package": "typer",
+            "from_version": "0.20.0",
+            "to_version": to_version,
+        }
+        if profile_fields is None
+        else profile_fields
+    )
+    authority = envelope or _envelope()
+    revision = register_revision(
+        session,
+        package_id=f"{package_id}-{key}",
+        source_repository="AlobarQuest/intent-packages",
+        revision=1,
+        content_hash=f"sha256:{key}",
+        source_path="intent.md",
+        source_commit="abc123",
+        approved_by="human-1",
+        approved_at=NOW,
+        approval_event_id=f"approval-{key}",
+        enforcement_snapshot={"acceptance_criteria": ["ac-1"], "profile_fields": fields},
+        authority=authority,
+        registry_version=1,
+        profile=profile,
+        actor_id="human-1",
+        actor_role=ActorRole.HUMAN,
+    )
+    unit = register_approved_unit(
+        session,
+        revision_id=revision.id,
+        unit_key=key,
+        title=key,
+        outcome=f"{key} complete",
+        required_capability="repo.edit",
+        authority=authority,
+        max_attempts=3,
+        approved_by="human-1",
+        approved_at=NOW,
+        actor_id="human-1",
+        actor_role=ActorRole.HUMAN,
+    )
+    add_criterion(session, unit, "ac-1", "automated_check")
+    session.commit()
+    _verifier_decided(session, unit)
+    _approve_authority(session, unit)
+    _bind_and_arm(session, unit)
+    _complete(session, unit)
+    return unit
+
+
+def _hold(
+    session: Session,
+    dependency: str = "typer",
+    ceiling: str = "0.20.5",
+    *,
+    ecosystem: str = "uv",
+    directory: str = "/",
+) -> None:
+    """A hold confirmed the only way one is written: staged, then confirmed by a person."""
+    add_member(session, TARGET)
+    hold = {
+        "ecosystem": ecosystem,
+        "directory": directory,
+        "dependency": dependency,
+        "action": "place",
+        "ceiling": ceiling,
+    }
+    change: dict[str, Any] = {"repository": TARGET, "reason": "0.21 breaks us", "holds": [hold]}
+    confirm(session, stage(session, body(change), f"hold:{dependency}"))
+    session.commit()
+
+
+def test_a_bump_beyond_a_hold_is_refused(migrated_session: Session) -> None:
+    _hold(migrated_session)
+    unit = _bump_unit(migrated_session, "held-beyond")
+
+    answer = _answer(migrated_session, unit)
+
+    assert answer.satisfied is False
+    assert answer.refusals == ("merge_version_ceiling_exceeded",)
+
+
+def test_a_uv_bump_within_a_hold_is_still_refused(migrated_session: Session) -> None:
+    """uv's `to_version` is a floor (`uv add 'pkg>=<to_version>'`), so the resolver may land a
+    release above the ceiling: any hold on the dependency refuses, whatever the version."""
+    _hold(migrated_session, ceiling="0.21.0")
+    unit = _bump_unit(migrated_session, "uv-held-within", to_version="0.20.4")
+
+    answer = _answer(migrated_session, unit)
+
+    assert answer.satisfied is False
+    assert answer.refusals == ("merge_version_ceiling_exceeded",)
+
+
+def test_a_uv_hold_in_any_directory_refuses(migrated_session: Session) -> None:
+    _hold(migrated_session, ceiling="9", directory="/tools")
+    unit = _bump_unit(migrated_session, "uv-held-subdirectory")
+
+    assert _answer(migrated_session, unit).refusals == ("merge_version_ceiling_exceeded",)
+
+
+@pytest.mark.parametrize(("tooling", "ecosystem"), [("npm", "npm_and_yarn"), ("pip", "pip")])
+def test_an_exact_bump_within_a_hold_is_admitted(
+    migrated_session: Session, tooling: str, ecosystem: str
+) -> None:
+    """npm and pip pin the exact version, so `to_version` is what lands and is compared."""
+    _hold(migrated_session, ceiling="0.21.0", ecosystem=ecosystem)
+    unit = _bump_unit(migrated_session, f"{tooling}-within", package_id=f"repo-{tooling}-typer")
+
+    answer = _answer(migrated_session, unit)
+
+    assert answer.satisfied is True
+    assert answer.refusals == ()
+
+
+@pytest.mark.parametrize(("tooling", "ecosystem"), [("npm", "npm_and_yarn"), ("pip", "pip")])
+def test_an_exact_bump_beyond_a_hold_is_refused(
+    migrated_session: Session, tooling: str, ecosystem: str
+) -> None:
+    _hold(migrated_session, ecosystem=ecosystem)
+    unit = _bump_unit(migrated_session, f"{tooling}-beyond", package_id=f"repo-{tooling}-typer")
+
+    assert _answer(migrated_session, unit).refusals == ("merge_version_ceiling_exceeded",)
+
+
+def test_a_hold_on_another_dependency_admits_the_bump(migrated_session: Session) -> None:
+    _hold(migrated_session, dependency="ruff")
+    unit = _bump_unit(migrated_session, "held-elsewhere")
+
+    assert _answer(migrated_session, unit).satisfied is True
+
+
+def test_the_hold_matches_the_registry_name_not_the_spelling(migrated_session: Session) -> None:
+    """PEP 503 for uv: the matcher's rule, applied to the profile's `package` field."""
+    _hold(migrated_session, dependency="Typer")
+    unit = _bump_unit(migrated_session, "held-spelling")
+
+    assert _answer(migrated_session, unit).refusals == ("merge_version_ceiling_exceeded",)
+
+
+def test_an_unparseable_version_on_a_held_dependency_is_refused(migrated_session: Session) -> None:
+    _hold(migrated_session)
+    unit = _bump_unit(migrated_session, "held-unparseable", to_version="latest")
+
+    answer = _answer(migrated_session, unit)
+
+    assert answer.satisfied is False
+    assert answer.refusals == ("merge_version_ceiling_exceeded",)
+
+
+def test_a_unit_declared_by_change_class_alone_is_held(migrated_session: Session) -> None:
+    """Either declaration makes it a dependency update: the envelope's class, or the profile."""
+    _hold(migrated_session)
+    unit = _bump_unit(
+        migrated_session, "held-by-class", profile=None, envelope=_dependency_update_envelope()
+    )
+
+    assert _answer(migrated_session, unit).refusals == ("merge_version_ceiling_exceeded",)
+
+
+def test_a_unit_that_is_not_a_dependency_update_is_unaffected(migrated_session: Session) -> None:
+    _hold(migrated_session)
+    unit = _bump_unit(migrated_session, "held-not-a-bump", profile="software-delivery")
+
+    assert _answer(migrated_session, unit).satisfied is True
+
+
+@pytest.mark.parametrize(
+    ("key", "changes"),
+    [
+        ("no-fields", {"profile_fields": _NO_FIELDS}),
+        ("no-version", {"to_version": None}),
+        ("blank-package", {"profile_fields": {"package": " ", "to_version": "0.21.0"}}),
+        ("padded-package", {"profile_fields": {"package": " typer", "to_version": "0.21.0"}}),
+        ("cargo", {"package_id": "repo-cargo-typer"}),
+        ("other-repo", {"package_id": "brain-uv-typer"}),
+    ],
+)
+def test_a_bump_that_cannot_be_read_in_a_held_repository_is_refused(
+    migrated_session: Session, key: str, changes: dict[str, Any]
+) -> None:
+    """Never "not held": a profile with no package or version, a padded name that would compare
+    unequal to the hold, or a package id whose tooling can't be read, refuses -- under its own
+    code, because the fix is the package's author's, not the hold's."""
+    _hold(migrated_session)
+    unit = _bump_unit(migrated_session, f"unreadable-{key}", **changes)
+
+    answer = _answer(migrated_session, unit)
+
+    assert answer.satisfied is False
+    assert answer.refusals == ("merge_dependency_bump_unreadable",)
+
+
+def test_a_repository_with_no_holds_reads_no_bump(migrated_session: Session) -> None:
+    """The profile is read only when there is a hold to compare against: an unreadable one, in a
+    repository nobody has held, refuses nothing."""
+    unit = _bump_unit(migrated_session, "unheld-unreadable", profile_fields=_NO_FIELDS)
+
+    assert _answer(migrated_session, unit).satisfied is True

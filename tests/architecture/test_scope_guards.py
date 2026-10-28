@@ -78,6 +78,9 @@ def test_production_post_route_inventory_is_explicit() -> None:
         # ADR-0038 part 2: the same lane's second act. It clears the staleness the lane's own
         # landings create, which is what makes requiring freshness survivable at all.
         "/api/v1/inert-pr-branch-update",
+        # Bridge layer Part 4: either Dependabot lane closes, with a comment, an update-bot pull
+        # request its own re-composed admission refuses for a hold. SYSTEM-only, like the landings.
+        "/api/v1/held-pr-close",
         "/api/v1/work-units/{unit_id}/verify",
         "/api/v1/work-units/{unit_id}/verifier-evidence/named-check",
         "/api/v1/work-units/{unit_id}/release-artifacts",

@@ -629,3 +629,14 @@ Placement rule: global CLAUDE.md §7.
   a proposal on `/review` reaches it; reads return frozen records, never ORM objects.
   `test_membership_writers.py` names every route that may write them and the role each requires.
   The deploys service's wire value is `rollouts` (word guards). Detail: `docs/operations/membership.md`.
+- Every path that lands or proposes a dependency bump honours the member record's holds through the
+  shared matcher (`factory_breaches`, `exceeded` or `terms.version_ceiling_term`), or is covered by
+  a gate that does, or is not a bump: `tests/architecture/test_hold_paths.py` classifies each and
+  fails on an unclassified `MERGE_EXEMPT_PATHS` entry; a new propose path is classified by hand.
+  The matcher's two copies (`services/membership/holds.py`, `sds_members/holds.py`) are held equal
+  by `test_hold_agreement.py`. Detail: `docs/operations/landing-lanes.md`, "Holds"; ADR-0028
+  amendment 2.
+- On the factory paths (merge, bump proposer, carrier) a uv `to_version` is a `>=` floor, so a uv
+  bump breaches every hold on its dependency whatever its version (`factory_breaches`); never
+  compare it as an exact version until the uv mutator locks one. A hold's ecosystem must be the one
+  Dependabot uses for that repository. Detail: `docs/operations/membership.md`, "Hold a dependency".

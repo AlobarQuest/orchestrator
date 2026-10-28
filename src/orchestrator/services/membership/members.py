@@ -4,13 +4,14 @@ Reads return frozen records, never ORM objects: a caller holding a mapped row co
 member without passing the writers guard (`tests/architecture/test_membership_writers.py`).
 """
 
+import uuid
 from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from orchestrator.persistence.models import MEMBER_SERVICES, SdsMember
+from orchestrator.persistence.models import MEMBER_SERVICES, SdsMember, SdsMemberProposal
 
 
 class _Record(BaseModel):
@@ -31,8 +32,19 @@ class GrantView(_Record):
     reason: str
 
 
+class HoldView(_Record):
+    ecosystem: str
+    directory: str
+    dependency: str
+    ceiling: str
+    reason: str
+    set_by: str
+    set_at: datetime
+
+
 class MemberView(_Record):
-    """One member with a grant for each of the seven services, keyed by wire value."""
+    """One member with a grant for each of the seven services, keyed by wire value, and its holds
+    (empty when it has none)."""
 
     repository: str
     owner: str
@@ -41,6 +53,14 @@ class MemberView(_Record):
     machine_local: bool
     apps: tuple[AppView, ...]
     grants: dict[str, GrantView]
+    holds: tuple[HoldView, ...]
+
+
+class StagedProposalView(_Record):
+    id: uuid.UUID
+    summary: str
+    staged_by: str
+    staged_at: datetime
 
 
 def list_members(session: Session) -> list[MemberView]:
@@ -52,7 +72,11 @@ def list_members(session: Session) -> list[MemberView]:
     """
     members = session.scalars(
         select(SdsMember)
-        .options(selectinload(SdsMember.grants), selectinload(SdsMember.apps))
+        .options(
+            selectinload(SdsMember.grants),
+            selectinload(SdsMember.apps),
+            selectinload(SdsMember.holds),
+        )
         .order_by(func.lower(SdsMember.repository))
     )
     views = []
@@ -88,6 +112,51 @@ def list_members(session: Session) -> list[MemberView]:
                     for a in sorted(member.apps, key=lambda a: a.name)
                 ),
                 grants=grants,
+                holds=tuple(
+                    HoldView(
+                        ecosystem=h.ecosystem,
+                        directory=h.directory,
+                        dependency=h.dependency,
+                        ceiling=h.ceiling,
+                        reason=h.reason,
+                        set_by=h.set_by,
+                        set_at=h.set_at,
+                    )
+                    for h in sorted(
+                        member.holds, key=lambda h: (h.ecosystem, h.directory, h.dependency)
+                    )
+                ),
             )
         )
     return views
+
+
+def holds_for(session: Session, repository: str) -> tuple[HoldView, ...]:
+    """The holds on one repository, compared case-folded, whatever the member's state: a hold is
+    a person's statement about a dependency, and a retired member's still applies to anything that
+    would land there."""
+    wanted = repository.lower()
+    return tuple(
+        hold
+        for member in list_members(session)
+        if member.repository.lower() == wanted
+        for hold in member.holds
+    )
+
+
+def staged_member_proposals(session: Session) -> tuple[StagedProposalView, ...]:
+    """Every member proposal a machine staged and no person has decided, oldest first."""
+    rows = session.scalars(
+        select(SdsMemberProposal)
+        .where(SdsMemberProposal.state == "staged")
+        .order_by(SdsMemberProposal.staged_at, SdsMemberProposal.id)
+    )
+    return tuple(
+        StagedProposalView(
+            id=row.id,
+            summary=str(row.payload.get("summary", "")),
+            staged_by=row.staged_by,
+            staged_at=row.staged_at,
+        )
+        for row in rows
+    )

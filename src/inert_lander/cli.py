@@ -147,7 +147,12 @@ LANE = Lane(
     # must not land it, never that nobody should. Suppressing the line without recording that
     # decision elsewhere converts a deferred decision into silence, which is the failure this
     # category exists to prevent wearing the category's own clothes.
-    exception=frozenset({"landing_ecosystem_excluded"}),
+    #
+    # `landing_version_ceiling_exceeded` (bridge layer Part 4) is the same class: a hold in the SDS
+    # member record clears only when a person lifts it. Its sibling
+    # `landing_dependency_list_unreadable` is deliberately NOT here -- an unreadable input stops
+    # loudly, as a finding.
+    exception=frozenset({"landing_ecosystem_excluded", "landing_version_ceiling_exceeded"}),
     # The branch-update act's refusals that say only *the answer moved between the read and the
     # request*. SPELLED `inert_*`, which is why it could never have been one set with the sibling's.
     update_self_clearing=frozenset(

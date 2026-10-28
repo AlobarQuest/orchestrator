@@ -7,6 +7,8 @@ either admission can call them without importing the other.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Final
 
 from orchestrator.services.landing.interfaces import (
@@ -15,6 +17,7 @@ from orchestrator.services.landing.interfaces import (
     LANDING_CHECKS_IN_FLIGHT,
     LANDING_CHECKS_NOT_CLEAN,
     LANDING_CHECKS_VERDICT_UNREADABLE,
+    LANDING_DEPENDENCY_LIST_UNREADABLE,
     LANDING_ECOSYSTEM_EXCLUDED,
     LANDING_ECOSYSTEM_UNREADABLE,
     LANDING_FRESHNESS_UNREADABLE,
@@ -22,6 +25,7 @@ from orchestrator.services.landing.interfaces import (
     LANDING_MERGEABILITY_UNRECOGNISED,
     LANDING_PULL_REQUEST_CONFLICTED,
     LANDING_ROLLOUT_MOVED,
+    LANDING_VERSION_CEILING_EXCEEDED,
     MERGEABLE_BLOCKED,
     MERGEABLE_CLEAN,
     MERGEABLE_DIRTY,
@@ -29,11 +33,13 @@ from orchestrator.services.landing.interfaces import (
     NO_VERDICT_CONCLUSIONS,
     RUN_COMPLETED,
     RUN_SUCCEEDED,
+    UPDATE_BOT_LOGIN,
     EstateGatewayError,
     EstatePullRequest,
     EstateReadGateway,
     Term,
 )
+from orchestrator.services.membership.holds import HeldDependency, HoldBreach, bumps_of, exceeded
 
 # The update bot's branch naming, from which the ecosystem is read: `dependabot/<ecosystem>/<rest>`.
 _BRANCH_PREFIX: Final = "dependabot/"
@@ -333,3 +339,63 @@ def ecosystem_exclusion_term(pull: EstatePullRequest, excluded: frozenset[str]) 
     if ecosystem.lower() in {name.lower() for name in excluded}:
         return Term(False, (LANDING_ECOSYSTEM_EXCLUDED,))
     return Term(True, ())
+
+
+@dataclass(frozen=True)
+class CeilingTerm:
+    """The hold term, with the breaches that refused it: the close act names each one in its
+    comment, and reads them off the composed answer rather than reading the update a second time.
+    Empty unless the term refused with `LANDING_VERSION_CEILING_EXCEEDED`."""
+
+    term: Term
+    breaches: tuple[HoldBreach, ...]
+
+
+# The term's answer for a subject it does not apply to, or one no hold reaches.
+NOT_HELD: Final = CeilingTerm(Term(True, ()), ())
+
+
+def version_ceiling_term(
+    repository: str,
+    pull: EstatePullRequest,
+    holds: Sequence[HeldDependency],
+    gateway: EstateReadGateway,
+) -> CeilingTerm:
+    """Does this update move a dependency the member record holds past its ceiling?
+
+    **A REPOSITORY WITH NO HOLDS IS NEVER READ.** The commit list is asked for only when there is a
+    hold to compare against, so a repository nobody has held costs no call and cannot refuse here.
+
+    The list is the update bot's own commit message, never the head's: the lane's branch update
+    puts a merge commit at the head that names nothing. Exactly one update-bot commit must carry
+    it; none, two, a commit with no message, a block `bumps_of` can't read, a branch whose
+    ecosystem can't be read, or a failed read is `LANDING_DEPENDENCY_LIST_UNREADABLE` -- never "not
+    held". A grouped update is refused when any member exceeds a hold. The comparison is the
+    matcher's (`membership.holds.exceeded`) and nobody else's.
+    """
+    if not holds:
+        return NOT_HELD
+    unreadable = CeilingTerm(Term(False, (LANDING_DEPENDENCY_LIST_UNREADABLE,)), ())
+    ecosystem = ecosystem_of(pull.head_ref)
+    if ecosystem is None:
+        return unreadable
+    message = _update_bot_message(repository, pull, gateway)
+    bumps = None if message is None else bumps_of(pull.title, message, ecosystem)
+    if bumps is None:
+        return unreadable
+    breaches = exceeded(holds, repository, bumps)
+    if breaches:
+        return CeilingTerm(Term(False, (LANDING_VERSION_CEILING_EXCEEDED,)), breaches)
+    return NOT_HELD
+
+
+def _update_bot_message(
+    repository: str, pull: EstatePullRequest, gateway: EstateReadGateway
+) -> str | None:
+    """The message of the one commit the update bot authored on this branch, or None."""
+    try:
+        commits = gateway.pull_request_commits(repository=repository, number=pull.number)
+    except EstateGatewayError:
+        return None
+    own = [commit for commit in commits if commit.author_login == UPDATE_BOT_LOGIN]
+    return own[0].message if len(own) == 1 else None

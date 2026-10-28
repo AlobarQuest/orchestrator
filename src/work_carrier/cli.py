@@ -82,7 +82,7 @@ from pathlib import Path
 from rotation_worker.git_mirror import MirrorError, RepoMirror, default_mirror_root
 from rotation_worker.registry import RegistryError, rotated_by_sds
 from rotation_worker.types import CLASS_TYPES
-from sds_members.client import Member, MembersUnreadable, read_members_from_environment
+from sds_members.client import Hold, Member, MembersUnreadable, read_members_from_environment
 from work_carrier.change_manager import (
     DEFAULT_BASE_URL,
     ChangeManagerError,
@@ -98,7 +98,7 @@ from work_carrier.orchestrator_client import (
     OrchestratorClient,
     OrchestratorError,
 )
-from work_carrier.prepare import Prepared, Refused, prepare
+from work_carrier.prepare import Prepared, Refused, held_refusal, prepare
 from work_carrier.workability import (
     NOT_WORKABLE,
     OPERATIONAL,
@@ -369,7 +369,9 @@ def _carry_all(
     return carried, unregistered
 
 
-def _prepare_all(pending: list[WorkRecord], root: Path) -> tuple[list[Prepared], list[Refused]]:
+def _prepare_all(
+    pending: list[WorkRecord], root: Path, holds: dict[str, tuple[Hold, ...]]
+) -> tuple[list[Prepared], list[Refused]]:
     prepared: list[Prepared] = []
     refused: list[Refused] = []
     for record in pending:
@@ -377,6 +379,8 @@ def _prepare_all(pending: list[WorkRecord], root: Path) -> tuple[list[Prepared],
         # the others being carried, and there is nothing to roll back because nothing was
         # written. A pass is a report over the whole approved queue or it is not a report.
         outcome = prepare(record, checkout_root=root)
+        ceiling = held_refusal(outcome, holds) if isinstance(outcome, Prepared) else None
+        outcome = ceiling or outcome
         if isinstance(outcome, Prepared):
             prepared.append(outcome)
         else:
@@ -438,6 +442,7 @@ def run(
         )
         return EXIT_UNUSABLE
     grants = grants_by_service(record)
+    holds = {member.repository.casefold(): member.holds for member in record}
 
     try:
         records = records_source.approved_work()
@@ -447,7 +452,7 @@ def run(
 
     pending, already_carried, unanswered = _records_to_carry(records, writer, out)
 
-    prepared, refused = _prepare_all(pending, root)
+    prepared, refused = _prepare_all(pending, root, holds)
 
     # JUDGED BEFORE ANYTHING IS CARRIED, and the order is the substance rather than the layout:
     # only a record the three constraints all answer YES for reaches the writer. Devon's rule --

@@ -1708,9 +1708,10 @@ class SdsMember(UUIDPrimaryKey, Base):
     state_changed_by: Mapped[str] = mapped_column(String)
     state_reason: Mapped[str] = mapped_column(Text)
 
-    # Read-only: grants and apps are written by `services/membership/proposals.py` alone.
+    # Read-only: grants, apps and holds are written by `services/membership/proposals.py` alone.
     grants: Mapped[list[SdsMemberGrant]] = relationship(viewonly=True)
     apps: Mapped[list[SdsMemberApp]] = relationship(viewonly=True)
+    holds: Mapped[list[SdsMemberHold]] = relationship(viewonly=True)
 
 
 class SdsMemberGrant(Base):
@@ -1743,6 +1744,32 @@ class SdsMemberApp(Base):
     name: Mapped[str] = mapped_column(String, primary_key=True)
     health_url: Mapped[str] = mapped_column(String)
     branch: Mapped[str] = mapped_column(String, default="main", server_default="main")
+
+
+class SdsMemberHold(Base):
+    """A version ceiling on one dependency of one member, keyed as Dependabot identifies an update.
+
+    The ecosystem is Dependabot's word and is not CHECK-constrained: Dependabot owns that
+    vocabulary. The reason is the confirmed change's reason, and `set_by` the person who confirmed.
+    """
+
+    __tablename__ = "sds_member_holds"
+    __table_args__ = (
+        CheckConstraint("ecosystem <> ''", name="ck_sds_member_holds_ecosystem"),
+        CheckConstraint("directory LIKE '/%'", name="ck_sds_member_holds_directory"),
+        CheckConstraint("dependency <> ''", name="ck_sds_member_holds_dependency"),
+        CheckConstraint("ceiling <> ''", name="ck_sds_member_holds_ceiling"),
+        CheckConstraint("reason <> ''", name="ck_sds_member_holds_reason"),
+    )
+
+    member_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("sds_members.id"), primary_key=True)
+    ecosystem: Mapped[str] = mapped_column(String, primary_key=True)
+    directory: Mapped[str] = mapped_column(String, primary_key=True)
+    dependency: Mapped[str] = mapped_column(String, primary_key=True)
+    ceiling: Mapped[str] = mapped_column(String)
+    reason: Mapped[str] = mapped_column(Text)
+    set_by: Mapped[str] = mapped_column(String)
+    set_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class SdsMemberProposal(UUIDPrimaryKey, Base):

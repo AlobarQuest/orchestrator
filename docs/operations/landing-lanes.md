@@ -603,3 +603,53 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   it. The remedy is a person re-running the checks on that one branch. **Do not write a test
   asserting that every holding member clears on its own** — three of them demonstrably need not,
   and a test saying otherwise would pin a claim the design explicitly declines to make.
+
+### Holds (bridge layer Part 4)
+
+- **Both landing admissions refuse a Dependabot update that moves a held dependency past its
+  ceiling.** Holds live in the SDS member record (`sds_member_holds`, written only when a person
+  confirms a member proposal on `/review`) and are read in-process through
+  `services/membership/members.py::holds_for`, case-folded on the repository and whatever the
+  member's state. `terms.version_ceiling_term` is the one term; the comparison is
+  `services/membership/holds.py::exceeded`.
+- **A repository with no holds never reads a commit message.** With holds, the term reads the pull
+  request's commits (`pull_request_commits`, now on `EstateReadGateway`) and takes the message of
+  the ONE commit the update bot authored — never the head's, which after the lane's branch update is
+  a merge commit naming nothing. A grouped update is refused when any member exceeds a hold; a
+  single update's version is the greater of its title's and its block's.
+- **Two codes.** `landing_version_ceiling_exceeded` is an **exception** in both landers (it clears
+  only when a person lifts the hold), so a held pull request is quiet, its freshness refusal is
+  suppressed, and it is never freshened (`qualifies_for_branch_update` treats it as a real
+  condition). `landing_dependency_list_unreadable` — no single update-bot commit, no message, no
+  readable `updated-dependencies` block, an unreadable branch ecosystem, or a failed read — is in
+  neither lander's set, so it is a **finding** (exit 3), and the sibling rule counts it as a read
+  failure. Neither is ever read as "not held".
+- **The term is asked before each admission's early return** (the inert policy, the estate record),
+  so the ceiling code is present whatever else refuses. **A fork's upstream sync is exempt** (an
+  author the inert policy declares non-ecosystem); without the policy the term is asked.
+- **An acting lander pass closes a held pull request with a comment** (`POST
+  /api/v1/held-pr-close`, `services/landing/held_close.py`) whenever the ceiling code is among the
+  refusals, beside any other; a dry run prints `would-close`, an acting pass `closed` (or
+  `reopened` when the orchestrator answers from its record: a person reopened it), and none is a
+  finding. Closes serialise per repository on an advisory lock. The orchestrator re-composes the named lane's own admission in its transaction and
+  closes only when it carries `landing_version_ceiling_exceeded` (never on
+  `landing_dependency_list_unreadable`), the update bot opened the pull request, the repository is
+  the lane's (the inert declaration; an identified change record for the deploying lane), the pull
+  request is open at the head the caller read, and the lane is switched on with its credentials.
+  The public comment names each held dependency and its ceiling and one fixed sentence, never the
+  hold's reason or who placed it. One `Event` (`landing.held_pull_request_closed`) keyed
+  `held-pr-close:<repository lowercased>#<number>` — the only key accepted — makes a replay touch
+  GitHub no more; a close that fails after its comment records nothing, and the next call finds the
+  sentence in the conversation and closes without commenting again.
+- **The factory side asks the same matcher through `factory_breaches`.** The factory merge
+  (`pr_merge_admission.py::_hold_term`) refuses a dependency-update unit whose revision's
+  `profile_fields` bump breaches a hold (`merge_version_ceiling_exceeded`) or can't be read in a
+  repository with holds (`merge_dependency_bump_unreadable`). The bump proposer skips a held bump
+  (`ceiling-exceeded`, no package, no proposal, no alert), and the work carrier refuses a held
+  record (`version_ceiling_exceeded`, `dependency_bump_unreadable`), which is a finding in that
+  lane. All three read a uv version as a `>=` floor, so a hold on a uv dependency stops every
+  factory update of it.
+- **Every merge and propose path is classified** in `tests/architecture/test_hold_paths.py`:
+  honours (names the function that calls the matcher), covered by an honouring gate, or not a bump.
+  A new `MERGE_EXEMPT_PATHS` entry fails until it is classified. The residuals are in ADR-0028
+  amendment 2.

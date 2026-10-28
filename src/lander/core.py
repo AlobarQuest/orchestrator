@@ -12,13 +12,14 @@ per lane by a test that reddens if the two are collapsed.
 term is evaluated by the orchestrator, inside the transaction that records the act; this relays
 the answer and classifies it for a reader. It imports no other program and no HTTP client: the
 orchestrator is reached only through the client a lane passes in, whose surface is that lane's own
-three literal paths.
+four literal paths.
 
 WHAT A LINE MEANS. A HELD pull request is a finding -- somebody has to act on the condition it
 names. A landing, a settled subject, a DELIBERATE refusal (the system refusing on purpose, which
-clears on a clock), an EXCEPTION (current policy can never clear it; it waits on a person) and a
-WAITING sibling (ADR-0045; clears when the edited branch ahead lands) are not. Every refusal is
-printed either way, so the line always says what was missed.
+clears on a clock), an EXCEPTION (current policy can never clear it; it waits on a person), a
+WAITING sibling (ADR-0045; clears when the edited branch ahead lands) and a held bump the lane
+CLOSED (bridge layer Part 4; a person lifting the hold is what lets it come back) are not. Every
+refusal is printed either way, so the line always says what was missed.
 
 EXIT CODES, the lander group's vocabulary: 0 clean, 1 tool failure, 2 unusable input, 3 findings.
 """
@@ -37,9 +38,9 @@ EXIT_FINDINGS = 3
 
 
 class LandingClient(Protocol):
-    """The whole orchestrator surface these passes use: one question and two acts.
+    """The whole orchestrator surface these passes use: one question and three acts.
 
-    Each lane's client satisfies it with its OWN three literal paths, checked before the transport
+    Each lane's client satisfies it with its OWN four literal paths, checked before the transport
     -- which is the control. A shared client taking paths from its caller was rejected for exactly
     that reason: neither program could then state its own surface.
     """
@@ -51,6 +52,10 @@ class LandingClient(Protocol):
     ) -> dict[str, Any]: ...
 
     def update_branch(
+        self, repository: str, pr_number: int, *, head_sha: str, idempotency_key: str
+    ) -> dict[str, Any]: ...
+
+    def close_held(
         self, repository: str, pr_number: int, *, head_sha: str, idempotency_key: str
     ) -> dict[str, Any]: ...
 
@@ -126,6 +131,12 @@ BASE_MATCHES_PIN = "rollout_base_matches_pin"
 # this lane already edited is queued to land. Named once, for the reason above.
 WITHHELD_FOR_SIBLING = "branch_update_withheld_for_sibling"
 
+# Bridge layer Part 4 (Ruling 7). The refusal saying the update moves a held dependency past its
+# ceiling. Whenever an answer carries it -- beside any other refusal -- an acting pass asks the
+# orchestrator to close the pull request with a comment, and the orchestrator decides again inside
+# its own transaction. The code is the orchestrator's; this program may not import it.
+CEILING = "landing_version_ceiling_exceeded"
+
 # Statuses that are not findings, stated as the set to EXCLUDE so a status nobody has thought of
 # fails toward being reported.
 #
@@ -143,6 +154,9 @@ NOT_A_FINDING = frozenset(
         "waiting",
         "updated",
         "would-update",
+        "closed",
+        "would-close",
+        "reopened",
     }
 )
 
@@ -165,6 +179,9 @@ REPORTED = (
     "error",
     "updated",
     "would-update",
+    "closed",
+    "would-close",
+    "reopened",
 )
 
 
@@ -195,6 +212,13 @@ def update_key(lane: Lane, repository: str, number: int, head_sha: str) -> str:
     makes an idempotency key safe on an act whose whole nature is that repeating it is right.
     """
     return f"{lane.name}-branch-update:{repository}:{number}:{head_sha[:12]}"
+
+
+def held_close_key(repository: str, number: int) -> str:
+    """The pull request's own key, and the only one the orchestrator accepts for a close: a second
+    request can then never comment twice. The orchestrator's copy is
+    `services.landing.held_close.held_close_key`, held equal by a test that may import both."""
+    return f"held-pr-close:{repository.lower()}#{number}"
 
 
 def freshness_derived(refusals: set[str], *, rollout_base_matches_pin: bool) -> frozenset[str]:
@@ -302,6 +326,8 @@ def consider(
     refusals = [str(r) for r in (answer.get("refusals") or [])]
     if SETTLED & set(refusals):
         return Outcome(repository, number, "settled", ", ".join(refusals))
+    if not answer.get("satisfied") and CEILING in refusals:
+        return _close_held(client, repository, number, answer, submit)
     if not answer.get("satisfied"):
         # A MISSING key reads as False, which withholds the criterion's one conditional member and
         # leaves the line a finding. That is the direction to fail in, and it is not hypothetical:
@@ -336,6 +362,36 @@ def consider(
     except OrchestratorError as error:
         return Outcome(repository, number, "error", str(error))
     return Outcome(repository, number, "landed", f"status={landed.get('status')}")
+
+
+def _close_held(
+    client: LandingClient, repository: str, number: int, answer: dict[str, Any], submit: bool
+) -> Outcome:
+    """A held bump waits on a person lifting the hold, so the lane closes it rather than leaving it
+    open and refused on every pass. A dry run sends nothing."""
+    detail = ", ".join(str(r) for r in answer.get("refusals") or [])
+    head = answer.get("head_sha")
+    if not isinstance(head, str) or not head:
+        return Outcome(repository, number, "unreadable", "held but names no head")
+    if not submit:
+        return Outcome(repository, number, "would-close", detail)
+    try:
+        answered = client.close_held(
+            repository,
+            number,
+            head_sha=head,
+            idempotency_key=held_close_key(repository, number),
+        )
+    except LandingRefused as error:
+        return Outcome(repository, number, "held", str(error))
+    except OrchestratorError as error:
+        return Outcome(repository, number, "error", str(error))
+    if answered.get("replayed") is True:
+        # Closed by an earlier pass and open again, so a person reopened it: their act, which the
+        # orchestrator answers from its record without closing it twice. Not `closed`, which would
+        # say every later pass closed it.
+        return Outcome(repository, number, "reopened", detail)
+    return Outcome(repository, number, "closed", detail)
 
 
 def landing_pass(

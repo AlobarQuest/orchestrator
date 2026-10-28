@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from orchestrator.api.schemas.membership import (
     GrantView,
+    HoldView,
     MemberProposalResponse,
     MembersResponse,
     MemberView,
@@ -133,7 +134,9 @@ def test_observer_reads_every_member_with_seven_grants(
         "machine_local",
         "apps",
         "grants",
+        "holds",
     }
+    assert alpha["holds"] == []
     assert alpha["apps"] == [{"name": "alpha-web", "health_url": "https://a/h", "branch": "main"}]
     assert list(alpha["grants"]) == list(MEMBER_SERVICES)
     assert set(alpha["grants"]["rollouts"]) == {"state", "seeded", "set_by", "set_at", "reason"}
@@ -151,8 +154,18 @@ def test_the_member_views_declare_exactly_the_pinned_fields() -> None:
         "machine_local",
         "apps",
         "grants",
+        "holds",
     }
     assert set(GrantView.model_fields) == {"state", "seeded", "set_by", "set_at", "reason"}
+    assert set(HoldView.model_fields) == {
+        "ecosystem",
+        "directory",
+        "dependency",
+        "ceiling",
+        "reason",
+        "set_by",
+        "set_at",
+    }
     assert set(MembersResponse.model_fields) == {"members"}
 
 

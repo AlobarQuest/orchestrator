@@ -22,7 +22,7 @@
 <table>
   <thead>
     <tr>
-      <th>Repository</th><th>State</th><th>Owner</th><th>Links</th><th>Apps</th>
+      <th>Repository</th><th>State</th><th>Owner</th><th>Links</th><th>Apps</th><th>Holds</th>
       {% for service in services %}<th>{{ labels[service] }}</th>{% endfor %}
     </tr>
   </thead>
@@ -36,6 +36,14 @@
       <td>working copy: {{ cell(change.fields.working_copy.old, change.fields.working_copy.new) }}<br>
         machine-local: {{ cell(change.fields.machine_local.old, change.fields.machine_local.new) }}</td>
       <td>{% if change.apps.new is none %}{{ change.apps.old | join(", ") or "—" }}{% else %}{{ change.apps.old | join(", ") or "—" }} → <strong>{{ change.apps.new | join("; ") or "none" }}</strong>{% endif %}</td>
+      <td>
+        {% for hold in change.holds.changes %}
+        {{ hold.action | capitalize }} <code>{{ hold.ecosystem }}</code> <code>{{ hold.directory }}</code> <code>{{ hold.dependency }}</code>:
+        {% if hold.action == "lift" %}{{ hold.old if hold.old is not none else "—" }} → <strong>lifted</strong>{% else %}{{ cell(hold.old, hold.new) }}{% endif %}<br>
+        {% endfor %}
+        <span class="meta">Held now:
+        {% for hold in change.holds.current %}<code>{{ hold.ecosystem }}</code> <code>{{ hold.directory }}</code> <code>{{ hold.dependency }}</code> ≤ {{ hold.ceiling }}{% if not loop.last %}; {% endif %}{% else %}none{% endfor %}</span>
+      </td>
       {% for service in services %}
       {% set grant = change.grants[service] %}
       <td>{{ cell(grant.old, grant.new) }}{% if grant.reason %}<br><span class="meta">{{ grant.reason }}</span>{% endif %}</td>

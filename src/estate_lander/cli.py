@@ -35,6 +35,10 @@ composed from the same terms and composed again inside the transaction that acts
 relays it, exactly as it does for the landing. A record can therefore print two lines in one pass,
 one per act considered, and the summary counts lines rather than records.
 
+A third act replaces the landing for a pull request whose answer names
+`landing_version_ceiling_exceeded` (bridge layer Part 4): the pass asks the orchestrator to close
+it with a comment naming the hold, and the orchestrator decides again in its own transaction.
+
 **THE BODY IS SHARED, THE PROGRAM IS NOT** (Tier 3 item 27, Devon 2026-09-28). Asking, classifying,
 acting and reporting live in `lander.core`, parameterised by `LANE` below; this module keeps what
 is this lane's alone -- its enumeration from change records, its credentials, its client, and the
@@ -114,7 +118,12 @@ LANE = Lane(
     # single delta, so no rule about update types applies to it -- decided in ADR-0018 and
     # deliberately left, which is what makes it an exception rather than a defect. It waits on a
     # person, forever, and no pass of this program will ever change that.
-    exception=frozenset({"landing_update_type_unparseable"}),
+    #
+    # `landing_version_ceiling_exceeded` (bridge layer Part 4) is the same class: a hold in the SDS
+    # member record clears only when a person lifts it. Its sibling
+    # `landing_dependency_list_unreadable` is deliberately NOT here -- an unreadable input stops
+    # loudly, as a finding.
+    exception=frozenset({"landing_update_type_unparseable", "landing_version_ceiling_exceeded"}),
     # ADR-0019 Increment 6 and ADR-0045. The branch-update act's refusals that say only *the
     # answer moved between the read and the request*. `landing_mergeability_unknown` in particular
     # is ordinary rather than exotic: the platform answers `unknown` while it works.

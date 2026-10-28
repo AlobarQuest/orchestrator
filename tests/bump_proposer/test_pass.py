@@ -27,7 +27,7 @@ from bump_proposer.landing_policy import (
     parse,
     read_inert_landing,
 )
-from sds_members.client import SERVICES, Member, MembersUnreadable
+from sds_members.client import SERVICES, Hold, Member, MembersUnreadable
 from tests.bump_proposer.test_landing_policy import LIVE
 
 REPOSITORY = "AlobarQuest/infraops-mcp-server"
@@ -241,7 +241,12 @@ class _Spine:
         return httpx.Response(self.status, json={"id": identifier, **payload})
 
 
-def _member(repository: str, dependency_updates: str = "granted", state: str = "member") -> Member:
+def _member(
+    repository: str,
+    dependency_updates: str = "granted",
+    state: str = "member",
+    holds: tuple[Hold, ...] = (),
+) -> Member:
     return Member(
         repository=repository,
         owner="devon",
@@ -251,6 +256,7 @@ def _member(repository: str, dependency_updates: str = "granted", state: str = "
         apps=(),
         grants={service: "withdrawn" for service in SERVICES}
         | {"dependency_updates": dependency_updates},
+        holds=holds,
     )
 
 
@@ -1495,3 +1501,60 @@ def test_a_repository_not_declared_inert_keeps_its_alerts(rig, checkout, monkeyp
     assert run(["--submit"]) == EXIT_FINDINGS
 
     assert hub.keys("resolved") == []
+
+
+# ---------------------------------------------------------------------------------------------
+# Bridge Part 4. A failed bump past a hold in the member record is skipped: nothing is created,
+# observed, proposed or alerted, and an alert raised for it before the hold resolves.
+# ---------------------------------------------------------------------------------------------
+
+
+def _hold(monkeypatch, *holds: Hold) -> None:
+    members = [_member(REPOSITORY, holds=holds)]
+    monkeypatch.setattr(cli, "read_members_from_environment", lambda **_: members)
+
+
+def test_a_held_bump_is_skipped_and_nothing_is_written(
+    rig, monkeypatch, spine, hub, capsys
+) -> None:
+    estate, calls = rig
+    _hold(monkeypatch, Hold("npm_and_yarn", "/", "zod", "3.99"))
+    _serve(monkeypatch, pulls=[Pull(), LEFT_PAD])
+
+    assert run(["--submit"]) == EXIT_OK
+
+    out = capsys.readouterr().out
+    assert "ceiling-exceeded" in out
+    # Only left-pad, which no hold names, is created and proposed.
+    assert [p["package_id"] for p in estate.proposals] == [CREATED_ID]
+    assert len(spine.posted) == 1
+    assert hub.keys("firing") == []
+
+
+def test_a_hold_applies_whatever_the_case_of_the_members_name(
+    rig, monkeypatch, spine, hub, capsys
+) -> None:
+    """Kills: the holds keyed by the record's spelling uncased. The package names
+    `AlobarQuest/infraops-mcp-server` and the scope takes its spelling; the record's differs."""
+    estate, calls = rig
+    members = [_member(REPOSITORY.upper(), holds=(Hold("npm_and_yarn", "/", "zod", "3.99"),))]
+    monkeypatch.setattr(cli, "read_members_from_environment", lambda **_: members)
+    _serve(monkeypatch, pulls=[Pull(), LEFT_PAD])
+
+    assert run(["--submit"]) == EXIT_OK
+
+    assert "ceiling-exceeded" in capsys.readouterr().out
+    assert [p["package_id"] for p in estate.proposals] == [CREATED_ID]
+
+
+def test_a_hold_resolves_the_alert_its_bump_raised(rig, monkeypatch, hub) -> None:
+    """Kills: a held skip that names the alert's key (holding it open) or raises it again."""
+    _serve(monkeypatch, pulls=[Pull(number=77, dependency="zod", ecosystem="uv")])
+    assert run(["--submit"]) == EXIT_OK
+    assert hub.keys("firing") == [_key("uv", "zod")]
+
+    _hold(monkeypatch, Hold("uv", "/", "zod", "99"))
+    assert run(["--submit"]) == EXIT_OK
+
+    assert hub.keys("firing") == [_key("uv", "zod")]
+    assert hub.keys("resolved") == [_key("uv", "zod")]

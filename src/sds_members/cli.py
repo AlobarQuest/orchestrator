@@ -3,6 +3,22 @@
 `stage <file.toml>` posts the proposal as SYSTEM and prints the page a person confirms it on.
 Staging changes no member. The idempotency key is the digest of the proposal itself, so staging
 an unchanged file again replays the same proposal instead of staging a second.
+
+A hold is a `[[changes.holds]]` table under its member's change, spelled as Dependabot spells the
+update (`npm_and_yarn`, not `npm`; `github_actions`, not `github-actions`):
+
+    summary = "hold sqlalchemy"
+
+    [[changes]]
+    repository = "AlobarQuest/orchestrator"
+    reason = "2.0.55 broke the build"   # becomes the hold's reason
+
+    [[changes.holds]]
+    action = "place"                    # or "lift", which names no ceiling
+    ecosystem = "uv"
+    directory = "/"                     # optional; "/" when left out
+    dependency = "sqlalchemy"
+    ceiling = "2.0.54"                  # the highest release allowed
 """
 
 from __future__ import annotations

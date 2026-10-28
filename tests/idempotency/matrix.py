@@ -186,6 +186,17 @@ COVERAGE_MATRIX: tuple[MatrixRow, ...] = (
         "tests/services/test_inert_pr_merge.py::test_a_repeat_replays_the_record_and_never_calls_the_remote_again",
     ),
     MatrixRow(
+        "held pr close",
+        "/api/v1/held-pr-close",
+        # The key is the PULL REQUEST'S, derived by both sides and refused when a caller sends any
+        # other, so a fresh key can never post a second comment. Read first under the lock, so a
+        # replay touches GitHub no more; a close that failed after its comment records nothing,
+        # and the next call reads the conversation and does not comment again.
+        "pg_advisory_xact_lock on the repository + unique Event per\n"
+        "held-pr-close:<repository>#<number>, the only key accepted",
+        "tests/services/test_held_close.py::test_a_replay_answers_from_the_record_and_touches_github_no_more",
+    ),
+    MatrixRow(
         "inert pr branch update",
         "/api/v1/inert-pr-branch-update",
         # NO ROW OF ITS OWN, for the reason its deploying sibling gives: the act is repeatable by

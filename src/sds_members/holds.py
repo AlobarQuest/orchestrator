@@ -1,0 +1,318 @@
+"""The lanes' copy of the hold matcher: does a bump move a held dependency beyond its ceiling.
+
+The orchestrator decides holds for its admissions in `orchestrator.services.membership.holds`;
+the lanes (the bump proposer, the work carrier) can't import it, and it can't import them, so the
+matcher is copied here and `tests/services/test_hold_agreement.py` runs both copies over one
+corpus. Change one, change both. `exceeded` is the only place either side decides, and
+`holding` (any hold on a dependency, for a uv bump whose version is only a floor) the one
+exception.
+
+**A VERSION THAT CANNOT BE READ IS NEVER "BELOW THE CEILING".** `release` returns `None` for
+anything it cannot read, and `exceeded` treats that as beyond the ceiling. The holds come from the
+member record as `sds_members.client.Hold`, stored as confirmed; name equivalence (PEP 503 for pip
+and uv, case-folding elsewhere) is applied here, when a bump is compared with a hold.
+"""
+
+from __future__ import annotations
+
+import re
+from collections.abc import Iterable
+from dataclasses import dataclass, replace
+from typing import Final, Protocol
+
+_RELEASE: Final = re.compile(r"v?(\d+(?:\.\d+)*)")
+# What may follow the release: nothing, a `-` or `+` part (semver pre-release, build), PEP 440's
+# dotted pre-, post- and dev-release parts (`.post1`), or a pre-release word glued to the release
+# (`2.0.55rc1`, `2.0b2`); a part ends at its digits, then at the end or a `-`, `+` or `.`. Anything
+# else (`1.x`, `1.2.abc`, the rest of a commit SHA that starts with a digit) is never a release.
+_SUFFIX: Final = re.compile(
+    r"[-+]|\.?(?:post|dev|rc|a|b)\d*(?:[-+.]|\Z)"
+    r"|(?:alpha|beta|preview|pre|c)\d*(?:[-+.]|\Z)",
+    re.IGNORECASE,
+)
+
+# The lander's single-update title read, byte-identical to `landing_ledger.titles.BUMP_PATTERN`
+# and pinned to it: `bump <name> from <a> to <b>` at the end of the title.
+BUMP_PATTERN: Final = r"\bfrom v?(\d[\d.]*) to v?(\d[\d.]*)$"
+_TITLE_BUMP: Final = re.compile(BUMP_PATTERN)
+# The suffix Dependabot adds to a single update's title outside the root directory
+# (`bump ruff from 0.15.22 to 0.16.1 in /tools`), which the lander's `$` anchor refuses.
+_TITLE_DIRECTORY: Final = re.compile(r"\s+in\s+/\S*$")
+
+_BLOCK_HEADER: Final = "updated-dependencies:"
+# not-a-vocabulary: the lines that end a YAML block, not values any system exchanges
+_BLOCK_ENDS: Final = frozenset({"...", "---"})
+_ENTRY: Final = re.compile(r"^\s*-\s+([\w-]+):\s*(.*?)\s*$")
+_FIELD: Final = re.compile(r"^\s+([\w-]+):\s*(.*?)\s*$")
+
+# not-a-vocabulary: the Dependabot ecosystems whose registry compares names by PEP 503
+_PEP_503_ECOSYSTEMS: Final = frozenset({"pip", "uv"})
+_PEP_503_RUN: Final = re.compile(r"[-_.]+")
+
+# A standing package's tooling (`<repo>-<tooling>-<slug>`, intent-packages' `standing_package_id`)
+# as Dependabot spells its ecosystem. Held equal to the orchestrator's copy by the agreement test.
+TOOLING_TO_DEPENDABOT: Final = {"npm": "npm_and_yarn", "pip": "pip", "uv": "uv"}
+
+
+def release(version: str) -> tuple[int, ...] | None:
+    """The leading dotted numeric release of `version`, or `None` when it has none.
+
+    A leading `v` is stripped, and anything after the release is ignored when it starts a
+    pre-release, build or post-release part (`2.0.55rc1`, `1.2.3-beta.1`, `1.2.3+b5`,
+    `1.2.3.post1` all read as their release). Refused, so `None`: no leading digit (`latest`,
+    `^1.2`, `>=1.2`, surrounding whitespace), a release that ends in a dot or doubles one (`1.`,
+    `2..0`), a wildcard (`1.x`, `1.2.*`, `1*`), a PEP 440 epoch (`1!2.0`), and anything else after
+    the release that `_SUFFIX` does not name (`1.2.abc`, a commit SHA such as `3f1c2d4e...`), each
+    of which would otherwise read as its leading digits and compare low.
+
+    An admitted suffix is ignored, so a pre-release of a ceiling's own release reads as that
+    release: `2.0.54-rc1` at ceiling `2.0.54` is admitted (the plan's Ruling 4, an accepted cost).
+    """
+    match = _RELEASE.match(version)
+    if match is None:
+        return None
+    rest = version[match.end() :]
+    if rest and not _SUFFIX.match(rest):
+        return None
+    return tuple(int(part) for part in match.group(1).split("."))
+
+
+@dataclass(frozen=True)
+class Bump:
+    """One dependency an update moves, as Dependabot names it. `directory` is `None` when the
+    update did not say which manifest it touched, and then it matches a hold on any directory."""
+
+    ecosystem: str
+    directory: str | None
+    dependency: str
+    to_version: str
+
+
+@dataclass(frozen=True)
+class HoldBreach:
+    """A bump that exceeds a hold: the hold as confirmed, and the version the bump would bring."""
+
+    repository: str
+    ecosystem: str
+    directory: str
+    dependency: str
+    ceiling: str
+    version: str
+
+
+class HeldDependency(Protocol):
+    """What the matcher reads from a hold, whichever side's record carries it."""
+
+    @property
+    def ecosystem(self) -> str: ...
+    @property
+    def directory(self) -> str: ...
+    @property
+    def dependency(self) -> str: ...
+    @property
+    def ceiling(self) -> str: ...
+
+
+def exceeded(
+    holds: Iterable[HeldDependency], repository: str, bumps: Iterable[Bump]
+) -> tuple[HoldBreach, ...]:
+    """Every (bump, hold) pair where the bump moves the held dependency beyond its ceiling.
+
+    Empty means admit. THIS IS THE ONLY PLACE THAT DECIDES: every lane and service that honours
+    holds calls it rather than comparing versions itself. A bump whose version, or a hold whose
+    ceiling, `release` can't read is beyond the ceiling.
+    """
+    held = tuple(holds)
+    return tuple(
+        HoldBreach(
+            repository=repository,
+            ecosystem=hold.ecosystem,
+            directory=hold.directory,
+            dependency=hold.dependency,
+            ceiling=hold.ceiling,
+            version=bump.to_version,
+        )
+        for bump in bumps
+        for hold in held
+        if _same_dependency(hold, bump) and _beyond(bump.to_version, hold.ceiling)
+    )
+
+
+def holding(holds: Iterable[HeldDependency], bump: Bump) -> tuple[HeldDependency, ...]:
+    """Every hold on the bump's dependency, whatever either version says.
+
+    For a caller whose bump's version is not what lands (the factory path's uv floor), so any hold
+    on the dependency is a refusal. Matched exactly as `exceeded` matches: same ecosystem, the
+    registry's name rule, and a `None` directory matching a hold on any directory."""
+    return tuple(hold for hold in holds if _same_dependency(hold, bump))
+
+
+# The ecosystem whose `to_version` is a floor, not the version that lands: intent-packages' uv
+# mutator runs `uv add '<pkg>>=<to_version>'`, so the resolver may land any newer release. npm and
+# pip pin the exact version.
+_FLOOR_ECOSYSTEM: Final = TOOLING_TO_DEPENDABOT["uv"]
+
+
+def factory_breaches(
+    holds: Iterable[HeldDependency], repository: str, bump: Bump
+) -> tuple[HoldBreach, ...]:
+    """Every hold breached by a bump the factory installs, whose uv version is a `>=` floor.
+
+    The one rule for every path that asks about a factory bump (the factory merge, the bump
+    proposer, the work carrier): a uv bump breaches every hold on its dependency, whatever its
+    version, since what lands can pass any ceiling; any other ecosystem is `exceeded`.
+    """
+    if bump.ecosystem.lower() != _FLOOR_ECOSYSTEM:
+        return exceeded(holds, repository, (bump,))
+    return tuple(
+        HoldBreach(
+            repository=repository,
+            ecosystem=hold.ecosystem,
+            directory=hold.directory,
+            dependency=hold.dependency,
+            ceiling=hold.ceiling,
+            version=bump.to_version,
+        )
+        for hold in holding(holds, bump)
+    )
+
+
+def _same_dependency(hold: HeldDependency, bump: Bump) -> bool:
+    return (
+        hold.ecosystem.lower() == bump.ecosystem.lower()
+        and (bump.directory is None or _directory(bump.directory) == _directory(hold.directory))
+        and _name(hold.ecosystem, hold.dependency) == _name(bump.ecosystem, bump.dependency)
+    )
+
+
+def _directory(directory: str) -> str:
+    return directory.rstrip("/") or "/"
+
+
+def _name(ecosystem: str, dependency: str) -> str:
+    """The name as its registry compares it. PEP 503 for pip and uv; every other ecosystem is
+    case-folded only, which is npm's rule and errs toward matching (so toward holding) for the
+    rest."""
+    if ecosystem.lower() in _PEP_503_ECOSYSTEMS:
+        return _PEP_503_RUN.sub("-", dependency).lower()
+    return dependency.lower()
+
+
+def _beyond(version: str, ceiling: str) -> bool:
+    """Is `version`'s release greater than `ceiling`'s? Releases of different length are padded
+    with zeros, so `2.0.54.0` equals `2.0.54`. Either one unreadable is beyond."""
+    ours, limit = release(version), release(ceiling)
+    if ours is None or limit is None:
+        return True
+    ours, limit = _padded(ours, limit)
+    return ours > limit
+
+
+def _padded(
+    left: tuple[int, ...], right: tuple[int, ...]
+) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    width = max(len(left), len(right))
+    return left + (0,) * (width - len(left)), right + (0,) * (width - len(right))
+
+
+def dependencies_of(commit_message: str, ecosystem: str) -> tuple[Bump, ...] | None:
+    """Every dependency Dependabot's `updated-dependencies` block names, or `None` when there is
+    no block this can read.
+
+    A small line parser, not a YAML library: `- key: value` opens an entry, an indented
+    `key: value` adds to it, and only `...` or `---` ends the block. Anything else inside a block
+    (a blank line included), a block the message ends before closing, a key twice in one entry, an
+    entry with no `dependency-name` or a block with no entries makes the whole message unreadable,
+    so a list is never silently cut short. Every block in the message is read. Quotes around
+    a value are stripped. An entry with no `dependency-version` reads as version `""`, which
+    `release` can't read, so it breaches any hold on its dependency.
+    """
+    lines = commit_message.splitlines()
+    entries: list[dict[str, str]] = []
+    found = False
+    index = 0
+    while index < len(lines):
+        if lines[index].strip() != _BLOCK_HEADER:
+            index += 1
+            continue
+        found = True
+        index += 1
+        block: list[dict[str, str]] = []
+        while index < len(lines) and lines[index].strip() not in _BLOCK_ENDS:
+            line = lines[index]
+            entry, field = _ENTRY.match(line), _FIELD.match(line)
+            if entry is not None:
+                block.append({entry.group(1): _unquote(entry.group(2))})
+            elif field is not None and block and field.group(1) not in block[-1]:
+                block[-1][field.group(1)] = _unquote(field.group(2))
+            else:
+                return None
+            index += 1
+        if index == len(lines) or not block:
+            return None
+        entries.extend(block)
+    if not found or any(not entry.get("dependency-name") for entry in entries):
+        return None
+    return tuple(
+        Bump(
+            ecosystem=ecosystem,
+            directory=entry.get("directory") or None,
+            dependency=entry["dependency-name"],
+            to_version=entry.get("dependency-version", ""),
+        )
+        for entry in entries
+    )
+
+
+def _unquote(value: str) -> str:
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+        return value[1:-1]
+    return value
+
+
+def bumps_of(title: str, commit_message: str, ecosystem: str) -> tuple[Bump, ...] | None:
+    """What an update moves: the block's dependencies, with a single update's version taken from
+    the title.
+
+    The title is the fresh source: Dependabot rewrites a pull request in place and its trailer can
+    lag (`estate_landing_admission.update_type_of`). So a single update takes its name from the
+    block, and its version is the GREATER of the title's and the block's, by `release`; when either
+    can't be read the version is `""`, which breaches any hold on it. A trailing ` in /<path>` is
+    stripped from the title before the lander's read; the directory is still read only from the
+    block, never narrowed from the title.
+
+    Residual exposures, recorded: a requirement-range title (`requirement from >=0.15 to >=0.16`)
+    doesn't match, so the block's version stands and can lag a rewrite. A grouped update's title
+    names no versions and nothing fresher than the block exists, so if the block lags, a group can
+    be admitted at a stale version. `None` when the block can't be read.
+    """
+    bumps = dependencies_of(commit_message, ecosystem)
+    if bumps is None or len(bumps) != 1:
+        return bumps
+    match = _TITLE_BUMP.search(_TITLE_DIRECTORY.sub("", title.strip()))
+    if match is None:
+        return bumps
+    return (replace(bumps[0], to_version=_greater(match.group(2), bumps[0].to_version)),)
+
+
+def _greater(title_version: str, block_version: str) -> str:
+    """The greater of two versions by release, or `""` when either can't be read."""
+    title_release, block_release = release(title_version), release(block_version)
+    if title_release is None or block_release is None:
+        return ""
+    title_release, block_release = _padded(title_release, block_release)
+    return title_version if title_release >= block_release else block_version
+
+
+def ecosystem_of_package_id(package_id: str, repository: str) -> str | None:
+    """The Dependabot ecosystem a standing package's id names, or `None` when it names none.
+
+    The id is `<repo name>-<tooling>-<slug>`, read exactly as `standing_identity` reads it: from
+    after the repository's own name, since a name can hold a tooling word
+    (`pip-tools-npm-left-pad`). That is why the repository is an argument.
+    """
+    name = repository.rsplit("/", 1)[-1].lower()
+    for tooling, ecosystem in TOOLING_TO_DEPENDABOT.items():
+        if package_id.startswith(f"{name}-{tooling}-"):
+            return ecosystem
+    return None

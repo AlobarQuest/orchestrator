@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import (
@@ -134,6 +135,18 @@ class EstatePrMergeResponse(BaseModel):
     updated_at: datetime
 
 
+class CeilingBreachModel(BaseModel):
+    """A hold this update moves past its ceiling (bridge layer Part 4): the hold as confirmed and
+    the version the update would bring. Never the hold's reason or who placed it."""
+
+    repository: str
+    ecosystem: str
+    directory: str
+    dependency: str
+    ceiling: str
+    version: str
+
+
 class EstateLandingAdmissionResponse(BaseModel):
     """Whether this pull request may be landed, and every term that is unmet.
 
@@ -168,6 +181,9 @@ class EstateLandingAdmissionResponse(BaseModel):
     # disqualifies the update outright. It is a fact about an observed sibling, NOT a record of the
     # lane declining. A scan that fails leaves this answer answering, with the fact false.
     branch_update_withheld_for_sibling: bool
+    # Bridge layer Part 4, declared for the reason every field above is: the answer is served whole.
+    ceiling_breaches: list[CeilingBreachModel]
+    update_bot_authored: bool
 
 
 class EstateBranchUpdateCommandModel(BaseModel):
@@ -302,6 +318,9 @@ class InertLandingAdmissionResponse(BaseModel):
     # disqualifies the update outright. It is a fact about an observed sibling, NOT a record of the
     # lane declining. A scan that fails leaves this answer answering, with the fact false.
     branch_update_withheld_for_sibling: bool
+    # Bridge layer Part 4, declared for the reason every field above is: the answer is served whole.
+    ceiling_breaches: list[CeilingBreachModel]
+    update_bot_authored: bool
 
 
 class InertBranchUpdateCommandModel(BaseModel):
@@ -337,4 +356,38 @@ class InertBranchUpdateResponse(BaseModel):
     repository: str
     pr_number: int
     head_sha: str
+    replayed: bool
+
+
+class HeldPrCloseCommandModel(BaseModel):
+    """Ask the orchestrator to close an update-bot pull request a hold refuses (bridge layer
+    Part 4). The orchestrator re-composes `lane`'s own admission and closes only on its answer.
+
+    `idempotency_key` must be `held-pr-close:<repository lowercased>#<number>`: the key is the
+    pull request's, so a second request can never post a second comment.
+    """
+
+    lane: Literal["inert", "estate"]
+    repository: str = Field(pattern=r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$", max_length=300)
+    pull_request_number: int = Field(gt=0)
+    idempotency_key: str = Field(min_length=1, max_length=400)
+    expected_head_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
+
+
+class HeldCeilingModel(BaseModel):
+    dependency: str
+    ceiling: str
+
+
+class HeldPrCloseResponse(BaseModel):
+    """What was done: the ceilings the comment named, whether this call commented (false when an
+    earlier, failed close already had), and whether it was answered from the record."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    lane: str
+    repository: str
+    pull_request_number: int
+    ceilings: list[HeldCeilingModel]
+    commented: bool
     replayed: bool

@@ -13,13 +13,22 @@ from __future__ import annotations
 
 import json
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
+from sds_members.client import Hold
 from work_carrier.change_manager import ChangeManagerError, WorkRecord
 from work_carrier.cli import EXIT_FINDINGS, EXIT_OK, EXIT_TOOL_FAILURE, EXIT_UNUSABLE, run
-from work_carrier.prepare import Prepared, Refused, emit_key, package_path, prepare
+from work_carrier.prepare import (
+    Prepared,
+    Refused,
+    emit_key,
+    held_refusal,
+    package_path,
+    prepare,
+)
 
 FIXTURE_PACKAGE = "ws32-approved-software"
 # The repository the fixture package would be worked in, and the one `workable_target`
@@ -342,6 +351,131 @@ def test_a_mismatched_record_is_not_carried_and_is_a_finding(
     out = report.getvalue()
     assert "target_repository_mismatch" in out
     assert "0 carried, 1 refused" in out
+
+
+# ---------------------------------------------------------------------------------------
+# Bridge Part 4: a dependency update past a hold in its target repository is refused
+# ---------------------------------------------------------------------------------------
+
+HOLDS = {
+    TARGET.casefold(): (Hold("npm_and_yarn", "/", "zod", "3.99"), Hold("uv", "/", "ruff", "1"))
+}
+
+
+def _bump(
+    checkout_root: Path, tooling: str, dependency: str, to_version, **overrides
+) -> tuple[WorkRecord, dict]:
+    """A standing dependency-update record and the payload its package emits."""
+    package_id = f"infraops-mcp-server-{tooling}-{dependency}"
+    (checkout_root / "intent-packages" / "packages" / package_id).mkdir(parents=True)
+    rec = record(**{"package_id": package_id, "change_class": "dependency-update", **overrides})
+    fields = {"target_repo": TARGET, "package": dependency, "to_version": to_version}
+    payload = {
+        **payload_for(rec),
+        "profile": "dependency-update",
+        "enforcement_snapshot": {"profile_fields": fields},
+    }
+    return rec, payload
+
+
+@pytest.mark.parametrize(
+    ("tooling", "dependency", "to_version", "holds", "reason"),
+    [
+        ("npm", "zod", "4.4.3", HOLDS, "version_ceiling_exceeded"),
+        ("npm", "Zod", "3.99.1", HOLDS, "version_ceiling_exceeded"),
+        # uv's version is a floor: the factory's mutator asks for `>=0.0.1`, so any hold refuses.
+        ("uv", "ruff", "0.0.1", HOLDS, "version_ceiling_exceeded"),
+        # In a repository with holds, a bump this can't read is never "not held".
+        ("npm", "zod", "latest", HOLDS, "version_ceiling_exceeded"),
+        ("npm", "zod", None, HOLDS, "dependency_bump_unreadable"),
+        ("cargo", "zod", "1", HOLDS, "dependency_bump_unreadable"),
+        # The controls.
+        ("npm", "zod", "3.99", HOLDS, None),
+        ("pip", "zod", "9", HOLDS, None),
+        ("npm", "zod", "4.4.3", {"alobarquest/other-repo": HOLDS[TARGET.casefold()]}, None),
+        ("npm", "zod", None, {}, None),
+    ],
+)
+def test_a_dependency_update_past_a_hold_is_refused(
+    checkout_root: Path, tooling, dependency, to_version, holds, reason
+) -> None:
+    rec, payload = _bump(checkout_root, tooling, dependency, to_version)
+    outcome = held_refusal(Prepared(rec, checkout_root, payload), holds)
+    if reason is None:
+        assert outcome is None, outcome
+    else:
+        assert outcome is not None
+        assert outcome.reason == reason, outcome.detail
+
+
+def test_a_record_that_is_not_a_dependency_update_ignores_holds(checkout_root: Path) -> None:
+    rec, payload = _bump(checkout_root, "npm", "zod", "4.4.3", change_class="software-change")
+    payload["profile"] = "software-change"
+    assert held_refusal(Prepared(rec, checkout_root, payload), HOLDS) is None
+
+
+def test_a_held_record_is_refused_end_to_end_from_the_member_record(
+    checkout_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Through `run`: the holds come from the member record the pass already read."""
+    import io
+
+    import work_carrier.cli as cli_module
+
+    rec, payload = _bump(checkout_root, "npm", "zod", "4.4.3")
+    runner, _ = runner_returning(payload)
+    original = cli_module.prepare
+    monkeypatch.setattr(cli_module, "prepare", lambda r, **kw: original(r, **kw, runner=runner))
+    members = [
+        replace(member, holds=HOLDS[TARGET.casefold()])
+        for member in cli_module.read_members_from_environment()
+    ]
+    report = io.StringIO()
+    code = run(
+        ["--checkout-root", str(checkout_root)],
+        source=_Source([rec]),
+        members=members,
+        out=report,
+    )
+    assert code == EXIT_FINDINGS
+    assert "version_ceiling_exceeded" in report.getvalue()
+    assert "0 carried, 1 refused" in report.getvalue()
+
+
+def test_a_retired_members_hold_refuses_whatever_the_case_of_its_name(
+    checkout_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Kills: holds read only from live members, or keyed by the record's spelling uncased."""
+    import io
+
+    import work_carrier.cli as cli_module
+
+    rec, payload = _bump(checkout_root, "npm", "zod", "4.4.3")
+    runner, _ = runner_returning(payload)
+    original = cli_module.prepare
+    monkeypatch.setattr(cli_module, "prepare", lambda r, **kw: original(r, **kw, runner=runner))
+    members = [
+        replace(
+            member,
+            repository=member.repository.upper(),
+            state="retired",
+            holds=HOLDS[TARGET.casefold()],
+        )
+        if member.repository.casefold() == TARGET.casefold()
+        else member
+        for member in cli_module.read_members_from_environment()
+    ]
+    assert any(member.repository == TARGET.upper() for member in members)
+    report = io.StringIO()
+    code = run(
+        ["--checkout-root", str(checkout_root)],
+        source=_Source([rec]),
+        members=members,
+        out=report,
+    )
+    assert code == EXIT_FINDINGS
+    assert "version_ceiling_exceeded" in report.getvalue()
+    assert "0 carried, 1 refused" in report.getvalue()
 
 
 def test_the_emit_key_is_derived_so_two_passes_print_the_same_bytes() -> None:

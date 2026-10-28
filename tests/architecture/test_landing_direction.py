@@ -56,6 +56,9 @@ INERT_LANE = frozenset(
 )
 SHARED = frozenset(
     {
+        # Bridge layer Part 4: one close act for both Dependabot lanes, bounded by each lane's own
+        # admission, which it imports and re-composes.
+        "held_close",
         "interfaces",
         "terms",
         "branch_update_serialization",
@@ -73,6 +76,7 @@ ADMISSIONS = frozenset(
 )
 ACTS = frozenset(
     {
+        "held_close",
         "estate_pr_merge",
         "estate_pr_branch_update",
         "inert_pr_merge",

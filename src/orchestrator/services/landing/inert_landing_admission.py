@@ -99,17 +99,22 @@ from orchestrator.services.landing.interfaces import (
     MERGE_COMMIT,
     MERGEABLE_UNKNOWN,
     SQUASH,
+    UPDATE_BOT_LOGIN,
     EstateGatewayError,
     EstatePullRequest,
     EstateReadGateway,
     Term,
 )
 from orchestrator.services.landing.terms import (
+    NOT_HELD,
     checks_term,
     ecosystem_exclusion_term,
     freshness_term,
     qualifies_for_branch_update,
+    version_ceiling_term,
 )
+from orchestrator.services.membership.holds import HoldBreach
+from orchestrator.services.membership.members import HoldView, holds_for
 
 # The estate says landing on this repository's default branch DOES change something already
 # serving -- so this is the wrong lane for it, and the right one exists. Its own refusal rather
@@ -170,6 +175,11 @@ class InertLandingAdmission:
     # already edited is queued to land? ALWAYS FALSE AS COMPOSED HERE: finding out means composing
     # each sibling's own answer, which must never ask the same of its siblings. The route fills it.
     branch_update_withheld_for_sibling: bool
+    # Bridge layer Part 4. What the close act needs and must not read a second time: each hold this
+    # update moves past its ceiling (empty unless `landing_version_ceiling_exceeded` refused), and
+    # whether the update bot opened the pull request (false when it could not be read).
+    ceiling_breaches: tuple[HoldBreach, ...]
+    update_bot_authored: bool
 
 
 def inert_landing_admission(
@@ -219,7 +229,9 @@ def inert_landing_admission(
 
     estate = _inert_estate_term(repository, landing_source)
     policy = _policy_term(repository, policy_source)
-    remote = _remote_terms(repository, pr_number, policy.rules, gateway)
+    remote = _remote_terms(
+        repository, pr_number, policy.rules, holds_for(session, repository), gateway
+    )
 
     refusals.extend(estate.refusals)
     refusals.extend(policy.term.refusals)
@@ -256,6 +268,8 @@ def inert_landing_admission(
         ),
         merge_method=remote.merge_method,
         branch_update_withheld_for_sibling=False,
+        ceiling_breaches=remote.ceiling_breaches,
+        update_bot_authored=remote.update_bot_authored,
     )
 
 
@@ -319,12 +333,15 @@ class _RemoteTerms:
     term: Term
     head_sha: str | None
     merge_method: str
+    ceiling_breaches: tuple[HoldBreach, ...] = ()
+    update_bot_authored: bool = False
 
 
 def _remote_terms(
     repository: str,
     pr_number: int,
     rules: InertLandingRules | None,
+    holds: tuple[HoldView, ...],
     gateway: EstateReadGateway,
 ) -> _RemoteTerms:
     """Every question only GitHub can answer, asked at the moment the answer has to be true.
@@ -350,6 +367,16 @@ def _remote_terms(
         checks = checks_term(repository, pull, gateway)
         refusals.extend(checks.refusals)
 
+    # Bridge layer Part 4. Asked BEFORE the policy's own early return, because the close act keys
+    # on the ceiling code being present whatever else refuses. A wholesale author (Ruling 8: a
+    # fork's upstream sync is someone else's release, not a bump) is never asked, and never has
+    # its commits read; without the rules nobody can say an author is wholesale, so it is asked.
+    wholesale = rules is not None and not rules.ecosystem_scoped(pull.author_login)
+    ceiling = NOT_HELD if wholesale else version_ceiling_term(repository, pull, holds, gateway)
+    held = ceiling.term
+    refusals.extend(held.refusals)
+    bot = pull.author_login == UPDATE_BOT_LOGIN and pull.author_is_bot
+
     if rules is None:
         # Already reported by the policy term. Everything below is a condition this process was
         # not told, so it cannot be met and there is nothing further to say about it.
@@ -357,7 +384,9 @@ def _remote_terms(
         # The method is the ordinary one rather than an absent value: this answer cannot be
         # satisfied, so nothing will act on it, and a field that reads "we were not told" would
         # oblige every later reader to handle a case the act can never see.
-        return _RemoteTerms(Term(False, tuple(refusals)), pull.head_sha, SQUASH)
+        return _RemoteTerms(
+            Term(False, tuple(refusals)), pull.head_sha, SQUASH, ceiling.breaches, bot
+        )
 
     author = _author_term(pull, rules)
     fresh = freshness_term(repository, pull, gateway, required=rules.require_head_current_with_base)
@@ -383,7 +412,6 @@ def _remote_terms(
     # reader can see and split, instead of silently acquiring a landing method nobody chose. The
     # direction of the mistake, if it is ever made, is a merge commit where a squash would have
     # done -- untidy, and not a landing that should not have happened.
-    wholesale = not rules.ecosystem_scoped(pull.author_login)
     if wholesale:
         ecosystem = Term(True, ())
     else:
@@ -408,8 +436,11 @@ def _remote_terms(
         and author.met
         and fresh.met
         and ecosystem.met
+        and held.met
     )
-    return _RemoteTerms(Term(met, tuple(refusals)), pull.head_sha, merge_method)
+    return _RemoteTerms(
+        Term(met, tuple(refusals)), pull.head_sha, merge_method, ceiling.breaches, bot
+    )
 
 
 def _author_term(pull: EstatePullRequest, rules: InertLandingRules) -> Term:

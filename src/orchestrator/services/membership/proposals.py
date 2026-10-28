@@ -23,9 +23,16 @@ from orchestrator.persistence.models import (
     SdsMember,
     SdsMemberApp,
     SdsMemberGrant,
+    SdsMemberHold,
     SdsMemberProposal,
 )
-from orchestrator.services.membership.changes import GrantChange, MemberChange, MemberProposalBody
+from orchestrator.services.membership.changes import (
+    GrantChange,
+    HoldChange,
+    MemberChange,
+    MemberProposalBody,
+)
+from orchestrator.services.membership.holds import MISSPELLED_ECOSYSTEMS, release
 
 # "MBR1": serializes concurrent stagings of one idempotency key, so the loser replays the winner
 # instead of meeting the unique constraint as an unhandled IntegrityError.
@@ -188,6 +195,7 @@ def proposal_preview(session: Session, proposal: SdsMemberProposal) -> list[dict
             if member is not None
             else []
         )
+        held = _current_holds(session, member)
         rows.append(
             {
                 "repository": change.repository,
@@ -211,6 +219,25 @@ def proposal_preview(session: Session, proposal: SdsMemberProposal) -> list[dict
                     }
                     for service in MEMBER_SERVICES
                     for named in [dict(change.grants).get(service)]
+                },
+                # Every current hold, read live, so a hold moved after the page rendered changes
+                # the digest even when this change does not name it.
+                "holds": {
+                    "current": [
+                        {"ecosystem": e, "directory": d, "dependency": n, "ceiling": c}
+                        for (e, d, n), c in sorted(held.items())
+                    ],
+                    "changes": [
+                        {
+                            "action": h.action,
+                            "ecosystem": h.ecosystem,
+                            "directory": h.directory,
+                            "dependency": h.dependency,
+                            "old": held.get(_hold_key(h)),
+                            "new": h.ceiling if h.action == "place" else None,
+                        }
+                        for h in change.holds
+                    ],
                 },
             }
         )
@@ -321,7 +348,8 @@ def _apply_change(
         session, member, change, created=created, seeded=body.seeded, actor=actor, now=now
     )
     apps = _replace_apps(session, member, change, old_apps.get(change.repository.lower(), []))
-    if (apps is not None or grants) and not created:
+    holds = _apply_holds(session, member, change, actor=actor, now=now)
+    if (apps is not None or grants or holds) and not created:
         member.updated_at = now
     session.add(
         Event(
@@ -336,6 +364,7 @@ def _apply_change(
                 "fields": fields,
                 "grants": grants,
                 "apps": apps,
+                "holds": holds,
             },
             correlation_id=proposal.id,
             idempotency_key=f"member-proposal:{proposal.id}:{member.id}",
@@ -389,6 +418,63 @@ def _apply_grants(
             row.state, row.reason = state, reason
             row.seeded, row.set_by, row.set_at = seeded, actor.actor_id, now
     return grants
+
+
+def _apply_holds(
+    session: Session, member: SdsMember, change: MemberChange, *, actor: ActorContext, now: datetime
+) -> list[dict[str, Any]]:
+    """Place or lift the holds a change names, returning each one that moved for the event. A place
+    replaces the key's ceiling and reason; one that changes neither records nothing."""
+    existing = {
+        (row.ecosystem, row.directory, row.dependency): row
+        for row in session.scalars(
+            select(SdsMemberHold).where(SdsMemberHold.member_id == member.id)
+        )
+    }
+    moved: list[dict[str, Any]] = []
+    for hold in change.holds:
+        key = _hold_key(hold)
+        row = existing.get(key)
+        old = row.ceiling if row is not None else None
+        new: str | None = None
+        if hold.action == "lift":
+            if row is None:
+                raise _lift_invalid(change.repository, hold)
+            session.delete(row)
+        else:
+            new = _placed_ceiling(hold)
+            if row is None:
+                session.add(
+                    SdsMemberHold(
+                        member_id=member.id,
+                        ecosystem=hold.ecosystem,
+                        directory=hold.directory,
+                        dependency=hold.dependency,
+                        ceiling=new,
+                        reason=change.reason,
+                        set_by=actor.actor_id,
+                        set_at=now,
+                    )
+                )
+            elif row.ceiling != new or row.reason != change.reason:
+                row.ceiling, row.reason, row.set_by, row.set_at = (
+                    new,
+                    change.reason,
+                    actor.actor_id,
+                    now,
+                )
+            else:
+                continue
+        moved.append(
+            {
+                "ecosystem": hold.ecosystem,
+                "directory": hold.directory,
+                "dependency": hold.dependency,
+                "old": old,
+                "new": new,
+            }
+        )
+    return moved
 
 
 def _free_replaced_apps(session: Session, changes: list[MemberChange]) -> dict[str, list[str]]:
@@ -454,6 +540,7 @@ def validate_changes(session: Session, changes: list[MemberChange]) -> None:
         _check_apps_text(change)
         _check_working_copy(change, member)
         _check_grants(session, change, member)
+        _check_holds(session, change, member)
     _check_app_names(session, changes, members)
 
 
@@ -558,6 +645,96 @@ def _check_grants(session: Session, change: MemberChange, member: SdsMember | No
                 f"{change.repository} has no granted {service} to withdraw",
                 "only a granted service can be withdrawn",
             )
+
+
+def _hold_key(hold: HoldChange) -> tuple[str, str, str]:
+    return (hold.ecosystem, hold.directory, hold.dependency)
+
+
+def _current_holds(session: Session, member: SdsMember | None) -> dict[tuple[str, str, str], str]:
+    if member is None:
+        return {}
+    return {
+        (row.ecosystem, row.directory, row.dependency): row.ceiling
+        for row in session.scalars(
+            select(SdsMemberHold).where(SdsMemberHold.member_id == member.id)
+        )
+    }
+
+
+def _placed_ceiling(hold: HoldChange) -> str:
+    """A place's ceiling, refused unless the matcher can read it: an unreadable ceiling would hold
+    every bump of the dependency with no signal that the hold was mistyped."""
+    if hold.ceiling is None or release(hold.ceiling) is None:
+        raise DomainError(
+            "hold_ceiling_unparseable",
+            f"hold on {hold.dependency} names ceiling {hold.ceiling!r}, which is not a version",
+            "name the highest allowed release, e.g. 2.0.54",
+        )
+    return hold.ceiling
+
+
+def _lift_invalid(repository: str, hold: HoldChange) -> DomainError:
+    return DomainError(
+        "hold_lift_invalid",
+        f"{repository} has no {hold.ecosystem} hold on {hold.dependency} in {hold.directory} "
+        "to lift, or the lift names a ceiling",
+        "lift only an existing hold, naming no ceiling",
+    )
+
+
+def _check_holds(session: Session, change: MemberChange, member: SdsMember | None) -> None:
+    current = _current_holds(session, member)
+    seen: set[tuple[str, str, str]] = set()
+    for hold in change.holds:
+        _require_text(hold.ecosystem, "hold ecosystem")
+        _require_text(hold.dependency, "hold dependency")
+        # Refused, not normalized: the stored hold must be exactly what the person confirmed.
+        for label, value in (
+            ("ecosystem", hold.ecosystem),
+            ("directory", hold.directory),
+            ("dependency", hold.dependency),
+            ("ceiling", hold.ceiling),
+        ):
+            if value is not None and value != value.strip():
+                raise DomainError(
+                    "hold_text_padded",
+                    f"hold {label} {value!r} has surrounding whitespace",
+                    f"write the {label} without leading or trailing spaces",
+                )
+        if hold.ecosystem != hold.ecosystem.lower():
+            raise DomainError(
+                "hold_ecosystem_not_lowercase",
+                f"hold ecosystem {hold.ecosystem!r} is not lowercase",
+                "spell it as Dependabot does, e.g. uv or npm_and_yarn",
+            )
+        meant = MISSPELLED_ECOSYSTEMS.get(hold.ecosystem)
+        if meant is not None:
+            raise DomainError(
+                "hold_ecosystem_misspelled",
+                f"{hold.ecosystem!r} is a tooling spelling; Dependabot calls it {meant!r}",
+                f"name the ecosystem {meant!r}",
+            )
+        if hold.directory != "/" and (
+            not hold.directory.startswith("/") or hold.directory.endswith("/")
+        ):
+            raise DomainError(
+                "hold_directory_invalid",
+                f"hold directory {hold.directory!r} must start with / and not end with one",
+                "name the directory as dependabot.yml does, e.g. / or /frontend",
+            )
+        key = _hold_key(hold)
+        if key in seen:
+            raise DomainError(
+                "hold_change_duplicated",
+                f"{change.repository} names the {hold.dependency} hold more than once",
+                "fold them into one",
+            )
+        seen.add(key)
+        if hold.action == "place":
+            _placed_ceiling(hold)
+        elif hold.ceiling is not None or key not in current:
+            raise _lift_invalid(change.repository, hold)
 
 
 def _require_text(value: str, label: str) -> None:

@@ -89,3 +89,24 @@ case, and admission makes no GitHub request for this term.
 Admission and the lanes hold the change-class mapping separately, because the lanes run out of
 process; `tests/services/test_target_grant.py` holds the two equal over every class the policy
 admits.
+
+## Amendment 2, 2026-10-28 — holds live in the record (bridge layer, Part 4)
+
+**Status:** Accepted (Devon's decisions in `docs/superpowers/specs/2026-10-27-bridge-layer-design.md`,
+Part 4; plan `docs/superpowers/plans/2026-10-28-bridge-p4-holds.md`).
+
+A hold is a version ceiling on one dependency of one member, and it is part of the member record:
+table `sds_member_holds`, keyed `(member_id, ecosystem, directory, dependency)` with `ceiling`,
+`reason`, `set_by` and `set_at`. It is changed the way every other part of the record is: staged
+as a `holds` list on a member's change (`sds-members stage`), each entry a `place` (with a ceiling)
+or a `lift`, and written only when a person confirms the proposal on `/review`
+(`services/membership/proposals.py`, the one writer). A place on an existing key replaces its
+ceiling. A lift deletes an existing hold and the confirming event records it; nothing else
+removes one, so only a person ends a hold. Member proposals are on the `/review` queue.
+
+The ecosystem is Dependabot's spelling, unconstrained by a CHECK because Dependabot owns the
+vocabulary; the three tooling spellings that differ are refused at staging. The directory defaults
+to `/`. A ceiling must parse to a numeric release. Reads go through
+`services/membership/members.py::holds_for` (in-process) and `GET /api/v1/members` (the lanes), and
+a retired member's holds still apply. How each path honours a hold is ADR-0028 amendment 2;
+operations: `docs/operations/membership.md`.

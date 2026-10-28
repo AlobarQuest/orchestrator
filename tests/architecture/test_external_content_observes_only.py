@@ -251,14 +251,26 @@ CLASSIFICATION: dict[str, Row] = {
     "estate_lander": Row(
         Role.INTERNAL_LANE_ACTOR,
         "Devon 2026-08-25 ruling: estate-landing is an internal lane actor; ADR-0019 inc 5b/6 "
-        "landing and branch update",
-        frozenset({"/api/v1/estate-pr-merge", "/api/v1/estate-pr-branch-update"}),
+        "landing, branch update and (bridge layer Part 4) closing a held bump",
+        frozenset(
+            {
+                "/api/v1/estate-pr-merge",
+                "/api/v1/estate-pr-branch-update",
+                "/api/v1/held-pr-close",
+            }
+        ),
     ),
     "inert_lander": Row(
         Role.INTERNAL_LANE_ACTOR,
-        "ADR-0038: the orchestrator merges the cascade's subjects; landing and branch update "
-        "(postdates the 2026-08-25 ruling, which does not name it)",
-        frozenset({"/api/v1/inert-pr-merge", "/api/v1/inert-pr-branch-update"}),
+        "ADR-0038: the orchestrator merges the cascade's subjects; landing, branch update "
+        "and closing a held bump (postdates the 2026-08-25 ruling, which does not name it)",
+        frozenset(
+            {
+                "/api/v1/inert-pr-merge",
+                "/api/v1/inert-pr-branch-update",
+                "/api/v1/held-pr-close",
+            }
+        ),
     ),
     "work_carrier": Row(
         Role.INTERNAL_LANE_ACTOR,

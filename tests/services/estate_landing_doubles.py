@@ -285,12 +285,34 @@ def run(status: str = "completed", conclusion: str | None = "success") -> HeadCh
     return HeadCheckRun(status=status, conclusion=conclusion)
 
 
-def dependabot_commit(sha: str) -> PullRequestCommit:
+def trailer(*updates: tuple[str, str], title: str = MINOR_TITLE) -> str:
+    """An update-bot commit message: its title, then the `updated-dependencies` block naming each
+    `(dependency, version)` it moves, in the shape Dependabot writes it."""
+    entries = "".join(
+        f"- dependency-name: {name}\n  dependency-version: {version}\n"
+        f"  dependency-type: direct:production\n"
+        for name, version in updates
+    )
+    return (
+        f"{title}\n\nBumps {updates[0][0]}.\n\n---\nupdated-dependencies:\n{entries}...\n\n"
+        "Signed-off-by: dependabot[bot] <support@github.com>\n"
+    )
+
+
+# The default pull request's own commit message, so a fixture that never names one still reads.
+MINOR_TRAILER = trailer(("alembic", "1.19.0"))
+
+
+def dependabot_commit(sha: str, message: str | None = MINOR_TRAILER) -> PullRequestCommit:
     """A commit exactly as the update bot's own commits read: linked to its account, committed
     through the platform's web-flow identity, and signed by the platform. Measured on 63 of 63
     update-bot commits across six repositories, 2026-09-25."""
     return PullRequestCommit(
-        sha=sha, author_login="dependabot[bot]", committer_login="web-flow", verified=True
+        sha=sha,
+        author_login="dependabot[bot]",
+        committer_login="web-flow",
+        verified=True,
+        message=message,
     )
 
 
@@ -299,7 +321,11 @@ def foreign_commit(sha: str, author: str = "alobar-sds-dispatch[bot]") -> PullRe
     whose update-branch commits ALSO carry committer web-flow and a platform signature -- the
     author is what tells the two apart."""
     return PullRequestCommit(
-        sha=sha, author_login=author, committer_login="web-flow", verified=True
+        sha=sha,
+        author_login=author,
+        committer_login="web-flow",
+        verified=True,
+        message="Merge branch 'main' into dependabot/uv/alembic-1.19.0",
     )
 
 

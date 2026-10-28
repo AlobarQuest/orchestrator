@@ -40,6 +40,7 @@ from orchestrator.services.intake.staged_intake import STAGED
 from orchestrator.services.lifecycle.execution_stall import stalled_executions
 from orchestrator.services.lifecycle.lifecycle import POST_DEPLOY_AC_IDS
 from orchestrator.services.lifecycle.rotation_claims import is_rotation_unit
+from orchestrator.services.membership.members import staged_member_proposals
 from orchestrator.services.reconciliation.reconciliation import open_conditions
 from orchestrator.services.reporting.dead_letter import recovery_action
 from orchestrator.services.verifier.evidence import current_adjudication, current_evidence
@@ -52,6 +53,7 @@ SETTLED_STATES = frozenset({WorkUnitState.COMPLETED, WorkUnitState.CANCELLED})
 
 # Ordered so the entries that block everything downstream come first.
 KIND_ORDER = (
+    "member_proposal",
     "staged_intake",
     "package_breakdown",
     "decomposition_proposal",
@@ -63,6 +65,7 @@ KIND_ORDER = (
     "reconciliation_condition",
 )
 KIND_LABELS: dict[str, str] = {
+    "member_proposal": "Membership proposals awaiting your confirmation",
     "staged_intake": "Staged intakes awaiting your confirmation",
     "package_breakdown": "Packages with no breakdown in progress",
     "decomposition_proposal": "Proposed breakdowns awaiting your decision",
@@ -85,6 +88,7 @@ def pending_decisions(
     place for the configured one to disagree with.
     """
     entries: list[dict[str, Any]] = [
+        *_member_proposals(session),
         *_staged_intakes(session),
         *_package_breakdowns(session),
         *_proposed_breakdowns(session),
@@ -151,6 +155,24 @@ def _entry(kind: str, subject: str, decision: str, detail: str, href: str) -> di
         "detail": detail,
         "href": href,
     }
+
+
+def _member_proposals(session: Session) -> list[dict[str, Any]]:
+    """Member-record changes a machine staged (grants, apps, holds) that nobody has decided.
+
+    First, because the record scopes every lane: a grant or a hold waiting here changes what the
+    lanes may do, and nothing changes until a person confirms it.
+    """
+    return [
+        _entry(
+            "member_proposal",
+            f"{proposal.summary} ({proposal.id})",
+            "Confirm this change to the member record, or withdraw it",
+            f"Staged by {proposal.staged_by}. The record is unchanged until you confirm it.",
+            f"/review/member-proposals/{proposal.id}",
+        )
+        for proposal in staged_member_proposals(session)
+    ]
 
 
 def _staged_intakes(session: Session) -> list[dict[str, Any]]:

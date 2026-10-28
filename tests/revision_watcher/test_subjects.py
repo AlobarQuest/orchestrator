@@ -23,6 +23,7 @@ def _member(repository: str, state: str, *apps: tuple[str, str, str]) -> dict:
             s: {"state": "granted", "seeded": False, "set_by": "x", "set_at": None, "reason": "r"}
             for s in SERVICES
         },
+        "holds": [],
     }
 
 

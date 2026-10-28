@@ -49,6 +49,80 @@ new state and a reason. Setting any state is a person's act, so a grant never mo
 confirmed proposal. A proposal that sets `seeded = true` marks its grants as recording what already
 runs rather than a fresh assessment.
 
+## Hold a dependency
+
+A hold is a version ceiling on one dependency of one member: "orchestrator's sqlalchemy stays at or
+below 2.0.54". It is keyed by ecosystem, directory and dependency, as Dependabot identifies an
+update, and staged like any other change: a `holds` list on the member's change, each entry a
+`place` (with a `ceiling`) or a `lift` (with none). The TOML shape is in `src/sds_members/cli.py`.
+
+- The ecosystem is Dependabot's spelling (`npm_and_yarn`, `pip`, `uv`, `docker`,
+  `github_actions`). The tooling spellings `npm`, `yarn`, `pnpm` and `github-actions` are refused,
+  since a hold typed with one would match no update.
+- The ecosystem must be lowercase. No field may have leading or trailing whitespace: staging refuses
+  it rather than trimming, so the stored hold is exactly what was confirmed.
+- The directory defaults to `/`; any other must start with `/` and not end with one.
+- A place needs a ceiling whose release can be read (`2.0.54`, `v3.23.8`; not `latest`, `^1.2` or
+  a wildcard such as `1.x` or `1.2.*`), and replaces the ceiling of an existing hold on the same
+  key.
+- A lift needs an existing hold and deletes it on confirm.
+- The hold's reason is the change's `reason`; who set it is the person who confirmed.
+- **The ecosystem must be the one Dependabot uses for that repository's manifest**, since that is
+  the spelling every path compares. A repository managed by uv gets `uv` updates, so a `pip` hold
+  there covers nothing; check the ecosystem in the branch name of a Dependabot pull request
+  (`dependabot/uv/...`) or in the repository's `.github/dependabot.yml`.
+- **Equivalent spellings of one dependency stage as separate holds.** `Flask_Cors` and `flask-cors`
+  are one pip package, and a hold under either applies to it (the matcher compares names by the
+  registry's rule), but they are stored as typed: two places make two holds, both of which apply,
+  and a lift must name the exact spelling that was staged. Read the member's `holds` before
+  lifting.
+
+For example, holding sqlalchemy and lifting an older hold in one change:
+
+```toml
+summary = "hold sqlalchemy, lift httpx"
+
+[[changes]]
+repository = "AlobarQuest/orchestrator"
+reason = "2.0.55 broke the build"   # becomes the hold's reason
+
+[[changes.holds]]
+action = "place"
+ecosystem = "uv"
+directory = "/"                     # optional; "/" when left out
+dependency = "sqlalchemy"
+ceiling = "2.0.54"                  # the highest release allowed
+
+[[changes.holds]]
+action = "lift"                     # names no ceiling
+ecosystem = "uv"
+dependency = "httpx"
+```
+
+To place or lift one: write the TOML, run `sds-members stage <file.toml>` (it prints the
+`/review/member-proposals/{id}` page), and confirm on that page as a person. A lift is staged and
+confirmed the same way; nothing else removes a hold, so only a person ends one.
+
+What a hold stops: every path that lands or proposes a dependency bump asks it
+(`tests/architecture/test_hold_paths.py` lists each path and how). Both landers refuse a Dependabot
+pull request past the ceiling, and an acting lander pass closes it with a comment; the factory
+merge refuses a dependency-update unit past it; the bump proposer skips it and the work carrier refuses its record.
+For a uv dependency the factory's version is a floor, so on those three factory paths a hold on a
+uv dependency stops every update of it, whatever its version, until it is lifted. ADR-0028
+amendment 2 has the rule and its residuals.
+
+**A hold covers only an update that names the dependency**: Dependabot's `updated-dependencies`
+list, or a factory unit's `profile_fields`. A transitive move through a lockfile is never compared,
+so an update of fastapi that moves a held starlette, or a `uv lock` re-resolve, lands whatever the
+hold says. Hold the direct dependency that pulls it, or pin it in the manifest.
+
+**Deploy before pulling.** The lanes' member client (`sds_members.client`) requires `holds` on every
+member, and a record without it is unreadable, so a lane reading it stops. A release that adds a
+field the lanes read is deployed to the orchestrator before the main tree is pulled.
+
+`GET /api/v1/members` returns each member's `holds` (an empty list when it has none). Staged member
+proposals are listed first on the `/review` queue.
+
 ## Where to confirm
 
 `/review/member-proposals/{id}`, as a signed-in person (HUMAN). The confirm button is bound to the

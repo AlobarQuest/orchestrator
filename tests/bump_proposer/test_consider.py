@@ -32,6 +32,7 @@ from bump_proposer.cli import FAILURE_SETTLE_SECONDS, _consider
 from bump_proposer.landing_policy import parse
 from bump_proposer.standing import StandingPackage
 from landing_ledger.model import Check, PendingUpdate, UpdateMetadata
+from sds_members.client import Hold
 from tests.bump_proposer.test_landing_policy import LIVE
 
 # The declaration `GET /api/landing-policy` served on 2026-08-31, parsed. ONE rule for every
@@ -195,7 +196,7 @@ def test_the_live_population_is_classified_as_measured(case) -> None:
         checks=checks,
         concluded_at=SETTLED,
     )
-    route = _consider(pending, RULE, PACKAGES, NOW)
+    route = _consider(pending, RULE, PACKAGES, NOW, holds=())
     if expected == "candidate":
         assert route.action == "act" and route.package is not None, route.detail
     else:
@@ -224,7 +225,7 @@ def test_a_bump_with_no_standing_package_is_routed_to_creation() -> None:
         checks=FAILED,
         concluded_at=SETTLED,
     )
-    route = _consider(pending, RULE, PACKAGES, NOW)
+    route = _consider(pending, RULE, PACKAGES, NOW, holds=())
     assert (route.action, route.package, route.tooling) == ("act", None, "npm"), route.detail
 
 
@@ -243,7 +244,7 @@ def test_a_title_and_a_trailer_that_disagree_are_ambiguous() -> None:
         ecosystem="npm_and_yarn",
         update_type=MINOR,
     )
-    route = _consider(pending, RULE, PACKAGES, NOW)
+    route = _consider(pending, RULE, PACKAGES, NOW, holds=())
     assert route.action == "ambiguous" and route.detail.startswith("ambiguous"), route.detail
 
 
@@ -258,7 +259,7 @@ def test_a_classifiable_title_with_no_trailer_is_ambiguous() -> None:
         ecosystem=None,
         update_type=None,
     )
-    route = _consider(pending, RULE, PACKAGES, NOW)
+    route = _consider(pending, RULE, PACKAGES, NOW, holds=())
     assert route.action == "ambiguous" and route.detail.startswith("ambiguous"), route.detail
 
 
@@ -297,7 +298,7 @@ def test_a_settled_failure_is_still_this_lanes_subject_under_the_outcome_rule() 
     """
     pending = _zod(checks=FAILED, concluded_at=SETTLED)
 
-    route = _consider(pending, RULE, PACKAGES, NOW)
+    route = _consider(pending, RULE, PACKAGES, NOW, holds=())
 
     assert route.action == "act" and route.package is not None, route.detail
     assert route.bump is not None and route.bump.kind == "semver-major"
@@ -312,7 +313,7 @@ def test_the_same_bump_passing_its_checks_is_left_to_the_cascade() -> None:
     """
     pending = _zod(checks=PASSED, concluded_at=SETTLED)
 
-    route = _consider(pending, RULE, PACKAGES, NOW)
+    route = _consider(pending, RULE, PACKAGES, NOW, holds=())
 
     assert route.action == "skip"
     assert "permits" in route.detail and "have passed" in route.detail, route.detail
@@ -325,7 +326,7 @@ def test_a_failure_that_has_not_settled_belongs_to_neither_lane_yet() -> None:
     re-run that then goes green strands the record as superseded with a human approval spent."""
     pending = _zod(checks=FAILED, concluded_at=JUST_CONCLUDED)
 
-    route = _consider(pending, RULE, PACKAGES, NOW)
+    route = _consider(pending, RULE, PACKAGES, NOW, holds=())
 
     assert route.action == "skip"
     assert "have not concluded against it" in route.detail, route.detail
@@ -336,7 +337,7 @@ def test_a_pull_request_whose_checks_have_not_concluded_at_all_is_not_taken() ->
     means waiting: a pass that skips it costs a pass, and the next one picks it up."""
     pending = _zod()
 
-    route = _consider(pending, RULE, PACKAGES, NOW)
+    route = _consider(pending, RULE, PACKAGES, NOW, holds=())
 
     assert route.action == "skip"
     assert "have not concluded against it" in route.detail, route.detail
@@ -374,7 +375,7 @@ def test_an_excluded_ecosystem_alerts_however_green_its_checks() -> None:
         "postgres", from_version="16.2", to_version="17.0"
     )
 
-    route = _consider(pending, RULE, packages, NOW)
+    route = _consider(pending, RULE, packages, NOW, holds=())
 
     assert route.action == "alert", route.detail
 
@@ -401,7 +402,7 @@ def test_the_exclusion_is_what_decides_that_and_not_the_ecosystems_name() -> Non
         "postgres", from_version="16.2", to_version="17.0"
     )
 
-    route = _consider(pending, RULE, packages, NOW)
+    route = _consider(pending, RULE, packages, NOW, holds=())
 
     assert route.action == "skip"
     assert "permits" in route.detail and "have passed" in route.detail, route.detail
@@ -423,7 +424,7 @@ def _range(ecosystem: str, checks: tuple[Check, ...]) -> PendingUpdate:
 def test_a_passing_requirement_range_is_left_to_the_cascade() -> None:
     """CONTROL 2, the producer's half. The cascade PERMITS a range (ADR-0034), so a green one is
     the cascade's, exactly as a green plain bump is."""
-    route = _consider(_range("uv", PASSED), RULE, PACKAGES, NOW)
+    route = _consider(_range("uv", PASSED), RULE, PACKAGES, NOW, holds=())
 
     assert route.action == "skip" and "have passed" in route.detail, route.detail
 
@@ -431,7 +432,7 @@ def test_a_passing_requirement_range_is_left_to_the_cascade() -> None:
 def test_a_failed_requirement_range_in_uv_carries_its_bare_versions() -> None:
     """Ruling 7: a single-clause range names two versions, and those are what a revision
     carries."""
-    route = _consider(_range("uv", FAILED), RULE, PACKAGES, NOW)
+    route = _consider(_range("uv", FAILED), RULE, PACKAGES, NOW, holds=())
 
     assert route.action == "act" and route.tooling == "uv", route.detail
     assert route.bump is not None
@@ -440,7 +441,7 @@ def test_a_failed_requirement_range_in_uv_carries_its_bare_versions() -> None:
 
 def test_a_failed_requirement_range_in_pip_alerts() -> None:
     """Review focus 5: pip's mutation rewrites `==` lines only."""
-    route = _consider(_range("pip", FAILED), RULE, PACKAGES, NOW)
+    route = _consider(_range("pip", FAILED), RULE, PACKAGES, NOW, holds=())
 
     assert route.action == "alert", route.detail
     assert route.key == "dependency-bump:alobarquest/infraops-mcp-server:pip:setuptools"
@@ -458,7 +459,7 @@ def test_a_multi_clause_range_stays_unclassifiable() -> None:
         concluded_at=SETTLED,
     )
 
-    route = _consider(pending, RULE, PACKAGES, NOW)
+    route = _consider(pending, RULE, PACKAGES, NOW, holds=())
 
     assert route.action == "skip" and route.detail.startswith("unclassifiable"), route.detail
 
@@ -477,7 +478,102 @@ def test_a_conclusion_that_is_no_verdict_does_not_hand_the_bump_to_the_factory(c
     the cascade's answer mints a package revision that cannot be unminted, and the bump lands by
     itself the moment somebody re-runs the job green.
     """
-    route = _consider(_zod(checks=checks, concluded_at=SETTLED), RULE, PACKAGES, NOW)
+    route = _consider(_zod(checks=checks, concluded_at=SETTLED), RULE, PACKAGES, NOW, holds=())
 
     assert route.action == "skip"
     assert "have not concluded against it" in route.detail, route.detail
+
+
+# ---------------------------------------------------------------------------------------------
+# Bridge Part 4. A failed bump past a hold in its repository is skipped `ceiling-exceeded`, with
+# no alert key, so a `dependency-bump:` alert this lane raised for it before the hold resolves.
+# ---------------------------------------------------------------------------------------------
+
+
+def test_a_failed_bump_past_a_hold_is_skipped_with_no_alert_key() -> None:
+    held = (Hold("npm_and_yarn", "/", "zod", "3.99"),)
+
+    route = _consider(_zod(checks=FAILED, concluded_at=SETTLED), RULE, PACKAGES, NOW, holds=held)
+
+    assert route.action == "skip", route.detail
+    assert route.detail.startswith("ceiling-exceeded"), route.detail
+    assert "zod" in route.detail and "3.99" in route.detail and "4.4.3" in route.detail
+    assert route.key == ""
+
+
+def test_a_failed_bump_at_or_below_its_ceiling_is_still_acted_on() -> None:
+    """The control: a hold on the dependency is not by itself a skip for npm."""
+    held = (Hold("npm_and_yarn", "/", "zod", "4.4.3"),)
+
+    route = _consider(_zod(checks=FAILED, concluded_at=SETTLED), RULE, PACKAGES, NOW, holds=held)
+
+    assert route.action == "act", route.detail
+
+
+def test_a_hold_on_another_dependency_or_ecosystem_changes_nothing() -> None:
+    held = (Hold("npm_and_yarn", "/", "typescript", "1"), Hold("pip", "/", "zod", "1"))
+
+    route = _consider(_zod(checks=FAILED, concluded_at=SETTLED), RULE, PACKAGES, NOW, holds=held)
+
+    assert route.action == "act", route.detail
+
+
+@pytest.mark.parametrize("ceiling", ["84.0.0", "999"])
+def test_a_uv_bump_of_a_held_dependency_is_skipped_whatever_its_version(ceiling) -> None:
+    """The factory's uv mutator asks for `>=<to_version>`, so what it lands can pass any ceiling;
+    a package proposed for it would only make a record the carrier refuses."""
+    held = (Hold("uv", "/", "SetupTools", ceiling),)
+
+    route = _consider(_range("uv", FAILED), RULE, PACKAGES, NOW, holds=held)
+
+    assert route.action == "skip" and route.detail.startswith("ceiling-exceeded"), route.detail
+    assert route.key == ""
+
+
+def _checkout(checks: tuple[Check, ...]) -> PendingUpdate:
+    return _pending(
+        "AlobarQuest/factory-runner",
+        28,
+        "chore(actions): bump actions/checkout from 4 to 7",
+        dependency="actions/checkout",
+        ecosystem="github_actions",
+        update_type=MAJOR,
+        checks=checks,
+        concluded_at=SETTLED,
+    )
+
+
+@pytest.mark.parametrize("ceiling", ["4", "7"])
+def test_a_held_bump_with_no_tooling_is_skipped_rather_than_alerted(ceiling) -> None:
+    """Kills: the no-tooling alert asked before the hold, raising an alert key a person already
+    answered. No version is read on that branch, so a hold at or past the bump skips it too."""
+    held = (Hold("github_actions", "/", "Actions/Checkout", ceiling),)
+
+    route = _consider(_checkout(FAILED), RULE, PACKAGES, NOW, holds=held)
+
+    assert route.action == "skip", route.detail
+    assert route.detail.startswith("ceiling-exceeded"), route.detail
+    assert "no tooling" in route.detail and ceiling in route.detail
+    assert route.key == ""
+
+
+def test_a_hold_on_another_dependency_leaves_the_no_tooling_alert() -> None:
+    """The control: only a hold on this dependency answers the alert."""
+    held = (
+        Hold("github_actions", "/", "astral-sh/setup-uv", "4"),
+        Hold("npm_and_yarn", "/", "actions/checkout", "4"),
+    )
+
+    route = _consider(_checkout(FAILED), RULE, PACKAGES, NOW, holds=held)
+
+    assert route.action == "alert", route.detail
+
+
+def test_a_held_pip_range_is_skipped_rather_than_alerted() -> None:
+    """A held dependency's alert would ask a person a question the hold already answered."""
+    held = (Hold("pip", "/", "setuptools", "83"),)
+
+    route = _consider(_range("pip", FAILED), RULE, PACKAGES, NOW, holds=held)
+
+    assert route.action == "skip" and route.detail.startswith("ceiling-exceeded"), route.detail
+    assert route.key == ""

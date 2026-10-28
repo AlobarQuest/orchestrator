@@ -17,9 +17,10 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from orchestrator.persistence.models import EstatePrMerge
+from orchestrator.persistence.models import EstatePrMerge, SdsMember
 from orchestrator.services.landing.change_record import ChangeRecordAnswer, WorkflowPin
 from orchestrator.services.landing.estate_landing_admission import (
     LANDING_AUTHOR_NOT_THE_UPDATE_BOT,
@@ -46,6 +47,7 @@ from orchestrator.services.landing.interfaces import (
     LANDING_CHECKS_IN_FLIGHT,
     LANDING_CHECKS_NOT_CLEAN,
     LANDING_CHECKS_VERDICT_UNREADABLE,
+    LANDING_DEPENDENCY_LIST_UNREADABLE,
     LANDING_ECOSYSTEM_EXCLUDED,
     LANDING_ECOSYSTEM_UNREADABLE,
     LANDING_ESTATE_SOURCE_UNCONFIGURED,
@@ -61,6 +63,7 @@ from orchestrator.services.landing.interfaces import (
     LANDING_PULL_REQUEST_NOT_OPEN,
     LANDING_PULL_REQUEST_UNREADABLE,
     LANDING_ROLLOUT_MOVED,
+    LANDING_VERSION_CEILING_EXCEEDED,
     EstateGatewayError,
     gateway_failure_detail,
 )
@@ -89,10 +92,13 @@ from tests.services.estate_landing_doubles import (
     FakeEstateGateway,
     approved,
     conditions,
+    dependabot_commit,
     outcome_conditions,
     pull_request,
     run,
+    trailer,
 )
+from tests.services.test_member_holds import place_hold
 
 PR = 49
 IN_WINDOW = datetime(2026, 8, 11, 7, 30, tzinfo=UTC)
@@ -1280,3 +1286,116 @@ def test_a_gateway_failure_names_the_status_when_the_remote_answered() -> None:
     assert gateway_failure_detail(EstateGatewayError("request_error:ConnectError")) == (
         "request_error:ConnectError"
     )
+
+
+# ---------------------------------------------------------------------------------------------
+# Bridge layer Part 4: a hold in the member record caps how far a dependency may move.
+# ---------------------------------------------------------------------------------------------
+
+HELD_MEMBER = "AlobarQuest/Change-Manager"
+GROUP_TITLE = "build(deps): bump the python group with 2 updates"
+
+
+def _hold_alembic(session: Session, ceiling: str = "1.18.9") -> None:
+    place_hold(session, HELD_MEMBER, ecosystem="uv", dependency="alembic", ceiling=ceiling)
+
+
+def test_a_bump_beyond_a_hold_is_refused_by_the_ceiling(migrated_session: Session) -> None:
+    _hold_alembic(migrated_session)
+    gateway = FakeEstateGateway()
+
+    answer = _ask(migrated_session, gateway=gateway)
+
+    assert answer.satisfied is False
+    assert answer.refusals == (LANDING_VERSION_CEILING_EXCEEDED,)
+    assert gateway.commit_reads == [(REPOSITORY, PR)]
+
+
+def test_a_retired_members_hold_still_refuses_and_its_name_is_case_folded(
+    migrated_session: Session,
+) -> None:
+    """Kills: `holds_for` skipping a retired member, or comparing the repository
+    case-sensitively (the member is `AlobarQuest/Change-Manager`, the pull request's
+    `alobarquest/change-manager`)."""
+    _hold_alembic(migrated_session)
+    member = migrated_session.scalars(
+        select(SdsMember).where(SdsMember.repository == HELD_MEMBER)
+    ).one()
+    member.state = "retired"
+    migrated_session.flush()
+    assert HELD_MEMBER != REPOSITORY
+
+    answer = _ask(migrated_session)
+
+    assert answer.refusals == (LANDING_VERSION_CEILING_EXCEEDED,)
+
+
+def test_a_group_with_one_held_member_is_refused(migrated_session: Session) -> None:
+    _hold_alembic(migrated_session)
+    message = trailer(("click", "8.2.0"), ("alembic", "1.19.0"), title=GROUP_TITLE)
+    gateway = FakeEstateGateway(
+        pull=pull_request(title=GROUP_TITLE),
+        commits={PR: (dependabot_commit(HEAD, message),)},
+    )
+
+    answer = _ask(migrated_session, gateway=gateway, record=_outcome_record())
+
+    assert answer.refusals == (LANDING_VERSION_CEILING_EXCEEDED,)
+
+
+def test_a_bump_up_to_the_ceiling_is_admitted(migrated_session: Session) -> None:
+    _hold_alembic(migrated_session, ceiling="1.19")
+    gateway = FakeEstateGateway()
+
+    answer = _ask(migrated_session, gateway=gateway)
+
+    assert answer.satisfied is True
+    assert gateway.commit_reads == [(REPOSITORY, PR)]
+
+
+def test_a_list_that_cannot_be_read_in_a_held_repository_is_refused_by_its_own_name(
+    migrated_session: Session,
+) -> None:
+    _hold_alembic(migrated_session)
+    gateway = FakeEstateGateway(commits={PR: (dependabot_commit(HEAD, "no trailer here"),)})
+
+    answer = _ask(migrated_session, gateway=gateway)
+
+    assert answer.refusals == (LANDING_DEPENDENCY_LIST_UNREADABLE,)
+
+
+def test_a_repository_without_holds_never_reads_the_commit_message(
+    migrated_session: Session,
+) -> None:
+    place_hold(
+        migrated_session, "AlobarQuest/brain", ecosystem="uv", dependency="alembic", ceiling="0.1"
+    )
+    gateway = FakeEstateGateway()
+
+    answer = _ask(migrated_session, gateway=gateway)
+
+    assert answer.satisfied is True
+    assert gateway.commit_reads == []
+
+
+def test_a_held_bump_with_no_change_record_still_names_the_ceiling(
+    migrated_session: Session,
+) -> None:
+    """A held update often has no record (the proposer refuses it), and the close act keys on the
+    ceiling code being present, so the hold is asked before the record's conditions are."""
+    _hold_alembic(migrated_session)
+
+    answer = estate_landing_admission(
+        migrated_session,
+        REPOSITORY,
+        PR,
+        redeploying_source(),
+        FakeChangeRecordSource({}),
+        FakeEstateGateway(),
+        enabled=True,
+        credentials_configured=True,
+        clock=FixedClock(IN_WINDOW),
+    )
+
+    assert LANDING_RECORD_ABSENT in answer.refusals
+    assert LANDING_VERSION_CEILING_EXCEEDED in answer.refusals

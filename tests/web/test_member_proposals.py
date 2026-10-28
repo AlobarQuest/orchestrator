@@ -217,3 +217,37 @@ def test_each_write_route_refuses_every_other_role(
             if route.startswith("/api/"):
                 assert response.json()["error"]["code"] in refusals, (route, role)
     assert _counts(migrated_engine) == before
+
+
+def test_page_shows_the_holds_being_placed_and_lifted(
+    db_client: TestClient, migrated_engine: Engine
+) -> None:
+    with Session(migrated_engine) as session:
+        session.add(
+            SdsMember(
+                repository="AlobarQuest/brain",
+                owner="devon",
+                state="member",
+                state_changed_by="devon",
+                state_reason="seed",
+            )
+        )
+        session.commit()
+    hold = {"ecosystem": "uv", "dependency": "sqlalchemy", "ceiling": "2.0.54", "action": "place"}
+    response = db_client.post(
+        "/api/v1/member-proposals",
+        headers=SYSTEM,
+        json={
+            "summary": "hold sqlalchemy",
+            "changes": [
+                {"repository": "AlobarQuest/brain", "reason": "2.0.55 broke it", "holds": [hold]}
+            ],
+            "idempotency_key": "web-hold",
+            "expected_version": 0,
+        },
+    )
+    assert response.status_code == 201, response.text
+    page = db_client.get(f"/review/member-proposals/{response.json()['id']}", headers=HUMAN).text
+    assert "<th>Holds</th>" in page
+    assert "Place <code>uv</code> <code>/</code> <code>sqlalchemy</code>" in page
+    assert "<strong>2.0.54</strong>" in page

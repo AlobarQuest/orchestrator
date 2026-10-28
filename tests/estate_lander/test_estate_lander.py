@@ -35,6 +35,7 @@ from lander.core import (
     NOT_A_FINDING,
     REPORTED,
     Outcome,
+    held_status,
     landing_key,
     update_key,
 )
@@ -73,6 +74,7 @@ class FakeOrchestrator:
         # ADR-0019 Increment 6. The list a refusal test asserts is EMPTY: an implementation that
         # asked and then reported the refusal would satisfy a status assertion and fail this.
         self.updated: list[tuple[str, int, str, str]] = []
+        self.closed: list[tuple[str, int, str]] = []
 
     def admission(self, repository: str, pr_number: int) -> dict[str, Any]:
         self.asked.append((repository, pr_number))
@@ -82,6 +84,10 @@ class FakeOrchestrator:
             (repository, pr_number),
             {"satisfied": False, "refusals": ["landing_record_absent"], "head_sha": None},
         )
+
+    def close_held(self, repository, pr_number, *, head_sha, idempotency_key):
+        self.closed.append((repository, pr_number, idempotency_key))
+        return {"commented": True, "replayed": False, "ceilings": []}
 
     def land(self, repository, pr_number, *, head_sha, idempotency_key):
         self.landed.append((repository, pr_number, head_sha, idempotency_key))
@@ -730,6 +736,11 @@ def test_the_summary_counts_every_status_so_its_parts_sum_to_what_was_considered
         # category, not a finding, and not `deliberate` -- it clears when that branch lands, not on
         # a clock.
         "waiting",
+        # Bridge layer Part 4: a held bump the lane closed, or would close on an acting pass.
+        "closed",
+        "would-close",
+        # A held bump closed before and reopened by a person; the close is not repeated.
+        "reopened",
     }
     assert NOT_A_FINDING < set(REPORTED)
     assert "waiting" in NOT_A_FINDING
@@ -1378,3 +1389,27 @@ def test_no_reported_status_is_a_substring_of_another() -> None:
     """
     collisions = [(a, b) for a in REPORTED for b in REPORTED if a != b and a in b]
     assert collisions == []
+
+
+# Bridge layer Part 4 (Ruling 6). A held bump clears only when Devon lifts the hold, so it is an
+# exception; a dependency list the orchestrator could not read is a finding, never a quiet refusal.
+_CEILING = "landing_version_ceiling_exceeded"
+_LIST_UNREADABLE = "landing_dependency_list_unreadable"
+
+
+@pytest.mark.parametrize(
+    ("refusals", "status", "exit_code"),
+    [
+        ([_CEILING], "exception", EXIT_OK),
+        ([_PACE, _BEHIND, _CEILING], "exception", EXIT_OK),
+        ([_LIST_UNREADABLE], "held", EXIT_FINDINGS),
+        ([_CEILING, _LIST_UNREADABLE], "held", EXIT_FINDINGS),
+    ],
+)
+def test_a_hold_is_an_exception_and_an_unreadable_list_is_a_finding(
+    refusals: list[str], status: str, exit_code: int
+) -> None:
+    verdict = held_status(LANE, refusals, rollout_base_matches_pin=False)
+
+    assert verdict == status
+    assert report([Outcome(REPOSITORY, 48, verdict, "")]) == exit_code

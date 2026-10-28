@@ -35,6 +35,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from sds_members import holds as hold_matcher
+from sds_members.client import Hold
 from work_carrier.change_manager import WorkRecord
 from work_carrier.workability import target_repository
 
@@ -235,3 +237,58 @@ def _policy_disagreement(record: WorkRecord, payload: dict[str, Any]) -> Refused
             f"profile is {payload.get('profile')!r}",
         )
     return None
+
+
+def held_refusal(prepared: Prepared, holds: dict[str, tuple[Hold, ...]]) -> Refused | None:
+    """A prepared dependency update that moves a dependency its repository holds past the ceiling.
+
+    `holds` are the member record's holds, keyed by repository case-folded. The factory's merge
+    refuses the same unit (`merge_version_ceiling_exceeded`); refusing here stops it before an
+    intake, a decomposition and a run are spent on it. Read as that merge term reads it: either
+    side declaring a dependency update is enough, the bump comes from the package's
+    `profile_fields` with its ecosystem from the standing package id, any directory matches, and
+    the comparison is `factory_breaches` (a uv version is a `>=` floor). A repository with no
+    holds reads nothing more; in one with holds, a bump this can't read is refused, never
+    "not held".
+    """
+    record, payload = prepared.record, prepared.payload
+    if DEPENDENCY_UPDATE not in (record.change_class, payload.get("profile")):
+        return None
+    repository = target_repository(payload)
+    held = holds.get(repository.casefold(), ()) if repository is not None else ()
+    if repository is None or not held:
+        return None
+    snapshot = payload.get("enforcement_snapshot")
+    fields = snapshot.get("profile_fields") if isinstance(snapshot, dict) else None
+    fields = fields if isinstance(fields, dict) else {}
+    dependency, to_version = fields.get("package"), fields.get("to_version")
+    package_id = payload.get("package_id")
+    ecosystem = (
+        hold_matcher.ecosystem_of_package_id(package_id, repository)
+        if isinstance(package_id, str)
+        else None
+    )
+    if (
+        ecosystem is None
+        or not isinstance(dependency, str)
+        or not dependency
+        or dependency != dependency.strip()
+        or not isinstance(to_version, str)
+    ):
+        return Refused(
+            record,
+            "dependency_bump_unreadable",
+            f"{repository} has holds and the package's ecosystem, dependency or version can't be "
+            "read, so it can't be shown to stay under them",
+        )
+    bump = hold_matcher.Bump(ecosystem, None, dependency, to_version)
+    breached = hold_matcher.factory_breaches(held, repository, bump)
+    if not breached:
+        return None
+    ceilings = ", ".join(sorted({hold.ceiling for hold in breached}))
+    return Refused(
+        record,
+        "version_ceiling_exceeded",
+        f"the member record holds {ecosystem} {dependency} in {repository} at {ceilings}, and "
+        f"this package moves it to {to_version}",
+    )

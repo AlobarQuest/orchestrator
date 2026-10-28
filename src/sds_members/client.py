@@ -64,6 +64,16 @@ class App:
 
 
 @dataclass(frozen=True)
+class Hold:
+    """A version ceiling on one dependency, keyed as Dependabot identifies an update."""
+
+    ecosystem: str
+    directory: str
+    dependency: str
+    ceiling: str
+
+
+@dataclass(frozen=True)
 class Member:
     repository: str
     owner: str
@@ -72,6 +82,9 @@ class Member:
     machine_local: bool
     apps: tuple[App, ...]
     grants: Mapping[str, str]
+    # The default serves test constructors only: `_parse` requires the wire key, so a server that
+    # dropped it is `MembersUnreadable`, never "nothing is held".
+    holds: tuple[Hold, ...] = ()
 
 
 _READ: Final = ("GET", _MEMBERS)
@@ -115,6 +128,7 @@ def _client(
 def _parse(wire: Any) -> Member:
     apps = tuple(App(a["name"], a["health_url"], a["branch"]) for a in wire["apps"])
     grants = {service: wire["grants"][service]["state"] for service in SERVICES}
+    holds = tuple(_parse_hold(h) for h in wire["holds"])
     working_copy = wire["working_copy"]
     if working_copy is not None and not isinstance(working_copy, str):
         raise TypeError("working_copy")
@@ -126,7 +140,15 @@ def _parse(wire: Any) -> Member:
         machine_local=bool(wire["machine_local"]),
         apps=apps,
         grants=grants,
+        holds=holds,
     )
+
+
+def _parse_hold(wire: Any) -> Hold:
+    fields = [wire[name] for name in ("ecosystem", "directory", "dependency", "ceiling")]
+    if not all(isinstance(value, str) for value in fields):
+        raise TypeError("hold")
+    return Hold(*fields)
 
 
 def read_members(

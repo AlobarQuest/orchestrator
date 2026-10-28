@@ -197,14 +197,14 @@ def _land[Admission: LaneAdmission](
     remote_call: Callable[[Admission, str], MergeOutcome],
     change_record_id: Callable[[Admission], int | None] | None,
 ) -> EstatePrMerge:
-    _authorize_actor(command.actor, _LANDING_VERB)
+    authorize_actor(command.actor, _LANDING_VERB)
     repository = command.repository.lower()
 
     # SERIALISE ON THE REPOSITORY before anything is read. There is no unit row to lock here, and
     # the two rules that must not be raced -- one row per pull request, one landing per repository
     # per window -- are both stated over rows that may not exist yet, which `FOR UPDATE` cannot
     # lock. Two requests would otherwise each read an absence and each act on it.
-    _lock_repository(session, _LANDING_LOCK, repository)
+    lock_repository(session, _LANDING_LOCK, repository)
 
     existing = session.scalar(
         select(EstatePrMerge).where(
@@ -484,7 +484,7 @@ def _update[Admission: LaneAdmission](
     sibling_composer: Callable[[str], Callable[[int], SiblingAnswer]],
     clock: Clock | None,
 ) -> BranchUpdateOutcome:
-    _authorize_actor(command.actor, _BRANCH_UPDATE_VERB)
+    authorize_actor(command.actor, _BRANCH_UPDATE_VERB)
     repository = command.repository.lower()
 
     # BEFORE the spent-key lookup, or the lookup and the write straddle the window two concurrent
@@ -492,7 +492,7 @@ def _update[Admission: LaneAdmission](
     # head that moved, but two requests carrying one idempotency key would both read no spent
     # event, both act, and the loser's commit would violate the unique index -- an unhandled 500
     # over an act that happened twice.
-    _lock_repository(session, _BRANCH_UPDATE_LOCK, repository)
+    lock_repository(session, _BRANCH_UPDATE_LOCK, repository)
 
     spent = session.scalar(select(Event).where(Event.idempotency_key == command.idempotency_key))
     if spent is not None:
@@ -572,7 +572,7 @@ def _update[Admission: LaneAdmission](
     )
 
 
-def _subject_id(repository: str, pr_number: int) -> uuid.UUID:
+def pull_request_subject_id(repository: str, pr_number: int) -> uuid.UUID:
     """The pull request's own identity, since there is no row of ours to point at.
 
     Derived from its URL rather than allocated, so the same pull request is the same subject on
@@ -628,7 +628,7 @@ def _record_branch_update(
             actor_id=command.actor.actor_id,
             action=lane.action,
             subject_type=lane.subject_type,
-            subject_id=_subject_id(repository, pr_number),
+            subject_id=pull_request_subject_id(repository, pr_number),
             payload={
                 "repository": repository,
                 "pr_number": pr_number,
@@ -641,7 +641,7 @@ def _record_branch_update(
     session.flush()
 
 
-def _lock_repository(session: Session, namespace: str, repository: str) -> None:
+def lock_repository(session: Session, namespace: str, repository: str) -> None:
     """Hold every other request for this act on this repository until this transaction settles.
 
     An advisory lock rather than a row lock, because the rows the decision is about are the ones
@@ -653,7 +653,7 @@ def _lock_repository(session: Session, namespace: str, repository: str) -> None:
     )
 
 
-def _authorize_actor(actor: ActorContext, verb: str) -> None:
+def authorize_actor(actor: ActorContext, verb: str) -> None:
     """SYSTEM only, for either lane and either act.
 
     Not the worker, because a runner asking for its own work to be landed, or made landable, is the

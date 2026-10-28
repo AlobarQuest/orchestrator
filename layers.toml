@@ -505,6 +505,7 @@ paths = [
   "tests/services/test_estate_landing_admission.py",
   "tests/services/test_estate_pr_branch_update.py",
   "tests/services/test_estate_pr_merge.py",
+  "tests/services/test_held_close.py",
   "tests/services/test_inert_landing_admission.py",
   "tests/services/test_inert_landing_policy.py",
   "tests/services/test_inert_pr_branch_update.py",
@@ -539,6 +540,7 @@ paths = [
   "docs/decisions/0045-*.md",
   "tests/api/test_estate_landing_admission_api.py",
   "tests/api/test_inert_landing_admission_api.py",
+  "tests/api/test_held_pr_close_api.py",
   "tests/api/test_page_landing_source.py",
   "tests/api/test_pr_merge_admission_api.py",
   "tests/api/test_pr_merge_api.py",
@@ -655,12 +657,16 @@ paths = [
 
 [membership]
 name = "SDS membership"
-description = "Which repositories the SDS maintains, which services each has been granted, and the staged proposals a person confirms."
+description = "Which repositories the SDS maintains, which services each has been granted, the holds on their dependencies, and the staged proposals a person confirms."
 paths = [
   "src/orchestrator/services/membership/**",
   "src/orchestrator/api/routes/membership.py",
   "src/orchestrator/api/schemas/membership.py",
   "tests/services/test_member_proposals.py",
+  "tests/services/test_member_holds.py",
+  "tests/services/test_hold_matcher.py",
+  "tests/services/test_hold_agreement.py",
+  "tests/architecture/test_hold_paths.py",
   "tests/services/test_membership_vocabulary.py",
   "tests/api/test_membership_api.py",
   "tests/web/test_member_proposals.py",

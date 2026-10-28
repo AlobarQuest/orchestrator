@@ -58,9 +58,15 @@ from orchestrator.errors import DomainError
 from orchestrator.factory_policy import load_factory_policy
 from orchestrator.kernel.authority import normalize_authority
 from orchestrator.kernel.states import WorkUnitState
-from orchestrator.persistence.models import UnitPrBinding, WorkPackageRevision, WorkUnit
+from orchestrator.persistence.models import (
+    UnitPrBinding,
+    WorkPackage,
+    WorkPackageRevision,
+    WorkUnit,
+)
 from orchestrator.persistence.repositories import PackageRepository
 from orchestrator.reach_vocabulary import LIVE_ESTATE
+from orchestrator.services.execution.target_grant import DEPENDENCY_UPDATE
 from orchestrator.services.landing.change_record import (
     RECORD_AMBIGUOUS,
     ChangeRecordSource,
@@ -75,6 +81,12 @@ from orchestrator.services.landing.estate_landing import (
     EstateLandingSource,
 )
 from orchestrator.services.lifecycle.lifecycle import verifier_decided_completion
+from orchestrator.services.membership.holds import (
+    Bump,
+    ecosystem_of_package_id,
+    factory_breaches,
+)
+from orchestrator.services.membership.members import holds_for
 from orchestrator.services.reconciliation.reconciliation import open_conditions
 
 # The capability a human approves per unit, in the envelope, the way every other capability is
@@ -192,6 +204,20 @@ MERGE_TARGET_ESTATE_UNKNOWN: Final = "merge_target_estate_unknown"
 MERGE_TARGET_ESTATE_SOURCE_UNCONFIGURED: Final = "merge_target_estate_source_unconfigured"
 MERGE_TARGET_ESTATE_SOURCE_UNREADABLE: Final = "merge_target_estate_source_unreadable"
 
+# The unit is a dependency update whose bump moves a dependency the member record holds past its
+# ceiling (bridge layer Part 4, Ruling 10). It clears only when a person lifts or raises the hold.
+# The landers' code for the same fact is `landing_version_ceiling_exceeded`; this path names its
+# own, as every refusal here does. A `to_version` the matcher can't read is beyond any ceiling.
+MERGE_VERSION_CEILING_EXCEEDED: Final = "merge_version_ceiling_exceeded"
+
+# The unit is a dependency update, its repository has holds, and what it bumps can't be read: the
+# revision's profile names no package or version, or its package id names no tooling this side
+# maps to an ecosystem. That last includes every non-standing dependency-update package, whose id
+# carries no tooling (`orchestrator-tzdata-bump`), so in a held repository each of those is refused
+# here. Never "not held" -- and distinct from the code above, because the fix is the package's or
+# the hold's, not a version's.
+MERGE_DEPENDENCY_BUMP_UNREADABLE: Final = "merge_dependency_bump_unreadable"
+
 
 @dataclass(frozen=True)
 class MergeAdmission:
@@ -283,6 +309,7 @@ def admission_for(
         clock,
         change_window_override,
     )
+    held = _hold_term(session, revision, envelope.change_class, target_repository)
 
     refusals: list[str] = []
     if not completed:
@@ -299,6 +326,7 @@ def admission_for(
         refusals.append(AUTHORITY_APPROVAL_NOT_BOUND)
     refusals.extend(head.refusals)
     refusals.extend(estate.refusals)
+    refusals.extend(held.refusals)
 
     return MergeAdmission(
         satisfied=(
@@ -310,6 +338,7 @@ def admission_for(
             and authority_bound
             and head.met
             and estate.met
+            and held.met
         ),
         refusals=tuple(refusals),
         target_repository=target_repository,
@@ -328,6 +357,75 @@ class _Term:
     # than that one was offered -- a landing inside the declared hours, or onto a repository where
     # landing changes nothing already serving, never reaches that term at all.
     change_window_override_applied: bool = False
+
+
+def _hold_term(
+    session: Session,
+    revision: WorkPackageRevision,
+    change_class: str | None,
+    target_repository: str,
+) -> _Term:
+    """Does this dependency update move a dependency the member record holds past its ceiling?
+
+    A unit is a dependency update when its envelope's change class or its revision's profile says
+    so; either declaration is enough, so a unit cannot leave the term by declaring only one. Every
+    other unit, and a unit with no repository (`MERGE_TARGET_REPOSITORY_MISSING` already says so),
+    is met here. **A REPOSITORY WITH NO HOLDS READS NOTHING MORE.**
+
+    The bump is read from the revision's `profile_fields` (`package`, `to_version`), its ecosystem
+    from the standing package id's tooling, and its directory is unknown, so it matches a hold on
+    any directory (Rulings 2 and 3). The holds are the repository the pull request lands into, the
+    envelope's, as every other term here reads. The comparison is the matcher's and nobody else's.
+
+    **FOR UV, `to_version` IS A FLOOR.** The uv mutator asks for `>=<to_version>`, so what lands
+    can be any newer release, past any ceiling: a uv unit is refused when ANY hold names its
+    dependency, whatever its version (`factory_breaches`, shared with the lanes). A follow-up that
+    has intent-packages' uv mutator lock the exact version would let uv compare like npm and pip,
+    which pin exactly.
+
+    Residual exposure, recorded: for npm and pip, nothing cross-checks the version in the
+    envelope's `mutation_commands` against `profile_fields.to_version`. They agree because the
+    profile's `build_envelope` derives both from the same arguments; a hand-authored approved
+    envelope could install a different version than the one compared here.
+    """
+    if DEPENDENCY_UPDATE not in (change_class, revision.profile) or not target_repository:
+        return _Term(True, ())
+    holds = holds_for(session, target_repository)
+    if not holds:
+        return _Term(True, ())
+    bump = _bump_of(session, revision, target_repository)
+    if bump is None:
+        return _Term(False, (MERGE_DEPENDENCY_BUMP_UNREADABLE,))
+    if factory_breaches(holds, target_repository, bump):
+        return _Term(False, (MERGE_VERSION_CEILING_EXCEEDED,))
+    return _Term(True, ())
+
+
+def _bump_of(
+    session: Session, revision: WorkPackageRevision, target_repository: str
+) -> Bump | None:
+    """What a dependency-update revision bumps, or `None` when any part of it can't be read. The
+    snapshot is data from another repository and nothing here validates its shape."""
+    package = session.get(WorkPackage, revision.work_package_id)
+    ecosystem = (
+        ecosystem_of_package_id(package.package_id, target_repository)
+        if package is not None
+        else None
+    )
+    snapshot = revision.enforcement_snapshot
+    fields = snapshot.get("profile_fields") if isinstance(snapshot, dict) else None
+    fields = fields if isinstance(fields, dict) else {}
+    dependency, to_version = fields.get("package"), fields.get("to_version")
+    # A padded name would compare unequal to the hold and read as "not held", so it is unreadable.
+    if (
+        ecosystem is None
+        or not isinstance(dependency, str)
+        or not dependency
+        or dependency != dependency.strip()
+        or not isinstance(to_version, str)
+    ):
+        return None
+    return Bump(ecosystem=ecosystem, directory=None, dependency=dependency, to_version=to_version)
 
 
 def _head_terms(binding: UnitPrBinding | None, unit: WorkUnit) -> _Term:
