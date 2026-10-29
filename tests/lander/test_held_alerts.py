@@ -442,6 +442,43 @@ def test_a_revert_raises_one_alert_naming_the_hold(tmp_path) -> None:
     assert not (tmp_path / "state" / "alerts.json").exists()
 
 
+def test_the_revert_alert_says_the_version_never_lands_again_and_how_to_override(
+    tmp_path,
+) -> None:
+    """Lifting the hold does not lift `landing_version_reverted`; the alert says so, and that the
+    one way past it is a person landing that version by hand, unwatched by the SDS."""
+    hub = Hub()
+    sync_revert_alerts(
+        LANE, [_record("revert_landed")], environ=_env(tmp_path), transport=hub.transport()
+    )
+
+    [sent] = hub.sent
+    message = str(sent["message"])
+    assert "landing_version_reverted" in message
+    assert "even after the hold is lifted" in message
+    assert "land that version by hand" in message
+    assert "not watched" in message
+
+
+def test_a_landed_revert_alert_stays_open_while_watched_and_resolves_when_it_leaves(
+    tmp_path,
+) -> None:
+    """The watch keeps a landed revert while its dependency is held, past the 48 hours; the alert
+    follows the watch, so it resolves only when the hold is lifted and the record leaves."""
+    hub = Hub()
+    env = _env(tmp_path)
+    landed = [_record("revert_landed")]
+
+    for _ in range(3):
+        assert sync_revert_alerts(LANE, landed, environ=env, transport=hub.transport()) is None
+    assert sync_revert_alerts(LANE, [], environ=env, transport=hub.transport()) is None
+
+    assert [(sent["key"], sent["status"]) for sent in hub.sent] == [
+        ("landing-reverted:alobarquest/veritok:41", "firing"),
+        ("landing-reverted:alobarquest/veritok:41", "resolved"),
+    ]
+
+
 def test_a_refused_and_a_failed_revert_each_raise_their_own_key(tmp_path) -> None:
     hub = Hub()
     rows = [

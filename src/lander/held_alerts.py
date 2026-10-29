@@ -32,14 +32,17 @@ the two writes never leaves `alerts.json` ahead of the sightings.
 
 `sync_revert_alerts` raises one alert per revert record in the orchestrator's landing watch:
 `landing-reverted:<repo>:<pr>` once the revert has landed (naming the failed jobs, the revert pull
-request, the hold it placed and how to lift one), and `landing-revert-refused:<repo>:<pr>` or
-`landing-revert-failed:<repo>:<pr>` when no revert could be opened, which stay open until a person
-closes them (their records never leave the watch on a timer). `landing-revert-stranded:<repo>:<pr>`
-fires for a revert pull request the lander found no longer open while its record still says it is
-(closed without landing); it is held while that repository could not be listed. Each fires once and
-is resolved when its condition is gone. A pass that could not read the watch holds every remembered
-key. Its memory is its own file, `revert-alerts.json`: `KeyedAlerts` resolves every
-remembered key a sync does not name, so sharing `alerts.json` would resolve the other's alerts.
+request, the hold it placed, how to lift one, and that the reverted version stays refused after
+that), and `landing-revert-refused:<repo>:<pr>` or `landing-revert-failed:<repo>:<pr>` when no
+revert could be opened. `landing-revert-stranded:<repo>:<pr>` fires for a revert pull request the
+lander found no longer open while its record still says it is (closed without landing); it is held
+while that repository could not be listed. Each fires once and follows its record in the watch:
+`landing-reverted` stays open while the dependency is held (the watch keeps the record that long)
+and resolves when the hold is lifted; the refused and failed records never leave the watch, so
+those alerts stay open until a person closes them, as does a stranded one while its revert stays
+closed. A pass that could not read the watch holds every remembered key. Its memory is its own
+file, `revert-alerts.json`: `KeyedAlerts` resolves every remembered key a sync does not name, so
+sharing `alerts.json` would resolve the other's alerts.
 """
 
 from __future__ import annotations
@@ -74,6 +77,10 @@ _REVERT_ALERTS: Final = {
 _STRANDED: Final = "landing-revert-stranded"
 LIFT_A_HOLD: Final = (
     "To lift a hold: stage a lift with `sds-members stage <file.toml>`, then confirm it on /review."
+)
+NEVER_AGAIN: Final = (
+    "The reverted version is refused for good (landing_version_reverted), even after the hold is "
+    "lifted; to take it anyway, land that version by hand, and it is not watched by the SDS."
 )
 
 
@@ -249,7 +256,7 @@ def _revert_alert(row: Mapping[str, object]) -> Alert:
             f"{failed} failed on the default branch after {subject} landed; the revert "
             f"#{revert} has landed. Hold: {hold}."
             + (f" {detail}." if detail else "")
-            + f" {LIFT_A_HOLD}",
+            + f" {LIFT_A_HOLD} {NEVER_AGAIN}",
             f"https://github.com/{repository}/pull/{revert}",
         )
     return Alert(

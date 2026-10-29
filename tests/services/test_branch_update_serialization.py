@@ -319,6 +319,7 @@ RELEASING = {
     "landing_record_not_approved",
     "landing_record_not_policy_approved",
     "landing_repository_not_granted",
+    "landing_repository_reverting",
     "landing_revert_not_exact_inverse",
     "landing_revert_not_recorded",
     "landing_rollout_unpinned",
@@ -373,7 +374,7 @@ def test_every_refusal_code_is_classified_exactly_once() -> None:
     assert not HOLDING & READ_FAILURE_REFUSALS
     assert not HOLDING & RELEASING
     assert not READ_FAILURE_REFUSALS & RELEASING
-    assert (len(HOLDING), len(READ_FAILURE_REFUSALS), len(RELEASING)) == (7, 20, 27)
+    assert (len(HOLDING), len(READ_FAILURE_REFUSALS), len(RELEASING)) == (7, 20, 28)
 
 
 def _class(*refusals: str, base_matches: bool = False) -> str:
@@ -439,6 +440,14 @@ def test_each_read_failure_is_unreadable_even_beside_a_releasing_code(code: str)
     assert _class(code) == "unreadable"
     assert _class(code, LANDING_CHECKS_NOT_CLEAN) == "unreadable"
     assert _class(code, LANDING_HEAD_NOT_CURRENT_WITH_BASE) == "unreadable"
+
+
+def test_a_bump_waiting_on_a_revert_releases_so_the_revert_is_never_withheld_behind_it() -> None:
+    """A bump refused because its repository has a revert in progress is not queued to land, so it
+    must not hold the queue: if it did, the revert -- the one subject that clears the refusal --
+    would be withheld from freshening behind it, and nothing would ever move."""
+    assert _class("landing_repository_reverting") == "releasing"
+    assert _class("landing_repository_reverting", LANDING_HEAD_NOT_CURRENT_WITH_BASE) == "releasing"
 
 
 def test_a_sibling_whose_answer_names_nothing_holds() -> None:

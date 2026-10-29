@@ -16,12 +16,16 @@ and a `dependabot/<ecosystem>/` branch, read from the pull request), so a fork's
 never watched either.
 
 A landing stays in the watch for `WATCH_HOURS` after it landed, and for as long after that as its
-record keeps it there: `revert_opened`, `refused_overlap` and `revert_failed` until they move, and
-every other status for `WATCH_HOURS` after its record last changed. So a `clean` landing leaves
-when its window closes, and so does one whose rerun passed (its record stays `rerun_requested`, and
-nothing moves it) or never reported; a revert stays until it has landed and been seen landed; and a
-refused or failed revert stays, since the default branch may still be broken and only a person
-clears it.
+record keeps it there: `revert_opened`, `refused_overlap` and `revert_failed` until they move;
+`revert_landed` while any of its bumps' dependencies is held in the member record (a hold it placed
+or one a person placed, matched by the hold matcher's identity, `holds.holding`); and every other
+status for `WATCH_HOURS` after its record last changed. So a `clean` landing leaves when its window
+closes, and so does one whose rerun passed (its record stays `rerun_requested`, and nothing moves
+it) or never reported; a revert stays until it has landed and been seen landed, and then while the
+dependency is held, so its alert stays open as long as the hold; and a refused or failed revert
+stays, since the default branch may still be broken and only a person clears it. None of these
+reads anything through the App: only a landing with no record or a `rerun_requested` one is
+judged.
 
 ## Every call is bounded by the inert lane's grant term
 
@@ -71,7 +75,7 @@ from orchestrator.services.landing.revert_build import (
     open_revert,
     plan_revert,
 )
-from orchestrator.services.landing.revert_record import REVERT_OPENED
+from orchestrator.services.landing.revert_record import REVERT_LANDED, REVERT_OPENED
 from orchestrator.services.landing.revert_watch import (
     BAD,
     FLAKY_RETRY,
@@ -86,7 +90,8 @@ from orchestrator.services.landing.terms import (
     ecosystem_of,
     grant_term,
 )
-from orchestrator.services.membership.holds import Bump, directory_of, from_version_of
+from orchestrator.services.membership.holds import Bump, directory_of, from_version_of, holding
+from orchestrator.services.membership.members import holds_for
 
 # Refusals. Nothing is read, written or recorded under any of them.
 LANDING_REVERT_LANE_OFF: Final = "landing_revert_lane_off"
@@ -453,25 +458,47 @@ def _watched_landings(
             LandingRevert.repository == EstatePrMerge.repository,
             LandingRevert.revert_pr_number == EstatePrMerge.pr_number,
         ),
-        or_(
-            EstatePrMerge.created_at >= window,
-            exists().where(
-                is_record,
-                or_(LandingRevert.status.in_(_ALWAYS_WATCHED), LandingRevert.updated_at >= window),
-            ),
-        ),
     ]
+    recent = or_(
+        EstatePrMerge.created_at >= window,
+        exists().where(
+            is_record,
+            or_(LandingRevert.status.in_(_ALWAYS_WATCHED), LandingRevert.updated_at >= window),
+        ),
+    )
+    # A landed revert past its window is a candidate, kept only while its dependency is held.
+    landed = LandingRevert.status == REVERT_LANDED
     if repository is not None:
         conditions.append(EstatePrMerge.repository == repository)
     if pr_number is not None:
         conditions.append(EstatePrMerge.pr_number == pr_number)
-    return list(
-        session.scalars(
-            select(EstatePrMerge)
-            .join(Event, Event.id == EstatePrMerge.event_id)
-            .where(*conditions)
-            .order_by(EstatePrMerge.created_at, EstatePrMerge.repository, EstatePrMerge.pr_number)
+    rows = session.execute(
+        select(EstatePrMerge, recent.label("recent"))
+        .join(Event, Event.id == EstatePrMerge.event_id)
+        .where(*conditions, or_(recent, exists().where(is_record, landed)))
+        .order_by(EstatePrMerge.created_at, EstatePrMerge.repository, EstatePrMerge.pr_number)
+    ).all()
+    return [landing for landing, is_recent in rows if is_recent or _still_held(session, landing)]
+
+
+def _still_held(session: Session, landing: EstatePrMerge) -> bool:
+    """Is any dependency its landed revert took back out still held in the member record?"""
+    record = _record(session, landing.repository, landing.pr_number, lock=False)
+    if record is None or record.status != REVERT_LANDED:
+        return False
+    holds = holds_for(session, landing.repository)
+    return any(
+        holding(
+            holds,
+            Bump(
+                ecosystem=str(entry.get("ecosystem") or ""),
+                directory=entry.get("directory"),
+                dependency=str(entry.get("dependency") or ""),
+                to_version="",
+            ),
         )
+        for entry in record.bumps
+        if entry.get("ecosystem") and entry.get("dependency")
     )
 
 

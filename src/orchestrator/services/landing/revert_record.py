@@ -1,24 +1,27 @@
 """What the landing admissions read from the revert record. Landing Part 3a.
 
-Two questions, each asked of `landing_reverts` for one repository (stored lower-cased): is this
-pull request a revert the SDS opened, and which versions has the SDS reverted from the default
-branch.
+Three questions, each asked of `landing_reverts` for one repository (stored lower-cased): is this
+pull request a revert the SDS opened, which versions has the SDS reverted from the default branch,
+and is a revert in progress there.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Final
 
-from sqlalchemy import select
+from sqlalchemy import exists, func, or_, select
 from sqlalchemy.orm import Session
 
 from orchestrator.persistence.models import LandingRevert
+from orchestrator.services.landing.revert_watch import WATCH_HOURS
 from orchestrator.services.membership.holds import Bump
 
 # The record statuses these reads key on.
 REVERT_OPENED: Final = "revert_opened"
 REVERT_LANDED: Final = "revert_landed"
+RERUN_REQUESTED: Final = "rerun_requested"
 
 
 @dataclass(frozen=True)
@@ -66,4 +69,30 @@ def reverted_versions(session: Session, repository: str) -> tuple[Bump, ...]:
         )
         for row in rows
         for entry in row.bumps
+    )
+
+
+def revert_in_progress(session: Session, repository: str) -> bool:
+    """Is a landing in this repository on its way to a revert: a rerun asked for and still in the
+    watch, or a revert opened and not yet landed?
+
+    A `rerun_requested` record counts only while it is in the watch (`WATCH_HOURS` since it last
+    changed), as `revert_act` keeps it: a rerun that passed leaves its record in that status for
+    good, so an unbounded match would hold the repository forever after one flaky job. A
+    `revert_opened` record counts however old, as the watch keeps it.
+    """
+    window = func.now() - timedelta(hours=WATCH_HOURS)
+    return bool(
+        session.scalar(
+            select(
+                exists().where(
+                    LandingRevert.repository == repository.lower(),
+                    or_(
+                        LandingRevert.status == REVERT_OPENED,
+                        (LandingRevert.status == RERUN_REQUESTED)
+                        & (LandingRevert.updated_at >= window),
+                    ),
+                )
+            )
+        )
     )

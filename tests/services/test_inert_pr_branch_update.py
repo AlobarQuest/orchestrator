@@ -441,6 +441,17 @@ def test_the_callers_SETTLED_set_is_exactly_the_refusals_that_mean_there_is_noth
     assert SETTLED == {LANDING_ALREADY_RECORDED, LANDING_PULL_REQUEST_NOT_OPEN}
 
 
+def test_the_callers_WAITING_ON_A_REVERT_code_is_the_one_the_admission_raises() -> None:
+    """Renamed on this side alone, every bump in a repository with a revert in progress would be
+    a nightly finding until the revert lands."""
+    from lander.core import REVERTING
+    from orchestrator.services.landing.inert_landing_admission import (
+        LANDING_REPOSITORY_REVERTING,
+    )
+
+    assert REVERTING == LANDING_REPOSITORY_REVERTING
+
+
 def test_the_callers_EXCEPTION_set_is_exactly_the_refusal_current_policy_never_clears() -> None:
     """The one exception this lane suppresses, and the condition of its freshness suppression.
 

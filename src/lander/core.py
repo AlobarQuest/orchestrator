@@ -17,7 +17,8 @@ four literal paths.
 WHAT A LINE MEANS. A HELD pull request is a finding -- somebody has to act on the condition it
 names. A landing, a settled subject, a DELIBERATE refusal (the system refusing on purpose, which
 clears on a clock), an EXCEPTION (current policy can never clear it; it waits on a person), a
-WAITING sibling (ADR-0045; clears when the edited branch ahead lands) and a held bump the lane
+WAITING sibling (ADR-0045; clears when the edited branch ahead lands) or bump waiting on a revert
+in its repository (Landing Part 3a; clears when the revert lands) and a held bump the lane
 CLOSED (bridge layer Part 4; a person lifting the hold is what lets it come back) are not. Every
 refusal is printed either way, so the line always says what was missed.
 
@@ -142,6 +143,13 @@ CEILING = "landing_version_ceiling_exceeded"
 # close a held pull request there, so a held bump beside it is never sent to be closed: the line is
 # classified, and this code makes it an exception. The orchestrator's code, not imported.
 NOT_GRANTED = "landing_repository_not_granted"
+
+# Landing Part 3a. A landing in this repository is on its way to a revert, so the orchestrator
+# lands no other bump there until the revert has. `waiting`, in both lanes, like a sibling queued
+# ahead (ADR-0045): it clears when the revert lands, not on a clock, so it is in neither lane's
+# `deliberate` set, and a person cannot act on it, so it is not a finding. The orchestrator's
+# code, not imported; held equal by a test that may import both.
+REVERTING = "landing_repository_reverting"
 
 # Statuses that are not findings, stated as the set to EXCLUDE so a status nobody has thought of
 # fails toward being reported.
@@ -301,10 +309,12 @@ def held_status(
     An exception outranks a deliberate refusal and a waiting sibling when both are present, because
     the exception is the durable fact.
 
-    A FRESHNESS-DERIVED refusal IS SUPPRESSED WHEN, AND ONLY WHEN, AN EXCEPTION IS PRESENT OR A
-    SIBLING IS OBSERVED HOLDING (ADR-0045). Conditional, never unconditional: an unconditional
-    subtraction would make a branch that is merely behind read as quiet, and an unconditional early
-    return would also silence `{behind, checks_not_clean}`. `waiting` is keyed on an OBSERVED
+    A FRESHNESS-DERIVED refusal IS SUPPRESSED WHEN, AND ONLY WHEN, AN EXCEPTION IS PRESENT, A
+    SIBLING IS OBSERVED HOLDING (ADR-0045), OR THE REPOSITORY IS WAITING ON A REVERT (`REVERTING`,
+    Landing Part 3a, which is itself `waiting`: it clears when the revert lands). Conditional,
+    never unconditional: an unconditional subtraction would make a branch that is merely behind
+    read as quiet, and an unconditional early return would also silence
+    `{behind, checks_not_clean}`. `waiting` is keyed on an OBSERVED
     sibling, never on the lane declining, and a key with no freshness refusal to subtract changes
     nothing. The default is False, so a caller that forgets it gets `held`.
 
@@ -319,19 +329,20 @@ def held_status(
     which returns `waiting` first.
     """
     present = set(refusals)
-    unexplained = present - lane.deliberate - lane.exception
+    reverting = REVERTING in present
+    unexplained = present - lane.deliberate - lane.exception - {REVERTING}
     # The lane's flag is applied HERE rather than by the caller, so no path into this function can
     # switch a rollout suppression on for a lane that does not evaluate a rollout pin.
     derived = freshness_derived(
         present, rollout_base_matches_pin=lane.reads_rollout_pin and rollout_base_matches_pin
     )
-    if lane.exception & present or withheld_for_sibling:
+    if lane.exception & present or withheld_for_sibling or reverting:
         unexplained -= derived
     if unexplained or not refusals:
         return "held"
     if lane.exception & present:
         return "exception"
-    if withheld_for_sibling and derived:
+    if reverting or (withheld_for_sibling and derived):
         return "waiting"
     return "deliberate"
 

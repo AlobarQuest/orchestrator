@@ -786,3 +786,53 @@ def test_a_key_spent_on_another_landing_is_refused(migrated_session: Session) ->
         act(migrated_session, gateway, key="shared", pr_number=NEXT_BUMP, expected=None)
 
     assert raised.value.code == "idempotency_conflict"
+
+
+# --------------------------------------------------------------------------------------------
+# Final review: a landed revert stays watched while its dependency is held.
+# --------------------------------------------------------------------------------------------
+
+
+def test_a_landed_revert_stays_watched_while_its_hold_stands_and_leaves_when_it_is_lifted(
+    migrated_session: Session,
+) -> None:
+    """Its alert is open while it is watched, and the hold is still in force: it must not resolve
+    on a timer. Reporting it reads nothing through the App."""
+    gateway = _reverted_and_landed(migrated_session, TITLE)
+    _age(migrated_session, 72)
+    gateway.reads.clear()
+    gateway.job_reads.clear()
+
+    [watched] = landing_watch(migrated_session, gateway, enabled=True, credentials_configured=True)
+    assert (watched.pr_number, watched.status, watched.verdict) == (BUMP, "revert_landed", None)
+    assert gateway.reads == [] and gateway.job_reads == []
+
+    migrated_session.execute(text("DELETE FROM sds_member_holds"))
+    assert landing_watch(migrated_session, gateway, enabled=True, credentials_configured=True) == ()
+
+
+def test_a_hold_a_person_placed_on_the_same_dependency_keeps_a_landed_revert_watched(
+    migrated_session: Session,
+) -> None:
+    """The revert's own hold was not placed (the dependency was already held), and the dependency
+    is held all the same, matched by the hold matcher's identity (directory `/` against `/`,
+    the name case-folded)."""
+    gateway = _reverted_and_landed(migrated_session, TITLE)
+    migrated_session.execute(
+        text("UPDATE sds_member_holds SET set_by = 'devon', dependency = 'Typer', ceiling = '0.19'")
+    )
+    _age(migrated_session, 72)
+
+    [watched] = landing_watch(migrated_session, gateway, enabled=True, credentials_configured=True)
+
+    assert (watched.pr_number, watched.status) == (BUMP, "revert_landed")
+
+
+def test_a_landed_revert_whose_hold_is_on_another_dependency_leaves_after_its_window(
+    migrated_session: Session,
+) -> None:
+    gateway = _reverted_and_landed(migrated_session, TITLE)
+    migrated_session.execute(text("UPDATE sds_member_holds SET dependency = 'click'"))
+    _age(migrated_session, 72)
+
+    assert landing_watch(migrated_session, gateway, enabled=True, credentials_configured=True) == ()

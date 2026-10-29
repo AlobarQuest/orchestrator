@@ -113,6 +113,7 @@ from orchestrator.services.landing.revert_build import REVERT_BRANCH_PREFIX, is_
 from orchestrator.services.landing.revert_record import (
     RevertSubject,
     recorded_revert,
+    revert_in_progress,
     reverted_versions,
 )
 from orchestrator.services.landing.terms import (
@@ -170,6 +171,13 @@ LANDING_REVERT_NOT_RECORDED: Final = "landing_revert_not_recorded"
 LANDING_REVERT_NOT_EXACT_INVERSE: Final = "landing_revert_not_exact_inverse"
 # A tree or the default branch's head could not be read, so the inverse check was not asked.
 LANDING_REVERT_UNREADABLE: Final = "landing_revert_unreadable"
+# A landing in this repository is on its way to a revert (`revert_record.revert_in_progress`), so
+# no other bump lands here until it has: a sibling landed on top of the bad bump would touch the
+# paths the revert restores and make it an overlap. Asked of a bump only: the revert subject is
+# what it waits for, and a fork's upstream sync is not a bump. The landers report it `waiting`,
+# and it clears when the revert lands. The branch-update scan counts it releasing, so it never
+# withholds the revert from being freshened.
+LANDING_REPOSITORY_REVERTING: Final = "landing_repository_reverting"
 
 
 @dataclass(frozen=True)
@@ -261,6 +269,7 @@ def inert_landing_admission(
         holds_for(session, repository),
         reverted_versions(session, repository),
         recorded_revert(session, repository, pr_number),
+        revert_in_progress(session, repository),
         gateway,
     )
     # Landing Part 2. The member record must grant what this subject is: a bump needs
@@ -391,6 +400,7 @@ def _remote_terms(
     holds: tuple[HoldView, ...],
     reverted: tuple[Bump, ...],
     revert: RevertSubject | None,
+    reverting: bool,
     gateway: InertReadGateway,
 ) -> _RemoteTerms:
     """Every question only GitHub can answer, asked at the moment the answer has to be true.
@@ -443,6 +453,10 @@ def _remote_terms(
     # author, for the reason the hold is not; one unreadable list is one refusal.
     never_again = Term(True, ()) if wholesale else version_reverted_term(reverted, update)
     refusals.extend(code for code in never_again.refusals if code not in refusals)
+    # Landing Part 3a: a revert in progress here holds every other bump until it has landed.
+    waits = reverting and not wholesale
+    if waits:
+        refusals.append(LANDING_REPOSITORY_REVERTING)
     bot = pull.author_login == UPDATE_BOT_LOGIN and pull.author_is_bot
 
     if rules is None:
@@ -495,7 +509,15 @@ def _remote_terms(
     refusals.extend(fresh.refusals)
     refusals.extend(ecosystem.refusals)
 
-    met = common and author.met and fresh.met and ecosystem.met and held.met and never_again.met
+    met = (
+        common
+        and author.met
+        and fresh.met
+        and ecosystem.met
+        and held.met
+        and never_again.met
+        and not waits
+    )
     return _RemoteTerms(
         Term(met, tuple(refusals)), pull.head_sha, merge_method, ceiling.breaches, bot, wholesale
     )

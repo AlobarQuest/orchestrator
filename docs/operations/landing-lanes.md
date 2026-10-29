@@ -728,9 +728,18 @@ Repositories that deploy on landing are not covered.
   head and its workflow has a `push` run at the merge commit. A `pull_request`-only workflow, or a
   job absent from the push run, is never watched.
 - **Failed** means `failure`, `timed_out` or `cancelled`.
+- **How long.** A landed revert stays in the watch, reported `reverted` (not a finding) with no App
+  read, while any of its dependencies is held, by its own hold or a person's on the same dependency.
+  A refused or failed revert never leaves; an open revert leaves when it lands.
 - **Routes.** `GET /api/v1/landing-watch` reads and judges; `POST /api/v1/landing-revert` acts once
   per judgment. Both are SYSTEM-only, ask the member record's `dependency_updates` grant for the
   repository first, and the act judges again inside its transaction.
+- **Order.** An acting pass reads the watch and acts on it before its landing pass, so a bad landing
+  is rerun or reverted before a sibling lands on top of it.
+- **Siblings wait.** While a repository has a rerun asked for (inside the watch) or a revert opened,
+  inert admission refuses every other Dependabot bump there `landing_repository_reverting`. Both
+  landers report it `waiting`; it clears when the revert lands. The revert itself and a fork's
+  upstream sync are not refused, and the branch-update scan never holds the revert behind it.
 
 ### The flake rule
 
@@ -762,17 +771,20 @@ stage a `lift` with `sds-members stage` and confirm it on `/review`
 ### The never-again rule
 
 Both landers refuse the exact reverted version for good (`landing_version_reverted`), whether or not
-a hold was placed. Lifting the hold does not lift this refusal.
+a hold was placed, and even after the hold is lifted. To take that version anyway, land it by hand;
+the SDS does not watch a landing it did not make.
 
 ### Alerts
 
 The inert lander raises these through alert-hub (`lander/held_alerts.py`, memory in
-`revert-alerts.json`). Each fires once and resolves when its condition is gone; a pass that cannot
+`revert-alerts.json`). Each fires once. `landing-reverted` stays open while the hold is in force and
+resolves when it is lifted. The refused, failed and stranded alerts stay open until a person closes
+them, and their lander findings print on every pass while the record stands. A pass that cannot
 read the watch holds every remembered key.
 
 | Key | Meaning | What you do |
 |---|---|---|
-| `landing-reverted:<repo>:<pr>` | The revert landed. The alert names the failed jobs, the revert pull request and the hold. | Read it. Lift the hold when the dependency is safe to take again. |
+| `landing-reverted:<repo>:<pr>` | The revert landed. The alert names the failed jobs, the revert pull request and the hold, and says the version stays refused after the hold is lifted. | Read it. Lift the hold when the dependency is safe to take again; land the reverted version itself only by hand. |
 | `landing-revert-refused:<repo>:<pr>` | Overlap: something landed on top of the bump. The default branch may still be broken. | Revert by hand. |
 | `landing-revert-failed:<repo>:<pr>` | The revert could not be opened. | Read the detail; revert by hand or fix the cause. |
 | `landing-revert-stranded:<repo>:<pr>` | The revert pull request closed without landing. | Reopen it or revert by hand. |

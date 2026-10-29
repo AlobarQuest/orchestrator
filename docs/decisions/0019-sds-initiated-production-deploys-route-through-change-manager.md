@@ -462,12 +462,20 @@ inert landing, and the dependency is held at the version before the bump.
   bump.
 - **The hold is an ordinary ceiling.** It is set by `sds-revert` at the from-version and stays until
   a person lifts it. Separately, both landers refuse that exact version for good
-  (`landing_version_reverted`).
+  (`landing_version_reverted`), even after the hold is lifted; a person who wants it lands it by
+  hand, and the SDS does not watch that landing.
 - **An alert is raised** for every outcome: reverted, refused, failed, stranded.
 - **A problem found after the watch is a person's rollback decision.** The SDS ties a failure to a
   bump only through the default branch's own checks inside the watch.
-- **The watch and the revert live in the landers**, which hold the credentials and the grant; the
-  orchestrator makes the judgment again inside the act and never takes it from the caller.
+- **The orchestrator owns the watch and the revert.** It holds the Dispatch App credentials and
+  performs every GitHub read and write, each bounded by the member record's grant; it judges each
+  landing, and judges again inside the act, never taking the judgment from the caller. The inert
+  lander only drives the passes, acting on the watch before it lands anything, and relays the
+  answers and alerts.
+- **Nothing else lands while a revert is in progress.** A bump in a repository with a rerun asked
+  for (inside the watch) or a revert opened is refused `landing_repository_reverting`, which both
+  landers report as `waiting`; a sibling landed on top of the bad bump would otherwise make its
+  revert an overlap.
 
 This amendment covers inert repositories. Repositories that deploy on landing (`brain`,
 change-manager) are not covered by it; their landings are not watched or reverted. Operations

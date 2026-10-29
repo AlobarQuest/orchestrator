@@ -57,8 +57,10 @@ inherited: given freshness, a landing stales every sibling, so at most one pull 
 repository is landable per pass and freshness serialises the lane by itself. So there is no
 refusal it can raise that clears on a clock, and every refusal that is not a settled subject is a
 finding somebody can act on. An empty set copied from the sibling would look like an oversight;
-having none is the statement. `waiting` (ADR-0045) does not change that: it is keyed on an
-update-bot sibling the orchestrator observed edited and queued to land, not on a clock.
+having none is the statement. `waiting` does not change that: it is keyed on an update-bot sibling
+the orchestrator observed edited and queued to land (ADR-0045), or on a revert in progress in the
+repository (`landing_repository_reverting`, Landing Part 3a), and each clears when that lands, not
+on a clock.
 
 **A refusal excused for ACTING is not thereby excused for REPORTING**, and the one candidate was
 measured rather than assumed. `qualifies_for_branch_update` excuses `landing_checks_awaiting_
@@ -433,7 +435,11 @@ def _ask_to_act(
         return Outcome(repository, number, "error", str(error))
     status = answer.get("status")
     detail = str(answer.get("detail") or "")
-    if not answer.get("acted") or not isinstance(status, str) or status not in _RECORDED:
+    if answer.get("acted") is False:
+        # The act judged again and found nothing to do: the watch and the act disagreed, a
+        # harmless race, and the next pass asks again. Not a finding.
+        return Outcome(repository, number, "waiting", detail or "nothing to do yet")
+    if answer.get("acted") is not True or not isinstance(status, str) or status not in _RECORDED:
         return Outcome(repository, number, "unreadable", detail or "nothing was done")
     return Outcome(repository, number, _RECORDED[status], detail)
 
@@ -478,16 +484,18 @@ def run(argv: list[str] | None = None) -> int:
             GitHubReader(github_token) as reader,
             OrchestratorClient(token, SYSTEM_KEY_ID, base_url=url or DEFAULT_BASE_URL) as client,
         ):
-            # The watch is read FIRST: the revert pull requests it names are subjects of the
-            # landing and branch-update passes below (Landing Part 3a). The acts it asks for come
-            # last, after this pass's own landings.
+            # The watch is read and acted on FIRST (Landing Part 3a): a bad landing is rerun or
+            # reverted before anything else lands, since a sibling landed on top of it would make
+            # its revert an overlap. The revert pull requests that read names are subjects of the
+            # landing and branch-update passes below; one this pass's act just opened is not, and
+            # needs none yet: its checks have not run.
             watch, watched = _read_watch(client)
+            if watch is not None:
+                watched.extend(_revert_pass(watch, client, args.submit))
             selection = _subjects(reader, rule, _open_reverts(watch))
             outcomes = list(selection.unreadable)
             outcomes.extend(_pass(selection.subjects, client, args.submit))
             outcomes.extend(_branch_updates(selection.subjects, client, args.submit))
-            if watch is not None:
-                watched.extend(_revert_pass(watch, client, args.submit))
             stranded, unknown = _stranded(watch, selection)
             watched.extend(
                 Outcome(repository, number, "revert-stranded", "its revert closed without landing")

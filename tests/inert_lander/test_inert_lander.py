@@ -1332,3 +1332,73 @@ def test_an_open_revert_is_not_stranded_and_an_unlisted_one_is_unknown(
 
     assert revert_alerts.stranded == [set()]
     assert revert_alerts.unknown == [{(OTHER, LANDED)}]
+
+
+# --------------------------------------------------------------------------------------------
+# Final review: the watch acts before the landing pass, and a race reads as waiting.
+# --------------------------------------------------------------------------------------------
+
+
+def test_an_acting_pass_acts_on_the_watch_BEFORE_it_lands_anything(monkeypatch) -> None:
+    """A sibling landed on top of a bad bump would make its revert an overlap, so the bad landing
+    is acted on first; the revert the watch already names is still a subject of this pass."""
+    calls: list[str] = []
+
+    class Recording(FakeOrchestrator):
+        def landing_watch(self) -> list[dict[str, Any]]:
+            calls.append("watch")
+            return super().landing_watch()
+
+        def revert_landing(self, repository: str, pr_number: int, **kwargs: Any):
+            calls.append(f"act {pr_number}")
+            return super().revert_landing(repository, pr_number, **kwargs)
+
+        def admission(self, repository: str, pr_number: int) -> dict[str, Any]:
+            calls.append(f"ask {pr_number}")
+            return super().admission(repository, pr_number)
+
+        def land(self, repository: str, pr_number: int, **kwargs: Any) -> dict[str, Any]:
+            calls.append(f"land {pr_number}")
+            return super().land(repository, pr_number, **kwargs)
+
+    client = Recording(
+        {(REPOSITORY, 1): _admissible(), (REPOSITORY, REVERT_PR): _admissible()},
+        watch=[
+            _watched("bad", "rerun_requested"),
+            _watched(None, "revert_opened", pr_number=8, revert_pr_number=REVERT_PR),
+        ],
+    )
+    github = FakeGitHub(
+        {REPOSITORY: [_pull(1), _pull(REVERT_PR, author="alobar-sds-dispatch[bot]")]}
+    )
+    _wire(monkeypatch, github, client, _rule())
+
+    run(["--submit"])
+
+    assert calls[:2] == ["watch", f"act {LANDED}"]
+    assert f"land {REVERT_PR}" in calls
+    assert calls.index(f"act {LANDED}") < min(
+        i for i, call in enumerate(calls) if call.startswith(("ask", "land"))
+    )
+
+
+def test_an_act_the_orchestrator_declined_is_waiting_not_unreadable(monkeypatch, capsys) -> None:
+    """`acted: false` means the act judged again and found nothing to do (the watch and the act
+    disagreed, a harmless race): the next pass asks again. Not a finding."""
+    client = FakeOrchestrator(
+        watch=[_watched("flaky_retry")],
+        revert_answers={
+            (REPOSITORY, LANDED): {
+                "acted": False,
+                "status": None,
+                "verdict": "pending",
+                "detail": "the rerun has not reported a failure of its own yet",
+            }
+        },
+    )
+    _wire(monkeypatch, FakeGitHub({REPOSITORY: []}), client, _rule())
+
+    assert run(["--submit"]) == EXIT_OK
+    out = capsys.readouterr().out
+    assert f"{REPOSITORY}#{LANDED}  waiting" in out
+    assert "the rerun has not reported" in out

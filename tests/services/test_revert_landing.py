@@ -10,17 +10,19 @@ from datetime import UTC, datetime
 from typing import Any
 
 import pytest
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine, select, text
 from sqlalchemy.orm import Session
 
 from orchestrator.persistence.models import EstatePrMerge, LandingRevert, SdsMemberHold
 from orchestrator.services.landing.estate_landing import LANDING_INERT, EstateAnswer
 from orchestrator.services.landing.inert_landing_admission import (
+    LANDING_REPOSITORY_REVERTING,
     LANDING_REVERT_NOT_EXACT_INVERSE,
     LANDING_REVERT_NOT_RECORDED,
     LANDING_REVERT_UNREADABLE,
     inert_landing_admission,
 )
+from orchestrator.services.landing.inert_landing_policy import InertLandingAnswer
 from orchestrator.services.landing.inert_pr_merge import InertMergeCommand, land_inert_pull_request
 from orchestrator.services.landing.interfaces import (
     LANDING_HEAD_NOT_CURRENT_WITH_BASE,
@@ -43,8 +45,12 @@ from tests.services.estate_landing_doubles import HEAD, FakeEstateGateway, pull_
 from tests.services.inert_landing_doubles import (
     INERT_REPOSITORY,
     LANDED_COMMIT,
+    SYNC_BOT,
+    SYNC_BRANCH,
+    UPDATE_BOT,
     ActingInertGateway,
     FakeInertPolicySource,
+    rules,
 )
 from tests.services.test_estate_landing_admission import REPOSITORY as ESTATE_REPOSITORY
 from tests.services.test_estate_landing_admission import _ask as estate_answer
@@ -351,7 +357,9 @@ def test_a_different_version_of_a_reverted_dependency_still_lands(
         migrated_session,
         repository=INERT_REPOSITORY,
         pr_number=99,
-        status="revert_opened",
+        # Not landed, so its version is not barred; and not in progress (an open revert would
+        # refuse every bump here as `landing_repository_reverting`).
+        status="refused_overlap",
         bumps=[
             {
                 "ecosystem": "uv",
@@ -436,3 +444,113 @@ def test_the_never_again_match(offered: Bump, gone: Bump, refused: bool) -> None
     term = version_reverted_term((gone,), update)
 
     assert term == (Term(False, (LANDING_VERSION_REVERTED,)) if refused else Term(True, ()))
+
+
+# --------------------------------------------------------------------------------------------
+# Final review: a repository with a revert in progress lands no other bump.
+# --------------------------------------------------------------------------------------------
+
+
+def _in_progress(session: Session, status: str, *, hours_old: int = 0) -> LandingRevert:
+    row = revert_record(
+        session,
+        status=status,
+        repository=INERT_REPOSITORY,
+        pr_number=7,
+        revert_pr_number=8 if status == "revert_opened" else None,
+    )
+    session.execute(
+        text("UPDATE landing_reverts SET updated_at = now() - make_interval(hours => :hours)"),
+        {"hours": hours_old},
+    )
+    return row
+
+
+@pytest.mark.parametrize(
+    ("status", "hours_old"),
+    [
+        pytest.param("rerun_requested", 0, id="a-rerun-asked-for"),
+        pytest.param("revert_opened", 72, id="an-open-revert-however-old"),
+    ],
+)
+def test_a_bump_in_a_repository_with_a_revert_in_progress_is_refused(
+    migrated_session: Session, status: str, hours_old: int
+) -> None:
+    """A sibling landed on top of the bad bump makes its revert an overlap: so nothing else lands
+    in that repository until the revert has, and nothing is freshened for it either."""
+    _in_progress(migrated_session, status, hours_old=hours_old)
+
+    answer = inert_answer(migrated_session)
+
+    assert answer.satisfied is False
+    assert answer.refusals == (LANDING_REPOSITORY_REVERTING,)
+    assert answer.branch_update_qualifies is False
+
+
+@pytest.mark.parametrize(
+    ("status", "hours_old"),
+    [
+        # A rerun that passed leaves its record `rerun_requested` for good; it stops refusing when
+        # it leaves the watch, as the watch stops judging it.
+        pytest.param("rerun_requested", 49, id="a-rerun-past-the-watch"),
+        pytest.param("revert_landed", 0, id="a-landed-revert"),
+        pytest.param("refused_overlap", 0, id="a-refused-revert"),
+        pytest.param("revert_failed", 0, id="a-failed-revert"),
+    ],
+)
+def test_a_record_that_is_not_a_revert_in_progress_refuses_no_bump(
+    migrated_session: Session, status: str, hours_old: int
+) -> None:
+    _in_progress(migrated_session, status, hours_old=hours_old)
+    if status == "revert_landed":
+        migrated_session.execute(text("UPDATE landing_reverts SET bumps = '[]'"))
+
+    answer = inert_answer(migrated_session)
+
+    assert LANDING_REPOSITORY_REVERTING not in answer.refusals
+    assert answer.satisfied is True
+
+
+def test_a_revert_in_progress_elsewhere_refuses_nothing_here(migrated_session: Session) -> None:
+    revert_record(
+        migrated_session,
+        status="rerun_requested",
+        repository="alobarquest/elsewhere",
+        revert_pr_number=None,
+    )
+
+    assert inert_answer(migrated_session).satisfied is True
+
+
+def test_the_revert_subject_itself_is_not_refused_as_reverting(migrated_session: Session) -> None:
+    """The revert is what the refusal waits for. Beside a second record still `rerun_requested`,
+    it is still admissible."""
+    _with_merge_parent(_opened(migrated_session))
+    _in_progress(migrated_session, "rerun_requested")
+
+    answer = _ask(migrated_session, _revert_gateway())
+
+    assert answer.refusals == ()
+    assert answer.satisfied is True
+
+
+def test_a_fork_sync_is_not_refused_as_reverting(migrated_session: Session) -> None:
+    """Someone else's release carried wholesale is not a bump, as it is not asked the hold."""
+    _in_progress(migrated_session, "rerun_requested")
+
+    answer = inert_answer(
+        migrated_session,
+        gateway=FakeEstateGateway(
+            pull=pull_request(number=7, head_ref=SYNC_BRANCH, author_login=SYNC_BOT)
+        ),
+        policy_source=FakeInertPolicySource(
+            InertLandingAnswer(
+                rules(
+                    permitted_authors=frozenset({UPDATE_BOT, SYNC_BOT}),
+                    non_ecosystem_authors=frozenset({SYNC_BOT}),
+                )
+            )
+        ),
+    )
+
+    assert LANDING_REPOSITORY_REVERTING not in answer.refusals
