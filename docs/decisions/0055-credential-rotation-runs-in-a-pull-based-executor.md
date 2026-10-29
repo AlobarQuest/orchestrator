@@ -2027,3 +2027,29 @@ credential change. A policy-approved decomposition's first unit is ready at once
 for superseding a decomposition before any unit is claimed is gone for these: a wrong derived
 plan is retired by letting its unit fail and cancelling it. Every other kind of work keeps its gates: the policies key on the rotation
 profile alone. Graduating decomposition approval in general stays with the Admission pass.
+
+### As built (2026-10-29)
+
+- **Shipped:** orchestrator #549 (deployed `2d1b7ff`) and change-manager #144 (deployed `2896f96`).
+  Review changed the decision in three places, each now stated above:
+  - change-manager keys a rotation record on its change class, `credential-rotation`, which the
+    rotation proposer sends and the carrier holds to the rotation profile. A package id alone
+    would have let a dependency-update package named `rotation-…` skip its population check.
+  - The orchestrator requires each unit to be recognised only by a rotation pattern, and to have
+    no more attempts than its envelope budgets.
+  - A policy approval that can't complete is rolled back to a savepoint, so the proposal waits for
+    a person instead of being refused.
+- **SYSTEM's registration exemption** in `register_approved_unit` is read from the stored
+  decomposition rows (SYSTEM both proposed and approved it), never from a caller flag.
+- **`bws-sds-operator-token` was handed to the SDS** (#550, Devon). Amendment 12's Keychain
+  instance had no Healthchecks key, so it would have refused any BWS-token unit whose readers name
+  a check, including `bws-tok-ops-mini`'s. It now holds a copy of the self-hosted project's
+  read-only key: a separate project couldn't help, because the VM's rotations read the same
+  checks.
+- **Read-only checks passed without a rotation** for that token: registry and package
+  destinations equal (`compare-destinations`), every reader seen through the copied key with a
+  "now" control that answers not yet (`read-consumers`), the decomposer's derived plan (store,
+  verify, confirm), and the factory policy recognising each step.
+- **One reader showed no run:** `sds-rotation-proposer`. The executor ignores a run Healthchecks
+  records as zero seconds, and a hand-run dry pass took 0.64 s. Its scheduled runs take 1.5 to
+  6.5 s and count.
