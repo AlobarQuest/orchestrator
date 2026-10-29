@@ -232,6 +232,23 @@ TABLE: dict[str, Row] = {
         "typing",
         no_sibling_lanes=True,
     ),
+    # ADR-0055 amendment 15, increment 5: proposes each carried rotation's decomposition as SYSTEM,
+    # from change-manager's work records and the orchestrator's intake, through its own confined
+    # clients. It reads the registry, the derived plan and each type's declaration from the
+    # executor's light modules, never a provider.
+    "rotation_decomposer": _row(
+        "__future__",
+        "argparse",
+        "collections",
+        "dataclasses",
+        "estate_clients",
+        "httpx",
+        "os",
+        "re",
+        "rotation_worker",
+        "sys",
+        "typing",
+    ),
     "image_release": _row(
         "__future__",
         "collections",

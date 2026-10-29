@@ -76,7 +76,9 @@ For a due credential whose package is `rotation-<credential_id>`:
    observation again. It replays and returns the same id. Then it proposes
    the `work` record with the propose-scoped bearer. The record names the approved revision and
    that observation, with `bump_proposer`'s asserted fields (`WORK_RECORD_FIELDS`). Later passes
-   replay it.
+   replay it. Once Devon approves the record, the work carrier registers its intake, and the
+   rotation decomposer proposes its decomposition for a person to approve on `/review` (see
+   "The rotation decomposer" in `rotation-executor.md`).
 5. **The pass after the rotation completes.** The work watcher retires the record once every unit
    it caused has completed: `resolved`, decided by `work-watcher`. Seeing that, the pass runs
    `security-drift-cli record-rotation --cred <credential_id> --date now` instead of replaying the

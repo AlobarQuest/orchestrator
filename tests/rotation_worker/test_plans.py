@@ -251,3 +251,52 @@ def test_a_type_s_derived_plan_has_its_fixed_plan_s_units_and_acts_in_order() ->
         derived = derive(adapter.capabilities, [], "keeper", adapter.store_kind)
         names = [(type(s).__name__, s.name) for s in derived.segments]
         assert names == [(type(s).__name__, s.name) for s in adapter.plan.segments], adapter
+
+
+def test_the_shared_hosted_service_rule_is_the_one_the_executor_checks() -> None:
+    """The decomposer marks a unit `touches_no_hosted_service` by `writes_hosted_service`; the
+    executor refuses a marked unit by `_check_destination_fit`. Held equal over every type's
+    derived plan and each kind of destination that writes a hosted service."""
+    from rotation_worker.checks import _check_destination_fit
+    from rotation_worker.contract import ContractError
+    from rotation_worker.plans import writes_hosted_service
+    from rotation_worker.types import TYPES
+
+    hosted = (
+        'coolify-env-hash instance="prod" resource_type="application" '
+        'uuid="eqj5l7k705fhi12x9i74fqf0" key="ORCHESTRATOR_M2M_CREDENTIALS" entry="example"'
+    )
+    held = (
+        'coolify-env-held instance="prod" resource_type="application" '
+        'uuid="eqj5l7k705fhi12x9i74fqf0" key="EXAMPLE_TOKEN"'
+    )
+    checked = 0
+    for declared in TYPES.values():
+        for extra in ([], [hosted], [held]):
+            destinations = [KEEPER, *extra]
+            plan = derive(declared.capabilities, destinations, KEEPER, declared.store_kind)
+            for unit in (s for s in plan.segments if isinstance(s, UnitPlan)):
+                try:
+                    _check_destination_fit(destinations, plan, unit, marked_non_hosted=True)
+                except ContractError as error:
+                    if "marked non-hosted" not in str(error):
+                        continue  # refused for another reason, unmarked or not
+                    refused = True
+                else:
+                    refused = False
+                assert refused == writes_hosted_service(destinations, plan, unit), (declared, unit)
+                checked += 1
+    assert checked > 20
+
+
+def test_a_type_that_hosts_writes_its_service_with_no_hosted_destination_listed() -> None:
+    """Kills: marking a hosting type's mint `touches_no_hosted_service` because its row lists no
+    Coolify setting, which would skip the live-estate change window while it restarts a service."""
+    from rotation_worker.plans import writes_hosted_service
+    from rotation_worker.types import TYPES
+
+    declared = TYPES["orchestrator"]
+    plan = derive(declared.capabilities, [KEEPER], KEEPER, declared.store_kind)
+    units = {s.name: s for s in plan.segments if isinstance(s, UnitPlan)}
+    assert writes_hosted_service([KEEPER], plan, units["mint"])
+    assert writes_hosted_service([KEEPER], plan, units["retire"])

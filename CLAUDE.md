@@ -546,6 +546,14 @@ Placement rule: global CLAUDE.md §7.
   adapters (`Adapter.store_kind`). A store reads back its own kind (`SecretStore.locate`); any
   other `keychain` destination stays person-attested. Detail:
   `docs/operations/rotation-executor.md`.
+- The `rotation-decomposer` lane proposes, as `orchestrator-system`, the decomposition of each
+  approved rotation record's registered revision that has no units and no proposal: the derived
+  plan the intake's own criteria describe (`select_plan`), every envelope one `rotation_known_good`
+  recognises, `touches_no_hosted_service` set by `plans.writes_hosted_service` (held equal to the
+  executor's `checks._check_destination_fit` by a test), never `host_without_overlap`, and no
+  person-act dependency. It never decides a proposal (approval accepts only a human actor) and
+  never proposes over one a person rejected or sent back; a package on a pre-derivation plan is
+  refused. Detail: `docs/operations/rotation-executor.md`, "The rotation decomposer".
 - A person's mint reaches a rotation only through its instance's `rotation-inbox` BWS secret or a
   staging secret written by hand: the unit after the mint waits, unclaimed, until one is staged
   (`worker._mint_waits`). The inbox binds a value only while no other rotation on either

@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Template for the rotation-decomposer LaunchAgent. Install with
+     scripts/install-rotation-decomposer-launchd.sh, which substitutes __REPO_ROOT__ and __HOME__ and
+     writes ~/Library/LaunchAgents/com.devon.rotation-decomposer.plist.
+
+     No secrets live here: the wrapper fetches the SYSTEM and change-manager READ bearers from
+     BWS at runtime.
+
+     HOURLY: a carried rotation waits for its decomposition, and then for a person to approve it,
+     so an hour after the carrier's pass is soon enough; a pass with nothing waiting is one
+     change-manager read and one orchestrator read per approved rotation record.
+
+     The exit code is the report: 0 nothing waits, 1 the tool failed, 2 a person decides
+     something, 3 a record could not be read. Every non-zero code pings /fail. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.devon.rotation-decomposer</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__REPO_ROOT__/scripts/run-rotation-decomposer.sh</string>
+    </array>
+
+    <key>StartInterval</key>
+    <integer>3600</integer>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>__HOME__</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/rotation-decomposer.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/rotation-decomposer.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>

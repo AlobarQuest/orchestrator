@@ -580,6 +580,11 @@ OUTBOUND_ALLOWLIST = {
     # ADR-0055 amendment 14. Three paths through the confined transport, as VERIFIER: the
     # status ledger and one unit read, and `/verify`. Its egress is the orchestrator's own API.
     Path("src/rotation_verifier/client.py"),
+    # ADR-0055 amendment 15, increment 5. Change-manager's work-record listing, read; and the
+    # orchestrator, as SYSTEM: a record's work, an intake and its decomposition proposals, read,
+    # and one write, proposing a decomposition. Enforced by `change_manager_permits` and
+    # `orchestrator_permits` and pinned by tests/rotation_decomposer/test_client_surface.py.
+    Path("src/rotation_decomposer/client.py"),
     # ADR-0055 decision 1. The credential-rotation executor PULLS its work: it is a separate
     # program in its own VM, and it reaches the orchestrator only as its WORKER identity. Its
     # reads are the ready queue, a unit, its package revision, history and evidence; its writes
