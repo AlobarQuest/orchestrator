@@ -46,6 +46,13 @@ REVERT_BRANCH_PREFIX: Final = "sds-revert/"
 # that changes nothing is not a revert.
 REVERT_TOUCHED_NOTHING: Final = "revert_touched_nothing"
 
+# Raised before any write when the revert would name no failed job: a revert says why it exists.
+REVERT_NAMES_NO_FAILED_JOB: Final = "revert_names_no_failed_job"
+
+# GitHub refuses a pull request title longer than this, in characters.
+_TITLE_LIMIT: Final = 256
+_TITLE_ELISION: Final = "\u2026"
+
 
 @dataclass(frozen=True)
 class Overlap:
@@ -133,8 +140,13 @@ def _open_revert(
     Four writes, not atomic: a failure after the branch exists leaves it behind, and a second call
     for the same pull request is refused when the branch is created. The caller records the act once
     either way.
+
+    Everything that can refuse is decided before the first write: a revert with no failed job
+    raises `REVERT_NAMES_NO_FAILED_JOB`, and a title that would pass GitHub's limit is shortened.
     """
-    title = f'Revert "{original.title}"'
+    if not original.failed_job_names:
+        raise EstateGatewayError(REVERT_NAMES_NO_FAILED_JOB)
+    title = _revert_title(original.title)
     body = (
         f"Reverts #{original.number}: {', '.join(original.failed_job_names)} "
         f"failed on {plan.merge_sha}."
@@ -153,6 +165,14 @@ def _open_revert(
     return number, commit
 
 
+def _revert_title(title: str) -> str:
+    """`Revert "<title>"`, the original title elided so the whole fits GitHub's limit."""
+    room = _TITLE_LIMIT - len('Revert ""')
+    if len(title) > room:
+        title = title[: room - len(_TITLE_ELISION)] + _TITLE_ELISION
+    return f'Revert "{title}"'
+
+
 def _is_exact_inverse(
     gateway: RevertBuildGateway,
     repository: str,
@@ -162,7 +182,8 @@ def _is_exact_inverse(
     parent_sha: str,
 ) -> bool:
     """Whether the revert's head, against `base_sha`, changes exactly the merge's touched paths,
-    each to the parent's entry (absent where the parent lacks it).
+    each to the parent's entry (absent where the parent lacks it), while the base still holds the
+    merge's entry on each of them.
 
     `base_sha` is the default branch's head the revert would land on, which the caller already reads
     for freshness. It is passed rather than derived from the revert's own parents, because a branch
@@ -177,4 +198,10 @@ def _is_exact_inverse(
     revert = gateway.tree(repository=repository, commit_sha=revert_head_sha).entries
     if _touched(base, revert) != touched:
         return False
-    return all(revert.get(path) == parent.get(path) for path in touched)
+    # The base must still hold the merge's entry on every touched path. Otherwise something landed
+    # on top there, and a revert hand-resolved back to the parent's entry would discard it: the
+    # overlap `_plan_revert` refuses, asked again at landing time.
+    return all(
+        base.get(path) == merged.get(path) and revert.get(path) == parent.get(path)
+        for path in touched
+    )

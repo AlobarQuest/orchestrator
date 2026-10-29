@@ -9,6 +9,7 @@ default branch after it landed is an overlap and nothing is built.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import cast
 
 import pytest
 
@@ -285,3 +286,52 @@ def test_the_exact_inverse_check_raises_on_an_unreadable_tree() -> None:
     )
     with pytest.raises(EstateGatewayError):
         is_exact_inverse(gateway, REPOSITORY, REVERT, HEAD, MERGE, PARENT)
+
+
+def test_the_exact_inverse_check_refuses_when_the_base_moved_a_touched_path() -> None:
+    """main changed uv.lock after the landing, and the revert was hand-resolved back to the
+    parent's entry: landing it would discard main's change, so it is the overlap, refused."""
+    moved = {**MERGE_TREE, "uv.lock": ADDED}
+    assert _inverse(REVERTED_TREE, moved) is False
+
+
+def _written(gateway: _Gateway, kind: str) -> tuple[str, ...]:
+    """The one write of this kind, as the strings it sent."""
+    (sent,) = [cast(tuple[str, ...], args) for name, args in gateway.writes if name == kind]
+    return sent
+
+
+def _original(title: str = "Bump httpx", names: tuple[str, ...] = ("test",)) -> RevertOf:
+    return RevertOf(number=12, title=title, failed_job_names=names)
+
+
+def test_a_long_title_is_shortened_to_githubs_limit_before_anything_is_written() -> None:
+    gateway = _Gateway({PARENT: PARENT_TREE, MERGE: MERGE_TREE, HEAD: MERGE_TREE})
+    original = _original(title="x" * 300)
+
+    open_revert(gateway, REPOSITORY, _plan(gateway), original)
+
+    message = _written(gateway, "commit")[0]
+    title = _written(gateway, "pull")[0]
+    assert len(title) == 256
+    assert title.startswith('Revert "xxx') and title.endswith('\u2026"')
+    assert message.split("\n")[0] == title
+
+
+def test_a_title_at_the_limit_is_kept_whole() -> None:
+    gateway = _Gateway({PARENT: PARENT_TREE, MERGE: MERGE_TREE, HEAD: MERGE_TREE})
+
+    open_revert(gateway, REPOSITORY, _plan(gateway), _original(title="y" * 247))
+
+    title = _written(gateway, "pull")[0]
+    assert title == 'Revert "' + "y" * 247 + '"'
+
+
+def test_a_revert_naming_no_failed_job_is_refused_before_any_write() -> None:
+    gateway = _Gateway({PARENT: PARENT_TREE, MERGE: MERGE_TREE, HEAD: MERGE_TREE})
+    plan = _plan(gateway)
+
+    with pytest.raises(EstateGatewayError) as raised:
+        open_revert(gateway, REPOSITORY, plan, _original(names=()))
+    assert raised.value.code == "revert_names_no_failed_job"
+    assert gateway.writes == []
