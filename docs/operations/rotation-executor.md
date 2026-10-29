@@ -122,10 +122,42 @@ An instance with no inbox configured waits for a value staged by hand, and its a
 old value must still answer for the identity check, so after an early revoke (an exposure) or an
 expiry, stage by hand.
 
+## The rotation decomposer
+
+After Devon approves a rotation's change record and the work carrier registers its intake, the
+`rotation-decomposer` lane proposes its decomposition (`src/rotation_decomposer/`, ADR-0055
+amendment 15, increment 5). A person approves it on `/review`, as every decomposition: approval
+accepts only a human actor. The lane runs hourly (`com.devon.rotation-decomposer`, installed by
+`scripts/install-rotation-decomposer-launchd.sh` from the main tree) and logs to
+`~/Library/Logs/rotation-decomposer.log`. Its Healthchecks check, `sds-rotation-decomposer`, is an
+outcome alarm: every non-zero exit pings `/fail` with the report.
+
+Each pass reads change-manager's `work` records with the READ bearer. For each approved record
+naming a standing rotation package, it asks the orchestrator what work the record caused
+(`GET /change-records/{id}/work`). A registered revision with no units and no proposal gets one,
+proposed as `orchestrator-system` with the idempotency key `rotation-decomposer:<revision id>`, so
+a repeated pass replays it. Only the revision the record names is proposed for: an older one the
+package has replaced would run units the executor refuses. Every other case is reported and left
+alone:
+
+| Result | Meaning | Exit |
+|---|---|---|
+| `proposed` | A proposal waits for a person on `/review` | 0 |
+| `awaiting-approval` | A proposal already waits | 0 |
+| `superseded` | A person superseded its approved decomposition (approval creates units at once, so approved with none means superseded); a person replaces it | 2 |
+| `declined` | A person rejected the proposal or sent it back; the lane never proposes again, so decompose it by hand | 2 |
+| `refused` | The package can't be decomposed by machine (its criteria describe its type's pre-derivation plan, its registry row names no type or isn't `rotated_by_sds`, or its destinations differ from the registry's), or the orchestrator refused the proposal | 2 |
+| `unread` | A record, the orchestrator or the registry couldn't be read | 3 |
+
+To see what a pass would do without proposing anything, run
+`/bin/bash scripts/run-rotation-decomposer.sh --dry-run`.
+
 ## Decompose a rotation
 
-Each credential's plan (see "The plan a credential runs") fixes its decomposition. For each
-unit, the decomposition proposal gives:
+The rotation decomposer writes each decomposition from the package's derived plan; this section
+describes what it writes, which is what a decomposition written by hand must also say. Each
+credential's plan (see "The plan a credential runs") fixes its decomposition. For each unit, the
+decomposition proposal gives:
 
 - `required_capability: operational_action`, and `max_attempts` of three. Any other value is
   outside the rotation pattern, so the unit needs its own authority approval.

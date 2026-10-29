@@ -1952,3 +1952,30 @@ pre-derivation plans and are never regenerated.
   unreadable registry holds each rotation record undecided and carries everything else.
 - **Each program has its own mirrors** (`git_mirror.default_mirror_root(program)`), so the
   proposer and the carrier don't race the executor's fetches.
+
+### Increment 5 design: generated decompositions (2026-10-29)
+
+After increment 4, a session still wrote each rotation's decomposition by hand once Devon approved
+its change record and the carrier registered the intake. Devon, 2026-10-29: generate it; keep the
+approval click; propose as the SYSTEM bearer.
+
+1. **A lane of its own proposes it.** `rotation-decomposer` (`src/rotation_decomposer/`), hourly, reads change-manager's `work` records for standing rotation packages, asks the
+   orchestrator what work each caused (`GET /change-records/{id}/work`), and for a registered
+   revision with no units and no decomposition proposal, proposes one as `orchestrator-system`, the
+   identity that already proposed three of them. It never decides one: decomposition approval
+   accepts only a human actor (`_require_decision_actor`), and graduating that gate belongs to the
+   Admission pass (bridge layer design). It never proposes over a proposal a person rejected or sent
+   back.
+2. **The decomposition is the package's derived plan.** One unit per machine segment of the plan
+   the intake's own criteria describe (`select_plan` over `plans.derive`), named
+   `<credential>-<unit>`; each criterion maps to the unit holding its step, by the criterion's
+   database id. The envelope is exactly what `rotation_known_good` recognises:
+   `operational_action`, three attempts, no change class, conformance or model-call budget, and
+   the constraints `rotation_adapter` (the type), `rotation_unit`, `destinations` (the package's)
+   and `touches_no_hosted_service` wherever the unit writes no hosted service, by the executor's
+   own rule. `host_without_overlap` is never generated: it is a person's declaration. Each unit
+   after the first depends on the one before it completing; a person's acts are no dependencies
+   (increment 3).
+3. **A package on a pre-derivation plan is a finding, not a guess.** The lane imports no provider,
+   so it can't read a type's fixed plan; it reports a package whose criteria describe no derived
+   plan. The four such packages are revised once onto their derived plans, which Devon approves.

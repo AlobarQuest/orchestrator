@@ -38,7 +38,7 @@ from rotation_worker.contract import (
     UnitPlan,
     validate_plan,
 )
-from rotation_worker.destinations import parse
+from rotation_worker.destinations import HOSTED_KINDS, parse
 
 M, H = Actor.MACHINE, Actor.HUMAN
 # A package criterion's evidence names the step it covers; the verifier reads the same text
@@ -125,6 +125,24 @@ def person_acts_beside(plan: Plan, unit: UnitPlan, offset: int, kind: StepKind) 
         return False
     segment = segments[index]
     return isinstance(segment, HumanAct) and any(step.kind is kind for step in segment.steps)
+
+
+# The steps that write a hosted service: host gives it the new value, and retire_old takes the
+# old one away. Store and distribute write BWS only.
+WRITING_STEPS: Final = frozenset({StepKind.HOST, StepKind.RETIRE_OLD})
+
+
+def writes_hosted_service(destinations: Sequence[str], plan: Plan, unit: UnitPlan) -> bool:
+    """Whether the unit writes a hosted service: a host or retire step of a type that hosts (its
+    plan has a host step) or of a credential with a hosted destination, or distribute writing a
+    held copy, whose application it restarts. A unit that doesn't may be marked
+    `touches_no_hosted_service`, and only such a unit; the executor refuses any other so marked
+    (`checks._check_destination_fit`)."""
+    kinds = {parse(destination)["kind"] for destination in destinations}
+    steps = {step.kind for step in unit.steps}
+    hosts = StepKind.HOST in {step.kind for step in plan.steps()} or bool(kinds & HOSTED_KINDS)
+    held = HELD_KIND in kinds and StepKind.DISTRIBUTE in steps
+    return (hosts and bool(steps & WRITING_STEPS)) or held
 
 
 def criteria_steps(plan: Plan) -> dict[str, tuple[str, StepKind]]:

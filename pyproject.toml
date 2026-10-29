@@ -65,6 +65,7 @@ rotation-proposer = "rotation_proposer.cli:main"
 # ADR-0055 amendment 14. Runs `/verify` on each submitted rotation unit as VERIFIER, so a unit
 # whose step evidence is clean completes without a person.
 rotation-verifier = "rotation_verifier.cli:main"
+rotation-decomposer = "rotation_decomposer.cli:main"
 # Is every deployed application serving the commit its branch names? Three surfaces report a
 # rollout that went WRONG and every one reports a moment; on 2026-09-06 all three fired and
 # app-brain served a build behind main for a day and a half anyway. This one reports the

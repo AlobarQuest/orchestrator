@@ -35,7 +35,7 @@ from typing import Any, Final, Protocol, runtime_checkable
 
 from rotation_worker.adapters import ADAPTERS, AdapterContext
 from rotation_worker.adapters.orchestrator_bearer import NAME as ORCHESTRATOR_PROVIDER
-from rotation_worker.checks import WRITING_STEPS, Approved, check_unit
+from rotation_worker.checks import Approved, check_unit
 from rotation_worker.config import ConfigError
 from rotation_worker.contract import (
     HELD_KIND,
@@ -65,7 +65,7 @@ from rotation_worker.live_runs import stranded_by_a_restart
 from rotation_worker.notify import Act, Notifier
 from rotation_worker.orchestrator_client import Lease, OrchestratorClient, OrchestratorError
 from rotation_worker.overlaps import mid_overlap
-from rotation_worker.plans import person_acts_beside
+from rotation_worker.plans import WRITING_STEPS, person_acts_beside
 from rotation_worker.readers import (
     ConsumerReads,
     Healthchecks,

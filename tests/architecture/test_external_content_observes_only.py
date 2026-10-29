@@ -293,6 +293,13 @@ CLASSIFICATION: dict[str, Row] = {
         "Reads only the status ledger and the unit",
         frozenset({VERIFY}),
     ),
+    "rotation_decomposer": Row(
+        Role.INTERNAL_LANE_ACTOR,
+        "ADR-0055 amendment 15 increment 5: proposes a carried rotation's decomposition as SYSTEM, "
+        "generated from its intake's criteria and its type's derived plan. Proposing changes no "
+        "unit; only a human approval on /review creates them",
+        frozenset({"/api/v1/package-intakes/{revision_id}/decomposition-proposals"}),
+    ),
     "image_release": Row(
         Role.INTERNAL_LANE_ACTOR,
         "ADR-0039 amendment 2026-10-05: the orchestrator's operator-run deploy step binds a "

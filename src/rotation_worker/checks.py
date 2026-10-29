@@ -49,7 +49,7 @@ from rotation_worker.envelope import ADAPTER_KEY
 from rotation_worker.evidence import MAX_DESTINATION
 from rotation_worker.git_mirror import COMMIT_PATTERN as COMMIT
 from rotation_worker.git_mirror import MirrorError, RepoMirror
-from rotation_worker.plans import derive, select_plan
+from rotation_worker.plans import derive, select_plan, writes_hosted_service
 from rotation_worker.readers import Read, scheduled_reads
 from rotation_worker.registry import (
     PACKAGES_REPOSITORY,
@@ -71,9 +71,6 @@ NON_HOSTED_KEY: Final = "touches_no_hosted_service"
 # Declares a host with no overlap, for one rotation whose old value another identity still holds
 # (ADR-0055 amendment 9). `True` declares it, only on a unit that hosts; `False` is the default.
 WITHOUT_OVERLAP_KEY: Final = "host_without_overlap"
-# The steps that write a hosted service: host gives it the new value, and retire_old takes the
-# old one away. Store and distribute write BWS only.
-WRITING_STEPS: Final = frozenset({StepKind.HOST, StepKind.RETIRE_OLD})
 
 
 @dataclass(frozen=True)
@@ -229,8 +226,12 @@ def _check_destination_fit(
     destinations: list[str], plan: Plan, unit: UnitPlan, *, marked_non_hosted: bool
 ) -> None:
     hosted = [d for d in destinations if parse(d)["kind"] in HOSTED_KINDS]
-    writes = any(step.kind in WRITING_STEPS for step in unit.steps)
-    if marked_non_hosted and hosted and writes:
+    held = [d for d in destinations if parse(d)["kind"] == HELD_KIND]
+    if marked_non_hosted and writes_hosted_service(destinations, plan, unit):
+        # The one rule, shared with the decomposer that sets the mark.
+        if held and StepKind.DISTRIBUTE in {s.kind for s in unit.steps}:
+            # Writing a held copy restarts the application that holds it.
+            raise ContractError("the unit is marked non-hosted but restarts an application")
         raise ContractError("the unit is marked non-hosted but writes a hosted consumer")
     if hosted and StepKind.HOST not in {step.kind for step in plan.steps()}:
         # Only an adapter whose provider is the hosted service can write or verify one: refuse
@@ -240,12 +241,8 @@ def _check_destination_fit(
     if actions and StepKind.DISTRIBUTE not in {step.kind for step in plan.steps()}:
         # Nothing else writes an Actions secret, so its copies would keep the old value.
         raise ContractError("this adapter writes no Actions secret")
-    held = [d for d in destinations if parse(d)["kind"] == HELD_KIND]
     if held and StepKind.DISTRIBUTE not in {step.kind for step in plan.steps()}:
         raise ContractError("this adapter writes no held copy")
-    if held and marked_non_hosted and StepKind.DISTRIBUTE in {s.kind for s in unit.steps}:
-        # Writing a held copy restarts the application that holds it.
-        raise ContractError("the unit is marked non-hosted but restarts an application")
     if any(len(destination) > MAX_DESTINATION for destination in destinations):
         raise ContractError("a destination is longer than rotation-step/1 evidence can carry")
 
