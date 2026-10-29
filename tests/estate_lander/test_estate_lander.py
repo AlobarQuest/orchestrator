@@ -12,8 +12,8 @@ from typing import Any
 import httpx
 import pytest
 
-from change_proposer.change_manager import ChangeManagerError
 from change_proposer.cli import BOT_CHANGE_CLASS, FACTORY_CHANGE_CLASS
+from estate_lander.change_manager import ChangeManagerError
 from estate_lander.cli import (
     LANE,
     _branch_updates,
@@ -32,6 +32,7 @@ from lander.core import (
     EXIT_FINDINGS,
     EXIT_OK,
     EXIT_TOOL_FAILURE,
+    EXIT_UNUSABLE,
     NOT_A_FINDING,
     REPORTED,
     Outcome,
@@ -1413,3 +1414,122 @@ def test_a_hold_is_an_exception_and_an_unreadable_list_is_a_finding(
 
     assert verdict == status
     assert report([Outcome(REPOSITORY, 48, verdict, "")]) == exit_code
+
+
+# ------------------------------------------------------------------------------------------------
+# `run`: the held-pull-request alert (Landing Part 1, task 1).
+# ------------------------------------------------------------------------------------------------
+
+
+class AlertCalls:
+    """Stands in for `sync_held_alerts`, so no test here reaches alert-hub or the real state
+    directory. It records each call and answers `reason`."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, list[Outcome]]] = []
+        self.reason: str | None = None
+
+    def __call__(self, lane: str, outcomes: Any, **_: Any) -> str | None:
+        self.calls.append((lane, list(outcomes)))
+        return self.reason
+
+
+@pytest.fixture(autouse=True)
+def alerts(monkeypatch) -> AlertCalls:
+    calls = AlertCalls()
+    monkeypatch.setattr("estate_lander.cli.sync_held_alerts", calls)
+    return calls
+
+
+class _Records(FakeRecords):
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        return None
+
+
+class _Orchestrator(FakeOrchestrator):
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        return None
+
+
+def _wire_run(monkeypatch, rows: list[dict[str, Any]], answers: dict[Any, Any]) -> None:
+    monkeypatch.setenv("ESTATE_LANDING_CHANGE_MANAGER_TOKEN", "cm")
+    monkeypatch.setenv("ESTATE_LANDING_ORCHESTRATOR_TOKEN", "orch")
+    monkeypatch.setattr("estate_lander.cli.ChangeManagerClient", lambda *a, **k: _Records(rows))
+    monkeypatch.setattr(
+        "estate_lander.cli.OrchestratorClient", lambda *a, **k: _Orchestrator(answers)
+    )
+
+
+def test_a_submit_pass_syncs_held_alerts_with_its_outcomes(monkeypatch, alerts) -> None:
+    _wire_run(monkeypatch, [_row(49)], {(REPOSITORY, 49): _answer(["landing_checks_not_clean"])})
+
+    assert run(["--submit"]) == EXIT_FINDINGS
+
+    assert len(alerts.calls) == 1
+    lane, outcomes = alerts.calls[0]
+    assert lane == "estate-landing"
+    assert [(o.number, o.status) for o in outcomes if o.status == "held"] == [(49, "held")]
+
+
+def test_a_report_run_sends_no_alerts_and_writes_no_state(monkeypatch, alerts, tmp_path) -> None:
+    from lander import held_alerts
+
+    monkeypatch.setattr("estate_lander.cli.sync_held_alerts", held_alerts.sync_held_alerts)
+    monkeypatch.setenv(held_alerts.TOKEN_ENV, "sender-token")
+    monkeypatch.setenv(held_alerts.STATE_DIR_ENV, str(tmp_path / "state"))
+    _wire_run(monkeypatch, [_row(49)], {(REPOSITORY, 49): _answer(["landing_checks_not_clean"])})
+
+    assert run([]) == EXIT_FINDINGS
+
+    assert not (tmp_path / "state").exists()
+
+
+@pytest.mark.parametrize(
+    "missing", ["ESTATE_LANDING_CHANGE_MANAGER_TOKEN", "ESTATE_LANDING_ORCHESTRATOR_TOKEN"]
+)
+def test_a_pass_that_produced_no_outcomes_does_not_sync(monkeypatch, alerts, missing) -> None:
+    """An early exit measured nothing, so it may not resolve an alert a measured pass raised."""
+    _wire_run(monkeypatch, [_row(49)], {})
+    monkeypatch.delenv(missing)
+
+    assert run(["--submit"]) == EXIT_UNUSABLE
+
+    assert alerts.calls == []
+
+
+def test_a_record_source_failure_does_not_sync(monkeypatch, alerts) -> None:
+    class Failing(_Records):
+        def records(self) -> list[dict[str, Any]]:
+            raise ChangeManagerError("change-manager is unreachable")
+
+    _wire_run(monkeypatch, [], {})
+    monkeypatch.setattr("estate_lander.cli.ChangeManagerClient", lambda *a, **k: Failing([]))
+
+    assert run(["--submit"]) == EXIT_TOOL_FAILURE
+
+    assert alerts.calls == []
+
+
+def test_an_empty_pass_still_syncs_so_remembered_alerts_resolve(monkeypatch, alerts) -> None:
+    _wire_run(monkeypatch, [], {})
+
+    assert run(["--submit"]) == EXIT_OK
+
+    assert alerts.calls == [("estate-landing", [])]
+
+
+def test_an_alert_failure_exits_one_after_printing_the_report(monkeypatch, alerts, capsys) -> None:
+    alerts.reason = "SDS_BRIDGE_ALERT_TOKEN is unset"
+    _wire_run(monkeypatch, [_row(49)], {(REPOSITORY, 49): _answer(["landing_checks_not_clean"])})
+
+    assert run(["--submit"]) == EXIT_TOOL_FAILURE
+
+    captured = capsys.readouterr()
+    assert "landing_checks_not_clean" in captured.out
+    assert "alert-hub: SDS_BRIDGE_ALERT_TOKEN is unset" in captured.err

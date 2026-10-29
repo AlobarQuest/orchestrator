@@ -152,3 +152,15 @@ to the Admission and Landing passes; this amendment graduates neither.
 **The change window stays `00:00–23:59` (Ruling 7).** That is the build-phase widening (ADR-0012
 amendment 1). When it narrows back to the night, dispatch and merge for these repositories become
 night-only. This is recorded here, not changed.
+
+## Amendment 3 — 2026-10-29 (the estate lander sets factory records aside)
+
+**Status:** Accepted (records what the code does; no new decision).
+
+The boundary "The estate lander is unaffected" no longer describes the lander. Policy version 4
+approves `factory-delivery`, and the lander selects subjects on status alone, so it would otherwise
+take a factory pull request into a lane that asks nothing about the work unit, the verifier-decided
+criteria or the authority fingerprint. The lander selects subjects by `_LANE_CLASSES` in
+`src/estate_lander/cli.py`, which holds only `dependency-update`. Factory records, and any class
+the lander doesn't know, are set aside and counted as deferrals by class. The factory lane
+(`pr_merge_admission`) lands them.

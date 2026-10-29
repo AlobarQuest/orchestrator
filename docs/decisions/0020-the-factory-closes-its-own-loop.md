@@ -121,3 +121,16 @@ authored by an agent and approved by a human at intake, so the gate moves earlie
 disappearing — but it moves to a point where the work does not yet exist and the criterion is
 harder to judge. That is the real cost of this decision and it should be revisited if a weak
 criterion ever admits a bad change.
+
+## Amendment 1 — 2026-10-29 (the boundary and the window)
+
+**Status:** Accepted (records what the code does; no new decision).
+
+- **ADR-0019 Increment 3 overtook the boundary.** "Anything that deploys is out of scope" held
+  until change-manager routing existed. Increment 3 replaced `pr-merge`'s blanket
+  `merge_target_repository_redeploys` refusal with eight routed refusal codes, so a deploying
+  repository is in scope when an approved change record and the `live_estate` window both hold.
+  `change-manager` and `brain` are in the dependency-update population (ADR-0038).
+- **The `live_estate` window is 00:00 to 23:59 `America/New_York` for the build phase** (ADR-0012
+  amendment 1), and returns to 02:00 to 06:00 when the SDS goes into operation. The window terms
+  above describe the hours that return.

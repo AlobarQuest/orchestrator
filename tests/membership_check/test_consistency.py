@@ -14,6 +14,7 @@ from typer.testing import CliRunner
 from bump_proposer.landing_policy import LandingPolicy, LandingPolicyError
 from fork_sync.watch import Unreadable
 from membership_check import cli
+from membership_check.auto_merge import AutoMergeState
 from membership_check.consistency import Report, Scope, canonical, check, factory_targets
 from membership_check.declaration import Declaration
 from pin_watcher.github import PinWatcherError
@@ -30,6 +31,22 @@ class Declarations:
         return Declaration(self._answers.get(slug, False), "test double")
 
     def __enter__(self) -> Declarations:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        return None
+
+
+class AutoMerge:
+    """Every repository reads clean unless named."""
+
+    def __init__(self, states: dict[str, AutoMergeState]) -> None:
+        self._states = states
+
+    def state(self, repository: str) -> AutoMergeState:
+        return self._states.get(repository, AutoMergeState(False, ()))
+
+    def __enter__(self) -> AutoMerge:
         return self
 
     def __exit__(self, *_: object) -> None:
@@ -84,6 +101,10 @@ class _Sources(TypedDict, total=False):
     registry_repositories: list[str]
     rollbacks: list[str]
     standing_update_repositories: list[str]
+    auto_merge: dict[str, AutoMergeState]
+
+
+QUIET = AutoMergeState(allowed=False, arming_workflows=())
 
 
 def _check(members: list[Member], **sources: Unpack[_Sources]) -> Report:
@@ -98,6 +119,7 @@ def _check(members: list[Member], **sources: Unpack[_Sources]) -> Report:
         "registry_repositories": [],
         "rollbacks": [],
         "standing_update_repositories": [],
+        "auto_merge": {m.repository: QUIET for m in members},
     }
     return check(members, **{**empty, **sources})
 
@@ -187,6 +209,58 @@ def test_an_unreadable_declaration_is_a_gap():
     assert report.gaps == ["declaration unreadable: A/one"]
 
 
+def test_a_member_allowing_auto_merge_is_a_disagreement():
+    state = AutoMergeState(allowed=True, arming_workflows=())
+    report = _check([_member("A/one")], auto_merge={"a/one": state})
+    [line] = report.disagreements
+    assert line.startswith("A/one: ") and "allow_auto_merge" in line
+    assert report.gaps == []
+
+
+def test_a_member_with_an_arming_workflow_is_a_disagreement():
+    state = AutoMergeState(
+        allowed=False, arming_workflows=(".github/workflows/a.yml", ".github/workflows/b.yml")
+    )
+    report = _check([_member("A/one")], auto_merge={"A/one": state})
+    assert len(report.disagreements) == 2
+    assert all(line.startswith("A/one: ") for line in report.disagreements)
+    assert ".github/workflows/a.yml" in report.disagreements[0]
+    assert ".github/workflows/b.yml" in report.disagreements[1]
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        AutoMergeState(allowed=None, arming_workflows=()),
+        AutoMergeState(allowed=False, arming_workflows=None),
+        AutoMergeState(allowed=None, arming_workflows=None, detail="answered 503"),
+    ],
+)
+def test_an_unreadable_setting_is_a_gap_not_a_pass(state):
+    report = _check([_member("A/one")], auto_merge={"A/one": state})
+    assert report.disagreements == []
+    [gap] = report.gaps
+    assert "A/one" in gap and state.detail in gap
+
+
+def test_a_member_missing_from_the_auto_merge_read_is_a_gap_not_a_pass():
+    report = _check([_member("A/one"), _member("A/two")], auto_merge={"A/one": QUIET})
+    assert report.disagreements == []
+    [gap] = report.gaps
+    assert "A/two" in gap
+
+
+def test_a_retired_member_is_still_read_for_auto_merge():
+    state = AutoMergeState(allowed=True, arming_workflows=())
+    report = _check([_member("A/one", state="retired")], auto_merge={"A/one": state})
+    assert len(report.disagreements) == 1
+
+
+def test_a_member_with_auto_merge_off_and_no_arming_workflow_agrees():
+    report = _check([_member("A/one")], auto_merge={"A/one": QUIET})
+    assert report == Report([], [])
+
+
 def test_fork_sync_needs_both_grants():
     report = _check([_member("A/fork", "dependency_updates")], synced_forks=["A/fork"])
     [line] = report.disagreements
@@ -208,6 +282,7 @@ def _wire(
     fork_error=None,
     listing_error=None,
     rollbacks=None,
+    auto_merge=None,
 ):
     for name in (
         "SDS_MEMBERS_OBSERVER_TOKEN",
@@ -251,6 +326,7 @@ def _wire(
         )
 
     monkeypatch.setattr(cli, "read_landing_policy", read_policy)
+    monkeypatch.setattr(cli, "GitHubAutoMergeSource", lambda token: AutoMerge(auto_merge or {}))
 
     def read_forks(_run):
         if fork_error:
@@ -329,6 +405,25 @@ def test_an_unlisted_account_is_a_gap_not_a_disagreement(monkeypatch):
     _wire(monkeypatch, members=CLEAN, listing_error=PinWatcherError("401"))
     result = _invoke()
     assert result.exit_code == 3 and result.stdout == ""
+
+
+def test_the_cli_reports_a_member_allowing_auto_merge(monkeypatch):
+    _wire(monkeypatch, members=CLEAN, auto_merge={"A/one": AutoMergeState(True, ())})
+    result = _invoke()
+    assert result.exit_code == 2 and "A/one: " in result.stdout
+    assert "allow_auto_merge" in result.stdout
+
+
+def test_the_cli_reads_every_member_and_an_unread_one_is_a_gap(monkeypatch):
+    members = [*CLEAN, _member("A/retired", state="retired")]
+    _wire(
+        monkeypatch,
+        members=members,
+        auto_merge={"A/retired": AutoMergeState(None, None, "answered 503")},
+    )
+    result = _invoke()
+    assert result.exit_code == 3 and result.stdout == ""
+    assert "A/retired" in result.stderr and "answered 503" in result.stderr
 
 
 def test_an_unreadable_record_exits_3(monkeypatch):

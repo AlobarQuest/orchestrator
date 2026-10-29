@@ -196,9 +196,10 @@ TABLE: dict[str, Row] = {
         "typer",
         "typing",
     ),
-    # The producer's already-confined change-manager client is reused rather than re-implemented,
-    # because a second read-only client for one listing would be a second place for the
-    # withheld-source trap to be forgotten.
+    # The lander has its own read-only change-manager client (Landing Part 1): the producer's
+    # client also proposes and retires, which the lander never needs. It still imports the
+    # producer's constants (`DEPLOY_SOURCE`, `BOT_CHANGE_CLASS`), so the two sides agree on what the
+    # records are called and the withheld-source trap has one spelling.
     #
     # `lander` is the shared body of the two landing callers (Tier 3 item 27): each lane imports
     # it, and neither lane imports the other.
@@ -207,6 +208,8 @@ TABLE: dict[str, Row] = {
         "argparse",
         "change_proposer",
         "dataclasses",
+        # The clock a held pull request's first sighting is measured against.
+        "datetime",
         "estate_clients",
         "httpx",
         "lander",
@@ -276,6 +279,8 @@ TABLE: dict[str, Row] = {
         "argparse",
         "bump_proposer",
         "dataclasses",
+        # The clock a held pull request's first sighting is measured against.
+        "datetime",
         "deploy_watcher",
         "estate_clients",
         "httpx",
@@ -284,13 +289,24 @@ TABLE: dict[str, Row] = {
         "sys",
         "typing",
     ),
-    # The ONE body both landing callers share (Tier 3 item 27). It borrows from no program and
-    # imports no HTTP client: it reaches the orchestrator only through the confined client a lane
-    # passes in, whose surface is that lane's own literal paths. Were it to import a lane, the two
-    # programs ADR-0038 keeps separate would be one again by the back door.
+    # The ONE body both landing callers share (Tier 3 item 27). It borrows from no program: it
+    # reaches the orchestrator only through the confined client a lane passes in, whose surface is
+    # that lane's own literal paths. Were it to import a lane, the two programs ADR-0038 keeps
+    # separate would be one again by the back door.
+    #
+    # Landing Part 1: `held_alerts` tells a person about a pull request held for a day through the
+    # shared alert-hub client, which can send only `POST /v1/alerts`; `httpx` is imported there for
+    # the injectable transport's type alone. Neither reaches the orchestrator.
     "lander": _row(
         "__future__",
+        "alert_hub_client",
+        "collections",
         "dataclasses",
+        "datetime",
+        "httpx",
+        "json",
+        "os",
+        "pathlib",
         "typing",
         no_sibling_lanes=True,
     ),

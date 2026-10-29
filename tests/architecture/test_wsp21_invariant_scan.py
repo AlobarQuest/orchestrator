@@ -203,6 +203,27 @@ MERGE_EXEMPT_PATHS: set[Path] = {
 }
 
 
+# A SECOND, NARROWER DOOR, for files that spell the merge command only to RECOGNISE it in text
+# they read, and perform no merge. Not `MERGE_EXEMPT_PATHS`: that set means "lands a pull
+# request", and every reader of it (the hold classification, ws32's labels) takes it at its word.
+# A file here is excused only the `gh pr merge` text spelling, and only while every string that
+# spells it sits inside the file's `ARMING_MARKERS` assignment (`_detector_strays`): a second
+# string that spells it anywhere else -- a shell command, an f-string, a docstring -- fails as if
+# there were no door. An argv-list merge, the REST spelling or a `.merge(` call still fails, and
+# the rot check below refuses an entry that no longer spells it or that also sits in the merge
+# exemption.
+MERGE_DETECTOR_SPELLING = repr("gh pr merge")
+# The one assignment in a door file whose strings may spell the command.
+MERGE_DETECTOR_MARKERS = "ARMING_MARKERS"
+MERGE_DETECTOR_PATHS: set[Path] = {
+    # ADR-0038: nothing in the SDS arms auto-merge. `membership_check` reports a member repository
+    # whose workflow does, so `ARMING_MARKERS` spells `gh pr merge` to find it in workflow
+    # text read over three GET routes (`is_allowed`); it merges nothing. The retired auto-merge
+    # workflows in tests/fixtures/auto-merge-rules/ are the control that the marker fires.
+    Path("src/membership_check/auto_merge.py"),
+}
+
+
 # The text scan above reads `gh pr merge` as one string, so the same command held as an argv
 # list -- `["gh", "pr", "merge", str(number), ...]`, the shape every subprocess call in this repo
 # takes -- spelled none of it. Measured 2026-10-24: `fork-sync ack` and `fork-sync onboard` both
@@ -239,11 +260,84 @@ def _merges(source: Path) -> list[str]:
     return found
 
 
+def _canonical_markers(tree: ast.Module) -> ast.Tuple | None:
+    """The one module-level `ARMING_MARKERS` tuple of plain string constants, or `None`.
+
+    `None` unless the name is bound exactly once in the whole file, at module level, by a single
+    `Name` target, to a tuple whose every element is a `str` constant -- so a local rebinding, a
+    second binding, a call or a computed element closes the door instead of widening it.
+    """
+    stores = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Name)
+        and node.id == MERGE_DETECTOR_MARKERS
+        and isinstance(node.ctx, ast.Store)
+    ]
+    if len(stores) != 1:
+        return None
+    for statement in tree.body:
+        if isinstance(statement, ast.Assign) and statement.targets == [stores[0]]:
+            value = statement.value
+        elif isinstance(statement, ast.AnnAssign) and statement.target is stores[0]:
+            value = statement.value
+        else:
+            continue
+        if isinstance(value, ast.Tuple) and all(
+            isinstance(element, ast.Constant) and isinstance(element.value, str)
+            for element in value.elts
+        ):
+            return value
+    return None
+
+
+def _imports_a_process_module(tree: ast.Module) -> bool:
+    """A door file may not import `subprocess` or `os`: it reads text, it runs nothing."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            roots = [alias.name.split(".")[0] for alias in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            roots = [(node.module or "").split(".")[0]]
+        else:
+            continue
+        if {"subprocess", "os"} & set(roots):
+            return True
+    return False
+
+
+def _detector_strays(source: Path) -> list[str]:
+    """Why the detector door does not apply to `source`; empty when it does.
+
+    The door holds only for a file that imports no process module, binds `ARMING_MARKERS` once
+    as a module-level tuple of string constants, and spells `gh pr merge` in no other `str` or
+    `bytes` constant.
+    """
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    problems = []
+    if _imports_a_process_module(tree):
+        problems.append(f"{source}: imports subprocess or os")
+    markers = _canonical_markers(tree)
+    if markers is None:
+        problems.append(f"{source}: no single module-level {MERGE_DETECTOR_MARKERS} string tuple")
+    allowed = {id(element) for element in markers.elts} if markers is not None else set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Constant) or id(node) in allowed:
+            continue
+        value = node.value
+        if isinstance(value, bytes):
+            value = value.decode("utf-8", errors="replace")
+        if isinstance(value, str) and "gh pr merge" in value.lower():
+            problems.append(f"{source}:{node.lineno}")
+    return problems
+
+
 @pytest.mark.parametrize("source", [*MERGE_SCAN_SOURCES, *SHELL_SOURCES], ids=lambda p: str(p))
 def test_nothing_in_the_repo_merges_a_pull_request(source: Path) -> None:
     if source in MERGE_EXEMPT_PATHS:
         return
     merges = _merges(source)
+    if source in MERGE_DETECTOR_PATHS and not _detector_strays(source):
+        merges = [found for found in merges if found != MERGE_DETECTOR_SPELLING]
     assert not merges, (
         f"{source} performs a merge ({', '.join(merges)}). Merging is Devon's gate; "
         "code that merges has removed it. If this file is the bounded exception ADR-0020 "
@@ -311,6 +405,83 @@ def test_nothing_in_the_repo_calls_a_merge_method(source: Path) -> None:
         "removed it. If this file is the bounded exception ADR-0020 allows, add it to "
         "MERGE_EXEMPT_PATHS with a reason."
     )
+
+
+def test_the_merge_detector_door_names_only_detectors_that_need_it() -> None:
+    """Each entry still spells the command (or it needs no door), is not also a merger, and has
+    no other merge shape the door would have to excuse."""
+    for path in MERGE_DETECTOR_PATHS:
+        assert path not in MERGE_EXEMPT_PATHS, path
+        assert MERGE_DETECTOR_SPELLING in _merges(path), f"{path} no longer needs the door"
+        assert not _merge_method_calls(path), path
+        assert not _detector_strays(path), path
+
+
+@pytest.mark.parametrize(
+    "stray",
+    [
+        'X = "gh pr merge 1"\n',
+        'subprocess.run("gh pr merge 5 --squash", shell=True)\n',
+        'run(["sh", "-c", "gh pr merge 5"])\n',
+        'run(f"gh pr merge {n}")\n',
+        'def f():\n    """Runs gh pr merge."""\n',
+        'X = b"gh pr merge 5"\n',
+        'def f():\n    ARMING_MARKERS = "gh pr merge 5 --squash"\n    run(ARMING_MARKERS)\n',
+        "import subprocess\n",
+        "from os import system\n",
+        'ARMING_MARKERS = ("y",)\n',
+    ],
+)
+def test_the_merge_detector_door_is_bound_to_the_marker_literal(stray: str, tmp_path: Path) -> None:
+    """The door excuses the spelling only inside the `ARMING_MARKERS` assignment: the same text
+    anywhere else in a door file, including a second string that would run it, still fails."""
+    source = tmp_path / "detector.py"
+    source.write_text(f'ARMING_MARKERS = ("gh pr merge", "x")\n{stray}')
+    MERGE_DETECTOR_PATHS.add(source)
+    try:
+        with pytest.raises(AssertionError, match="performs a merge"):
+            test_nothing_in_the_repo_merges_a_pull_request(source)
+    finally:
+        MERGE_DETECTOR_PATHS.discard(source)
+
+
+@pytest.mark.parametrize(
+    "marker",
+    [
+        'ARMING_MARKERS = subprocess.run("gh pr merge 5", shell=True)\n',
+        'ARMING_MARKERS = ("gh pr merge", run("gh pr merge 5"))\n',
+        'ARMING_MARKERS = ["gh pr merge"]\n',
+        'ARMING_MARKERS = ("gh pr merge", "gh pr merge " + n)\n',
+        'class C:\n    ARMING_MARKERS = ("gh pr merge",)\n',
+    ],
+)
+def test_only_a_module_level_tuple_of_strings_opens_the_detector_door(
+    marker: str, tmp_path: Path
+) -> None:
+    """An `ARMING_MARKERS` that is a call, a list, a computed element or not module-level does not
+    open the door: the file fails as if it had none."""
+    source = tmp_path / "detector.py"
+    source.write_text(marker)
+    MERGE_DETECTOR_PATHS.add(source)
+    try:
+        with pytest.raises(AssertionError, match="performs a merge"):
+            test_nothing_in_the_repo_merges_a_pull_request(source)
+    finally:
+        MERGE_DETECTOR_PATHS.discard(source)
+
+
+def test_the_merge_detector_door_excuses_only_the_text_spelling(tmp_path: Path) -> None:
+    """A detector that also merges is caught: the door excuses one spelling, not the file."""
+    source = tmp_path / "detector.py"
+    source.write_text('ARMING_MARKERS = ("gh pr merge",)\nC = ["gh", "pr", "merge", "1"]\n')
+    MERGE_DETECTOR_PATHS.add(source)
+    try:
+        with pytest.raises(AssertionError, match="performs a merge"):
+            test_nothing_in_the_repo_merges_a_pull_request(source)
+        source.write_text('ARMING_MARKERS = ("gh pr merge", "x")\n')
+        test_nothing_in_the_repo_merges_a_pull_request(source)
+    finally:
+        MERGE_DETECTOR_PATHS.discard(source)
 
 
 def test_the_merge_exemption_names_only_files_that_need_it() -> None:
@@ -476,6 +647,11 @@ OUTBOUND_ALLOWLIST = {
     # opted in, which is the answer inverted for the whole population and in the direction that
     # looks like a working refusal.
     Path("src/membership_check/declaration.py"),
+    # `membership_check`'s auto-merge reader (ADR-0038: nothing in the SDS arms auto-merge). Three
+    # GET routes on GitHub -- the repository (`allow_auto_merge`), its `.github/workflows`
+    # listing, and each file in it -- each judged on the path the transport will send, so a name
+    # that composes anything else is refused before it leaves. It reports; it changes no setting.
+    Path("src/membership_check/auto_merge.py"),
     # ADR-0029. `work_watcher` is the work lane's watcher, a SEPARATE program that shares the
     # carry's invocation and runs before it. TWO files, one route each. The change-manager
     # one is the only MUTATING egress either work-lane program has, and it is one-directional
@@ -498,9 +674,15 @@ OUTBOUND_ALLOWLIST = {
     # egress is not the orchestrator's. It reads which changes the estate routed, asks the
     # orchestrator whether each may be landed, and relays the answer -- composing nothing, because
     # every term is evaluated inside the orchestrator in the transaction that records the act.
-    # Its whole surface is two routes, enforced in code by `is_allowed_read`/`is_allowed_write`
-    # and in tests by tests/estate_lander/test_client_surface.py.
+    # Its whole surface is four routes (the admission read; the land, branch-update and
+    # held-pr-close writes), enforced in code by `is_allowed_read`/`is_allowed_write` and in tests
+    # by tests/estate_lander/test_client_surface.py.
     Path("src/estate_lander/orchestrator_client.py"),
+    # Landing Part 1. The estate lander's own change-manager client: one GET of the deploying-merge
+    # listing and no write of any kind (`is_allowed_write` is always False), so the lander no longer
+    # holds the producer's propose and retire routes. tests/estate_lander/test_client_surface.py
+    # and tests/architecture/test_landing_edges.py pin it.
+    Path("src/estate_lander/change_manager.py"),
     # ADR-0038 part 2a. `inert_lander` is the SIBLING separate program, and its egress is not
     # the orchestrator's either. It reads which repositories a person declared ones where landing
     # on the default branch changes nothing already serving, asks the orchestrator whether each
@@ -629,6 +811,10 @@ OUTBOUND_ALLOWLIST = {
     # client may send only `POST /v1/alerts` (via `alert_hub_client`), pinned by
     # tests/architecture/test_bridge_edges.py. Its egress is not the orchestrator's.
     Path("src/work_watcher/alerts.py"),
+    # Landing Part 1. The two landers hold one alert open per pull request held for a day, as the
+    # `sds-bridge` sender. Its client may send only `POST /v1/alerts` (via `alert_hub_client`),
+    # pinned by tests/lander/test_held_alerts.py. Its egress is not the orchestrator's.
+    Path("src/lander/held_alerts.py"),
     # ADR-0055 increment 7. The rotation App mints a token for one repository with exactly the
     # permissions one purpose needs, writes that repository's one approved Actions secret, and
     # reads its secret-fingerprint report's job log (one hop to GitHub's log storage, which

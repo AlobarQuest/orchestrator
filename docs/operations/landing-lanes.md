@@ -4,6 +4,8 @@ How the estate and inert landing lanes, the landing ledger, change records and t
 
 The entries below moved verbatim from the CLAUDE.md invariants section on 2026-10-01 (Tier 3 item 17). Each keeps its original number. Their dated corrections are the record of what was measured when; read the last correction in an entry as its current state.
 
+**Reading the older entries.** ADR-0038 (2026-08-31) removed the Dependabot auto-merge workflows from the six repositories that carried them, and the orchestrator merges directly. "The cascade" in an entry below means the inert lane, which took the cascade's subjects. An entry that describes enabling or arming auto-merge records what was true when it was written; members now keep auto-merge off, and `membership_check` reports any member that doesn't.
+
 ### #100
 
 - **R13's "merging a PR deploys nothing" is TRUE OF COOLIFY AND FALSE OF THE ESTATE — a repo can
@@ -159,7 +161,9 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   the reasoning going missing is how a setting becomes folklore.** Applied 2026-08-06 after the Pro
   upgrade made protection available on private repos. Every repo: a **required status check that
   actually runs on pull requests**, no force-push, no deletion, **`required_approving_review_count`
-  absent**, `strict: false`, `allow_auto_merge: true`.
+  absent**, `strict: false`, `allow_auto_merge: true`. *ADR-0038 superseded `allow_auto_merge:
+  true` and the auto-merge bullets below: members have auto-merge off, and `membership_check`
+  reports one that doesn't.*
   - **The required check must be the JOB name, not the workflow name**, and it must be verified
     against a real open PR — a context string that does not match blocks every pull request
     forever, silently. The six: orchestrator `Quality` + `Runner consumer compatibility`;
@@ -180,12 +184,12 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
     uncommon, and immediately visible when `main` goes red. factory-runner carried `strict: true`
     from its initial 2026-08-03 application rather than from a decision, and was flipped to `false`
     on 2026-08-06 for uniformity.
-  - **`enforce_admins` is TRUE on `factory-runner` alone, and that asymmetry is the considered
-    part.** It is the one repo where a bad merge stops every dispatch in the estate, and its CI is
-    ~20 seconds, so enforcement is nearly free. It is off elsewhere chiefly because orchestrator's
-    suite is 25 minutes and enforcing there taxes every CLAUDE.md, ADR and backlog commit — the
-    lowest-risk commits, hardest. Note `enforce_admins` does **not** affect auto-merge, which
-    merges through GitHub once required checks pass either way.
+  - **`enforce_admins` is TRUE on `factory-runner`, `change-manager` and `brain` (ADR-0038), and
+    false on the other repositories measured; the asymmetry is the considered part.**
+    `factory-runner` is the one repo where a bad merge stops every dispatch in the estate, and its
+    CI is ~20 seconds, so enforcement is nearly free. It is off elsewhere chiefly because
+    orchestrator's suite is 25 minutes and enforcing there taxes every CLAUDE.md, ADR and backlog
+    commit — the lowest-risk commits, hardest.
 
 ### #142
 
@@ -463,6 +467,8 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
 
 ### #253
 
+*ADR-0038 removed the arming workflows, so nothing arms auto-merge now. The attribution mechanics below still decide what the ledger records for any merge: `merged_by` with a `[bot]` suffix is the basis.*
+
 - **GITHUB ATTRIBUTES AN AUTO-MERGE TO THE ARMING IDENTITY, SO THE ARMING CREDENTIAL IS ALSO THE
   LANDING LEDGER'S ATTRIBUTION — MOVING ONE SILENTLY MOVES THE OTHER.** `basis_of`
   (`landing_ledger/record.py:207`) requires the gate to have succeeded **and**
@@ -683,3 +689,26 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
 - **The hold term asks a different question.** `services/landing/terms.py::_update_bot_message`
   takes the one bot-authored commit anywhere on the branch. The two agree on every ordinary pull
   request.
+
+### The landers' outbound surface (Landing Part 1)
+
+- **Each lander's whole outbound surface is one row of `tests/architecture/test_landing_edges.py`**:
+  the orchestrator, change-manager, GitHub and alert-hub routes its clients permit, under every verb,
+  and the bearers its launcher fetches. Writes are POST only (`_permits` refuses PUT, PATCH and
+  DELETE on a write path), and the estate lander reads change-manager through its own
+  `estate_lander/change_manager.py`, which permits `GET /api/items` and no write. The inert lander's
+  GitHub reads go through `deploy_watcher.github`, which bounds the verb and not the route, so its
+  row pins the import and the one method `PullRequestSource` declares.
+- **Residual: the landers' SYSTEM bearer has no server-side route confinement.** Both landers send
+  the `orchestrator-system` credential (BWS `221a48d5-…`), and the orchestrator confines only
+  OBSERVER by route (`api/dependencies.py::_confine_observer`), so the bearer could reach
+  `/api/v1/work-units/{id}/pr-merge` and every other SYSTEM route. The client predicates and the
+  edge table bound what these programs send, not what the credential can do. Confining it needs a
+  dedicated lander identity (a security-standards registry change and a new M2M credential), which
+  is a separate decision.
+- **A pull request held for 24 hours raises one alert-hub alert** (`lander/held_alerts.py`, key
+  `landing-held:<lane>:<repository lowercased>:<number>`), resolved on the first pass it is no
+  longer `held`, `unreadable` or `error`; a repository the lane can't list fires one alert under
+  number 0 after the same 24 hours, and resolves when it lists again. An orchestrator outage of 24
+  hours or more turns every in-scope open pull request `unreadable`, so each fires its one keyed
+  alert: noise in proportion to the open pull requests, never a repeat.

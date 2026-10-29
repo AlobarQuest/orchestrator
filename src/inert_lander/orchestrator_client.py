@@ -70,7 +70,7 @@ def is_allowed_write(path: str) -> bool:
 
 
 def _permits(method: str, path: str) -> bool:
-    return is_allowed_read(path) if method == "GET" else is_allowed_write(path)
+    return is_allowed_read(path) if method == "GET" else method == "POST" and is_allowed_write(path)
 
 
 class OrchestratorClient:

@@ -288,8 +288,8 @@ Placement rule: global CLAUDE.md §7.
   unit's own approval sets (ADR-0052); otherwise a stranded READY unit is inert and is retired by
   letting it fail then cancelling. History: `docs/history/claude-md-invariants-archive.md` #134.
 - Never set `required_approving_review_count`; a branch-protection required check is a JOB name
-  verified against a real open pull request, and auto-merge with no required checks merges
-  instantly. Detail: `docs/operations/landing-lanes.md`.
+  verified against a real open pull request, and members keep `allow_auto_merge` off (ADR-0038),
+  which `membership_check` reports. Detail: `docs/operations/landing-lanes.md`.
 - The capability vocabulary has four copies (orchestrator, factory-runner, the contract fixture,
   intent-packages' `CAPABILITIES`); grep the whole portfolio before widening it. History:
   `docs/history/claude-md-invariants-archive.md` #140.

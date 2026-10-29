@@ -999,3 +999,94 @@ def test_a_hold_is_still_an_exception_to_the_classifier() -> None:
     """The close replaces the line, not the classification: were it ever skipped, the line would be
     the exception it was before (`held_status` unchanged)."""
     assert held_status(LANE, [_CEILING], rollout_base_matches_pin=False) == "exception"
+
+
+# --------------------------------------------------------------------------------------------
+# `run`: the held-pull-request alert (Landing Part 1, task 1).
+# --------------------------------------------------------------------------------------------
+
+
+class AlertCalls:
+    """Stands in for `sync_held_alerts`, so no test here reaches alert-hub or the real state
+    directory. It records each call and answers `reason`."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, list[Outcome]]] = []
+        self.reason: str | None = None
+
+    def __call__(self, lane: str, outcomes: Any, **_: Any) -> str | None:
+        self.calls.append((lane, list(outcomes)))
+        return self.reason
+
+
+@pytest.fixture(autouse=True)
+def alerts(monkeypatch) -> AlertCalls:
+    calls = AlertCalls()
+    monkeypatch.setattr("inert_lander.cli.sync_held_alerts", calls)
+    return calls
+
+
+def test_a_submit_pass_syncs_held_alerts_with_its_outcomes(monkeypatch, alerts) -> None:
+    client = FakeOrchestrator({(REPOSITORY, 1): _held("landing_checks_not_clean")})
+    _wire(monkeypatch, FakeGitHub({REPOSITORY: [_pull(1)]}), client, _rule())
+
+    assert run(["--submit"]) == EXIT_FINDINGS
+
+    assert len(alerts.calls) == 1
+    lane, outcomes = alerts.calls[0]
+    assert lane == "inert-landing"
+    assert Outcome(REPOSITORY, 1, "held", "landing_checks_not_clean") in outcomes
+
+
+def test_a_report_run_sends_no_alerts_and_writes_no_state(monkeypatch, alerts, tmp_path) -> None:
+    from lander import held_alerts
+
+    monkeypatch.setattr("inert_lander.cli.sync_held_alerts", held_alerts.sync_held_alerts)
+    monkeypatch.setenv(held_alerts.TOKEN_ENV, "sender-token")
+    monkeypatch.setenv(held_alerts.STATE_DIR_ENV, str(tmp_path / "state"))
+    client = FakeOrchestrator({(REPOSITORY, 1): _held("landing_checks_not_clean")})
+    _wire(monkeypatch, FakeGitHub({REPOSITORY: [_pull(1)]}), client, _rule())
+
+    assert run([]) == EXIT_FINDINGS
+
+    assert not (tmp_path / "state").exists()
+
+
+def test_a_pass_that_produced_no_outcomes_does_not_sync(monkeypatch, alerts) -> None:
+    """The early exits: a missing credential and an unreadable declaration. Neither measured
+    anything, so neither may resolve an alert a measured pass raised."""
+    from bump_proposer.landing_policy import LandingPolicyError
+
+    _wire(monkeypatch, FakeGitHub(), FakeOrchestrator(), _rule())
+    monkeypatch.delenv("INERT_LANDING_GITHUB_TOKEN")
+    assert run(["--submit"]) == EXIT_UNUSABLE
+
+    _wire(monkeypatch, FakeGitHub(), FakeOrchestrator(), _rule())
+
+    def refuse(*_: Any, **__: Any) -> LandingPolicy:
+        raise LandingPolicyError("declares no inert population")
+
+    monkeypatch.setattr("inert_lander.cli.read_landing_policy", refuse)
+    assert run(["--submit"]) == EXIT_UNUSABLE
+
+    assert alerts.calls == []
+
+
+def test_an_empty_pass_still_syncs_so_remembered_alerts_resolve(monkeypatch, alerts) -> None:
+    _wire(monkeypatch, FakeGitHub({REPOSITORY: []}), FakeOrchestrator(), _rule())
+
+    assert run(["--submit"]) == EXIT_OK
+
+    assert alerts.calls == [("inert-landing", [])]
+
+
+def test_an_alert_failure_exits_one_after_printing_the_report(monkeypatch, alerts, capsys) -> None:
+    alerts.reason = "SDS_BRIDGE_ALERT_TOKEN is unset"
+    client = FakeOrchestrator({(REPOSITORY, 1): _held("landing_checks_not_clean")})
+    _wire(monkeypatch, FakeGitHub({REPOSITORY: [_pull(1)]}), client, _rule())
+
+    assert run(["--submit"]) == EXIT_TOOL_FAILURE
+
+    captured = capsys.readouterr()
+    assert "landing_checks_not_clean" in captured.out
+    assert "alert-hub: SDS_BRIDGE_ALERT_TOKEN is unset" in captured.err

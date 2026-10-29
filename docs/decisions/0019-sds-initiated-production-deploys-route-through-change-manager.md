@@ -425,3 +425,18 @@ acceptance criterion triggers the rollback automatically or reports and waits â€
 established shape is that detectors report and never act, and a deploy rollback is a mutation,
 so the default should be reporting until decided otherwise. And whether non-production deploys
 acquire a lighter version of the same record.
+
+## Amendment 1 â€” 2026-10-29 (Increment 6 and the window)
+
+**Status:** Accepted (records what the code does; no new decision).
+
+**Increment 6 is the estate lane's branch-update act.** After the landing pass, the estate lander
+asks the orchestrator to bring up to date any pull request whose only remaining obstacle is that its
+head is behind its base. It is a second write, `POST /api/v1/estate-pr-branch-update`, named
+individually in the lander's confined client. The orchestrator answers with `qualifies_for_branch_update`
+(ADR-0024) and asks it again inside the transaction that acts. The act reaches only a topic branch
+that nothing serves. ADR-0045 amends it: one Dependabot branch per repository at a time.
+
+**The `live_estate` change window is 00:00 to 23:59 `America/New_York` for the build phase**
+(ADR-0012 amendment 1), and returns to 02:00 to 06:00 when the SDS goes into operation. Every
+reference in this ADR to the night window names the hours that return, not the hours in force.

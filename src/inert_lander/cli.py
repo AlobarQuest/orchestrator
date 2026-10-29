@@ -100,6 +100,7 @@ import argparse
 import os
 import sys
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from bump_proposer.change_manager import DEFAULT_BASE_URL as CM_DEFAULT_BASE_URL
@@ -116,6 +117,7 @@ from inert_lander.orchestrator_client import (
 )
 from lander import core
 from lander.core import EXIT_TOOL_FAILURE, EXIT_UNUSABLE, LandingClient, Lane, Outcome
+from lander.held_alerts import sync_held_alerts
 
 # The credential key id the orchestrator resolves the bearer against. A constant rather than a
 # setting: an operator who could change it could only ever make the call unauthenticated.
@@ -320,7 +322,15 @@ def run(argv: list[str] | None = None) -> int:
         print(str(error), file=sys.stderr)
         return EXIT_TOOL_FAILURE
 
-    return report(outcomes, selection.deferred, rule.version)
+    code = report(outcomes, selection.deferred, rule.version)
+    if args.submit:
+        # A pull request held for a day raises one alert (`lander.held_alerts`). Only a submitting
+        # pass sends; a pass that returned above measured nothing and must not resolve anything.
+        reason = sync_held_alerts("inert-landing", outcomes, now=datetime.now(UTC))
+        if reason is not None:
+            print(f"alert-hub: {reason}", file=sys.stderr)
+            return EXIT_TOOL_FAILURE
+    return code
 
 
 def report(outcomes: list[Outcome], deferred: dict[str, int], policy_version: int) -> int:
