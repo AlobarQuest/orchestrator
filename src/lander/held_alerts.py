@@ -11,6 +11,12 @@ One pull request can be reported twice in a pass (the landing pass and the branc
 both report every subject), so it is in the set when ANY of its outcomes is, and the first such
 outcome supplies the alert's words.
 
+A repository the lane could not list is reported as one row numbered 0, and none of its pull
+requests appear. That row says nothing about them, so their remembered alerts and first sightings
+are HELD (passed to `KeyedAlerts` as `unread`, kept by `firing`), never resolved or forgotten; and
+the row fires no alert of its own, since the lane's report and dead-man check already say the
+listing failed. Which keys belong to a repository is read from `held_key`'s own prefix.
+
 Two files live in the lane's state directory (`LANDER_STATE_DIR`, else
 `~/Library/Application Support/sds/<lane>`): `held-since.json`, the first sightings, and
 `alerts.json`, `KeyedAlerts`' memory of what it fired. The launchers set neither variable, so the
@@ -45,6 +51,16 @@ def held_key(repository: str, number: int) -> str:
     return alert_key("landing-held", repository.lower(), str(number))
 
 
+def _repository_prefix(repository: str) -> str:
+    """The start every `held_key` for this repository shares, ending at the part separator."""
+    return alert_key("landing-held", repository.lower()) + ":"
+
+
+def unlisted_prefixes(outcomes: Iterable[Outcome]) -> tuple[str, ...]:
+    """The key prefixes of the repositories this pass could not list (a row numbered 0)."""
+    return tuple(sorted({_repository_prefix(o.repository) for o in outcomes if o.number == 0}))
+
+
 def state_dir(lane: str, environ: Mapping[str, str]) -> Path:
     configured = environ.get(STATE_DIR_ENV)
     if configured:
@@ -64,10 +80,11 @@ def firing(
     outcomes: Iterable[Outcome], first_seen: Mapping[str, str], now: datetime
 ) -> tuple[dict[str, Alert], dict[str, str]]:
     """The alerts to fire now, and the first sightings to keep. Pure."""
+    outcomes = list(outcomes)
     alerts: dict[str, Alert] = {}
     kept: dict[str, str] = {}
     for outcome in outcomes:
-        if outcome.status not in ALERTING_STATUSES:
+        if outcome.number == 0 or outcome.status not in ALERTING_STATUSES:
             continue
         key = held_key(outcome.repository, outcome.number)
         if key in kept:
@@ -83,6 +100,11 @@ def firing(
                 f"{outcome.status} for {hours} hours: {outcome.detail}",
                 f"https://github.com/{outcome.repository}/pull/{outcome.number}",
             )
+    unlisted = unlisted_prefixes(outcomes)
+    if unlisted:
+        for key, since in first_seen.items():
+            if key not in kept and key.startswith(unlisted):
+                kept[key] = since
     return alerts, kept
 
 
@@ -121,6 +143,7 @@ def sync_held_alerts(
     except OSError as error:
         return f"the state directory is unusable: {type(error).__name__}"
     alerts, kept = firing(outcomes, _read_first_seen(held_since), now)
+    unlisted = unlisted_prefixes(outcomes)
     hub = KeyedAlerts(
         lambda: token,
         directory / ALERTS_FILE,
@@ -128,13 +151,16 @@ def sync_held_alerts(
         resolved_title="Pull request no longer held",
         transport=transport,
     )
-    reason: str | None = None
+    reasons: list[str] = []
     try:
-        hub.sync(alerts)
+        unread = (
+            {key for key in hub.remembered() if key.startswith(unlisted)} if unlisted else set()
+        )
+        hub.sync(alerts, unread)
     except AlertHubError as error:
-        reason = str(error)
+        reasons.append(str(error))
     try:
         _write_first_seen(held_since, kept)
     except OSError as error:
-        return reason or f"the state directory is unusable: {type(error).__name__}"
-    return reason
+        reasons.append(f"the state directory is unusable: {type(error).__name__}")
+    return "; ".join(reasons) or None

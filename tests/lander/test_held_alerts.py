@@ -257,3 +257,97 @@ def test_the_default_state_directory_is_per_lane(tmp_path) -> None:
         Path.home() / "Library" / "Application Support" / "sds" / "inert-landing"
     )
     assert held_alerts.state_dir("estate-landing", {STATE_DIR_ENV: str(tmp_path)}) == tmp_path
+
+
+# ------------------------------------------------------------------------------------------------
+# A repository the lane could not list (an `Outcome(repo, 0, ...)` row) is unread, not resolved.
+# ------------------------------------------------------------------------------------------------
+
+OTHER = "AlobarQuest/factory-runner"
+
+
+def _unlisted(repository: str = REPOSITORY) -> Outcome:
+    return Outcome(repository, 0, "unreadable", "github answered 502")
+
+
+def test_an_unlisted_repository_keeps_its_sightings_and_forgets_another_repositorys() -> None:
+    mine = _iso(NOW - timedelta(hours=30))
+    theirs = _iso(NOW - timedelta(hours=30))
+    seen = {KEY: mine, held_key(OTHER, 7): theirs}
+
+    alerts, kept = firing([_unlisted()], seen, NOW)
+
+    assert alerts == {}, "an unread pull request is neither fired nor resolved"
+    assert kept == {KEY: mine}
+
+
+def test_a_repository_level_row_past_the_threshold_never_fires_its_own_alert() -> None:
+    seen = {held_key(REPOSITORY, 0): _iso(NOW - timedelta(days=3))}
+
+    alerts, _ = firing([_unlisted()], seen, NOW)
+
+    assert alerts == {}
+
+
+def test_the_unlisted_prefix_does_not_reach_a_repository_whose_name_it_begins() -> None:
+    longer = "AlobarQuest/orchestrator-extra"
+    seen = {held_key(longer, 3): _iso(NOW - timedelta(hours=30))}
+
+    _, kept = firing([_unlisted()], seen, NOW)
+
+    assert kept == {}
+
+
+def test_a_pass_with_only_unlisted_repositories_resolves_nothing(tmp_path) -> None:
+    hub = Hub()
+    env = _env(tmp_path)
+    first = _iso(NOW - timedelta(hours=30))
+    (tmp_path / "state").mkdir()
+    (tmp_path / "state" / "held-since.json").write_text(json.dumps({KEY: first}))
+    assert (
+        sync_held_alerts(
+            "inert-landing", [_held()], now=NOW, environ=env, transport=hub.transport()
+        )
+        is None
+    )
+    assert [body["status"] for body in hub.sent] == ["firing"]
+
+    later = NOW + timedelta(hours=1)
+    for _ in range(2):
+        assert (
+            sync_held_alerts(
+                "inert-landing", [_unlisted()], now=later, environ=env, transport=hub.transport()
+            )
+            is None
+        )
+
+    assert [body["status"] for body in hub.sent] == ["firing"], "no resolved, nothing new fired"
+    assert json.loads((tmp_path / "state" / "held-since.json").read_text()) == {KEY: first}
+    assert json.loads((tmp_path / "state" / "alerts.json").read_text()) == [KEY]
+
+
+def test_both_reasons_are_reported_when_alert_hub_and_the_state_file_both_fail(
+    tmp_path, monkeypatch
+) -> None:
+    from lander import held_alerts
+
+    def unwritable(*_: object) -> None:
+        raise PermissionError("no")
+
+    (tmp_path / "state").mkdir()
+    (tmp_path / "state" / "held-since.json").write_text(
+        json.dumps({KEY: _iso(NOW - timedelta(hours=30))})
+    )
+    monkeypatch.setattr(held_alerts, "_write_first_seen", unwritable)
+
+    reason = sync_held_alerts(
+        "inert-landing",
+        [_held()],
+        now=NOW,
+        environ=_env(tmp_path),
+        transport=Hub(status=500).transport(),
+    )
+
+    assert reason is not None
+    assert "not sent" in reason
+    assert "PermissionError" in reason
