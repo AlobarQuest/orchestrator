@@ -501,6 +501,11 @@ OUTBOUND_ALLOWLIST = {
     # Its whole surface is two routes, enforced in code by `is_allowed_read`/`is_allowed_write`
     # and in tests by tests/estate_lander/test_client_surface.py.
     Path("src/estate_lander/orchestrator_client.py"),
+    # Landing Part 1. The estate lander's own change-manager client: one GET of the deploying-merge
+    # listing and no write of any kind (`is_allowed_write` is always False), so the lander no longer
+    # holds the producer's propose and retire routes. tests/estate_lander/test_client_surface.py
+    # and tests/architecture/test_landing_edges.py pin it.
+    Path("src/estate_lander/change_manager.py"),
     # ADR-0038 part 2a. `inert_lander` is the SIBLING separate program, and its egress is not
     # the orchestrator's either. It reads which repositories a person declared ones where landing
     # on the default branch changes nothing already serving, asks the orchestrator whether each

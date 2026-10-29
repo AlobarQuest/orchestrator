@@ -683,3 +683,20 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
 - **The hold term asks a different question.** `services/landing/terms.py::_update_bot_message`
   takes the one bot-authored commit anywhere on the branch. The two agree on every ordinary pull
   request.
+
+### The landers' outbound surface (Landing Part 1)
+
+- **Each lander's whole outbound surface is one row of `tests/architecture/test_landing_edges.py`**:
+  the orchestrator, change-manager, GitHub and alert-hub routes its clients permit, under every verb,
+  and the bearers its launcher fetches. Writes are POST only (`_permits` refuses PUT, PATCH and
+  DELETE on a write path), and the estate lander reads change-manager through its own
+  `estate_lander/change_manager.py`, which permits `GET /api/items` and no write. The inert lander's
+  GitHub reads go through `deploy_watcher.github`, which bounds the verb and not the route, so its
+  row pins the import and the one method `PullRequestSource` declares.
+- **Residual: the landers' SYSTEM bearer has no server-side route confinement.** Both landers send
+  the `orchestrator-system` credential (BWS `221a48d5-…`), and the orchestrator confines only
+  OBSERVER by route (`api/dependencies.py::_confine_observer`), so the bearer could reach
+  `/api/v1/work-units/{id}/pr-merge` and every other SYSTEM route. The client predicates and the
+  edge table bound what these programs send, not what the credential can do. Confining it needs a
+  dedicated lander identity (a security-standards registry change and a new M2M credential), which
+  is a separate decision.

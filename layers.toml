@@ -519,6 +519,7 @@ paths = [
   "tests/contract/test_rollout_policy_ratification.py",
   "tests/architecture/test_landing_direction.py",
   "tests/architecture/test_no_automatic_merge.py",
+  "tests/architecture/test_landing_edges.py",
   "tests/fixtures/app_brain_landing.json",
   "tests/fixtures/auto-merge-rules/**",
   "tests/fixtures/deploy-workflows/**",

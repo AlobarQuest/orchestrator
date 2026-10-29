@@ -54,9 +54,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
-from change_proposer.change_manager import DEFAULT_BASE_URL as CM_DEFAULT_BASE_URL
-from change_proposer.change_manager import ChangeManagerClient, ChangeManagerError
 from change_proposer.cli import BOT_CHANGE_CLASS
+from estate_lander.change_manager import DEFAULT_BASE_URL as CM_DEFAULT_BASE_URL
+from estate_lander.change_manager import ChangeManagerClient, ChangeManagerError
 from estate_lander.orchestrator_client import (
     DEFAULT_BASE_URL,
     OrchestratorClient,

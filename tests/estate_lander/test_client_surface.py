@@ -22,11 +22,23 @@ import json
 import httpx
 import pytest
 
+from estate_lander.change_manager import ChangeManagerClient
+from estate_lander.change_manager import ForbiddenEndpointError as ChangeManagerForbidden
+from estate_lander.change_manager import is_allowed_write as is_allowed_cm_write
 from estate_lander.orchestrator_client import (
     ForbiddenEndpointError,
     OrchestratorClient,
     is_allowed_read,
     is_allowed_write,
+)
+
+# not-a-vocabulary: this lander's write routes, the cases the verb test runs over.
+WRITE_PATHS = frozenset(
+    {
+        "/api/v1/estate-pr-merge",
+        "/api/v1/estate-pr-branch-update",
+        "/api/v1/held-pr-close",
+    }
 )
 
 
@@ -82,6 +94,17 @@ def test_a_forbidden_write_never_reaches_the_transport() -> None:
     assert seen == []
 
 
+@pytest.mark.parametrize("method", ["PUT", "PATCH", "DELETE"])
+@pytest.mark.parametrize("path", sorted(WRITE_PATHS))
+def test_put_patch_and_delete_on_a_write_path_are_refused(method: str, path: str) -> None:
+    """The write allowlist is a POST allowlist: the method is part of the key, so another verb on
+    a listed path never reaches the transport."""
+    client, seen = _seen_client()
+    with pytest.raises(ForbiddenEndpointError):
+        client._send(method, path, json={})
+    assert seen == []
+
+
 def test_the_admission_route_may_only_be_READ() -> None:
     """The method is part of the key. A template-only allowlist that permitted the read would hand
     over the write with it -- and here the two paths are one character apart."""
@@ -117,3 +140,32 @@ def test_a_close_names_this_lanes_own_literal_and_the_callers_key() -> None:
             },
         )
     ]
+
+
+def test_the_change_manager_client_reads_items_and_writes_nothing() -> None:
+    """The lander's own change-manager client: the producer's one listing, sent exactly as the
+    producer sends it, and no write of any kind -- not even the producer's propose and retire."""
+    sent: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(f"{request.method} {request.url.path}?{request.url.query.decode()}")
+        return httpx.Response(200, json=[{"id": 1}, "not a record"])
+
+    with ChangeManagerClient("t", transport=httpx.MockTransport(handler)) as client:
+        assert client.records() == [{"id": 1}]
+        for method, path in (
+            ("POST", "/api/deploy-changes"),
+            ("POST", "/api/items/44/deploy-retirement"),
+            ("POST", "/api/items/44/approve"),
+            ("PUT", "/api/items"),
+            ("DELETE", "/api/items"),
+            ("GET", "/api/items/"),
+            ("GET", "/api/items/44"),
+            ("GET", "/api/landing-policy"),
+        ):
+            with pytest.raises(ChangeManagerForbidden):
+                client._send(method, path)
+
+    assert sent == ["GET /api/items?source=deploy"]
+    assert not is_allowed_cm_write("/api/deploy-changes")
+    assert not is_allowed_cm_write("/api/items")

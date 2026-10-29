@@ -196,9 +196,10 @@ TABLE: dict[str, Row] = {
         "typer",
         "typing",
     ),
-    # The producer's already-confined change-manager client is reused rather than re-implemented,
-    # because a second read-only client for one listing would be a second place for the
-    # withheld-source trap to be forgotten.
+    # The lander has its own read-only change-manager client (Landing Part 1): the producer's
+    # client also proposes and retires, which the lander never needs. It still imports the
+    # producer's constants (`DEPLOY_SOURCE`, `BOT_CHANGE_CLASS`), so the two sides agree on what the
+    # records are called and the withheld-source trap has one spelling.
     #
     # `lander` is the shared body of the two landing callers (Tier 3 item 27): each lane imports
     # it, and neither lane imports the other.

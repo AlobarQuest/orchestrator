@@ -12,8 +12,8 @@ from typing import Any
 import httpx
 import pytest
 
-from change_proposer.change_manager import ChangeManagerError
 from change_proposer.cli import BOT_CHANGE_CLASS, FACTORY_CHANGE_CLASS
+from estate_lander.change_manager import ChangeManagerError
 from estate_lander.cli import (
     LANE,
     _branch_updates,

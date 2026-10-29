@@ -29,6 +29,15 @@ from inert_lander.orchestrator_client import (
     is_allowed_write,
 )
 
+# not-a-vocabulary: this lander's write routes, the cases the verb test runs over.
+WRITE_PATHS = frozenset(
+    {
+        "/api/v1/inert-pr-merge",
+        "/api/v1/inert-pr-branch-update",
+        "/api/v1/held-pr-close",
+    }
+)
+
 
 def test_the_write_surface_is_three_routes_and_no_more() -> None:
     """THREE, and the count is in the name so a fourth has to be written down rather than acquired.
@@ -89,6 +98,17 @@ def test_a_forbidden_write_never_reaches_the_transport() -> None:
     client, seen = _seen_client()
     with pytest.raises(ForbiddenEndpointError):
         client._send("POST", "/api/v1/work-units/x/dispatch", json={})
+    assert seen == []
+
+
+@pytest.mark.parametrize("method", ["PUT", "PATCH", "DELETE"])
+@pytest.mark.parametrize("path", sorted(WRITE_PATHS))
+def test_put_patch_and_delete_on_a_write_path_are_refused(method: str, path: str) -> None:
+    """The write allowlist is a POST allowlist: the method is part of the key, so another verb on
+    a listed path never reaches the transport."""
+    client, seen = _seen_client()
+    with pytest.raises(ForbiddenEndpointError):
+        client._send(method, path, json={})
     assert seen == []
 
 
