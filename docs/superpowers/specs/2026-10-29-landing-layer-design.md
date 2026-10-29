@@ -6,7 +6,7 @@
   routes
 - **Decisions it builds on:** ADR-0016, 0018, 0019, 0020, 0023, 0024, 0028 (amendments 2 and 3),
   0034 to 0038, 0041, 0044, 0045, 0058
-- **Status:** Draft for Devon's review
+- **Status:** Draft for Devon's review; builder check done, its questions answered
 
 ## Intent
 
@@ -113,6 +113,8 @@ Recorded 2026-10-29, in this conversation:
 7. **The hold is an ordinary ceiling at the last known good version** (the version before the bump),
    and it stays until someone lifts it.
 8. **The post-landing watch and the revert are built into the landers,** not a separate process.
+9. **Where a repository's rollback plan targets the image (brain), the SDS re-points the image
+   first, then lands the revert.**
 
 ## Goals
 
@@ -277,6 +279,24 @@ did (ADR-0019): the orchestrator files a revert record, and change-manager's pol
 automatically, the way its work policy approves a standing bump. That is a change-manager change in
 Part 3. The revert's own rollout is then watched like any other. *Claude's call,* because Devon's
 decision 5 says the revert lands the way the bump landed.
+
+**Where the rollback plan targets the image, the image goes back first** (Devon's decision 9).
+brain has no lockfile, so a rebuild after a revert can resolve different dependencies than
+production ran; its transcribed rollback plan (`change_proposer/criteria.py::_ROLLBACKS`) names the
+image as the target, and `docs/operations/auto-merge-rollback.md` prescribes re-point, then revert.
+For such a repository the SDS:
+
+1. Re-points the application to the image it ran before the bump: the image bound to the bump's
+   parent commit (`image_release`'s binding), never a tag that can move.
+2. Confirms production serves that image's revision before going on, and alerts and stops if it
+   doesn't.
+3. Then opens and lands the revert as above, so `main` matches production again.
+
+The re-point is a new kind of act for the SDS: changing what Coolify runs, not only merging. The
+word guards (ADR-0051) forbid it in `src/orchestrator/`, so it runs on the lander side through a
+confined client (ADR-0050's `estate_clients` pattern), with a credential that can re-point only the
+member applications whose plan says image. *The credential's shape and where it lives are the
+builder's call,* under the BWS rules; it is registered like any other SDS credential.
 
 **A bump the SDS reverted is never landed again,** whether or not a hold could be placed: every
 landing admission refuses a bump to a dependency version the SDS has reverted. This closes the loop
