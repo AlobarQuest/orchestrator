@@ -203,6 +203,22 @@ MERGE_EXEMPT_PATHS: set[Path] = {
 }
 
 
+# A SECOND, NARROWER DOOR, for files that spell the merge command only to RECOGNISE it in text
+# they read, and perform no merge. Not `MERGE_EXEMPT_PATHS`: that set means "lands a pull
+# request", and every reader of it (the hold classification, ws32's labels) takes it at its word.
+# A file here is excused only the `gh pr merge` text spelling; an argv-list merge, the REST
+# spelling or a `.merge(` call in it still fails, and the rot check below refuses an entry that no
+# longer spells it or that also sits in the merge exemption.
+MERGE_DETECTOR_SPELLING = repr("gh pr merge")
+MERGE_DETECTOR_PATHS: set[Path] = {
+    # ADR-0038: nothing in the SDS arms auto-merge. `membership_check` reports a member repository
+    # whose workflow does, so `ARMING_MARKERS` spells `gh pr merge --auto` to find it in workflow
+    # text read over three GET routes (`is_allowed`); it merges nothing. The retired auto-merge
+    # workflows in tests/fixtures/auto-merge-rules/ are the control that the marker fires.
+    Path("src/membership_check/auto_merge.py"),
+}
+
+
 # The text scan above reads `gh pr merge` as one string, so the same command held as an argv
 # list -- `["gh", "pr", "merge", str(number), ...]`, the shape every subprocess call in this repo
 # takes -- spelled none of it. Measured 2026-10-24: `fork-sync ack` and `fork-sync onboard` both
@@ -244,6 +260,8 @@ def test_nothing_in_the_repo_merges_a_pull_request(source: Path) -> None:
     if source in MERGE_EXEMPT_PATHS:
         return
     merges = _merges(source)
+    if source in MERGE_DETECTOR_PATHS:
+        merges = [found for found in merges if found != MERGE_DETECTOR_SPELLING]
     assert not merges, (
         f"{source} performs a merge ({', '.join(merges)}). Merging is Devon's gate; "
         "code that merges has removed it. If this file is the bounded exception ADR-0020 "
@@ -311,6 +329,29 @@ def test_nothing_in_the_repo_calls_a_merge_method(source: Path) -> None:
         "removed it. If this file is the bounded exception ADR-0020 allows, add it to "
         "MERGE_EXEMPT_PATHS with a reason."
     )
+
+
+def test_the_merge_detector_door_names_only_detectors_that_need_it() -> None:
+    """Each entry still spells the command (or it needs no door), is not also a merger, and has
+    no other merge shape the door would have to excuse."""
+    for path in MERGE_DETECTOR_PATHS:
+        assert path not in MERGE_EXEMPT_PATHS, path
+        assert MERGE_DETECTOR_SPELLING in _merges(path), f"{path} no longer needs the door"
+        assert not _merge_method_calls(path), path
+
+
+def test_the_merge_detector_door_excuses_only_the_text_spelling(tmp_path: Path) -> None:
+    """A detector that also merges is caught: the door excuses one spelling, not the file."""
+    source = tmp_path / "detector.py"
+    source.write_text('M = "gh pr merge --auto"\nC = ["gh", "pr", "merge", "1"]\n')
+    MERGE_DETECTOR_PATHS.add(source)
+    try:
+        with pytest.raises(AssertionError, match="performs a merge"):
+            test_nothing_in_the_repo_merges_a_pull_request(source)
+        source.write_text('M = "gh pr merge --auto"\n')
+        test_nothing_in_the_repo_merges_a_pull_request(source)
+    finally:
+        MERGE_DETECTOR_PATHS.discard(source)
 
 
 def test_the_merge_exemption_names_only_files_that_need_it() -> None:
@@ -476,6 +517,11 @@ OUTBOUND_ALLOWLIST = {
     # opted in, which is the answer inverted for the whole population and in the direction that
     # looks like a working refusal.
     Path("src/membership_check/declaration.py"),
+    # `membership_check`'s auto-merge reader (ADR-0038: nothing in the SDS arms auto-merge). Three
+    # GET routes on GitHub -- the repository (`allow_auto_merge`), its `.github/workflows`
+    # listing, and each file in it -- each judged on the path the transport will send, so a name
+    # that composes anything else is refused before it leaves. It reports; it changes no setting.
+    Path("src/membership_check/auto_merge.py"),
     # ADR-0029. `work_watcher` is the work lane's watcher, a SEPARATE program that shares the
     # carry's invocation and runs before it. TWO files, one route each. The change-manager
     # one is the only MUTATING egress either work-lane program has, and it is one-directional

@@ -19,6 +19,7 @@ from deploy_watcher.workflows import ROLLOUT_WORKFLOWS
 from fork_harden.rules import FORKS
 from fork_sync.gh import CommandFailed, subprocess_runner
 from fork_sync.watch import Unreadable, forks
+from membership_check.auto_merge import AutoMergeState, GitHubAutoMergeSource
 from membership_check.consistency import Scope, canonical, check, factory_targets
 from membership_check.declaration import GitHubDeclarationSource
 from pin_watcher.github import GitHubReader, PinWatcherError, repositories
@@ -81,6 +82,12 @@ def _spelled(names: Iterable[str], owned: list[str]) -> list[str]:
     return [spelling.get(name.lower(), name) for name in names]
 
 
+def _auto_merge(token: str, members: Iterable[str]) -> dict[str, AutoMergeState]:
+    """Every member repository's auto-merge setting and arming workflows, read from GitHub."""
+    with GitHubAutoMergeSource(token=token) as source:
+        return {repository: source.state(repository) for repository in members}
+
+
 def _standing_update_repositories() -> tuple[list[str], list[str]]:
     """Repositories with a standing dependency-update package; an unreadable checkout is a gap."""
     try:
@@ -130,6 +137,7 @@ def main() -> None:
         registry_repositories=_spelled(REGISTRY_REPOSITORIES, owned),
         rollbacks=_spelled(ROLLBACKS, owned),
         standing_update_repositories=_spelled(standing, owned),
+        auto_merge=_auto_merge(tokens[GITHUB_TOKEN_VARIABLE], [m.repository for m in members]),
     )
     for line in report.disagreements:
         typer.echo(line)

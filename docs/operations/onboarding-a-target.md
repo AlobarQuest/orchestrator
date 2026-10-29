@@ -155,8 +155,10 @@ by hand before you make it a target.
    - `squash_merge_commit_message` set to `COMMIT_MESSAGES`, so the landing commit keeps
      factory-runner's `SDS-Unit:` trailer. Without it the landing ledger can't attribute the
      landing.
-   - `allow_auto_merge: true`, enabled only after reading the required checks back. Auto-merge
-     with no required checks merges instantly.
+   - `allow_auto_merge: false`, and no workflow that arms auto-merge. Nothing in the SDS arms
+     auto-merge since ADR-0038 (the orchestrator merges directly), and the setting only lets any
+     writer arm a merge the landing lanes never judged. `membership-check` reports a member
+     repository that allows it or carries an arming workflow.
 
 ## Prepare the first unit
 

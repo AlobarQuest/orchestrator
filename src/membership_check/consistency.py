@@ -17,6 +17,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 
+from membership_check.auto_merge import AutoMergeState
 from membership_check.declaration import DeclarationSource
 from sds_members.client import Member
 
@@ -94,6 +95,7 @@ def check(
     registry_repositories: Iterable[str],
     rollbacks: Iterable[str],
     standing_update_repositories: Iterable[str],
+    auto_merge: Mapping[str, AutoMergeState],
 ) -> Report:
     members = list(members)
     app_changes = _granted(members, "app_changes")
@@ -137,4 +139,38 @@ def check(
         updates,
         "dependency_updates",
     )
-    return Report(disagreements, list(declarations.gaps))
+    auto_disagreements, auto_gaps = _auto_merge(members, auto_merge)
+    disagreements += auto_disagreements
+    return Report(disagreements, [*declarations.gaps, *auto_gaps])
+
+
+def _auto_merge(
+    members: list[Member], states: Mapping[str, AutoMergeState]
+) -> tuple[list[str], list[str]]:
+    """No member repository may allow auto-merge or carry a workflow that arms it (ADR-0038).
+
+    Every member is read, retired ones included: this is about what a repository CAN do, not what
+    the SDS is granted there. A member with no state, or with a field that couldn't be read, is a
+    gap, never a pass.
+    """
+    by_name = {name.lower(): state for name, state in states.items()}
+    disagreements: list[str] = []
+    gaps: list[str] = []
+    for member in sorted(members, key=lambda m: m.repository.lower()):
+        repository = member.repository
+        state = by_name.get(repository.lower())
+        if state is None:
+            gaps.append(f"auto-merge state unread: {repository} (no read was made)")
+            continue
+        if state.allowed is True:
+            disagreements.append(
+                f"{repository}: allow_auto_merge is on, so any writer can arm a merge; "
+                "nothing in the SDS arms auto-merge (ADR-0038)"
+            )
+        disagreements += [
+            f"{repository}: {path} arms auto-merge; nothing in the SDS arms auto-merge (ADR-0038)"
+            for path in state.arming_workflows or ()
+        ]
+        if state.allowed is None or state.arming_workflows is None:
+            gaps.append(f"auto-merge state unreadable: {repository} ({state.detail})")
+    return disagreements, gaps
