@@ -194,10 +194,12 @@ These invariants in the orchestrator's `CLAUDE.md` govern the work:
 
 ### Part 1: Findings get a home, and the edges get pinned
 
-**Findings.** Both landers become outcome alarms, as the bridge launchers did in #533: a finding
-pings `/fail` with the report as its body. A PR held past a threshold gets a keyed alert-hub alert
-that resolves when the PR lands or closes, so #506 would have alerted. *The threshold is the
-builder's call*, a plain int with a real default (`docs/method-lessons.md` #32).
+**Findings.** The landers keep their dead-man checks, which already route to alert-hub, because
+94% of the last 300 inert passes held something (the current streak is 166), so a `/fail` per held
+pass would alert once and then say nothing new. Instead one keyed alert-hub alert fires per PR held
+past 24 hours, and it resolves when the PR stops being held (a repository GitHub couldn't list
+holds its alerts rather than resolving them), so #506 would have alerted. The threshold is a plain
+int with a real default (`docs/method-lessons.md` #32).
 
 **Edges.**
 

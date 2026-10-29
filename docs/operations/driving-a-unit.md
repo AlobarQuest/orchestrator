@@ -460,17 +460,17 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   `verifier.github.named_check` evidence, never by a person. One attempt, 9 LLM calls of 120, 40
   seconds of coding, `uv.lock` +3 −3.
 
-  1. **`factory decompose` structurally CANNOT produce a merge-granting envelope**, for any
-     package, any repository, any version. `build_envelope` emits
-     `profiles/dependency_update.py::CAPABILITIES` verbatim — a fixed six-entry dict with no
-     `github.pr.merge` — so its envelopes refuse at `merge_capability_not_authorized`. **Every
-     ADR-0020 landing hand-authors its decomposition proposal until that profile changes**, so the
-     one profile with end-to-end tooling is the one profile that cannot close the loop. Separately
-     `_uv_discover` scans `pyproject.toml` sections only, so a **transitive** dependency has no pin
-     site and `decompose` refuses before emitting anything — which is exactly the property that
-     makes a transitive bump the safest possible subject. Everything decompose does *around* the
-     envelope stays reusable: the criterion-UUID map, the conformance scan, brain enrichment, the
-     routing rationale, the three fail-closed validations.
+  1. **`factory decompose` emits a merge-granting envelope for a dependency update.** Every
+     `dependency-update` known-good pattern in `factory-policy.toml` (uv, npm and pip, under both
+     `source_repository` and `live_estate`) allows `github.pr.merge`, and intent-packages'
+     `profiles/dependency_update.py::CAPABILITIES` stamps it, held equal by
+     `scripts/check_profile_budget_agreement.py`. On 2026-08-10 the profile had no such entry, so
+     every ADR-0020 landing hand-authored its decomposition proposal. Separately `_uv_discover`
+     scans `pyproject.toml` sections only, so a **transitive** dependency has no pin site and
+     `decompose` refuses before emitting anything — which is exactly the property that makes a
+     transitive bump the safest possible subject. Everything decompose does *around* the envelope
+     stays reusable: the criterion-UUID map, the conformance scan, brain enrichment, the routing
+     rationale, the three fail-closed validations.
   2. **A `human_review` acceptance criterion ANYWHERE on a package the factory is to land refuses
      the landing — including one RETAINED rather than mapped to the unit.**
      `verifier_decided_completion`'s fifth disqualifier (`decision_outside_required_criteria`)

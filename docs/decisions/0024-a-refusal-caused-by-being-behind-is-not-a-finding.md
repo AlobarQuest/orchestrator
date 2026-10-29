@@ -76,3 +76,24 @@ since `#177`.
   no exception present, is still a finding — it is transient, and the lane will freshen it on the
   next pass.
 - **The line still prints.** Suppression means it does not drive exit 3, never that it is hidden.
+
+## Amendment 1 — 2026-10-29 (acting and reporting are separate criteria)
+
+**Status:** Accepted (records what the code does; no new decision).
+
+The two consumers keep separate criteria. A refusal is never folded into a shared set to excuse it
+for one consumer:
+
+- **`qualifies_for_branch_update`** is the acting criterion: may the lane bring this head up to
+  date. It reads the freshness set and subtracts two more things of its own: the deliberate
+  refusals, and `landing_checks_awaiting_verdict`, which bringing the branch up to date answers
+  rather than tolerates.
+- **`freshness_derived_refusals`** (`orchestrator.services.landing.terms`) is the reporting
+  criterion: which refusals the head's position causes, and so are not findings beside an
+  exception. `landing_checks_awaiting_verdict` is not a member, because an unanswered check is
+  still worth reporting beside a permanent exception.
+
+So *One concept, two consumers* above means one definition of what freshness causes, read by both.
+It does not mean one set of excused refusals. The lanes hold a second copy of the reporting
+criterion, `lander.core.freshness_derived`, because they may not import the orchestrator; a test
+that may import both holds the copies equal.

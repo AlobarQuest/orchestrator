@@ -392,7 +392,8 @@ CLASSIFICATION: dict[str, Row] = {
         "ADR-0038 amendment 1 (Tier 3 item 27): the body the two landing callers share. It "
         "DECIDES when to land and to update a branch, but names no orchestrator path: every write "
         "goes through the confined client a lane passes in, and that lane's row declares it. Its "
-        "own isolation row forbids it importing any client, so it cannot acquire one",
+        "own isolation row lets it import one client, `alert_hub_client` (`held_alerts` sends a "
+        "keyed alert-hub alert), and no orchestrator or GitHub client, so it cannot acquire one",
     ),
     "fork_sync": Row(
         Role.NOT_AN_ORCHESTRATOR_WRITER,

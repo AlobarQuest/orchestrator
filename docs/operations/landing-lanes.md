@@ -4,6 +4,8 @@ How the estate and inert landing lanes, the landing ledger, change records and t
 
 The entries below moved verbatim from the CLAUDE.md invariants section on 2026-10-01 (Tier 3 item 17). Each keeps its original number. Their dated corrections are the record of what was measured when; read the last correction in an entry as its current state.
 
+**Reading the older entries.** ADR-0038 (2026-08-31) removed the Dependabot auto-merge workflows from the six repositories that carried them, and the orchestrator merges directly. "The cascade" in an entry below means the inert lane, which took the cascade's subjects. An entry that describes enabling or arming auto-merge records what was true when it was written; members now keep auto-merge off, and `membership_check` reports any member that doesn't.
+
 ### #100
 
 - **R13's "merging a PR deploys nothing" is TRUE OF COOLIFY AND FALSE OF THE ESTATE — a repo can
@@ -159,7 +161,9 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   the reasoning going missing is how a setting becomes folklore.** Applied 2026-08-06 after the Pro
   upgrade made protection available on private repos. Every repo: a **required status check that
   actually runs on pull requests**, no force-push, no deletion, **`required_approving_review_count`
-  absent**, `strict: false`, `allow_auto_merge: true`.
+  absent**, `strict: false`, `allow_auto_merge: true`. *ADR-0038 superseded `allow_auto_merge:
+  true` and the auto-merge bullets below: members have auto-merge off, and `membership_check`
+  reports one that doesn't.*
   - **The required check must be the JOB name, not the workflow name**, and it must be verified
     against a real open PR — a context string that does not match blocks every pull request
     forever, silently. The six: orchestrator `Quality` + `Runner consumer compatibility`;
@@ -180,12 +184,12 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
     uncommon, and immediately visible when `main` goes red. factory-runner carried `strict: true`
     from its initial 2026-08-03 application rather than from a decision, and was flipped to `false`
     on 2026-08-06 for uniformity.
-  - **`enforce_admins` is TRUE on `factory-runner` alone, and that asymmetry is the considered
-    part.** It is the one repo where a bad merge stops every dispatch in the estate, and its CI is
-    ~20 seconds, so enforcement is nearly free. It is off elsewhere chiefly because orchestrator's
-    suite is 25 minutes and enforcing there taxes every CLAUDE.md, ADR and backlog commit — the
-    lowest-risk commits, hardest. Note `enforce_admins` does **not** affect auto-merge, which
-    merges through GitHub once required checks pass either way.
+  - **`enforce_admins` is TRUE on `factory-runner`, `change-manager` and `brain` (ADR-0038), and
+    false on the other repositories measured; the asymmetry is the considered part.**
+    `factory-runner` is the one repo where a bad merge stops every dispatch in the estate, and its
+    CI is ~20 seconds, so enforcement is nearly free. It is off elsewhere chiefly because
+    orchestrator's suite is 25 minutes and enforcing there taxes every CLAUDE.md, ADR and backlog
+    commit — the lowest-risk commits, hardest.
 
 ### #142
 
@@ -462,6 +466,8 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   `rule_revision_unknown` ⊂ `current_rule_revision_unknown`, exempted as named debt.
 
 ### #253
+
+*ADR-0038 removed the arming workflows, so nothing arms auto-merge now. The attribution mechanics below still decide what the ledger records for any merge: `merged_by` with a `[bot]` suffix is the basis.*
 
 - **GITHUB ATTRIBUTES AN AUTO-MERGE TO THE ARMING IDENTITY, SO THE ARMING CREDENTIAL IS ALSO THE
   LANDING LEDGER'S ATTRIBUTION — MOVING ONE SILENTLY MOVES THE OTHER.** `basis_of`
