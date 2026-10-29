@@ -503,9 +503,9 @@ def read_landing(reader: GitHubReader, repository: str, base_ref: str, sha: str)
     # has them. A true merge commit does not, and neither does a squash in a repository configured
     # to write a different body -- and the fallback in both cases is the pull request's own head,
     # where the runner wrote its own trailers. For Dependabot's block the gate read the FIRST
-    # commit instead (`_gate_message`); after a branch update the head is a merge commit and this
-    # fallback finds nothing. It stays head-only because landing facts are frozen at first write.
-    # Fetched ONCE for all four, and only when something is actually missing.
+    # commit (`_gate_message`); after a branch update the head is a merge commit naming nothing,
+    # so that commit is asked last, below. Fetched ONCE for all four, and only when something is
+    # actually missing.
     #
     # EACH ARM ASKS ITS OWN QUESTION, AND THE UPDATE ARM'S USED TO ASK A DIFFERENT ONE. It was
     # keyed on an absent `update-type`, which spells "no version delta stated" and was being read
@@ -536,6 +536,14 @@ def read_landing(reader: GitHubReader, repository: str, base_ref: str, sha: str)
         inert_policy = inert_policy or inert_landing_permission(head_message)
         if update is None:
             update = update_metadata(head_message, head_ref)
+    if update is None and (detail.get("user") or {}).get("login") == UPSTREAM_AUTHOR:
+        # The last resort, and only for the update bot's pull requests: after a branch update the
+        # head is a merge commit naming nothing, while the gate read `commits[0]`. It can move only
+        # a row stored with `update` absent, and on 2026-10-29 none did: re-deriving all 541
+        # stored landings in the 30-day window across the 13 ledger repositories under this rule
+        # reproduced every row except the four `KNOWN_UNDERCOUNTED_CHECK_LANDINGS`, which differ
+        # by their checks and are already declined. Landings recorded since carry this rule.
+        update = update_metadata(_gate_message(reader, repository, detail["number"]), head_ref)
     return Landing(
         repository=repository,
         base_ref=base_ref,
