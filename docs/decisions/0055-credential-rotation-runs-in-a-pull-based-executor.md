@@ -2023,5 +2023,7 @@ After the click everything is machine until a provider needs a person: the propo
 proposes the record, change-manager approves it, the carrier registers it at its next pass, the
 decomposer proposes and the orchestrator approves the decomposition within the hour, and the
 executor claims within five minutes. Approving a rotation revision by name now starts a production
-credential change. Every other kind of work keeps its gates: the policies key on the rotation
+credential change. A policy-approved decomposition's first unit is ready at once, so the window ADR-0052 leaves
+for superseding a decomposition before any unit is claimed is gone for these: a wrong derived
+plan is retired by letting its unit fail and cancelling it. Every other kind of work keeps its gates: the policies key on the rotation
 profile alone. Graduating decomposition approval in general stays with the Admission pass.

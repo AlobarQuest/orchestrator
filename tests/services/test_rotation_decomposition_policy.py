@@ -11,7 +11,7 @@ import uuid
 from typing import Any
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
@@ -489,3 +489,45 @@ def test_system_may_not_register_a_unit_of_its_own_proposal_a_person_approved(
             actor_role=ActorRole.SYSTEM,
             approved_decomposition_id=approved.id,
         )
+
+
+def test_an_approval_failing_midway_leaves_no_trace_of_itself(
+    migrated_session: Session, migrated_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The second unit's registration fails after the approval, the first unit and its events
+    are written: the savepoint must take all of them back, and the proposal must survive."""
+    from orchestrator.persistence.models import ApprovedDecomposition, Event
+    from orchestrator.services.intake import decomposition
+
+    real = decomposition.register_approved_unit
+    calls: list[str] = []
+
+    def fail_second(session: Session, **kwargs: Any) -> WorkUnit:
+        calls.append(kwargs["unit_key"])
+        if len(calls) == 2:
+            raise DomainError("unit_conflict", "a unit already holds that key", None)
+        return real(session, **kwargs)
+
+    monkeypatch.setattr(decomposition, "register_approved_unit", fail_second)
+    revision = _rotation_revision(migrated_session)
+    events_before = migrated_session.scalar(select(func.count()).select_from(Event))
+    proposal = submit_decomposition_proposal(
+        migrated_session,
+        _command(revision.id, package_ac_ids(migrated_session, revision.id)),
+        SYSTEM,
+    )
+    migrated_session.commit()
+    assert len(calls) == 2
+
+    with Session(migrated_engine) as reader:
+        stored = reader.get(DecompositionProposal, proposal.id)
+        assert stored is not None
+        assert (stored.state, stored.decided_by, stored.created_work_unit_ids) == (
+            "proposed",
+            None,
+            None,
+        )
+        assert reader.scalar(select(func.count()).select_from(WorkUnit)) == 0
+        assert reader.scalar(select(func.count()).select_from(ApprovedDecomposition)) == 0
+        # Only the proposal's own event, written before the savepoint, remains.
+        assert reader.scalar(select(func.count()).select_from(Event)) == (events_before or 0) + 1
