@@ -342,7 +342,15 @@ def _consider(
     if bump is None:
         return Route("skip", "unclassifiable: the title states no single version delta")
 
-    assert pending.update is not None  # a parsed title with no trailer is ambiguous above
+    if pending.update is None:
+        # A range declares no update type, so a head commit with no trailer at all (a branch
+        # update's merge commit) agrees with the title on "no delta" and passes the check above.
+        # With no metadata there is no ecosystem or dependency to route on.
+        return Route(
+            "ambiguous",
+            "ambiguous: the title states a version range and the head commit carries no update "
+            "trailer",
+        )
     ecosystem = pending.update.ecosystem
     if ecosystem is None:
         return Route("skip", "unroutable: the branch names no ecosystem")
