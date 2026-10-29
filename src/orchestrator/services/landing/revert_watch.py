@@ -157,9 +157,13 @@ def judge(
     if record is None:
         return _failed_verdict(FLAKY_RETRY, failed, "failed once")
     asked = record.rerun_attempts or {}
-    new = [job for job in failed if str(job.run_id) not in asked]
+    # Survival is per job: a failure counts toward `bad` only for a job the record already names,
+    # in a run already rerun. A job failing for the first time -- one skipped until the job it
+    # needs passed on the rerun -- is a first failure of its own, and asks for its own rerun.
+    known = set(record.failed_job_names)
+    new = [job for job in failed if str(job.run_id) not in asked or job.name not in known]
     if new:
-        return _failed_verdict(FLAKY_RETRY, new, "failed in a run not yet rerun")
+        return _failed_verdict(FLAKY_RETRY, new, "failed in a run or job not yet rerun")
     if any(job.attempt <= asked[str(job.run_id)] or job.conclusion == _CANCELLED for job in failed):
         return _verdict(PENDING, "the rerun has not reported a failure of its own yet")
     return _after_rerun(gateway, repository, record.parent_sha, failed)

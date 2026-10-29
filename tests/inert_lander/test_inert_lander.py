@@ -1063,9 +1063,21 @@ class RevertAlertCalls:
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, list[dict[str, Any]] | None]] = []
+        self.stranded: list[set[tuple[str, int]]] = []
+        self.unknown: list[set[tuple[str, int]]] = []
 
-    def __call__(self, lane: str, watch: Any, **_: Any) -> str | None:
+    def __call__(
+        self,
+        lane: str,
+        watch: Any,
+        *,
+        stranded: Any = frozenset(),
+        unknown: Any = frozenset(),
+        **_: Any,
+    ) -> str | None:
         self.calls.append((lane, None if watch is None else list(watch)))
+        self.stranded.append(set(stranded))
+        self.unknown.append(set(unknown))
         return None
 
 
@@ -1289,3 +1301,34 @@ def test_a_refused_act_is_reported_as_an_error(monkeypatch, capsys) -> None:
 
     assert run(["--submit"]) == EXIT_FINDINGS
     assert "error" in capsys.readouterr().out
+
+
+def test_a_revert_closed_without_landing_is_a_finding(monkeypatch, revert_alerts, capsys) -> None:
+    """Its record stays `revert_opened` and GitHub no longer lists it: nothing else says so."""
+    watch = [_watched(None, "revert_opened", revert_pr_number=REVERT_PR)]
+    _wire(monkeypatch, FakeGitHub({REPOSITORY: []}), FakeOrchestrator(watch=watch), _rule())
+
+    assert run(["--submit"]) == EXIT_FINDINGS
+
+    assert f"{REPOSITORY}#{LANDED}  revert-stranded" in capsys.readouterr().out
+    assert revert_alerts.stranded == [{(REPOSITORY, LANDED)}]
+    assert revert_alerts.unknown == [set()]
+
+
+def test_an_open_revert_is_not_stranded_and_an_unlisted_one_is_unknown(
+    monkeypatch, revert_alerts
+) -> None:
+    watch = [
+        _watched(None, "revert_opened", revert_pr_number=REVERT_PR),
+        _watched(None, "revert_opened", repository=OTHER, revert_pr_number=REVERT_PR),
+    ]
+    github = FakeGitHub(
+        {REPOSITORY: [_pull(REVERT_PR, author="alobar-sds-dispatch[bot]")]},
+        errors={OTHER: ReadError("listing failed")},
+    )
+    _wire(monkeypatch, github, FakeOrchestrator(watch=watch), _rule(REPOSITORY, OTHER))
+
+    run(["--submit"])
+
+    assert revert_alerts.stranded == [set()]
+    assert revert_alerts.unknown == [{(OTHER, LANDED)}]

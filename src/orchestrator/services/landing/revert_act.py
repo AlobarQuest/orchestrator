@@ -16,10 +16,12 @@ and a `dependabot/<ecosystem>/` branch, read from the pull request), so a fork's
 never watched either.
 
 A landing stays in the watch for `WATCH_HOURS` after it landed, and for as long after that as its
-record keeps it there: `revert_opened` until it moves, and every other status for `WATCH_HOURS`
-after its record last changed. So a `clean` landing leaves when its window closes, and so does one
-whose rerun passed (its record stays `rerun_requested`, and nothing moves it) or never reported;
-a revert stays until it has landed and been seen landed; and a refusal is reported for two days.
+record keeps it there: `revert_opened`, `refused_overlap` and `revert_failed` until they move, and
+every other status for `WATCH_HOURS` after its record last changed. So a `clean` landing leaves
+when its window closes, and so does one whose rerun passed (its record stays `rerun_requested`, and
+nothing moves it) or never reported; a revert stays until it has landed and been seen landed; and a
+refused or failed revert stays, since the default branch may still be broken and only a person
+clears it.
 
 ## Every call is bounded by the inert lane's grant term
 
@@ -84,7 +86,7 @@ from orchestrator.services.landing.terms import (
     ecosystem_of,
     grant_term,
 )
-from orchestrator.services.membership.holds import Bump, from_version_of
+from orchestrator.services.membership.holds import Bump, directory_of, from_version_of
 
 # Refusals. Nothing is read, written or recorded under any of them.
 LANDING_REVERT_LANE_OFF: Final = "landing_revert_lane_off"
@@ -99,10 +101,13 @@ RERUN_REQUESTED: Final = "rerun_requested"
 REFUSED_OVERLAP: Final = "refused_overlap"
 REVERT_FAILED: Final = "revert_failed"
 
-# The record status that keeps a landing in the watch however old it is: the revert pull request
-# the lander must still land. Never `rerun_requested`: a rerun that passed leaves its record there
-# for good, and it would be re-judged through the App on every pass forever.
-_ALWAYS_WATCHED: Final = frozenset({REVERT_OPENED})  # not-a-vocabulary: statuses
+# The record statuses that keep a landing in the watch however old it is, none of them read through
+# the App: the revert pull request the lander must still land, and the two that leave the default
+# branch possibly broken with no revert, which only a person clears. Never `rerun_requested`: a
+# rerun that passed leaves its record there for good, and it would be re-judged on every pass.
+_ALWAYS_WATCHED: Final = frozenset(  # not-a-vocabulary: record statuses
+    {REVERT_OPENED, REFUSED_OVERLAP, REVERT_FAILED}
+)
 
 # The events a landing of this lane's writes, one per landed status.
 _LANDED_ACTIONS: Final = (
@@ -170,8 +175,18 @@ class RevertActOutcome:
     replayed: bool
 
 
-def landing_watch(session: Session, gateway: RevertActGateway) -> tuple[WatchedLanding, ...]:
-    """Every watched landing, judged or reported, oldest first. Reads only; writes nothing."""
+def landing_watch(
+    session: Session,
+    gateway: RevertActGateway,
+    *,
+    enabled: bool,
+    credentials_configured: bool,
+) -> tuple[WatchedLanding, ...]:
+    """Every watched landing, judged or reported, oldest first. Reads only; writes nothing.
+
+    Refused, before any read, when the lane may not act: the same refusal the act gives.
+    """
+    _refuse_unless_lane_on(enabled and credentials_configured)
     grants = MemberRecordGrants(session)
     watched: list[WatchedLanding] = []
     for landing in _watched_landings(session):
@@ -231,7 +246,7 @@ def _act(
     lock_repository(session, _LOCK, repository)
     spent = session.scalar(select(Event).where(Event.idempotency_key == command.idempotency_key))
     if spent is not None:
-        return _replay(spent, command.idempotency_key)
+        return _replay(spent, command, repository)
     landing = next(iter(_watched_landings(session, repository, command.pr_number)), None)
     record = _record(session, repository, command.pr_number, lock=True)
     if landing is None:
@@ -256,14 +271,18 @@ def _act(
     return _outcome(landing, verdict, record, acted=False)
 
 
-def _refuse_unless_permitted(session: Session, repository: str, lane_on: bool) -> None:
-    """The lane's switch and App credentials, then its grant term: before anything is read."""
+def _refuse_unless_lane_on(lane_on: bool) -> None:
     if not lane_on:
         raise DomainError(
             LANDING_REVERT_LANE_OFF,
             "the inert lane may not act: it is switched off or has no App credentials",
             "switch the lane on and configure the App",
         )
+
+
+def _refuse_unless_permitted(session: Session, repository: str, lane_on: bool) -> None:
+    """The lane's switch and App credentials, then its grant term: before anything is read."""
+    _refuse_unless_lane_on(lane_on)
     if not grant_term(MemberRecordGrants(session), repository, (DEPENDENCY_UPDATES_SERVICE,)).met:
         raise DomainError(
             LANDING_REPOSITORY_NOT_GRANTED,
@@ -396,17 +415,21 @@ def _revert(
 def _bump_rows(bumps: tuple[Bump, ...] | None, title: str) -> list[dict[str, Any]] | None:
     """The record's `bumps`: each dependency the update moved, with the version it moved from.
 
-    The from-version is read from a single update's title; a grouped update's title names none, so
-    its entries carry None and `revert_hold` holds nothing for them (the never-again term still
-    refuses their versions).
+    The from-version and the directory are read from a single update's title (the block names
+    neither): the directory is its ` in /<path>` suffix, else the root, and is used only where the
+    block named none. A grouped update's title names neither, so its entries carry None for both
+    and `revert_hold` holds nothing for them (the never-again term still refuses their versions,
+    on any directory).
     """
     if bumps is None:
         return None
-    from_version = from_version_of(title) if len(bumps) == 1 else None
+    single = len(bumps) == 1
+    from_version = from_version_of(title) if single else None
+    directory = directory_of(title) if single else None
     return [
         {
             "ecosystem": bump.ecosystem,
-            "directory": bump.directory,
+            "directory": bump.directory or directory,
             "dependency": bump.dependency,
             "from_version": from_version,
             "to_version": bump.to_version,
@@ -565,15 +588,22 @@ def _recorded(
     return outcome
 
 
-def _replay(spent: Event, key: str) -> RevertActOutcome:
-    """This request, already acted on: answer from its event. A key another act spent is refused."""
-    if not spent.action.startswith(_EVENT_PREFIX) or not isinstance(spent.payload, dict):
+def _replay(spent: Event, command: RevertCommand, repository: str) -> RevertActOutcome:
+    """This request, already acted on: answer from its event. A key another act spent, or one spent
+    on another landing, is refused."""
+    key = command.idempotency_key
+    payload = spent.payload if isinstance(spent.payload, dict) else None
+    if (
+        not spent.action.startswith(_EVENT_PREFIX)
+        or payload is None
+        or payload.get("repository") != repository
+        or payload.get("pr_number") != command.pr_number
+    ):
         raise DomainError(
             "idempotency_conflict",
-            "this idempotency key belongs to a different act",
-            f"nothing uses {key} but an act on a landing that went bad",
+            "this idempotency key belongs to a different act or landing",
+            f"nothing uses {key} but this act on this landing",
         )
-    payload: dict[str, Any] = spent.payload
     number, status = payload.get("revert_pr_number"), payload.get("status")
     return RevertActOutcome(
         repository=str(payload.get("repository") or ""),

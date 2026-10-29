@@ -33,9 +33,12 @@ the two writes never leaves `alerts.json` ahead of the sightings.
 `sync_revert_alerts` raises one alert per revert record in the orchestrator's landing watch:
 `landing-reverted:<repo>:<pr>` once the revert has landed (naming the failed jobs, the revert pull
 request, the hold it placed and how to lift one), and `landing-revert-refused:<repo>:<pr>` or
-`landing-revert-failed:<repo>:<pr>` when no revert could be opened. Each fires once and is
-resolved when its record leaves the watch. A pass that could not read the watch holds every
-remembered key. Its memory is its own file, `revert-alerts.json`: `KeyedAlerts` resolves every
+`landing-revert-failed:<repo>:<pr>` when no revert could be opened, which stay open until a person
+closes them (their records never leave the watch on a timer). `landing-revert-stranded:<repo>:<pr>`
+fires for a revert pull request the lander found no longer open while its record still says it is
+(closed without landing); it is held while that repository could not be listed. Each fires once and
+is resolved when its condition is gone. A pass that could not read the watch holds every remembered
+key. Its memory is its own file, `revert-alerts.json`: `KeyedAlerts` resolves every
 remembered key a sync does not name, so sharing `alerts.json` would resolve the other's alerts.
 """
 
@@ -43,7 +46,7 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence, Set
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Final
@@ -68,6 +71,7 @@ _REVERT_ALERTS: Final = {
     "refused_overlap": "landing-revert-refused",
     "revert_failed": "landing-revert-failed",
 }
+_STRANDED: Final = "landing-revert-stranded"
 LIFT_A_HOLD: Final = (
     "To lift a hold: stage a lift with `sds-members stage <file.toml>`, then confirm it on /review."
 )
@@ -211,6 +215,25 @@ def revert_key(status: str, repository: str, number: int) -> str | None:
     return None if prefix is None else alert_key(prefix, repository.lower(), str(number))
 
 
+def stranded_key(repository: str, number: int) -> str:
+    """The alert key of a landing whose revert pull request closed without landing."""
+    return alert_key(_STRANDED, repository.lower(), str(number))
+
+
+def _stranded_alert(row: Mapping[str, object]) -> Alert:
+    repository, number, revert = (
+        row.get("repository"),
+        row.get("pr_number"),
+        row.get("revert_pr_number"),
+    )
+    return Alert(
+        f"Revert not landed: {repository}#{number}",
+        f"The revert #{revert} of {repository}#{number} is no longer open and did not land, so the "
+        "default branch may still carry the bad bump. A person reverts it or reopens the revert.",
+        f"https://github.com/{repository}/pull/{revert}",
+    )
+
+
 def _revert_alert(row: Mapping[str, object]) -> Alert:
     repository, number = str(row.get("repository")), row.get("pr_number")
     jobs = row.get("failed_job_names")
@@ -254,11 +277,15 @@ def sync_revert_alerts(
     lane: str,
     watch: Sequence[Mapping[str, object]] | None,
     *,
+    stranded: Set[tuple[str, int]] = frozenset(),
+    unknown: Set[tuple[str, int]] = frozenset(),
     environ: Mapping[str, str] = os.environ,
     transport: httpx.BaseTransport | None = None,
 ) -> str | None:
     """Bring alert-hub in line with the watch's revert records; `None` for a watch that could not
-    be read, which holds every remembered key. Answers why it could not, or None."""
+    be read, which holds every remembered key. `stranded` names the landings whose revert pull
+    request the lander found closed without landing, and `unknown` those whose repository it could
+    not list (their stranded alert is held). Answers why it could not, or None."""
     token = environ.get(TOKEN_ENV, "")
     if not token:
         return f"{TOKEN_ENV} is unset"
@@ -278,7 +305,13 @@ def sync_revert_alerts(
         if watch is None:
             hub.sync({}, hub.remembered())
         else:
-            hub.sync(revert_alerts(watch))
+            alerts = revert_alerts(watch)
+            for row in watch:
+                repository, number = row.get("repository"), row.get("pr_number")
+                if isinstance(repository, str) and isinstance(number, int):
+                    if (repository, number) in stranded:
+                        alerts[stranded_key(repository, number)] = _stranded_alert(row)
+            hub.sync(alerts, {stranded_key(r, n) for r, n in unknown})
     except AlertHubError as error:
         return str(error)
     return None

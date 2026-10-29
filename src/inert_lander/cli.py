@@ -249,6 +249,10 @@ class Selection:
     subjects: list[tuple[str, int]]
     deferred: dict[str, int]
     unreadable: list[Outcome]
+    # Landing Part 3a: every pull request GitHub listed open, and every repository it listed, so a
+    # recorded revert that is no longer open can be told from one whose repository went unread.
+    open_pulls: frozenset[tuple[str, int]] = frozenset()
+    listed: frozenset[str] = frozenset()
 
 
 def _subjects(
@@ -282,12 +286,15 @@ def _subjects(
     subjects: list[tuple[str, int]] = []
     deferred: dict[str, int] = {}
     unreadable: list[Outcome] = []
+    open_pulls: set[tuple[str, int]] = set()
+    listed: set[str] = set()
     for repository in sorted(rule.inert):
         try:
             pulls = reader.open_pull_requests(repository)
         except ReadError as error:
             unreadable.append(Outcome(repository, 0, "unreadable", str(error)))
             continue
+        listed.add(repository)
         # NUMBERED FIRST, SORTED SECOND, and the order of those two is not cosmetic: sorting a
         # list whose numbers have not been checked compares whatever the platform answered, and
         # one string beside one integer raises a `TypeError` that no caller here catches -- a
@@ -303,6 +310,7 @@ def _subjects(
                 continue
             numbered.append((number, pull))
         for number, pull in sorted(numbered, key=lambda item: item[0]):
+            open_pulls.add((repository, number))
             author = pull.get("author")
             if (repository, number) in reverts:
                 subjects.append((repository, number))
@@ -311,7 +319,13 @@ def _subjects(
                 deferred[_DEFERRAL_AUTHOR] = deferred.get(_DEFERRAL_AUTHOR, 0) + 1
                 continue
             subjects.append((repository, number))
-    return Selection(subjects=subjects, deferred=deferred, unreadable=unreadable)
+    return Selection(
+        subjects=subjects,
+        deferred=deferred,
+        unreadable=unreadable,
+        open_pulls=frozenset(open_pulls),
+        listed=frozenset(listed),
+    )
 
 
 def _pass(subjects: list[tuple[str, int]], client: LandingClient, submit: bool) -> list[Outcome]:
@@ -356,6 +370,30 @@ def _open_reverts(watch: list[dict[str, Any]] | None) -> frozenset[tuple[str, in
         and isinstance(row.get("repository"), str)
         and isinstance(row.get("revert_pr_number"), int)
     )
+
+
+def _stranded(
+    watch: list[dict[str, Any]] | None, selection: Selection
+) -> tuple[frozenset[tuple[str, int]], frozenset[tuple[str, int]]]:
+    """The landings whose recorded revert pull request GitHub no longer lists open (closed without
+    landing: its record still says `revert_opened`), and those whose repository went unlisted."""
+    stranded: set[tuple[str, int]] = set()
+    unknown: set[tuple[str, int]] = set()
+    for row in watch or []:
+        repository, number, revert = (
+            row.get("repository"),
+            row.get("pr_number"),
+            row.get("revert_pr_number"),
+        )
+        if row.get("status") != "revert_opened" or not isinstance(repository, str):
+            continue
+        if not isinstance(number, int) or not isinstance(revert, int):
+            continue
+        if repository not in selection.listed:
+            unknown.add((repository, number))
+        elif (repository, revert) not in selection.open_pulls:
+            stranded.add((repository, number))
+    return frozenset(stranded), frozenset(unknown)
 
 
 def _revert_pass(watch: list[dict[str, Any]], client: Watch, submit: bool) -> list[Outcome]:
@@ -450,6 +488,11 @@ def run(argv: list[str] | None = None) -> int:
             outcomes.extend(_branch_updates(selection.subjects, client, args.submit))
             if watch is not None:
                 watched.extend(_revert_pass(watch, client, args.submit))
+            stranded, unknown = _stranded(watch, selection)
+            watched.extend(
+                Outcome(repository, number, "revert-stranded", "its revert closed without landing")
+                for repository, number in sorted(stranded)
+            )
     except (ReadError, OrchestratorError) as error:
         print(str(error), file=sys.stderr)
         return EXIT_TOOL_FAILURE
@@ -465,7 +508,7 @@ def run(argv: list[str] | None = None) -> int:
             reason
             for reason in (
                 sync_held_alerts("inert-landing", outcomes, now=now),
-                sync_revert_alerts("inert-landing", watch),
+                sync_revert_alerts("inert-landing", watch, stranded=stranded, unknown=unknown),
             )
             if reason is not None
         ]

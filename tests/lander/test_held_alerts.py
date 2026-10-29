@@ -473,3 +473,37 @@ def test_a_revert_alert_resolves_when_its_record_leaves_the_watch_and_is_held_wh
 
     assert sync_revert_alerts(LANE, [], environ=env, transport=hub.transport()) is None
     assert [body["status"] for body in hub.sent] == ["firing", "resolved"]
+
+
+def test_a_failed_revert_alert_stays_firing_while_its_record_is_watched(tmp_path) -> None:
+    """No timer resolves it: the record stays in the watch until a person deals with it."""
+    hub = Hub()
+    env = _env(tmp_path)
+    failed = [_record("revert_failed", detail="branch_create_status (HTTP 422)")]
+
+    for _ in range(3):
+        assert sync_revert_alerts(LANE, failed, environ=env, transport=hub.transport()) is None
+
+    assert [(b["key"], b["status"]) for b in hub.sent] == [
+        ("landing-revert-failed:alobarquest/veritok:41", "firing")
+    ]
+
+
+def test_a_stranded_revert_raises_its_own_alert_and_is_held_when_its_listing_failed(
+    tmp_path,
+) -> None:
+    hub = Hub()
+    env = _env(tmp_path)
+    opened = [_record("revert_opened")]
+    subject = ("alobarquest/veritok", 41)
+
+    sync_revert_alerts(LANE, opened, stranded={subject}, environ=env, transport=hub.transport())
+    sync_revert_alerts(LANE, opened, unknown={subject}, environ=env, transport=hub.transport())
+    assert len(hub.sent) == 1  # its repository went unlisted: held, never resolved
+    sync_revert_alerts(LANE, opened, environ=env, transport=hub.transport())
+
+    assert [(b["key"], b["status"]) for b in hub.sent] == [
+        ("landing-revert-stranded:alobarquest/veritok:41", "firing"),
+        ("landing-revert-stranded:alobarquest/veritok:41", "resolved"),
+    ]
+    assert hub.sent[0]["link"] == "https://github.com/alobarquest/veritok/pull/42"

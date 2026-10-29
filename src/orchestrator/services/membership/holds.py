@@ -332,6 +332,16 @@ def from_version_of(title: str) -> str | None:
     return None if match is None else match.group(1)
 
 
+def directory_of(title: str) -> str:
+    """The manifest directory a single update's title names (` in /<path>`), else the root.
+
+    The update bot's dependency block never names it (measured on factory-runner#103); the title
+    carries it only when the manifest is outside the root, which is why its absence means `/`.
+    """
+    match = _TITLE_DIRECTORY.search(title.strip())
+    return "/" if match is None else match.group(0).split()[-1]
+
+
 def _greater(title_version: str, block_version: str) -> str:
     """The greater of two versions by release, or `""` when either can't be read."""
     title_release, block_release = release(title_version), release(block_version)

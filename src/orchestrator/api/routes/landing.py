@@ -507,8 +507,16 @@ def landing_watch_route(actor: ActorDep, session: SessionDep, settings: Settings
     acts on what it answers. Each repository's reads are bounded by the inert lane's grant term.
     """
     authorize_actor(actor, "read the landing watch")
-    gateway = GitHubInertPullRequests(token_provider_for(github_app_credentials_for(settings)))
-    return {"landings": landing_watch(session, gateway)}
+    credentials = github_app_credentials_for(settings)
+    gateway = GitHubInertPullRequests(token_provider_for(credentials))
+    return {
+        "landings": landing_watch(
+            session,
+            gateway,
+            enabled=settings.inert_landing_enabled,
+            credentials_configured=credentials is not None,
+        )
+    }
 
 
 @router.post("/landing-revert", response_model=LandingRevertResponse)

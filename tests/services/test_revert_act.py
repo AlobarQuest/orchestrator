@@ -75,10 +75,11 @@ NEXT_HEAD = "4" * 40
 
 
 def message(title: str = TITLE, version: str = "0.21.0") -> str:
-    """The update bot's commit message, naming the directory its update touched."""
+    """The update bot's commit message in its real shape: the block names the dependency, its
+    version and its type, and never the directory (measured on factory-runner#103)."""
     return (
         f"{title}\n\nBumps typer.\n\n---\nupdated-dependencies:\n"
-        f"- dependency-name: typer\n  dependency-version: {version}\n  directory: /\n"
+        f"- dependency-name: typer\n  dependency-version: {version}\n"
         "  dependency-type: direct:production\n...\n"
     )
 
@@ -293,7 +294,7 @@ def test_a_bad_landing_is_rerun_then_reverted_landed_held_and_never_lands_again(
     )
 
     # It failed once: the watch asks for one rerun, and the act asks for it.
-    [watched] = landing_watch(migrated_session, gateway)
+    [watched] = landing_watch(migrated_session, gateway, enabled=True, credentials_configured=True)
     assert (watched.verdict, watched.status) == ("flaky_retry", None)
     assert watched.failed_runs == ((RUN, 1),)
     rerun = act(migrated_session, gateway, key="rerun")
@@ -309,7 +310,7 @@ def test_a_bad_landing_is_rerun_then_reverted_landed_held_and_never_lands_again(
 
     # The rerun failed too, and the commit before the bump passed: bad, and the revert opens.
     gateway.jobs = failing(attempt=2)
-    [watched] = landing_watch(migrated_session, gateway)
+    [watched] = landing_watch(migrated_session, gateway, enabled=True, credentials_configured=True)
     assert watched.verdict == "bad"
     opened = act(migrated_session, gateway, key="revert")
     assert (opened.status, opened.revert_pr_number) == ("revert_opened", REVERT)
@@ -330,7 +331,7 @@ def test_a_bad_landing_is_rerun_then_reverted_landed_held_and_never_lands_again(
             "to_version": "0.21.0",
         }
     ]
-    [watched] = landing_watch(migrated_session, gateway)
+    [watched] = landing_watch(migrated_session, gateway, enabled=True, credentials_configured=True)
     assert (watched.verdict, watched.status, watched.revert_pr_number) == (
         None,
         "revert_opened",
@@ -350,7 +351,7 @@ def test_a_bad_landing_is_rerun_then_reverted_landed_held_and_never_lands_again(
     # The revert's own landing is never watched, nor even read; the reverted landing is, until
     # its window ends.
     gateway.reads.clear()
-    [watched] = landing_watch(migrated_session, gateway)
+    [watched] = landing_watch(migrated_session, gateway, enabled=True, credentials_configured=True)
     assert (INERT_REPOSITORY, REVERT) not in gateway.reads
     assert (watched.pr_number, watched.status) == (BUMP, "revert_landed")
     assert watched.hold_outcome == "held uv / typer at 0.20.0"
@@ -383,7 +384,7 @@ def test_a_clean_landing_is_watched_and_nothing_is_acted_on(migrated_session: Se
     landed_bump(migrated_session)
     gateway = WatchGateway(jobs={BUMP_HEAD: HEAD_GREEN, LANDED_COMMIT: (job("test", "success"),)})
 
-    [watched] = landing_watch(migrated_session, gateway)
+    [watched] = landing_watch(migrated_session, gateway, enabled=True, credentials_configured=True)
     outcome = act(migrated_session, gateway)
 
     assert watched.verdict == "clean"
@@ -399,7 +400,7 @@ def test_a_landing_past_the_window_leaves_the_watch(migrated_session: Session) -
     )
     gateway = WatchGateway(jobs=failing())
 
-    assert landing_watch(migrated_session, gateway) == ()
+    assert landing_watch(migrated_session, gateway, enabled=True, credentials_configured=True) == ()
     with pytest.raises(DomainError) as raised:
         act(migrated_session, gateway)
     assert raised.value.code == LANDING_REVERT_NOT_WATCHED
@@ -424,12 +425,12 @@ def test_a_landing_whose_rerun_passed_leaves_the_watch_when_its_window_closes(
     gateway = WatchGateway(jobs=failing())
     act(migrated_session, gateway)
     gateway.jobs[LANDED_COMMIT] = (job("test", "success", attempt=2),)
-    [watched] = landing_watch(migrated_session, gateway)
+    [watched] = landing_watch(migrated_session, gateway, enabled=True, credentials_configured=True)
     assert (watched.status, watched.verdict) == ("rerun_requested", "clean")
     _age(migrated_session, 49)
     gateway.job_reads.clear()
 
-    assert landing_watch(migrated_session, gateway) == ()
+    assert landing_watch(migrated_session, gateway, enabled=True, credentials_configured=True) == ()
     assert gateway.job_reads == []
 
 
@@ -442,7 +443,7 @@ def test_a_rerun_updated_inside_the_window_keeps_an_old_landing_watched(
     _age(migrated_session, 72)
     migrated_session.execute(text("UPDATE landing_reverts SET updated_at = now()"))
 
-    [watched] = landing_watch(migrated_session, gateway)
+    [watched] = landing_watch(migrated_session, gateway, enabled=True, credentials_configured=True)
 
     assert (watched.status, watched.verdict) == ("rerun_requested", "pending")
 
@@ -455,7 +456,7 @@ def test_an_open_revert_keeps_its_landing_watched_however_old(migrated_session: 
     act(migrated_session, gateway, key="revert")
     _age(migrated_session, 72)
 
-    [watched] = landing_watch(migrated_session, gateway)
+    [watched] = landing_watch(migrated_session, gateway, enabled=True, credentials_configured=True)
 
     assert (watched.status, watched.revert_pr_number) == ("revert_opened", REVERT)
 
@@ -477,7 +478,7 @@ def test_a_fork_sync_is_never_watched(migrated_session: Session) -> None:
         pulls={BUMP: bump_pull(author_login=SYNC_BOT, head_ref=SYNC_BRANCH)}, jobs=failing()
     )
 
-    assert landing_watch(migrated_session, gateway) == ()
+    assert landing_watch(migrated_session, gateway, enabled=True, credentials_configured=True) == ()
     with pytest.raises(DomainError) as raised:
         act(migrated_session, gateway)
     assert raised.value.code == LANDING_REVERT_NOT_WATCHED
@@ -491,7 +492,7 @@ def test_a_repository_the_record_no_longer_grants_is_never_read(
     grant_services(migrated_session, INERT_REPOSITORY, "dependency_updates", state="withdrawn")
     gateway = WatchGateway(jobs=failing())
 
-    [watched] = landing_watch(migrated_session, gateway)
+    [watched] = landing_watch(migrated_session, gateway, enabled=True, credentials_configured=True)
     with pytest.raises(DomainError) as raised:
         act(migrated_session, gateway)
 
@@ -504,7 +505,7 @@ def test_an_unreadable_pull_request_is_reported_never_skipped(migrated_session: 
     landed_bump(migrated_session)
     gateway = WatchGateway(jobs=failing(), read_error=EstateGatewayError("read_status", 502))
 
-    [watched] = landing_watch(migrated_session, gateway)
+    [watched] = landing_watch(migrated_session, gateway, enabled=True, credentials_configured=True)
 
     assert (watched.verdict, watched.detail) == ("unreadable", "read_status (HTTP 502)")
 
@@ -699,3 +700,89 @@ def test_a_record_that_moved_since_the_caller_read_it_is_refused(
 
     assert raised.value.code == LANDING_REVERT_RECORD_MOVED
     assert gateway.writes == []
+
+
+# --------------------------------------------------------------------------------------------
+# Fix round 1.
+# --------------------------------------------------------------------------------------------
+
+
+def _reverted_and_landed(session: Session, title: str) -> WatchGateway:
+    """Land a bump titled `title`, judge it bad after its rerun, open the revert and land it."""
+    landed_bump(session, title=title)
+    gateway = WatchGateway(
+        pulls={BUMP: bump_pull(title=title)},
+        jobs=failing(),
+        outcome=MergeOutcome(landed=True, commit_sha=REVERT_MERGE, status_code=200),
+    )
+    act(session, gateway, key="rerun")
+    gateway.jobs = failing(attempt=2)
+    act(session, gateway, key="revert")
+    land(session, gateway, REVERT, REVERT_HEAD)
+    return gateway
+
+
+@pytest.mark.parametrize(
+    ("title", "directory"),
+    [
+        pytest.param(f"{TITLE} in /tools", "/tools", id="in-a-subdirectory"),
+        pytest.param(TITLE, "/", id="at-the-root"),
+    ],
+)
+def test_a_single_update_is_held_on_the_directory_its_title_names(
+    migrated_session: Session, migrated_engine: Engine, title: str, directory: str
+) -> None:
+    """The update bot's block never names a directory; its title does (` in /<path>`), and an
+    update without that suffix is at the root."""
+    _reverted_and_landed(migrated_session, title)
+
+    with Session(migrated_engine) as reader:
+        holds = [
+            (h.directory, h.dependency, h.ceiling) for h in reader.scalars(select(SdsMemberHold))
+        ]
+    assert holds == [(directory, "typer", "0.20.0")]
+
+
+def test_a_failed_revert_stays_watched_however_old(migrated_session: Session) -> None:
+    """Main may still be broken and no revert exists: it never leaves the watch on a timer, and
+    reporting it reads nothing through the App."""
+    landed_bump(migrated_session)
+    gateway = WatchGateway(
+        jobs=failing(), branch_error=EstateGatewayError("branch_create_status", 422)
+    )
+    act(migrated_session, gateway, key="rerun")
+    gateway.jobs = failing(attempt=2)
+    act(migrated_session, gateway, key="revert")
+    _age(migrated_session, 72)
+    gateway.reads.clear()
+    gateway.job_reads.clear()
+
+    [watched] = landing_watch(migrated_session, gateway, enabled=True, credentials_configured=True)
+
+    assert watched.status == "revert_failed"
+    assert gateway.reads == [] and gateway.job_reads == []
+
+
+def test_the_watch_refuses_when_the_lane_is_off(migrated_session: Session) -> None:
+    landed_bump(migrated_session)
+    gateway = WatchGateway(jobs=failing())
+
+    for enabled, configured in ((False, True), (True, False)):
+        with pytest.raises(DomainError) as raised:
+            landing_watch(
+                migrated_session, gateway, enabled=enabled, credentials_configured=configured
+            )
+        assert raised.value.code == LANDING_REVERT_LANE_OFF
+    assert gateway.reads == [] and gateway.job_reads == []
+
+
+def test_a_key_spent_on_another_landing_is_refused(migrated_session: Session) -> None:
+    landed_bump(migrated_session)
+    gateway = WatchGateway(jobs=failing())
+    act(migrated_session, gateway, key="shared")
+    gateway.jobs = failing(attempt=2)
+
+    with pytest.raises(DomainError) as raised:
+        act(migrated_session, gateway, key="shared", pr_number=NEXT_BUMP, expected=None)
+
+    assert raised.value.code == "idempotency_conflict"

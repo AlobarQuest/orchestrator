@@ -203,6 +203,7 @@ REPORTED = (
     "reverted",
     "revert-refused",
     "revert-failed",
+    "revert-stranded",
 )
 
 

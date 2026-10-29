@@ -206,3 +206,10 @@ def test_a_repository_that_is_not_owner_slash_name_is_unusable_input(
     )
 
     assert response.status_code == 422
+
+
+def test_the_watch_refuses_by_name_without_app_credentials(db_client: TestClient) -> None:
+    response = db_client.get(WATCH, headers=SYSTEM)
+
+    assert response.status_code == 409, response.text
+    assert response.json()["error"]["code"] == LANDING_REVERT_LANE_OFF

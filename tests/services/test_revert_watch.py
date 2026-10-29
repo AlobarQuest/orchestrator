@@ -516,3 +516,39 @@ def test_a_run_is_named_with_its_highest_failing_attempt() -> None:
     )
 
     assert judge(gateway, _landing(), None).failed_runs == ((RUN, 2),)
+
+
+def test_a_job_failing_for_the_first_time_after_the_rerun_asks_for_a_rerun_not_a_revert() -> None:
+    """`test` failed and was rerun; on the rerun it passed and `lint` (skipped until then, since
+    it needs `test`) failed for the first time. That is a first failure of its own, not one that
+    survived a rerun."""
+    gateway = _Gateway(
+        {
+            HEAD: GREEN_HEAD,
+            MERGE: (_job("test", "success", attempt=2), _job("lint", "failure", attempt=2)),
+            PARENT: GREEN_PARENT,
+        }
+    )
+
+    verdict = judge(gateway, _landing(), _record())
+
+    assert (verdict.kind, verdict.failed_job_names, verdict.failed_runs) == (
+        "flaky_retry",
+        ("lint",),
+        ((RUN, 2),),
+    )
+
+
+def test_a_job_that_failed_again_after_its_own_rerun_is_bad() -> None:
+    """The same job, once its run was rerun past the attempt it first failed at."""
+    gateway = _Gateway(
+        {
+            HEAD: GREEN_HEAD,
+            MERGE: (_job("test", "success", attempt=3), _job("lint", "failure", attempt=3)),
+            PARENT: GREEN_PARENT,
+        }
+    )
+    record = _record(rerun_attempts={str(RUN): 2})
+    record.failed_job_names = ["lint", "test"]
+
+    assert judge(gateway, _landing(), record).kind == "bad"
