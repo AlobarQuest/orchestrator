@@ -1,4 +1,4 @@
-"""The confined orchestrator surface for the inert-population lander. FOUR paths, checked
+"""The confined orchestrator surface for the inert-population lander. SIX paths, checked
 before the transport.
 
 It asks whether a pull request the update bot opened may be landed into a repository where
@@ -57,16 +57,23 @@ _BRANCH_UPDATE = "/api/v1/inert-pr-branch-update"
 _CLOSE_HELD = "/api/v1/held-pr-close"
 
 
+# Landing Part 3a. The second read, the lane's recent landings each judged, and the FOURTH write:
+# act on one that went bad (rerun its failing runs, or open its revert). The orchestrator judges
+# again inside the act and acts only on its own answer.
+_WATCH = "/api/v1/landing-watch"
+_REVERT = "/api/v1/landing-revert"
+
+
 class ForbiddenEndpointError(OrchestratorError):
     """This program tried to reach a path it is not allowed to reach."""
 
 
 def is_allowed_read(path: str) -> bool:
-    return path == _ADMISSION
+    return path in (_ADMISSION, _WATCH)
 
 
 def is_allowed_write(path: str) -> bool:
-    return path in (_LAND, _BRANCH_UPDATE, _CLOSE_HELD)
+    return path in (_LAND, _BRANCH_UPDATE, _CLOSE_HELD, _REVERT)
 
 
 def _permits(method: str, path: str) -> bool:
@@ -213,3 +220,34 @@ class OrchestratorClient:
             },
         )
         return self._object(response, "close response")
+
+    def landing_watch(self) -> list[dict[str, Any]]:
+        """The lane's watched landings, each with its verdict or its record's status."""
+        body = self._object(self._send("GET", _WATCH), "landing watch")
+        landings = body.get("landings")
+        if not isinstance(landings, list) or not all(isinstance(row, dict) for row in landings):
+            raise OrchestratorError("the landing watch carried no list of landings")
+        return landings
+
+    def revert_landing(
+        self,
+        repository: str,
+        pr_number: int,
+        *,
+        expected_status: str | None,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        """Ask the orchestrator to act on one watched landing. What it does is its own judgment,
+        made again inside the act: this program names the landing and the record status it read,
+        never the act."""
+        response = self._send(
+            "POST",
+            _REVERT,
+            json={
+                "repository": repository,
+                "pr_number": pr_number,
+                "expected_status": expected_status,
+                "idempotency_key": idempotency_key,
+            },
+        )
+        return self._object(response, "revert response")

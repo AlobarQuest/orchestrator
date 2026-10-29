@@ -33,6 +33,8 @@ UNPARSEABLE = "landing_update_type_unparseable"
 ECOSYSTEM = "landing_ecosystem_excluded"
 CEILING = "landing_version_ceiling_exceeded"
 NOT_GRANTED = "landing_repository_not_granted"
+REVERTED = "landing_version_reverted"
+REVERTING = "landing_repository_reverting"
 
 
 class _Client:
@@ -91,7 +93,7 @@ def test_the_estate_lane_is_exactly_this() -> None:
     assert estate.LANE == Lane(
         name="estate",
         deliberate=frozenset({PACE, WINDOW}),
-        exception=frozenset({UNPARSEABLE, CEILING, NOT_GRANTED}),
+        exception=frozenset({UNPARSEABLE, CEILING, NOT_GRANTED, REVERTED}),
         update_self_clearing=frozenset(
             {
                 "estate_branch_update_head_moved",
@@ -110,7 +112,7 @@ def test_the_inert_lane_is_exactly_this() -> None:
     assert inert.LANE == Lane(
         name="inert",
         deliberate=frozenset(),
-        exception=frozenset({ECOSYSTEM, CEILING, NOT_GRANTED}),
+        exception=frozenset({ECOSYSTEM, CEILING, NOT_GRANTED, REVERTED}),
         update_self_clearing=frozenset(
             {
                 "inert_branch_update_head_moved",
@@ -167,7 +169,16 @@ def test_the_DELIBERATE_status_is_unreachable_for_the_inert_lane() -> None:
     vocabulary, both flags, rather than asserted from reading."""
     from itertools import combinations
 
-    vocabulary = (BEHIND, ROLLOUT, PACE, WINDOW, UNPARSEABLE, ECOSYSTEM, "landing_checks_not_clean")
+    vocabulary = (
+        BEHIND,
+        ROLLOUT,
+        PACE,
+        WINDOW,
+        UNPARSEABLE,
+        ECOSYSTEM,
+        REVERTING,
+        "landing_checks_not_clean",
+    )
     for size in range(len(vocabulary) + 1):
         for subset in combinations(vocabulary, size):
             for withheld in (True, False):
@@ -368,3 +379,34 @@ def test_a_held_answer_naming_no_head_is_unreadable_and_sends_nothing(module: An
 
     assert outcome.status == "unreadable"
     assert client.closed == []
+
+
+# ---- Landing Part 3a: a bump waiting on a revert in its repository -------------------------------
+
+
+@pytest.mark.parametrize("module", [estate, inert])
+@pytest.mark.parametrize(
+    ("refusals", "expected"),
+    [
+        pytest.param([REVERTING], "waiting", id="alone"),
+        # Behind beside it is the same wait: the bump is freshened after the revert lands.
+        pytest.param([REVERTING, BEHIND], "waiting", id="beside-behind"),
+        # A red build is still a finding, whatever it waits on.
+        pytest.param([REVERTING, "landing_checks_not_clean"], "held", id="beside-a-red-build"),
+        pytest.param([REVERTING, BEHIND, "landing_checks_not_clean"], "held", id="red-and-behind"),
+        # The durable fact outranks the wait.
+        pytest.param([REVERTING, REVERTED], "exception", id="beside-an-exception"),
+    ],
+)
+def test_a_bump_waiting_on_a_revert_is_waiting_in_both_lanes_never_a_finding(
+    module: Any, refusals: list[str], expected: str
+) -> None:
+    assert _status(module, refusals) == expected
+
+
+def test_the_wait_on_a_revert_is_not_a_deliberate_refusal_in_either_lane() -> None:
+    """It clears when the revert lands, not on a clock, so it is in neither lane's `deliberate`
+    set; the inert lane's stays empty."""
+    assert REVERTING not in estate.LANE.deliberate | inert.LANE.deliberate
+    assert REVERTING not in estate.LANE.exception | inert.LANE.exception
+    assert core.REVERTING == REVERTING

@@ -81,6 +81,11 @@ EXPECTED_VALUE_EXCEPTIONS = {
     # acts on a pull request in a foreign system, which has no version of ours, and names the head
     # the caller read.
     "/api/v1/held-pr-close": "expected_head_sha",
+    # Landing Part 3a. A SIXTH entry, and a different subject: the act's subject is our own
+    # `landing_reverts` record, which has no version column. Its status is the one thing an act on
+    # it moves, so the caller names the status it read (null for no record yet) and a record that
+    # moved since is refused (`landing_revert_record_moved`).
+    "/api/v1/landing-revert": "expected_status",
 }
 
 
@@ -97,19 +102,20 @@ def test_every_api_mutation_requires_idempotency_key_and_expected_version() -> N
         assert {"idempotency_key", expected} <= required, path
 
 
-def test_the_expected_value_exception_is_exactly_five_routes_wide() -> None:
+def test_the_expected_value_exception_is_exactly_six_routes_wide() -> None:
     """The exception states a judgment, so it needs its own cross-check.
 
     Emptying it would leave the test above green while protecting less, and adding an entry
     without a reason is how "every mutation states what it read" becomes "most do". Each named
     route must exist, and must genuinely lack a version of ours to state.
 
-    IT IS FIVE ROUTES SINCE bridge layer Part 4, and the count is in the NAME so that growing it is
-    an edit somebody has to make on purpose. Every member is the same judgment about the same kind
-    of subject -- a pull request in a foreign system -- so what the exception covers has not
-    widened, only the number of acts on that kind of subject. An entry naming a subject that DOES
-    have a version of ours would be the failure this test exists to make visible, and it would
-    still have to be written by hand.
+    IT IS SIX ROUTES SINCE Landing Part 3a, and the count is in the NAME so that growing it is
+    an edit somebody has to make on purpose. Five members are one judgment about one kind of
+    subject -- a pull request in a foreign system -- which names the head it read. The sixth is a
+    SECOND judgment, made on purpose: its subject is our own `landing_reverts` row, which has no
+    version column, so it names the one value an act on it moves, its status. An entry naming a
+    subject that DOES have a version of ours would be the failure this test exists to make
+    visible, and it would still have to be written by hand.
     """
     document = TestClient(app).get("/openapi.json").json()
 
@@ -119,6 +125,7 @@ def test_the_expected_value_exception_is_exactly_five_routes_wide() -> None:
         "/api/v1/inert-pr-merge": "expected_head_sha",
         "/api/v1/inert-pr-branch-update": "expected_head_sha",
         "/api/v1/held-pr-close": "expected_head_sha",
+        "/api/v1/landing-revert": "expected_status",
     }
     for path in EXPECTED_VALUE_EXCEPTIONS:
         assert path in document["paths"], f"the exception names a route that does not exist: {path}"

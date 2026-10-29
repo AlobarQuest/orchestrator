@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from functools import cached_property
 from typing import Final
 
 from orchestrator.services.execution.target_grant import TargetGrantSource
@@ -40,7 +41,15 @@ from orchestrator.services.landing.interfaces import (
     EstateReadGateway,
     Term,
 )
-from orchestrator.services.membership.holds import HeldDependency, HoldBreach, bumps_of, exceeded
+from orchestrator.services.membership.holds import (
+    Bump,
+    HeldDependency,
+    HoldBreach,
+    bumps_of,
+    exceeded,
+    release,
+    same_dependency,
+)
 
 # The update bot's branch naming, from which the ecosystem is read: `dependabot/<ecosystem>/<rest>`.
 _BRANCH_PREFIX: Final = "dependabot/"
@@ -48,6 +57,11 @@ _BRANCH_PREFIX: Final = "dependabot/"
 # The SDS member record does not grant every service this subject needs on this repository. An
 # exception to both landers: it clears only when a person grants the service on `/review`.
 LANDING_REPOSITORY_NOT_GRANTED: Final = "landing_repository_not_granted"
+
+# Landing Part 3a. The update brings a version the SDS reverted from this repository's default
+# branch (a `revert_landed` record names it). An exception to both landers: it clears only when a
+# later release is offered, or a person lands it by hand.
+LANDING_VERSION_REVERTED: Final = "landing_version_reverted"
 
 # The member-record service a fork's upstream sync lands under, beside `dependency_updates`.
 SECURITY_PATCHES_SERVICE: Final = "security_patches"
@@ -377,11 +391,29 @@ class CeilingTerm:
 NOT_HELD: Final = CeilingTerm(Term(True, ()), ())
 
 
+class UpdateBumps:
+    """What one update moves, read from the update bot's commit at most once, and only when a term
+    has something to compare it against: a repository with no holds and no reverted version costs
+    no call. `bumps` is `None` when the list can't be read (see `version_ceiling_term`)."""
+
+    def __init__(
+        self, repository: str, pull: EstatePullRequest, gateway: EstateReadGateway
+    ) -> None:
+        self._repository = repository
+        self._pull = pull
+        self._gateway = gateway
+
+    @cached_property
+    def bumps(self) -> tuple[Bump, ...] | None:
+        ecosystem = ecosystem_of(self._pull.head_ref)
+        if ecosystem is None:
+            return None
+        message = _update_bot_message(self._repository, self._pull, self._gateway)
+        return None if message is None else bumps_of(self._pull.title, message, ecosystem)
+
+
 def version_ceiling_term(
-    repository: str,
-    pull: EstatePullRequest,
-    holds: Sequence[HeldDependency],
-    gateway: EstateReadGateway,
+    repository: str, holds: Sequence[HeldDependency], update: UpdateBumps
 ) -> CeilingTerm:
     """Does this update move a dependency the member record holds past its ceiling?
 
@@ -397,18 +429,45 @@ def version_ceiling_term(
     """
     if not holds:
         return NOT_HELD
-    unreadable = CeilingTerm(Term(False, (LANDING_DEPENDENCY_LIST_UNREADABLE,)), ())
-    ecosystem = ecosystem_of(pull.head_ref)
-    if ecosystem is None:
-        return unreadable
-    message = _update_bot_message(repository, pull, gateway)
-    bumps = None if message is None else bumps_of(pull.title, message, ecosystem)
+    bumps = update.bumps
     if bumps is None:
-        return unreadable
+        return CeilingTerm(Term(False, (LANDING_DEPENDENCY_LIST_UNREADABLE,)), ())
     breaches = exceeded(holds, repository, bumps)
     if breaches:
         return CeilingTerm(Term(False, (LANDING_VERSION_CEILING_EXCEEDED,)), breaches)
     return NOT_HELD
+
+
+def version_reverted_term(reverted: Sequence[Bump], update: UpdateBumps) -> Term:
+    """Does this update bring a version the SDS reverted from this repository? Landing Part 3a.
+
+    Never read when nothing was reverted here. A list that can't be read refuses
+    `LANDING_DEPENDENCY_LIST_UNREADABLE`, as the hold term does. A bump matches a reverted one when
+    the hold matcher says they name one dependency (`membership.holds.same_dependency`: ecosystem,
+    directory, and the registry's name rule, PEP 503 for pip and uv) and they bring the same release
+    (`membership.holds.release`, zero-padded); a version either side can't read matches, so an
+    unreadable version is refused rather than let through.
+    """
+    if not reverted:
+        return Term(True, ())
+    bumps = update.bumps
+    if bumps is None:
+        return Term(False, (LANDING_DEPENDENCY_LIST_UNREADABLE,))
+    if any(_same_bump(bump, gone) for bump in bumps for gone in reverted):
+        return Term(False, (LANDING_VERSION_REVERTED,))
+    return Term(True, ())
+
+
+def _same_bump(bump: Bump, gone: Bump) -> bool:
+    return same_dependency(bump, gone) and _same_release(bump.to_version, gone.to_version)
+
+
+def _same_release(left: str, right: str) -> bool:
+    ours, theirs = release(left), release(right)
+    if ours is None or theirs is None:
+        return True
+    width = max(len(ours), len(theirs))
+    return ours + (0,) * (width - len(ours)) == theirs + (0,) * (width - len(theirs))
 
 
 def _update_bot_message(

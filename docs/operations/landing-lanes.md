@@ -712,3 +712,88 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   number 0 after the same 24 hours, and resolves when it lists again. An orchestrator outage of 24
   hours or more turns every in-scope open pull request `unreadable`, so each fires its one keyed
   alert: noise in proportion to the open pull requests, never a repeat.
+
+## Automatic reverts (inert repositories)
+
+The inert lander reverts a Dependabot bump it landed when the default branch's own checks fail
+because of that bump, and holds the dependency at the version before it (ADR-0019 amendment 2).
+Repositories that deploy on landing are not covered.
+
+### The watch
+
+- **What is watched.** A landing of this lane (`inert_pr_merge.merged` or `.already_merged`) for 48
+  hours (`WATCH_HOURS`). A revert landing is never watched, and a landing with no record must be the
+  update bot's, so a fork's upstream sync is never watched.
+- **Which jobs.** A job is a (workflow, job) pair. It counts when it passed at the pull request's
+  head and its workflow has a `push` run at the merge commit. A `pull_request`-only workflow, or a
+  job absent from the push run, is never watched.
+- **Failed** means `failure`, `timed_out` or `cancelled`.
+- **How long.** A landed revert stays in the watch, reported `reverted` (not a finding) with no App
+  read, while any of its dependencies is held, by its own hold or a person's on the same dependency.
+  A refused or failed revert never leaves; an open revert leaves when it lands.
+- **Routes.** `GET /api/v1/landing-watch` reads and judges; `POST /api/v1/landing-revert` acts once
+  per judgment. Both are SYSTEM-only, ask the member record's `dependency_updates` grant for the
+  repository first, and the act judges again inside its transaction.
+- **Order.** An acting pass reads the watch and acts on it before its landing pass, so a bad landing
+  is rerun or reverted before a sibling lands on top of it.
+- **Siblings wait.** While a repository has a rerun asked for (inside the watch) or a revert opened,
+  inert admission refuses every other Dependabot bump there `landing_repository_reverting`. Both
+  landers report it `waiting`; it clears when the revert lands. The revert itself and a fork's
+  upstream sync are not refused, and the branch-update scan never holds the revert behind it.
+
+### The flake rule
+
+A failed job gets one rerun of its failed jobs. The verdict is `bad` only when a recorded job fails
+again at a later attempt than the one recorded when the rerun was asked for, and the same jobs
+passed on the merge commit's parent. A job that passes on the rerun, a job that was already failing
+on the parent, and a job still cancelled after the rerun are not the bump's: the landing stays
+`clean` or `pending` and nothing is reverted.
+
+### The revert
+
+The revert is the exact inverse of the squash merge, built through the git data API on branch
+`sds-revert/pr-<N>` (title capped at 256 characters). Inert admission lands it only when it is
+recorded, is the exact inverse, has clean checks and a current head. Landing it marks the record
+`revert_landed`.
+
+**Overlap refusal.** When anything landed on top of the bump touched a path the bump touched, the
+orchestrator records `refused_overlap` and opens nothing. Reverting would remove that work too.
+
+### The hold
+
+When the revert lands, `services/membership/revert_hold.py::place` inserts a ceiling hold at the
+from-version in the same transaction, with `set_by` `sds-revert` and a `member.changed` event. The
+directory comes from the pull request title, else `/`. A grouped bump gets no hold, because it has
+no single from-version; the record's `hold_outcome` says why a hold was skipped. To lift a hold,
+stage a `lift` with `sds-members stage` and confirm it on `/review`
+(`docs/operations/membership.md`, "Automatic holds"). Nothing else removes it.
+
+### The never-again rule
+
+Both landers refuse the exact reverted version for good (`landing_version_reverted`), whether or not
+a hold was placed, and even after the hold is lifted. To take that version anyway, land it by hand;
+the SDS does not watch a landing it did not make.
+
+### Alerts
+
+The inert lander raises these through alert-hub (`lander/held_alerts.py`, memory in
+`revert-alerts.json`). Each fires once. `landing-reverted` stays open while the hold is in force and
+resolves when it is lifted. The refused, failed and stranded alerts stay open until a person closes
+them, and their lander findings print on every pass while the record stands. A pass that cannot
+read the watch holds every remembered key.
+
+| Key | Meaning | What you do |
+|---|---|---|
+| `landing-reverted:<repo>:<pr>` | The revert landed. The alert names the failed jobs, the revert pull request and the hold, and says the version stays refused after the hold is lifted. | Read it. Lift the hold when the dependency is safe to take again; land the reverted version itself only by hand. |
+| `landing-revert-refused:<repo>:<pr>` | Overlap: something landed on top of the bump. The default branch may still be broken. | Revert by hand. |
+| `landing-revert-failed:<repo>:<pr>` | The revert could not be opened. | Read the detail; revert by hand or fix the cause. |
+| `landing-revert-stranded:<repo>:<pr>` | The revert pull request closed without landing. This repository's Dependabot bumps wait (`landing_repository_reverting`) until it is reopened and lands. | Reopen it. Reverting by hand does not release the bumps yet. |
+
+### Known gaps
+
+- A grouped bump gets no hold, so only the never-again rule stops it returning.
+- A `refused_overlap` or `revert_failed` record stays in the watch, and its alert stays open, until a
+  person closes the alert; no act clears the record yet.
+- A stranded revert has no clearing act either. Its record keeps the repository's Dependabot bumps
+  refused `landing_repository_reverting` until the revert is reopened and lands; reverting by hand
+  does not release them.

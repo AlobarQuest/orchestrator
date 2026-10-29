@@ -11,6 +11,9 @@ bump is classified here, once, as one of:
   each of which honours;
 - `NotABump`: what it lands or publishes is not a dependency bump, for the stated reason.
 
+A merge path can land more than one kind of subject. A subject class inside an `Honours` path that
+is not asked the hold term is named in `SUBJECTS_NOT_A_BUMP`, by the function that decides it.
+
 A new entry in `MERGE_EXEMPT_PATHS` fails here until it is classified. The propose paths have no
 such list to read, so a new propose path is added here by hand.
 
@@ -111,6 +114,17 @@ HOLD_PATHS: dict[Path, Honours | CoveredBy | NotABump] = {
     SRC / "orchestrator/services/execution/dispatch.py": CoveredBy(
         (FACTORY_MERGE,),
         "starts a unit's run, whose pull request lands only through the factory merge",
+    ),
+}
+
+
+# Subject classes inside a classified merge path that skip its hold term: the function that decides
+# them, and why what they land is not a bump.
+SUBJECTS_NOT_A_BUMP: dict[tuple[Path, str], NotABump] = {
+    (LANDING / "inert_landing_admission.py", "_revert_term"): NotABump(
+        "a revert the SDS opened (Landing Part 3a) restores the version before a landed bump, so "
+        "it moves no dependency forward; the hold that follows it is placed when it lands "
+        "(`services/membership/revert_hold.py`)"
     ),
 }
 
@@ -272,3 +286,16 @@ def test_the_honours_check_passes_a_path_that_asks(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     assert _honours_failures(module, Honours(module, "_hold_term")) == []
+
+
+@pytest.mark.parametrize("subject", list(SUBJECTS_NOT_A_BUMP), ids=lambda key: key[1])
+def test_a_subject_that_is_not_a_bump_is_decided_where_it_says(subject: tuple[Path, str]) -> None:
+    """The named function exists, is called in its module, and asks no matcher: a subject class
+    that started asking the hold term no longer belongs here."""
+    module, name = subject
+    tree = _tree(module)
+    function = _function(tree, name)
+    assert function is not None, f"{module} defines no top-level function {name}"
+    assert _called(tree, name, function), f"nothing in {module} calls {name}"
+    assert not _referenced_names(function) & MATCHER_NAMES
+    assert SUBJECTS_NOT_A_BUMP[subject].reason.strip()

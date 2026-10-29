@@ -50,9 +50,9 @@ until somebody writes an environment variable.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any, Final, Protocol
+from typing import Any, Final, Protocol, TypeGuard
 from urllib.parse import quote
 
 import httpx
@@ -70,13 +70,18 @@ from orchestrator.services.landing.estate_landing_admission import (
 )
 from orchestrator.services.landing.interfaces import (
     SQUASH,
+    BranchHead,
     EstateGatewayError,
     EstatePullRequest,
     EstateReadGateway,
     HeadCheckRun,
+    Job,
     MergeOutcome,
     OpenPullRequest,
     PullRequestCommit,
+    Tree,
+    TreeChange,
+    TreeEntry,
 )
 from orchestrator.services.landing.lane_act import LandingLane, land_pull_request
 
@@ -88,6 +93,10 @@ _LIST_PAGE_SIZE: Final = 100
 _MAX_LIST_PAGES: Final = 20
 # The platform's own ceiling on the pull request commits listing, whatever the paging.
 _COMMITS_LIST_CAP: Final = 250
+
+# A git tree row's fields, in the order `tree` unpacks them, and the type of a directory row.
+_TREE_FIELDS: Final = ("path", "mode", "type", "sha")
+_TREE_KIND_DIRECTORY: Final = "tree"
 
 # The trailers the landing writes into the squash body, and the ledger reads back out of it. Named
 # here because this is the only writer; the reader pins the same spellings on its own side, and a
@@ -207,7 +216,7 @@ def _trailers(admission: EstateLandingAdmission) -> str:
 
 
 class GitHubEstatePullRequests:
-    """The real gateway. Eleven calls, and four of them change anything.
+    """The real gateway. Twenty calls, and nine of them change anything.
 
     Holds a token PROVIDER rather than a token, because an installation token expires within the
     hour and a long-lived process would otherwise carry a dead one. Nothing here logs, formats or
@@ -236,7 +245,7 @@ class GitHubEstatePullRequests:
         # raises `UnicodeError`, which is a `ValueError` and neither of the other two. The
         # repository interpolated into these paths is operator-authored, so all three are ordinary
         # ways for one to escape as a bare 500.
-        except (httpx.RequestError, httpx.InvalidURL, ValueError) as error:
+        except (httpx.HTTPError, httpx.InvalidURL, ValueError) as error:
             raise EstateGatewayError(f"request_error:{error.__class__.__name__}") from error
         if response.status_code == 404:
             return None
@@ -579,6 +588,208 @@ class GitHubEstatePullRequests:
         if not isinstance(body, dict) or body.get("state") != "closed":
             raise EstateGatewayError("close_response_invalid")
 
+    def jobs_at(self, *, repository: str, sha: str) -> tuple[Job, ...]:
+        """Every workflow job at this commit, each at its latest attempt. Landing Part 3a.
+
+        The runs at the commit, then the jobs of each run -- the Actions listings, because this
+        estate's App holds no `checks` permission (the same substitution `head_check_runs` makes).
+
+        **`filter=all`, reduced here to each job's highest `run_attempt`**, rather than the
+        platform's `latest`: what `latest` lists after a rerun of failed jobs only has not been
+        measured from this side, and the reduction is right under either answer.
+
+        Strict like every list read here: any status but 200, a row that cannot be read, or fewer
+        rows than the listing's own `total_count` raises. A short list of jobs is how a failing one
+        goes unseen.
+        """
+        quoted = quote(sha, safe="")
+        runs = self._listing(
+            f"{GITHUB_API_URL}/repos/{repository}/actions/runs?head_sha={quoted}", "workflow_runs"
+        )
+        latest: dict[tuple[int, str], Job] = {}
+        for run in runs:
+            run_id, workflow, event = _run_from_row(run)
+            rows = self._listing(
+                f"{GITHUB_API_URL}/repos/{repository}/actions/runs/{run_id}/jobs?filter=all",
+                "jobs",
+            )
+            for row in rows:
+                job = _job_from_row(row, run_id, workflow, event)
+                held = latest.get((run_id, job.name))
+                if held is None or job.attempt > held.attempt:
+                    latest[(run_id, job.name)] = job
+        return tuple(latest.values())
+
+    def parent_of(self, *, repository: str, sha: str) -> str:
+        """The single parent of a squash merge. Landing Part 3a.
+
+        Exactly one, or a raise: a commit with none or with two is not a squash merge, and the
+        default branch before the bump is only well defined for one.
+        """
+        body = self._get(f"{GITHUB_API_URL}/repos/{repository}/commits/{quote(sha, safe='')}")
+        if body is None:
+            raise EstateGatewayError("commit_not_found", 404)
+        parents = body.get("parents") if isinstance(body, dict) else None
+        if not isinstance(parents, list) or len(parents) != 1:
+            raise EstateGatewayError("commit_parents_not_single")
+        parent = parents[0].get("sha") if isinstance(parents[0], dict) else None
+        if not isinstance(parent, str) or not parent:
+            raise EstateGatewayError("commit_response_invalid")
+        return parent
+
+    def rerun_failed_jobs(self, *, repository: str, run_id: int) -> None:
+        """Ask the platform to rerun this run's failed jobs, once. Landing Part 3a.
+
+        **201 Created is success**, not 200. The body names nothing this side needs, and nothing
+        re-reads to confirm: the new attempt can take a while to appear, which the judgment reads
+        from the attempt number rather than from this answer.
+        """
+        self._send(
+            httpx.post,
+            f"{GITHUB_API_URL}/repos/{repository}/actions/runs/{run_id}/rerun-failed-jobs",
+            {},
+            expected=201,
+            status_code="rerun_status",
+        )
+
+    def default_branch_head(self, *, repository: str) -> BranchHead:
+        """The default branch's name and the commit it points at now. Landing Part 3a."""
+        body = self._get(f"{GITHUB_API_URL}/repos/{repository}")
+        name = body.get("default_branch") if isinstance(body, dict) else None
+        if not isinstance(name, str) or not name:
+            raise EstateGatewayError("repository_response_invalid")
+        ref = self._get(
+            f"{GITHUB_API_URL}/repos/{repository}/git/ref/heads/{quote(name, safe='/')}"
+        )
+        target = ref.get("object") if isinstance(ref, dict) else None
+        sha = target.get("sha") if isinstance(target, dict) else None
+        if not isinstance(sha, str) or not sha:
+            raise EstateGatewayError("ref_response_invalid")
+        return BranchHead(name=name, sha=sha)
+
+    def tree(self, *, repository: str, commit_sha: str) -> Tree:
+        """A commit's tree sha and every leaf of it by path. Landing Part 3a.
+
+        The commit is read first because the trees endpoint, given a commit, echoes the COMMIT's sha
+        rather than the tree's (measured 2026-10-29), and a new tree's `base_tree` must be a tree.
+        Directory rows are dropped: a directory's sha changes with any file under it, so only the
+        leaves say what changed.
+
+        Strict: a `truncated` answer raises, because a tree missing entries would read a path the
+        bump touched as untouched.
+        """
+        repo = f"{GITHUB_API_URL}/repos/{repository}"
+        commit = self._get(f"{repo}/git/commits/{quote(commit_sha, safe='')}")
+        tree = commit.get("tree") if isinstance(commit, dict) else None
+        tree_sha = tree.get("sha") if isinstance(tree, dict) else None
+        if not isinstance(tree_sha, str) or not tree_sha:
+            raise EstateGatewayError("commit_response_invalid")
+        body = self._get(f"{repo}/git/trees/{quote(tree_sha, safe='')}?recursive=1")
+        if not isinstance(body, dict) or body.get("truncated") is not False:
+            raise EstateGatewayError("tree_response_invalid")
+        rows = body.get("tree")
+        if not isinstance(rows, list):
+            raise EstateGatewayError("tree_response_invalid")
+        entries: dict[str, TreeEntry] = {}
+        for row in rows:
+            path, entry = _tree_row(row)
+            if entry.type != _TREE_KIND_DIRECTORY:
+                entries[path] = entry
+        return Tree(sha=tree_sha, entries=entries)
+
+    def create_tree(self, *, repository: str, base_tree: str, changes: Sequence[TreeChange]) -> str:
+        """A new tree: `base_tree` with each change applied, a null sha deleting its path."""
+        body = self._send(
+            httpx.post,
+            f"{GITHUB_API_URL}/repos/{repository}/git/trees",
+            {
+                "base_tree": base_tree,
+                "tree": [
+                    {
+                        "path": change.path,
+                        "mode": change.mode,
+                        "type": change.type,
+                        "sha": change.sha,
+                    }
+                    for change in changes
+                ],
+            },
+            expected=201,
+            status_code="tree_create_status",
+        )
+        return _created_sha(body, "tree_create_response_invalid")
+
+    def create_commit(self, *, repository: str, message: str, tree: str, parent: str) -> str:
+        """A new commit of `tree` with the one parent `parent`. Moves no branch."""
+        body = self._send(
+            httpx.post,
+            f"{GITHUB_API_URL}/repos/{repository}/git/commits",
+            {"message": message, "tree": tree, "parents": [parent]},
+            expected=201,
+            status_code="commit_create_status",
+        )
+        return _created_sha(body, "commit_create_response_invalid")
+
+    def create_branch(self, *, repository: str, branch: str, sha: str) -> None:
+        """A new branch at `sha`. Refused (422) when the branch exists already: never moves one."""
+        self._send(
+            httpx.post,
+            f"{GITHUB_API_URL}/repos/{repository}/git/refs",
+            {"ref": f"refs/heads/{branch}", "sha": sha},
+            expected=201,
+            status_code="branch_create_status",
+        )
+
+    def open_pull_request(
+        self, *, repository: str, title: str, body: str, head: str, base: str
+    ) -> int:
+        """Open a pull request from `head` into `base`; its number."""
+        answer = self._send(
+            httpx.post,
+            f"{GITHUB_API_URL}/repos/{repository}/pulls",
+            {"title": title, "body": body, "head": head, "base": base},
+            expected=201,
+            status_code="pull_create_status",
+        )
+        number = answer.get("number") if isinstance(answer, dict) else None
+        if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
+            raise EstateGatewayError("pull_create_response_invalid")
+        return number
+
+    def _listing(self, url: str, key: str) -> list[Any]:
+        """Every row of an Actions listing, whose answer wraps its rows as `{total_count, <key>}`.
+
+        Separate from `_get_pages`, whose answers are bare lists, and from `_get`, which reads a
+        404 as absent -- for a listing, that would read as EMPTY. Any status but 200 on any page
+        raises, and so does ending with fewer rows than `total_count` names.
+        """
+        joiner = "&" if "?" in url else "?"
+        rows: list[Any] = []
+        for page in range(1, _MAX_LIST_PAGES + 1):
+            paged = f"{url}{joiner}per_page={_LIST_PAGE_SIZE}&page={page}"
+            try:
+                response = httpx.get(paged, headers=self._headers(), timeout=self._timeout)
+            except (httpx.HTTPError, httpx.InvalidURL, ValueError) as error:
+                raise EstateGatewayError(f"request_error:{error.__class__.__name__}") from error
+            if response.status_code != 200:
+                raise EstateGatewayError("listing_status", response.status_code)
+            try:
+                body = response.json()
+            except ValueError as error:
+                raise EstateGatewayError("listing_response_invalid") from error
+            batch = body.get(key) if isinstance(body, dict) else None
+            total = body.get("total_count") if isinstance(body, dict) else None
+            if not isinstance(batch, list):
+                raise EstateGatewayError("listing_response_invalid")
+            if not isinstance(total, int) or isinstance(total, bool):
+                raise EstateGatewayError("listing_response_invalid")
+            rows.extend(batch)
+            if len(batch) < _LIST_PAGE_SIZE:
+                if len(rows) < total:
+                    raise EstateGatewayError("listing_truncated")
+                return rows
+        raise EstateGatewayError("list_pagination_exceeded")
+
     def _send(
         self,
         method: Callable[..., httpx.Response],
@@ -591,7 +802,7 @@ class GitHubEstatePullRequests:
         """One write, refusing any status but `expected`; the parsed body, or None without one."""
         try:
             response = method(url, headers=self._headers(), json=payload, timeout=self._timeout)
-        except (httpx.RequestError, httpx.InvalidURL, ValueError) as error:
+        except (httpx.HTTPError, httpx.InvalidURL, ValueError) as error:
             raise EstateGatewayError(f"request_error:{error.__class__.__name__}") from error
         if response.status_code != expected:
             raise EstateGatewayError(status_code, response.status_code)
@@ -599,6 +810,63 @@ class GitHubEstatePullRequests:
             return response.json()
         except ValueError:
             return None
+
+
+def _tree_row(row: Any) -> tuple[str, TreeEntry]:
+    """One tree row, strictly: a leaf with no path, mode, type or sha cannot be compared."""
+    if not isinstance(row, dict):
+        raise EstateGatewayError("tree_response_invalid")
+    path, mode, kind, sha = (row.get(key) for key in _TREE_FIELDS)
+    if not (_text(path) and _text(mode) and _text(kind) and _text(sha)):
+        raise EstateGatewayError("tree_response_invalid")
+    return path, TreeEntry(mode=mode, type=kind, sha=sha)
+
+
+def _text(value: Any) -> TypeGuard[str]:
+    return isinstance(value, str) and bool(value)
+
+
+def _created_sha(body: Any, code: str) -> str:
+    """The sha of an object a write created, or a raise."""
+    sha = body.get("sha") if isinstance(body, dict) else None
+    if not isinstance(sha, str) or not sha:
+        raise EstateGatewayError(code)
+    return sha
+
+
+def _run_from_row(row: Any) -> tuple[int, str, str]:
+    """A run's id, workflow name and triggering event, strictly: the judgment keys on all three."""
+    if not isinstance(row, dict):
+        raise EstateGatewayError("runs_response_invalid")
+    run_id = row.get("id")
+    workflow = row.get("name")
+    event = row.get("event")
+    if not isinstance(run_id, int) or isinstance(run_id, bool):
+        raise EstateGatewayError("runs_response_invalid")
+    if not isinstance(workflow, str) or not workflow or not isinstance(event, str) or not event:
+        raise EstateGatewayError("runs_response_invalid")
+    return run_id, workflow, event
+
+
+def _job_from_row(row: Any, run_id: int, workflow: str, event: str) -> Job:
+    """One job row, strictly: a job with no name or attempt cannot be matched to anything."""
+    if not isinstance(row, dict):
+        raise EstateGatewayError("jobs_response_invalid")
+    name = row.get("name")
+    attempt = row.get("run_attempt")
+    conclusion = row.get("conclusion")
+    if not isinstance(name, str) or not name:
+        raise EstateGatewayError("jobs_response_invalid")
+    if not isinstance(attempt, int) or isinstance(attempt, bool):
+        raise EstateGatewayError("jobs_response_invalid")
+    return Job(
+        name=name,
+        conclusion=conclusion if isinstance(conclusion, str) else None,
+        run_id=run_id,
+        attempt=attempt,
+        workflow=workflow,
+        event=event,
+    )
 
 
 def _linked_login(account: Any) -> str | None:
@@ -643,6 +911,8 @@ def _pull_from_body(body: dict[str, Any], number: int) -> EstatePullRequest:
     ):
         raise EstateGatewayError("read_response_invalid")
     login = user.get("login")
+    landed = bool(body.get("merged"))
+    merge_sha = body.get("merge_commit_sha")
     return EstatePullRequest(
         number=number,
         title=str(title),
@@ -651,8 +921,11 @@ def _pull_from_body(body: dict[str, Any], number: int) -> EstatePullRequest:
         head_ref=str(head_ref),
         default_branch=str(default_branch),
         open=body.get("state") == "open",
-        landed=bool(body.get("merged")),
+        landed=landed,
         author_login=login if isinstance(login, str) else "",
         author_is_bot=str(user.get("type", "")).lower() == "bot",
         mergeable_state=str(body.get("mergeable_state") or ""),
+        # GitHub fills this for an open pull request too (a test merge); only a landed one's is
+        # the landing commit.
+        merge_commit_sha=merge_sha if landed and isinstance(merge_sha, str) and merge_sha else None,
     )

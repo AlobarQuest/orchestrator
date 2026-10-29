@@ -391,3 +391,52 @@ class HeldPrCloseResponse(BaseModel):
     ceilings: list[HeldCeilingModel]
     commented: bool
     replayed: bool
+
+
+class WatchedLandingModel(BaseModel):
+    """One watched landing of the inert lane (Landing Part 3a): its verdict when it was judged,
+    else its record's status. `failed_runs` is each failing run's (id, attempt)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    repository: str
+    pr_number: int
+    merge_commit_sha: str | None
+    landed_at: datetime
+    verdict: str | None
+    detail: str
+    failed_job_names: list[str]
+    failed_runs: list[tuple[int, int]]
+    status: str | None
+    revert_pr_number: int | None
+    hold_outcome: str | None
+
+
+class LandingWatchResponse(BaseModel):
+    landings: list[WatchedLandingModel]
+
+
+class LandingRevertCommandModel(BaseModel):
+    """Ask the orchestrator to act on one watched landing (Landing Part 3a). It judges the landing
+    again and acts only on its own answer: a rerun for `flaky_retry`, a revert for `bad`."""
+
+    repository: str = Field(pattern=r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$", max_length=300)
+    pr_number: int = Field(gt=0)
+    idempotency_key: str = Field(min_length=1, max_length=400)
+    # The record's status the caller read in the watch, `null` when it had none. Required.
+    expected_status: str | None
+
+
+class LandingRevertResponse(BaseModel):
+    """What the act judged, and what it did: `acted` is false when the verdict asked for nothing."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    repository: str
+    pr_number: int
+    verdict: str
+    detail: str
+    acted: bool
+    status: str | None
+    revert_pr_number: int | None
+    replayed: bool

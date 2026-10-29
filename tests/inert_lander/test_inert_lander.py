@@ -107,6 +107,9 @@ class FakeOrchestrator:
         admission_error: Exception | None = None,
         update_error: Exception | None = None,
         replayed: bool = False,
+        watch: list[dict[str, Any]] | None = None,
+        watch_error: Exception | None = None,
+        revert_answers: dict[tuple[str, int], dict[str, Any]] | None = None,
     ) -> None:
         self._answers = answers or {}
         self._land_error = land_error
@@ -119,6 +122,12 @@ class FakeOrchestrator:
         # the refusal would satisfy a status assertion and fail this.
         self.updated: list[tuple[str, int, str, str]] = []
         self.closed: list[tuple[str, int, str]] = []
+        # Landing Part 3a. The watch this program reads, and every act it asked for on one.
+        self._watch = watch or []
+        self._watch_error = watch_error
+        self._revert_answers = revert_answers or {}
+        self.reverts: list[tuple[str, int, str]] = []
+        self.revert_reads: list[str | None] = []
 
     def __enter__(self) -> FakeOrchestrator:
         return self
@@ -164,6 +173,26 @@ class FakeOrchestrator:
         self.closed.append((repository, pr_number, idempotency_key))
         closed: dict[str, Any] = {"commented": True, "replayed": False, "ceilings": []}
         return closed
+
+    def landing_watch(self) -> list[dict[str, Any]]:
+        if self._watch_error is not None:
+            raise self._watch_error
+        return self._watch
+
+    def revert_landing(
+        self,
+        repository: str,
+        pr_number: int,
+        *,
+        expected_status: str | None,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        self.reverts.append((repository, pr_number, idempotency_key))
+        self.revert_reads.append(expected_status)
+        return self._revert_answers.get(
+            (repository, pr_number),
+            {"acted": True, "status": "rerun_requested", "detail": "failed once: test"},
+        )
 
 
 def _pull(number: int, *, author: str = BOT) -> dict[str, Any]:
@@ -1029,10 +1058,40 @@ class AlertCalls:
         return self.reason
 
 
+class RevertAlertCalls:
+    """Stands in for `sync_revert_alerts`: records the watch each call was handed."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, list[dict[str, Any]] | None]] = []
+        self.stranded: list[set[tuple[str, int]]] = []
+        self.unknown: list[set[tuple[str, int]]] = []
+
+    def __call__(
+        self,
+        lane: str,
+        watch: Any,
+        *,
+        stranded: Any = frozenset(),
+        unknown: Any = frozenset(),
+        **_: Any,
+    ) -> str | None:
+        self.calls.append((lane, None if watch is None else list(watch)))
+        self.stranded.append(set(stranded))
+        self.unknown.append(set(unknown))
+        return None
+
+
 @pytest.fixture(autouse=True)
 def alerts(monkeypatch) -> AlertCalls:
     calls = AlertCalls()
     monkeypatch.setattr("inert_lander.cli.sync_held_alerts", calls)
+    return calls
+
+
+@pytest.fixture(autouse=True)
+def revert_alerts(monkeypatch) -> RevertAlertCalls:
+    calls = RevertAlertCalls()
+    monkeypatch.setattr("inert_lander.cli.sync_revert_alerts", calls)
     return calls
 
 
@@ -1100,3 +1159,275 @@ def test_an_alert_failure_exits_one_after_printing_the_report(monkeypatch, alert
     captured = capsys.readouterr()
     assert "landing_checks_not_clean" in captured.out
     assert "alert-hub: SDS_BRIDGE_ALERT_TOKEN is unset" in captured.err
+
+
+# --------------------------------------------------------------------------------------------
+# The watch (Landing Part 3a): landings that went bad, and the reverts the orchestrator opened.
+# --------------------------------------------------------------------------------------------
+
+LANDED = 7
+REVERT_PR = 9
+
+
+def _watched(verdict: str | None, status: str | None = None, **extra: Any) -> dict[str, Any]:
+    row: dict[str, Any] = {
+        "repository": REPOSITORY,
+        "pr_number": LANDED,
+        "verdict": verdict,
+        "detail": f"{verdict or status}: test",
+        "failed_job_names": ["test"],
+        "failed_runs": [[18_000_000_001, 1]],
+        "status": status,
+        "revert_pr_number": None,
+        "hold_outcome": None,
+    }
+    row.update(extra)
+    return row
+
+
+def test_an_acting_pass_asks_for_each_bad_landing(monkeypatch, capsys) -> None:
+    watch = [
+        _watched("flaky_retry"),
+        _watched("bad", "rerun_requested", pr_number=8),
+        _watched("clean", pr_number=10),
+        _watched("pending", pr_number=11),
+    ]
+    client = FakeOrchestrator(
+        watch=watch,
+        revert_answers={(REPOSITORY, 8): {"acted": True, "status": "revert_opened", "detail": ""}},
+    )
+    _wire(monkeypatch, FakeGitHub({REPOSITORY: []}), client, _rule())
+
+    assert run(["--submit"]) == EXIT_OK
+
+    assert client.reverts == [
+        (
+            REPOSITORY,
+            LANDED,
+            f"inert-landing-revert:{REPOSITORY}:{LANDED}:flaky_retry:18000000001.1",
+        ),
+        (REPOSITORY, 8, f"inert-landing-revert:{REPOSITORY}:8:bad:18000000001.1"),
+    ]
+    assert client.revert_reads == [None, "rerun_requested"]
+    out = capsys.readouterr().out
+    assert f"{REPOSITORY}#{LANDED}  reran" in out
+    assert f"{REPOSITORY}#8  revert-opened" in out
+
+
+def test_a_report_run_asks_for_nothing(monkeypatch, alerts, revert_alerts, capsys) -> None:
+    client = FakeOrchestrator(watch=[_watched("flaky_retry"), _watched("bad", pr_number=8)])
+    _wire(monkeypatch, FakeGitHub({REPOSITORY: []}), client, _rule())
+
+    assert run([]) == EXIT_OK
+
+    assert client.reverts == []
+    assert alerts.calls == [] and revert_alerts.calls == []
+    out = capsys.readouterr().out
+    assert "would-rerun" in out and "would-revert" in out
+
+
+def test_an_opened_revert_is_a_subject_of_the_landing_and_branch_update_passes(
+    monkeypatch,
+) -> None:
+    """The App opened it, which no declared author is: it is asked about by the record."""
+    client = FakeOrchestrator(
+        {(REPOSITORY, REVERT_PR): _admissible()},
+        watch=[_watched(None, "revert_opened", revert_pr_number=REVERT_PR)],
+    )
+    github = FakeGitHub({REPOSITORY: [_pull(REVERT_PR, author="alobar-sds-dispatch[bot]")]})
+    _wire(monkeypatch, github, client, _rule())
+
+    run(["--submit"])
+
+    assert client.asked == [(REPOSITORY, REVERT_PR), (REPOSITORY, REVERT_PR)]
+    assert [(r, n) for r, n, _, _ in client.landed] == [(REPOSITORY, REVERT_PR)]
+    assert client.reverts == []
+
+
+def test_a_closed_revert_is_never_asked_about(monkeypatch) -> None:
+    client = FakeOrchestrator(watch=[_watched(None, "revert_opened", revert_pr_number=REVERT_PR)])
+    _wire(monkeypatch, FakeGitHub({REPOSITORY: []}), client, _rule())
+
+    run(["--submit"])
+
+    assert client.asked == []
+
+
+def test_a_refused_revert_is_a_finding_while_it_is_watched(monkeypatch, capsys) -> None:
+    client = FakeOrchestrator(watch=[_watched(None, "refused_overlap")])
+    _wire(monkeypatch, FakeGitHub({REPOSITORY: []}), client, _rule())
+
+    assert run(["--submit"]) == EXIT_FINDINGS
+    assert "revert-refused" in capsys.readouterr().out
+
+
+def test_a_revert_raises_its_alert_from_the_watch_it_was_handed(monkeypatch, revert_alerts) -> None:
+    watch = [_watched(None, "revert_landed", hold_outcome="held uv / typer at 0.20.0")]
+    _wire(monkeypatch, FakeGitHub({REPOSITORY: []}), FakeOrchestrator(watch=watch), _rule())
+
+    assert run(["--submit"]) == EXIT_OK
+
+    assert revert_alerts.calls == [("inert-landing", watch)]
+
+
+def test_an_unreadable_watch_still_lands_and_holds_the_revert_alerts(
+    monkeypatch, alerts, revert_alerts, capsys
+) -> None:
+    client = FakeOrchestrator(
+        {(REPOSITORY, 1): _admissible()}, watch_error=OrchestratorError("answered 404")
+    )
+    _wire(monkeypatch, FakeGitHub({REPOSITORY: [_pull(1)]}), client, _rule())
+
+    assert run(["--submit"]) == EXIT_FINDINGS
+
+    assert [(r, n) for r, n, _, _ in client.landed] == [(REPOSITORY, 1)]
+    assert revert_alerts.calls == [("inert-landing", None)]
+    # The watch's row is not a pull request held: it never reaches the held alerts.
+    assert all(o.repository != "landing-watch" for o in alerts.calls[0][1])
+    assert "landing-watch#0  unreadable" in capsys.readouterr().out
+
+
+def test_a_refused_act_is_reported_as_an_error(monkeypatch, capsys) -> None:
+    class Refusing(FakeOrchestrator):
+        def revert_landing(self, repository: str, pr_number: int, **_: Any):
+            raise LandingRefused("no failing run could be rerun", "landing_revert_rerun_refused")
+
+    _wire(
+        monkeypatch,
+        FakeGitHub({REPOSITORY: []}),
+        Refusing(watch=[_watched("flaky_retry")]),
+        _rule(),
+    )
+
+    assert run(["--submit"]) == EXIT_FINDINGS
+    assert "error" in capsys.readouterr().out
+
+
+def test_a_revert_closed_without_landing_is_a_finding(monkeypatch, revert_alerts, capsys) -> None:
+    """Its record stays `revert_opened` and GitHub no longer lists it: nothing else says so."""
+    watch = [_watched(None, "revert_opened", revert_pr_number=REVERT_PR)]
+    _wire(monkeypatch, FakeGitHub({REPOSITORY: []}), FakeOrchestrator(watch=watch), _rule())
+
+    assert run(["--submit"]) == EXIT_FINDINGS
+
+    assert f"{REPOSITORY}#{LANDED}  revert-stranded" in capsys.readouterr().out
+    assert revert_alerts.stranded == [{(REPOSITORY, LANDED)}]
+    assert revert_alerts.unknown == [set()]
+
+
+def test_an_open_revert_is_not_stranded_and_an_unlisted_one_is_unknown(
+    monkeypatch, revert_alerts
+) -> None:
+    watch = [
+        _watched(None, "revert_opened", revert_pr_number=REVERT_PR),
+        _watched(None, "revert_opened", repository=OTHER, revert_pr_number=REVERT_PR),
+    ]
+    github = FakeGitHub(
+        {REPOSITORY: [_pull(REVERT_PR, author="alobar-sds-dispatch[bot]")]},
+        errors={OTHER: ReadError("listing failed")},
+    )
+    _wire(monkeypatch, github, FakeOrchestrator(watch=watch), _rule(REPOSITORY, OTHER))
+
+    run(["--submit"])
+
+    assert revert_alerts.stranded == [set()]
+    assert revert_alerts.unknown == [{(OTHER, LANDED)}]
+
+
+# --------------------------------------------------------------------------------------------
+# Final review: the watch acts before the landing pass, and a race reads as waiting.
+# --------------------------------------------------------------------------------------------
+
+
+def test_an_acting_pass_acts_on_the_watch_BEFORE_it_lands_anything(monkeypatch) -> None:
+    """A sibling landed on top of a bad bump would make its revert an overlap, so the bad landing
+    is acted on first; the revert the watch already names is still a subject of this pass."""
+    calls: list[str] = []
+
+    class Recording(FakeOrchestrator):
+        def landing_watch(self) -> list[dict[str, Any]]:
+            calls.append("watch")
+            return super().landing_watch()
+
+        def revert_landing(self, repository: str, pr_number: int, **kwargs: Any):
+            calls.append(f"act {pr_number}")
+            return super().revert_landing(repository, pr_number, **kwargs)
+
+        def admission(self, repository: str, pr_number: int) -> dict[str, Any]:
+            calls.append(f"ask {pr_number}")
+            return super().admission(repository, pr_number)
+
+        def land(self, repository: str, pr_number: int, **kwargs: Any) -> dict[str, Any]:
+            calls.append(f"land {pr_number}")
+            return super().land(repository, pr_number, **kwargs)
+
+    client = Recording(
+        {(REPOSITORY, 1): _admissible(), (REPOSITORY, REVERT_PR): _admissible()},
+        watch=[
+            _watched("bad", "rerun_requested"),
+            _watched(None, "revert_opened", pr_number=8, revert_pr_number=REVERT_PR),
+        ],
+    )
+    github = FakeGitHub(
+        {REPOSITORY: [_pull(1), _pull(REVERT_PR, author="alobar-sds-dispatch[bot]")]}
+    )
+    _wire(monkeypatch, github, client, _rule())
+
+    run(["--submit"])
+
+    assert calls[:2] == ["watch", f"act {LANDED}"]
+    assert f"land {REVERT_PR}" in calls
+    assert calls.index(f"act {LANDED}") < min(
+        i for i, call in enumerate(calls) if call.startswith(("ask", "land"))
+    )
+
+
+def test_an_act_the_orchestrator_declined_is_waiting_not_unreadable(monkeypatch, capsys) -> None:
+    """`acted: false` means the act judged again and found nothing to do (the watch and the act
+    disagreed, a harmless race): the next pass asks again. Not a finding."""
+    client = FakeOrchestrator(
+        watch=[_watched("flaky_retry")],
+        revert_answers={
+            (REPOSITORY, LANDED): {
+                "acted": False,
+                "status": None,
+                "verdict": "pending",
+                "detail": "the rerun has not reported a failure of its own yet",
+            }
+        },
+    )
+    _wire(monkeypatch, FakeGitHub({REPOSITORY: []}), client, _rule())
+
+    assert run(["--submit"]) == EXIT_OK
+    out = capsys.readouterr().out
+    assert f"{REPOSITORY}#{LANDED}  waiting" in out
+    assert "the rerun has not reported" in out
+
+
+@pytest.mark.parametrize(
+    ("verdict", "expected", "code"),
+    [
+        # A read inside the act failed: nothing was reverted, and nothing else will say so.
+        pytest.param("unreadable", "unreadable", EXIT_FINDINGS, id="a-failed-read-is-a-finding"),
+        pytest.param("pending", "waiting", EXIT_OK, id="a-race-is-waiting"),
+        pytest.param("clean", "waiting", EXIT_OK, id="a-clean-race-is-waiting"),
+    ],
+)
+def test_an_act_that_did_nothing_is_a_finding_only_when_its_read_failed(
+    monkeypatch, capsys, verdict: str, expected: str, code: int
+) -> None:
+    client = FakeOrchestrator(
+        watch=[_watched("bad", "rerun_requested")],
+        revert_answers={
+            (REPOSITORY, LANDED): {
+                "acted": False,
+                "status": "rerun_requested",
+                "verdict": verdict,
+                "detail": f"{verdict}: the reason",
+            }
+        },
+    )
+    _wire(monkeypatch, FakeGitHub({REPOSITORY: []}), client, _rule())
+
+    assert run(["--submit"]) == code
+    assert f"{REPOSITORY}#{LANDED}  {expected:<12} {verdict}: the reason" in capsys.readouterr().out

@@ -1,9 +1,14 @@
 """Who may write the SDS member tables, and through which routes.
 
-Membership is explicit: no lane enrolls a repository. Only a human confirming a proposal on
-`/review` writes the member tables, and only `proposals.py` holds that code. The role each route
-requires is pinned in `WRITE_ROUTES` and proved behaviourally by
+Membership is explicit: no lane enrolls a repository. A human confirming a proposal on `/review`
+writes the member tables, and only `proposals.py` holds that code. The role each route requires is
+pinned in `WRITE_ROUTES` and proved behaviourally by
 `tests/web/test_member_proposals.py::test_each_write_route_refuses_every_other_role`.
+
+One exception, Devon's decision of 2026-10-29 (Landing Part 3a): after the SDS's own revert of a
+bump lands, `revert_hold.place` inserts a ceiling hold. It may only construct and add a hold --
+never assign, update or delete -- and its one caller is the inert lane's merge path. The route walk
+below follows same-module helpers only, so it cannot see that path; the two tests at the end pin it.
 """
 
 import ast
@@ -29,9 +34,22 @@ MAY_NAME = frozenset(
         "persistence/models.py",
         "services/membership/proposals.py",
         "services/membership/members.py",
+        "services/membership/revert_hold.py",
     }
 )
 MAY_WRITE = frozenset({"services/membership/proposals.py"})
+# The automatic hold writer: the only writes it may make, by `_writes`' description, line dropped --
+# one hold constructed, added, and the audit event added (an `Event` is no member model).
+INSERT_ONLY = {
+    "services/membership/revert_hold.py": [
+        "constructs SdsMemberHold",
+        "session.add(...)",
+        "session.add(...)",
+    ],
+}
+# The automatic hold writer's module, and the one module that may import it.
+AUTOMATIC_WRITER = "orchestrator.services.membership.revert_hold"
+AUTOMATIC_WRITER_CALLER = "services/landing/inert_pr_merge.py"
 
 WRITE_FUNCTIONS = frozenset(
     {"stage_member_proposal", "confirm_member_proposal", "withdraw_member_proposal"}
@@ -142,6 +160,11 @@ def _violations(modules: dict[str, ast.Module]) -> list[str]:
             continue
         if relative not in MAY_NAME:
             problems.append(f"{relative} names {sorted(named)}")
+        elif relative in INSERT_ONLY:
+            writes = sorted(p.split(": ", 1)[1] for p in _writes(tree))
+            if writes != INSERT_ONLY[relative]:
+                problems.append(f"{relative} writes {writes}, not only {INSERT_ONLY[relative]}")
+            problems.extend(f"{relative} {p}" for p in _assigned_attributes(tree))
         elif relative not in MAY_WRITE:
             # members.py reads: it may not construct, add to a session, or assign attributes.
             problems.extend(f"{relative} {p}" for p in _writes(tree) + _assigned_attributes(tree))
@@ -278,3 +301,62 @@ def _returns_orm_model(tree: ast.Module) -> list[str]:
         and not node.name.startswith("_")
         and (node.returns is None or "Sds" in ast.unparse(node.returns))
     ]
+
+
+def test_the_automatic_writer_only_inserts_a_hold() -> None:
+    """Control: an update or an attribute write in the automatic writer is seen; the same module
+    making only its allowed writes is not."""
+    writer = "services/membership/revert_hold.py"
+    allowed = ast.parse(
+        "from orchestrator.persistence.models import SdsMemberHold\n"
+        "def place(session):\n"
+        "    session.add(SdsMemberHold(ceiling='1'))\n"
+        "    session.add(Event())\n"
+    )
+    assert _violations({writer: allowed}) == []
+    updates = ast.parse(
+        "from orchestrator.persistence.models import SdsMemberHold\n"
+        "def place(session, row):\n"
+        "    session.add(SdsMemberHold(ceiling='1'))\n"
+        "    session.add(Event())\n"
+        "    row.ceiling = '2'\n"
+    )
+    assert len(_violations({writer: updates})) == 1
+    deletes = ast.parse(
+        "from orchestrator.persistence.models import SdsMemberHold\n"
+        "def place(session, row):\n"
+        "    session.add(SdsMemberHold(ceiling='1'))\n"
+        "    session.add(Event())\n"
+        "    session.execute(delete(SdsMemberHold))\n"
+    )
+    assert len(_violations({writer: deletes})) == 1
+
+
+def _importers(modules: dict[str, ast.Module], target: str) -> set[str]:
+    package, _, leaf = target.rpartition(".")
+    found: set[str] = set()
+    for relative, tree in modules.items():
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import) and any(a.name == target for a in node.names):
+                found.add(relative)
+            elif isinstance(node, ast.ImportFrom) and (
+                node.module == target
+                or (node.module == package and any(a.name == leaf for a in node.names))
+            ):
+                found.add(relative)
+    return found
+
+
+def test_the_automatic_writer_has_one_caller_the_inert_merge_path() -> None:
+    modules = _modules()
+
+    assert _importers(modules, AUTOMATIC_WRITER) == {AUTOMATIC_WRITER_CALLER}
+    imported = {
+        alias.asname or alias.name
+        for node in ast.walk(modules[AUTOMATIC_WRITER_CALLER])
+        if isinstance(node, ast.ImportFrom) and node.module == AUTOMATIC_WRITER
+        for alias in node.names
+        if alias.name == "place"
+    }
+    assert len(imported) == 1
+    assert _calls(modules[AUTOMATIC_WRITER_CALLER]) & imported

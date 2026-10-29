@@ -37,6 +37,7 @@ from orchestrator.services.landing.estate_landing_admission import (
 from orchestrator.services.landing.inert_landing_admission import (
     INERT_LANDING_POLICY_SOURCE_UNCONFIGURED,
     INERT_LANDING_POLICY_SOURCE_UNREADABLE,
+    LANDING_REVERT_UNREADABLE,
     inert_landing_admission,
 )
 from orchestrator.services.landing.interfaces import (
@@ -70,6 +71,7 @@ if TYPE_CHECKING:
     from orchestrator.services.landing.inert_landing_policy import InertLandingPolicySource
     from orchestrator.services.landing.interfaces import (
         EstateReadGateway,
+        InertReadGateway,
     )
 
 # The event actions the two branch-update acts record, one per lane. They live HERE rather than in
@@ -247,6 +249,7 @@ READ_FAILURE_REFUSALS: Final = frozenset(
         LANDING_APP_CREDENTIALS_MISSING,
         INERT_LANDING_POLICY_SOURCE_UNREADABLE,
         INERT_LANDING_POLICY_SOURCE_UNCONFIGURED,
+        LANDING_REVERT_UNREADABLE,
     }
 )
 
@@ -477,7 +480,7 @@ def inert_sibling_composer(
     repository: str,
     landing_source: EstateLandingSource,
     policy_source: InertLandingPolicySource,
-    gateway: EstateReadGateway,
+    gateway: InertReadGateway,
     *,
     enabled: bool,
     credentials_configured: bool,

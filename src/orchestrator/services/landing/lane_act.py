@@ -51,6 +51,7 @@ from orchestrator.services.landing.interfaces import (
     MERGE_REFUSED_BY_REMOTE,
     NEVER_SENT,
     EstateGatewayError,
+    EstatePullRequest,
     EstateReadGateway,
     MergeOutcome,
     SiblingReadGateway,
@@ -63,6 +64,9 @@ _BRANCH_UPDATE_LOCK: Final = "estate_pr_branch_update"
 
 # What each act says when the actor is not the system actor.
 _LANDING_VERB: Final = "land a pull request"
+# The recorded statuses that say the pull request landed: this lane's own landing, and a refusal
+# the confirming read showed had landed after all.
+_LANDED: Final = frozenset({"merged", "already_merged"})  # not-a-vocabulary: `_record`'s statuses
 _BRANCH_UPDATE_VERB: Final = "bring a pull request's branch up to date"
 
 
@@ -159,6 +163,7 @@ def land_pull_request[Admission: LaneAdmission](
     admit: Callable[[str], Admission],
     remote_call: Callable[[Admission, str], MergeOutcome],
     change_record_id: Callable[[Admission], int | None] | None,
+    on_landed: Callable[[EstatePrMerge], None] | None = None,
 ) -> EstatePrMerge:
     """Own the transaction, the way every request entry point in this repository does.
 
@@ -169,6 +174,9 @@ def land_pull_request[Admission: LaneAdmission](
     `admit` composes the lane's answer for the lower-cased repository. `remote_call` performs the
     lane's landing of the head that answer named. `change_record_id` reads the change record the
     row names; a lane that has no change record passes None, and its row and event name none.
+    `on_landed` runs in the same transaction, after a NEW row records the pull request as landed
+    (`merged`, or `already_merged` on a refusal the confirming read contradicted); a replayed row
+    never runs it.
     """
     try:
         record = _land(
@@ -179,6 +187,7 @@ def land_pull_request[Admission: LaneAdmission](
             admit=admit,
             remote_call=remote_call,
             change_record_id=change_record_id,
+            on_landed=on_landed,
         )
         session.commit()
         return record
@@ -196,6 +205,7 @@ def _land[Admission: LaneAdmission](
     admit: Callable[[str], Admission],
     remote_call: Callable[[Admission, str], MergeOutcome],
     change_record_id: Callable[[Admission], int | None] | None,
+    on_landed: Callable[[EstatePrMerge], None] | None,
 ) -> EstatePrMerge:
     authorize_actor(command.actor, _LANDING_VERB)
     repository = command.repository.lower()
@@ -251,7 +261,7 @@ def _land[Admission: LaneAdmission](
             "the pull request's head is not the one the caller read",
             "re-read the landing-admission answer and ask again",
         )
-    return _act(
+    record = _act(
         session,
         command,
         lane,
@@ -261,6 +271,9 @@ def _land[Admission: LaneAdmission](
         change_record_id=None if change_record_id is None else change_record_id(admission),
         names_change_record=change_record_id is not None,
     )
+    if on_landed is not None and record.status in _LANDED:
+        on_landed(record)
+    return record
 
 
 def _act[Admission: LaneAdmission](
@@ -302,7 +315,8 @@ def _act[Admission: LaneAdmission](
                 f"the landing was not attempted: {gateway_failure_detail(error)}",
                 "retry once the credential can be minted",
             ) from error
-        landed = _landed_after_all(gateway, admission)
+        reread = _reread(gateway, admission)
+        landed = None if reread is None else reread.landed
         if landed is True:
             return _record(
                 session,
@@ -314,6 +328,7 @@ def _act[Admission: LaneAdmission](
                 names_change_record=names_change_record,
                 status="already_merged",
                 reason_code=None,
+                merge_commit_sha=reread.merge_commit_sha if reread is not None else None,
                 github_status=error.status_code,
             )
         if landed is False:
@@ -355,8 +370,9 @@ def _act[Admission: LaneAdmission](
     )
 
 
-def _landed_after_all(gateway: EstateReadGateway, admission: LaneAdmission) -> bool | None:
-    """Did the pull request land despite the refusal? `None` means WE DO NOT KNOW.
+def _reread(gateway: EstateReadGateway, admission: LaneAdmission) -> EstatePullRequest | None:
+    """Did the pull request land despite the refusal? `None` means WE DO NOT KNOW; otherwise the
+    re-read pull request, whose `landed` answers and whose merge commit names the landing.
 
     Three answers, not two, and the third is the one the caller must treat differently: a second
     failure to read cannot be collapsed into "it did not land", because that reads a lost success
@@ -365,7 +381,7 @@ def _landed_after_all(gateway: EstateReadGateway, admission: LaneAdmission) -> b
     try:
         return gateway.read_pull_request(
             repository=admission.repository, number=admission.pr_number
-        ).landed
+        )
     except EstateGatewayError:
         return None
 

@@ -67,6 +67,9 @@ EDGES: dict[str, Edge] = {
                 ("POST", "/api/v1/inert-pr-merge"),
                 ("POST", "/api/v1/inert-pr-branch-update"),
                 _HELD_CLOSE,
+                # Landing Part 3a: the watch, and the act on a landing that went bad.
+                ("GET", "/api/v1/landing-watch"),
+                ("POST", "/api/v1/landing-revert"),
             }
         ),
         github=frozenset(),  # through deploy_watcher.github: GITHUB_THROUGH

@@ -59,7 +59,7 @@ from orchestrator.services.landing.interfaces import (
     LANDING_PULL_REQUEST_NOT_OPEN,
     LANDING_VERSION_CEILING_EXCEEDED,
     EstateGatewayError,
-    EstateReadGateway,
+    InertReadGateway,
     gateway_failure_detail,
 )
 from orchestrator.services.landing.lane_act import (
@@ -96,7 +96,7 @@ _VERB: Final = "close a held pull request"
 _LANE_OFF: Final = frozenset({LANDING_NOT_ENABLED, LANDING_APP_CREDENTIALS_MISSING})
 
 
-class HeldCloseGateway(EstateReadGateway, Protocol):
+class HeldCloseGateway(InertReadGateway, Protocol):
     """Everything the lane's admission reads, plus the conversation read and the two writes."""
 
     def comment_bodies(self, *, repository: str, number: int) -> tuple[str, ...]: ...

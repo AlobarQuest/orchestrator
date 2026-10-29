@@ -318,6 +318,8 @@ def test_a_refusal_the_reconciling_read_reveals_as_a_landing_is_recorded(
 
     assert record.status == "already_merged"
     assert record.github_status == 502
+    # The re-read names the landing commit, so the record does too.
+    assert record.merge_commit_sha == LANDED_COMMIT
     assert len(_rows(migrated_engine)) == 1
 
 

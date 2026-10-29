@@ -193,10 +193,22 @@ def factory_breaches(
 
 
 def _same_dependency(hold: HeldDependency, bump: Bump) -> bool:
+    return same_dependency(Bump(hold.ecosystem, hold.directory, hold.dependency, ""), bump)
+
+
+def same_dependency(left: Bump, right: Bump) -> bool:
+    """Do two bumps name one dependency? The matcher's identity rule, whatever their versions: the
+    same ecosystem, case-folded; the same directory, a trailing `/` ignored, and a side naming none
+    matching any; and the same name by the registry's rule (`_name`). Used by every hold match and
+    by the landing lanes' reverted-version term, so the two never disagree on a spelling."""
     return (
-        hold.ecosystem.lower() == bump.ecosystem.lower()
-        and (bump.directory is None or _directory(bump.directory) == _directory(hold.directory))
-        and _name(hold.ecosystem, hold.dependency) == _name(bump.ecosystem, bump.dependency)
+        left.ecosystem.lower() == right.ecosystem.lower()
+        and (
+            left.directory is None
+            or right.directory is None
+            or _directory(left.directory) == _directory(right.directory)
+        )
+        and _name(left.ecosystem, left.dependency) == _name(right.ecosystem, right.dependency)
     )
 
 
@@ -308,6 +320,26 @@ def bumps_of(title: str, commit_message: str, ecosystem: str) -> tuple[Bump, ...
     if match is None:
         return bumps
     return (replace(bumps[0], to_version=_greater(match.group(2), bumps[0].to_version)),)
+
+
+def from_version_of(title: str) -> str | None:
+    """The version a single update moves FROM, read from its title, or None.
+
+    Only the title says it: the update bot's dependency block names where a dependency goes, never
+    where it came from. A grouped update's title names no versions, so it answers None.
+    """
+    match = _TITLE_BUMP.search(_TITLE_DIRECTORY.sub("", title.strip()))
+    return None if match is None else match.group(1)
+
+
+def directory_of(title: str) -> str:
+    """The manifest directory a single update's title names (` in /<path>`), else the root.
+
+    The update bot's dependency block never names it (measured on factory-runner#103); the title
+    carries it only when the manifest is outside the root, which is why its absence means `/`.
+    """
+    match = _TITLE_DIRECTORY.search(title.strip())
+    return "/" if match is None else match.group(0).split()[-1]
 
 
 def _greater(title_version: str, block_version: str) -> str:

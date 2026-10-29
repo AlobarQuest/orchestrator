@@ -52,7 +52,14 @@ LANDING = SRC / "orchestrator/services/landing"
 # Which lane a module belongs to.
 ESTATE_LANE = frozenset({"estate_landing_admission", "estate_pr_merge", "estate_pr_branch_update"})
 INERT_LANE = frozenset(
-    {"inert_landing_admission", "inert_landing_policy", "inert_pr_merge", "inert_pr_branch_update"}
+    {
+        "inert_landing_admission",
+        "inert_landing_policy",
+        "inert_pr_merge",
+        "inert_pr_branch_update",
+        # Landing Part 3a: watching this lane's landings and acting on a bad one.
+        "revert_act",
+    }
 )
 SHARED = frozenset(
     {
@@ -67,6 +74,11 @@ SHARED = frozenset(
         "estate_landing",
         "pr_merge",
         "pr_merge_admission",
+        # Landing Part 3a: judging a landed bump and building its revert each reach GitHub only
+        # through their own gateway protocol.
+        "revert_build",
+        "revert_record",
+        "revert_watch",
     }
 )
 
@@ -82,6 +94,7 @@ ACTS = frozenset(
         "inert_pr_merge",
         "inert_pr_branch_update",
         "pr_merge",
+        "revert_act",
     }
 )
 NEITHER = frozenset(
@@ -93,6 +106,9 @@ NEITHER = frozenset(
         "change_record",
         "estate_landing",
         "inert_landing_policy",
+        "revert_build",
+        "revert_record",
+        "revert_watch",
     }
 )
 

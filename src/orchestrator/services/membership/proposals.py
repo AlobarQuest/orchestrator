@@ -119,7 +119,7 @@ def confirm_member_proposal(
     refused rather than applied blind.
     """
     _require_human(actor, "confirm")
-    _lock_record(session)
+    lock_record(session)
     proposal = _locked_staged(session, proposal_id)
     if read_digest(session, proposal) != expected_digest:
         raise DomainError(
@@ -145,7 +145,7 @@ def withdraw_member_proposal(
     """Retire a staged proposal a person decided against. It changes nothing in the record."""
     _require_human(actor, "withdraw")
     _require_text(reason, "reason")
-    _lock_record(session)
+    lock_record(session)
     proposal = _locked_staged(session, proposal_id)
     proposal.state = "withdrawn"
     proposal.decided_by = actor.actor_id
@@ -258,7 +258,9 @@ def read_digest(session: Session, proposal: SdsMemberProposal) -> str:
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
-def _lock_record(session: Session) -> None:
+def lock_record(session: Session) -> None:
+    """Take the whole membership record's lock for this transaction. Every writer takes it: a
+    person's decision here, and the automatic hold after a landed revert (`revert_hold`)."""
     session.execute(
         text("SELECT pg_advisory_xact_lock(:namespace, 0)"),
         {"namespace": RECORD_LOCK_NAMESPACE},

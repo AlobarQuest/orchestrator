@@ -12,6 +12,7 @@ this vocabulary are in `terms`.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Final, Protocol
 
@@ -280,6 +281,10 @@ class EstatePullRequest:
     author_login: str
     author_is_bot: bool
     mergeable_state: str
+    # The commit the landing made, once it has landed; `None` before, or when the remote's answer
+    # names none. Read by the reconciling re-read, so a landing confirmed only by it still names
+    # its commit (Landing Part 3a).
+    merge_commit_sha: str | None = None
 
 
 class EstateGatewayError(Exception):
@@ -378,6 +383,122 @@ class SiblingReadGateway(EstateReadGateway, Protocol):
     """
 
     def open_pull_requests(self, *, repository: str) -> tuple[OpenPullRequest, ...]: ...
+
+
+@dataclass(frozen=True)
+class Job:
+    """One workflow job at a commit, at its latest attempt. Landing Part 3a.
+
+    Job-level where `HeadCheckRun` is run-level, because the question here is WHICH check went
+    red, and a job's name is the identity branch protection and named-check evidence both use.
+    `conclusion` is `None` while the job has not finished. `attempt` is the run attempt the answer
+    is from, which is how a judgment tells a rerun's verdict from the first attempt's. `workflow`
+    is the run's workflow name and `event` what triggered it (`push`, `pull_request`, `dynamic`
+    for the update bot's own runs), which decide whether a job is watched at all.
+    """
+
+    name: str
+    conclusion: str | None
+    run_id: int
+    attempt: int
+    workflow: str
+    event: str
+
+
+class RevertWatchGateway(Protocol):
+    """The reads and the one act that judging a landed bump needs. Landing Part 3a.
+
+    Narrow rather than a widened `EstateReadGateway`, so no existing caller's double has to answer
+    for jobs. Both calls are bounded by the caller's grant check, as every App call is.
+    """
+
+    def jobs_at(self, *, repository: str, sha: str) -> tuple[Job, ...]: ...
+
+    def parent_of(self, *, repository: str, sha: str) -> str: ...
+
+    def rerun_failed_jobs(self, *, repository: str, run_id: int) -> None: ...
+
+
+@dataclass(frozen=True)
+class TreeEntry:
+    """One leaf of a git tree: a file, a symlink or a submodule. Landing Part 3a.
+
+    Compared whole, so a changed executable bit or a moved submodule is a changed entry, and a
+    revert restores the mode and type along with the object.
+    """
+
+    mode: str
+    type: str
+    sha: str
+
+
+@dataclass(frozen=True)
+class Tree:
+    """A commit's tree: its own sha (a new tree's `base_tree`) and every leaf by path."""
+
+    sha: str
+    entries: dict[str, TreeEntry]
+
+
+@dataclass(frozen=True)
+class TreeChange:
+    """One entry of a tree write. `sha` None deletes the path; mode and type are still sent."""
+
+    path: str
+    mode: str
+    type: str
+    sha: str | None
+
+
+@dataclass(frozen=True)
+class BranchHead:
+    """A repository's default branch: its name and the commit it points at now."""
+
+    name: str
+    sha: str
+
+
+class RevertReadGateway(Protocol):
+    """The two reads that checking a revert against the bump it inverts needs. Landing Part 3a.
+
+    Separate from the writes so the inert lane's admission, which only reads, can ask the check.
+    """
+
+    def default_branch_head(self, *, repository: str) -> BranchHead: ...
+
+    def tree(self, *, repository: str, commit_sha: str) -> Tree: ...
+
+
+class InertReadGateway(EstateReadGateway, RevertReadGateway, Protocol):
+    """Every read the inert lane's admission makes: the shared landing reads, plus the trees a
+    revert subject is checked against (Landing Part 3a)."""
+
+
+class RevertBuildGateway(RevertReadGateway, Protocol):
+    """The reads and writes that building a revert pull request needs. Landing Part 3a.
+
+    Its own narrow protocol, beside `RevertWatchGateway`: judging never writes git objects and
+    building never reads jobs. Every call is bounded by the caller's grant check, as every App call
+    is.
+    """
+
+    def create_tree(
+        self, *, repository: str, base_tree: str, changes: Sequence[TreeChange]
+    ) -> str: ...
+
+    def create_commit(self, *, repository: str, message: str, tree: str, parent: str) -> str: ...
+
+    def create_branch(self, *, repository: str, branch: str, sha: str) -> None: ...
+
+    def open_pull_request(
+        self, *, repository: str, title: str, body: str, head: str, base: str
+    ) -> int: ...
+
+
+class RevertActGateway(EstateReadGateway, RevertWatchGateway, RevertBuildGateway, Protocol):
+    """Everything watching a landing and acting on a bad one needs: the landed pull request and its
+    commits (the dependency list), its jobs, a rerun, and the revert's reads and writes. Landing
+    Part 3a. Every call is bounded by the inert lane's grant term, asked first by the caller."""
 
 
 @dataclass(frozen=True)

@@ -562,6 +562,19 @@ def _wire_body(**overrides: object) -> dict:
     return body
 
 
+def test_the_landing_commit_is_read_only_from_a_landed_body() -> None:
+    """GitHub fills `merge_commit_sha` on an open pull request too, with a test merge that never
+    lands; only a landed one's names the landing (Landing Part 3a)."""
+    landed = _pull_from_body(_wire_body(merged=True, state="closed", merge_commit_sha="c" * 40), 67)
+    open_ = _pull_from_body(_wire_body(merge_commit_sha="t" * 40), 67)
+
+    assert landed.merge_commit_sha == "c" * 40
+    assert open_.merge_commit_sha is None
+    assert (
+        _pull_from_body(_wire_body(merged=True, merge_commit_sha=None), 67).merge_commit_sha is None
+    )
+
+
 def test_the_head_BRANCH_is_read_from_the_body() -> None:
     """The field the ecosystem exclusion is keyed on, read at the one place it enters this
     process. Without this the exclusion could be correct in every unit test and be handed an

@@ -67,6 +67,7 @@ from orchestrator.services.landing.interfaces import (
 )
 from orchestrator.services.landing.terms import (
     LANDING_REPOSITORY_NOT_GRANTED,
+    LANDING_VERSION_REVERTED,
     freshness_derived_refusals,
     qualifies_for_branch_update,
 )
@@ -542,6 +543,7 @@ def test_the_exception_the_lander_suppresses_beside_is_exactly_the_one_composed_
             LANDING_UPDATE_TYPE_UNPARSEABLE,
             LANDING_VERSION_CEILING_EXCEEDED,
             LANDING_REPOSITORY_NOT_GRANTED,
+            LANDING_VERSION_REVERTED,
         }
     )
 

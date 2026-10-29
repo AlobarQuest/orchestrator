@@ -182,7 +182,8 @@ class ActingInertGateway(FakeEstateGateway):
         if self.merges and self._landed_after_refusal is not None:
             from dataclasses import replace
 
-            return replace(pull, landed=self._landed_after_refusal)
+            landed = self._landed_after_refusal
+            return replace(pull, landed=landed, merge_commit_sha=LANDED_COMMIT if landed else None)
         return pull
 
 

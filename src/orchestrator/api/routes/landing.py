@@ -24,6 +24,9 @@ from orchestrator.api.schemas.landing import (
     InertLandingAdmissionResponse,
     InertPrMergeCommandModel,
     InertPrMergeResponse,
+    LandingRevertCommandModel,
+    LandingRevertResponse,
+    LandingWatchResponse,
     PrMergeAdmissionResponse,
     PrMergeCommandModel,
     PrMergeResponse,
@@ -66,12 +69,18 @@ from orchestrator.services.landing.inert_pr_merge import (
     InertMergeCommand,
     land_inert_pull_request,
 )
+from orchestrator.services.landing.lane_act import authorize_actor
 from orchestrator.services.landing.pr_merge import (
     GitHubPullRequests,
     MergeCommand,
     land_unit_pull_request,
 )
 from orchestrator.services.landing.pr_merge_admission import pr_merge_admission
+from orchestrator.services.landing.revert_act import (
+    RevertCommand,
+    act_on_landing,
+    landing_watch,
+)
 
 router = APIRouter(prefix="/api/v1", responses=ERROR_RESPONSES)
 
@@ -484,6 +493,54 @@ def held_pr_close_route(
         GitHubInertPullRequests(token_provider_for(credentials)),
         landing_source,
         policy_source,
+        enabled=settings.inert_landing_enabled,
+        credentials_configured=credentials is not None,
+    )
+
+
+@router.get("/landing-watch", response_model=LandingWatchResponse)
+def landing_watch_route(actor: ActorDep, session: SessionDep, settings: SettingsDep) -> object:
+    """Landing Part 3a: the inert lane's recent landings, each judged by its own checks on the
+    default branch, and every revert record still in the watch.
+
+    Reads only, but reads through the App, so the system actor alone may ask: the same actor that
+    acts on what it answers. Each repository's reads are bounded by the inert lane's grant term.
+    """
+    authorize_actor(actor, "read the landing watch")
+    credentials = github_app_credentials_for(settings)
+    gateway = GitHubInertPullRequests(token_provider_for(credentials))
+    return {
+        "landings": landing_watch(
+            session,
+            gateway,
+            enabled=settings.inert_landing_enabled,
+            credentials_configured=credentials is not None,
+        )
+    }
+
+
+@router.post("/landing-revert", response_model=LandingRevertResponse)
+def landing_revert_route(
+    body: LandingRevertCommandModel,
+    actor: ActorDep,
+    session: SessionDep,
+    settings: SettingsDep,
+) -> object:
+    """Landing Part 3a: act once on one watched landing -- rerun its failing runs, or open its
+    revert -- by the judgment made again here, never the caller's. The inert lane's switch and
+    credentials, and its grant term on the repository, bound it.
+    """
+    credentials = github_app_credentials_for(settings)
+    return act_on_landing(
+        session,
+        RevertCommand(
+            repository=body.repository,
+            pr_number=body.pr_number,
+            actor=actor,
+            idempotency_key=body.idempotency_key,
+            expected_status=body.expected_status,
+        ),
+        GitHubInertPullRequests(token_provider_for(credentials)),
         enabled=settings.inert_landing_enabled,
         credentials_configured=credentials is not None,
     )

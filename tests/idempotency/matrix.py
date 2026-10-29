@@ -197,6 +197,17 @@ COVERAGE_MATRIX: tuple[MatrixRow, ...] = (
         "tests/services/test_held_close.py::test_a_replay_answers_from_the_record_and_touches_github_no_more",
     ),
     MatrixRow(
+        "landing revert",
+        "/api/v1/landing-revert",
+        # Landing Part 3a. The record decides what may happen: a rerun moves the judgment to
+        # pending until it reports, and a revert moves the record past the judgment, both read
+        # under the repository's lock and the record's row lock. Each act also writes one event
+        # under the caller's key, which a repeat answers from without touching GitHub.
+        "pg_advisory_xact_lock on the repository + LandingRevert FOR UPDATE, unique per\n"
+        "(repository, pull request) + unique Event per caller key",
+        "tests/services/test_revert_act.py::test_a_repeated_key_answers_from_its_event_and_acts_no_more",
+    ),
+    MatrixRow(
         "inert pr branch update",
         "/api/v1/inert-pr-branch-update",
         # NO ROW OF ITS OWN, for the reason its deploying sibling gives: the act is repeatable by

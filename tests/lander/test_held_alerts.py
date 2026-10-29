@@ -16,11 +16,13 @@ from lander.core import Outcome
 from lander.held_alerts import (
     ALERTING_STATUSES,
     HELD_ALERT_HOURS,
+    LIFT_A_HOLD,
     STATE_DIR_ENV,
     TOKEN_ENV,
     firing,
     held_key,
     sync_held_alerts,
+    sync_revert_alerts,
 )
 
 REPOSITORY = "AlobarQuest/orchestrator"
@@ -397,3 +399,169 @@ def test_the_first_sightings_are_written_before_alert_hub_is_asked(tmp_path, mon
         is None
     )
     assert seen_at_sync == [{KEY: _iso(NOW)}]
+
+
+# ------------------------------------------------------------------------------------------------
+# `sync_revert_alerts`: one alert per revert record in the landing watch (Landing Part 3a).
+# ------------------------------------------------------------------------------------------------
+
+
+def _record(status: str, **overrides: object) -> dict[str, object]:
+    row: dict[str, object] = {
+        "repository": "alobarquest/veritok",
+        "pr_number": 41,
+        "verdict": None,
+        "detail": "",
+        "failed_job_names": ["test", "lint"],
+        "status": status,
+        "revert_pr_number": 42,
+        "hold_outcome": "held uv / typer at 0.20.0",
+    }
+    row.update(overrides)
+    return row
+
+
+def test_a_revert_raises_one_alert_naming_the_hold(tmp_path) -> None:
+    hub = Hub()
+    env = _env(tmp_path)
+    landed = [_record("revert_landed")]
+
+    assert sync_revert_alerts(LANE, landed, environ=env, transport=hub.transport()) is None
+    assert sync_revert_alerts(LANE, landed, environ=env, transport=hub.transport()) is None
+
+    [sent] = hub.sent
+    assert (sent["key"], sent["status"]) == ("landing-reverted:alobarquest/veritok:41", "firing")
+    assert sent["title"] == "Landing reverted: alobarquest/veritok#41"
+    message = str(sent["message"])
+    assert "test, lint failed" in message
+    assert "#42" in message
+    assert "held uv / typer at 0.20.0" in message
+    assert LIFT_A_HOLD in message
+    assert sent["link"] == "https://github.com/alobarquest/veritok/pull/42"
+    # Its own memory: the held-pull-request alerts' file is never touched.
+    assert not (tmp_path / "state" / "alerts.json").exists()
+
+
+def test_the_revert_alert_says_the_version_never_lands_again_and_how_to_override(
+    tmp_path,
+) -> None:
+    """Lifting the hold does not lift `landing_version_reverted`; the alert says so, and that the
+    one way past it is a person landing that version by hand, unwatched by the SDS."""
+    hub = Hub()
+    sync_revert_alerts(
+        LANE, [_record("revert_landed")], environ=_env(tmp_path), transport=hub.transport()
+    )
+
+    [sent] = hub.sent
+    message = str(sent["message"])
+    assert "landing_version_reverted" in message
+    assert "even after the hold is lifted" in message
+    assert "land that version by hand" in message
+    assert "not watched" in message
+
+
+def test_a_landed_revert_alert_stays_open_while_watched_and_resolves_when_it_leaves(
+    tmp_path,
+) -> None:
+    """The watch keeps a landed revert while its dependency is held, past the 48 hours; the alert
+    follows the watch, so it resolves only when the hold is lifted and the record leaves."""
+    hub = Hub()
+    env = _env(tmp_path)
+    landed = [_record("revert_landed")]
+
+    for _ in range(3):
+        assert sync_revert_alerts(LANE, landed, environ=env, transport=hub.transport()) is None
+    assert sync_revert_alerts(LANE, [], environ=env, transport=hub.transport()) is None
+
+    assert [(sent["key"], sent["status"]) for sent in hub.sent] == [
+        ("landing-reverted:alobarquest/veritok:41", "firing"),
+        ("landing-reverted:alobarquest/veritok:41", "resolved"),
+    ]
+
+
+def test_a_refused_and_a_failed_revert_each_raise_their_own_key(tmp_path) -> None:
+    hub = Hub()
+    rows = [
+        _record("refused_overlap", detail="changed on the default branch since the landing: a"),
+        _record("revert_failed", pr_number=50, detail="tree_response_invalid"),
+        _record("revert_opened", pr_number=51),
+        _record("rerun_requested", pr_number=52),
+    ]
+
+    assert sync_revert_alerts(LANE, rows, environ=_env(tmp_path), transport=hub.transport()) is None
+
+    assert sorted(str(body["key"]) for body in hub.sent) == [
+        "landing-revert-failed:alobarquest/veritok:50",
+        "landing-revert-refused:alobarquest/veritok:41",
+    ]
+    failed = next(body for body in hub.sent if str(body["key"]).endswith(":50"))
+    assert "tree_response_invalid" in str(failed["message"])
+
+
+def test_a_revert_alert_resolves_when_its_record_leaves_the_watch_and_is_held_when_unread(
+    tmp_path,
+) -> None:
+    hub = Hub()
+    env = _env(tmp_path)
+    sync_revert_alerts(LANE, [_record("revert_landed")], environ=env, transport=hub.transport())
+
+    assert sync_revert_alerts(LANE, None, environ=env, transport=hub.transport()) is None
+    assert [body["status"] for body in hub.sent] == ["firing"]
+
+    assert sync_revert_alerts(LANE, [], environ=env, transport=hub.transport()) is None
+    assert [body["status"] for body in hub.sent] == ["firing", "resolved"]
+
+
+def test_a_failed_revert_alert_stays_firing_while_its_record_is_watched(tmp_path) -> None:
+    """No timer resolves it: the record stays in the watch until a person deals with it."""
+    hub = Hub()
+    env = _env(tmp_path)
+    failed = [_record("revert_failed", detail="branch_create_status (HTTP 422)")]
+
+    for _ in range(3):
+        assert sync_revert_alerts(LANE, failed, environ=env, transport=hub.transport()) is None
+
+    assert [(b["key"], b["status"]) for b in hub.sent] == [
+        ("landing-revert-failed:alobarquest/veritok:41", "firing")
+    ]
+
+
+def test_the_stranded_alert_says_the_repositorys_bumps_wait_until_the_revert_lands(
+    tmp_path,
+) -> None:
+    """The record stays `revert_opened`, so every Dependabot bump in the repository is refused
+    `landing_repository_reverting`; reverting by hand does not release them."""
+    hub = Hub()
+    subject = ("alobarquest/veritok", 41)
+    sync_revert_alerts(
+        LANE,
+        [_record("revert_opened")],
+        stranded={subject},
+        environ=_env(tmp_path),
+        transport=hub.transport(),
+    )
+
+    [sent] = hub.sent
+    message = str(sent["message"])
+    assert "Dependabot bumps wait until the revert pull request is reopened and lands" in message
+    assert "Reverting by hand does not release them" in message
+
+
+def test_a_stranded_revert_raises_its_own_alert_and_is_held_when_its_listing_failed(
+    tmp_path,
+) -> None:
+    hub = Hub()
+    env = _env(tmp_path)
+    opened = [_record("revert_opened")]
+    subject = ("alobarquest/veritok", 41)
+
+    sync_revert_alerts(LANE, opened, stranded={subject}, environ=env, transport=hub.transport())
+    sync_revert_alerts(LANE, opened, unknown={subject}, environ=env, transport=hub.transport())
+    assert len(hub.sent) == 1  # its repository went unlisted: held, never resolved
+    sync_revert_alerts(LANE, opened, environ=env, transport=hub.transport())
+
+    assert [(b["key"], b["status"]) for b in hub.sent] == [
+        ("landing-revert-stranded:alobarquest/veritok:41", "firing"),
+        ("landing-revert-stranded:alobarquest/veritok:41", "resolved"),
+    ]
+    assert hub.sent[0]["link"] == "https://github.com/alobarquest/veritok/pull/42"
