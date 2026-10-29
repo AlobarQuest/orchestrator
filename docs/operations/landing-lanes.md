@@ -662,3 +662,24 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   honours (names the function that calls the matcher), covered by an honouring gate, or not a bump.
   A new `MERGE_EXEMPT_PATHS` entry fails until it is classified. The residuals are in ADR-0028
   amendment 2.
+
+### Dependabot's update block
+
+- **The update block is read from the commit the gate reads, never from the head.** The gate's
+  `dependabot/fetch-metadata` (v3.1.0) takes the pull request's FIRST commit, `commits[0]` of
+  `GET /pulls/{n}/commits`, and uses its message only when the update bot authored it and its
+  signature is verified. Every transcribed gate revision leaves both `skip-*` inputs unset.
+  `landing_ledger/github.py::_gate_message` mirrors that rule. A branch update puts a merge commit
+  with no trailer on top, so reading the head lost metadata the gate still had (brain#107 and
+  change-manager#139 on 2026-10-29).
+- **Pending updates read only that commit** (`read_pending_updates`, #544), so the bump proposer
+  and the ledger's audit see what the gate saw. A requirement range whose gate commit yields nothing
+  is `ambiguous` in the bump proposer, never a crash (#542).
+- **A landing asks it last** (`read_landing`, #545): the landing commit, then the pull request's
+  head (where factory-runner writes its own trailers), then the gate's commit, and that only for a
+  pull request the update bot opened. Asking it last means a row that already has metadata can't
+  move. Measured on 2026-10-29: re-deriving all 541 stored landings in the 30-day window across the
+  13 ledger repositories reproduced every row except the four `KNOWN_UNDERCOUNTED_CHECK_LANDINGS`.
+- **The hold term asks a different question.** `services/landing/terms.py::_update_bot_message`
+  takes the one bot-authored commit anywhere on the branch. The two agree on every ordinary pull
+  request.

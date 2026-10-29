@@ -4,7 +4,10 @@
 - **Layer:** `bridge` in `layers.toml` (`make layer L=bridge`)
 - **Programs:** `bump_proposer`, `change_proposer`, `work_carrier`, `work_watcher`
 - **Decisions it builds on:** ADR-0019, ADR-0025 to ADR-0029, ADR-0033, ADR-0039, ADR-0058
-- **Status:** Draft for Devon's review; builder check done, its questions answered
+- **Status:** Approved 2026-10-27. Parts 1 to 4 and the widening to repositories that deploy
+  shipped by 2026-10-29: Part 1 #533, Part 2 #537, Part 3 #538 (with change-manager#142 and
+  intent-packages#154), Part 4 #540, the widening #541 (with change-manager#143 and
+  intent-packages#156), and its follow-ups #542, #544 and #545. Part 5 (verified carry) remains.
 
 ## Intent
 
