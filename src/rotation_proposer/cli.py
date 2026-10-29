@@ -195,9 +195,9 @@ def _reasoning(package: RotationPackage) -> str:
         f"infraops' credential registry reports {package.credential_id} due for rotation "
         f"(occurrence {package.occurrence}). Revision {package.revision} of the standing package "
         f"{package.package_id} carries this rotation, approved by a named human because no "
-        f"approval policy grants rotation revisions (ADR-0054 amendment 1). Approving this record "
-        f"is the decision to rotate the credential; the decomposition, the authority envelope and "
-        f"every adjudication are each approved separately after it."
+        f"approval policy grants rotation revisions (ADR-0054 amendment 1). That approval is the "
+        f"decision to rotate the credential: change-manager's work policy approves this record "
+        f"and the orchestrator approves the derived decomposition (ADR-0055 amendment 16)."
     )
 
 
