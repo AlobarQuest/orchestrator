@@ -328,6 +328,10 @@ def test_work_reaching_two_places_must_be_recognised_under_both() -> None:
     assert refusals(uv_bump(), reach=("source_repository",)) == ()
 
 
+def test_work_reaching_source_and_live_estate_is_recognised_under_both() -> None:
+    assert refusals(uv_bump(), reach=("source_repository", "live_estate")) == ()
+
+
 # ---------------------------------------------------------------------------------------------
 # The artifact itself
 # ---------------------------------------------------------------------------------------------
@@ -1025,3 +1029,19 @@ def test_source_and_live_estate_dependency_patterns_are_equal() -> None:
 
     assert len(source) == 3
     assert live == source
+
+
+@pytest.mark.parametrize(
+    ("label", "envelope"),
+    [
+        ("a different change class", mutated(change_class="software-delivery")),
+        (
+            "a capability the pattern does not declare",
+            mutated(capabilities={**PROFILE_CAPABILITIES, "infra.write": "allowed"}),
+        ),
+    ],
+)
+def test_live_estate_still_refuses_what_is_not_a_dependency_update(
+    label: str, envelope: dict[str, Any]
+) -> None:
+    assert refusals(envelope, LIVE_ESTATE_REACH) == (AUTHORITY_ENVELOPE_NOVEL,), label

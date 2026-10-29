@@ -109,6 +109,7 @@ def test_the_policy_surface_serves_the_known_good_patterns_a_row_declares(
     rows = {row["member"]: row for row in body["reach"]}
 
     live = rows["live_estate"]["known_good"]
+    assert len(live) == 3
     assert [p["name"] for p in live] == [p["name"] for p in rows["source_repository"]["known_good"]]
     assert all(p["change_class"] == "dependency-update" for p in live)
     pattern = rows["source_repository"]["known_good"][0]
