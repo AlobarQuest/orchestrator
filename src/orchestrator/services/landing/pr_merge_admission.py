@@ -19,8 +19,9 @@ round-trip is asked only when the unit names a repository to ask about, so a uni
 repository does not pay for an answer that could not mean anything.
 
 **The estate term is asked of App Brain and nothing else.** A repository where landing on the
-default branch changes something already serving is out of scope until ADR-0019's routing exists,
-and the question is read from the estate, never from a list of repository names kept here.
+default branch changes something already serving is ROUTED (ADR-0019 Increment 3): it lands only
+with an approved change record naming the pull request and inside the `live_estate` change
+window. The question is read from the estate, never from a list of repository names kept here.
 It is deliberately NOT `reach_admission.estate_refusal`: that term answers *does the package's
 declaration agree with the estate*, which is a different question off the same source, and reusing
 it would be the correct-about-the-wrong-noun error this repository has made four times.
@@ -35,10 +36,12 @@ a human authority approval bound to the unit's exact fingerprint before it says 
 
 **What this answer INHERITS FROM NOTHING, said out loud rather than left to be discovered.** It is
 not admission and shares none of admission's environment gates: there is no target-repository
-allowlist here, no hard off-switch, and no change window. Each absence is a position rather than
-an oversight. The allowlist governs where work may be SENT, and a unit that was never sent can
-still finish by hand. The change window belongs to a reach that names something already serving,
-and the only landing this answer can approve is one the estate calls inert. **The off-switch is
+allowlist here and no hard off-switch, and admission's change window -- asked of the PACKAGE's
+reach -- is not asked here either. Each absence is a position rather than an oversight. The
+allowlist governs where work may be SENT, and a unit that was never sent can still finish by hand.
+The window this answer asks is the LANDING's: the `live_estate` window, asked only when the estate
+routes the repository, whatever reach the package declared (a deploying dependency-update package
+declares `live_estate` since ADR-0028 amendment 3, and is still asked here). **The off-switch is
 the one that is genuinely open**: the flag admission reads is matched against
 `unit.required_capability`, and a grant to land is a secondary entry in the capabilities map, so
 no existing environment term could ever see it.
@@ -553,10 +556,11 @@ def _change_window_term(
 
     **The reach asked about is the LANDING's, never the package's.** A package declares what its
     work touches when it runs; the estate says what landing on the repository touches; and the
-    landing is a separate act, by a separate actor, at a separate time. Every unit that reaches
-    this term declares a reach that says a landed pull request changes nothing outside the
-    repository, which is false for exactly the repositories the estate routes here -- so reading
-    the declaration would be answering a different question with the right-looking value.
+    landing is a separate act, by a separate actor, at a separate time. A unit reaching this term
+    may declare a reach that says a landed pull request changes nothing outside the repository,
+    which is false for exactly the repositories the estate routes here -- so reading the
+    declaration would be answering a different question with the right-looking value, even for the
+    units whose declaration happens to agree.
 
     **The window is asserted to exist before it is asked about.** The artifact treats a row with no
     window as raising no objection, which is correct for a policy report and fail-open for an

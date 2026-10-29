@@ -31,6 +31,18 @@ dry run reads this document and still cannot reach the route that writes.
 is not one that opened this lane to everybody; it is one that did not decide the question. Every
 failure below raises, and the pass reports that it could not use its inputs -- which is the same
 fail-closed reading an untranscribed gate blob got, arrived at from the other side.
+
+**BOTH POPULATIONS, EACH ON ITS OWN TERMS (ADR-0028 amendment 3).** The document governs two
+populations: the DEPLOYING one, the top-level `repositories` with its terms in the `landing` block,
+where landing redeploys production; and the INERT one, the `inert_landing` block. The bump
+proposer's lane covers both, and asks each repository's own block which ecosystems the landing
+party excludes (ADR-0028 amendment 3). An empty or absent deploying population is a refusal
+exactly as an inert one is, so a document that stopped declaring it can't shrink the lane to inert
+in silence.
+Of the `landing` block only `excluded_ecosystems` is read, and it is required: a version without
+it (1 to 4) decides by update type, which this producer does not evaluate. The `landing` block
+names no authors -- who may land a deploying pull request is the orchestrator's admission -- so
+`covers_author` asks the inert block alone, as before.
 """
 
 from __future__ import annotations
@@ -49,6 +61,9 @@ _PATH: Final = "/api/landing-policy"
 
 # The key the document carries the inert population under.
 _BLOCK: Final = "inert_landing"
+# The key carrying the deploying population's landing terms; the population itself is the
+# document's top-level `repositories`.
+_DEPLOYING_BLOCK: Final = "landing"
 
 # The keys that block must carry. THE FOURTH IS REQUIRED AND DELIBERATELY NOT STORED --
 # `require_head_current_with_base` is a condition on the ACT, and this producer does not act. It
@@ -69,31 +84,50 @@ class LandingPolicyError(Exception):
 
 
 @dataclass(frozen=True)
-class InertLanding:
-    """The population where landing on the default branch changes nothing already serving.
+class LandingPolicy:
+    """Both populations change-manager declares, and the terms each lands on.
 
-    `version` is the DOCUMENT's version and not this block's -- one version covers both
-    populations change-manager governs, so a later version moving only a rollout pin in the
-    deploying half re-stamps this one too. Carried because the pass reports it, and reported
-    because a reader of a proposal wants to know which declaration was in force.
+    `repositories`, `permitted_authors` and `excluded_ecosystems` are the INERT block's, kept
+    under the names the inert lander reads; `deploying` and `deploying_excluded_ecosystems` are the
+    deploying population and its `landing` block's exclusions. All names are stored lowercased.
+
+    `version` is the DOCUMENT's version and not either block's -- one version covers both
+    populations, so a later version moving only a rollout pin in the deploying half re-stamps the
+    inert half too. Carried because the pass reports it, and reported because a reader of a
+    proposal wants to know which declaration was in force.
     """
 
     version: int
     repositories: frozenset[str]
     permitted_authors: frozenset[str]
     excluded_ecosystems: frozenset[str]
+    deploying: frozenset[str]
+    deploying_excluded_ecosystems: frozenset[str]
 
     def declares(self, repository: str) -> bool:
-        """Whether a human has admitted this repository to the inert population.
+        """Whether a human has admitted this repository to either population.
 
-        CASE-FOLDED ON BOTH SIDES. change-manager serves the population lowercased and a standing
+        CASE-FOLDED ON BOTH SIDES. change-manager serves the populations lowercased and a standing
         package names its target the way GitHub spells it (`AlobarQuest/...`), so comparing the
         two as given would answer False for every repository in the lane.
         """
-        return repository.lower() in self.repositories
+        name = repository.lower()
+        return name in self.repositories or name in self.deploying
 
-    def permits(self, ecosystem: str | None) -> bool:
-        """Whether the declaration lets a bump in this ecosystem land unattended.
+    def deploys(self, repository: str) -> bool:
+        """Whether this repository is in the deploying population, where landing redeploys.
+
+        A repository in both populations deploys: change-manager holds the two disjoint, and if
+        that ever fails the more restrained answer wins (Review focus 2).
+        """
+        return repository.lower() in self.deploying
+
+    def permits(self, repository: str, ecosystem: str | None) -> bool:
+        """Whether the declaration lets a bump in this repository and ecosystem land unattended.
+
+        EACH REPOSITORY'S OWN BLOCK DECIDES (ADR-0028 amendment 3): the `landing` block's
+        exclusions for a deploying repository, the inert block's for an inert one. A repository in
+        neither is permitted nothing -- nobody has said anything lands there.
 
         IT ASKS NOTHING ABOUT THE VERSION DELTA, and that is the declaration's own shape rather
         than a simplification here: what decides is whether the required checks pass, except in
@@ -108,7 +142,11 @@ class InertLanding:
         """
         if ecosystem is None:
             return False
-        return ecosystem not in self.excluded_ecosystems
+        if self.deploys(repository):
+            return ecosystem not in self.deploying_excluded_ecosystems
+        if repository.lower() in self.repositories:
+            return ecosystem not in self.excluded_ecosystems
+        return False
 
     def covers_author(self, author: str) -> bool:
         """Whether pull requests by this author are ones the declaration lets land at all.
@@ -153,7 +191,34 @@ def _names(block: dict[str, Any], key: str) -> frozenset[str]:
     return frozenset(value)
 
 
-def parse(document: Any) -> InertLanding:
+def _deploying(document: dict[str, Any], version: int) -> tuple[frozenset[str], frozenset[str]]:
+    """The deploying population and its `landing` block's exclusions, or a refusal."""
+    if "repositories" not in document:
+        raise LandingPolicyError(
+            f"landing policy version {version} declares no deploying population; an absent "
+            "declaration is a refusal rather than a waiver"
+        )
+    deploying = _names(document, "repositories")
+    if not deploying:
+        raise LandingPolicyError(
+            f"landing policy version {version} declares an EMPTY deploying population; a "
+            "declaration naming nobody is not the same as one naming everybody"
+        )
+    landing = document.get(_DEPLOYING_BLOCK)
+    if not isinstance(landing, dict):
+        raise LandingPolicyError(f"the landing policy's {_DEPLOYING_BLOCK} is not an object")
+    if "excluded_ecosystems" not in landing:
+        raise LandingPolicyError(
+            f"landing policy version {version} decides deploying landings by update type, which "
+            "this producer does not evaluate"
+        )
+    return (
+        frozenset(name.lower() for name in deploying),
+        _names(landing, "excluded_ecosystems"),
+    )
+
+
+def parse(document: Any) -> LandingPolicy:
     """The declaration, or a refusal. Separated from the transport so it can be exercised."""
     block = _block(document)
     version = document["version"]
@@ -163,20 +228,23 @@ def parse(document: Any) -> InertLanding:
             f"landing policy version {version} declares an EMPTY inert population; a declaration "
             "naming nobody is not the same as one naming everybody"
         )
-    return InertLanding(
+    deploying, deploying_excluded = _deploying(document, version)
+    return LandingPolicy(
         version=version,
         repositories=frozenset(name.lower() for name in repositories),
         permitted_authors=_names(block, "permitted_authors"),
         excluded_ecosystems=_names(block, "excluded_ecosystems"),
+        deploying=deploying,
+        deploying_excluded_ecosystems=deploying_excluded,
     )
 
 
-def read_inert_landing(
+def read_landing_policy(
     token: str,
     *,
     base_url: str = DEFAULT_BASE_URL,
     transport: httpx.BaseTransport | None = None,
-) -> InertLanding:
+) -> LandingPolicy:
     """Ask change-manager what it declares. One request, one path, one credential."""
     if not token:
         raise LandingPolicyError("no READ-scoped change-manager credential")

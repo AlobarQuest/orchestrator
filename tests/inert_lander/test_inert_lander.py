@@ -17,7 +17,7 @@ from typing import Any
 import httpx
 import pytest
 
-from bump_proposer.landing_policy import InertLanding
+from bump_proposer.landing_policy import LandingPolicy
 from deploy_watcher.github import ReadError
 from inert_lander.cli import (
     _DEFERRAL_AUTHOR,
@@ -53,17 +53,19 @@ BOT = "dependabot[bot]"
 HEAD = "9f7f6ea6b3adde1cfc712f737647bc308cadb59a"
 
 
-def _rule(*repositories: str) -> InertLanding:
+def _rule(*repositories: str) -> LandingPolicy:
     """The declaration, as `bump_proposer.landing_policy` parses it from the live document.
 
     The real dataclass rather than a stub, because `declares` and `covers_author` are the two
     questions this program asks of it and a stub would let either drift.
     """
-    return InertLanding(
+    return LandingPolicy(
         version=6,
         repositories=frozenset(name.lower() for name in (repositories or (REPOSITORY,))),
         permitted_authors=frozenset({BOT}),
         excluded_ecosystems=frozenset({"docker"}),
+        deploying=frozenset({"alobarquest/brain"}),
+        deploying_excluded_ecosystems=frozenset({"github_actions"}),
     )
 
 
@@ -233,6 +235,14 @@ def test_only_the_DECLARED_repositories_are_enumerated_at_all() -> None:
     selection = _subjects(github, _rule(REPOSITORY))
     assert github.enumerated == [REPOSITORY]
     assert selection.subjects == [(REPOSITORY, 1)]
+
+
+def test_a_DEPLOYING_repository_is_never_enumerated() -> None:
+    """The landing policy the bump proposer reads now declares both populations; this lane is the
+    inert one alone. `_rule` declares `alobarquest/brain` deploying."""
+    github = FakeGitHub({REPOSITORY: [_pull(1)], "alobarquest/brain": [_pull(9)]})
+    _subjects(github, _rule(REPOSITORY))
+    assert github.enumerated == [REPOSITORY]
 
 
 def test_a_repository_GITHUB_CANNOT_ANSWER_FOR_is_a_finding_and_the_others_still_run() -> None:
@@ -667,13 +677,13 @@ def test_the_status_column_is_wide_enough_for_the_widest_status(capsys) -> None:
 # --------------------------------------------------------------------------------------------
 
 
-def _wire(monkeypatch, github: FakeGitHub, client: FakeOrchestrator, rule: InertLanding) -> None:
+def _wire(monkeypatch, github: FakeGitHub, client: FakeOrchestrator, rule: LandingPolicy) -> None:
     monkeypatch.setenv("INERT_LANDING_CHANGE_MANAGER_TOKEN", "cm")
     monkeypatch.setenv("INERT_LANDING_ORCHESTRATOR_TOKEN", "orch")
     monkeypatch.setenv("INERT_LANDING_GITHUB_TOKEN", "gh")
     monkeypatch.setattr("inert_lander.cli.GitHubReader", lambda *a, **k: github)
     monkeypatch.setattr("inert_lander.cli.OrchestratorClient", lambda *a, **k: client)
-    monkeypatch.setattr("inert_lander.cli.read_inert_landing", lambda *a, **k: rule)
+    monkeypatch.setattr("inert_lander.cli.read_landing_policy", lambda *a, **k: rule)
 
 
 @pytest.mark.parametrize(
@@ -701,10 +711,10 @@ def test_a_declaration_this_program_cannot_read_stops_the_WHOLE_pass(monkeypatch
     github = FakeGitHub({REPOSITORY: [_pull(1)]})
     _wire(monkeypatch, github, FakeOrchestrator(), _rule())
 
-    def refuse(*_: Any, **__: Any) -> InertLanding:
+    def refuse(*_: Any, **__: Any) -> LandingPolicy:
         raise LandingPolicyError("declares no inert population")
 
-    monkeypatch.setattr("inert_lander.cli.read_inert_landing", refuse)
+    monkeypatch.setattr("inert_lander.cli.read_landing_policy", refuse)
     assert run([]) == EXIT_UNUSABLE
     assert github.enumerated == []
 
@@ -759,11 +769,13 @@ def test_run_reports_the_REAL_deferral_tally(monkeypatch, capsys) -> None:
 
 
 def test_run_reports_the_version_of_the_declaration_it_actually_read(monkeypatch, capsys) -> None:
-    rule = InertLanding(
+    rule = LandingPolicy(
         version=99,
         repositories=frozenset({REPOSITORY}),
         permitted_authors=frozenset({BOT}),
         excluded_ecosystems=frozenset(),
+        deploying=frozenset({"alobarquest/brain"}),
+        deploying_excluded_ecosystems=frozenset(),
     )
     _wire(monkeypatch, FakeGitHub({REPOSITORY: []}), FakeOrchestrator(), rule)
     run([])

@@ -25,7 +25,7 @@ from bump_proposer.cli import EXIT_FINDINGS, EXIT_OK, EXIT_UNUSABLE, run
 from bump_proposer.landing_policy import (
     LandingPolicyError,
     parse,
-    read_inert_landing,
+    read_landing_policy,
 )
 from sds_members.client import SERVICES, Hold, Member, MembersUnreadable
 from tests.bump_proposer.test_landing_policy import LIVE
@@ -352,7 +352,7 @@ def rig(checkout, monkeypatch, spine, hub):
             token="gh", transport=httpx.MockTransport(_github())
         ),
     )
-    monkeypatch.setattr(cli, "read_inert_landing", lambda token, base_url: parse(LIVE))
+    monkeypatch.setattr(cli, "read_landing_policy", lambda token, base_url: parse(LIVE))
     _grant(monkeypatch, "AlobarQuest/infraops-mcp-server")
     monkeypatch.setattr(
         cli,
@@ -540,7 +540,7 @@ def test_a_dry_run_without_the_read_credential_is_unusable_rather_than_a_clean_p
     monkeypatch.delenv("BUMP_PROPOSER_CHANGE_MANAGER_READ_TOKEN")
     # The rig stubs the reader; this case needs the REAL one, which refuses an empty credential
     # before it constructs a client -- so nothing leaves the process either.
-    monkeypatch.setattr(cli, "read_inert_landing", read_inert_landing)
+    monkeypatch.setattr(cli, "read_landing_policy", read_landing_policy)
 
     assert run([]) == EXIT_UNUSABLE
 
@@ -607,34 +607,22 @@ def test_an_unclassifiable_bump_is_reported_by_name_and_is_not_a_finding(
     assert "unclassifiable" in capsys.readouterr().out
 
 
-def test_a_repository_the_declaration_does_not_name_refuses_the_whole_repository(
-    rig, capsys, monkeypatch
-) -> None:
+def test_repository_in_neither_population_is_not_declared_landing(rig, capsys, monkeypatch) -> None:
     """THE SUCCESSOR TO `no-cascade`, and it is the same fact asked of the holder.
 
-    A repository the landing policy does not declare inert is one where nobody has said that
-    landing on the default branch changes nothing already serving -- so what lands there
-    unattended has no answer, and this producer will not guess. It is a finding rather than a
-    quiet skip because a standing package targeting such a repository was authored for a
-    producer that does not exist.
-
-    The live case is not hypothetical: `change-manager` is in the SAME document's deploying
-    population, where landing redeploys production and a change record, a rollout pin and a
-    change window all apply -- none of which this producer knows anything about.
+    A repository the landing policy declares in neither population is one where nobody has said
+    what landing on its default branch does -- so what lands there unattended has no answer, and
+    this producer will not guess. It is a finding rather than a quiet skip because a standing
+    package targeting such a repository was authored for a lane that does not cover it.
     """
     estate, calls = rig
-    declared = parse(LIVE)
-    narrowed = type(declared)(
-        version=declared.version,
-        repositories=frozenset({"alobarquest/change-manager"}),
-        permitted_authors=declared.permitted_authors,
-        excluded_ecosystems=declared.excluded_ecosystems,
-    )
-    monkeypatch.setattr(cli, "read_inert_landing", lambda token, base_url: narrowed)
+    document = json.loads(json.dumps(LIVE))
+    document["inert_landing"]["repositories"].remove("alobarquest/infraops-mcp-server")
+    monkeypatch.setattr(cli, "read_landing_policy", lambda token, base_url: parse(document))
 
     assert run(["--submit"]) == EXIT_FINDINGS
     out = capsys.readouterr().out
-    assert "not-declared-inert" in out
+    assert "not-declared-landing" in out
     assert calls == [] and estate.proposals == []
 
 
@@ -653,7 +641,7 @@ def test_a_declaration_that_cannot_be_read_stops_the_pass_before_it_reads_github
     def refuse(token, base_url):
         raise LandingPolicyError("change-manager answered 503 for the landing policy")
 
-    monkeypatch.setattr(cli, "read_inert_landing", refuse)
+    monkeypatch.setattr(cli, "read_landing_policy", refuse)
 
     assert run(["--submit"]) == EXIT_UNUSABLE
     assert calls == [] and estate.proposals == []
@@ -671,14 +659,8 @@ def test_a_declaration_that_stopped_permitting_the_update_bot_refuses_rather_tha
     costs a pass; the next one picks it up if a person meant something else.
     """
     estate, calls = rig
-    declared = parse(LIVE)
-    without = type(declared)(
-        version=declared.version,
-        repositories=declared.repositories,
-        permitted_authors=frozenset({"app/some-other-bot"}),
-        excluded_ecosystems=declared.excluded_ecosystems,
-    )
-    monkeypatch.setattr(cli, "read_inert_landing", lambda token, base_url: without)
+    without = replace(parse(LIVE), permitted_authors=frozenset({"app/some-other-bot"}))
+    monkeypatch.setattr(cli, "read_landing_policy", lambda token, base_url: without)
 
     assert run(["--submit"]) == EXIT_UNUSABLE
     assert calls == [] and estate.proposals == []
@@ -1097,6 +1079,8 @@ def test_a_failed_bump_without_a_package_creates_one_then_proposes(
         "2.0.0",
         "--out",
         "packages",
+        "--reach",
+        "source_repository",
     )
     assert [(p["package_id"], p["package_revision"]) for p in estate.proposals] == [(CREATED_ID, 1)]
     out = capsys.readouterr().out
@@ -1433,18 +1417,18 @@ def test_a_granted_inert_repository_with_no_package_is_in_the_lane(
     assert "[NO PACKAGE]" not in capsys.readouterr().out
 
 
-def test_a_granted_repository_not_declared_inert_with_no_package_is_told_not_found(
+def test_a_granted_repository_in_neither_population_with_no_package_is_told_not_found(
     rig, monkeypatch, capsys
 ) -> None:
-    """Ruling 1: Part 3 is inert-only. A granted deploying repository with no package is out of
-    the lane and is not a finding (with a package it is `not-declared-inert`, as before)."""
-    _grant(monkeypatch, "AlobarQuest/infraops-mcp-server", "AlobarQuest/brain")
+    """A granted repository the landing policy declares in neither population, with no package,
+    is out of the lane and is not a finding (with a package it is `not-declared-landing`)."""
+    _grant(monkeypatch, "AlobarQuest/infraops-mcp-server", "AlobarQuest/rtk")
 
     assert run([]) == EXIT_OK
 
     out = capsys.readouterr().out
-    assert "[NO PACKAGE] AlobarQuest/brain" in out
-    assert "brain#" not in out
+    assert "[NO PACKAGE] AlobarQuest/rtk" in out
+    assert "rtk#" not in out
 
 
 def _git(cwd, *args: str) -> str:
@@ -1489,14 +1473,16 @@ def test_a_refused_approval_after_create_leaves_a_checkout_the_next_pass_accepts
     assert [(p["package_id"], p["package_revision"]) for p in estate.proposals] == [(CREATED_ID, 1)]
 
 
-def test_a_repository_not_declared_inert_keeps_its_alerts(rig, checkout, monkeypatch, hub) -> None:
-    """A repository with a package that the landing policy stops declaring inert is not read, so
-    its remembered keys stay as they were."""
+def test_a_repository_not_declared_landing_keeps_its_alerts(
+    rig, checkout, monkeypatch, hub
+) -> None:
+    """A repository with a package that the landing policy stops declaring in either population
+    is not read, so its remembered keys stay as they were."""
     remembered = _key("docker", "python")
     _remember(checkout, remembered)
     document = json.loads(json.dumps(LIVE))
     document["inert_landing"]["repositories"].remove("alobarquest/infraops-mcp-server")
-    monkeypatch.setattr(cli, "read_inert_landing", lambda token, base_url: parse(document))
+    monkeypatch.setattr(cli, "read_landing_policy", lambda token, base_url: parse(document))
 
     assert run(["--submit"]) == EXIT_FINDINGS
 
@@ -1558,3 +1544,133 @@ def test_a_hold_resolves_the_alert_its_bump_raised(rig, monkeypatch, hub) -> Non
 
     assert hub.keys("firing") == [_key("uv", "zod")]
     assert hub.keys("resolved") == [_key("uv", "zod")]
+
+
+# ---------------------------------------------------------------------------------------------
+# Widening to repositories that deploy on landing (ADR-0028 amendment 3). The stub GitHub serves
+# one repository, so these tests move it from the inert population to the deploying one rather
+# than serving another: what changes is which block the landing policy declares it in.
+# ---------------------------------------------------------------------------------------------
+
+
+def _deploying(monkeypatch, *, also_inert: bool = False) -> None:
+    """Declare the rig's repository deploying (and, with `also_inert`, inert as well)."""
+    document = json.loads(json.dumps(LIVE))
+    if not also_inert:
+        document["inert_landing"]["repositories"].remove("alobarquest/infraops-mcp-server")
+    document["repositories"].append("alobarquest/infraops-mcp-server")
+    monkeypatch.setattr(cli, "read_landing_policy", lambda token, base_url: parse(document))
+
+
+def test_failed_bump_in_deploying_repository_creates_live_estate_package(
+    rig, monkeypatch, capsys
+) -> None:
+    estate, calls = rig
+    _deploying(monkeypatch)
+    _serve(monkeypatch, pulls=[LEFT_PAD])
+
+    assert run(["--submit"]) == EXIT_OK
+
+    assert calls[0][0] == "create-standing"
+    assert calls[0][-2:] == ("--reach", "live_estate")
+    assert [(p["package_id"], p["package_revision"]) for p in estate.proposals] == [(CREATED_ID, 1)]
+    out = capsys.readouterr().out
+    assert "created" in out and "proposed" in out
+
+
+def test_failed_bump_in_inert_repository_still_creates_source_repository_package(
+    rig, monkeypatch
+) -> None:
+    estate, calls = rig
+    _serve(monkeypatch, pulls=[LEFT_PAD])
+
+    assert run(["--submit"]) == EXIT_OK
+
+    assert calls[0][0] == "create-standing"
+    assert calls[0][-2:] == ("--reach", "source_repository")
+
+
+def test_a_dry_run_names_the_reach_it_would_create(rig, monkeypatch, capsys) -> None:
+    _deploying(monkeypatch)
+    _serve(monkeypatch, pulls=[LEFT_PAD])
+
+    assert run([]) == EXIT_OK
+
+    assert "would-create" in (out := capsys.readouterr().out) and "live_estate" in out
+
+
+def test_passing_bump_in_deploying_repository_is_skipped(rig, monkeypatch, hub, capsys) -> None:
+    """Review focus 3: the estate lander has it; it never becomes a package."""
+    estate, calls = rig
+    _deploying(monkeypatch)
+    _serve(monkeypatch, pulls=[replace(LEFT_PAD, conclusion="success")])
+
+    assert run(["--submit"]) == EXIT_OK
+
+    assert calls == [] and estate.proposals == [] and hub.sent == []
+    assert "skipped" in capsys.readouterr().out
+
+
+def test_github_actions_bump_in_deploying_repository_is_this_lanes(rig, monkeypatch, hub) -> None:
+    """The `landing` block excludes `github_actions`, so even a passing one is this lane's -- and
+    with no tooling, an alert. The inert control is
+    `test_a_passing_github_actions_bump_is_left_to_the_cascade`."""
+    estate, calls = rig
+    _deploying(monkeypatch)
+    _serve(monkeypatch, pulls=[_actions("success")])
+
+    assert run(["--submit"]) == EXIT_OK
+
+    assert calls == [] and estate.proposals == []
+    assert hub.keys("firing") == [_key("github__actions", "actions/checkout")]
+
+
+def test_docker_bump_in_deploying_repository_is_left_to_the_lander(rig, monkeypatch, hub) -> None:
+    """The `landing` block does not exclude docker, so a passing docker bump is the lander's. The
+    inert control is `test_a_docker_bump_alerts_whether_or_not_it_passes`."""
+    estate, calls = rig
+    _deploying(monkeypatch)
+    _serve(
+        monkeypatch,
+        pulls=[
+            Pull(
+                number=75,
+                title="chore(deps): bump python from 3.12-slim to 3.14-slim",
+                dependency="python",
+                ecosystem="docker",
+                update_type=None,
+                conclusion="success",
+            )
+        ],
+    )
+
+    assert run(["--submit"]) == EXIT_OK
+
+    assert calls == [] and estate.proposals == [] and hub.sent == []
+
+
+@pytest.mark.parametrize("deploying", [[], None], ids=["empty", "missing"])
+def test_policy_without_deploying_population_is_unreadable(rig, monkeypatch, deploying) -> None:
+    """Review focus 4: exit 2, never a lane silently shrunk to inert."""
+    estate, calls = rig
+    document = json.loads(json.dumps(LIVE))
+    if deploying is None:
+        del document["repositories"]
+    else:
+        document["repositories"] = deploying
+    monkeypatch.setattr(cli, "read_landing_policy", lambda token, base_url: parse(document))
+
+    assert run(["--submit"]) == EXIT_UNUSABLE
+
+    assert calls == [] and estate.proposals == []
+
+
+def test_repository_in_both_populations_deploys(rig, monkeypatch) -> None:
+    """Review focus 2: the more restrained reach."""
+    estate, calls = rig
+    _deploying(monkeypatch, also_inert=True)
+    _serve(monkeypatch, pulls=[LEFT_PAD])
+
+    assert run(["--submit"]) == EXIT_OK
+
+    assert calls[0][-2:] == ("--reach", "live_estate")

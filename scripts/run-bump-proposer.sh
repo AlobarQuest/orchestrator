@@ -6,8 +6,10 @@
 # pass reading a registry with no subject.
 #
 # WHAT A WRITING PASS ACTUALLY DOES, because it is more than the siblings do. It edits two
-# lines of a standing package in the intent-packages checkout -- or, for a failed bump in an
-# inert repository that no package covers yet, creates the package (bridge Part 3) -- takes the
+# lines of a standing package in the intent-packages checkout -- or, for a failed bump in a
+# repository the landing policy declares (inert or deploying) that no package covers yet, creates
+# the package (bridge Part 3; ADR-0028 amendment 3 widened it to deploying repositories, whose
+# packages get reach live_estate where inert ones get source_repository) -- takes the
 # revision through that repository's audited lifecycle, re-pins its hash fixture, COMMITS the
 # files, PUBLISHES that commit to the authoring repository's default branch (ADR-0033), and
 # proposes a work record in change-manager naming the target repository and the
@@ -18,8 +20,10 @@
 # package in another ecosystem already covers, and every docker bump -- holds one keyed alert
 # open in alert-hub as the `sds-bridge` sender, resolved by the first writing pass that no longer
 # raises it: its pull request merged or closed, or (in an ecosystem the cascade lands) a re-run
-# passed. A re-run failing again but not yet settled holds the key. Docker bumps alert passing or
-# not only because the inert landing policy excludes docker today.
+# passed. A re-run failing again but not yet settled holds the key. Which bumps with no tooling
+# alert even when they pass is each repository's own block's exclusion list: docker in an inert
+# repository, github_actions in a deploying one. A passing bump in any other ecosystem is the
+# landing party's, in either population.
 # The keys it has fired are kept in `~/Library/Application Support/sds/bump-proposer/`.
 #
 # PUBLISHING IS THE COMMIT FINISHED, NOT A SECOND ACT. Until ADR-0033 the pass stopped at the
@@ -57,13 +61,15 @@
 #      checkout carrying a commit a previous pass wrote and could not publish -- a state no
 #      further revision may be built on, and one only a person can resolve -- or, since
 #      ADR-0038, a landing policy it could not read: unreachable, refused, malformed, declaring
-#      no inert population at all, or declaring one that does not permit the update bot whose
+#      no inert population or no deploying one (ADR-0028 amendment 3), a `landing` block that
+#      decides by update type, or an inert population that does not permit the update bot whose
 #      pull requests are the only ones this pass can see. One declaration covers every
 #      repository, so a rule this pass cannot read stops the pass rather than one repository.
 #      An absent declaration is a REFUSAL and not a waiver: it is a version that did not decide
 #      the question, and this pass will not guess what it would have decided).
 #   3  something was found -- an alert alert-hub would not take, a standing package targeting a
-#      repository the landing policy does not declare inert, a pull request whose title and update trailer disagree, a bump whose
+#      repository the landing policy declares neither inert nor deploying (`not-declared-landing`),
+#      a pull request whose title and update trailer disagree, a bump whose
 #      CAUSE COULD NOT BE FILED (G1+G2: the observation is the cause a proposal names, so a bump
 #      that cannot be stated is reported `unobserved` and nothing is proposed for it), a record
 #      stranded by a bump that moved, a refused proposal, or a revision that was committed and

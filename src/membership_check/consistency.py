@@ -1,10 +1,11 @@
 """Does the member record agree with the declarations and the per-repository configuration lists?
 
-The record says which repositories the SDS maintains and which services each is granted. Nine
+The record says which repositories the SDS maintains and which services each is granted. Ten
 other places still say the same thing in their own words: each repository's `factory-target.toml`,
-change-manager's inert landing population, and the lists the rollout, tool, hardening, fork-sync
-and rotation lanes carry. This module compares them, so a repository added to one and not the
-other is a line in a report rather than a lane that quietly does the wrong thing.
+change-manager's inert and deploying landing populations, and the lists the rollout, tool,
+hardening, fork-sync and rotation lanes carry. This module compares them, so a repository added
+to one and not the other is a line in a report rather than a lane that quietly does the wrong
+thing.
 
 `check` is pure: every input is a plain collection. Reading the sources is `cli.py`'s job.
 Repository names compare ignoring case (GitHub spells them one way, the lists another), and a
@@ -85,6 +86,7 @@ def check(
     *,
     declarations: Scope,
     inert: frozenset[str],
+    deploying: frozenset[str],
     rollout_repositories: Iterable[str],
     tool_repositories: Iterable[str],
     hardened_forks: Iterable[str],
@@ -111,6 +113,9 @@ def check(
         if m.repository.lower() in app_changes and m.repository.lower() not in declared | unread
     ]
     disagreements += _require("the inert landing population", inert, updates, "dependency_updates")
+    disagreements += _require(
+        "the deploying landing population", deploying, updates, "dependency_updates"
+    )
     rollouts = _granted(members, "rollouts")
     disagreements += _require(
         "deploy_watcher ROLLOUT_WORKFLOWS", rollout_repositories, rollouts, "rollouts"

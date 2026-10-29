@@ -352,7 +352,8 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   and by a person otherwise; no producer credential moves one.** change-manager approves a record,
   as `work-policy`, when it is a standing dependency-update package (`change_class`
   `dependency-update`, `package_source_repository` `AlobarQuest/intent-packages`, risk `caution`)
-  whose `target_repository` is on its own inert list (ADR-0025 amendment 1); every other `work`
+  whose `target_repository` is in its inert or deploying population (ADR-0025 amendments 1 and 2;
+  a repository outside both is refused `target_repository_not_in_policy`); every other `work`
   record stays pending for a person. `src/bump_proposer/change_manager.py` is propose-and-read by
   construction — `/api/work-changes` and `/api/items`, anchored so no `/api/items/{id}/…` verb
   matches — and change-manager's `propose` scope refuses every status-moving route server-side
@@ -363,21 +364,29 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   which reads like a missing secret rather than a denied one. Use the broad identity for it.
 - **The bump proposer creates a missing standing package, and alerts on a bump it cannot route.**
   Its lane is every repository the member record grants `dependency_updates` that the landing
-  policy declares inert or that a standing package targets. For a failed bump in an ecosystem with
-  tooling (`npm_and_yarn` → `npm`, `pip`, `uv`) and no package for its dependency, it runs
-  intent-packages' `create-standing` and then the usual transition, policy approval, hash, commit,
-  publish and proposal; a single-clause uv range with `>=` or `==` carries its bare versions. It
+  policy declares (inert, or deploying: the top-level `repositories`) or that a standing package
+  targets; a policy declaring either population empty or absent stops the pass (exit 2). For a
+  failed bump in an ecosystem with tooling (`npm_and_yarn` → `npm`, `pip`, `uv`) and no package for
+  its dependency, it runs intent-packages' `create-standing` with `--reach live_estate` for a
+  deploying repository and `--reach source_repository` for an inert one (a repository in both
+  deploys), and then the usual transition, policy approval, hash, commit, publish and proposal; a
+  single-clause uv range with `>=` or `==` carries its bare versions. Whether the landing party
+  still has a bump is asked of the repository's own block: the inert block's
+  `excluded_ecosystems` (docker) for an inert repository, the `landing` block's (github_actions)
+  for a deploying one, so a passing bump in a deploying repository stays with the estate lander
+  (ADR-0028 amendment 3). It
   sends one alert-hub alert (sender `sds-bridge`, key
   `dependency-bump:<repository lowercased>:<ecosystem>:<dependency>`, built by
   `alert_hub_client.dependency_bump_key`) instead for a failed bump with no tooling, any other
   range (pip and npm ranges, uv ranges other than `>=`/`==`), a dependency already covered by a
-  package in another ecosystem, and every docker bump (only because the inert landing policy
-  excludes docker). A key fires once, is kept in
+  package in another ecosystem, and a bump with no tooling in an ecosystem its repository's block
+  excludes even when it passes (docker in an inert repository, github_actions in a deploying one).
+  A key fires once, is kept in
   `~/Library/Application Support/sds/bump-proposer/alerts.json`, and is resolved by the first writing pass that no longer raises it: its pull request merged or closed, or (in an ecosystem the cascade lands) a re-run passed. A re-run that fails again but hasn't settled holds the key, neither resolved nor fired again. A
   repository still in the lane that the pass didn't read (unreadable, in scope through a standing
-  package but not declared inert, or outside a `--repository` run) keeps its keys; one that left
-  the lane (its `dependency_updates` grant withdrawn, or no longer declared inert with no standing
-  package) has its keys resolved by the next writing pass that reaches its alerts (a pass with no
+  package but declared in neither population, `not-declared-landing`, or outside a `--repository`
+  run) keeps its keys; one that left the lane (its `dependency_updates` grant withdrawn, or no
+  longer declared in either population with no standing package) has its keys resolved by the next writing pass that reaches its alerts (a pass with no
   repository in the lane stops first and sends nothing). An approval refused after a package was created removes that uncommitted
   package directory, so the next pass's clean-checkout check still passes. A dry run sends nothing and writes no state.
   `--submit` refuses to start without `SDS_BRIDGE_ALERT_TOKEN`, which the launcher fetches from

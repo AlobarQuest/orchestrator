@@ -194,7 +194,10 @@ FINDING_STATUSES = frozenset({"refused", "error", "unreadable", "underivable"})
 # why the per-record approval was rejected rather than merely skipped. change-manager has no
 # GitHub egress, so a human approving a record there could not be shown what changed. The
 # judgment that reads a machine-authored diff is the human-judgment acceptance criterion on the
-# intent package, which disqualifies its unit from landing unattended.
+# intent package, which disqualifies its unit from landing unattended -- except for a standing
+# dependency-update package, which carries none (ADR-0025 amendment 2). Its human gates are the
+# decomposition approval and `pr_merge_admission`'s authority term, an approval bound to the
+# unit's exact fingerprint that no known-good pattern substitutes for.
 FACTORY_CHANGE_CLASS = "factory-delivery"
 BOT_CHANGE_CLASS = "dependency-update"
 

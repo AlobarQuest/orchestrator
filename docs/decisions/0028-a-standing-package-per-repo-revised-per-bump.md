@@ -198,3 +198,51 @@ greater than the ceiling's, or when either can't be parsed.
 11. A docker or github_actions bump, for which the factory has no tooling, is skipped by the bump
     proposer under any hold on its dependency, whatever its version: no version is read on that
     branch, and the hold answers the alert it would otherwise raise.
+
+## Amendment 3 — 2026-10-28 (bridge layer: repositories that deploy)
+
+**Status:** Accepted (Devon's decisions in `docs/superpowers/specs/2026-10-27-bridge-layer-design.md`,
+Part 3, "Coverage that widens: Repositories that deploy"; Rulings 1, 2, 3 and 5 of
+`docs/superpowers/plans/2026-10-28-bridge-widen-deploying.md`). This is the decision amendment 2
+deferred ("Holds do not widen the bump proposer's lane … is its own change and decision").
+
+**The lane covers repositories that deploy.** `bump_proposer`'s lane is every repository the
+member record grants `dependency_updates` that change-manager's landing policy declares, inert or
+deploying, or that a standing package targets. A policy whose deploying population (the top-level
+`repositories`) is empty or absent, or whose `landing` block decides by update type, stops the pass
+(exit 2); it never shrinks the lane to inert in silence. A repository in neither population is
+`not-declared-landing`. Measured 2026-10-28, the widened lane adds exactly brain and change-manager.
+
+**Reach for a deploying target is `[live_estate]` (Ruling 1).** `create-standing --reach
+live_estate` writes it; an inert target keeps `[source_repository]`. This supersedes amendment 1's
+"Its reach stays `[source_repository]`" for deploying targets. Only `live_estate` known-good
+patterns are needed, because `authority_refusals` asks a pattern for every declared reach member,
+and dispatch's `estate_refusal` passes, since it refuses only a redeploying target whose reach
+omits `live_estate`. Cost if wrong: the reach no longer names the source repository; members only
+narrow, and the target is still in the envelope.
+
+**Which repositories deploy has one producer-side source and one enforcing one (Ruling 2).** The
+bump proposer chooses the reach from change-manager's landing policy, the same document
+change-manager's work policy reads. App Brain's `default-branch-landing`, read by dispatch
+(`estate_refusal`) and by merge (`_landing_terms`), enforces it. If the two disagree, nothing
+lands: a package marked `live_estate` for a repository App Brain calls inert gets more restraint
+(the change window, a longer lease), and a `source_repository` package for one App Brain says
+redeploys is refused `reach_contradicts_estate` at dispatch, visible on the unit. They agreed when
+measured. No `membership_check` leg reads App Brain, because no lane holds an App Brain credential:
+dispatch is the net. `membership_check` does report a deploying repository the member record does
+not grant `dependency_updates`, beside the inert row.
+
+**The grant accepts either exact reach (Ruling 3).** intent-packages' dependency-update grant
+(schema 3) carries `reach_options`, `[["source_repository"], ["live_estate"]]`, and passes a
+package whose reach equals one option exactly, so `[]`, a superset and a mixed set are refused.
+intent-packages does not decide which option fits a target; App Brain at dispatch does.
+
+**Each repository's own block decides what the landing party still has (Ruling 5).** The inert
+block's `excluded_ecosystems` (docker) for an inert repository, the `landing` block's (github_actions)
+for a deploying one. A passing bump in a deploying repository stays with the estate lander and never
+becomes a package; only a failed one, or one in an excluded ecosystem, is this lane's. A repository
+in both populations (which change-manager's disjointness test refuses) is treated as deploying, the
+more restrained reach. The `landing` block names no authors, so the proposer's update-bot check
+still reads the inert block only.
+
+What still gates the merge in these repositories is recorded in ADR-0025 amendment 2.

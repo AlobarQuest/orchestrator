@@ -1,7 +1,10 @@
 """What change-manager declares, read at the source (ADR-0038).
 
 **THE DOCUMENT BELOW IS THE ONE PRODUCTION SERVES**, fetched from `GET /api/landing-policy` on
-2026-08-31 with the READ-scoped bearer and pasted here in full rather than invented. A parser
+2026-08-31 with the READ-scoped bearer and pasted here in full rather than invented. Two parts were
+re-read on 2026-10-28, when this producer started reading the deploying population as well: the
+top-level `repositories` (served lowercased) and `landing.excluded_ecosystems`. The `landing`
+block's other fields carry the live keys with their values elided. A parser
 tested against a shape somebody thought of passes while being wrong for the only document it will
 ever read, which is a mistake this estate has already paid for.
 
@@ -19,10 +22,10 @@ import httpx
 import pytest
 
 from bump_proposer.landing_policy import (
-    InertLanding,
+    LandingPolicy,
     LandingPolicyError,
     parse,
-    read_inert_landing,
+    read_landing_policy,
 )
 from landing_ledger.rules import REGISTRY
 
@@ -47,21 +50,33 @@ LIVE = {
     "version": 6,
     "decided": "2026-08-31",
     "rationale": "[...]",
-    "repositories": ["alobarquest/change-manager", "alobarquest/brain"],
+    "repositories": ["alobarquest/brain", "alobarquest/change-manager"],
     "change_classes": ["dependency-update"],
     "risks": ["caution"],
-    "landing": {},
+    "landing": {
+        "update_types": [],
+        "require_head_current_with_base": True,
+        "rationale": "[...]",
+        "rollout_workflows": {},
+        "excluded_ecosystems": ["github_actions"],
+    },
     "inert_landing": LIVE_BLOCK,
 }
 
 
 def _document(**overrides):
-    """The live document with one part replaced, so every case below differs in one thing."""
+    """The live document with one part replaced, so every case below differs in one thing.
+
+    `version`, `inert_landing` and `landing` replace that top-level part; `deploying` replaces the
+    top-level `repositories`; any other key replaces that key inside the inert block.
+    """
     block = dict(LIVE_BLOCK)
     document = dict(LIVE)
     for key, value in overrides.items():
-        if key == "version":
-            document["version"] = value
+        if key in ("version", "landing"):
+            document[key] = value
+        elif key == "deploying":
+            document["repositories"] = value
         elif key == "inert_landing":
             document["inert_landing"] = value
         else:
@@ -110,22 +125,28 @@ def test_a_population_served_in_mixed_case_is_still_declared() -> None:
     assert rule.declares("alobarquest/orchestrator")
 
 
-def test_a_repository_the_document_governs_on_the_OTHER_terms_is_not_declared_inert() -> None:
-    """The live case, and the reason `declares` is not a formality: one document, two
-    populations. `change-manager` is in `repositories` at the top level -- landing there
-    redeploys production -- and it is deliberately not in the inert block."""
+def test_a_repository_the_document_governs_on_the_OTHER_terms_is_declared_deploying() -> None:
+    """One document, two populations. `change-manager` is in `repositories` at the top level --
+    landing there redeploys production -- and deliberately not in the inert block, so it is
+    declared, deploys, and is asked against the `landing` block."""
     rule = parse(LIVE)
 
     assert "alobarquest/change-manager" in LIVE["repositories"]
-    assert not rule.declares("AlobarQuest/change-manager")
+    assert "alobarquest/change-manager" not in rule.repositories
+    assert rule.declares("AlobarQuest/change-manager")
+    assert rule.deploys("AlobarQuest/change-manager")
+
+
+INERT = "AlobarQuest/infraops-mcp-server"
+DEPLOYING = "AlobarQuest/brain"
 
 
 def test_an_excluded_ecosystem_is_refused_and_an_unexcluded_one_is_permitted() -> None:
     rule = parse(LIVE)
 
-    assert rule.permits("npm_and_yarn")
-    assert rule.permits("github_actions")
-    assert not rule.permits("docker")
+    assert rule.permits(INERT, "npm_and_yarn")
+    assert rule.permits(INERT, "github_actions")
+    assert not rule.permits(INERT, "docker")
 
 
 def test_an_absent_ecosystem_is_fail_closed_rather_than_faithful() -> None:
@@ -133,7 +154,79 @@ def test_an_absent_ecosystem_is_fail_closed_rather_than_faithful() -> None:
     so `None` never means "the party that lands saw nothing". It means this program could not
     read what that party reads, and permitting on that leaves a bump to a lane whose exclusion
     nobody can re-check."""
-    assert not parse(LIVE).permits(None)
+    assert not parse(LIVE).permits(INERT, None)
+    assert not parse(LIVE).permits(DEPLOYING, None)
+
+
+def test_a_deploying_repository_is_asked_against_the_landing_blocks_exclusions() -> None:
+    """Ruling 5: each repository's own block. The deploying `landing` block excludes
+    `github_actions` and not `docker` -- the inert block's opposite -- so the same ecosystem gets
+    opposite answers in the two populations."""
+    rule = parse(LIVE)
+
+    assert rule.deploys(DEPLOYING) and not rule.deploys(INERT)
+    assert rule.permits(DEPLOYING, "docker")
+    assert rule.permits(DEPLOYING, "npm_and_yarn")
+    assert not rule.permits(DEPLOYING, "github_actions")
+
+
+def test_both_populations_are_declared_and_neither_is_another() -> None:
+    rule = parse(LIVE)
+
+    assert rule.declares(INERT) and rule.declares("alobarquest/BRAIN")
+    assert not rule.declares("AlobarQuest/rtk")
+    assert not rule.permits("AlobarQuest/rtk", "npm_and_yarn")
+
+
+def test_repository_in_both_populations_deploys() -> None:
+    """Review focus 2. change-manager's disjointness test should make this unreachable; if it is
+    reached anyway, the repository is treated as deploying, the more restrained reach."""
+    rule = parse(_document(deploying=["alobarquest/brain", "alobarquest/infraops-mcp-server"]))
+
+    assert rule.deploys(INERT)
+    assert rule.permits(INERT, "docker")
+    assert not rule.permits(INERT, "github_actions")
+
+
+def test_a_deploying_population_served_in_mixed_case_is_still_declared() -> None:
+    rule = parse(_document(deploying=["AlobarQuest/Brain"]))
+
+    assert rule.deploys("alobarquest/brain") and rule.deploys("AlobarQuest/brain")
+
+
+@pytest.mark.parametrize(
+    "deploying", [[], None, "alobarquest/brain"], ids=["empty", "missing", "not-a-list"]
+)
+def test_policy_without_deploying_population_is_unreadable(deploying) -> None:
+    """Review focus 4: an absent or empty deploying population never shrinks the lane silently
+    to inert; it is a refusal, like the inert one."""
+    document = _document(deploying=deploying)
+    if deploying is None:
+        del document["repositories"]
+
+    with pytest.raises(LandingPolicyError):
+        parse(document)
+
+
+@pytest.mark.parametrize(
+    "landing",
+    [None, "not an object", {"update_types": []}, {"excluded_ecosystems": "github_actions"}],
+    ids=["missing", "not-an-object", "decides-by-update-type", "not-a-list"],
+)
+def test_a_landing_block_this_producer_cannot_read_is_refused(landing) -> None:
+    """A version without `landing.excluded_ecosystems` decides by update type (versions 1 to 4),
+    which this producer does not evaluate, so it is a refusal rather than "nothing excluded"."""
+    document = _document(landing=landing)
+    if landing is None:
+        del document["landing"]
+
+    with pytest.raises(LandingPolicyError):
+        parse(document)
+
+
+def test_a_version_deciding_deploying_landings_by_update_type_says_so() -> None:
+    with pytest.raises(LandingPolicyError, match="by update type"):
+        parse(_document(landing={"update_types": ["version-update:semver-patch"]}))
 
 
 def test_the_author_the_reader_can_see_is_the_one_the_document_permits() -> None:
@@ -224,7 +317,9 @@ def test_it_asks_for_the_one_path_and_carries_the_bearer() -> None:
         seen.append((request.url.path, request.headers.get("authorization", "")))
         return httpx.Response(200, json=LIVE)
 
-    rule = read_inert_landing("token", base_url="https://cm.example", transport=_transport(handler))
+    rule = read_landing_policy(
+        "token", base_url="https://cm.example", transport=_transport(handler)
+    )
 
     assert rule.version == 6
     assert seen == [("/api/landing-policy", "Bearer token")]
@@ -235,12 +330,12 @@ def test_an_empty_credential_is_refused_before_anything_is_sent() -> None:
         raise AssertionError("a request left the process without a credential")
 
     with pytest.raises(LandingPolicyError):
-        read_inert_landing("", base_url="https://cm.example", transport=_transport(handler))
+        read_landing_policy("", base_url="https://cm.example", transport=_transport(handler))
 
 
 @pytest.mark.parametrize("status", [401, 403, 404, 500], ids=str)
 def test_a_refused_or_broken_response_is_a_refusal_naming_the_status(status: int) -> None:
-    rule = read_inert_landing
+    rule = read_landing_policy
     with pytest.raises(LandingPolicyError) as raised:
         rule(
             "token",
@@ -254,7 +349,7 @@ def test_a_refused_or_broken_response_is_a_refusal_naming_the_status(status: int
 
 def test_a_response_that_is_not_json_is_a_refusal_rather_than_a_traceback() -> None:
     with pytest.raises(LandingPolicyError):
-        read_inert_landing(
+        read_landing_policy(
             "token",
             base_url="https://cm.example",
             transport=_transport(lambda request: httpx.Response(200, content=b"<html>")),
@@ -266,7 +361,7 @@ def test_an_unreachable_service_names_the_exception_type_and_nothing_else() -> N
         raise httpx.ConnectError("refused")
 
     with pytest.raises(LandingPolicyError) as raised:
-        read_inert_landing("s3cret", base_url="https://cm.example", transport=_transport(handler))
+        read_landing_policy("s3cret", base_url="https://cm.example", transport=_transport(handler))
 
     assert "ConnectError" in str(raised.value)
     assert "s3cret" not in str(raised.value)
@@ -284,7 +379,7 @@ def test_an_unusable_base_url_is_a_refusal_at_either_end(base_url: str) -> None:
     on one half is not a guard -- an environment-variable typo would crash the pass with a
     traceback instead of reporting that it could not use its inputs."""
     with pytest.raises(LandingPolicyError):
-        read_inert_landing("token", base_url=base_url)
+        read_landing_policy("token", base_url=base_url)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -325,7 +420,7 @@ def test_the_declaration_and_the_installed_gate_agree_on_every_measured_input(
     package revision for a bump the still-armed workflow was about to land -- and a package
     revision cannot be unminted.
     """
-    assert parse(LIVE).permits(ecosystem) == REGISTRY[INSTALLED_GATE].permits(
+    assert parse(LIVE).permits(INERT, ecosystem) == REGISTRY[INSTALLED_GATE].permits(
         update_type, ecosystem
     )
 
@@ -337,9 +432,9 @@ def test_that_agreement_is_a_measurement_and_not_a_tautology() -> None:
     permits it and leaves the outcome to the required checks. So the comparison above can fail,
     and it passes because the installed revision and the declaration say the same thing.
     """
-    assert parse(LIVE).permits("npm_and_yarn")
+    assert parse(LIVE).permits(INERT, "npm_and_yarn")
     assert not REGISTRY[SUPERSEDED_GATE].permits(MAJOR, "npm_and_yarn")
 
 
 def test_the_reader_returns_the_shape_the_pass_expects() -> None:
-    assert isinstance(parse(LIVE), InertLanding)
+    assert isinstance(parse(LIVE), LandingPolicy)
