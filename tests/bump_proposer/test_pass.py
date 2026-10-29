@@ -143,8 +143,19 @@ def _github(
                         },
                     },
                 )
-            if path == f"/repos/{REPOSITORY}/commits/{head}":
-                return httpx.Response(200, json={"commit": {"message": trailer(pull)}})
+            if path == f"/repos/{REPOSITORY}/pulls/{number}/commits":
+                return httpx.Response(
+                    200,
+                    json=[
+                        {
+                            "author": {"login": "dependabot[bot]"},
+                            "commit": {
+                                "message": trailer(pull),
+                                "verification": {"verified": True},
+                            },
+                        }
+                    ],
+                )
             if path == f"/repos/{REPOSITORY}/actions/runs" and request.url.params.get(
                 "head_sha"
             ) in (head, None):

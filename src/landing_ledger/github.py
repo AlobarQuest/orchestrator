@@ -501,9 +501,11 @@ def read_landing(reader: GitHubReader, repository: str, base_ref: str, sha: str)
             )
     # A squash carries both sets of trailers through verbatim, so the landing commit almost always
     # has them. A true merge commit does not, and neither does a squash in a repository configured
-    # to write a different body -- and the authority in both cases is the pull request's own head,
-    # which is what `fetch-metadata` read and where the runner wrote its own. Fetched ONCE for all
-    # four, and only when something is actually missing.
+    # to write a different body -- and the fallback in both cases is the pull request's own head,
+    # where the runner wrote its own trailers. For Dependabot's block the gate read the FIRST
+    # commit instead (`_gate_message`); after a branch update the head is a merge commit and this
+    # fallback finds nothing. It stays head-only because landing facts are frozen at first write.
+    # Fetched ONCE for all four, and only when something is actually missing.
     #
     # EACH ARM ASKS ITS OWN QUESTION, AND THE UPDATE ARM'S USED TO ASK A DIFFERENT ONE. It was
     # keyed on an absent `update-type`, which spells "no version delta stated" and was being read
@@ -680,6 +682,29 @@ def workflow_runs_at(reader: GitHubReader, repository: str, commit: str) -> tupl
     return tuple(sorted(collected, key=lambda entry: (entry.path, entry.run)))
 
 
+def _gate_message(reader: GitHubReader, repository: str, number: int) -> str:
+    """The commit message the gate's `fetch-metadata` reads, or "" where it would read none.
+
+    `fetch-metadata` (v3.1.0, `verified_commits.ts::getMessage`) takes the pull request's FIRST
+    commit, `commits[0]` of `GET /pulls/{n}/commits` (oldest first, so `per_page=1` is that row),
+    and refuses it unless its author is the update bot and its signature is verified. That is its
+    default; every gate revision in `rules.py` leaves both `skip-*` inputs unset. Not the head: a
+    branch update puts a merge commit with no trailer on top, and reading the head lost metadata
+    the gate still had. The hold term (`terms.py::_update_bot_message`) asks a different question
+    -- the one bot-authored commit anywhere -- and the two agree on every ordinary pull request.
+    """
+    commits = reader.get(f"/repos/{repository}/pulls/{number}/commits", per_page=1) or []
+    if not commits:
+        return ""
+    first = commits[0]
+    commit = first.get("commit") or {}
+    if (first.get("author") or {}).get("login") != UPSTREAM_AUTHOR:
+        return ""
+    if not (commit.get("verification") or {}).get("verified"):
+        return ""
+    return str(commit.get("message") or "")
+
+
 def read_pending_updates(
     reader: GitHubReader, repository: str, base_ref: str
 ) -> tuple[PendingUpdate, ...]:
@@ -706,8 +731,7 @@ def read_pending_updates(
         if detail is None:
             raise LedgerError(f"github has no pull request {repository}#{row['number']}")
         head_sha = detail["head"]["sha"]
-        head = reader.get(f"/repos/{repository}/commits/{head_sha}")
-        message = head["commit"]["message"] if head else ""
+        message = _gate_message(reader, repository, detail["number"])
         checks, last_concluded = _concluded_checks(reader, repository, head_sha)
         pending.append(
             PendingUpdate(

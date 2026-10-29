@@ -83,7 +83,9 @@ class UpdateMetadata:
     """The three values the gate's condition is written against.
 
     Read from the `updated-dependencies` trailer Dependabot writes into the commit message, which
-    is what `dependabot/fetch-metadata` itself parses -- not from the pull request title. The
+    is what `dependabot/fetch-metadata` itself parses -- not from the pull request title. On a
+    pending update that commit is the pull request's first (`github._gate_message`), which after a
+    branch update is not `PendingUpdate.head_commit`; never attribute one to the other. The
     ecosystem is the second segment of the branch name, which is where fetch-metadata gets it and
     why it spells it `github_actions` with an underscore.
 

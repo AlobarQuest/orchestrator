@@ -780,7 +780,7 @@ def audit_pending(
     about to happen).
 
     A FOURTH outcome is neither healthy nor a finding, and separating it out is the whole of this
-    function's 2026-08-23 change. When the head commit carries no update metadata, two very
+    function's 2026-08-23 change. When the gate's commit carries no update metadata, two very
     different subjects arrive at the same place: one the gate SHOULD be able to decide and this
     audit cannot, which is a finding; and one nothing here can decide, because neither the
     trailer nor the title states anything a rule could be applied to. Reporting the second kind
@@ -791,7 +791,7 @@ def audit_pending(
     ITS SUBJECT SHRANK ON 2026-08-28 AND THE BRANCH IS KEPT ANYWAY. Requirement ranges were the
     bulk of it, and they no longer arrive here at all: the reader keeps the ecosystem a range
     states even though it states no delta, and revision 3457db3c classifies one on that alone.
-    What still reaches this branch is a head commit whose trailer could not be read, which is a
+    What still reaches this branch is a first commit whose trailer could not be read, which is a
     genuine and fail-closed state rather than a residue -- it just stopped being the common one.
 
     THE TITLE IS CONSULTED ONLY WHERE THE METADATA IS ABSENT, and that bound is deliberate. The
@@ -807,15 +807,16 @@ def audit_pending(
                 Finding(
                     EXCEPTION_UPDATE_TYPE_UNPARSEABLE,
                     subject,
-                    "no update metadata on the head commit and no single version delta in the "
-                    "title, so there is nothing here for any rule to be applied to",
+                    "no update metadata on the pull request's first commit and no single version "
+                    "delta in the title, so there is nothing here for any rule to be applied to",
                 ),
             )
         return (
             Finding(
                 STALL_METADATA_UNREADABLE,
                 subject,
-                "no update metadata on the head commit, so eligibility cannot be decided",
+                "no update metadata on the pull request's first commit, so eligibility cannot "
+                "be decided",
             ),
         ), ()
     if not rule.permits(pending.update.update_type, pending.update.ecosystem):

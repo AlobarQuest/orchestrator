@@ -73,6 +73,16 @@ updated-dependencies:
 """
 
 
+def _pr_commit(
+    message: str, *, author: str = "dependabot[bot]", verified: bool = True
+) -> dict[str, Any]:
+    """One row of `GET /pulls/{n}/commits`, in the fields `fetch-metadata` reads."""
+    return {
+        "author": {"login": author},
+        "commit": {"message": message, "verification": {"verified": verified}},
+    }
+
+
 def _routes(
     *,
     armed: bool = False,
@@ -85,8 +95,12 @@ def _routes(
     tip_conclusion: str | None = "success",
     tip: bool = True,
     gate_at_tip: bool = False,
+    commits: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     routes: dict[str, Any] = {
+        f"/repos/{REPO}/pulls/31/commits": (
+            commits if commits is not None else [_pr_commit(message)]
+        ),
         f"/repos/{REPO}": {"default_branch": "main"},
         f"/repos/{REPO}/pulls": [{"number": 31, "user": {"login": author}}],
         f"/repos/{REPO}/pulls/31": {
@@ -96,7 +110,6 @@ def _routes(
             "auto_merge": {"merge_method": "squash"} if armed else None,
             "head": {"sha": HEAD, "ref": "dependabot/github_actions/astral-sh/setup-uv-7"},
         },
-        f"/repos/{REPO}/commits/{HEAD}": {"commit": {"message": message}},
         f"/repos/{REPO}/actions/runs": {
             "workflow_runs": [
                 # THESE TWO CARRY A FULL RUN SHAPE, and that is what makes the exclusions
@@ -240,6 +253,52 @@ def test_only_the_single_pull_request_read_can_see_whether_anything_is_armed() -
     unarmed = read_pending_updates(reader_for(_routes(armed=False)), REPO, "main")
 
     assert (armed[0].armed, unarmed[0].armed) == (True, False)
+
+
+MERGE = "Merge branch 'main' into dependabot/github_actions/astral-sh/setup-uv-7"
+
+
+def test_the_trailer_is_read_from_the_first_commit_past_a_branch_update_merge() -> None:
+    """`fetch-metadata` reads `commits[0]` of the pull request, never the head. A branch update
+    puts a trailer-less merge commit on top; reading the head lost the metadata the gate still
+    has (brain#107, change-manager#139 on 2026-10-29)."""
+    routes = _routes(
+        message=MERGE, commits=[_pr_commit(TRAILER), _pr_commit(MERGE, author="sds-app[bot]")]
+    )
+
+    (pending,) = read_pending_updates(reader_for(routes), REPO, "main")
+
+    assert pending.update is not None
+    assert (pending.update.dependency, pending.update.update_type) == (
+        "astral-sh/setup-uv",
+        "version-update:semver-major",
+    )
+
+
+@pytest.mark.parametrize(
+    "first",
+    [
+        _pr_commit(TRAILER, author="AlobarQuest"),
+        _pr_commit(TRAILER, verified=False),
+    ],
+    ids=["not-dependabot", "unverified"],
+)
+def test_a_first_commit_the_gate_would_refuse_yields_no_metadata(first: dict[str, Any]) -> None:
+    """The gate refuses a first commit that is not Dependabot's or not verified, and so reads no
+    metadata. Reading what the gate read means reading nothing here too."""
+    (pending,) = read_pending_updates(reader_for(_routes(commits=[first])), REPO, "main")
+
+    assert pending.update is None
+
+
+def test_no_commits_to_read_yields_no_metadata_rather_than_raising() -> None:
+    """An empty list and a 404 both leave the gate nothing to read; neither may stop the pass."""
+    empty = _routes(commits=[])
+    missing = {k: v for k, v in _routes().items() if not k.endswith("/pulls/31/commits")}
+
+    for routes in (empty, missing):
+        (pending,) = read_pending_updates(reader_for(routes), REPO, "main")
+        assert pending.update is None
 
 
 def test_a_pull_request_nobody_automated_is_not_this_detectors_subject() -> None:
