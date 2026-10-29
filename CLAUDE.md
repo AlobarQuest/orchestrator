@@ -424,6 +424,11 @@ Placement rule: global CLAUDE.md §7.
 - Landing-ledger observations are content-addressed and immutable: a change to what a producer
   derives must, in the same change, handle every stored row whose facts would move, or each write is
   `observation_conflict`. Detail: `docs/operations/landing-lanes.md`.
+- Dependabot's update block is read from the commit the gate's `fetch-metadata` reads:
+  `commits[0]`, only when the update bot authored it and it is verified
+  (`landing_ledger/github.py::_gate_message`), never the head, which a branch update makes a
+  merge commit. A landing asks it last, after the landing commit and the head. Detail:
+  `docs/operations/landing-lanes.md`, "Dependabot's update block".
 - No reported finding kind may be a substring of another;
   `test_no_reported_kind_is_a_substring_of_another` guards it. Detail:
   `docs/operations/landing-lanes.md`.
