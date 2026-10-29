@@ -381,6 +381,34 @@ class SiblingReadGateway(EstateReadGateway, Protocol):
 
 
 @dataclass(frozen=True)
+class Job:
+    """One workflow job at a commit, at its latest attempt. Landing Part 3a.
+
+    Job-level where `HeadCheckRun` is run-level, because the question here is WHICH check went
+    red, and a job's name is the identity branch protection and named-check evidence both use.
+    `conclusion` is `None` while the job has not finished. `attempt` is the run attempt the answer
+    is from, which is how a judgment tells a rerun's verdict from the first attempt's.
+    """
+
+    name: str
+    conclusion: str | None
+    run_id: int
+    attempt: int
+
+
+class RevertWatchGateway(Protocol):
+    """The reads and the one act that judging a landed bump needs. Landing Part 3a.
+
+    Narrow rather than a widened `EstateReadGateway`, so no existing caller's double has to answer
+    for jobs. Both calls are bounded by the caller's grant check, as every App call is.
+    """
+
+    def jobs_at(self, *, repository: str, sha: str) -> tuple[Job, ...]: ...
+
+    def rerun_failed_jobs(self, *, repository: str, run_id: int) -> None: ...
+
+
+@dataclass(frozen=True)
 class Term:
     met: bool
     refusals: tuple[str, ...]

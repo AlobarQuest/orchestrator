@@ -74,6 +74,7 @@ from orchestrator.services.landing.interfaces import (
     EstatePullRequest,
     EstateReadGateway,
     HeadCheckRun,
+    Job,
     MergeOutcome,
     OpenPullRequest,
     PullRequestCommit,
@@ -207,7 +208,7 @@ def _trailers(admission: EstateLandingAdmission) -> str:
 
 
 class GitHubEstatePullRequests:
-    """The real gateway. Eleven calls, and four of them change anything.
+    """The real gateway. Thirteen calls, and five of them change anything.
 
     Holds a token PROVIDER rather than a token, because an installation token expires within the
     hour and a long-lived process would otherwise carry a dead one. Nothing here logs, formats or
@@ -579,6 +580,89 @@ class GitHubEstatePullRequests:
         if not isinstance(body, dict) or body.get("state") != "closed":
             raise EstateGatewayError("close_response_invalid")
 
+    def jobs_at(self, *, repository: str, sha: str) -> tuple[Job, ...]:
+        """Every workflow job at this commit, each at its latest attempt. Landing Part 3a.
+
+        The runs at the commit, then the jobs of each run -- the Actions listings, because this
+        estate's App holds no `checks` permission (the same substitution `head_check_runs` makes).
+
+        **`filter=all`, reduced here to each job's highest `run_attempt`**, rather than the
+        platform's `latest`: what `latest` lists after a rerun of failed jobs only has not been
+        measured from this side, and the reduction is right under either answer.
+
+        Strict like every list read here: any status but 200, a row that cannot be read, or fewer
+        rows than the listing's own `total_count` raises. A short list of jobs is how a failing one
+        goes unseen.
+        """
+        quoted = quote(sha, safe="")
+        runs = self._listing(
+            f"{GITHUB_API_URL}/repos/{repository}/actions/runs?head_sha={quoted}", "workflow_runs"
+        )
+        latest: dict[tuple[int, str], Job] = {}
+        for run in runs:
+            run_id = run.get("id") if isinstance(run, dict) else None
+            if not isinstance(run_id, int) or isinstance(run_id, bool):
+                raise EstateGatewayError("runs_response_invalid")
+            rows = self._listing(
+                f"{GITHUB_API_URL}/repos/{repository}/actions/runs/{run_id}/jobs?filter=all",
+                "jobs",
+            )
+            for row in rows:
+                job = _job_from_row(row, run_id)
+                held = latest.get((run_id, job.name))
+                if held is None or job.attempt > held.attempt:
+                    latest[(run_id, job.name)] = job
+        return tuple(latest.values())
+
+    def rerun_failed_jobs(self, *, repository: str, run_id: int) -> None:
+        """Ask the platform to rerun this run's failed jobs, once. Landing Part 3a.
+
+        **201 Created is success**, not 200. The body names nothing this side needs, and nothing
+        re-reads to confirm: the new attempt can take a while to appear, which the judgment reads
+        from the attempt number rather than from this answer.
+        """
+        self._send(
+            httpx.post,
+            f"{GITHUB_API_URL}/repos/{repository}/actions/runs/{run_id}/rerun-failed-jobs",
+            {},
+            expected=201,
+            status_code="rerun_status",
+        )
+
+    def _listing(self, url: str, key: str) -> list[Any]:
+        """Every row of an Actions listing, whose answer wraps its rows as `{total_count, <key>}`.
+
+        Separate from `_get_pages`, whose answers are bare lists, and from `_get`, which reads a
+        404 as absent -- for a listing, that would read as EMPTY. Any status but 200 on any page
+        raises, and so does ending with fewer rows than `total_count` names.
+        """
+        joiner = "&" if "?" in url else "?"
+        rows: list[Any] = []
+        for page in range(1, _MAX_LIST_PAGES + 1):
+            paged = f"{url}{joiner}per_page={_LIST_PAGE_SIZE}&page={page}"
+            try:
+                response = httpx.get(paged, headers=self._headers(), timeout=self._timeout)
+            except (httpx.HTTPError, httpx.InvalidURL, ValueError) as error:
+                raise EstateGatewayError(f"request_error:{error.__class__.__name__}") from error
+            if response.status_code != 200:
+                raise EstateGatewayError("listing_status", response.status_code)
+            try:
+                body = response.json()
+            except ValueError as error:
+                raise EstateGatewayError("listing_response_invalid") from error
+            batch = body.get(key) if isinstance(body, dict) else None
+            total = body.get("total_count") if isinstance(body, dict) else None
+            if not isinstance(batch, list):
+                raise EstateGatewayError("listing_response_invalid")
+            if not isinstance(total, int) or isinstance(total, bool):
+                raise EstateGatewayError("listing_response_invalid")
+            rows.extend(batch)
+            if len(batch) < _LIST_PAGE_SIZE:
+                if len(rows) < total:
+                    raise EstateGatewayError("listing_truncated")
+                return rows
+        raise EstateGatewayError("list_pagination_exceeded")
+
     def _send(
         self,
         method: Callable[..., httpx.Response],
@@ -591,7 +675,7 @@ class GitHubEstatePullRequests:
         """One write, refusing any status but `expected`; the parsed body, or None without one."""
         try:
             response = method(url, headers=self._headers(), json=payload, timeout=self._timeout)
-        except (httpx.RequestError, httpx.InvalidURL, ValueError) as error:
+        except (httpx.HTTPError, httpx.InvalidURL, ValueError) as error:
             raise EstateGatewayError(f"request_error:{error.__class__.__name__}") from error
         if response.status_code != expected:
             raise EstateGatewayError(status_code, response.status_code)
@@ -599,6 +683,25 @@ class GitHubEstatePullRequests:
             return response.json()
         except ValueError:
             return None
+
+
+def _job_from_row(row: Any, run_id: int) -> Job:
+    """One job row, strictly: a job with no name or attempt cannot be matched to anything."""
+    if not isinstance(row, dict):
+        raise EstateGatewayError("jobs_response_invalid")
+    name = row.get("name")
+    attempt = row.get("run_attempt")
+    conclusion = row.get("conclusion")
+    if not isinstance(name, str) or not name:
+        raise EstateGatewayError("jobs_response_invalid")
+    if not isinstance(attempt, int) or isinstance(attempt, bool):
+        raise EstateGatewayError("jobs_response_invalid")
+    return Job(
+        name=name,
+        conclusion=conclusion if isinstance(conclusion, str) else None,
+        run_id=run_id,
+        attempt=attempt,
+    )
 
 
 def _linked_login(account: Any) -> str | None:
