@@ -674,9 +674,9 @@ OUTBOUND_ALLOWLIST = {
     # egress is not the orchestrator's. It reads which changes the estate routed, asks the
     # orchestrator whether each may be landed, and relays the answer -- composing nothing, because
     # every term is evaluated inside the orchestrator in the transaction that records the act.
-    # Its whole surface is four routes (the admission read; the land, branch-update and held-pr-close
-    # writes), enforced in code by `is_allowed_read`/`is_allowed_write` and in tests by
-    # tests/estate_lander/test_client_surface.py.
+    # Its whole surface is four routes (the admission read; the land, branch-update and
+    # held-pr-close writes), enforced in code by `is_allowed_read`/`is_allowed_write` and in tests
+    # by tests/estate_lander/test_client_surface.py.
     Path("src/estate_lander/orchestrator_client.py"),
     # Landing Part 1. The estate lander's own change-manager client: one GET of the deploying-merge
     # listing and no write of any kind (`is_allowed_write` is always False), so the lander no longer

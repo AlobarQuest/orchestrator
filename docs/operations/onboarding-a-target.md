@@ -158,7 +158,10 @@ by hand before you make it a target.
    - `allow_auto_merge: false`, and no workflow that arms auto-merge. Nothing in the SDS arms
      auto-merge since ADR-0038 (the orchestrator merges directly), and the setting only lets any
      writer arm a merge the landing lanes never judged. `membership-check` reports a member
-     repository that allows it or carries an arming workflow.
+     repository that allows it or carries an arming workflow. It detects only arming (the
+     setting, and a workflow that arms auto-merge), not a workflow that merges directly (`gh pr
+     merge` without `--auto`, or REST `PUT .../merge`); a wider "nothing but the SDS merges"
+     check is out of its scope.
 
 ## Prepare the first unit
 

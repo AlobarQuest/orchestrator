@@ -706,3 +706,9 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   edge table bound what these programs send, not what the credential can do. Confining it needs a
   dedicated lander identity (a security-standards registry change and a new M2M credential), which
   is a separate decision.
+- **A pull request held for 24 hours raises one alert-hub alert** (`lander/held_alerts.py`, key
+  `landing-held:<lane>:<repository lowercased>:<number>`), resolved on the first pass it is no
+  longer `held`, `unreadable` or `error`; a repository the lane can't list fires one alert under
+  number 0 after the same 24 hours, and resolves when it lists again. An orchestrator outage of 24
+  hours or more turns every in-scope open pull request `unreadable`, so each fires its one keyed
+  alert: noise in proportion to the open pull requests, never a repeat.

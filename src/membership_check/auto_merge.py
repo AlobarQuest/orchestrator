@@ -6,6 +6,11 @@ that arms it is exactly such a writer. So each member repository is read for two
 `allow_auto_merge` setting, and every file under `.github/workflows/` on its default branch that
 carries an arming marker.
 
+This is an ARMING detector, and deliberately narrower than "nothing but the SDS merges": it
+reports the setting and a workflow that arms auto-merge, not a workflow that merges directly
+(the `gh` CLI's merge command without `--auto`, or the REST pull-request merge endpoint). That
+wider check is out of scope here.
+
 `None` means the read failed, and it is never a pass. `allow_auto_merge` is served only to a
 credential with admin rights on the repository, so a missing key is `None`, not `False`.
 
