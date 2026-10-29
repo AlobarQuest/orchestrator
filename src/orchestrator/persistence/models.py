@@ -1609,6 +1609,9 @@ class LandingRevert(UUIDPrimaryKey, Base):
     failed_job_names: Mapped[list[str]] = mapped_column(JSONB)
     # GitHub Actions run ids exceed 2^31.
     failed_run_id: Mapped[int] = mapped_column(BigInteger)
+    # {"<run id>": <attempt>} -- each run whose failed jobs were rerun, with the attempt that failed
+    # before the rerun. A failure counts toward a revert only at a later attempt than this.
+    rerun_attempts: Mapped[dict[str, int] | None] = mapped_column(JSONB)
     status: Mapped[str] = mapped_column(String)
     revert_pr_number: Mapped[int | None] = mapped_column(Integer)
     revert_head_sha: Mapped[str | None] = mapped_column(String)

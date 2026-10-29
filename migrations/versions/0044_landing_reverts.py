@@ -37,6 +37,7 @@ def upgrade() -> None:
         sa.Column("parent_sha", sa.String(), nullable=False),
         sa.Column("failed_job_names", postgresql.JSONB(), nullable=False),
         sa.Column("failed_run_id", sa.BigInteger(), nullable=False),
+        sa.Column("rerun_attempts", postgresql.JSONB(), nullable=True),
         sa.Column("status", sa.String(), nullable=False),
         sa.Column("revert_pr_number", sa.Integer(), nullable=True),
         sa.Column("revert_head_sha", sa.String(), nullable=True),

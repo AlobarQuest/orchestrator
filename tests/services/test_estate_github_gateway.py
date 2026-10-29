@@ -170,6 +170,10 @@ def _jobs_url(run_id: int, page: int = 1) -> str:
     return f"{API}/runs/{run_id}/jobs?filter=all&per_page=100&page={page}"
 
 
+def _run(run_id: int, workflow: str = "CI", event: str = "push") -> dict[str, Any]:
+    return {"id": run_id, "name": workflow, "event": event}
+
+
 def _job_row(name: str, conclusion: str | None, attempt: int) -> dict[str, Any]:
     return {"name": name, "conclusion": conclusion, "run_attempt": attempt}
 
@@ -191,7 +195,13 @@ def test_jobs_at_reads_every_run_at_the_commit_and_keeps_each_jobs_latest_attemp
     gateway, _ = _jobs_gateway(
         monkeypatch,
         {
-            _runs_url(MERGE): (200, {"total_count": 2, "workflow_runs": [{"id": 11}, {"id": 12}]}),
+            _runs_url(MERGE): (
+                200,
+                {
+                    "total_count": 2,
+                    "workflow_runs": [_run(11), _run(12, "Dependabot Updates", "dynamic")],
+                },
+            ),
             _jobs_url(11): (
                 200,
                 {
@@ -208,9 +218,16 @@ def test_jobs_at_reads_every_run_at_the_commit_and_keeps_each_jobs_latest_attemp
     )
 
     assert set(gateway.jobs_at(repository=REPOSITORY, sha=MERGE)) == {
-        Job(name="test", conclusion="success", run_id=11, attempt=2),
-        Job(name="lint", conclusion="success", run_id=11, attempt=1),
-        Job(name="build", conclusion=None, run_id=12, attempt=1),
+        Job(name="test", conclusion="success", run_id=11, attempt=2, workflow="CI", event="push"),
+        Job(name="lint", conclusion="success", run_id=11, attempt=1, workflow="CI", event="push"),
+        Job(
+            name="build",
+            conclusion=None,
+            run_id=12,
+            attempt=1,
+            workflow="Dependabot Updates",
+            event="dynamic",
+        ),
     }
 
 
@@ -220,7 +237,7 @@ def test_jobs_at_follows_every_page(monkeypatch: pytest.MonkeyPatch) -> None:
     gateway, router = _jobs_gateway(
         monkeypatch,
         {
-            _runs_url(MERGE): (200, {"total_count": 1, "workflow_runs": [{"id": 11}]}),
+            _runs_url(MERGE): (200, {"total_count": 1, "workflow_runs": [_run(11)]}),
             _jobs_url(11): (200, {"total_count": 101, "jobs": first}),
             _jobs_url(11, page=2): (
                 200,
@@ -232,7 +249,17 @@ def test_jobs_at_follows_every_page(monkeypatch: pytest.MonkeyPatch) -> None:
     jobs = gateway.jobs_at(repository=REPOSITORY, sha=MERGE)
 
     assert len(jobs) == 101
-    assert Job(name="test (100)", conclusion="failure", run_id=11, attempt=1) in jobs
+    assert (
+        Job(
+            name="test (100)",
+            conclusion="failure",
+            run_id=11,
+            attempt=1,
+            workflow="CI",
+            event="push",
+        )
+        in jobs
+    )
     assert _jobs_url(11, page=2) in router.urls
 
 
@@ -246,28 +273,46 @@ def test_jobs_at_follows_every_page(monkeypatch: pytest.MonkeyPatch) -> None:
         ),
         pytest.param(
             {
-                _runs_url(MERGE): (200, {"total_count": 1, "workflow_runs": [{"id": 11}]}),
+                _runs_url(MERGE): (200, {"total_count": 1, "workflow_runs": [_run(11)]}),
                 _jobs_url(11): (404, {"message": "Not Found"}),
             },
             id="jobs 404",
         ),
         pytest.param(
             {
-                _runs_url(MERGE): (200, {"total_count": 1, "workflow_runs": [{"id": 11}]}),
+                _runs_url(MERGE): (
+                    200,
+                    {"total_count": 1, "workflow_runs": [{"id": 11, "name": "CI"}]},
+                )
+            },
+            id="a run with no event",
+        ),
+        pytest.param(
+            {
+                _runs_url(MERGE): (
+                    200,
+                    {"total_count": 1, "workflow_runs": [{"id": 11, "event": "push"}]},
+                )
+            },
+            id="a run with no workflow name",
+        ),
+        pytest.param(
+            {
+                _runs_url(MERGE): (200, {"total_count": 1, "workflow_runs": [_run(11)]}),
                 _jobs_url(11): (200, {"total_count": 1, "jobs": [{"conclusion": "success"}]}),
             },
             id="a job with no name",
         ),
         pytest.param(
             {
-                _runs_url(MERGE): (200, {"total_count": 1, "workflow_runs": [{"id": 11}]}),
+                _runs_url(MERGE): (200, {"total_count": 1, "workflow_runs": [_run(11)]}),
                 _jobs_url(11): (200, {"total_count": 1, "jobs": [{"name": "test"}]}),
             },
             id="a job with no attempt",
         ),
         pytest.param(
             {
-                _runs_url(MERGE): (200, {"total_count": 1, "workflow_runs": [{"id": 11}]}),
+                _runs_url(MERGE): (200, {"total_count": 1, "workflow_runs": [_run(11)]}),
                 _jobs_url(11): (200, {"total_count": 2, "jobs": [_job_row("test", None, 1)]}),
             },
             id="fewer jobs than the total says",
@@ -339,3 +384,41 @@ def test_a_rerun_that_did_not_happen_raises(
         GitHubEstatePullRequests(lambda: "token").rerun_failed_jobs(
             repository=REPOSITORY, run_id=18_000_000_001
         )
+
+
+def _commit_gateway(
+    monkeypatch: pytest.MonkeyPatch, status: int, body: Any
+) -> tuple[GitHubEstatePullRequests, _Router]:
+    return _jobs_gateway(
+        monkeypatch, {f"https://api.github.com/repos/{REPOSITORY}/commits/{MERGE}": (status, body)}
+    )
+
+
+def test_parent_of_a_squash_merge_is_its_single_parent(monkeypatch: pytest.MonkeyPatch) -> None:
+    gateway, _ = _commit_gateway(monkeypatch, 200, {"sha": MERGE, "parents": [{"sha": HEAD}]})
+
+    assert gateway.parent_of(repository=REPOSITORY, sha=MERGE) == HEAD
+
+
+@pytest.mark.parametrize(
+    ("status", "body"),
+    [
+        pytest.param(200, {"sha": MERGE, "parents": []}, id="a root commit"),
+        pytest.param(
+            200, {"sha": MERGE, "parents": [{"sha": HEAD}, {"sha": MERGE}]}, id="a merge commit"
+        ),
+        pytest.param(200, {"sha": MERGE}, id="no parents key"),
+        pytest.param(200, {"sha": MERGE, "parents": [{}]}, id="a parent with no sha"),
+        pytest.param(404, {"message": "Not Found"}, id="no such commit"),
+        pytest.param(502, {"message": "Bad Gateway"}, id="the remote failed"),
+    ],
+)
+def test_parent_of_refuses_anything_but_exactly_one_parent(
+    monkeypatch: pytest.MonkeyPatch, status: int, body: Any
+) -> None:
+    """A squash merge has one parent. Zero or two means this is not the commit the lane landed, and
+    reverting to either answer would be reverting to a guess."""
+    gateway, _ = _commit_gateway(monkeypatch, status, body)
+
+    with pytest.raises(EstateGatewayError):
+        gateway.parent_of(repository=REPOSITORY, sha=MERGE)

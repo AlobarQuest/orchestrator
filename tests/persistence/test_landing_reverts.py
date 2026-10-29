@@ -56,3 +56,17 @@ def test_run_ids_above_two_to_the_thirty_one_are_stored(
     migrated_session.commit()
     with Session(migrated_engine) as reader:
         assert reader.query(LandingRevert).one().failed_run_id == big
+
+
+def test_rerun_attempts_hold_each_reruns_run_and_attempt(
+    migrated_session: Session, migrated_engine
+) -> None:
+    """JSON keys are strings, so the run id is stored as its decimal text; run ids exceed 2^31."""
+    attempts = {str(2**31 + 1): 1, "42": 2}
+    migrated_session.add(_revert(rerun_attempts=attempts))
+    migrated_session.add(_revert(pr_number=8))
+    migrated_session.commit()
+    with Session(migrated_engine) as reader:
+        rows = {row.pr_number: row for row in reader.query(LandingRevert).all()}
+        assert rows[7].rerun_attempts == attempts
+        assert rows[8].rerun_attempts is None

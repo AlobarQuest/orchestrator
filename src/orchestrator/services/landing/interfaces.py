@@ -387,13 +387,17 @@ class Job:
     Job-level where `HeadCheckRun` is run-level, because the question here is WHICH check went
     red, and a job's name is the identity branch protection and named-check evidence both use.
     `conclusion` is `None` while the job has not finished. `attempt` is the run attempt the answer
-    is from, which is how a judgment tells a rerun's verdict from the first attempt's.
+    is from, which is how a judgment tells a rerun's verdict from the first attempt's. `workflow`
+    is the run's workflow name and `event` what triggered it (`push`, `pull_request`, `dynamic`
+    for the update bot's own runs), which decide whether a job is watched at all.
     """
 
     name: str
     conclusion: str | None
     run_id: int
     attempt: int
+    workflow: str
+    event: str
 
 
 class RevertWatchGateway(Protocol):
@@ -404,6 +408,8 @@ class RevertWatchGateway(Protocol):
     """
 
     def jobs_at(self, *, repository: str, sha: str) -> tuple[Job, ...]: ...
+
+    def parent_of(self, *, repository: str, sha: str) -> str: ...
 
     def rerun_failed_jobs(self, *, repository: str, run_id: int) -> None: ...
 

@@ -208,7 +208,7 @@ def _trailers(admission: EstateLandingAdmission) -> str:
 
 
 class GitHubEstatePullRequests:
-    """The real gateway. Thirteen calls, and five of them change anything.
+    """The real gateway. Fourteen calls, and five of them change anything.
 
     Holds a token PROVIDER rather than a token, because an installation token expires within the
     hour and a long-lived process would otherwise carry a dead one. Nothing here logs, formats or
@@ -237,7 +237,7 @@ class GitHubEstatePullRequests:
         # raises `UnicodeError`, which is a `ValueError` and neither of the other two. The
         # repository interpolated into these paths is operator-authored, so all three are ordinary
         # ways for one to escape as a bare 500.
-        except (httpx.RequestError, httpx.InvalidURL, ValueError) as error:
+        except (httpx.HTTPError, httpx.InvalidURL, ValueError) as error:
             raise EstateGatewayError(f"request_error:{error.__class__.__name__}") from error
         if response.status_code == 404:
             return None
@@ -600,19 +600,34 @@ class GitHubEstatePullRequests:
         )
         latest: dict[tuple[int, str], Job] = {}
         for run in runs:
-            run_id = run.get("id") if isinstance(run, dict) else None
-            if not isinstance(run_id, int) or isinstance(run_id, bool):
-                raise EstateGatewayError("runs_response_invalid")
+            run_id, workflow, event = _run_from_row(run)
             rows = self._listing(
                 f"{GITHUB_API_URL}/repos/{repository}/actions/runs/{run_id}/jobs?filter=all",
                 "jobs",
             )
             for row in rows:
-                job = _job_from_row(row, run_id)
+                job = _job_from_row(row, run_id, workflow, event)
                 held = latest.get((run_id, job.name))
                 if held is None or job.attempt > held.attempt:
                     latest[(run_id, job.name)] = job
         return tuple(latest.values())
+
+    def parent_of(self, *, repository: str, sha: str) -> str:
+        """The single parent of a squash merge. Landing Part 3a.
+
+        Exactly one, or a raise: a commit with none or with two is not a squash merge, and the
+        default branch before the bump is only well defined for one.
+        """
+        body = self._get(f"{GITHUB_API_URL}/repos/{repository}/commits/{quote(sha, safe='')}")
+        if body is None:
+            raise EstateGatewayError("commit_not_found", 404)
+        parents = body.get("parents") if isinstance(body, dict) else None
+        if not isinstance(parents, list) or len(parents) != 1:
+            raise EstateGatewayError("commit_parents_not_single")
+        parent = parents[0].get("sha") if isinstance(parents[0], dict) else None
+        if not isinstance(parent, str) or not parent:
+            raise EstateGatewayError("commit_response_invalid")
+        return parent
 
     def rerun_failed_jobs(self, *, repository: str, run_id: int) -> None:
         """Ask the platform to rerun this run's failed jobs, once. Landing Part 3a.
@@ -685,7 +700,21 @@ class GitHubEstatePullRequests:
             return None
 
 
-def _job_from_row(row: Any, run_id: int) -> Job:
+def _run_from_row(row: Any) -> tuple[int, str, str]:
+    """A run's id, workflow name and triggering event, strictly: the judgment keys on all three."""
+    if not isinstance(row, dict):
+        raise EstateGatewayError("runs_response_invalid")
+    run_id = row.get("id")
+    workflow = row.get("name")
+    event = row.get("event")
+    if not isinstance(run_id, int) or isinstance(run_id, bool):
+        raise EstateGatewayError("runs_response_invalid")
+    if not isinstance(workflow, str) or not workflow or not isinstance(event, str) or not event:
+        raise EstateGatewayError("runs_response_invalid")
+    return run_id, workflow, event
+
+
+def _job_from_row(row: Any, run_id: int, workflow: str, event: str) -> Job:
     """One job row, strictly: a job with no name or attempt cannot be matched to anything."""
     if not isinstance(row, dict):
         raise EstateGatewayError("jobs_response_invalid")
@@ -701,6 +730,8 @@ def _job_from_row(row: Any, run_id: int) -> Job:
         conclusion=conclusion if isinstance(conclusion, str) else None,
         run_id=run_id,
         attempt=attempt,
+        workflow=workflow,
+        event=event,
     )
 
 
