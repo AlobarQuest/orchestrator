@@ -436,8 +436,12 @@ def _ask_to_act(
     status = answer.get("status")
     detail = str(answer.get("detail") or "")
     if answer.get("acted") is False:
-        # The act judged again and found nothing to do: the watch and the act disagreed, a
-        # harmless race, and the next pass asks again. Not a finding.
+        # A read inside the act failed, so nothing was rerun or reverted and the bad bump stays:
+        # a finding, as the watch's own `unreadable` is.
+        if answer.get("verdict") == "unreadable":
+            return Outcome(repository, number, "unreadable", detail or "a read in the act failed")
+        # Otherwise the act judged again and found nothing to do: the watch and the act
+        # disagreed, a harmless race, and the next pass asks again. Not a finding.
         return Outcome(repository, number, "waiting", detail or "nothing to do yet")
     if answer.get("acted") is not True or not isinstance(status, str) or status not in _RECORDED:
         return Outcome(repository, number, "unreadable", detail or "nothing was done")

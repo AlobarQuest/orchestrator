@@ -1402,3 +1402,32 @@ def test_an_act_the_orchestrator_declined_is_waiting_not_unreadable(monkeypatch,
     out = capsys.readouterr().out
     assert f"{REPOSITORY}#{LANDED}  waiting" in out
     assert "the rerun has not reported" in out
+
+
+@pytest.mark.parametrize(
+    ("verdict", "expected", "code"),
+    [
+        # A read inside the act failed: nothing was reverted, and nothing else will say so.
+        pytest.param("unreadable", "unreadable", EXIT_FINDINGS, id="a-failed-read-is-a-finding"),
+        pytest.param("pending", "waiting", EXIT_OK, id="a-race-is-waiting"),
+        pytest.param("clean", "waiting", EXIT_OK, id="a-clean-race-is-waiting"),
+    ],
+)
+def test_an_act_that_did_nothing_is_a_finding_only_when_its_read_failed(
+    monkeypatch, capsys, verdict: str, expected: str, code: int
+) -> None:
+    client = FakeOrchestrator(
+        watch=[_watched("bad", "rerun_requested")],
+        revert_answers={
+            (REPOSITORY, LANDED): {
+                "acted": False,
+                "status": "rerun_requested",
+                "verdict": verdict,
+                "detail": f"{verdict}: the reason",
+            }
+        },
+    )
+    _wire(monkeypatch, FakeGitHub({REPOSITORY: []}), client, _rule())
+
+    assert run(["--submit"]) == code
+    assert f"{REPOSITORY}#{LANDED}  {expected:<12} {verdict}: the reason" in capsys.readouterr().out

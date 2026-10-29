@@ -787,10 +787,13 @@ read the watch holds every remembered key.
 | `landing-reverted:<repo>:<pr>` | The revert landed. The alert names the failed jobs, the revert pull request and the hold, and says the version stays refused after the hold is lifted. | Read it. Lift the hold when the dependency is safe to take again; land the reverted version itself only by hand. |
 | `landing-revert-refused:<repo>:<pr>` | Overlap: something landed on top of the bump. The default branch may still be broken. | Revert by hand. |
 | `landing-revert-failed:<repo>:<pr>` | The revert could not be opened. | Read the detail; revert by hand or fix the cause. |
-| `landing-revert-stranded:<repo>:<pr>` | The revert pull request closed without landing. | Reopen it or revert by hand. |
+| `landing-revert-stranded:<repo>:<pr>` | The revert pull request closed without landing. This repository's Dependabot bumps wait (`landing_repository_reverting`) until it is reopened and lands. | Reopen it. Reverting by hand does not release the bumps yet. |
 
 ### Known gaps
 
 - A grouped bump gets no hold, so only the never-again rule stops it returning.
 - A `refused_overlap` or `revert_failed` record stays in the watch, and its alert stays open, until a
-  person closes the alert; no act clears the record yet. A stranded alert has no clearing act either.
+  person closes the alert; no act clears the record yet.
+- A stranded revert has no clearing act either. Its record keeps the repository's Dependabot bumps
+  refused `landing_repository_reverting` until the revert is reopened and lands; reverting by hand
+  does not release them.

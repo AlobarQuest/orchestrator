@@ -236,7 +236,9 @@ def _stranded_alert(row: Mapping[str, object]) -> Alert:
     return Alert(
         f"Revert not landed: {repository}#{number}",
         f"The revert #{revert} of {repository}#{number} is no longer open and did not land, so the "
-        "default branch may still carry the bad bump. A person reverts it or reopens the revert.",
+        "default branch may still carry the bad bump. This repository's Dependabot bumps wait "
+        "until the revert pull request is reopened and lands. Reverting by hand does not release "
+        "them yet (no act clears the record).",
         f"https://github.com/{repository}/pull/{revert}",
     )
 

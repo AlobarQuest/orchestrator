@@ -526,6 +526,27 @@ def test_a_failed_revert_alert_stays_firing_while_its_record_is_watched(tmp_path
     ]
 
 
+def test_the_stranded_alert_says_the_repositorys_bumps_wait_until_the_revert_lands(
+    tmp_path,
+) -> None:
+    """The record stays `revert_opened`, so every Dependabot bump in the repository is refused
+    `landing_repository_reverting`; reverting by hand does not release them."""
+    hub = Hub()
+    subject = ("alobarquest/veritok", 41)
+    sync_revert_alerts(
+        LANE,
+        [_record("revert_opened")],
+        stranded={subject},
+        environ=_env(tmp_path),
+        transport=hub.transport(),
+    )
+
+    [sent] = hub.sent
+    message = str(sent["message"])
+    assert "Dependabot bumps wait until the revert pull request is reopened and lands" in message
+    assert "Reverting by hand does not release them" in message
+
+
 def test_a_stranded_revert_raises_its_own_alert_and_is_held_when_its_listing_failed(
     tmp_path,
 ) -> None:
