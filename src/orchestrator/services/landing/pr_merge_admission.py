@@ -69,7 +69,11 @@ from orchestrator.persistence.models import (
 )
 from orchestrator.persistence.repositories import PackageRepository
 from orchestrator.reach_vocabulary import LIVE_ESTATE
-from orchestrator.services.execution.target_grant import DEPENDENCY_UPDATE
+from orchestrator.services.execution.target_grant import (
+    DEPENDENCY_UPDATE,
+    MemberRecordGrants,
+    service_for_change_class,
+)
 from orchestrator.services.landing.change_record import (
     RECORD_AMBIGUOUS,
     ChangeRecordSource,
@@ -83,6 +87,7 @@ from orchestrator.services.landing.estate_landing import (
     SOURCE_UNCONFIGURED,
     EstateLandingSource,
 )
+from orchestrator.services.landing.terms import grant_term
 from orchestrator.services.lifecycle.lifecycle import verifier_decided_completion
 from orchestrator.services.membership.holds import (
     Bump,
@@ -213,6 +218,11 @@ MERGE_TARGET_ESTATE_SOURCE_UNREADABLE: Final = "merge_target_estate_source_unrea
 # own, as every refusal here does. A `to_version` the matcher can't read is beyond any ceiling.
 MERGE_VERSION_CEILING_EXCEEDED: Final = "merge_version_ceiling_exceeded"
 
+# The member record does not grant the unit's change class on its target repository (landing
+# layer Part 2: the grant is the authority). The landers' code for the same fact is
+# `landing_repository_not_granted`; this path names its own, as every refusal here does.
+MERGE_REPOSITORY_NOT_GRANTED: Final = "merge_repository_not_granted"
+
 # The unit is a dependency update, its repository has holds, and what it bumps can't be read: the
 # revision's profile names no package or version, or its package id names no tooling this side
 # maps to an ecosystem. That last includes every non-standing dependency-update package, whose id
@@ -313,6 +323,11 @@ def admission_for(
         change_window_override,
     )
     held = _hold_term(session, revision, envelope.change_class, target_repository)
+    granted = grant_term(
+        MemberRecordGrants(session),
+        target_repository,
+        (service_for_change_class(envelope.change_class or unit.required_capability),),
+    )
 
     refusals: list[str] = []
     if not completed:
@@ -330,6 +345,8 @@ def admission_for(
     refusals.extend(head.refusals)
     refusals.extend(estate.refusals)
     refusals.extend(held.refusals)
+    if not granted.met:
+        refusals.append(MERGE_REPOSITORY_NOT_GRANTED)
 
     return MergeAdmission(
         satisfied=(
@@ -342,6 +359,7 @@ def admission_for(
             and head.met
             and estate.met
             and held.met
+            and granted.met
         ),
         refusals=tuple(refusals),
         target_repository=target_repository,
