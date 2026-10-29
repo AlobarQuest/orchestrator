@@ -115,3 +115,40 @@ missing either field) stays pending for a person.
 The producer is `bump_proposer`, which sends `target_repository` and `change_class` on every
 proposal. Neither field is asserted, so a replay that adds them to an earlier pending record changes
 no stored payload and lets the policy approve it.
+
+## Amendment 2 — 2026-10-28 (bridge layer: repositories that deploy)
+
+**Status:** Accepted (Devon's decisions in `docs/superpowers/specs/2026-10-27-bridge-layer-design.md`,
+Part 3, "Coverage that widens: Repositories that deploy"; Rulings 6 and 7 of
+`docs/superpowers/plans/2026-10-28-bridge-widen-deploying.md`).
+
+change-manager's work policy now approves a standing dependency-update record whose
+`target_repository` is in its inert **or deploying** population; one in neither is refused
+`target_repository_not_in_policy`. The deploying population is the policy's top-level
+`repositories` (brain and change-manager, measured 2026-10-28). The producer is still
+`bump_proposer`, which now creates packages for deploying repositories with reach `[live_estate]`
+(ADR-0028 amendment 3).
+
+**"The risk to watch" is amended, not ignored (Ruling 6).** That section feared that a
+machine-authored change to a redeploying repository would reach production unread unless its
+package carried a human-judgment criterion. A standing dependency-update package carries none, so
+for these records the human-AC lever is unused by construction. Two human gates still stand
+between the change and production:
+
+1. **The decomposition approval.** A person approves the units and their commands before any work
+   starts (`docs/operations/driving-a-unit.md`).
+2. **`pr_merge_admission`'s authority term.** The factory merges only when a human authority
+   approval is bound to the unit's exact current fingerprint
+   (`PackageRepository.exact_authority_approval(unit)`, `pr_merge_admission.py` module docstring
+   and `admission_for`). The term is unconditional: the known-good substitute that dispatch
+   admission allows (ADR-0011) has no counterpart at merge. The `live_estate` known-good patterns
+   (factory-policy.toml) therefore remove only the dispatch-time approval, as they already did for
+   inert repositories.
+
+The merge is also gated by the approved `factory-delivery` change record `change_proposer` files
+for the pull request, and by the `live_estate` change window. Graduating either human gate is left
+to the Admission and Landing passes; this amendment graduates neither.
+
+**The change window stays `00:00–23:59` (Ruling 7).** That is the build-phase widening (ADR-0012
+amendment 1). When it narrows back to the night, dispatch and merge for these repositories become
+night-only. This is recorded here, not changed.

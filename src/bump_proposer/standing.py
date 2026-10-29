@@ -272,7 +272,7 @@ def require_publishable(root: Path) -> None:
 
 
 def create(
-    root: Path, repository: str, tooling: str, dependency: str, bump: Bump
+    root: Path, repository: str, tooling: str, dependency: str, bump: Bump, *, reach: str
 ) -> StandingPackage:
     """Write a draft standing package carrying this bump, through intent-packages' own
     `create-standing`, and answer it as discovery now reads it.
@@ -280,6 +280,10 @@ def create(
     The draft already carries the bump, so `advance` takes it straight to `transition` and
     `approve`. `create-standing` refuses an existing directory, so a second package for a
     dependency whose id collides is a refusal, never an overwrite.
+
+    `reach` is the package's single reach member: `live_estate` for a repository whose landing
+    redeploys, `source_repository` otherwise (ADR-0028 amendment 3). The caller chooses it from
+    the landing policy; `create-standing` writes it and its grant accepts either.
     """
     printed = lifecycle(
         root,
@@ -296,6 +300,8 @@ def create(
         bump.to_version,
         "--out",
         _PACKAGES_DIRECTORY,
+        "--reach",
+        reach,
     ).strip()
     package = discover(root).get((repository.lower(), dependency))
     if package is None or not printed or Path(printed).name != package.package_id:

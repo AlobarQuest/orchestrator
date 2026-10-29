@@ -226,7 +226,7 @@ def _captured_permits(
 
 _landing_policy_permits = _captured_permits(
     bump_landing_policy,
-    lambda: bump_landing_policy.read_inert_landing("token"),
+    lambda: bump_landing_policy.read_landing_policy("token"),
     bump_landing_policy.LandingPolicyError,
 )
 _alert_hub_permits = _captured_permits(

@@ -32,8 +32,8 @@ read until now from `landing_ledger.rules`, a hand transcription of the GitHub A
 that used to enforce it, keyed by that workflow's blob sha; the workflow is being removed and the
 orchestrator becomes the merger, which would have left this producer reading a registry with no
 subject. The fail-closed property is carried over rather than lost: a policy version that declares
-no inert population is a refusal, not a waiver, exactly as an untranscribed blob was a finding
-rather than a guess.
+no inert population, or no deploying one, is a refusal, not a waiver, exactly as an untranscribed
+blob was a finding rather than a guess.
 
 **IT APPROVES A PACKAGE REVISION AND NOTHING ELSE.** It cannot approve the change record it
 writes: the record is created `pending` by construction, change-manager's `propose` scope
@@ -45,9 +45,11 @@ Whoever approves the record -- change-manager's work policy or a person -- this 
 the other side of that decision.
 
 **ITS POPULATION IS THE MEMBER RECORD'S GRANT.** A repository is considered when the member record
-grants it `dependency_updates` and the landing policy declares it inert or a standing package
-targets it. The record is read once, before anything else, as the observer; an unreadable one is
-exit 2, never a smaller population.
+grants it `dependency_updates` and the landing policy declares it (inert or deploying) or a
+standing package targets it. The record is read once, before anything else, as the observer; an
+unreadable one is exit 2, never a smaller population. A package created for a deploying repository
+has reach `[live_estate]`, one for an inert repository `[source_repository]` (ADR-0028 amendment
+3), and each repository's bumps are judged against its own block of the policy.
 
 **A REPEAT PASS IS A REPLAY, in both halves.** A standing package whose tip revision already
 carries this bump is not revised again; change-manager answers 200 for an identical proposal.
@@ -72,9 +74,9 @@ from bump_proposer.change_manager import (
     ProposalRefused,
 )
 from bump_proposer.landing_policy import (
-    InertLanding,
+    LandingPolicy,
     LandingPolicyError,
-    read_inert_landing,
+    read_landing_policy,
 )
 from bump_proposer.observation import ObservationUncomposable, bump_observation
 from bump_proposer.orchestrator_client import (
@@ -150,6 +152,12 @@ WORK_RECORD_FIELDS: Final = (
 PROPOSAL_FIELDS: Final = (*WORK_RECORD_FIELDS, "target_repository", "change_class")
 CHANGE_CLASS: Final = "dependency-update"
 
+# The reach a created standing package declares (ADR-0028 amendment 3, Ruling 1): `live_estate`
+# where landing redeploys, so the factory's `live_estate` patterns, change window and lease apply;
+# `source_repository` where it is inert. Dispatch checks the choice against App Brain.
+DEPLOYING_REACH: Final = "live_estate"
+INERT_REACH: Final = "source_repository"
+
 # How long a concluded failure must stand before this producer reads it as the cascade's answer.
 #
 # IT GUARDS AN IRREVERSIBLE ACT, which is why it exists at all and why it is not borrowed from
@@ -180,13 +188,13 @@ FINDING_STATUSES: Final = frozenset(
         "ambiguous",
         # ADR-0038, and the SUCCESSOR to `no-cascade` rather than a new kind of thing. It used to
         # mean "this repository carries no auto-merge workflow, so which bumps it refuses is not a
-        # question with an answer"; it now means the landing policy does not declare the
-        # repository one where landing on the default branch is inert, which is the same fact
-        # asked of the holder instead of of a file. `gate-not-transcribed` retires with no
-        # successor: there is no longer a transcription to be missing an entry, and the shape it
-        # guarded -- a rule this program cannot read -- is now a whole-pass refusal rather than a
-        # per-repository one, because one declaration covers every repository at once.
-        "not-declared-inert",
+        # question with an answer"; it now means the landing policy declares the repository in
+        # neither population, inert nor deploying, which is the same fact asked of the holder
+        # instead of of a file. `gate-not-transcribed` retires with no successor: there is no
+        # longer a transcription to be missing an entry, and the shape it guarded -- a rule this
+        # program cannot read -- is now a whole-pass refusal rather than a per-repository one,
+        # because one declaration covers every repository at once.
+        "not-declared-landing",
         "superseded",
         "refused",
         # G1+G2. The cause could not be filed, so nothing was proposed -- and a bump this lane
@@ -273,7 +281,7 @@ RANGE_OPERATORS: Final = {"pip": frozenset(), "uv": frozenset({">=", "=="}), "np
 
 def _consider(
     pending: PendingUpdate,
-    rule: InertLanding,
+    rule: LandingPolicy,
     packages: dict[tuple[str, str], StandingPackage],
     now: datetime,
     *,
@@ -289,11 +297,12 @@ def _consider(
     if update is not None and update.ecosystem is not None and update.ecosystem not in TOOLING:
         # NO TOOLING (bridge Part 3). The factory has no profile for this ecosystem, so a bump the
         # cascade will not land has no route but a person -- asked before the title is read,
-        # because an alert needs no versions and a docker tag rarely parses as one. Ruling 6:
-        # every docker bump, passing or not, reaches the alert ONLY because the inert landing
-        # policy excludes docker today; were docker permitted, a passing one would be the
-        # cascade's like any other ecosystem's. A hold is asked first: it is a person's decision
-        # about this dependency already, so the alert would only ask them again.
+        # because an alert needs no versions and a docker tag rarely parses as one. Which bumps
+        # with no tooling reach the alert even when they pass is the repository's own block's
+        # exclusion list (ADR-0028 amendment 3): docker in an inert repository, github_actions
+        # in a deploying one. A permitted ecosystem's passing bump is the landing party's. A hold
+        # is asked first: it is a person's decision about this dependency already, so the alert
+        # would only ask them again.
         on_hold = _held_without_tooling(holds, update.ecosystem, update.dependency)
         if on_hold is not None:
             return on_hold
@@ -390,7 +399,7 @@ def _held_without_tooling(holds: tuple[Hold, ...], ecosystem: str, dependency: s
 def _gated(
     route: Route,
     pending: PendingUpdate,
-    rule: InertLanding,
+    rule: LandingPolicy,
     ecosystem: str,
     bump: Bump | None,
     now: datetime,
@@ -401,12 +410,13 @@ def _gated(
     2026-08-28. ADR-0034 moved the split onto the OUTCOME -- anything not excluded is permitted and
     the required checks decide the rest -- so a bump whose checks FAIL is permitted and unlandable
     at once, and this lane's subject is the second half. Reading `permits` alone would EMPTY the
-    factory's queue. The declaration ADR-0038 moved to change-manager is that same rule.
+    factory's queue. The declaration ADR-0038 moved to change-manager is that same rule, asked of
+    the repository's own population (ADR-0028 amendment 3).
 
     A failure that hasn't settled (a re-run failing again) can't be decided yet, so the key of an
     alert the route would raise is HELD: neither resolved now nor fired again once it settles.
     """
-    if not rule.permits(ecosystem) or _refused_by_the_checks(pending, now):
+    if not rule.permits(pending.repository, ecosystem) or _refused_by_the_checks(pending, now):
         return route
     unsettled = any(check.conclusion in REFUSING_CONCLUSIONS for check in pending.checks)
     held = route.key if route.action == "alert" and unsettled else ""
@@ -552,6 +562,7 @@ def _act(
     observer: OrchestratorClient | None,
     records: list[dict[str, Any]],
     root: Path,
+    reach: str,
 ) -> list[Outcome]:
     subject = pending.repository
     bump, package = route.bump, route.package
@@ -564,7 +575,7 @@ def _act(
                     subject,
                     pending.number,
                     "would-create",
-                    f"a {route.tooling} standing package for {dependency}: "
+                    f"a {route.tooling} standing package (reach {reach}) for {dependency}: "
                     f"{bump.from_version} to {bump.to_version}",
                 )
             ]
@@ -603,7 +614,7 @@ def _act(
             # the same publish guard. Remembered at once, so a second pull request for the same
             # dependency in this pass finds it rather than creating it again.
             require_publishable(root)
-            package = create(root, subject, route.tooling, dependency, bump)
+            package = create(root, subject, route.tooling, dependency, bump, reach=reach)
             packages[key] = package
             outcomes.append(Outcome(subject, pending.number, "created", package.package_id))
         published = None
@@ -646,7 +657,7 @@ def _act(
 def _repository_pass(
     reader: GitHubReader,
     repository: str,
-    rule: InertLanding,
+    rule: LandingPolicy,
     packages: dict[tuple[str, str], StandingPackage],
     client: ChangeManagerClient | None,
     observer: OrchestratorClient | None,
@@ -658,25 +669,22 @@ def _repository_pass(
 ) -> list[Outcome]:
     if not rule.declares(repository):
         # THE SUCCESSOR TO `no-cascade`, and the same fact asked of the holder rather than of a
-        # file. A repository the landing policy does not declare inert is one where nobody has
-        # said that landing on the default branch changes nothing already serving -- so "what
-        # lands here unattended" has no answer, and every bump against it is outside a lane whose
-        # subject is defined by what that declaration declines. Still a finding, because a
-        # standing package targeting such a repository was authored for a producer that does not
-        # exist. The DEPLOYING population this same document governs is the live case: landing
-        # there redeploys production, and that lane has a change record, a rollout pin and a
-        # change window this producer knows nothing about.
+        # file. A repository the landing policy declares in neither population is one where
+        # nobody has said what landing on its default branch does -- so "what lands here
+        # unattended" has no answer, and every bump against it is outside a lane whose subject is
+        # defined by what that declaration declines. Still a finding, because a standing package
+        # targeting such a repository was authored for a lane that does not cover it.
         return [
             Outcome(
                 repository,
                 0,
-                "not-declared-inert",
-                f"landing policy version {rule.version} does not declare this repository one "
-                "where landing on the default branch is inert, so which bumps land there "
-                "unattended is not a question with an answer; a standing package targeting it "
-                "needs a different producer",
+                "not-declared-landing",
+                f"landing policy version {rule.version} declares this repository neither inert "
+                "nor deploying, so which bumps land there unattended is not a question with an "
+                "answer; a standing package targeting it needs a different producer",
             )
         ]
+    reach = DEPLOYING_REACH if rule.deploys(repository) else INERT_REACH
     try:
         base = default_branch(reader, repository)
         pending_updates = read_pending_updates(reader, repository, base)
@@ -690,7 +698,7 @@ def _repository_pass(
             outcomes.append(_unacted(route, pending, raised, submitting=client is not None))
             continue
         try:
-            outcomes.extend(_act(route, pending, packages, client, observer, records, root))
+            outcomes.extend(_act(route, pending, packages, client, observer, records, root, reach))
         except (ObservationUncomposable, ObservationWriteError) as error:
             # ONE STATUS FOR BOTH, because the consequence is identical and it is the consequence
             # a reader acts on: this bump has no cause on record, so nothing was proposed for it.
@@ -732,22 +740,23 @@ def _lane(
     submit: bool,
     requested: list[str] | None,
     members: list[Member],
-    rule: InertLanding,
+    rule: LandingPolicy,
 ) -> tuple[dict[tuple[str, str], StandingPackage], list[str]] | None:
     """The standing packages and the repositories this pass reads, or None when there is no lane.
 
     **SCOPE IS THE MEMBER RECORD'S GRANT.** A repository is in this lane when the record grants it
-    `dependency_updates` and either the landing policy declares it inert (bridge Part 3: a failed
-    bump there gets a standing package created) or a standing package already targets it (which
-    `_repository_pass` reports `not-declared-inert` when the declaration doesn't name it).
-    Repositories are compared case-folded, the record holding GitHub's spelling and a package
-    whatever its author typed.
+    `dependency_updates` and either the landing policy declares it, inert or deploying (a failed
+    bump there gets a standing package created: bridge Part 3, widened by ADR-0028 amendment 3),
+    or a standing package already targets it (which `_repository_pass` reports
+    `not-declared-landing` when the declaration names it in neither population). Repositories are
+    compared case-folded, the record holding GitHub's spelling and a package whatever its author
+    typed.
 
     The two ways to fall short are told apart and neither is a finding. A granted repository that
-    is neither is `[NO PACKAGE]`: Part 3 creates packages for inert repositories only (Ruling 1),
-    and the grant is not a defect. A package for an ungranted repository is `[NOT GRANTED]`: it is
-    not acted on, and `membership_check` already reports it. Naming either with `--repository` is
-    a refusal, not a smaller run.
+    is neither is `[NO PACKAGE]`: packages are created only for repositories the landing policy
+    declares, and the grant is not a defect. A package for an ungranted repository is
+    `[NOT GRANTED]`: it is not acted on, and `membership_check` already reports it. Naming either
+    with `--repository` is a refusal, not a smaller run.
     """
     try:
         packages = discover(root)
@@ -769,7 +778,7 @@ def _lane(
     for name in sorted(set(spelling) - in_lane):
         print(
             f"[NO PACKAGE] {spelling[name]} is granted dependency_updates; no standing package "
-            "targets it and the landing policy does not declare it inert"
+            "targets it and the landing policy declares it neither inert nor deploying"
         )
     targeted = {package.target_repository for package in packages.values()}
     for name in sorted(targeted, key=str.lower):
@@ -794,8 +803,8 @@ def _lane(
         unknown = wanted - in_lane
         if unknown:
             print(
-                f"no standing package targets {sorted(unknown)} and the landing policy does not "
-                "declare it inert",
+                f"no standing package targets {sorted(unknown)} and the landing policy declares it "
+                "neither inert nor deploying",
                 file=sys.stderr,
             )
             return None
@@ -806,7 +815,7 @@ def _lane(
     return packages, scope
 
 
-def _declared_rule(read_token: str, *, base_url: str) -> InertLanding | None:
+def _declared_rule(read_token: str, *, base_url: str) -> LandingPolicy | None:
     """What change-manager declares lands unattended, or None -- which stops the pass.
 
     ADR-0038. Every failure here is "this pass could not use its inputs" rather than "this pass
@@ -816,18 +825,38 @@ def _declared_rule(read_token: str, *, base_url: str) -> InertLanding | None:
     repository at once -- reporting it per repository would be N copies of one fact.
     """
     try:
-        rule = read_inert_landing(read_token, base_url=base_url)
+        rule = read_landing_policy(read_token, base_url=base_url)
     except LandingPolicyError as error:
         print(str(error), file=sys.stderr)
         return None
+    # THE DEPLOYING HALF IS REQUIRED HERE AND NOWHERE ELSE (ADR-0028 amendment 3). This pass is
+    # the one reader that widens its lane on it, so a document that stopped declaring it must stop
+    # the pass rather than shrink the lane to inert in silence. `parse` reads it permissively so
+    # the inert lander, which never asks, is not stopped by its absence.
+    if not rule.deploying:
+        print(
+            f"landing policy version {rule.version} declares no deploying population, or an "
+            "empty one; an absent declaration is a refusal rather than a waiver",
+            file=sys.stderr,
+        )
+        return None
+    if rule.deploying_excluded_ecosystems is None:
+        print(
+            f"landing policy version {rule.version} decides deploying landings by update type, "
+            "which this producer does not evaluate",
+            file=sys.stderr,
+        )
+        return None
     if not rule.covers_author(UPSTREAM_AUTHOR):
         # THE ONE THING THIS PASS CHECKS ABOUT THE DECLARATION ITSELF, and it fails closed in the
-        # expensive direction. `read_pending_updates` returns pull requests by `UPSTREAM_AUTHOR`
-        # and no others, so a declaration that stopped permitting that author would make every
-        # open update in the estate this lane's subject at once -- a flood of package revisions
-        # that cannot be unminted, on a decision nobody took. Refusing costs a pass. The opposite
-        # direction, a declaration naming an author this program's reader cannot see, needs no
-        # check here: the lane simply goes quiet, and writes nothing.
+        # expensive direction. It asks the inert block only: the deploying `landing` block names
+        # no authors, since the orchestrator's admission decides who may land there.
+        # `read_pending_updates` returns pull requests by `UPSTREAM_AUTHOR` and no others, so a
+        # declaration that stopped permitting that author would make every open update in the
+        # estate this lane's subject at once -- a flood of package revisions that cannot be
+        # unminted, on a decision nobody took. Refusing costs a pass. The opposite direction, a
+        # declaration naming an author this program's reader cannot see, needs no check here:
+        # the lane simply goes quiet, and writes nothing.
         print(
             f"landing policy version {rule.version} does not permit {UPSTREAM_AUTHOR} to land, "
             "so every open update would be this lane's subject at once; refusing",
@@ -837,7 +866,7 @@ def _declared_rule(read_token: str, *, base_url: str) -> InertLanding | None:
     return rule
 
 
-def _report(outcomes: list[Outcome], rule: InertLanding) -> int:
+def _report(outcomes: list[Outcome], rule: LandingPolicy) -> int:
     """Print the pass and answer its exit code.
 
     Extracted from `run` rather than inlined, because `run` now carries the observer credential's
@@ -1071,9 +1100,9 @@ def _send_alerts(
     if not submit:
         return []
     # Repositories in the lane this pass did not read: GitHub could not answer, or the landing
-    # policy doesn't declare them inert. Their remembered keys are neither resolved nor fired again;
-    # a repository that left the lane has no outcome, so its keys are resolved.
-    unread_statuses = {"unreadable", "not-declared-inert"}  # not-a-vocabulary: two local statuses
+    # policy declares them in neither population. Their remembered keys are neither resolved nor
+    # fired again; a repository that left the lane has no outcome, so its keys are resolved.
+    unread_statuses = {"unreadable", "not-declared-landing"}  # not-a-vocabulary: two local statuses
     unreadable = {o.repository for o in outcomes if o.status in unread_statuses}
     failure = alerts.sync(token, raised, unreadable=unreadable, requested=requested)
     return [] if failure is None else [Outcome("alert-hub", 0, "error", failure)]

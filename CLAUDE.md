@@ -363,11 +363,13 @@ Placement rule: global CLAUDE.md §7.
   suffices. Detail: `docs/operations/landing-lanes.md`.
 - change-manager's work policy approves a `work` record (as `work-policy`) only when it is a
   standing dependency-update package (`change_class` `dependency-update`, source repository
-  intent-packages, risk `caution`) whose `target_repository` is on its inert list; a person moves
-  every other one. No producer credential moves a status: `bump_proposer` is propose-and-read and
-  the `propose` scope refuses status routes. `bump_proposer` creates a missing package for an inert
-  repository's failed npm, pip or uv bump and alerts (`dependency_bump_key`) on what it can't route.
-  Detail: `docs/operations/landing-lanes.md`.
+  intent-packages, risk `caution`) whose `target_repository` is in its inert or deploying
+  population; a person moves every other one. No producer credential moves a status:
+  `bump_proposer` is propose-and-read and the `propose` scope refuses status routes.
+  `bump_proposer` creates a missing package for a declared repository's failed npm, pip or uv bump
+  (reach `live_estate` if it deploys, else `source_repository`), judges each bump by its own
+  population's block, and alerts (`dependency_bump_key`) on what it can't route. Detail:
+  `docs/operations/landing-lanes.md`.
 - `rotation_proposer` never approves a package revision. A pass that revises a standing rotation
   package to `ready_for_review` proposes nothing, and the first pass after a named human approves
   it proposes. "Due" is infraops' rule, read from `security-drift-cli cred-findings` and never

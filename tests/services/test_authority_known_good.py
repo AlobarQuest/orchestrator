@@ -315,8 +315,8 @@ def test_an_unrecognised_reach_member_asks() -> None:
 
 def test_a_reach_member_whose_row_declares_no_pattern_asks() -> None:
     # Total coverage means every member has a row; a row with no pattern recognises nothing, which
-    # is the restrictive reading and the one three of the four rows currently have.
-    for member in sorted(set(REACH_VOCABULARY) - {"source_repository"}):
+    # is the restrictive reading and the one two of the four rows currently have.
+    for member in sorted(set(REACH_VOCABULARY) - {"source_repository", "live_estate"}):
         assert refusals(uv_bump(), reach=(member,)) == (AUTHORITY_ENVELOPE_NOVEL,), member
 
 
@@ -326,6 +326,10 @@ def test_work_reaching_two_places_must_be_recognised_under_both() -> None:
         AUTHORITY_ENVELOPE_NOVEL,
     )
     assert refusals(uv_bump(), reach=("source_repository",)) == ()
+
+
+def test_work_reaching_source_and_live_estate_is_recognised_under_both() -> None:
+    assert refusals(uv_bump(), reach=("source_repository", "live_estate")) == ()
 
 
 # ---------------------------------------------------------------------------------------------
@@ -974,3 +978,85 @@ def test_the_shipped_dependency_update_patterns_declare_shapes_not_prefixes() ->
     ]
 
     assert all(p.command_shapes and not p.command_prefixes for p in patterns)
+
+
+# ---------------------------------------------------------------------------------------------
+# The same dependency-update patterns under live_estate (a repository that redeploys on landing)
+# ---------------------------------------------------------------------------------------------
+
+LIVE_ESTATE_REACH = ("live_estate",)
+
+
+def _dependency_update_patterns(member: str) -> list[Any]:
+    return [
+        p
+        for p in load_factory_policy().rows[member].known_good
+        if p.change_class == "dependency-update"
+    ]
+
+
+def _authority_fields(pattern: Any) -> tuple[Any, ...]:
+    """What a pattern recognises; the rationale and decided date are per reach and may differ."""
+    return (
+        pattern.name,
+        pattern.change_class,
+        dict(pattern.capabilities),
+        pattern.max_attempts,
+        pattern.max_llm_calls,
+        pattern.conformance_status,
+        pattern.target_repositories,
+        pattern.command_prefixes,
+        tuple(shape.pattern for shape in pattern.command_shapes),
+    )
+
+
+@pytest.mark.parametrize(
+    ("name", "repository"),
+    [
+        ("pip", "AlobarQuest/brain"),
+        ("uv", "AlobarQuest/change-manager"),
+        ("npm", INERT_REPOSITORY),
+        ("pip", INERT_REPOSITORY),
+    ],
+)
+def test_live_estate_dependency_update_envelope_is_recognised(name: str, repository: str) -> None:
+    envelope = generated(name)
+    envelope["constraints"]["target_repository"] = repository
+
+    assert refusals(envelope, LIVE_ESTATE_REACH) == ()
+
+
+@pytest.mark.parametrize(
+    ("name", "label", "command"), ATTACK_COMMANDS, ids=[case[1] for case in ATTACK_COMMANDS]
+)
+def test_live_estate_refuses_the_attack_commands(name: str, label: str, command: str) -> None:
+    envelope = generated(name)
+    constraints = envelope["constraints"]
+    constraints["allowed_commands"][0] = command
+    constraints["mutation_commands"][0] = command
+
+    assert refusals(envelope, LIVE_ESTATE_REACH) == (AUTHORITY_ENVELOPE_NOVEL,), label
+
+
+def test_source_and_live_estate_dependency_patterns_are_equal() -> None:
+    source = _dependency_update_patterns("source_repository")
+    live = _dependency_update_patterns("live_estate")
+
+    assert len(source) == 3
+    assert [_authority_fields(p) for p in live] == [_authority_fields(p) for p in source]
+
+
+@pytest.mark.parametrize(
+    ("label", "envelope"),
+    [
+        ("a different change class", mutated(change_class="software-delivery")),
+        (
+            "a capability the pattern does not declare",
+            mutated(capabilities={**PROFILE_CAPABILITIES, "infra.write": "allowed"}),
+        ),
+    ],
+)
+def test_live_estate_still_refuses_what_is_not_a_dependency_update(
+    label: str, envelope: dict[str, Any]
+) -> None:
+    assert refusals(envelope, LIVE_ESTATE_REACH) == (AUTHORITY_ENVELOPE_NOVEL,), label

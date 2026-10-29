@@ -12,7 +12,7 @@ from typing import Final
 
 import typer
 
-from bump_proposer.landing_policy import LandingPolicyError, read_inert_landing
+from bump_proposer.landing_policy import LandingPolicyError, read_landing_policy
 from bump_proposer.standing import StandingError, discover
 from change_proposer.criteria import _ROLLBACKS as ROLLBACKS
 from deploy_watcher.workflows import ROLLOUT_WORKFLOWS
@@ -56,13 +56,23 @@ def _declarations(token: str, repositories_of_members: list[str]) -> tuple[Scope
         return factory_targets([*owned, *extra], source), owned
 
 
-def _inert(token: str, owned: list[str]) -> tuple[frozenset[str], list[str]]:
+def _landing(token: str, owned: list[str]) -> tuple[frozenset[str], frozenset[str], list[str]]:
+    """The inert and the deploying landing populations, and the gaps."""
     try:
-        policy = read_inert_landing(token)
+        policy = read_landing_policy(token)
     except LandingPolicyError as error:
-        return frozenset(), [f"the landing policy couldn't be read: {error}"]
-    gaps = canonical(policy.repositories, owned).gaps if owned else []
-    return frozenset(_spelled(policy.repositories, owned)), gaps
+        return frozenset(), frozenset(), [f"the landing policy couldn't be read: {error}"]
+    populations = (policy.inert, policy.deploying)
+    gaps = [gap for names in populations for gap in canonical(names, owned).gaps] if owned else []
+    if not policy.deploying:
+        # A GAP, never "nothing deploys": an absent or empty deploying population is a document
+        # that did not decide, so this row could not be checked.
+        gaps.append(
+            f"landing policy version {policy.version} declares no deploying population, so "
+            "the deploying row couldn't be checked"
+        )
+    inert, deploying = (frozenset(_spelled(names, owned)) for names in populations)
+    return inert, deploying, gaps
 
 
 def _spelled(names: Iterable[str], owned: list[str]) -> list[str]:
@@ -100,8 +110,7 @@ def main() -> None:
     declarations, owned = _declarations(
         tokens[GITHUB_TOKEN_VARIABLE], [m.repository for m in members]
     )
-    inert, inert_gaps = _inert(tokens[CHANGE_MANAGER_TOKEN_VARIABLE], owned)
-    gaps = inert_gaps
+    inert, deploying, gaps = _landing(tokens[CHANGE_MANAGER_TOKEN_VARIABLE], owned)
     synced: list[str] = []
     try:
         synced = forks(subprocess_runner)
@@ -113,6 +122,7 @@ def main() -> None:
         members,
         declarations=declarations,
         inert=inert,
+        deploying=deploying,
         rollout_repositories=_spelled(ROLLOUT_WORKFLOWS, owned),
         tool_repositories=_spelled([tool.repository for tool in TOOLS], owned),
         hardened_forks=_spelled([fork.repository for fork in FORKS], owned),

@@ -11,7 +11,7 @@ from typing import TypedDict, Unpack, cast
 import pytest
 from typer.testing import CliRunner
 
-from bump_proposer.landing_policy import InertLanding, LandingPolicyError
+from bump_proposer.landing_policy import LandingPolicy, LandingPolicyError
 from fork_sync.watch import Unreadable
 from membership_check import cli
 from membership_check.consistency import Report, Scope, canonical, check, factory_targets
@@ -76,6 +76,7 @@ def _member(repository: str, *granted: str, state: str = "member") -> Member:
 class _Sources(TypedDict, total=False):
     declarations: Scope
     inert: frozenset[str]
+    deploying: frozenset[str]
     rollout_repositories: list[str]
     tool_repositories: list[str]
     hardened_forks: list[str]
@@ -89,6 +90,7 @@ def _check(members: list[Member], **sources: Unpack[_Sources]) -> Report:
     empty: _Sources = {
         "declarations": Scope([]),
         "inert": frozenset(),
+        "deploying": frozenset(),
         "rollout_repositories": [],
         "tool_repositories": [],
         "hardened_forks": [],
@@ -115,6 +117,7 @@ def test_an_agreeing_estate_is_clean():
         members,
         declarations=Scope(["a/ONE"]),
         inert=frozenset({"a/one"}),
+        deploying=frozenset({"A/one"}),
         rollout_repositories=["a/one"],
         tool_repositories=["A/ONE"],
         hardened_forks=["A/one"],
@@ -130,6 +133,7 @@ def test_an_agreeing_estate_is_clean():
 RULES = [
     ("declarations", "app_changes"),
     ("inert", "dependency_updates"),
+    ("deploying", "dependency_updates"),
     ("rollout_repositories", "rollouts"),
     ("tool_repositories", "rollouts"),
     ("hardened_forks", "security_patches"),
@@ -145,8 +149,8 @@ def _source(argument: str, repository: str) -> _Sources:
     """One source, named by `argument`, naming `repository`."""
     if argument == "declarations":
         return {"declarations": Scope([repository])}
-    if argument == "inert":
-        return {"inert": frozenset({repository.lower()})}
+    if argument in ("inert", "deploying"):
+        return cast(_Sources, {argument: frozenset({repository.lower()})})
     return cast(_Sources, {argument: [repository]})
 
 
@@ -198,6 +202,7 @@ def _wire(
     members,
     answers=None,
     policy=("a/one",),
+    deploying=("a/one",),
     policy_error=None,
     fork_list=(),
     fork_error=None,
@@ -236,9 +241,16 @@ def _wire(
     def read_policy(_token):
         if policy_error:
             raise policy_error
-        return InertLanding(12, frozenset(policy), frozenset(), frozenset())
+        return LandingPolicy(
+            version=12,
+            inert=frozenset(policy),
+            permitted_authors=frozenset(),
+            inert_excluded_ecosystems=frozenset(),
+            deploying=frozenset(deploying),
+            deploying_excluded_ecosystems=frozenset(),
+        )
 
-    monkeypatch.setattr(cli, "read_inert_landing", read_policy)
+    monkeypatch.setattr(cli, "read_landing_policy", read_policy)
 
     def read_forks(_run):
         if fork_error:
@@ -359,6 +371,21 @@ def test_the_inert_lines_fall_back_to_the_policys_spelling_when_the_listing_fail
     assert "a/one: the inert landing population" in result.stdout
 
 
+def test_membership_check_reports_a_deploying_repository_without_dependency_updates(monkeypatch):
+    _wire(monkeypatch, members=[_member("A/one", "app_changes")], policy=(), deploying=("a/one",))
+    result = _invoke()
+    assert result.exit_code == 2
+    assert "A/one: the deploying landing population names it" in result.stdout
+    assert "dependency_updates" in result.stdout
+
+
+def test_an_absent_deploying_population_is_a_gap_not_nothing_deploys(monkeypatch):
+    _wire(monkeypatch, members=CLEAN, deploying=())
+    result = _invoke()
+    assert result.exit_code == 3
+    assert "declares no deploying population" in result.stderr and result.stdout == ""
+
+
 def test_a_rollback_for_a_repository_without_rollouts_is_a_disagreement(monkeypatch):
     _wire(monkeypatch, members=CLEAN, rollbacks={"a/one": object()})
     result = _invoke()
@@ -381,8 +408,10 @@ def test_a_standing_package_for_a_repository_without_dependency_updates_is_a_dis
 def test_the_live_population_agrees(monkeypatch, packages_checkout):
     _standing_tree(packages_checkout, "alobarquest/infraops-mcp-server")
     members = [
-        _member("AlobarQuest/brain", "rollouts"),
-        _member("AlobarQuest/change-manager", "rollouts"),
+        # Both deploying repositories are granted dependency_updates (all 13 members are,
+        # measured 2026-10-28), so the deploying row agrees.
+        _member("AlobarQuest/brain", "rollouts", "dependency_updates"),
+        _member("AlobarQuest/change-manager", "rollouts", "dependency_updates"),
         _member("AlobarQuest/infraops-mcp-server", "dependency_updates"),
     ]
     _wire(
@@ -390,6 +419,7 @@ def test_the_live_population_agrees(monkeypatch, packages_checkout):
         members=members,
         answers={},
         policy=(),
+        deploying=("alobarquest/brain", "alobarquest/change-manager"),
         rollbacks={"alobarquest/brain": 1, "alobarquest/change-manager": 1},
     )
     owned = [m.repository for m in members]

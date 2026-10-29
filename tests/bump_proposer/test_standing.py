@@ -491,6 +491,7 @@ def test_create_runs_create_standing_and_answers_the_package_discovery_finds(
         "npm",
         "left-pad",
         Bump("1.0.0", "2.0.0", "semver-major"),
+        reach="live_estate",
     )
 
     assert ran == [
@@ -508,6 +509,8 @@ def test_create_runs_create_standing_and_answers_the_package_discovery_finds(
             "2.0.0",
             "--out",
             "packages",
+            "--reach",
+            "live_estate",
         )
     ]
     assert package.package_id == "infraops-mcp-server-npm-left-pad"
@@ -522,7 +525,14 @@ def test_create_refuses_a_directory_discovery_does_not_find_under_that_dependenc
     (tmp_path / "packages").mkdir()
 
     with pytest.raises(StandingError, match="discovery does not find it"):
-        standing.create(tmp_path, "AlobarQuest/infraops-mcp-server", "npm", "left-pad", BUMP)
+        standing.create(
+            tmp_path,
+            "AlobarQuest/infraops-mcp-server",
+            "npm",
+            "left-pad",
+            BUMP,
+            reach="source_repository",
+        )
 
 
 @pytest.mark.parametrize(

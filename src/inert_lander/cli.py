@@ -104,9 +104,9 @@ from typing import Any, Protocol
 
 from bump_proposer.change_manager import DEFAULT_BASE_URL as CM_DEFAULT_BASE_URL
 from bump_proposer.landing_policy import (
-    InertLanding,
+    LandingPolicy,
     LandingPolicyError,
-    read_inert_landing,
+    read_landing_policy,
 )
 from deploy_watcher.github import GitHubReader, ReadError
 from inert_lander.orchestrator_client import (
@@ -208,11 +208,13 @@ class Selection:
     unreadable: list[Outcome]
 
 
-def _subjects(reader: PullRequestSource, rule: InertLanding) -> Selection:
+def _subjects(reader: PullRequestSource, rule: LandingPolicy) -> Selection:
     """Every open pull request this lane is for, in a stable order, and what was left alone.
 
     THE SCOPE IS THE DECLARATION'S, twice over: the repositories are the ones a person pinned, and
-    the authors are the ones the same declaration names. Neither is written here.
+    the authors are the ones the same declaration names. Neither is written here. Both are the
+    INERT block's (`rule.inert`, `covers_author`): the policy's deploying population is
+    the bump proposer's to read, never this lane's.
 
     **THE AUTHOR FILTER IS A SCOPE TEST, NOT A PERMISSION TEST**, and the orchestrator decides the
     permission again -- on the login AND on the platform's own answer about whether the account is
@@ -229,7 +231,7 @@ def _subjects(reader: PullRequestSource, rule: InertLanding) -> Selection:
     subjects: list[tuple[str, int]] = []
     deferred: dict[str, int] = {}
     unreadable: list[Outcome] = []
-    for repository in sorted(rule.repositories):
+    for repository in sorted(rule.inert):
         try:
             pulls = reader.open_pull_requests(repository)
         except ReadError as error:
@@ -297,7 +299,7 @@ def run(argv: list[str] | None = None) -> int:
             return EXIT_UNUSABLE
 
     try:
-        rule = read_inert_landing(cm_token, base_url=cm_url or CM_DEFAULT_BASE_URL)
+        rule = read_landing_policy(cm_token, base_url=cm_url or CM_DEFAULT_BASE_URL)
     except LandingPolicyError as error:
         # THE WHOLE PASS, not one repository. One declaration covers every repository at once, so
         # reporting this per repository would be N copies of one fact -- and a rule this program
