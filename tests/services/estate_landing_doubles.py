@@ -17,11 +17,13 @@ from orchestrator.services.landing.change_record import (
     WorkflowPin,
 )
 from orchestrator.services.landing.interfaces import (
+    BranchHead,
     EstateGatewayError,
     EstatePullRequest,
     HeadCheckRun,
     OpenPullRequest,
     PullRequestCommit,
+    Tree,
 )
 
 REPOSITORY = "alobarquest/change-manager"
@@ -177,8 +179,15 @@ class FakeEstateGateway:
         commits: dict[int, tuple[PullRequestCommit, ...]] | None = None,
         open_error: EstateGatewayError | None = None,
         commits_error: dict[int, EstateGatewayError] | None = None,
+        trees: dict[str, Tree] | None = None,
+        base_head: BranchHead | None = None,
     ) -> None:
         self._pull = pull or pull_request()
+        # Landing Part 3a. The trees a revert subject is checked against, by commit; a commit not
+        # named here is an unreadable tree. Nothing else asks for one.
+        self._trees = trees or {}
+        self._base_head = base_head
+        self.tree_reads: list[str] = []
         # ADR-0045. THE DEFAULT IS THE TARGET ALONE, POSITIVELY OWNED: an open list naming only
         # this pull request, and (below) one update-bot commit at its head. That is the sibling
         # rule's "no edited sibling, readable commits" hygiene made the default, so every fixture
@@ -250,6 +259,17 @@ class FakeEstateGateway:
         if self._runs_error is not None:
             raise self._runs_error
         return self._runs
+
+    def default_branch_head(self, *, repository: str) -> BranchHead:
+        if self._base_head is None:
+            raise EstateGatewayError("repository_response_invalid")
+        return self._base_head
+
+    def tree(self, *, repository: str, commit_sha: str) -> Tree:
+        self.tree_reads.append(commit_sha)
+        if commit_sha not in self._trees:
+            raise EstateGatewayError("tree_response_invalid")
+        return self._trees[commit_sha]
 
     def update_branch(self, *, repository: str, number: int, expected_head_sha: str) -> None:
         self.branch_updates.append((repository, number, expected_head_sha))

@@ -106,20 +106,28 @@ from orchestrator.services.landing.interfaces import (
     UPDATE_BOT_LOGIN,
     EstateGatewayError,
     EstatePullRequest,
-    EstateReadGateway,
+    InertReadGateway,
     Term,
+)
+from orchestrator.services.landing.revert_build import REVERT_BRANCH_PREFIX, is_exact_inverse
+from orchestrator.services.landing.revert_record import (
+    RevertSubject,
+    recorded_revert,
+    reverted_versions,
 )
 from orchestrator.services.landing.terms import (
     NOT_HELD,
     SECURITY_PATCHES_SERVICE,
+    UpdateBumps,
     checks_term,
     ecosystem_exclusion_term,
     freshness_term,
     grant_term,
     qualifies_for_branch_update,
     version_ceiling_term,
+    version_reverted_term,
 )
-from orchestrator.services.membership.holds import HoldBreach
+from orchestrator.services.membership.holds import Bump, HoldBreach
 from orchestrator.services.membership.members import HoldView, holds_for
 
 # The estate says landing on this repository's default branch DOES change something already
@@ -151,6 +159,17 @@ INERT_LANDING_REPOSITORY_NOT_DECLARED: Final = "inert_landing_repository_not_dec
 # rests on -- whether the unit completed, whether the verifier decided its criteria from observed
 # evidence, whether a human's authority approval is bound to the envelope's fingerprint.
 INERT_LANDING_AUTHOR_NOT_PERMITTED: Final = "inert_landing_author_not_permitted"
+
+# Landing Part 3a. A pull request from a revert branch (`REVERT_BRANCH_PREFIX`) is a revert
+# subject only when a machine account opened it and a `revert_opened` record names it as its
+# revert on that record's own branch. Any other one is refused by this name: nobody but the SDS
+# opens those branches, so it is a finding.
+LANDING_REVERT_NOT_RECORDED: Final = "landing_revert_not_recorded"
+# The revert's head, against the default branch's head, no longer changes exactly the paths the
+# bump touched back to the bump's parent, or the default branch moved one of them since.
+LANDING_REVERT_NOT_EXACT_INVERSE: Final = "landing_revert_not_exact_inverse"
+# A tree or the default branch's head could not be read, so the inverse check was not asked.
+LANDING_REVERT_UNREADABLE: Final = "landing_revert_unreadable"
 
 
 @dataclass(frozen=True)
@@ -194,7 +213,7 @@ def inert_landing_admission(
     pr_number: int,
     landing_source: EstateLandingSource,
     policy_source: InertLandingPolicySource,
-    gateway: EstateReadGateway,
+    gateway: InertReadGateway,
     *,
     enabled: bool,
     credentials_configured: bool,
@@ -236,13 +255,19 @@ def inert_landing_admission(
     estate = _inert_estate_term(repository, landing_source)
     policy = _policy_term(repository, policy_source)
     remote = _remote_terms(
-        repository, pr_number, policy.rules, holds_for(session, repository), gateway
+        repository,
+        pr_number,
+        policy.rules,
+        holds_for(session, repository),
+        reverted_versions(session, repository),
+        recorded_revert(session, repository, pr_number),
+        gateway,
     )
     # Landing Part 2. The member record must grant what this subject is: a bump needs
     # `dependency_updates`; a fork's upstream sync, someone else's release carried wholesale, also
     # needs `security_patches`. Asked once on every path, after the author is known; where it is
     # not (the pull request or the policy could not be read) a bump's grant is asked, and those
-    # paths already refuse on their own.
+    # paths already refuse on their own. A revert subject asks a bump's grant: it undoes one.
     services = (
         (SECURITY_PATCHES_SERVICE, DEPENDENCY_UPDATES_SERVICE)
         if remote.wholesale
@@ -364,7 +389,9 @@ def _remote_terms(
     pr_number: int,
     rules: InertLandingRules | None,
     holds: tuple[HoldView, ...],
-    gateway: EstateReadGateway,
+    reverted: tuple[Bump, ...],
+    revert: RevertSubject | None,
+    gateway: InertReadGateway,
 ) -> _RemoteTerms:
     """Every question only GitHub can answer, asked at the moment the answer has to be true.
 
@@ -388,15 +415,34 @@ def _remote_terms(
     else:
         checks = checks_term(repository, pull, gateway)
         refusals.extend(checks.refusals)
+    common = (
+        pull.open
+        and not pull.landed
+        and pull.base_ref == pull.default_branch
+        and pull.mergeable_state != MERGEABLE_UNKNOWN
+        and checks.met
+    )
+
+    if pull.head_ref.startswith(REVERT_BRANCH_PREFIX):
+        revert_term = _revert_term(repository, pull, revert, gateway)
+        refusals.extend(revert_term.refusals)
+        return _RemoteTerms(
+            Term(common and revert_term.met, tuple(refusals)), pull.head_sha, SQUASH
+        )
 
     # Bridge layer Part 4. Asked BEFORE the policy's own early return, because the close act keys
     # on the ceiling code being present whatever else refuses. A wholesale author (Ruling 8: a
     # fork's upstream sync is someone else's release, not a bump) is never asked, and never has
     # its commits read; without the rules nobody can say an author is wholesale, so it is asked.
     wholesale = rules is not None and not rules.ecosystem_scoped(pull.author_login)
-    ceiling = NOT_HELD if wholesale else version_ceiling_term(repository, pull, holds, gateway)
+    update = UpdateBumps(repository, pull, gateway)
+    ceiling = NOT_HELD if wholesale else version_ceiling_term(repository, holds, update)
     held = ceiling.term
     refusals.extend(held.refusals)
+    # Landing Part 3a: a version the SDS reverted here never lands again. Not asked of a wholesale
+    # author, for the reason the hold is not; one unreadable list is one refusal.
+    never_again = Term(True, ()) if wholesale else version_reverted_term(reverted, update)
+    refusals.extend(code for code in never_again.refusals if code not in refusals)
     bot = pull.author_login == UPDATE_BOT_LOGIN and pull.author_is_bot
 
     if rules is None:
@@ -449,17 +495,7 @@ def _remote_terms(
     refusals.extend(fresh.refusals)
     refusals.extend(ecosystem.refusals)
 
-    met = (
-        pull.open
-        and not pull.landed
-        and pull.base_ref == pull.default_branch
-        and pull.mergeable_state != MERGEABLE_UNKNOWN
-        and checks.met
-        and author.met
-        and fresh.met
-        and ecosystem.met
-        and held.met
-    )
+    met = common and author.met and fresh.met and ecosystem.met and held.met and never_again.met
     return _RemoteTerms(
         Term(met, tuple(refusals)), pull.head_sha, merge_method, ceiling.breaches, bot, wholesale
     )
@@ -480,3 +516,49 @@ def _author_term(pull: EstatePullRequest, rules: InertLandingRules) -> Term:
     if rules.permits_author(pull.author_login) and pull.author_is_bot:
         return Term(True, ())
     return Term(False, (INERT_LANDING_AUTHOR_NOT_PERMITTED,))
+
+
+def _revert_term(
+    repository: str,
+    pull: EstatePullRequest,
+    revert: RevertSubject | None,
+    gateway: InertReadGateway,
+) -> Term:
+    """May this revert pull request land? Landing Part 3a.
+
+    A revert is not a bump, so it is asked none of a bump's questions -- author, ecosystem, hold,
+    reverted version -- and is asked three of its own instead, in order:
+
+    1. Is it the one the record names: a `revert_opened` record whose revert this pull request is,
+       on that record's own branch, opened by a machine account. The record is what proves the SDS
+       opened it; no configuration names the App's login.
+    2. Is its head current with its base. Always required here, and asked BEFORE the inverse: a
+       merely-behind revert differs from its base on every path the base moved since, and reporting
+       that as not-an-inverse would never be freshened.
+    3. Is its head, against the default branch's head, exactly the inverse of the bump's squash
+       merge (`revert_build.is_exact_inverse`), which also refuses a base that moved a touched path.
+
+    The default branch's head is read here, separately from the freshness read; if it moves between
+    the two, the landing meets the same race every landing does.
+    """
+    expected = f"{REVERT_BRANCH_PREFIX}pr-{revert.pr_number}" if revert is not None else None
+    if revert is None or pull.head_ref != expected or not pull.author_is_bot:
+        return Term(False, (LANDING_REVERT_NOT_RECORDED,))
+    fresh = freshness_term(repository, pull, gateway, required=True)
+    if not fresh.met:
+        return fresh
+    try:
+        base = gateway.default_branch_head(repository=repository)
+        exact = is_exact_inverse(
+            gateway,
+            repository,
+            revert_head_sha=pull.head_sha,
+            base_sha=base.sha,
+            merge_sha=revert.merge_commit_sha,
+            parent_sha=revert.parent_sha,
+        )
+    except EstateGatewayError:
+        return Term(False, (LANDING_REVERT_UNREADABLE,))
+    if not exact:
+        return Term(False, (LANDING_REVERT_NOT_EXACT_INVERSE,))
+    return Term(True, ())

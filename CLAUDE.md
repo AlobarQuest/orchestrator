@@ -652,10 +652,12 @@ Placement rule: global CLAUDE.md §7.
   names a file (`tests/architecture/test_layer_manifest.py`). Place a new file in the manifest;
   never widen a pattern to quiet the guard. `make layer L=<id>` lists a layer's files. Detail:
   `docs/operations/architecture-guards.md`, "The layer manifest".
-- Only `services/membership/proposals.py` writes the member tables, and only a human confirming
-  a proposal on `/review` reaches it; reads return frozen records, never ORM objects.
-  `test_membership_writers.py` names every route that may write them and the role each requires.
-  The deploys service's wire value is `rollouts` (word guards). Detail: `docs/operations/membership.md`.
+- Only `services/membership/proposals.py` writes the member tables, reached only by a human
+  confirming on `/review`, with one exception: `revert_hold.place` inserts a ceiling hold, only in
+  the inert merge path's transaction for a landed SDS revert, and never updates or deletes. Reads
+  return frozen records, never ORM objects. `test_membership_writers.py` pins both writers, every
+  write route and its role. The deploys service's wire value is `rollouts` (word guards). Detail:
+  `docs/operations/membership.md`.
 - Every path that lands or proposes a dependency bump honours the member record's holds through the
   shared matcher (`factory_breaches`, `exceeded` or `terms.version_ceiling_term`), or is covered by
   a gate that does, or is not a bump: `tests/architecture/test_hold_paths.py` classifies each and

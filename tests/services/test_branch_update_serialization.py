@@ -319,11 +319,14 @@ RELEASING = {
     "landing_record_not_approved",
     "landing_record_not_policy_approved",
     "landing_repository_not_granted",
+    "landing_revert_not_exact_inverse",
+    "landing_revert_not_recorded",
     "landing_rollout_unpinned",
     "landing_target_not_routed",
     "landing_update_type_not_permitted",
     "landing_update_type_unparseable",
     "landing_version_ceiling_exceeded",
+    "landing_version_reverted",
 }
 
 # The holding vocabulary: the two deliberate refusals, the freshness criterion's two members, and
@@ -370,7 +373,7 @@ def test_every_refusal_code_is_classified_exactly_once() -> None:
     assert not HOLDING & READ_FAILURE_REFUSALS
     assert not HOLDING & RELEASING
     assert not READ_FAILURE_REFUSALS & RELEASING
-    assert (len(HOLDING), len(READ_FAILURE_REFUSALS), len(RELEASING)) == (7, 19, 24)
+    assert (len(HOLDING), len(READ_FAILURE_REFUSALS), len(RELEASING)) == (7, 20, 27)
 
 
 def _class(*refusals: str, base_matches: bool = False) -> str:

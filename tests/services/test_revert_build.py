@@ -27,8 +27,8 @@ from orchestrator.services.landing.revert_build import (
     Overlap,
     RevertOf,
     RevertPlan,
+    is_exact_inverse,
 )
-from orchestrator.services.landing.revert_build import _is_exact_inverse as is_exact_inverse
 from orchestrator.services.landing.revert_build import _open_revert as open_revert
 from orchestrator.services.landing.revert_build import _plan_revert as plan_revert
 

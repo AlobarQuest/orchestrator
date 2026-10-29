@@ -153,12 +153,14 @@ LANE = Lane(
     # `landing_version_ceiling_exceeded` (bridge layer Part 4) is the same class: a hold in the SDS
     # member record clears only when a person lifts it. Its sibling
     # `landing_dependency_list_unreadable` is deliberately NOT here -- an unreadable input stops
-    # loudly, as a finding.
+    # loudly, as a finding. `landing_version_reverted` (Landing Part 3a) is the same class again:
+    # the SDS reverted that version here, and it lands only by a person's hand.
     exception=frozenset(
         {
             "landing_ecosystem_excluded",
             "landing_version_ceiling_exceeded",
             "landing_repository_not_granted",
+            "landing_version_reverted",
         }
     ),
     # The branch-update act's refusals that say only *the answer moved between the read and the

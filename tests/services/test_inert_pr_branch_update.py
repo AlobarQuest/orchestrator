@@ -454,12 +454,16 @@ def test_the_callers_EXCEPTION_set_is_exactly_the_refusal_current_policy_never_c
         LANDING_ECOSYSTEM_EXCLUDED,
         LANDING_VERSION_CEILING_EXCEEDED,
     )
-    from orchestrator.services.landing.terms import LANDING_REPOSITORY_NOT_GRANTED
+    from orchestrator.services.landing.terms import (
+        LANDING_REPOSITORY_NOT_GRANTED,
+        LANDING_VERSION_REVERTED,
+    )
 
     assert LANE.exception == {
         LANDING_ECOSYSTEM_EXCLUDED,
         LANDING_VERSION_CEILING_EXCEEDED,
         LANDING_REPOSITORY_NOT_GRANTED,
+        LANDING_VERSION_REVERTED,
     }
 
 

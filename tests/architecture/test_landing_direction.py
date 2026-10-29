@@ -70,6 +70,7 @@ SHARED = frozenset(
         # Landing Part 3a: judging a landed bump and building its revert each reach GitHub only
         # through their own gateway protocol.
         "revert_build",
+        "revert_record",
         "revert_watch",
     }
 )
@@ -98,6 +99,7 @@ NEITHER = frozenset(
         "estate_landing",
         "inert_landing_policy",
         "revert_build",
+        "revert_record",
         "revert_watch",
     }
 )

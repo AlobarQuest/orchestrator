@@ -64,7 +64,7 @@ already holds. It never reads the served answer's copy of the fact.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Final
+from typing import Final, Protocol
 
 from sqlalchemy.orm import Session
 
@@ -77,6 +77,7 @@ from orchestrator.services.landing.branch_update_serialization import (
 from orchestrator.services.landing.estate_landing import EstateLandingSource
 from orchestrator.services.landing.inert_landing_admission import inert_landing_admission
 from orchestrator.services.landing.inert_landing_policy import InertLandingPolicySource
+from orchestrator.services.landing.interfaces import RevertReadGateway
 from orchestrator.services.landing.lane_act import (
     BranchUpdateGateway,
     BranchUpdateLane,
@@ -130,10 +131,15 @@ class InertBranchUpdateCommand:
     expected_head_sha: str
 
 
+class InertBranchUpdateGateway(BranchUpdateGateway, RevertReadGateway, Protocol):
+    """The shared branch-update reads and act, plus the trees the inert admission checks a revert
+    subject against (Landing Part 3a)."""
+
+
 def update_inert_pull_request_branch(
     session: Session,
     command: InertBranchUpdateCommand,
-    gateway: BranchUpdateGateway,
+    gateway: InertBranchUpdateGateway,
     landing_source: EstateLandingSource,
     policy_source: InertLandingPolicySource,
     *,

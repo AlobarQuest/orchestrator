@@ -454,17 +454,29 @@ class BranchHead:
     sha: str
 
 
-class RevertBuildGateway(Protocol):
+class RevertReadGateway(Protocol):
+    """The two reads that checking a revert against the bump it inverts needs. Landing Part 3a.
+
+    Separate from the writes so the inert lane's admission, which only reads, can ask the check.
+    """
+
+    def default_branch_head(self, *, repository: str) -> BranchHead: ...
+
+    def tree(self, *, repository: str, commit_sha: str) -> Tree: ...
+
+
+class InertReadGateway(EstateReadGateway, RevertReadGateway, Protocol):
+    """Every read the inert lane's admission makes: the shared landing reads, plus the trees a
+    revert subject is checked against (Landing Part 3a)."""
+
+
+class RevertBuildGateway(RevertReadGateway, Protocol):
     """The reads and writes that building a revert pull request needs. Landing Part 3a.
 
     Its own narrow protocol, beside `RevertWatchGateway`: judging never writes git objects and
     building never reads jobs. Every call is bounded by the caller's grant check, as every App call
     is.
     """
-
-    def default_branch_head(self, *, repository: str) -> BranchHead: ...
-
-    def tree(self, *, repository: str, commit_sha: str) -> Tree: ...
 
     def create_tree(
         self, *, repository: str, base_tree: str, changes: Sequence[TreeChange]

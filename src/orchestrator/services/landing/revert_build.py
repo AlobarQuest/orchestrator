@@ -23,7 +23,8 @@ That is an `Overlap`, and nothing is built.
 These functions act through the Dispatch App, which can reach more repositories than it works on.
 Their only caller is the revert route (Landing Part 3a, Task 5), which asks the inert lane's grant
 term first; the landing-time check runs inside the revert subject's admission, after the same term.
-They are private until that caller exists (`test_unreachable_guards`).
+They are private until that caller exists (`test_unreachable_guards`), except `is_exact_inverse`,
+which the inert lane's admission asks of a revert subject (Task 4).
 """
 
 from __future__ import annotations
@@ -34,6 +35,7 @@ from typing import Final
 from orchestrator.services.landing.interfaces import (
     EstateGatewayError,
     RevertBuildGateway,
+    RevertReadGateway,
     TreeChange,
     TreeEntry,
 )
@@ -173,8 +175,8 @@ def _revert_title(title: str) -> str:
     return f'Revert "{title}"'
 
 
-def _is_exact_inverse(
-    gateway: RevertBuildGateway,
+def is_exact_inverse(
+    gateway: RevertReadGateway,
     repository: str,
     revert_head_sha: str,
     base_sha: str,

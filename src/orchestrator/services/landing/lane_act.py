@@ -63,6 +63,9 @@ _BRANCH_UPDATE_LOCK: Final = "estate_pr_branch_update"
 
 # What each act says when the actor is not the system actor.
 _LANDING_VERB: Final = "land a pull request"
+# The recorded statuses that say the pull request landed: this lane's own landing, and a refusal
+# the confirming read showed had landed after all.
+_LANDED: Final = frozenset({"merged", "already_merged"})  # not-a-vocabulary: `_record`'s statuses
 _BRANCH_UPDATE_VERB: Final = "bring a pull request's branch up to date"
 
 
@@ -159,6 +162,7 @@ def land_pull_request[Admission: LaneAdmission](
     admit: Callable[[str], Admission],
     remote_call: Callable[[Admission, str], MergeOutcome],
     change_record_id: Callable[[Admission], int | None] | None,
+    on_landed: Callable[[EstatePrMerge], None] | None = None,
 ) -> EstatePrMerge:
     """Own the transaction, the way every request entry point in this repository does.
 
@@ -169,6 +173,9 @@ def land_pull_request[Admission: LaneAdmission](
     `admit` composes the lane's answer for the lower-cased repository. `remote_call` performs the
     lane's landing of the head that answer named. `change_record_id` reads the change record the
     row names; a lane that has no change record passes None, and its row and event name none.
+    `on_landed` runs in the same transaction, after a NEW row records the pull request as landed
+    (`merged`, or `already_merged` on a refusal the confirming read contradicted); a replayed row
+    never runs it.
     """
     try:
         record = _land(
@@ -179,6 +186,7 @@ def land_pull_request[Admission: LaneAdmission](
             admit=admit,
             remote_call=remote_call,
             change_record_id=change_record_id,
+            on_landed=on_landed,
         )
         session.commit()
         return record
@@ -196,6 +204,7 @@ def _land[Admission: LaneAdmission](
     admit: Callable[[str], Admission],
     remote_call: Callable[[Admission, str], MergeOutcome],
     change_record_id: Callable[[Admission], int | None] | None,
+    on_landed: Callable[[EstatePrMerge], None] | None,
 ) -> EstatePrMerge:
     authorize_actor(command.actor, _LANDING_VERB)
     repository = command.repository.lower()
@@ -251,7 +260,7 @@ def _land[Admission: LaneAdmission](
             "the pull request's head is not the one the caller read",
             "re-read the landing-admission answer and ask again",
         )
-    return _act(
+    record = _act(
         session,
         command,
         lane,
@@ -261,6 +270,9 @@ def _land[Admission: LaneAdmission](
         change_record_id=None if change_record_id is None else change_record_id(admission),
         names_change_record=change_record_id is not None,
     )
+    if on_landed is not None and record.status in _LANDED:
+        on_landed(record)
+    return record
 
 
 def _act[Admission: LaneAdmission](

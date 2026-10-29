@@ -103,6 +103,20 @@ To place or lift one: write the TOML, run `sds-members stage <file.toml>` (it pr
 `/review/member-proposals/{id}` page), and confirm on that page as a person. A lift is staged and
 confirmed the same way; nothing else removes a hold, so only a person ends one.
 
+### Automatic holds
+
+One hold is placed without a person: when the inert lane lands a revert the SDS opened for a bad
+Dependabot bump (Landing Part 3a), the same transaction holds each reverted dependency at the
+version before the bump (`services/membership/revert_hold.py`). The hold is an ordinary ceiling,
+set by `sds-revert`, with reason `Reverted <repository>#<pr>: <failed jobs> failed`. It is skipped,
+and the revert record's `hold_outcome` says why, when the version before the bump is unknown (a
+grouped bump), the directory is not a path, or the dependency is already held; it never replaces or
+lifts a hold. Separately, both landers refuse that exact version for good (`landing_version_reverted`),
+whether or not a hold was placed.
+
+To lift an automatic hold, stage a `lift` for it like any other (`sds-members stage`) and confirm
+on `/review`.
+
 What a hold stops: every path that lands or proposes a dependency bump asks it
 (`tests/architecture/test_hold_paths.py` lists each path and how). Both landers refuse a Dependabot
 pull request past the ceiling, and an acting lander pass closes it with a comment; the factory
@@ -149,4 +163,6 @@ nothing quietly.
 
 `tests/architecture/test_membership_writers.py` holds two rules: only `services/membership/proposals.py`
 constructs, adds or assigns the member models, and the routes that reach the stage, confirm or
-withdraw functions are exactly the three above. Role refusal is pinned by the service and web tests.
+withdraw functions are exactly the three above. The one exception is the automatic hold
+(`revert_hold.place`): it may only construct and add a hold, and the inert lane's merge path is its
+only caller. Role refusal is pinned by the service and web tests.

@@ -71,12 +71,14 @@ one on must not turn the other on.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Final, Protocol
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from orchestrator.kernel.states import ActorContext
-from orchestrator.persistence.models import EstatePrMerge
+from orchestrator.persistence.models import EstatePrMerge, LandingRevert
 from orchestrator.services.landing.estate_landing import EstateLandingSource
 from orchestrator.services.landing.estate_pr_merge import (
     GitHubEstatePullRequests,
@@ -86,8 +88,10 @@ from orchestrator.services.landing.inert_landing_admission import (
     inert_landing_admission,
 )
 from orchestrator.services.landing.inert_landing_policy import InertLandingPolicySource
-from orchestrator.services.landing.interfaces import EstateReadGateway, MergeOutcome
+from orchestrator.services.landing.interfaces import InertReadGateway, MergeOutcome
 from orchestrator.services.landing.lane_act import LandingLane, land_pull_request
+from orchestrator.services.landing.revert_record import REVERT_LANDED, REVERT_OPENED
+from orchestrator.services.membership.revert_hold import place as place_revert_hold
 
 # The trailer the landing writes into the landing commit's body, and the estate's ledger reads back
 # out of it. It reaches the artifact under either landing method, measured rather than assumed --
@@ -116,7 +120,7 @@ _LANE: Final = LandingLane(
 )
 
 
-class InertPullRequestGateway(EstateReadGateway, Protocol):
+class InertPullRequestGateway(InertReadGateway, Protocol):
     """Everything the cascade reads, plus the two calls that change anything.
 
     **THE LANDING IS NAMED `merge`, DELIBERATELY, AND THAT IS NOT A DETAIL.** This repository's
@@ -213,7 +217,34 @@ def land_inert_pull_request(
         ),
         remote_call=lambda admission, head_sha: _act(gateway, admission, head_sha),
         change_record_id=None,
+        on_landed=lambda record: _revert_landed(session, record),
     )
+
+
+def _revert_landed(session: Session, record: EstatePrMerge) -> None:
+    """If the pull request that just landed is a revert the SDS opened, record it landed and hold
+    the dependency, in the transaction that records the landing. Landing Part 3a.
+
+    The record is the `revert_opened` one naming this pull request as its revert -- the same record
+    the admission found -- read under the landing's repository lock, which is already held. Every
+    other landing finds none and does nothing. `revert_merge_sha` stays empty when the landing was
+    confirmed only by a re-read (`already_merged`), which carries no commit.
+    """
+    revert = session.scalar(
+        select(LandingRevert)
+        .where(
+            LandingRevert.repository == record.repository,
+            LandingRevert.revert_pr_number == record.pr_number,
+            LandingRevert.status == REVERT_OPENED,
+        )
+        .with_for_update()
+    )
+    if revert is None:
+        return
+    revert.status = REVERT_LANDED
+    revert.revert_merge_sha = record.merge_commit_sha
+    revert.updated_at = datetime.now(UTC)
+    revert.hold_outcome = place_revert_hold(session, revert)
 
 
 def _act(
