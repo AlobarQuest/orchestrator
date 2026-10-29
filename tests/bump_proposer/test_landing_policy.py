@@ -91,8 +91,8 @@ def test_the_document_production_serves_parses_to_what_it_declares() -> None:
 
     assert rule.version == 6
     assert rule.permitted_authors == frozenset({"dependabot[bot]"})
-    assert rule.excluded_ecosystems == frozenset({"docker"})
-    assert len(rule.repositories) == 6
+    assert rule.inert_excluded_ecosystems == frozenset({"docker"})
+    assert len(rule.inert) == 6
 
 
 def test_the_declared_population_is_case_folded_against_the_way_github_spells_it() -> None:
@@ -132,7 +132,7 @@ def test_a_repository_the_document_governs_on_the_OTHER_terms_is_declared_deploy
     rule = parse(LIVE)
 
     assert "alobarquest/change-manager" in LIVE["repositories"]
-    assert "alobarquest/change-manager" not in rule.repositories
+    assert "alobarquest/change-manager" not in rule.inert
     assert rule.declares("AlobarQuest/change-manager")
     assert rule.deploys("AlobarQuest/change-manager")
 
@@ -194,39 +194,56 @@ def test_a_deploying_population_served_in_mixed_case_is_still_declared() -> None
     assert rule.deploys("alobarquest/brain") and rule.deploys("AlobarQuest/brain")
 
 
-@pytest.mark.parametrize(
-    "deploying", [[], None, "alobarquest/brain"], ids=["empty", "missing", "not-a-list"]
-)
-def test_policy_without_deploying_population_is_unreadable(deploying) -> None:
-    """Review focus 4: an absent or empty deploying population never shrinks the lane silently
-    to inert; it is a refusal, like the inert one."""
+@pytest.mark.parametrize("deploying", [[], None], ids=["empty", "missing"])
+def test_an_undeclared_deploying_population_parses_empty_rather_than_refusing(deploying) -> None:
+    """Read permissively here: the bump proposer, the one reader that widens on it, refuses an
+    empty population itself, and the inert lander must not be stopped by its absence."""
     document = _document(deploying=deploying)
     if deploying is None:
         del document["repositories"]
 
-    with pytest.raises(LandingPolicyError):
-        parse(document)
+    rule = parse(document)
+
+    assert rule.deploying == frozenset()
+    assert rule.declares(INERT) and not rule.declares(DEPLOYING)
 
 
 @pytest.mark.parametrize(
-    "landing",
-    [None, "not an object", {"update_types": []}, {"excluded_ecosystems": "github_actions"}],
-    ids=["missing", "not-an-object", "decides-by-update-type", "not-a-list"],
+    "landing", [None, {"update_types": []}], ids=["missing", "decides-by-update-type"]
 )
-def test_a_landing_block_this_producer_cannot_read_is_refused(landing) -> None:
-    """A version without `landing.excluded_ecosystems` decides by update type (versions 1 to 4),
-    which this producer does not evaluate, so it is a refusal rather than "nothing excluded"."""
+def test_undeclared_deploying_exclusions_are_none_rather_than_nothing_excluded(landing) -> None:
+    """`None` keeps "did not say" apart from "excludes nothing", which the bump proposer refuses on.
+    A deploying repository with no declared exclusions is permitted nothing."""
     document = _document(landing=landing)
     if landing is None:
         del document["landing"]
 
+    rule = parse(document)
+
+    assert rule.deploying_excluded_ecosystems is None
+    assert not rule.permits(DEPLOYING, "npm_and_yarn")
+    assert rule.permits(INERT, "npm_and_yarn")
+
+
+def test_an_empty_deploying_exclusion_list_excludes_nothing() -> None:
+    rule = parse(_document(landing={"excluded_ecosystems": []}))
+
+    assert rule.deploying_excluded_ecosystems == frozenset()
+    assert rule.permits(DEPLOYING, "github_actions")
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"deploying": "alobarquest/brain"},
+        {"landing": "not an object"},
+        {"landing": {"excluded_ecosystems": "github_actions"}},
+    ],
+    ids=["population-not-a-list", "landing-not-an-object", "exclusions-not-a-list"],
+)
+def test_a_malformed_deploying_half_is_refused(overrides) -> None:
     with pytest.raises(LandingPolicyError):
-        parse(document)
-
-
-def test_a_version_deciding_deploying_landings_by_update_type_says_so() -> None:
-    with pytest.raises(LandingPolicyError, match="by update type"):
-        parse(_document(landing={"update_types": ["version-update:semver-patch"]}))
+        parse(_document(**overrides))
 
 
 def test_the_author_the_reader_can_see_is_the_one_the_document_permits() -> None:

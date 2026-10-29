@@ -1665,6 +1665,26 @@ def test_policy_without_deploying_population_is_unreadable(rig, monkeypatch, dep
     assert calls == [] and estate.proposals == []
 
 
+@pytest.mark.parametrize("landing", [None, {"update_types": []}], ids=["missing", "update-type"])
+def test_policy_whose_landing_block_declares_no_exclusions_is_unreadable(
+    rig, monkeypatch, capsys, landing
+) -> None:
+    """A `landing` block without `excluded_ecosystems` decides by update type, which this
+    producer does not evaluate: exit 2, not "nothing excluded"."""
+    estate, calls = rig
+    document = json.loads(json.dumps(LIVE))
+    if landing is None:
+        del document["landing"]
+    else:
+        document["landing"] = landing
+    monkeypatch.setattr(cli, "read_landing_policy", lambda token, base_url: parse(document))
+
+    assert run(["--submit"]) == EXIT_UNUSABLE
+
+    assert calls == [] and estate.proposals == []
+    assert "by update type" in capsys.readouterr().err
+
+
 def test_repository_in_both_populations_deploys(rig, monkeypatch) -> None:
     """Review focus 2: the more restrained reach."""
     estate, calls = rig

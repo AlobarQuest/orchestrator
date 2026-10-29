@@ -829,6 +829,24 @@ def _declared_rule(read_token: str, *, base_url: str) -> LandingPolicy | None:
     except LandingPolicyError as error:
         print(str(error), file=sys.stderr)
         return None
+    # THE DEPLOYING HALF IS REQUIRED HERE AND NOWHERE ELSE (ADR-0028 amendment 3). This pass is
+    # the one reader that widens its lane on it, so a document that stopped declaring it must stop
+    # the pass rather than shrink the lane to inert in silence. `parse` reads it permissively so
+    # the inert lander, which never asks, is not stopped by its absence.
+    if not rule.deploying:
+        print(
+            f"landing policy version {rule.version} declares no deploying population, or an "
+            "empty one; an absent declaration is a refusal rather than a waiver",
+            file=sys.stderr,
+        )
+        return None
+    if rule.deploying_excluded_ecosystems is None:
+        print(
+            f"landing policy version {rule.version} decides deploying landings by update type, "
+            "which this producer does not evaluate",
+            file=sys.stderr,
+        )
+        return None
     if not rule.covers_author(UPSTREAM_AUTHOR):
         # THE ONE THING THIS PASS CHECKS ABOUT THE DECLARATION ITSELF, and it fails closed in the
         # expensive direction. It asks the inert block only: the deploying `landing` block names

@@ -211,7 +211,11 @@ member record grants `dependency_updates` that change-manager's landing policy d
 deploying, or that a standing package targets. A policy whose deploying population (the top-level
 `repositories`) is empty or absent, or whose `landing` block decides by update type, stops the pass
 (exit 2); it never shrinks the lane to inert in silence. A repository in neither population is
-`not-declared-landing`. Measured 2026-10-28, the widened lane adds exactly brain and change-manager.
+`not-declared-landing`. Measured 2026-10-28, the widened lane adds exactly brain and change-manager. The requirement is
+the bump proposer's alone, because it is the one reader that widens on that data: the shared parser
+reads the deploying half permissively, so the inert lander runs unchanged on a document without it,
+and `membership_check` reports an absent or empty deploying population as a gap, never as "nothing
+deploys".
 
 **Reach for a deploying target is `[live_estate]` (Ruling 1).** `create-standing --reach
 live_estate` writes it; an inert target keeps `[source_repository]`. This supersedes amendment 1's

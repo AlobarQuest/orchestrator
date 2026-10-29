@@ -213,7 +213,7 @@ def _subjects(reader: PullRequestSource, rule: LandingPolicy) -> Selection:
 
     THE SCOPE IS THE DECLARATION'S, twice over: the repositories are the ones a person pinned, and
     the authors are the ones the same declaration names. Neither is written here. Both are the
-    INERT block's (`rule.repositories`, `covers_author`): the policy's deploying population is
+    INERT block's (`rule.inert`, `covers_author`): the policy's deploying population is
     the bump proposer's to read, never this lane's.
 
     **THE AUTHOR FILTER IS A SCOPE TEST, NOT A PERMISSION TEST**, and the orchestrator decides the
@@ -231,7 +231,7 @@ def _subjects(reader: PullRequestSource, rule: LandingPolicy) -> Selection:
     subjects: list[tuple[str, int]] = []
     deferred: dict[str, int] = {}
     unreadable: list[Outcome] = []
-    for repository in sorted(rule.repositories):
+    for repository in sorted(rule.inert):
         try:
             pulls = reader.open_pull_requests(repository)
         except ReadError as error:

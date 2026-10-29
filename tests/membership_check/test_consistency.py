@@ -202,7 +202,7 @@ def _wire(
     members,
     answers=None,
     policy=("a/one",),
-    deploying=(),
+    deploying=("a/one",),
     policy_error=None,
     fork_list=(),
     fork_error=None,
@@ -243,9 +243,9 @@ def _wire(
             raise policy_error
         return LandingPolicy(
             version=12,
-            repositories=frozenset(policy),
+            inert=frozenset(policy),
             permitted_authors=frozenset(),
-            excluded_ecosystems=frozenset(),
+            inert_excluded_ecosystems=frozenset(),
             deploying=frozenset(deploying),
             deploying_excluded_ecosystems=frozenset(),
         )
@@ -379,6 +379,13 @@ def test_membership_check_reports_a_deploying_repository_without_dependency_upda
     assert "dependency_updates" in result.stdout
 
 
+def test_an_absent_deploying_population_is_a_gap_not_nothing_deploys(monkeypatch):
+    _wire(monkeypatch, members=CLEAN, deploying=())
+    result = _invoke()
+    assert result.exit_code == 3
+    assert "declares no deploying population" in result.stderr and result.stdout == ""
+
+
 def test_a_rollback_for_a_repository_without_rollouts_is_a_disagreement(monkeypatch):
     _wire(monkeypatch, members=CLEAN, rollbacks={"a/one": object()})
     result = _invoke()
@@ -401,8 +408,10 @@ def test_a_standing_package_for_a_repository_without_dependency_updates_is_a_dis
 def test_the_live_population_agrees(monkeypatch, packages_checkout):
     _standing_tree(packages_checkout, "alobarquest/infraops-mcp-server")
     members = [
-        _member("AlobarQuest/brain", "rollouts"),
-        _member("AlobarQuest/change-manager", "rollouts"),
+        # Both deploying repositories are granted dependency_updates (all 13 members are,
+        # measured 2026-10-28), so the deploying row agrees.
+        _member("AlobarQuest/brain", "rollouts", "dependency_updates"),
+        _member("AlobarQuest/change-manager", "rollouts", "dependency_updates"),
         _member("AlobarQuest/infraops-mcp-server", "dependency_updates"),
     ]
     _wire(
@@ -410,6 +419,7 @@ def test_the_live_population_agrees(monkeypatch, packages_checkout):
         members=members,
         answers={},
         policy=(),
+        deploying=("alobarquest/brain", "alobarquest/change-manager"),
         rollbacks={"alobarquest/brain": 1, "alobarquest/change-manager": 1},
     )
     owned = [m.repository for m in members]

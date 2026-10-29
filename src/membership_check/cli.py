@@ -62,8 +62,15 @@ def _landing(token: str, owned: list[str]) -> tuple[frozenset[str], frozenset[st
         policy = read_landing_policy(token)
     except LandingPolicyError as error:
         return frozenset(), frozenset(), [f"the landing policy couldn't be read: {error}"]
-    populations = (policy.repositories, policy.deploying)
+    populations = (policy.inert, policy.deploying)
     gaps = [gap for names in populations for gap in canonical(names, owned).gaps] if owned else []
+    if not policy.deploying:
+        # A GAP, never "nothing deploys": an absent or empty deploying population is a document
+        # that did not decide, so this row could not be checked.
+        gaps.append(
+            f"landing policy version {policy.version} declares no deploying population, so "
+            "the deploying row couldn't be checked"
+        )
     inert, deploying = (frozenset(_spelled(names, owned)) for names in populations)
     return inert, deploying, gaps
 

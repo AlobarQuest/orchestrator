@@ -61,9 +61,9 @@ def _rule(*repositories: str) -> LandingPolicy:
     """
     return LandingPolicy(
         version=6,
-        repositories=frozenset(name.lower() for name in (repositories or (REPOSITORY,))),
+        inert=frozenset(name.lower() for name in (repositories or (REPOSITORY,))),
         permitted_authors=frozenset({BOT}),
-        excluded_ecosystems=frozenset({"docker"}),
+        inert_excluded_ecosystems=frozenset({"docker"}),
         deploying=frozenset({"alobarquest/brain"}),
         deploying_excluded_ecosystems=frozenset({"github_actions"}),
     )
@@ -719,6 +719,34 @@ def test_a_declaration_this_program_cannot_read_stops_the_WHOLE_pass(monkeypatch
     assert github.enumerated == []
 
 
+@pytest.mark.parametrize("drop", [("repositories",), ("landing",), ("repositories", "landing")])
+def test_a_document_with_no_deploying_half_runs_exactly_as_the_full_one(
+    monkeypatch, capsys, drop
+) -> None:
+    """The inert lane never asks about the deploying population, so a policy without it (or
+    without its `landing` block) must not stop or change this pass. Compared against the same
+    pass over the full live document, through the real parser."""
+    import json
+
+    from bump_proposer.landing_policy import parse
+    from tests.bump_proposer.test_landing_policy import LIVE
+
+    def one_pass(document: dict[str, Any]) -> tuple[int, list[str], str]:
+        github = FakeGitHub({REPOSITORY: [_pull(1)]})
+        _wire(monkeypatch, github, FakeOrchestrator({(REPOSITORY, 1): _admissible()}), _rule())
+        monkeypatch.setattr("inert_lander.cli.read_landing_policy", lambda *a, **k: parse(document))
+        code = run([])
+        return code, github.enumerated, capsys.readouterr().out
+
+    reduced = json.loads(json.dumps(LIVE))
+    for key in drop:
+        del reduced[key]
+
+    full = one_pass(LIVE)
+    assert full[0] == EXIT_OK and REPOSITORY in full[1]
+    assert one_pass(reduced) == full
+
+
 def test_a_github_failure_MID_PASS_is_a_tool_failure(monkeypatch) -> None:
     """`_subjects` catches a per-repository read, so reaching this means the reader itself broke."""
 
@@ -771,9 +799,9 @@ def test_run_reports_the_REAL_deferral_tally(monkeypatch, capsys) -> None:
 def test_run_reports_the_version_of_the_declaration_it_actually_read(monkeypatch, capsys) -> None:
     rule = LandingPolicy(
         version=99,
-        repositories=frozenset({REPOSITORY}),
+        inert=frozenset({REPOSITORY}),
         permitted_authors=frozenset({BOT}),
-        excluded_ecosystems=frozenset(),
+        inert_excluded_ecosystems=frozenset(),
         deploying=frozenset({"alobarquest/brain"}),
         deploying_excluded_ecosystems=frozenset(),
     )

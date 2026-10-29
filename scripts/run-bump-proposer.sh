@@ -16,14 +16,14 @@
 # `dependency-update` change class. It cannot approve the record: change-manager's work policy
 # approves one that conforms (ADR-0025 amendment), and a person decides every other one.
 #
-# A bump it cannot route -- no tooling for its ecosystem, a pip requirement range, a dependency a
-# package in another ecosystem already covers, and every docker bump -- holds one keyed alert
-# open in alert-hub as the `sds-bridge` sender, resolved by the first writing pass that no longer
-# raises it: its pull request merged or closed, or (in an ecosystem the cascade lands) a re-run
-# passed. A re-run failing again but not yet settled holds the key. Which bumps with no tooling
-# alert even when they pass is each repository's own block's exclusion list: docker in an inert
-# repository, github_actions in a deploying one. A passing bump in any other ecosystem is the
-# landing party's, in either population.
+# A failed bump it cannot route -- no tooling for its ecosystem, a requirement range its tooling
+# can't carry, a dependency a package in another ecosystem already covers -- and a bump with no
+# tooling in an ecosystem its repository's block excludes, passing or not (docker in an inert
+# repository, github_actions in a deploying one), holds one keyed alert open in alert-hub as the
+# `sds-bridge` sender. A passing bump in any other ecosystem is the landing party's. The alert is
+# resolved by the first writing pass that no longer raises it: its pull request merged or closed,
+# or (in an ecosystem the landing party lands) a re-run passed. A re-run failing again but not yet
+# settled holds the key.
 # The keys it has fired are kept in `~/Library/Application Support/sds/bump-proposer/`.
 #
 # PUBLISHING IS THE COMMIT FINISHED, NOT A SECOND ACT. Until ADR-0033 the pass stopped at the

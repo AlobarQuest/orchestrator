@@ -36,13 +36,21 @@ fail-closed reading an untranscribed gate blob got, arrived at from the other si
 populations: the DEPLOYING one, the top-level `repositories` with its terms in the `landing` block,
 where landing redeploys production; and the INERT one, the `inert_landing` block. The bump
 proposer's lane covers both, and asks each repository's own block which ecosystems the landing
-party excludes (ADR-0028 amendment 3). An empty or absent deploying population is a refusal
-exactly as an inert one is, so a document that stopped declaring it can't shrink the lane to inert
-in silence.
-Of the `landing` block only `excluded_ecosystems` is read, and it is required: a version without
-it (1 to 4) decides by update type, which this producer does not evaluate. The `landing` block
-names no authors -- who may land a deploying pull request is the orchestrator's admission -- so
-`covers_author` asks the inert block alone, as before.
+party excludes (ADR-0028 amendment 3).
+
+**THE DEPLOYING HALF IS READ PERMISSIVELY HERE, AND REQUIRED BY THE ONE CONSUMER THAT WIDENS ON
+IT.** Three lanes read this module: the bump proposer, the inert lander and the membership check.
+Only the bump proposer widens its lane on the deploying population, so only it refuses a document
+whose deploying population is absent or empty, or whose `landing` block has no
+`excluded_ecosystems` (a version 1 to 4 `landing` block, which decides by update type and which
+this producer does not evaluate). Here an absent population is an empty set, and absent
+exclusions are `None` rather than an empty set, so that refusal can tell "excludes nothing" from
+"did not say". The inert lander reads only the inert block and behaves on a document with no
+deploying half exactly as it did before the field existed; the membership check reports an empty
+deploying population as a gap. A deploying half that is present but malformed is still refused
+here, for every reader: that is a document nobody can trust, not one that left a question open.
+The `landing` block names no authors -- who may land a deploying pull request is the
+orchestrator's admission -- so `covers_author` asks the inert block alone, as before.
 """
 
 from __future__ import annotations
@@ -87,9 +95,12 @@ class LandingPolicyError(Exception):
 class LandingPolicy:
     """Both populations change-manager declares, and the terms each lands on.
 
-    `repositories`, `permitted_authors` and `excluded_ecosystems` are the INERT block's, kept
-    under the names the inert lander reads; `deploying` and `deploying_excluded_ecosystems` are the
-    deploying population and its `landing` block's exclusions. All names are stored lowercased.
+    `inert`, `permitted_authors` and `inert_excluded_ecosystems` are the `inert_landing` block's;
+    `deploying` and `deploying_excluded_ecosystems` are the top-level `repositories` and the
+    `landing` block's exclusions. The two repository populations, `inert` and `deploying`, are
+    stored lowercased; authors and ecosystems are stored as served. `deploying` is empty and
+    `deploying_excluded_ecosystems` is `None` when the document does not declare them (see the
+    module docstring for who refuses that).
 
     `version` is the DOCUMENT's version and not either block's -- one version covers both
     populations, so a later version moving only a rollout pin in the deploying half re-stamps the
@@ -98,11 +109,11 @@ class LandingPolicy:
     """
 
     version: int
-    repositories: frozenset[str]
+    inert: frozenset[str]
     permitted_authors: frozenset[str]
-    excluded_ecosystems: frozenset[str]
+    inert_excluded_ecosystems: frozenset[str]
     deploying: frozenset[str]
-    deploying_excluded_ecosystems: frozenset[str]
+    deploying_excluded_ecosystems: frozenset[str] | None
 
     def declares(self, repository: str) -> bool:
         """Whether a human has admitted this repository to either population.
@@ -112,7 +123,7 @@ class LandingPolicy:
         two as given would answer False for every repository in the lane.
         """
         name = repository.lower()
-        return name in self.repositories or name in self.deploying
+        return name in self.inert or name in self.deploying
 
     def deploys(self, repository: str) -> bool:
         """Whether this repository is in the deploying population, where landing redeploys.
@@ -143,9 +154,12 @@ class LandingPolicy:
         if ecosystem is None:
             return False
         if self.deploys(repository):
-            return ecosystem not in self.deploying_excluded_ecosystems
-        if repository.lower() in self.repositories:
-            return ecosystem not in self.excluded_ecosystems
+            # Undeclared exclusions permit nothing: the bump proposer refuses such a document
+            # before asking, and any other reader gets the fail-closed answer.
+            excluded = self.deploying_excluded_ecosystems
+            return excluded is not None and ecosystem not in excluded
+        if repository.lower() in self.inert:
+            return ecosystem not in self.inert_excluded_ecosystems
         return False
 
     def covers_author(self, author: str) -> bool:
@@ -191,31 +205,17 @@ def _names(block: dict[str, Any], key: str) -> frozenset[str]:
     return frozenset(value)
 
 
-def _deploying(document: dict[str, Any], version: int) -> tuple[frozenset[str], frozenset[str]]:
-    """The deploying population and its `landing` block's exclusions, or a refusal."""
-    if "repositories" not in document:
-        raise LandingPolicyError(
-            f"landing policy version {version} declares no deploying population; an absent "
-            "declaration is a refusal rather than a waiver"
-        )
-    deploying = _names(document, "repositories")
-    if not deploying:
-        raise LandingPolicyError(
-            f"landing policy version {version} declares an EMPTY deploying population; a "
-            "declaration naming nobody is not the same as one naming everybody"
-        )
+def _deploying(document: dict[str, Any]) -> tuple[frozenset[str], frozenset[str] | None]:
+    """The deploying population (empty when absent) and its `landing` block's exclusions (`None`
+    when absent). A present but malformed value is a refusal."""
+    deploying = _names(document, "repositories") if "repositories" in document else frozenset()
     landing = document.get(_DEPLOYING_BLOCK)
+    if landing is None:
+        return frozenset(name.lower() for name in deploying), None
     if not isinstance(landing, dict):
         raise LandingPolicyError(f"the landing policy's {_DEPLOYING_BLOCK} is not an object")
-    if "excluded_ecosystems" not in landing:
-        raise LandingPolicyError(
-            f"landing policy version {version} decides deploying landings by update type, which "
-            "this producer does not evaluate"
-        )
-    return (
-        frozenset(name.lower() for name in deploying),
-        _names(landing, "excluded_ecosystems"),
-    )
+    excluded = _names(landing, "excluded_ecosystems") if "excluded_ecosystems" in landing else None
+    return frozenset(name.lower() for name in deploying), excluded
 
 
 def parse(document: Any) -> LandingPolicy:
@@ -228,12 +228,12 @@ def parse(document: Any) -> LandingPolicy:
             f"landing policy version {version} declares an EMPTY inert population; a declaration "
             "naming nobody is not the same as one naming everybody"
         )
-    deploying, deploying_excluded = _deploying(document, version)
+    deploying, deploying_excluded = _deploying(document)
     return LandingPolicy(
         version=version,
-        repositories=frozenset(name.lower() for name in repositories),
+        inert=frozenset(name.lower() for name in repositories),
         permitted_authors=_names(block, "permitted_authors"),
-        excluded_ecosystems=_names(block, "excluded_ecosystems"),
+        inert_excluded_ecosystems=_names(block, "excluded_ecosystems"),
         deploying=deploying,
         deploying_excluded_ecosystems=deploying_excluded,
     )
