@@ -6,9 +6,10 @@ shape has, until now, had nothing looking at it. That parse is where a silent fa
 truncated page or a swallowed error does not raise, it just answers with fewer runs, and fewer
 runs is the direction that loses a FAILING one and reports a head as having reached no verdict.
 
-Covered here: the workflow-run read, and (Landing Part 3a) the jobs-at-a-commit read and the
-rerun. The three older reads are left as they are rather than retro-fitted: this file exists
-because a new parse arrived, not to open a gap nobody was standing in.
+Covered here: the workflow-run read, and (Landing Part 3a) the jobs-at-a-commit read, the
+rerun, and the git data reads and writes that build a revert. The three older reads are left as
+they are rather than retro-fitted: this file exists because a new parse arrived, not to open a gap
+nobody was standing in.
 """
 
 from __future__ import annotations
@@ -20,9 +21,13 @@ import pytest
 
 from orchestrator.services.landing.estate_pr_merge import GitHubEstatePullRequests
 from orchestrator.services.landing.interfaces import (
+    BranchHead,
     EstateGatewayError,
     HeadCheckRun,
     Job,
+    Tree,
+    TreeChange,
+    TreeEntry,
 )
 
 REPOSITORY = "alobarquest/change-manager"
@@ -422,3 +427,291 @@ def test_parent_of_refuses_anything_but_exactly_one_parent(
 
     with pytest.raises(EstateGatewayError):
         gateway.parent_of(repository=REPOSITORY, sha=MERGE)
+
+
+# Landing Part 3a: building a revert through the git data API.
+REPO_API = f"https://api.github.com/repos/{REPOSITORY}"
+TREE_SHA = "5555555555555555555555555555555555555555"
+
+
+def _tree_routes(tree_body: Any, tree_status: int = 200) -> dict[str, tuple[int, Any]]:
+    return {
+        f"{REPO_API}/git/commits/{MERGE}": (200, {"sha": MERGE, "tree": {"sha": TREE_SHA}}),
+        f"{REPO_API}/git/trees/{TREE_SHA}?recursive=1": (tree_status, tree_body),
+    }
+
+
+def _row(path: str, mode: str, kind: str, sha: str) -> dict[str, Any]:
+    return {"path": path, "mode": mode, "type": kind, "sha": sha}
+
+
+def test_tree_reads_the_commits_tree_and_keeps_every_leaf_with_its_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The commit is read first: given a commit, the trees endpoint echoes the commit's sha, and a
+    new tree's base must be a tree. Directory rows are dropped; modes and types survive."""
+    gateway, router = _jobs_gateway(
+        monkeypatch,
+        _tree_routes(
+            {
+                "sha": TREE_SHA,
+                "truncated": False,
+                "tree": [
+                    _row("scripts", "040000", "tree", "1" * 40),
+                    _row("scripts/run.sh", "100755", "blob", "2" * 40),
+                    _row("vendor/lib", "160000", "commit", "3" * 40),
+                    _row("link", "120000", "blob", "4" * 40),
+                ],
+            }
+        ),
+    )
+
+    tree = gateway.tree(repository=REPOSITORY, commit_sha=MERGE)
+
+    assert router.urls == list(_tree_routes({}).keys())
+    assert tree == Tree(
+        sha=TREE_SHA,
+        entries={
+            "scripts/run.sh": TreeEntry("100755", "blob", "2" * 40),
+            "vendor/lib": TreeEntry("160000", "commit", "3" * 40),
+            "link": TreeEntry("120000", "blob", "4" * 40),
+        },
+    )
+
+
+@pytest.mark.parametrize(
+    ("status", "body"),
+    [
+        pytest.param(200, {"sha": TREE_SHA, "truncated": True, "tree": []}, id="truncated"),
+        pytest.param(200, {"sha": TREE_SHA, "tree": []}, id="no truncated flag"),
+        pytest.param(200, {"sha": TREE_SHA, "truncated": False}, id="no rows"),
+        pytest.param(
+            200,
+            {"sha": TREE_SHA, "truncated": False, "tree": [{"path": "a", "type": "blob"}]},
+            id="a row with no sha",
+        ),
+        pytest.param(404, {"message": "Not Found"}, id="no such tree"),
+        pytest.param(502, {"message": "Bad Gateway"}, id="the remote failed"),
+    ],
+)
+def test_a_tree_that_cannot_be_read_whole_raises(
+    monkeypatch: pytest.MonkeyPatch, status: int, body: Any
+) -> None:
+    """A tree missing entries would read a path the bump touched as untouched."""
+    gateway, _ = _jobs_gateway(monkeypatch, _tree_routes(body, status))
+
+    with pytest.raises(EstateGatewayError):
+        gateway.tree(repository=REPOSITORY, commit_sha=MERGE)
+
+
+def test_tree_raises_on_a_commit_it_cannot_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    gateway, _ = _jobs_gateway(
+        monkeypatch, {f"{REPO_API}/git/commits/{MERGE}": (404, {"message": "Not Found"})}
+    )
+
+    with pytest.raises(EstateGatewayError):
+        gateway.tree(repository=REPOSITORY, commit_sha=MERGE)
+
+
+def test_default_branch_head_reads_the_name_then_its_ref(monkeypatch: pytest.MonkeyPatch) -> None:
+    gateway, _ = _jobs_gateway(
+        monkeypatch,
+        {
+            REPO_API: (200, {"default_branch": "main"}),
+            f"{REPO_API}/git/ref/heads/main": (200, {"object": {"sha": HEAD}}),
+        },
+    )
+
+    assert gateway.default_branch_head(repository=REPOSITORY) == BranchHead(name="main", sha=HEAD)
+
+
+@pytest.mark.parametrize(
+    "routes",
+    [
+        pytest.param({REPO_API: (404, {})}, id="no such repository"),
+        pytest.param({REPO_API: (200, {"default_branch": ""})}, id="no default branch"),
+        pytest.param(
+            {
+                REPO_API: (200, {"default_branch": "main"}),
+                f"{REPO_API}/git/ref/heads/main": (404, {}),
+            },
+            id="no such ref",
+        ),
+    ],
+)
+def test_default_branch_head_raises_when_unreadable(
+    monkeypatch: pytest.MonkeyPatch, routes: dict[str, tuple[int, Any]]
+) -> None:
+    gateway, _ = _jobs_gateway(monkeypatch, routes)
+
+    with pytest.raises(EstateGatewayError):
+        gateway.default_branch_head(repository=REPOSITORY)
+
+
+class _Writer:
+    """Answers every POST with one status and body; records each URL and payload."""
+
+    def __init__(self, status_code: int, body: Any) -> None:
+        self._status_code = status_code
+        self._body = body
+        self.sent: list[tuple[str, Any]] = []
+
+    def __call__(self, url: str, *, json: Any, **_: Any) -> httpx.Response:
+        self.sent.append((url, json))
+        return httpx.Response(self._status_code, json=self._body)
+
+
+def _writer(
+    monkeypatch: pytest.MonkeyPatch, status_code: int, body: Any
+) -> tuple[GitHubEstatePullRequests, _Writer]:
+    writer = _Writer(status_code, body)
+    monkeypatch.setattr(httpx, "post", writer)
+    return GitHubEstatePullRequests(lambda: "token"), writer
+
+
+def test_create_tree_sends_each_change_and_a_null_sha_for_a_delete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gateway, writer = _writer(monkeypatch, 201, {"sha": "new-tree"})
+
+    answer = gateway.create_tree(
+        repository=REPOSITORY,
+        base_tree=TREE_SHA,
+        changes=(
+            TreeChange(path="run.sh", mode="100755", type="blob", sha="2" * 40),
+            TreeChange(path="added.txt", mode="100644", type="blob", sha=None),
+        ),
+    )
+
+    assert answer == "new-tree"
+    assert writer.sent == [
+        (
+            f"{REPO_API}/git/trees",
+            {
+                "base_tree": TREE_SHA,
+                "tree": [
+                    {"path": "run.sh", "mode": "100755", "type": "blob", "sha": "2" * 40},
+                    {"path": "added.txt", "mode": "100644", "type": "blob", "sha": None},
+                ],
+            },
+        )
+    ]
+
+
+def test_create_commit_names_one_parent(monkeypatch: pytest.MonkeyPatch) -> None:
+    gateway, writer = _writer(monkeypatch, 201, {"sha": MERGE})
+
+    assert (
+        gateway.create_commit(repository=REPOSITORY, message="m", tree=TREE_SHA, parent=HEAD)
+        == MERGE
+    )
+    assert writer.sent == [
+        (f"{REPO_API}/git/commits", {"message": "m", "tree": TREE_SHA, "parents": [HEAD]})
+    ]
+
+
+def test_create_branch_creates_a_full_ref(monkeypatch: pytest.MonkeyPatch) -> None:
+    gateway, writer = _writer(monkeypatch, 201, {"ref": "refs/heads/sds-revert/pr-12"})
+
+    gateway.create_branch(repository=REPOSITORY, branch="sds-revert/pr-12", sha=MERGE)
+
+    assert writer.sent == [
+        (f"{REPO_API}/git/refs", {"ref": "refs/heads/sds-revert/pr-12", "sha": MERGE})
+    ]
+
+
+def test_open_pull_request_answers_its_number(monkeypatch: pytest.MonkeyPatch) -> None:
+    gateway, writer = _writer(monkeypatch, 201, {"number": 77})
+
+    number = gateway.open_pull_request(
+        repository=REPOSITORY, title="t", body="b", head="sds-revert/pr-12", base="main"
+    )
+
+    assert number == 77
+    assert writer.sent == [
+        (
+            f"{REPO_API}/pulls",
+            {"title": "t", "body": "b", "head": "sds-revert/pr-12", "base": "main"},
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    ("call", "body"),
+    [
+        pytest.param(
+            lambda g: g.create_tree(repository=REPOSITORY, base_tree=TREE_SHA, changes=()),
+            {"sha": "x"},
+            id="tree",
+        ),
+        pytest.param(
+            lambda g: g.create_commit(repository=REPOSITORY, message="m", tree="t", parent=HEAD),
+            {"sha": "x"},
+            id="commit",
+        ),
+        pytest.param(
+            lambda g: g.create_branch(repository=REPOSITORY, branch="b", sha=MERGE),
+            {},
+            id="branch",
+        ),
+        pytest.param(
+            lambda g: g.open_pull_request(
+                repository=REPOSITORY, title="t", body="b", head="h", base="main"
+            ),
+            {"number": 1},
+            id="pull request",
+        ),
+    ],
+)
+@pytest.mark.parametrize("status", [200, 422])
+def test_a_write_answered_with_anything_but_201_raises(
+    monkeypatch: pytest.MonkeyPatch, call: Any, body: Any, status: int
+) -> None:
+    """422 is how the platform refuses a branch that already exists: never treated as created."""
+    gateway, _ = _writer(monkeypatch, status, body)
+
+    with pytest.raises(EstateGatewayError):
+        call(gateway)
+
+
+@pytest.mark.parametrize(
+    ("call", "body"),
+    [
+        pytest.param(
+            lambda g: g.create_tree(repository=REPOSITORY, base_tree=TREE_SHA, changes=()),
+            {},
+            id="tree with no sha",
+        ),
+        pytest.param(
+            lambda g: g.create_commit(repository=REPOSITORY, message="m", tree="t", parent=HEAD),
+            {"sha": ""},
+            id="commit with an empty sha",
+        ),
+        pytest.param(
+            lambda g: g.open_pull_request(
+                repository=REPOSITORY, title="t", body="b", head="h", base="main"
+            ),
+            {"number": True},
+            id="pull request with no number",
+        ),
+    ],
+)
+def test_a_created_object_that_names_nothing_raises(
+    monkeypatch: pytest.MonkeyPatch, call: Any, body: Any
+) -> None:
+    gateway, _ = _writer(monkeypatch, 201, body)
+
+    with pytest.raises(EstateGatewayError):
+        call(gateway)
+
+
+def test_a_write_to_a_malformed_host_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    def explode(url: str, **_: Any) -> httpx.Response:
+        raise UnicodeError("label empty or too long")
+
+    monkeypatch.setattr(httpx, "post", explode)
+
+    with pytest.raises(EstateGatewayError):
+        GitHubEstatePullRequests(lambda: "token").create_branch(
+            repository=REPOSITORY, branch="b", sha=MERGE
+        )

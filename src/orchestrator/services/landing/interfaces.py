@@ -12,6 +12,7 @@ this vocabulary are in `terms`.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Final, Protocol
 
@@ -412,6 +413,70 @@ class RevertWatchGateway(Protocol):
     def parent_of(self, *, repository: str, sha: str) -> str: ...
 
     def rerun_failed_jobs(self, *, repository: str, run_id: int) -> None: ...
+
+
+@dataclass(frozen=True)
+class TreeEntry:
+    """One leaf of a git tree: a file, a symlink or a submodule. Landing Part 3a.
+
+    Compared whole, so a changed executable bit or a moved submodule is a changed entry, and a
+    revert restores the mode and type along with the object.
+    """
+
+    mode: str
+    type: str
+    sha: str
+
+
+@dataclass(frozen=True)
+class Tree:
+    """A commit's tree: its own sha (a new tree's `base_tree`) and every leaf by path."""
+
+    sha: str
+    entries: dict[str, TreeEntry]
+
+
+@dataclass(frozen=True)
+class TreeChange:
+    """One entry of a tree write. `sha` None deletes the path; mode and type are still sent."""
+
+    path: str
+    mode: str
+    type: str
+    sha: str | None
+
+
+@dataclass(frozen=True)
+class BranchHead:
+    """A repository's default branch: its name and the commit it points at now."""
+
+    name: str
+    sha: str
+
+
+class RevertBuildGateway(Protocol):
+    """The reads and writes that building a revert pull request needs. Landing Part 3a.
+
+    Its own narrow protocol, beside `RevertWatchGateway`: judging never writes git objects and
+    building never reads jobs. Every call is bounded by the caller's grant check, as every App call
+    is.
+    """
+
+    def default_branch_head(self, *, repository: str) -> BranchHead: ...
+
+    def tree(self, *, repository: str, commit_sha: str) -> Tree: ...
+
+    def create_tree(
+        self, *, repository: str, base_tree: str, changes: Sequence[TreeChange]
+    ) -> str: ...
+
+    def create_commit(self, *, repository: str, message: str, tree: str, parent: str) -> str: ...
+
+    def create_branch(self, *, repository: str, branch: str, sha: str) -> None: ...
+
+    def open_pull_request(
+        self, *, repository: str, title: str, body: str, head: str, base: str
+    ) -> int: ...
 
 
 @dataclass(frozen=True)

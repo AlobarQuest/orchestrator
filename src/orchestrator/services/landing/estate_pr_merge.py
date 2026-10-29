@@ -50,9 +50,9 @@ until somebody writes an environment variable.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any, Final, Protocol
+from typing import Any, Final, Protocol, TypeGuard
 from urllib.parse import quote
 
 import httpx
@@ -70,6 +70,7 @@ from orchestrator.services.landing.estate_landing_admission import (
 )
 from orchestrator.services.landing.interfaces import (
     SQUASH,
+    BranchHead,
     EstateGatewayError,
     EstatePullRequest,
     EstateReadGateway,
@@ -78,6 +79,9 @@ from orchestrator.services.landing.interfaces import (
     MergeOutcome,
     OpenPullRequest,
     PullRequestCommit,
+    Tree,
+    TreeChange,
+    TreeEntry,
 )
 from orchestrator.services.landing.lane_act import LandingLane, land_pull_request
 
@@ -89,6 +93,10 @@ _LIST_PAGE_SIZE: Final = 100
 _MAX_LIST_PAGES: Final = 20
 # The platform's own ceiling on the pull request commits listing, whatever the paging.
 _COMMITS_LIST_CAP: Final = 250
+
+# A git tree row's fields, in the order `tree` unpacks them, and the type of a directory row.
+_TREE_FIELDS: Final = ("path", "mode", "type", "sha")
+_TREE_KIND_DIRECTORY: Final = "tree"
 
 # The trailers the landing writes into the squash body, and the ledger reads back out of it. Named
 # here because this is the only writer; the reader pins the same spellings on its own side, and a
@@ -208,7 +216,7 @@ def _trailers(admission: EstateLandingAdmission) -> str:
 
 
 class GitHubEstatePullRequests:
-    """The real gateway. Fourteen calls, and five of them change anything.
+    """The real gateway. Twenty calls, and nine of them change anything.
 
     Holds a token PROVIDER rather than a token, because an installation token expires within the
     hour and a long-lived process would otherwise carry a dead one. Nothing here logs, formats or
@@ -644,6 +652,110 @@ class GitHubEstatePullRequests:
             status_code="rerun_status",
         )
 
+    def default_branch_head(self, *, repository: str) -> BranchHead:
+        """The default branch's name and the commit it points at now. Landing Part 3a."""
+        body = self._get(f"{GITHUB_API_URL}/repos/{repository}")
+        name = body.get("default_branch") if isinstance(body, dict) else None
+        if not isinstance(name, str) or not name:
+            raise EstateGatewayError("repository_response_invalid")
+        ref = self._get(
+            f"{GITHUB_API_URL}/repos/{repository}/git/ref/heads/{quote(name, safe='/')}"
+        )
+        target = ref.get("object") if isinstance(ref, dict) else None
+        sha = target.get("sha") if isinstance(target, dict) else None
+        if not isinstance(sha, str) or not sha:
+            raise EstateGatewayError("ref_response_invalid")
+        return BranchHead(name=name, sha=sha)
+
+    def tree(self, *, repository: str, commit_sha: str) -> Tree:
+        """A commit's tree sha and every leaf of it by path. Landing Part 3a.
+
+        The commit is read first because the trees endpoint, given a commit, echoes the COMMIT's sha
+        rather than the tree's (measured 2026-10-29), and a new tree's `base_tree` must be a tree.
+        Directory rows are dropped: a directory's sha changes with any file under it, so only the
+        leaves say what changed.
+
+        Strict: a `truncated` answer raises, because a tree missing entries would read a path the
+        bump touched as untouched.
+        """
+        repo = f"{GITHUB_API_URL}/repos/{repository}"
+        commit = self._get(f"{repo}/git/commits/{quote(commit_sha, safe='')}")
+        tree = commit.get("tree") if isinstance(commit, dict) else None
+        tree_sha = tree.get("sha") if isinstance(tree, dict) else None
+        if not isinstance(tree_sha, str) or not tree_sha:
+            raise EstateGatewayError("commit_response_invalid")
+        body = self._get(f"{repo}/git/trees/{quote(tree_sha, safe='')}?recursive=1")
+        if not isinstance(body, dict) or body.get("truncated") is not False:
+            raise EstateGatewayError("tree_response_invalid")
+        rows = body.get("tree")
+        if not isinstance(rows, list):
+            raise EstateGatewayError("tree_response_invalid")
+        entries: dict[str, TreeEntry] = {}
+        for row in rows:
+            path, entry = _tree_row(row)
+            if entry.type != _TREE_KIND_DIRECTORY:
+                entries[path] = entry
+        return Tree(sha=tree_sha, entries=entries)
+
+    def create_tree(self, *, repository: str, base_tree: str, changes: Sequence[TreeChange]) -> str:
+        """A new tree: `base_tree` with each change applied, a null sha deleting its path."""
+        body = self._send(
+            httpx.post,
+            f"{GITHUB_API_URL}/repos/{repository}/git/trees",
+            {
+                "base_tree": base_tree,
+                "tree": [
+                    {
+                        "path": change.path,
+                        "mode": change.mode,
+                        "type": change.type,
+                        "sha": change.sha,
+                    }
+                    for change in changes
+                ],
+            },
+            expected=201,
+            status_code="tree_create_status",
+        )
+        return _created_sha(body, "tree_create_response_invalid")
+
+    def create_commit(self, *, repository: str, message: str, tree: str, parent: str) -> str:
+        """A new commit of `tree` with the one parent `parent`. Moves no branch."""
+        body = self._send(
+            httpx.post,
+            f"{GITHUB_API_URL}/repos/{repository}/git/commits",
+            {"message": message, "tree": tree, "parents": [parent]},
+            expected=201,
+            status_code="commit_create_status",
+        )
+        return _created_sha(body, "commit_create_response_invalid")
+
+    def create_branch(self, *, repository: str, branch: str, sha: str) -> None:
+        """A new branch at `sha`. Refused (422) when the branch exists already: never moves one."""
+        self._send(
+            httpx.post,
+            f"{GITHUB_API_URL}/repos/{repository}/git/refs",
+            {"ref": f"refs/heads/{branch}", "sha": sha},
+            expected=201,
+            status_code="branch_create_status",
+        )
+
+    def open_pull_request(
+        self, *, repository: str, title: str, body: str, head: str, base: str
+    ) -> int:
+        """Open a pull request from `head` into `base`; its number."""
+        answer = self._send(
+            httpx.post,
+            f"{GITHUB_API_URL}/repos/{repository}/pulls",
+            {"title": title, "body": body, "head": head, "base": base},
+            expected=201,
+            status_code="pull_create_status",
+        )
+        number = answer.get("number") if isinstance(answer, dict) else None
+        if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
+            raise EstateGatewayError("pull_create_response_invalid")
+        return number
+
     def _listing(self, url: str, key: str) -> list[Any]:
         """Every row of an Actions listing, whose answer wraps its rows as `{total_count, <key>}`.
 
@@ -698,6 +810,28 @@ class GitHubEstatePullRequests:
             return response.json()
         except ValueError:
             return None
+
+
+def _tree_row(row: Any) -> tuple[str, TreeEntry]:
+    """One tree row, strictly: a leaf with no path, mode, type or sha cannot be compared."""
+    if not isinstance(row, dict):
+        raise EstateGatewayError("tree_response_invalid")
+    path, mode, kind, sha = (row.get(key) for key in _TREE_FIELDS)
+    if not (_text(path) and _text(mode) and _text(kind) and _text(sha)):
+        raise EstateGatewayError("tree_response_invalid")
+    return path, TreeEntry(mode=mode, type=kind, sha=sha)
+
+
+def _text(value: Any) -> TypeGuard[str]:
+    return isinstance(value, str) and bool(value)
+
+
+def _created_sha(body: Any, code: str) -> str:
+    """The sha of an object a write created, or a raise."""
+    sha = body.get("sha") if isinstance(body, dict) else None
+    if not isinstance(sha, str) or not sha:
+        raise EstateGatewayError(code)
+    return sha
 
 
 def _run_from_row(row: Any) -> tuple[int, str, str]:
