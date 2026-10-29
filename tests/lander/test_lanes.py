@@ -288,6 +288,22 @@ def test_a_dry_run_says_it_would_close_and_sends_nothing(module: Any) -> None:
 
 
 @pytest.mark.parametrize("module", LANDERS)
+@pytest.mark.parametrize("submit", [True, False], ids=["acting", "dry-run"])
+def test_a_held_bump_in_an_ungranted_repository_is_an_exception_and_never_closed(
+    module: Any, submit: bool
+) -> None:
+    """Landing Part 2. The orchestrator refuses to close a pull request in a repository the member
+    record does not grant, so asking would only turn a durable exception into an hourly finding --
+    and a dry run would promise a close that cannot happen."""
+    client = _Client({"satisfied": False, "refusals": [CEILING, NOT_GRANTED], "head_sha": HEAD})
+
+    [outcome] = module._pass(SUBJECT, client, submit)
+
+    assert outcome.status == "exception"
+    assert client.closed == []
+
+
+@pytest.mark.parametrize("module", LANDERS)
 def test_no_ceiling_refusal_closes_nothing(module: Any) -> None:
     client = _Client(
         {"satisfied": False, "refusals": ["landing_dependency_list_unreadable"], "head_sha": HEAD}

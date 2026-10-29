@@ -12,9 +12,10 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from orchestrator.persistence.models import EstatePrMerge
+from orchestrator.persistence.models import EstatePrMerge, SdsMember
 from orchestrator.services.landing.estate_landing import (
     LANDING_INERT,
     LANDING_REDEPLOYS,
@@ -1245,6 +1246,10 @@ def test_a_mixed_case_repository_reads_as_granted(migrated_session: Session) -> 
 
     answer = _answer(migrated_session, granted=())
 
+    # One member, stored in mixed case: the read folds, not the seeding helper.
+    assert migrated_session.scalars(select(SdsMember.repository)).all() == [
+        "AlobarQuest/Orchestrator"
+    ]
     assert answer.satisfied is True
 
 
