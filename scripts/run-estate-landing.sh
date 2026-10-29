@@ -24,6 +24,10 @@
 # with either alone dies on the other's fetch. `infraops-mcp-server/scripts/drift-audit.sh` is the
 # in-estate precedent for overriding the identity for a single foreign call.
 #
+# A `--submit` pass also raises one alert-hub alert, as the `sds-bridge` sender, for each pull
+# request held (or unreadable) for a day (`lander.held_alerts`); its token is fetched only then,
+# because a report run sends nothing.
+#
 # EXPECT A FIRST PASS TO LAND NOTHING, and read that as the conditions working rather than as the
 # lane failing. A held pull request that names its condition is the whole point of the report.
 #
@@ -56,6 +60,9 @@ ORCHESTRATOR_SYSTEM_UUID="221a48d5-3f29-4898-b300-b4820140c880"
 # reported it as never minted, and it was there. Probed against production 2026-08-12: 200 on the
 # listing and on the policy, 403 on approve and on deploy-observation.
 CHANGE_MANAGER_UUID="314f276d-55ca-4ddc-a24d-b4a3013508cd"
+# The `sds-bridge` sender's alert-hub token, BWS `ALERT_HUB_SENDER_TOKEN_SDS_BRIDGE` in `SDS
+# Operator`, read with the narrow identity, as the bump proposer reads it.
+SDS_BRIDGE_ALERT_UUID="b415d03b-f92d-46b1-8a9d-b4f10103df49"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # ACTIVATION — a merged change is not live on this machine until the code is pulled. The estate's
@@ -138,5 +145,19 @@ if [ -z "${ESTATE_LANDING_ORCHESTRATOR_TOKEN:-}" ]; then
   echo "FATAL: could not read the orchestrator system credential from BWS" >&2
   exit 1
 fi
+
+# THE ALERT TOKEN IS FETCHED ONLY FOR A SUBMITTING RUN, the only one that sends.
+case " $* " in
+  *" --submit "*)
+    if [ -z "${SDS_BRIDGE_ALERT_TOKEN:-}" ]; then
+      SDS_BRIDGE_ALERT_TOKEN="$(sds_bws_value "$SDS_BRIDGE_ALERT_UUID" "$SDS_IDENTITY")"
+    fi
+    if [ -z "${SDS_BRIDGE_ALERT_TOKEN:-}" ]; then
+      echo "FATAL: could not read the sds-bridge alert sender token from BWS (narrow)" >&2
+      exit 1
+    fi
+    export SDS_BRIDGE_ALERT_TOKEN
+    ;;
+esac
 
 "$REPO_ROOT/.venv/bin/estate-landing" "$@"

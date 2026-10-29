@@ -629,6 +629,10 @@ OUTBOUND_ALLOWLIST = {
     # client may send only `POST /v1/alerts` (via `alert_hub_client`), pinned by
     # tests/architecture/test_bridge_edges.py. Its egress is not the orchestrator's.
     Path("src/work_watcher/alerts.py"),
+    # Landing Part 1. The two landers hold one alert open per pull request held for a day, as the
+    # `sds-bridge` sender. Its client may send only `POST /v1/alerts` (via `alert_hub_client`),
+    # pinned by tests/lander/test_held_alerts.py. Its egress is not the orchestrator's.
+    Path("src/lander/held_alerts.py"),
     # ADR-0055 increment 7. The rotation App mints a token for one repository with exactly the
     # permissions one purpose needs, writes that repository's one approved Actions secret, and
     # reads its secret-fingerprint report's job log (one hop to GitHub's log storage, which
