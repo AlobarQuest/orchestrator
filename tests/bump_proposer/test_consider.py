@@ -23,6 +23,7 @@ corpus for an untested branch.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -445,6 +446,20 @@ def test_a_failed_requirement_range_in_pip_alerts() -> None:
 
     assert route.action == "alert", route.detail
     assert route.key == "dependency-bump:alobarquest/infraops-mcp-server:pip:setuptools"
+
+
+@pytest.mark.parametrize("checks", [PASSED, FAILED], ids=["passed", "failed"])
+def test_a_range_whose_head_carries_no_trailer_is_ambiguous(checks: tuple[Check, ...]) -> None:
+    """A range declares no update type, so a head commit with no trailer (a branch-update merge
+    commit, say) agrees with the title on "no delta". With no metadata there is no ecosystem or
+    dependency to route on, so it is ambiguous, never a crash: on 2026-10-29 an assertion here
+    stopped the whole pass."""
+    pending = replace(_range("pip", checks), update=None)
+
+    route = _consider(pending, RULE, PACKAGES, NOW, holds=())
+
+    assert route.action == "ambiguous", route.detail
+    assert "trailer" in route.detail, route.detail
 
 
 def test_a_multi_clause_range_stays_unclassifiable() -> None:
