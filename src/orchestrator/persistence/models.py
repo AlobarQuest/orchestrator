@@ -3,6 +3,7 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     CheckConstraint,
     DateTime,
@@ -1569,6 +1570,52 @@ class EstatePrMerge(UUIDPrimaryKey, Base):
     policy_version: Mapped[int | None] = mapped_column(Integer)
     event_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("events.id"))
     idempotency_key: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# Where a landed bump that went bad stands. `rerun_requested` is the first look (a failing run
+# may be flaky); the rest follow the revert's own pull request.
+LANDING_REVERT_STATUSES = (
+    "rerun_requested",
+    "revert_opened",
+    "revert_landed",
+    "refused_overlap",
+    "revert_failed",
+)
+
+
+class LandingRevert(UUIDPrimaryKey, Base):
+    """One landed Dependabot bump that went bad, and what was done about it.
+
+    **One row per (repository, pull request), ever**: the uniqueness answers "did we already
+    handle this landing?" here rather than by asking GitHub. `repository` is lower-cased at every
+    write, because GitHub names are case-insensitive.
+    """
+
+    __tablename__ = "landing_reverts"
+    __table_args__ = (
+        UniqueConstraint("repository", "pr_number", name="uq_landing_reverts_subject"),
+        CheckConstraint(
+            "status IN ({})".format(", ".join(f"'{s}'" for s in LANDING_REVERT_STATUSES)),
+            name="ck_landing_reverts_status",
+        ),
+    )
+
+    repository: Mapped[str] = mapped_column(String)
+    pr_number: Mapped[int] = mapped_column(Integer)
+    merge_commit_sha: Mapped[str] = mapped_column(String)
+    parent_sha: Mapped[str] = mapped_column(String)
+    failed_job_names: Mapped[list[str]] = mapped_column(JSONB)
+    # GitHub Actions run ids exceed 2^31.
+    failed_run_id: Mapped[int] = mapped_column(BigInteger)
+    status: Mapped[str] = mapped_column(String)
+    revert_pr_number: Mapped[int | None] = mapped_column(Integer)
+    revert_head_sha: Mapped[str | None] = mapped_column(String)
+    revert_merge_sha: Mapped[str | None] = mapped_column(String)
+    # [{ecosystem, directory, dependency, from_version (nullable), to_version}]
+    bumps: Mapped[list[dict[str, Any]]] = mapped_column(JSONB)
+    hold_outcome: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
