@@ -440,3 +440,35 @@ that nothing serves. ADR-0045 amends it: one Dependabot branch per repository at
 **The `live_estate` change window is 00:00 to 23:59 `America/New_York` for the build phase**
 (ADR-0012 amendment 1), and returns to 02:00 to 06:00 when the SDS goes into operation. Every
 reference in this ADR to the night window names the hours that return, not the hours in force.
+
+## Amendment 2 — 2026-10-29 (Landing Part 3a: inert landings that break are reverted)
+
+**Status:** Accepted. Decides, for inert repositories only, the question this ADR left open as
+"automatic or report and wait".
+
+**For an inert repository, a landing the SDS can tie a failure to is reverted automatically.** The
+inert lander watches each Dependabot bump it landed for 48 hours. A bump is `bad` only when a job
+that passed at the pull request's head fails on the merge commit's push run, still fails on the
+rerun the lander asks for, and passed on the merge commit's parent. Then the lander asks the
+orchestrator to open a revert pull request, the orchestrator admits and lands it like any other
+inert landing, and the dependency is held at the version before the bump.
+
+- **The bump needs no approval beyond its grant.** Membership and the `dependency_updates` grant are
+  the whole authority for the landing, and the same authority covers its revert. Nothing further
+  gates the revert.
+- **The revert is the exact inverse of the squash merge.** It restores the parent's entry on every
+  path the merge touched. When anything landed on top of the bump touched one of those paths, the
+  orchestrator builds nothing and records `refused_overlap`: a revert never removes more than the
+  bump.
+- **The hold is an ordinary ceiling.** It is set by `sds-revert` at the from-version and stays until
+  a person lifts it. Separately, both landers refuse that exact version for good
+  (`landing_version_reverted`).
+- **An alert is raised** for every outcome: reverted, refused, failed, stranded.
+- **A problem found after the watch is a person's rollback decision.** The SDS ties a failure to a
+  bump only through the default branch's own checks inside the watch.
+- **The watch and the revert live in the landers**, which hold the credentials and the grant; the
+  orchestrator makes the judgment again inside the act and never takes it from the caller.
+
+This amendment covers inert repositories. Repositories that deploy on landing (`brain`,
+change-manager) are not covered by it; their landings are not watched or reverted. Operations
+detail: `docs/operations/landing-lanes.md`, "Automatic reverts (inert repositories)".
