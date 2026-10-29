@@ -123,6 +123,12 @@ field the lanes read is deployed to the orchestrator before the main tree is pul
 `GET /api/v1/members` returns each member's `holds` (an empty list when it has none). Staged member
 proposals are listed first on the `/review` queue.
 
+`membership_check` compares both directions for `dependency_updates`: a repository in change-manager's
+inert or deploying landing population needs the grant, and a non-retired member granted
+`dependency_updates` that neither population names is reported as "granted dependency_updates, but no
+landing path reaches it". It skips the reverse row when the landing policy is unread or declares no
+deploying population.
+
 ## Where to confirm
 
 `/review/member-proposals/{id}`, as a signed-in person (HUMAN). The confirm button is bound to the

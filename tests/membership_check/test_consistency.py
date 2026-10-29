@@ -101,6 +101,7 @@ class _Sources(TypedDict, total=False):
     registry_repositories: list[str]
     rollbacks: list[str]
     standing_update_repositories: list[str]
+    landing_decided: bool
     auto_merge: dict[str, AutoMergeState]
 
 
@@ -186,7 +187,33 @@ def test_a_source_naming_a_repository_without_the_grant_is_a_disagreement(argume
 def test_a_source_naming_a_repository_with_the_grant_agrees(argument, service):
     other = "dependency_updates" if service == "security_patches" else "security_patches"
     members = [_member("A/one", service, other)]
-    assert _check(members, **_source(argument, "A/one")).disagreements == []
+    # A dependency_updates grant also needs a landing path, or the reverse row objects.
+    reached: _Sources = (
+        {"inert": frozenset({"a/one"})} if "dependency_updates" in (service, other) else {}
+    )
+    assert _check(members, **{**reached, **_source(argument, "A/one")}).disagreements == []
+
+
+def test_a_granted_repository_no_landing_path_reaches_is_a_disagreement():
+    report = _check([_member("A/one", "dependency_updates")])
+    [line] = report.disagreements
+    assert line == "A/one: granted dependency_updates, but no landing path reaches it"
+
+
+@pytest.mark.parametrize("population", ["inert", "deploying"])
+def test_a_granted_repository_in_either_landing_population_is_reached(population):
+    report = _check([_member("A/one", "dependency_updates")], **_source(population, "a/ONE"))
+    assert report.disagreements == []
+
+
+def test_an_undecided_landing_policy_does_not_make_every_grant_unreached():
+    report = _check([_member("A/one", "dependency_updates")], landing_decided=False)
+    assert report.disagreements == []
+
+
+def test_a_retired_member_is_not_required_to_be_reached():
+    members = [_member("A/one", "dependency_updates", state="retired")]
+    assert _check(members).disagreements == []
 
 
 def test_a_granted_app_changes_member_must_declare_a_target():
@@ -262,7 +289,11 @@ def test_a_member_with_auto_merge_off_and_no_arming_workflow_agrees():
 
 
 def test_fork_sync_needs_both_grants():
-    report = _check([_member("A/fork", "dependency_updates")], synced_forks=["A/fork"])
+    report = _check(
+        [_member("A/fork", "dependency_updates")],
+        inert=frozenset({"a/fork"}),
+        synced_forks=["A/fork"],
+    )
     [line] = report.disagreements
     assert "security_patches" in line
 
@@ -513,7 +544,7 @@ def test_the_live_population_agrees(monkeypatch, packages_checkout):
         monkeypatch,
         members=members,
         answers={},
-        policy=(),
+        policy=("alobarquest/infraops-mcp-server",),
         deploying=("alobarquest/brain", "alobarquest/change-manager"),
         rollbacks={"alobarquest/brain": 1, "alobarquest/change-manager": 1},
     )

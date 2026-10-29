@@ -96,6 +96,7 @@ def check(
     rollbacks: Iterable[str],
     standing_update_repositories: Iterable[str],
     auto_merge: Mapping[str, AutoMergeState],
+    landing_decided: bool = True,
 ) -> Report:
     members = list(members)
     app_changes = _granted(members, "app_changes")
@@ -118,6 +119,16 @@ def check(
     disagreements += _require(
         "the deploying landing population", deploying, updates, "dependency_updates"
     )
+    # Reverse direction. Skipped when the policy was unread or undecided: an empty population
+    # then means "unknown", and every grant would read as unreached.
+    reached = {n.lower() for n in inert | deploying}
+    disagreements += [
+        f"{m.repository}: granted dependency_updates, but no landing path reaches it"
+        for m in sorted(members, key=lambda m: m.repository.lower())
+        if landing_decided
+        and m.repository.lower() in updates
+        and m.repository.lower() not in reached
+    ]
     rollouts = _granted(members, "rollouts")
     disagreements += _require(
         "deploy_watcher ROLLOUT_WORKFLOWS", rollout_repositories, rollouts, "rollouts"
