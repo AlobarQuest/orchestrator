@@ -221,7 +221,7 @@ already does (`services/execution/target_grant.py`):
 | Path | Grant |
 |---|---|
 | Inert lane, Dependabot PR | `dependency_updates` |
-| Inert lane, fork upstream sync | `security_patches`, the grant `fork_harden` already selects forks by |
+| Inert lane, fork upstream sync | `security_patches` and `dependency_updates`, the pair `membership_check` already requires of forks (`consistency.py:125-126`) |
 | Estate lane | `dependency_updates` |
 | Factory merge | by change class, as `target_grant.py` maps it |
 
@@ -241,11 +241,15 @@ Devon's click.
 (*the period is the builder's call*). A landing is **bad** when one of these is tied to its merge
 commit:
 
-- **A failed SDS check:** a required check's job on the merge commit on the default branch concluded
-  failure. The landing ledger already reads these jobs per landing, by their own creation and
-  completion times (#530).
-- **A failed deploy:** the deploy watcher's rollout observation for that merge commit records a
-  failure (repositories where landing redeploys).
+- **A failed SDS check:** a check run on the merge commit on the default branch concluded failure.
+  No code reads this today: the landing ledger reads jobs at the PR head before the merge, and
+  `workflow_runs_at` reads whole runs. Part 3 adds the read. A repository whose checks don't run on
+  push to its default branch has no such signal, and `membership_check` reports it.
+  *Claude's call:* a failure counts only if it persists on one rerun of the failed job and the
+  parent commit's same check passed. One flaky run must not cost a revert and a standing hold.
+- **A failed deploy:** the rollout the deploy watcher observed for that merge commit failed. For a
+  Dependabot landing the watcher writes this to the change-manager record (`changes.observe`); for a
+  factory unit, to an orchestrator observation (`_observe_unit`). The lander reads both.
 - **Anything else the SDS knows:** a post-deploy verifier criterion for the unit fails. The builder
   adds any further signal only where it ties to the merge commit.
 
@@ -268,9 +272,22 @@ A revert PR lands through the same lane as its bump, as a new subject class with
   before. *Claude's call.*
 - It is never itself watched for reverting. If it fails, the lander alerts and stops.
 
+**A revert in a repository where landing redeploys** goes through change-manager like the bump
+did (ADR-0019): the orchestrator files a revert record, and change-manager's policy approves it
+automatically, the way its work policy approves a standing bump. That is a change-manager change in
+Part 3. The revert's own rollout is then watched like any other. *Claude's call,* because Devon's
+decision 5 says the revert lands the way the bump landed.
+
+**A bump the SDS reverted is never landed again,** whether or not a hold could be placed: every
+landing admission refuses a bump to a dependency version the SDS has reverted. This closes the loop
+even when the hold can't be written.
+
 **Hold.** When the revert lands, the orchestrator places a ceiling hold on each dependency the bump
 moved, at the version it moved from, with the ecosystem and directory as Dependabot spelled them. A
-grouped Dependabot PR gets one hold per dependency. The hold's reason names the revert. This is the
+grouped Dependabot PR gets one hold per dependency. *Claude's call:* the from-version is read from
+the PR's own metadata (Dependabot's body table and the merge's diff of the manifest). When a
+dependency's from-version can't be read, the revert still lands and no hold is placed for that
+dependency; the alert says so, and the never-again term still blocks the reverted version. The hold's reason names the revert. This is the
 one automatic writer of the member tables:
 
 - It lives in `services/membership/` beside the person's path, and `test_membership_writers.py`
@@ -294,13 +311,24 @@ granted `dependency_updates`:
   `factory decompose` (intent-packages) is deterministic for this profile. *Which program runs it is
   the builder's call* between the carrier, right after it registers the intake, and the lander, which
   already walks the rest of this list.
-- **Decomposition approval.** Not required when the decomposition comes from the standing package's
-  profile and its envelope matches a dependency-update known-good pattern. The approval is recorded
-  as not required (`authority.human_gate_not_required`), the way rotation units are. Precondition,
-  from ADR-0028 amendment 1: the envelope's mutation must be bound to the package's dependency, so a
-  decomposition can't bump something the package didn't name.
-- **Dispatch, verify and merge.** The lander dispatches a ready bump unit, calls `/verify` when its
-  evidence is in, and calls `pr-merge` when the unit completes.
+- **Decomposition approval.** Today it is HUMAN-only (`decomposition.py::_require_decision_actor`),
+  every unit's readiness needs `decomposition_approved_by` and `decomposition_approved_at`, and no
+  precedent exists for skipping it: rotation units still get a human decomposition approval, and
+  `authority.human_gate_not_required` lifts only the authority gate. So this is a new graduation.
+  *Claude's call on the mechanism:* a named policy actor approves the decomposition (as
+  change-manager's `work-policy` approves a record) when the decomposition comes from a standing
+  dependency-update package in a granted repository and its envelope matches a known-good pattern.
+  It records Devon's decision 1 as its basis. ADR-0006 (human gates are browser-only) gets an
+  amendment for this one class. Precondition, from ADR-0028 amendment 1, built in this part: the
+  envelope's mutation is bound to the package's dependency (`profile_fields.package`), so a
+  decomposition can't bump something the package didn't name. That touches intent-packages and is a
+  standing-authority release.
+- **Dispatch, verify and merge.** The lander dispatches a ready bump unit and calls `pr-merge` when
+  the unit completes. `/verify` is VERIFIER-only (`verifier.py:44`) and the landers hold SYSTEM, so
+  *Claude's call:* the existing verifier lane (`rotation-verifier`, already VERIFIER) widens to verify
+  bump units too, rather than the landers gaining a second identity. Scheduling `pr-merge` gets the
+  same off switch the inert route has, since the route's own docstring voids the no-off-switch
+  ruling once a scheduled caller is proposed.
 - **Merge approval.** `pr_merge_admission` accepts, in place of the exact-fingerprint human approval,
   a dependency-update known-good recognition plus the `dependency_updates` grant. Every other change
   class still needs the human approval.
