@@ -324,7 +324,8 @@ orb -m rotation-executor -u root runuser -u rotation -- env -i PATH=/usr/bin:/bi
 ## Its credentials
 
 All six are in ADR-0055's hand-rotated set: a person creates and rotates them, never the
-executor. None is ever printed, passed as an argument, or kept on the Mac.
+executor. None is ever printed or passed as an argument, and none is kept on the Mac except a
+copy of the Healthchecks key, which the Keychain instance reads.
 
 | Credential | Lives in | Read by |
 |---|---|---|
@@ -406,7 +407,8 @@ Before a credential's first rotation, its keeper secret moves from wherever it l
   restart, point `bearer_secret_id` at the new secret, run one pass, then remove `previous`,
   restart, and delete the old secret.
 - **The Healthchecks key:** create a new read-only key, replace the BWS secret's value in the
-  console, then delete the old key in Healthchecks.
+  console, copy it into the Mac instance's Keychain item `rotation-executor`/`healthchecks-key`
+  ("BWS machine tokens: the Keychain instance"), then delete the old key in Healthchecks.
 - **The Coolify token:** create a second token with the same three abilities, replace the BWS
   secret's value in the console, run one pass by hand, then delete the old token in Coolify.
 - **The OpenRouter management key:** create a new management key, replace the BWS secret's value
@@ -688,18 +690,17 @@ First install, in this order, with nothing dispatched in flight:
       No roles entry is needed: an unpromoted credential is a WORKER.
 4. Run the installer again. It loads the agent.
 
-A token with scheduled readers that have Healthchecks checks needs the instance's own read-only
-Healthchecks key, a separate key from the VM's. Healthchecks allows one read-only key per project,
-and the VM holds the self-hosted project's, so this instance has none: it refuses any unit whose
-reader names a check. Giving it one means a second Healthchecks project that holds those checks.
-The steps, once such a key exists:
-
-1. In Healthchecks, under the project's **Settings**, create a read-only API key.
-2. Store it from a terminal, typing the key at the hidden prompt:
-   `security add-generic-password -s rotation-executor -a healthchecks-key -T /usr/bin/security -w`
-3. Run the installer again. It names the item as `healthchecks_key_id` once the item exists.
-
-Without it, a unit whose reader names a check is refused at its checks.
+A token with scheduled readers that have Healthchecks checks needs the read-only key of the
+self-hosted Healthchecks project. Healthchecks allows one read-only key per project, and the
+VM's readers and the Mac's share the same checks, so this instance holds a copy of the VM's key
+(Devon, 2026-10-29), in the Keychain item `rotation-executor`/`healthchecks-key`, which the
+installer names as `healthchecks_key_id`. To copy it, read it inside the VM as the `rotation`
+user and pipe it straight into `security -i` on the Mac, so the value is never printed:
+`orb -m rotation-executor -u root runuser -u rotation -- /opt/rotation-worker/venv/bin/python
+-c '<load the config; print store.read(healthchecks_key_id).reveal()>'`, piped to a local
+program that writes `add-generic-password -U -s rotation-executor -a healthchecks-key -T
+/usr/bin/security -w "<value>"` to `security -i`. Then run the installer again. Without the
+item, a unit whose reader names a check is refused at its checks.
 
 The instance announces acts (see "When a rotation waits on you") only once the Keychain item
 `rotation-executor`/`alert-hub-token` holds its alert-hub sender token, the

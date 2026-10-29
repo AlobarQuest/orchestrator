@@ -34,6 +34,9 @@ disposition = "reissue"
 # A machine token has no BWS copy of itself, so its keeper is its one Keychain item.
 keeper_service = "Claude"
 keeper_account = "BWS_ACCESS_TOKEN_SDS"
+# Handed to the rotation executor 2026-10-29 (Devon). The Mac instance reads its scheduled
+# readers' checks with the self-hosted Healthchecks read-only key, copied into its Keychain.
+rotated_by_sds = true
 
   [[credential.consumer]]
   kind = "keychain"
