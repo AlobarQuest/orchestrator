@@ -45,7 +45,8 @@ DECIDING: Final = frozenset({"proposed", "approved"})
 @dataclass(frozen=True)
 class Outcome:
     subject: str
-    # proposed, would-propose, awaiting-approval, superseded, declined, refused or unread
+    # approved, proposed, would-propose, awaiting-approval, superseded, declined, refused or
+    # unread
     result: str
     detail: str = ""
 
@@ -87,18 +88,8 @@ def run_pass(
     return outcomes
 
 
-def _revision(
-    subject: str,
-    revision_id: str,
-    named: int,
-    credential: str,
-    orchestrator: Orchestrator,
-    registry: Callable[[], dict[str, RegistryEntry]],
-    dry_run: bool,
-) -> Outcome | None:
-    """What becomes of one registered revision with no units; `None` for one the record doesn't
-    name, which an approval would strand (the executor runs only the package's latest)."""
-    states = [str(p.get("state")) for p in orchestrator.proposals(revision_id)]
+def _existing(subject: str, states: list[str]) -> Outcome | None:
+    """What a revision's proposals already say, or ``None`` when it has none."""
     if "proposed" in states:
         return Outcome(subject, "awaiting-approval", "a proposal waits for a person on /review")
     if "approved" in states:
@@ -114,6 +105,25 @@ def _revision(
             f"a person {states[-1].replace('_', ' ')} its proposal; it is never proposed again "
             "by machine",
         )
+    return None
+
+
+def _revision(
+    subject: str,
+    revision_id: str,
+    named: int,
+    credential: str,
+    orchestrator: Orchestrator,
+    registry: Callable[[], dict[str, RegistryEntry]],
+    dry_run: bool,
+) -> Outcome | None:
+    """What becomes of one registered revision with no units; `None` for one the record doesn't
+    name, which an approval would strand (the executor runs only the package's latest)."""
+    existing = _existing(
+        subject, [str(p.get("state")) for p in orchestrator.proposals(revision_id)]
+    )
+    if existing is not None:
+        return existing
     intake = orchestrator.intake(revision_id)
     if intake.get("revision") != named:
         return None
@@ -140,6 +150,10 @@ def _revision(
             raise
         # The orchestrator read the proposal and refused it, for a reason a person resolves.
         return Outcome(subject, "refused", str(error))
+    if answer.get("state") == "approved":
+        # A rotation's decomposition is approved by policy as it is proposed (ADR-0055
+        # amendment 16): its units exist now, and the executor takes them.
+        return Outcome(subject, "approved", f"proposal {answer.get('id')} approved by policy")
     return Outcome(
         subject, "proposed", f"proposal {answer.get('id')} waits for a person on /review"
     )

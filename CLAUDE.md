@@ -364,7 +364,10 @@ Placement rule: global CLAUDE.md §7.
 - change-manager's work policy approves a `work` record (as `work-policy`) only when it is a
   standing dependency-update package (`change_class` `dependency-update`, source repository
   intent-packages, risk `caution`) whose `target_repository` is in its inert or deploying
-  population; a person moves every other one. No producer credential moves a status:
+  population, or a standing rotation package's record (`rotation-<credential>`, intent-packages
+  source, risk `caution`, change class `credential-rotation`, no target repository; ADR-0055
+  amendment 16, and the carrier refuses that class on a package of any other profile); a person
+  moves every other one. No producer credential moves a status:
   `bump_proposer` is propose-and-read and the `propose` scope refuses status routes.
   `bump_proposer` creates a missing package for a declared repository's failed npm, pip or uv bump
   (reach `live_estate` if it deploys, else `source_repository`), judges each bump by its own
@@ -556,9 +559,16 @@ Placement rule: global CLAUDE.md §7.
   plan the intake's own criteria describe (`select_plan`), every envelope one `rotation_known_good`
   recognises, `touches_no_hosted_service` set by `plans.writes_hosted_service` (held equal to the
   executor's `checks._check_destination_fit` by a test), never `host_without_overlap`, and no
-  person-act dependency. It never decides a proposal (approval accepts only a human actor) and
-  never proposes over one a person rejected or sent back; a package on a pre-derivation plan is
-  refused. Detail: `docs/operations/rotation-executor.md`, "The rotation decomposer".
+  person-act dependency. It never proposes over a proposal a person rejected, sent back or
+  superseded; a package on a pre-derivation plan is refused. Detail:
+  `docs/operations/rotation-executor.md`, "The rotation decomposer".
+- A rotation's one click is its package revision approval (ADR-0055 amendment 16). change-manager
+  approves its `work` record by policy, and the orchestrator approves a decomposition SYSTEM
+  proposes, in the proposal's own transaction (`decomposition._policy_approval`), only when the
+  revision is a standing rotation package with a recorded approval, every dependency is
+  unit-on-unit `completed`, and every unit is a rotation unit `human_authority_gate` finds
+  recognised. `register_approved_unit` admits SYSTEM only with `approved_by_policy`. A human's or
+  WORKER's proposal, and every other decomposition, waits for a person on `/review`.
 - A person's mint reaches a rotation only through its instance's `rotation-inbox` BWS secret or a
   staging secret written by hand: the unit after the mint waits, unclaimed, until one is staged
   (`worker._mint_waits`). The inbox binds a value only while no other rotation on either

@@ -109,8 +109,13 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
 
 ### #40
 
-- **Decomposition approval is human-only and reachable ONLY through the `/review` GUI, never the
-  raw `/api` path.** **The raw `/api` approve and reject routes, and their `approve-decomposition` /
+- **A person approves a decomposition only through the `/review` GUI, never the raw `/api`
+  path, and policy approves only a rotation's.** A decomposition SYSTEM proposes for a standing
+  rotation package a person approved, whose dependencies are all unit-on-unit and whose every
+  unit only a rotation pattern recognises within its budgeted attempts, is approved by policy in
+  the proposal's own transaction (`decomposition._policy_approval`, ADR-0055 amendment 16),
+  attributed to SYSTEM with the pattern and policy version in its reason; if that approval can't
+  complete, the proposal waits for a person. Every other decomposition is a person's. **The raw `/api` approve and reject routes, and their `approve-decomposition` /
   `reject-decomposition` CLI commands, were DELETED on 2026-09-28 (Tier 3 item 24b); the rest of
   this bullet is why they could never have been used.** `approve_decomposition_proposal` calls `_require_decision_actor`, which
   raises unless `actor.role is ActorRole.HUMAN`. But the raw `POST

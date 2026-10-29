@@ -33,7 +33,7 @@ from orchestrator.factory_policy import load_factory_policy
 from orchestrator.kernel.authority import normalize_authority
 from orchestrator.persistence.models import Event, WorkPackageRevision, WorkUnit
 from orchestrator.reach_vocabulary import reach_from_snapshot
-from orchestrator.services.lifecycle.rotation_claims import is_rotation_unit
+from orchestrator.services.lifecycle.rotation_claims import ProposedUnitTerms, is_rotation_unit
 
 # Policy could not be consulted at all. Distinct from every refusal the artifact itself can make,
 # because it is a fault in this process rather than a statement about this unit -- and it is still
@@ -56,7 +56,9 @@ class AuthorityGate:
     policy_source: str | None
 
 
-def human_authority_gate(unit: WorkUnit, revision: WorkPackageRevision) -> AuthorityGate:
+def human_authority_gate(
+    unit: WorkUnit | ProposedUnitTerms, revision: WorkPackageRevision
+) -> AuthorityGate:
     """Policy's answer for this unit, read from the artifact on this call.
 
     The revision is where the reach declaration lives: intake copies it verbatim into the

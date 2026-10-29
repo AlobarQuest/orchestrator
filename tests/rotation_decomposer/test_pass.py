@@ -24,6 +24,8 @@ class FakeOrchestrator:
         self.proposed: list[tuple[str, dict[str, Any]]] = []
         self.unreadable: set[int] = set()
         self.refuse_with: int | None = None
+        # What the orchestrator answers a proposal with: `approved` when policy approves it.
+        self.answer_state = "proposed"
         # The registered revision number, by revision id, where it isn't the record's.
         self.revisions: dict[str, int] = {}
 
@@ -42,7 +44,7 @@ class FakeOrchestrator:
         if self.refuse_with is not None:
             raise CallError(f"the orchestrator refused POST: {self.refuse_with}", self.refuse_with)
         self.proposed.append((revision_id, body))
-        return {"id": "p-1", "state": "proposed"}
+        return {"id": "p-1", "state": self.answer_state}
 
 
 @pytest.fixture
@@ -195,3 +197,10 @@ def test_a_started_revision_doesn_t_hide_another_without_units(orch) -> None:
     }
     assert [o.result for o in _run(orch, [RECORD])] == ["proposed"]
     assert [revision for revision, _ in orch.proposed] == [REVISION]
+
+
+def test_a_proposal_policy_approves_is_reported_approved(orch) -> None:
+    orch.answer_state = "approved"
+    outcomes = _run(orch, [RECORD])
+    assert [o.result for o in outcomes] == ["approved"]
+    assert exit_code(outcomes) == 0

@@ -208,6 +208,10 @@ def _disagreement(record: WorkRecord, payload: dict[str, Any]) -> Refused | None
 
 
 DEPENDENCY_UPDATE = "dependency-update"
+# The rotation proposer's change class (`rotation_proposer.cli.CHANGE_CLASS`) and the profile a
+# standing rotation package carries.
+CREDENTIAL_ROTATION = "credential-rotation"
+ROTATION_PROFILE = "non-software-operational"
 
 
 def _policy_disagreement(record: WorkRecord, payload: dict[str, Any]) -> Refused | None:
@@ -216,8 +220,10 @@ def _policy_disagreement(record: WorkRecord, payload: dict[str, Any]) -> Refused
     The policy approves a standing dependency-update record on the RECORD's own
     `target_repository` and `change_class`; the carry and the workability judgment act on the
     PACKAGE's `profile_fields.target_repo` and `profile`. Nothing else compares the two, so a
-    record approved for one repository could carry a package aimed at another. Either field
-    absent on the record (every hand-proposed record) is no claim and refuses nothing.
+    record approved for one repository could carry a package aimed at another. The policy approves
+    a standing rotation record on its `credential-rotation` class (ADR-0055 amendment 16), so that
+    class must carry a rotation-profile package. Either field absent on the record (every
+    hand-proposed record) is no claim and refuses nothing.
     """
     claimed = record.target_repository
     if claimed is not None:
@@ -234,6 +240,13 @@ def _policy_disagreement(record: WorkRecord, payload: dict[str, Any]) -> Refused
             record,
             "change_class_mismatch",
             f"the approved record's change class is {DEPENDENCY_UPDATE!r} and the package's "
+            f"profile is {payload.get('profile')!r}",
+        )
+    if record.change_class == CREDENTIAL_ROTATION and payload.get("profile") != ROTATION_PROFILE:
+        return Refused(
+            record,
+            "change_class_mismatch",
+            f"the approved record's change class is {CREDENTIAL_ROTATION!r} and the package's "
             f"profile is {payload.get('profile')!r}",
         )
     return None

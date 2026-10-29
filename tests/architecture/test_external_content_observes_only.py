@@ -296,8 +296,9 @@ CLASSIFICATION: dict[str, Row] = {
     "rotation_decomposer": Row(
         Role.INTERNAL_LANE_ACTOR,
         "ADR-0055 amendment 15 increment 5: proposes a carried rotation's decomposition as SYSTEM, "
-        "generated from its intake's criteria and its type's derived plan. Proposing changes no "
-        "unit; only a human approval on /review creates them",
+        "generated from its intake's criteria and its type's derived plan. The orchestrator "
+        "approves it by policy when every unit is a recognised rotation unit (amendment 16); "
+        "anything else waits for a person on /review",
         frozenset({"/api/v1/package-intakes/{revision_id}/decomposition-proposals"}),
     ),
     "image_release": Row(

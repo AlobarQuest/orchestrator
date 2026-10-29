@@ -27,8 +27,11 @@ the deliberate exception to the rule that a per-claim rule covers all three leas
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
+from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -73,7 +76,16 @@ class RotationExecutors:
 NO_ROTATION_EXECUTORS = RotationExecutors()
 
 
-def is_rotation_unit(unit: WorkUnit, revision: WorkPackageRevision) -> bool:
+@dataclass(frozen=True)
+class ProposedUnitTerms:
+    """A unit as approving its decomposition proposal would create it, for asking policy first."""
+
+    id: UUID
+    authority: Mapping[str, Any]
+    required_capability: str
+
+
+def is_rotation_unit(unit: WorkUnit | ProposedUnitTerms, revision: WorkPackageRevision) -> bool:
     """Decision 1's predicate, read from the unit and its package revision's snapshot."""
     if unit.required_capability != "operational_action":
         return False

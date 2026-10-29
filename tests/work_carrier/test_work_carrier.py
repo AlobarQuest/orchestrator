@@ -272,6 +272,8 @@ def test_a_payload_naming_a_cause_the_record_does_not_is_refused(checkout_root: 
         ({"target_repository": "AlobarQuest/other-repo"}, None, "target_repository_mismatch"),
         ({"change_class": "dependency-update"}, "software-change", "change_class_mismatch"),
         ({"change_class": "dependency-update"}, None, "change_class_mismatch"),
+        ({"change_class": "credential-rotation"}, "dependency-update", "change_class_mismatch"),
+        ({"change_class": "credential-rotation"}, None, "change_class_mismatch"),
     ],
 )
 def test_a_record_the_package_disagrees_with_is_refused(
@@ -315,6 +317,13 @@ def test_a_record_the_package_agrees_with_is_prepared(checkout_root: Path, overr
     class are carried."""
     rec = record(**overrides)
     payload = {**payload_for(rec), "profile": "dependency-update"}
+    runner, _ = runner_returning(payload)
+    assert isinstance(prepare(rec, checkout_root=checkout_root, runner=runner), Prepared)
+
+
+def test_a_rotation_record_carries_a_rotation_package(checkout_root: Path) -> None:
+    rec = record(change_class="credential-rotation")
+    payload = {**payload_for(rec), "profile": "non-software-operational"}
     runner, _ = runner_returning(payload)
     assert isinstance(prepare(rec, checkout_root=checkout_root, runner=runner), Prepared)
 
