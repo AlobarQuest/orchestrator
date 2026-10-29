@@ -44,6 +44,7 @@ def upgrade() -> None:
         sa.Column("revert_merge_sha", sa.String(), nullable=True),
         sa.Column("bumps", postgresql.JSONB(), nullable=False),
         sa.Column("hold_outcome", sa.Text(), nullable=True),
+        sa.Column("detail", sa.Text(), nullable=True),
         sa.Column(
             "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
         ),

@@ -163,6 +163,14 @@ NOT_A_FINDING = frozenset(
         "closed",
         "would-close",
         "reopened",
+        # Landing Part 3a, the inert lane's watch: a rerun asked for, a revert opened or landed,
+        # and what a dry run would have asked. Each revert raises its own alert; a refused or
+        # failed revert is a finding.
+        "reran",
+        "would-rerun",
+        "revert-opened",
+        "would-revert",
+        "reverted",
     }
 )
 
@@ -188,6 +196,13 @@ REPORTED = (
     "closed",
     "would-close",
     "reopened",
+    "reran",
+    "would-rerun",
+    "revert-opened",
+    "would-revert",
+    "reverted",
+    "revert-refused",
+    "revert-failed",
 )
 
 

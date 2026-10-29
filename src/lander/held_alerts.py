@@ -27,6 +27,16 @@ Two files live in the lane's state directory (`LANDER_STATE_DIR`, else
 two lanes' state stays apart. The first sightings are written before alert-hub is asked, and kept
 even when it refuses, so an outage never restarts a pull request's clock and a pass killed between
 the two writes never leaves `alerts.json` ahead of the sightings.
+
+## Reverts (Landing Part 3a, the inert lane)
+
+`sync_revert_alerts` raises one alert per revert record in the orchestrator's landing watch:
+`landing-reverted:<repo>:<pr>` once the revert has landed (naming the failed jobs, the revert pull
+request, the hold it placed and how to lift one), and `landing-revert-refused:<repo>:<pr>` or
+`landing-revert-failed:<repo>:<pr>` when no revert could be opened. Each fires once and is
+resolved when its record leaves the watch. A pass that could not read the watch holds every
+remembered key. Its memory is its own file, `revert-alerts.json`: `KeyedAlerts` resolves every
+remembered key a sync does not name, so sharing `alerts.json` would resolve the other's alerts.
 """
 
 from __future__ import annotations
@@ -50,6 +60,17 @@ TOKEN_ENV: Final = "SDS_BRIDGE_ALERT_TOKEN"
 STATE_DIR_ENV: Final = "LANDER_STATE_DIR"
 HELD_SINCE_FILE: Final = "held-since.json"
 ALERTS_FILE: Final = "alerts.json"
+REVERT_ALERTS_FILE: Final = "revert-alerts.json"
+
+# The record statuses that raise an alert, and the key prefix each raises it under.
+_REVERT_ALERTS: Final = {
+    "revert_landed": "landing-reverted",
+    "refused_overlap": "landing-revert-refused",
+    "revert_failed": "landing-revert-failed",
+}
+LIFT_A_HOLD: Final = (
+    "To lift a hold: stage a lift with `sds-members stage <file.toml>`, then confirm it on /review."
+)
 
 
 def held_key(lane: str, repository: str, number: int) -> str:
@@ -182,3 +203,82 @@ def sync_held_alerts(
     except AlertHubError as error:
         reasons.append(str(error))
     return "; ".join(reasons) or None
+
+
+def revert_key(status: str, repository: str, number: int) -> str | None:
+    """The alert key a revert record of this status raises, or None when it raises none."""
+    prefix = _REVERT_ALERTS.get(status)
+    return None if prefix is None else alert_key(prefix, repository.lower(), str(number))
+
+
+def _revert_alert(row: Mapping[str, object]) -> Alert:
+    repository, number = str(row.get("repository")), row.get("pr_number")
+    jobs = row.get("failed_job_names")
+    failed = ", ".join(str(job) for job in jobs) if isinstance(jobs, list) and jobs else "a job"
+    subject = f"{repository}#{number}"
+    landing = f"https://github.com/{repository}/pull/{number}"
+    if row.get("status") == "revert_landed":
+        revert = row.get("revert_pr_number")
+        hold = row.get("hold_outcome") or "nothing held"
+        detail = row.get("detail")
+        return Alert(
+            f"Landing reverted: {subject}",
+            f"{failed} failed on the default branch after {subject} landed; the revert "
+            f"#{revert} has landed. Hold: {hold}."
+            + (f" {detail}." if detail else "")
+            + f" {LIFT_A_HOLD}",
+            f"https://github.com/{repository}/pull/{revert}",
+        )
+    return Alert(
+        f"Landing not reverted: {subject}",
+        f"{failed} failed on the default branch after {subject} landed, and no revert was "
+        f"opened: {row.get('detail') or row.get('status')}. A person reverts it by hand.",
+        landing,
+    )
+
+
+def revert_alerts(watch: Iterable[Mapping[str, object]]) -> dict[str, Alert]:
+    """The alerts the watch's revert records raise now, by key. Pure."""
+    alerts: dict[str, Alert] = {}
+    for row in watch:
+        repository, number, status = row.get("repository"), row.get("pr_number"), row.get("status")
+        if not isinstance(repository, str) or not isinstance(number, int):
+            continue
+        key = revert_key(status, repository, number) if isinstance(status, str) else None
+        if key is not None:
+            alerts[key] = _revert_alert(row)
+    return alerts
+
+
+def sync_revert_alerts(
+    lane: str,
+    watch: Sequence[Mapping[str, object]] | None,
+    *,
+    environ: Mapping[str, str] = os.environ,
+    transport: httpx.BaseTransport | None = None,
+) -> str | None:
+    """Bring alert-hub in line with the watch's revert records; `None` for a watch that could not
+    be read, which holds every remembered key. Answers why it could not, or None."""
+    token = environ.get(TOKEN_ENV, "")
+    if not token:
+        return f"{TOKEN_ENV} is unset"
+    directory = state_dir(lane, environ)
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        return f"the state directory is unusable: {type(error).__name__}"
+    hub = KeyedAlerts(
+        lambda: token,
+        directory / REVERT_ALERTS_FILE,
+        user_agent=f"{lane}/1 (+AlobarQuest/orchestrator)",
+        resolved_title="Landing no longer watched",
+        transport=transport,
+    )
+    try:
+        if watch is None:
+            hub.sync({}, hub.remembered())
+        else:
+            hub.sync(revert_alerts(watch))
+    except AlertHubError as error:
+        return str(error)
+    return None

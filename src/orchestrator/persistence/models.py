@@ -1619,6 +1619,10 @@ class LandingRevert(UUIDPrimaryKey, Base):
     # [{ecosystem, directory, dependency, from_version (nullable), to_version}]
     bumps: Mapped[list[dict[str, Any]]] = mapped_column(JSONB)
     hold_outcome: Mapped[str | None] = mapped_column(Text)
+    # Why the record stands where it does, in words a person reads: the paths that moved for
+    # `refused_overlap`, the failure for `revert_failed` (named by its code, e.g.
+    # `tree_response_invalid`), and a dependency list that couldn't be read for `revert_opened`.
+    detail: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

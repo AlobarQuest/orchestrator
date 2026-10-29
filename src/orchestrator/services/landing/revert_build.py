@@ -21,10 +21,9 @@ That is an `Overlap`, and nothing is built.
 ## Every call is bounded by the inert lane's grant term
 
 These functions act through the Dispatch App, which can reach more repositories than it works on.
-Their only caller is the revert route (Landing Part 3a, Task 5), which asks the inert lane's grant
-term first; the landing-time check runs inside the revert subject's admission, after the same term.
-They are private until that caller exists (`test_unreachable_guards`), except `is_exact_inverse`,
-which the inert lane's admission asks of a revert subject (Task 4).
+Their only caller is the revert act (`revert_act`), which asks the inert lane's grant term first;
+the landing-time check, `is_exact_inverse`, runs inside the revert subject's admission, after the
+same term.
 """
 
 from __future__ import annotations
@@ -65,7 +64,7 @@ class Overlap:
 
 @dataclass(frozen=True)
 class RevertPlan:
-    """What `_open_revert` writes: the parent's entries on the touched paths, on top of the head.
+    """What `open_revert` writes: the parent's entries on the touched paths, on top of the head.
 
     `base_ref` is the default branch the pull request targets, `base_sha` its head when planned (the
     new commit's parent) and `base_tree_sha` that head's tree (the new tree's `base_tree`).
@@ -93,7 +92,7 @@ def _touched(before: dict[str, TreeEntry], after: dict[str, TreeEntry]) -> set[s
     return {path for path in before.keys() | after.keys() if before.get(path) != after.get(path)}
 
 
-def _plan_revert(
+def plan_revert(
     gateway: RevertBuildGateway, repository: str, merge_sha: str, parent_sha: str
 ) -> RevertPlan | Overlap:
     """The inverse of the squash merge `merge_sha` on the default branch's current head, or the
@@ -133,7 +132,7 @@ def _restore(path: str, parent: dict[str, TreeEntry], merged: dict[str, TreeEntr
     return TreeChange(path=path, mode=added.mode, type=added.type, sha=None)
 
 
-def _open_revert(
+def open_revert(
     gateway: RevertBuildGateway, repository: str, plan: RevertPlan, original: RevertOf
 ) -> tuple[int, str]:
     """Write the plan as a tree, a commit on the planned head, the revert branch and its pull
@@ -202,7 +201,7 @@ def is_exact_inverse(
         return False
     # The base must still hold the merge's entry on every touched path. Otherwise something landed
     # on top there, and a revert hand-resolved back to the parent's entry would discard it: the
-    # overlap `_plan_revert` refuses, asked again at landing time.
+    # overlap `plan_revert` refuses, asked again at landing time.
     return all(
         base.get(path) == merged.get(path) and revert.get(path) == parent.get(path)
         for path in touched

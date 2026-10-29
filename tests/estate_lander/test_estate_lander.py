@@ -761,6 +761,16 @@ def test_the_summary_counts_every_status_so_its_parts_sum_to_what_was_considered
         "would-close",
         # A held bump closed before and reopened by a person; the close is not repeated.
         "reopened",
+        # Landing Part 3a, the inert lane's watch (the shared body reports them; this lane never
+        # produces one): a rerun asked for, a revert opened or landed, and their dry runs are not
+        # findings; a refused or failed revert is.
+        "reran",
+        "would-rerun",
+        "revert-opened",
+        "would-revert",
+        "reverted",
+        "revert-refused",
+        "revert-failed",
     }
     assert NOT_A_FINDING < set(REPORTED)
     assert "waiting" in NOT_A_FINDING

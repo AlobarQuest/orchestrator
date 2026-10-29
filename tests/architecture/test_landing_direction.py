@@ -52,7 +52,14 @@ LANDING = SRC / "orchestrator/services/landing"
 # Which lane a module belongs to.
 ESTATE_LANE = frozenset({"estate_landing_admission", "estate_pr_merge", "estate_pr_branch_update"})
 INERT_LANE = frozenset(
-    {"inert_landing_admission", "inert_landing_policy", "inert_pr_merge", "inert_pr_branch_update"}
+    {
+        "inert_landing_admission",
+        "inert_landing_policy",
+        "inert_pr_merge",
+        "inert_pr_branch_update",
+        # Landing Part 3a: watching this lane's landings and acting on a bad one.
+        "revert_act",
+    }
 )
 SHARED = frozenset(
     {
@@ -87,6 +94,7 @@ ACTS = frozenset(
         "inert_pr_merge",
         "inert_pr_branch_update",
         "pr_merge",
+        "revert_act",
     }
 )
 NEITHER = frozenset(

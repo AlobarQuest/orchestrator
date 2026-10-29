@@ -120,7 +120,7 @@ def _green_at_head(head_jobs: Iterable[Job]) -> set[_Key]:
     return green
 
 
-def _judge(
+def judge(
     gateway: RevertWatchGateway, landing: EstatePrMerge, record: LandingRevert | None
 ) -> Verdict:
     """The verdict on one landing, from its head, its merge commit and, after a rerun, its parent.

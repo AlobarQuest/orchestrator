@@ -262,13 +262,15 @@ CLASSIFICATION: dict[str, Row] = {
     ),
     "inert_lander": Row(
         Role.INTERNAL_LANE_ACTOR,
-        "ADR-0038: the orchestrator merges the cascade's subjects; landing, branch update "
-        "and closing a held bump (postdates the 2026-08-25 ruling, which does not name it)",
+        "ADR-0038: the orchestrator merges the cascade's subjects; landing, branch update, "
+        "closing a held bump and (Landing Part 3a) acting on a landing that went bad "
+        "(postdates the 2026-08-25 ruling, which does not name it)",
         frozenset(
             {
                 "/api/v1/inert-pr-merge",
                 "/api/v1/inert-pr-branch-update",
                 "/api/v1/held-pr-close",
+                "/api/v1/landing-revert",
             }
         ),
     ),

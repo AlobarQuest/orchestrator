@@ -322,6 +322,16 @@ def bumps_of(title: str, commit_message: str, ecosystem: str) -> tuple[Bump, ...
     return (replace(bumps[0], to_version=_greater(match.group(2), bumps[0].to_version)),)
 
 
+def from_version_of(title: str) -> str | None:
+    """The version a single update moves FROM, read from its title, or None.
+
+    Only the title says it: the update bot's dependency block names where a dependency goes, never
+    where it came from. A grouped update's title names no versions, so it answers None.
+    """
+    match = _TITLE_BUMP.search(_TITLE_DIRECTORY.sub("", title.strip()))
+    return None if match is None else match.group(1)
+
+
 def _greater(title_version: str, block_version: str) -> str:
     """The greater of two versions by release, or `""` when either can't be read."""
     title_release, block_release = release(title_version), release(block_version)

@@ -112,8 +112,13 @@ INERT_MERGE_NOT_ADMISSIBLE: Final = "inert_merge_not_admissible"
 INERT_MERGE_REFUSED_BY_REMOTE: Final = "inert_merge_refused_by_remote"
 INERT_MERGE_HEAD_MOVED: Final = "inert_merge_head_moved"
 
+# The event action's prefix: a landing's event is `<prefix>.<status>`, and it is what tells this
+# lane's rows in the shared table from the deploying lane's. The revert watch reads it to find this
+# lane's landings (Landing Part 3a).
+INERT_LANDING_EVENT_PREFIX: Final = "inert_pr_merge"
+
 _LANE: Final = LandingLane(
-    event_prefix="inert_pr_merge",
+    event_prefix=INERT_LANDING_EVENT_PREFIX,
     not_admissible=INERT_MERGE_NOT_ADMISSIBLE,
     head_moved=INERT_MERGE_HEAD_MOVED,
     refused_by_remote=INERT_MERGE_REFUSED_BY_REMOTE,

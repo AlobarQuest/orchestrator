@@ -11,10 +11,7 @@ from __future__ import annotations
 
 from orchestrator.persistence.models import EstatePrMerge, LandingRevert
 from orchestrator.services.landing.interfaces import EstateGatewayError, Job
-
-# `_judge` is private until Task 5 gives it a production caller (test_unreachable_guards).
-from orchestrator.services.landing.revert_watch import WATCH_HOURS, Verdict
-from orchestrator.services.landing.revert_watch import _judge as judge
+from orchestrator.services.landing.revert_watch import WATCH_HOURS, Verdict, judge
 
 REPOSITORY = "alobarquest/veritok"
 HEAD = "1111111111111111111111111111111111111111"

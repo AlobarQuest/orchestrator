@@ -28,9 +28,9 @@ from orchestrator.services.landing.revert_build import (
     RevertOf,
     RevertPlan,
     is_exact_inverse,
+    open_revert,
+    plan_revert,
 )
-from orchestrator.services.landing.revert_build import _open_revert as open_revert
-from orchestrator.services.landing.revert_build import _plan_revert as plan_revert
 
 REPOSITORY = "alobarquest/veritok"
 PARENT = "1111111111111111111111111111111111111111"

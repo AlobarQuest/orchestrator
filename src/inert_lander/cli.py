@@ -112,12 +112,13 @@ from bump_proposer.landing_policy import (
 from deploy_watcher.github import GitHubReader, ReadError
 from inert_lander.orchestrator_client import (
     DEFAULT_BASE_URL,
+    LandingRefused,
     OrchestratorClient,
     OrchestratorError,
 )
 from lander import core
 from lander.core import EXIT_TOOL_FAILURE, EXIT_UNUSABLE, LandingClient, Lane, Outcome
-from lander.held_alerts import sync_held_alerts
+from lander.held_alerts import sync_held_alerts, sync_revert_alerts
 
 # The credential key id the orchestrator resolves the bearer against. A constant rather than a
 # setting: an operator who could change it could only ever make the call unauthenticated.
@@ -185,6 +186,38 @@ LANE = Lane(
 # count; here there is only one.
 _DEFERRAL_AUTHOR = "not-a-declared-author"
 
+# Landing Part 3a. The verdicts the orchestrator acts on, and how this program reports each
+# record status and each act's answer. The orchestrator judges again inside the act; this program
+# only relays.
+_ACTED_ON = frozenset({"flaky_retry", "bad"})  # not-a-vocabulary: the watch's verdicts, relayed
+_DRY_RUN = {"flaky_retry": "would-rerun", "bad": "would-revert"}
+_RECORDED = {
+    "rerun_requested": "reran",
+    "revert_opened": "revert-opened",
+    "revert_landed": "reverted",
+    "refused_overlap": "revert-refused",
+    "revert_failed": "revert-failed",
+}
+# The record statuses a watched landing is reported by on a pass that did not act on it: a refused
+# or failed revert is a finding until it leaves the watch, and a landed one is said once a pass.
+_REPORTED_RECORDS = frozenset({"revert_landed", "refused_overlap", "revert_failed"})
+_WATCH_ROW = "landing-watch"
+
+
+class Watch(Protocol):
+    """The two orchestrator calls the watch needs, beside the landing client's."""
+
+    def landing_watch(self) -> list[dict[str, Any]]: ...
+
+    def revert_landing(
+        self,
+        repository: str,
+        pr_number: int,
+        *,
+        expected_status: str | None,
+        idempotency_key: str,
+    ) -> dict[str, Any]: ...
+
 
 class PullRequestSource(Protocol):
     """The ONE read this pass needs from GitHub: which pull requests are open in a repository.
@@ -218,7 +251,11 @@ class Selection:
     unreadable: list[Outcome]
 
 
-def _subjects(reader: PullRequestSource, rule: LandingPolicy) -> Selection:
+def _subjects(
+    reader: PullRequestSource,
+    rule: LandingPolicy,
+    reverts: frozenset[tuple[str, int]] = frozenset(),
+) -> Selection:
     """Every open pull request this lane is for, in a stable order, and what was left alone.
 
     THE SCOPE IS THE DECLARATION'S, twice over: the repositories are the ones a person pinned, and
@@ -237,6 +274,10 @@ def _subjects(reader: PullRequestSource, rule: LandingPolicy) -> Selection:
 
     ONE enumeration, used by both passes, so the landing pass and the branch-update pass can never
     disagree about which pull requests this program is for.
+
+    `reverts` names the revert pull requests the orchestrator opened and recorded (Landing Part
+    3a). The App opens them, which no declared author is, so each is a subject by that record
+    rather than by its author; the orchestrator asks its own terms of it.
     """
     subjects: list[tuple[str, int]] = []
     deferred: dict[str, int] = {}
@@ -263,6 +304,9 @@ def _subjects(reader: PullRequestSource, rule: LandingPolicy) -> Selection:
             numbered.append((number, pull))
         for number, pull in sorted(numbered, key=lambda item: item[0]):
             author = pull.get("author")
+            if (repository, number) in reverts:
+                subjects.append((repository, number))
+                continue
             if not isinstance(author, str) or not rule.covers_author(author):
                 deferred[_DEFERRAL_AUTHOR] = deferred.get(_DEFERRAL_AUTHOR, 0) + 1
                 continue
@@ -280,6 +324,80 @@ def _branch_updates(
 ) -> list[Outcome]:
     """Bring up to date the branches whose only obstacle is being behind; see `core`."""
     return core.branch_updates(LANE, subjects, client, submit)
+
+
+def revert_key(repository: str, number: int, row: dict[str, Any]) -> str:
+    """CONTENT-ADDRESSED over the landing, the verdict and the failing runs: a pass that asks again
+    about an unchanged judgment replays, and a new failing run is a new request."""
+    runs = row.get("failed_runs")
+    named = ",".join(
+        f"{run[0]}.{run[1]}"
+        for run in (runs if isinstance(runs, list) else [])
+        if isinstance(run, list) and len(run) == 2
+    )
+    return f"{LANE.name}-landing-revert:{repository}:{number}:{row.get('verdict')}:{named}"
+
+
+def _read_watch(client: Watch) -> tuple[list[dict[str, Any]] | None, list[Outcome]]:
+    """The watch, or None and the one row saying it could not be read. A watch the orchestrator
+    cannot answer for does not stop the landing pass: it is reported, and held by the alerts."""
+    try:
+        return client.landing_watch(), []
+    except OrchestratorError as error:
+        return None, [Outcome(_WATCH_ROW, 0, "unreadable", str(error))]
+
+
+def _open_reverts(watch: list[dict[str, Any]] | None) -> frozenset[tuple[str, int]]:
+    """Each revert pull request the orchestrator opened and has not yet seen land."""
+    return frozenset(
+        (row["repository"], row["revert_pr_number"])
+        for row in watch or []
+        if row.get("status") == "revert_opened"
+        and isinstance(row.get("repository"), str)
+        and isinstance(row.get("revert_pr_number"), int)
+    )
+
+
+def _revert_pass(watch: list[dict[str, Any]], client: Watch, submit: bool) -> list[Outcome]:
+    """Ask the orchestrator to act on each landing it judged `flaky_retry` or `bad`, and report the
+    rest of the watch that says something. Without `--submit` it asks for nothing."""
+    outcomes: list[Outcome] = []
+    for row in watch:
+        repository, number = row.get("repository"), row.get("pr_number")
+        if not isinstance(repository, str) or not isinstance(number, int):
+            continue
+        verdict, status = row.get("verdict"), row.get("status")
+        detail = str(row.get("detail") or "")
+        if verdict in _ACTED_ON:
+            outcomes.append(_ask_to_act(client, repository, number, row, submit))
+        elif verdict == "unreadable":
+            outcomes.append(Outcome(repository, number, "unreadable", detail))
+        elif verdict is None and status in _REPORTED_RECORDS:
+            outcomes.append(Outcome(repository, number, _RECORDED[status], detail))
+    return outcomes
+
+
+def _ask_to_act(
+    client: Watch, repository: str, number: int, row: dict[str, Any], submit: bool
+) -> Outcome:
+    verdict = str(row.get("verdict"))
+    if not submit:
+        return Outcome(repository, number, _DRY_RUN[verdict], str(row.get("detail") or ""))
+    try:
+        status = row.get("status")
+        answer = client.revert_landing(
+            repository,
+            number,
+            expected_status=status if isinstance(status, str) else None,
+            idempotency_key=revert_key(repository, number, row),
+        )
+    except (LandingRefused, OrchestratorError) as error:
+        return Outcome(repository, number, "error", str(error))
+    status = answer.get("status")
+    detail = str(answer.get("detail") or "")
+    if not answer.get("acted") or not isinstance(status, str) or status not in _RECORDED:
+        return Outcome(repository, number, "unreadable", detail or "nothing was done")
+    return Outcome(repository, number, _RECORDED[status], detail)
 
 
 def run(argv: list[str] | None = None) -> int:
@@ -322,21 +440,37 @@ def run(argv: list[str] | None = None) -> int:
             GitHubReader(github_token) as reader,
             OrchestratorClient(token, SYSTEM_KEY_ID, base_url=url or DEFAULT_BASE_URL) as client,
         ):
-            selection = _subjects(reader, rule)
+            # The watch is read FIRST: the revert pull requests it names are subjects of the
+            # landing and branch-update passes below (Landing Part 3a). The acts it asks for come
+            # last, after this pass's own landings.
+            watch, watched = _read_watch(client)
+            selection = _subjects(reader, rule, _open_reverts(watch))
             outcomes = list(selection.unreadable)
             outcomes.extend(_pass(selection.subjects, client, args.submit))
             outcomes.extend(_branch_updates(selection.subjects, client, args.submit))
+            if watch is not None:
+                watched.extend(_revert_pass(watch, client, args.submit))
     except (ReadError, OrchestratorError) as error:
         print(str(error), file=sys.stderr)
         return EXIT_TOOL_FAILURE
 
-    code = report(outcomes, selection.deferred, rule.version)
+    code = report([*outcomes, *watched], selection.deferred, rule.version)
     if args.submit:
-        # A pull request held for a day raises one alert (`lander.held_alerts`). Only a submitting
-        # pass sends; a pass that returned above measured nothing and must not resolve anything.
-        reason = sync_held_alerts("inert-landing", outcomes, now=datetime.now(UTC))
-        if reason is not None:
-            print(f"alert-hub: {reason}", file=sys.stderr)
+        # A pull request held for a day raises one alert (`lander.held_alerts`), and each revert
+        # record one of its own. Only a submitting pass sends; a pass that returned above measured
+        # nothing and must not resolve anything. The watch's rows stay out of the held alerts:
+        # they are landings, not pull requests held.
+        now = datetime.now(UTC)
+        reasons = [
+            reason
+            for reason in (
+                sync_held_alerts("inert-landing", outcomes, now=now),
+                sync_revert_alerts("inert-landing", watch),
+            )
+            if reason is not None
+        ]
+        if reasons:
+            print(f"alert-hub: {'; '.join(reasons)}", file=sys.stderr)
             return EXIT_TOOL_FAILURE
     return code
 
