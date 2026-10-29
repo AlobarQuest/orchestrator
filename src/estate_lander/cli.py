@@ -125,7 +125,13 @@ LANE = Lane(
     # member record clears only when a person lifts it. Its sibling
     # `landing_dependency_list_unreadable` is deliberately NOT here -- an unreadable input stops
     # loudly, as a finding.
-    exception=frozenset({"landing_update_type_unparseable", "landing_version_ceiling_exceeded"}),
+    exception=frozenset(
+        {
+            "landing_update_type_unparseable",
+            "landing_version_ceiling_exceeded",
+            "landing_repository_not_granted",
+        }
+    ),
     # ADR-0019 Increment 6 and ADR-0045. The branch-update act's refusals that say only *the
     # answer moved between the read and the request*. `landing_mergeability_unknown` in particular
     # is ordinary rather than exotic: the platform answers `unknown` while it works.

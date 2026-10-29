@@ -10,9 +10,10 @@ The act RE-COMPOSES THE LANE'S OWN ADMISSION inside its transaction and closes o
 answer refuses with `landing_version_ceiling_exceeded` -- never on the caller's word, and never on
 `landing_dependency_list_unreadable`, which is a finding and is never closed. The update bot must
 have opened the pull request, the repository must be in the lane's population (the inert lane's
-declaration; the deploying lane's routed change record), the pull request must still be open, and
-the lane must be switched on with its credentials configured. Every other refusal may sit beside
-the ceiling: a held pull request whose checks fail is still closed.
+declaration; the deploying lane's routed change record) and granted by the member record, the
+pull request must still be open, and the lane must be switched on with its credentials
+configured. Every other refusal may sit beside the ceiling: a held pull request whose checks fail
+is still closed.
 
 ## What the comment says
 
@@ -66,6 +67,7 @@ from orchestrator.services.landing.lane_act import (
     lock_repository,
     pull_request_subject_id,
 )
+from orchestrator.services.landing.terms import LANDING_REPOSITORY_NOT_GRANTED
 from orchestrator.services.membership.holds import HoldBreach
 
 HELD_CLOSE_ACTION: Final = "landing.held_pull_request_closed"
@@ -323,7 +325,13 @@ def _refuse_unless_held(admission: _HeldAdmission, in_population: bool) -> None:
             HELD_CLOSE_AUTHOR_NOT_UPDATE_BOT,
             "the update bot did not open this pull request",
         ),
-        (in_population, HELD_CLOSE_OUTSIDE_POPULATION, "the repository is not this lane's"),
+        (
+            # The member record not granting the repository puts it outside every lane's
+            # population (Landing Part 2), whatever the lane's own declaration says.
+            in_population and LANDING_REPOSITORY_NOT_GRANTED not in refusals,
+            HELD_CLOSE_OUTSIDE_POPULATION,
+            "the repository is not this lane's",
+        ),
         (
             LANDING_PULL_REQUEST_NOT_OPEN not in refusals,
             HELD_CLOSE_NOT_OPEN,

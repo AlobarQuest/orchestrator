@@ -32,6 +32,7 @@ WINDOW = "landing_outside_change_window"
 UNPARSEABLE = "landing_update_type_unparseable"
 ECOSYSTEM = "landing_ecosystem_excluded"
 CEILING = "landing_version_ceiling_exceeded"
+NOT_GRANTED = "landing_repository_not_granted"
 
 
 class _Client:
@@ -90,7 +91,7 @@ def test_the_estate_lane_is_exactly_this() -> None:
     assert estate.LANE == Lane(
         name="estate",
         deliberate=frozenset({PACE, WINDOW}),
-        exception=frozenset({UNPARSEABLE, CEILING}),
+        exception=frozenset({UNPARSEABLE, CEILING, NOT_GRANTED}),
         update_self_clearing=frozenset(
             {
                 "estate_branch_update_head_moved",
@@ -109,7 +110,7 @@ def test_the_inert_lane_is_exactly_this() -> None:
     assert inert.LANE == Lane(
         name="inert",
         deliberate=frozenset(),
-        exception=frozenset({ECOSYSTEM, CEILING}),
+        exception=frozenset({ECOSYSTEM, CEILING, NOT_GRANTED}),
         update_self_clearing=frozenset(
             {
                 "inert_branch_update_head_moved",
@@ -283,6 +284,22 @@ def test_a_dry_run_says_it_would_close_and_sends_nothing(module: Any) -> None:
     [outcome] = module._pass(SUBJECT, client, False)
 
     assert outcome.status == "would-close"
+    assert client.closed == []
+
+
+@pytest.mark.parametrize("module", LANDERS)
+@pytest.mark.parametrize("submit", [True, False], ids=["acting", "dry-run"])
+def test_a_held_bump_in_an_ungranted_repository_is_an_exception_and_never_closed(
+    module: Any, submit: bool
+) -> None:
+    """Landing Part 2. The orchestrator refuses to close a pull request in a repository the member
+    record does not grant, so asking would only turn a durable exception into an hourly finding --
+    and a dry run would promise a close that cannot happen."""
+    client = _Client({"satisfied": False, "refusals": [CEILING, NOT_GRANTED], "head_sha": HEAD})
+
+    [outcome] = module._pass(SUBJECT, client, submit)
+
+    assert outcome.status == "exception"
     assert client.closed == []
 
 

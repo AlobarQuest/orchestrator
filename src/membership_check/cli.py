@@ -57,15 +57,18 @@ def _declarations(token: str, repositories_of_members: list[str]) -> tuple[Scope
         return factory_targets([*owned, *extra], source), owned
 
 
-def _landing(token: str, owned: list[str]) -> tuple[frozenset[str], frozenset[str], list[str]]:
-    """The inert and the deploying landing populations, and the gaps."""
+def _landing(
+    token: str, owned: list[str]
+) -> tuple[frozenset[str], frozenset[str], list[str], bool]:
+    """The inert and deploying landing populations, the gaps, and whether both were decided."""
     try:
         policy = read_landing_policy(token)
     except LandingPolicyError as error:
-        return frozenset(), frozenset(), [f"the landing policy couldn't be read: {error}"]
+        return frozenset(), frozenset(), [f"the landing policy couldn't be read: {error}"], False
     populations = (policy.inert, policy.deploying)
     gaps = [gap for names in populations for gap in canonical(names, owned).gaps] if owned else []
-    if not policy.deploying:
+    decided = bool(policy.deploying)
+    if not decided:
         # A GAP, never "nothing deploys": an absent or empty deploying population is a document
         # that did not decide, so this row could not be checked.
         gaps.append(
@@ -73,7 +76,7 @@ def _landing(token: str, owned: list[str]) -> tuple[frozenset[str], frozenset[st
             "the deploying row couldn't be checked"
         )
     inert, deploying = (frozenset(_spelled(names, owned)) for names in populations)
-    return inert, deploying, gaps
+    return inert, deploying, gaps, decided
 
 
 def _spelled(names: Iterable[str], owned: list[str]) -> list[str]:
@@ -117,7 +120,7 @@ def main() -> None:
     declarations, owned = _declarations(
         tokens[GITHUB_TOKEN_VARIABLE], [m.repository for m in members]
     )
-    inert, deploying, gaps = _landing(tokens[CHANGE_MANAGER_TOKEN_VARIABLE], owned)
+    inert, deploying, gaps, landing_decided = _landing(tokens[CHANGE_MANAGER_TOKEN_VARIABLE], owned)
     synced: list[str] = []
     try:
         synced = forks(subprocess_runner)
@@ -130,6 +133,7 @@ def main() -> None:
         declarations=declarations,
         inert=inert,
         deploying=deploying,
+        landing_decided=landing_decided,
         rollout_repositories=_spelled(ROLLOUT_WORKFLOWS, owned),
         tool_repositories=_spelled([tool.repository for tool in TOOLS], owned),
         hardened_forks=_spelled([fork.repository for fork in FORKS], owned),

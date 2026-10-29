@@ -12,9 +12,10 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from orchestrator.persistence.models import EstatePrMerge
+from orchestrator.persistence.models import EstatePrMerge, SdsMember
 from orchestrator.services.landing.estate_landing import (
     LANDING_INERT,
     LANDING_REDEPLOYS,
@@ -70,6 +71,7 @@ from orchestrator.services.landing.interfaces import (
     EstateGatewayError,
     PullRequestCommit,
 )
+from orchestrator.services.landing.terms import LANDING_REPOSITORY_NOT_GRANTED
 from tests.services.estate_doubles import FakeEstateLandingSource
 from tests.services.estate_landing_doubles import (
     HEAD,
@@ -91,10 +93,13 @@ from tests.services.inert_landing_doubles import (
     rules,
 )
 from tests.services.test_member_holds import place_hold
+from tests.services.test_member_proposals import grant_services
 
 PR = 3
 DOCKER_BRANCH = f"dependabot/{EXCLUDED_ECOSYSTEM}/python-3.14-slim"
 UV_BRANCH = "dependabot/uv/typer-0.21.0"
+# Every service a subject of this lane can need, granted unless a test says otherwise.
+BOTH_SERVICES = ("dependency_updates", "security_patches")
 
 
 def _inert_source() -> FakeEstateLandingSource:
@@ -110,7 +115,9 @@ def _answer(
     enabled: bool = True,
     credentials_configured: bool = True,
     repository: str = INERT_REPOSITORY,
+    granted: tuple[str, ...] = BOTH_SERVICES,
 ):
+    grant_services(session, repository, *granted)
     return inert_landing_admission(
         session,
         repository,
@@ -1184,3 +1191,92 @@ def test_a_held_bump_names_the_ceiling_even_when_the_policy_cannot_be_read(
     )
 
     assert LANDING_VERSION_CEILING_EXCEEDED in answer.refusals
+
+
+# ---------------------------------------------------------------------------------------------
+# The member record's grant (Landing Part 2): the lane's own declaration admits nothing the
+# record does not also grant.
+# ---------------------------------------------------------------------------------------------
+
+
+def test_an_ungranted_repository_is_refused_not_granted(migrated_session: Session) -> None:
+    answer = _answer(migrated_session, granted=())
+
+    assert answer.satisfied is False
+    assert answer.refusals == (LANDING_REPOSITORY_NOT_GRANTED,)
+    # Every act built on the answer inherits the bound: nothing to freshen either.
+    assert answer.branch_update_qualifies is False
+
+
+@pytest.mark.parametrize(
+    ("granted", "satisfied"),
+    [
+        ((), False),
+        (("security_patches",), False),
+        (("dependency_updates",), False),
+        (("security_patches", "dependency_updates"), True),
+    ],
+)
+def test_a_fork_sync_needs_both_security_patches_and_dependency_updates(
+    migrated_session: Session, granted: tuple[str, ...], satisfied: bool
+) -> None:
+    answer = _answer(
+        migrated_session,
+        gateway=FakeEstateGateway(
+            pull=pull_request(number=PR, head_ref=SYNC_BRANCH, author_login=SYNC_BOT)
+        ),
+        policy_source=FakeInertPolicySource(InertLandingAnswer(_sync_rules())),
+        granted=granted,
+    )
+
+    assert answer.satisfied is satisfied
+    assert answer.refusals == (() if satisfied else (LANDING_REPOSITORY_NOT_GRANTED,))
+
+
+def test_a_dependabot_pull_request_needs_only_dependency_updates(
+    migrated_session: Session,
+) -> None:
+    answer = _answer(migrated_session, granted=("dependency_updates",))
+
+    assert answer.satisfied is True
+
+
+def test_a_mixed_case_repository_reads_as_granted(migrated_session: Session) -> None:
+    grant_services(migrated_session, "AlobarQuest/Orchestrator", *BOTH_SERVICES)
+
+    answer = _answer(migrated_session, granted=())
+
+    # One member, stored in mixed case: the read folds, not the seeding helper.
+    assert migrated_session.scalars(select(SdsMember.repository)).all() == [
+        "AlobarQuest/Orchestrator"
+    ]
+    assert answer.satisfied is True
+
+
+@pytest.mark.parametrize("withdrawn", ["retired_member", "remediating", "withdrawn"])
+def test_a_retired_member_or_a_grant_not_in_state_granted_is_refused(
+    migrated_session: Session, withdrawn: str
+) -> None:
+    if withdrawn == "retired_member":
+        member = grant_services(migrated_session, INERT_REPOSITORY, *BOTH_SERVICES)
+        member.state = "retired"
+        migrated_session.flush()
+    else:
+        grant_services(migrated_session, INERT_REPOSITORY, *BOTH_SERVICES, state=withdrawn)
+
+    answer = _answer(migrated_session, granted=())
+
+    assert answer.satisfied is False
+    assert LANDING_REPOSITORY_NOT_GRANTED in answer.refusals
+
+
+def test_a_pull_request_that_could_not_be_read_still_asks_the_grant(
+    migrated_session: Session,
+) -> None:
+    answer = _answer(
+        migrated_session,
+        gateway=FakeEstateGateway(read_error=EstateGatewayError("read_status", 502)),
+        granted=(),
+    )
+
+    assert LANDING_REPOSITORY_NOT_GRANTED in answer.refusals

@@ -71,6 +71,7 @@ from tests.services.estate_landing_doubles import (
     open_pull,
     pull_request,
 )
+from tests.services.test_member_proposals import grant_services
 
 NOW = datetime(2026, 9, 25, 6, 15, tzinfo=UTC)
 
@@ -260,6 +261,7 @@ def test_the_event_the_REAL_act_writes_is_the_one_arm_b_reads(migrated_session: 
     reader asking in the folded form -- a disagreement would fail OPEN, reading a branch the lane
     has just edited as still owned."""
     gateway = FakeEstateGateway(behind=3)
+    grant_services(migrated_session, REPOSITORY, "dependency_updates")
     update_estate_pull_request_branch(
         migrated_session,
         EstateBranchUpdateCommand(
@@ -316,6 +318,7 @@ RELEASING = {
     "landing_record_has_live_objections",
     "landing_record_not_approved",
     "landing_record_not_policy_approved",
+    "landing_repository_not_granted",
     "landing_rollout_unpinned",
     "landing_target_not_routed",
     "landing_update_type_not_permitted",
@@ -337,8 +340,8 @@ HOLDING = (
 def _refusal_codes() -> set[str]:
     """Every refusal-code constant the two admission modules and their shared vocabulary define.
 
-    By VALUE. The shared vocabulary is `interfaces`, where the codes both lanes raise live, and
-    `terms`, which defines none today and is read so that a code placed there is not missed.
+    By VALUE. The shared vocabulary is `interfaces`, where most codes both lanes raise live, and
+    `terms`, which defines the grant term's code.
 
     The value predicate excludes the platform words (`clean`, `blocked`...), the run vocabulary,
     the update-type labels, the bot login and the branch prefix, none of which is a refusal.
@@ -367,7 +370,7 @@ def test_every_refusal_code_is_classified_exactly_once() -> None:
     assert not HOLDING & READ_FAILURE_REFUSALS
     assert not HOLDING & RELEASING
     assert not READ_FAILURE_REFUSALS & RELEASING
-    assert (len(HOLDING), len(READ_FAILURE_REFUSALS), len(RELEASING)) == (7, 19, 23)
+    assert (len(HOLDING), len(READ_FAILURE_REFUSALS), len(RELEASING)) == (7, 19, 24)
 
 
 def _class(*refusals: str, base_matches: bool = False) -> str:

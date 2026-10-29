@@ -57,6 +57,10 @@ from orchestrator.errors import DomainError
 from orchestrator.factory_policy import load_factory_policy
 from orchestrator.persistence.models import EstatePrMerge
 from orchestrator.reach_vocabulary import LIVE_ESTATE
+from orchestrator.services.execution.target_grant import (
+    DEPENDENCY_UPDATES_SERVICE,
+    MemberRecordGrants,
+)
 from orchestrator.services.landing.change_record import (
     RECORD_AMBIGUOUS,
     ChangeRecordSource,
@@ -96,6 +100,7 @@ from orchestrator.services.landing.terms import (
     checks_term,
     ecosystem_exclusion_term,
     freshness_term,
+    grant_term,
     qualifies_for_branch_update,
     version_ceiling_term,
 )
@@ -304,6 +309,8 @@ def estate_landing_admission(
     record = _record_term(repository, pr_number, record_source)
     window = _window_term(now)
     pace = _pace_term(session, repository, now)
+    # Landing Part 2: the member record must grant `dependency_updates` on the repository.
+    granted = grant_term(MemberRecordGrants(session), repository, (DEPENDENCY_UPDATES_SERVICE,))
 
     conditions = record.conditions
     remote = _remote_terms(
@@ -311,6 +318,7 @@ def estate_landing_admission(
     )
 
     refusals.extend(estate.refusals)
+    refusals.extend(granted.refusals)
     refusals.extend(record.term.refusals)
     refusals.extend(window.refusals)
     refusals.extend(pace.refusals)
@@ -321,6 +329,7 @@ def estate_landing_admission(
         and credentials_configured
         and prior is None
         and estate.met
+        and granted.met
         and record.term.met
         and window.met
         and pace.met

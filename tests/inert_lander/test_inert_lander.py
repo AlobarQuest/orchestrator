@@ -402,6 +402,16 @@ def test_a_refusal_CURRENT_POLICY_CAN_NEVER_CLEAR_is_an_exception_and_not_a_find
     assert report(outcomes, {}, 6) == EXIT_OK
 
 
+def test_an_ungranted_repository_is_an_exception_not_held() -> None:
+    """Landing Part 2. The member record not granting the repository clears only when a person
+    grants it on `/review`, so no pass of this program changes it: an exception, not a finding."""
+    client = FakeOrchestrator({(REPOSITORY, 1): _held("landing_repository_not_granted")})
+    outcomes = _pass([(REPOSITORY, 1)], client, True)
+    assert [o.status for o in outcomes] == ["exception"]
+    assert client.landed == []
+    assert report(outcomes, {}, 6) == EXIT_OK
+
+
 def test_freshness_is_suppressed_WHEN_AND_ONLY_WHEN_an_exception_is_present() -> None:
     """THREE ROWS, and the third was added because a mutation proved the first two insufficient.
 

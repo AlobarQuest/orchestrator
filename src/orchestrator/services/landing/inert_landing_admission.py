@@ -69,6 +69,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from orchestrator.persistence.models import EstatePrMerge
+from orchestrator.services.execution.target_grant import (
+    DEPENDENCY_UPDATES_SERVICE,
+    MemberRecordGrants,
+)
 from orchestrator.services.landing.estate_landing import (
     LANDING_INERT,
     LANDING_REDEPLOYS,
@@ -107,9 +111,11 @@ from orchestrator.services.landing.interfaces import (
 )
 from orchestrator.services.landing.terms import (
     NOT_HELD,
+    SECURITY_PATCHES_SERVICE,
     checks_term,
     ecosystem_exclusion_term,
     freshness_term,
+    grant_term,
     qualifies_for_branch_update,
     version_ceiling_term,
 )
@@ -232,9 +238,21 @@ def inert_landing_admission(
     remote = _remote_terms(
         repository, pr_number, policy.rules, holds_for(session, repository), gateway
     )
+    # Landing Part 2. The member record must grant what this subject is: a bump needs
+    # `dependency_updates`; a fork's upstream sync, someone else's release carried wholesale, also
+    # needs `security_patches`. Asked once on every path, after the author is known; where it is
+    # not (the pull request or the policy could not be read) a bump's grant is asked, and those
+    # paths already refuse on their own.
+    services = (
+        (SECURITY_PATCHES_SERVICE, DEPENDENCY_UPDATES_SERVICE)
+        if remote.wholesale
+        else (DEPENDENCY_UPDATES_SERVICE,)
+    )
+    granted = grant_term(MemberRecordGrants(session), repository, services)
 
     refusals.extend(estate.refusals)
     refusals.extend(policy.term.refusals)
+    refusals.extend(granted.refusals)
     refusals.extend(remote.term.refusals)
 
     satisfied = (
@@ -243,6 +261,7 @@ def inert_landing_admission(
         and prior is None
         and estate.met
         and policy.term.met
+        and granted.met
         and remote.term.met
     )
     return InertLandingAdmission(
@@ -335,6 +354,9 @@ class _RemoteTerms:
     merge_method: str
     ceiling_breaches: tuple[HoldBreach, ...] = ()
     update_bot_authored: bool = False
+    # A fork's upstream sync, by the policy's declaration of its author; false when the pull
+    # request or the policy could not be read.
+    wholesale: bool = False
 
 
 def _remote_terms(
@@ -385,7 +407,7 @@ def _remote_terms(
         # satisfied, so nothing will act on it, and a field that reads "we were not told" would
         # oblige every later reader to handle a case the act can never see.
         return _RemoteTerms(
-            Term(False, tuple(refusals)), pull.head_sha, SQUASH, ceiling.breaches, bot
+            Term(False, tuple(refusals)), pull.head_sha, SQUASH, ceiling.breaches, bot, wholesale
         )
 
     author = _author_term(pull, rules)
@@ -439,7 +461,7 @@ def _remote_terms(
         and held.met
     )
     return _RemoteTerms(
-        Term(met, tuple(refusals)), pull.head_sha, merge_method, ceiling.breaches, bot
+        Term(met, tuple(refusals)), pull.head_sha, merge_method, ceiling.breaches, bot, wholesale
     )
 
 

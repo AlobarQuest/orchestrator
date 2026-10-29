@@ -47,6 +47,7 @@ from tests.services.inert_landing_doubles import (
     rules,
 )
 from tests.services.landing_locks import hold_landing_lock
+from tests.services.test_member_proposals import grant_services
 
 SYSTEM = ActorContext("orchestrator-system", ActorRole.SYSTEM)
 WORKER = ActorContext("claude-code-runner", ActorRole.WORKER)
@@ -77,9 +78,11 @@ def _land(
     enabled: bool = True,
     credentials_configured: bool = True,
 ):
+    command = command or _command()
+    grant_services(session, command.repository, "dependency_updates", "security_patches")
     return land_inert_pull_request(
         session,
-        command or _command(),
+        command,
         gateway or ActingInertGateway(pull=pull_request(number=PR, head_ref=UV_BRANCH)),
         landing_source or FakeEstateLandingSource(),
         policy_source or FakeInertPolicySource(),

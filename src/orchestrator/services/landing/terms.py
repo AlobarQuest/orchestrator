@@ -1,16 +1,17 @@
 """The terms both landing lanes compose their answers from, and the branch-update criterion.
 
 Each lane's admission ANDs its own terms with these; the refusal a term raises means the same thing
-whichever lane raised it. Pure functions of what the gateway reads -- no session, no clock -- so
-either admission can call them without importing the other.
+whichever lane raised it. Pure functions of what the gateway and the grant source read -- no
+session, no clock -- so either admission can call them without importing the other.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Final
 
+from orchestrator.services.execution.target_grant import TargetGrantSource
 from orchestrator.services.landing.interfaces import (
     DELIBERATE_REFUSALS,
     LANDING_CHECKS_AWAITING_VERDICT,
@@ -43,6 +44,13 @@ from orchestrator.services.membership.holds import HeldDependency, HoldBreach, b
 
 # The update bot's branch naming, from which the ecosystem is read: `dependabot/<ecosystem>/<rest>`.
 _BRANCH_PREFIX: Final = "dependabot/"
+
+# The SDS member record does not grant every service this subject needs on this repository. An
+# exception to both landers: it clears only when a person grants the service on `/review`.
+LANDING_REPOSITORY_NOT_GRANTED: Final = "landing_repository_not_granted"
+
+# The member-record service a fork's upstream sync lands under, beside `dependency_updates`.
+SECURITY_PATCHES_SERVICE: Final = "security_patches"
 
 
 def freshness_derived_refusals(
@@ -290,6 +298,20 @@ def freshness_term(
     if behind > 0:
         return Term(False, (LANDING_HEAD_NOT_CURRENT_WITH_BASE,))
     return Term(True, ())
+
+
+def grant_term(grants: TargetGrantSource, repository: str, services: Iterable[str]) -> Term:
+    """Does the SDS member record grant every one of these services on this repository?
+
+    The member record is the authority for which repositories the factory may act on (ADR-0058),
+    so a lane's own population declaration admits nothing the record does not also grant. One
+    refusal whichever service is missing, and an empty set of services is never met: a caller
+    that asked about nothing was granted nothing.
+    """
+    asked = tuple(services)
+    if asked and all(grants.is_granted(repository, service) for service in asked):
+        return Term(True, ())
+    return Term(False, (LANDING_REPOSITORY_NOT_GRANTED,))
 
 
 def ecosystem_of(head_ref: str) -> str | None:

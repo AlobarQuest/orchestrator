@@ -154,7 +154,13 @@ LANE = Lane(
     # member record clears only when a person lifts it. Its sibling
     # `landing_dependency_list_unreadable` is deliberately NOT here -- an unreadable input stops
     # loudly, as a finding.
-    exception=frozenset({"landing_ecosystem_excluded", "landing_version_ceiling_exceeded"}),
+    exception=frozenset(
+        {
+            "landing_ecosystem_excluded",
+            "landing_version_ceiling_exceeded",
+            "landing_repository_not_granted",
+        }
+    ),
     # The branch-update act's refusals that say only *the answer moved between the read and the
     # request*. SPELLED `inert_*`, which is why it could never have been one set with the sibling's.
     update_self_clearing=frozenset(

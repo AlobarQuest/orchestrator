@@ -474,11 +474,13 @@ Placement rule: global CLAUDE.md §7.
   (schema 9): absent, the member record's grant decides which repositories. Raising the pattern
   ceiling withholds a human gate: a standing-authority decision. History:
   `docs/history/claude-md-invariants-archive.md` #291.
-- Dispatch admission reads the member record's grant for the unit's change class
-  (`services/execution/target_grant.py`): `dependency_updates` for `dependency-update`, `app_changes`
-  for every other class, only in state `granted` on a non-retired member, case-folded; otherwise
-  `target_repository_not_granted`. The lanes' copy of the mapping is held equal by
-  `test_target_grant.py`. Detail: `docs/operations/driving-a-unit.md`; full procedure:
+- Dispatch admission and every landing admission read the member record's grant. Dispatch maps the
+  unit's change class (`services/execution/target_grant.py`): `dependency_updates` for
+  `dependency-update`, `app_changes` for every other class, only in state `granted` on a non-retired
+  member, case-folded; otherwise `target_repository_not_granted`. The landers and the pr-merge gate
+  refuse with `landing_repository_not_granted` and `merge_repository_not_granted`. The lanes' copy of
+  the mapping is held equal by `test_target_grant.py`, and `membership_check` reports a granted
+  repository no landing path reaches. Detail: `docs/operations/driving-a-unit.md`; full procedure:
   `docs/operations/onboarding-a-target.md`.
 - Moving a rollout workflow is a paired change: re-transcribe it in
   `src/deploy_watcher/workflows.py` AND ratify the derived criteria plus the landing blob pin in

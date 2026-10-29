@@ -71,7 +71,13 @@ from tests.services.estate_doubles import (
     redeploying_source,
 )
 from tests.services.test_adjudications import FROM_EVALUATION, add_criterion
-from tests.services.test_member_proposals import add_member, body, confirm, stage
+from tests.services.test_member_proposals import (
+    add_member,
+    body,
+    confirm,
+    grant_services,
+    stage,
+)
 from tests.services.test_verifier_decided_completion import VERIFIER, _decide
 
 OBSERVED_TYPE = VERIFIER_NAMED_CHECK_EVIDENCE_TYPE
@@ -80,8 +86,11 @@ HEAD = "0123456789abcdef0123456789abcdef01234567"
 SYSTEM = ActorContext("orchestrator-system", ActorRole.SYSTEM)
 
 
-def _envelope(*, merge_level: str = "allowed", target: str | None = TARGET) -> AuthorityEnvelope:
+def _envelope(
+    *, merge_level: str = "allowed", target: str | None = TARGET, change_class: str | None = None
+) -> AuthorityEnvelope:
     return AuthorityEnvelope(
+        change_class=change_class,
         capabilities={"repo.edit": "allowed", MERGE_CAPABILITY: merge_level},
         budgets=AuthorityBudgets(max_attempts=3, max_llm_calls=60),
         constraints={"target_repository": target} if target is not None else {},
@@ -90,6 +99,7 @@ def _envelope(*, merge_level: str = "allowed", target: str | None = TARGET) -> A
 
 def _unit(session: Session, key: str, *, envelope: AuthorityEnvelope | None = None) -> WorkUnit:
     unit = register_unit(session, key, authority=envelope or _envelope())
+    grant_services(session, TARGET, "dependency_updates", "app_changes")
     # `register_test_revision` is idempotent on the default criteria list -- fixed package id,
     # fixed content hash -- so a second unit here shares the FIRST unit's revision, and declaring
     # the criterion again violates UNIQUE(revision, ac_id). Declare it once per revision.
@@ -280,6 +290,37 @@ def _resolve_condition(session: Session, condition: ReconciliationCondition) -> 
 # ---------------------------------------------------------------------------------------------
 # The one affirmative case.
 # ---------------------------------------------------------------------------------------------
+
+
+def _granted_unit(session: Session, key: str, change_class: str, *granted: str) -> WorkUnit:
+    """A ready unit of this change class on a repository holding only the named grants."""
+    other = "owner/other"
+    unit = _ready_unit(session, key, target=other, change_class=change_class)
+    grant_services(session, other, *granted)
+    session.commit()
+    return unit
+
+
+def test_a_unit_targeting_an_ungranted_repository_is_refused(migrated_session: Session) -> None:
+    unit = _bump_unit(
+        migrated_session,
+        "ungranted",
+        envelope=_dependency_update_envelope(),
+        granted=("app_changes",),
+    )
+
+    answer = _answer(migrated_session, unit)
+
+    assert answer.satisfied is False
+    assert answer.refusals == ("merge_repository_not_granted",)
+
+
+def test_the_grant_follows_the_change_class(migrated_session: Session) -> None:
+    app_change = _granted_unit(migrated_session, "app", "app-change", "dependency_updates")
+    assert _answer(migrated_session, app_change).refusals == ("merge_repository_not_granted",)
+
+    granted = _granted_unit(migrated_session, "app-ok", "app-change", "app_changes")
+    assert _answer(migrated_session, granted).satisfied is True
 
 
 def test_a_unit_meeting_every_term_is_admitted(migrated_session: Session) -> None:
@@ -583,7 +624,8 @@ def test_an_envelope_naming_no_repository_is_refused_without_asking_the_estate(
     answer = _answer(migrated_session, unit, source)
 
     assert answer.satisfied is False
-    assert answer.refusals == ("merge_target_repository_missing",)
+    # No repository is granted nothing, so the grant term refuses beside the missing constraint.
+    assert answer.refusals == ("merge_target_repository_missing", "merge_repository_not_granted")
     assert source.asked == []
 
 
@@ -967,6 +1009,7 @@ def _bump_unit(
     profile: str | None = "dependency-update",
     profile_fields: dict[str, Any] | None = None,
     envelope: AuthorityEnvelope | None = None,
+    granted: tuple[str, ...] = ("dependency_updates", "app_changes"),
 ) -> WorkUnit:
     """A ready unit under its own revision, whose snapshot carries the dependency-update profile's
     fields. Each key gets its own package id and content hash: revisions are append-only."""
@@ -981,6 +1024,7 @@ def _bump_unit(
         else profile_fields
     )
     authority = envelope or _envelope()
+    grant_services(session, TARGET, *granted)
     revision = register_revision(
         session,
         package_id=f"{package_id}-{key}",

@@ -132,10 +132,16 @@ BASE_MATCHES_PIN = "rollout_base_matches_pin"
 WITHHELD_FOR_SIBLING = "branch_update_withheld_for_sibling"
 
 # Bridge layer Part 4 (Ruling 7). The refusal saying the update moves a held dependency past its
-# ceiling. Whenever an answer carries it -- beside any other refusal -- an acting pass asks the
-# orchestrator to close the pull request with a comment, and the orchestrator decides again inside
-# its own transaction. The code is the orchestrator's; this program may not import it.
+# ceiling. Whenever an answer carries it -- beside any other refusal but `NOT_GRANTED` -- an acting
+# pass asks the orchestrator to close the pull request with a comment, and the orchestrator
+# decides again inside its own transaction. The code is the orchestrator's; this program may not
+# import it.
 CEILING = "landing_version_ceiling_exceeded"
+
+# Landing Part 2. The member record does not grant the repository. The orchestrator refuses to
+# close a held pull request there, so a held bump beside it is never sent to be closed: the line is
+# classified, and this code makes it an exception. The orchestrator's code, not imported.
+NOT_GRANTED = "landing_repository_not_granted"
 
 # Statuses that are not findings, stated as the set to EXCLUDE so a status nobody has thought of
 # fails toward being reported.
@@ -326,7 +332,7 @@ def consider(
     refusals = [str(r) for r in (answer.get("refusals") or [])]
     if SETTLED & set(refusals):
         return Outcome(repository, number, "settled", ", ".join(refusals))
-    if not answer.get("satisfied") and CEILING in refusals:
+    if not answer.get("satisfied") and CEILING in refusals and NOT_GRANTED not in refusals:
         return _close_held(client, repository, number, answer, submit)
     if not answer.get("satisfied"):
         # A MISSING key reads as False, which withholds the criterion's one conditional member and

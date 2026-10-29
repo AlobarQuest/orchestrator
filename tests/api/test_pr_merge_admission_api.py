@@ -21,12 +21,15 @@ import uuid
 from typing import Any
 
 from fastapi.testclient import TestClient
+from sqlalchemy import Engine
+from sqlalchemy.orm import Session
 
 from orchestrator.api.schemas.landing import PrMergeAdmissionResponse
 from orchestrator.services.landing.pr_merge_admission import MergeAdmission
 from tests._support.seeding import register_ready_unit
 from tests.api.test_lifecycle_api import AUTHORITY as BASE_AUTHORITY
 from tests.api.test_lifecycle_api import WORKER
+from tests.services.test_member_proposals import grant_services
 
 TARGET_REPOSITORY = "AlobarQuest/intent-packages"
 # The unit must name the repository it would land in, or the estate is never asked about anything
@@ -88,6 +91,20 @@ def test_a_unit_that_never_finished_is_refused_on_named_terms(db_client: TestCli
         "pr_binding_missing",
     } <= set(body["refusals"])
     assert "authority_approval_not_bound" not in body["refusals"]
+
+
+def test_the_refusal_is_served_in_the_admission_answer(
+    db_client: TestClient, migrated_engine: Engine
+) -> None:
+    """The member record holds no grant for this repository until one is written."""
+    unit_id = _register_ready_unit(db_client, "merge-admission-grant")
+    assert "merge_repository_not_granted" in _admission(db_client, unit_id)["refusals"]
+
+    with Session(migrated_engine) as session:
+        grant_services(session, TARGET_REPOSITORY, "app_changes", "dependency_updates")
+        session.commit()
+
+    assert "merge_repository_not_granted" not in _admission(db_client, unit_id)["refusals"]
 
 
 def test_an_unconfigured_estate_source_refuses_rather_than_answering(

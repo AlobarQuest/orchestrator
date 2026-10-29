@@ -49,6 +49,7 @@ from tests.services.estate_landing_doubles import (
     foreign_commit,
     pull_request,
 )
+from tests.services.test_member_proposals import grant_services
 
 
 def _admission(db_client: TestClient) -> dict[str, Any]:
@@ -151,6 +152,10 @@ def sibling_client(
     monkeypatch.setattr(
         landing_routes, "GitHubEstatePullRequests", lambda _provider: slot["gateway"]
     )
+    # The member record grants the repository, so the sibling scan is what these tests reach.
+    with Session(migrated_engine) as seeding:
+        grant_services(seeding, REPOSITORY, "dependency_updates")
+        seeding.commit()
     app = create_app(auth_config)
 
     def database_session() -> Iterator[Session]:
