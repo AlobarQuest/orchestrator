@@ -483,8 +483,12 @@ def register_approved_unit(
     approved_decomposition_id: uuid.UUID | None = None,
     idempotency_key: str | None = None,
     expected_version: int | None = None,
+    approved_by_policy: bool = False,
 ) -> WorkUnit:
-    _require_human(actor_id, actor_role)
+    # A person registers a unit, or SYSTEM does for a decomposition policy approved: a rotation's
+    # (ADR-0055 amendment 16, `decomposition._policy_approval`). Nothing else may.
+    if not (approved_by_policy and actor_role is ActorRole.SYSTEM and actor_id):
+        _require_human(actor_id, actor_role)
     validate_unit_capabilities(required_capability, authority.capabilities)
     # Checked against the dict that will be STORED -- the exact bytes the brief serves the
     # runner -- because that is where an undeclared top-level key becomes fatal. The fallback

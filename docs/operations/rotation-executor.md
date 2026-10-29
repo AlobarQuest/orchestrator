@@ -126,8 +126,9 @@ expiry, stage by hand.
 
 After Devon approves a rotation's change record and the work carrier registers its intake, the
 `rotation-decomposer` lane proposes its decomposition (`src/rotation_decomposer/`, ADR-0055
-amendment 15, increment 5). A person approves it on `/review`, as every decomposition: approval
-accepts only a human actor. The lane runs hourly (`com.devon.rotation-decomposer`, installed by
+amendment 15, increment 5). The orchestrator approves it by policy as it is proposed when every
+unit is a rotation unit the rotation pattern recognises (amendment 16), so the package revision is
+a rotation's one click; a proposal it doesn't approve waits for a person on `/review`. The lane runs hourly (`com.devon.rotation-decomposer`, installed by
 `scripts/install-rotation-decomposer-launchd.sh` from the main tree) and logs to
 `~/Library/Logs/rotation-decomposer.log`. Its Healthchecks check, `sds-rotation-decomposer`, is an
 outcome alarm: every non-zero exit pings `/fail` with the report.
@@ -142,7 +143,8 @@ alone:
 
 | Result | Meaning | Exit |
 |---|---|---|
-| `proposed` | A proposal waits for a person on `/review` | 0 |
+| `approved` | The orchestrator approved the proposal by policy; its units exist and the executor takes them | 0 |
+| `proposed` | A proposal waits for a person on `/review`: policy didn't recognise every unit | 0 |
 | `awaiting-approval` | A proposal already waits | 0 |
 | `superseded` | A person superseded its approved decomposition (approval creates units at once, so approved with none means superseded); a person replaces it | 2 |
 | `declined` | A person rejected the proposal or sent it back; the lane never proposes again, so decompose it by hand | 2 |

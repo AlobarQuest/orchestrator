@@ -34,6 +34,7 @@ from orchestrator.persistence.models import (
     WorkUnit,
 )
 from orchestrator.services.execution.run_activity import a_run_may_have_started
+from orchestrator.services.intake.authority_gate import human_authority_gate
 from orchestrator.services.intake.packages import (
     DependencySpec,
     register_approved_unit,
@@ -45,6 +46,7 @@ from orchestrator.services.lifecycle.lifecycle import (
     ready_if_satisfied,
     transition_in_transaction,
 )
+from orchestrator.services.lifecycle.rotation_claims import ProposedUnitTerms, is_rotation_unit
 
 _PROPOSAL_ACTION = "decomposition.proposed"
 _PACKAGE_CLI_SOURCE = "package_cli"
@@ -241,7 +243,71 @@ def submit_decomposition_proposal(
         )
     )
     session.flush()
+    reason = _policy_approval(session, proposal, revision, actor)
+    if reason is not None:
+        return _approve(
+            session,
+            proposal.id,
+            actor=actor,
+            reason=reason,
+            idempotency_key=_derived_idempotency_key(command.idempotency_key, "policy-approval"),
+            by_policy=True,
+        )
     return proposal
+
+
+def _policy_approval(
+    session: Session,
+    proposal: DecompositionProposal,
+    revision: WorkPackageRevision,
+    actor: ActorContext,
+) -> str | None:
+    """The reason policy approves this decomposition, or ``None``: a person decides it.
+
+    ADR-0055 amendment 16. Only a rotation's, proposed by SYSTEM (the rotation decomposer), for a
+    revision a person approved, whose dependencies are all unit-on-unit and whose every unit is a
+    rotation unit the claim's own gate (``human_authority_gate``) finds recognised by policy. A
+    decomposition a person or a WORKER proposed is a person's to decide, whatever it holds.
+    """
+    if actor.role is not ActorRole.SYSTEM:
+        return None
+    dependencies = session.scalars(
+        select(DecompositionProposalDependency).where(
+            DecompositionProposalDependency.proposal_id == proposal.id
+        )
+    )
+    if any(
+        d.kind != "work_unit" or d.required_state_or_condition != "completed" for d in dependencies
+    ):
+        return None
+    units = tuple(
+        session.scalars(
+            select(DecompositionProposalUnit).where(
+                DecompositionProposalUnit.proposal_id == proposal.id
+            )
+        )
+    )
+    patterns: set[str] = set()
+    version: int | None = None
+    for proposed in units:
+        # The unit as approval would create it: its id is deterministic in the proposal's.
+        unit = ProposedUnitTerms(
+            id=decomposition_unit_id(proposal.id, proposed.unit_key),
+            authority=proposed.authority,
+            required_capability=proposed.required_capability,
+        )
+        if not is_rotation_unit(unit, revision):
+            return None
+        gate = human_authority_gate(unit, revision)
+        if gate.refusals:
+            return None
+        patterns.update(gate.recognised_by)
+        version = gate.policy_version
+    return (
+        "approved by policy (ADR-0055 amendment 16): every unit is a rotation unit the rotation "
+        f"pattern recognises ({', '.join(sorted(patterns))}, policy version {version}), and "
+        f"the package revision was approved by {revision.approved_by}"
+    )
 
 
 def approve_decomposition_proposal(
@@ -264,7 +330,23 @@ def approve_decomposition_proposal(
     )
     if replay is not None:
         return replay
+    return _approve(
+        session, proposal_id, actor=actor, reason=reason, idempotency_key=idempotency_key
+    )
 
+
+def _approve(
+    session: Session,
+    proposal_id: uuid.UUID,
+    *,
+    actor: ActorContext,
+    reason: str,
+    idempotency_key: str,
+    by_policy: bool = False,
+) -> DecompositionProposal:
+    """Approve a proposal: create its units and dependencies. The caller has established who may
+    decide it: a person (`approve_decomposition_proposal`), or policy for a rotation
+    (`_policy_approval`)."""
     proposal = _proposal_for_decision(session, proposal_id)
     revision = session.get(
         WorkPackageRevision,
@@ -350,6 +432,7 @@ def approve_decomposition_proposal(
             idempotency_key=_derived_idempotency_key(
                 idempotency_key, f"unit:{proposal_unit.unit_key}"
             ),
+            approved_by_policy=by_policy,
         )
         created_work_unit_ids[proposal_unit.unit_key] = str(unit.id)
         units_by_key[proposal_unit.unit_key] = unit.id

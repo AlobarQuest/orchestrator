@@ -438,10 +438,13 @@ command_shapes = [
 [[reach.live_estate.rotation_known_good]]
 name = "credential rotation unit of an approved standing package"
 rationale = """
-Every rotation unit's envelope is shown in full on the decomposition page a person
-approves, carries the fingerprint that approval saw, and cannot change afterwards,
-so approving it again unit by unit restated a decision already made (Devon,
-2026-10-20: "that bit of theater"). The rotation executor holds what the envelope
+Every rotation unit's envelope is derived by machine from a package revision a named
+person approved, which fixes its credential, its destinations and its criteria, and it
+cannot change afterwards, so approving it unit by unit restated a decision already made
+(Devon, 2026-10-20: "that bit of theater"). Since ADR-0055 amendment 16 that revision
+approval is a rotation's one click: its decomposition is approved by policy when the
+rotation decomposer proposes it and this pattern recognises every unit (Devon,
+2026-10-29: "keep the revision approval, one click every time"). The rotation executor holds what the envelope
 could get wrong to the approved package by machine before it acts: it refuses a
 unit unless the registry's, the package's and the envelope's destinations are
 exactly equal, and refuses a unit marked as touching no hosted service that writes
@@ -491,10 +494,10 @@ wrong answer costs the most to unwind, so it earns the most restraint.
 
 NO WINDOW, and the reason is worth writing down because the absence looks like an
 oversight. A window moves WHEN work runs; it does nothing about how hard the work
-is to undo. Restraint here is a person having read the envelope, which is what
+is to undo. Restraint here is a person having decided the work, which is what
 this row gets: the only pattern declared under it is the rotation pattern below,
-and a rotation unit's envelope is the one the decomposition page already showed a
-person in full. And a window would have had to be one of two
+and a rotation unit's envelope is derived from a package revision a named person
+approved (ADR-0055 amendment 16). And a window would have had to be one of two
 wrong things. The same night hours as the rows below would be ceremony, since
 nothing about an external system of record cares what time it is here. Office
 hours — "run it while somebody can notice" — reads better and is worse: they do
@@ -522,10 +525,13 @@ minutes = 60
 [[reach.external_system.rotation_known_good]]
 name = "credential rotation unit of an approved standing package"
 rationale = """
-Every rotation unit's envelope is shown in full on the decomposition page a person
-approves, carries the fingerprint that approval saw, and cannot change afterwards,
-so approving it again unit by unit restated a decision already made (Devon,
-2026-10-20: "that bit of theater"). The rotation executor holds what the envelope
+Every rotation unit's envelope is derived by machine from a package revision a named
+person approved, which fixes its credential, its destinations and its criteria, and it
+cannot change afterwards, so approving it unit by unit restated a decision already made
+(Devon, 2026-10-20: "that bit of theater"). Since ADR-0055 amendment 16 that revision
+approval is a rotation's one click: its decomposition is approved by policy when the
+rotation decomposer proposes it and this pattern recognises every unit (Devon,
+2026-10-29: "keep the revision approval, one click every time"). The rotation executor holds what the envelope
 could get wrong to the approved package by machine before it acts: it refuses a
 unit unless the registry's, the package's and the envelope's destinations are
 exactly equal, and refuses a unit marked as touching no hosted service that writes
@@ -580,8 +586,8 @@ rationale = """
 A BWS machine access token lives in this machine's Keychain, so its rotation's
 store, verify and confirm units write and read Keychain items here (ADR-0055
 amendment 12). Recognised for the reason the external-system row gives: the
-envelope a person approved on the decomposition page is the one the executor
-runs, and it holds the envelope's destinations to the approved package's before
+envelope is derived from a package revision a named person approved, and the executor
+holds the envelope's destinations to the approved package's before
 it acts. Only this adapter and only its machine units: the token's creation and
 revocation are human acts in the web app, which file nothing, and no other
 adapter's unit touches this machine.

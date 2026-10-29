@@ -1979,3 +1979,48 @@ approval click; propose as the SYSTEM bearer.
 3. **A package on a pre-derivation plan is a finding, not a guess.** The lane imports no provider,
    so it can't read a type's fixed plan; it reports a package whose criteria describe no derived
    plan. The four such packages are revised once onto their derived plans, which Devon approves.
+
+## Amendment 16 — One click per rotation: the revision approval (2026-10-29)
+
+**Status:** accepted (Devon, 2026-10-29: "keep the revision approval, one click every time").
+
+### Context
+
+After amendment 15 a rotation took three approvals: the package revision by name, its `work`
+record in change-manager, and its decomposition on `/review`. Only the first carries content: which
+credential rotates, why (the occurrence), and where the new value goes (the registry's
+destinations, as a diff against the last approval). The record restates that decision, and the
+decomposition is derived from the approved package by machine (increment 5).
+
+### Decision
+
+1. **The revision approval is the one click, every time.** No approval policy approves a rotation
+   revision; intent-packages refuses the profile, and the rotation proposer never approves.
+2. **change-manager approves a rotation's `work` record by policy**, as `work-policy`, inside the
+   proposal transaction, as it already does for standing dependency updates. A record conforms when
+   it names a standing rotation package (`rotation-<credential>`), intent-packages as its source,
+   risk `caution`, and no change class or target repository. The safety rests on the carrier: it
+   carries a record only when its package revision is approved, the approval's hash verified
+   against the tamper-evident chain, and only a named person can approve a rotation revision.
+3. **The orchestrator approves a rotation decomposition by policy** when SYSTEM proposes it, inside
+   the proposal transaction: the revision is a standing rotation package with a recorded approval,
+   every dependency is a unit-on-unit `completed` one, and every created unit is a rotation unit
+   whose envelope the rotation pattern recognises (the claim's own gate, `human_authority_gate`,
+   evaluated on the created units). Anything else stays proposed for a person. A decomposition
+   proposed by a human or a WORKER (a session's, by hand) is never approved by policy. The decision
+   is attributed to the proposing SYSTEM actor, with the pattern and the policy version in its
+   reason, as `authority.human_gate_not_required` is.
+4. **The rotation pattern's basis moves.** It lifted the per-unit authority click because a person
+   approved the decomposition page showing every envelope. Its basis is now the named revision
+   approval, which fixes the package, the destinations and the criteria the envelopes are derived
+   from, and the executor's checks before it acts (registry, package and envelope destinations
+   equal; a unit marked as touching no hosted service refused if it writes one).
+
+### Consequences
+
+After the click everything is machine until a provider needs a person: the proposer's next pass
+proposes the record, change-manager approves it, the carrier registers it at its next pass, the
+decomposer proposes and the orchestrator approves the decomposition within the hour, and the
+executor claims within five minutes. Approving a rotation revision by name now starts a production
+credential change. Every other kind of work keeps its gates: the policies key on the rotation
+profile alone. Graduating decomposition approval in general stays with the Admission pass.

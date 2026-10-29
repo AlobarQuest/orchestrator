@@ -109,6 +109,11 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
 
 ### #40
 
+- **One exception, a rotation's (ADR-0055 amendment 16):** a decomposition SYSTEM proposes for a
+  standing rotation package a person approved, whose dependencies are all unit-on-unit and whose
+  every unit the rotation pattern recognises, is approved by policy inside the proposal's own
+  transaction (`decomposition._policy_approval`), attributed to SYSTEM with the pattern and policy
+  version in its reason. Every other decomposition follows the rest of this bullet.
 - **Decomposition approval is human-only and reachable ONLY through the `/review` GUI, never the
   raw `/api` path.** **The raw `/api` approve and reject routes, and their `approve-decomposition` /
   `reject-decomposition` CLI commands, were DELETED on 2026-09-28 (Tier 3 item 24b); the rest of
