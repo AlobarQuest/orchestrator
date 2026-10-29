@@ -6,7 +6,7 @@
   routes
 - **Decisions it builds on:** ADR-0016, 0018, 0019, 0020, 0023, 0024, 0028 (amendments 2 and 3),
   0034 to 0038, 0041, 0044, 0045, 0058
-- **Status:** Draft for Devon's review; builder check done, its questions answered
+- **Status:** Approved by Devon, 2026-10-29
 
 ## Intent
 
