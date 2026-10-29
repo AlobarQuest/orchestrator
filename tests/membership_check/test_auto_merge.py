@@ -39,6 +39,35 @@ def test_no_rollout_workflow_is_arming(path: Path):
     assert not arming(path.read_text(encoding="utf-8"))
 
 
+@pytest.mark.parametrize(
+    "line",
+    [
+        'run: gh pr merge "$PR_URL" --auto --squash',
+        "run: gh pr merge --squash --auto",
+        'run: gh pr merge --auto --squash "$PR_URL"',
+        'run: |\n  gh pr merge "$PR_URL" \\\n    --squash --auto',
+        "run: gh api graphql -f query='mutation { enablePullRequestAutoMerge(input: $i) { a } }'",
+        "uses: peter-evans/enable-pull-request-automerge@v3",
+    ],
+)
+def test_an_arming_command_in_any_flag_order_is_arming(line: str):
+    assert arming(line)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "run: gh pr merge --disable-auto",
+        'run: gh pr merge "$PR_URL" --squash',
+        "run: gh pr view --auto",
+        "run: gh pr merge --squash\nrun: echo --auto",
+        "run: gh pr merge --autodelete",
+    ],
+)
+def test_a_merge_without_a_whole_auto_flag_is_not_arming(line: str):
+    assert not arming(line)
+
+
 REPO = "/repos/A/one"
 LISTING = f"{REPO}/contents/.github/workflows"
 
@@ -95,6 +124,13 @@ def test_a_setting_the_credential_is_not_shown_is_unread_not_off():
     source, _ = _source({REPO: httpx.Response(200, json={}), LISTING: httpx.Response(200, json=[])})
     state = source.state("A/one")
     assert state.allowed is None and state.arming_workflows == ()
+
+
+def test_an_unserved_setting_and_a_failed_listing_keep_both_reasons():
+    source, _ = _source({REPO: httpx.Response(200, json={}), LISTING: httpx.Response(503)})
+    state = source.state("A/one")
+    assert state.allowed is None and state.arming_workflows is None
+    assert "allow_auto_merge was not served" in state.detail and "503" in state.detail
 
 
 def test_an_unreadable_repository_reads_nothing_else():

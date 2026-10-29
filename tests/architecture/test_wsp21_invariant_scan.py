@@ -206,13 +206,18 @@ MERGE_EXEMPT_PATHS: set[Path] = {
 # A SECOND, NARROWER DOOR, for files that spell the merge command only to RECOGNISE it in text
 # they read, and perform no merge. Not `MERGE_EXEMPT_PATHS`: that set means "lands a pull
 # request", and every reader of it (the hold classification, ws32's labels) takes it at its word.
-# A file here is excused only the `gh pr merge` text spelling; an argv-list merge, the REST
-# spelling or a `.merge(` call in it still fails, and the rot check below refuses an entry that no
-# longer spells it or that also sits in the merge exemption.
+# A file here is excused only the `gh pr merge` text spelling, and only while every string that
+# spells it sits inside the file's `ARMING_MARKERS` assignment (`_detector_strays`): a second
+# string that spells it anywhere else -- a shell command, an f-string, a docstring -- fails as if
+# there were no door. An argv-list merge, the REST spelling or a `.merge(` call still fails, and
+# the rot check below refuses an entry that no longer spells it or that also sits in the merge
+# exemption.
 MERGE_DETECTOR_SPELLING = repr("gh pr merge")
+# The one assignment in a door file whose strings may spell the command.
+MERGE_DETECTOR_MARKERS = "ARMING_MARKERS"
 MERGE_DETECTOR_PATHS: set[Path] = {
     # ADR-0038: nothing in the SDS arms auto-merge. `membership_check` reports a member repository
-    # whose workflow does, so `ARMING_MARKERS` spells `gh pr merge --auto` to find it in workflow
+    # whose workflow does, so `ARMING_MARKERS` spells `gh pr merge` to find it in workflow
     # text read over three GET routes (`is_allowed`); it merges nothing. The retired auto-merge
     # workflows in tests/fixtures/auto-merge-rules/ are the control that the marker fires.
     Path("src/membership_check/auto_merge.py"),
@@ -255,12 +260,36 @@ def _merges(source: Path) -> list[str]:
     return found
 
 
+def _detector_strays(source: Path) -> list[str]:
+    """Each string constant spelling `gh pr merge` outside the `ARMING_MARKERS` assignment."""
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    allowed: set[int] = set()
+    for node in ast.walk(tree):
+        targets = (
+            node.targets
+            if isinstance(node, ast.Assign)
+            else [node.target]
+            if isinstance(node, ast.AnnAssign)
+            else []
+        )
+        if any(isinstance(t, ast.Name) and t.id == MERGE_DETECTOR_MARKERS for t in targets):
+            allowed |= {id(inner) for inner in ast.walk(node)}
+    return [
+        f"{source}:{node.lineno}"
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and "gh pr merge" in node.value.lower()
+        and id(node) not in allowed
+    ]
+
+
 @pytest.mark.parametrize("source", [*MERGE_SCAN_SOURCES, *SHELL_SOURCES], ids=lambda p: str(p))
 def test_nothing_in_the_repo_merges_a_pull_request(source: Path) -> None:
     if source in MERGE_EXEMPT_PATHS:
         return
     merges = _merges(source)
-    if source in MERGE_DETECTOR_PATHS:
+    if source in MERGE_DETECTOR_PATHS and not _detector_strays(source):
         merges = [found for found in merges if found != MERGE_DETECTOR_SPELLING]
     assert not merges, (
         f"{source} performs a merge ({', '.join(merges)}). Merging is Devon's gate; "
@@ -338,17 +367,41 @@ def test_the_merge_detector_door_names_only_detectors_that_need_it() -> None:
         assert path not in MERGE_EXEMPT_PATHS, path
         assert MERGE_DETECTOR_SPELLING in _merges(path), f"{path} no longer needs the door"
         assert not _merge_method_calls(path), path
+        assert not _detector_strays(path), path
+
+
+@pytest.mark.parametrize(
+    "stray",
+    [
+        'X = "gh pr merge 1"\n',
+        'subprocess.run("gh pr merge 5 --squash", shell=True)\n',
+        'run(["sh", "-c", "gh pr merge 5"])\n',
+        'run(f"gh pr merge {n}")\n',
+        'def f():\n    """Runs gh pr merge."""\n',
+    ],
+)
+def test_the_merge_detector_door_is_bound_to_the_marker_literal(stray: str, tmp_path: Path) -> None:
+    """The door excuses the spelling only inside the `ARMING_MARKERS` assignment: the same text
+    anywhere else in a door file, including a second string that would run it, still fails."""
+    source = tmp_path / "detector.py"
+    source.write_text(f'ARMING_MARKERS = ("gh pr merge", "x")\n{stray}')
+    MERGE_DETECTOR_PATHS.add(source)
+    try:
+        with pytest.raises(AssertionError, match="performs a merge"):
+            test_nothing_in_the_repo_merges_a_pull_request(source)
+    finally:
+        MERGE_DETECTOR_PATHS.discard(source)
 
 
 def test_the_merge_detector_door_excuses_only_the_text_spelling(tmp_path: Path) -> None:
     """A detector that also merges is caught: the door excuses one spelling, not the file."""
     source = tmp_path / "detector.py"
-    source.write_text('M = "gh pr merge --auto"\nC = ["gh", "pr", "merge", "1"]\n')
+    source.write_text('ARMING_MARKERS = ("gh pr merge",)\nC = ["gh", "pr", "merge", "1"]\n')
     MERGE_DETECTOR_PATHS.add(source)
     try:
         with pytest.raises(AssertionError, match="performs a merge"):
             test_nothing_in_the_repo_merges_a_pull_request(source)
-        source.write_text('M = "gh pr merge --auto"\n')
+        source.write_text('ARMING_MARKERS = ("gh pr merge", "x")\n')
         test_nothing_in_the_repo_merges_a_pull_request(source)
     finally:
         MERGE_DETECTOR_PATHS.discard(source)

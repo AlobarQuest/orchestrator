@@ -29,12 +29,18 @@ JSON_ACCEPT: Final = "application/vnd.github+json"
 RAW_ACCEPT: Final = "application/vnd.github.raw"
 
 # not-a-vocabulary: substrings searched for in workflow text, never compared with another
-# program's values. The `gh` CLI form, the GraphQL mutation, and the community action.
+# program's values. The `gh` CLI command (arming only beside a whole `--auto` flag, in any order),
+# the GraphQL mutation, and the community action. The CLI spelling appears in this module only
+# here: the merge guard's detector door is bound to this assignment.
 ARMING_MARKERS: Final = (
-    "gh pr merge --auto",
+    "gh pr merge",
     "enablePullRequestAutoMerge",
     "enable-pull-request-automerge",
 )
+_CLI_MARKER: Final = ARMING_MARKERS[0]
+_SUBSTRING_MARKERS: Final = ARMING_MARKERS[1:]
+# A whole `--auto` flag: not `--disable-auto`, not `--autodelete`.
+_AUTO_FLAG = re.compile(r"(?<![\w-])--auto(?![\w-])")
 
 _SEGMENT: Final = r"[A-Za-z0-9._-]+"
 _ALLOWED = re.compile(
@@ -47,8 +53,18 @@ def is_allowed(path: str) -> bool:
 
 
 def arming(text: str) -> bool:
-    """True when the workflow text contains any arming marker."""
-    return any(marker in text for marker in ARMING_MARKERS)
+    """True when the workflow text arms auto-merge.
+
+    A line arms when it holds the CLI command and a whole `--auto` flag, in any order, or either
+    of the other markers. Shell line continuations are joined first, so a command split over
+    lines is read as one.
+    """
+    for line in text.replace("\\\n", " ").splitlines():
+        if _CLI_MARKER in line and _AUTO_FLAG.search(line):
+            return True
+        if any(marker in line for marker in _SUBSTRING_MARKERS):
+            return True
+    return False
 
 
 @dataclass(frozen=True)
@@ -111,7 +127,8 @@ class GitHubAutoMergeSource:
         try:
             workflows = self._arming_workflows(repository)
         except _Unread as error:
-            return AutoMergeState(allowed, None, f"{repository}: {error}")
+            reasons = "; ".join(filter(None, (detail, f"{repository}: {error}")))
+            return AutoMergeState(allowed, None, reasons)
         return AutoMergeState(allowed, workflows, detail)
 
     def _arming_workflows(self, repository: str) -> tuple[str, ...]:
