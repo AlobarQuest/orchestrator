@@ -46,6 +46,7 @@ from tests.services.estate_landing_doubles import (
     pull_request,
 )
 from tests.services.landing_locks import hold_landing_lock
+from tests.services.test_member_proposals import grant_services
 
 SYSTEM = ActorContext("orchestrator-system", ActorRole.SYSTEM)
 WORKER = ActorContext("claude-code-runner", ActorRole.WORKER)
@@ -120,6 +121,7 @@ def _land(
     record=None,
     landing=None,
 ) -> EstatePrMerge:
+    grant_services(session, REPOSITORY, "dependency_updates")
     return land_estate_pull_request(
         session,
         EstateMergeCommand(

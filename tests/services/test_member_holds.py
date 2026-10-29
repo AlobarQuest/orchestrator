@@ -21,6 +21,7 @@ from tests.services.test_member_proposals import (
     add_member,
     body,
     confirm,
+    member_of,
     stage,
 )
 
@@ -55,7 +56,7 @@ def place_hold(
     directory: str = "/",
 ) -> None:
     """A member holding one dependency, written the only way a hold is: confirmed by a person."""
-    add_member(session, repository)
+    member_of(session, repository)
     change = {
         "repository": repository,
         "reason": "held for a test",

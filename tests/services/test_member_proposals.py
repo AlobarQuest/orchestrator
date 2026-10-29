@@ -66,6 +66,28 @@ def add_member(session: Session, repository: str = "AlobarQuest/brain", **fields
     return member
 
 
+def member_of(session: Session, repository: str) -> SdsMember:
+    """The member for this repository, case-folded, seeded by `add_member` if there is none."""
+    found = session.scalar(
+        select(SdsMember).where(func.lower(SdsMember.repository) == repository.lower())
+    )
+    return found or add_member(session, repository)
+
+
+def grant_services(
+    session: Session, repository: str, *services: str, state: str = "granted"
+) -> SdsMember:
+    """Set each service's grant on the repository's member to `state`, seeding the member first if
+    there is none. Written straight to the tables, as the admission suites need a grant standing
+    rather than the proposal that would have set it."""
+    member = member_of(session, repository)
+    for service in services:
+        session.merge(grant(member, service, state))
+    session.flush()
+    session.expire(member)
+    return member
+
+
 def refused(session: Session, proposal: MemberProposalBody) -> str:
     with pytest.raises(DomainError) as raised:
         stage(session, proposal)

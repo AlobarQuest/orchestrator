@@ -68,6 +68,7 @@ from orchestrator.services.landing.interfaces import (
     gateway_failure_detail,
 )
 from orchestrator.services.landing.terms import (
+    LANDING_REPOSITORY_NOT_GRANTED,
     ecosystem_of,
 )
 from tests.services.change_record_doubles import (
@@ -99,6 +100,7 @@ from tests.services.estate_landing_doubles import (
     trailer,
 )
 from tests.services.test_member_holds import place_hold
+from tests.services.test_member_proposals import grant_services
 
 PR = 49
 IN_WINDOW = datetime(2026, 8, 11, 7, 30, tzinfo=UTC)
@@ -122,7 +124,9 @@ def _ask(
     enabled: bool = True,
     credentials: bool = True,
     moment: datetime = IN_WINDOW,
+    granted: tuple[str, ...] = ("dependency_updates",),
 ):
+    grant_services(session, REPOSITORY, *granted)
     return estate_landing_admission(
         session,
         REPOSITORY,
@@ -1253,6 +1257,7 @@ def test_the_repository_is_folded_so_the_report_and_the_act_ask_one_question(
     landing = redeploying_source()
     records = FakeChangeRecordSource({(REPOSITORY, PR): approved()})
     gateway = FakeEstateGateway()
+    grant_services(migrated_session, REPOSITORY, "dependency_updates")
 
     answer = estate_landing_admission(
         migrated_session,
@@ -1327,7 +1332,8 @@ def test_a_retired_members_hold_still_refuses_and_its_name_is_case_folded(
 
     answer = _ask(migrated_session)
 
-    assert answer.refusals == (LANDING_VERSION_CEILING_EXCEEDED,)
+    # A retired member grants nothing (Landing Part 2), and its hold still refuses beside that.
+    assert answer.refusals == (LANDING_REPOSITORY_NOT_GRANTED, LANDING_VERSION_CEILING_EXCEEDED)
 
 
 def test_a_group_with_one_held_member_is_refused(migrated_session: Session) -> None:
@@ -1399,3 +1405,22 @@ def test_a_held_bump_with_no_change_record_still_names_the_ceiling(
 
     assert LANDING_RECORD_ABSENT in answer.refusals
     assert LANDING_VERSION_CEILING_EXCEEDED in answer.refusals
+
+
+# ---------------------------------------------------------------------------------------------
+# Landing Part 2: the member record's grant bounds this lane as it bounds the inert one.
+# ---------------------------------------------------------------------------------------------
+
+
+def test_an_ungranted_repository_is_refused_not_granted(migrated_session: Session) -> None:
+    answer = _ask(migrated_session, granted=())
+
+    assert answer.satisfied is False
+    assert answer.refusals == (LANDING_REPOSITORY_NOT_GRANTED,)
+    assert answer.branch_update_qualifies is False
+
+
+def test_security_patches_alone_does_not_grant_this_lane(migrated_session: Session) -> None:
+    answer = _ask(migrated_session, granted=("security_patches",))
+
+    assert answer.refusals == (LANDING_REPOSITORY_NOT_GRANTED,)

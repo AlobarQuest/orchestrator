@@ -48,6 +48,7 @@ from tests.services.estate_landing_doubles import (
     pull_request,
 )
 from tests.services.inert_landing_doubles import INERT_REPOSITORY, FakeInertPolicySource
+from tests.services.test_member_proposals import grant_services
 
 ROUTE = "/api/v1/inert-pr-merge-admission"
 
@@ -190,6 +191,10 @@ def sibling_client(
     monkeypatch.setattr(
         landing_routes, "GitHubInertPullRequests", lambda _provider: slot["gateway"]
     )
+    # The member record grants the repository, so the sibling scan is what these tests reach.
+    with Session(migrated_engine) as seeding:
+        grant_services(seeding, INERT_REPOSITORY, "dependency_updates", "security_patches")
+        seeding.commit()
     app = create_app(auth_config)
 
     def database_session() -> Iterator[Session]:

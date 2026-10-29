@@ -32,6 +32,7 @@ WINDOW = "landing_outside_change_window"
 UNPARSEABLE = "landing_update_type_unparseable"
 ECOSYSTEM = "landing_ecosystem_excluded"
 CEILING = "landing_version_ceiling_exceeded"
+NOT_GRANTED = "landing_repository_not_granted"
 
 
 class _Client:
@@ -90,7 +91,7 @@ def test_the_estate_lane_is_exactly_this() -> None:
     assert estate.LANE == Lane(
         name="estate",
         deliberate=frozenset({PACE, WINDOW}),
-        exception=frozenset({UNPARSEABLE, CEILING}),
+        exception=frozenset({UNPARSEABLE, CEILING, NOT_GRANTED}),
         update_self_clearing=frozenset(
             {
                 "estate_branch_update_head_moved",
@@ -109,7 +110,7 @@ def test_the_inert_lane_is_exactly_this() -> None:
     assert inert.LANE == Lane(
         name="inert",
         deliberate=frozenset(),
-        exception=frozenset({ECOSYSTEM, CEILING}),
+        exception=frozenset({ECOSYSTEM, CEILING, NOT_GRANTED}),
         update_self_clearing=frozenset(
             {
                 "inert_branch_update_head_moved",

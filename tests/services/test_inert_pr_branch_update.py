@@ -51,6 +51,7 @@ from tests.services.inert_landing_doubles import (
     rules,
 )
 from tests.services.landing_locks import hold_branch_update_lock, hold_landing_lock
+from tests.services.test_member_proposals import grant_services
 
 SYSTEM = ActorContext("orchestrator-system", ActorRole.SYSTEM)
 WORKER = ActorContext("claude-code-runner", ActorRole.WORKER)
@@ -93,9 +94,11 @@ def _update(
     credentials_configured: bool = True,
     clock=None,
 ):
+    command = command or _command()
+    grant_services(session, command.repository, "dependency_updates", "security_patches")
     return update_inert_pull_request_branch(
         session,
-        command or _command(),
+        command,
         gateway or _behind_gateway(),
         landing_source or FakeEstateLandingSource(),
         policy_source or FakeInertPolicySource(),
@@ -409,6 +412,7 @@ def test_composing_the_answer_alone_observes_no_sibling(migrated_session: Sessio
     """The admission function never scans siblings; only the route fills the fact in."""
     from orchestrator.services.landing.inert_landing_admission import inert_landing_admission
 
+    grant_services(migrated_session, INERT_REPOSITORY, "dependency_updates")
     answer = inert_landing_admission(
         migrated_session,
         INERT_REPOSITORY,
@@ -450,8 +454,13 @@ def test_the_callers_EXCEPTION_set_is_exactly_the_refusal_current_policy_never_c
         LANDING_ECOSYSTEM_EXCLUDED,
         LANDING_VERSION_CEILING_EXCEEDED,
     )
+    from orchestrator.services.landing.terms import LANDING_REPOSITORY_NOT_GRANTED
 
-    assert LANE.exception == {LANDING_ECOSYSTEM_EXCLUDED, LANDING_VERSION_CEILING_EXCEEDED}
+    assert LANE.exception == {
+        LANDING_ECOSYSTEM_EXCLUDED,
+        LANDING_VERSION_CEILING_EXCEEDED,
+        LANDING_REPOSITORY_NOT_GRANTED,
+    }
 
 
 def test_the_caller_composes_the_key_THIS_TEST_FILE_IS_WRITTEN_AGAINST() -> None:

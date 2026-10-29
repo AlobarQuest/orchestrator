@@ -66,6 +66,7 @@ from orchestrator.services.landing.interfaces import (
     EstateGatewayError,
 )
 from orchestrator.services.landing.terms import (
+    LANDING_REPOSITORY_NOT_GRANTED,
     freshness_derived_refusals,
     qualifies_for_branch_update,
 )
@@ -82,6 +83,7 @@ from tests.services.estate_landing_doubles import (
     pull_request,
 )
 from tests.services.landing_locks import hold_landing_lock
+from tests.services.test_member_proposals import grant_services
 
 SYSTEM = ActorContext("orchestrator-system", ActorRole.SYSTEM)
 WORKER = ActorContext("claude-code-runner", ActorRole.WORKER)
@@ -124,6 +126,7 @@ def _update(
     key: str = "branch-update-1",
     record_source: FakeChangeRecordSource | None = None,
 ):
+    grant_services(session, REPOSITORY, "dependency_updates")
     return update_estate_pull_request_branch(
         session,
         EstateBranchUpdateCommand(
@@ -502,6 +505,7 @@ def test_composing_the_answer_alone_observes_no_sibling(migrated_session: Sessio
     false even on an answer that qualifies. Only the route fills it in."""
     from orchestrator.services.landing.estate_landing_admission import estate_landing_admission
 
+    grant_services(migrated_session, REPOSITORY, "dependency_updates")
     answer = estate_landing_admission(
         migrated_session,
         REPOSITORY,
@@ -534,7 +538,11 @@ def test_the_exception_the_lander_suppresses_beside_is_exactly_the_one_composed_
     from estate_lander.cli import LANE
 
     assert LANE.exception == frozenset(
-        {LANDING_UPDATE_TYPE_UNPARSEABLE, LANDING_VERSION_CEILING_EXCEEDED}
+        {
+            LANDING_UPDATE_TYPE_UNPARSEABLE,
+            LANDING_VERSION_CEILING_EXCEEDED,
+            LANDING_REPOSITORY_NOT_GRANTED,
+        }
     )
 
 

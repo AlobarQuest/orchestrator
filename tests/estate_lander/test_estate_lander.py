@@ -441,6 +441,25 @@ def test_an_EXCEPTION_alone_is_not_a_finding_and_is_NOT_called_deliberate() -> N
     assert report(outcomes) == EXIT_OK
 
 
+def test_an_ungranted_repository_is_an_exception_not_held() -> None:
+    """Landing Part 2. The member record not granting the repository clears only when a person
+    grants it on `/review`, so no pass of this program changes it: an exception, not a finding."""
+    client = FakeOrchestrator(
+        {
+            (REPOSITORY, 48): {
+                "satisfied": False,
+                "refusals": ["landing_repository_not_granted"],
+                "head_sha": HEAD,
+            }
+        }
+    )
+
+    outcomes = _pass(_subjects_of(FakeRecords([_row(48)])), client, submit=True)  # type: ignore[arg-type]
+
+    assert [o.status for o in outcomes] == ["exception"]
+    assert report(outcomes) == EXIT_OK
+
+
 def test_an_EXCEPTION_beside_a_DELIBERATE_refusal_is_reported_as_the_EXCEPTION() -> None:
     """Production's `#48` (2026-08-13). The pace resets tonight and the record still cannot land,
     so the exception is the durable fact and is what the line must say."""
