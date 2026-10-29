@@ -260,28 +260,75 @@ def _merges(source: Path) -> list[str]:
     return found
 
 
-def _detector_strays(source: Path) -> list[str]:
-    """Each string constant spelling `gh pr merge` outside the `ARMING_MARKERS` assignment."""
-    tree = ast.parse(source.read_text(encoding="utf-8"))
-    allowed: set[int] = set()
-    for node in ast.walk(tree):
-        targets = (
-            node.targets
-            if isinstance(node, ast.Assign)
-            else [node.target]
-            if isinstance(node, ast.AnnAssign)
-            else []
-        )
-        if any(isinstance(t, ast.Name) and t.id == MERGE_DETECTOR_MARKERS for t in targets):
-            allowed |= {id(inner) for inner in ast.walk(node)}
-    return [
-        f"{source}:{node.lineno}"
+def _canonical_markers(tree: ast.Module) -> ast.Tuple | None:
+    """The one module-level `ARMING_MARKERS` tuple of plain string constants, or `None`.
+
+    `None` unless the name is bound exactly once in the whole file, at module level, by a single
+    `Name` target, to a tuple whose every element is a `str` constant -- so a local rebinding, a
+    second binding, a call or a computed element closes the door instead of widening it.
+    """
+    stores = [
+        node
         for node in ast.walk(tree)
-        if isinstance(node, ast.Constant)
-        and isinstance(node.value, str)
-        and "gh pr merge" in node.value.lower()
-        and id(node) not in allowed
+        if isinstance(node, ast.Name)
+        and node.id == MERGE_DETECTOR_MARKERS
+        and isinstance(node.ctx, ast.Store)
     ]
+    if len(stores) != 1:
+        return None
+    for statement in tree.body:
+        if isinstance(statement, ast.Assign) and statement.targets == [stores[0]]:
+            value = statement.value
+        elif isinstance(statement, ast.AnnAssign) and statement.target is stores[0]:
+            value = statement.value
+        else:
+            continue
+        if isinstance(value, ast.Tuple) and all(
+            isinstance(element, ast.Constant) and isinstance(element.value, str)
+            for element in value.elts
+        ):
+            return value
+    return None
+
+
+def _imports_a_process_module(tree: ast.Module) -> bool:
+    """A door file may not import `subprocess` or `os`: it reads text, it runs nothing."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            roots = [alias.name.split(".")[0] for alias in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            roots = [(node.module or "").split(".")[0]]
+        else:
+            continue
+        if {"subprocess", "os"} & set(roots):
+            return True
+    return False
+
+
+def _detector_strays(source: Path) -> list[str]:
+    """Why the detector door does not apply to `source`; empty when it does.
+
+    The door holds only for a file that imports no process module, binds `ARMING_MARKERS` once
+    as a module-level tuple of string constants, and spells `gh pr merge` in no other `str` or
+    `bytes` constant.
+    """
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    problems = []
+    if _imports_a_process_module(tree):
+        problems.append(f"{source}: imports subprocess or os")
+    markers = _canonical_markers(tree)
+    if markers is None:
+        problems.append(f"{source}: no single module-level {MERGE_DETECTOR_MARKERS} string tuple")
+    allowed = {id(element) for element in markers.elts} if markers is not None else set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Constant) or id(node) in allowed:
+            continue
+        value = node.value
+        if isinstance(value, bytes):
+            value = value.decode("utf-8", errors="replace")
+        if isinstance(value, str) and "gh pr merge" in value.lower():
+            problems.append(f"{source}:{node.lineno}")
+    return problems
 
 
 @pytest.mark.parametrize("source", [*MERGE_SCAN_SOURCES, *SHELL_SOURCES], ids=lambda p: str(p))
@@ -378,6 +425,11 @@ def test_the_merge_detector_door_names_only_detectors_that_need_it() -> None:
         'run(["sh", "-c", "gh pr merge 5"])\n',
         'run(f"gh pr merge {n}")\n',
         'def f():\n    """Runs gh pr merge."""\n',
+        'X = b"gh pr merge 5"\n',
+        'def f():\n    ARMING_MARKERS = "gh pr merge 5 --squash"\n    run(ARMING_MARKERS)\n',
+        "import subprocess\n",
+        "from os import system\n",
+        'ARMING_MARKERS = ("y",)\n',
     ],
 )
 def test_the_merge_detector_door_is_bound_to_the_marker_literal(stray: str, tmp_path: Path) -> None:
@@ -385,6 +437,31 @@ def test_the_merge_detector_door_is_bound_to_the_marker_literal(stray: str, tmp_
     anywhere else in a door file, including a second string that would run it, still fails."""
     source = tmp_path / "detector.py"
     source.write_text(f'ARMING_MARKERS = ("gh pr merge", "x")\n{stray}')
+    MERGE_DETECTOR_PATHS.add(source)
+    try:
+        with pytest.raises(AssertionError, match="performs a merge"):
+            test_nothing_in_the_repo_merges_a_pull_request(source)
+    finally:
+        MERGE_DETECTOR_PATHS.discard(source)
+
+
+@pytest.mark.parametrize(
+    "marker",
+    [
+        'ARMING_MARKERS = subprocess.run("gh pr merge 5", shell=True)\n',
+        'ARMING_MARKERS = ("gh pr merge", run("gh pr merge 5"))\n',
+        'ARMING_MARKERS = ["gh pr merge"]\n',
+        'ARMING_MARKERS = ("gh pr merge", "gh pr merge " + n)\n',
+        'class C:\n    ARMING_MARKERS = ("gh pr merge",)\n',
+    ],
+)
+def test_only_a_module_level_tuple_of_strings_opens_the_detector_door(
+    marker: str, tmp_path: Path
+) -> None:
+    """An `ARMING_MARKERS` that is a call, a list, a computed element or not module-level does not
+    open the door: the file fails as if it had none."""
+    source = tmp_path / "detector.py"
+    source.write_text(marker)
     MERGE_DETECTOR_PATHS.add(source)
     try:
         with pytest.raises(AssertionError, match="performs a merge"):

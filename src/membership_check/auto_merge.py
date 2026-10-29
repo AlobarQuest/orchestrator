@@ -56,10 +56,10 @@ def arming(text: str) -> bool:
     """True when the workflow text arms auto-merge.
 
     A line arms when it holds the CLI command and a whole `--auto` flag, in any order, or either
-    of the other markers. Shell line continuations are joined first, so a command split over
-    lines is read as one.
+    of the other markers. Line endings are normalised and shell line continuations joined first,
+    so a command split over lines is read as one.
     """
-    for line in text.replace("\\\n", " ").splitlines():
+    for line in text.replace("\r\n", "\n").replace("\\\n", " ").splitlines():
         if _CLI_MARKER in line and _AUTO_FLAG.search(line):
             return True
         if any(marker in line for marker in _SUBSTRING_MARKERS):

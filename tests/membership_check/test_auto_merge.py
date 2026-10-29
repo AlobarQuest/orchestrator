@@ -46,6 +46,7 @@ def test_no_rollout_workflow_is_arming(path: Path):
         "run: gh pr merge --squash --auto",
         'run: gh pr merge --auto --squash "$PR_URL"',
         'run: |\n  gh pr merge "$PR_URL" \\\n    --squash --auto',
+        'run: |\r\n  gh pr merge "$PR_URL" \\\r\n    --squash --auto\r\n',
         "run: gh api graphql -f query='mutation { enablePullRequestAutoMerge(input: $i) { a } }'",
         "uses: peter-evans/enable-pull-request-automerge@v3",
     ],
