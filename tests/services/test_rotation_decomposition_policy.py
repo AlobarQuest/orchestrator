@@ -10,9 +10,11 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
+import pytest
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import normalize_authority
 from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import DecompositionProposal, WorkUnit
@@ -47,12 +49,15 @@ def _criterion(ac_id: str) -> AcceptanceCriterionProjection:
     )
 
 
-def _rotation_revision(session: Session, *, profile: str = "non-software-operational"):
+def _rotation_revision(
+    session: Session, *, profile: str = "non-software-operational", approved_by: str = "human-1"
+):
     return register_package_intake(
         session,
         intake_command(
             package_id="rotation-openrouter-generic",
             profile=profile,
+            approved_by=approved_by,
             enforcement_snapshot={
                 "title": "Standing rotation",
                 "reach": ["external_system"],
@@ -91,6 +96,7 @@ def _command(
     retire: dict[str, Any] | None = None,
     dependency: ProposedDependency | None = None,
     key: str = "rotation-decomposer:r",
+    retire_attempts: int = 3,
 ) -> DecompositionProposalCommand:
     return DecompositionProposalCommand(
         work_package_revision_id=revision_id,
@@ -112,7 +118,7 @@ def _command(
                 required_capability="operational_action",
                 authority=normalize_authority(retire or _envelope("retire")),
                 authority_payload=retire or _envelope("retire"),
-                max_attempts=3,
+                max_attempts=retire_attempts,
             ),
         ),
         dependencies=(
@@ -236,9 +242,6 @@ def test_system_may_register_a_unit_only_for_a_decomposition_policy_approved(
     migrated_session: Session,
 ) -> None:
     """The second human gate behind approval: SYSTEM is admitted for a policy approval alone."""
-    import pytest
-
-    from orchestrator.errors import DomainError
     from orchestrator.services.intake.packages import register_approved_unit
     from tests.services.test_package_intake import NOW
 
@@ -336,3 +339,153 @@ def test_a_dependency_on_anything_but_a_unit_completing_waits_for_a_person(
             SYSTEM,
         )
         assert proposal.state == "proposed", dependency
+
+
+def test_more_attempts_than_the_envelope_budgets_waits_for_a_person(
+    migrated_session: Session,
+) -> None:
+    """The enforced cap is the unit's column, which nothing compares to the envelope."""
+    revision = _rotation_revision(migrated_session)
+    proposal = submit_decomposition_proposal(
+        migrated_session,
+        _command(revision.id, package_ac_ids(migrated_session, revision.id), retire_attempts=4),
+        SYSTEM,
+    )
+    assert proposal.state == "proposed"
+
+
+def test_a_revision_an_approval_policy_approved_waits_for_a_person(
+    migrated_session: Session,
+) -> None:
+    revision = _rotation_revision(migrated_session, approved_by="policy:rotation@v1")
+    proposal = submit_decomposition_proposal(
+        migrated_session,
+        _command(revision.id, package_ac_ids(migrated_session, revision.id)),
+        SYSTEM,
+    )
+    assert proposal.state == "proposed"
+
+
+def test_a_unit_no_rotation_pattern_recognises_waits_for_a_person(
+    migrated_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Recognition by any other pattern is not enough: the policy's basis is the rotation one."""
+    from dataclasses import replace
+
+    from orchestrator.factory_policy import load_factory_policy
+    from orchestrator.services.intake import decomposition
+
+    policy = load_factory_policy()
+    stripped = replace(
+        policy,
+        rows={k: replace(row, rotation_known_good=()) for k, row in policy.rows.items()},
+    )
+    monkeypatch.setattr(decomposition, "load_factory_policy", lambda: stripped)
+    revision = _rotation_revision(migrated_session)
+    proposal = submit_decomposition_proposal(
+        migrated_session,
+        _command(revision.id, package_ac_ids(migrated_session, revision.id)),
+        SYSTEM,
+    )
+    assert proposal.state == "proposed"
+
+
+def test_an_approval_that_cannot_complete_leaves_the_proposal_for_a_person(
+    migrated_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from orchestrator.services.intake import decomposition
+
+    def refuse(*_args: object, **_kwargs: object) -> None:
+        raise DomainError("unit_conflict", "a unit already holds that key", None)
+
+    monkeypatch.setattr(decomposition, "_approve", refuse)
+    revision = _rotation_revision(migrated_session)
+    proposal = submit_decomposition_proposal(
+        migrated_session,
+        _command(revision.id, package_ac_ids(migrated_session, revision.id)),
+        SYSTEM,
+    )
+    assert proposal.state == "proposed"
+    assert migrated_session.get(DecompositionProposal, proposal.id) is not None
+    assert _units(migrated_session) == 0
+
+
+def test_system_may_not_register_a_unit_of_a_decomposition_a_person_approved(
+    migrated_session: Session,
+) -> None:
+    from orchestrator.persistence.models import ApprovedDecomposition
+    from orchestrator.services.intake.decomposition import approve_decomposition_proposal
+    from orchestrator.services.intake.packages import register_approved_unit
+    from tests.services.test_package_intake import NOW
+
+    revision = _rotation_revision(migrated_session)
+    proposal = submit_decomposition_proposal(
+        migrated_session,
+        _command(revision.id, package_ac_ids(migrated_session, revision.id)),
+        human_actor(),
+    )
+    approve_decomposition_proposal(
+        migrated_session,
+        proposal.id,
+        actor=human_actor(),
+        reason="looks right",
+        idempotency_key="a",
+    )
+    approved = migrated_session.scalars(select(ApprovedDecomposition)).one()
+    for actor_id in ("orchestrator-system", "human-1"):
+        with pytest.raises(DomainError, match="registered human actor"):
+            register_approved_unit(
+                migrated_session,
+                revision_id=revision.id,
+                unit_key=f"extra-{actor_id}",
+                title="t",
+                outcome="o",
+                required_capability="operational_action",
+                authority=normalize_authority(_envelope("mint")),
+                approved_by=actor_id,
+                approved_at=NOW,
+                actor_id=actor_id,
+                actor_role=ActorRole.SYSTEM,
+                approved_decomposition_id=approved.id,
+            )
+
+
+def test_system_may_not_register_a_unit_of_its_own_proposal_a_person_approved(
+    migrated_session: Session,
+) -> None:
+    """A SYSTEM proposal policy left for a person, then approved by one, is not policy's."""
+    from orchestrator.persistence.models import ApprovedDecomposition
+    from orchestrator.services.intake.decomposition import approve_decomposition_proposal
+    from orchestrator.services.intake.packages import register_approved_unit
+    from tests.services.test_package_intake import NOW
+
+    revision = _rotation_revision(migrated_session)
+    retire = _envelope("retire", host_without_overlap=True)
+    proposal = submit_decomposition_proposal(
+        migrated_session,
+        _command(revision.id, package_ac_ids(migrated_session, revision.id), retire=retire),
+        SYSTEM,
+    )
+    approve_decomposition_proposal(
+        migrated_session,
+        proposal.id,
+        actor=human_actor(),
+        reason="looks right",
+        idempotency_key="a",
+    )
+    approved = migrated_session.scalars(select(ApprovedDecomposition)).one()
+    with pytest.raises(DomainError, match="registered human actor"):
+        register_approved_unit(
+            migrated_session,
+            revision_id=revision.id,
+            unit_key="extra",
+            title="t",
+            outcome="o",
+            required_capability="operational_action",
+            authority=normalize_authority(_envelope("mint")),
+            approved_by="orchestrator-system",
+            approved_at=NOW,
+            actor_id="orchestrator-system",
+            actor_role=ActorRole.SYSTEM,
+            approved_decomposition_id=approved.id,
+        )

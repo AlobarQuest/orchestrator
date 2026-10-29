@@ -1999,7 +1999,8 @@ decomposition is derived from the approved package by machine (increment 5).
 2. **change-manager approves a rotation's `work` record by policy**, as `work-policy`, inside the
    proposal transaction, as it already does for standing dependency updates. A record conforms when
    it names a standing rotation package (`rotation-<credential>`), intent-packages as its source,
-   risk `caution`, and no change class or target repository. The safety rests on the carrier: it
+   risk `caution`, change class `credential-rotation` and no target repository; the carrier
+   refuses that class on a package whose profile isn't the rotation profile. The safety rests on the carrier: it
    carries a record only when its package revision is approved, the approval's hash verified
    against the tamper-evident chain, and only a named person can approve a rotation revision.
 3. **The orchestrator approves a rotation decomposition by policy** when SYSTEM proposes it, inside

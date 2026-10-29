@@ -185,7 +185,8 @@ def test_the_pass_after_devon_approves_proposes_naming_the_first_observation(rig
     assert run(["--submit"]) == EXIT_OK
     assert rig.acts() == (["revise", "transition", "hash"], 2, 1, 1)
     proposal = rig.estate.proposals[0]
-    assert tuple(proposal) == WORK_RECORD_FIELDS
+    assert tuple(proposal) == (*WORK_RECORD_FIELDS, "change_class")
+    assert proposal["change_class"] == "credential-rotation"
     assert (proposal["package_id"], proposal["package_revision"], proposal["actor"]) == (
         f"rotation-{CREDENTIAL}",
         2,

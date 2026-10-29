@@ -365,7 +365,8 @@ Placement rule: global CLAUDE.md §7.
   standing dependency-update package (`change_class` `dependency-update`, source repository
   intent-packages, risk `caution`) whose `target_repository` is in its inert or deploying
   population, or a standing rotation package's record (`rotation-<credential>`, intent-packages
-  source, risk `caution`, no change class or target repository; ADR-0055 amendment 16); a person
+  source, risk `caution`, change class `credential-rotation`, no target repository; ADR-0055
+  amendment 16, and the carrier refuses that class on a package of any other profile); a person
   moves every other one. No producer credential moves a status:
   `bump_proposer` is propose-and-read and the `propose` scope refuses status routes.
   `bump_proposer` creates a missing package for a declared repository's failed npm, pip or uv bump

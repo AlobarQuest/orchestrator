@@ -110,6 +110,9 @@ EXIT_FINDINGS: Final = 3
 
 ACTOR: Final = "rotation-proposer"
 RISK: Final = "caution"
+# The class change-manager's work policy approves a rotation record on, and the carrier holds
+# the package's profile to (`work_carrier.prepare.CREDENTIAL_ROTATION`).
+CHANGE_CLASS: Final = "credential-rotation"
 USER_AGENT: Final = "rotation-proposer/1 (+AlobarQuest/orchestrator)"
 OBSERVER_KEY_ID: Final = "orchestrator-observer"
 # The actor the work watcher retires a record as (`work_watcher.change_manager`), duplicated
@@ -202,8 +205,8 @@ def _reasoning(package: RotationPackage) -> str:
 
 
 def _proposal(package: RotationPackage, observation_id: str) -> dict[str, Any]:
-    """The record's facts. Exactly `bump_proposer.cli.WORK_RECORD_FIELDS`, which a test holds it
-    to: a rotation record names no target repository and no dependency-update change class."""
+    """The record's facts: `bump_proposer.cli.WORK_RECORD_FIELDS` and the change class, which a
+    test holds it to. A rotation record names no target repository."""
     return {
         "package_id": package.package_id,
         "package_revision": package.revision,
@@ -212,6 +215,7 @@ def _proposal(package: RotationPackage, observation_id: str) -> dict[str, Any]:
         "reasoning": _reasoning(package),
         "actor": ACTOR,
         "originating_observation_id": observation_id,
+        "change_class": CHANGE_CLASS,
     }
 
 

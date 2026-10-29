@@ -27,6 +27,7 @@ from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import (
     Approval,
     ApprovedDecomposition,
+    DecompositionProposal,
     DecompositionProposalUnit,
     Dependency,
     Event,
@@ -483,11 +484,8 @@ def register_approved_unit(
     approved_decomposition_id: uuid.UUID | None = None,
     idempotency_key: str | None = None,
     expected_version: int | None = None,
-    approved_by_policy: bool = False,
 ) -> WorkUnit:
-    # A person registers a unit, or SYSTEM does for a decomposition policy approved: a rotation's
-    # (ADR-0055 amendment 16, `decomposition._policy_approval`). Nothing else may.
-    if not (approved_by_policy and actor_role is ActorRole.SYSTEM and actor_id):
+    if not _approved_by_policy(session, approved_decomposition_id, actor_id, actor_role):
         _require_human(actor_id, actor_role)
     validate_unit_capabilities(required_capability, authority.capabilities)
     # Checked against the dict that will be STORED -- the exact bytes the brief serves the
@@ -985,6 +983,27 @@ def _require_registrar(
         "the actor may not register a package revision",
         None,
     )
+
+
+def _approved_by_policy(
+    session: Session,
+    approved_decomposition_id: uuid.UUID | None,
+    actor_id: str,
+    actor_role: ActorRole,
+) -> bool:
+    """Whether SYSTEM is registering a unit of a decomposition SYSTEM proposed and it approved.
+
+    ADR-0055 amendment 16 (`decomposition._policy_approval`). Read from the stored rows, never
+    from the caller: a person's approval route refuses SYSTEM, so a decomposition SYSTEM both
+    proposed and approved can only have been approved by policy.
+    """
+    if actor_role is not ActorRole.SYSTEM or not actor_id or approved_decomposition_id is None:
+        return False
+    approved = session.get(ApprovedDecomposition, approved_decomposition_id)
+    if approved is None or approved.approved_by != actor_id:
+        return False
+    proposal = session.get(DecompositionProposal, approved.proposal_id)
+    return proposal is not None and proposal.proposed_actor_role == ActorRole.SYSTEM.value
 
 
 def _require_human(actor_id: str, actor_role: ActorRole) -> None:
