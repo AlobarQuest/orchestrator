@@ -25,6 +25,7 @@ from orchestrator.services.landing.inert_pr_merge import InertMergeCommand, land
 from orchestrator.services.landing.interfaces import (
     LANDING_HEAD_NOT_CURRENT_WITH_BASE,
     BranchHead,
+    EstateGatewayError,
     MergeOutcome,
     Term,
     Tree,
@@ -250,6 +251,35 @@ def test_landing_the_revert_records_it_and_places_the_hold_in_one_transaction(
         assert reader.scalars(select(EstatePrMerge)).one().pr_number == REVERT
 
 
+def test_a_revert_confirmed_landed_by_the_reread_is_recorded_with_its_commit(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    """`already_merged`: the remote refused, the confirming read says it landed. The revert is
+    landed and held, and names the commit the re-read reports."""
+    _with_merge_parent(_opened(migrated_session))
+    migrated_session.commit()
+    grant_services(migrated_session, INERT_REPOSITORY, "dependency_updates")
+    gateway = _acting_revert_gateway(
+        merge_error=EstateGatewayError("merge_status", 502), landed_after_refusal=True
+    )
+
+    record = land_inert_pull_request(
+        migrated_session,
+        InertMergeCommand(INERT_REPOSITORY, REVERT, SYSTEM, "revert-1", HEAD),
+        gateway,
+        FakeEstateLandingSource(default=EstateAnswer(LANDING_INERT)),
+        FakeInertPolicySource(),
+        enabled=True,
+        credentials_configured=True,
+    )
+
+    assert record.status == "already_merged"
+    with Session(migrated_engine) as reader:
+        stored = reader.scalars(select(LandingRevert)).one()
+        assert (stored.status, stored.revert_merge_sha) == ("revert_landed", LANDED_COMMIT)
+        assert stored.hold_outcome == "held uv / typer at 0.20.0"
+
+
 def test_a_revert_the_remote_refused_records_no_landing_and_no_hold(
     migrated_session: Session, migrated_engine: Engine
 ) -> None:
@@ -381,6 +411,17 @@ GONE = Bump("uv", "/", "alembic", "1.19.0")
         (Bump("uv", "/", "alembic-utils", "1.19.0"), GONE, False),
         (Bump("uv", "/api", "alembic", "1.19.0"), GONE, False),
         (Bump("uv", "/api/", "alembic", "1.19.0"), Bump("uv", "/api", "alembic", "1.19.0"), True),
+        (Bump("uv", "/api", "alembic", "1.19.0"), Bump("uv", "/api/", "alembic", "1.19.0"), True),
+        # The registry's name rule, the hold matcher's own: PEP 503 for pip and uv, case only for
+        # npm. A reverted version re-offered under another spelling is still that version.
+        (Bump("pip", "/", "Foo_Bar", "2.0"), Bump("pip", "/", "foo-bar", "2.0"), True),
+        (Bump("uv", "/", "foo.bar", "2.0"), Bump("uv", "/", "Foo_Bar", "2.0"), True),
+        (Bump("pip", "/", "foo-baz", "2.0"), Bump("pip", "/", "foo-bar", "2.0"), False),
+        (
+            Bump("npm_and_yarn", "/", "Foo_Bar", "2.0"),
+            Bump("npm_and_yarn", "/", "foo-bar", "2.0"),
+            False,
+        ),
         # A side naming no directory matches any; a version either side can't read matches.
         (Bump("uv", None, "alembic", "1.19.0"), GONE, True),
         (Bump("uv", "/api", "alembic", "1.19.0"), Bump("uv", None, "alembic", "1.19.0"), True),

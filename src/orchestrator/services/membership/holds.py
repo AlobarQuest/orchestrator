@@ -193,10 +193,22 @@ def factory_breaches(
 
 
 def _same_dependency(hold: HeldDependency, bump: Bump) -> bool:
+    return same_dependency(Bump(hold.ecosystem, hold.directory, hold.dependency, ""), bump)
+
+
+def same_dependency(left: Bump, right: Bump) -> bool:
+    """Do two bumps name one dependency? The matcher's identity rule, whatever their versions: the
+    same ecosystem, case-folded; the same directory, a trailing `/` ignored, and a side naming none
+    matching any; and the same name by the registry's rule (`_name`). Used by every hold match and
+    by the landing lanes' reverted-version term, so the two never disagree on a spelling."""
     return (
-        hold.ecosystem.lower() == bump.ecosystem.lower()
-        and (bump.directory is None or _directory(bump.directory) == _directory(hold.directory))
-        and _name(hold.ecosystem, hold.dependency) == _name(bump.ecosystem, bump.dependency)
+        left.ecosystem.lower() == right.ecosystem.lower()
+        and (
+            left.directory is None
+            or right.directory is None
+            or _directory(left.directory) == _directory(right.directory)
+        )
+        and _name(left.ecosystem, left.dependency) == _name(right.ecosystem, right.dependency)
     )
 
 

@@ -911,6 +911,8 @@ def _pull_from_body(body: dict[str, Any], number: int) -> EstatePullRequest:
     ):
         raise EstateGatewayError("read_response_invalid")
     login = user.get("login")
+    landed = bool(body.get("merged"))
+    merge_sha = body.get("merge_commit_sha")
     return EstatePullRequest(
         number=number,
         title=str(title),
@@ -919,8 +921,11 @@ def _pull_from_body(body: dict[str, Any], number: int) -> EstatePullRequest:
         head_ref=str(head_ref),
         default_branch=str(default_branch),
         open=body.get("state") == "open",
-        landed=bool(body.get("merged")),
+        landed=landed,
         author_login=login if isinstance(login, str) else "",
         author_is_bot=str(user.get("type", "")).lower() == "bot",
         mergeable_state=str(body.get("mergeable_state") or ""),
+        # GitHub fills this for an open pull request too (a test merge); only a landed one's is
+        # the landing commit.
+        merge_commit_sha=merge_sha if landed and isinstance(merge_sha, str) and merge_sha else None,
     )

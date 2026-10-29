@@ -281,6 +281,10 @@ class EstatePullRequest:
     author_login: str
     author_is_bot: bool
     mergeable_state: str
+    # The commit the landing made, once it has landed; `None` before, or when the remote's answer
+    # names none. Read by the reconciling re-read, so a landing confirmed only by it still names
+    # its commit (Landing Part 3a).
+    merge_commit_sha: str | None = None
 
 
 class EstateGatewayError(Exception):

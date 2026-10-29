@@ -48,6 +48,7 @@ from orchestrator.services.membership.holds import (
     bumps_of,
     exceeded,
     release,
+    same_dependency,
 )
 
 # The update bot's branch naming, from which the ecosystem is read: `dependabot/<ecosystem>/<rest>`.
@@ -441,10 +442,11 @@ def version_reverted_term(reverted: Sequence[Bump], update: UpdateBumps) -> Term
     """Does this update bring a version the SDS reverted from this repository? Landing Part 3a.
 
     Never read when nothing was reverted here. A list that can't be read refuses
-    `LANDING_DEPENDENCY_LIST_UNREADABLE`, as the hold term does. A bump matches a reverted one on
-    the same ecosystem and dependency (case-folded), the same directory (either side naming none
-    matches any) and the same release (`membership.holds.release`, zero-padded); a version either
-    side can't read matches, so an unreadable version is refused rather than let through.
+    `LANDING_DEPENDENCY_LIST_UNREADABLE`, as the hold term does. A bump matches a reverted one when
+    the hold matcher says they name one dependency (`membership.holds.same_dependency`: ecosystem,
+    directory, and the registry's name rule, PEP 503 for pip and uv) and they bring the same release
+    (`membership.holds.release`, zero-padded); a version either side can't read matches, so an
+    unreadable version is refused rather than let through.
     """
     if not reverted:
         return Term(True, ())
@@ -457,16 +459,7 @@ def version_reverted_term(reverted: Sequence[Bump], update: UpdateBumps) -> Term
 
 
 def _same_bump(bump: Bump, gone: Bump) -> bool:
-    return (
-        bump.ecosystem.lower() == gone.ecosystem.lower()
-        and bump.dependency.lower() == gone.dependency.lower()
-        and (
-            bump.directory is None
-            or gone.directory is None
-            or bump.directory.rstrip("/") == gone.directory.rstrip("/")
-        )
-        and _same_release(bump.to_version, gone.to_version)
-    )
+    return same_dependency(bump, gone) and _same_release(bump.to_version, gone.to_version)
 
 
 def _same_release(left: str, right: str) -> bool:

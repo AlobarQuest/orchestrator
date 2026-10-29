@@ -13,12 +13,14 @@ import pytest
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
-from orchestrator.persistence.models import LandingRevert, SdsMemberHold
+from orchestrator.kernel.states import ActorContext, ActorRole
+from orchestrator.persistence.models import Event, LandingRevert, SdsMemberHold
 from orchestrator.services.membership.revert_hold import SET_BY, place
 from tests.services.test_member_holds import place_hold
 from tests.services.test_member_proposals import member_of
 
 REPOSITORY = "alobarquest/brain"
+SYSTEM = ActorContext("orchestrator-system", ActorRole.SYSTEM)
 
 
 def bump(**overrides: Any) -> dict[str, Any]:
@@ -71,7 +73,7 @@ def test_the_hold_is_a_ceiling_at_the_from_version(
     member_of(migrated_session, REPOSITORY)
     revert = revert_record(migrated_session)
 
-    outcome = place(migrated_session, revert)
+    outcome = place(migrated_session, revert, actor=SYSTEM)
     migrated_session.commit()
 
     assert _holds(migrated_engine) == [
@@ -79,6 +81,20 @@ def test_the_hold_is_a_ceiling_at_the_from_version(
     ]
     assert SET_BY == "sds-revert"
     assert outcome == "held uv / typer at 0.20.0"
+    # The audit a person's confirmation leaves, attributed to the landing's SYSTEM actor.
+    with Session(migrated_engine) as reader:
+        event = reader.scalars(select(Event).where(Event.action == "member.changed")).one()
+        assert event.actor_id == "orchestrator-system"
+        assert event.correlation_id == revert.id
+        assert event.payload["holds"] == [
+            {
+                "ecosystem": "uv",
+                "directory": "/",
+                "dependency": "typer",
+                "old": None,
+                "new": "0.20.0",
+            }
+        ]
 
 
 def test_an_unknown_from_version_places_no_hold_and_says_so(
@@ -99,7 +115,7 @@ def test_an_unknown_from_version_places_no_hold_and_says_so(
         ],
     )
 
-    outcome = place(migrated_session, revert)
+    outcome = place(migrated_session, revert, actor=SYSTEM)
     migrated_session.commit()
 
     assert [row[2] for row in _holds(migrated_engine)] == ["typer"]
@@ -125,13 +141,20 @@ def test_an_existing_hold_is_left_alone(migrated_session: Session, migrated_engi
         bumps=[bump(ecosystem="pip", dependency="typing-extensions", from_version="4.12.0")],
     )
 
-    outcome = place(migrated_session, revert)
+    outcome = place(migrated_session, revert, actor=SYSTEM)
     migrated_session.commit()
 
     assert _holds(migrated_engine) == [
         ("pip", "/", "Typing_Extensions", "4.0", "held for a test", "devon")
     ]
     assert outcome == "not held pip / typing-extensions: already held at 4.0"
+    with Session(migrated_engine) as reader:
+        assert (
+            reader.scalars(
+                select(Event).where(Event.idempotency_key == f"revert-hold:{revert.id}")
+            ).all()
+            == []
+        )
 
 
 def test_two_bumps_of_one_dependency_place_one_hold(
@@ -142,7 +165,7 @@ def test_two_bumps_of_one_dependency_place_one_hold(
     member_of(migrated_session, REPOSITORY)
     revert = revert_record(migrated_session, bumps=[bump(), bump(from_version="0.19.0")])
 
-    outcome = place(migrated_session, revert)
+    outcome = place(migrated_session, revert, actor=SYSTEM)
     migrated_session.commit()
 
     assert [row[3] for row in _holds(migrated_engine)] == ["0.20.0"]
@@ -154,7 +177,7 @@ def test_a_repository_with_no_member_places_nothing_and_says_so(
 ) -> None:
     revert = revert_record(migrated_session)
 
-    outcome = place(migrated_session, revert)
+    outcome = place(migrated_session, revert, actor=SYSTEM)
 
     assert _holds(migrated_engine) == []
     assert outcome == f"nothing held: {REPOSITORY} has no member record"
@@ -169,7 +192,7 @@ def test_a_revert_that_has_not_landed_places_nothing(
     ):
         revert = revert_record(migrated_session, status=status, pr_number=number)
 
-        outcome = place(migrated_session, revert)
+        outcome = place(migrated_session, revert, actor=SYSTEM)
 
         assert outcome == f"nothing held: the revert is {status}, not landed"
     migrated_session.commit()
@@ -188,6 +211,7 @@ def test_the_writer_never_updates_or_deletes() -> None:
     tree = ast.parse(inspect.getsource(revert_hold))
     assert sorted(p.split(": ", 1)[1] for p in _writes(tree)) == [
         "constructs SdsMemberHold",
+        "session.add(...)",
         "session.add(...)",
     ]
     assert _assigned_attributes(tree) == []
@@ -210,9 +234,11 @@ def test_the_writer_takes_the_lock_a_persons_confirmation_takes(migrated_engine:
             blocked.execute(text("SET LOCAL lock_timeout = '1s'"))
             revert = blocked.scalars(select(LandingRevert)).one()
             with pytest.raises(OperationalError):
-                place(blocked, revert)
+                place(blocked, revert, actor=SYSTEM)
         holder.rollback()
 
     with Session(migrated_engine) as free:
         free.execute(text("SET LOCAL lock_timeout = '1s'"))
-        assert place(free, free.scalars(select(LandingRevert)).one()).startswith("held")
+        assert place(free, free.scalars(select(LandingRevert)).one(), actor=SYSTEM).startswith(
+            "held"
+        )

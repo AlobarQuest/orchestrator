@@ -217,18 +217,18 @@ def land_inert_pull_request(
         ),
         remote_call=lambda admission, head_sha: _act(gateway, admission, head_sha),
         change_record_id=None,
-        on_landed=lambda record: _revert_landed(session, record),
+        on_landed=lambda record: _revert_landed(session, record, command.actor),
     )
 
 
-def _revert_landed(session: Session, record: EstatePrMerge) -> None:
+def _revert_landed(session: Session, record: EstatePrMerge, actor: ActorContext) -> None:
     """If the pull request that just landed is a revert the SDS opened, record it landed and hold
     the dependency, in the transaction that records the landing. Landing Part 3a.
 
     The record is the `revert_opened` one naming this pull request as its revert -- the same record
     the admission found -- read under the landing's repository lock, which is already held. Every
-    other landing finds none and does nothing. `revert_merge_sha` stays empty when the landing was
-    confirmed only by a re-read (`already_merged`), which carries no commit.
+    other landing finds none and does nothing. On `already_merged` the commit is the confirming
+    re-read's; it stays empty only when that read named none.
     """
     revert = session.scalar(
         select(LandingRevert)
@@ -238,13 +238,14 @@ def _revert_landed(session: Session, record: EstatePrMerge) -> None:
             LandingRevert.status == REVERT_OPENED,
         )
         .with_for_update()
+        .execution_options(populate_existing=True)
     )
     if revert is None:
         return
     revert.status = REVERT_LANDED
     revert.revert_merge_sha = record.merge_commit_sha
     revert.updated_at = datetime.now(UTC)
-    revert.hold_outcome = place_revert_hold(session, revert)
+    revert.hold_outcome = place_revert_hold(session, revert, actor=actor)
 
 
 def _act(

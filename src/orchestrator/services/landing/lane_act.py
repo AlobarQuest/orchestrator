@@ -51,6 +51,7 @@ from orchestrator.services.landing.interfaces import (
     MERGE_REFUSED_BY_REMOTE,
     NEVER_SENT,
     EstateGatewayError,
+    EstatePullRequest,
     EstateReadGateway,
     MergeOutcome,
     SiblingReadGateway,
@@ -314,7 +315,8 @@ def _act[Admission: LaneAdmission](
                 f"the landing was not attempted: {gateway_failure_detail(error)}",
                 "retry once the credential can be minted",
             ) from error
-        landed = _landed_after_all(gateway, admission)
+        reread = _reread(gateway, admission)
+        landed = None if reread is None else reread.landed
         if landed is True:
             return _record(
                 session,
@@ -326,6 +328,7 @@ def _act[Admission: LaneAdmission](
                 names_change_record=names_change_record,
                 status="already_merged",
                 reason_code=None,
+                merge_commit_sha=reread.merge_commit_sha if reread is not None else None,
                 github_status=error.status_code,
             )
         if landed is False:
@@ -367,8 +370,9 @@ def _act[Admission: LaneAdmission](
     )
 
 
-def _landed_after_all(gateway: EstateReadGateway, admission: LaneAdmission) -> bool | None:
-    """Did the pull request land despite the refusal? `None` means WE DO NOT KNOW.
+def _reread(gateway: EstateReadGateway, admission: LaneAdmission) -> EstatePullRequest | None:
+    """Did the pull request land despite the refusal? `None` means WE DO NOT KNOW; otherwise the
+    re-read pull request, whose `landed` answers and whose merge commit names the landing.
 
     Three answers, not two, and the third is the one the caller must treat differently: a second
     failure to read cannot be collapsed into "it did not land", because that reads a lost success
@@ -377,7 +381,7 @@ def _landed_after_all(gateway: EstateReadGateway, admission: LaneAdmission) -> b
     try:
         return gateway.read_pull_request(
             repository=admission.repository, number=admission.pr_number
-        ).landed
+        )
     except EstateGatewayError:
         return None
 

@@ -531,7 +531,10 @@ def _revert_term(
 
     1. Is it the one the record names: a `revert_opened` record whose revert this pull request is,
        on that record's own branch, opened by a machine account. The record is what proves the SDS
-       opened it; no configuration names the App's login.
+       opened it; no configuration names the App's login. The binding is the pull request NUMBER
+       the record wrote when the SDS opened it, so `author_is_bot` need not name which bot: no
+       other account can be the author of that number, and the exact-inverse check below decides
+       what it changes whoever pushed to it.
     2. Is its head current with its base. Always required here, and asked BEFORE the inverse: a
        merely-behind revert differs from its base on every path the base moved since, and reporting
        that as not-an-inverse would never be freshened.
@@ -540,6 +543,10 @@ def _revert_term(
 
     The default branch's head is read here, separately from the freshness read; if it moves between
     the two, the landing meets the same race every landing does.
+
+    Every App read here is bounded as every read of this lane is: the policy's declared population
+    and the grant term are asked by the caller for the same answer, and nothing here writes -- the
+    one write, the landing, happens only on a satisfied answer, which needs the grant.
     """
     expected = f"{REVERT_BRANCH_PREFIX}pr-{revert.pr_number}" if revert is not None else None
     if revert is None or pull.head_ref != expected or not pull.author_is_bot:

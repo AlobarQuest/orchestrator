@@ -38,9 +38,14 @@ MAY_NAME = frozenset(
     }
 )
 MAY_WRITE = frozenset({"services/membership/proposals.py"})
-# The automatic hold writer: the only writes it may make, by `_writes`' description, line dropped.
+# The automatic hold writer: the only writes it may make, by `_writes`' description, line dropped --
+# one hold constructed, added, and the audit event added (an `Event` is no member model).
 INSERT_ONLY = {
-    "services/membership/revert_hold.py": ["constructs SdsMemberHold", "session.add(...)"],
+    "services/membership/revert_hold.py": [
+        "constructs SdsMemberHold",
+        "session.add(...)",
+        "session.add(...)",
+    ],
 }
 # The automatic hold writer's module, and the one module that may import it.
 AUTOMATIC_WRITER = "orchestrator.services.membership.revert_hold"
@@ -299,12 +304,21 @@ def _returns_orm_model(tree: ast.Module) -> list[str]:
 
 
 def test_the_automatic_writer_only_inserts_a_hold() -> None:
-    """Control: an update or an attribute write in the automatic writer is seen."""
+    """Control: an update or an attribute write in the automatic writer is seen; the same module
+    making only its allowed writes is not."""
     writer = "services/membership/revert_hold.py"
+    allowed = ast.parse(
+        "from orchestrator.persistence.models import SdsMemberHold\n"
+        "def place(session):\n"
+        "    session.add(SdsMemberHold(ceiling='1'))\n"
+        "    session.add(Event())\n"
+    )
+    assert _violations({writer: allowed}) == []
     updates = ast.parse(
         "from orchestrator.persistence.models import SdsMemberHold\n"
         "def place(session, row):\n"
         "    session.add(SdsMemberHold(ceiling='1'))\n"
+        "    session.add(Event())\n"
         "    row.ceiling = '2'\n"
     )
     assert len(_violations({writer: updates})) == 1
@@ -312,6 +326,7 @@ def test_the_automatic_writer_only_inserts_a_hold() -> None:
         "from orchestrator.persistence.models import SdsMemberHold\n"
         "def place(session, row):\n"
         "    session.add(SdsMemberHold(ceiling='1'))\n"
+        "    session.add(Event())\n"
         "    session.execute(delete(SdsMemberHold))\n"
     )
     assert len(_violations({writer: deletes})) == 1

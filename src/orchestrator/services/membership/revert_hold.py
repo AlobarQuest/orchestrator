@@ -23,7 +23,8 @@ from typing import Any, Final
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from orchestrator.persistence.models import LandingRevert, SdsMember, SdsMemberHold
+from orchestrator.kernel.states import ActorContext
+from orchestrator.persistence.models import Event, LandingRevert, SdsMember, SdsMemberHold
 from orchestrator.services.membership.holds import Bump, HeldDependency, holding, release
 from orchestrator.services.membership.members import holds_for
 from orchestrator.services.membership.proposals import lock_record
@@ -44,11 +45,13 @@ class _Placed:
     ceiling: str
 
 
-def place(session: Session, revert: LandingRevert) -> str:
+def place(session: Session, revert: LandingRevert, *, actor: ActorContext) -> str:
     """Hold each dependency the revert took back out, at its from-version; answer what was done.
 
     Takes the membership record's lock, as a person's confirmation does, so the two take turns.
-    Flushes nothing and never commits: the caller owns the transaction.
+    When it places a hold it records the `member.changed` event a person's confirmation records,
+    attributed to `actor` (the landing's SYSTEM actor). Flushes nothing and never commits: the
+    caller owns the transaction.
     """
     if revert.status != _LANDED:
         return f"nothing held: the revert is {revert.status}, not landed"
@@ -62,13 +65,54 @@ def place(session: Session, revert: LandingRevert) -> str:
     jobs = ", ".join(revert.failed_job_names)
     reason = f"Reverted {revert.repository}#{revert.pr_number}: {jobs} failed"
     answers: list[str] = []
+    placed: list[_Placed] = []
     for entry in revert.bumps:
         answer, row = _hold(member, entry, held, reason)
         answers.append(answer)
         if row is not None:
             session.add(row)
-            held.append(_Placed(row.ecosystem, row.directory, row.dependency, row.ceiling))
+            placed.append(_Placed(row.ecosystem, row.directory, row.dependency, row.ceiling))
+            held.append(placed[-1])
+    if placed:
+        session.add(_event(member, revert, reason, placed, actor))
     return "; ".join(answers)
+
+
+def _event(
+    member: SdsMember,
+    revert: LandingRevert,
+    reason: str,
+    placed: list[_Placed],
+    actor: ActorContext,
+) -> Event:
+    """The event a person's confirmation records (`proposals._apply_change`), in the same shape:
+    nothing but holds moved, each from no ceiling to its new one."""
+    return Event(
+        actor_id=actor.actor_id,
+        action="member.changed",
+        subject_type="sds_member",
+        subject_id=member.id,
+        payload={
+            "revert_id": str(revert.id),
+            "repository": member.repository,
+            "reason": reason,
+            "fields": {},
+            "grants": [],
+            "apps": None,
+            "holds": [
+                {
+                    "ecosystem": hold.ecosystem,
+                    "directory": hold.directory,
+                    "dependency": hold.dependency,
+                    "old": None,
+                    "new": hold.ceiling,
+                }
+                for hold in placed
+            ],
+        },
+        correlation_id=revert.id,
+        idempotency_key=f"revert-hold:{revert.id}",
+    )
 
 
 def _hold(
