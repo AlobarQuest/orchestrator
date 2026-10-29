@@ -995,10 +995,25 @@ def _dependency_update_patterns(member: str) -> list[Any]:
     ]
 
 
+def _authority_fields(pattern: Any) -> tuple[Any, ...]:
+    """What a pattern recognises; the rationale and decided date are per reach and may differ."""
+    return (
+        pattern.name,
+        pattern.change_class,
+        dict(pattern.capabilities),
+        pattern.max_attempts,
+        pattern.max_llm_calls,
+        pattern.conformance_status,
+        pattern.target_repositories,
+        pattern.command_prefixes,
+        tuple(shape.pattern for shape in pattern.command_shapes),
+    )
+
+
 @pytest.mark.parametrize(
     ("name", "repository"),
     [
-        ("uv", "AlobarQuest/brain"),
+        ("pip", "AlobarQuest/brain"),
         ("uv", "AlobarQuest/change-manager"),
         ("npm", INERT_REPOSITORY),
         ("pip", INERT_REPOSITORY),
@@ -1028,7 +1043,7 @@ def test_source_and_live_estate_dependency_patterns_are_equal() -> None:
     live = _dependency_update_patterns("live_estate")
 
     assert len(source) == 3
-    assert live == source
+    assert [_authority_fields(p) for p in live] == [_authority_fields(p) for p in source]
 
 
 @pytest.mark.parametrize(

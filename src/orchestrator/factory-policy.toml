@@ -325,10 +325,13 @@ name = "uv dependency pin bump"
 rationale = """
 The one shape of work this factory has taken end to end, and the shape R2 names:
 a pin moves, a lockfile follows, a pull request opens, and the target
-repository's own named check decides whether it was right. Nothing outside that
-repository changes, the whole change is one revert away, and a person reading
-the envelope learns only which version string moved — which is ceremony, not
-review. Recognised narrowly on purpose: only uv tooling (npm and pip have their
+repository's own named check decides whether it was right. Landing it redeploys the service, so recognition withholds only the per-unit
+authority approval at dispatch: the merge still needs a person's authority
+approval bound to the exact fingerprint, an approved change record naming the
+pull request, and the live_estate change window, and a revert redeploys the
+previous version.
+At dispatch a person reading the envelope learns only which version string
+moved — which is ceremony, not review. Recognised narrowly on purpose: only uv tooling (npm and pip have their
 own patterns below), only a conformance claim that is green and waives nothing,
 and only budgets at or under the profile's own defaults. It names no repository:
 since schema 9 the member record's grant decides which repositories a dependency
@@ -352,7 +355,7 @@ profile's default would recognise an envelope no profile emits — widening the
 recognised shape, which the paragraph above forbids without an edit. Held to
 intent-packages by `scripts/check_profile_budget_agreement.py`.
 """
-decided = "2026-08-01"
+decided = "2026-10-28"
 change_class = "dependency-update"
 capabilities = { "command.run" = "allowed", "github.pr.create" = "allowed", "github.pr.merge" = "allowed", "orchestrator.claim" = "allowed", "orchestrator.evidence.write" = "allowed", "repo.edit" = "allowed", "repo.read" = "allowed" }
 max_attempts = 3
@@ -383,6 +386,11 @@ on the same narrow terms as the uv pattern (a green conformance claim that waive
 nothing, budgets equal to the profile's) and, like it, names no repository: the
 member record's grant decides that at admission. The pattern carries the merge
 capability because the profile stamps it into every dependency-update envelope.
+Landing it redeploys the service, so recognition withholds only the per-unit
+authority approval at dispatch: the merge still needs a person's authority
+approval bound to the exact fingerprint, an approved change record naming the
+pull request, and the live_estate change window, and a revert redeploys the
+previous version.
 """
 decided = "2026-10-28"
 change_class = "dependency-update"
@@ -410,7 +418,10 @@ so a prefix would not bound it; what bounds it here is the shape. The package an
 the versions are bounded character sets that cannot express a slash, a space or
 a shell character, so the script cannot gain a second command or flag, and the
 file operand is only requirements.txt or requirements-dev.txt, so it cannot be
-pointed at a workflow or a system file. The inertness rule still applies on top.
+pointed at a workflow or a system file. Landing it redeploys the
+service, so the merge gates for that reach apply on top: a person's authority
+approval bound to the exact fingerprint, an approved change record, and the
+live_estate change window.
 Same narrow terms and no repository list as the patterns above.
 """
 decided = "2026-10-28"
