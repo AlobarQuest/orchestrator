@@ -1087,6 +1087,89 @@ def test_a_landing_commit_with_no_trailer_at_all_still_falls_back_to_the_head() 
     assert landing.update.dependency == "setuptools"
 
 
+def _opened_by(routes: dict[str, object], login: str) -> None:
+    pull = routes[f"/repos/{REPO}/pulls/50"]
+    assert isinstance(pull, dict)
+    pull["user"] = {"login": login}
+
+
+def _gate_commits(message: str, *, author: str = "dependabot[bot]") -> list[dict[str, object]]:
+    return [
+        {
+            "author": {"login": author},
+            "commit": {"message": message, "verification": {"verified": True}},
+        },
+        {"author": {"login": "sds-app[bot]"}, "commit": {"message": RANGE_HEAD_MESSAGE}},
+    ]
+
+
+def test_a_branch_updated_landing_reads_the_gates_first_commit_when_both_messages_are_silent() -> (
+    None
+):
+    """A landing with a composed body and a branch-update merge head names nothing, yet the gate
+    read the trailer from `commits[0]`. The landing records what the gate read."""
+    routes = range_routes(
+        "chore(deps): a body this repository composed itself (#50)",
+        RANGE_HEAD_MESSAGE,
+        "dependabot/uv/setuptools-gte-84.0.0",
+    )
+    _opened_by(routes, "dependabot[bot]")
+    routes[f"/repos/{REPO}/pulls/50/commits"] = _gate_commits(RANGE_LANDING_MESSAGE)
+
+    landing = read_landing(reader_for(routes), REPO, "main", "e931db8d")
+
+    assert landing.update is not None
+    assert landing.update.dependency == "setuptools"
+
+
+def test_a_pull_request_the_update_bot_did_not_open_never_reads_the_gates_commit() -> None:
+    """Only Dependabot's pull requests have a gate commit to read; anyone else's landing keeps
+    `update=None` and costs no request."""
+    routes = range_routes(
+        "chore(deps): a body this repository composed itself (#50)",
+        RANGE_HEAD_MESSAGE,
+        "feature/x",
+    )
+    _opened_by(routes, "AlobarQuest")
+    routes[f"/repos/{REPO}/pulls/50/commits"] = _gate_commits(RANGE_LANDING_MESSAGE)
+    asked: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        asked.append(request.url.path)
+        if request.url.path not in routes:
+            return httpx.Response(404, json=None)
+        return httpx.Response(200, json=routes[request.url.path])
+
+    reader = GitHubReader(token="fixture", transport=httpx.MockTransport(handler))
+    landing = read_landing(reader, REPO, "main", "e931db8d")
+
+    assert landing.update is None
+    assert f"/repos/{REPO}/pulls/50/commits" not in asked
+
+
+@pytest.mark.parametrize("verified", [False, True], ids=["unverified", "not-the-bot"])
+def test_a_gate_commit_the_gate_would_refuse_records_no_update(verified: bool) -> None:
+    """The landing records what the gate read, and the gate reads nothing from a first commit
+    that is unverified or not the update bot's."""
+    routes = range_routes(
+        "chore(deps): a body this repository composed itself (#50)",
+        RANGE_HEAD_MESSAGE,
+        "dependabot/uv/setuptools-gte-84.0.0",
+    )
+    _opened_by(routes, "dependabot[bot]")
+    commits = _gate_commits(
+        RANGE_LANDING_MESSAGE, author="dependabot[bot]" if not verified else "x"
+    )
+    first = commits[0]["commit"]
+    assert isinstance(first, dict)
+    first["verification"] = {"verified": verified}
+    routes[f"/repos/{REPO}/pulls/50/commits"] = commits
+
+    landing = read_landing(reader_for(routes), REPO, "main", "e931db8d")
+
+    assert landing.update is None
+
+
 def test_the_update_arm_reaches_for_the_head_even_when_the_other_three_are_answered() -> None:
     """Each of the four arms asks its OWN question, and this is the case that proves it.
 
