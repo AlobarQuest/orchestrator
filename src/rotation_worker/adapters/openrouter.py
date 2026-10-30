@@ -35,7 +35,7 @@ import hashlib
 import hmac
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any, Final
 
@@ -233,6 +233,9 @@ class OpenRouterProvider:
 
     def host(self, new: Value, old: Value) -> str:
         raise ContractError("OpenRouter accepts a key from its mint; there is no host step")
+
+    def consumer_loaded(self, consumer: Mapping[str, Any], new: Value) -> bool:
+        raise ContractError("OpenRouter has no hosted consumer")
 
     def revoke(self, value: Value) -> str:
         info = self._send("GET", KEY_INFO, value, "reading key-info")

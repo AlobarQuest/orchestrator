@@ -62,6 +62,7 @@ from rotation_worker.contract import (
     Step,
     StepKind,
     UnitPlan,
+    accepts,
     validate_plan,
 )
 from rotation_worker.coolify import CoolifyClient
@@ -286,7 +287,9 @@ def build_provider(
 
     def coolify() -> CoolifyClient:
         token = store.read(coolify_token_id)
-        return CoolifyClient(coolify_url, token, destination["uuid"], coolify_transport)
+        return CoolifyClient(
+            coolify_url, token, "application", destination["uuid"], coolify_transport
+        )
 
     probe_client = ConfinedClient(
         base_url=BASE_URL,
@@ -390,6 +393,9 @@ class ChangeManagerProvider:
             f"wrote {self._variable} with the new hash and the old one as previous, and "
             "restarted; change-manager accepts the new value"
         )
+
+    def consumer_loaded(self, consumer: Mapping[str, Any], new: Value) -> bool:
+        return accepts(self, new)
 
     def revoke(self, value: Value) -> str:
         new = self._keeper()

@@ -558,6 +558,35 @@ gets 401 from host's restart until `store` runs, so finish or undo it straight a
   Host refuses an entry that still accepts an earlier value as `previous`, so the old hash is the
   only one an undo restores.
 
+#### A failed Postgres host
+
+A `postgres-role` host replaces the password with no overlap, so while it runs the database and the
+service restart together and the service is down. Nothing requeues a failed unit by itself, and
+`/review` sits behind the service this type restarts, so host undoes itself: any failure of its
+writes runs them again with the old value, and the unit then fails. Read the unit's failure reason;
+it names the state it left.
+
+- **"restored" (the undo worked).** The service is on the old value, the keeper holds it, and
+  staging holds the unused new one. Nothing is wrong with the estate. Requeue the unit
+  (`POST /work-units/{id}/requeue`, as SYSTEM); the next attempt starts clean.
+- **The undo failed too.** The reason names both failures and says to run `pg-restore`. The state
+  is one of: the role on the new value with the service on the old (Coolify unreachable); the role
+  on the old with the variable on the new; or a restart that didn't land. The keeper still holds the
+  old value, which is the target. Run `pg-restore` (below) in the VM, then requeue.
+- **Host's first Coolify write is what failed, and the undo's too.** The first failure the reason
+  names is the variable write, and it says the consumers are on the value: nothing changed. It
+  still says to run `pg-restore`, but the recovery is a requeue once Coolify returns, since
+  `pg-restore` would restart a service that's healthy on the old value.
+- **"the database accepts neither value, or may be down".** Host wrote nothing. Read the helper's
+  state first (`docker ps` on the VPS), then requeue.
+- **"the database accepts the new value and what the consumers loaded couldn't be read".** Host
+  wrote nothing; the role already holds the new value. Fix the helper's `loaded` read and requeue;
+  the retry writes the variable alone and restarts nothing.
+- **A failure after host** leaves a working service on the new value, so ordinary requeue applies.
+
+A BWS token rotation waits on a failed Postgres unit as on any unfinished overlap, until it is
+requeued or cancelled.
+
 ### If the orchestrator doesn't come back after a rotation's restart
 
 The executor refuses every setting the orchestrator's boot would refuse, so this needs a cause it
@@ -887,3 +916,164 @@ writes nothing, and goes on to store. To undo instead, in Coolify set the variab
 secret. A value that doesn't parse grants nothing for that one scope and leaves the others
 working; a rule broken across scopes stops change-manager booting, so read the entries of the
 other three before restarting.
+
+## Postgres role passwords
+
+ADR-0055 amendment 17. A `postgres-role` credential is a database role's password, for example
+`alobar-id-postgres`. Postgres holds one password per role, so a host has no overlap: the role
+changes, the service restarts onto the new value, and it is down until it does. The package's
+revision approval covers that outage. The executor reaches the database only through a helper on the
+VPS, `deploy/vps/sds-pg-rotate`, and reaches the service through production Coolify.
+
+### Install the helper
+
+On the VPS, as root. Its only dependency is Python 3.12 and Docker.
+
+1. Install the file, root-owned and not writable by anyone else: `install -o root -g root -m 0750
+   deploy/vps/sds-pg-rotate /usr/local/sbin/sds-pg-rotate`, from a checkout at the commit the VM
+   runs.
+2. Create the directory and the targets file, all root-owned: `install -d -o root -g root -m 0700
+   /etc/sds-pg-rotate`, then write `/etc/sds-pg-rotate/targets.toml` and `chmod 0600` it (the
+   helper refuses a file another user owns, as `targets_untrusted`). A target is named in the
+   request and defined only here, so a request can't reach anything else:
+
+   ```toml
+   [target.alobar-id]
+   container = "<the database container's name>"
+   role = "<the role>"
+   database = "<the database>"
+
+   [[target.alobar-id.consumer]]
+   container = "<a service container that loads the password>"
+   env = "<its environment variable>"
+   ```
+
+   List one `consumer` table for each container that loads the password. A missing key is refused
+   as `bad_target` before anything runs. The name after `target.` is what the registry row's
+   `helper_target` must equal.
+3. Create the executor's key in the VM, and nowhere else. The `rotation` user has no login shell, so
+   run its commands through `runuser`: `orb -m rotation-executor -u root runuser -u rotation --
+   ssh-keygen -t ed25519 -N '' -f /tmp/pg-helper-key`. Never print the private half. On the Mac, run
+   `orb -m rotation-executor -u root runuser -u rotation -- cat /tmp/pg-helper-key | pbcopy`, paste
+   it into a new secret in `Rotation / Admin` from the console, and clear the clipboard with `pbcopy
+   < /dev/null`. Put the secret's id in the executor's configuration as `pg_helper_key_id`. Keep the
+   file until the proofs that follow pass.
+4. Add the public half to the VPS's `/root/.ssh/authorized_keys` as one line, with the forced
+   command, so the key can run nothing else:
+
+   ```
+   restrict,command="/usr/local/sbin/sds-pg-rotate" ssh-ed25519 AAAA... rotation-executor-pg
+   ```
+
+5. Pin the host key. From the VM, `ssh-keyscan -t ed25519 <VPS tailnet address>` and read the
+   fingerprint against the VPS's own (`ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`). Put the
+   one line in the configuration as `pg_helper_known_host`, and the destination as `pg_helper_host`
+   (`root@<tailnet address>`). The line must name exactly that host. Add `keepers_project_id`
+   (`Rotation / Keepers`) for `adopt-keeper`, and `postgres-role` to `admin_secrets`, pointing at
+   the Coolify token's secret id in `Rotation / Coolify`.
+
+The registry row, in infraops' `.cred-consumers.toml`, names the target and the health endpoint.
+`helper_target` must equal the `[target.<name>]` above; a row without it is refused before a claim:
+
+```toml
+[[credential]]
+id = "alobar-id-postgres"
+class = "postgres-role-password"
+provider = "postgres-role"
+bws_uuid = "<the keeper's secret id, printed by adopt-keeper>"
+rotated_by_sds = true
+helper_target = "alobar-id"
+health_url = "https://id.alobar.net/-/health/ready/"
+
+  [[credential.consumer]]
+  kind = "bws-secret"
+  uuid = "<the same secret id>"
+
+  [[credential.consumer]]
+  kind = "coolify-env"
+  instance = "prod"
+  resource_type = "service"
+  uuid = "<the Coolify service uuid>"
+  key = "PG_PASS"
+  redeploy = true
+```
+
+`health_url` is https with a host and path only; the executor asks it for exactly 200 after a
+restart. The hosted consumer must be a production service with `redeploy = true`.
+
+Prove two things from the VM, as the `rotation` user, before the first rotation. Both use plain
+`ssh` with the options the client uses, so a pass here is a pass there:
+
+```sh
+echo '{}' | ssh -F /dev/null -o GlobalKnownHostsFile=/dev/null \
+  -o UserKnownHostsFile=<known_hosts file> -o StrictHostKeyChecking=yes \
+  -o BatchMode=yes -o IdentitiesOnly=yes -i <key> root@<VPS>
+```
+
+- **The key runs nothing else.** With the real pinned line in the file, the helper answers one JSON
+  line, `{"refused": "unknown_verb"}`, and ssh exits 2. Passing a command, with no stdin (`... -o
+  BatchMode=yes ... root@<VPS> id </dev/null`), must print `{"refused": "bad_request"}`, not a user
+  id: the forced command ignores it, and the helper reads an empty request.
+- **The wrong host key is refused.** Put a line in the file that carries the VPS's own host field
+  with a different key (a throwaway host's). ssh must exit 255 with "Host key verification failed"
+  on stderr, and the helper never answers, so nothing is sent to whatever replied. A run that
+  connects anyway is a defect: it would send the password to that host.
+
+Then remove the key file: `orb -m rotation-executor -u root runuser -u rotation -- rm
+/tmp/pg-helper-key`.
+
+### Adopt the keeper
+
+The keeper is a BWS secret in `Rotation / Keepers` holding the role's current password. Adopt an
+existing password into it as the `rotation` user in the VM, with the value on stdin.
+The value comes straight from the Keychain item `Claude/AUTHENTIK_POSTGRES_PASSWORD`, never typed
+or pasted. Run this on the Mac:
+
+```sh
+security find-generic-password -s Claude -a AUTHENTIK_POSTGRES_PASSWORD -w | orb -m rotation-executor \
+  -u root runuser -u rotation -- env -i PATH=/usr/bin:/bin HOME=/var/lib/rotation-worker \
+  /opt/rotation-worker/venv/bin/rotation-worker adopt-keeper alobar-id-postgres \
+  --config /etc/rotation-worker/config.toml
+```
+
+The command refuses unless the registry row's class is `postgres-role-password` and the value is
+exactly 64 lowercase hex characters, refuses to overwrite a keeper that exists, and prints the
+secret id and fingerprint, never the value. Put the id in the registry row's `bws_uuid` and in its
+`bws-secret` consumer. When the fingerprint matches the one the role's consumers report, delete the
+Keychain item.
+
+### What an outage looks like
+
+From host's restart until the consumers load the new value, the service answers 5xx and its health
+endpoint fails. Host waits for the database to accept the value and every consumer to show its
+fingerprint; the row's `health_url` answering exactly 200 is the consumer step's check, not host's.
+The worst case, host's wait and its undo together, is within the 15-minute lease with two minutes
+to spare. If the wait ends first, host undoes itself ("A failed Postgres host"); a service that is
+still down after that is the case below.
+
+### Recover with sign-in down
+
+`/review` is behind the service this type restarts, so a failure here can't be cleared from its
+usual place. Two levers need neither:
+
+- **Requeue over M2M.** `POST /work-units/{id}/requeue` as SYSTEM, with its bearer (see
+  `docs/operations/driving-a-unit.md`). It retries the unit against the state host left.
+- **`pg-restore`**, in the VM. First stop new passes and check none is running: `orb -m
+  rotation-executor -u root systemctl stop rotation-worker.timer`, then `systemctl is-active
+  rotation-worker` in the VM must print `inactive`. Start the timer again afterward. It reads the keeper and
+  repeats host's writes with that value: the Coolify variable, the role through the helper, the
+  restart, and the wait for every consumer:
+
+  ```sh
+  orb -m rotation-executor -u root runuser -u rotation -- env -i PATH=/usr/bin:/bin \
+    HOME=/var/lib/rotation-worker /opt/rotation-worker/venv/bin/rotation-worker pg-restore \
+    alobar-id-postgres --config /etc/rotation-worker/config.toml
+  ```
+
+  It prints what happened and nothing else. With Coolify down it can move only the role. It sets
+  the role to the keeper's value only when the consumers show that value; consumers on any other
+  value leave the role alone, since that is host's finished state. It then says to run it again
+  once Coolify returns. Exit 0 means every consumer loaded the keeper's value; exit 2 prints why
+  not, with no traceback, including a Coolify refusal.
+
+When the service is back, requeue the unit; the keeper never changed, so the retry is clean.

@@ -1,15 +1,17 @@
-"""The executor's Coolify writes: one approved application's variable, and its restart.
+"""The executor's Coolify writes: one approved resource's variable (an application or a service),
+and its restart.
 
 ADR-0055 amendment 1 measured the token the executor holds: `read`, `write` and `deploy`, without
 `read:sensitive`, so it writes a variable it can never read back. Coolify tokens name actions, not
 resources, so the token itself could change any application on the instance. This client is the
-bound: it is built for the one application uuid an approved destination names, and its `permits`
-allows exactly that application's env PATCH and restart, so a bug elsewhere can't reach another.
+bound: it is built for the one resource uuid an approved destination names, and its `permits`
+allows exactly that resource's env PATCH and restart, so a bug elsewhere can't reach another.
 
 Each variable is stored twice, once per `is_preview` value, and a PATCH changes one (amendment 1),
-so a write sends both. A refused write stops: the delete-and-recreate fallback people use when a
-PATCH answers 500 could leave the variable missing, and an orchestrator without its credentials
-setting doesn't boot. The next attempt re-derives what to write from what the service loaded.
+so a write sends both (a service's variable has one row). A refused write stops: the
+delete-and-recreate fallback people use when a PATCH answers 500 could leave the variable
+missing, and an orchestrator without its credentials setting doesn't boot. The next attempt
+re-derives what to write from what the service loaded.
 
 The executor reaches production Coolify over the tailnet, which encrypts it; its public address
 answers plain HTTP (amendment 9).
@@ -17,7 +19,7 @@ answers plain HTTP (amendment 9).
 
 from __future__ import annotations
 
-from typing import Final
+from typing import Final, Literal
 
 import httpx
 
@@ -35,19 +37,35 @@ PREVIEW_ROWS: Final = (True, False)
 url_problem = tailnet_or_https_problem
 
 
+class CoolifyRefused(ContractError):
+    """Coolify answered 4xx, which proves it did not do what was asked. `status` is the code."""
+
+    def __init__(self, method: str, status: int) -> None:
+        super().__init__(f"Coolify {method} answered HTTP {status}")
+        self.status = status
+
+
 class CoolifyClient:
     def __init__(
         self,
         base_url: str,
         token: Value,
-        application: str,
+        resource_type: Literal["application", "service"],
+        uuid: str,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
+        if resource_type not in ("application", "service"):
+            raise ContractError("a Coolify resource is an application or a service")
         problem = url_problem(base_url)
         if problem is not None:
             raise ContractError(f"the Coolify URL {problem}")
-        self._envs = f"/api/v1/applications/{application}/envs"
-        self._restart = f"/api/v1/applications/{application}/restart"
+        self._service = resource_type == "service"
+        if self._service:
+            self._envs = f"/api/v1/services/{uuid}/envs"
+            self._restart = f"/api/v1/services/{uuid}/restart"
+        else:
+            self._envs = f"/api/v1/applications/{uuid}/envs"
+            self._restart = f"/api/v1/applications/{uuid}/restart"
         try:
             self._client = ConfinedClient(
                 base_url=base_url,
@@ -65,7 +83,12 @@ class CoolifyClient:
         return (method, path) in {("PATCH", self._envs), ("POST", self._restart)}
 
     def set_variable(self, key: str, value: str) -> None:
-        """Write `value` to both rows of `key`. The value never appears in an error."""
+        """Write `value` to `key`: both rows of an application's, the one row of a service's.
+
+        The value never appears in an error."""
+        if self._service:
+            self._send("PATCH", self._envs, json={"key": key, "value": value})
+            return
         for preview in PREVIEW_ROWS:
             body = {"key": key, "value": value, "is_preview": preview}
             self._send("PATCH", self._envs, json=body)
@@ -78,6 +101,8 @@ class CoolifyClient:
             response = self._client.request(method, path, **kwargs)
         except TransportFailure as failure:
             raise ContractError(f"Coolify {method} got no answer: {failure.error_type}") from None
+        if 400 <= response.status_code < 500:
+            raise CoolifyRefused(method, response.status_code)
         if not 200 <= response.status_code < 300:
             # The body may echo the request, so only the status is kept.
             raise ContractError(f"Coolify {method} answered HTTP {response.status_code}")

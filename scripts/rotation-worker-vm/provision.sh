@@ -37,9 +37,9 @@ opt=/opt/rotation-worker
 etc=/etc/rotation-worker
 repository=https://github.com/AlobarQuest/orchestrator.git
 
-if ! command -v git >/dev/null || ! command -v curl >/dev/null; then
+if ! command -v git >/dev/null || ! command -v curl >/dev/null || ! command -v ssh >/dev/null; then
   DEBIAN_FRONTEND=noninteractive apt-get update -qq
-  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git curl ca-certificates >/dev/null
+  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git curl ca-certificates openssh-client >/dev/null
 fi
 
 if ! id -u "$service_user" >/dev/null 2>&1; then

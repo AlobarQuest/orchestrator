@@ -27,7 +27,7 @@ contract's unit run does, for the length of the step that needs it.
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -54,6 +54,7 @@ from rotation_worker.evidence import StepEvidence
 from rotation_worker.git_mirror import MirrorError, RepoMirror
 from rotation_worker.github_actions import ActionsSecrets, FingerprintReports, RotationApp
 from rotation_worker.held import HeldSettings
+from rotation_worker.helper_client import HelperClient
 from rotation_worker.inbox import (
     INBOX_PROJECTS,
     Inbox,
@@ -117,6 +118,8 @@ class Setup:
     inbox: Inbox | None = None
     # The BWS organization, which a provider lists a token's reach in.
     organization_id: str | None = None
+    # The VPS Postgres helper, built when a step needs it (`AdapterContext.pg_helper`).
+    pg_helper: Callable[[], HelperClient] | None = None
 
 
 def run_pass(setup: Setup) -> int:
@@ -304,6 +307,7 @@ def _provider(setup: Setup, approved: Approved) -> Provider:
             host_without_overlap=approved.host_without_overlap,
             credential=approved.registry.credential,
             organization_id=setup.organization_id,
+            pg_helper=setup.pg_helper,
         )
     )
 
@@ -328,7 +332,7 @@ def _held(setup: Setup, approved: Approved) -> HeldSettings | None:
         raise ConfigError("a held copy is approved and this executor can't write one")
     held = HeldSettings(
         setup.client,
-        lambda app: CoolifyClient(coolify_url, store.read(token_id), app),
+        lambda app: CoolifyClient(coolify_url, store.read(token_id), "application", app),
         application,
     )
     for consumer in destinations:

@@ -149,3 +149,38 @@ def test_a_held_copy_puts_a_type_that_doesn_t_host_into_the_live_estate() -> Non
     assert reach("github-pat", [held]) == ["external_system", "live_estate"]
     assert "infra_mutation" in authority("github-pat", [held])["allowed"]
     assert "infra_mutation" in authority("github-pat", [])["prohibited"]
+
+
+BEFORE_OVERLAP = Path(__file__).parents[1] / "fixtures" / "rotation_packages_before_overlap.json"
+HOST_OUTAGE = (
+    "The hosted service replaces the old value with the new one, and its dependents restart; "
+    "they're unavailable until the restart finishes."
+)
+
+
+def test_generated_package_for_postgres_states_the_outage() -> None:
+    entry = _entry("postgres-role-password")
+    rendered = render(entry, "2026-10-30-requested", "2026-10-30T12:00:00Z")
+    _, plan = plan_for(entry)
+    conditions = [c["condition"] for c in rendered["acceptance"]]
+    assert conditions.count(HOST_OUTAGE) == 1
+    assert "The hosted service accepts the new value beside the old one." not in conditions
+    assert "any hour of the change window" in rendered["risk"]["max_impact"]
+    assert "beside the old" not in rendered["risk"]["max_impact"]
+    assert select_plan((plan,), rendered["acceptance"]) is plan
+    rollback = rendered["risk"]["rollback"]
+    assert "If the host step itself fails, the executor writes the old value back" in rollback
+    assert "Once host finishes, recovery is forward" in rollback
+    assert "automatic" not in rollback.lower()
+    assert "Devon" not in rendered["risk"]["max_impact"]
+
+
+def test_existing_generated_packages_are_unchanged() -> None:
+    """Kills: a no-overlap rule that leaks into a type whose provider keeps the old value alive.
+    The fixture was rendered by the generator as it stood before the type existed."""
+    expected = json.loads(BEFORE_OVERLAP.read_text(encoding="utf-8"))
+    assert expected and "postgres-role-password" not in expected
+    for credential_class, package in expected.items():
+        entry = _entry(credential_class)
+        rendered = render(entry, "2026-10-29-requested", "2026-10-29T12:00:00Z")
+        assert rendered == package, credential_class

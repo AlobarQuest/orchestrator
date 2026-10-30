@@ -51,11 +51,16 @@ _CRITERION: Final = re.compile(
 
 @dataclass(frozen=True)
 class Capabilities:
-    """Which steps a type's provider does by machine, and whether it is a hosted service."""
+    """Which steps a type's provider does by machine, and whether it is a hosted service.
+
+    `overlap` says whether the old value keeps working once the service holds the new one. It moves
+    no step, only the words the generated package uses for host (ADR-0055 amendment 17).
+    """
 
     machine_mint: bool
     machine_revoke: bool
     hosted: bool = False
+    overlap: bool = True
 
 
 def derive(

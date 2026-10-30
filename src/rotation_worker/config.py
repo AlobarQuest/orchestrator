@@ -30,6 +30,8 @@ UUID_PATTERN: Final = re.compile(r"^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$
 REVISION_PATTERN: Final = re.compile(r"^[0-9a-f]{7,12}$")
 APP_ID_PATTERN: Final = re.compile(r"^[1-9][0-9]{0,11}$")
 KEYCHAIN_NAME: Final = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+SSH_DESTINATION: Final = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.@-]{0,127}$")
+KNOWN_HOST_KEY: Final = re.compile(r"^(?:ssh|ecdsa|sk)-[a-z0-9@.-]+ [A-Za-z0-9+/]+={0,2}$")
 STORES: Final = ("bws", "keychain")
 # What only the VM instance's configuration may name.
 VM_ONLY: Final = (
@@ -40,6 +42,10 @@ VM_ONLY: Final = (
     "change_manager_application",
     "github_app_id",
     "github_app_key_id",
+    "pg_helper_key_id",
+    "pg_helper_host",
+    "pg_helper_known_host",
+    "keepers_project_id",
 )
 
 
@@ -79,6 +85,14 @@ class Config:
     # `Rotation / Admin`. Both or neither; read only when a step writes or reads an Actions secret.
     github_app_id: str | None = None
     github_app_key_id: str | None = None
+    # The VPS Postgres helper (`helper_client.py`): its SSH private key's secret id, the SSH
+    # destination, and the pinned host-key line. All three or none; the key is read only when a
+    # step needs the helper.
+    pg_helper_key_id: str | None = None
+    pg_helper_host: str | None = None
+    pg_helper_known_host: str | None = None
+    # `Rotation / Keepers`, where `adopt-keeper` creates a keeper. Read by no rotation step.
+    keepers_project_id: str | None = None
     # This instance's alert-hub sender token: a BWS UUID, or a Keychain account name. Absent, no
     # act is announced (ADR-0055 amendment 15, increment 3).
     alert_hub_token_id: str | None = None
@@ -112,6 +126,7 @@ def load(path: Path) -> Config:
     if "inbox_token_id" in raw:
         raise ConfigError("the VM's inbox is read with the root token: it names no inbox_token_id")
     app_id, app_key = _github_app(raw)
+    helper_key, helper_host, helper_known_host = _pg_helper(raw)
     admin_secrets = raw.get("admin_secrets", {})
     if not isinstance(admin_secrets, dict) or not all(
         isinstance(name, str) and isinstance(uuid, str) and UUID_PATTERN.fullmatch(uuid)
@@ -137,6 +152,10 @@ def load(path: Path) -> Config:
         healthchecks_key_id=healthchecks_key,
         github_app_id=app_id,
         github_app_key_id=app_key,
+        pg_helper_key_id=helper_key,
+        pg_helper_host=helper_host,
+        pg_helper_known_host=helper_known_host,
+        keepers_project_id=_optional_uuid(raw, "keepers_project_id"),
         alert_hub_token_id=alert_hub_token,
         inbox_secret_id=_optional_uuid(raw, "inbox_secret_id"),
     )
@@ -199,6 +218,33 @@ def _github_app(raw: dict[str, Any]) -> tuple[str | None, str | None]:
     if not isinstance(app_key, str) or not UUID_PATTERN.fullmatch(app_key):
         raise ConfigError("github_app_key_id must be a lowercase UUID, with the App's id")
     return app_id, app_key
+
+
+def _pg_helper(raw: dict[str, Any]) -> tuple[str | None, str | None, str | None]:
+    names = ("pg_helper_key_id", "pg_helper_host", "pg_helper_known_host")
+    present = [raw.get(name) for name in names]
+    if all(value is None for value in present):
+        return None, None, None
+    key, host, known_host = present
+    if not isinstance(key, str) or not UUID_PATTERN.fullmatch(key):
+        raise ConfigError("pg_helper_key_id must be a lowercase UUID, with the helper's host")
+    if not isinstance(host, str) or not SSH_DESTINATION.fullmatch(host):
+        raise ConfigError(
+            "pg_helper_host is an ssh destination, with the helper's key and host key"
+        )
+    if not isinstance(known_host, str) or not _pins(host, known_host.strip()):
+        raise ConfigError(
+            "pg_helper_known_host is exactly '<host> <keytype> <base64>' for pg_helper_host"
+        )
+    return key, host, known_host.strip()
+
+
+def _pins(destination: str, line: str) -> bool:
+    """Whether `line` pins one key for exactly the destination's host: no marker, no pattern."""
+    fields = line.split(" ")
+    if len(fields) != 3 or not KNOWN_HOST_KEY.fullmatch(" ".join(fields[1:])):
+        return False
+    return fields[0] == destination.rsplit("@", 1)[-1]
 
 
 def read_root_token(path: Path) -> Value:

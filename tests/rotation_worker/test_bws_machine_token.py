@@ -198,6 +198,9 @@ class Bitwarden:
     def host(self, new: Value, old: Value) -> str:
         raise ContractError("no host")
 
+    def consumer_loaded(self, consumer: Mapping[str, Any], new: Value) -> bool:
+        raise ContractError("no hosted consumer")
+
     def revoke(self, value: Value) -> str:
         raise ContractError("a person revokes")
 

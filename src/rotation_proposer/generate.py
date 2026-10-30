@@ -73,6 +73,16 @@ _CONDITIONS: Final[dict[StepKind, str]] = {
 }
 
 
+# A type whose provider keeps no old value alive (`Capabilities.overlap` false) replaces it at the
+# host step, and what depends on the service restarts. The package states that outage, because the
+# person approving the revision is approving it.
+_HOST_REPLACES: Final = (
+    "The hosted service replaces the old value with the new one, and its dependents restart; "
+    "they're unavailable until the restart finishes."
+)
+_RESTART_HOUR: Final = " The restart can happen at any hour of the change window."
+
+
 class GenerateError(RuntimeError):
     """The row names no type the SDS rotates, or a type whose plan can't be derived."""
 
@@ -88,8 +98,11 @@ def plan_for(entry: RegistryEntry) -> tuple[str, Plan]:
     return adapter_name, plan
 
 
-def acceptance(plan: Plan) -> list[dict[str, str]]:
-    """One criterion per machine step, in the plan's numbering."""
+def acceptance(plan: Plan, overlap: bool = True) -> list[dict[str, str]]:
+    """One criterion per machine step, in the plan's numbering.
+
+    A type with no overlap states its host step as the replacement and restart it is."""
+    conditions = {**_CONDITIONS, StepKind.HOST: _HOST_REPLACES} if not overlap else _CONDITIONS
     steps = criteria_steps(plan)
     units_per_kind = Counter(kind for _, kind in set(steps.values()))
     criteria = []
@@ -98,7 +111,7 @@ def acceptance(plan: Plan) -> list[dict[str, str]]:
         criteria.append(
             {
                 "id": ac_id,
-                "condition": _CONDITIONS[kind],
+                "condition": conditions[kind],
                 "evidence_type": "external_attestation",
                 "evidence": (
                     f"external: {named}{kind.value} step's rotation-step/1 evidence, filed by the "
@@ -147,6 +160,7 @@ def render(entry: RegistryEntry, occurrence: str, created_at: str) -> dict[str, 
     credential_id = str(entry.credential["id"])
     adapter_name, plan = plan_for(entry)
     identity = str(entry.credential.get("provider_identity") or credential_id)
+    overlap = TYPES[adapter_name].capabilities.overlap
     units = [s.name for s in plan.segments if isinstance(s, UnitPlan)]
     acts = [s.name for s in plan.segments if isinstance(s, HumanAct)]
     person = (
@@ -242,7 +256,7 @@ def render(entry: RegistryEntry, occurrence: str, created_at: str) -> dict[str, 
             "operational": None,
             "other": [],
         },
-        "acceptance": acceptance(plan),
+        "acceptance": acceptance(plan, overlap),
         "authority": authority(adapter_name, entry.destinations),
         "deliverables": {
             "artifacts": [
@@ -279,11 +293,18 @@ def render(entry: RegistryEntry, occurrence: str, created_at: str) -> dict[str, 
             "max_impact": (
                 "A destination holds a value it can't use until the rotation completes or is "
                 "undone; the old value stays valid until it is revoked."
+                if overlap
+                else "The hosted service's dependents are unavailable while the service restarts "
+                "on the new value, and the old value stops working at that step." + _RESTART_HOUR
             ),
             "stop_conditions": ["A value appears anywhere it should not."],
             "rollback": (
                 "Before the revoke the old value stays valid and is quarantined; after it, the "
                 "recovery is forward: a new value and the rotation run again."
+                if overlap
+                else "If the host step itself fails, the executor writes the old value back and "
+                "restarts, leaving the keeper unchanged. Once host finishes, recovery is forward: "
+                "a new value and the rotation run again."
             ),
             "escalation_target": OWNER,
         },

@@ -23,9 +23,9 @@ from __future__ import annotations
 
 import secrets
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timedelta
-from typing import Final
+from typing import Any, Final
 
 import httpx
 
@@ -169,6 +169,9 @@ class GitHubPatProvider:
 
     def host(self, new: Value, old: Value) -> str:
         raise ContractError("a GitHub PAT has no hosted service to host it")
+
+    def consumer_loaded(self, consumer: Mapping[str, Any], new: Value) -> bool:
+        raise ContractError("a GitHub PAT has no hosted consumer")
 
     def readers_mid_run(self) -> list[str]:
         """The dispatched runs a revoke now would fail: the worker waits, unclaimed, for none.

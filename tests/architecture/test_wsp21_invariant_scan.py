@@ -808,6 +808,10 @@ OUTBOUND_ALLOWLIST = {
     # read every scope may make, with the bearer being rotated, and may send nothing else. Pinned
     # by tests/rotation_worker/test_change_manager.py. Its egress is not the orchestrator's.
     Path("src/rotation_worker/adapters/change_manager.py"),
+    # ADR-0055 amendment 17. The postgres-role adapter asks the one health URL its registry row
+    # names, with no credential, and may send nothing else. Pinned by
+    # tests/rotation_worker/test_postgres_role.py. Its egress is not the orchestrator's.
+    Path("src/rotation_worker/adapters/postgres_role.py"),
     # ADR-0055 amendment 9, decision 5. The rotation executor reads Healthchecks' check listing,
     # with a read-only key, to see whether a scheduled reader of a rotated keeper has run since the
     # store. Its client may send only `GET /api/v3/checks/`, pinned by

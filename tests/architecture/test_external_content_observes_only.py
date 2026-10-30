@@ -378,6 +378,12 @@ CLASSIFICATION: dict[str, Row] = {
             "/api/v1/applications/{}/restart": (
                 "Coolify's restart of the one approved application (ADR-0055 amendment 9)"
             ),
+            "/api/v1/services/{}/envs": (
+                "Coolify's env write for the one approved Postgres service (rotation design)"
+            ),
+            "/api/v1/services/{}/restart": (
+                "Coolify's restart of the one approved Postgres service (rotation design)"
+            ),
         },
     ),
     "change_proposer": Row(

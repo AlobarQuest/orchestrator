@@ -670,3 +670,8 @@ Placement rule: global CLAUDE.md §7.
   bump breaches every hold on its dependency whatever its version (`factory_breaches`); never
   compare it as an exact version until the uv mutator locks one. A hold's ecosystem must be the one
   Dependabot uses for that repository. Detail: `docs/operations/membership.md`, "Hold a dependency".
+- A `postgres-role` host replaces the password with no overlap and restores the old value on its
+  own failure, because `/review` sits behind the service it restarts. Its only reach to the
+  database is the forced-command helper (`deploy/vps/sds-pg-rotate`), and a password must never be
+  sent in plain text to `ALTER ROLE`: the helper sends only a SCRAM-SHA-256 verifier. Detail:
+  `docs/operations/rotation-executor.md`, "Postgres role passwords"; ADR-0055 amendment 17.

@@ -23,9 +23,11 @@ from rotation_worker.adapters import (
     github_pat,
     openrouter,
     orchestrator_bearer,
+    postgres_role,
 )
 from rotation_worker.contract import ContractError, Plan, Provider, Rotation, UnitPlan
 from rotation_worker.git_mirror import RepoMirror
+from rotation_worker.helper_client import HelperClient
 from rotation_worker.orchestrator_client import OrchestratorClient
 from rotation_worker.plans import Capabilities
 from rotation_worker.readers import Healthchecks
@@ -59,6 +61,8 @@ class AdapterContext:
     credential: Mapping[str, Any] | None = None
     # The BWS organization, for a provider that lists what a BWS token can see.
     organization_id: str | None = None
+    # The VPS Postgres helper, built on demand so its SSH key is read only when a step needs it.
+    pg_helper: Callable[[], HelperClient] | None = None
 
 
 # Why a unit can't be claimed yet, from the unit, its history and the time; `None` means now.
@@ -84,6 +88,8 @@ class Adapter:
     # that pins one fixed plan. A type's `plan` is the one its packages approved before
     # derivation, run only for a package whose criteria still describe it.
     capabilities: Capabilities | None = None
+    # Refuses, before a claim, a registry row this adapter couldn't act on.
+    check_row: Callable[[Mapping[str, Any]], None] | None = None
 
 
 def _change_manager(context: AdapterContext) -> Provider:
@@ -115,6 +121,21 @@ def _orchestrator(context: AdapterContext) -> Provider:
         orchestrator_application=context.orchestrator_application,
         executor_key_id=context.executor_key_id,
         without_overlap=context.host_without_overlap,
+    )
+
+
+def _postgres_role(context: AdapterContext) -> Provider:
+    # The type declares it has no overlap. The envelope's flag says something else: that another
+    # identity shares the old value (ADR-0055 amendment 17).
+    if context.host_without_overlap:
+        raise ContractError("a postgres role declares no overlap itself, not by envelope")
+    return postgres_role.build_provider(
+        rotation=context.rotation,
+        credential=context.credential,
+        store=context.store,
+        coolify_token_id=context.admin_secret_id,
+        coolify_url=context.coolify_url,
+        pg_helper=context.pg_helper,
     )
 
 
@@ -168,6 +189,13 @@ ADAPTERS: Final[dict[str, Adapter]] = {
         overlap_waits=frozenset({"store"}),
         revoke_settles=bws_machine_token.REVOKE_SETTLES,
         capabilities=TYPES[bws_machine_token.NAME].capabilities,
+    ),
+    postgres_role.NAME: Adapter(
+        postgres_role.NAME,
+        postgres_role.PLAN,
+        _postgres_role,
+        capabilities=TYPES[postgres_role.NAME].capabilities,
+        check_row=postgres_role.check_row,
     ),
     change_manager.ATTESTED_NAME: Adapter(
         change_manager.NAME, change_manager.ATTESTED_PLAN, _change_manager
