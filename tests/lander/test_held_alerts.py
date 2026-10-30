@@ -682,3 +682,13 @@ def test_a_hand_restore_of_a_failed_revert_resolves_the_pinned_alert(tmp_path) -
     sync_revert_alerts(LANE, [_pinned_record("restored")], environ=env, transport=hub.transport())
 
     assert [b["status"] for b in hub.sent if b["key"] == PINNED_KEY] == ["firing", "resolved"]
+
+
+def test_a_hand_restore_while_repointed_resolves_the_pinned_alert(tmp_path) -> None:
+    hub = Hub()
+    env = _env(tmp_path)
+
+    sync_revert_alerts(LANE, [_pinned_record("repointed")], environ=env, transport=hub.transport())
+    sync_revert_alerts(LANE, [_pinned_record("restored")], environ=env, transport=hub.transport())
+
+    assert [b["status"] for b in hub.sent if b["key"] == PINNED_KEY] == ["firing", "resolved"]

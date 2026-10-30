@@ -652,3 +652,31 @@ def test_an_image_that_is_not_the_repositorys_refuses_the_repoint() -> None:
 
     assert status == "repoint-refused" and "change-manager" in detail
     assert "repoint" not in world.log
+
+
+def test_a_hand_restore_while_repointed_is_recorded_restored_and_opens_no_revert() -> None:
+    world = World(_apps(code_brain="main"), serving={"app-brain": MERGE, "code-brain": MERGE})
+    row = _row(
+        None,
+        "repointed",
+        pinned_images={
+            "u1": {"tag": PARENT, "digest": DIGEST, "restore_tag": "latest"},
+            "u2": {"tag": PARENT, "digest": DIGEST, "restore_tag": "main"},
+        },
+    )
+
+    assert _only(world.run(row))[0] == "restored"
+    [(act, body)] = world.acts.calls
+    assert (act, body["expected_status"]) == ("restored", "repointed")
+    assert not any(entry.startswith(("tag ", "start ")) for entry in world.log)
+
+
+def test_a_partial_hand_restore_while_repointed_changes_nothing() -> None:
+    world = World(
+        _apps(tag=PARENT, code_brain="latest"),
+        serving={"app-brain": PARENT, "code-brain": MERGE},
+    )
+
+    status, _ = _only(world.run(_repointed()))
+
+    assert status == "pinned" and world.acts.calls == []

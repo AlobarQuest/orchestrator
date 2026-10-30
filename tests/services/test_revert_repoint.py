@@ -362,7 +362,7 @@ def test_a_landed_revert_is_recorded_restored(
     assert revert_in_progress(migrated_session, BRAIN) is False
 
 
-@pytest.mark.parametrize("status", ["repointed", "revert_opened"])
+@pytest.mark.parametrize("status", ["revert_opened"])
 def test_nothing_is_restored_before_its_revert_has_landed(
     migrated_session: Session, migrated_engine: Engine, status: str
 ) -> None:
@@ -538,3 +538,23 @@ def test_every_bump_waits_while_production_is_pinned(
     row.status = "restored"
     migrated_session.commit()
     assert revert_in_progress(migrated_session, BRAIN) is False
+
+
+def test_a_hand_restore_before_the_revert_opens_hands_the_landing_to_a_person(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    """Restored from `repointed`: the detail says so, bumps resume, nothing was reverted, and the
+    revert is never opened afterwards (opening needs `repointed`)."""
+    _pinned_at(migrated_session, "repointed")
+
+    outcome = restore(migrated_session, brain_gateway())
+
+    assert (outcome.acted, outcome.status) == (True, "restored")
+    record = stored(migrated_engine)
+    assert record is not None and record.status == "restored"
+    assert record.detail == "restored by hand before the revert opened"
+    assert reverted_versions(migrated_session, BRAIN) == ()
+    assert revert_in_progress(migrated_session, BRAIN) is False
+    gateway = brain_gateway()
+    later = open_revert(migrated_session, gateway, key="open-after")
+    assert later.acted is False and gateway.writes == []

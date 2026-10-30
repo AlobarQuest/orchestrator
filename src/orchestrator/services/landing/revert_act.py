@@ -176,10 +176,12 @@ _ALWAYS_WATCHED: Final = frozenset(  # not-a-vocabulary: record statuses
 )
 RESTORED: Final = "restored"
 # The statuses production may be recorded restored from: the revert landed, or it never could and
-# a person put the moving tags back by hand (the lander confirms the tags before it asks).
+# a person put the moving tags back by hand (the lander confirms the tags before it asks), or a
+# person did so before the revert opened and so took the landing over: no revert is opened then.
 _RESTORABLE: Final = frozenset(  # not-a-vocabulary: record statuses
-    {REVERT_LANDED, REVERT_FAILED, REFUSED_OVERLAP}
+    {REVERT_LANDED, REVERT_FAILED, REFUSED_OVERLAP, REPOINTED}
 )
+_TAKEN_OVER: Final = "restored by hand before the revert opened"
 # The statuses a re-point may be recorded from: no record yet, or a rerun's.
 _REPOINTABLE: Final = (None, RERUN_REQUESTED)
 # An image a re-point names: the bump's parent's full commit as its tag, and the digest it resolved.
@@ -585,6 +587,8 @@ def _restore(
             "production stays pinned until the revert lands",
         )
     now = datetime.now(UTC)
+    if record.status == REPOINTED:
+        record.detail = _TAKEN_OVER
     record.status = RESTORED
     record.restored_at = now
     record.updated_at = now

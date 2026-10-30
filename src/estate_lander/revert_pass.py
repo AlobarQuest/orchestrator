@@ -389,6 +389,15 @@ def _confirm_parent(
         return Outcome(repository, number, "error", f"production stays pinned: {error}")
     try:
         applications = _pinned_applications(images, row, production, repository)
+        if _all_put_back(applications, row):
+            # A person put every moving tag back before the revert opened: they took over.
+            answer = client.restored(
+                repository,
+                number,
+                expected_status=_REPOINTED,
+                idempotency_key=f"estate-landing-restored:{repository}:{number}:{_REPOINTED}",
+            )
+            return _restored_outcome(answer, repository, number, "taken over by hand")
         serving = {app.name: production.served(app.health_url) for app in applications}
         off = sorted(name for name, served in serving.items() if not serves(served, parent))
         if not off:
@@ -438,7 +447,7 @@ def _hand_restored(
         return Outcome(repository, number, "error", f"production stays pinned: {error}")
     try:
         applications = _pinned_applications(images, row, production, repository)
-        if any(app.tag != str(pinned[app.uuid].get("restore_tag")) for app in applications):
+        if not _all_put_back(applications, row):
             return waiting
         answer = client.restored(
             repository,
@@ -452,9 +461,25 @@ def _hand_restored(
         return Outcome(repository, number, "error", str(error))
     finally:
         images.close()
+    return _restored_outcome(answer, repository, number, "the moving tags were put back by hand")
+
+
+def _all_put_back(applications: Sequence[Application], row: Mapping[str, Any]) -> bool:
+    """Is every pinned application's tag its recorded restore tag again (a person put it back)?"""
+    pinned = row.get("pinned_images")
+    return isinstance(pinned, Mapping) and all(
+        isinstance(pinned.get(app.uuid), Mapping)
+        and app.tag == str(pinned[app.uuid].get("restore_tag"))
+        for app in applications
+    )
+
+
+def _restored_outcome(
+    answer: Mapping[str, Any], repository: str, number: int, detail: str
+) -> Outcome:
     if answer.get("status") != _RESTORED:
         return Outcome(repository, number, "unreadable", str(answer.get("detail") or ""))
-    return Outcome(repository, number, "restored", "the moving tags were put back by hand")
+    return Outcome(repository, number, "restored", detail)
 
 
 def _restore(
