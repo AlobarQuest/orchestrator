@@ -26,6 +26,9 @@ from estate_lander.change_manager import ChangeManagerClient
 from estate_lander.change_manager import ForbiddenEndpointError as ChangeManagerForbidden
 from estate_lander.change_manager import is_allowed_write as is_allowed_cm_write
 from estate_lander.orchestrator_client import (
+    DEFAULT_BASE_URL,
+    TIMEOUT_SECONDS,
+    WATCH_TIMEOUT_SECONDS,
     ForbiddenEndpointError,
     OrchestratorClient,
     is_allowed_read,
@@ -179,3 +182,25 @@ def test_the_change_manager_client_reads_items_and_writes_nothing() -> None:
     assert sent == ["GET /api/items?source=deploy"]
     assert not is_allowed_cm_write("/api/deploy-changes")
     assert not is_allowed_cm_write("/api/items")
+
+
+def test_the_watch_asks_for_this_lanes_own_landings_with_the_longer_timeout() -> None:
+    """The orchestrator reads nothing for the inert lane's landings when this lane names its own,
+    and only the watch, whose reads are serial per landing, waits longer than every other call."""
+    sent: list[tuple[str, dict[str, float | None]]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(
+            (str(request.url).removeprefix(DEFAULT_BASE_URL), request.extensions["timeout"])
+        )
+        return httpx.Response(200, json={"landings": [], "allowed": True})
+
+    client = OrchestratorClient("t", "k", transport=httpx.MockTransport(handler))
+    client.landing_watch()
+    client.admission("alobarquest/x", 7)
+
+    [(watch, watch_timeout), (admission, admission_timeout)] = sent
+    assert watch == "/api/v1/landing-watch?lane=estate"
+    assert admission.startswith("/api/v1/estate-pr-merge-admission?")
+    assert set(watch_timeout.values()) == {WATCH_TIMEOUT_SECONDS} == {240.0}
+    assert set(admission_timeout.values()) == {TIMEOUT_SECONDS} == {60.0}

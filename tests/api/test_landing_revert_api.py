@@ -23,6 +23,7 @@ from orchestrator.main import create_app
 from orchestrator.services.landing.revert_act import (
     LANDING_RESTORE_NOT_LANDED,
     LANDING_REVERT_LANE_OFF,
+    LANDING_WATCH_LANE_UNKNOWN,
     RevertActOutcome,
     WatchedLanding,
 )
@@ -249,6 +250,81 @@ def test_a_landing_that_redeploys_is_read_through_the_estate_gateway(
     assert served[BRAIN_BUMP]["verdict"] == "clean"
     assert [number for _, number in slot["estate"].reads] == [BRAIN_BUMP]
     assert [number for _, number in slot["gateway"].reads] == [BUMP]
+
+
+class NeverCalled:
+    """A gateway that fails the test on any use: the watch must make no App read through it."""
+
+    def __getattr__(self, name: str) -> Any:
+        raise AssertionError(f"the other lane's gateway was asked for {name}")
+
+
+def _both_lanes(engine: Engine) -> None:
+    """The inert landing the fixture seeds, and a clean estate landing beside it."""
+    with Session(engine) as seeding:
+        landed_on_brain(seeding)
+        everywhere(seeding, MERGE_79, minutes_ago=120)
+        seeding.commit()
+
+
+def _lane_watch(client: TestClient, lane: str) -> list[dict[str, Any]]:
+    response = client.get(WATCH, params={"lane": lane}, headers=SYSTEM)
+    assert response.status_code == 200, response.text
+    return response.json()["landings"]
+
+
+def test_the_inert_lane_is_served_alone_and_the_estate_gateway_is_never_read(
+    watch_client, migrated_engine: Engine
+) -> None:
+    client, slot = watch_client
+    _both_lanes(migrated_engine)
+    slot["estate"] = NeverCalled()
+
+    served = _lane_watch(client, "inert")
+
+    assert [(row["pr_number"], row["lane"]) for row in served] == [(BUMP, "inert")]
+    assert served[0]["verdict"] == "flaky_retry"
+    # The control: the same watch asked for both lanes does reach the estate gateway.
+    assert client.get(WATCH, headers=SYSTEM).status_code == 500
+
+
+def test_the_estate_lane_is_served_alone_and_the_inert_gateway_is_never_read(
+    watch_client, migrated_engine: Engine
+) -> None:
+    client, slot = watch_client
+    _both_lanes(migrated_engine)
+    slot["estate"] = BrainGateway()
+    slot["gateway"] = NeverCalled()
+
+    served = _lane_watch(client, "estate")
+
+    assert [(row["pr_number"], row["lane"]) for row in served] == [(BRAIN_BUMP, "estate")]
+    assert served[0]["verdict"] == "clean"
+    assert client.get(WATCH, headers=SYSTEM).status_code == 500
+
+
+def test_a_watch_naming_no_lane_still_serves_both(watch_client, migrated_engine: Engine) -> None:
+    client, slot = watch_client
+    _both_lanes(migrated_engine)
+    slot["estate"] = BrainGateway()
+
+    served = {row["pr_number"]: row["lane"] for row in _watch(client)}
+
+    assert served == {BUMP: "inert", BRAIN_BUMP: "estate"}
+
+
+@pytest.mark.parametrize("lane", ["", "INERT", "both", "inert,estate"])
+def test_an_unknown_lane_is_refused_by_name_before_any_read(
+    watch_client, migrated_engine: Engine, lane: str
+) -> None:
+    client, slot = watch_client
+    _both_lanes(migrated_engine)
+    slot["gateway"], slot["estate"] = NeverCalled(), NeverCalled()
+
+    response = client.get(WATCH, params={"lane": lane}, headers=SYSTEM)
+
+    assert response.status_code == 409, response.text
+    assert response.json()["error"]["code"] == LANDING_WATCH_LANE_UNKNOWN
 
 
 def test_each_lane_is_under_its_own_switch(watch_client, migrated_engine: Engine) -> None:

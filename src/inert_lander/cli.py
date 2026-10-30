@@ -359,9 +359,9 @@ def _read_watch(client: Watch) -> tuple[list[dict[str, Any]] | None, list[Outcom
     the orchestrator cannot answer for does not stop the landing pass: it is reported, and held by
     the alerts.
 
-    The watch serves both lanes' landings (Landing Part 3b); a landing that redeploys is the estate
-    lander's to act on and alert about. A row naming no lane is this lane's: an orchestrator that
-    predates the field watched this lane alone.
+    The client asks for this lane's landings alone; the filter stays as defence in depth, since a
+    landing that redeploys is the estate lander's to act on and alert about. A row naming no lane
+    is this lane's: an orchestrator that predates the field watched this lane alone.
     """
     try:
         watch = client.landing_watch()

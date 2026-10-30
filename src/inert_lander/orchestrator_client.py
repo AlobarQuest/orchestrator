@@ -40,6 +40,8 @@ from lander.errors import LandingRefused, OrchestratorError
 DEFAULT_BASE_URL = "https://sds.alobar.net"
 USER_AGENT = "inert-lander/1 (+AlobarQuest/orchestrator)"
 TIMEOUT_SECONDS = 60.0
+# The watch alone: about 6.5s per watched landing, its GitHub reads serial; peak 13 landings in 48h.
+WATCH_TIMEOUT_SECONDS = 240.0
 
 _ADMISSION = "/api/v1/inert-pr-merge-admission"
 _LAND = "/api/v1/inert-pr-merge"
@@ -222,8 +224,12 @@ class OrchestratorClient:
         return self._object(response, "close response")
 
     def landing_watch(self) -> list[dict[str, Any]]:
-        """The lane's watched landings, each with its verdict or its record's status."""
-        body = self._object(self._send("GET", _WATCH), "landing watch")
+        """This lane's watched landings, each with its verdict or its record's status. Asks for
+        this lane alone, so the orchestrator reads nothing for the other lane's landings."""
+        response = self._send(
+            "GET", _WATCH, params={"lane": "inert"}, timeout=WATCH_TIMEOUT_SECONDS
+        )
+        body = self._object(response, "landing watch")
         landings = body.get("landings")
         if not isinstance(landings, list) or not all(isinstance(row, dict) for row in landings):
             raise OrchestratorError("the landing watch carried no list of landings")
