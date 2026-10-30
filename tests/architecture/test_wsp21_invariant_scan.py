@@ -785,6 +785,13 @@ OUTBOUND_ALLOWLIST = {
     # and one write, proposing a decomposition. Enforced by `change_manager_permits` and
     # `orchestrator_permits` and pinned by tests/rotation_decomposer/test_client_surface.py.
     Path("src/rotation_decomposer/client.py"),
+    # Landing Part 4. Change-manager's work-record listing, read; GitHub, one pull request's state,
+    # read; and the orchestrator as SYSTEM, its reads for a bump and three writes: propose, dispatch
+    # and merge. Enforced by the three `*_permits` and pinned by
+    # tests/bump_driver/test_client_surface.py.
+    Path("src/bump_driver/client.py"),
+    # Only the type annotation of the test transport and of `KeyedAlerts`' transport argument.
+    Path("src/bump_driver/alerts.py"),
     # ADR-0055 decision 1. The credential-rotation executor PULLS its work: it is a separate
     # program in its own VM, and it reaches the orchestrator only as its WORKER identity. Its
     # reads are the ready queue, a unit, its package revision, history and evidence; its writes

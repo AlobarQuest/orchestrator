@@ -268,6 +268,29 @@ TABLE: dict[str, Row] = {
         "sys",
         "typing",
     ),
+    # Landing Part 4: moves standing dependency-update work as SYSTEM. It reads the member record
+    # and the bump matcher's tooling map from `sds_members`, a library its siblings share, tells
+    # alert-hub through the shared client, and runs only git and the generator as subprocesses.
+    "bump_driver": _row(
+        "__future__",
+        "alert_hub_client",
+        "argparse",
+        "base64",
+        "collections",
+        "dataclasses",
+        "estate_clients",
+        "httpx",
+        "json",
+        "os",
+        "pathlib",
+        "re",
+        "sds_members",
+        "shutil",
+        "subprocess",
+        "sys",
+        "tempfile",
+        "typing",
+    ),
     "image_release": _row(
         "__future__",
         "collections",

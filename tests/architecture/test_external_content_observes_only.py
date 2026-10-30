@@ -323,6 +323,22 @@ CLASSIFICATION: dict[str, Row] = {
         "anything else waits for a person on /review",
         frozenset({"/api/v1/package-intakes/{revision_id}/decomposition-proposals"}),
     ),
+    "bump_driver": Row(
+        Role.INTERNAL_LANE_ACTOR,
+        "Landing Part 4 (ADR-0006 amendment 2, ADR-0025 amendment 4): moves standing "
+        "dependency-update work as SYSTEM. It proposes a registered bump's decomposition, built "
+        "by intent-packages' generator with no repository code run; the orchestrator approves it "
+        "by policy only when it is the generator's own for that revision in a granted "
+        "repository, else it waits for a person on /review. It starts a ready bump unit's run "
+        "and asks to land a completed one; the orchestrator admits both on the unit's own terms",
+        frozenset(
+            {
+                "/api/v1/package-intakes/{revision_id}/decomposition-proposals",
+                "/api/v1/work-units/{unit_id}/dispatch",
+                "/api/v1/work-units/{unit_id}/pr-merge",
+            }
+        ),
+    ),
     "image_release": Row(
         Role.INTERNAL_LANE_ACTOR,
         "ADR-0039 amendment 2026-10-05: the orchestrator's operator-run deploy step binds a "

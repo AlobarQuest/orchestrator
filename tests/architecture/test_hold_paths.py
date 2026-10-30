@@ -100,6 +100,12 @@ HOLD_PATHS: dict[Path, Honours | CoveredBy | NotABump] = {
     # Propose paths: no list names them, so each is named here.
     SRC / "bump_proposer/cli.py": Honours(SRC / "bump_proposer/cli.py", "_held"),
     CARRIER: Honours(SRC / "work_carrier/prepare.py", "held_refusal"),
+    SRC / "bump_driver/cli.py": CoveredBy(
+        (CARRIER, FACTORY_MERGE),
+        "proposes the decomposition of an intake the carrier registered, which it refused had the "
+        "record been held, and starts its unit; what the unit produces lands only through the "
+        "factory merge, whose hold term refuses a held bump",
+    ),
     SRC / "change_proposer/cli.py": CoveredBy(
         (ESTATE_MERGE,),
         "proposes deploy change records for Dependabot pull requests in deploying repositories; "
