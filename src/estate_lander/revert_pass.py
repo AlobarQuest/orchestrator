@@ -76,11 +76,15 @@ _REPORTED_RECORDS: Final = {  # not-a-vocabulary: the watch's record statuses, r
 }
 # The step a pinned record with no revert to land waits on: a person's hand restore.
 _HAND_RESTORE: Final = "hand_restore"
-# The orchestrator's refusals of a re-point that say only that its answer moved since the watch was
-# read: nothing was touched, and the next pass asks again. Every other refusal is alerted.
-_ANSWER_MOVED: Final = frozenset(  # not-a-vocabulary: the orchestrator's refusal codes, relayed
-    {"landing_revert_record_moved", "landing_repoint_not_bad"}
+# The orchestrator's refusals of a re-point that are not findings: its answer moved since the watch
+# was read, or the estate lane is switched off on purpose. Nothing was touched, and the next pass
+# asks again. Every other refusal (a repository not granted among them: a bad build is served and
+# nothing will act on it) is alerted.
+_NOT_A_FINDING: Final = frozenset(  # not-a-vocabulary: the orchestrator's refusal codes, relayed
+    {"landing_revert_record_moved", "landing_repoint_not_bad", "landing_revert_lane_off"}
 )
+# The mark a confirmed pin carries on each image (the orchestrator's `revert_act.PIN_CONFIRMED`).
+_CONFIRMED: Final = ("pinned", "yes")
 _ACT_ANSWERS: Final = {  # not-a-vocabulary: the act's answers, relayed
     "rerun_requested": "reran",
     "revert_opened": "revert-opened",
@@ -123,6 +127,10 @@ class Acts(Protocol):
     ) -> dict[str, Any]: ...
 
     def restored(
+        self, repository: str, pr_number: int, *, expected_status: str, idempotency_key: str
+    ) -> dict[str, Any]: ...
+
+    def pinned(
         self, repository: str, pr_number: int, *, expected_status: str, idempotency_key: str
     ) -> dict[str, Any]: ...
 
@@ -319,7 +327,7 @@ def _repoint(
                 idempotency_key=f"estate-landing-repoint:{repository}:{number}:{parent}:{digest}",
             )
         except LandingRefused as refused:
-            if refused.code in _ANSWER_MOVED:
+            if refused.code in _NOT_A_FINDING:
                 # Judged again and found nothing to point back, or the record moved: nothing was
                 # recorded and nothing was touched, and the next pass asks again.
                 return Outcome(repository, number, "waiting", str(refused))
@@ -333,9 +341,40 @@ def _repoint(
     finally:
         images.close()
     if failed is not None:
+        # Not confirmed: the next pass points the rest and confirms.
         return Outcome(repository, number, "error", failed)
+    unconfirmed = _confirm_pin(client, repository, number)
+    if unconfirmed is not None:
+        return Outcome(repository, number, "error", unconfirmed)
     return Outcome(
         repository, number, "repointed", f"{len(applications)} application(s) on {parent[:12]}"
+    )
+
+
+def _confirm_pin(client: Acts, repository: str, number: int) -> str | None:
+    """Ask the orchestrator to mark the pin confirmed: every application's tag is the parent's.
+    None once it is, else why not (the next pass confirms again)."""
+    try:
+        client.pinned(
+            repository,
+            number,
+            expected_status=_REPOINTED,
+            idempotency_key=f"estate-landing-pinned:{repository}:{number}",
+        )
+    except (LandingRefused, OrchestratorError) as error:
+        return f"every tag is set but the pin is not confirmed: {error}"
+    return None
+
+
+def _pin_confirmed(row: Mapping[str, Any]) -> bool:
+    """Did the lander confirm that it set every pinned application's tag? Until then a tag on its
+    restore tag is a pin that never happened, not a person's restore."""
+    pinned = row.get("pinned_images")
+    key, value = _CONFIRMED
+    return (
+        isinstance(pinned, Mapping)
+        and bool(pinned)
+        and all(isinstance(image, Mapping) and image.get(key) == value for image in pinned.values())
     )
 
 
@@ -378,10 +417,12 @@ def _serving(
 def _confirm_parent(
     row: Mapping[str, Any], repository: str, number: int, client: Acts, production: Production
 ) -> Outcome:
-    """Step 2: every application serves the parent, so ask for the revert; else start a deploy of
-    each application not serving it whose tag is still the parent's (its deploy never started, or
-    the pin failed part-way). An application whose tag a person changed is left alone and named;
-    production stays pinned and the alert open."""
+    """Step 2. Until the pin is confirmed (the pass that pinned stopped part-way, or died before
+    confirming), point every application not on the parent's tag at it, deploy it, and confirm.
+    Once confirmed: every application's tag back on its restore tag means a person took over, and
+    `restored` is asked for; every application serving the parent asks for the revert; else each
+    application not serving it whose tag is still the parent's is deployed again, and one whose tag
+    a person changed is left alone and named -- production stays pinned and the alert open."""
     parent = str(row.get("parent_sha") or "").lower()
     try:
         images = _open(production)
@@ -389,6 +430,12 @@ def _confirm_parent(
         return Outcome(repository, number, "error", f"production stays pinned: {error}")
     try:
         applications = _pinned_applications(images, row, production, repository)
+        if not _pin_confirmed(row):
+            moved = [app for app in applications if app.tag.lower() != parent]
+            failed = _point(images, moved, parent) or _confirm_pin(client, repository, number)
+            if failed is not None:
+                return Outcome(repository, number, "error", failed)
+            return Outcome(repository, number, "pinned", f"pin completed on {parent[:12]}")
         if _all_put_back(applications, row):
             # A person put every moving tag back before the revert opened: they took over.
             answer = client.restored(
@@ -465,12 +512,17 @@ def _hand_restored(
 
 
 def _all_put_back(applications: Sequence[Application], row: Mapping[str, Any]) -> bool:
-    """Is every pinned application's tag its recorded restore tag again (a person put it back)?"""
+    """Is every pinned application's tag its recorded restore tag again, after a confirmed pin (a
+    person put it back)? Before the pin is confirmed, it is a pin that never happened."""
     pinned = row.get("pinned_images")
-    return isinstance(pinned, Mapping) and all(
-        isinstance(pinned.get(app.uuid), Mapping)
-        and app.tag == str(pinned[app.uuid].get("restore_tag"))
-        for app in applications
+    return (
+        _pin_confirmed(row)
+        and isinstance(pinned, Mapping)
+        and all(
+            isinstance(pinned.get(app.uuid), Mapping)
+            and app.tag == str(pinned[app.uuid].get("restore_tag"))
+            for app in applications
+        )
     )
 
 

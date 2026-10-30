@@ -252,7 +252,8 @@ CLASSIFICATION: dict[str, Row] = {
         Role.INTERNAL_LANE_ACTOR,
         "Devon 2026-08-25 ruling: estate-landing is an internal lane actor; ADR-0019 inc 5b/6 "
         "landing, branch update, (bridge layer Part 4) closing a held bump and (Landing Part 3b) "
-        "acting on a landing that went bad: the rerun or revert, the re-point and the restore",
+        "acting on a landing that went bad: the rerun or revert, the re-point, its confirmation "
+        "and the restore",
         frozenset(
             {
                 "/api/v1/estate-pr-merge",
@@ -260,6 +261,7 @@ CLASSIFICATION: dict[str, Row] = {
                 "/api/v1/held-pr-close",
                 "/api/v1/landing-revert",
                 "/api/v1/landing-repoint",
+                "/api/v1/landing-pinned",
                 "/api/v1/landing-restored",
             }
         ),

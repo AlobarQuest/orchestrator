@@ -24,6 +24,7 @@ from orchestrator.api.schemas.landing import (
     InertLandingAdmissionResponse,
     InertPrMergeCommandModel,
     InertPrMergeResponse,
+    LandingPinnedCommandModel,
     LandingRepointCommandModel,
     LandingRestoreCommandModel,
     LandingRevertCommandModel,
@@ -81,12 +82,14 @@ from orchestrator.services.landing.pr_merge import (
 )
 from orchestrator.services.landing.pr_merge_admission import pr_merge_admission
 from orchestrator.services.landing.revert_act import (
+    PinnedCommand,
     RepointCommand,
     RestoreCommand,
     RevertCommand,
     RevertLane,
     act_on_landing,
     landing_watch,
+    record_pinned,
     record_repoint,
     record_restored,
 )
@@ -605,6 +608,34 @@ def landing_repoint_route(
             idempotency_key=body.idempotency_key,
             expected_status=body.expected_status,
             pinned_images=body.pinned_images,
+        ),
+        inert=inert,
+        estate=estate,
+        credentials_configured=credentials is not None,
+    )
+
+
+@router.post("/landing-pinned", response_model=LandingRevertResponse)
+def landing_pinned_route(
+    body: LandingPinnedCommandModel,
+    actor: ActorDep,
+    session: SessionDep,
+    settings: SettingsDep,
+) -> object:
+    """Landing Part 3b: the estate lander set every pinned application's tag to the parent's.
+    Confirms the pin of a `repointed` record, so a tag later found on its restore tag reads as a
+    person's restore rather than as a pin that never happened.
+    """
+    credentials = github_app_credentials_for(settings)
+    inert, estate = _revert_lanes(settings, credentials)
+    return record_pinned(
+        session,
+        PinnedCommand(
+            repository=body.repository,
+            pr_number=body.pr_number,
+            actor=actor,
+            idempotency_key=body.idempotency_key,
+            expected_status=body.expected_status,
         ),
         inert=inert,
         estate=estate,

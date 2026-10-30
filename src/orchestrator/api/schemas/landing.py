@@ -462,6 +462,18 @@ class LandingRepointCommandModel(BaseModel):
     pinned_images: dict[str, dict[str, str]] = Field(min_length=1, max_length=20)
 
 
+class LandingPinnedCommandModel(BaseModel):
+    """The estate lander set every pinned application's tag to the parent's (Landing Part 3b).
+    Only a `repointed` record is confirmed; until it is, a tag on its restore tag is a pin that
+    never happened."""
+
+    repository: str = Field(pattern=r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$", max_length=300)
+    pr_number: int = Field(gt=0)
+    idempotency_key: str = Field(min_length=1, max_length=400)
+    # The record's status the caller read: a confirmation is asked of a re-pointed record only.
+    expected_status: str
+
+
 class LandingRestoreCommandModel(BaseModel):
     """The estate lander has put the moving tag back and production serves the revert (Landing
     Part 3b). Only a landed revert that pinned production is recorded `restored`."""

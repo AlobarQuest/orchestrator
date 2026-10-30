@@ -83,6 +83,7 @@ def test_production_post_route_inventory_is_explicit() -> None:
         "/api/v1/held-pr-close",
         "/api/v1/landing-revert",
         "/api/v1/landing-repoint",
+        "/api/v1/landing-pinned",
         "/api/v1/landing-restored",
         "/api/v1/work-units/{unit_id}/verify",
         "/api/v1/work-units/{unit_id}/verifier-evidence/named-check",

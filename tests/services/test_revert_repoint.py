@@ -22,17 +22,20 @@ from orchestrator.errors import DomainError
 from orchestrator.persistence.models import Event, LandingRevert
 from orchestrator.services.landing.interfaces import Tree
 from orchestrator.services.landing.revert_act import (
+    LANDING_PIN_NOT_REPOINTED,
     LANDING_REPOINT_IMAGES_INVALID,
     LANDING_REPOINT_NOT_BAD,
     LANDING_REPOINT_NOT_SERVING,
     LANDING_RESTORE_NOT_LANDED,
     LANDING_REVERT_NEEDS_REPOINT,
     LANDING_REVERT_RECORD_MOVED,
+    PinnedCommand,
     RepointCommand,
     RestoreCommand,
     RevertCommand,
     act_on_landing,
     landing_watch,
+    record_pinned,
     record_repoint,
     record_restored,
 )
@@ -558,3 +561,71 @@ def test_a_hand_restore_before_the_revert_opens_hands_the_landing_to_a_person(
     gateway = brain_gateway()
     later = open_revert(migrated_session, gateway, key="open-after")
     assert later.acted is False and gateway.writes == []
+
+
+# --------------------------------------------------------------------------------------------
+# Fix round 3: the lander confirms the pin once every tag is set.
+# --------------------------------------------------------------------------------------------
+
+
+def confirm(session: Session, *, key: str = "pinned-1", expected: str = "repointed"):
+    return record_pinned(
+        session,
+        PinnedCommand(BRAIN, BRAIN_BUMP, SYSTEM, key, expected_status=expected),
+        **lanes(brain_gateway()),
+    )
+
+
+def test_a_confirmed_pin_marks_every_image_pinned(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    stuck_on_the_parent(migrated_session)
+    repoint(migrated_session, brain_gateway())
+
+    outcome = confirm(migrated_session)
+
+    assert (outcome.acted, outcome.status) == (True, "repointed")
+    record = stored(migrated_engine)
+    assert record is not None
+    assert record.pinned_images == {
+        uuid: {**image, "pinned": "yes"} for uuid, image in pinned().items()
+    }
+
+
+def test_a_re_point_never_carries_a_confirmation_the_caller_wrote(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    stuck_on_the_parent(migrated_session)
+
+    repoint(migrated_session, brain_gateway(), images=pinned(pinned="yes"))
+
+    record = stored(migrated_engine)
+    assert record is not None and record.pinned_images == pinned()
+
+
+@pytest.mark.parametrize("status", ["revert_opened", "revert_landed", "restored"])
+def test_only_a_repointed_record_is_confirmed(migrated_session: Session, status: str) -> None:
+    _pinned_at(migrated_session, status)
+
+    with pytest.raises(DomainError) as raised:
+        confirm(migrated_session, expected=status)
+
+    assert raised.value.code == LANDING_PIN_NOT_REPOINTED
+
+
+def test_a_confirmation_names_the_status_it_read(migrated_session: Session) -> None:
+    _pinned_at(migrated_session, "repointed")
+
+    with pytest.raises(DomainError) as raised:
+        confirm(migrated_session, expected="revert_opened")
+
+    assert raised.value.code == LANDING_REVERT_RECORD_MOVED
+
+
+def test_a_repeated_confirmation_key_answers_from_its_event(migrated_session: Session) -> None:
+    _pinned_at(migrated_session, "repointed")
+    confirm(migrated_session)
+
+    again = confirm(migrated_session)
+
+    assert again.replayed is True

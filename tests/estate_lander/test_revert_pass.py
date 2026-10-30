@@ -52,9 +52,13 @@ def _apps(tag: str = "latest", **tags: str) -> list[Application]:
     ]
 
 
-def _pins(restore: str = "latest") -> dict[str, dict[str, str]]:
+def _pins(restore: str = "latest", *, confirmed: bool = True) -> dict[str, dict[str, str]]:
+    """The images a re-point recorded; `confirmed` once the lander has set every tag (the
+    orchestrator marks each entry `pinned`)."""
+    flag = {"pinned": "yes"} if confirmed else {}
     return {
-        uuid: {"tag": PARENT, "digest": DIGEST, "restore_tag": restore} for uuid in ("u1", "u2")
+        uuid: {"tag": PARENT, "digest": DIGEST, "restore_tag": restore, **flag}
+        for uuid in ("u1", "u2")
     }
 
 
@@ -130,6 +134,10 @@ class FakeActs:
     def restored(self, repository: str, pr_number: int, **body: Any) -> dict[str, Any]:
         answer = {"acted": True, "status": "restored", "detail": ""}
         return self._call("restored", answer, repository=repository, pr_number=pr_number, **body)
+
+    def pinned(self, repository: str, pr_number: int, **body: Any) -> dict[str, Any]:
+        answer = {"acted": True, "status": "repointed", "detail": ""}
+        return self._call("pinned", answer, repository=repository, pr_number=pr_number, **body)
 
 
 class World:
@@ -231,8 +239,11 @@ def test_a_bad_landing_is_recorded_repointed_before_production_is_touched() -> N
         "start u1",
         f"tag u2 {PARENT[:12]}",
         "start u2",
+        # Every tag is set: the pin is confirmed.
+        "pinned",
     ]
-    [(act, body)] = world.acts.calls
+    act, body = world.acts.calls[0]
+    assert act == "repoint"
     assert body["expected_status"] is None
     assert body["pinned_images"] == {
         "u1": {"tag": PARENT, "digest": DIGEST, "restore_tag": "latest"},
@@ -371,8 +382,8 @@ def _landed(**extra: Any) -> dict[str, Any]:
         None,
         "revert_landed",
         pinned_images={
-            "u1": {"tag": PARENT, "digest": DIGEST, "restore_tag": "latest"},
-            "u2": {"tag": PARENT, "digest": DIGEST, "restore_tag": "main"},
+            "u1": {"tag": PARENT, "digest": DIGEST, "restore_tag": "latest", "pinned": "yes"},
+            "u2": {"tag": PARENT, "digest": DIGEST, "restore_tag": "main", "pinned": "yes"},
         },
         revert_merge_sha=REVERT_MERGE,
         **extra,
@@ -559,8 +570,8 @@ def _stuck(status: str) -> dict[str, Any]:
         None,
         status,
         pinned_images={
-            "u1": {"tag": PARENT, "digest": DIGEST, "restore_tag": "latest"},
-            "u2": {"tag": PARENT, "digest": DIGEST, "restore_tag": "main"},
+            "u1": {"tag": PARENT, "digest": DIGEST, "restore_tag": "latest", "pinned": "yes"},
+            "u2": {"tag": PARENT, "digest": DIGEST, "restore_tag": "main", "pinned": "yes"},
         },
     )
 
@@ -618,7 +629,9 @@ def test_a_hand_restored_tag_while_pinned_is_left_alone() -> None:
     [
         ("landing_repoint_not_bad", "waiting", False),
         ("landing_revert_record_moved", "waiting", False),
-        ("landing_revert_lane_off", "repoint-refused", True),
+        # The lane's off switch is deliberate, not a finding.
+        ("landing_revert_lane_off", "waiting", False),
+        # A bad build is served and nothing will act on it.
         ("landing_repository_not_granted", "repoint-refused", True),
     ],
 )
@@ -660,8 +673,8 @@ def test_a_hand_restore_while_repointed_is_recorded_restored_and_opens_no_revert
         None,
         "repointed",
         pinned_images={
-            "u1": {"tag": PARENT, "digest": DIGEST, "restore_tag": "latest"},
-            "u2": {"tag": PARENT, "digest": DIGEST, "restore_tag": "main"},
+            "u1": {"tag": PARENT, "digest": DIGEST, "restore_tag": "latest", "pinned": "yes"},
+            "u2": {"tag": PARENT, "digest": DIGEST, "restore_tag": "main", "pinned": "yes"},
         },
     )
 
@@ -680,3 +693,88 @@ def test_a_partial_hand_restore_while_repointed_changes_nothing() -> None:
     status, _ = _only(world.run(_repointed()))
 
     assert status == "pinned" and world.acts.calls == []
+
+
+# --------------------------------------------------------------------------------------------
+# Fix round 3: a pin is confirmed before a tag on its restore tag can mean a person put it back.
+# --------------------------------------------------------------------------------------------
+
+
+def test_the_pin_is_confirmed_once_every_tag_is_set() -> None:
+    world = World()
+
+    assert _only(world.run(_row("bad")))[0] == "repointed"
+
+    assert [act for act, _ in world.acts.calls] == ["repoint", "pinned"]
+    assert world.log.index("pinned") > world.log.index(f"tag u2 {PARENT[:12]}")
+    assert world.acts.calls[1][1]["expected_status"] == "repointed"
+
+
+def test_a_pin_refused_on_the_first_application_is_not_confirmed_and_is_repaired() -> None:
+    """Every tag still equals its restore tag after a PATCH refused on the first app: that is a pin
+    that never happened, not a person's take-over. The next pass points both and confirms."""
+    first = World(fail_on="u1")
+    assert _only(first.run(_row("bad")))[0] == "error"
+    assert [act for act, _ in first.acts.calls] == ["repoint"]
+
+    world = World(_apps(code_brain="main"), serving={"app-brain": MERGE, "code-brain": MERGE})
+    row = _row(None, "repointed", pinned_images=_unconfirmed_pins())
+
+    status, _ = _only(world.run(row))
+
+    assert status == "pinned"
+    assert [act for act, _ in world.acts.calls] == ["pinned"]
+    assert [e for e in world.log if e.startswith(("tag ", "start "))] == [
+        f"tag u1 {PARENT[:12]}",
+        "start u1",
+        f"tag u2 {PARENT[:12]}",
+        "start u2",
+    ]
+
+
+def test_a_pin_refused_part_way_points_the_rest_on_the_next_pass() -> None:
+    first = World(fail_on="u2")
+    assert _only(first.run(_row("bad")))[0] == "error"
+    assert [act for act, _ in first.acts.calls] == ["repoint"]
+
+    world = World(
+        _apps(tag=PARENT, code_brain="main"),
+        serving={"app-brain": PARENT, "code-brain": MERGE},
+    )
+    row = _row(None, "repointed", pinned_images=_unconfirmed_pins())
+
+    status, detail = _only(world.run(row))
+
+    assert status == "pinned" and "by hand" not in detail
+    assert [e for e in world.log if e.startswith(("tag ", "start "))] == [
+        f"tag u2 {PARENT[:12]}",
+        "start u2",
+    ]
+    assert [act for act, _ in world.acts.calls] == ["pinned"]
+
+
+def test_an_unconfirmed_failed_revert_is_never_taken_as_a_hand_restore() -> None:
+    world = World(_apps(code_brain="main"))
+    row = _row(None, "revert_failed", pinned_images=_unconfirmed_pins())
+
+    assert _only(world.run(row))[0] == "revert-failed"
+    assert world.acts.calls == []
+
+
+def _unconfirmed_pins() -> dict[str, dict[str, str]]:
+    return {
+        "u1": {"tag": PARENT, "digest": DIGEST, "restore_tag": "latest"},
+        "u2": {"tag": PARENT, "digest": DIGEST, "restore_tag": "main"},
+    }
+
+
+def test_a_pin_marked_on_only_some_images_is_not_confirmed() -> None:
+    """Every image carries the mark, or the pin is unconfirmed and completed again."""
+    pins = _unconfirmed_pins()
+    pins["u1"] = {**pins["u1"], "pinned": "yes"}
+    world = World(_apps(code_brain="main"), serving={"app-brain": MERGE, "code-brain": MERGE})
+
+    status, _ = _only(world.run(_row(None, "repointed", pinned_images=pins)))
+
+    assert status == "pinned"
+    assert [act for act, _ in world.acts.calls] == ["pinned"]

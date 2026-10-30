@@ -60,6 +60,7 @@ EDGES: dict[str, Edge] = {
                 ("GET", "/api/v1/landing-watch"),
                 ("POST", "/api/v1/landing-revert"),
                 ("POST", "/api/v1/landing-repoint"),
+                ("POST", "/api/v1/landing-pinned"),
                 ("POST", "/api/v1/landing-restored"),
             }
         ),

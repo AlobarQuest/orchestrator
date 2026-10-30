@@ -306,6 +306,22 @@ def test_a_deploying_landing_is_repointed_reverted_and_restored_through_the_rout
     served = {row["pr_number"]: row for row in _watch(client)}[BRAIN_BUMP]
     assert (served["status"], served["pinned_images"]) == ("repointed", pinned())
 
+    confirmed = client.post(
+        "/api/v1/landing-pinned",
+        json={
+            "repository": BRAIN,
+            "pr_number": BRAIN_BUMP,
+            "expected_status": "repointed",
+            "idempotency_key": "pinned",
+        },
+        headers=SYSTEM,
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    served = {row["pr_number"]: row for row in _watch(client)}[BRAIN_BUMP]
+    assert served["pinned_images"] == {
+        uuid: {**image, "pinned": "yes"} for uuid, image in pinned().items()
+    }
+
     opened = client.post(
         REVERT_ROUTE,
         json={
@@ -340,6 +356,7 @@ def test_only_the_system_actor_may_repoint_or_restore(watch_client) -> None:
             "/api/v1/landing-repoint",
             {"expected_status": None, "pinned_images": pinned()},
         ),
+        ("/api/v1/landing-pinned", {"expected_status": "repointed"}),
         ("/api/v1/landing-restored", {"expected_status": "revert_landed"}),
     ):
         response = client.post(

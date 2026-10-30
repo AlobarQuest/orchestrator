@@ -161,6 +161,11 @@ LANDING_REPOINT_NOT_SERVING: Final = "landing_repoint_not_serving"
 LANDING_REPOINT_NOT_BAD: Final = "landing_repoint_not_bad"
 LANDING_REPOINT_IMAGES_INVALID: Final = "landing_repoint_images_invalid"
 LANDING_RESTORE_NOT_LANDED: Final = "landing_restore_not_landed"
+# A pin confirmed on a record that is not `repointed`.
+LANDING_PIN_NOT_REPOINTED: Final = "landing_pin_not_repointed"
+# The mark a confirmed pin puts on each image: the lander set every application's tag. Until it is
+# there, a tag equal to its restore tag is a pin that never happened, never a person's restore.
+PIN_CONFIRMED: Final = {"pinned": "yes"}
 
 # The record statuses, as the act writes them.
 RERUN_REQUESTED: Final = "rerun_requested"
@@ -262,6 +267,17 @@ class RepointCommand:
     idempotency_key: str
     expected_status: str | None
     pinned_images: Mapping[str, object]
+
+
+@dataclass(frozen=True)
+class PinnedCommand:
+    """The estate lander set every pinned application's tag to the parent's."""
+
+    repository: str
+    pr_number: int
+    actor: ActorContext
+    idempotency_key: str
+    expected_status: str
 
 
 @dataclass(frozen=True)
@@ -536,6 +552,63 @@ def _valid_images(images: Mapping[str, object], parent: str) -> dict[str, dict[s
     )
 
 
+def record_pinned(
+    session: Session,
+    command: PinnedCommand,
+    *,
+    inert: RevertLane,
+    estate: RevertLane,
+    credentials_configured: bool,
+) -> RevertActOutcome:
+    """Record that every pinned application's tag was set to the parent's (Landing Part 3b).
+
+    Only a `repointed` record, as the caller read it; each image gains the confirmation mark. A
+    re-point never carries the mark (`_valid_images` keeps three fields), so a tag on its restore
+    tag before this is a pin that never happened. Owns its transaction.
+    """
+    try:
+        outcome = _pinned(session, command, estate, inert, credentials_configured)
+        session.commit()
+        return outcome
+    except Exception:
+        session.rollback()
+        raise
+
+
+def _pinned(
+    session: Session,
+    command: PinnedCommand,
+    estate: RevertLane,
+    inert: RevertLane,
+    credentials_configured: bool,
+) -> RevertActOutcome:
+    landing, record, repository = _locked_landing(
+        session, command, (inert.enabled or estate.enabled) and credentials_configured
+    )
+    if isinstance(landing, RevertActOutcome):
+        return landing
+    _refuse_unless_lane_on(estate.enabled)
+    status = None if record is None else record.status
+    if status != command.expected_status:
+        raise DomainError(
+            LANDING_REVERT_RECORD_MOVED,
+            f"the record is {status or 'absent'}, not {command.expected_status} as the caller "
+            "read it",
+            "re-read the landing watch and ask again",
+        )
+    if record is None or record.status != REPOINTED or not record.pinned_images:
+        raise DomainError(
+            LANDING_PIN_NOT_REPOINTED,
+            f"{repository}#{command.pr_number} is not pointed back (the record is {status})",
+            "only a re-pointed record's pin is confirmed",
+        )
+    record.pinned_images = {
+        uuid: {**image, **PIN_CONFIRMED} for uuid, image in record.pinned_images.items()
+    }
+    record.updated_at = datetime.now(UTC)
+    return _recorded(session, _as_revert_command(command), landing, record, _stored_verdict(record))
+
+
 def record_restored(
     session: Session,
     command: RestoreCommand,
@@ -597,7 +670,9 @@ def _restore(
 
 
 def _locked_landing(
-    session: Session, command: RevertCommand | RepointCommand | RestoreCommand, lane_on: bool
+    session: Session,
+    command: RevertCommand | RepointCommand | RestoreCommand | PinnedCommand,
+    lane_on: bool,
 ) -> tuple[EstatePrMerge | RevertActOutcome, LandingRevert | None, str]:
     """The act's common start: the actor, the switch and grant, the repository's lock, a replay of
     a spent key, and the watched landing with its record read under `FOR UPDATE`."""
@@ -615,7 +690,9 @@ def _locked_landing(
     return landing, record, repository
 
 
-def _as_revert_command(command: RevertCommand | RepointCommand | RestoreCommand) -> RevertCommand:
+def _as_revert_command(
+    command: RevertCommand | RepointCommand | RestoreCommand | PinnedCommand,
+) -> RevertCommand:
     """The fields the shared recording and replay read, from any step's command."""
     if isinstance(command, RevertCommand):
         return command

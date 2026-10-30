@@ -1,4 +1,4 @@
-"""The confined orchestrator surface for the lander. EIGHT paths, checked before the transport.
+"""The confined orchestrator surface for the lander. NINE paths, checked before the transport.
 
 It asks whether a pull request may be landed and, when told to, asks for the landing, for the
 much smaller act of bringing a stale branch up to date with its base, or for a held bump to be
@@ -51,12 +51,14 @@ _CLOSE_HELD = "/api/v1/held-pr-close"
 
 # Landing Part 3b. The watch of the lanes' landings, read every pass, and the three acts on one of
 # this lane's that went bad: rerun its failed jobs or open its revert (the inert lander's act too),
-# record that production is being pointed back at the build before the bump, and record that it
+# record that production is being pointed back at the build before the bump (and, once every tag is
+# set, that the pin is confirmed: `_PINNED`), and record that it
 # was pointed forward again. The orchestrator judges each inside its own transaction.
 _WATCH = "/api/v1/landing-watch"
 _REVERT = "/api/v1/landing-revert"
 _REPOINT = "/api/v1/landing-repoint"
 _RESTORED = "/api/v1/landing-restored"
+_PINNED = "/api/v1/landing-pinned"
 
 
 class ForbiddenEndpointError(OrchestratorError):
@@ -68,7 +70,7 @@ def is_allowed_read(path: str) -> bool:
 
 
 def is_allowed_write(path: str) -> bool:
-    return path in (_LAND, _BRANCH_UPDATE, _CLOSE_HELD, _REVERT, _REPOINT, _RESTORED)
+    return path in (_LAND, _BRANCH_UPDATE, _CLOSE_HELD, _REVERT, _REPOINT, _PINNED, _RESTORED)
 
 
 def _permits(method: str, path: str) -> bool:
@@ -298,3 +300,15 @@ class OrchestratorClient:
             "idempotency_key": idempotency_key,
         }
         return self._object(self._send("POST", _RESTORED, json=body), "restore response")
+
+    def pinned(
+        self, repository: str, pr_number: int, *, expected_status: str, idempotency_key: str
+    ) -> dict[str, Any]:
+        """Ask the orchestrator to record that every pinned application's tag is the parent's."""
+        body = {
+            "repository": repository,
+            "pr_number": pr_number,
+            "expected_status": expected_status,
+            "idempotency_key": idempotency_key,
+        }
+        return self._object(self._send("POST", _PINNED, json=body), "pin confirmation")

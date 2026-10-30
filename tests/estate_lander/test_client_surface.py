@@ -40,19 +40,21 @@ WRITE_PATHS = frozenset(
         "/api/v1/held-pr-close",
         "/api/v1/landing-revert",
         "/api/v1/landing-repoint",
+        "/api/v1/landing-pinned",
         "/api/v1/landing-restored",
     }
 )
 
 
-def test_the_write_surface_is_six_routes_and_no_more() -> None:
-    """SIX since Landing Part 3b, and the count is in the name so each addition had to be written
+def test_the_write_surface_is_seven_routes_and_no_more() -> None:
+    """SEVEN since Landing Part 3b, and the count is in the name so each addition had to be written
     down rather than acquired. The surface GREW by named paths; it did not open. The branch update
     is much the smaller act -- it brings a topic branch up to date with its base, where the landing
     rewrites a default branch and starts a rollout on a running service -- and the third closes a
     held bump with a comment, bounded by this lane's own admission. The last three are the watch's
     acts on a landing that went bad: rerun or open its revert, record that production is being
-    pointed back at the build before it, and record that it was pointed forward again."""
+    pointed back at the build before it, confirm that every tag was set, and record that it was
+    pointed forward again."""
     for allowed in WRITE_PATHS:
         assert is_allowed_write(allowed), allowed
     for forbidden in (

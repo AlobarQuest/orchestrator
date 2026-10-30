@@ -88,6 +88,7 @@ EXPECTED_VALUE_EXCEPTIONS = {
     "/api/v1/landing-revert": "expected_status",
     # Landing Part 3b. The same subject, two more steps on it: the re-point and the restore.
     "/api/v1/landing-repoint": "expected_status",
+    "/api/v1/landing-pinned": "expected_status",
     "/api/v1/landing-restored": "expected_status",
 }
 
@@ -130,6 +131,7 @@ def test_the_expected_value_exception_is_exactly_six_routes_wide() -> None:
         "/api/v1/held-pr-close": "expected_head_sha",
         "/api/v1/landing-revert": "expected_status",
         "/api/v1/landing-repoint": "expected_status",
+        "/api/v1/landing-pinned": "expected_status",
         "/api/v1/landing-restored": "expected_status",
     }
     for path in EXPECTED_VALUE_EXCEPTIONS:

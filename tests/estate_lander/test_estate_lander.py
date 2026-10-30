@@ -129,6 +129,10 @@ class FakeOrchestrator:
         self.acts.append(("restored", repository, pr_number))
         return {"acted": True, "status": "restored", "detail": ""}
 
+    def pinned(self, repository, pr_number, **_: Any):
+        self.acts.append(("pinned", repository, pr_number))
+        return {"acted": True, "status": "repointed", "detail": ""}
+
 
 def _row(
     number: int,
