@@ -952,12 +952,15 @@ On the VPS, as root. Its only dependency is Python 3.12 and Docker.
    as `bad_target` before anything runs. The name after `target.` is what the registry row's
    `helper_target` must equal.
 3. Create the executor's key in the VM, and nowhere else. The `rotation` user has no login shell, so
-   run its commands through `runuser`: `orb -m rotation-executor -u root runuser -u rotation --
-   ssh-keygen -t ed25519 -N '' -f /tmp/pg-helper-key`. Never print the private half. On the Mac, run
-   `orb -m rotation-executor -u root runuser -u rotation -- cat /tmp/pg-helper-key | pbcopy`, paste
-   it into a new secret in `Rotation / Admin` from the console, and clear the clipboard with `pbcopy
-   < /dev/null`. Put the secret's id in the executor's configuration as `pg_helper_key_id`. Keep the
-   file until the proofs that follow pass.
+   run a short script as that user through `orb -m rotation-executor -u root runuser -u rotation --
+   env -i PATH=/usr/bin:/bin HOME=/var/lib/rotation-worker /opt/rotation-worker/venv/bin/python -`.
+   The script runs `ssh-keygen -t ed25519 -N ''`, writes the private half with `bitwarden_sdk` to a
+   secret `pg-helper-ssh-key` in `Rotation / Keepers`, and prints the secret's id and the public
+   half. The private half never leaves the VM or reaches a clipboard. It lives in `Rotation /
+   Keepers` because the root can write that project and only reads `Rotation / Admin`. Put the
+   secret's id in the executor's configuration as `pg_helper_key_id`, with `keepers_project_id`,
+   `pg_helper_host`, `pg_helper_known_host`, and the Coolify token's id in `admin_secrets` as
+   `postgres-role`. Keep the key file until the proofs that follow pass.
 4. Add the public half to the VPS's `/root/.ssh/authorized_keys` as one line, with the forced
    command, so the key can run nothing else:
 
@@ -1038,8 +1041,9 @@ security find-generic-password -s Claude -a AUTHENTIK_POSTGRES_PASSWORD -w | orb
 
 The command refuses unless the registry row's class is `postgres-role-password` and the value is
 exactly 64 lowercase hex characters, refuses to overwrite a keeper that exists, and prints the
-secret id and fingerprint, never the value. Put the id in the registry row's `bws_uuid` and in its
-`bws-secret` consumer. When the fingerprint matches the one the role's consumers report, delete the
+secret id and fingerprint, never the value. `adopt-keeper` reads the row, so land the row first with its class and provider and no keeper,
+then put the id in the row's `bws_uuid` and its `bws-secret` consumer and set `rotated_by_sds` in a
+second change. When the fingerprint matches the one the role's consumers report, delete the
 Keychain item.
 
 ### What an outage looks like
