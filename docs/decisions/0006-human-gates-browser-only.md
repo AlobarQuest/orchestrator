@@ -160,14 +160,18 @@ decomposition these conditions don't cover.
 
 - SYSTEM proposed it;
 - the revision's approver starts `policy:dependency-update@`, its profile is `dependency-update`,
-  and `profile_fields.standing` is true;
-- there is exactly one proposed unit, with no dependencies, and `max_attempts` is at or below the
-  envelope's budget;
+  `profile_fields.standing` is true, and its declared reach is exactly `source_repository`, so a
+  `live_estate` package waits for a person;
+- there is exactly one proposed unit, with no dependencies, every criterion is mapped to it and
+  none retained (a unit with no criteria completes without the named check), and `max_attempts` is
+  at or below the envelope's budget;
 - `human_authority_gate` reports no refusals, and only dependency-update known-good patterns
   recognise the stamped envelope;
 - `bump_binding_violations` is empty: every command is the one intent-packages' generator emits
   for the package's own dependency, versions and tooling (ADR-0028 amendment 1 asks for this
   binding), and the target repository is the package's;
+- the unit's `title` and `outcome` are the text the generator derives from `profile_fields`, since
+  both reach the agent's prompt beside `repo.edit`;
 - the member record grants `dependency_updates` on that repository.
 
 The recorded approver is the proposing SYSTEM identity, as on the rotation path (ADR-0055
@@ -187,3 +191,12 @@ bump stays held, and an alert fires. A session-authored decomposition still dry-
 The binding also covers `allowed_commands` and `verify_commands`, which goes past mutation commands
 alone: `allowed_commands` is the coding agent's whole vocabulary and a known-good pattern bounds
 only each command's shape, so a second `uv add` listed there would be a bump nothing named.
+
+What stays unbound, and why. The proposal's `rationale` never reaches the agent: factory-runner reads
+no such field. `context_enrichment` does ride the unit, and is not bound, because the Brains supply it
+rather than the proposer.
+
+**Residual accepted.** `approved_by` and `standing` on a SYSTEM-registered intake are
+caller-attested: `POST /api/v1/package-intakes` takes them from the body. A stolen SYSTEM bearer
+could therefore forge an intake and get a `READY` bump unit of any dependency in a granted inert
+repository, with no person seeing it. That is the cost, and it is accepted: no check here closes it.

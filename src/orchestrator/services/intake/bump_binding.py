@@ -12,6 +12,10 @@ accepts any of the three toolings' commands, so the tooling itself has to be bou
 
 `allowed_commands` is the coding agent's whole vocabulary, so it and `verify_commands` are bound
 too: a second `uv add` the agent may run is a second bump, wherever the envelope lists it.
+
+A unit's title and outcome reach the agent's prompt, so they are bound the same way
+(`bump_text_differs`). `tests/fixtures/intent-packages-envelopes/dependency_update_proposals.json`
+is the generator's real output, and holds both functions to it.
 """
 
 import re
@@ -30,6 +34,12 @@ _UV_SECTION: Final = (
     r"( --dev| --group [A-Za-z0-9][A-Za-z0-9_-]*| --optional [A-Za-z0-9][A-Za-z0-9_-]*)?"
 )
 _NPM_BUILD: Final = "npm run build"
+# intent-packages' `coding_note`, which the generator appends when the repository has a build.
+_NPM_BUILD_NOTE: Final = (
+    "Run the repository's own build; it is in your authorized commands, and what it reports is "
+    "the work. A repository that tracks compiled output also fails its named check when that "
+    "output is stale."
+)
 # not-a-vocabulary: the generator's gate components for npm, in the order it emits them
 _NPM_COMPONENTS: Final = ("npm ci", "npx eslint .", "npx prettier --check .", "npm test")
 # not-a-vocabulary: the generator's pip manifests, compared against commands and never a wire value
@@ -157,3 +167,23 @@ def bump_binding_violations(
     if allowed != (*mutations, *verifiers):
         violations.append("allowed_commands_differ")
     return tuple(violations)
+
+
+def bump_text_differs(
+    title: str, outcome: str, envelope: Mapping[str, Any], profile_fields: Mapping[str, Any]
+) -> bool:
+    """Whether a unit's text isn't what the generator derives from the bump.
+
+    Asked only of an envelope `bump_binding_violations` passed, so its fields and commands are
+    readable. The build note follows `npm run build`, which is the generator's own condition: it
+    emits the two from the same check of the repository.
+    """
+    package, new = profile_fields["package"], profile_fields["to_version"]
+    target, old = profile_fields["target_repo"], profile_fields["from_version"]
+    expected = (
+        f"{target} receives a PR that moves {package} {old} -> {new}; "
+        "its named check passes on the PR head."
+    )
+    if _NPM_BUILD in envelope["constraints"]["mutation_commands"]:
+        expected = f"{expected} {_NPM_BUILD_NOTE}"
+    return title != f"Update {package} to {new} in {target}" or outcome != expected

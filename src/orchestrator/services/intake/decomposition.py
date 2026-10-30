@@ -34,6 +34,7 @@ from orchestrator.persistence.models import (
     WorkPackageRevision,
     WorkUnit,
 )
+from orchestrator.reach_vocabulary import SOURCE_REPOSITORY, reach_from_snapshot
 from orchestrator.services.execution.run_activity import a_run_may_have_started
 from orchestrator.services.execution.target_grant import (
     DEPENDENCY_UPDATE,
@@ -41,7 +42,7 @@ from orchestrator.services.execution.target_grant import (
     MemberRecordGrants,
 )
 from orchestrator.services.intake.authority_gate import human_authority_gate
-from orchestrator.services.intake.bump_binding import bump_binding_violations
+from orchestrator.services.intake.bump_binding import bump_binding_violations, bump_text_differs
 from orchestrator.services.intake.intake_reads import POLICY_NOT_APPLIED
 from orchestrator.services.intake.packages import (
     DependencySpec,
@@ -397,7 +398,9 @@ def _bump_policy_outcome(
 
     The binding runs before the grant because it establishes that the target is a readable
     string naming the package's own repository. ``recognised_by`` can't be empty beside no
-    refusals: an empty or undeclared reach draws ``reach_undeclared``.
+    refusals, because the reach has exactly one member by then. ``context_enrichment`` is not
+    bound: the Brains supply it, not the proposer. The proposal's ``rationale`` never reaches the
+    agent.
     """
     refusal = _bump_revision_refusal(revision, actor)
     if refusal is not None:
@@ -409,20 +412,10 @@ def _bump_policy_outcome(
             )
         )
     )
-    if len(units) != 1:
-        return _PolicyRefusal("not_exactly_one_unit")
-    dependency = session.scalar(
-        select(DecompositionProposalDependency.id)
-        .where(DecompositionProposalDependency.proposal_id == proposal.id)
-        .limit(1)
-    )
-    if dependency is not None:
-        return _PolicyRefusal("unit_has_dependencies")
+    refusal = _bump_shape_refusal(session, proposal, units)
+    if refusal is not None:
+        return refusal
     proposed = units[0]
-    envelope = normalize_authority(proposed.authority)
-    budget = envelope.budgets.max_attempts
-    if budget is None or proposed.max_attempts > budget:
-        return _PolicyRefusal("attempts_over_budget")
     try:
         policy = load_factory_policy()
     except DomainError:
@@ -444,14 +437,15 @@ def _bump_policy_outcome(
     )
     if gate.refusals or not set(gate.recognised_by) <= bump_patterns:
         return _PolicyRefusal("envelope_not_recognised", (*gate.refusals, *gate.recognised_by))
+    fields = revision.enforcement_snapshot["profile_fields"]
     violations = bump_binding_violations(
-        proposed.authority,
-        revision.enforcement_snapshot["profile_fields"],
-        revision.work_package.package_id,
+        proposed.authority, fields, revision.work_package.package_id
     )
     if violations:
         return _PolicyRefusal("binding_violated", violations)
-    target = str(envelope.constraints["target_repository"])
+    if bump_text_differs(proposed.title, proposed.outcome, proposed.authority, fields):
+        return _PolicyRefusal("unit_text_differs")
+    target = str(normalize_authority(proposed.authority).constraints["target_repository"])
     if not MemberRecordGrants(session).is_granted(target, DEPENDENCY_UPDATES_SERVICE):
         return _PolicyRefusal("repository_not_granted", (target,))
     return (
@@ -475,7 +469,44 @@ def _bump_revision_refusal(
     fields = snapshot.get("profile_fields") if isinstance(snapshot, dict) else None
     if not isinstance(fields, dict) or fields.get("standing") is not True:
         return _PolicyRefusal("revision_not_standing")
+    reach = reach_from_snapshot(snapshot)
+    if reach != (SOURCE_REPOSITORY,):
+        return _PolicyRefusal("reach_not_inert", tuple(reach or ()))
     return None
+
+
+def _bump_shape_refusal(
+    session: Session,
+    proposal: DecompositionProposal,
+    units: Sequence[DecompositionProposalUnit],
+) -> _PolicyRefusal | None:
+    """One unit, waiting on nothing, within its budget, and answerable to every criterion.
+
+    A retained criterion is one no unit answers, and a unit with no criteria completes without
+    the verifier reading any named check. Intake requires criteria and coverage is already
+    validated, so with one unit and no retained row every criterion is the unit's.
+    """
+    if len(units) != 1:
+        return _PolicyRefusal("not_exactly_one_unit")
+    if _any_row(session, DecompositionProposalDependency, proposal.id):
+        return _PolicyRefusal("unit_has_dependencies")
+    if _any_row(session, DecompositionProposalRetainedAc, proposal.id):
+        return _PolicyRefusal("criteria_not_all_mapped")
+    budget = normalize_authority(units[0].authority).budgets.max_attempts
+    if budget is None or units[0].max_attempts > budget:
+        return _PolicyRefusal("attempts_over_budget")
+    return None
+
+
+def _any_row(
+    session: Session,
+    model: type[DecompositionProposalDependency | DecompositionProposalRetainedAc],
+    proposal_id: uuid.UUID,
+) -> bool:
+    return (
+        session.scalar(select(model.proposal_id).where(model.proposal_id == proposal_id).limit(1))
+        is not None
+    )
 
 
 def _record_policy_not_applied(

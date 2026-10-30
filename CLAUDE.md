@@ -575,10 +575,13 @@ Placement rule: global CLAUDE.md §7.
   `human_authority_gate` finds recognised. A standing bump needs no click (ADR-0006 amendment 2):
   the bump branch takes any revision with the `dependency-update` profile or a
   `policy:dependency-update@` approver, and approves only when that approver and profile both hold,
-  `standing` is true, there is one unit with no dependencies and attempts within its budget, only
-  dependency-update patterns recognise it, `bump_binding_violations` is empty and the member record
-  grants `dependency_updates`. The binding is a whole-command allowlist of the generator's forms,
-  and covers `allowed_commands` and `verify_commands` too. Each bump refusal, and an approval that
+  `standing` is true, reach is exactly `source_repository`, there is one unit with no dependencies,
+  every criterion mapped to it and none retained, and attempts within its budget, only
+  dependency-update patterns recognise it, `bump_binding_violations` is empty, its `title` and
+  `outcome` are the generator's (`bump_text_differs`) and the member record grants
+  `dependency_updates`. The binding is a whole-command allowlist of the generator's forms, and
+  covers `allowed_commands` and `verify_commands` too; a generator change means regenerating
+  `dependency_update_proposals.json`. Each bump refusal, and an approval that
   fails after policy said yes, records `decomposition.policy_not_applied`, served as
   `policy_not_applied` on the proposal routes. `register_approved_unit` admits SYSTEM only with
   `approved_by_policy`. A human's or WORKER's proposal, and every other decomposition, waits for a

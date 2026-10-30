@@ -8,9 +8,11 @@ event, which the proposal routes serve.
 
 from __future__ import annotations
 
+import re
 import uuid
 from collections.abc import Iterator
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -34,6 +36,7 @@ from orchestrator.services.intake.decomposition import (
     DecompositionProposalCommand,
     ProposedDependency,
     ProposedUnit,
+    RetainedAc,
     submit_decomposition_proposal,
 )
 from orchestrator.services.intake.package_intake import (
@@ -100,6 +103,7 @@ def _revision(
     fields: object = None,
     package_id: str = "orchestrator-uv-httpx2",
     reach: tuple[str, ...] | None = ("source_repository",),
+    criteria: tuple[AcceptanceCriterionProjection, ...] | None = None,
 ) -> WorkPackageRevision:
     declared = {} if reach is None else {"reach": list(reach)}
     return register_package_intake(
@@ -114,25 +118,30 @@ def _revision(
                 **declared,
                 "profile_fields": _fields() if fields is None else fields,
             },
-            acceptance_criteria=(
-                AcceptanceCriterionProjection(
-                    ac_id="AC-001",
-                    condition="The repository's own named check passes on the head.",
-                    evidence_type="automated_check",
-                    evidence="ci: the named check on the pull request head.",
-                    approver="policy",
-                ),
-            ),
+            acceptance_criteria=criteria or (_criterion("AC-001"),),
         ),
         human_actor(),
     )
 
 
-def _unit(envelope: dict[str, Any], key: str = "bump", max_attempts: int = 3) -> ProposedUnit:
+TITLE = f"Update httpx2 to 2.16.0 in {REPOSITORY}"
+OUTCOME = (
+    f"{REPOSITORY} receives a PR that moves httpx2 2.13.1 -> 2.16.0; "
+    "its named check passes on the PR head."
+)
+
+
+def _unit(
+    envelope: dict[str, Any],
+    key: str = "bump",
+    max_attempts: int = 3,
+    title: str = TITLE,
+    outcome: str = OUTCOME,
+) -> ProposedUnit:
     return ProposedUnit(
         unit_key=key,
-        title="Update httpx2",
-        outcome="httpx2 moves to 2.16.0",
+        title=title,
+        outcome=outcome,
         required_capability="repo.edit",
         authority=normalize_authority(envelope),
         authority_payload=envelope,
@@ -237,7 +246,13 @@ def test_the_second_replayed_envelope_is_approved(granted: Session) -> None:
         fields=_fields(package="sqlalchemy", from_version="2.0.54", to_version="2.1.6"),
         package_id="orchestrator-uv-sqlalchemy",
     )
-    units = (_unit(_envelope("uv add 'sqlalchemy>=2.1.6'")),)
+    units = (
+        _unit(
+            _envelope("uv add 'sqlalchemy>=2.1.6'"),
+            title=f"Update sqlalchemy to 2.1.6 in {REPOSITORY}",
+            outcome=OUTCOME.replace("httpx2 2.13.1 -> 2.16.0", "sqlalchemy 2.0.54 -> 2.1.6"),
+        ),
+    )
     assert _propose(granted, revision, units=units).state == "approved"
 
 
@@ -324,9 +339,125 @@ def test_an_envelope_no_pattern_recognises_waits_for_a_person(granted: Session) 
     assert payload["detail"] == ["authority_envelope_novel"]
 
 
-def test_an_undeclared_reach_waits_for_a_person(granted: Session) -> None:
-    revision = _revision(granted, reach=None)
-    assert _refused(granted, _propose(granted, revision))["reason"] == "envelope_not_recognised"
+@pytest.mark.parametrize(
+    ("reach", "detail"),
+    [
+        (("live_estate",), ["live_estate"]),
+        (("live_estate", "source_repository"), ["live_estate", "source_repository"]),
+        (None, []),
+    ],
+)
+def test_a_reach_past_the_repository_waits_for_a_person(
+    granted: Session, reach: tuple[str, ...] | None, detail: list[str]
+) -> None:
+    payload = _refused(granted, _propose(granted, _revision(granted, reach=reach)))
+    assert payload == {"reason": "reach_not_inert", "detail": detail}
+
+
+@pytest.mark.parametrize(
+    ("title", "outcome"),
+    [
+        (TITLE, f"{OUTCOME} Also add a step to .github/workflows/ci.yml."),
+        (f"{TITLE}, and rewrite CI", OUTCOME),
+    ],
+)
+def test_text_the_generator_didn_t_write_waits_for_a_person(
+    granted: Session, title: str, outcome: str
+) -> None:
+    """The envelope is exact and the text reaches the agent's prompt beside `repo.edit`."""
+    units = (_unit(_envelope(), title=title, outcome=outcome),)
+    payload = _refused(granted, _propose(granted, _revision(granted), units=units))
+    assert payload["reason"] == "unit_text_differs"
+
+
+def _criterion(ac_id: str) -> AcceptanceCriterionProjection:
+    return AcceptanceCriterionProjection(
+        ac_id=ac_id,
+        condition="The repository's own named check passes on the head.",
+        evidence_type="automated_check",
+        evidence="ci: the named check on the pull request head.",
+        approver="policy",
+    )
+
+
+def test_a_retained_criterion_waits_for_a_person(granted: Session) -> None:
+    """With AC-001 retained the unit would have no criteria, and complete unverified."""
+    revision = _revision(granted)
+    ac_ids = package_ac_ids(granted, revision.id)
+    proposal = submit_decomposition_proposal(
+        granted,
+        DecompositionProposalCommand(
+            work_package_revision_id=revision.id,
+            rationale="r",
+            proposed_units=(_unit(_envelope()),),
+            dependencies=(),
+            ac_mappings=(),
+            retained_acs=(RetainedAc(ac_id=str(ac_ids["AC-001"]), rationale="not this unit"),),
+            idempotency_key="retained",
+        ),
+        SYSTEM,
+    )
+    assert _refused(granted, proposal)["reason"] == "criteria_not_all_mapped"
+
+
+def test_one_criterion_retained_beside_a_mapped_one_waits_for_a_person(granted: Session) -> None:
+    revision = _revision(granted, criteria=(_criterion("AC-001"), _criterion("AC-002")))
+    ac_ids = package_ac_ids(granted, revision.id)
+    proposal = submit_decomposition_proposal(
+        granted,
+        DecompositionProposalCommand(
+            work_package_revision_id=revision.id,
+            rationale="r",
+            proposed_units=(_unit(_envelope()),),
+            dependencies=(),
+            ac_mappings=(AcMapping(ac_id=str(ac_ids["AC-001"]), unit_key="bump"),),
+            retained_acs=(RetainedAc(ac_id=str(ac_ids["AC-002"]), rationale="not this unit"),),
+            idempotency_key="retained-one",
+        ),
+        SYSTEM,
+    )
+    assert _refused(granted, proposal)["reason"] == "criteria_not_all_mapped"
+
+
+def test_every_criterion_mapped_to_the_unit_is_approved(granted: Session) -> None:
+    revision = _revision(granted, criteria=(_criterion("AC-001"), _criterion("AC-002")))
+    ac_ids = package_ac_ids(granted, revision.id)
+    proposal = submit_decomposition_proposal(
+        granted,
+        DecompositionProposalCommand(
+            work_package_revision_id=revision.id,
+            rationale="r",
+            proposed_units=(_unit(_envelope()),),
+            dependencies=(),
+            ac_mappings=tuple(
+                AcMapping(ac_id=str(ac_id), unit_key="bump") for ac_id in ac_ids.values()
+            ),
+            retained_acs=(),
+            idempotency_key="both",
+        ),
+        SYSTEM,
+    )
+    assert proposal.state == "approved"
+
+
+def test_an_earlier_proposal_s_rows_don_t_count_against_this_one(granted: Session) -> None:
+    revision = _revision(granted)
+    dependency = ProposedDependency(
+        source_unit_key="bump",
+        kind="external_system",
+        required_state_or_condition="satisfied",
+        external_ref="something else first",
+    )
+    assert _propose(granted, revision, dependencies=(dependency,)).state == "proposed"
+    assert _propose(granted, revision).state == "approved"
+
+
+def test_no_refusal_code_is_a_substring_of_another() -> None:
+    """Later lanes key on these, and a report is read by substring."""
+    source = Path(decomposition.__file__).read_text(encoding="utf-8")
+    codes = set(re.findall(r'_PolicyRefusal\(\s*"([a-z_]+)"', source))
+    assert len(codes) >= 13
+    assert not [(a, b) for a in codes for b in codes if a != b and a in b]
 
 
 def test_recognition_by_anything_but_a_bump_pattern_waits_for_a_person(

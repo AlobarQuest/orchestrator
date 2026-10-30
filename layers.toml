@@ -157,6 +157,8 @@ paths = [
   "tests/services/test_decomposition.py",
   "tests/services/test_decomposition_supersession.py",
   "tests/services/test_rotation_decomposition_policy.py",
+  "tests/services/test_bump_binding.py",
+  "tests/services/test_bump_decomposition_policy.py",
   "tests/services/test_factory_policy.py",
   "tests/services/test_follow_ups.py",
   "tests/services/test_graduation_ledger.py",

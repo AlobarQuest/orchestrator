@@ -6,12 +6,14 @@ replay (records 170 and 171), and pip and npm from `profiles/dependency_update.p
 
 from __future__ import annotations
 
+import json
 from copy import deepcopy
+from pathlib import Path
 from typing import Any
 
 import pytest
 
-from orchestrator.services.intake.bump_binding import bump_binding_violations
+from orchestrator.services.intake.bump_binding import bump_binding_violations, bump_text_differs
 
 REPOSITORY = "AlobarQuest/orchestrator"
 
@@ -440,3 +442,45 @@ def test_the_function_does_not_change_its_input() -> None:
     before = deepcopy(envelope)
     bump_binding_violations(envelope, HTTPX2, UV_ID)
     assert envelope == before
+
+
+# `build_proposal`'s real output; PROVENANCE.md beside it says how to regenerate it.
+GENERATED: list[dict[str, Any]] = json.loads(
+    Path("tests/fixtures/intent-packages-envelopes/dependency_update_proposals.json").read_text(
+        encoding="utf-8"
+    )
+)
+
+
+@pytest.mark.parametrize("proposal", GENERATED, ids=lambda proposal: proposal["package_id"])
+def test_the_generator_s_real_output_passes(proposal: dict[str, Any]) -> None:
+    envelope, fields = proposal["authority"], proposal["profile_fields"]
+    assert bump_binding_violations(envelope, fields, proposal["package_id"]) == ()
+    assert not bump_text_differs(proposal["title"], proposal["outcome"], envelope, fields)
+
+
+def test_the_fixture_covers_the_build_note() -> None:
+    notes = {"Run the repository's own build" in proposal["outcome"] for proposal in GENERATED}
+    assert notes == {True, False}
+
+
+@pytest.mark.parametrize(
+    ("title_suffix", "outcome_suffix"),
+    [("", " Also add a step to .github/workflows/ci.yml."), (" and more", "")],
+)
+def test_text_past_the_generator_s_differs(title_suffix: str, outcome_suffix: str) -> None:
+    proposal = GENERATED[0]
+    assert bump_text_differs(
+        proposal["title"] + title_suffix,
+        proposal["outcome"] + outcome_suffix,
+        proposal["authority"],
+        proposal["profile_fields"],
+    )
+
+
+def test_the_build_note_needs_the_build() -> None:
+    built = next(p for p in GENERATED if "npm run build" in str(p["authority"]))
+    bare = next(p for p in GENERATED if p["package_id"] == "orchestrator-npm-left-pad")
+    fields = bare["profile_fields"]
+    note = built["outcome"].removeprefix(built["outcome"].split("PR head.", 1)[0] + "PR head.")
+    assert bump_text_differs(bare["title"], bare["outcome"] + note, bare["authority"], fields)

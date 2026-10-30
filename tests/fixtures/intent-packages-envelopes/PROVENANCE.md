@@ -15,3 +15,11 @@ that waives nothing, and a pin bump of a single package. The only edit afterward
 `constraints.work_unit_id` is the placeholder `__WORK_UNIT_ID__`, which the orchestrator stamps
 at registration; the tests substitute a unit id. Regenerate by re-running `build_envelope` the
 same way when the profile's command generators change.
+
+`dependency_update_proposals.json` is the output of intent-packages'
+`factory.decompose.build_proposal` at `02bebf5`, called directly so no dry run ran and nothing was
+installed, one proposed unit per entry, beside the `profile_fields` and standing package id it was
+built for. Throwaway checkouts as above, plus a single-site dev-group uv pin, a uv pin at two
+sites, and an npm repository with no build script. Tests hold `bump_binding.py`'s two functions to
+it. Regenerate it when the profile's commands or `_outcome` or the title change: until then a
+changed generator's bumps wait for a person.
