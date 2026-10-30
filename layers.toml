@@ -529,6 +529,7 @@ paths = [
   "tests/fixtures/deploy-workflows/**",
   "scripts/check_pr_title_marking_compatibility.py",
   "scripts/check_rollout_policy_ratification.py",
+  "scripts/replay_deploy_signal.py",
   "docs/operations/auto-merge-rollback.md",
   "docs/operations/landing-lanes.md",
   "docs/decisions/0016-*.md",
