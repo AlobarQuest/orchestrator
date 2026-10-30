@@ -172,6 +172,7 @@ OBSERVATIONS = "/api/v1/observations"
 RELEASE_BINDING = "/api/v1/work-units/{unit_id}/release-artifacts"
 DEPLOYMENT_OBSERVATION = "/api/v1/release-artifacts/{binding_id}/deployment-observations"
 VERIFY = "/api/v1/work-units/{unit_id}/verify"
+NAMED_CHECK = "/api/v1/work-units/{unit_id}/verifier-evidence/named-check"
 WRITE_METHODS = frozenset({"post", "put", "patch", "delete"})
 PAYLOAD_DIGEST_KEYS = frozenset({"artifact_digest", "observed_artifact_digest"})
 
@@ -309,8 +310,10 @@ CLASSIFICATION: dict[str, Row] = {
         Role.INTERNAL_LANE_ACTOR,
         "ADR-0055 amendment 14: runs the orchestrator's verifier on each submitted rotation unit "
         "as VERIFIER; the verifier decides every criterion from the executor's step evidence. "
-        "Reads only the status ledger and the unit",
-        frozenset({VERIFY}),
+        "Landing Part 4: on a dependency-bump unit it first files the repository's required checks "
+        "as named-check evidence, which the orchestrator observes from GitHub itself. Reads only "
+        "the status ledger and the unit",
+        frozenset({VERIFY, NAMED_CHECK}),
     ),
     "rotation_decomposer": Row(
         Role.INTERNAL_LANE_ACTOR,

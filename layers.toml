@@ -273,6 +273,7 @@ paths = [
   "tests/api/test_cost_actuals_schema.py",
   "tests/api/test_dispatch_api.py",
   "tests/api/test_lifecycle_api.py",
+  "tests/api/test_work_unit_detail.py",
   "tests/api/test_requeue_api.py",
   "tests/api/test_runner_brief_api.py",
   "tests/web/test_human_act_form.py",
@@ -308,6 +309,7 @@ paths = [
   "tests/api/test_evidence_supersede_route.py",
   "tests/api/test_recover_evidence_api.py",
   "tests/api/test_verifier_api.py",
+  "tests/api/test_bump_unit_verification.py",
   "tests/web/test_adjudication_route.py",
 ]
 

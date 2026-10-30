@@ -777,6 +777,9 @@ OUTBOUND_ALLOWLIST = {
     # ADR-0055 amendment 14. Three paths through the confined transport, as VERIFIER: the
     # status ledger and one unit read, and `/verify`. Its egress is the orchestrator's own API.
     Path("src/rotation_verifier/client.py"),
+    # Landing Part 4. The one GitHub read the lane makes: a repository's required status checks on
+    # `main`, through the confined transport and a single permitted path. Read-only.
+    Path("src/rotation_verifier/required_checks.py"),
     # ADR-0055 amendment 15, increment 5. Change-manager's work-record listing, read; and the
     # orchestrator, as SYSTEM: a record's work, an intake and its decomposition proposals, read,
     # and one write, proposing a decomposition. Enforced by `change_manager_permits` and

@@ -242,6 +242,7 @@ TABLE: dict[str, Row] = {
         "collections",
         "dataclasses",
         "estate_clients",
+        "hashlib",
         "httpx",
         "os",
         "re",

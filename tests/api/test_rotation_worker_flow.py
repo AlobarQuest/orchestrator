@@ -510,6 +510,9 @@ def test_the_unit_read_route_serves_what_the_executor_reads(estate: Estate) -> N
         "authority_fingerprint",
         "attempt_count",
         "max_attempts",
+        "latest_dispatch_id",
+        "pr_number",
+        "armed_head_sha",
     }
     assert body["state"] == "ready"
     assert body["authority"]["constraints"]["rotation_unit"] == "mint"
