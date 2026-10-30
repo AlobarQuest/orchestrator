@@ -15,6 +15,8 @@ from types import ModuleType
 
 import pytest
 
+from rotation_worker.helper_client import PROBE_TIMEOUT_SECONDS, SET_TIMEOUT_SECONDS
+
 HELPER = Path(__file__).resolve().parents[2] / "deploy" / "vps" / "sds-pg-rotate"
 GOOD = "a" * 64
 NEW = "b" * 64
@@ -302,3 +304,13 @@ def test_targets_not_owned_by_root_are_refused_when_running_as_root(helper, monk
         pytest.skip("test file is already root-owned")
     answer, code = ask(helper, verb="probe", target="app", password=GOOD)
     assert (answer, code) == ({"refused": "targets_untrusted"}, 2)
+
+
+# `set` runs a probe, the ALTER, and a probe to prove it.
+SET_DOCKER_CALLS = 3
+
+
+def test_the_helper_finishes_before_the_client_stops_waiting(helper):
+    """Otherwise an ALTER can land after the client gave up, behind the undo's `set`."""
+    assert SET_DOCKER_CALLS * helper.TIMEOUT < SET_TIMEOUT_SECONDS
+    assert helper.TIMEOUT < PROBE_TIMEOUT_SECONDS

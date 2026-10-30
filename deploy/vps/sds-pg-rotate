@@ -33,7 +33,9 @@ IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_.-]*")
 ENV_NAME = re.compile(r"[A-Z_][A-Z0-9_]*")
 FINGERPRINT_PREFIX = 16
 SCRAM_ITERATIONS = 4096
-TIMEOUT = 60
+# Per docker call. `set` makes three, and must end before the client stops waiting for it
+# (`helper_client.SET_TIMEOUT_SECONDS`), or an ALTER could land after the client gave up.
+TIMEOUT = 25
 
 # Postgres trusts loopback and the socket, so only a non-loopback address exercises the password.
 # An empty or loopback address exits 3 before psql runs; -w forbids a password prompt.
