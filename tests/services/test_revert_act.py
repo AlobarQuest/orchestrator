@@ -984,7 +984,13 @@ def landed_on_brain(session: Session, status: str = "merged") -> None:
     session.flush()
 
 
-def served(session: Session, application: str, serving: str | None, minutes_ago: int) -> None:
+def served(
+    session: Session,
+    application: str,
+    serving: str | None,
+    minutes_ago: int,
+    tip: str = MERGE_79,
+) -> None:
     """One `production_revision` reading as `revision_watcher` files it, received `minutes_ago`.
     A None `serving` is an `unstamped` reading, whose facts carry `serving: null`."""
     reading = Reading(
@@ -993,7 +999,7 @@ def served(session: Session, application: str, serving: str | None, minutes_ago:
         ),
         state="unstamped" if serving is None else "behind" if serving == BEFORE_79 else "current",
         served=serving,
-        expected=MERGE_79,
+        expected=tip,
         observed_at="2026-10-02T07:15:20Z",
         landing="redeploys",
     )
@@ -1054,9 +1060,11 @@ def heard(session: Session, minutes_ago: int, applications: Sequence[str] = BRAI
     session.flush()
 
 
-def everywhere(session: Session, serving: str | None, minutes_ago: int) -> None:
+def everywhere(
+    session: Session, serving: str | None, minutes_ago: int, tip: str = MERGE_79
+) -> None:
     for name in BRAINS:
-        served(session, name, serving, minutes_ago)
+        served(session, name, serving, minutes_ago, tip)
 
 
 def act_on_brain(
@@ -1208,7 +1216,7 @@ def test_an_unstamped_reading_in_the_store_never_counts(migrated_session: Sessio
     [watched] = landing_watch(migrated_session, **lanes(gateway))
 
     assert (watched.verdict, watched.reason) == ("bad", "served")
-    assert gateway.compared == [(MERGE_79, BEFORE_79), (BEFORE_79, BEFORE_79)]
+    assert gateway.compared == [(MERGE_79, MERGE_79), (MERGE_79, BEFORE_79), (BEFORE_79, BEFORE_79)]
 
 
 def test_only_the_watched_jobs_that_failed_are_rerun_one_at_a_time(
@@ -1404,3 +1412,18 @@ def test_a_rerun_attempt_already_recorded_never_moves_backwards(
     assert (outcome.verdict, outcome.status) == ("flaky_retry", "rerun_requested")
     record = stored(migrated_engine)
     assert record is not None and record.rerun_attempts == {str(RUN): 2}
+
+
+def test_readings_taken_before_a_late_push_never_count(migrated_session: Session) -> None:
+    """`already_merged`, its merge commit committed five hours before it reached the branch: the
+    readings from before the push were measured against the parent and correctly show it. They
+    are not this landing's, however early the committer date anchors it."""
+    landed_on_brain(migrated_session, "already_merged")
+    everywhere(migrated_session, BEFORE_79, minutes_ago=240, tip=BEFORE_79)
+    heard(migrated_session, minutes_ago=5)
+    gateway = BrainGateway()
+    gateway.landed_at = datetime.now(UTC) - timedelta(hours=5)
+
+    [watched] = landing_watch(migrated_session, **lanes(gateway))
+
+    assert watched.verdict == "pending" and "no reading since the landing" in watched.detail

@@ -595,10 +595,12 @@ def _production(session: Session, gateway: RevertActGateway, landing: EstatePrMe
     """What the store says production served since the landing redeployed it.
 
     The applications are the member record's apps for the repository on its default branch. The
-    landing time is the merge commit's, read from the remote: an `already_merged` landing is
-    recorded after the merge, and a reading between the two is one that counts. Every reading of
-    those applications received since then, and the watcher's heartbeat for each: when the ingest
-    last accepted a post about it, a repeat of a stored reading included.
+    landing time is the merge commit's committer date, read from the remote: it times the settle,
+    and bounds the query (a reading taken after the landing was received after the commit
+    existed). Which readings were taken after the landing is the served rule's to decide, from the
+    tip each was measured against. Every reading of those applications received since then, and
+    the watcher's heartbeat for each: when the ingest last accepted a post about it, a repeat of a
+    stored reading included.
     """
     branch = gateway.default_branch_head(repository=landing.repository).name
     landed_at = gateway.committed_at(
@@ -623,7 +625,12 @@ def _production(session: Session, gateway: RevertActGateway, landing: EstatePrMe
     return Production(
         applications=applications,
         readings=tuple(
-            ServedReading(application=name, serving=_serving(facts), received_at=received_at)
+            ServedReading(
+                application=name,
+                serving=_fact(facts, "serving"),
+                received_at=received_at,
+                measured_against=_fact(facts, "branch_names"),
+            )
             for name, facts, received_at in rows
         ),
         heard={name: last_seen_at for name, last_seen_at in heard},
@@ -632,10 +639,11 @@ def _production(session: Session, gateway: RevertActGateway, landing: EstatePrMe
     )
 
 
-def _serving(facts: object) -> str | None:
-    """The commit a reading names; None for an `unstamped` one, which names none."""
-    serving = facts.get("serving") if isinstance(facts, dict) else None
-    return serving if isinstance(serving, str) and serving else None
+def _fact(facts: object, key: str) -> str | None:
+    """A commit a reading names under `key` (`serving`, `branch_names`); None when it names none,
+    as an `unstamped` reading's `serving` does."""
+    value = facts.get(key) if isinstance(facts, dict) else None
+    return value if isinstance(value, str) and value else None
 
 
 def _still_held(session: Session, landing: EstatePrMerge) -> bool:

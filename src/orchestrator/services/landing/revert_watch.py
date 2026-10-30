@@ -55,8 +55,11 @@ without the bump, because landings are squash merges.
 
 What production serves is `revision_watcher`'s `production_revision` reading of each application
 the member record lists for the repository on its default branch, passed in as `Production`. Each
-application's latest reading that names a commit (an `unstamped` one never counts) and was
-RECEIVED since the landing (the merge commit's time) stands. Its relation to the merge commit is
+application's latest reading that names a commit (an `unstamped` one never counts) and was TAKEN
+AFTER THE LANDING stands: one the watcher measured against the merge commit or a later tip of the
+branch (`branch_names`). That is clock-free: a merge commit's committer date can precede the
+landing by hours (a branch pushed straight to the default branch), and a reading measured against
+an older tip predates the landing whatever its time. Its relation to the merge commit is
 GitHub's compare of the merge commit against the served one: identical or ahead is `fine` (a later
 landing serves this one too), behind is `behind`, anything else `diverged`.
 
@@ -66,7 +69,8 @@ landing serves this one too), behind is `behind`, anything else `diverged`.
   posted about every application within `WATCHER_SILENT_HOURS`; production has stood still for
   `ROLLOUT_STUCK_HOURS`, timed from the newest standing reading or from the end of
   `ROLLOUT_SETTLE_MINUTES` after the landing, whichever is later; and no application serves a
-  commit strictly behind the bump's parent. One application of several behind is never bad:
+  commit strictly behind the bump's parent or off the default branch altogether (diverged from
+  both the merge commit and its parent). One application of several behind is never bad:
   app-brain alone has stayed on a build its three siblings left, for days, on bumps that were
   fine.
 * `pending` otherwise, including when an application has no reading since the landing.
@@ -78,6 +82,7 @@ nothing after; dropping that reading for arriving early would leave the rule not
 **Behind the parent is not this bump's fault.** If any application serves a commit older than the
 commit before the bump, production was already stale before it landed -- a bump landed during
 another's outage, or a default branch already broken -- and reverting this one would fix nothing.
+Nor is a commit that was never on the default branch: production serves something else entirely.
 
 **Time is `received_at`, never `observed_at`**, which the watcher sets to the served commit's
 committer date. The readings are content-addressed, so an application stuck on one commit leaves
@@ -132,6 +137,7 @@ DIVERGED: Final = "diverged"
 # GitHub's compare statuses that mean the served commit holds the merge commit.
 _HOLDS_THE_MERGE: Final = frozenset({"identical", "ahead"})  # not-a-vocabulary: GitHub's statuses
 _GITHUB_BEHIND: Final = "behind"
+_GITHUB_DIVERGED: Final = "diverged"
 
 # The one record status this judgment reads on; every later status is reported by itself.
 _RERUN_REQUESTED: Final = "rerun_requested"
@@ -163,12 +169,14 @@ class Verdict:
 
 @dataclass(frozen=True)
 class ServedReading:
-    """One `production_revision` reading: what an application served, and when it was received.
-    `serving` is None for an `unstamped` reading."""
+    """One `production_revision` reading: what an application served, when it was received, and
+    the branch tip the watcher measured it against (`branch_names`). `serving` is None for an
+    `unstamped` reading."""
 
     application: str
     serving: str | None
     received_at: datetime
+    measured_against: str | None
 
 
 @dataclass(frozen=True)
@@ -254,14 +262,14 @@ def judge(
 
     parent: list[str] = [] if record is None else [record.parent_sha]
 
-    def before_the_bump(served: str) -> bool:
+    def against_parent(served: str) -> str:
         if not parent:
             parent.append(gateway.parent_of(repository=landing.repository, sha=merge_sha))
-        return compare(parent[0], served) == _GITHUB_BEHIND
+        return compare(parent[0], served)
 
     try:
         served = served_verdict(
-            production, lambda found: relation_of(compare(merge_sha, found)), before_the_bump
+            production, lambda found: relation_of(compare(merge_sha, found)), against_parent
         )
     except EstateGatewayError as error:
         return _verdict(UNREADABLE, gateway_failure_detail(error))
@@ -291,16 +299,17 @@ def relation_of(compare_status: str) -> str:
 def served_verdict(
     production: Production,
     relation: Callable[[str], str],
-    before_the_bump: Callable[[str], bool],
+    against_parent: Callable[[str], str],
 ) -> Verdict:
     """The served rule alone: `clean`, `pending` or `bad` (see the module docstring).
 
-    `relation` answers `relation_of` for a served commit, and `before_the_bump` whether a served
-    commit is strictly behind the bump's parent; whatever either raises is the caller's.
+    `relation` answers `relation_of` for a commit against the merge commit, and `against_parent`
+    GitHub's compare status of a served commit against the bump's parent; whatever either raises
+    is the caller's.
     """
     if not production.applications:
         return _verdict(PENDING, "the member record names no application for the repository")
-    latest = _latest(production)
+    latest = _latest(production, relation)
     unread = [app for app in production.applications if app not in latest]
     if unread:
         return _verdict(PENDING, f"no reading since the landing: {', '.join(unread)}")
@@ -326,18 +335,27 @@ def served_verdict(
     stood = production.now - max(settled, *(reading.received_at for reading in standing.values()))
     if stood < timedelta(hours=ROLLOUT_STUCK_HOURS):
         return _verdict(PENDING, f"not serving the merge commit yet: {serving}")
-    stale = sorted(
-        {
-            str(reading.serving)[:12]
-            for reading in standing.values()
-            if before_the_bump(str(reading.serving))
-        }
-    )
+    to_parent = {
+        str(reading.serving)[:12]: against_parent(str(reading.serving))
+        for reading in standing.values()
+    }
+    stale = sorted(served for served, status in to_parent.items() if status == _GITHUB_BEHIND)
     if stale:
         return _verdict(
             PENDING,
             f"production was already behind the commit before the bump ({', '.join(stale)}): "
             "not this bump's fault",
+        )
+    off_main = sorted(
+        str(reading.serving)[:12]
+        for app, reading in standing.items()
+        if relations[app] == DIVERGED and to_parent[str(reading.serving)[:12]] == _GITHUB_DIVERGED
+    )
+    if off_main:
+        return _verdict(
+            PENDING,
+            f"production serves a commit not on the default branch ({', '.join(off_main)}): "
+            "not this bump's doing",
         )
     return Verdict(
         kind=BAD,
@@ -349,14 +367,18 @@ def served_verdict(
     )
 
 
-def _latest(production: Production) -> dict[str, ServedReading]:
-    """Each application's latest stamped reading received since the landing."""
+def _latest(production: Production, relation: Callable[[str], str]) -> dict[str, ServedReading]:
+    """Each application's latest stamped reading taken after the landing: measured against the
+    merge commit or a later tip of the branch. Which tip the watcher measured against says when
+    the reading was taken without a clock; a reading against an older tip predates the landing."""
     latest: dict[str, ServedReading] = {}
-    for reading in production.readings:
-        if reading.serving is None or reading.received_at < production.landed_at:
+    newest_first = sorted(production.readings, key=lambda r: r.received_at, reverse=True)
+    for reading in newest_first:
+        if reading.application in latest or reading.serving is None:
             continue
-        held = latest.get(reading.application)
-        if held is None or reading.received_at > held.received_at:
+        if reading.received_at < production.landed_at or reading.measured_against is None:
+            continue
+        if relation(reading.measured_against) == FINE:
             latest[reading.application] = reading
     return latest
 

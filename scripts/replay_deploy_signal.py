@@ -220,6 +220,7 @@ def _readings(cache: dict[str, Any], apps: list[str]) -> tuple[ServedReading, ..
             application=o["subject_reference"],
             serving=(o.get("facts") or {}).get("serving") or None,
             received_at=_ts(o["received_at"]),
+            measured_against=(o.get("facts") or {}).get("branch_names") or None,
         )
         for o in cache["observations"]
         if o["subject_reference"] in apps
@@ -251,11 +252,8 @@ def judge(cache: dict[str, Any], landing: dict[str, Any]) -> dict[str, Any]:
         answer = served_verdict(
             production,
             lambda served: relation(cache, repository, landing["merge_sha"], served),
-            lambda served: (
-                compare(
-                    cache, repository, parent_of(cache, repository, landing["merge_sha"]), served
-                )
-                == "behind"
+            lambda served: compare(
+                cache, repository, parent_of(cache, repository, landing["merge_sha"]), served
             ),
         )
         if answer.kind != PENDING:

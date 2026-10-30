@@ -586,6 +586,9 @@ MERGE_79 = "271a2ac8de79a1dbc09bc5c05d4be73d08472449"
 BEFORE_79 = "80b620ce1799c1eeeaac83f494e6cd9a553d5503"
 FIX_FORWARD = "e6cd48ac781eccbebc151d8334be95a8e3e38523"
 UNRELATED = "9" * 40
+# A commit off a side branch from #79's parent: it diverged from the merge commit, not from main's
+# history before the bump.
+SIDE = "c" * 40
 # A build from before #79's parent: production already stale before the bump.
 OLDER = "a2f8233236" + "0" * 30
 LANDED_79 = datetime(2026, 10, 3, 6, 15, 19, tzinfo=UTC)
@@ -596,9 +599,15 @@ COMPARES_79 = {
     FIX_FORWARD: "ahead",
     UNRELATED: "diverged",
     OLDER: "behind",
+    SIDE: "diverged",
 }
 # GitHub's compare of the bump's parent (#80's merge) against each served commit.
-PARENT_COMPARES_79 = {BEFORE_79: "identical", UNRELATED: "diverged", OLDER: "behind"}
+PARENT_COMPARES_79 = {
+    BEFORE_79: "identical",
+    UNRELATED: "diverged",
+    OLDER: "behind",
+    SIDE: "ahead",
+}
 GREEN_HEAD_79 = (_pr("test"),)
 GREEN_MERGE_79 = (_job("test", "success"),)
 
@@ -659,12 +668,20 @@ def _at(minutes: float) -> datetime:
     return LANDED_79 + timedelta(minutes=minutes)
 
 
-def _reading(application: str, serving: str | None, minutes: float) -> ServedReading:
-    return ServedReading(application=application, serving=serving, received_at=_at(minutes))
+def _reading(
+    application: str, serving: str | None, minutes: float, tip: str = MERGE_79
+) -> ServedReading:
+    """A reading received `minutes` after the landing, measured against branch tip `tip` (the
+    watcher's `branch_names`): by default the merge commit, i.e. taken after the landing."""
+    return ServedReading(
+        application=application, serving=serving, received_at=_at(minutes), measured_against=tip
+    )
 
 
-def _everywhere(serving: str | None, minutes: float) -> tuple[ServedReading, ...]:
-    return tuple(_reading(app, serving, minutes) for app in BRAINS)
+def _everywhere(
+    serving: str | None, minutes: float, tip: str = MERGE_79
+) -> tuple[ServedReading, ...]:
+    return tuple(_reading(app, serving, minutes, tip) for app in BRAINS)
 
 
 def _production(
@@ -674,6 +691,7 @@ def _production(
     seen: float | None = None,
     applications: tuple[str, ...] = BRAINS,
     heard: dict[str, float] | None = None,
+    landed_at: datetime = LANDED_79,
 ) -> Production:
     """What the store says at `now` minutes after the landing. The watcher last posted about every
     application at `seen` (default: its newest reading of these applications), unless `heard`
@@ -686,7 +704,7 @@ def _production(
         applications=applications,
         readings=readings,
         heard={app: _at(minutes) for app, minutes in times.items()},
-        landed_at=LANDED_79,
+        landed_at=landed_at,
         now=_at(now),
     )
 
@@ -725,7 +743,8 @@ def test_a_descendant_of_the_merge_commit_is_fine() -> None:
     verdict = _judged(_production(_everywhere(FIX_FORWARD, 40), now=300, seen=299), gateway)
 
     assert verdict.kind == "clean"
-    assert gateway.compared == [(MERGE_79, FIX_FORWARD)]  # four brains on one commit: one compare
+    # Four brains on one commit, measured against one tip: one compare each.
+    assert gateway.compared == [(MERGE_79, MERGE_79), (MERGE_79, FIX_FORWARD)]
 
 
 def test_every_application_behind_for_two_hours_is_bad_by_what_production_serves() -> None:
@@ -742,8 +761,43 @@ def test_every_application_behind_for_just_under_two_hours_is_pending() -> None:
     assert verdict.kind == "pending"
 
 
-def test_every_application_serving_something_unrelated_is_bad_too() -> None:
+def test_every_application_on_a_side_branch_from_the_parent_is_bad_too() -> None:
+    """Diverged from the merge commit but ahead of its parent: a build of main before the bump
+    plus something else. Still not the bump."""
+    verdict = _judged(_production(_everywhere(SIDE, 40), now=300, seen=299))
+
+    assert (verdict.kind, verdict.reason) == ("bad", "served")
+
+
+def test_production_on_a_commit_not_on_the_default_branch_is_pending() -> None:
+    """Diverged from both the merge commit and the bump's parent: production serves something
+    that never was main. Whatever it is, it is not this bump's doing."""
     verdict = _judged(_production(_everywhere(UNRELATED, 40), now=300, seen=299))
+
+    assert verdict.kind == "pending" and "not on the default branch" in verdict.detail
+
+
+def test_a_reading_measured_against_an_older_tip_never_counts() -> None:
+    """An `already_merged` landing whose merge commit was committed hours before it was pushed:
+    readings taken before the push were measured against the parent and correctly showed it.
+    They say nothing about this landing, however early the committer date anchors it."""
+    committed = LANDED_79 - timedelta(hours=3)
+    before_the_push = _everywhere(BEFORE_79, -120, tip=BEFORE_79)
+
+    early = _judged(_production(before_the_push, now=10, seen=9, landed_at=committed))
+    after = before_the_push + _everywhere(BEFORE_79, 7)
+    stuck = _judged(_production(after, now=7 + 120, seen=7 + 119, landed_at=committed))
+    not_yet = _judged(_production(after, now=7 + 119, seen=7 + 118, landed_at=committed))
+
+    assert early.kind == "pending"
+    assert not_yet.kind == "pending"
+    assert (stuck.kind, stuck.reason) == ("bad", "served")
+
+
+def test_a_reading_measured_against_a_later_tip_still_counts() -> None:
+    """The branch moved on past the merge commit (a later landing): the reading was still taken
+    after this landing."""
+    verdict = _judged(_production(_everywhere(BEFORE_79, 37, tip=FIX_FORWARD), now=600, seen=599))
 
     assert (verdict.kind, verdict.reason) == ("bad", "served")
 
@@ -864,7 +918,7 @@ def test_a_bump_landed_during_another_bumps_outage_is_not_bad() -> None:
     later = "b" * 40
     gateway = _BrainGateway(
         jobs={HEAD: GREEN_HEAD_79, later: GREEN_MERGE_79},
-        compares={BEFORE_79: "behind"},
+        compares={BEFORE_79: "behind", later: "identical"},
         merge=later,
         parent=MERGE_79,
         parent_compares={BEFORE_79: "behind"},
@@ -874,7 +928,7 @@ def test_a_bump_landed_during_another_bumps_outage_is_not_bad() -> None:
         gateway,
         _brain_landing(merge=later),
         None,
-        _production(_everywhere(BEFORE_79, 37), now=600, seen=599),
+        _production(_everywhere(BEFORE_79, 37, tip=later), now=600, seen=599),
     )
 
     assert verdict.kind == "pending"
@@ -886,7 +940,7 @@ def test_brain_79_serving_its_own_parent_is_still_bad_and_compares_each_commit_o
     verdict = _judged(_production(_everywhere(BEFORE_79, 37), now=600, seen=599), gateway)
 
     assert (verdict.kind, verdict.reason) == ("bad", "served")
-    assert gateway.compared == [(MERGE_79, BEFORE_79), (BEFORE_79, BEFORE_79)]
+    assert gateway.compared == [(MERGE_79, MERGE_79), (MERGE_79, BEFORE_79), (BEFORE_79, BEFORE_79)]
 
 
 def test_an_application_with_no_reading_yet_is_pending() -> None:
@@ -995,7 +1049,7 @@ def test_a_stuck_landing_is_timed_from_the_newest_standing_reading() -> None:
     production has not stood still for two hours, so it is not yet `bad`."""
     readings = tuple(_reading(app, BEFORE_79, 37) for app in BRAINS if app != "open-brain") + (
         _reading("open-brain", BEFORE_79, 37),
-        _reading("open-brain", UNRELATED, 37 + 240),
+        _reading("open-brain", SIDE, 37 + 240),
     )
 
     verdict = _judged(_production(readings, now=37 + 300, seen=37 + 299))
@@ -1018,3 +1072,16 @@ def test_a_failure_names_each_failed_watched_job_for_its_own_rerun() -> None:
         ("lint", job_id_of("lint", RUN, 1)),
         ("test", job_id_of("test", RUN, 1)),
     }
+
+
+def test_a_reading_that_names_no_tip_never_counts() -> None:
+    """Without the tip it was measured against, nothing says the reading was taken after the
+    landing."""
+    readings = tuple(
+        ServedReading(
+            application=app, serving=BEFORE_79, received_at=_at(37), measured_against=None
+        )
+        for app in BRAINS
+    )
+
+    assert _judged(_production(readings, now=600, seen=599)).kind == "pending"
