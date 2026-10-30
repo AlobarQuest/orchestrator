@@ -12,6 +12,9 @@ read. `compare-destinations <credential>` is read-only. It fetches intent-packag
 repositories into the executor's mirrors and prints the registry's destinations, ready to paste
 into a package, then compares them with the standing package's, at each repository's `main`.
 Exit codes: 0 equal, 1 different (the package needs a revision before approval), 2 unreadable.
+`adopt-keeper <credential>` reads a Postgres role's password on stdin, once, and creates its keeper
+in `Rotation / Keepers`; `pg-restore <credential>` puts the keeper's value back everywhere a host
+step writes it. Neither prints a value, and neither takes one as an argument.
 """
 
 from __future__ import annotations
@@ -27,15 +30,16 @@ from collections.abc import Callable, Sequence
 from datetime import datetime
 from getpass import getpass
 from pathlib import Path
-from typing import Final
+from typing import Final, TextIO
 
-from rotation_worker.adapters import ADAPTERS, AdapterContext, fake
+from rotation_worker.adapters import ADAPTERS, AdapterContext, fake, postgres_role
 from rotation_worker.compare import Comparison, report
 from rotation_worker.config import DEFAULT_PATH, Config, ConfigError, load, read_root_token
-from rotation_worker.contract import Rotation
+from rotation_worker.contract import ContractError, Rotation
 from rotation_worker.destinations import DestinationError, parse, render
 from rotation_worker.git_mirror import MirrorError, RepoMirror, default_mirror_root
 from rotation_worker.github_actions import RotationApp
+from rotation_worker.helper_client import HelperClient
 from rotation_worker.inbox import Inbox
 from rotation_worker.logs import configure
 from rotation_worker.notify import Notifier
@@ -68,6 +72,9 @@ KEYCHAIN_BEARER: Final = "worker-bearer"
 BWS_TOKEN: Final = re.compile(
     r"^0\.[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.[A-Za-z0-9]+:[A-Za-z0-9+/]+=*$"
 )
+# A Postgres role's password: what `PostgresRoleProvider.mint` makes and the helper accepts.
+POSTGRES_PASSWORD: Final = re.compile(r"^[0-9a-f]{64}$")
+POSTGRES_CLASS: Final = "postgres-role-password"
 BEARER_BYTES: Final = 48
 LOG = logging.getLogger("rotation_worker")
 
@@ -144,6 +151,17 @@ def open_github_app(config: Config, store: SecretStore) -> RotationApp | None:
     return RotationApp(app_id, lambda: store.read_key(key_id))
 
 
+def open_pg_helper(config: Config, store: SecretStore) -> Callable[[], HelperClient] | None:
+    key_id, host, known_host = (
+        config.pg_helper_key_id,
+        config.pg_helper_host,
+        config.pg_helper_known_host,
+    )
+    if key_id is None or host is None or known_host is None:
+        return None
+    return lambda: HelperClient(host, known_host, store.read_key(key_id), config.state_dir)
+
+
 def read_consumers(setup: Setup, credential_id: str, stored_at: datetime) -> int:
     """Each scheduled reader's answer for a store at `stored_at`. Reads only."""
     try:
@@ -195,6 +213,7 @@ def build_setup(config: Config) -> Setup:
         notifier=open_notifier(config, store),
         inbox=open_inbox(config, store),
         organization_id=config.organization_id,
+        pg_helper=open_pg_helper(config, store),
     )
 
 
@@ -276,6 +295,85 @@ def stage(
     return 0
 
 
+def adopt_keeper(config: Config, credential_id: str, mirror: RepoMirror, stdin: TextIO) -> int:
+    """Create a Postgres role's keeper in `Rotation / Keepers` from stdin; print its id and
+    fingerprint. The registry row's `id` names the secret. Nothing is overwritten."""
+    try:
+        entry = find_credential(mirror, credential_id)
+    except (MirrorError, RegistryError) as error:
+        print(f"adopt-keeper: {error}", file=sys.stderr)
+        return EXIT_UNREADABLE
+    if entry.credential.get("class") != POSTGRES_CLASS:
+        print(f"adopt-keeper: {credential_id} isn't a {POSTGRES_CLASS} row", file=sys.stderr)
+        return EXIT_UNREADABLE
+    if config.keepers_project_id is None:
+        print("adopt-keeper: the configuration names no keepers_project_id", file=sys.stderr)
+        return EXIT_UNREADABLE
+    text = stdin.read().strip()
+    if not POSTGRES_PASSWORD.fullmatch(text):
+        print("adopt-keeper: not 64 lowercase hex characters; nothing stored", file=sys.stderr)
+        return EXIT_UNREADABLE
+    value = Value(text)
+    key = str(entry.credential["id"])
+    try:
+        store = open_store(config)
+        if store.find(config.keepers_project_id, key) is not None:
+            print(f"adopt-keeper: {key!r} already exists; nothing stored", file=sys.stderr)
+            return EXIT_UNREADABLE
+        created = store.create(config.keepers_project_id, key, value)
+    except (StoreError, ConfigError) as error:
+        print(f"adopt-keeper: {error}", file=sys.stderr)
+        return EXIT_UNREADABLE
+    fingerprint = value.fingerprint
+    print(
+        json.dumps(
+            {
+                "secret_id": created.id,
+                "sha256_prefix": fingerprint.sha256_prefix,
+                "length": fingerprint.length,
+            }
+        )
+    )
+    return 0
+
+
+def pg_restore(setup: Setup, credential_id: str) -> int:
+    """Put the keeper's value back everywhere a host step writes it. For a host whose undo
+    failed too: it needs no `/review`, no requeue and no value in an argument."""
+    try:
+        entry = find_credential(setup.mirror, credential_id)
+        if entry.credential.get("provider") != postgres_role.NAME:
+            print(f"pg-restore: {credential_id} isn't a postgres-role row", file=sys.stderr)
+            return EXIT_UNREADABLE
+        keeper_id = setup.store.locate(parse(entry.keeper))
+        if keeper_id is None:
+            print("pg-restore: the keeper isn't kept where this executor reads", file=sys.stderr)
+            return EXIT_UNREADABLE
+        rotation = Rotation(
+            credential_id, "pg-restore", keeper_id, setup.work_project_id, tuple(entry.destinations)
+        )
+        provider = ADAPTERS[postgres_role.NAME].build(
+            AdapterContext(
+                setup.state_dir,
+                setup.store,
+                setup.admin_secrets.get(postgres_role.NAME),
+                rotation=rotation,
+                coolify_url=setup.coolify_url,
+                credential=entry.credential,
+                pg_helper=setup.pg_helper,
+            )
+        )
+        if not isinstance(provider, postgres_role.PostgresRoleProvider):
+            print("pg-restore: not a postgres-role provider", file=sys.stderr)
+            return EXIT_UNREADABLE
+        outcome = provider.restore(setup.store.read(keeper_id))
+    except (MirrorError, RegistryError, DestinationError, StoreError, ContractError) as error:
+        print(f"pg-restore: {error}", file=sys.stderr)
+        return EXIT_UNREADABLE
+    print(f"pg-restore: {outcome}")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="rotation-worker")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -301,7 +399,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     staging.add_argument("credential_id")
     staging.add_argument("--occurrence", required=True)
-    for command in (running, seeding, minting, reading, staging):
+    adopting = commands.add_parser(
+        "adopt-keeper", help="create a Postgres role's keeper from its password on stdin"
+    )
+    adopting.add_argument("credential_id")
+    restoring = commands.add_parser(
+        "pg-restore", help="put a Postgres role's keeper value back where host writes it"
+    )
+    restoring.add_argument("credential_id")
+    for command in (running, seeding, minting, reading, staging, adopting, restoring):
         command.add_argument("--config", type=Path, default=DEFAULT_PATH)
     arguments = parser.parse_args(argv)
     if arguments.command == "compare-destinations":
@@ -315,6 +421,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return mint_bearer(config)
     if arguments.command == "read-consumers":
         return read_consumers(build_setup(config), arguments.credential_id, arguments.stored_at)
+    if arguments.command == "adopt-keeper":
+        return adopt_keeper(
+            config, arguments.credential_id, RepoMirror(config.mirror_root), sys.stdin
+        )
+    if arguments.command == "pg-restore":
+        return pg_restore(build_setup(config), arguments.credential_id)
     if arguments.command == "stage":
         return stage(config, arguments.credential_id, arguments.occurrence)
     return seed_canary(config)

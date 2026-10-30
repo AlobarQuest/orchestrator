@@ -2053,3 +2053,60 @@ profile alone. Graduating decomposition approval in general stays with the Admis
 - **One reader showed no run:** `sds-rotation-proposer`. The executor ignores a run Healthchecks
   records as zero seconds, and a hand-run dry pass took 0.64 s. Its scheduled runs take 1.5 to
   6.5 s and count.
+
+## Amendment 17 — A type with no overlap, and the VPS helper as the executor's reach (2026-10-30)
+
+### Context
+
+Postgres keeps one password per role. Once the role takes the new value the old one fails for every
+new connection, and the service whose database it is cannot reach it until it restarts with the new
+one. Amendment 15's host step assumed the service accepts the new value beside the old, and
+`host_without_overlap` (amendment 9) is a per-envelope declaration about a value another identity
+shares, which only a person makes. Neither describes a role password. Authentik's Postgres password
+(`alobar-id`) is the first credential of the kind. The role lives in a container with no published
+port, and nothing the executor held could set a role's password or test a login against that container.
+
+### Decision
+
+1. **A type with no overlap.** `Capabilities.overlap` is true by default and false only for
+   `postgres-role` (`rotation_worker/types.py`). It changes no derived step, so every existing plan,
+   criterion and generated package is byte-identical (pinned by
+   `tests/fixtures/rotation_packages_before_overlap.json`). For an `overlap=False` type the generator
+   states the host step as "The hosted service replaces the old value with the new one, and its
+   dependents restart; they're unavailable until the restart finishes." and says in the package's risk
+   section that the restart can happen at any hour of the change window. The person approving the
+   revision is approving that outage. `rotation_known_good` lists `postgres-role` under both reach
+   members its package uses (`live_estate`, `external_system`) and still never recognises
+   `host_without_overlap`: the no-overlap is the type's, stated in the approved package, and not an
+   envelope's declaration.
+2. **The helper is the executor's new reach.** `deploy/vps/sds-pg-rotate` runs as root behind an SSH
+   forced command, called by the executor through `helper_client.py`. It takes one JSON line and
+   answers three verbs: `set` changes a role's password, `probe` logs in over the container's network
+   address and answers 200, 401 or null, and `loaded` reports the fingerprint of the environment
+   variable each consumer loaded. Targets come from the root-owned `/etc/sds-pg-rotate/targets.toml`,
+   never from the request. A password must be 64 lowercase hex characters. No verb returns a password,
+   logs one, or puts one in an argument vector, and `set` sends Postgres only a SCRAM-SHA-256
+   verifier. The alternatives were worse. A Coolify scheduled task would store the password in a
+   command string, which Coolify keeps and displays. Publishing the database on a host port would
+   remove the protection the container's network isolation gives it, for every client of that port
+   and not only for the rotation.
+3. **Host undoes itself.** `/review` sits behind Authentik, the service this type restarts, and nothing
+   requeues a failed unit by itself. A host step that failed and left the service down would leave the
+   person without the page that recovers it. So any failure in host's own writes runs the same writes
+   with the old value and then raises, leaving the keeper unchanged. This covers host only: once host
+   finishes, recovery is forward. If the undo fails too, the error names
+   both failures and recovery is `rotation-worker pg-restore`.
+
+Devon approved the no-overlap decision and the helper as the executor's reach on 2026-10-30.
+
+### Consequences
+
+- A rotation of this type is an outage by design, lasting the restart, at an hour of the change window
+  the executor picks. The first one runs under the one click every rotation has (amendment 16).
+- The executor's reach now includes one SSH path to the VPS and the helper's three verbs, and nothing
+  else on that host. The helper's targets file is the only place a role, database or consumer is named.
+- Registering the credential is an infraops change (a `.cred-consumers.toml` row and a `cred-rotation`
+  table entry) made separately from this one; this repository holds the type, the helper, the
+  generated package text and the policy recognition.
+- The policy's pattern for rotation units carries `postgres-role` and a new `decided` date; its schema
+  is unchanged.

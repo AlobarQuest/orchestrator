@@ -18,8 +18,9 @@ import hashlib
 import json
 import os
 import secrets
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 
 from rotation_worker.contract import (
     Actor,
@@ -29,6 +30,7 @@ from rotation_worker.contract import (
     Step,
     StepKind,
     UnitPlan,
+    accepts,
     validate_plan,
 )
 from rotation_worker.values import Value
@@ -98,6 +100,9 @@ class FakeProvider:
 
     def host(self, new: Value, old: Value) -> str:
         raise ContractError("the fake provider has no host step")
+
+    def consumer_loaded(self, consumer: Mapping[str, Any], new: Value) -> bool:
+        return accepts(self, new)
 
     def revoke(self, value: Value) -> str:
         live = self._live()

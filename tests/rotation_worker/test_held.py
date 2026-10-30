@@ -108,7 +108,9 @@ def _held(o: Orchestrator, clock: Clock) -> HeldSettings:
     token = Value("throwaway-coolify-token-for-tests")
     return HeldSettings(
         cast(OrchestratorClient, o),
-        lambda app: CoolifyClient(COOLIFY, token, app, transport=httpx.MockTransport(o.coolify)),
+        lambda app: CoolifyClient(
+            COOLIFY, token, "application", app, transport=httpx.MockTransport(o.coolify)
+        ),
         APP,
         clock=clock,
         sleep=clock.sleep,

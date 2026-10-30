@@ -190,6 +190,8 @@ HTTP_CLIENTS = frozenset(
         "adapters/bitbucket.py",
         "readers.py",
         "notify.py",
+        # The one health URL its registry row names, with no credential.
+        "adapters/postgres_role.py",
     }
 )
 
@@ -204,6 +206,8 @@ PROCESS_RUNNERS = frozenset(
         "secret_store.py",
         # A fresh Bitwarden login in a child process with an empty HOME (amendment 1).
         "adapters/bws_machine_token.py",
+        # `ssh` to the VPS Postgres helper, the password on stdin only (`test_helper_client.py`).
+        "helper_client.py",
     }
 )
 

@@ -402,3 +402,46 @@ def test_a_private_key_is_read_without_its_trailing_newline() -> None:
     assert store.read_key(sid).reveal() == pem
     with pytest.raises(ValueError, match="surrounding whitespace"):
         store.read(sid)
+
+
+HELPER = (
+    f'pg_helper_key_id = "{PROJECT}"\n'
+    'pg_helper_host = "root@ovh-vps1"\n'
+    'pg_helper_known_host = "ovh-vps1 ssh-ed25519 AAAAthrowaway"\n'
+)
+
+
+def test_helper_settings_are_all_or_none(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(CONFIG + HELPER)
+    config = load(path)
+    assert config.pg_helper_key_id == PROJECT and config.pg_helper_host == "root@ovh-vps1"
+    assert config.pg_helper_known_host == "ovh-vps1 ssh-ed25519 AAAAthrowaway"
+    path.write_text(CONFIG)
+    assert load(path).pg_helper_key_id is None
+    for line in HELPER.splitlines():
+        path.write_text(CONFIG + HELPER.replace(line + "\n", ""))
+        with pytest.raises(ConfigError, match="pg_helper"):
+            load(path)
+    path.write_text(CONFIG + HELPER.replace("root@ovh-vps1", "-oProxyCommand=x"))
+    with pytest.raises(ConfigError, match="pg_helper_host"):
+        load(path)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "@cert-authority ovh-vps1 ssh-ed25519 AAAAthrowaway",
+        "*.vps1 ssh-ed25519 AAAAthrowaway",
+        "ovh-vps? ssh-ed25519 AAAAthrowaway",
+        "ovh-vps1,other ssh-ed25519 AAAAthrowaway",
+        "other-host ssh-ed25519 AAAAthrowaway",
+        "ovh-vps1 ssh-ed25519",
+        "ovh-vps1 ssh-ed25519 AAAA extra",
+    ],
+)
+def test_the_pinned_host_key_line_must_be_exact(tmp_path: Path, line: str) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(CONFIG + HELPER.replace("ovh-vps1 ssh-ed25519 AAAAthrowaway", line))
+    with pytest.raises(ConfigError, match="pg_helper_known_host"):
+        load(path)

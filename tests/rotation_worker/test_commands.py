@@ -5,19 +5,30 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 
+import httpx
 import pytest
 
 from rotation_worker import cli
 from rotation_worker.adapters import AdapterContext
+from rotation_worker.adapters import postgres_role as pg
 from rotation_worker.config import Config, ConfigError, load
 from rotation_worker.registry import RegistryEntry
 from rotation_worker.values import Value
 from rotation_worker.worker import Setup
 from tests.rotation_worker.stores import MemoryStore
+from tests.rotation_worker.test_postgres_role import (
+    COOLIFY_URL,
+    NEW,
+    TOKEN_ID,
+    Authentik,
+    Clock,
+    _credential,
+)
 
 WORK = "22222222-2222-4222-8222-222222222222"
 
@@ -175,3 +186,169 @@ def test_the_rotation_app_is_built_only_when_configured(tmp_path: Path) -> None:
     assert open_github_app(config, store) is None
     configured = replace(config, github_app_id="5383095", github_app_key_id="id")
     assert isinstance(open_github_app(configured, store), RotationApp)
+
+
+# ---- adopt-keeper and pg-restore, through the entry point ------------------------------------
+
+KEEPERS = "33333333-3333-4333-8333-333333333333"
+PASSWORD = "5ab2e4d8eec1" + "0" * 52
+
+
+def _pg_config(tmp_path: Path) -> Config:
+    from dataclasses import replace
+
+    return replace(_config(tmp_path), keepers_project_id=KEEPERS)
+
+
+def _entry(**changes: object) -> RegistryEntry:
+    credential = {
+        "id": "alobar-id-postgres",
+        "class": "postgres-role-password",
+        "provider": "postgres-role",
+        "bws_uuid": "00000000-0000-4000-8000-000000000000",
+        "consumer": [],
+    }
+    return RegistryEntry("r", "c" * 40, {**credential, **changes})
+
+
+@pytest.fixture
+def entry_point(tmp_path: Path, store: MemoryStore, monkeypatch: pytest.MonkeyPatch) -> MemoryStore:
+    """`cli.main` with the configuration, the registry and the clones faked, and stdin to set."""
+    monkeypatch.setattr(cli, "load", lambda path: _pg_config(tmp_path))
+    monkeypatch.setattr(cli, "configure", lambda: None)
+    monkeypatch.setattr(cli, "find_credential", lambda mirror, cid: _entry())
+    monkeypatch.setattr(cli, "RepoMirror", lambda root: None)
+    return store
+
+
+def _stdin(monkeypatch: pytest.MonkeyPatch, text: str) -> None:
+    import io
+
+    monkeypatch.setattr("sys.stdin", io.StringIO(text))
+
+
+def test_adopt_keeper_reads_stdin_not_argv(
+    entry_point: MemoryStore, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _stdin(monkeypatch, PASSWORD + "\n")
+    assert cli.main(["adopt-keeper", "alobar-id-postgres"]) == 0
+    printed = capsys.readouterr()
+    project, key, value = next(iter(entry_point.secrets.values()))
+    assert (project, key, value.reveal()) == (KEEPERS, "alobar-id-postgres", PASSWORD)
+    assert json.loads(printed.out)["sha256_prefix"] == value.fingerprint.sha256_prefix
+    assert PASSWORD not in printed.out + printed.err
+    with pytest.raises(SystemExit):
+        cli.main(["adopt-keeper", "alobar-id-postgres", PASSWORD])
+
+
+@pytest.mark.parametrize(
+    "text", ["", "short", PASSWORD.upper(), PASSWORD + "0", "g" * 64, PASSWORD[:-1] + "\n0"]
+)
+def test_adopt_keeper_refuses_a_wrong_shape(
+    entry_point: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    text: str,
+) -> None:
+    _stdin(monkeypatch, text)
+    assert cli.main(["adopt-keeper", "alobar-id-postgres"]) == cli.EXIT_UNREADABLE
+    assert entry_point.secrets == {}
+    assert text.strip() not in capsys.readouterr().err or not text.strip()
+
+
+def test_adopt_keeper_refuses_another_class_and_an_existing_secret(
+    entry_point: MemoryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(cli, "find_credential", lambda mirror, cid: _entry(**{"class": "x"}))
+    _stdin(monkeypatch, PASSWORD)
+    assert cli.main(["adopt-keeper", "alobar-id-postgres"]) == cli.EXIT_UNREADABLE
+    monkeypatch.setattr(cli, "find_credential", lambda mirror, cid: _entry())
+    entry_point.put(KEEPERS, "alobar-id-postgres", Value("earlier"))
+    _stdin(monkeypatch, PASSWORD)
+    assert cli.main(["adopt-keeper", "alobar-id-postgres"]) == cli.EXIT_UNREADABLE
+    assert [v.reveal() for _, _, v in entry_point.secrets.values()] == ["earlier"]
+
+
+def _restoring(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, store: MemoryStore, row: dict[str, Any]
+) -> tuple[Authentik, Clock]:
+    """The real adapter, provider and `Rotation`, over a model of the service: only the network
+    (Coolify's transport, the helper, the health check) and the clock are replaced."""
+    keeper = store.put(KEEPERS, "alobar-id-postgres", NEW)
+    store.secrets[TOKEN_ID] = ("admin", "token", Value("coolify-token"))
+    authentik, clock = Authentik(), Clock()
+    credential = {
+        **row,
+        "bws_uuid": keeper,
+        "consumer": [
+            {**c, "uuid": keeper} if c["kind"] == "bws-secret" else c for c in row["consumer"]
+        ],
+    }
+    monkeypatch.setattr(
+        cli, "find_credential", lambda mirror, cid: RegistryEntry("r", "c" * 40, credential)
+    )
+    monkeypatch.setattr(
+        cli.postgres_role,
+        "build_provider",
+        partial(
+            cli.postgres_role.build_provider,
+            transport=httpx.MockTransport(authentik.health_check),
+            coolify_transport=httpx.MockTransport(authentik.coolify),
+            clock=clock,
+            sleep=clock.sleep,
+        ),
+    )
+    setup = SimpleNamespace(
+        mirror=None,
+        store=store,
+        work_project_id=WORK,
+        state_dir=tmp_path,
+        admin_secrets={"postgres-role": TOKEN_ID},
+        coolify_url=COOLIFY_URL,
+        pg_helper=lambda: authentik,
+    )
+    monkeypatch.setattr(cli, "build_setup", lambda config: setup)
+    return authentik, clock
+
+
+def test_pg_restore_uses_the_keepers_value(
+    entry_point: MemoryStore,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    authentik, _ = _restoring(tmp_path, monkeypatch, entry_point, _credential())
+    assert cli.main(["pg-restore", "alobar-id-postgres"]) == 0
+    out = capsys.readouterr()
+    assert out.out == f"pg-restore: {pg.WRITTEN}\n"
+    assert authentik.variable == authentik.password == NEW.reveal()
+    assert set(authentik.running.values()) == {NEW.reveal()}
+    assert NEW.reveal() not in out.out + out.err
+
+
+def test_pg_restore_fails_without_the_rows_helper_target(
+    entry_point: MemoryStore,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    row = {k: v for k, v in _credential().items() if k != "helper_target"}
+    authentik, _ = _restoring(tmp_path, monkeypatch, entry_point, row)
+    assert cli.main(["pg-restore", "alobar-id-postgres"]) == cli.EXIT_UNREADABLE
+    out = capsys.readouterr()
+    assert "helper_target" in out.err and out.out == ""
+    assert authentik.log == []
+
+
+def test_pg_restore_reports_a_refusal_without_a_traceback(
+    entry_point: MemoryStore,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    authentik, _ = _restoring(tmp_path, monkeypatch, entry_point, _credential())
+    authentik.refused_post = 1
+    assert cli.main(["pg-restore", "alobar-id-postgres"]) == cli.EXIT_UNREADABLE
+    err = capsys.readouterr().err
+    assert err.startswith("pg-restore: ") and "HTTP 409" in err
+    assert "Traceback" not in err and NEW.reveal() not in err

@@ -16,6 +16,7 @@ from intent-packages' and the registries' public git:
 * the keeper (the registry's `bws_uuid`, or a machine token's Keychain item) is one of them and
   is kept where this instance's store reads, every one fits a `rotation-step/1` row, and a unit
   marked as touching no hosted service writes none;
+* the registry row says everything its adapter reads from it (`Adapter.check_row`);
 * a unit declaring a host with no overlap has a host step (whether an overlap is impossible is
   `m2m_setting.build`'s to refuse, from what the orchestrator serves);
 * every `runtime-fetch` consumer can be verified: the registry names its scheduled read, or the
@@ -123,6 +124,8 @@ def check_unit(
     keeper = _keeper_id(entry, packaged, store)
     reads = scheduled_reads(entry.credential)
     plan = _plan(adapter, entry, store, document.get("acceptance"))
+    if adapter.check_row is not None:
+        adapter.check_row(entry.credential)
     unit = plan.unit(str(constraints.get(UNIT_KEY)))
     criteria = {criterion.get("ac_id") for criterion in intake.get("acceptance_criteria", [])}
     for step in unit.steps:

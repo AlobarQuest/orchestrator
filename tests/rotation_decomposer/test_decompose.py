@@ -240,3 +240,43 @@ def test_destinations_that_moved_since_the_package_was_approved_are_refused() ->
     )
     with pytest.raises(DecomposeError, match="differ from the registry's"):
         decomposition(intake, grown)
+
+
+def test_decomposer_generates_postgres_units_with_no_person_act() -> None:
+    entry = _entry("postgres-role-password")
+    body = decomposition(_intake(entry), entry)
+    assert [u["authority"]["constraints"]["rotation_unit"] for u in body["proposed_units"]] == [
+        "mint",
+        "retire",
+    ]
+    assert all(d["kind"] == "work_unit" for d in body["dependencies"])
+    assert all(
+        "host_without_overlap" not in u["authority"]["constraints"] for u in body["proposed_units"]
+    )
+
+
+def _postgres_refusals(**extra: Any) -> dict[str, tuple[str, ...]]:
+    entry = _entry("postgres-role-password")
+    reach = render(entry, "x", "2026-10-30T12:00:00Z")["reach"]
+    policy = load_factory_policy()
+    refusals: dict[str, tuple[str, ...]] = {}
+    for unit in decomposition(_intake(entry), entry)["proposed_units"]:
+        unit_id = uuid.uuid4()
+        constraints = {**unit["authority"]["constraints"], "work_unit_id": str(unit_id), **extra}
+        authority = {**unit["authority"], "constraints": constraints}
+        refusals[unit["unit_key"]] = policy.authority_refusals(
+            reach, normalize_authority(authority), unit_id, rotation_unit=True
+        ).refusals
+    return refusals
+
+
+def test_known_good_recognises_a_postgres_role_unit() -> None:
+    entry = _entry("postgres-role-password")
+    assert render(entry, "x", "2026-10-30T12:00:00Z")["reach"] == ["external_system", "live_estate"]
+    assert _postgres_refusals() == {"example-mint": (), "example-retire": ()}
+
+
+def test_known_good_still_refuses_host_without_overlap() -> None:
+    """The type's own no-overlap is recognised; a per-envelope declaration still needs a person."""
+    refusals = _postgres_refusals(host_without_overlap=True)
+    assert all(r == ("authority_envelope_novel",) for r in refusals.values()), refusals

@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 import yaml
 
-from rotation_worker.adapters import ADAPTERS, github_pat, orchestrator_bearer
+from rotation_worker.adapters import ADAPTERS, github_pat, orchestrator_bearer, postgres_role
 from rotation_worker.canonical import CanonicalError, package_hash
 from rotation_worker.checks import check_unit
 from rotation_worker.contract import ContractError, Plan, StepKind, UnitPlan
@@ -321,6 +321,62 @@ def test_only_a_literal_true_marks_a_unit_non_hosted(world: World) -> None:
                 destinations=destinations, rotation_unit="retire", touches_no_hosted_service="yes"
             )
         )
+
+
+POSTGRES_HOSTED = (
+    'coolify-env instance="prod" resource_type="service" uuid="svc" key="PG_PASS" redeploy=true'
+)
+
+
+def _postgres(world: World, row: dict[str, str]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """A postgres-role unit whose registry row carries `row`, and everything else correct."""
+    fields = {"provider": '"postgres-role"', **row}
+    world.registry(
+        _registry(**fields).replace(
+            '  kind = "runtime-fetch"\n  repo = "orchestrator"\n  ref = "a person attests"\n',
+            '  kind = "coolify-env"\n  instance = "prod"\n  resource_type = "service"\n'
+            '  uuid = "svc"\n  key = "PG_PASS"\n  redeploy = true\n',
+        )
+    )
+    destinations = sorted(
+        [f'bws-secret uuid="{KEEPER}"', 'provider name="postgres-role"', POSTGRES_HOSTED]
+    )
+    world.publish(_package(_acceptance(postgres_role.PLAN), destinations=destinations))
+    unit = world.unit(
+        destinations=destinations,
+        rotation_adapter="postgres-role",
+        rotation_unit="mint",
+        touches_no_hosted_service=None,
+    )
+    intake = world.intake(acceptance_criteria=[{"ac_id": f"AC-00{n}"} for n in range(1, 10)])
+    return unit, intake
+
+
+GOOD_POSTGRES_ROW = {
+    "helper_target": '"alobar-id"',
+    "health_url": '"https://id.alobar.net/-/health/ready/"',
+}
+
+
+def test_a_postgres_row_naming_where_to_ask_passes(world: World) -> None:
+    unit, intake = _postgres(world, GOOD_POSTGRES_ROW)
+    assert world.check(unit, intake).plan == postgres_role.PLAN
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        {"health_url": GOOD_POSTGRES_ROW["health_url"]},
+        {"helper_target": GOOD_POSTGRES_ROW["helper_target"]},
+        {**GOOD_POSTGRES_ROW, "health_url": '"http://id.alobar.net/-/health/ready/"'},
+    ],
+)
+def test_a_row_with_no_helper_target_is_refused_before_the_claim(
+    world: World, row: dict[str, str]
+) -> None:
+    unit, intake = _postgres(world, row)
+    with pytest.raises(ContractError, match="helper_target|health_url"):
+        world.check(unit, intake)
 
 
 def test_a_revision_superseded_by_a_later_approval_is_refused(world: World) -> None:
