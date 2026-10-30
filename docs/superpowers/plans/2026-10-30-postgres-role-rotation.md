@@ -114,7 +114,7 @@
 
 ### Task 6: Live run (after merge and deploy)
 
-- [ ] Create the helper's key, store it in BWS `Rotation / Admin`, install the helper, targets file, and `authorized_keys` line. Prove `ssh` can't run any other command.
+- [ ] Create the helper's key, store it in BWS `Rotation / Admin`, install the helper, targets file, and `authorized_keys` line. Prove `ssh` can't run any other command, and that a wrong pinned host key is refused.
 - [ ] Measure `rotation-coolify-token` writing a throwaway variable on a throwaway service.
 - [ ] Merge the infraops change: class table (`executor: false`, `maxAgeDays: Infinity`) and the `alobar-id-postgres` row.
 - [ ] Update the VM to the merged commit, then run `adopt-keeper` and confirm its fingerprint is `5ab2e4d8eec1`. Delete `Claude/AUTHENTIK_POSTGRES_PASSWORD`.
