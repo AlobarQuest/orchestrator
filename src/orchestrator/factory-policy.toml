@@ -455,9 +455,13 @@ uses, and the attested change-manager variant, which no package uses.
 `change-manager-distributed` (ADR-0055 amendment 13) also restarts the
 orchestrator, at distribute, and its executor waits unclaimed while that restart
 would strand a dispatched run, as the orchestrator adapter's host does.
+`postgres-role` (ADR-0055 amendment 17) has no overlap: Postgres keeps one password per
+role, so its host step replaces the old value and restarts the dependents. That no-overlap
+is the type's own, stated in the package the person approves, and is a different thing from
+`host_without_overlap`, a per-envelope declaration that stays unrecognised.
 """
-decided = "2026-10-22"
-rotation_adapters = ["bitbucket", "change-manager", "change-manager-distributed", "github-pat", "openrouter", "orchestrator", "orchestrator-distributed"]
+decided = "2026-10-30"
+rotation_adapters = ["bitbucket", "change-manager", "change-manager-distributed", "github-pat", "openrouter", "orchestrator", "orchestrator-distributed", "postgres-role"]
 rotation_units = ["confirm", "mint", "retire", "store", "verify"]
 capabilities = { "operational_action" = "allowed" }
 max_attempts = 3
@@ -542,9 +546,13 @@ uses, and the attested change-manager variant, which no package uses.
 `change-manager-distributed` (ADR-0055 amendment 13) also restarts the
 orchestrator, at distribute, and its executor waits unclaimed while that restart
 would strand a dispatched run, as the orchestrator adapter's host does.
+`postgres-role` (ADR-0055 amendment 17) has no overlap: Postgres keeps one password per
+role, so its host step replaces the old value and restarts the dependents. That no-overlap
+is the type's own, stated in the package the person approves, and is a different thing from
+`host_without_overlap`, a per-envelope declaration that stays unrecognised.
 """
-decided = "2026-10-22"
-rotation_adapters = ["bitbucket", "change-manager", "change-manager-distributed", "github-pat", "openrouter", "orchestrator", "orchestrator-distributed"]
+decided = "2026-10-30"
+rotation_adapters = ["bitbucket", "change-manager", "change-manager-distributed", "github-pat", "openrouter", "orchestrator", "orchestrator-distributed", "postgres-role"]
 rotation_units = ["confirm", "mint", "retire", "store", "verify"]
 capabilities = { "operational_action" = "allowed" }
 max_attempts = 3

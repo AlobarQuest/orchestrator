@@ -1,0 +1,1200 @@
+{
+  "atlassian-api-token": {
+    "acceptance": [
+      {
+        "approver": "devon",
+        "condition": "The new value answers live at the provider's probe, beside a known-bad value the same probe refuses.",
+        "evidence": "external: the verify_new step's rotation-step/1 evidence, filed by the rotation executor.",
+        "evidence_type": "external_attestation",
+        "id": "AC-001"
+      },
+      {
+        "approver": "devon",
+        "condition": "The old value is quarantined and the keeper reads back the new one.",
+        "evidence": "external: the store step's rotation-step/1 evidence, filed by the rotation executor.",
+        "evidence_type": "external_attestation",
+        "id": "AC-002"
+      },
+      {
+        "approver": "devon",
+        "condition": "Every consumer the registry names holds the new value, or has run on it since it was stored.",
+        "evidence": "external: the verify_consumers step's rotation-step/1 evidence, filed by the rotation executor.",
+        "evidence_type": "external_attestation",
+        "id": "AC-003"
+      },
+      {
+        "approver": "devon",
+        "condition": "The old value is refused and the new one answers live, each beside a refused known-bad value, and the staging and quarantine secrets are deleted.",
+        "evidence": "external: the confirm_dead step's rotation-step/1 evidence, filed by the rotation executor.",
+        "evidence_type": "external_attestation",
+        "id": "AC-004"
+      }
+    ],
+    "applicable_standards": {
+      "project": "1.0",
+      "security": "1.0"
+    },
+    "authority": {
+      "allowed": [
+        "secret_read",
+        "secret_write"
+      ],
+      "budgets": {
+        "max_attempts": 3,
+        "max_llm_calls": null
+      },
+      "prohibited": [
+        "credential_create",
+        "credential_revoke",
+        "repository_write",
+        "infra_mutation",
+        "outward_publish",
+        "email_send"
+      ],
+      "requires_approval": []
+    },
+    "constraints": {
+      "compatibility": null,
+      "operational": null,
+      "other": [],
+      "policy_legal": null,
+      "privacy_security": "No value appears in a transcript, a tool argument, a process argument, a log or evidence. Values are identified by sha256 prefix and length only.",
+      "quality_accessibility": null,
+      "technology": "The rotation executor at the orchestrator revision installed.",
+      "time_budget": "Each unit at the executor's next pass once its waits clear."
+    },
+    "created_at": "2026-10-29T12:00:00Z",
+    "created_by": "rotation-proposer",
+    "deliverables": {
+      "artifacts": [
+        "A rotated credential in its keeper, and terminal work units carrying each step's evidence."
+      ],
+      "definition_of_done": "Every unit is completed and every acceptance criterion carries evidence and an adjudication, and infraops reports no rotation finding for example.",
+      "destination": "the production ledger",
+      "operator_responsibilities": [
+        "Devon approves this revision and the change record, and performs each act the executor announces."
+      ],
+      "recipient": "devon"
+    },
+    "dependencies": {
+      "blocking_conditions": [
+        "The executor refuses a unit at its checks; the refusal names the reason."
+      ],
+      "external_decisions": [
+        "ADR-0055 amendment 15: plans derived from a type's capabilities (2026-10-27)."
+      ],
+      "predecessor_packages": [],
+      "required_capabilities": [
+        "secret_read",
+        "secret_write"
+      ],
+      "required_people_systems": [
+        "The rotation executor",
+        "Devon"
+      ]
+    },
+    "follow_up": {
+      "owner": "devon",
+      "required": false,
+      "revisit_when": "The next rotation of example, which arrives as a new revision.",
+      "signals": []
+    },
+    "outcome": {
+      "beneficiary": "Devon, whose credentials the SDS rotates.",
+      "success_signal": "Every unit completes, the keeper holds a value different from the one it started with, the old value is refused, and infraops reports no rotation finding for example.",
+      "what": "example (example) is replaced by a new value, every destination the registry names holds it, and the old value is proved dead.",
+      "why": "The credential is due for rotation (2026-10-29-requested), and the registry hands its rotation to the SDS."
+    },
+    "owner": "devon",
+    "package_id": "rotation-example",
+    "profile": "non-software-operational",
+    "profile_fields": {
+      "credential_id": "example",
+      "destinations": [
+        "provider name=\"p\""
+      ],
+      "external_systems": [
+        "example, the credential's provider"
+      ],
+      "occurrence": "2026-10-29-requested",
+      "operating_procedure": "The rotation executor (orchestrator src/rotation_worker/) works this rotation with its bitbucket adapter and the plan derived from the type's capabilities and this credential's registry row: units store, verify, confirm. A person's acts, each announced by an alert and observed by the executor: mint, revoke. Evidence carries fingerprints, probe status codes and notes only.",
+      "owner": "devon",
+      "standing": true
+    },
+    "reach": [
+      "external_system"
+    ],
+    "revision": 1,
+    "risk": {
+      "escalation_target": "devon",
+      "failure_modes": [
+        "A contract refusal fails a unit partway; the executor resumes from its store on a retry after a requeue."
+      ],
+      "max_impact": "A destination holds a value it can't use until the rotation completes or is undone; the old value stays valid until it is revoked.",
+      "rollback": "Before the revoke the old value stays valid and is quarantined; after it, the recovery is forward: a new value and the rotation run again.",
+      "stop_conditions": [
+        "A value appears anywhere it should not."
+      ]
+    },
+    "schema_version": 1,
+    "scope": {
+      "assumptions": [
+        "The executor instance that keeps this credential runs the bitbucket adapter at a revision with derived plans (ADR-0055 amendment 15)."
+      ],
+      "excluded": [
+        "Every other credential, each rotated by its own package."
+      ],
+      "included": [
+        "The bitbucket plan's units, worked by the rotation executor."
+      ],
+      "non_goals": [
+        "Changing what the credential can reach."
+      ],
+      "open_questions": []
+    },
+    "sources": [
+      {
+        "authority_level": "authoritative",
+        "location": "orchestrator docs/decisions/0055-credential-rotation-runs-in-a-pull-based-executor.md, amendment 15 (one mechanism, a declaration per type).",
+        "required_version": "2026-10-28",
+        "sensitivity": "internal",
+        "trust": "trusted_instruction"
+      },
+      {
+        "authority_level": "authoritative",
+        "location": "AlobarQuest/example-registry .cred-consumers.toml, credential example: its keeper and every destination.",
+        "required_version": "2026-10-29",
+        "sensitivity": "internal",
+        "trust": "trusted_instruction"
+      }
+    ],
+    "status": "draft",
+    "supersedes": null,
+    "title": "Standing rotation of example",
+    "verification": {
+      "independent_review": [
+        "The rotation verifier decides each criterion from the executor's step evidence."
+      ],
+      "non_mechanical": []
+    }
+  },
+  "bws-machine-token": {
+    "acceptance": [
+      {
+        "approver": "devon",
+        "condition": "The new value answers live at the provider's probe, beside a known-bad value the same probe refuses.",
+        "evidence": "external: the verify_new step's rotation-step/1 evidence, filed by the rotation executor.",
+        "evidence_type": "external_attestation",
+        "id": "AC-001"
+      },
+      {
+        "approver": "devon",
+        "condition": "The old value is quarantined and the keeper reads back the new one.",
+        "evidence": "external: the store step's rotation-step/1 evidence, filed by the rotation executor.",
+        "evidence_type": "external_attestation",
+        "id": "AC-002"
+      },
+      {
+        "approver": "devon",
+        "condition": "Every consumer the registry names holds the new value, or has run on it since it was stored.",
+        "evidence": "external: the verify_consumers step's rotation-step/1 evidence, filed by the rotation executor.",
+        "evidence_type": "external_attestation",
+        "id": "AC-003"
+      },
+      {
+        "approver": "devon",
+        "condition": "The old value is refused and the new one answers live, each beside a refused known-bad value, and the staging and quarantine secrets are deleted.",
+        "evidence": "external: the confirm_dead step's rotation-step/1 evidence, filed by the rotation executor.",
+        "evidence_type": "external_attestation",
+        "id": "AC-004"
+      }
+    ],
+    "applicable_standards": {
+      "project": "1.0",
+      "security": "1.0"
+    },
+    "authority": {
+      "allowed": [
+        "secret_read",
+        "secret_write"
+      ],
+      "budgets": {
+        "max_attempts": 3,
+        "max_llm_calls": null
+      },
+      "prohibited": [
+        "credential_create",
+        "credential_revoke",
+        "repository_write",
+        "infra_mutation",
+        "outward_publish",
+        "email_send"
+      ],
+      "requires_approval": []
+    },
+    "constraints": {
+      "compatibility": null,
+      "operational": null,
+      "other": [],
+      "policy_legal": null,
+      "privacy_security": "No value appears in a transcript, a tool argument, a process argument, a log or evidence. Values are identified by sha256 prefix and length only.",
+      "quality_accessibility": null,
+      "technology": "The rotation executor at the orchestrator revision installed.",
+      "time_budget": "Each unit at the executor's next pass once its waits clear."
+    },
+    "created_at": "2026-10-29T12:00:00Z",
+    "created_by": "rotation-proposer",
+    "deliverables": {
+      "artifacts": [
+        "A rotated credential in its keeper, and terminal work units carrying each step's evidence."
+      ],
+      "definition_of_done": "Every unit is completed and every acceptance criterion carries evidence and an adjudication, and infraops reports no rotation finding for example.",
+      "destination": "the production ledger",
+      "operator_responsibilities": [
+        "Devon approves this revision and the change record, and performs each act the executor announces."
+      ],
+      "recipient": "devon"
+    },
+    "dependencies": {
+      "blocking_conditions": [
+        "The executor refuses a unit at its checks; the refusal names the reason."
+      ],
+      "external_decisions": [
+        "ADR-0055 amendment 15: plans derived from a type's capabilities (2026-10-27)."
+      ],
+      "predecessor_packages": [],
+      "required_capabilities": [
+        "secret_read",
+        "secret_write"
+      ],
+      "required_people_systems": [
+        "The rotation executor",
+        "Devon"
+      ]
+    },
+    "follow_up": {
+      "owner": "devon",
+      "required": false,
+      "revisit_when": "The next rotation of example, which arrives as a new revision.",
+      "signals": []
+    },
+    "outcome": {
+      "beneficiary": "Devon, whose credentials the SDS rotates.",
+      "success_signal": "Every unit completes, the keeper holds a value different from the one it started with, the old value is refused, and infraops reports no rotation finding for example.",
+      "what": "example (example) is replaced by a new value, every destination the registry names holds it, and the old value is proved dead.",
+      "why": "The credential is due for rotation (2026-10-29-requested), and the registry hands its rotation to the SDS."
+    },
+    "owner": "devon",
+    "package_id": "rotation-example",
+    "profile": "non-software-operational",
+    "profile_fields": {
+      "credential_id": "example",
+      "destinations": [
+        "provider name=\"p\""
+      ],
+      "external_systems": [
+        "example, the credential's provider"
+      ],
+      "occurrence": "2026-10-29-requested",
+      "operating_procedure": "The rotation executor (orchestrator src/rotation_worker/) works this rotation with its bws-machine-token adapter and the plan derived from the type's capabilities and this credential's registry row: units store, verify, confirm. A person's acts, each announced by an alert and observed by the executor: mint, revoke. Evidence carries fingerprints, probe status codes and notes only.",
+      "owner": "devon",
+      "standing": true
+    },
+    "reach": [
+      "external_system",
+      "operator_machine"
+    ],
+    "revision": 1,
+    "risk": {
+      "escalation_target": "devon",
+      "failure_modes": [
+        "A contract refusal fails a unit partway; the executor resumes from its store on a retry after a requeue."
+      ],
+      "max_impact": "A destination holds a value it can't use until the rotation completes or is undone; the old value stays valid until it is revoked.",
+      "rollback": "Before the revoke the old value stays valid and is quarantined; after it, the recovery is forward: a new value and the rotation run again.",
+      "stop_conditions": [
+        "A value appears anywhere it should not."
+      ]
+    },
+    "schema_version": 1,
+    "scope": {
+      "assumptions": [
+        "The executor instance that keeps this credential runs the bws-machine-token adapter at a revision with derived plans (ADR-0055 amendment 15)."
+      ],
+      "excluded": [
+        "Every other credential, each rotated by its own package."
+      ],
+      "included": [
+        "The bws-machine-token plan's units, worked by the rotation executor."
+      ],
+      "non_goals": [
+        "Changing what the credential can reach."
+      ],
+      "open_questions": []
+    },
+    "sources": [
+      {
+        "authority_level": "authoritative",
+        "location": "orchestrator docs/decisions/0055-credential-rotation-runs-in-a-pull-based-executor.md, amendment 15 (one mechanism, a declaration per type).",
+        "required_version": "2026-10-28",
+        "sensitivity": "internal",
+        "trust": "trusted_instruction"
+      },
+      {
+        "authority_level": "authoritative",
+        "location": "AlobarQuest/example-registry .cred-consumers.toml, credential example: its keeper and every destination.",
+        "required_version": "2026-10-29",
+        "sensitivity": "internal",
+        "trust": "trusted_instruction"
+      }
+    ],
+    "status": "draft",
+    "supersedes": null,
+    "title": "Standing rotation of example",
+    "verification": {
+      "independent_review": [
+        "The rotation verifier decides each criterion from the executor's step evidence."
+      ],
+      "non_mechanical": []
+    }
+  },
+  "change-manager-m2m-bearer": {
+    "acceptance": [
+      {
+        "approver": "devon",
+        "condition": "The executor mints a new value with the provider's admin credential.",
+        "evidence": "external: the mint step's rotation-step/1 evidence, filed by the rotation executor.",
+        "evidence_type": "external_attestation",
+        "id": "AC-001"
+      },
+      {
+        "approver": "devon",
+        "condition": "The new value is staged in the executor's work store, with a fingerprint different from the old value's.",
+        "evidence": "external: the stage step's rotation-step/1 evidence, filed by the rotation executor.",
+        "evidence_type": "external_attestation",
+        "id": "AC-002"
+      },
+      {
+        "approver": "devon",
+        "condition": "The hosted service accepts the new value beside the old one.",
+        "evidence": "external: the host step's rotation-step/1 evidence, filed by the rotation executor.",
+        "evidence_type": "external_attestation",
+        "id": "AC-003"
+      },
+      {
+        "approver": "devon",
+        "condition": "The new value answers live at the provider's probe, beside a known-bad value the same probe refuses.",
+        "evidence": "external: the verify_new step's rotation-step/1 evidence, filed by the rotation executor.",
+        "evidence_type": "external_attestation",
+        "id": "AC-004"
+      },
+      {
+        "approver": "devon",
+        "condition": "The old value is quarantined and the keeper reads back the new one.",
+        "evidence": "external: the store step's rotation-step/1 evidence, filed by the rotation executor.",
+        "evidence_type": "external_attestation",
+        "id": "AC-005"
+      },
+      {
+        "approver": "devon",
+        "condition": "Every consumer the registry names holds the new value, or has run on it since it was stored.",
+        "evidence": "external: the mint unit's verify_consumers step's rotation-step/1 evidence, filed by the rotation executor.",
+        "evidence_type": "external_attestation",
+        "id": "AC-006"
+      },
+      {
+        "approver": "devon",
+        "condition": "Every consumer the registry names holds the new value, or has run on it since it was stored.",
+        "evidence": "external: the retire unit's verify_consumers step's rotation-step/1 evidence, filed by the rotation executor.",
+        "evidence_type": "external_attestation",
+        "id": "AC-007"
+      },
+      {
+        "approver": "devon",
+        "condition": "The old value is revoked at the provider, proved live just before.",
+        "evidence": "external: the retire_old step's rotation-step/1 evidence, filed by the rotation executor.",
+        "evidence_type": "external_attestation",
+        "id": "AC-008"
+      },
+      {
+        "approver": "devon",
+        "condition": "The old value is refused and the new one answers live, each beside a refused known-bad value, and the staging and quarantine secrets are deleted.",
+        "evidence": "external: the confirm_dead step's rotation-step/1 evidence, filed by the rotation executor.",
+        "evidence_type": "external_attestation",
+        "id": "AC-009"
+      }
+    ],
+    "applicable_standards": {
+      "project": "1.0",
+      "security": "1.0"
+    },
+    "authority": {
+      "allowed": [
+        "credential_create",
+        "credential_revoke",
+        "secret_read",
+        "secret_write",
+        "infra_mutation"
+      ],
+      "budgets": {
+        "max_attempts": 3,
+        "max_llm_calls": null
+      },
+      "prohibited": [
+        "repository_write",
+        "outward_publish",
+        "email_send"
+      ],
+      "requires_approval": []
+    },
+    "constraints": {
+      "compatibility": null,
+      "operational": null,
+      "other": [],
+      "policy_legal": null,
+      "privacy_security": "No value appears in a transcript, a tool argument, a process argument, a log or evidence. Values are identified by sha256 prefix and length only.",
+      "quality_accessibility": null,
+      "technology": "The rotation executor at the orchestrator revision installed.",
+      "time_budget": "Each unit at the executor's next pass once its waits clear."
+    },
+    "created_at": "2026-10-29T12:00:00Z",
+    "created_by": "rotation-proposer",
+    "deliverables": {
+      "artifacts": [
+        "A rotated credential in its keeper, and terminal work units carrying each step's evidence."
+      ],
+      "definition_of_done": "Every unit is completed and every acceptance criterion carries evidence and an adjudication, and infraops reports no rotation finding for example.",
+      "destination": "the production ledger",
+      "operator_responsibilities": [
+        "Devon approves this revision and the change record, and performs each act the executor announces."
+      ],
+      "recipient": "devon"
+    },
+    "dependencies": {
+      "blocking_conditions": [
+        "The executor refuses a unit at its checks; the refusal names the reason."
+      ],
+      "external_decisions": [
+        "ADR-0055 amendment 15: plans derived from a type's capabilities (2026-10-27)."
+      ],
+      "predecessor_packages": [],
+      "required_capabilities": [
+        "credential_create",
+        "credential_revoke",
+        "secret_read",
+        "secret_write",
+        "infra_mutation"
+      ],
+      "required_people_systems": [
+        "The rotation executor",
+        "Devon"
+      ]
+    },
+    "follow_up": {
+      "owner": "devon",
+      "required": false,
+      "revisit_when": "The next rotation of example, which arrives as a new revision.",
+      "signals": []
+    },
+    "outcome": {
+      "beneficiary": "Devon, whose credentials the SDS rotates.",
+      "success_signal": "Every unit completes, the keeper holds a value different from the one it started with, the old value is refused, and infraops reports no rotation finding for example.",
+      "what": "example (example) is replaced by a new value, every destination the registry names holds it, and the old value is proved dead.",
+      "why": "The credential is due for rotation (2026-10-29-requested), and the registry hands its rotation to the SDS."
+    },
+    "owner": "devon",
+    "package_id": "rotation-example",
+    "profile": "non-software-operational",
+    "profile_fields": {
+      "credential_id": "example",
+      "destinations": [
+        "provider name=\"p\""
+      ],
+      "external_systems": [
+        "example, the credential's provider"
+      ],
+      "occurrence": "2026-10-29-requested",
+      "operating_procedure": "The rotation executor (orchestrator src/rotation_worker/) works this rotation with its change-manager adapter and the plan derived from the type's capabilities and this credential's registry row: units mint, retire. No act is a person's. Evidence carries fingerprints, probe status codes and notes only.",
+      "owner": "devon",
+      "standing": true
+    },
+    "reach": [
+      "external_system",
+      "live_estate"
+    ],
+    "revision": 1,
+    "risk": {
+      "escalation_target": "devon",
+      "failure_modes": [
+        "A contract refusal fails a unit partway; the executor resumes from its store on a retry after a requeue."
+      ],
+      "max_impact": "A destination holds a value it can't use until the rotation completes or is undone; the old value stays valid until it is revoked.",
+      "rollback": "Before the revoke the old value stays valid and is quarantined; after it, the recovery is forward: a new value and the rotation run again.",
+      "stop_conditions": [
+        "A value appears anywhere it should not."
+      ]
+    },
+    "schema_version": 1,
+    "scope": {
+      "assumptions": [
+        "The executor instance that keeps this credential runs the change-manager adapter at a revision with derived plans (ADR-0055 amendment 15)."
+      ],
+      "excluded": [
+        "Every other credential, each rotated by its own package."
+      ],
+      "included": [
+        "The change-manager plan's units, worked by the rotation executor."
+      ],
+      "non_goals": [
+        "Changing what the credential can reach."
+      ],
+      "open_questions": []
+    },
+    "sources": [
+      {
+        "authority_level": "authoritative",
+        "location": "orchestrator docs/decisions/0055-credential-rotation-runs-in-a-pull-based-executor.md, amendment 15 (one mechanism, a declaration per type).",
+        "required_version": "2026-10-28",
+        "sensitivity": "internal",
+        "trust": "trusted_instruction"
+      },
+      {
+        "authority_level": "authoritative",
+        "location": "AlobarQuest/example-registry .cred-consumers.toml, credential example: its keeper and every destination.",
+        "required_version": "2026-10-29",
+        "sensitivity": "internal",
+        "trust": "trusted_instruction"
+      }
+    ],
+    "status": "draft",
+    "supersedes": null,
+    "title": "Standing rotation of example",
+    "verification": {
+      "independent_review": [
+        "The rotation verifier decides each criterion from the executor's step evidence."
+      ],
+      "non_mechanical": []
+    }
+  },
+  "github-pat-fine-grained": {
+    "acceptance": [
+      {
+        "approver": "devon",
+        "condition": "The new value answers live at the provider's probe, beside a known-bad value the same probe refuses.",
+        "evidence": "external: the verify_new step's rotation-step/1 evidence, filed by the rotation executor.",
+        "evidence_type": "external_attestation",
+        "id": "AC-001"
+      },
+      {
+        "approver": "devon",
+        "condition": "The old value is quarantined and the keeper reads back the new one.",
+        "evidence": "external: the store step's rotation-step/1 evidence, filed by the rotation executor.",
+        "evidence_type": "external_attestation",
+        "id": "AC-002"
+      },
+      {
+        "approver": "devon",
+        "condition": "Every consumer the registry names holds the new value, or has run on it since it was stored.",
+        "evidence": "external: the store unit's verify_consumers step's rotation-step/1 evidence, filed by the rotation executor.",
+        "evidence_type": "external_attestation",
+        "id": "AC-003"
+      },
+      {
+        "approver": "devon",
+        "condition": "Every consumer the registry names holds the new value, or has run on it since it was stored.",
+        "evidence": "external: the retire unit's verify_consumers step's rotation-step/1 evidence, filed by the rotation executor.",
+        "evidence_type": "external_attestation",
+        "id": "AC-004"
+      },
+      {
+        "approver": "devon",
+        "condition": "The old value is revoked at the provider, proved live just before.",
+        "evidence": "external: the retire_old step's rotation-step/1 evidence, filed by the rotation executor.",
+        "evidence_type": "external_attestation",
+        "id": "AC-005"
+      },
+      {
+        "approver": "devon",
+        "condition": "The old value is refused and the new one answers live, each beside a refused known-bad value, and the staging and quarantine secrets are deleted.",
+        "evidence": "external: the confirm_dead step's rotation-step/1 evidence, filed by the rotation executor.",
+        "evidence_type": "external_attestation",
+        "id": "AC-006"
+      }
+    ],
+    "applicable_standards": {
+      "project": "1.0",
+      "security": "1.0"
+    },
+    "authority": {
+      "allowed": [
+        "credential_revoke",
+        "secret_read",
+        "secret_write"
+      ],
+      "budgets": {
+        "max_attempts": 3,
+        "max_llm_calls": null
+      },
+      "prohibited": [
+        "credential_create",
+        "repository_write",
+        "infra_mutation",
+        "outward_publish",
+        "email_send"
+      ],
+      "requires_approval": []
+    },
+    "constraints": {
+      "compatibility": null,
+      "operational": null,
+      "other": [],
+      "policy_legal": null,
+      "privacy_security": "No value appears in a transcript, a tool argument, a process argument, a log or evidence. Values are identified by sha256 prefix and length only.",
+      "quality_accessibility": null,
+      "technology": "The rotation executor at the orchestrator revision installed.",
+      "time_budget": "Each unit at the executor's next pass once its waits clear."
+    },
+    "created_at": "2026-10-29T12:00:00Z",
+    "created_by": "rotation-proposer",
+    "deliverables": {
+      "artifacts": [
+        "A rotated credential in its keeper, and terminal work units carrying each step's evidence."
+      ],
+      "definition_of_done": "Every unit is completed and every acceptance criterion carries evidence and an adjudication, and infraops reports no rotation finding for example.",
+      "destination": "the production ledger",
+      "operator_responsibilities": [
+        "Devon approves this revision and the change record, and performs each act the executor announces."
+      ],
+      "recipient": "devon"
+    },
+    "dependencies": {
+      "blocking_conditions": [
+        "The executor refuses a unit at its checks; the refusal names the reason."
+      ],
+      "external_decisions": [
+        "ADR-0055 amendment 15: plans derived from a type's capabilities (2026-10-27)."
+      ],
+      "predecessor_packages": [],
+      "required_capabilities": [
+        "credential_revoke",
+        "secret_read",
+        "secret_write"
+      ],
+      "required_people_systems": [
+        "The rotation executor",
+        "Devon"
+      ]
+    },
+    "follow_up": {
+      "owner": "devon",
+      "required": false,
+      "revisit_when": "The next rotation of example, which arrives as a new revision.",
+      "signals": []
+    },
+    "outcome": {
+      "beneficiary": "Devon, whose credentials the SDS rotates.",
+      "success_signal": "Every unit completes, the keeper holds a value different from the one it started with, the old value is refused, and infraops reports no rotation finding for example.",
+      "what": "example (example) is replaced by a new value, every destination the registry names holds it, and the old value is proved dead.",
+      "why": "The credential is due for rotation (2026-10-29-requested), and the registry hands its rotation to the SDS."
+    },
+    "owner": "devon",
+    "package_id": "rotation-example",
+    "profile": "non-software-operational",
+    "profile_fields": {
+      "credential_id": "example",
+      "destinations": [
+        "provider name=\"p\""
+      ],
+      "external_systems": [
+        "example, the credential's provider"
+      ],
+      "occurrence": "2026-10-29-requested",
+      "operating_procedure": "The rotation executor (orchestrator src/rotation_worker/) works this rotation with its github-pat adapter and the plan derived from the type's capabilities and this credential's registry row: units store, retire. A person's acts, each announced by an alert and observed by the executor: mint. Evidence carries fingerprints, probe status codes and notes only.",
+      "owner": "devon",
+      "standing": true
+    },
+    "reach": [
+      "external_system"
+    ],
+    "revision": 1,
+    "risk": {
+      "escalation_target": "devon",
+      "failure_modes": [
+        "A contract refusal fails a unit partway; the executor resumes from its store on a retry after a requeue."
+      ],
+      "max_impact": "A destination holds a value it can't use until the rotation completes or is undone; the old value stays valid until it is revoked.",
+      "rollback": "Before the revoke the old value stays valid and is quarantined; after it, the recovery is forward: a new value and the rotation run again.",
+      "stop_conditions": [
+        "A value appears anywhere it should not."
+      ]
+    },
+    "schema_version": 1,
+    "scope": {
+      "assumptions": [
+        "The executor instance that keeps this credential runs the github-pat adapter at a revision with derived plans (ADR-0055 amendment 15)."
+      ],
+      "excluded": [
+        "Every other credential, each rotated by its own package."
+      ],
+      "included": [
+        "The github-pat plan's units, worked by the rotation executor."
+      ],
+      "non_goals": [
+        "Changing what the credential can reach."
+      ],
+      "open_questions": []
+    },
+    "sources": [
+      {
+        "authority_level": "authoritative",
+        "location": "orchestrator docs/decisions/0055-credential-rotation-runs-in-a-pull-based-executor.md, amendment 15 (one mechanism, a declaration per type).",
+        "required_version": "2026-10-28",
+        "sensitivity": "internal",
+        "trust": "trusted_instruction"
+      },
+      {
+        "authority_level": "authoritative",
+        "location": "AlobarQuest/example-registry .cred-consumers.toml, credential example: its keeper and every destination.",
+        "required_version": "2026-10-29",
+        "sensitivity": "internal",
+        "trust": "trusted_instruction"
+      }
+    ],
+    "status": "draft",
+    "supersedes": null,
+    "title": "Standing rotation of example",
+    "verification": {
+      "independent_review": [
+        "The rotation verifier decides each criterion from the executor's step evidence."
+      ],
+      "non_mechanical": []
+    }
+  },
+  "openrouter-key": {
+    "acceptance": [
+      {
+        "approver": "devon",
+        "condition": "The executor mints a new value with the provider's admin credential.",
+        "evidence": "external: the mint step's rotation-step/1 evidence, filed by the rotation executor.",
+        "evidence_type": "external_attestation",
+        "id": "AC-001"
+      },
+      {
+        "approver": "devon",
+        "condition": "The new value is staged in the executor's work store, with a fingerprint different from the old value's.",
+        "evidence": "external: the stage step's rotation-step/1 evidence, filed by the rotation executor.",
+        "evidence_type": "external_attestation",
+        "id": "AC-002"
+      },
+      {
+        "approver": "devon",
+        "condition": "The new value answers live at the provider's probe, beside a known-bad value the same probe refuses.",
+        "evidence": "external: the verify_new step's rotation-step/1 evidence, filed by the rotation executor.",
+        "evidence_type": "external_attestation",
+        "id": "AC-003"
+      },
+      {
+        "approver": "devon",
+        "condition": "The old value is quarantined and the keeper reads back the new one.",
+        "evidence": "external: the store step's rotation-step/1 evidence, filed by the rotation executor.",
+        "evidence_type": "external_attestation",
+        "id": "AC-004"
+      },
+      {
+        "approver": "devon",
+        "condition": "Every consumer the registry names holds the new value, or has run on it since it was stored.",
+        "evidence": "external: the mint unit's verify_consumers step's rotation-step/1 evidence, filed by the rotation executor.",
+        "evidence_type": "external_attestation",
+        "id": "AC-005"
+      },
+      {
+        "approver": "devon",
+        "condition": "Every consumer the registry names holds the new value, or has run on it since it was stored.",
+        "evidence": "external: the retire unit's verify_consumers step's rotation-step/1 evidence, filed by the rotation executor.",
+        "evidence_type": "external_attestation",
+        "id": "AC-006"
+      },
+      {
+        "approver": "devon",
+        "condition": "The old value is revoked at the provider, proved live just before.",
+        "evidence": "external: the retire_old step's rotation-step/1 evidence, filed by the rotation executor.",
+        "evidence_type": "external_attestation",
+        "id": "AC-007"
+      },
+      {
+        "approver": "devon",
+        "condition": "The old value is refused and the new one answers live, each beside a refused known-bad value, and the staging and quarantine secrets are deleted.",
+        "evidence": "external: the confirm_dead step's rotation-step/1 evidence, filed by the rotation executor.",
+        "evidence_type": "external_attestation",
+        "id": "AC-008"
+      }
+    ],
+    "applicable_standards": {
+      "project": "1.0",
+      "security": "1.0"
+    },
+    "authority": {
+      "allowed": [
+        "credential_create",
+        "credential_revoke",
+        "secret_read",
+        "secret_write"
+      ],
+      "budgets": {
+        "max_attempts": 3,
+        "max_llm_calls": null
+      },
+      "prohibited": [
+        "repository_write",
+        "infra_mutation",
+        "outward_publish",
+        "email_send"
+      ],
+      "requires_approval": []
+    },
+    "constraints": {
+      "compatibility": null,
+      "operational": null,
+      "other": [],
+      "policy_legal": null,
+      "privacy_security": "No value appears in a transcript, a tool argument, a process argument, a log or evidence. Values are identified by sha256 prefix and length only.",
+      "quality_accessibility": null,
+      "technology": "The rotation executor at the orchestrator revision installed.",
+      "time_budget": "Each unit at the executor's next pass once its waits clear."
+    },
+    "created_at": "2026-10-29T12:00:00Z",
+    "created_by": "rotation-proposer",
+    "deliverables": {
+      "artifacts": [
+        "A rotated credential in its keeper, and terminal work units carrying each step's evidence."
+      ],
+      "definition_of_done": "Every unit is completed and every acceptance criterion carries evidence and an adjudication, and infraops reports no rotation finding for example.",
+      "destination": "the production ledger",
+      "operator_responsibilities": [
+        "Devon approves this revision and the change record, and performs each act the executor announces."
+      ],
+      "recipient": "devon"
+    },
+    "dependencies": {
+      "blocking_conditions": [
+        "The executor refuses a unit at its checks; the refusal names the reason."
+      ],
+      "external_decisions": [
+        "ADR-0055 amendment 15: plans derived from a type's capabilities (2026-10-27)."
+      ],
+      "predecessor_packages": [],
+      "required_capabilities": [
+        "credential_create",
+        "credential_revoke",
+        "secret_read",
+        "secret_write"
+      ],
+      "required_people_systems": [
+        "The rotation executor",
+        "Devon"
+      ]
+    },
+    "follow_up": {
+      "owner": "devon",
+      "required": false,
+      "revisit_when": "The next rotation of example, which arrives as a new revision.",
+      "signals": []
+    },
+    "outcome": {
+      "beneficiary": "Devon, whose credentials the SDS rotates.",
+      "success_signal": "Every unit completes, the keeper holds a value different from the one it started with, the old value is refused, and infraops reports no rotation finding for example.",
+      "what": "example (example) is replaced by a new value, every destination the registry names holds it, and the old value is proved dead.",
+      "why": "The credential is due for rotation (2026-10-29-requested), and the registry hands its rotation to the SDS."
+    },
+    "owner": "devon",
+    "package_id": "rotation-example",
+    "profile": "non-software-operational",
+    "profile_fields": {
+      "credential_id": "example",
+      "destinations": [
+        "provider name=\"p\""
+      ],
+      "external_systems": [
+        "example, the credential's provider"
+      ],
+      "occurrence": "2026-10-29-requested",
+      "operating_procedure": "The rotation executor (orchestrator src/rotation_worker/) works this rotation with its openrouter adapter and the plan derived from the type's capabilities and this credential's registry row: units mint, retire. No act is a person's. Evidence carries fingerprints, probe status codes and notes only.",
+      "owner": "devon",
+      "standing": true
+    },
+    "reach": [
+      "external_system"
+    ],
+    "revision": 1,
+    "risk": {
+      "escalation_target": "devon",
+      "failure_modes": [
+        "A contract refusal fails a unit partway; the executor resumes from its store on a retry after a requeue."
+      ],
+      "max_impact": "A destination holds a value it can't use until the rotation completes or is undone; the old value stays valid until it is revoked.",
+      "rollback": "Before the revoke the old value stays valid and is quarantined; after it, the recovery is forward: a new value and the rotation run again.",
+      "stop_conditions": [
+        "A value appears anywhere it should not."
+      ]
+    },
+    "schema_version": 1,
+    "scope": {
+      "assumptions": [
+        "The executor instance that keeps this credential runs the openrouter adapter at a revision with derived plans (ADR-0055 amendment 15)."
+      ],
+      "excluded": [
+        "Every other credential, each rotated by its own package."
+      ],
+      "included": [
+        "The openrouter plan's units, worked by the rotation executor."
+      ],
+      "non_goals": [
+        "Changing what the credential can reach."
+      ],
+      "open_questions": []
+    },
+    "sources": [
+      {
+        "authority_level": "authoritative",
+        "location": "orchestrator docs/decisions/0055-credential-rotation-runs-in-a-pull-based-executor.md, amendment 15 (one mechanism, a declaration per type).",
+        "required_version": "2026-10-28",
+        "sensitivity": "internal",
+        "trust": "trusted_instruction"
+      },
+      {
+        "authority_level": "authoritative",
+        "location": "AlobarQuest/example-registry .cred-consumers.toml, credential example: its keeper and every destination.",
+        "required_version": "2026-10-29",
+        "sensitivity": "internal",
+        "trust": "trusted_instruction"
+      }
+    ],
+    "status": "draft",
+    "supersedes": null,
+    "title": "Standing rotation of example",
+    "verification": {
+      "independent_review": [
+        "The rotation verifier decides each criterion from the executor's step evidence."
+      ],
+      "non_mechanical": []
+    }
+  },
+  "orchestrator-m2m-bearer": {
+    "acceptance": [
+      {
+        "approver": "devon",
+        "condition": "The executor mints a new value with the provider's admin credential.",
+        "evidence": "external: the mint step's rotation-step/1 evidence, filed by the rotation executor.",
+        "evidence_type": "external_attestation",
+        "id": "AC-001"
+      },
+      {
+        "approver": "devon",
+        "condition": "The new value is staged in the executor's work store, with a fingerprint different from the old value's.",
+        "evidence": "external: the stage step's rotation-step/1 evidence, filed by the rotation executor.",
+        "evidence_type": "external_attestation",
+        "id": "AC-002"
+      },
+      {
+        "approver": "devon",
+        "condition": "The hosted service accepts the new value beside the old one.",
+        "evidence": "external: the host step's rotation-step/1 evidence, filed by the rotation executor.",
+        "evidence_type": "external_attestation",
+        "id": "AC-003"
+      },
+      {
+        "approver": "devon",
+        "condition": "The new value answers live at the provider's probe, beside a known-bad value the same probe refuses.",
+        "evidence": "external: the verify_new step's rotation-step/1 evidence, filed by the rotation executor.",
+        "evidence_type": "external_attestation",
+        "id": "AC-004"
+      },
+      {
+        "approver": "devon",
+        "condition": "The old value is quarantined and the keeper reads back the new one.",
+        "evidence": "external: the store step's rotation-step/1 evidence, filed by the rotation executor.",
+        "evidence_type": "external_attestation",
+        "id": "AC-005"
+      },
+      {
+        "approver": "devon",
+        "condition": "Every consumer the registry names holds the new value, or has run on it since it was stored.",
+        "evidence": "external: the mint unit's verify_consumers step's rotation-step/1 evidence, filed by the rotation executor.",
+        "evidence_type": "external_attestation",
+        "id": "AC-006"
+      },
+      {
+        "approver": "devon",
+        "condition": "Every consumer the registry names holds the new value, or has run on it since it was stored.",
+        "evidence": "external: the retire unit's verify_consumers step's rotation-step/1 evidence, filed by the rotation executor.",
+        "evidence_type": "external_attestation",
+        "id": "AC-007"
+      },
+      {
+        "approver": "devon",
+        "condition": "The old value is revoked at the provider, proved live just before.",
+        "evidence": "external: the retire_old step's rotation-step/1 evidence, filed by the rotation executor.",
+        "evidence_type": "external_attestation",
+        "id": "AC-008"
+      },
+      {
+        "approver": "devon",
+        "condition": "The old value is refused and the new one answers live, each beside a refused known-bad value, and the staging and quarantine secrets are deleted.",
+        "evidence": "external: the confirm_dead step's rotation-step/1 evidence, filed by the rotation executor.",
+        "evidence_type": "external_attestation",
+        "id": "AC-009"
+      }
+    ],
+    "applicable_standards": {
+      "project": "1.0",
+      "security": "1.0"
+    },
+    "authority": {
+      "allowed": [
+        "credential_create",
+        "credential_revoke",
+        "secret_read",
+        "secret_write",
+        "infra_mutation"
+      ],
+      "budgets": {
+        "max_attempts": 3,
+        "max_llm_calls": null
+      },
+      "prohibited": [
+        "repository_write",
+        "outward_publish",
+        "email_send"
+      ],
+      "requires_approval": []
+    },
+    "constraints": {
+      "compatibility": null,
+      "operational": null,
+      "other": [],
+      "policy_legal": null,
+      "privacy_security": "No value appears in a transcript, a tool argument, a process argument, a log or evidence. Values are identified by sha256 prefix and length only.",
+      "quality_accessibility": null,
+      "technology": "The rotation executor at the orchestrator revision installed.",
+      "time_budget": "Each unit at the executor's next pass once its waits clear."
+    },
+    "created_at": "2026-10-29T12:00:00Z",
+    "created_by": "rotation-proposer",
+    "deliverables": {
+      "artifacts": [
+        "A rotated credential in its keeper, and terminal work units carrying each step's evidence."
+      ],
+      "definition_of_done": "Every unit is completed and every acceptance criterion carries evidence and an adjudication, and infraops reports no rotation finding for example.",
+      "destination": "the production ledger",
+      "operator_responsibilities": [
+        "Devon approves this revision and the change record, and performs each act the executor announces."
+      ],
+      "recipient": "devon"
+    },
+    "dependencies": {
+      "blocking_conditions": [
+        "The executor refuses a unit at its checks; the refusal names the reason."
+      ],
+      "external_decisions": [
+        "ADR-0055 amendment 15: plans derived from a type's capabilities (2026-10-27)."
+      ],
+      "predecessor_packages": [],
+      "required_capabilities": [
+        "credential_create",
+        "credential_revoke",
+        "secret_read",
+        "secret_write",
+        "infra_mutation"
+      ],
+      "required_people_systems": [
+        "The rotation executor",
+        "Devon"
+      ]
+    },
+    "follow_up": {
+      "owner": "devon",
+      "required": false,
+      "revisit_when": "The next rotation of example, which arrives as a new revision.",
+      "signals": []
+    },
+    "outcome": {
+      "beneficiary": "Devon, whose credentials the SDS rotates.",
+      "success_signal": "Every unit completes, the keeper holds a value different from the one it started with, the old value is refused, and infraops reports no rotation finding for example.",
+      "what": "example (example) is replaced by a new value, every destination the registry names holds it, and the old value is proved dead.",
+      "why": "The credential is due for rotation (2026-10-29-requested), and the registry hands its rotation to the SDS."
+    },
+    "owner": "devon",
+    "package_id": "rotation-example",
+    "profile": "non-software-operational",
+    "profile_fields": {
+      "credential_id": "example",
+      "destinations": [
+        "provider name=\"p\""
+      ],
+      "external_systems": [
+        "example, the credential's provider"
+      ],
+      "occurrence": "2026-10-29-requested",
+      "operating_procedure": "The rotation executor (orchestrator src/rotation_worker/) works this rotation with its orchestrator adapter and the plan derived from the type's capabilities and this credential's registry row: units mint, retire. No act is a person's. Evidence carries fingerprints, probe status codes and notes only.",
+      "owner": "devon",
+      "standing": true
+    },
+    "reach": [
+      "external_system",
+      "live_estate"
+    ],
+    "revision": 1,
+    "risk": {
+      "escalation_target": "devon",
+      "failure_modes": [
+        "A contract refusal fails a unit partway; the executor resumes from its store on a retry after a requeue."
+      ],
+      "max_impact": "A destination holds a value it can't use until the rotation completes or is undone; the old value stays valid until it is revoked.",
+      "rollback": "Before the revoke the old value stays valid and is quarantined; after it, the recovery is forward: a new value and the rotation run again.",
+      "stop_conditions": [
+        "A value appears anywhere it should not."
+      ]
+    },
+    "schema_version": 1,
+    "scope": {
+      "assumptions": [
+        "The executor instance that keeps this credential runs the orchestrator adapter at a revision with derived plans (ADR-0055 amendment 15)."
+      ],
+      "excluded": [
+        "Every other credential, each rotated by its own package."
+      ],
+      "included": [
+        "The orchestrator plan's units, worked by the rotation executor."
+      ],
+      "non_goals": [
+        "Changing what the credential can reach."
+      ],
+      "open_questions": []
+    },
+    "sources": [
+      {
+        "authority_level": "authoritative",
+        "location": "orchestrator docs/decisions/0055-credential-rotation-runs-in-a-pull-based-executor.md, amendment 15 (one mechanism, a declaration per type).",
+        "required_version": "2026-10-28",
+        "sensitivity": "internal",
+        "trust": "trusted_instruction"
+      },
+      {
+        "authority_level": "authoritative",
+        "location": "AlobarQuest/example-registry .cred-consumers.toml, credential example: its keeper and every destination.",
+        "required_version": "2026-10-29",
+        "sensitivity": "internal",
+        "trust": "trusted_instruction"
+      }
+    ],
+    "status": "draft",
+    "supersedes": null,
+    "title": "Standing rotation of example",
+    "verification": {
+      "independent_review": [
+        "The rotation verifier decides each criterion from the executor's step evidence."
+      ],
+      "non_mechanical": []
+    }
+  }
+}
