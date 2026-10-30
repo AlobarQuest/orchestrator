@@ -168,6 +168,11 @@ def test_generated_package_for_postgres_states_the_outage() -> None:
     assert "any hour of the change window" in rendered["risk"]["max_impact"]
     assert "beside the old" not in rendered["risk"]["max_impact"]
     assert select_plan((plan,), rendered["acceptance"]) is plan
+    rollback = rendered["risk"]["rollback"]
+    assert "If the host step itself fails, the executor writes the old value back" in rollback
+    assert "Once host finishes, recovery is forward" in rollback
+    assert "automatic" not in rollback.lower()
+    assert "Devon" not in rendered["risk"]["max_impact"]
 
 
 def test_existing_generated_packages_are_unchanged() -> None:

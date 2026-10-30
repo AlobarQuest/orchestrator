@@ -80,10 +80,7 @@ _HOST_WITHOUT_OVERLAP: Final = (
     "The hosted service replaces the old value with the new one, and its dependents restart; "
     "they're unavailable until the restart finishes."
 )
-_RESTART_HOUR: Final = (
-    " The restart can happen at any hour of the change window, so the outage lands in the window "
-    "and not at a time Devon chooses."
-)
+_RESTART_HOUR: Final = " The restart can happen at any hour of the change window."
 
 
 class GenerateError(RuntimeError):
@@ -307,9 +304,9 @@ def render(entry: RegistryEntry, occurrence: str, created_at: str) -> dict[str, 
                 "Before the revoke the old value stays valid and is quarantined; after it, the "
                 "recovery is forward: a new value and the rotation run again."
                 if overlap
-                else "The host step is the cutover: the executor undoes it by writing the old "
-                "value back and restarting. After the store step the recovery is forward: "
-                "a new value and the rotation run again."
+                else "If the host step itself fails, the executor writes the old value back and "
+                "restarts, leaving the keeper unchanged. Once host finishes, recovery is forward: a new "
+                "value and the rotation run again."
             ),
             "escalation_target": OWNER,
         },
