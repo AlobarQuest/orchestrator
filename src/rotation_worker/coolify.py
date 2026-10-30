@@ -7,9 +7,10 @@ bound: it is built for the one application uuid an approved destination names, a
 allows exactly that application's env PATCH and restart, so a bug elsewhere can't reach another.
 
 Each variable is stored twice, once per `is_preview` value, and a PATCH changes one (amendment 1),
-so a write sends both. A refused write stops: the delete-and-recreate fallback people use when a
-PATCH answers 500 could leave the variable missing, and an orchestrator without its credentials
-setting doesn't boot. The next attempt re-derives what to write from what the service loaded.
+so a write sends both (a service's variable has one row). A refused write stops: the
+delete-and-recreate fallback people use when a PATCH answers 500 could leave the variable
+missing, and an orchestrator without its credentials setting doesn't boot. The next attempt
+re-derives what to write from what the service loaded.
 
 The executor reaches production Coolify over the tailnet, which encrypts it; its public address
 answers plain HTTP (amendment 9).
@@ -18,7 +19,7 @@ answers plain HTTP (amendment 9).
 from __future__ import annotations
 
 import ipaddress
-from typing import Final
+from typing import Final, Literal
 from urllib.parse import urlsplit
 
 import httpx
@@ -54,14 +55,20 @@ class CoolifyClient:
         self,
         base_url: str,
         token: Value,
-        application: str,
+        resource_type: Literal["application", "service"],
+        uuid: str,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         problem = url_problem(base_url)
         if problem is not None:
             raise ContractError(f"the Coolify URL {problem}")
-        self._envs = f"/api/v1/applications/{application}/envs"
-        self._restart = f"/api/v1/applications/{application}/restart"
+        self._service = resource_type == "service"
+        if self._service:
+            self._envs = f"/api/v1/services/{uuid}/envs"
+            self._restart = f"/api/v1/services/{uuid}/restart"
+        else:
+            self._envs = f"/api/v1/applications/{uuid}/envs"
+            self._restart = f"/api/v1/applications/{uuid}/restart"
         try:
             self._client = ConfinedClient(
                 base_url=base_url,
@@ -79,7 +86,12 @@ class CoolifyClient:
         return (method, path) in {("PATCH", self._envs), ("POST", self._restart)}
 
     def set_variable(self, key: str, value: str) -> None:
-        """Write `value` to both rows of `key`. The value never appears in an error."""
+        """Write `value` to `key`: both rows of an application's, the one row of a service's.
+
+        The value never appears in an error."""
+        if self._service:
+            self._send("PATCH", self._envs, json={"key": key, "value": value})
+            return
         for preview in PREVIEW_ROWS:
             body = {"key": key, "value": value, "is_preview": preview}
             self._send("PATCH", self._envs, json=body)

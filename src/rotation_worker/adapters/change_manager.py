@@ -286,7 +286,9 @@ def build_provider(
 
     def coolify() -> CoolifyClient:
         token = store.read(coolify_token_id)
-        return CoolifyClient(coolify_url, token, destination["uuid"], coolify_transport)
+        return CoolifyClient(
+            coolify_url, token, "application", destination["uuid"], coolify_transport
+        )
 
     probe_client = ConfinedClient(
         base_url=BASE_URL,

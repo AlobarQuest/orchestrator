@@ -36,6 +36,7 @@ from rotation_worker.contract import Rotation
 from rotation_worker.destinations import DestinationError, parse, render
 from rotation_worker.git_mirror import MirrorError, RepoMirror, default_mirror_root
 from rotation_worker.github_actions import RotationApp
+from rotation_worker.helper_client import HelperClient
 from rotation_worker.inbox import Inbox
 from rotation_worker.logs import configure
 from rotation_worker.notify import Notifier
@@ -144,6 +145,17 @@ def open_github_app(config: Config, store: SecretStore) -> RotationApp | None:
     return RotationApp(app_id, lambda: store.read_key(key_id))
 
 
+def open_pg_helper(config: Config, store: SecretStore) -> Callable[[], HelperClient] | None:
+    key_id, host, known_host = (
+        config.pg_helper_key_id,
+        config.pg_helper_host,
+        config.pg_helper_known_host,
+    )
+    if key_id is None or host is None or known_host is None:
+        return None
+    return lambda: HelperClient(host, known_host, store.read_key(key_id), config.state_dir)
+
+
 def read_consumers(setup: Setup, credential_id: str, stored_at: datetime) -> int:
     """Each scheduled reader's answer for a store at `stored_at`. Reads only."""
     try:
@@ -195,6 +207,7 @@ def build_setup(config: Config) -> Setup:
         notifier=open_notifier(config, store),
         inbox=open_inbox(config, store),
         organization_id=config.organization_id,
+        pg_helper=open_pg_helper(config, store),
     )
 
 

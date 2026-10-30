@@ -324,7 +324,11 @@ def test_the_coolify_client_reaches_only_the_approved_application() -> None:
         raise AssertionError(f"reached the transport: {request.url}")
 
     client = CoolifyClient(
-        COOLIFY, Value("throwaway-coolify-token-for-tests"), APP, httpx.MockTransport(never)
+        COOLIFY,
+        Value("throwaway-coolify-token-for-tests"),
+        "application",
+        APP,
+        httpx.MockTransport(never),
     )
     assert client.permits("PATCH", f"/api/v1/applications/{APP}/envs")
     assert client.permits("POST", f"/api/v1/applications/{APP}/restart")

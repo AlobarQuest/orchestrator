@@ -26,6 +26,7 @@ from rotation_worker.adapters import (
 )
 from rotation_worker.contract import ContractError, Plan, Provider, Rotation, UnitPlan
 from rotation_worker.git_mirror import RepoMirror
+from rotation_worker.helper_client import HelperClient
 from rotation_worker.orchestrator_client import OrchestratorClient
 from rotation_worker.plans import Capabilities
 from rotation_worker.readers import Healthchecks
@@ -59,6 +60,8 @@ class AdapterContext:
     credential: Mapping[str, Any] | None = None
     # The BWS organization, for a provider that lists what a BWS token can see.
     organization_id: str | None = None
+    # The VPS Postgres helper, built on demand so its SSH key is read only when a step needs it.
+    pg_helper: Callable[[], HelperClient] | None = None
 
 
 # Why a unit can't be claimed yet, from the unit, its history and the time; `None` means now.

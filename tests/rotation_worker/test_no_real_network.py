@@ -13,6 +13,6 @@ from tests.rotation_worker.conftest import RealNetworkRefused
 
 
 def test_a_client_built_without_a_fake_transport_is_refused() -> None:
-    client = CoolifyClient("https://127.0.0.1:9", Value("placeholder"), "app")
+    client = CoolifyClient("https://127.0.0.1:9", Value("placeholder"), "application", "app")
     with pytest.raises(RealNetworkRefused):
         client.restart()
