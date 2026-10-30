@@ -700,6 +700,49 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   takes the one bot-authored commit anywhere on the branch. The two agree on every ordinary pull
   request.
 
+### The bump driver (Landing Part 4)
+
+`bump-driver` (`src/bump_driver/`, `scripts/run-bump-driver.sh`, hourly at :50, log
+`~/Library/Logs/bump-driver.log`, Healthchecks check `sds-bump-driver`, an outcome alarm) moves
+standing dependency-update work as SYSTEM with no person acting. Verification stays with the
+`rotation-verifier` lane, as VERIFIER. Check it with `/bin/bash scripts/run-bump-driver.sh --dry-run`.
+
+- **What it reads.** `work` records whose `change_class` is `dependency-update`, in a repository the
+  member record grants `dependency_updates`, whose revision is a standing package's. It reads
+  `approved` records and `resolved` ones, because `work_watcher` retires a record as soon as its
+  units complete, which is before the lane lands them. A unit is touched only if its own envelope is
+  `dependency-update`, names no `rotation_unit` and targets that repository.
+- **Decompose.** A revision with no units and no proposal: `factory decompose --no-execute` against
+  a shallow mirror under `~/Library/Application Support/sds/bump-driver/mirrors/`, posted with key
+  `bump-driver:<revision>`. The mirrors run only git, with hooks off and the token in the
+  environment. The bump's terms come from `enforcement_snapshot.profile_fields`. A proposal a person
+  rejected, sent back or superseded is never proposed over.
+- **Dispatch.** One run per repository: a `claimed` or `executing` unit holds it, and so does a run
+  dispatched but not yet claimed (the unit is still `ready`, and history says so). The key is
+  `bump-driver:dispatch:<unit>:<version>`, with `:<n>` added once `n` earlier dispatch records didn't
+  start a run: such a record holds its key and moves no version, so reusing the key would replay it
+  for ever. `dispatch_disabled` and `outside_change_window` are `waiting`. Each pass while the
+  switch is off writes one skipped record per ready unit.
+- **Merge.** A completed unit whose bound pull request is open. The lane reads `pr-merge-admission`
+  first, because the act puts its refusals in a message: `merge_policy_path_off` alone is `waiting`,
+  and any other refusal is reported. A closed or merged pull request is nothing to do.
+- **Alerts** (sender `sds-bridge`, memory in the state directory's `alerts.json`):
+  `bump-unit-failed:<repo>:<unit>` for a unit `failed` or `revision_required`, and
+  `bump-decompose-refused:<repo>:<revision>` for a generator refusal or a proposal of this lane's
+  policy didn't approve (`policy_not_applied`). Each resolves when its subject clears, and is held
+  while its repository's records can't be read. A person's own proposal never alerts.
+- **Nothing retries a failed unit.** `revision_required` has a SYSTEM edge back to `ready`, but
+  `requeue` takes only failed or blocked work and no lane drives it, so the alert is the end state
+  and a person decides.
+- **What `factory` needs from the launcher:** intent-packages' venv and this repository's on `PATH`
+  (`factory` shells out to `orchestrator conformance-claim`), project-standards and
+  security-standards on `FACTORY_PYTHONPATH`, the SYSTEM bearer as `ORCHESTRATOR_SYSTEM_TOKEN`, and
+  the Brain keys as `CODE_BRAIN_KEY` and `INFRA_BRAIN_KEY`. Nothing else reaches it. A
+  `--no-execute` the intent-packages checkout doesn't know is a refusal like any other, so that
+  checkout must be current.
+- **Deploying the orchestrator.** `deploy_orchestrator.py` refuses while a unit is live or a dispatch
+  is unclaimed, and this lane can start one at :50, so deploy away from it.
+
 ### The landers' outbound surface (Landing Part 1)
 
 - **Each lander's whole outbound surface is one row of `tests/architecture/test_landing_edges.py`**:

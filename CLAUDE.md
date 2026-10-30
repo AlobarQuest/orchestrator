@@ -449,7 +449,7 @@ Placement rule: global CLAUDE.md §7.
   `docs/operations/local-development.md`.
 - The outcome-alarm launchers (`run-fork-sync-watch.sh`, `run-fork-harden.sh`,
   `run-membership-check.sh`, `run-bump-proposer.sh`, `run-change-proposer.sh`,
-  `run-work-carrier.sh`) run through `sds_outcome_begin`/`sds_outcome_end` in
+  `run-work-carrier.sh`, `run-bump-driver.sh`) run through `sds_outcome_begin`/`sds_outcome_end` in
   `scripts/sds-deadman.sh`: `/fail` with the report on every non-zero exit, findings included,
   pinging only on the bridge lanes' acting run. They never arm the dead-man switch, and a launcher
   that doesn't arm it must not contain the arming function's name, which `test_sds_deadman.py`
@@ -596,6 +596,13 @@ Placement rule: global CLAUDE.md §7.
   so it means waiting only as the sole refusal. The admission answer writes nothing; the act records
   `authority.human_gate_not_required` beside a `merged` record only. Detail:
   `docs/operations/landing-lanes.md`.
+- The `bump-driver` lane acts as SYSTEM only on a standing `dependency-update` revision in a
+  repository granted `dependency_updates`, and on a unit whose own envelope says so; it reads
+  `resolved` records as well as `approved`, since `work_watcher` retires a record before its unit
+  lands. A dispatch record that started no run holds its idempotency key and moves no version, so
+  the lane's key gains a suffix per such record, or it would replay the skip for ever. Its mirrors
+  run only git, and it never retries a unit. Detail: `docs/operations/landing-lanes.md`, "The bump
+  driver".
 - A person's mint reaches a rotation only through its instance's `rotation-inbox` BWS secret or a
   staging secret written by hand: the unit after the mint waits, unclaimed, until one is staged
   (`worker._mint_waits`). The inbox binds a value only while no other rotation on either
