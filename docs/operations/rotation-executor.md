@@ -33,7 +33,7 @@ and the staging and quarantine secrets named `rotation/<credential>/<occurrence>
 ## The plan a credential runs
 
 A credential type (`openrouter`, `orchestrator`, `change-manager`, `github-pat`, `bitbucket`,
-`bws-machine-token`) declares only which steps its provider does by machine
+`bws-machine-token`, `postgres-role`) declares only which steps its provider does by machine
 (`Adapter.capabilities`). The executor derives each credential's plan from that and the
 credential's registry row (`plans.derive`, ADR-0055 amendment 15):
 

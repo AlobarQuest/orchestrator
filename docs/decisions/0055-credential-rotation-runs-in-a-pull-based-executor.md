@@ -2110,3 +2110,18 @@ Devon approved the no-overlap decision and the helper as the executor's reach on
   generated package text and the policy recognition.
 - The policy's pattern for rotation units carries `postgres-role` and a new `decided` date; its schema
   is unchanged.
+
+### As built (2026-10-30)
+
+Shipped in #556 and deployed as `06d7bbf`, with infraops #155 and #156 registering
+`alobar-id-postgres`. Two details moved from the decision. The helper's SSH key lives in `Rotation /
+Keepers`, because the root can write that project and only reads `Rotation / Admin`; the VM created
+it and stored it directly, so it never reached a clipboard. The registry row landed in two steps,
+because `adopt-keeper` reads the row and the row needs the keeper's id.
+
+The first rotation ran on 2026-10-30 after Devon approved revision 1 (intent-packages #160). The
+record and the decomposition were approved by policy. Mint through `verify_consumers` took 36
+seconds, of which `host` took about 23, and the containers restarted together at 18:29:37 UTC.
+`retire_old` found the old value already refused and `confirm_dead` proved it. Authentik logged no
+password failure. Nothing failed, so the undo, a second restart during a first, and ssh teardown on
+client exit stay unmeasured on the live system.
