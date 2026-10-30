@@ -23,10 +23,12 @@ from orchestrator.persistence.models import Event, LandingRevert
 from orchestrator.services.landing.interfaces import Tree
 from orchestrator.services.landing.revert_act import (
     LANDING_PIN_NOT_REPOINTED,
+    LANDING_PIN_UNCONFIRMED,
     LANDING_REPOINT_IMAGES_INVALID,
     LANDING_REPOINT_NOT_BAD,
     LANDING_REPOINT_NOT_SERVING,
     LANDING_RESTORE_NOT_LANDED,
+    LANDING_REVERT_LANE_OFF,
     LANDING_REVERT_NEEDS_REPOINT,
     LANDING_REVERT_RECORD_MOVED,
     PinnedCommand,
@@ -318,6 +320,12 @@ def test_the_revert_of_a_deploying_landing_opens_only_from_repointed(
         open_revert(migrated_session, gateway, key="too-early")
     assert raised.value.code == LANDING_REVERT_NEEDS_REPOINT
     repoint(migrated_session, gateway)
+    # Fix round 4: not from an unconfirmed pin, whoever asks.
+    with pytest.raises(DomainError) as unconfirmed:
+        open_revert(migrated_session, gateway, key="unconfirmed")
+    assert unconfirmed.value.code == LANDING_PIN_UNCONFIRMED
+    assert not any(write.startswith("pull") for write in gateway.writes)
+    confirm(migrated_session)
 
     opened = open_revert(migrated_session, gateway)
 
@@ -329,7 +337,9 @@ def test_the_revert_of_a_deploying_landing_opens_only_from_repointed(
     record = stored(migrated_engine)
     assert record is not None
     assert (record.status, record.revert_pr_number) == ("revert_opened", REVERT)
-    assert record.pinned_images == pinned()
+    assert record.pinned_images == {
+        uuid: {**image, "pinned": "yes"} for uuid, image in pinned().items()
+    }
     assert gateway.writes[-1].startswith("pull Revert")
     # Listed for `change_proposer` once the act's transaction commits.
     assert [(r.repository, r.revert_pr_number) for r in opened_reverts(migrated_session)] == [
@@ -341,6 +351,7 @@ def _landed_revert(session: Session, engine: Engine) -> None:
     stuck_on_the_parent(session)
     gateway = brain_gateway()
     repoint(session, gateway)
+    confirm(session)
     open_revert(session, gateway)
     row = session.scalar(select(LandingRevert))
     assert row is not None
@@ -475,9 +486,11 @@ def test_a_landing_already_repointed_is_not_repointed_again(migrated_session: Se
 # --------------------------------------------------------------------------------------------
 
 
-def _pinned_at(session: Session, status: str) -> None:
+def _pinned_at(session: Session, status: str, *, confirmed: bool = True) -> None:
     stuck_on_the_parent(session)
     repoint(session, brain_gateway())
+    if confirmed:
+        confirm(session, key=f"pinned-{status}")
     row = session.scalar(select(LandingRevert))
     assert row is not None
     row.status = status
@@ -629,3 +642,87 @@ def test_a_repeated_confirmation_key_answers_from_its_event(migrated_session: Se
     again = confirm(migrated_session)
 
     assert again.replayed is True
+
+
+# --------------------------------------------------------------------------------------------
+# Fix round 4.
+# --------------------------------------------------------------------------------------------
+
+
+def test_a_take_over_restore_needs_a_confirmed_pin(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    """Any SYSTEM caller asking `restored` of an unconfirmed `repointed` record is refused: its
+    tags on their restore tags are a pin that never happened. The control is confirmed."""
+    _pinned_at(migrated_session, "repointed", confirmed=False)
+
+    with pytest.raises(DomainError) as raised:
+        restore(migrated_session, brain_gateway())
+
+    assert raised.value.code == LANDING_PIN_UNCONFIRMED
+    record = stored(migrated_engine)
+    assert record is not None and record.status == "repointed"
+    confirm(migrated_session)
+    assert restore(migrated_session, brain_gateway(), key="restore-2").status == "restored"
+
+
+@pytest.mark.parametrize("status", ["repointed", "revert_landed"])
+def test_an_estate_landing_past_its_rerun_is_unreadable_while_its_lane_is_off(
+    migrated_session: Session, status: str
+) -> None:
+    """Switched off, the estate lane's records are served with the lane-off refusal as their
+    verdict, so the lander takes no step on them; the record, and its pins, are still served."""
+    _pinned_at(migrated_session, status)
+    if status == "revert_landed":
+        row = migrated_session.scalar(select(LandingRevert))
+        assert row is not None
+        row.revert_merge_sha = "f" * 40
+        migrated_session.commit()
+
+    [watched] = landing_watch(migrated_session, **lanes(brain_gateway(), estate=False))
+
+    assert (watched.verdict, watched.detail) == ("unreadable", LANDING_REVERT_LANE_OFF)
+    assert (watched.status, watched.lane) == (status, "estate")
+    assert watched.pinned_images is not None
+
+
+def test_an_inert_landing_past_its_rerun_is_still_reported_by_its_status_when_its_lane_is_off(
+    migrated_session: Session,
+) -> None:
+    """Part 3a's behaviour, kept: the inert lander takes no step on a record past its rerun (its
+    revert lands through admission, which the switch refuses), so the row reports its status."""
+    landed_bump(migrated_session)
+    migrated_session.add(
+        LandingRevert(
+            repository=INERT_REPOSITORY,
+            pr_number=BUMP,
+            merge_commit_sha="m" * 40,
+            parent_sha="p" * 40,
+            failed_job_names=["test"],
+            failed_run_id=1,
+            status="revert_opened",
+            revert_pr_number=REVERT,
+            bumps=[],
+        )
+    )
+    migrated_session.commit()
+
+    [watched] = landing_watch(migrated_session, **lanes(WatchGateway(), inert=False))
+
+    assert (watched.verdict, watched.status) == (None, "revert_opened")
+
+
+def test_a_pin_marked_on_only_some_images_is_unconfirmed(migrated_session: Session) -> None:
+    _pinned_at(migrated_session, "repointed", confirmed=False)
+    row = migrated_session.scalar(select(LandingRevert))
+    assert row is not None
+    images = dict(row.pinned_images or {})
+    first = sorted(images)[0]
+    images[first] = {**images[first], "pinned": "yes"}
+    row.pinned_images = images
+    migrated_session.commit()
+
+    with pytest.raises(DomainError) as raised:
+        open_revert(migrated_session, brain_gateway())
+
+    assert raised.value.code == LANDING_PIN_UNCONFIRMED

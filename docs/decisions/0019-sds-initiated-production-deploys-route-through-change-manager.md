@@ -588,7 +588,18 @@ back on its moving tag. The dependency is held and the version refused for good,
   > whose bad bump a person chose to keep.
 
   A hand restore after the revert opened clears nothing by itself: the revert continues, and the
-  record becomes `restored` through the ordinary restore step once the revert lands.
+  record becomes `restored` through the ordinary restore step once the revert lands. The
+  orchestrator, not only the lander, holds the take-over and the revert to a confirmed pin: from a
+  `repointed` record whose images do not all carry the confirmation mark, both are refused
+  `landing_pin_unconfirmed`, which the lander reports `waiting`.
+- **The estate lane's off switch stops every write to production.** With
+  `estate_landing_enabled` off, the watch serves each estate-lane landing, past its rerun or not,
+  with the lane-off refusal as its verdict (`unreadable`, `landing_revert_lane_off`), so the
+  lander takes no step on it: no tag is set, no deploy started, nothing restored. A person who
+  switched the lane off to take over by hand is not overwritten. The record's status and pins are
+  still served, so `landing-production-pinned` stays open. The inert lane keeps Part 3a's
+  behaviour: its records past the rerun drive no write of their own (a revert lands through
+  admission, which the switch refuses), so they are still reported by their status.
 - **Every exit before `restored` leaves an alert open.** A pinned record raises
   `landing-production-pinned:<repo>:<pr>` until it is `restored`; a `bad` landing the lander could
   not point back at all raises `landing-not-pointed-back:<repo>:<pr>` with the reason, and nothing is

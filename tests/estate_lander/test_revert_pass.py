@@ -24,6 +24,7 @@ from estate_lander.image_repoint import (
 from estate_lander.revert_pass import Production, RevertPass, lane_rows, revert_pass
 from estate_lander.served import ServedUnreadable
 from lander.errors import LandingRefused, OrchestratorError
+from lander.held_alerts import pinned_key, revert_alerts
 
 BRAIN = "alobarquest/brain"
 PR = 79
@@ -778,3 +779,59 @@ def test_a_pin_marked_on_only_some_images_is_not_confirmed() -> None:
 
     assert status == "pinned"
     assert [act for act, _ in world.acts.calls] == ["pinned"]
+
+
+# --------------------------------------------------------------------------------------------
+# Fix round 4.
+# --------------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        _row(
+            "unreadable",
+            "repointed",
+            detail="landing_revert_lane_off",
+            pinned_images=_unconfirmed_pins(),
+        ),
+        _row(
+            "unreadable",
+            "revert_landed",
+            detail="landing_revert_lane_off",
+            pinned_images=_pins(),
+            revert_merge_sha=REVERT_MERGE,
+        ),
+    ],
+)
+def test_a_record_whose_lane_is_off_is_never_stepped_and_stays_pinned(row: dict[str, Any]) -> None:
+    """A person switched the estate lane off to take over: nothing on Coolify moves, and the pinned
+    alert stays open (it keys on the record's status and pins, not on the verdict)."""
+    world = World(_apps(code_brain="main"), registry={PARENT: DIGEST, REVERT_MERGE: DIGEST})
+
+    status, _ = _only(world.run(row))
+
+    assert status == "unreadable"
+    assert world.log == [] and world.acts.calls == []
+    assert pinned_key(BRAIN, PR) in revert_alerts([row])
+
+
+@pytest.mark.parametrize("act", ["revert", "restored"])
+def test_an_unconfirmed_pin_refused_by_the_orchestrator_is_waiting(act: str) -> None:
+    refused = LandingRefused("the pin is not confirmed", "landing_pin_unconfirmed")
+    world = World(
+        _apps(tag=PARENT) if act == "revert" else _apps(code_brain="main"),
+        serving={"app-brain": PARENT, "code-brain": PARENT},
+        acts_error=refused,
+    )
+
+    assert _only(world.run(_repointed()))[0] == "waiting"
+
+
+def test_any_other_refusal_while_confirming_is_a_finding() -> None:
+    refused = LandingRefused("the record moved", "landing_revert_record_moved")
+    world = World(
+        _apps(tag=PARENT), serving={"app-brain": PARENT, "code-brain": PARENT}, acts_error=refused
+    )
+
+    assert _only(world.run(_repointed()))[0] == "error"

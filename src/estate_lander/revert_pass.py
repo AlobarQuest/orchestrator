@@ -83,6 +83,8 @@ _HAND_RESTORE: Final = "hand_restore"
 _NOT_A_FINDING: Final = frozenset(  # not-a-vocabulary: the orchestrator's refusal codes, relayed
     {"landing_revert_record_moved", "landing_repoint_not_bad", "landing_revert_lane_off"}
 )
+# The orchestrator refuses to read tags of a pin it holds unconfirmed: not a finding.
+_PIN_UNCONFIRMED: Final = "landing_pin_unconfirmed"
 # The mark a confirmed pin carries on each image (the orchestrator's `revert_act.PIN_CONFIRMED`).
 _CONFIRMED: Final = ("pinned", "yes")
 _ACT_ANSWERS: Final = {  # not-a-vocabulary: the act's answers, relayed
@@ -455,22 +457,35 @@ def _confirm_parent(
                 idempotency_key=f"estate-landing-revert:{repository}:{number}:{_REPOINTED}",
             )
             return _answered(answer, repository, number)
-        lagging = [app for app in applications if app.name in off]
-        again = [app for app in lagging if app.tag.lower() == parent]
-        by_hand = sorted(app.name for app in lagging if app.tag.lower() != parent)
-        failed = _point(images, again, parent)
-        if failed is not None:
-            return Outcome(repository, number, "error", failed)
-        detail = f"not serving {parent[:12]} yet: {', '.join(off)}"
-        if by_hand:
-            detail += f"; tag changed by hand on {', '.join(by_hand)}, left alone"
-        return Outcome(repository, number, "pinned", detail)
+        status, detail = _deploy_lagging(images, applications, off, parent)
+        return Outcome(repository, number, status, detail)
     except (_Refused, RepointRefused, ServedUnreadable) as error:
         return Outcome(repository, number, "error", f"production stays pinned: {error}")
-    except (LandingRefused, OrchestratorError) as error:
+    except LandingRefused as refused:
+        # The orchestrator holds the pin unconfirmed: the next pass completes it.
+        status = "waiting" if refused.code == _PIN_UNCONFIRMED else "error"
+        return Outcome(repository, number, status, str(refused))
+    except OrchestratorError as error:
         return Outcome(repository, number, "error", str(error))
     finally:
         images.close()
+
+
+def _deploy_lagging(
+    images: Images, applications: Sequence[Application], off: Sequence[str], parent: str
+) -> tuple[str, str]:
+    """Deploy again each application not serving the parent whose tag is still the parent's; name
+    one whose tag a person changed, and leave it alone. The report's status and detail."""
+    lagging = [app for app in applications if app.name in off]
+    again = [app for app in lagging if app.tag.lower() == parent]
+    by_hand = sorted(app.name for app in lagging if app.tag.lower() != parent)
+    failed = _point(images, again, parent)
+    if failed is not None:
+        return "error", failed
+    detail = f"not serving {parent[:12]} yet: {', '.join(off)}"
+    if by_hand:
+        detail += f"; tag changed by hand on {', '.join(by_hand)}, left alone"
+    return "pinned", detail
 
 
 def _hand_restored(

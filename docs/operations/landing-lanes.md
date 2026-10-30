@@ -891,6 +891,16 @@ is, production stays as you set it, and the pinned alert stays open. The lander 
 while `repointed`, but the restore after a landed revert sets every application back to its
 restore tag, overwriting it.
 
+The orchestrator also holds the take-over, and opening the revert, to a confirmed pin: asked of a
+`repointed` record whose pin is not confirmed, both are refused `landing_pin_unconfirmed`, which
+the lander reports `waiting` while it completes the pin.
+
+To take over without the lander acting at all, switch the estate lane off
+(`ORCHESTRATOR_ESTATE_LANDING_ENABLED=false`). The watch then serves every estate-lane landing with
+`landing_revert_lane_off` as its verdict, whatever its record's status, so no pass sets a tag,
+starts a deploy or restores. The pinned alert stays open, because it reads the record's status and
+pins. The inert lane is unchanged: its records past the rerun drive no write of their own.
+
 ### What holds bumps
 
 While a record has `pinned_images` and is not `restored`, in any status, estate admission refuses

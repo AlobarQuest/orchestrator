@@ -163,6 +163,9 @@ LANDING_REPOINT_IMAGES_INVALID: Final = "landing_repoint_images_invalid"
 LANDING_RESTORE_NOT_LANDED: Final = "landing_restore_not_landed"
 # A pin confirmed on a record that is not `repointed`.
 LANDING_PIN_NOT_REPOINTED: Final = "landing_pin_not_repointed"
+# A revert opened, or a take-over recorded, from a `repointed` record whose pin is not confirmed:
+# its tags may never have moved, so nothing is read from them yet.
+LANDING_PIN_UNCONFIRMED: Final = "landing_pin_unconfirmed"
 # The mark a confirmed pin puts on each image: the lander set every application's tag. Until it is
 # there, a tag equal to its restore tag is a pin that never happened, never a person's restore.
 PIN_CONFIRMED: Final = {"pinned": "yes"}
@@ -347,6 +350,10 @@ def landing_watch(
         verdict: Verdict | None = None
         if not grant_term(grants, landing.repository, (DEPENDENCY_UPDATES_SERVICE,)).met:
             verdict = Verdict(UNREADABLE, (), None, LANDING_REPOSITORY_NOT_GRANTED)
+        elif redeploys and not lane.enabled:
+            # Before the past-the-rerun case: a record of the estate lane drives writes to
+            # production through its status, so a lane switched off serves none to act on.
+            verdict = Verdict(UNREADABLE, (), None, LANDING_REVERT_LANE_OFF)
         elif record is not None and record.status != RERUN_REQUESTED:
             pass  # past the rerun: reported by its record's status, reading nothing
         elif not lane.enabled:
@@ -419,7 +426,8 @@ def _act(
         )
     if record is not None and record.status == REPOINTED and redeploys:
         # Production serves the parent by the SDS's own act now, so a fresh judgment would read
-        # clean: the revert opens from the record that judged it bad.
+        # clean: the revert opens from the record that judged it bad -- once the pin is confirmed.
+        _refuse_unless_pin_confirmed(record, repository, command.pr_number)
         return _revert(session, command, gateway, landing, record, _stored_verdict(record))
     if record is None:
         pull = _bump_pull(gateway, landing)
@@ -661,6 +669,7 @@ def _restore(
         )
     now = datetime.now(UTC)
     if record.status == REPOINTED:
+        _refuse_unless_pin_confirmed(record, repository, command.pr_number)
         record.detail = _TAKEN_OVER
     record.status = RESTORED
     record.restored_at = now
@@ -713,6 +722,21 @@ def _stored_verdict(record: LandingRevert) -> Verdict:
         run_id=record.failed_run_id or None,
         detail=record.detail or "judged bad before production was pointed back",
     )
+
+
+def _refuse_unless_pin_confirmed(record: LandingRevert, repository: str, pr_number: int) -> None:
+    """Every pinned image carries the lander's confirmation that its tag was set."""
+    images = record.pinned_images or {}
+    confirmed = bool(images) and all(
+        all(image.get(key) == value for key, value in PIN_CONFIRMED.items())
+        for image in images.values()
+    )
+    if not confirmed:
+        raise DomainError(
+            LANDING_PIN_UNCONFIRMED,
+            f"{repository}#{pr_number} is pointed back but its pin is not confirmed",
+            "the lander completes and confirms the pin first",
+        )
 
 
 def _refuse_unless_lane_on(lane_on: bool) -> None:
