@@ -265,10 +265,10 @@ def landing_watch(
             verdict = (
                 pull
                 if isinstance(pull, Verdict)
-                else judge(lane.gateway, landing, None, _production(session, landing, redeploys))
+                else _judgment(session, lane.gateway, landing, None, redeploys)
             )
         else:
-            verdict = judge(lane.gateway, landing, record, _production(session, landing, redeploys))
+            verdict = _judgment(session, lane.gateway, landing, record, redeploys)
         watched.append(_entry(landing, record, verdict))
     return tuple(watched)
 
@@ -338,7 +338,7 @@ def _act(
             raise _not_watched(repository, command.pr_number)
         if isinstance(pull, Verdict):
             return _outcome(landing, pull, None, acted=False)
-    verdict = judge(gateway, landing, record, _production(session, landing, redeploys))
+    verdict = _judgment(session, gateway, landing, record, redeploys)
     if verdict.kind == FLAKY_RETRY:
         return _rerun(session, command, gateway, landing, record, verdict)
     if verdict.kind == BAD and redeploys:
@@ -435,7 +435,11 @@ def _rerun(
     else:
         # A new dict, merged rather than replaced: an earlier run's attempt still decides whether
         # its failure survived the rerun asked for it.
-        record.rerun_attempts = {**(record.rerun_attempts or {}), **asked}
+        stored = record.rerun_attempts or {}
+        record.rerun_attempts = {
+            **stored,
+            **{run: max(attempt, stored.get(run, 0)) for run, attempt in asked.items()},
+        }
         record.failed_job_names = sorted({*record.failed_job_names, *rerun})
         record.updated_at = now
     record.detail = "; ".join(f"rerun refused for {reason}" for reason in refused) or None
@@ -570,41 +574,60 @@ def _redeploys(session: Session, landing: EstatePrMerge) -> bool:
     return action in _SERVED_ACTIONS
 
 
-def _production(session: Session, landing: EstatePrMerge, redeploys: bool) -> Production | None:
-    """What the store says production served since the landing, or None for a landing that does
-    not redeploy (the inert lane's), which is judged by its checks alone.
-
-    Every reading of the member record's applications for the repository received since the
-    landing, and the watcher's heartbeat: when the ingest last accepted a post from it, a repeat
-    of a stored reading included.
-    """
+def _judgment(
+    session: Session,
+    gateway: RevertActGateway,
+    landing: EstatePrMerge,
+    record: LandingRevert | None,
+    redeploys: bool,
+) -> Verdict:
+    """The landing's verdict: by its checks, and by what production served when it redeploys."""
     if not redeploys:
-        return None
-    applications = apps_for(session, landing.repository)
-    of_the_watcher = (
-        Observation.source_system == _WATCHER,
-        Observation.observation_type == _PRODUCTION_REVISION,
-        Observation.subject_type == _APPLICATION,
+        return judge(gateway, landing, record)
+    try:
+        production = _production(session, gateway, landing)
+    except EstateGatewayError as error:
+        return _unreadable(error)
+    return judge(gateway, landing, record, production)
+
+
+def _production(session: Session, gateway: RevertActGateway, landing: EstatePrMerge) -> Production:
+    """What the store says production served since the landing redeployed it.
+
+    The applications are the member record's apps for the repository on its default branch. The
+    landing time is the merge commit's, read from the remote: an `already_merged` landing is
+    recorded after the merge, and a reading between the two is one that counts. Every reading of
+    those applications received since then, and the watcher's heartbeat for each: when the ingest
+    last accepted a post about it, a repeat of a stored reading included.
+    """
+    branch = gateway.default_branch_head(repository=landing.repository).name
+    landed_at = gateway.committed_at(
+        repository=landing.repository, sha=landing.merge_commit_sha or ""
     )
+    applications = apps_for(session, landing.repository, branch)
     rows = session.execute(
         select(Observation.subject_reference, Observation.facts, Observation.received_at).where(
-            *of_the_watcher,
+            Observation.source_system == _WATCHER,
+            Observation.observation_type == _PRODUCTION_REVISION,
+            Observation.subject_type == _APPLICATION,
             Observation.subject_reference.in_(applications),
-            Observation.received_at >= landing.created_at,
+            Observation.received_at >= landed_at,
         )
     ).all()
-    readings = tuple(
-        ServedReading(application=name, serving=_serving(facts), received_at=received_at)
-        for name, facts, received_at in rows
-    )
+    heard = session.execute(
+        select(ObservationSource.subject_reference, ObservationSource.last_seen_at).where(
+            ObservationSource.source_system == _WATCHER,
+            ObservationSource.subject_reference.in_(applications),
+        )
+    ).all()
     return Production(
         applications=applications,
-        readings=readings,
-        watcher_seen_at=session.scalar(
-            select(ObservationSource.last_seen_at).where(
-                ObservationSource.source_system == _WATCHER
-            )
+        readings=tuple(
+            ServedReading(application=name, serving=_serving(facts), received_at=received_at)
+            for name, facts, received_at in rows
         ),
+        heard={name: last_seen_at for name, last_seen_at in heard},
+        landed_at=landed_at,
         now=session.scalar(select(func.now())) or datetime.now(UTC),
     )
 

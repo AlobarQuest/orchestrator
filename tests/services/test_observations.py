@@ -243,11 +243,14 @@ def test_observation_refuses_a_key_only_the_deployment_ingress_used_to_refuse(
 # fact is otherwise indistinguishable from one that stopped.
 
 
-def _last_seen(engine: Engine, source_system: str) -> datetime | None:
+def _last_seen(
+    engine: Engine, source_system: str, subject: str = "AlobarQuest/orchestrator"
+) -> datetime | None:
     with Session(engine) as reader:
         return reader.scalar(
             select(ObservationSource.last_seen_at).where(
-                ObservationSource.source_system == source_system
+                ObservationSource.source_system == source_system,
+                ObservationSource.subject_reference == subject,
             )
         )
 
@@ -293,3 +296,22 @@ def test_a_refused_observation_does_not_count_as_seen(
 
     assert isinstance(changed, DomainError)
     assert _last_seen(migrated_engine, "github") == first
+
+
+def test_the_heartbeat_is_kept_per_subject(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    """A producer that asks several subjects is heard from about each one: a pass that reached
+    three applications and not the fourth has not asked the fourth."""
+    record_observation(migrated_session, command())
+    first = _last_seen(migrated_engine, "github")
+
+    other = replace(
+        command(key="other-subject"),
+        subject_reference="AlobarQuest/factory-runner",
+        source_reference="github:AlobarQuest/factory-runner:check:1",
+    )
+    assert isinstance(record_observation(migrated_session, other), Observation)
+
+    assert _last_seen(migrated_engine, "github") == first
+    assert _last_seen(migrated_engine, "github", "AlobarQuest/factory-runner") is not None

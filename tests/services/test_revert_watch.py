@@ -586,6 +586,8 @@ MERGE_79 = "271a2ac8de79a1dbc09bc5c05d4be73d08472449"
 BEFORE_79 = "80b620ce1799c1eeeaac83f494e6cd9a553d5503"
 FIX_FORWARD = "e6cd48ac781eccbebc151d8334be95a8e3e38523"
 UNRELATED = "9" * 40
+# A build from before #79's parent: production already stale before the bump.
+OLDER = "a2f8233236" + "0" * 30
 LANDED_79 = datetime(2026, 10, 3, 6, 15, 19, tzinfo=UTC)
 # GitHub's compare of the merge commit against each served commit, as the replay measured it.
 COMPARES_79 = {
@@ -593,48 +595,61 @@ COMPARES_79 = {
     BEFORE_79: "behind",
     FIX_FORWARD: "ahead",
     UNRELATED: "diverged",
+    OLDER: "behind",
 }
+# GitHub's compare of the bump's parent (#80's merge) against each served commit.
+PARENT_COMPARES_79 = {BEFORE_79: "identical", UNRELATED: "diverged", OLDER: "behind"}
 GREEN_HEAD_79 = (_pr("test"),)
 GREEN_MERGE_79 = (_job("test", "success"),)
 
 
 class _BrainGateway:
-    """Answers `jobs_at` and `compare_status` for brain; an unlisted served commit is a 404."""
+    """Answers `jobs_at`, `parent_of` and `compare_status` for brain. A compare is keyed by its
+    base (the merge commit, or its parent) and the served head; an unlisted pair is a 404."""
 
     def __init__(
         self,
         jobs: dict[str, tuple[Job, ...]] | None = None,
         compares: dict[str, str] | None = None,
+        *,
+        merge: str = MERGE_79,
+        parent: str = BEFORE_79,
+        parent_compares: dict[str, str] | None = None,
     ) -> None:
-        self._jobs = jobs if jobs is not None else {HEAD: GREEN_HEAD_79, MERGE_79: GREEN_MERGE_79}
-        self._compares = COMPARES_79 if compares is None else compares
-        self.compared: list[str] = []
+        self._jobs = jobs if jobs is not None else {HEAD: GREEN_HEAD_79, merge: GREEN_MERGE_79}
+        self._merge, self._parent = merge, parent
+        self._compares = {
+            merge: COMPARES_79 if compares is None else compares,
+            parent: PARENT_COMPARES_79 if parent_compares is None else parent_compares,
+        }
+        self.compared: list[tuple[str, str]] = []
 
     def jobs_at(self, *, repository: str, sha: str) -> tuple[Job, ...]:
         assert repository == BRAIN
         return self._jobs.get(sha, ())
 
     def parent_of(self, *, repository: str, sha: str) -> str:
-        raise AssertionError("judging reads the parent from the record")
+        assert (repository, sha) == (BRAIN, self._merge)
+        return self._parent
 
     def rerun_job(self, *, repository: str, job_id: int) -> None:
         raise AssertionError("judging never acts")
 
     def compare_status(self, *, repository: str, base: str, head: str) -> str:
-        assert (repository, base) == (BRAIN, MERGE_79)
-        self.compared.append(head)
-        if head not in self._compares:
+        assert repository == BRAIN and base in self._compares
+        self.compared.append((base, head))
+        if head not in self._compares[base]:
             raise EstateGatewayError("commit_not_found", 404)
-        return self._compares[head]
+        return self._compares[base][head]
 
 
-def _brain_landing() -> EstatePrMerge:
+def _brain_landing(merge: str = MERGE_79) -> EstatePrMerge:
     return EstatePrMerge(
         repository=BRAIN,
         pr_number=79,
         head_sha=HEAD,
         status="merged",
-        merge_commit_sha=MERGE_79,
+        merge_commit_sha=merge,
         created_at=LANDED_79,
     )
 
@@ -658,15 +673,20 @@ def _production(
     now: float,
     seen: float | None = None,
     applications: tuple[str, ...] = BRAINS,
+    heard: dict[str, float] | None = None,
 ) -> Production:
-    """What the store says at `now` minutes after the landing. The watcher was last heard from at
-    `seen` (default: its newest reading of these applications)."""
+    """What the store says at `now` minutes after the landing. The watcher last posted about every
+    application at `seen` (default: its newest reading of these applications), unless `heard`
+    names an application's own time."""
     if seen is None and readings:
         seen = max((r.received_at - LANDED_79).total_seconds() / 60 for r in readings)
+    times = {} if seen is None else {app: seen for app in applications}
+    times.update(heard or {})
     return Production(
         applications=applications,
         readings=readings,
-        watcher_seen_at=None if seen is None else _at(seen),
+        heard={app: _at(minutes) for app, minutes in times.items()},
+        landed_at=LANDED_79,
         now=_at(now),
     )
 
@@ -705,7 +725,7 @@ def test_a_descendant_of_the_merge_commit_is_fine() -> None:
     verdict = _judged(_production(_everywhere(FIX_FORWARD, 40), now=300, seen=299), gateway)
 
     assert verdict.kind == "clean"
-    assert gateway.compared == [FIX_FORWARD]  # four brains on one commit: one compare
+    assert gateway.compared == [(MERGE_79, FIX_FORWARD)]  # four brains on one commit: one compare
 
 
 def test_every_application_behind_for_two_hours_is_bad_by_what_production_serves() -> None:
@@ -761,12 +781,23 @@ def test_no_word_from_the_watcher_at_all_is_pending() -> None:
         Production(
             applications=BRAINS,
             readings=_everywhere(BEFORE_79, 37),
-            watcher_seen_at=None,
+            heard={},
+            landed_at=LANDED_79,
             now=_at(600),
         )
     )
 
     assert verdict.kind == "pending"
+
+
+def test_one_application_the_watcher_has_not_posted_about_holds_it_pending() -> None:
+    """Liveness is per application: the watcher heard from about three brains but not the fourth
+    has not asked the fourth again."""
+    readings = _everywhere(BEFORE_79, 37)
+
+    stale = _judged(_production(readings, now=600, seen=590, heard={"open-brain": 600 - 121}))
+
+    assert stale.kind == "pending" and "open-brain" in stale.detail
 
 
 def test_brain_79_is_pending_through_the_watchers_gap_and_bad_once_it_reports_again() -> None:
@@ -793,10 +824,69 @@ def test_an_unstamped_reading_never_counts() -> None:
     assert (stuck.kind, stuck.reason) == ("bad", "served")
 
 
-def test_a_reading_inside_the_settle_time_never_counts() -> None:
-    verdict = _judged(_production(_everywhere(BEFORE_79, 29), now=600, seen=599))
+def test_a_reading_inside_the_settle_time_still_counts_once_the_settle_has_passed() -> None:
+    """The settle time delays the verdict; it never drops a reading. A stuck application writes
+    ONE reading, on the first pass after the landing; dropping it for arriving early would leave
+    the rule nothing to fire on. Stuck is timed from the end of the settle time."""
+    readings = _everywhere(BEFORE_79, 29)
+
+    early = _judged(_production(readings, now=30 + 119, seen=30 + 118))
+    stuck = _judged(_production(readings, now=150, seen=149))
+
+    assert early.kind == "pending"
+    assert (stuck.kind, stuck.reason) == ("bad", "served")
+
+
+def test_a_reading_after_the_settle_time_is_timed_from_itself() -> None:
+    readings = _everywhere(BEFORE_79, 37)
+
+    assert _judged(_production(readings, now=37 + 119, seen=37 + 118)).kind == "pending"
+    assert _judged(_production(readings, now=37 + 120, seen=37 + 119)).kind == "bad"
+
+
+def test_a_reading_from_before_the_landing_never_counts() -> None:
+    readings = _everywhere(BEFORE_79, -5)
+
+    assert _judged(_production(readings, now=600, seen=599)).kind == "pending"
+
+
+def test_production_already_behind_the_bumps_parent_is_not_the_bumps_fault() -> None:
+    """A pre-broken main: every brain stuck on a build older than the commit before the bump.
+    Production was stale before this bump; reverting it would fix nothing."""
+    verdict = _judged(_production(_everywhere(OLDER, 37), now=600, seen=599))
+
+    assert verdict.kind == "pending" and "before the bump" in verdict.detail
+
+
+def test_a_bump_landed_during_another_bumps_outage_is_not_bad() -> None:
+    """L2 lands while every brain is still stuck on the build before #79: L2's parent is #79's
+    merge commit, and production is behind that too. #79 is the bad bump, not L2."""
+    later = "b" * 40
+    gateway = _BrainGateway(
+        jobs={HEAD: GREEN_HEAD_79, later: GREEN_MERGE_79},
+        compares={BEFORE_79: "behind"},
+        merge=later,
+        parent=MERGE_79,
+        parent_compares={BEFORE_79: "behind"},
+    )
+
+    verdict = judge(
+        gateway,
+        _brain_landing(merge=later),
+        None,
+        _production(_everywhere(BEFORE_79, 37), now=600, seen=599),
+    )
 
     assert verdict.kind == "pending"
+
+
+def test_brain_79_serving_its_own_parent_is_still_bad_and_compares_each_commit_once() -> None:
+    gateway = _BrainGateway()
+
+    verdict = _judged(_production(_everywhere(BEFORE_79, 37), now=600, seen=599), gateway)
+
+    assert (verdict.kind, verdict.reason) == ("bad", "served")
+    assert gateway.compared == [(MERGE_79, BEFORE_79), (BEFORE_79, BEFORE_79)]
 
 
 def test_an_application_with_no_reading_yet_is_pending() -> None:
@@ -862,13 +952,26 @@ def test_a_check_rule_bad_on_an_inert_landing_carries_its_reason() -> None:
     assert judge(gateway, _landing(), _record()).reason == "checks"
 
 
-def test_production_stuck_outranks_checks_still_running() -> None:
-    """Whether the checks finish says nothing about what production serves."""
-    gateway = _BrainGateway(jobs={HEAD: GREEN_HEAD_79, MERGE_79: (_job("test", None),)})
+def test_a_served_bad_stands_only_when_the_checks_are_clean() -> None:
+    """A check still running, or a rerun this side asked for that has not reported: production
+    stuck for three hours is not yet `bad`."""
+    stuck = _production(_everywhere(BEFORE_79, 37), now=37 + 180, seen=37 + 179)
+    running = _BrainGateway(jobs={HEAD: GREEN_HEAD_79, MERGE_79: (_job("test", None),)})
+    unreported = _BrainGateway(jobs={HEAD: GREEN_HEAD_79, MERGE_79: (_job("test", "failure"),)})
+    record = LandingRevert(
+        repository=BRAIN,
+        pr_number=79,
+        merge_commit_sha=MERGE_79,
+        parent_sha=BEFORE_79,
+        failed_job_names=["test"],
+        failed_run_id=RUN,
+        rerun_attempts={str(RUN): 1},
+        status="rerun_requested",
+        bumps=[],
+    )
 
-    verdict = _judged(_production(_everywhere(BEFORE_79, 37), now=600, seen=599), gateway)
-
-    assert (verdict.kind, verdict.reason) == ("bad", "served")
+    assert _judged(stuck, running).kind == "pending"
+    assert judge(unreported, _brain_landing(), record, stuck).kind == "pending"
 
 
 def test_clean_needs_both_rules() -> None:

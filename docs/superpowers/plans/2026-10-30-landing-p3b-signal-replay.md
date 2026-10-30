@@ -3,10 +3,12 @@
 Measured 2026-10-30 by `scripts/replay_deploy_signal.py`. Read-only: every call was a GET.
 
 > **Since Task 2** the script replays the orchestrator's own time-based rule
-> (`revert_watch.served_verdict`, imported), not the row-counting draft measured below. Re-run on
-> the same cached data (2026-10-30): 58 `clean`, 12 `pending` (the 11 with no reading, and brain
-> #70 with app-brain alone behind), 1 `bad`: brain #79, at 12:54 UTC, the watcher's first row of
-> any kind after the four brains went behind at 06:52. The tables below are the draft's.
+> (`revert_watch.served_verdict`, imported), not the row-counting draft measured below. After Task 2's
+> second fix round (the settle time delays rather than drops a reading; production behind the bump's
+> parent is not the bump's fault), re-run on the same cached data (2026-10-30): 60 `clean`, 10
+> `pending` (the nine landings before the watcher's first row, and brain #70 with app-brain alone
+> behind), 1 `bad`: brain #79, at 12:54 UTC. The cache holds no heartbeat history, so the replay
+> stands in the watcher's newest row of any kind for it. The tables below are the draft's.
 
 ## Result in brief
 

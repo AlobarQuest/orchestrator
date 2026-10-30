@@ -181,6 +181,9 @@ class WatchGateway(ActingInertGateway):
     def compare_status(self, *, repository: str, base: str, head: str) -> str:
         raise AssertionError("an inert landing is judged by its checks alone")
 
+    def committed_at(self, *, repository: str, sha: str) -> datetime:
+        raise AssertionError("an inert landing is judged by its checks alone")
+
     def create_tree(self, *, repository: str, base_tree: str, changes: Sequence[TreeChange]) -> str:
         self.writes.append("tree")
         return "t" * 40
@@ -916,16 +919,26 @@ class BrainGateway(WatchGateway):
             {BRAIN_HEAD: HEAD_GREEN, MERGE_79: (job("test", "success"),)},
         )
         super().__init__(**kwargs)
-        self.compared: list[str] = []
+        self.compared: list[tuple[str, str]] = []
+        # The merge commit's time: three hours ago, when `landed_on_brain` lands it.
+        self.landed_at = datetime.now(UTC) - timedelta(hours=3)
 
     def parent_of(self, *, repository: str, sha: str) -> str:
         assert (repository, sha) == (BRAIN, MERGE_79)
         return BEFORE_79
 
+    def committed_at(self, *, repository: str, sha: str) -> datetime:
+        assert (repository, sha) == (BRAIN, MERGE_79)
+        return self.landed_at
+
     def compare_status(self, *, repository: str, base: str, head: str) -> str:
-        assert (repository, base) == (BRAIN, MERGE_79)
-        self.compared.append(head)
-        return {MERGE_79: "identical", BEFORE_79: "behind"}[head]
+        assert repository == BRAIN
+        self.compared.append((base, head))
+        against = {
+            MERGE_79: {MERGE_79: "identical", BEFORE_79: "behind"},
+            BEFORE_79: {BEFORE_79: "identical"},
+        }
+        return against[base][head]
 
 
 def landed_on_brain(session: Session, status: str = "merged") -> None:
@@ -1027,14 +1040,17 @@ def served(session: Session, application: str, serving: str | None, minutes_ago:
     session.flush()
 
 
-def heard(session: Session, minutes_ago: int) -> None:
-    """`revision_watcher`'s heartbeat, as the ingest records it on every accepted post."""
-    session.merge(
-        ObservationSource(
-            source_system="revision_watcher",
-            last_seen_at=datetime.now(UTC) - timedelta(minutes=minutes_ago),
+def heard(session: Session, minutes_ago: int, applications: Sequence[str] = BRAINS) -> None:
+    """`revision_watcher`'s heartbeat for each application, as the ingest records it on every
+    accepted post about it."""
+    for name in applications:
+        session.merge(
+            ObservationSource(
+                source_system="revision_watcher",
+                subject_reference=name,
+                last_seen_at=datetime.now(UTC) - timedelta(minutes=minutes_ago),
+            )
         )
-    )
     session.flush()
 
 
@@ -1071,7 +1087,7 @@ def test_a_deploying_landing_is_watched_and_judged_by_what_production_serves(
 
     assert (watched.repository, watched.pr_number, watched.verdict) == (BRAIN, BRAIN_BUMP, "clean")
     assert watched.reason is None
-    assert gateway.compared == [MERGE_79]
+    assert gateway.compared == [(MERGE_79, MERGE_79)]
 
 
 def test_a_deploying_landing_stuck_behind_is_bad_and_is_not_reverted_before_a_repoint(
@@ -1192,7 +1208,7 @@ def test_an_unstamped_reading_in_the_store_never_counts(migrated_session: Sessio
     [watched] = landing_watch(migrated_session, **lanes(gateway))
 
     assert (watched.verdict, watched.reason) == ("bad", "served")
-    assert gateway.compared == [BEFORE_79]
+    assert gateway.compared == [(MERGE_79, BEFORE_79), (BEFORE_79, BEFORE_79)]
 
 
 def test_only_the_watched_jobs_that_failed_are_rerun_one_at_a_time(
@@ -1305,3 +1321,86 @@ def test_the_inert_switch_off_judges_no_inert_landing(migrated_session: Session)
     assert watched[BUMP].detail == LANDING_REVERT_LANE_OFF
     assert raised.value.code == LANDING_REVERT_LANE_OFF
     assert inert.reads == [] and inert.job_reads == [] and inert.reruns == []
+
+
+def test_a_landing_recorded_after_its_merge_is_anchored_on_the_merge_commits_time(
+    migrated_session: Session,
+) -> None:
+    """`already_merged`: the lane found the pull request merged and recorded it later. The stuck
+    reading arrived after the merge but before the record; it still counts."""
+    landed_on_brain(migrated_session, "already_merged")
+    migrated_session.execute(text("UPDATE estate_pr_merge SET created_at = now()"))
+    everywhere(migrated_session, BEFORE_79, minutes_ago=140)
+    heard(migrated_session, minutes_ago=10)
+
+    [watched] = landing_watch(migrated_session, **lanes(BrainGateway()))
+
+    assert (watched.verdict, watched.reason) == ("bad", "served")
+
+
+def test_an_application_on_another_branch_is_not_judged(migrated_session: Session) -> None:
+    """A preview application serves a branch the bump never landed on: it is not production."""
+    landed_on_brain(migrated_session)
+    member = grant_services(migrated_session, BRAIN, "dependency_updates")
+    migrated_session.add(
+        SdsMemberApp(
+            member_id=member.id,
+            name="app-brain-preview",
+            health_url="https://app-brain-preview.devonwatkins.com/api/health",
+            branch="preview",
+        )
+    )
+    migrated_session.flush()
+    everywhere(migrated_session, BEFORE_79, minutes_ago=140)
+    heard(migrated_session, minutes_ago=10)
+
+    [watched] = landing_watch(migrated_session, **lanes(BrainGateway()))
+
+    assert (watched.verdict, watched.reason) == ("bad", "served")
+
+
+def test_one_application_the_watcher_has_stopped_posting_about_is_pending(
+    migrated_session: Session,
+) -> None:
+    landed_on_brain(migrated_session)
+    everywhere(migrated_session, BEFORE_79, minutes_ago=140)
+    heard(migrated_session, minutes_ago=10, applications=BRAINS[:3])
+    heard(migrated_session, minutes_ago=125, applications=BRAINS[3:])
+
+    [watched] = landing_watch(migrated_session, **lanes(BrainGateway()))
+
+    assert watched.verdict == "pending" and BRAINS[3] in watched.detail
+
+
+def test_a_rerun_attempt_already_recorded_never_moves_backwards(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    """The record says run RUN was rerun at attempt 2. A job of that run failing for the first
+    time at attempt 1 (never rerun) asks for its own rerun, and the run's attempt stays 2."""
+    landed_bump(migrated_session)
+    migrated_session.add(
+        LandingRevert(
+            repository=INERT_REPOSITORY,
+            pr_number=BUMP,
+            merge_commit_sha=LANDED_COMMIT,
+            parent_sha=PARENT,
+            failed_job_names=["test"],
+            failed_run_id=RUN,
+            rerun_attempts={str(RUN): 2},
+            status="rerun_requested",
+            bumps=[],
+        )
+    )
+    migrated_session.flush()
+    gateway = WatchGateway(
+        jobs={
+            BUMP_HEAD: (*HEAD_GREEN, job("lint", "success", event="pull_request")),
+            LANDED_COMMIT: (job("test", "success", attempt=2), job("lint", "failure")),
+        }
+    )
+
+    outcome = act(migrated_session, gateway)
+
+    assert (outcome.verdict, outcome.status) == ("flaky_retry", "rerun_requested")
+    record = stored(migrated_engine)
+    assert record is not None and record.rerun_attempts == {str(RUN): 2}

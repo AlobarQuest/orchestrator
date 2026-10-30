@@ -52,6 +52,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Final, Protocol, TypeGuard
 from urllib.parse import quote
 
@@ -637,6 +638,26 @@ class GitHubEstatePullRequests:
         if not isinstance(status, str) or not status:
             raise EstateGatewayError("compare_response_invalid")
         return status
+
+    def committed_at(self, *, repository: str, sha: str) -> datetime:
+        """The commit's committer date: for a squash merge, the moment it landed. Landing Part 3b.
+
+        A commit the repository does not have, or a date that cannot be read, raises: a landing
+        with no time cannot be told how long production has stood.
+        """
+        body = self._get(f"{GITHUB_API_URL}/repos/{repository}/commits/{quote(sha, safe='')}")
+        if body is None:
+            raise EstateGatewayError("commit_not_found", 404)
+        commit = body.get("commit") if isinstance(body, dict) else None
+        committer = commit.get("committer") if isinstance(commit, dict) else None
+        date = committer.get("date") if isinstance(committer, dict) else None
+        try:
+            when = datetime.fromisoformat(str(date).replace("Z", "+00:00"))
+        except ValueError as error:
+            raise EstateGatewayError("commit_response_invalid") from error
+        if when.tzinfo is None:
+            raise EstateGatewayError("commit_response_invalid")
+        return when
 
     def parent_of(self, *, repository: str, sha: str) -> str:
         """The single parent of a squash merge. Landing Part 3a.

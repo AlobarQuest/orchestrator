@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Final, Protocol
 
 # The identity of the account whose pull requests this lane exists for, exactly. NOT "any account
@@ -513,6 +514,11 @@ class RevertActGateway(EstateReadGateway, RevertWatchGateway, RevertBuildGateway
     """Everything watching a landing and acting on a bad one needs: the landed pull request and its
     commits (the dependency list), its jobs, a rerun, and the revert's reads and writes. Landing
     Part 3a. Every call is bounded by the inert lane's grant term, asked first by the caller."""
+
+    def committed_at(self, *, repository: str, sha: str) -> datetime:
+        """When a commit was committed: for a squash merge, when it landed. Landing Part 3b,
+        where it anchors what production served since a landing that redeploys."""
+        ...
 
 
 @dataclass(frozen=True)

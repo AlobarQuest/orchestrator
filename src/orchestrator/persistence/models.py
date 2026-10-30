@@ -1025,17 +1025,20 @@ class Observation(UUIDPrimaryKey, Base):
 
 
 class ObservationSource(Base):
-    """When each observation producer was last heard from. Landing Part 3b.
+    """When each observation producer last posted about each subject. Landing Part 3b.
 
-    One row per `source_system`, its `last_seen_at` moved by EVERY accepted observation, a repeat
-    of a stored one included. A content-addressed producer writes no observation while nothing it
-    measures changes, so the observations alone cannot tell "stuck on one fact" from "stopped";
-    this row can. Written in the ingest's own transaction, so a refused observation moves nothing.
+    One row per (`source_system`, `subject_reference`), its `last_seen_at` moved by EVERY accepted
+    observation, a repeat of a stored one included. Per subject, because a pass that reached three
+    applications and not the fourth has not asked the fourth. A content-addressed producer writes
+    no observation while nothing it measures changes, so the observations alone cannot tell "stuck
+    on one fact" from "stopped"; this row can. Written in the ingest's own transaction, so a
+    refused observation moves nothing.
     """
 
     __tablename__ = "observation_sources"
 
     source_system: Mapped[str] = mapped_column(String, primary_key=True)
+    subject_reference: Mapped[str] = mapped_column(Text, primary_key=True)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 

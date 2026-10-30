@@ -49,7 +49,6 @@ from orchestrator.services.landing.revert_watch import (
     BAD,
     FINE,
     PENDING,
-    ROLLOUT_SETTLE_MINUTES,
     WATCH_HOURS,
     Production,
     ServedReading,
@@ -183,13 +182,29 @@ def _ts(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
+def compare(cache: dict[str, Any], repository: str, base: str, served: str) -> str:
+    """GitHub's compare status of the served commit against `base`."""
+    key = f"{repository}:{base}...{served}"
+    if key not in cache["compares"]:
+        body = _gh("api", f"repos/{repository}/compare/{base}...{served}", "--jq", "{status}")
+        cache["compares"][key] = body["status"]
+    return str(cache["compares"][key])
+
+
 def relation(cache: dict[str, Any], repository: str, merge_sha: str, served: str) -> str:
     """Where the served commit stands relative to the merge commit."""
-    key = f"{repository}:{merge_sha}...{served}"
-    if key not in cache["compares"]:
-        body = _gh("api", f"repos/{repository}/compare/{merge_sha}...{served}", "--jq", "{status}")
-        cache["compares"][key] = body["status"]
-    return relation_of(cache["compares"][key])
+    return relation_of(compare(cache, repository, merge_sha, served))
+
+
+def parent_of(cache: dict[str, Any], repository: str, merge_sha: str) -> str:
+    """The squash merge's single parent: the default branch before the bump."""
+    parents = cache.setdefault("parents", {})
+    key = f"{repository}:{merge_sha}"
+    if key not in parents:
+        parents[key] = _gh(
+            "api", f"repos/{repository}/commits/{merge_sha}", "--jq", "{p: .parents}"
+        )["p"][0]["sha"]
+    return str(parents[key])
 
 
 def apps_of(members: dict[str, Any], repository: str) -> list[str]:
@@ -229,18 +244,23 @@ def judge(cache: dict[str, Any], landing: dict[str, Any]) -> dict[str, Any]:
         production = Production(
             applications=tuple(apps),
             readings=tuple(r for r in every if r.received_at <= now),
-            watcher_seen_at=seen[-1] if seen else None,
+            heard={app: seen[-1] for app in apps} if seen else {},
+            landed_at=merged,
             now=now,
         )
         answer = served_verdict(
             production,
-            merged,
             lambda served: relation(cache, repository, landing["merge_sha"], served),
+            lambda served: (
+                compare(
+                    cache, repository, parent_of(cache, repository, landing["merge_sha"]), served
+                )
+                == "behind"
+            ),
         )
         if answer.kind != PENDING:
             verdict, decided_at, detail = answer.kind, now.isoformat(), answer.detail
             break
-    settle = merged + timedelta(minutes=ROLLOUT_SETTLE_MINUTES)
     per_app = {
         app: [
             {
@@ -249,7 +269,7 @@ def judge(cache: dict[str, Any], landing: dict[str, Any]) -> dict[str, Any]:
                 "relation": relation(cache, repository, landing["merge_sha"], r.serving),
             }
             for r in sorted(every, key=lambda r: r.received_at)
-            if r.application == app and r.serving and settle <= r.received_at <= end
+            if r.application == app and r.serving and merged <= r.received_at <= end
         ]
         for app in apps
     }

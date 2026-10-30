@@ -1037,5 +1037,8 @@ def test_0046_observation_sources_is_reversible(migrated_engine) -> None:
     assert "observation_sources" not in inspect(migrated_engine).get_table_names()
     command.upgrade(config, "head")
     columns = {c["name"]: c for c in inspect(migrated_engine).get_columns("observation_sources")}
-    assert set(columns) == {"source_system", "last_seen_at"}
+    assert set(columns) == {"source_system", "subject_reference", "last_seen_at"}
+    assert inspect(migrated_engine).get_pk_constraint("observation_sources")[
+        "constrained_columns"
+    ] == ["source_system", "subject_reference"]
     assert columns["last_seen_at"]["nullable"] is False

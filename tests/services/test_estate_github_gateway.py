@@ -14,6 +14,7 @@ nobody was standing in.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -809,3 +810,40 @@ def test_compare_status_turns_a_malformed_host_into_a_gateway_error(
         GitHubEstatePullRequests(lambda: "t").compare_status(
             repository="alobarquest/brain", base=MERGE_79, head=BEFORE_79
         )
+
+
+def test_committed_at_reads_the_commits_committer_date(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Brain #79's squash merge: committed when it landed, 2026-10-03 06:15:19 UTC."""
+    gateway, recorder = _gateway(
+        monkeypatch,
+        {
+            "sha": MERGE_79,
+            "commit": {
+                "author": {"date": "2026-10-02T21:00:00Z"},
+                "committer": {"date": "2026-10-03T06:15:19Z"},
+            },
+        },
+    )
+
+    when = gateway.committed_at(repository="alobarquest/brain", sha=MERGE_79)
+
+    assert when == datetime(2026, 10, 3, 6, 15, 19, tzinfo=UTC)
+    assert recorder.urls == [f"https://api.github.com/repos/alobarquest/brain/commits/{MERGE_79}"]
+
+
+@pytest.mark.parametrize(
+    ("body", "status_code"),
+    [
+        pytest.param({"message": "Not Found"}, 404, id="not there"),
+        pytest.param({"commit": {}}, 200, id="no committer"),
+        pytest.param({"commit": {"committer": {"date": "yesterday"}}}, 200, id="not a date"),
+        pytest.param({"commit": {"committer": {"date": "2026-10-03T06:15:19"}}}, 200, id="naive"),
+    ],
+)
+def test_committed_at_raises_rather_than_guessing(
+    monkeypatch: pytest.MonkeyPatch, body: Any, status_code: int
+) -> None:
+    gateway, _ = _gateway(monkeypatch, body, status_code)
+
+    with pytest.raises(EstateGatewayError):
+        gateway.committed_at(repository="alobarquest/brain", sha=MERGE_79)

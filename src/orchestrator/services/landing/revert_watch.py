@@ -19,9 +19,10 @@ store says production served. It decides; the caller acts. Five answers:
 
 An inert landing is judged by the check rule alone. A landing that redeploys is judged by both,
 and they combine in this order: the check rule's `unreadable`, `flaky_retry` or `bad` stands (a
-rerun is asked for whatever production serves); then the served rule's `unreadable` or `bad`
-stands, even while a check is still running, since whether the checks finish says nothing about
-what production serves; then `clean` only when both rules are `clean`; else `pending`.
+rerun is asked for whatever production serves); then the served rule's `unreadable`; then
+`clean` only when both rules are `clean`, and the served rule's `bad` only when the check rule is
+`clean` -- a check still running, or a rerun not yet reported, may yet be the cause, so the
+answer is `pending`; else `pending`.
 
 ## Which jobs are watched
 
@@ -53,27 +54,38 @@ without the bump, because landings are squash merges.
 ## The served rule
 
 What production serves is `revision_watcher`'s `production_revision` reading of each application
-the member record lists for the repository, passed in as `Production`. A reading counts when it
-names a commit (an `unstamped` one never counts) and was RECEIVED at least `ROLLOUT_SETTLE_MINUTES`
-after the landing. Its relation to the merge commit is GitHub's compare of the merge commit against
-the served one: identical or ahead is `fine` (a later landing serves this one too), behind is
-`behind`, anything else `diverged`.
+the member record lists for the repository on its default branch, passed in as `Production`. Each
+application's latest reading that names a commit (an `unstamped` one never counts) and was
+RECEIVED since the landing (the merge commit's time) stands. Its relation to the merge commit is
+GitHub's compare of the merge commit against the served one: identical or ahead is `fine` (a later
+landing serves this one too), behind is `behind`, anything else `diverged`.
 
-* `clean` when every application's latest counted reading is `fine`. So a slow rollout -- behind on
-  the first reading, current on the next -- is never bad.
-* `bad` when every application's latest counted reading is `behind` or `diverged`, and has stood
-  for at least `ROLLOUT_STUCK_HOURS`, and the watcher has reported within `WATCHER_SILENT_HOURS`.
-  One application of several behind is never bad: app-brain alone has stayed on a build its three
-  siblings left, for days, on bumps that were fine.
-* `pending` otherwise, including when an application has no counted reading yet.
+* `clean` when every application's standing reading is `fine`. So a slow rollout -- behind on the
+  first reading, current on the next -- is never bad.
+* `bad` when every application's standing reading is `behind` or `diverged`; the watcher has
+  posted about every application within `WATCHER_SILENT_HOURS`; production has stood still for
+  `ROLLOUT_STUCK_HOURS`, timed from the newest standing reading or from the end of
+  `ROLLOUT_SETTLE_MINUTES` after the landing, whichever is later; and no application serves a
+  commit strictly behind the bump's parent. One application of several behind is never bad:
+  app-brain alone has stayed on a build its three siblings left, for days, on bumps that were
+  fine.
+* `pending` otherwise, including when an application has no reading since the landing.
+
+**The settle time delays the verdict; it never drops a reading.** A stuck application writes ONE
+reading, on the first pass after the landing (the branch it is measured against moved), and
+nothing after; dropping that reading for arriving early would leave the rule nothing to fire on.
+
+**Behind the parent is not this bump's fault.** If any application serves a commit older than the
+commit before the bump, production was already stale before it landed -- a bump landed during
+another's outage, or a default branch already broken -- and reverting this one would fix nothing.
 
 **Time is `received_at`, never `observed_at`**, which the watcher sets to the served commit's
 committer date. The readings are content-addressed, so an application stuck on one commit leaves
 ONE row however many passes repeat it: how long a reading has stood is measured from when it was
 received, and never by counting rows.
 
-**The watcher is live when the observation ingest accepted a post from it within
-`WATCHER_SILENT_HOURS`** (`observation_sources.last_seen_at`), a repeat of a stored reading
+**The watcher is live for an application when the observation ingest accepted a post about it
+within `WATCHER_SILENT_HOURS`** (`observation_sources.last_seen_at`), a repeat of a stored reading
 included. A repeated reading writes no row, so the readings alone cannot tell a stuck application
 from a watcher that stopped; the heartbeat can. The watcher runs on the operator's machine and has
 had overnight gaps: through one, a stuck landing stays `pending`, never `bad`.
@@ -81,7 +93,7 @@ had overnight gaps: through one, a stuck landing stays `pending`, never `bad`.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Final
@@ -163,14 +175,16 @@ class ServedReading:
 class Production:
     """What the store says production served, for one repository whose landing redeploys.
 
-    `applications` are the member record's apps for the repository; `readings` every reading of
-    them, in any order; `watcher_seen_at` when the watcher was last heard from (None: never);
-    `now` the instant the judgment is made.
+    `applications` are the member record's apps for the repository on its default branch;
+    `readings` every reading of them, in any order; `heard` when the watcher last posted about
+    each application (absent: never); `landed_at` the merge commit's time; `now` the instant the
+    judgment is made.
     """
 
     applications: tuple[str, ...]
     readings: tuple[ServedReading, ...]
-    watcher_seen_at: datetime | None
+    heard: Mapping[str, datetime]
+    landed_at: datetime
     now: datetime
 
 
@@ -229,23 +243,41 @@ def judge(
     if production is None or checks.kind in (UNREADABLE, FLAKY_RETRY, BAD):
         return checks
     merge_sha = landing.merge_commit_sha or ""
-    compared: dict[str, str] = {}
+    compared: dict[tuple[str, str], str] = {}
 
-    def relation(served: str) -> str:
-        if served not in compared:
-            compared[served] = relation_of(
-                gateway.compare_status(repository=landing.repository, base=merge_sha, head=served)
+    def compare(base: str, served: str) -> str:
+        if (base, served) not in compared:
+            compared[(base, served)] = gateway.compare_status(
+                repository=landing.repository, base=base, head=served
             )
-        return compared[served]
+        return compared[(base, served)]
+
+    parent: list[str] = [] if record is None else [record.parent_sha]
+
+    def before_the_bump(served: str) -> bool:
+        if not parent:
+            parent.append(gateway.parent_of(repository=landing.repository, sha=merge_sha))
+        return compare(parent[0], served) == _GITHUB_BEHIND
 
     try:
-        served = served_verdict(production, landing.created_at, relation)
+        served = served_verdict(
+            production, lambda found: relation_of(compare(merge_sha, found)), before_the_bump
+        )
     except EstateGatewayError as error:
         return _verdict(UNREADABLE, gateway_failure_detail(error))
+    return _both(checks, served)
+
+
+def _both(checks: Verdict, served: Verdict) -> Verdict:
+    """The two rules combined, the check rule `clean` or `pending`: `clean` only when both are,
+    and the served rule's `bad` only beside clean checks (a check still running, or a rerun not
+    yet reported, may yet be the cause)."""
+    if checks.kind == CLEAN and served.kind in (CLEAN, BAD):
+        return (
+            served if served.kind == BAD else _verdict(CLEAN, f"{checks.detail}; {served.detail}")
+        )
     if served.kind == BAD:
-        return served
-    if served.kind == CLEAN and checks.kind == CLEAN:
-        return _verdict(CLEAN, f"{checks.detail}; {served.detail}")
+        return _verdict(PENDING, f"{served.detail}; but the checks are not clean: {checks.detail}")
     return checks if checks.kind == PENDING else served
 
 
@@ -257,25 +289,21 @@ def relation_of(compare_status: str) -> str:
 
 
 def served_verdict(
-    production: Production, landed_at: datetime, relation: Callable[[str], str]
+    production: Production,
+    relation: Callable[[str], str],
+    before_the_bump: Callable[[str], bool],
 ) -> Verdict:
     """The served rule alone: `clean`, `pending` or `bad` (see the module docstring).
 
-    `relation` answers `relation_of` for a served commit; whatever it raises is the caller's.
+    `relation` answers `relation_of` for a served commit, and `before_the_bump` whether a served
+    commit is strictly behind the bump's parent; whatever either raises is the caller's.
     """
     if not production.applications:
         return _verdict(PENDING, "the member record names no application for the repository")
-    settled = landed_at + timedelta(minutes=ROLLOUT_SETTLE_MINUTES)
-    latest: dict[str, ServedReading] = {}
-    for reading in production.readings:
-        if reading.serving is None or reading.received_at < settled:
-            continue
-        held = latest.get(reading.application)
-        if held is None or reading.received_at > held.received_at:
-            latest[reading.application] = reading
+    latest = _latest(production)
     unread = [app for app in production.applications if app not in latest]
     if unread:
-        return _verdict(PENDING, f"no reading since the rollout settled: {', '.join(unread)}")
+        return _verdict(PENDING, f"no reading since the landing: {', '.join(unread)}")
     standing = {app: latest[app] for app in production.applications}
     relations = {app: relation(str(reading.serving)) for app, reading in standing.items()}
     if all(found == FINE for found in relations.values()):
@@ -283,20 +311,34 @@ def served_verdict(
     off = [app for app, found in relations.items() if found != FINE]
     if len(off) < len(relations):
         return _verdict(PENDING, f"not serving the merge commit yet: {', '.join(off)}")
-    seen = production.watcher_seen_at
-    if seen is None or production.now - seen > timedelta(hours=WATCHER_SILENT_HOURS):
+    silent = _silent(production)
+    if silent:
         return _verdict(
             PENDING,
-            f"every application serves an earlier build, and the watcher has not reported in "
-            f"{WATCHER_SILENT_HOURS} hours",
+            f"every application serves an earlier build, and the watcher has not posted about "
+            f"{', '.join(silent)} in {WATCHER_SILENT_HOURS} hours",
         )
-    stood = production.now - max(reading.received_at for reading in standing.values())
     serving = ", ".join(
         f"{app} {relations[app]} on {str(reading.serving)[:12]}"
         for app, reading in standing.items()
     )
+    settled = production.landed_at + timedelta(minutes=ROLLOUT_SETTLE_MINUTES)
+    stood = production.now - max(settled, *(reading.received_at for reading in standing.values()))
     if stood < timedelta(hours=ROLLOUT_STUCK_HOURS):
         return _verdict(PENDING, f"not serving the merge commit yet: {serving}")
+    stale = sorted(
+        {
+            str(reading.serving)[:12]
+            for reading in standing.values()
+            if before_the_bump(str(reading.serving))
+        }
+    )
+    if stale:
+        return _verdict(
+            PENDING,
+            f"production was already behind the commit before the bump ({', '.join(stale)}): "
+            "not this bump's fault",
+        )
     return Verdict(
         kind=BAD,
         failed_job_names=(),
@@ -305,6 +347,28 @@ def served_verdict(
         f"{stood.total_seconds() / 3600:.1f} hours: {serving}",
         reason=SERVED,
     )
+
+
+def _latest(production: Production) -> dict[str, ServedReading]:
+    """Each application's latest stamped reading received since the landing."""
+    latest: dict[str, ServedReading] = {}
+    for reading in production.readings:
+        if reading.serving is None or reading.received_at < production.landed_at:
+            continue
+        held = latest.get(reading.application)
+        if held is None or reading.received_at > held.received_at:
+            latest[reading.application] = reading
+    return latest
+
+
+def _silent(production: Production) -> list[str]:
+    """The applications the watcher has not posted about within `WATCHER_SILENT_HOURS`."""
+    after = production.now - timedelta(hours=WATCHER_SILENT_HOURS)
+    return [
+        app
+        for app in production.applications
+        if (heard := production.heard.get(app)) is None or heard < after
+    ]
 
 
 def _judge_checks(

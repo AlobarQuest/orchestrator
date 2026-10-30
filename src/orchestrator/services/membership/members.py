@@ -144,16 +144,17 @@ def holds_for(session: Session, repository: str) -> tuple[HoldView, ...]:
     )
 
 
-def apps_for(session: Session, repository: str) -> tuple[str, ...]:
-    """The names of the apps a live member serves for this repository, compared case-folded: the
-    subjects `revision_watcher` reads, which it names by app name alone. A retired member's apps
-    are not read, so they have none."""
+def apps_for(session: Session, repository: str, branch: str) -> tuple[str, ...]:
+    """The names of the apps a live member serves for this repository from `branch`, compared
+    case-folded: the subjects `revision_watcher` reads, which it names by app name alone. A
+    retired member's apps are not read, so they have none."""
     wanted = repository.lower()
     return tuple(
         app.name
         for member in list_members(session)
         if member.repository.lower() == wanted and member.state != "retired"
         for app in member.apps
+        if app.branch == branch
     )
 
 
