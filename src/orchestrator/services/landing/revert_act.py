@@ -1,4 +1,4 @@
-"""Watch the inert lane's recent landings, and act on one that went bad. Landing Part 3a.
+"""Watch the landing lanes' recent landings, and act on one that went bad. Landing Part 3.
 
 Two entry points, one population. `landing_watch` reads: it judges each watched landing and reports
 each record. `act_on_landing` acts on one landing, once per judgment: a `flaky_retry` reruns the
@@ -8,8 +8,9 @@ nothing. The judgment is made again inside the act's transaction, never taken fr
 
 ## Which landings are watched
 
-A landing is this lane's when its `estate_pr_merge` row's event is `inert_pr_merge.merged` or
-`inert_pr_merge.already_merged` (the action names the lane; the table is shared). A revert landing
+A landing is watched when its `estate_pr_merge` row's event is `merged` or `already_merged` by the
+inert lane (`inert_pr_merge.*`, Part 3a) or by the estate lane, whose landings redeploy
+(`estate_pr_merge.*`, Part 3b): the action names the lane; the table is shared. A revert landing
 is never watched: a row whose pull request some record names as its revert is left out, so a revert
 is never judged and never reverted. A landing without a record must be the update bot's (its author
 and a `dependabot/<ecosystem>/` branch, read from the pull request), so a fork's upstream sync is
@@ -26,6 +27,16 @@ dependency is held, so its alert stays open as long as the hold; and a refused o
 stays, since the default branch may still be broken and only a person clears it. None of these
 reads anything through the App: only a landing with no record or a `rerun_requested` one is
 judged.
+
+## A landing that redeploys (Landing Part 3b)
+
+An estate-lane landing is judged by what production serves as well as by its checks
+(`revert_watch`): its applications are the member record's `apps` for the repository, and their
+readings are `revision_watcher`'s `production_revision` observations, read here from the store. A
+`flaky_retry` on one reruns as on an inert landing. A `bad` one, for either reason, is refused
+`landing_revert_needs_repoint` and nothing is written: the revert of a repository that redeploys
+waits until production has been pointed back at the build before the bump, which this act does not
+do. The watch reports the verdict and its reason meanwhile.
 
 ## Every call is bounded by the inert lane's grant term
 
@@ -54,13 +65,14 @@ from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext
-from orchestrator.persistence.models import EstatePrMerge, Event, LandingRevert
+from orchestrator.persistence.models import EstatePrMerge, Event, LandingRevert, Observation
 from orchestrator.services.execution.target_grant import (
     DEPENDENCY_UPDATES_SERVICE,
     MemberRecordGrants,
 )
 from orchestrator.services.landing.inert_pr_merge import INERT_LANDING_EVENT_PREFIX
 from orchestrator.services.landing.interfaces import (
+    ESTATE_LANDING_EVENT_PREFIX,
     UPDATE_BOT_LOGIN,
     EstateGatewayError,
     EstatePullRequest,
@@ -81,6 +93,8 @@ from orchestrator.services.landing.revert_watch import (
     FLAKY_RETRY,
     UNREADABLE,
     WATCH_HOURS,
+    Production,
+    ServedReading,
     Verdict,
     judge,
 )
@@ -91,7 +105,7 @@ from orchestrator.services.landing.terms import (
     grant_term,
 )
 from orchestrator.services.membership.holds import Bump, directory_of, from_version_of, holding
-from orchestrator.services.membership.members import holds_for
+from orchestrator.services.membership.members import apps_for, holds_for
 
 # Refusals. Nothing is read, written or recorded under any of them.
 LANDING_REVERT_LANE_OFF: Final = "landing_revert_lane_off"
@@ -100,6 +114,8 @@ LANDING_REVERT_NOT_WATCHED: Final = "landing_revert_not_watched"
 LANDING_REVERT_RERUN_REFUSED: Final = "landing_revert_rerun_refused"
 # The record is not in the status the caller read: someone acted between the read and the request.
 LANDING_REVERT_RECORD_MOVED: Final = "landing_revert_record_moved"
+# A landing that redeploys was judged bad: production must be pointed back before it is reverted.
+LANDING_REVERT_NEEDS_REPOINT: Final = "landing_revert_needs_repoint"
 
 # The record statuses, as the act writes them.
 RERUN_REQUESTED: Final = "rerun_requested"
@@ -114,11 +130,21 @@ _ALWAYS_WATCHED: Final = frozenset(  # not-a-vocabulary: record statuses
     {REVERT_OPENED, REFUSED_OVERLAP, REVERT_FAILED}
 )
 
-# The events a landing of this lane's writes, one per landed status.
+# The events a watched landing writes: each lane's, one per landed status. The estate lane's are
+# the landings that redeploy, which are judged by what production serves too.
+_SERVED_ACTIONS: Final = (
+    f"{ESTATE_LANDING_EVENT_PREFIX}.merged",
+    f"{ESTATE_LANDING_EVENT_PREFIX}.already_merged",
+)
 _LANDED_ACTIONS: Final = (
     f"{INERT_LANDING_EVENT_PREFIX}.merged",
     f"{INERT_LANDING_EVENT_PREFIX}.already_merged",
+    *_SERVED_ACTIONS,
 )
+# `revision_watcher`'s readings of what each application serves.
+_WATCHER: Final = "revision_watcher"
+_PRODUCTION_REVISION: Final = "production_revision"
+_APPLICATION: Final = "service"
 _EVENT_PREFIX: Final = "landing_revert."
 _LOCK: Final = "landing_revert"
 _VERB: Final = "act on a landing that went bad"
@@ -139,7 +165,8 @@ class WatchedLanding:
     """One watched landing: its verdict when it was judged, else its record's status.
 
     `verdict` is None when the record is past the rerun, which is then reported by `status` alone.
-    `failed_runs` is the verdict's (run id, attempt) pairs, which a caller's key names.
+    `failed_runs` is the verdict's (run id, attempt) pairs, which a caller's key names. `reason` is
+    a `bad` verdict's rule, `checks` or `served`.
     """
 
     repository: str
@@ -153,6 +180,7 @@ class WatchedLanding:
     status: str | None
     revert_pr_number: int | None
     hold_outcome: str | None
+    reason: str | None
 
 
 @dataclass(frozen=True)
@@ -203,9 +231,13 @@ def landing_watch(
             pull = _bump_pull(gateway, landing)
             if pull is None:
                 continue
-            verdict = pull if isinstance(pull, Verdict) else judge(gateway, landing, None)
+            verdict = (
+                pull
+                if isinstance(pull, Verdict)
+                else judge(gateway, landing, None, _production(session, landing))
+            )
         elif record.status == RERUN_REQUESTED:
-            verdict = judge(gateway, landing, record)
+            verdict = judge(gateway, landing, record, _production(session, landing))
         watched.append(_entry(landing, record, verdict))
     return tuple(watched)
 
@@ -268,9 +300,18 @@ def _act(
             raise _not_watched(repository, command.pr_number)
         if isinstance(pull, Verdict):
             return _outcome(landing, pull, None, acted=False)
-    verdict = judge(gateway, landing, record)
+    production = _production(session, landing)
+    verdict = judge(gateway, landing, record, production)
     if verdict.kind == FLAKY_RETRY:
         return _rerun(session, command, gateway, landing, record, verdict)
+    if verdict.kind == BAD and production is not None:
+        raise DomainError(
+            LANDING_REVERT_NEEDS_REPOINT,
+            f"{repository}#{command.pr_number} redeploys and was judged bad by its "
+            f"{verdict.reason}: {verdict.detail}",
+            "production must be pointed back at the build before the bump first; nothing is "
+            "reverted here yet",
+        )
     if verdict.kind == BAD and record is not None:
         return _revert(session, command, gateway, landing, record, verdict)
     return _outcome(landing, verdict, record, acted=False)
@@ -481,6 +522,49 @@ def _watched_landings(
     return [landing for landing, is_recent in rows if is_recent or _still_held(session, landing)]
 
 
+def _production(session: Session, landing: EstatePrMerge) -> Production | None:
+    """What the store says production served since the landing, or None for a landing that does
+    not redeploy (the inert lane's), which is judged by its checks alone.
+
+    Every reading of the member record's applications for the repository received since the
+    landing, and the newest reading of any application: the watcher's last word.
+    """
+    action = session.scalar(select(Event.action).where(Event.id == landing.event_id))
+    if action not in _SERVED_ACTIONS:
+        return None
+    applications = apps_for(session, landing.repository)
+    of_the_watcher = (
+        Observation.source_system == _WATCHER,
+        Observation.observation_type == _PRODUCTION_REVISION,
+        Observation.subject_type == _APPLICATION,
+    )
+    rows = session.execute(
+        select(Observation.subject_reference, Observation.facts, Observation.received_at).where(
+            *of_the_watcher,
+            Observation.subject_reference.in_(applications),
+            Observation.received_at >= landing.created_at,
+        )
+    ).all()
+    readings = tuple(
+        ServedReading(application=name, serving=_serving(facts), received_at=received_at)
+        for name, facts, received_at in rows
+    )
+    return Production(
+        applications=applications,
+        readings=readings,
+        watcher_seen_at=session.scalar(
+            select(func.max(Observation.received_at)).where(*of_the_watcher)
+        ),
+        now=session.scalar(select(func.now())) or datetime.now(UTC),
+    )
+
+
+def _serving(facts: object) -> str | None:
+    """The commit a reading names; None for an `unstamped` one, which names none."""
+    serving = facts.get("serving") if isinstance(facts, dict) else None
+    return serving if isinstance(serving, str) and serving else None
+
+
 def _still_held(session: Session, landing: EstatePrMerge) -> bool:
     """Is any dependency its landed revert took back out still held in the member record?"""
     record = _record(session, landing.repository, landing.pr_number, lock=False)
@@ -536,7 +620,7 @@ def _unreadable(error: EstateGatewayError) -> Verdict:
 def _not_watched(repository: str, pr_number: int) -> DomainError:
     return DomainError(
         LANDING_REVERT_NOT_WATCHED,
-        f"{repository}#{pr_number} is not a watched landing of the inert lane",
+        f"{repository}#{pr_number} is not a watched landing",
         "read GET /api/v1/landing-watch for the landings that are",
     )
 
@@ -564,6 +648,7 @@ def _entry(
         status=None if record is None else record.status,
         revert_pr_number=None if record is None else record.revert_pr_number,
         hold_outcome=None if record is None else record.hold_outcome,
+        reason=None if verdict is None else verdict.reason,
     )
 
 

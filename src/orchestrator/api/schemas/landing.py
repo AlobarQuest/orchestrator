@@ -394,8 +394,9 @@ class HeldPrCloseResponse(BaseModel):
 
 
 class WatchedLandingModel(BaseModel):
-    """One watched landing of the inert lane (Landing Part 3a): its verdict when it was judged,
-    else its record's status. `failed_runs` is each failing run's (id, attempt)."""
+    """One watched landing of a landing lane (Landing Part 3): its verdict when it was judged,
+    else its record's status. `failed_runs` is each failing run's (id, attempt); `reason` is a
+    `bad` verdict's rule, `checks` or `served` (Part 3b)."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -410,6 +411,7 @@ class WatchedLandingModel(BaseModel):
     status: str | None
     revert_pr_number: int | None
     hold_outcome: str | None
+    reason: str | None
 
 
 class LandingWatchResponse(BaseModel):

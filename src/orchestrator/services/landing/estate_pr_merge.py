@@ -69,6 +69,7 @@ from orchestrator.services.landing.estate_landing_admission import (
     estate_landing_admission,
 )
 from orchestrator.services.landing.interfaces import (
+    ESTATE_LANDING_EVENT_PREFIX,
     SQUASH,
     BranchHead,
     EstateGatewayError,
@@ -111,7 +112,7 @@ ESTATE_MERGE_REFUSED_BY_REMOTE: Final = "estate_merge_refused_by_remote"
 ESTATE_MERGE_HEAD_MOVED: Final = "estate_merge_head_moved"
 
 _LANE: Final = LandingLane(
-    event_prefix="estate_pr_merge",
+    event_prefix=ESTATE_LANDING_EVENT_PREFIX,
     not_admissible=ESTATE_MERGE_NOT_ADMISSIBLE,
     head_moved=ESTATE_MERGE_HEAD_MOVED,
     refused_by_remote=ESTATE_MERGE_REFUSED_BY_REMOTE,
@@ -216,7 +217,7 @@ def _trailers(admission: EstateLandingAdmission) -> str:
 
 
 class GitHubEstatePullRequests:
-    """The real gateway. Twenty calls, and nine of them change anything.
+    """The real gateway. Twenty-one calls, and nine of them change anything.
 
     Holds a token PROVIDER rather than a token, because an installation token expires within the
     hour and a long-lived process would otherwise carry a dead one. Nothing here logs, formats or
@@ -619,6 +620,23 @@ class GitHubEstatePullRequests:
                 if held is None or job.attempt > held.attempt:
                     latest[(run_id, job.name)] = job
         return tuple(latest.values())
+
+    def compare_status(self, *, repository: str, base: str, head: str) -> str:
+        """GitHub's compare status of `head` against `base`. Landing Part 3b.
+
+        A commit the repository does not have is a 404, and raises: a served commit that cannot be
+        placed against the merge commit is unreadable, never fine.
+        """
+        body = self._get(
+            f"{GITHUB_API_URL}/repos/{repository}/compare/"
+            f"{quote(base, safe='')}...{quote(head, safe='')}"
+        )
+        if body is None:
+            raise EstateGatewayError("commit_not_found", 404)
+        status = body.get("status") if isinstance(body, dict) else None
+        if not isinstance(status, str) or not status:
+            raise EstateGatewayError("compare_response_invalid")
+        return status
 
     def parent_of(self, *, repository: str, sha: str) -> str:
         """The single parent of a squash merge. Landing Part 3a.

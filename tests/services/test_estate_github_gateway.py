@@ -715,3 +715,54 @@ def test_a_write_to_a_malformed_host_raises(monkeypatch: pytest.MonkeyPatch) -> 
         GitHubEstatePullRequests(lambda: "token").create_branch(
             repository=REPOSITORY, branch="b", sha=MERGE
         )
+
+
+# Landing Part 3b: where a served commit stands against a merge commit (brain #79's two commits).
+MERGE_79 = "271a2ac8de79a1dbc09bc5c05d4be73d08472449"
+BEFORE_79 = "80b620ce1799c1eeeaac83f494e6cd9a553d5503"
+
+
+def test_compare_status_reads_githubs_compare_of_base_against_head(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gateway, recorder = _gateway(monkeypatch, {"status": "behind", "behind_by": 1, "ahead_by": 0})
+
+    status = gateway.compare_status(repository="alobarquest/brain", base=MERGE_79, head=BEFORE_79)
+
+    assert status == "behind"
+    assert recorder.urls == [
+        f"https://api.github.com/repos/alobarquest/brain/compare/{MERGE_79}...{BEFORE_79}"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("body", "status_code", "code"),
+    [
+        pytest.param({"message": "Not Found"}, 404, "commit_not_found", id="a commit not there"),
+        pytest.param({"behind_by": 1}, 200, "compare_response_invalid", id="no status"),
+        pytest.param([], 200, "compare_response_invalid", id="a list"),
+        pytest.param({}, 502, "read_status", id="a 502"),
+    ],
+)
+def test_compare_status_raises_rather_than_answering_fine(
+    monkeypatch: pytest.MonkeyPatch, body: Any, status_code: int, code: str
+) -> None:
+    gateway, _ = _gateway(monkeypatch, body, status_code)
+
+    with pytest.raises(EstateGatewayError) as raised:
+        gateway.compare_status(repository="alobarquest/brain", base=MERGE_79, head=BEFORE_79)
+    assert raised.value.code == code
+
+
+def test_compare_status_turns_a_malformed_host_into_a_gateway_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def broken(url: str, **_: Any) -> httpx.Response:
+        raise UnicodeError("label empty or too long")
+
+    monkeypatch.setattr(httpx, "get", broken)
+
+    with pytest.raises(EstateGatewayError):
+        GitHubEstatePullRequests(lambda: "t").compare_status(
+            repository="alobarquest/brain", base=MERGE_79, head=BEFORE_79
+        )

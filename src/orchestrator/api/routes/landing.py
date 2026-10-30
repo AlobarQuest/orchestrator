@@ -500,8 +500,9 @@ def held_pr_close_route(
 
 @router.get("/landing-watch", response_model=LandingWatchResponse)
 def landing_watch_route(actor: ActorDep, session: SessionDep, settings: SettingsDep) -> object:
-    """Landing Part 3a: the inert lane's recent landings, each judged by its own checks on the
-    default branch, and every revert record still in the watch.
+    """Landing Part 3: the landing lanes' recent landings, each judged by its own checks on the
+    default branch and, where landing redeploys, by what production serves; and every revert record
+    still in the watch.
 
     Reads only, but reads through the App, so the system actor alone may ask: the same actor that
     acts on what it answers. Each repository's reads are bounded by the inert lane's grant term.

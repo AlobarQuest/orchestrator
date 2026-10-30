@@ -6,14 +6,14 @@ repositories, it asks what Task 2's served-revision rule would have judged, and 
 change-manager's rollout verdict. The result is recorded in
 `docs/superpowers/plans/2026-10-30-landing-p3b-signal-replay.md`.
 
-THE RULE, as replayed. The applications are the member record's `apps` for the repository. A
-`revision_watcher` `production_revision` reading counts when it was RECEIVED at least
-`SETTLE_MINUTES` and at most `WINDOW_HOURS` after the merge, and names a served commit. Serving the
-merge commit or a descendant is fine; serving an ancestor is `behind`; serving something unrelated
-is `diverged` (ancestry from GitHub's compare API, not from the row's own `state`, which is relative
-to the branch tip at the time). The landing is `bad` when every application's two most recent
-counted readings are both `behind` or `diverged`, `clean` when every application has two counted
-readings and at least one is fine, and `pending` otherwise.
+THE RULE, as replayed, is the orchestrator's own: `revert_watch.served_verdict`, imported, never
+copied (Task 0 replayed a first, row-counting draft; Task 2 replaced it with the time-based rule
+and this script with it). It is asked at every instant a reading arrived within `WATCH_HOURS` of
+the merge, and at every hour, as the store stood then: the applications are the member record's
+`apps` for the repository, the readings those received by that instant, and the watcher's last
+word the newest reading of any application by then. The replay verdict is the first `bad` or
+`clean` it answers, else `pending`. Ancestry is GitHub's compare API (`relation_of`), not the
+row's own `state`, which is relative to the branch tip at the time.
 
 THE READING TIME IS `received_at`, NEVER `observed_at`. The watcher sets `observed_at` to the
 served commit's committer date (a fact-derived clock), so it says nothing about when production was
@@ -44,6 +44,18 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from orchestrator.services.landing.revert_watch import (
+    BAD,
+    FINE,
+    PENDING,
+    ROLLOUT_SETTLE_MINUTES,
+    WATCH_HOURS,
+    Production,
+    ServedReading,
+    relation_of,
+    served_verdict,
+)
+
 REPOSITORIES = ("AlobarQuest/brain", "AlobarQuest/change-manager")
 LANDER = "app/alobar-sds-dispatch"
 SDS = "https://sds.alobar.net"
@@ -54,11 +66,7 @@ OBSERVER_IDENTITY = "BWS_ACCESS_TOKEN_SDS"
 OBSERVER_KEY_ID = "orchestrator-observer"
 CM_READ_SECRET = "314f276d-55ca-4ddc-a24d-b4a3013508cd"
 CM_IDENTITY = "BWS_ACCESS_TOKEN_VPS_BACKUP"
-SETTLE_MINUTES = 30
-WINDOW_HOURS = 48
 GITHUB_PAUSE_SECONDS = 0.5
-
-FINE, BEHIND, DIVERGED = "fine", "behind", "diverged"
 
 
 # -- reading ---------------------------------------------------------------------------------
@@ -180,10 +188,7 @@ def relation(cache: dict[str, Any], repository: str, merge_sha: str, served: str
     if key not in cache["compares"]:
         body = _gh("api", f"repos/{repository}/compare/{merge_sha}...{served}", "--jq", "{status}")
         cache["compares"][key] = body["status"]
-    status = cache["compares"][key]
-    if status in ("identical", "ahead"):
-        return FINE
-    return BEHIND if status == "behind" else DIVERGED
+    return relation_of(cache["compares"][key])
 
 
 def apps_of(members: dict[str, Any], repository: str) -> list[str]:
@@ -193,40 +198,67 @@ def apps_of(members: dict[str, Any], repository: str) -> list[str]:
     return []
 
 
+def _readings(cache: dict[str, Any], apps: list[str]) -> tuple[ServedReading, ...]:
+    return tuple(
+        ServedReading(
+            application=o["subject_reference"],
+            serving=(o.get("facts") or {}).get("serving") or None,
+            received_at=_ts(o["received_at"]),
+        )
+        for o in cache["observations"]
+        if o["subject_reference"] in apps
+    )
+
+
 def judge(cache: dict[str, Any], landing: dict[str, Any]) -> dict[str, Any]:
+    """The orchestrator's served rule, asked at each instant the store changed and every hour."""
     repository = landing["repository"]
     merged = _ts(landing["merged_at"])
-    start = merged + timedelta(minutes=SETTLE_MINUTES)
-    end = merged + timedelta(hours=WINDOW_HOURS)
+    end = merged + timedelta(hours=WATCH_HOURS)
     apps = apps_of(cache["members"], repository)
-    per_app: dict[str, list[dict[str, Any]]] = {}
-    for app in apps:
-        rows = [
-            o
-            for o in cache["observations"]
-            if o["subject_reference"] == app
-            and start <= _ts(o["received_at"]) <= end
-            and (o.get("facts") or {}).get("serving")
-        ]
-        rows.sort(key=lambda o: o["received_at"])
-        per_app[app] = [
+    every = _readings(cache, apps)
+    arrivals = sorted(_ts(o["received_at"]) for o in cache["observations"])
+    instants = sorted(
+        {at for at in arrivals if merged <= at <= end}
+        | {merged + timedelta(hours=hour) for hour in range(1, WATCH_HOURS + 1)}
+    )
+    verdict, decided_at, detail = PENDING, None, ""
+    for now in instants:
+        seen = [at for at in arrivals if at <= now]
+        production = Production(
+            applications=tuple(apps),
+            readings=tuple(r for r in every if r.received_at <= now),
+            watcher_seen_at=seen[-1] if seen else None,
+            now=now,
+        )
+        answer = served_verdict(
+            production,
+            merged,
+            lambda served: relation(cache, repository, landing["merge_sha"], served),
+        )
+        if answer.kind != PENDING:
+            verdict, decided_at, detail = answer.kind, now.isoformat(), answer.detail
+            break
+    settle = merged + timedelta(minutes=ROLLOUT_SETTLE_MINUTES)
+    per_app = {
+        app: [
             {
-                "received_at": o["received_at"],
-                "serving": o["facts"]["serving"][:10],
-                "relation": relation(
-                    cache, repository, landing["merge_sha"], o["facts"]["serving"]
-                ),
+                "received_at": r.received_at.isoformat(),
+                "serving": (r.serving or "")[:10],
+                "relation": relation(cache, repository, landing["merge_sha"], r.serving),
             }
-            for o in rows
+            for r in sorted(every, key=lambda r: r.received_at)
+            if r.application == app and r.serving and settle <= r.received_at <= end
         ]
-    counted = {app: rows[-2:] for app, rows in per_app.items()}
-    if not apps or any(len(rows) < 2 for rows in counted.values()):
-        verdict = "pending"
-    elif all(all(r["relation"] != FINE for r in rows) for rows in counted.values()):
-        verdict = "bad"
-    else:
-        verdict = "clean"
-    return {"apps": apps, "readings": per_app, "verdict": verdict}
+        for app in apps
+    }
+    return {
+        "apps": apps,
+        "readings": per_app,
+        "verdict": verdict,
+        "decided_at": decided_at,
+        "detail": detail,
+    }
 
 
 def all_behind_hours(judged: dict[str, Any], landing: dict[str, Any]) -> float:
@@ -238,7 +270,7 @@ def all_behind_hours(judged: dict[str, Any], landing: dict[str, Any]) -> float:
     window's end), which is what the store actually says. A gap in the watcher's passes (it runs on
     the operator's machine) also lets a row stand, so a long figure is a lead, not a verdict.
     """
-    end = _ts(landing["merged_at"]) + timedelta(hours=WINDOW_HOURS)
+    end = _ts(landing["merged_at"]) + timedelta(hours=WATCH_HOURS)
     readings = judged["readings"]
     if not judged["apps"] or any(not readings[a] for a in judged["apps"]):
         return 0.0
@@ -253,7 +285,7 @@ def all_behind_hours(judged: dict[str, Any], landing: dict[str, Any]) -> float:
 
 def later_served(cache: dict[str, Any], landing: dict[str, Any], app: str) -> str | None:
     """The first reading after the window that serves the merge commit or a descendant."""
-    end = _ts(landing["merged_at"]) + timedelta(hours=WINDOW_HOURS)
+    end = _ts(landing["merged_at"]) + timedelta(hours=WATCH_HOURS)
     rows = sorted(
         (
             o
@@ -285,7 +317,7 @@ def replay(cache: dict[str, Any], since: str) -> list[dict[str, Any]]:
             "rollout": current.get("verdict") if isinstance(current, dict) else current,
             "all_behind_hours": all_behind_hours(judged, landing),
         }
-        if judged["verdict"] == "bad":
+        if judged["verdict"] == BAD:
             row["later_served"] = {app: later_served(cache, landing, app) for app in judged["apps"]}
         results.append(row)
     return results
@@ -301,7 +333,8 @@ def show(results: list[dict[str, Any]], observations: list[dict[str, Any]]) -> N
             f"{r['merged_at']} rollout={r['rollout']!s:<10} readings=[{counts}] -> {r['verdict']}"
             f" all-behind={r['all_behind_hours']}h"
         )
-        if r["verdict"] == "bad":
+        if r["verdict"] == BAD:
+            print(f"    at {r['decided_at']}: {r['detail']}")
             for app in r["apps"]:
                 print(f"    {app}: {r['readings'][app][-2:]} later fine: {r['later_served'][app]}")
 

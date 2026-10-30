@@ -9,9 +9,21 @@ own runs are never watched.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 from orchestrator.persistence.models import EstatePrMerge, LandingRevert
 from orchestrator.services.landing.interfaces import EstateGatewayError, Job
-from orchestrator.services.landing.revert_watch import WATCH_HOURS, Verdict, judge
+from orchestrator.services.landing.revert_watch import (
+    ROLLOUT_SETTLE_MINUTES,
+    ROLLOUT_STUCK_HOURS,
+    WATCH_HOURS,
+    WATCHER_SILENT_HOURS,
+    Production,
+    ServedReading,
+    Verdict,
+    judge,
+    relation_of,
+)
 
 REPOSITORY = "alobarquest/veritok"
 HEAD = "1111111111111111111111111111111111111111"
@@ -41,6 +53,9 @@ class _Gateway:
 
     def rerun_failed_jobs(self, *, repository: str, run_id: int) -> None:
         raise AssertionError("judging never acts")
+
+    def compare_status(self, *, repository: str, base: str, head: str) -> str:
+        raise AssertionError("an inert landing is judged by its checks alone")
 
 
 def _job(
@@ -552,3 +567,331 @@ def test_a_job_that_failed_again_after_its_own_rerun_is_bad() -> None:
     record.failed_job_names = ["lint", "test"]
 
     assert judge(gateway, _landing(), record).kind == "bad"
+
+
+# --------------------------------------------------------------------------------------------
+# Landing Part 3b: a deploying landing is judged by what production serves, too.
+#
+# Real shapes, from the replay (`docs/superpowers/plans/2026-10-30-landing-p3b-signal-replay.md`):
+# brain's four applications as the member record names them, brain #79 (sqlalchemy 2.1.1, an image
+# that crashed at import in every brain) and brain #70 (app-brain alone left on the build before).
+# --------------------------------------------------------------------------------------------
+
+BRAIN = "alobarquest/brain"
+BRAINS = ("app-brain", "code-brain", "infra-brain", "open-brain")
+# Brain #79's merge commit, the build before it (#80's), and the person's fix forward after it.
+MERGE_79 = "271a2ac8de79a1dbc09bc5c05d4be73d08472449"
+BEFORE_79 = "80b620ce1799c1eeeaac83f494e6cd9a553d5503"
+FIX_FORWARD = "e6cd48ac781eccbebc151d8334be95a8e3e38523"
+UNRELATED = "9" * 40
+LANDED_79 = datetime(2026, 10, 3, 6, 15, 19, tzinfo=UTC)
+# GitHub's compare of the merge commit against each served commit, as the replay measured it.
+COMPARES_79 = {
+    MERGE_79: "identical",
+    BEFORE_79: "behind",
+    FIX_FORWARD: "ahead",
+    UNRELATED: "diverged",
+}
+GREEN_HEAD_79 = (_pr("test"),)
+GREEN_MERGE_79 = (_job("test", "success"),)
+
+
+class _BrainGateway:
+    """Answers `jobs_at` and `compare_status` for brain; an unlisted served commit is a 404."""
+
+    def __init__(
+        self,
+        jobs: dict[str, tuple[Job, ...]] | None = None,
+        compares: dict[str, str] | None = None,
+    ) -> None:
+        self._jobs = jobs if jobs is not None else {HEAD: GREEN_HEAD_79, MERGE_79: GREEN_MERGE_79}
+        self._compares = COMPARES_79 if compares is None else compares
+        self.compared: list[str] = []
+
+    def jobs_at(self, *, repository: str, sha: str) -> tuple[Job, ...]:
+        assert repository == BRAIN
+        return self._jobs.get(sha, ())
+
+    def parent_of(self, *, repository: str, sha: str) -> str:
+        raise AssertionError("judging reads the parent from the record")
+
+    def rerun_failed_jobs(self, *, repository: str, run_id: int) -> None:
+        raise AssertionError("judging never acts")
+
+    def compare_status(self, *, repository: str, base: str, head: str) -> str:
+        assert (repository, base) == (BRAIN, MERGE_79)
+        self.compared.append(head)
+        if head not in self._compares:
+            raise EstateGatewayError("commit_not_found", 404)
+        return self._compares[head]
+
+
+def _brain_landing() -> EstatePrMerge:
+    return EstatePrMerge(
+        repository=BRAIN,
+        pr_number=79,
+        head_sha=HEAD,
+        status="merged",
+        merge_commit_sha=MERGE_79,
+        created_at=LANDED_79,
+    )
+
+
+def _at(minutes: float) -> datetime:
+    """`minutes` after brain #79 landed."""
+    return LANDED_79 + timedelta(minutes=minutes)
+
+
+def _reading(application: str, serving: str | None, minutes: float) -> ServedReading:
+    return ServedReading(application=application, serving=serving, received_at=_at(minutes))
+
+
+def _everywhere(serving: str | None, minutes: float) -> tuple[ServedReading, ...]:
+    return tuple(_reading(app, serving, minutes) for app in BRAINS)
+
+
+def _production(
+    readings: tuple[ServedReading, ...],
+    *,
+    now: float,
+    seen: float | None = None,
+    applications: tuple[str, ...] = BRAINS,
+) -> Production:
+    """What the store says at `now` minutes after the landing. The watcher was last heard from at
+    `seen` (default: its newest reading of these applications)."""
+    if seen is None and readings:
+        seen = max((r.received_at - LANDED_79).total_seconds() / 60 for r in readings)
+    return Production(
+        applications=applications,
+        readings=readings,
+        watcher_seen_at=None if seen is None else _at(seen),
+        now=_at(now),
+    )
+
+
+def _judged(production: Production, gateway: _BrainGateway | None = None) -> Verdict:
+    return judge(gateway or _BrainGateway(), _brain_landing(), None, production)
+
+
+def test_the_served_rule_constants_are_plain_ints_with_real_defaults() -> None:
+    assert (ROLLOUT_SETTLE_MINUTES, ROLLOUT_STUCK_HOURS, WATCHER_SILENT_HOURS) == (30, 2, 2)
+    assert {
+        type(ROLLOUT_SETTLE_MINUTES),
+        type(ROLLOUT_STUCK_HOURS),
+        type(WATCHER_SILENT_HOURS),
+    } == {int}
+
+
+def test_every_application_serving_the_merge_commit_is_clean() -> None:
+    verdict = _judged(_production(_everywhere(MERGE_79, 37), now=180))
+
+    assert (verdict.kind, verdict.reason) == ("clean", None)
+
+
+def test_a_slow_rollout_behind_first_then_current_is_never_bad() -> None:
+    """Review focus 1: `behind` on the first reading after the rollout and `current` on the next."""
+    readings = _everywhere(BEFORE_79, 37) + _everywhere(MERGE_79, 97)
+
+    for now in (98, 37 + 60 * 2, 37 + 60 * 5, 60 * 47):
+        assert _judged(_production(readings, now=now, seen=now)).kind == "clean"
+
+
+def test_a_descendant_of_the_merge_commit_is_fine() -> None:
+    """Review focus 2: an application serving a later landing serves this one too."""
+    gateway = _BrainGateway()
+
+    verdict = _judged(_production(_everywhere(FIX_FORWARD, 40), now=300, seen=299), gateway)
+
+    assert verdict.kind == "clean"
+    assert gateway.compared == [FIX_FORWARD]  # four brains on one commit: one compare
+
+
+def test_every_application_behind_for_two_hours_is_bad_by_what_production_serves() -> None:
+    verdict = _judged(_production(_everywhere(BEFORE_79, 37), now=37 + 120, seen=37 + 119))
+
+    assert (verdict.kind, verdict.reason) == ("bad", "served")
+    assert verdict.failed_job_names == ()
+    assert "app-brain" in verdict.detail and BEFORE_79[:12] in verdict.detail
+
+
+def test_every_application_behind_for_just_under_two_hours_is_pending() -> None:
+    verdict = _judged(_production(_everywhere(BEFORE_79, 37), now=37 + 119, seen=37 + 118))
+
+    assert verdict.kind == "pending"
+
+
+def test_every_application_serving_something_unrelated_is_bad_too() -> None:
+    verdict = _judged(_production(_everywhere(UNRELATED, 40), now=300, seen=299))
+
+    assert (verdict.kind, verdict.reason) == ("bad", "served")
+
+
+def test_one_application_of_four_behind_is_never_bad() -> None:
+    """Brain #70's shape: app-brain alone stayed on the build before, for days, on an image the
+    other three served. Reverting it would have reverted a good bump."""
+    readings = (
+        _reading("infra-brain", MERGE_79, 41),
+        _reading("open-brain", MERGE_79, 41),
+        _reading("app-brain", BEFORE_79, 41),
+        _reading("code-brain", MERGE_79, 41),
+    )
+
+    for now in (180, 60 * 30, 60 * 47):
+        verdict = _judged(_production(readings, now=now, seen=now))
+        assert verdict.kind == "pending"
+        assert "app-brain" in verdict.detail
+
+
+def test_a_silent_watcher_holds_a_stuck_landing_pending() -> None:
+    """The watcher runs on the operator's machine and has had overnight gaps; a reading that has
+    "stood" through a gap was never asked again."""
+    readings = _everywhere(BEFORE_79, 37)
+
+    stale = _judged(_production(readings, now=37 + 300, seen=37 + 300 - 121))
+    live = _judged(_production(readings, now=37 + 300, seen=37 + 300 - 119))
+
+    assert stale.kind == "pending" and "watcher" in stale.detail
+    assert (live.kind, live.reason) == ("bad", "served")
+
+
+def test_no_word_from_the_watcher_at_all_is_pending() -> None:
+    verdict = _judged(
+        Production(
+            applications=BRAINS,
+            readings=_everywhere(BEFORE_79, 37),
+            watcher_seen_at=None,
+            now=_at(600),
+        )
+    )
+
+    assert verdict.kind == "pending"
+
+
+def test_brain_79_is_pending_through_the_watchers_gap_and_bad_once_it_reports_again() -> None:
+    """The replay's brain #79: all four brains behind at 06:52, then nothing from the watcher about
+    them until 15:22. Its next row of any kind was the orchestrator's, at 12:54."""
+    readings = _everywhere(BEFORE_79, 37.4)
+    orchestrator_row = (datetime(2026, 10, 3, 12, 54, 13, tzinfo=UTC) - LANDED_79).total_seconds()
+
+    in_the_gap = _judged(_production(readings, now=60 * 4, seen=37.4))
+    reported = _judged(_production(readings, now=orchestrator_row / 60, seen=orchestrator_row / 60))
+
+    assert in_the_gap.kind == "pending"
+    assert (reported.kind, reported.reason) == ("bad", "served")
+
+
+def test_an_unstamped_reading_never_counts() -> None:
+    """A reading naming no commit says nothing about this landing, either way."""
+    behind_then_unstamped = _everywhere(BEFORE_79, 37) + _everywhere(None, 60)
+    only_unstamped = _everywhere(None, 37)
+
+    assert _judged(_production(only_unstamped, now=600, seen=599)).kind == "pending"
+    stuck = _judged(_production(behind_then_unstamped, now=600, seen=599))
+    assert (stuck.kind, stuck.reason) == ("bad", "served")
+
+
+def test_a_reading_inside_the_settle_time_never_counts() -> None:
+    verdict = _judged(_production(_everywhere(BEFORE_79, 29), now=600, seen=599))
+
+    assert verdict.kind == "pending"
+
+
+def test_an_application_with_no_reading_yet_is_pending() -> None:
+    readings = tuple(r for r in _everywhere(BEFORE_79, 37) if r.application != "open-brain")
+
+    verdict = _judged(_production(readings, now=600, seen=599))
+
+    assert verdict.kind == "pending" and "open-brain" in verdict.detail
+
+
+def test_a_repository_the_member_record_names_no_application_for_is_pending() -> None:
+    verdict = _judged(_production((), now=600, seen=599, applications=()))
+
+    assert verdict.kind == "pending"
+
+
+def test_a_served_commit_the_remote_cannot_compare_is_unreadable_never_clean() -> None:
+    gateway = _BrainGateway(compares={})
+
+    verdict = _judged(_production(_everywhere(BEFORE_79, 37), now=600, seen=599), gateway)
+
+    assert verdict.kind == "unreadable"
+
+
+def test_a_check_failure_on_a_deploying_landing_still_follows_the_check_rule() -> None:
+    """Production serving the merge commit does not excuse a check it broke on the default branch:
+    one rerun first, then bad by the checks once it survives with a green parent."""
+    serving = _production(_everywhere(MERGE_79, 37), now=600, seen=599)
+    once = _BrainGateway(jobs={HEAD: GREEN_HEAD_79, MERGE_79: (_job("test", "failure"),)})
+    survived = _BrainGateway(
+        jobs={
+            HEAD: GREEN_HEAD_79,
+            MERGE_79: (_job("test", "failure", attempt=2),),
+            PARENT: (_job("test", "success", run_id=9),),
+        }
+    )
+    record = LandingRevert(
+        repository=BRAIN,
+        pr_number=79,
+        merge_commit_sha=MERGE_79,
+        parent_sha=PARENT,
+        failed_job_names=["test"],
+        failed_run_id=RUN,
+        rerun_attempts={str(RUN): 1},
+        status="rerun_requested",
+        bumps=[],
+    )
+
+    assert judge(once, _brain_landing(), None, serving).kind == "flaky_retry"
+    bad = judge(survived, _brain_landing(), record, serving)
+    assert (bad.kind, bad.reason, bad.failed_job_names) == ("bad", "checks", ("test",))
+
+
+def test_a_check_rule_bad_on_an_inert_landing_carries_its_reason() -> None:
+    gateway = _Gateway(
+        {
+            HEAD: GREEN_HEAD,
+            MERGE: (_job("test", "failure", attempt=2), _job("lint", "success")),
+            PARENT: GREEN_PARENT,
+        }
+    )
+
+    assert judge(gateway, _landing(), _record()).reason == "checks"
+
+
+def test_production_stuck_outranks_checks_still_running() -> None:
+    """Whether the checks finish says nothing about what production serves."""
+    gateway = _BrainGateway(jobs={HEAD: GREEN_HEAD_79, MERGE_79: (_job("test", None),)})
+
+    verdict = _judged(_production(_everywhere(BEFORE_79, 37), now=600, seen=599), gateway)
+
+    assert (verdict.kind, verdict.reason) == ("bad", "served")
+
+
+def test_clean_needs_both_rules() -> None:
+    running = _BrainGateway(jobs={HEAD: GREEN_HEAD_79, MERGE_79: (_job("test", None),)})
+    serving = _production(_everywhere(MERGE_79, 37), now=600, seen=599)
+
+    assert _judged(serving, running).kind == "pending"
+
+
+def test_the_served_relation_reads_githubs_compare_of_merge_against_served() -> None:
+    assert [relation_of(s) for s in ("identical", "ahead", "behind", "diverged")] == [
+        "fine",
+        "fine",
+        "behind",
+        "diverged",
+    ]
+
+
+def test_a_stuck_landing_is_timed_from_the_newest_standing_reading() -> None:
+    """Three brains behind for five hours and one that moved to another earlier build an hour ago:
+    production has not stood still for two hours, so it is not yet `bad`."""
+    readings = tuple(_reading(app, BEFORE_79, 37) for app in BRAINS if app != "open-brain") + (
+        _reading("open-brain", BEFORE_79, 37),
+        _reading("open-brain", UNRELATED, 37 + 240),
+    )
+
+    verdict = _judged(_production(readings, now=37 + 300, seen=37 + 299))
+
+    assert verdict.kind == "pending"

@@ -405,8 +405,15 @@ class Job:
     event: str
 
 
+# The prefix of the estate lane's event actions, which tells its rows in the shared
+# `estate_pr_merge` table from the inert lane's. Here rather than in the lane, because the revert
+# watch (an inert module) reads it to find the landings that redeploy. Landing Part 3b.
+ESTATE_LANDING_EVENT_PREFIX: Final = "estate_pr_merge"
+
+
 class RevertWatchGateway(Protocol):
-    """The reads and the one act that judging a landed bump needs. Landing Part 3a.
+    """The reads and the one act that judging a landed bump needs. Landing Part 3a, and 3b's
+    compare.
 
     Narrow rather than a widened `EstateReadGateway`, so no existing caller's double has to answer
     for jobs. Both calls are bounded by the caller's grant check, as every App call is.
@@ -417,6 +424,11 @@ class RevertWatchGateway(Protocol):
     def parent_of(self, *, repository: str, sha: str) -> str: ...
 
     def rerun_failed_jobs(self, *, repository: str, run_id: int) -> None: ...
+
+    def compare_status(self, *, repository: str, base: str, head: str) -> str:
+        """GitHub's compare status of `head` against `base` (`identical`, `ahead`, `behind` or
+        `diverged`). Landing Part 3b: where a served commit stands against a merge commit."""
+        ...
 
 
 @dataclass(frozen=True)
