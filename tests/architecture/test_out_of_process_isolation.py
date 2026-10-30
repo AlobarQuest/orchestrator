@@ -248,6 +248,7 @@ TABLE: dict[str, Row] = {
         "re",
         "sys",
         "typing",
+        "uuid",
         no_sibling_lanes=True,
     ),
     # ADR-0055 amendment 15, increment 5: proposes each carried rotation's decomposition as SYSTEM,

@@ -9,7 +9,7 @@ person.
 A bump unit has one criterion, and only the newest named-check row for it counts, so the lane files
 the repository's required checks in sorted order and stops at the first that did not succeed: the
 newest row is then a failure exactly when one failed. A check still running is `waiting`; the next
-pass files from the start again, and a repeated filing replays rather than writing a new row.
+pass files from the start again, under keys of its own, so it observes every check afresh.
 
 EXIT CODES:
   0  every submitted unit was verified and completed or is waiting on a check, or none was
@@ -27,6 +27,7 @@ import argparse
 import hashlib
 import os
 import sys
+import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -67,14 +68,23 @@ def _is_bump(unit: dict[str, Any]) -> bool:
     return isinstance(authority, dict) and authority.get("change_class") == BUMP_CHANGE_CLASS
 
 
-def _check_key(unit_id: str, head_sha: str, check_name: str) -> str:
-    """Stable across passes, so a refiling replays; distinct per check, head and unit."""
-    digest = hashlib.sha256(f"{head_sha}\0{check_name}".encode()).hexdigest()[:32]
+def _check_key(pass_id: str, unit_id: str, head_sha: str, check_name: str) -> str:
+    """Distinct per pass, check, head and unit.
+
+    The orchestrator replays a key BEFORE it observes GitHub, so a key shared across passes would
+    serve a check's old success after the check was re-run red. A fresh `pass_id` makes every pass
+    observe afresh; a retry inside one pass still replays.
+    """
+    digest = hashlib.sha256(f"{pass_id}\0{head_sha}\0{check_name}".encode()).hexdigest()[:32]
     return f"rotation-verifier-check-{unit_id}-{digest}"
 
 
 def _file_checks(
-    client: VerifierClient, unit_id: str, unit: dict[str, Any], names: Sequence[str]
+    client: VerifierClient,
+    pass_id: str,
+    unit_id: str,
+    unit: dict[str, Any],
+    names: Sequence[str],
 ) -> None:
     """File each required check in sorted order, stopping at the first that did not succeed.
 
@@ -100,7 +110,7 @@ def _file_checks(
                 "check_name": name,
                 "expected_conclusion": "success",
                 "expected_version": int(unit["version"]),
-                "idempotency_key": _check_key(unit_id, head_sha, name),
+                "idempotency_key": _check_key(pass_id, unit_id, head_sha, name),
             },
         )
         payload = filed.get("payload")
@@ -113,7 +123,9 @@ def run_pass(
     *,
     dry_run: bool = False,
     read_required_checks: Callable[[str], tuple[str, ...]] | None = None,
+    pass_id: str | None = None,
 ) -> list[Outcome]:
+    pass_id = pass_id or uuid.uuid4().hex
     outcomes: list[Outcome] = []
     for row in client.pending():
         key = str(row.get("unit_key"))
@@ -127,7 +139,7 @@ def run_pass(
                 outcomes.append(Outcome(key, "would-verify"))
                 continue
             if bump:
-                early = _file_bump_checks(client, unit_id, unit, read_required_checks)
+                early = _file_bump_checks(client, pass_id, unit_id, unit, read_required_checks)
                 if early is not None:
                     outcomes.append(Outcome(key, *early))
                     continue
@@ -144,6 +156,7 @@ def run_pass(
 
 def _file_bump_checks(
     client: VerifierClient,
+    pass_id: str,
     unit_id: str,
     unit: dict[str, Any],
     read_required_checks: Callable[[str], tuple[str, ...]] | None,
@@ -159,7 +172,7 @@ def _file_bump_checks(
     if not names:
         return (NO_REQUIRED_CHECK, repository)
     try:
-        _file_checks(client, unit_id, unit, names)
+        _file_checks(client, pass_id, unit_id, unit, names)
     except CheckNotConcluded:
         return (WAITING, "a required check has not concluded")
     return None

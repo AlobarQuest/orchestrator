@@ -6,6 +6,7 @@ import json
 from typing import Any
 
 import httpx
+import pytest
 
 from rotation_verifier.cli import exit_code, run_pass
 from rotation_verifier.client import VerifierClient
@@ -141,20 +142,44 @@ def test_a_failed_check_stops_filing_and_the_unit_goes_to_the_verifier() -> None
     assert orchestrator.verified == [BUMP]
 
 
-def test_a_refiling_uses_the_same_key_per_check_and_distinct_keys_across_checks() -> None:
+def test_keys_are_distinct_per_check_and_per_pass() -> None:
     orchestrator = Orchestrator(
         {BUMP: _bump()}, {"Quality": _filed("success"), "scan": _filed("success")}
     )
     client = _client(orchestrator)
 
-    run_pass(client, read_required_checks=_required("Quality", "scan"))
-    run_pass(client, read_required_checks=_required("Quality", "scan"))
+    run_pass(client, read_required_checks=_required("Quality", "scan"), pass_id="one")
+    run_pass(client, read_required_checks=_required("Quality", "scan"), pass_id="one")
+    run_pass(client, read_required_checks=_required("Quality", "scan"), pass_id="two")
 
     keys = [c["idempotency_key"] for c in orchestrator.filed]
-    assert keys[0] == keys[2]
+    assert keys[0] == keys[2]  # inside a pass id a filing is the same claim, so it replays
     assert keys[1] == keys[3]
     assert keys[0] != keys[1]
+    assert keys[4] != keys[0]  # a new pass observes afresh
     assert all(len(key) <= 200 for key in keys)
+
+
+def test_each_pass_without_an_injected_id_gets_its_own() -> None:
+    orchestrator = Orchestrator({BUMP: _bump()}, {"Quality": _filed("success")})
+    client = _client(orchestrator)
+
+    run_pass(client, read_required_checks=_required("Quality"))
+    run_pass(client, read_required_checks=_required("Quality"))
+
+    assert orchestrator.filed[0]["idempotency_key"] != orchestrator.filed[1]["idempotency_key"]
+
+
+@pytest.mark.parametrize("conclusion", ["skipped", "neutral", "cancelled"])
+def test_a_check_that_did_not_succeed_stops_filing(conclusion: str) -> None:
+    orchestrator = Orchestrator(
+        {BUMP: _bump()}, {"Quality": _filed(conclusion), "scan": _filed("success")}
+    )
+
+    run_pass(_client(orchestrator), read_required_checks=_required("Quality", "scan"))
+
+    assert [c["check_name"] for c in orchestrator.filed] == ["Quality"]
+    assert orchestrator.verified == [BUMP]
 
 
 def test_a_new_head_files_under_new_keys() -> None:

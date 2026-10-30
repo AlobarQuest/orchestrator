@@ -10,8 +10,9 @@ from __future__ import annotations
 import uuid
 
 import httpx
+import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import Engine, func, select
+from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
 from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope
@@ -93,7 +94,9 @@ def _submitted_bump(engine: Engine, key: str) -> uuid.UUID:
         return unit.id
 
 
-def _lane(db_client: TestClient, conclusions: dict[str, str], *required: str):
+def _lane(
+    db_client: TestClient, conclusions: dict[str, str], *required: str, pass_id: str | None = None
+):
     github = GitHubByCheck(conclusions)
     substitute_github(db_client, github)  # type: ignore[arg-type]
     client = VerifierClient(
@@ -102,7 +105,7 @@ def _lane(db_client: TestClient, conclusions: dict[str, str], *required: str):
         token="verifier-token",
         transport=ThroughTestClient(db_client),
     )
-    outcomes = run_pass(client, read_required_checks=lambda repository: required)
+    outcomes = run_pass(client, read_required_checks=lambda repository: required, pass_id=pass_id)
     return github, outcomes
 
 
@@ -164,17 +167,36 @@ def test_a_pending_check_waits_then_a_later_pass_refiles_from_the_start_and_comp
     _, second = _lane(db_client, {"Lint": "success", "test": "success"}, "test", "Lint")
 
     assert [o.result for o in second] == ["completed"]
-    # Lint was filed once: the second pass's refiling of it replayed rather than writing a row.
-    assert _filed_check_names(migrated_engine, unit_id) == ["Lint", "test"]
-    with Session(migrated_engine) as session:
-        assert (
-            session.scalar(
-                select(func.count())
-                .select_from(Evidence)
-                .where(
-                    Evidence.work_unit_id == unit_id,
-                    Evidence.evidence_type == "verifier.github.named_check",
-                )
-            )
-            == 2
-        )
+    # Each pass observes afresh, so Lint is filed again; the newest row for the criterion is test's.
+    assert _filed_check_names(migrated_engine, unit_id) == ["Lint", "Lint", "test"]
+
+
+def test_a_check_rerun_red_between_passes_is_seen(
+    db_client: TestClient, migrated_engine: Engine
+) -> None:
+    unit_id = _submitted_bump(migrated_engine, "bump-rerun-red")
+
+    _, first = _lane(db_client, {"Lint": "success"}, "test", "Lint", pass_id="one")
+    assert [o.result for o in first] == ["waiting"]
+
+    # Lint is re-run on the same head and fails; test would now succeed.
+    github, second = _lane(
+        db_client, {"Lint": "failure", "test": "success"}, "test", "Lint", pass_id="two"
+    )
+
+    assert github.asked == ["Lint"]
+    assert _filed_check_names(migrated_engine, unit_id) == ["Lint", "Lint"]
+    assert [o.result for o in second] == ["revision_required"]
+
+
+@pytest.mark.parametrize("conclusion", ["skipped", "neutral", "cancelled"])
+def test_a_check_that_did_not_succeed_does_not_meet_the_criterion(
+    db_client: TestClient, migrated_engine: Engine, conclusion: str
+) -> None:
+    unit_id = _submitted_bump(migrated_engine, f"bump-{conclusion}")
+
+    github, outcomes = _lane(db_client, {"Lint": conclusion, "test": "success"}, "test", "Lint")
+
+    assert github.asked == ["Lint"]
+    assert _filed_check_names(migrated_engine, unit_id) == ["Lint"]
+    assert [o.result for o in outcomes] == ["revision_required"]
