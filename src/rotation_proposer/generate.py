@@ -307,8 +307,8 @@ def render(entry: RegistryEntry, occurrence: str, created_at: str) -> dict[str, 
                 "Before the revoke the old value stays valid and is quarantined; after it, the "
                 "recovery is forward: a new value and the rotation run again."
                 if overlap
-                else "The host step is the cutover: the executor undoes it by writing the old value back "
-                "and restarting. After the store step the recovery is forward: a new value and "
+                else "The host step is the cutover: the executor undoes it by writing the old value "
+                "back and restarting. After the store step the recovery is forward: a new value and "
                 "the rotation run again."
             ),
             "escalation_target": OWNER,
