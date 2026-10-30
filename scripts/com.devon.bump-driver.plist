@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Template for the bump-driver LaunchAgent. Install with
+     scripts/install-bump-driver-launchd.sh, which substitutes __REPO_ROOT__ and __HOME__ and
+     writes ~/Library/LaunchAgents/com.devon.bump-driver.plist.
+
+     No secrets live here: the wrapper fetches its bearers from BWS at runtime.
+
+     HOURLY AT :50: a bump takes a run and a verification, so an hour between acts is soon enough;
+     a pass with nothing waiting is one change-manager read and a few orchestrator reads per live
+     bump record.
+
+     The exit code is the report: 0 nothing needs a person, 1 the tool failed, 2 a person decides
+     something, 3 something could not be read. Every non-zero code pings /fail. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.devon.bump-driver</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__REPO_ROOT__/scripts/run-bump-driver.sh</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Minute</key>
+        <integer>50</integer>
+    </dict>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>__HOME__</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/bump-driver.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/bump-driver.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>
