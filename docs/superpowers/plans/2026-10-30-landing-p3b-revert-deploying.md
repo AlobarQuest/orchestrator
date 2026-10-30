@@ -26,10 +26,12 @@ Builds on Part 3a (`docs/superpowers/plans/2026-10-29-landing-p3a-revert-inert.m
 
 - **The rollout verdict is not a usable signal.** change-manager holds nine `failed` rollout
   observations for brain (#59, #60, #65, #70, #74, #79, #81, #82, #89). Every one has
-  `production_reached = yes` and a successful trigger step, and the recon found each superseded the
-  next day with the bump still in. The failing step is brain CI's own "every brain serves the new
-  revision" poll, which times out before Coolify's rolling swap finishes. Reverting on it would have
-  frozen nine good dependencies. Measured 2026-10-30.
+  `production_reached = yes` and a successful trigger step. The failing step is brain CI's own
+  "every brain serves the new revision" check. Most are `app-brain` alone not serving a build the
+  other three applications served; one (#79) was a real broken image that left all four applications
+  on the previous build for 8.5 hours until a person fixed it forward. Reverting on the verdict would
+  have reverted eight good bumps. Measured 2026-10-30; the replay (Task 0) is in
+  `2026-10-30-landing-p3b-signal-replay.md`.
 - **What production serves is already measured.** `revision_watcher` (hourly) records a
   `production_revision` observation per application (`subject_type = service`) with the served and
   expected commits and a state: `current`, `behind`, `diverged`, `awaiting_deploy` or `unstamped`.
@@ -127,14 +129,20 @@ Builds on Part 3a (`docs/superpowers/plans/2026-10-29-landing-p3a-revert-inert.m
   - A reading counts only if its observation was made at least `ROLLOUT_SETTLE_MINUTES = 30` after the
     landing.
   - An application serving the merge commit or a descendant is fine.
-  - `bad` when every application's two most recent counted readings both show it serving an ancestor
-    of the merge commit (`behind`) or something unrelated (`diverged`).
-  - Fewer than two counted readings: `pending`. No observation at all past `WATCH_HOURS`: the landing
-    leaves the watch with no act.
+  - `bad` when every application's latest counted reading shows it serving an ancestor of the merge
+    commit (`behind`) or something unrelated (`diverged`), and that reading has stood for at least
+    `ROLLOUT_STUCK_HOURS = 2`, measured by the observation's `received_at` (never `observed_at`, which
+    is a commit date). Readings are content-addressed, so an application stuck on one commit leaves one
+    row; time, not a count of rows, is the measure.
+  - Liveness: if any application has no reading received within the last 2 hours, the verdict is
+    `pending` (the watcher may not have run; it runs on the Mac and has had overnight gaps).
+  - Otherwise `pending` until the stuck time is reached. No observation at all past `WATCH_HOURS`:
+    the landing leaves the watch with no act.
 - The `bad` verdict carries the reason (`checks` or `served`), recorded on the row.
 
-- [ ] **Steps:** failing tests for each review-focus case 1 and 2, `behind` twice is `bad`, one
-  application of four `behind` twice is `bad`, `unstamped` never counts, a check failure on brain
+- [ ] **Steps:** failing tests for each review-focus case 1 and 2, every application `behind` for
+  2 hours is `bad`, one application of four `behind` (app-brain alone often lags) is NOT `bad`, a stale
+  watcher (no reading in 2 hours) is `pending`, the replay's brain #79 shape is `bad`, `unstamped` never counts, a check failure on brain
   still follows 3a's rule; implement; `make check`; commit
   `"landing: judge a deploying landing by what production serves"`.
 
