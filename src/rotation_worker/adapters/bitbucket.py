@@ -126,5 +126,8 @@ class BitbucketProvider:
     def host(self, new: Value, old: Value) -> str:
         raise ContractError("an Atlassian token has no hosted service to host it")
 
+    def consumer_loaded(self, consumer: Mapping[str, Any], new: Value) -> bool:
+        raise ContractError("a Bitbucket token has no hosted consumer")
+
     def revoke(self, value: Value) -> str:
         raise ContractError("a person revokes an Atlassian API token, in the console")

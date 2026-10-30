@@ -190,6 +190,8 @@ HTTP_CLIENTS = frozenset(
         "adapters/bitbucket.py",
         "readers.py",
         "notify.py",
+        # The one health URL its registry row names, with no credential.
+        "adapters/postgres_role.py",
     }
 )
 

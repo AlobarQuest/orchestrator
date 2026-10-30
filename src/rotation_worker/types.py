@@ -37,6 +37,9 @@ TYPES: Final[dict[str, CredentialType]] = {
     "bws-machine-token": CredentialType(
         Capabilities(machine_mint=False, machine_revoke=False), store_kind="keychain"
     ),
+    "postgres-role": CredentialType(
+        Capabilities(machine_mint=True, machine_revoke=True, hosted=True, overlap=False)
+    ),
 }
 
 # A registry row's `class`, mapped to its type (increment 4). A class with no entry is a type the
@@ -48,4 +51,5 @@ CLASS_TYPES: Final[dict[str, str]] = {
     "github-pat-fine-grained": "github-pat",
     "openrouter-key": "openrouter",
     "orchestrator-m2m-bearer": "orchestrator",
+    "postgres-role-password": "postgres-role",
 }

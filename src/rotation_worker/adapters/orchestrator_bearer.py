@@ -45,6 +45,7 @@ from rotation_worker.contract import (
     Step,
     StepKind,
     UnitPlan,
+    accepts,
     validate_plan,
 )
 from rotation_worker.coolify import CoolifyClient
@@ -288,6 +289,9 @@ class OrchestratorBearerProvider:
             f"wrote setting {rewrite.fingerprint} and restarted; the orchestrator loaded "
             + hosted_as
         )
+
+    def consumer_loaded(self, consumer: Mapping[str, Any], new: Value) -> bool:
+        return accepts(self, new)
 
     def revoke(self, value: Value) -> str:
         old_hash = bearer_hash(value)

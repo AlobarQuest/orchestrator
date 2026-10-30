@@ -28,7 +28,9 @@ here, once, so the invariants hold for every adapter rather than being re-writte
   before that backstop (the runbook's "If a rotation stalls after host"). The one exception is a
   host the approved envelope declares without an overlap, which the provider refuses unless the
   old value is another identity's current one (ADR-0055 amendment 9): the old value stops
-  working at host, its consumers fail until store, and retire_old finds it already refused.
+  working at host, its consumers fail until store, and retire_old finds it already refused. A
+  type with no overlap at all (`Capabilities.overlap`, amendment 17) replaces the value at host
+  too, and its provider restarts every consumer there, so none of them waits for store.
 
 **STATE IS RE-DERIVED, NEVER TRUSTED (decision 1).** Where a rotation stands is read from BWS
 (the keeper, and the staging and quarantine secrets named for this credential and occurrence) and
@@ -150,6 +152,15 @@ class Provider(Protocol):
 
         Only a provider whose plan has a host step implements it. Like every step, it re-derives
         where things stand: a service that already accepts both is re-proved, not written again.
+        """
+        ...
+
+    def consumer_loaded(self, consumer: Mapping[str, Any], new: Value) -> bool:
+        """Whether a hosted destination holds `new` right now.
+
+        Only a provider that hosts its destinations implements it. For most, the service accepting
+        the value is the whole answer (`accepts`). A provider whose service accepting it says
+        nothing about the consumers asks them too.
         """
         ...
 
@@ -463,7 +474,7 @@ class UnitRun:
         if kind in HOSTED_KINDS:
             if not self.provider.hosts_destinations:
                 raise ContractError(f"this adapter can't reach a {kind} consumer")
-            return accepts(self.provider, new)
+            return self.provider.consumer_loaded(consumer, new)
         secret_id = self.store.locate(consumer)
         if secret_id is not None:
             return self.store.read(secret_id).same_as(new)
