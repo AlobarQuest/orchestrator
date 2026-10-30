@@ -1,8 +1,9 @@
 """Watch the landing lanes' recent landings, and act on one that went bad. Landing Part 3.
 
 Two entry points, one population. `landing_watch` reads: it judges each watched landing and reports
-each record. `act_on_landing` acts on one landing, once per judgment: a `flaky_retry` reruns the
-failing runs and records `rerun_requested`; a `bad` plans the revert and opens it (`revert_opened`),
+each record. `act_on_landing` acts on one landing, once per judgment: a `flaky_retry` reruns each
+failed watched job by its own id (never a run's failed jobs, which include jobs the watch never
+judged) and records `rerun_requested`; a `bad` plans the revert and opens it (`revert_opened`),
 or records why it could not (`refused_overlap`, `revert_failed`). Every other verdict acts on
 nothing. The judgment is made again inside the act's transaction, never taken from the caller.
 
@@ -38,7 +39,14 @@ readings are `revision_watcher`'s `production_revision` observations, read here 
 waits until production has been pointed back at the build before the bump, which this act does not
 do. The watch reports the verdict and its reason meanwhile.
 
-## Every call is bounded by the inert lane's grant term
+## Each landing is under its own lane
+
+An inert landing is read and acted on through the inert lane's gateway under its switch, a
+landing that redeploys through the estate lane's under the estate switch. The watch is refused
+only when neither lane may act; a landing whose own lane is off is reported `unreadable` by the
+refusal's name and read through nothing, and the act refuses it.
+
+## Every call is bounded by the grant term
 
 Both entry points read through the Dispatch App, and the act writes through it. Each asks the member
 record's `dependency_updates` grant for the repository first, so a repository the record does not
@@ -65,7 +73,13 @@ from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext
-from orchestrator.persistence.models import EstatePrMerge, Event, LandingRevert, Observation
+from orchestrator.persistence.models import (
+    EstatePrMerge,
+    Event,
+    LandingRevert,
+    Observation,
+    ObservationSource,
+)
 from orchestrator.services.execution.target_grant import (
     DEPENDENCY_UPDATES_SERVICE,
     MemberRecordGrants,
@@ -208,36 +222,53 @@ class RevertActOutcome:
     replayed: bool
 
 
+@dataclass(frozen=True)
+class RevertLane:
+    """One landing lane as the watch and the act use it: its switch, and the App gateway its
+    landings are read and written through."""
+
+    gateway: RevertActGateway
+    enabled: bool
+
+
 def landing_watch(
     session: Session,
-    gateway: RevertActGateway,
     *,
-    enabled: bool,
+    inert: RevertLane,
+    estate: RevertLane,
     credentials_configured: bool,
 ) -> tuple[WatchedLanding, ...]:
     """Every watched landing, judged or reported, oldest first. Reads only; writes nothing.
 
-    Refused, before any read, when the lane may not act: the same refusal the act gives.
+    Refused, before any read, when no lane may act. A landing whose own lane is switched off is
+    reported `unreadable` by the refusal's name and read through nothing; one reported by its
+    record's status alone reads nothing either way.
     """
-    _refuse_unless_lane_on(enabled and credentials_configured)
+    _refuse_unless_lane_on((inert.enabled or estate.enabled) and credentials_configured)
     grants = MemberRecordGrants(session)
     watched: list[WatchedLanding] = []
     for landing in _watched_landings(session):
         record = _record(session, landing.repository, landing.pr_number, lock=False)
+        redeploys = _redeploys(session, landing)
+        lane = estate if redeploys else inert
         verdict: Verdict | None = None
         if not grant_term(grants, landing.repository, (DEPENDENCY_UPDATES_SERVICE,)).met:
             verdict = Verdict(UNREADABLE, (), None, LANDING_REPOSITORY_NOT_GRANTED)
+        elif record is not None and record.status != RERUN_REQUESTED:
+            pass  # past the rerun: reported by its record's status, reading nothing
+        elif not lane.enabled:
+            verdict = Verdict(UNREADABLE, (), None, LANDING_REVERT_LANE_OFF)
         elif record is None:
-            pull = _bump_pull(gateway, landing)
+            pull = _bump_pull(lane.gateway, landing)
             if pull is None:
                 continue
             verdict = (
                 pull
                 if isinstance(pull, Verdict)
-                else judge(gateway, landing, None, _production(session, landing))
+                else judge(lane.gateway, landing, None, _production(session, landing, redeploys))
             )
-        elif record.status == RERUN_REQUESTED:
-            verdict = judge(gateway, landing, record, _production(session, landing))
+        else:
+            verdict = judge(lane.gateway, landing, record, _production(session, landing, redeploys))
         watched.append(_entry(landing, record, verdict))
     return tuple(watched)
 
@@ -245,12 +276,13 @@ def landing_watch(
 def act_on_landing(
     session: Session,
     command: RevertCommand,
-    gateway: RevertActGateway,
     *,
-    enabled: bool,
+    inert: RevertLane,
+    estate: RevertLane,
     credentials_configured: bool,
 ) -> RevertActOutcome:
-    """Judge one watched landing again and act once on what the judgment asks for.
+    """Judge one watched landing again and act once on what the judgment asks for, through its
+    own lane's gateway and under its own lane's switch.
 
     Owns its transaction: commits what it recorded, or rolls back everything it did not finish.
     """
@@ -258,8 +290,8 @@ def act_on_landing(
         outcome = _act(
             session,
             command,
-            gateway,
-            enabled=enabled,
+            inert=inert,
+            estate=estate,
             credentials_configured=credentials_configured,
         )
         session.commit()
@@ -272,14 +304,16 @@ def act_on_landing(
 def _act(
     session: Session,
     command: RevertCommand,
-    gateway: RevertActGateway,
     *,
-    enabled: bool,
+    inert: RevertLane,
+    estate: RevertLane,
     credentials_configured: bool,
 ) -> RevertActOutcome:
     authorize_actor(command.actor, _VERB)
     repository = command.repository.lower()
-    _refuse_unless_permitted(session, repository, enabled and credentials_configured)
+    _refuse_unless_permitted(
+        session, repository, (inert.enabled or estate.enabled) and credentials_configured
+    )
     lock_repository(session, _LOCK, repository)
     spent = session.scalar(select(Event).where(Event.idempotency_key == command.idempotency_key))
     if spent is not None:
@@ -288,6 +322,10 @@ def _act(
     record = _record(session, repository, command.pr_number, lock=True)
     if landing is None:
         raise _not_watched(repository, command.pr_number)
+    redeploys = _redeploys(session, landing)
+    lane = estate if redeploys else inert
+    _refuse_unless_lane_on(lane.enabled)
+    gateway = lane.gateway
     if (None if record is None else record.status) != command.expected_status:
         raise DomainError(
             LANDING_REVERT_RECORD_MOVED,
@@ -300,11 +338,10 @@ def _act(
             raise _not_watched(repository, command.pr_number)
         if isinstance(pull, Verdict):
             return _outcome(landing, pull, None, acted=False)
-    production = _production(session, landing)
-    verdict = judge(gateway, landing, record, production)
+    verdict = judge(gateway, landing, record, _production(session, landing, redeploys))
     if verdict.kind == FLAKY_RETRY:
         return _rerun(session, command, gateway, landing, record, verdict)
-    if verdict.kind == BAD and production is not None:
+    if verdict.kind == BAD and redeploys:
         raise DomainError(
             LANDING_REVERT_NEEDS_REPOINT,
             f"{repository}#{command.pr_number} redeploys and was judged bad by its "
@@ -321,7 +358,7 @@ def _refuse_unless_lane_on(lane_on: bool) -> None:
     if not lane_on:
         raise DomainError(
             LANDING_REVERT_LANE_OFF,
-            "the inert lane may not act: it is switched off or has no App credentials",
+            "the landing's lane may not act: it is switched off or has no App credentials",
             "switch the lane on and configure the App",
         )
 
@@ -345,11 +382,14 @@ def _rerun(
     record: LandingRevert | None,
     verdict: Verdict,
 ) -> RevertActOutcome:
-    """Rerun each failing run once, then record the attempts each rerun is measured against.
+    """Rerun each failed watched job once, by its own id, then record the attempts each rerun is
+    measured against (per run) and the jobs rerun.
 
-    The parent is read before anything is rerun, so a rerun is never left without the record that
-    makes its result count. A run whose rerun was refused is left out of the record, so the next
-    pass judges it new and asks again.
+    Never a run's failed jobs: that would rerun a failed job the watch never judged too, and in a
+    repository that redeploys one of those is the step that redeploys. The parent is read before
+    anything is rerun, so a rerun is never left without the record that makes its result count. A
+    job whose rerun was refused is left out of the record, so the next pass judges it new and asks
+    again.
     """
     merge_sha = landing.merge_commit_sha or ""
     if record is None:
@@ -358,18 +398,20 @@ def _rerun(
         except EstateGatewayError as error:
             return _outcome(landing, _unreadable(error), None, acted=False)
     asked: dict[str, int] = {}
+    rerun: set[str] = set()
     refused: list[str] = []
-    for run_id, attempt in verdict.failed_runs:
+    for job in verdict.failed_jobs:
         try:
-            gateway.rerun_failed_jobs(repository=landing.repository, run_id=run_id)
+            gateway.rerun_job(repository=landing.repository, job_id=job.job_id)
         except EstateGatewayError as error:
-            refused.append(f"run {run_id}: {gateway_failure_detail(error)}")
+            refused.append(f"{job.name} in run {job.run_id}: {gateway_failure_detail(error)}")
             continue
-        asked[str(run_id)] = attempt
+        asked[str(job.run_id)] = max(job.attempt, asked.get(str(job.run_id), 0))
+        rerun.add(job.name)
     if not asked:
         raise DomainError(
             LANDING_REVERT_RERUN_REFUSED,
-            "no failing run could be rerun: " + "; ".join(refused),
+            "no failed job could be rerun: " + "; ".join(refused),
             "nothing was recorded; the next pass asks again",
         )
     now = datetime.now(UTC)
@@ -379,7 +421,7 @@ def _rerun(
             pr_number=landing.pr_number,
             merge_commit_sha=merge_sha,
             parent_sha=parent_sha,
-            failed_job_names=list(verdict.failed_job_names),
+            failed_job_names=sorted(rerun),
             failed_run_id=verdict.run_id,
             # Every write of this status names its runs: a record with none would read every
             # failure as a run not yet rerun, and rerun it every pass.
@@ -394,7 +436,7 @@ def _rerun(
         # A new dict, merged rather than replaced: an earlier run's attempt still decides whether
         # its failure survived the rerun asked for it.
         record.rerun_attempts = {**(record.rerun_attempts or {}), **asked}
-        record.failed_job_names = sorted({*record.failed_job_names, *verdict.failed_job_names})
+        record.failed_job_names = sorted({*record.failed_job_names, *rerun})
         record.updated_at = now
     record.detail = "; ".join(f"rerun refused for {reason}" for reason in refused) or None
     return _recorded(session, command, landing, record, verdict)
@@ -522,15 +564,21 @@ def _watched_landings(
     return [landing for landing, is_recent in rows if is_recent or _still_held(session, landing)]
 
 
-def _production(session: Session, landing: EstatePrMerge) -> Production | None:
+def _redeploys(session: Session, landing: EstatePrMerge) -> bool:
+    """Is this the estate lane's landing, whose landing redeploys? Read from its event's action."""
+    action = session.scalar(select(Event.action).where(Event.id == landing.event_id))
+    return action in _SERVED_ACTIONS
+
+
+def _production(session: Session, landing: EstatePrMerge, redeploys: bool) -> Production | None:
     """What the store says production served since the landing, or None for a landing that does
     not redeploy (the inert lane's), which is judged by its checks alone.
 
     Every reading of the member record's applications for the repository received since the
-    landing, and the newest reading of any application: the watcher's last word.
+    landing, and the watcher's heartbeat: when the ingest last accepted a post from it, a repeat
+    of a stored reading included.
     """
-    action = session.scalar(select(Event.action).where(Event.id == landing.event_id))
-    if action not in _SERVED_ACTIONS:
+    if not redeploys:
         return None
     applications = apps_for(session, landing.repository)
     of_the_watcher = (
@@ -553,7 +601,9 @@ def _production(session: Session, landing: EstatePrMerge) -> Production | None:
         applications=applications,
         readings=readings,
         watcher_seen_at=session.scalar(
-            select(func.max(Observation.received_at)).where(*of_the_watcher)
+            select(ObservationSource.last_seen_at).where(
+                ObservationSource.source_system == _WATCHER
+            )
         ),
         now=session.scalar(select(func.now())) or datetime.now(UTC),
     )

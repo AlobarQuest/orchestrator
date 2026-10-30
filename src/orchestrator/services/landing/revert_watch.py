@@ -8,8 +8,8 @@ store says production served. It decides; the caller acts. Five answers:
 * `pending` -- no watched workflow has a push run at the merge commit yet, a watched job is still
   running or reached no verdict, a rerun this side asked for has not reported, or production has
   not settled either way. Never an act.
-* `flaky_retry` -- a watched job failed in a run not yet rerun: the caller reruns the failed jobs of
-  every run in `failed_runs` and records each run's attempt in `rerun_attempts`.
+* `flaky_retry` -- a watched job failed in a run not yet rerun: the caller reruns each job in
+  `failed_jobs`, one at a time by its id, and records each run's attempt in `rerun_attempts`.
 * `bad` -- the failure survived the rerun and the same jobs passed on the commit before the bump
   (`reason` `checks`), or production is stuck on something other than the bump (`reason`
   `served`).
@@ -38,7 +38,7 @@ at the merge commit, the answer is `pending`.
 ## What counts as failed
 
 `failure`, `timed_out` and `cancelled`. A cancelled job asks for a rerun like a failure does,
-because the platform's rerun of failed jobs reruns cancelled ones too. Still cancelled after that
+and is rerun by its id like one. Still cancelled after that
 rerun is `pending`, never `bad`: a cancellation says nothing about the bump. At the parent, a
 cancelled job is not green, so a failure beside it reads `clean`.
 
@@ -72,13 +72,11 @@ committer date. The readings are content-addressed, so an application stuck on o
 ONE row however many passes repeat it: how long a reading has stood is measured from when it was
 received, and never by counting rows.
 
-**The watcher is live when it wrote any reading within `WATCHER_SILENT_HOURS`, of any
-application.** Because a repeated reading writes nothing, nothing in the store can say that this
-application was asked again in the last two hours: a reading that had to be that recent could
-never have stood two hours. The newest reading of any application is the evidence the store has
-that a pass ran; it misses a pass that changed nothing anywhere, which holds a stuck landing
-`pending` (never `bad`) until something in the estate moves. Brain #79 (2026-10-03) is the measured
-case: all four brains behind from 06:52, the watcher silent until a row at 12:54, `bad` then.
+**The watcher is live when the observation ingest accepted a post from it within
+`WATCHER_SILENT_HOURS`** (`observation_sources.last_seen_at`), a repeat of a stored reading
+included. A repeated reading writes no row, so the readings alone cannot tell a stuck application
+from a watcher that stopped; the heartbeat can. The watcher runs on the operator's machine and has
+had overnight gaps: through one, a stuck landing stays `pending`, never `bad`.
 """
 
 from __future__ import annotations
@@ -147,6 +145,8 @@ class Verdict:
     failed_runs: tuple[tuple[int, int], ...] = ()
     # `checks` or `served` on a `bad` verdict; None on every other.
     reason: str | None = None
+    # Every failed watched job, which a `flaky_retry` reruns one at a time by its id.
+    failed_jobs: tuple[Job, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -164,7 +164,7 @@ class Production:
     """What the store says production served, for one repository whose landing redeploys.
 
     `applications` are the member record's apps for the repository; `readings` every reading of
-    them, in any order; `watcher_seen_at` the newest reading of ANY application (None: none at all);
+    them, in any order; `watcher_seen_at` when the watcher was last heard from (None: never);
     `now` the instant the judgment is made.
     """
 
@@ -190,6 +190,7 @@ def _failed_verdict(kind: str, failed: list[Job], detail: str) -> Verdict:
         detail=f"{detail}: {', '.join(names)}",
         failed_runs=tuple(sorted(runs.items())),
         reason=CHECKS if kind == BAD else None,
+        failed_jobs=tuple(failed),
     )
 
 

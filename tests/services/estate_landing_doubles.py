@@ -10,6 +10,8 @@ green suite over a wire nobody read.
 
 from __future__ import annotations
 
+import zlib
+
 from orchestrator.services.landing.change_record import (
     ChangeRecord,
     ChangeRecordAnswer,
@@ -415,3 +417,9 @@ class SiblingGateway(FakeEstateGateway):
         if self._runs_error is not None:
             raise self._runs_error
         return self._runs_by.get(self._number_at(head_sha) or -1, ())
+
+
+def job_id_of(name: str, run_id: int, attempt: int) -> int:
+    """A stable job id for a double's job: one per (name, run, attempt), as the platform gives a
+    rerun attempt of a job an id of its own."""
+    return zlib.crc32(f"{name}/{run_id}/{attempt}".encode()) + 10_000_000_000

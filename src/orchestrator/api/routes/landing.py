@@ -31,7 +31,8 @@ from orchestrator.api.schemas.landing import (
     PrMergeCommandModel,
     PrMergeResponse,
 )
-from orchestrator.services.github_app import token_provider_for
+from orchestrator.config import Settings
+from orchestrator.services.github_app import GitHubAppCredentials, token_provider_for
 from orchestrator.services.landing.branch_update_serialization import (
     branch_update_sibling_outcome,
     estate_sibling_composer,
@@ -78,6 +79,7 @@ from orchestrator.services.landing.pr_merge import (
 from orchestrator.services.landing.pr_merge_admission import pr_merge_admission
 from orchestrator.services.landing.revert_act import (
     RevertCommand,
+    RevertLane,
     act_on_landing,
     landing_watch,
 )
@@ -509,15 +511,27 @@ def landing_watch_route(actor: ActorDep, session: SessionDep, settings: Settings
     """
     authorize_actor(actor, "read the landing watch")
     credentials = github_app_credentials_for(settings)
-    gateway = GitHubInertPullRequests(token_provider_for(credentials))
+    inert, estate = _revert_lanes(settings, credentials)
     return {
         "landings": landing_watch(
             session,
-            gateway,
-            enabled=settings.inert_landing_enabled,
+            inert=inert,
+            estate=estate,
             credentials_configured=credentials is not None,
         )
     }
+
+
+def _revert_lanes(
+    settings: Settings, credentials: GitHubAppCredentials | None
+) -> tuple[RevertLane, RevertLane]:
+    """Each lane's switch and its own App gateway: the inert lane's landings under the inert
+    switch, the estate lane's (the landings that redeploy) under the estate switch."""
+    provider = token_provider_for(credentials)
+    return (
+        RevertLane(GitHubInertPullRequests(provider), settings.inert_landing_enabled),
+        RevertLane(GitHubEstatePullRequests(provider), settings.estate_landing_enabled),
+    )
 
 
 @router.post("/landing-revert", response_model=LandingRevertResponse)
@@ -529,9 +543,11 @@ def landing_revert_route(
 ) -> object:
     """Landing Part 3a: act once on one watched landing -- rerun its failing runs, or open its
     revert -- by the judgment made again here, never the caller's. The inert lane's switch and
-    credentials, and its grant term on the repository, bound it.
+    credentials, and its grant term on the repository, bound it; a landing that redeploys is under
+    the estate lane's switch and gateway instead (Part 3b).
     """
     credentials = github_app_credentials_for(settings)
+    inert, estate = _revert_lanes(settings, credentials)
     return act_on_landing(
         session,
         RevertCommand(
@@ -541,7 +557,7 @@ def landing_revert_route(
             idempotency_key=body.idempotency_key,
             expected_status=body.expected_status,
         ),
-        GitHubInertPullRequests(token_provider_for(credentials)),
-        enabled=settings.inert_landing_enabled,
+        inert=inert,
+        estate=estate,
         credentials_configured=credentials is not None,
     )

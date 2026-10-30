@@ -394,7 +394,8 @@ class Job:
     `conclusion` is `None` while the job has not finished. `attempt` is the run attempt the answer
     is from, which is how a judgment tells a rerun's verdict from the first attempt's. `workflow`
     is the run's workflow name and `event` what triggered it (`push`, `pull_request`, `dynamic`
-    for the update bot's own runs), which decide whether a job is watched at all.
+    for the update bot's own runs), which decide whether a job is watched at all. `job_id` is the
+    platform's id of this attempt of the job, which a rerun names (Landing Part 3b).
     """
 
     name: str
@@ -403,6 +404,7 @@ class Job:
     attempt: int
     workflow: str
     event: str
+    job_id: int
 
 
 # The prefix of the estate lane's event actions, which tells its rows in the shared
@@ -423,7 +425,7 @@ class RevertWatchGateway(Protocol):
 
     def parent_of(self, *, repository: str, sha: str) -> str: ...
 
-    def rerun_failed_jobs(self, *, repository: str, run_id: int) -> None: ...
+    def rerun_job(self, *, repository: str, job_id: int) -> None: ...
 
     def compare_status(self, *, repository: str, base: str, head: str) -> str:
         """GitHub's compare status of `head` against `base` (`identical`, `ahead`, `behind` or

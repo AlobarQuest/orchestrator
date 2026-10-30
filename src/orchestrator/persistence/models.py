@@ -1024,6 +1024,21 @@ class Observation(UUIDPrimaryKey, Base):
     idempotency_key: Mapped[str] = mapped_column(String)
 
 
+class ObservationSource(Base):
+    """When each observation producer was last heard from. Landing Part 3b.
+
+    One row per `source_system`, its `last_seen_at` moved by EVERY accepted observation, a repeat
+    of a stored one included. A content-addressed producer writes no observation while nothing it
+    measures changes, so the observations alone cannot tell "stuck on one fact" from "stopped";
+    this row can. Written in the ingest's own transaction, so a refused observation moves nothing.
+    """
+
+    __tablename__ = "observation_sources"
+
+    source_system: Mapped[str] = mapped_column(String, primary_key=True)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 # Tier 3 item 24a (2026-09-28) deleted every reader and writer of this table; the table and
 # this mapping stay because its production rows are cited by UUID as Phase-6 exit evidence
 # (~/docs/software-delivery-system/2026-07-09-ws63-governed-promotion-closeout-evidence.md).

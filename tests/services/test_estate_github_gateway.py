@@ -180,7 +180,16 @@ def _run(run_id: int, workflow: str = "CI", event: str = "push") -> dict[str, An
 
 
 def _job_row(name: str, conclusion: str | None, attempt: int) -> dict[str, Any]:
-    return {"name": name, "conclusion": conclusion, "run_attempt": attempt}
+    return {
+        "id": _job_id(name, attempt),
+        "name": name,
+        "conclusion": conclusion,
+        "run_attempt": attempt,
+    }
+
+
+def _job_id(name: str, attempt: int) -> int:
+    return 60_000_000_000 + attempt * 1000 + sum(map(ord, name))
 
 
 def _jobs_gateway(
@@ -223,8 +232,24 @@ def test_jobs_at_reads_every_run_at_the_commit_and_keeps_each_jobs_latest_attemp
     )
 
     assert set(gateway.jobs_at(repository=REPOSITORY, sha=MERGE)) == {
-        Job(name="test", conclusion="success", run_id=11, attempt=2, workflow="CI", event="push"),
-        Job(name="lint", conclusion="success", run_id=11, attempt=1, workflow="CI", event="push"),
+        Job(
+            name="test",
+            conclusion="success",
+            run_id=11,
+            attempt=2,
+            workflow="CI",
+            event="push",
+            job_id=_job_id("test", 2),
+        ),
+        Job(
+            name="lint",
+            conclusion="success",
+            run_id=11,
+            attempt=1,
+            workflow="CI",
+            event="push",
+            job_id=_job_id("lint", 1),
+        ),
         Job(
             name="build",
             conclusion=None,
@@ -232,6 +257,7 @@ def test_jobs_at_reads_every_run_at_the_commit_and_keeps_each_jobs_latest_attemp
             attempt=1,
             workflow="Dependabot Updates",
             event="dynamic",
+            job_id=_job_id("build", 1),
         ),
     }
 
@@ -262,6 +288,7 @@ def test_jobs_at_follows_every_page(monkeypatch: pytest.MonkeyPatch) -> None:
             attempt=1,
             workflow="CI",
             event="push",
+            job_id=_job_id("test (100)", 1),
         )
         in jobs
     )
@@ -359,16 +386,18 @@ class _Poster:
         return httpx.Response(self._status_code, json={})
 
 
-def test_a_rerun_names_the_run_and_accepts_201(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The platform answers a rerun with 201 Created, not 200."""
+def test_a_rerun_names_one_job_and_accepts_201(monkeypatch: pytest.MonkeyPatch) -> None:
+    """One job, by its id: never `rerun-failed-jobs` of a whole run, which would rerun a failed
+    step the watch never judged (in a repository that redeploys, the step that redeploys). The
+    platform answers 201 Created, not 200."""
     poster = _Poster()
     monkeypatch.setattr(httpx, "post", poster)
 
-    GitHubEstatePullRequests(lambda: "token").rerun_failed_jobs(
-        repository=REPOSITORY, run_id=18_000_000_001
+    GitHubEstatePullRequests(lambda: "token").rerun_job(
+        repository=REPOSITORY, job_id=60_000_001_234
     )
 
-    assert poster.urls == [f"{API}/runs/18000000001/rerun-failed-jobs"]
+    assert poster.urls == [f"{API}/jobs/60000001234/rerun"]
 
 
 @pytest.mark.parametrize(
@@ -386,9 +415,23 @@ def test_a_rerun_that_did_not_happen_raises(
     monkeypatch.setattr(httpx, "post", poster)
 
     with pytest.raises(EstateGatewayError):
-        GitHubEstatePullRequests(lambda: "token").rerun_failed_jobs(
-            repository=REPOSITORY, run_id=18_000_000_001
+        GitHubEstatePullRequests(lambda: "token").rerun_job(
+            repository=REPOSITORY, job_id=60_000_001_234
         )
+
+
+def test_a_job_row_with_no_id_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    row = {"name": "test", "conclusion": "failure", "run_attempt": 1}
+    gateway, _ = _jobs_gateway(
+        monkeypatch,
+        {
+            _runs_url(MERGE): (200, {"total_count": 1, "workflow_runs": [_run(11)]}),
+            _jobs_url(11): (200, {"total_count": 1, "jobs": [row]}),
+        },
+    )
+
+    with pytest.raises(EstateGatewayError):
+        gateway.jobs_at(repository=REPOSITORY, sha=MERGE)
 
 
 def _commit_gateway(

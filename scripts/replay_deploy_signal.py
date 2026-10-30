@@ -11,8 +11,9 @@ copied (Task 0 replayed a first, row-counting draft; Task 2 replaced it with the
 and this script with it). It is asked at every instant a reading arrived within `WATCH_HOURS` of
 the merge, and at every hour, as the store stood then: the applications are the member record's
 `apps` for the repository, the readings those received by that instant, and the watcher's last
-word the newest reading of any application by then. The replay verdict is the first `bad` or
-`clean` it answers, else `pending`. Ancestry is GitHub's compare API (`relation_of`), not the
+word the newest reading of any application by then (the store kept no heartbeat before
+`observation_sources`, so the newest row stands in for it). The replay verdict is the first `bad`
+or `clean` it answers, else `pending`. Ancestry is GitHub's compare API (`relation_of`), not the
 row's own `state`, which is relative to the branch tip at the time.
 
 THE READING TIME IS `received_at`, NEVER `observed_at`. The watcher sets `observed_at` to the

@@ -1028,3 +1028,14 @@ def test_0042_creates_the_member_tables_and_refuses_bad_values(migrated_engine) 
     assert not tables & set(inspect(migrated_engine).get_table_names())
     command.upgrade(config, "head")
     assert tables <= set(inspect(migrated_engine).get_table_names())
+
+
+def test_0046_observation_sources_is_reversible(migrated_engine) -> None:
+    config = alembic_config()
+    assert "observation_sources" in inspect(migrated_engine).get_table_names()
+    command.downgrade(config, "0045_landing_revert_images")
+    assert "observation_sources" not in inspect(migrated_engine).get_table_names()
+    command.upgrade(config, "head")
+    columns = {c["name"]: c for c in inspect(migrated_engine).get_columns("observation_sources")}
+    assert set(columns) == {"source_system", "last_seen_at"}
+    assert columns["last_seen_at"]["nullable"] is False

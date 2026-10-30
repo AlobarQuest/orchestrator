@@ -24,6 +24,7 @@ from orchestrator.services.landing.revert_watch import (
     judge,
     relation_of,
 )
+from tests.services.estate_landing_doubles import job_id_of
 
 REPOSITORY = "alobarquest/veritok"
 HEAD = "1111111111111111111111111111111111111111"
@@ -51,7 +52,7 @@ class _Gateway:
     def parent_of(self, *, repository: str, sha: str) -> str:
         raise AssertionError("judging reads the parent from the record")
 
-    def rerun_failed_jobs(self, *, repository: str, run_id: int) -> None:
+    def rerun_job(self, *, repository: str, job_id: int) -> None:
         raise AssertionError("judging never acts")
 
     def compare_status(self, *, repository: str, base: str, head: str) -> str:
@@ -74,6 +75,7 @@ def _job(
         attempt=attempt,
         workflow=workflow,
         event=event,
+        job_id=job_id_of(name, run_id, attempt),
     )
 
 
@@ -615,7 +617,7 @@ class _BrainGateway:
     def parent_of(self, *, repository: str, sha: str) -> str:
         raise AssertionError("judging reads the parent from the record")
 
-    def rerun_failed_jobs(self, *, repository: str, run_id: int) -> None:
+    def rerun_job(self, *, repository: str, job_id: int) -> None:
         raise AssertionError("judging never acts")
 
     def compare_status(self, *, repository: str, base: str, head: str) -> str:
@@ -768,8 +770,9 @@ def test_no_word_from_the_watcher_at_all_is_pending() -> None:
 
 
 def test_brain_79_is_pending_through_the_watchers_gap_and_bad_once_it_reports_again() -> None:
-    """The replay's brain #79: all four brains behind at 06:52, then nothing from the watcher about
-    them until 15:22. Its next row of any kind was the orchestrator's, at 12:54."""
+    """The replay's brain #79: all four brains behind at 06:52, and nothing new from them until
+    15:22. The store holds no heartbeat for that day, so the watcher's next row of any kind (an
+    orchestrator reading at 12:54) stands in for it here: silent until then, heard from then."""
     readings = _everywhere(BEFORE_79, 37.4)
     orchestrator_row = (datetime(2026, 10, 3, 12, 54, 13, tzinfo=UTC) - LANDED_79).total_seconds()
 
@@ -895,3 +898,20 @@ def test_a_stuck_landing_is_timed_from_the_newest_standing_reading() -> None:
     verdict = _judged(_production(readings, now=37 + 300, seen=37 + 299))
 
     assert verdict.kind == "pending"
+
+
+def test_a_failure_names_each_failed_watched_job_for_its_own_rerun() -> None:
+    gateway = _Gateway(
+        {
+            HEAD: GREEN_HEAD,
+            MERGE: (_job("lint", "failure"), _job("test", "failure"), _job("rollout", "failure")),
+        }
+    )
+
+    verdict = judge(gateway, _landing(), None)
+
+    assert verdict.kind == "flaky_retry"
+    assert {(job.name, job.job_id) for job in verdict.failed_jobs} == {
+        ("lint", job_id_of("lint", RUN, 1)),
+        ("test", job_id_of("test", RUN, 1)),
+    }

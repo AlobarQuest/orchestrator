@@ -655,8 +655,12 @@ class GitHubEstatePullRequests:
             raise EstateGatewayError("commit_response_invalid")
         return parent
 
-    def rerun_failed_jobs(self, *, repository: str, run_id: int) -> None:
-        """Ask the platform to rerun this run's failed jobs, once. Landing Part 3a.
+    def rerun_job(self, *, repository: str, job_id: int) -> None:
+        """Ask the platform to rerun one job, once. Landing Part 3 (one job since Part 3b).
+
+        One job by its id, never a run's failed jobs: those include failed jobs the watch never
+        judged, and in a repository that redeploys one of them is the step that redeploys. The
+        platform reruns the jobs that need this one too, as it would for any rerun of it.
 
         **201 Created is success**, not 200. The body names nothing this side needs, and nothing
         re-reads to confirm: the new attempt can take a while to appear, which the judgment reads
@@ -664,7 +668,7 @@ class GitHubEstatePullRequests:
         """
         self._send(
             httpx.post,
-            f"{GITHUB_API_URL}/repos/{repository}/actions/runs/{run_id}/rerun-failed-jobs",
+            f"{GITHUB_API_URL}/repos/{repository}/actions/jobs/{job_id}/rerun",
             {},
             expected=201,
             status_code="rerun_status",
@@ -867,15 +871,18 @@ def _run_from_row(row: Any) -> tuple[int, str, str]:
 
 
 def _job_from_row(row: Any, run_id: int, workflow: str, event: str) -> Job:
-    """One job row, strictly: a job with no name or attempt cannot be matched to anything."""
+    """One job row, strictly: a job with no name, attempt or id cannot be matched or rerun."""
     if not isinstance(row, dict):
         raise EstateGatewayError("jobs_response_invalid")
     name = row.get("name")
     attempt = row.get("run_attempt")
+    job_id = row.get("id")
     conclusion = row.get("conclusion")
     if not isinstance(name, str) or not name:
         raise EstateGatewayError("jobs_response_invalid")
     if not isinstance(attempt, int) or isinstance(attempt, bool):
+        raise EstateGatewayError("jobs_response_invalid")
+    if not isinstance(job_id, int) or isinstance(job_id, bool):
         raise EstateGatewayError("jobs_response_invalid")
     return Job(
         name=name,
@@ -884,6 +891,7 @@ def _job_from_row(row: Any, run_id: int, workflow: str, event: str) -> Job:
         attempt=attempt,
         workflow=workflow,
         event=event,
+        job_id=job_id,
     )
 
 
