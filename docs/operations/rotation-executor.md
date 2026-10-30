@@ -951,12 +951,13 @@ On the VPS, as root. Its only dependency is Python 3.12 and Docker.
    List one `consumer` table for each container that loads the password. A missing key is refused
    as `bad_target` before anything runs. The name after `target.` is what the registry row's
    `helper_target` must equal.
-3. Create the executor's key in the VM, as the `rotation` user, and nowhere else: `ssh-keygen -t
-   ed25519 -N '' -f /tmp/pg-helper-key`. Never print the private half. On the Mac, run `orb -m
-   rotation-executor -u rotation cat /tmp/pg-helper-key | pbcopy` and paste it into a new secret in
-   `Rotation / Admin` from the console. Then remove the file (`orb -m rotation-executor -u rotation
-   rm /tmp/pg-helper-key`) and clear the clipboard with `pbcopy < /dev/null`. Put the secret's id in
-   the executor's configuration as `pg_helper_key_id`.
+3. Create the executor's key in the VM, and nowhere else. The `rotation` user has no login shell, so
+   run its commands through `runuser`: `orb -m rotation-executor -u root runuser -u rotation --
+   ssh-keygen -t ed25519 -N '' -f /tmp/pg-helper-key`. Never print the private half. On the Mac, run
+   `orb -m rotation-executor -u root runuser -u rotation -- cat /tmp/pg-helper-key | pbcopy`, paste
+   it into a new secret in `Rotation / Admin` from the console, and clear the clipboard with `pbcopy
+   < /dev/null`. Put the secret's id in the executor's configuration as `pg_helper_key_id`. Keep the
+   file until the proofs that follow pass.
 4. Add the public half to the VPS's `/root/.ssh/authorized_keys` as one line, with the forced
    command, so the key can run nothing else:
 
@@ -1018,6 +1019,9 @@ echo '{}' | ssh -F /dev/null -o GlobalKnownHostsFile=/dev/null \
   on stderr, and the helper never answers, so nothing is sent to whatever replied. A run that
   connects anyway is a defect: it would send the password to that host.
 
+Then remove the key file: `orb -m rotation-executor -u root runuser -u rotation -- rm
+/tmp/pg-helper-key`.
+
 ### Adopt the keeper
 
 The keeper is a BWS secret in `Rotation / Keepers` holding the role's current password. Adopt an
@@ -1054,8 +1058,9 @@ usual place. Two levers need neither:
 
 - **Requeue over M2M.** `POST /work-units/{id}/requeue` as SYSTEM, with its bearer (see
   `docs/operations/driving-a-unit.md`). It retries the unit against the state host left.
-- **`pg-restore`**, in the VM. First check that no pass is running: `orb -m rotation-executor -u
-  root systemctl status rotation-worker` must not show the service active. It reads the keeper and
+- **`pg-restore`**, in the VM. First stop new passes and check none is running: `orb -m
+  rotation-executor -u root systemctl stop rotation-worker.timer`, then `systemctl is-active
+  rotation-worker` in the VM must print `inactive`. Start the timer again afterward. It reads the keeper and
   repeats host's writes with that value: the Coolify variable, the role through the helper, the
   restart, and the wait for every consumer:
 
