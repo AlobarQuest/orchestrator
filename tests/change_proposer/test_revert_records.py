@@ -100,7 +100,9 @@ def test_a_recorded_revert_is_filed_as_a_revert_with_the_reverts_remedy() -> Non
 
 def test_the_revert_carries_its_repositorys_criteria_and_the_same_fields_as_any_record() -> None:
     bump, _ = _consider(
-        _Reader(revision=_transcribed()), CM, {**_revert_pull(), "author": "dependabot[bot]"}
+        _Reader(revision=_transcribed()),
+        CM,
+        _revert_pull(author="dependabot[bot]", head_ref="dependabot/uv/x-1.2"),
     )
     revert, _ = _consider_revert(_revert_pull())
 
@@ -192,9 +194,29 @@ def test_the_dispatch_app_is_never_filed_as_a_bump(pull, reverts) -> None:
 def test_the_update_bot_is_still_filed_as_a_bump() -> None:
     """The control: the Dispatch App rule did not take Dependabot with it, even on a branch that
     looks like a revert."""
-    proposal, _ = _consider_revert(_revert_pull(author="dependabot[bot]"))
+    proposal, _ = _consider_revert(
+        _revert_pull(author="dependabot[bot]", head_ref="dependabot/uv/x-1.2")
+    )
 
     assert proposal is not None and proposal["change_class"] == BOT_CHANGE_CLASS
+
+
+@pytest.mark.parametrize(
+    "author",
+    ["dependabot[bot]", "Alobar-SDS-Dispatch[bot]", "alobar-sds-dispatch-renamed[bot]", "someone"],
+    ids=["update-bot", "other-casing", "renamed", "person"],
+)
+@pytest.mark.parametrize("is_bot", [True, False], ids=["bot", "user"])
+def test_a_revert_branch_is_never_filed_as_a_bump_whoever_opened_it(author, is_bot) -> None:
+    """Whatever the author: a login rename or a casing difference must not route a revert branch
+    into the bump class, which policy would approve under the bump's terms. Only the SDS's App
+    files from one, and anyone else opening one is a finding."""
+    reader = _Pulls({CM: [_revert_pull(author=author, is_bot=is_bot)]}, _transcribed())
+
+    outcomes = _pass(reader, [CM], None, RECORDED)
+
+    assert [o.status for o in outcomes] == ["unrecorded"]
+    assert "unrecorded" in FINDING_STATUSES
 
 
 def test_a_revert_against_another_base_is_skipped() -> None:

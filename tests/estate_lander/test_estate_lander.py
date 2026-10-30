@@ -1177,14 +1177,17 @@ def test_a_factory_record_is_never_asked_about() -> None:
     assert client.landed == []
 
 
-def test_a_revert_record_is_a_subject_of_this_lane() -> None:
-    """Landing Part 3b. The SDS's own revert of a bump in a deploying repository lands through this
-    lane, under deploy policy 14's conditions for the class, which the orchestrator's admission
-    asks; this program only selects it."""
-    selection = _subjects(FakeRecords([_row(51, change_class=REVERT_CHANGE_CLASS)]))
+def test_a_revert_record_is_deferred_until_its_admission_exists() -> None:
+    """Landing Part 3b. `ChangeRecord` carries no class, so the admission would judge the SDS's
+    revert as a bump. Until the revert admission exists (Task 4), the class defers, fail closed."""
+    client = FakeOrchestrator({(REPOSITORY, 51): _admissible()})
 
-    assert selection.subjects == [(REPOSITORY, 51)]
-    assert selection.deferred == {}
+    selection = _subjects(FakeRecords([_row(51, change_class=REVERT_CHANGE_CLASS)]))
+    outcomes = _pass(selection.subjects, client, submit=True)  # type: ignore[arg-type]
+
+    assert selection.subjects == []
+    assert selection.deferred == {REVERT_CHANGE_CLASS: 1}
+    assert outcomes == [] and client.asked == []
 
 
 def test_a_deferred_record_is_counted_rather_than_silently_dropped() -> None:
@@ -1317,7 +1320,8 @@ def test_the_lane_classes_are_the_producers_own_constants() -> None:
     estate keeps paying for, in a place where the cost is landing somebody else's pull request."""
     from estate_lander.cli import _LANE_CLASSES
 
-    assert _LANE_CLASSES == {BOT_CHANGE_CLASS, REVERT_CHANGE_CLASS}
+    assert _LANE_CLASSES == {BOT_CHANGE_CLASS}
+    assert REVERT_CHANGE_CLASS not in _LANE_CLASSES
     assert FACTORY_CHANGE_CLASS not in _LANE_CLASSES
 
 

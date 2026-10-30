@@ -437,6 +437,13 @@ def _consider(
         reverted, why = _recorded_revert(repository, pull, reverts)
         if reverted is None:
             return None, why
+    elif str(pull.get("head_ref") or "").startswith(REVERT_BRANCH_PREFIX):
+        # Whoever else opened it -- a renamed or differently-cased App login included -- a revert
+        # branch is never filed as a bump, which policy would approve under the bump's terms.
+        return None, (
+            f"{UNRECORDED_PREFIX}{pull.get('author')!r} opened a revert branch, and only the "
+            "SDS's App files one"
+        )
     else:
         work_unit_id = factory_unit_id(pull.get("title"))
     if reverted is None and work_unit_id is None and not pull.get("is_bot"):

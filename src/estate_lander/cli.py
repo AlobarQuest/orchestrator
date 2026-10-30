@@ -54,7 +54,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
-from change_proposer.cli import BOT_CHANGE_CLASS, REVERT_CHANGE_CLASS
+from change_proposer.cli import BOT_CHANGE_CLASS
 from estate_lander.change_manager import DEFAULT_BASE_URL as CM_DEFAULT_BASE_URL
 from estate_lander.change_manager import ChangeManagerClient, ChangeManagerError
 from estate_lander.orchestrator_client import (
@@ -101,10 +101,10 @@ _ASK_ABOUT = frozenset({"approved"})
 # third spelling here would be a copy of a vocabulary that already has two, which is the defect
 # this estate keeps paying for.
 #
-# `REVERT_CHANGE_CLASS` (Landing Part 3b) is the SDS's own revert of a bump this lane landed and the
-# SDS judged bad. It lands here, and the orchestrator's admission asks deploy policy 14's conditions
-# for the class -- not the bump's -- before anything lands.
-_LANE_CLASSES = frozenset({BOT_CHANGE_CLASS, REVERT_CHANGE_CLASS})
+# NOT YET `dependency-revert` (Landing Part 3b). The SDS's own revert of a bump will land here, but
+# the admission this lane asks reads no record class and would judge a revert as a bump. Until the
+# revert admission exists, the class defers like any class this lane does not land: fail closed.
+_LANE_CLASSES = frozenset({BOT_CHANGE_CLASS})
 
 # What a deferral is called in the report, keyed by the class that caused it. Named rather than
 # counted as one lump, because "it belongs to the factory lane" and "nobody has taught this program
