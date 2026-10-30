@@ -834,11 +834,16 @@ per pass, and lands the SDS's own revert pull requests; ordinary bumps land only
    `POST /api/v1/landing-repoint` to record `repointed` with `pinned_images` (`{application uuid:
    {tag, digest, restore_tag}}`). The orchestrator judges again and refuses unless the landing is
    still `bad`. Only then does the lander set each application's `docker_registry_image_tag` to the
-   parent's commit and start a deploy. A pin that fails part-way is repeated on the next pass.
-2. **Confirm and open.** Once every application serves the parent, the lander asks
-   `POST /api/v1/landing-revert` with expected status `repointed`, and the orchestrator opens the
-   revert from the record. Until then the lander deploys again each application whose tag is still
-   the parent's; an application whose tag a person changed is left alone and named.
+   parent's commit and start a deploy, and once every tag is set it confirms the pin
+   (`POST /api/v1/landing-pinned`), which marks each image `"pinned": "yes"`. A pin that fails
+   part-way, or a pass that stops before confirming, is completed and confirmed on the next pass.
+   The orchestrator refusing the re-point is `waiting` when its answer moved (the record moved, or
+   the landing is no longer `bad`) or the estate lane is switched off; any other refusal, a
+   repository not granted among them, raises `landing-not-pointed-back`.
+2. **Confirm and open.** Once the pin is confirmed and every application serves the parent, the
+   lander asks `POST /api/v1/landing-revert` with expected status `repointed`, and the orchestrator
+   opens the revert from the record. Until then the lander deploys again each application whose tag
+   is still the parent's; an application whose tag a person changed is left alone and named.
 3. **Land.** `change_proposer` files the revert as a `dependency-revert` record, which deploy policy
    14 approves. The estate lane lands it in any pass, outside the pace and the window, and the
    merge path records `revert_landed` and places the hold. The revert merge's own rollout check
@@ -867,17 +872,19 @@ design.
 ### Restore by hand
 
 To put production back yourself, set each pinned application's `docker_registry_image_tag` back to
-its recorded restore tag in Coolify and redeploy. The `landing-production-pinned` alert names each
+its recorded restore tag in Coolify and redeploy. The lander reads tags on their restore tags as
+your restore only once the pin is confirmed (every image in the watch's `pinned_images` carries
+`"pinned": "yes"`); before that they are a pin that never happened, and it points them again. The `landing-production-pinned` alert names each
 application's uuid, its pinned tag and its restore tag. Set every pinned application, not some: the
 lander acts only when every tag equals its restore tag. What the lander does next depends on the
 record's status:
 
 | Status when you restore | What the lander does |
 |---|---|
-| `repointed` (the revert has not opened) | Records `restored` with detail `restored by hand before the revert opened`. No revert opens; the bad bump stays on `main` as your rollback decision. Bumps resume and the pinned alert resolves. |
+| `repointed` (the revert has not opened; the pin is confirmed) | Records `restored` with detail `restored by hand before the revert opened`. No revert opens; the bad bump stays on `main` as your rollback decision. Bumps resume and the pinned alert resolves. |
 | `revert_opened` | Nothing yet. The revert continues; once it lands, the restore step finds the tags already back, deploys any application not yet serving the revert's merge commit, and records `restored`. |
 | `revert_landed` | The restore step finds the tags already back, deploys any application not yet serving the revert's merge commit, and records `restored`. |
-| `refused_overlap` or `revert_failed` | Records `restored`. The pinned alert resolves, and so does the `landing-revert-refused` or `landing-revert-failed` alert. Bumps resume. The default branch may still carry the bad bump: fix it by hand before you restore. |
+| `refused_overlap` or `revert_failed` (the pin is confirmed) | Records `restored`. The pinned alert resolves, and so does the `landing-revert-refused` or `landing-revert-failed` alert. Bumps resume. The default branch may still carry the bad bump: fix it by hand before you restore. |
 
 A tag set to anything other than the restore tag is not a hand restore: the record stays as it
 is, production stays as you set it, and the pinned alert stays open. The lander never undoes it
@@ -893,7 +900,10 @@ when the revert lands, and the never-again rule, work as for an inert repository
 
 ### Alerts
 
-The inert section's four alerts apply. The estate lander adds two (`lander/held_alerts.py`):
+The inert section's four alerts apply. A `restored` record whose revert landed keeps
+`landing-reverted` open, with the same text, while the hold stands; a record restored by hand with
+no revert (a take-over, or after a refused or failed revert) raises nothing. The estate lander adds
+two (`lander/held_alerts.py`):
 
 | Key | Meaning | What you do |
 |---|---|---|
@@ -902,8 +912,5 @@ The inert section's four alerts apply. The estate lander adds two (`lander/held_
 
 ### Known gaps
 
-- A `restored` record raises no alert and prints no report line. So `landing-reverted` resolves at
-  `restored`, although the hold stays in force and the record stays in the watch while it does, and
-  a hand restore of a `refused_overlap` or `revert_failed` record resolves its alert too.
 - A hand restore after the revert opened leaves the pinned alert open and bumps refused until the
   revert lands. A stranded revert with production pinned has no clearing act.

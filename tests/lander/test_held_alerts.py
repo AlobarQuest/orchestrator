@@ -22,6 +22,7 @@ from lander.held_alerts import (
     TOKEN_ENV,
     firing,
     held_key,
+    revert_alerts,
     sync_held_alerts,
     sync_revert_alerts,
 )
@@ -692,3 +693,34 @@ def test_a_hand_restore_while_repointed_resolves_the_pinned_alert(tmp_path) -> N
     sync_revert_alerts(LANE, [_pinned_record("restored")], environ=env, transport=hub.transport())
 
     assert [b["status"] for b in hub.sent if b["key"] == PINNED_KEY] == ["firing", "resolved"]
+
+
+# The alert at `restored` (fix round 3): the hold a landed revert placed outlives the pin.
+
+
+def test_a_restored_landed_revert_keeps_the_reverted_alert_open_with_the_same_words(
+    tmp_path,
+) -> None:
+    hub = Hub()
+    env = _env(tmp_path)
+    landed = _pinned_record("revert_landed", revert_merge_sha="f" * 40)
+    restored = _pinned_record("restored", revert_merge_sha="f" * 40)
+
+    sync_revert_alerts(LANE, [landed], environ=env, transport=hub.transport())
+    first = next(b for b in hub.sent if str(b["key"]).startswith("landing-reverted:"))
+    sync_revert_alerts(LANE, [restored], environ=env, transport=hub.transport())
+
+    reverted = [b for b in hub.sent if str(b["key"]).startswith("landing-reverted:")]
+    assert [b["status"] for b in reverted] == ["firing"]
+    assert LIFT_A_HOLD in str(first["message"])
+    assert (
+        revert_alerts([restored])[str(first["key"])] == revert_alerts([landed])[str(first["key"])]
+    )
+
+
+@pytest.mark.parametrize(
+    "detail", ["restored by hand before the revert opened", "the moving tags were put back by hand"]
+)
+def test_a_restored_record_whose_revert_never_landed_raises_nothing(detail: str) -> None:
+    """A take-over, or a hand restore after a refused or failed revert: no revert, no hold."""
+    assert revert_alerts([_pinned_record("restored", detail=detail, revert_merge_sha=None)]) == {}

@@ -525,7 +525,12 @@ back on its moving tag. The dependency is held and the version refused for good,
      with `pinned_images` (`POST /api/v1/landing-repoint`), which judges the landing again and
      refuses unless it is still `bad`. Only then does it set each application's tag to the parent's
      commit and start a deploy. Recording first means every pin has a record, and an open alert,
-     behind it.
+     behind it. Once every tag is set, it confirms the pin (`POST /api/v1/landing-pinned`), which
+     marks each image `pinned`; a pin that stopped part-way is completed and confirmed on the next
+     pass. Tags alone cannot tell a pin that never happened from a person's restore, so a tag on its
+     restore tag reads as a restore only after the confirmation. A refused re-point is `waiting`
+     when the orchestrator's answer moved or the estate lane is switched off (a deliberate off
+     switch, not a finding); any other refusal, a repository not granted among them, alerts.
   2. Once every application serves the parent, it asks the orchestrator to open the revert, which
      opens from the `repointed` record without judging again: production serves the parent by the
      SDS's own act, so a fresh judgment would read `clean`.
@@ -587,7 +592,9 @@ back on its moving tag. The dependency is held and the version refused for good,
 - **Every exit before `restored` leaves an alert open.** A pinned record raises
   `landing-production-pinned:<repo>:<pr>` until it is `restored`; a `bad` landing the lander could
   not point back at all raises `landing-not-pointed-back:<repo>:<pr>` with the reason, and nothing is
-  pinned or reverted.
+  pinned or reverted. A `restored` record whose revert landed keeps `landing-reverted` open, with
+  the inert lane's text, while the hold it placed stands; a record restored by hand with no revert
+  held nothing and raises nothing.
 - **The estate lander runs hourly.** Every pass takes the watch's next step and lands the SDS's own
   revert pull requests; ordinary bumps still land only between 02:00 and 06:00 `America/New_York`.
 - **The live proof is a no-op drill** (Devon's decision), not a deliberately broken bump in

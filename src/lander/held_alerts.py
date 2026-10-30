@@ -33,7 +33,8 @@ the two writes never leaves `alerts.json` ahead of the sightings.
 `sync_revert_alerts` raises one alert per revert record in the orchestrator's landing watch:
 `landing-reverted:<repo>:<pr>` once the revert has landed (naming the failed jobs, the revert pull
 request, the hold it placed, how to lift one, and that the reverted version stays refused after
-that), and `landing-revert-refused:<repo>:<pr>` or `landing-revert-failed:<repo>:<pr>` when no
+that; a deploying repository's record keeps it once `restored`, the hold outliving the pin), and
+`landing-revert-refused:<repo>:<pr>` or `landing-revert-failed:<repo>:<pr>` when no
 revert could be opened. `landing-revert-stranded:<repo>:<pr>` fires for a revert pull request the
 lander found no longer open while its record still says it is (closed without landing); it is held
 while that repository could not be listed. Each fires once and follows its record in the watch:
@@ -308,7 +309,7 @@ def _revert_alert(row: Mapping[str, object]) -> Alert:
         failed = "production never served it, and a job"
     subject = f"{repository}#{number}"
     landing = f"https://github.com/{repository}/pull/{number}"
-    if row.get("status") == "revert_landed":
+    if _revert_landed(row):
         revert = row.get("revert_pr_number")
         hold = row.get("hold_outcome") or "nothing held"
         detail = row.get("detail")
@@ -328,6 +329,15 @@ def _revert_alert(row: Mapping[str, object]) -> Alert:
     )
 
 
+def _revert_landed(row: Mapping[str, object]) -> bool:
+    """Did this record's revert land? `revert_landed`, or `restored` after it (Landing Part 3b: it
+    names the revert's merge commit). Such a record placed a hold, which outlives the pin, so it
+    keeps the `landing-reverted` alert as the inert lane's does. A record restored by hand with no
+    revert -- a take-over, or after a refused or failed revert -- held nothing and raises none."""
+    status = row.get("status")
+    return status == "revert_landed" or (status == _RESTORED and bool(row.get("revert_merge_sha")))
+
+
 def revert_alerts(watch: Iterable[Mapping[str, object]]) -> dict[str, Alert]:
     """The alerts the watch's revert records raise now, by key. Pure."""
     alerts: dict[str, Alert] = {}
@@ -335,7 +345,8 @@ def revert_alerts(watch: Iterable[Mapping[str, object]]) -> dict[str, Alert]:
         repository, number, status = row.get("repository"), row.get("pr_number"), row.get("status")
         if not isinstance(repository, str) or not isinstance(number, int):
             continue
-        key = revert_key(status, repository, number) if isinstance(status, str) else None
+        keyed = "revert_landed" if _revert_landed(row) else status
+        key = revert_key(keyed, repository, number) if isinstance(keyed, str) else None
         if key is not None:
             alerts[key] = _revert_alert(row)
         if row.get("pinned_images") and status != _RESTORED:
