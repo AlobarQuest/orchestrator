@@ -683,6 +683,16 @@ OUTBOUND_ALLOWLIST = {
     # holds the producer's propose and retire routes. tests/estate_lander/test_client_surface.py
     # and tests/architecture/test_landing_edges.py pin it.
     Path("src/estate_lander/change_manager.py"),
+    # Landing Part 3b. The estate lander points a repository that redeploys at the image of a bad
+    # bump's parent and back. Its hosting-platform client is confined to that one repository's
+    # applications, matched by host from the member record each pass: list, read, PATCH the image
+    # tag, start a deploy -- nothing else; its registry client reads one tag's digest of this
+    # estate's GHCR images. tests/estate_lander/test_image_repoint.py lists both surfaces, with a
+    # control that widens one and fails.
+    Path("src/estate_lander/image_repoint.py"),
+    # Landing Part 3b. Reads an application's served revision through `revision_watcher`'s own
+    # reader and parser; it builds no client of its own (the import is the transport type only).
+    Path("src/estate_lander/served.py"),
     # ADR-0038 part 2a. `inert_lander` is the SIBLING separate program, and its egress is not
     # the orchestrator's either. It reads which repositories a person declared ones where landing
     # on the default branch changes nothing already serving, asks the orchestrator whether each
