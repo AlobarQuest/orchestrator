@@ -2061,7 +2061,7 @@ profile alone. Graduating decomposition approval in general stays with the Admis
 Postgres keeps one password per role. Once the role takes the new value the old one fails for every
 new connection, and the service whose database it is cannot reach it until it restarts with the new
 one. Amendment 15's host step assumed the service accepts the new value beside the old, and
-`host_without_overlap` (amendment 8) is a per-envelope declaration about a value another identity
+`host_without_overlap` (amendment 9) is a per-envelope declaration about a value another identity
 shares, which only a person makes. Neither describes a role password. Authentik's Postgres password
 (`alobar-id`) is the first credential of the kind. The role lives in a container with no published
 port, and nothing the executor held could set a role's password or test a login against that container.

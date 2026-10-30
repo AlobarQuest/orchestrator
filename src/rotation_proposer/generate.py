@@ -105,7 +105,9 @@ def acceptance(plan: Plan, overlap: bool = True) -> list[dict[str, str]]:
     """One criterion per machine step, in the plan's numbering.
 
     A type with no overlap states its host step as the replacement and restart it is."""
-    conditions = {**_CONDITIONS, StepKind.HOST: _HOST_WITHOUT_OVERLAP} if not overlap else _CONDITIONS
+    conditions = (
+        {**_CONDITIONS, StepKind.HOST: _HOST_WITHOUT_OVERLAP} if not overlap else _CONDITIONS
+    )
     steps = criteria_steps(plan)
     units_per_kind = Counter(kind for _, kind in set(steps.values()))
     criteria = []
@@ -298,17 +300,16 @@ def render(entry: RegistryEntry, occurrence: str, created_at: str) -> dict[str, 
                 "undone; the old value stays valid until it is revoked."
                 if overlap
                 else "The hosted service's dependents are unavailable while the service restarts "
-                "on the new value, and the old value stops working at that step."
-                + _RESTART_HOUR
+                "on the new value, and the old value stops working at that step." + _RESTART_HOUR
             ),
             "stop_conditions": ["A value appears anywhere it should not."],
             "rollback": (
                 "Before the revoke the old value stays valid and is quarantined; after it, the "
                 "recovery is forward: a new value and the rotation run again."
                 if overlap
-                else "The host step is the cutover: the executor undoes it by writing the old "
-                "value back and restarting, and after the store step it the recovery is forward: a new value "
-                "and the rotation run again."
+                else "The host step is the cutover: the executor undoes it by writing the old value back "
+                "and restarting. After the store step the recovery is forward: a new value and "
+                "the rotation run again."
             ),
             "escalation_target": OWNER,
         },

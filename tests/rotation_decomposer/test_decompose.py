@@ -251,8 +251,7 @@ def test_decomposer_generates_postgres_units_with_no_person_act() -> None:
     ]
     assert all(d["kind"] == "work_unit" for d in body["dependencies"])
     assert all(
-        "host_without_overlap" not in u["authority"]["constraints"]
-        for u in body["proposed_units"]
+        "host_without_overlap" not in u["authority"]["constraints"] for u in body["proposed_units"]
     )
 
 
