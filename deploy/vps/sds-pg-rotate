@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3
 """Rotate a Postgres role's password on this host. Runs as root behind an SSH forced command.
 
 One JSON line on stdin, one JSON line on stdout:
@@ -6,33 +6,46 @@ One JSON line on stdin, one JSON line on stdout:
     {"verb": "set" | "probe" | "loaded", "target": "<name>", "password": "<64 hex>"?}
 
 `set` answers {"changed": bool}, `probe` {"status": 200 | 401 | null}, `loaded`
-{"fingerprints": {container: "<sha256 first 16>:<length>"}}. A refusal answers {"refused": reason}
-and exits 2. Targets come from the root-owned TARGETS_PATH, never from the request. No verb returns
-a password, logs one, or puts one in argv. Stdlib only.
+{"fingerprints": {"<container>/<env>": "<sha256 first 16>:<length>"}}. A refusal answers
+{"refused": reason} and exits 2. Targets come from the root-owned TARGETS_PATH, never from the
+request. No verb returns a password, logs one, or puts one in argv; `set` sends Postgres only a
+SCRAM-SHA-256 verifier, so the plaintext cannot reach its statement log. Stdlib only, Python 3.12.
 """
 
 from __future__ import annotations
 
+import base64
 import hashlib
+import hmac
 import json
+import os
 import re
+import secrets
 import subprocess
 import sys
 import tomllib
 from typing import Any
 
 TARGETS_PATH = "/etc/sds-pg-rotate/targets.toml"
+DOCKER = "/usr/bin/docker"
 PASSWORD = re.compile(r"[0-9a-f]{64}")
 IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_.-]*")
 ENV_NAME = re.compile(r"[A-Z_][A-Z0-9_]*")
 FINGERPRINT_PREFIX = 16
+SCRAM_ITERATIONS = 4096
 TIMEOUT = 60
 
 # Postgres trusts loopback and the socket, so only a non-loopback address exercises the password.
-PROBE_SCRIPT = (
-    "IFS= read -r PGPASSWORD; export PGPASSWORD; "
-    'exec psql -h "$(hostname -i | cut -d" " -f1)" -U "$1" -d "$2" -tAc "select 1"'
-)
+# An empty or loopback address exits 3 before psql runs; -w forbids a password prompt.
+PROBE_SCRIPT = """\
+IFS= read -r PGPASSWORD
+export PGPASSWORD
+addr=$(hostname -i | cut -d' ' -f1)
+case "$addr" in
+  ''|127.*|::1|::ffff:127.*) exit 3 ;;
+esac
+exec psql -w -h "$addr" -U "$1" -d "$2" -tAc 'select 1'
+"""
 
 
 class Refused(Exception):
@@ -41,48 +54,72 @@ class Refused(Exception):
 
 def _docker(args: list[str], stdin: str = "") -> subprocess.CompletedProcess[str]:
     try:
-        return subprocess.run(  # noqa: S603
-            ["docker", *args],  # noqa: S607
+        return subprocess.run(
+            [DOCKER, *args],
             input=stdin,
             capture_output=True,
             text=True,
             timeout=TIMEOUT,
             check=False,
         )
-    except OSError, subprocess.SubprocessError:
+    except (OSError, subprocess.SubprocessError):
         raise Refused("docker_unavailable") from None
 
 
-def _target(name: object) -> dict[str, Any]:
+def scram_verifier(password: str, salt: bytes | None = None) -> str:
+    """The SCRAM-SHA-256 verifier Postgres stores for `password` (RFC 5802 / 7677)."""
+    salt = salt if salt is not None else secrets.token_bytes(16)
+    salted = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, SCRAM_ITERATIONS)
+    client_key = hmac.new(salted, b"Client Key", hashlib.sha256).digest()
+    stored_key = hashlib.sha256(client_key).digest()
+    server_key = hmac.new(salted, b"Server Key", hashlib.sha256).digest()
+    parts = [base64.b64encode(raw).decode() for raw in (salt, stored_key, server_key)]
+    return f"SCRAM-SHA-256${SCRAM_ITERATIONS}:{parts[0]}${parts[1]}:{parts[2]}"
+
+
+def _load_targets() -> dict[str, Any]:
     try:
         with open(TARGETS_PATH, "rb") as handle:
-            targets = tomllib.load(handle).get("target", {})
-    except OSError, tomllib.TOMLDecodeError:
+            if os.geteuid() == 0 and os.fstat(handle.fileno()).st_uid != 0:
+                raise Refused("targets_untrusted")
+            return tomllib.load(handle).get("target", {})
+    except (OSError, tomllib.TOMLDecodeError):
         raise Refused("targets_unreadable") from None
-    target = targets.get(name) if isinstance(name, str) else None
+
+
+def _ident(value: object) -> str:
+    if not isinstance(value, str) or not IDENT.fullmatch(value):
+        raise Refused("bad_target")
+    return value
+
+
+def _target(name: object) -> dict[str, Any]:
+    target = _load_targets().get(name) if isinstance(name, str) else None
     if not isinstance(target, dict):
         raise Refused("unknown_target")
     for key in ("container", "role", "database"):
-        if not isinstance(target.get(key), str) or not IDENT.fullmatch(target[key]):
-            raise Refused("bad_target")
+        _ident(target.get(key))
     return target
 
 
 def _probe(target: dict[str, Any], password: str) -> int | None:
-    done = _docker(
-        [
-            "exec",
-            "-i",
-            target["container"],
-            "sh",
-            "-c",
-            PROBE_SCRIPT,
-            "sh",
-            target["role"],
-            target["database"],
-        ],
-        stdin=password + "\n",
-    )
+    try:
+        done = _docker(
+            [
+                "exec",
+                "-i",
+                target["container"],
+                "sh",
+                "-c",
+                PROBE_SCRIPT,
+                "sh",
+                target["role"],
+                target["database"],
+            ],
+            stdin=password + "\n",
+        )
+    except Refused:
+        return None
     if done.returncode == 0:
         return 200
     if "password authentication failed" in done.stderr:
@@ -91,9 +128,12 @@ def _probe(target: dict[str, Any], password: str) -> int | None:
 
 
 def _set(target: dict[str, Any], password: str) -> dict[str, Any]:
-    if _probe(target, password) == 200:
+    status = _probe(target, password)
+    if status == 200:
         return {"changed": False}
-    sql = f"ALTER ROLE \"{target['role']}\" WITH PASSWORD '{password}';\n"
+    if status is None:
+        raise Refused("probe_unavailable")
+    sql = f"ALTER ROLE \"{target['role']}\" WITH PASSWORD '{scram_verifier(password)}';\n"
     done = _docker(
         [
             "exec",
@@ -112,39 +152,49 @@ def _set(target: dict[str, Any], password: str) -> dict[str, Any]:
     )
     if done.returncode != 0:
         raise Refused("alter_failed")
+    if _probe(target, password) != 200:
+        raise Refused("alter_unproven")
     return {"changed": True}
 
 
 def _loaded(target: dict[str, Any]) -> dict[str, Any]:
+    consumers = target.get("consumer")
+    if not isinstance(consumers, list) or not consumers:
+        raise Refused("bad_target")
     prints: dict[str, str] = {}
-    for consumer in target.get("consumer", []):
-        container, env = consumer.get("container"), consumer.get("env")
-        if not (isinstance(container, str) and IDENT.fullmatch(container)):
+    for consumer in consumers:
+        if not isinstance(consumer, dict):
             raise Refused("bad_target")
-        if not (isinstance(env, str) and ENV_NAME.fullmatch(env)):
+        container = _ident(consumer.get("container"))
+        env = consumer.get("env")
+        if not isinstance(env, str) or not ENV_NAME.fullmatch(env):
             raise Refused("bad_target")
         done = _docker(["exec", container, "sh", "-c", f'printf %s "${env}"'])
         value = done.stdout if done.returncode == 0 else ""
         digest = hashlib.sha256(value.encode()).hexdigest()[:FINGERPRINT_PREFIX]
-        prints[container] = f"{digest}:{len(value)}" if value else ""
+        prints[f"{container}/{env}"] = f"{digest}:{len(value)}" if value else ""
     return {"fingerprints": prints}
 
 
-def run(line: str) -> tuple[dict[str, Any], int]:
+def _parse(raw: bytes) -> dict[str, Any]:
     try:
-        try:
-            request = json.loads(line)
-        except ValueError:
-            raise Refused("bad_request") from None
-        if not isinstance(request, dict):
-            raise Refused("bad_request")
+        request = json.loads(raw.decode("utf-8"))
+    except (ValueError, RecursionError):
+        raise Refused("bad_request") from None
+    if not isinstance(request, dict):
+        raise Refused("bad_request")
+    return request
+
+
+def run(raw: bytes) -> tuple[dict[str, Any], int]:
+    try:
+        request = _parse(raw)
         verb = request.get("verb")
         if verb not in ("set", "probe", "loaded"):
             raise Refused("unknown_verb")
-        if verb != "loaded":
-            password = request.get("password")
-            if not isinstance(password, str) or not PASSWORD.fullmatch(password):
-                raise Refused("bad_password")
+        password = request.get("password")
+        if verb != "loaded" and not (isinstance(password, str) and PASSWORD.fullmatch(password)):
+            raise Refused("bad_password")
         target = _target(request.get("target"))
         if verb == "loaded":
             return _loaded(target), 0
@@ -156,7 +206,7 @@ def run(line: str) -> tuple[dict[str, Any], int]:
 
 
 def main() -> int:
-    answer, code = run(sys.stdin.readline())
+    answer, code = run(sys.stdin.buffer.readline())
     sys.stdout.write(json.dumps(answer) + "\n")
     return code
 

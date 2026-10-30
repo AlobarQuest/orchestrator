@@ -131,6 +131,11 @@ line-length = 100
 # formatter is excluded from them rather than allowed to rewrite them.
 extend-exclude = ["*.md"]
 
+# The VPS helper runs on the host's Python 3.12; the project target would let the formatter strip
+# the parentheses 3.12 requires around a multi-exception `except`.
+[tool.ruff.per-file-target-version]
+"deploy/vps/sds-pg-rotate" = "py312"
+
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "C90"]
 
