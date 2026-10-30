@@ -305,8 +305,8 @@ def render(entry: RegistryEntry, occurrence: str, created_at: str) -> dict[str, 
                 "recovery is forward: a new value and the rotation run again."
                 if overlap
                 else "If the host step itself fails, the executor writes the old value back and "
-                "restarts, leaving the keeper unchanged. Once host finishes, recovery is forward: a new "
-                "value and the rotation run again."
+                "restarts, leaving the keeper unchanged. Once host finishes, recovery is forward: "
+                "a new value and the rotation run again."
             ),
             "escalation_target": OWNER,
         },
