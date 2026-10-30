@@ -109,12 +109,16 @@ from orchestrator.services.landing.interfaces import (
     InertReadGateway,
     Term,
 )
-from orchestrator.services.landing.revert_build import REVERT_BRANCH_PREFIX, is_exact_inverse
+from orchestrator.services.landing.revert_build import REVERT_BRANCH_PREFIX
 from orchestrator.services.landing.revert_record import (
     RevertSubject,
     recorded_revert,
     revert_in_progress,
     reverted_versions,
+)
+from orchestrator.services.landing.revert_subject import (
+    LANDING_REPOSITORY_REVERTING,
+    revert_subject_term,
 )
 from orchestrator.services.landing.terms import (
     NOT_HELD,
@@ -160,24 +164,6 @@ INERT_LANDING_REPOSITORY_NOT_DECLARED: Final = "inert_landing_repository_not_dec
 # rests on -- whether the unit completed, whether the verifier decided its criteria from observed
 # evidence, whether a human's authority approval is bound to the envelope's fingerprint.
 INERT_LANDING_AUTHOR_NOT_PERMITTED: Final = "inert_landing_author_not_permitted"
-
-# Landing Part 3a. A pull request from a revert branch (`REVERT_BRANCH_PREFIX`) is a revert
-# subject only when a machine account opened it and a `revert_opened` record names it as its
-# revert on that record's own branch. Any other one is refused by this name: nobody but the SDS
-# opens those branches, so it is a finding.
-LANDING_REVERT_NOT_RECORDED: Final = "landing_revert_not_recorded"
-# The revert's head, against the default branch's head, no longer changes exactly the paths the
-# bump touched back to the bump's parent, or the default branch moved one of them since.
-LANDING_REVERT_NOT_EXACT_INVERSE: Final = "landing_revert_not_exact_inverse"
-# A tree or the default branch's head could not be read, so the inverse check was not asked.
-LANDING_REVERT_UNREADABLE: Final = "landing_revert_unreadable"
-# A landing in this repository is on its way to a revert (`revert_record.revert_in_progress`), so
-# no other bump lands here until it has: a sibling landed on top of the bad bump would touch the
-# paths the revert restores and make it an overlap. Asked of a bump only: the revert subject is
-# what it waits for, and a fork's upstream sync is not a bump. The landers report it `waiting`,
-# and it clears when the revert lands. The branch-update scan counts it releasing, so it never
-# withholds the revert from being freshened.
-LANDING_REPOSITORY_REVERTING: Final = "landing_repository_reverting"
 
 
 @dataclass(frozen=True)
@@ -546,48 +532,6 @@ def _revert_term(
     revert: RevertSubject | None,
     gateway: InertReadGateway,
 ) -> Term:
-    """May this revert pull request land? Landing Part 3a.
-
-    A revert is not a bump, so it is asked none of a bump's questions -- author, ecosystem, hold,
-    reverted version -- and is asked three of its own instead, in order:
-
-    1. Is it the one the record names: a `revert_opened` record whose revert this pull request is,
-       on that record's own branch, opened by a machine account. The record is what proves the SDS
-       opened it; no configuration names the App's login. The binding is the pull request NUMBER
-       the record wrote when the SDS opened it, so `author_is_bot` need not name which bot: no
-       other account can be the author of that number, and the exact-inverse check below decides
-       what it changes whoever pushed to it.
-    2. Is its head current with its base. Always required here, and asked BEFORE the inverse: a
-       merely-behind revert differs from its base on every path the base moved since, and reporting
-       that as not-an-inverse would never be freshened.
-    3. Is its head, against the default branch's head, exactly the inverse of the bump's squash
-       merge (`revert_build.is_exact_inverse`), which also refuses a base that moved a touched path.
-
-    The default branch's head is read here, separately from the freshness read; if it moves between
-    the two, the landing meets the same race every landing does.
-
-    Every App read here is bounded as every read of this lane is: the policy's declared population
-    and the grant term are asked by the caller for the same answer, and nothing here writes -- the
-    one write, the landing, happens only on a satisfied answer, which needs the grant.
-    """
-    expected = f"{REVERT_BRANCH_PREFIX}pr-{revert.pr_number}" if revert is not None else None
-    if revert is None or pull.head_ref != expected or not pull.author_is_bot:
-        return Term(False, (LANDING_REVERT_NOT_RECORDED,))
-    fresh = freshness_term(repository, pull, gateway, required=True)
-    if not fresh.met:
-        return fresh
-    try:
-        base = gateway.default_branch_head(repository=repository)
-        exact = is_exact_inverse(
-            gateway,
-            repository,
-            revert_head_sha=pull.head_sha,
-            base_sha=base.sha,
-            merge_sha=revert.merge_commit_sha,
-            parent_sha=revert.parent_sha,
-        )
-    except EstateGatewayError:
-        return Term(False, (LANDING_REVERT_UNREADABLE,))
-    if not exact:
-        return Term(False, (LANDING_REVERT_NOT_EXACT_INVERSE,))
-    return Term(True, ())
+    """May this revert pull request land? Landing Part 3a; the terms are `revert_subject`'s, shared
+    with the estate lane. The inert lane names no author for a revert beyond a machine account."""
+    return revert_subject_term(repository, pull, revert, gateway)

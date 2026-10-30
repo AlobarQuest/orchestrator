@@ -52,6 +52,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Final, Protocol, TypeGuard
 from urllib.parse import quote
 
@@ -69,6 +70,7 @@ from orchestrator.services.landing.estate_landing_admission import (
     estate_landing_admission,
 )
 from orchestrator.services.landing.interfaces import (
+    ESTATE_LANDING_EVENT_PREFIX,
     SQUASH,
     BranchHead,
     EstateGatewayError,
@@ -84,6 +86,7 @@ from orchestrator.services.landing.interfaces import (
     TreeEntry,
 )
 from orchestrator.services.landing.lane_act import LandingLane, land_pull_request
+from orchestrator.services.landing.revert_landed import record_revert_landed
 
 GITHUB_API_URL: Final = "https://api.github.com"
 
@@ -111,7 +114,7 @@ ESTATE_MERGE_REFUSED_BY_REMOTE: Final = "estate_merge_refused_by_remote"
 ESTATE_MERGE_HEAD_MOVED: Final = "estate_merge_head_moved"
 
 _LANE: Final = LandingLane(
-    event_prefix="estate_pr_merge",
+    event_prefix=ESTATE_LANDING_EVENT_PREFIX,
     not_admissible=ESTATE_MERGE_NOT_ADMISSIBLE,
     head_moved=ESTATE_MERGE_HEAD_MOVED,
     refused_by_remote=ESTATE_MERGE_REFUSED_BY_REMOTE,
@@ -180,6 +183,9 @@ def land_estate_pull_request(
         ),
         remote_call=lambda admission, head_sha: _act(gateway, admission, head_sha),
         change_record_id=lambda admission: admission.change_record_id,
+        # Landing Part 3b: a revert the SDS opened lands here too, and is recorded and held as
+        # the inert lane's are.
+        on_landed=lambda record: record_revert_landed(session, record, command.actor),
     )
 
 
@@ -216,7 +222,7 @@ def _trailers(admission: EstateLandingAdmission) -> str:
 
 
 class GitHubEstatePullRequests:
-    """The real gateway. Twenty calls, and nine of them change anything.
+    """The real gateway. Twenty-one calls, and nine of them change anything.
 
     Holds a token PROVIDER rather than a token, because an installation token expires within the
     hour and a long-lived process would otherwise carry a dead one. Nothing here logs, formats or
@@ -620,6 +626,43 @@ class GitHubEstatePullRequests:
                     latest[(run_id, job.name)] = job
         return tuple(latest.values())
 
+    def compare_status(self, *, repository: str, base: str, head: str) -> str:
+        """GitHub's compare status of `head` against `base`. Landing Part 3b.
+
+        A commit the repository does not have is a 404, and raises: a served commit that cannot be
+        placed against the merge commit is unreadable, never fine.
+        """
+        body = self._get(
+            f"{GITHUB_API_URL}/repos/{repository}/compare/"
+            f"{quote(base, safe='')}...{quote(head, safe='')}"
+        )
+        if body is None:
+            raise EstateGatewayError("commit_not_found", 404)
+        status = body.get("status") if isinstance(body, dict) else None
+        if not isinstance(status, str) or not status:
+            raise EstateGatewayError("compare_response_invalid")
+        return status
+
+    def committed_at(self, *, repository: str, sha: str) -> datetime:
+        """The commit's committer date: for a squash merge, the moment it landed. Landing Part 3b.
+
+        A commit the repository does not have, or a date that cannot be read, raises: a landing
+        with no time cannot be told how long production has stood.
+        """
+        body = self._get(f"{GITHUB_API_URL}/repos/{repository}/commits/{quote(sha, safe='')}")
+        if body is None:
+            raise EstateGatewayError("commit_not_found", 404)
+        commit = body.get("commit") if isinstance(body, dict) else None
+        committer = commit.get("committer") if isinstance(commit, dict) else None
+        date = committer.get("date") if isinstance(committer, dict) else None
+        try:
+            when = datetime.fromisoformat(str(date).replace("Z", "+00:00"))
+        except ValueError as error:
+            raise EstateGatewayError("commit_response_invalid") from error
+        if when.tzinfo is None:
+            raise EstateGatewayError("commit_response_invalid")
+        return when
+
     def parent_of(self, *, repository: str, sha: str) -> str:
         """The single parent of a squash merge. Landing Part 3a.
 
@@ -637,8 +680,12 @@ class GitHubEstatePullRequests:
             raise EstateGatewayError("commit_response_invalid")
         return parent
 
-    def rerun_failed_jobs(self, *, repository: str, run_id: int) -> None:
-        """Ask the platform to rerun this run's failed jobs, once. Landing Part 3a.
+    def rerun_job(self, *, repository: str, job_id: int) -> None:
+        """Ask the platform to rerun one job, once. Landing Part 3 (one job since Part 3b).
+
+        One job by its id, never a run's failed jobs: those include failed jobs the watch never
+        judged, and in a repository that redeploys one of them is the step that redeploys. The
+        platform reruns the jobs that need this one too, as it would for any rerun of it.
 
         **201 Created is success**, not 200. The body names nothing this side needs, and nothing
         re-reads to confirm: the new attempt can take a while to appear, which the judgment reads
@@ -646,7 +693,7 @@ class GitHubEstatePullRequests:
         """
         self._send(
             httpx.post,
-            f"{GITHUB_API_URL}/repos/{repository}/actions/runs/{run_id}/rerun-failed-jobs",
+            f"{GITHUB_API_URL}/repos/{repository}/actions/jobs/{job_id}/rerun",
             {},
             expected=201,
             status_code="rerun_status",
@@ -849,15 +896,18 @@ def _run_from_row(row: Any) -> tuple[int, str, str]:
 
 
 def _job_from_row(row: Any, run_id: int, workflow: str, event: str) -> Job:
-    """One job row, strictly: a job with no name or attempt cannot be matched to anything."""
+    """One job row, strictly: a job with no name, attempt or id cannot be matched or rerun."""
     if not isinstance(row, dict):
         raise EstateGatewayError("jobs_response_invalid")
     name = row.get("name")
     attempt = row.get("run_attempt")
+    job_id = row.get("id")
     conclusion = row.get("conclusion")
     if not isinstance(name, str) or not name:
         raise EstateGatewayError("jobs_response_invalid")
     if not isinstance(attempt, int) or isinstance(attempt, bool):
+        raise EstateGatewayError("jobs_response_invalid")
+    if not isinstance(job_id, int) or isinstance(job_id, bool):
         raise EstateGatewayError("jobs_response_invalid")
     return Job(
         name=name,
@@ -866,6 +916,7 @@ def _job_from_row(row: Any, run_id: int, workflow: str, event: str) -> Job:
         attempt=attempt,
         workflow=workflow,
         event=event,
+        job_id=job_id,
     )
 
 

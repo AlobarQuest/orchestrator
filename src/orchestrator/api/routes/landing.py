@@ -24,14 +24,19 @@ from orchestrator.api.schemas.landing import (
     InertLandingAdmissionResponse,
     InertPrMergeCommandModel,
     InertPrMergeResponse,
+    LandingPinnedCommandModel,
+    LandingRepointCommandModel,
+    LandingRestoreCommandModel,
     LandingRevertCommandModel,
     LandingRevertResponse,
     LandingWatchResponse,
+    OpenedRevertsResponse,
     PrMergeAdmissionResponse,
     PrMergeCommandModel,
     PrMergeResponse,
 )
-from orchestrator.services.github_app import token_provider_for
+from orchestrator.config import Settings
+from orchestrator.services.github_app import GitHubAppCredentials, token_provider_for
 from orchestrator.services.landing.branch_update_serialization import (
     branch_update_sibling_outcome,
     estate_sibling_composer,
@@ -77,10 +82,18 @@ from orchestrator.services.landing.pr_merge import (
 )
 from orchestrator.services.landing.pr_merge_admission import pr_merge_admission
 from orchestrator.services.landing.revert_act import (
+    PinnedCommand,
+    RepointCommand,
+    RestoreCommand,
     RevertCommand,
+    RevertLane,
     act_on_landing,
     landing_watch,
+    record_pinned,
+    record_repoint,
+    record_restored,
 )
+from orchestrator.services.landing.revert_record import opened_reverts
 
 router = APIRouter(prefix="/api/v1", responses=ERROR_RESPONSES)
 
@@ -500,23 +513,48 @@ def held_pr_close_route(
 
 @router.get("/landing-watch", response_model=LandingWatchResponse)
 def landing_watch_route(actor: ActorDep, session: SessionDep, settings: SettingsDep) -> object:
-    """Landing Part 3a: the inert lane's recent landings, each judged by its own checks on the
-    default branch, and every revert record still in the watch.
+    """Landing Part 3: the landing lanes' recent landings, each judged by its own checks on the
+    default branch and, where landing redeploys, by what production serves; and every revert record
+    still in the watch.
 
     Reads only, but reads through the App, so the system actor alone may ask: the same actor that
     acts on what it answers. Each repository's reads are bounded by the inert lane's grant term.
     """
     authorize_actor(actor, "read the landing watch")
     credentials = github_app_credentials_for(settings)
-    gateway = GitHubInertPullRequests(token_provider_for(credentials))
+    inert, estate = _revert_lanes(settings, credentials)
     return {
         "landings": landing_watch(
             session,
-            gateway,
-            enabled=settings.inert_landing_enabled,
+            inert=inert,
+            estate=estate,
             credentials_configured=credentials is not None,
         )
     }
+
+
+@router.get("/opened-reverts", response_model=OpenedRevertsResponse)
+def opened_reverts_route(actor: ActorDep, session: SessionDep) -> object:
+    """Landing Part 3b: every revert the SDS opened and has not landed, from its own records.
+
+    Any authenticated role may read, OBSERVER included: `change_proposer` reads it with the
+    observer bearer to file a revert pull request's change record only when a record here names
+    it. Database rows only -- unlike the landing watch, nothing here reads through the App.
+    """
+    del actor
+    return {"reverts": opened_reverts(session)}
+
+
+def _revert_lanes(
+    settings: Settings, credentials: GitHubAppCredentials | None
+) -> tuple[RevertLane, RevertLane]:
+    """Each lane's switch and its own App gateway: the inert lane's landings under the inert
+    switch, the estate lane's (the landings that redeploy) under the estate switch."""
+    provider = token_provider_for(credentials)
+    return (
+        RevertLane(GitHubInertPullRequests(provider), settings.inert_landing_enabled),
+        RevertLane(GitHubEstatePullRequests(provider), settings.estate_landing_enabled),
+    )
 
 
 @router.post("/landing-revert", response_model=LandingRevertResponse)
@@ -528,9 +566,11 @@ def landing_revert_route(
 ) -> object:
     """Landing Part 3a: act once on one watched landing -- rerun its failing runs, or open its
     revert -- by the judgment made again here, never the caller's. The inert lane's switch and
-    credentials, and its grant term on the repository, bound it.
+    credentials, and its grant term on the repository, bound it; a landing that redeploys is under
+    the estate lane's switch and gateway instead (Part 3b).
     """
     credentials = github_app_credentials_for(settings)
+    inert, estate = _revert_lanes(settings, credentials)
     return act_on_landing(
         session,
         RevertCommand(
@@ -540,7 +580,91 @@ def landing_revert_route(
             idempotency_key=body.idempotency_key,
             expected_status=body.expected_status,
         ),
-        GitHubInertPullRequests(token_provider_for(credentials)),
-        enabled=settings.inert_landing_enabled,
+        inert=inert,
+        estate=estate,
+        credentials_configured=credentials is not None,
+    )
+
+
+@router.post("/landing-repoint", response_model=LandingRevertResponse)
+def landing_repoint_route(
+    body: LandingRepointCommandModel,
+    actor: ActorDep,
+    session: SessionDep,
+    settings: SettingsDep,
+) -> object:
+    """Landing Part 3b: the estate lander is pointing a landing that redeploys at the image of the
+    bump's parent. The landing is judged again here and recorded `repointed`, with the images, only
+    when it is still `bad`. The estate lane's switch, credentials and grant term bound it.
+    """
+    credentials = github_app_credentials_for(settings)
+    inert, estate = _revert_lanes(settings, credentials)
+    return record_repoint(
+        session,
+        RepointCommand(
+            repository=body.repository,
+            pr_number=body.pr_number,
+            actor=actor,
+            idempotency_key=body.idempotency_key,
+            expected_status=body.expected_status,
+            pinned_images=body.pinned_images,
+        ),
+        inert=inert,
+        estate=estate,
+        credentials_configured=credentials is not None,
+    )
+
+
+@router.post("/landing-pinned", response_model=LandingRevertResponse)
+def landing_pinned_route(
+    body: LandingPinnedCommandModel,
+    actor: ActorDep,
+    session: SessionDep,
+    settings: SettingsDep,
+) -> object:
+    """Landing Part 3b: the estate lander set every pinned application's tag to the parent's.
+    Confirms the pin of a `repointed` record, so a tag later found on its restore tag reads as a
+    person's restore rather than as a pin that never happened.
+    """
+    credentials = github_app_credentials_for(settings)
+    inert, estate = _revert_lanes(settings, credentials)
+    return record_pinned(
+        session,
+        PinnedCommand(
+            repository=body.repository,
+            pr_number=body.pr_number,
+            actor=actor,
+            idempotency_key=body.idempotency_key,
+            expected_status=body.expected_status,
+        ),
+        inert=inert,
+        estate=estate,
+        credentials_configured=credentials is not None,
+    )
+
+
+@router.post("/landing-restored", response_model=LandingRevertResponse)
+def landing_restored_route(
+    body: LandingRestoreCommandModel,
+    actor: ActorDep,
+    session: SessionDep,
+    settings: SettingsDep,
+) -> object:
+    """Landing Part 3b: the revert landed, the moving tag is back and production serves the revert:
+    record `restored`. Only a landed revert that pinned production is restored.
+    """
+    credentials = github_app_credentials_for(settings)
+    inert, estate = _revert_lanes(settings, credentials)
+    return record_restored(
+        session,
+        RestoreCommand(
+            repository=body.repository,
+            pr_number=body.pr_number,
+            actor=actor,
+            idempotency_key=body.idempotency_key,
+            expected_status=body.expected_status,
+        ),
+        inert=inert,
+        estate=estate,
         credentials_configured=credentials is not None,
     )

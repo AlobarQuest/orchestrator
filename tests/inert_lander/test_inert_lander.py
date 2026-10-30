@@ -1431,3 +1431,25 @@ def test_an_act_that_did_nothing_is_a_finding_only_when_its_read_failed(
 
     assert run(["--submit"]) == code
     assert f"{REPOSITORY}#{LANDED}  {expected:<12} {verdict}: the reason" in capsys.readouterr().out
+
+
+def test_the_estate_lanes_landings_in_the_watch_are_never_this_lanes(
+    monkeypatch, revert_alerts, capsys
+) -> None:
+    """Landing Part 3b: the watch serves both lanes' landings. A landing that redeploys is the
+    estate lander's to act on and alert about; this one acts, reports and alerts on its own."""
+    mine = _watched("flaky_retry", lane="inert")
+    theirs = [
+        _watched("bad", pr_number=79, lane="estate"),
+        _watched(None, "refused_overlap", pr_number=80, lane="estate"),
+        _watched(None, "revert_opened", pr_number=81, revert_pr_number=82, lane="estate"),
+    ]
+    client = FakeOrchestrator(watch=[mine, *theirs])
+    _wire(monkeypatch, FakeGitHub({REPOSITORY: []}), client, _rule())
+
+    assert run(["--submit"]) == EXIT_OK
+
+    assert [number for _, number, _ in client.reverts] == [LANDED]
+    assert revert_alerts.calls == [("inert-landing", [mine])]
+    out = capsys.readouterr().out
+    assert all(f"{REPOSITORY}#{number}" not in out for number in (79, 80, 81))

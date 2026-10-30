@@ -29,6 +29,7 @@ This package imports nothing from any program, and no program's wording appears 
 
 from __future__ import annotations
 
+import ipaddress
 from collections.abc import Callable, Mapping
 from typing import Any
 from urllib.parse import urlsplit
@@ -38,6 +39,10 @@ import httpx
 TRANSPORT_ERRORS = (httpx.HTTPError, httpx.InvalidURL, ValueError)
 
 MAX_DNS_LABEL = 63
+
+# Tailscale's address range. WireGuard encrypts everything sent to it, so plain HTTP is allowed
+# there and nowhere else: production Coolify's API has no TLS (ADR-0055 amendment 9).
+TAILNET = ipaddress.ip_network("100.64.0.0/10")
 
 
 class TransportFailure(Exception):
@@ -66,6 +71,19 @@ def base_url_problem(base_url: str) -> str | None:
         if not label or len(label) > MAX_DNS_LABEL:
             return "has a malformed host"
     return None
+
+
+def tailnet_or_https_problem(base_url: str) -> str | None:
+    """Why a write credential may not be sent to `base_url`, or None if it may: https, or plain
+    http to a tailnet address (production Coolify, ADR-0055 amendment 9)."""
+    parsed = urlsplit(base_url.strip())
+    if parsed.scheme == "http":
+        try:
+            address = ipaddress.ip_address(parsed.hostname or "")
+        except ValueError:
+            return "must be https, or http to a tailnet address"
+        return None if address in TAILNET else "must be https, or http to a tailnet address"
+    return base_url_problem(base_url)
 
 
 def error_detail(response: httpx.Response, limit: int = 400) -> str:

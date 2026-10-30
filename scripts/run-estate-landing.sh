@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # One estate-landing pass: land the pull requests the estate has routed and approved, into the
-# repositories where landing changes something already serving (ADR-0019 increment 5b).
+# repositories where landing changes something already serving (ADR-0019 increment 5b), and take
+# the next step for any of this lane's landings that went bad (Landing Part 3b).
 #
-# WHY THIS RUNS IN THE CHANGE WINDOW AND THE PRODUCER DOES NOT. Proposing is not acting. A record
-# that exists before the window opens is the entire point of having one; landing IS the change,
-# and policy declares the hours in which something already serving may change. The orchestrator
-# refuses outside them regardless -- this schedule is so the pass HAPPENS then, not so that it is
-# allowed to.
+# HOURLY, AND IT LANDS BUMPS ONLY 02:00-06:00 NEW YORK. Proposing is not acting, and policy
+# declares the hours in which something already serving may change: the program itself asks about
+# ordinary bumps only in passes inside those hours (the orchestrator refuses outside its window
+# regardless). Every pass reads the watch and steps a bad landing on -- pointing production back at
+# the build before the bump, opening the revert, putting the moving tag back -- and lands the SDS's
+# own revert pull requests, which policy exempts from the window: a production pinned to an old
+# build should not wait a day for its revert.
 #
 # BARE INVOCATION ASKS FOR NOTHING. It reports every routed pull request and the condition each one
 # misses; `--submit` is what turns the report into a request. This wrapper must not supply it.
@@ -25,8 +28,17 @@
 # in-estate precedent for overriding the identity for a single foreign call.
 #
 # A `--submit` pass also raises one alert-hub alert, as the `sds-bridge` sender, for each pull
-# request held (or unreadable) for a day (`lander.held_alerts`); its token is fetched only then,
-# because a report run sends nothing.
+# request held (or unreadable) for a day (`lander.held_alerts`), and one per revert record and per
+# landing pinned or not pointed back; its token is fetched only then, because a report run sends
+# nothing.
+#
+# THE COOLIFY TOKEN IS FETCHED ONLY ON `--submit` TOO, and its absence is not fatal: the program
+# refuses every step that would change production by name and raises `landing-not-pointed-back`.
+# It is a dedicated token a person mints in Coolify; until the UUID below names it (or
+# `ESTATE_LANDING_COOLIFY_UUID` does), nothing is fetched. It is sent only over the tailnet.
+#
+# THE GITHUB TOKEN is the operator's own `gh` login, as the inert lander's: it reads the open pull
+# requests a revert is in and the registry's digests of this estate's images.
 #
 # EXPECT A FIRST PASS TO LAND NOTHING, and read that as the conditions working rather than as the
 # lane failing. A held pull request that names its condition is the whole point of the report.
@@ -63,6 +75,11 @@ CHANGE_MANAGER_UUID="314f276d-55ca-4ddc-a24d-b4a3013508cd"
 # The `sds-bridge` sender's alert-hub token, BWS `ALERT_HUB_SENDER_TOKEN_SDS_BRIDGE` in `SDS
 # Operator`, read with the narrow identity, as the bump proposer reads it.
 SDS_BRIDGE_ALERT_UUID="b415d03b-f92d-46b1-8a9d-b4f10103df49"
+# The estate lander's own Coolify token (Landing Part 3b): `read`, `write` and `deploy`, minted by a
+# person in Coolify and stored in `SDS Operator`, read with the narrow identity. The client bounds it
+# to one repository's applications (`estate_lander.image_repoint`). BWS
+# `COOLIFY_TOKEN_SDS_ESTATE_LANDER`; `ESTATE_LANDING_COOLIFY_UUID` overrides it.
+COOLIFY_TOKEN_UUID="${ESTATE_LANDING_COOLIFY_UUID:-f9f59233-0794-4ea8-9806-b4f3011e6147}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # ACTIVATION — a merged change is not live on this machine until the code is pulled. The estate's
@@ -88,8 +105,8 @@ activate_checkout "$REPO_ROOT" "$0" "$@"
 # reach nobody: a pass that stops running, or that fails every night, is silent. Armed AFTER
 # activation, because `activate_checkout` may `exec` and an `exec` does not fire an EXIT handler.
 # It reports and never gates -- every failure inside it logs a line and returns 0. Note this lane
-# runs FOUR times a night and the check is scheduled to expect all four: a single missed window is
-# a lane that half-stopped, which is the thing worth hearing about.
+# runs every hour and the check is scheduled to expect each: a missed hour is a lane that
+# half-stopped, which is the thing worth hearing about.
 # shellcheck disable=SC1091
 source "$REPO_ROOT/scripts/sds-deadman.sh"
 sds_deadman_arm sds-estate-landing --finding 3 "$@"
@@ -134,9 +151,18 @@ if [ -z "${ESTATE_LANDING_ORCHESTRATOR_TOKEN:-}" ]; then
   export ESTATE_LANDING_ORCHESTRATOR_TOKEN
 fi
 
+if [ -z "${ESTATE_LANDING_GITHUB_TOKEN:-}" ]; then
+  ESTATE_LANDING_GITHUB_TOKEN="$(gh auth token 2>/dev/null || true)"
+  export ESTATE_LANDING_GITHUB_TOKEN
+fi
+
 # `set -e` is deliberately not used, so a failed fetch would otherwise leave these EMPTY and fall
 # through -- into an exit 2 that reports "unusable input" for what is actually a credential
 # failure. Name each here, so the exit code means what this header says it means.
+if [ -z "${ESTATE_LANDING_GITHUB_TOKEN:-}" ]; then
+  echo "FATAL: no GitHub token (set ESTATE_LANDING_GITHUB_TOKEN or run gh auth login)" >&2
+  exit 1
+fi
 if [ -z "${ESTATE_LANDING_CHANGE_MANAGER_TOKEN:-}" ]; then
   echo "FATAL: could not read the change-manager credential from BWS" >&2
   exit 1
@@ -157,6 +183,13 @@ case " $* " in
       exit 1
     fi
     export SDS_BRIDGE_ALERT_TOKEN
+    if [ -z "${ESTATE_LANDING_COOLIFY_TOKEN:-}" ]; then
+      ESTATE_LANDING_COOLIFY_TOKEN="$(sds_bws_value "$COOLIFY_TOKEN_UUID" "$SDS_IDENTITY" || true)"
+      if [ -z "$ESTATE_LANDING_COOLIFY_TOKEN" ]; then
+        echo "[estate-landing] the Coolify token could not be read: re-points are refused" >&2
+      fi
+      export ESTATE_LANDING_COOLIFY_TOKEN
+    fi
     ;;
 esac
 

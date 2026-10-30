@@ -208,6 +208,33 @@ COVERAGE_MATRIX: tuple[MatrixRow, ...] = (
         "tests/services/test_revert_act.py::test_a_repeated_key_answers_from_its_event_and_acts_no_more",
     ),
     MatrixRow(
+        "landing repoint",
+        "/api/v1/landing-repoint",
+        # Landing Part 3b. The same record and locks as the revert act: a re-point moves the record
+        # to `repointed`, from which it is refused, and its event under the caller's key replays.
+        "pg_advisory_xact_lock on the repository + LandingRevert FOR UPDATE, unique per\n"
+        "(repository, pull request) + unique Event per caller key",
+        "tests/services/test_revert_repoint.py::test_a_repeated_repoint_key_answers_from_its_event",
+    ),
+    MatrixRow(
+        "landing pinned",
+        "/api/v1/landing-pinned",
+        # Landing Part 3b. The same record and locks: a confirmation is accepted from `repointed`
+        # as read, and its event under the caller's key replays.
+        "pg_advisory_xact_lock on the repository + LandingRevert FOR UPDATE, unique per\n"
+        "(repository, pull request) + unique Event per caller key",
+        "tests/services/test_revert_repoint.py::test_a_repeated_confirmation_key_answers_from_its_event",
+    ),
+    MatrixRow(
+        "landing restored",
+        "/api/v1/landing-restored",
+        # Landing Part 3b. A restore moves the record from `revert_landed` to `restored`, from
+        # which it is refused, and its event under the caller's key replays.
+        "pg_advisory_xact_lock on the repository + LandingRevert FOR UPDATE, unique per\n"
+        "(repository, pull request) + unique Event per caller key",
+        "tests/services/test_revert_repoint.py::test_a_repeated_restore_key_answers_from_its_event",
+    ),
+    MatrixRow(
         "inert pr branch update",
         "/api/v1/inert-pr-branch-update",
         # NO ROW OF ITS OWN, for the reason its deploying sibling gives: the act is repeatable by

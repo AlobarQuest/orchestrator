@@ -213,11 +213,11 @@ class GitHubReader:
         return str(sha) if is_sha(sha) else None
 
     def open_pull_requests(self, repository: str) -> list[dict[str, Any]]:
-        """Open pull requests, projected to the four fields a caller may key on.
+        """Open pull requests, projected to the fields a caller may key on.
 
         Projected rather than returned whole for the reason the estate learned from an MCP tool
         that returned secrets: a response passed through untouched is a response whose every
-        future field arrives in a transcript. Four fields, named here, and nothing else escapes.
+        future field arrives in a transcript. The fields are named here, and nothing else escapes.
 
         `author` is the login, and a bot is identified by `user.type == "Bot"` rather than by a
         `[bot]` suffix on the login -- the suffix is a display convention a machine account can
@@ -234,6 +234,8 @@ class GitHubReader:
             user = user if isinstance(user, dict) else {}
             base = item.get("base")
             base = base if isinstance(base, dict) else {}
+            head = item.get("head")
+            head = head if isinstance(head, dict) else {}
             pulls.append(
                 {
                     "number": item.get("number"),
@@ -242,6 +244,8 @@ class GitHubReader:
                     "is_bot": str(user.get("type", "")).lower() == "bot",
                     "draft": bool(item.get("draft")),
                     "base_ref": base.get("ref"),
+                    # Landing Part 3b: the branch, which tells the SDS's own revert apart.
+                    "head_ref": head.get("ref"),
                 }
             )
         return pulls

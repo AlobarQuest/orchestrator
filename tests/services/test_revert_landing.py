@@ -15,13 +15,7 @@ from sqlalchemy.orm import Session
 
 from orchestrator.persistence.models import EstatePrMerge, LandingRevert, SdsMemberHold
 from orchestrator.services.landing.estate_landing import LANDING_INERT, EstateAnswer
-from orchestrator.services.landing.inert_landing_admission import (
-    LANDING_REPOSITORY_REVERTING,
-    LANDING_REVERT_NOT_EXACT_INVERSE,
-    LANDING_REVERT_NOT_RECORDED,
-    LANDING_REVERT_UNREADABLE,
-    inert_landing_admission,
-)
+from orchestrator.services.landing.inert_landing_admission import inert_landing_admission
 from orchestrator.services.landing.inert_landing_policy import InertLandingAnswer
 from orchestrator.services.landing.inert_pr_merge import InertMergeCommand, land_inert_pull_request
 from orchestrator.services.landing.interfaces import (
@@ -34,6 +28,12 @@ from orchestrator.services.landing.interfaces import (
     TreeEntry,
 )
 from orchestrator.services.landing.revert_build import REVERT_BRANCH_PREFIX
+from orchestrator.services.landing.revert_subject import (
+    LANDING_REPOSITORY_REVERTING,
+    LANDING_REVERT_NOT_EXACT_INVERSE,
+    LANDING_REVERT_NOT_RECORDED,
+    LANDING_REVERT_UNREADABLE,
+)
 from orchestrator.services.landing.terms import (
     LANDING_VERSION_REVERTED,
     UpdateBumps,

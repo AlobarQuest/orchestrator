@@ -21,23 +21,33 @@ from orchestrator.api.routes import landing as landing_routes
 from orchestrator.config import Settings, get_settings
 from orchestrator.main import create_app
 from orchestrator.services.landing.revert_act import (
+    LANDING_RESTORE_NOT_LANDED,
     LANDING_REVERT_LANE_OFF,
     RevertActOutcome,
     WatchedLanding,
 )
 from orchestrator.services.landing.terms import LANDING_REPOSITORY_NOT_GRANTED
-from tests.api.test_lifecycle_api import SYSTEM
+from tests.api.test_lifecycle_api import SYSTEM, WORKER
+from tests.services.estate_landing_doubles import job_id_of
 from tests.services.inert_landing_doubles import INERT_REPOSITORY, LANDED_COMMIT
 from tests.services.test_member_proposals import grant_services
 from tests.services.test_revert_act import (
+    BEFORE_79,
+    BRAIN,
+    BRAIN_BUMP,
     BUMP,
+    MERGE_79,
     REVERT,
     RUN,
+    BrainGateway,
     WatchGateway,
+    everywhere,
     failing,
     job,
     landed_bump,
+    landed_on_brain,
 )
+from tests.services.test_revert_repoint import brain_gateway, pinned, stuck_on_the_parent
 
 WATCH = "/api/v1/landing-watch"
 REVERT_ROUTE = "/api/v1/landing-revert"
@@ -46,10 +56,18 @@ REVERT_ROUTE = "/api/v1/landing-revert"
 @pytest.fixture
 def watch_client(
     auth_config: AuthConfig, migrated_engine: Engine, monkeypatch: pytest.MonkeyPatch
-) -> Iterator[tuple[TestClient, dict[str, WatchGateway]]]:
-    slot: dict[str, WatchGateway] = {"gateway": WatchGateway(jobs=failing())}
+) -> Iterator[tuple[TestClient, dict[str, Any]]]:
+    slot: dict[str, Any] = {
+        "gateway": WatchGateway(jobs=failing()),
+        "estate": WatchGateway(),
+        "inert_enabled": True,
+        "estate_enabled": True,
+    }
     monkeypatch.setattr(
         landing_routes, "GitHubInertPullRequests", lambda _provider: slot["gateway"]
+    )
+    monkeypatch.setattr(
+        landing_routes, "GitHubEstatePullRequests", lambda _provider: slot["estate"]
     )
     with Session(migrated_engine) as seeding:
         landed_bump(seeding)
@@ -65,7 +83,8 @@ def watch_client(
             github_app_id="123456",
             github_app_installation_id="78901234",
             github_app_private_key_b64=SecretStr("cGVt"),
-            inert_landing_enabled=True,
+            inert_landing_enabled=slot["inert_enabled"],
+            estate_landing_enabled=slot["estate_enabled"],
         )
 
     app.dependency_overrides[get_session] = database_session
@@ -130,7 +149,7 @@ def test_a_flaky_landing_is_rerun_through_the_route(watch_client) -> None:
         True,
         "rerun_requested",
     )
-    assert slot["gateway"].reruns == [RUN]
+    assert slot["gateway"].reruns == [job_id_of("test", RUN, 1)]
     assert _watch(client)[0]["status"] == "rerun_requested"
 
 
@@ -213,3 +232,136 @@ def test_the_watch_refuses_by_name_without_app_credentials(db_client: TestClient
 
     assert response.status_code == 409, response.text
     assert response.json()["error"]["code"] == LANDING_REVERT_LANE_OFF
+
+
+def test_a_landing_that_redeploys_is_read_through_the_estate_gateway(
+    watch_client, migrated_engine: Engine
+) -> None:
+    client, slot = watch_client
+    with Session(migrated_engine) as seeding:
+        landed_on_brain(seeding)
+        everywhere(seeding, MERGE_79, minutes_ago=120)
+        seeding.commit()
+    slot["estate"] = BrainGateway()
+
+    served = {row["pr_number"]: row for row in _watch(client)}
+
+    assert served[BRAIN_BUMP]["verdict"] == "clean"
+    assert [number for _, number in slot["estate"].reads] == [BRAIN_BUMP]
+    assert [number for _, number in slot["gateway"].reads] == [BUMP]
+
+
+def test_each_lane_is_under_its_own_switch(watch_client, migrated_engine: Engine) -> None:
+    client, slot = watch_client
+    with Session(migrated_engine) as seeding:
+        landed_on_brain(seeding)
+        everywhere(seeding, MERGE_79, minutes_ago=120)
+        seeding.commit()
+    slot["estate"] = BrainGateway()
+    slot["estate_enabled"] = False
+
+    served = {row["pr_number"]: row for row in _watch(client)}
+
+    assert (served[BUMP]["verdict"], served[BRAIN_BUMP]["verdict"]) == ("flaky_retry", "unreadable")
+    assert served[BRAIN_BUMP]["detail"] == LANDING_REVERT_LANE_OFF
+    assert slot["estate"].reads == []
+
+    slot["inert_enabled"], slot["estate_enabled"] = False, True
+    served = {row["pr_number"]: row for row in _watch(client)}
+    assert (served[BUMP]["verdict"], served[BRAIN_BUMP]["verdict"]) == ("unreadable", "clean")
+
+    slot["estate_enabled"] = False
+    response = client.get(WATCH, headers=SYSTEM)
+    assert response.status_code == 409, response.text
+    assert response.json()["error"]["code"] == LANDING_REVERT_LANE_OFF
+
+
+def test_a_deploying_landing_is_repointed_reverted_and_restored_through_the_routes(
+    watch_client, migrated_engine: Engine
+) -> None:
+    """Landing Part 3b: the three steps the estate lander takes, each through its route, each
+    body carrying every field the outcome answers with; the watch serves the images and the
+    parent the lander needs."""
+    client, slot = watch_client
+    with Session(migrated_engine) as seeding:
+        stuck_on_the_parent(seeding)
+    slot["estate"] = brain_gateway()
+
+    served = {row["pr_number"]: row for row in _watch(client)}[BRAIN_BUMP]
+    assert (served["verdict"], served["lane"], served["parent_sha"]) == ("bad", "estate", BEFORE_79)
+    repointed = client.post(
+        "/api/v1/landing-repoint",
+        json={
+            "repository": BRAIN,
+            "pr_number": BRAIN_BUMP,
+            "expected_status": None,
+            "pinned_images": pinned(),
+            "idempotency_key": "repoint",
+        },
+        headers=SYSTEM,
+    )
+    assert repointed.status_code == 200, repointed.text
+    assert set(repointed.json()) == {field.name for field in fields(RevertActOutcome)}
+    assert repointed.json()["status"] == "repointed"
+    served = {row["pr_number"]: row for row in _watch(client)}[BRAIN_BUMP]
+    assert (served["status"], served["pinned_images"]) == ("repointed", pinned())
+
+    confirmed = client.post(
+        "/api/v1/landing-pinned",
+        json={
+            "repository": BRAIN,
+            "pr_number": BRAIN_BUMP,
+            "expected_status": "repointed",
+            "idempotency_key": "pinned",
+        },
+        headers=SYSTEM,
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    served = {row["pr_number"]: row for row in _watch(client)}[BRAIN_BUMP]
+    assert served["pinned_images"] == {
+        uuid: {**image, "pinned": "yes"} for uuid, image in pinned().items()
+    }
+
+    opened = client.post(
+        REVERT_ROUTE,
+        json={
+            "repository": BRAIN,
+            "pr_number": BRAIN_BUMP,
+            "expected_status": "repointed",
+            "idempotency_key": "open",
+        },
+        headers=SYSTEM,
+    )
+    assert opened.status_code == 200, opened.text
+    assert opened.json()["status"] == "revert_opened"
+
+    early = client.post(
+        "/api/v1/landing-restored",
+        json={
+            "repository": BRAIN,
+            "pr_number": BRAIN_BUMP,
+            "expected_status": "revert_opened",
+            "idempotency_key": "restore-early",
+        },
+        headers=SYSTEM,
+    )
+    assert early.status_code == 409
+    assert early.json()["error"]["code"] == LANDING_RESTORE_NOT_LANDED
+
+
+def test_only_the_system_actor_may_repoint_or_restore(watch_client) -> None:
+    client, _ = watch_client
+    for route, body in (
+        (
+            "/api/v1/landing-repoint",
+            {"expected_status": None, "pinned_images": pinned()},
+        ),
+        ("/api/v1/landing-pinned", {"expected_status": "repointed"}),
+        ("/api/v1/landing-restored", {"expected_status": "revert_landed"}),
+    ):
+        response = client.post(
+            route,
+            json={"repository": BRAIN, "pr_number": BRAIN_BUMP, "idempotency_key": "k", **body},
+            headers=WORKER,
+        )
+        assert response.status_code in (401, 403), (route, response.text)

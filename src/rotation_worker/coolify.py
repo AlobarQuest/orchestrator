@@ -19,13 +19,11 @@ answers plain HTTP (amendment 9).
 
 from __future__ import annotations
 
-import ipaddress
 from typing import Final, Literal
-from urllib.parse import urlsplit
 
 import httpx
 
-from estate_clients.confined import ConfinedClient, TransportFailure, base_url_problem
+from estate_clients.confined import ConfinedClient, TransportFailure, tailnet_or_https_problem
 from rotation_worker.contract import ContractError
 from rotation_worker.values import Value
 
@@ -34,21 +32,9 @@ TIMEOUT_SECONDS: Final = 60.0
 # The preview row first: if the production row's write then fails, nothing the running service
 # would load on its next restart has changed.
 PREVIEW_ROWS: Final = (True, False)
-# Tailscale's address range. WireGuard encrypts everything sent to it, so plain HTTP is allowed
-# there and nowhere else: production Coolify's API has no TLS (ADR-0055 amendment 9).
-TAILNET: Final = ipaddress.ip_network("100.64.0.0/10")
-
-
-def url_problem(base_url: str) -> str | None:
-    """Why the executor may not send its Coolify token to `base_url`, or None if it may."""
-    parsed = urlsplit(base_url.strip())
-    if parsed.scheme == "http":
-        try:
-            address = ipaddress.ip_address(parsed.hostname or "")
-        except ValueError:
-            return "must be https, or http to a tailnet address"
-        return None if address in TAILNET else "must be https, or http to a tailnet address"
-    return base_url_problem(base_url)
+# The executor sends its Coolify token only over TLS or to a tailnet address; the rule is shared
+# with the estate lander's Coolify client (`estate_clients.confined.tailnet_or_https_problem`).
+url_problem = tailnet_or_https_problem
 
 
 class CoolifyRefused(ContractError):

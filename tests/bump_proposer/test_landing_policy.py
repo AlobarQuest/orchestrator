@@ -18,6 +18,9 @@ comparison can fail.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import httpx
 import pytest
 
@@ -455,3 +458,18 @@ def test_that_agreement_is_a_measurement_and_not_a_tautology() -> None:
 
 def test_the_reader_returns_the_shape_the_pass_expects() -> None:
     assert isinstance(parse(LIVE), LandingPolicy)
+
+
+def test_the_version_fourteen_document_parses_and_its_revert_block_widens_nothing() -> None:
+    """Deploy policy 14 (Landing Part 3b) adds `landing.revert_landing`. This producer proposes
+    bumps, so it reads none of it, and the document still parses to the same populations and
+    exclusions version 13 declared. The fixture is change-manager's own `policy_dict(V14)`."""
+    document = json.loads(Path("tests/fixtures/deploy_policy_v14.json").read_text())
+    rule = parse(document)
+
+    assert rule.version == 14
+    assert rule.deploying == frozenset({"alobarquest/brain", "alobarquest/change-manager"})
+    assert rule.deploying_excluded_ecosystems == frozenset({"github_actions"})
+    assert rule.declares("AlobarQuest/sds-canary")
+    assert rule.permitted_authors == {"dependabot[bot]", "fork-secure-upstream-sync[bot]"}
+    assert "alobar-sds-dispatch[bot]" not in rule.permitted_authors

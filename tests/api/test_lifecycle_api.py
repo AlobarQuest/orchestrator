@@ -86,6 +86,10 @@ EXPECTED_VALUE_EXCEPTIONS = {
     # it moves, so the caller names the status it read (null for no record yet) and a record that
     # moved since is refused (`landing_revert_record_moved`).
     "/api/v1/landing-revert": "expected_status",
+    # Landing Part 3b. The same subject, two more steps on it: the re-point and the restore.
+    "/api/v1/landing-repoint": "expected_status",
+    "/api/v1/landing-pinned": "expected_status",
+    "/api/v1/landing-restored": "expected_status",
 }
 
 
@@ -126,6 +130,9 @@ def test_the_expected_value_exception_is_exactly_six_routes_wide() -> None:
         "/api/v1/inert-pr-branch-update": "expected_head_sha",
         "/api/v1/held-pr-close": "expected_head_sha",
         "/api/v1/landing-revert": "expected_status",
+        "/api/v1/landing-repoint": "expected_status",
+        "/api/v1/landing-pinned": "expected_status",
+        "/api/v1/landing-restored": "expected_status",
     }
     for path in EXPECTED_VALUE_EXCEPTIONS:
         assert path in document["paths"], f"the exception names a route that does not exist: {path}"

@@ -717,7 +717,7 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
 
 The inert lander reverts a Dependabot bump it landed when the default branch's own checks fail
 because of that bump, and holds the dependency at the version before it (ADR-0019 amendment 2).
-Repositories that deploy on landing are not covered.
+Repositories that deploy on landing follow "Automatic reverts (deploying repositories)" below.
 
 ### The watch
 
@@ -797,3 +797,130 @@ read the watch holds every remembered key.
 - A stranded revert has no clearing act either. Its record keeps the repository's Dependabot bumps
   refused `landing_repository_reverting` until the revert is reopened and lands; reverting by hand
   does not release them.
+
+## Automatic reverts (deploying repositories)
+
+The estate lander points production back at the build before a bad bump, reverts the bump, holds
+the dependency, and puts production back on its moving tag (ADR-0019 amendment 3). It covers the
+repositories served from a GHCR image by Coolify, such as `brain` and change-manager. The watch, the
+flake rule, the revert, the hold and the never-again rule are the inert section's, with the
+differences below.
+
+### The signal
+
+A landing is `bad` by its checks (the inert rule) or by what production serves
+(`services/landing/revert_watch.py`). The served rule reads `revision_watcher`'s
+`production_revision` observations for every application the member record lists for the
+repository on its default branch:
+
+- **`bad`** only when every application serves exactly the bump's parent, that has stood for
+  `ROLLOUT_STUCK_HOURS` (2) by `received_at`, timed from the later of the newest standing reading
+  and `ROLLOUT_SETTLE_MINUTES` (30) after the landing, and the watcher has posted about every
+  application within `WATCHER_SILENT_HOURS` (2) (`observation_sources.last_seen_at`).
+- **`clean`** when every application serves the merge commit or a later one.
+- **`pending`** otherwise: one application of several behind, production on a commit older than the
+  parent or off the default branch, a silent watcher, or a check still running.
+
+A served `bad` stands only when the check rule is `clean`.
+
+### The sequence
+
+The estate lander runs hourly. Every pass takes the next step for each watched landing, one step
+per pass, and lands the SDS's own revert pull requests; ordinary bumps land only between 02:00 and
+06:00 `America/New_York`. Without `--submit` it reads nothing from Coolify or GHCR and reports
+`would-repoint`, `pinned` or `would-restore`.
+
+1. **Point back.** The lander resolves the parent's image digest in GHCR, then asks
+   `POST /api/v1/landing-repoint` to record `repointed` with `pinned_images` (`{application uuid:
+   {tag, digest, restore_tag}}`). The orchestrator judges again and refuses unless the landing is
+   still `bad`. Only then does the lander set each application's `docker_registry_image_tag` to the
+   parent's commit and start a deploy, and once every tag is set it confirms the pin
+   (`POST /api/v1/landing-pinned`), which marks each image `"pinned": "yes"`. A pin that fails
+   part-way, or a pass that stops before confirming, is completed and confirmed on the next pass.
+   The orchestrator refusing the re-point is `waiting` when its answer moved (the record moved, or
+   the landing is no longer `bad`) or the estate lane is switched off; any other refusal, a
+   repository not granted among them, raises `landing-not-pointed-back`.
+2. **Confirm and open.** Once the pin is confirmed and every application serves the parent, the
+   lander asks `POST /api/v1/landing-revert` with expected status `repointed`, and the orchestrator
+   opens the revert from the record. Until then the lander deploys again each application whose tag
+   is still the parent's; an application whose tag a person changed is left alone and named.
+3. **Land.** `change_proposer` files the revert as a `dependency-revert` record, which deploy policy
+   14 approves. The estate lane lands it in any pass, outside the pace and the window, and the
+   merge path records `revert_landed` and places the hold. The revert merge's own rollout check
+   fails while production is pinned; that is expected.
+4. **Restore.** Once GHCR holds the revert merge commit's image, the lander sets each application
+   back to its `restore_tag` and starts a deploy. Once every application serves the revert's merge
+   commit or a later one, it asks `POST /api/v1/landing-restored`, and the record moves to
+   `restored`.
+
+The orchestrator refuses `POST /api/v1/landing-revert` on a `bad` deploying landing with no
+`repointed` record (`landing_revert_needs_repoint`).
+
+### The Coolify client
+
+`estate_lander/image_repoint.py` sends the dedicated estate-lander Coolify token (BWS, minted by
+Devon), which the launcher fetches on `--submit` only (`ESTATE_LANDING_COOLIFY_TOKEN`). Without it
+every re-point and restore is refused by name. The client is confined per repository: it lists the
+applications, matches each member-record application's `health_url` host to the one Coolify
+application whose `fqdn` names it, and then may only read those applications, `PATCH` their
+`docker_registry_image_tag`, and `POST` their `/start`. An application that matches no Coolify
+application, or several, refuses the whole re-point.
+
+Compose applications (domains in Traefik labels, empty Coolify `fqdn`) refuse the re-point by
+design.
+
+### Restore by hand
+
+To put production back yourself, set each pinned application's `docker_registry_image_tag` back to
+its recorded restore tag in Coolify and redeploy. The lander reads tags on their restore tags as
+your restore only once the pin is confirmed (every image in the watch's `pinned_images` carries
+`"pinned": "yes"`); before that they are a pin that never happened, and it points them again. The `landing-production-pinned` alert names each
+application's uuid, its pinned tag and its restore tag. Set every pinned application, not some: the
+lander acts only when every tag equals its restore tag. What the lander does next depends on the
+record's status:
+
+| Status when you restore | What the lander does |
+|---|---|
+| `repointed` (the revert has not opened; the pin is confirmed) | Records `restored` with detail `restored by hand before the revert opened`. No revert opens; the bad bump stays on `main` as your rollback decision. Bumps resume and the pinned alert resolves. |
+| `revert_opened` | Nothing yet. The revert continues; once it lands, the restore step finds the tags already back, deploys any application not yet serving the revert's merge commit, and records `restored`. |
+| `revert_landed` | The restore step finds the tags already back, deploys any application not yet serving the revert's merge commit, and records `restored`. |
+| `refused_overlap` or `revert_failed` (the pin is confirmed) | Records `restored`. The pinned alert resolves, and so does the `landing-revert-refused` or `landing-revert-failed` alert. Bumps resume. The default branch may still carry the bad bump: fix it by hand before you restore. |
+
+A tag set to anything other than the restore tag is not a hand restore: the record stays as it
+is, production stays as you set it, and the pinned alert stays open. The lander never undoes it
+while `repointed`, but the restore after a landed revert sets every application back to its
+restore tag, overwriting it.
+
+The orchestrator also holds the take-over, and opening the revert, to a confirmed pin: asked of a
+`repointed` record whose pin is not confirmed, both are refused `landing_pin_unconfirmed`, which
+the lander reports `waiting` while it completes the pin.
+
+To take over without the lander acting at all, switch the estate lane off
+(`ORCHESTRATOR_ESTATE_LANDING_ENABLED=false`). The watch then serves every estate-lane landing with
+`landing_revert_lane_off` as its verdict, whatever its record's status, so no pass sets a tag,
+starts a deploy or restores. The pinned alert stays open, because it reads the record's status and
+pins. The inert lane is unchanged: its records past the rerun drive no write of their own.
+
+### What holds bumps
+
+While a record has `pinned_images` and is not `restored`, in any status, estate admission refuses
+every other Dependabot bump in the repository `landing_repository_reverting`, reported `waiting`. A
+bump landed behind the pin would never be served. The revert itself is not refused. The hold placed
+when the revert lands, and the never-again rule, work as for an inert repository.
+
+### Alerts
+
+The inert section's four alerts apply. A `restored` record whose revert landed keeps
+`landing-reverted` open, with the same text, while the hold stands; a record restored by hand with
+no revert (a take-over, or after a refused or failed revert) raises nothing. The estate lander adds
+two (`lander/held_alerts.py`):
+
+| Key | Meaning | What you do |
+|---|---|---|
+| `landing-production-pinned:<repo>:<pr>` | Production serves the build before the bump. Raised in every status before `restored`; resolves at `restored`. Names each application's pinned and restore tags. | Let the sequence finish, or restore by hand (above). |
+| `landing-not-pointed-back:<repo>:<pr>` | The landing is `bad` and the lander could not point it back: no token, an application no Coolify application serves (or two do), the parent's image missing from GHCR, an image not this estate's, or an application already pinned to a commit. Nothing is pinned and no revert is open. Open while the refusal stands. | Fix the cause, or roll back by hand. |
+
+### Known gaps
+
+- A hand restore after the revert opened leaves the pinned alert open and bumps refused until the
+  revert lands. A stranded revert with production pinned has no clearing act.

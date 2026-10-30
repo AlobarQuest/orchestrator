@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Final, Protocol
 
 # The identity of the account whose pull requests this lane exists for, exactly. NOT "any account
@@ -335,6 +336,12 @@ class EstateReadGateway(Protocol):
         self, *, repository: str, number: int
     ) -> tuple[PullRequestCommit, ...]: ...
 
+    # Landing Part 3b: the reads a revert subject's exact-inverse check makes, which the estate
+    # lane now asks as the inert lane does (`revert_subject`).
+    def default_branch_head(self, *, repository: str) -> BranchHead: ...
+
+    def tree(self, *, repository: str, commit_sha: str) -> Tree: ...
+
 
 @dataclass(frozen=True)
 class OpenPullRequest:
@@ -394,7 +401,8 @@ class Job:
     `conclusion` is `None` while the job has not finished. `attempt` is the run attempt the answer
     is from, which is how a judgment tells a rerun's verdict from the first attempt's. `workflow`
     is the run's workflow name and `event` what triggered it (`push`, `pull_request`, `dynamic`
-    for the update bot's own runs), which decide whether a job is watched at all.
+    for the update bot's own runs), which decide whether a job is watched at all. `job_id` is the
+    platform's id of this attempt of the job, which a rerun names (Landing Part 3b).
     """
 
     name: str
@@ -403,10 +411,18 @@ class Job:
     attempt: int
     workflow: str
     event: str
+    job_id: int
+
+
+# The prefix of the estate lane's event actions, which tells its rows in the shared
+# `estate_pr_merge` table from the inert lane's. Here rather than in the lane, because the revert
+# watch (an inert module) reads it to find the landings that redeploy. Landing Part 3b.
+ESTATE_LANDING_EVENT_PREFIX: Final = "estate_pr_merge"
 
 
 class RevertWatchGateway(Protocol):
-    """The reads and the one act that judging a landed bump needs. Landing Part 3a.
+    """The reads and the one act that judging a landed bump needs. Landing Part 3a, and 3b's
+    compare.
 
     Narrow rather than a widened `EstateReadGateway`, so no existing caller's double has to answer
     for jobs. Both calls are bounded by the caller's grant check, as every App call is.
@@ -416,7 +432,12 @@ class RevertWatchGateway(Protocol):
 
     def parent_of(self, *, repository: str, sha: str) -> str: ...
 
-    def rerun_failed_jobs(self, *, repository: str, run_id: int) -> None: ...
+    def rerun_job(self, *, repository: str, job_id: int) -> None: ...
+
+    def compare_status(self, *, repository: str, base: str, head: str) -> str:
+        """GitHub's compare status of `head` against `base` (`identical`, `ahead`, `behind` or
+        `diverged`). Landing Part 3b: where a served commit stands against a merge commit."""
+        ...
 
 
 @dataclass(frozen=True)
@@ -499,6 +520,11 @@ class RevertActGateway(EstateReadGateway, RevertWatchGateway, RevertBuildGateway
     """Everything watching a landing and acting on a bad one needs: the landed pull request and its
     commits (the dependency list), its jobs, a rerun, and the revert's reads and writes. Landing
     Part 3a. Every call is bounded by the inert lane's grant term, asked first by the caller."""
+
+    def committed_at(self, *, repository: str, sha: str) -> datetime:
+        """When a commit was committed: for a squash merge, when it landed. Landing Part 3b,
+        where it anchors what production served since a landing that redeploys."""
+        ...
 
 
 @dataclass(frozen=True)

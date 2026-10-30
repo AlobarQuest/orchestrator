@@ -126,6 +126,11 @@ SUBJECTS_NOT_A_BUMP: dict[tuple[Path, str], NotABump] = {
         "it moves no dependency forward; the hold that follows it is placed when it lands "
         "(`services/membership/revert_hold.py`)"
     ),
+    (LANDING / "estate_landing_admission.py", "_revert_remote_terms"): NotABump(
+        "the SDS's revert of a bump in a repository that redeploys (Landing Part 3b) restores the "
+        "version before a landed bump, so it moves no dependency forward; the hold that follows "
+        "it is placed when it lands, by the same hook as the inert lane's"
+    ),
 }
 
 

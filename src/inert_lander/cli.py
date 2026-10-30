@@ -355,12 +355,19 @@ def revert_key(repository: str, number: int, row: dict[str, Any]) -> str:
 
 
 def _read_watch(client: Watch) -> tuple[list[dict[str, Any]] | None, list[Outcome]]:
-    """The watch, or None and the one row saying it could not be read. A watch the orchestrator
-    cannot answer for does not stop the landing pass: it is reported, and held by the alerts."""
+    """This lane's rows of the watch, or None and the one row saying it could not be read. A watch
+    the orchestrator cannot answer for does not stop the landing pass: it is reported, and held by
+    the alerts.
+
+    The watch serves both lanes' landings (Landing Part 3b); a landing that redeploys is the estate
+    lander's to act on and alert about. A row naming no lane is this lane's: an orchestrator that
+    predates the field watched this lane alone.
+    """
     try:
-        return client.landing_watch(), []
+        watch = client.landing_watch()
     except OrchestratorError as error:
         return None, [Outcome(_WATCH_ROW, 0, "unreadable", str(error))]
+    return [row for row in watch if row.get("lane", LANE.name) == LANE.name], []
 
 
 def _open_reverts(watch: list[dict[str, Any]] | None) -> frozenset[tuple[str, int]]:

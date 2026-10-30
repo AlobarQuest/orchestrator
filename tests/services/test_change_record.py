@@ -571,3 +571,120 @@ def test_an_explicitly_null_qualifier_is_absent_rather_than_unreadable() -> None
     assert answer.answered
     assert answer.record is not None and answer.record.policy_objections == ()
     assert answer.record.approved
+
+
+# Landing Part 3b. The conditions deploy policy VERSION 14 serves, generated from change-manager's
+# own `landing_conditions_dict(V14)` on 2026-10-30 (rationale elided) and pasted here, for the
+# reason `V5_CONDITIONS` is: a payload built from this parser proves only that it reads itself.
+V14_CONDITIONS: dict = {
+    "excluded_ecosystems": ["github_actions"],
+    "rationale": "…",
+    "require_head_current_with_base": True,
+    "revert_landing": {
+        "change_class": "dependency-revert",
+        "exempt_from_change_window": True,
+        "exempt_from_pace": True,
+        "permitted_authors": ["alobar-sds-dispatch[bot]"],
+    },
+    "rollout_workflows": {
+        "alobarquest/brain": {
+            "blob_sha": "2017c1ed0fcfbb844d2b933c542c9a5f29a1f17a",
+            "path": ".github/workflows/ci.yml",
+        },
+        "alobarquest/change-manager": {
+            "blob_sha": "b92f812ccb036027d4bc8682405ab092ec32eb17",
+            "path": ".github/workflows/deploy.yml",
+        },
+    },
+    "update_types": [],
+}
+
+
+def _v14(**revert: object) -> ChangeRecordAnswer:
+    served = {**V14_CONDITIONS}
+    if revert:
+        served["revert_landing"] = {**V14_CONDITIONS["revert_landing"], **revert}
+    return _read([_served_row(landing_policy_version=14, landing_conditions=served)])
+
+
+def test_the_version_fourteen_conditions_carry_the_revert_landing() -> None:
+    conditions = _v14().record.conditions  # type: ignore[union-attr]
+
+    assert conditions is not None and conditions.version == 14
+    # The bump's terms read exactly as version 5's did.
+    assert conditions.excluded_ecosystems == frozenset({"github_actions"})
+    assert conditions.update_types == frozenset()
+    revert = conditions.revert_landing
+    assert revert is not None
+    assert revert.change_class == "dependency-revert"
+    assert revert.permitted_authors == frozenset({"alobar-sds-dispatch[bot]"})
+    assert revert.exempt_from_pace is True
+    assert revert.exempt_from_change_window is True
+
+
+def test_a_version_that_serves_no_revert_landing_reads_as_none() -> None:
+    """Every version before the fourteenth. Absent is the version not deciding the question, and
+    a landing party lands no revert by it."""
+    conditions = _read(
+        [_served_row(landing_policy_version=5, landing_conditions=V5_CONDITIONS)]
+    ).record.conditions  # type: ignore[union-attr]
+
+    assert conditions is not None
+    assert conditions.revert_landing is None
+
+
+@pytest.mark.parametrize(
+    "revert",
+    [
+        {"change_class": ""},
+        {"change_class": 7},
+        {"permitted_authors": "alobar-sds-dispatch[bot]"},
+        {"permitted_authors": []},
+        {"permitted_authors": [""]},
+        {"exempt_from_pace": "yes"},
+        {"exempt_from_change_window": None},
+    ],
+    ids=[
+        "empty-class",
+        "int-class",
+        "string-authors",
+        "no-authors",
+        "empty-author",
+        "pace-string",
+        "window-none",
+    ],
+)
+def test_a_malformed_revert_landing_refuses_the_whole_conditions(revert: dict) -> None:
+    """Malformed is not absent. Read as absent, a damaged block would land nothing as a revert --
+    safe -- but the same parser reading the rest of a document it cannot fully read is the shape
+    `excluded_ecosystems` already refuses, and one rule is easier to hold than two."""
+    assert _v14(**revert).record.conditions is None  # type: ignore[union-attr]
+
+
+def test_a_revert_landing_that_is_not_an_object_refuses_the_whole_conditions() -> None:
+    served = {**V14_CONDITIONS, "revert_landing": ["dependency-revert"]}
+    row = _served_row(landing_policy_version=14, landing_conditions=served)
+    assert _read([row]).record.conditions is None  # type: ignore[union-attr]
+
+
+# Landing Part 3b, Task 4: the record's class, which the estate admission reads to tell a revert
+# record from a bump's.
+
+
+def test_the_record_carries_its_change_class() -> None:
+    record = _read([_served_row(change_class="dependency-revert")]).record
+
+    assert record is not None and record.change_class == "dependency-revert"
+
+
+def test_a_record_serving_no_change_class_reads_as_none() -> None:
+    record = _read([_served_row()]).record
+
+    assert record is not None and record.change_class is None
+
+
+@pytest.mark.parametrize("value", [7, ["dependency-update"], True, ""])
+def test_a_change_class_of_the_wrong_shape_makes_the_record_unreadable(value: object) -> None:
+    answer = _read([_served_row(change_class=value)])
+
+    assert answer.answered is False and answer.record is None

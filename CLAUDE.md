@@ -653,9 +653,10 @@ Placement rule: global CLAUDE.md §7.
   never widen a pattern to quiet the guard. `make layer L=<id>` lists a layer's files. Detail:
   `docs/operations/architecture-guards.md`, "The layer manifest".
 - Only `services/membership/proposals.py` writes the member tables, reached only by a human
-  confirming on `/review`, with one exception: `revert_hold.place` inserts a ceiling hold, only in
-  the inert merge path's transaction for a landed SDS revert, and never updates or deletes. Reads
-  return frozen records, never ORM objects. `test_membership_writers.py` pins both writers, every
+  confirming on `/review`, with one exception: `revert_hold.place` inserts a ceiling hold, only
+  through `revert_landed.record_revert_landed`, in either landing lane's merge transaction (inert
+  or estate) for a landed SDS revert, and never updates or deletes. Reads return frozen records,
+  never ORM objects. `test_membership_writers.py` pins both writers, the hook's two callers, every
   write route and its role. The deploys service's wire value is `rollouts` (word guards). Detail:
   `docs/operations/membership.md`.
 - Every path that lands or proposes a dependency bump honours the member record's holds through the

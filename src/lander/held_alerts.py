@@ -33,7 +33,8 @@ the two writes never leaves `alerts.json` ahead of the sightings.
 `sync_revert_alerts` raises one alert per revert record in the orchestrator's landing watch:
 `landing-reverted:<repo>:<pr>` once the revert has landed (naming the failed jobs, the revert pull
 request, the hold it placed, how to lift one, and that the reverted version stays refused after
-that), and `landing-revert-refused:<repo>:<pr>` or `landing-revert-failed:<repo>:<pr>` when no
+that; a deploying repository's record keeps it once `restored`, the hold outliving the pin), and
+`landing-revert-refused:<repo>:<pr>` or `landing-revert-failed:<repo>:<pr>` when no
 revert could be opened. `landing-revert-stranded:<repo>:<pr>` fires for a revert pull request the
 lander found no longer open while its record still says it is (closed without landing); it is held
 while that repository could not be listed. Each fires once and follows its record in the watch:
@@ -43,6 +44,16 @@ those alerts stay open until a person closes them, as does a stranded one while 
 closed. A pass that could not read the watch holds every remembered key. Its memory is its own
 file, `revert-alerts.json`: `KeyedAlerts` resolves every remembered key a sync does not name, so
 sharing `alerts.json` would resolve the other's alerts.
+
+## Production pinned (Landing Part 3b, the estate lane)
+
+A revert record that pinned production (`pinned_images`) raises `landing-production-pinned:<repo>:
+<pr>` in every status before `restored` -- `repointed`, `revert_opened`, `refused_overlap`,
+`revert_failed`, `revert_landed`, and a stranded revert -- so every way the sequence can stop
+leaves an open alert saying production serves the build before the bump, and which tag puts it
+back. It resolves when the record is `restored` (or leaves the watch). A landing the lander could
+not point back at all -- refused before anything was pinned -- raises
+`landing-not-pointed-back:<repo>:<pr>` with the reason, for as long as it is refused (`unpinned`).
 """
 
 from __future__ import annotations
@@ -75,6 +86,10 @@ _REVERT_ALERTS: Final = {
     "revert_failed": "landing-revert-failed",
 }
 _STRANDED: Final = "landing-revert-stranded"
+_PINNED: Final = "landing-production-pinned"
+_NOT_POINTED_BACK: Final = "landing-not-pointed-back"
+# The record status at which production is no longer pinned.
+_RESTORED: Final = "restored"
 LIFT_A_HOLD: Final = (
     "To lift a hold: stage a lift with `sds-members stage <file.toml>`, then confirm it on /review."
 )
@@ -222,6 +237,48 @@ def revert_key(status: str, repository: str, number: int) -> str | None:
     return None if prefix is None else alert_key(prefix, repository.lower(), str(number))
 
 
+def pinned_key(repository: str, number: int) -> str:
+    """The alert key of a landing whose revert record pinned production and is not restored."""
+    return alert_key(_PINNED, repository.lower(), str(number))
+
+
+def not_pointed_back_key(repository: str, number: int) -> str:
+    """The alert key of a bad landing the lander could not point production back from."""
+    return alert_key(_NOT_POINTED_BACK, repository.lower(), str(number))
+
+
+def _pinned_alert(row: Mapping[str, object]) -> Alert:
+    repository, number = row.get("repository"), row.get("pr_number")
+    images = row.get("pinned_images")
+    pins = (
+        "; ".join(
+            f"{uuid} on {str(image.get('tag'))[:12]} (restore `{image.get('restore_tag')}`)"
+            for uuid, image in sorted(images.items())
+            if isinstance(image, Mapping)
+        )
+        if isinstance(images, Mapping)
+        else "unknown"
+    )
+    return Alert(
+        f"Production pinned: {repository}#{number}",
+        f"{repository}#{number} was judged bad, so production was pointed at the image of the "
+        f"commit before it and stays pinned until the revert lands and the moving tag is back "
+        f"(record: {row.get('status')}). Applications: {pins}. To restore by hand, set each "
+        "application's image tag back to its restore tag in Coolify and redeploy.",
+        f"https://github.com/{repository}/pull/{number}",
+    )
+
+
+def _not_pointed_back_alert(repository: str, number: int, reason: str) -> Alert:
+    return Alert(
+        f"Production not pointed back: {repository}#{number}",
+        f"{repository}#{number} was judged bad and production still serves it: the lander could "
+        f"not point it back at the commit before ({reason}). Nothing is pinned and no revert is "
+        "open; a person decides.",
+        f"https://github.com/{repository}/pull/{number}",
+    )
+
+
 def stranded_key(repository: str, number: int) -> str:
     """The alert key of a landing whose revert pull request closed without landing."""
     return alert_key(_STRANDED, repository.lower(), str(number))
@@ -247,9 +304,12 @@ def _revert_alert(row: Mapping[str, object]) -> Alert:
     repository, number = str(row.get("repository")), row.get("pr_number")
     jobs = row.get("failed_job_names")
     failed = ", ".join(str(job) for job in jobs) if isinstance(jobs, list) and jobs else "a job"
+    if not (isinstance(jobs, list) and jobs) and row.get("pinned_images"):
+        # Landing Part 3b: judged bad by what production served, not by a job.
+        failed = "production never served it, and a job"
     subject = f"{repository}#{number}"
     landing = f"https://github.com/{repository}/pull/{number}"
-    if row.get("status") == "revert_landed":
+    if _revert_landed(row):
         revert = row.get("revert_pr_number")
         hold = row.get("hold_outcome") or "nothing held"
         detail = row.get("detail")
@@ -269,6 +329,15 @@ def _revert_alert(row: Mapping[str, object]) -> Alert:
     )
 
 
+def _revert_landed(row: Mapping[str, object]) -> bool:
+    """Did this record's revert land? `revert_landed`, or `restored` after it (Landing Part 3b: it
+    names the revert's merge commit). Such a record placed a hold, which outlives the pin, so it
+    keeps the `landing-reverted` alert as the inert lane's does. A record restored by hand with no
+    revert -- a take-over, or after a refused or failed revert -- held nothing and raises none."""
+    status = row.get("status")
+    return status == "revert_landed" or (status == _RESTORED and bool(row.get("revert_merge_sha")))
+
+
 def revert_alerts(watch: Iterable[Mapping[str, object]]) -> dict[str, Alert]:
     """The alerts the watch's revert records raise now, by key. Pure."""
     alerts: dict[str, Alert] = {}
@@ -276,9 +345,12 @@ def revert_alerts(watch: Iterable[Mapping[str, object]]) -> dict[str, Alert]:
         repository, number, status = row.get("repository"), row.get("pr_number"), row.get("status")
         if not isinstance(repository, str) or not isinstance(number, int):
             continue
-        key = revert_key(status, repository, number) if isinstance(status, str) else None
+        keyed = "revert_landed" if _revert_landed(row) else status
+        key = revert_key(keyed, repository, number) if isinstance(keyed, str) else None
         if key is not None:
             alerts[key] = _revert_alert(row)
+        if row.get("pinned_images") and status != _RESTORED:
+            alerts[pinned_key(repository, number)] = _pinned_alert(row)
     return alerts
 
 
@@ -288,6 +360,7 @@ def sync_revert_alerts(
     *,
     stranded: Set[tuple[str, int]] = frozenset(),
     unknown: Set[tuple[str, int]] = frozenset(),
+    unpinned: Mapping[tuple[str, int], str] | None = None,
     environ: Mapping[str, str] = os.environ,
     transport: httpx.BaseTransport | None = None,
 ) -> str | None:
@@ -320,6 +393,10 @@ def sync_revert_alerts(
                 if isinstance(repository, str) and isinstance(number, int):
                     if (repository, number) in stranded:
                         alerts[stranded_key(repository, number)] = _stranded_alert(row)
+            for (repository, number), reason in (unpinned or {}).items():
+                alerts[not_pointed_back_key(repository, number)] = _not_pointed_back_alert(
+                    repository, number, reason
+                )
             hub.sync(alerts, {stranded_key(r, n) for r, n in unknown})
     except AlertHubError as error:
         return str(error)

@@ -26,6 +26,13 @@ rollout watcher reads every deploy record whatever its status, so ADR-0022's obs
 reached without waiting on that decision; the ADR-0020 landing lane refuses at
 `change_record_not_approved` until it is taken.
 
+**The SDS's own REVERTS (Landing Part 3b).** When the orchestrator judges a bump it landed into a
+deploying repository bad, it opens the revert through its Dispatch App. That pull request is filed
+as `dependency-revert`, with the revert's own remedy, and only when the orchestrator recorded
+opening exactly it (`GET /api/v1/opened-reverts`, read as the observer). A pull request the
+Dispatch App opened is NEVER filed as `dependency-update`: deploy policy would approve it under the
+bump's terms. One on a revert branch that no record names is a finding (`unrecorded`).
+
 WHY IT PROPOSES RATHER THAN AUTHORS. A rule requiring three hand-written fields is incompatible
 with anything unattended, so the acceptance criteria are read from the transcribed statement of
 what each rollout workflow actually attests, and the rollback plan from a transcribed per-repository
@@ -74,8 +81,20 @@ from change_proposer.change_manager import (
     ChangeManagerError,
     ProposalRefused,
 )
-from change_proposer.criteria import CriteriaUnavailable, acceptance_criteria, rollback_for
+from change_proposer.criteria import (
+    REVERT_CHANGE_CLASS,
+    CriteriaUnavailable,
+    acceptance_criteria,
+    rollback_for,
+)
 from change_proposer.factory_marking import FACTORY_TITLE_PREFIX, factory_unit_id
+from change_proposer.reverts import (
+    DISPATCH_APP_LOGIN,
+    REVERT_BRANCH_PREFIX,
+    RecordedRevert,
+    RevertsUnreadable,
+    read_recorded_reverts_from_environment,
+)
 from deploy_watcher.github import GitHubReader, ReadError
 from deploy_watcher.transcription_currency import Row, audit
 from deploy_watcher.workflows import REGISTRY, ROLLOUT_WORKFLOWS, attestation_for
@@ -137,6 +156,15 @@ EXIT_UNUSABLE = 2
 # definition, used to write the reason and to recognise it again, because the alternative is
 # a magic string in two places and the recogniser silently ceasing to match.
 REFUSAL_PREFIX = "REFUSED: "
+# Landing Part 3b, the same device for two more answers about a Dispatch App pull request: the
+# recorded reverts could not be read, or no record names this revert-branch pull request.
+UNREADABLE_PREFIX = "UNREADABLE: "
+UNRECORDED_PREFIX = "UNRECORDED: "
+_STATUS_BY_PREFIX = (
+    (REFUSAL_PREFIX, "underivable"),
+    (UNREADABLE_PREFIX, "unreadable"),
+    (UNRECORDED_PREFIX, "unrecorded"),
+)
 
 # EXACTLY the keys `_proposal` emits, declared rather than left implicit in a dict literal.
 #
@@ -170,7 +198,11 @@ PROPOSAL_FIELDS = (
 # PROVES had changed, no record could be derived for any pull request on that repository, and
 # the scheduled job reported success. A skip means "this pull request is not our business"; a
 # refusal means "it is, and nobody can say what its deploy would attest".
-FINDING_STATUSES = frozenset({"refused", "error", "unreadable", "underivable"})
+#
+# `unrecorded` (Landing Part 3b) is a pull request the SDS's Dispatch App opened on a revert branch
+# that no revert record names: the SDS's App doing something the SDS did not record. Nothing files
+# it, and nothing would ever land it, so a person must hear of it.
+FINDING_STATUSES = frozenset({"refused", "error", "unreadable", "underivable", "unrecorded"})
 
 # What kind of change a FACTORY pull request lands, as distinct from an update bot's.
 #
@@ -200,6 +232,14 @@ FINDING_STATUSES = frozenset({"refused", "error", "unreadable", "underivable"})
 # unit's exact fingerprint that no known-good pattern substitutes for.
 FACTORY_CHANGE_CLASS = "factory-delivery"
 BOT_CHANGE_CLASS = "dependency-update"
+# Landing Part 3b. The SDS's own revert of a bump it judged bad, opened through its Dispatch App.
+# Deploy policy 14 approves it on its own terms (its own remedy, no pace, no window, the Dispatch
+# App as author). A Dispatch App pull request is NEVER filed as `BOT_CHANGE_CLASS`: the policy
+# would approve it under the bump's terms. `REVERT_CHANGE_CLASS` itself is defined in `criteria`,
+# beside the remedy that class carries, and imported here.
+
+# No recorded revert: the default for a caller that does not ask, which files nothing as a revert.
+NO_REVERTS: frozenset[RecordedRevert] = frozenset()
 
 # What the retirement sweep must observe before it retires anything, mirrored from
 # `deploy_watcher.github.pull_request_disposition`.
@@ -286,7 +326,7 @@ def _scope_sweep(reader: BlobSource) -> list[Row]:
     return audit(ROLLOUT_WORKFLOWS, REGISTRY, _blob_read(reader))
 
 
-def _reasoning(repository: str, work_unit_id: str | None) -> str:
+def _reasoning(repository: str, work_unit_id: str | None, reverted: int | None = None) -> str:
     """Why this pull request carries a change record -- and, for a factory one, what opened it.
 
     **A FROZEN REPLAY CONTRACT.** `reasoning` is one of change-manager's asserted fields, so this
@@ -306,6 +346,11 @@ def _reasoning(repository: str, work_unit_id: str | None) -> str:
         f"landing this pull request on the default branch of {repository} redeploys "
         "production, so it is a deploying merge and carries a change record (ADR-0019)."
     )
+    if reverted is not None:
+        return (
+            f"{why} The SDS opened it through its App to revert pull request #{reverted}, a "
+            "dependency update it landed here and judged bad."
+        )
     if work_unit_id is None:
         return why
     return (
@@ -322,6 +367,7 @@ def _proposal(
     rollback: Any,
     *,
     work_unit_id: str | None,
+    reverted: int | None = None,
 ) -> dict[str, Any]:
     """The record's facts, and EVERY ONE OF THEM MUST STAY TRUE.
 
@@ -352,12 +398,18 @@ def _proposal(
     green rollout of this REPOSITORY attests and how its production is put back; who opened the
     pull request changes neither.
     """
+    if reverted is not None:
+        change_class = REVERT_CHANGE_CLASS
+    elif work_unit_id is not None:
+        change_class = FACTORY_CHANGE_CLASS
+    else:
+        change_class = BOT_CHANGE_CLASS
     return {
         "target_repository": repository,
         "pull_request_number": pull["number"],
-        "change_class": BOT_CHANGE_CLASS if work_unit_id is None else FACTORY_CHANGE_CLASS,
+        "change_class": change_class,
         "risk": "caution",
-        "reasoning": _reasoning(repository, work_unit_id),
+        "reasoning": _reasoning(repository, work_unit_id, reverted),
         "acceptance_criteria": list(criteria),
         "rollback_plan": {"steps": list(rollback.steps), "target": rollback.target},
         "actor": "change-proposer",
@@ -365,14 +417,36 @@ def _proposal(
 
 
 def _consider(
-    reader: BlobSource, repository: str, pull: dict[str, Any]
+    reader: BlobSource,
+    repository: str,
+    pull: dict[str, Any],
+    reverts: frozenset[RecordedRevert] | None = NO_REVERTS,
 ) -> tuple[dict[str, Any] | None, str]:
-    """Build the proposal for one pull request, or say why there is none."""
+    """Build the proposal for one pull request, or say why there is none.
+
+    `reverts` is what the orchestrator recorded opening, or None when it could not be read.
+    """
     workflow = ROLLOUT_WORKFLOWS[repository.lower()]
     if pull.get("draft"):
         return None, "draft"
-    work_unit_id = factory_unit_id(pull.get("title"))
-    if work_unit_id is None and not pull.get("is_bot"):
+    reverted: int | None = None
+    work_unit_id: str | None = None
+    if pull.get("author") == DISPATCH_APP_LOGIN:
+        # FIRST, before the factory marking and the bot filter: whatever else is true of it, a
+        # pull request the Dispatch App opened is filed as the SDS's revert or not at all.
+        reverted, why = _recorded_revert(repository, pull, reverts)
+        if reverted is None:
+            return None, why
+    elif str(pull.get("head_ref") or "").startswith(REVERT_BRANCH_PREFIX):
+        # Whoever else opened it -- a renamed or differently-cased App login included -- a revert
+        # branch is never filed as a bump, which policy would approve under the bump's terms.
+        return None, (
+            f"{UNRECORDED_PREFIX}{pull.get('author')!r} opened a revert branch, and only the "
+            "SDS's App files one"
+        )
+    else:
+        work_unit_id = factory_unit_id(pull.get("title"))
+    if reverted is None and work_unit_id is None and not pull.get("is_bot"):
         # A human's pull request is a human's to merge, which ADR-0019 puts out of scope by
         # construction. Keyed on the account TYPE, never on a `[bot]` login suffix -- and NOT
         # loosened: what admits a factory pull request is the marking beside this filter, not a
@@ -384,10 +458,36 @@ def _consider(
     revision = reader.blob_revision(repository, workflow.path, workflow.trigger_branch)
     try:
         criteria = acceptance_criteria(repository, attestation_for(revision))
-        rollback = rollback_for(repository)
+        rollback = rollback_for(repository, None if reverted is None else REVERT_CHANGE_CLASS)
     except CriteriaUnavailable as error:
         return None, f"{REFUSAL_PREFIX}{error}"
-    return _proposal(repository, pull, criteria, rollback, work_unit_id=work_unit_id), "eligible"
+    proposal = _proposal(
+        repository, pull, criteria, rollback, work_unit_id=work_unit_id, reverted=reverted
+    )
+    return proposal, "eligible"
+
+
+def _recorded_revert(
+    repository: str, pull: dict[str, Any], reverts: frozenset[RecordedRevert] | None
+) -> tuple[int | None, str]:
+    """The bump this Dispatch App pull request reverts, or why it is filed as nothing.
+
+    It is a revert only if it is typed a bot, sits on a revert branch, and a record the
+    orchestrator wrote when it opened the revert names exactly this pull request on exactly that
+    branch. Off a revert branch it is a skip -- the App opens other pull requests, none of them a
+    deploying merge this lane files. On one, with no record naming it, it is a finding.
+    """
+    head = pull.get("head_ref")
+    if not pull.get("is_bot") or not isinstance(head, str):
+        return None, "opened by the SDS's App but not as a revert"
+    if not head.startswith(REVERT_BRANCH_PREFIX):
+        return None, f"opened by the SDS's App on {head!r}, which is not a revert branch"
+    if reverts is None:
+        return None, f"{UNREADABLE_PREFIX}the reverts the orchestrator recorded could not be read"
+    for revert in reverts:
+        if revert.names(repository, pull):
+            return revert.pr_number, "revert"
+    return None, f"{UNRECORDED_PREFIX}no revert the orchestrator recorded names {head!r}"
 
 
 def _unmarked_author_reason(pull: dict[str, Any]) -> str:
@@ -411,6 +511,7 @@ def _pass(
     reader: PullSource,
     scope: list[str],
     client: ChangeManagerClient | None,
+    reverts: frozenset[RecordedRevert] | None = NO_REVERTS,
 ) -> list[Outcome]:
     """Consider every open pull request in scope, and say what happened to each.
 
@@ -426,7 +527,7 @@ def _pass(
             continue
         for pull in sorted(pulls, key=lambda p: p.get("number") or 0):
             try:
-                outcomes.append(_consider_one(reader, repository, pull, client))
+                outcomes.append(_consider_one(reader, repository, pull, client, reverts))
             except ReadError as error:
                 # `blob_revision` is called INSIDE the per-pull path, so a 403 rate-limit, a 502 or
                 # a timeout here used to escape `_pass` entirely and kill the scheduled run with a
@@ -443,12 +544,13 @@ def _consider_one(
     repository: str,
     pull: dict[str, Any],
     client: ChangeManagerClient | None,
+    reverts: frozenset[RecordedRevert] | None = NO_REVERTS,
 ) -> Outcome:
     number = pull.get("number") or 0
-    proposal, why = _consider(reader, repository, pull)
+    proposal, why = _consider(reader, repository, pull, reverts)
     if proposal is None:
-        underivable = why.startswith(REFUSAL_PREFIX)
-        return Outcome(repository, number, "underivable" if underivable else "skipped", why)
+        status = next((s for prefix, s in _STATUS_BY_PREFIX if why.startswith(prefix)), "skipped")
+        return Outcome(repository, number, status, why)
     if client is None:
         return Outcome(repository, number, "would-propose", proposal["reasoning"])
     try:
@@ -571,6 +673,18 @@ def _read_members() -> list[Member] | None:
         return None
 
 
+def _read_reverts() -> tuple[frozenset[RecordedRevert] | None, list[Outcome]]:
+    """The reverts the orchestrator recorded, read once per pass, or None and a finding.
+
+    A finding on EVERY pass that cannot read them, whether or not a Dispatch App pull request is
+    open: a read that broke must be heard before the pass that needs it, not at it.
+    """
+    try:
+        return read_recorded_reverts_from_environment(), []
+    except RevertsUnreadable as error:
+        return None, [Outcome("-", 0, "unreadable", f"recorded reverts: {error}")]
+
+
 def run(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -598,6 +712,8 @@ def run(argv: list[str] | None = None) -> int:
     if scope is None:
         return EXIT_UNUSABLE
 
+    reverts, unread = _read_reverts()
+
     client = None
     try:
         if args.submit:
@@ -609,7 +725,7 @@ def run(argv: list[str] | None = None) -> int:
             # requests -- and, since the two carry different exit codes, would need pulling apart
             # again immediately.
             scope_rows = _scope_sweep(reader)
-            outcomes = _pass(reader, scope, client)
+            outcomes = unread + _pass(reader, scope, client, reverts)
             outcomes.extend(_retire_pass(reader, scope, client))
     except ChangeManagerError as error:
         print(str(error), file=sys.stderr)

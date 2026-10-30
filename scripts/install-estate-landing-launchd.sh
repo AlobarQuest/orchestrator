@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Install the in-window estate-landing LaunchAgent (ADR-0019 increment 5b).
+# Install the hourly estate-landing LaunchAgent (ADR-0019 increment 5b; hourly since Landing
+# Part 3b, landing bumps only 02:00-06:00 New York).
 #
 # A SEPARATE OPERATOR STEP, and the most consequential one in this repository. It is the only
 # schedule whose pass can end in something changing a running service, so installing it is not
@@ -34,7 +35,8 @@ launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
 launchctl bootstrap "gui/$(id -u)" "$TARGET"
 
 echo "installed $TARGET"
-echo "  runs at 02:15, 03:15, 04:15 and 05:15 local; log: $HOME/Library/Logs/estate-landing.log"
+echo "  runs hourly at :15; lands bumps only 02:00-06:00 New York; log: $HOME/Library/Logs/estate-landing.log"
+echo "  the Healthchecks check sds-estate-landing must expect an hourly ping (period 1h)"
 echo "  ORCHESTRATOR_ESTATE_LANDING_ENABLED=false in production stops every landing"
 echo "  report now, without asking for anything: $REPO_ROOT/scripts/run-estate-landing.sh"
 echo "  (bare reports; add --submit to ask for the landings)"

@@ -7,8 +7,10 @@ pinned in `WRITE_ROUTES` and proved behaviourally by
 
 One exception, Devon's decision of 2026-10-29 (Landing Part 3a): after the SDS's own revert of a
 bump lands, `revert_hold.place` inserts a ceiling hold. It may only construct and add a hold --
-never assign, update or delete -- and its one caller is the inert lane's merge path. The route walk
-below follows same-module helpers only, so it cannot see that path; the two tests at the end pin it.
+never assign, update or delete -- and its one caller is `revert_landed.record_revert_landed`, which
+the two landing lanes' merge paths call (the inert lane's, Part 3a; the estate lane's, Part 3b).
+The route walk below follows same-module helpers only, so it cannot see those paths; the tests at
+the end pin them.
 """
 
 import ast
@@ -49,7 +51,12 @@ INSERT_ONLY = {
 }
 # The automatic hold writer's module, and the one module that may import it.
 AUTOMATIC_WRITER = "orchestrator.services.membership.revert_hold"
-AUTOMATIC_WRITER_CALLER = "services/landing/inert_pr_merge.py"
+AUTOMATIC_WRITER_CALLER = "services/landing/revert_landed.py"
+# The hook that calls it, and the merge paths that may call the hook: exactly the two lanes'.
+REVERT_LANDED_HOOK = "orchestrator.services.landing.revert_landed"
+REVERT_LANDED_CALLERS = frozenset(
+    {"services/landing/inert_pr_merge.py", "services/landing/estate_pr_merge.py"}
+)
 
 WRITE_FUNCTIONS = frozenset(
     {"stage_member_proposal", "confirm_member_proposal", "withdraw_member_proposal"}
@@ -347,7 +354,7 @@ def _importers(modules: dict[str, ast.Module], target: str) -> set[str]:
     return found
 
 
-def test_the_automatic_writer_has_one_caller_the_inert_merge_path() -> None:
+def test_the_automatic_writer_has_one_caller_the_revert_landed_hook() -> None:
     modules = _modules()
 
     assert _importers(modules, AUTOMATIC_WRITER) == {AUTOMATIC_WRITER_CALLER}
@@ -360,3 +367,11 @@ def test_the_automatic_writer_has_one_caller_the_inert_merge_path() -> None:
     }
     assert len(imported) == 1
     assert _calls(modules[AUTOMATIC_WRITER_CALLER]) & imported
+
+
+def test_the_revert_landed_hook_is_called_by_exactly_the_two_merge_paths() -> None:
+    modules = _modules()
+
+    assert _importers(modules, REVERT_LANDED_HOOK) == REVERT_LANDED_CALLERS
+    for caller in REVERT_LANDED_CALLERS:
+        assert "record_revert_landed" in _calls(modules[caller]), caller

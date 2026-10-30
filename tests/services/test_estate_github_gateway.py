@@ -14,6 +14,7 @@ nobody was standing in.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -180,7 +181,16 @@ def _run(run_id: int, workflow: str = "CI", event: str = "push") -> dict[str, An
 
 
 def _job_row(name: str, conclusion: str | None, attempt: int) -> dict[str, Any]:
-    return {"name": name, "conclusion": conclusion, "run_attempt": attempt}
+    return {
+        "id": _job_id(name, attempt),
+        "name": name,
+        "conclusion": conclusion,
+        "run_attempt": attempt,
+    }
+
+
+def _job_id(name: str, attempt: int) -> int:
+    return 60_000_000_000 + attempt * 1000 + sum(map(ord, name))
 
 
 def _jobs_gateway(
@@ -223,8 +233,24 @@ def test_jobs_at_reads_every_run_at_the_commit_and_keeps_each_jobs_latest_attemp
     )
 
     assert set(gateway.jobs_at(repository=REPOSITORY, sha=MERGE)) == {
-        Job(name="test", conclusion="success", run_id=11, attempt=2, workflow="CI", event="push"),
-        Job(name="lint", conclusion="success", run_id=11, attempt=1, workflow="CI", event="push"),
+        Job(
+            name="test",
+            conclusion="success",
+            run_id=11,
+            attempt=2,
+            workflow="CI",
+            event="push",
+            job_id=_job_id("test", 2),
+        ),
+        Job(
+            name="lint",
+            conclusion="success",
+            run_id=11,
+            attempt=1,
+            workflow="CI",
+            event="push",
+            job_id=_job_id("lint", 1),
+        ),
         Job(
             name="build",
             conclusion=None,
@@ -232,6 +258,7 @@ def test_jobs_at_reads_every_run_at_the_commit_and_keeps_each_jobs_latest_attemp
             attempt=1,
             workflow="Dependabot Updates",
             event="dynamic",
+            job_id=_job_id("build", 1),
         ),
     }
 
@@ -262,6 +289,7 @@ def test_jobs_at_follows_every_page(monkeypatch: pytest.MonkeyPatch) -> None:
             attempt=1,
             workflow="CI",
             event="push",
+            job_id=_job_id("test (100)", 1),
         )
         in jobs
     )
@@ -359,16 +387,18 @@ class _Poster:
         return httpx.Response(self._status_code, json={})
 
 
-def test_a_rerun_names_the_run_and_accepts_201(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The platform answers a rerun with 201 Created, not 200."""
+def test_a_rerun_names_one_job_and_accepts_201(monkeypatch: pytest.MonkeyPatch) -> None:
+    """One job, by its id: never `rerun-failed-jobs` of a whole run, which would rerun a failed
+    step the watch never judged (in a repository that redeploys, the step that redeploys). The
+    platform answers 201 Created, not 200."""
     poster = _Poster()
     monkeypatch.setattr(httpx, "post", poster)
 
-    GitHubEstatePullRequests(lambda: "token").rerun_failed_jobs(
-        repository=REPOSITORY, run_id=18_000_000_001
+    GitHubEstatePullRequests(lambda: "token").rerun_job(
+        repository=REPOSITORY, job_id=60_000_001_234
     )
 
-    assert poster.urls == [f"{API}/runs/18000000001/rerun-failed-jobs"]
+    assert poster.urls == [f"{API}/jobs/60000001234/rerun"]
 
 
 @pytest.mark.parametrize(
@@ -386,9 +416,23 @@ def test_a_rerun_that_did_not_happen_raises(
     monkeypatch.setattr(httpx, "post", poster)
 
     with pytest.raises(EstateGatewayError):
-        GitHubEstatePullRequests(lambda: "token").rerun_failed_jobs(
-            repository=REPOSITORY, run_id=18_000_000_001
+        GitHubEstatePullRequests(lambda: "token").rerun_job(
+            repository=REPOSITORY, job_id=60_000_001_234
         )
+
+
+def test_a_job_row_with_no_id_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    row = {"name": "test", "conclusion": "failure", "run_attempt": 1}
+    gateway, _ = _jobs_gateway(
+        monkeypatch,
+        {
+            _runs_url(MERGE): (200, {"total_count": 1, "workflow_runs": [_run(11)]}),
+            _jobs_url(11): (200, {"total_count": 1, "jobs": [row]}),
+        },
+    )
+
+    with pytest.raises(EstateGatewayError):
+        gateway.jobs_at(repository=REPOSITORY, sha=MERGE)
 
 
 def _commit_gateway(
@@ -715,3 +759,91 @@ def test_a_write_to_a_malformed_host_raises(monkeypatch: pytest.MonkeyPatch) -> 
         GitHubEstatePullRequests(lambda: "token").create_branch(
             repository=REPOSITORY, branch="b", sha=MERGE
         )
+
+
+# Landing Part 3b: where a served commit stands against a merge commit (brain #79's two commits).
+MERGE_79 = "271a2ac8de79a1dbc09bc5c05d4be73d08472449"
+BEFORE_79 = "80b620ce1799c1eeeaac83f494e6cd9a553d5503"
+
+
+def test_compare_status_reads_githubs_compare_of_base_against_head(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gateway, recorder = _gateway(monkeypatch, {"status": "behind", "behind_by": 1, "ahead_by": 0})
+
+    status = gateway.compare_status(repository="alobarquest/brain", base=MERGE_79, head=BEFORE_79)
+
+    assert status == "behind"
+    assert recorder.urls == [
+        f"https://api.github.com/repos/alobarquest/brain/compare/{MERGE_79}...{BEFORE_79}"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("body", "status_code", "code"),
+    [
+        pytest.param({"message": "Not Found"}, 404, "commit_not_found", id="a commit not there"),
+        pytest.param({"behind_by": 1}, 200, "compare_response_invalid", id="no status"),
+        pytest.param([], 200, "compare_response_invalid", id="a list"),
+        pytest.param({}, 502, "read_status", id="a 502"),
+    ],
+)
+def test_compare_status_raises_rather_than_answering_fine(
+    monkeypatch: pytest.MonkeyPatch, body: Any, status_code: int, code: str
+) -> None:
+    gateway, _ = _gateway(monkeypatch, body, status_code)
+
+    with pytest.raises(EstateGatewayError) as raised:
+        gateway.compare_status(repository="alobarquest/brain", base=MERGE_79, head=BEFORE_79)
+    assert raised.value.code == code
+
+
+def test_compare_status_turns_a_malformed_host_into_a_gateway_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def broken(url: str, **_: Any) -> httpx.Response:
+        raise UnicodeError("label empty or too long")
+
+    monkeypatch.setattr(httpx, "get", broken)
+
+    with pytest.raises(EstateGatewayError):
+        GitHubEstatePullRequests(lambda: "t").compare_status(
+            repository="alobarquest/brain", base=MERGE_79, head=BEFORE_79
+        )
+
+
+def test_committed_at_reads_the_commits_committer_date(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Brain #79's squash merge: committed when it landed, 2026-10-03 06:15:19 UTC."""
+    gateway, recorder = _gateway(
+        monkeypatch,
+        {
+            "sha": MERGE_79,
+            "commit": {
+                "author": {"date": "2026-10-02T21:00:00Z"},
+                "committer": {"date": "2026-10-03T06:15:19Z"},
+            },
+        },
+    )
+
+    when = gateway.committed_at(repository="alobarquest/brain", sha=MERGE_79)
+
+    assert when == datetime(2026, 10, 3, 6, 15, 19, tzinfo=UTC)
+    assert recorder.urls == [f"https://api.github.com/repos/alobarquest/brain/commits/{MERGE_79}"]
+
+
+@pytest.mark.parametrize(
+    ("body", "status_code"),
+    [
+        pytest.param({"message": "Not Found"}, 404, id="not there"),
+        pytest.param({"commit": {}}, 200, id="no committer"),
+        pytest.param({"commit": {"committer": {"date": "yesterday"}}}, 200, id="not a date"),
+        pytest.param({"commit": {"committer": {"date": "2026-10-03T06:15:19"}}}, 200, id="naive"),
+    ],
+)
+def test_committed_at_raises_rather_than_guessing(
+    monkeypatch: pytest.MonkeyPatch, body: Any, status_code: int
+) -> None:
+    gateway, _ = _gateway(monkeypatch, body, status_code)
+
+    with pytest.raises(EstateGatewayError):
+        gateway.committed_at(repository="alobarquest/brain", sha=MERGE_79)

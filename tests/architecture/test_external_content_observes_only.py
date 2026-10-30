@@ -251,14 +251,31 @@ CLASSIFICATION: dict[str, Row] = {
     "estate_lander": Row(
         Role.INTERNAL_LANE_ACTOR,
         "Devon 2026-08-25 ruling: estate-landing is an internal lane actor; ADR-0019 inc 5b/6 "
-        "landing, branch update and (bridge layer Part 4) closing a held bump",
+        "landing, branch update, (bridge layer Part 4) closing a held bump and (Landing Part 3b) "
+        "acting on a landing that went bad: the rerun or revert, the re-point, its confirmation "
+        "and the restore",
         frozenset(
             {
                 "/api/v1/estate-pr-merge",
                 "/api/v1/estate-pr-branch-update",
                 "/api/v1/held-pr-close",
+                "/api/v1/landing-revert",
+                "/api/v1/landing-repoint",
+                "/api/v1/landing-pinned",
+                "/api/v1/landing-restored",
             }
         ),
+        # Landing Part 3b: the hosting platform's client, confined to one repository's
+        # applications (`estate_lander.image_repoint`).
+        foreign={
+            "/api/v1/applications": "Coolify's application listing (GET)",
+            "/api/v1/applications/{}": (
+                "Coolify's read and image-tag PATCH of one application the member record lists"
+            ),
+            "/api/v1/applications/{}/start": (
+                "Coolify's deploy of one application the member record lists"
+            ),
+        },
     ),
     "inert_lander": Row(
         Role.INTERNAL_LANE_ACTOR,

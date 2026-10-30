@@ -24,6 +24,7 @@ from pathlib import Path
 import pytest
 
 from estate_lander import change_manager as estate_change_manager
+from estate_lander import image_repoint
 from estate_lander import orchestrator_client as estate_orchestrator
 from inert_lander import orchestrator_client as inert_orchestrator
 from inert_lander.cli import PullRequestSource
@@ -38,8 +39,10 @@ from tests.architecture.test_bridge_edges import (
     _landing_policy_permits,
 )
 
-# The inert lander's GitHub token is not a BWS secret: its launcher takes it from the gh CLI.
+# The landers' GitHub token is not a BWS secret: each launcher takes it from the gh CLI.
 GH_AUTH_TOKEN = "gh auth token"
+# Landing Part 3b. The estate lander's Coolify token (BWS `COOLIFY_TOKEN_SDS_ESTATE_LANDER`).
+COOLIFY_TOKEN = "f9f59233-0794-4ea8-9806-b4f3011e6147"
 
 _HELD_CLOSE = ("POST", "/api/v1/held-pr-close")
 _ALERTS = frozenset({("POST", "/v1/alerts")})
@@ -53,11 +56,19 @@ EDGES: dict[str, Edge] = {
                 ("POST", "/api/v1/estate-pr-merge"),
                 ("POST", "/api/v1/estate-pr-branch-update"),
                 _HELD_CLOSE,
+                # Landing Part 3b: the watch, and the three acts on one of this lane's landings.
+                ("GET", "/api/v1/landing-watch"),
+                ("POST", "/api/v1/landing-revert"),
+                ("POST", "/api/v1/landing-repoint"),
+                ("POST", "/api/v1/landing-pinned"),
+                ("POST", "/api/v1/landing-restored"),
             }
         ),
-        github=frozenset(),
+        github=frozenset(),  # through deploy_watcher.github: GITHUB_THROUGH
         alert_hub=_ALERTS,  # through lander.held_alerts
-        bearers=frozenset({SYSTEM_BEARER, READ_BEARER, SDS_BRIDGE_ALERT_BEARER}),
+        bearers=frozenset(
+            {SYSTEM_BEARER, READ_BEARER, SDS_BRIDGE_ALERT_BEARER, GH_AUTH_TOKEN, COOLIFY_TOKEN}
+        ),
     ),
     "inert_lander": Edge(
         change_manager=frozenset({("GET", "/api/landing-policy")}),
@@ -80,14 +91,59 @@ EDGES: dict[str, Edge] = {
 
 GITHUB_THROUGH: dict[str, tuple[str, str]] = {
     "inert_lander": ("src/inert_lander/cli.py", "deploy_watcher.github"),
+    "estate_lander": ("src/estate_lander/cli.py", "deploy_watcher.github"),
 }
+
+# Landing Part 3b. The estate lander's two clients of services outside the estate's own: the
+# hosting platform, confined to one repository's applications (shown here with `u1` allowed), and
+# the registry. Each cell is checked against the client's own predicate over a corpus.
+PLATFORM_ALLOWED_UUID = "u1"
+PLATFORM_EDGES: dict[str, tuple[Permits, frozenset[tuple[str, str]]]] = {
+    "coolify": (
+        lambda m, p: image_repoint._permits(frozenset({PLATFORM_ALLOWED_UUID}), m, p),
+        frozenset(
+            {
+                ("GET", "/api/v1/applications"),
+                ("GET", "/api/v1/applications/u1"),
+                ("PATCH", "/api/v1/applications/u1"),
+                ("POST", "/api/v1/applications/u1/start"),
+            }
+        ),
+    ),
+    "ghcr": (
+        lambda m, p: image_repoint._registry_permits(m, p),
+        frozenset(
+            {
+                ("GET", "/token"),
+                ("HEAD", "/v2/alobarquest/brain/manifests/latest"),
+            }
+        ),
+    ),
+}
+# The registry's one read names a tag, so its row is a pattern rather than a path: any tag of one
+# of this estate's images. The corpus's suffixed near miss of a listed tag is another tag.
+_MANIFEST = re.compile(
+    r"/v2/alobarquest/[a-z0-9][a-z0-9._-]*/manifests/[A-Za-z0-9_][A-Za-z0-9_.-]*"
+)
+PLATFORM_PROBES = frozenset(
+    {
+        "/api/v1/applications/u2",
+        "/api/v1/applications/u1/restart",
+        "/api/v1/applications/u1/stop",
+        "/api/v1/applications/u1/envs",
+        "/api/v1/deploy",
+        "/api/v1/servers",
+        "/v2/someone-else/brain/manifests/latest",
+        "/v2/alobarquest/brain/blobs/latest",
+    }
+)
 
 LAUNCHERS: dict[str, str] = {
     "estate_lander": "scripts/run-estate-landing.sh",
     "inert_lander": "scripts/run-inert-landing.sh",
 }
 
-METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
+METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD")
 
 PROBES = frozenset(
     {
@@ -168,6 +224,58 @@ def test_a_lander_without_its_own_github_reader_reads_through_the_named_one(lane
     source, reader = GITHUB_THROUGH[lane]
     assert EDGES[lane].github == frozenset()
     assert reader in _imports(source)
+
+
+def platform_disagreements(service: str) -> frozenset[tuple[str, str, bool]]:
+    permits, listed = PLATFORM_EDGES[service]
+    paths = {path for _, path in listed} | PLATFORM_PROBES
+    corpus = paths | {f"{path}/" for path in paths} | {f"{path}x" for path in paths}
+    return frozenset(
+        (method, path, permits(method, path))
+        for method in METHODS
+        for path in corpus
+        if permits(method, path) != _listed(service, listed, method, path)
+    )
+
+
+def _listed(service: str, listed: frozenset[tuple[str, str]], method: str, path: str) -> bool:
+    if service == "ghcr" and method == "HEAD" and _MANIFEST.fullmatch(path):
+        return True
+    return (method, path) in listed
+
+
+@pytest.mark.parametrize("service", sorted(PLATFORM_EDGES))
+def test_the_estate_landers_platform_and_registry_reach_exactly_their_routes(service: str) -> None:
+    assert sorted(platform_disagreements(service)) == []
+
+
+def test_control_a_widened_platform_predicate_fails_the_table(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = image_repoint._permits
+    monkeypatch.setattr(
+        image_repoint,
+        "_permits",
+        lambda allowed, m, p: p.endswith("/restart") or original(allowed, m, p),
+    )
+
+    assert ("POST", "/api/v1/applications/u1/restart", True) in platform_disagreements("coolify")
+
+
+def test_the_estate_landers_github_reads_are_the_listing_and_the_compare() -> None:
+    """The reader permits any GET, so what bounds this lane's GitHub reads is the methods its
+    program calls on it: the open pull requests a revert is in, and whether production serves a
+    commit at or after the revert's."""
+    tree = ast.parse(Path("src/estate_lander/cli.py").read_text(encoding="utf-8"))
+    called = {
+        node.func.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "reader"
+    }
+    assert called == {"open_pull_requests", "compare_status"}
 
 
 def test_the_inert_landers_github_need_is_the_one_listing() -> None:

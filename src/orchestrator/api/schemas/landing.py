@@ -394,8 +394,9 @@ class HeldPrCloseResponse(BaseModel):
 
 
 class WatchedLandingModel(BaseModel):
-    """One watched landing of the inert lane (Landing Part 3a): its verdict when it was judged,
-    else its record's status. `failed_runs` is each failing run's (id, attempt)."""
+    """One watched landing of a landing lane (Landing Part 3): its verdict when it was judged,
+    else its record's status. `failed_runs` is each failing run's (id, attempt); `reason` is a
+    `bad` verdict's rule, `checks` or `served` (Part 3b)."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -410,10 +411,31 @@ class WatchedLandingModel(BaseModel):
     status: str | None
     revert_pr_number: int | None
     hold_outcome: str | None
+    reason: str | None
+    # Landing Part 3b: the lane that landed it, the bump's parent, the images a re-point pinned
+    # (`{application uuid: {tag, digest, restore_tag}}`) and the revert's own merge commit.
+    lane: str
+    parent_sha: str | None
+    pinned_images: dict[str, dict[str, str]] | None
+    revert_merge_sha: str | None
 
 
 class LandingWatchResponse(BaseModel):
     landings: list[WatchedLandingModel]
+
+
+class OpenedRevertModel(BaseModel):
+    """A revert the SDS opened and has not landed (Landing Part 3b)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    repository: str
+    pr_number: int
+    revert_pr_number: int
+
+
+class OpenedRevertsResponse(BaseModel):
+    reverts: list[OpenedRevertModel]
 
 
 class LandingRevertCommandModel(BaseModel):
@@ -425,6 +447,42 @@ class LandingRevertCommandModel(BaseModel):
     idempotency_key: str = Field(min_length=1, max_length=400)
     # The record's status the caller read in the watch, `null` when it had none. Required.
     expected_status: str | None
+
+
+class LandingRepointCommandModel(BaseModel):
+    """The estate lander names the images it points each application at (Landing Part 3b): the
+    bump's parent's full commit as the tag, the digest it resolved, and the moving tag to restore.
+    The orchestrator judges the landing again and records `repointed` only on its own `bad`."""
+
+    repository: str = Field(pattern=r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$", max_length=300)
+    pr_number: int = Field(gt=0)
+    idempotency_key: str = Field(min_length=1, max_length=400)
+    # The record's status the caller read in the watch, `null` when it had none. Required.
+    expected_status: str | None
+    pinned_images: dict[str, dict[str, str]] = Field(min_length=1, max_length=20)
+
+
+class LandingPinnedCommandModel(BaseModel):
+    """The estate lander set every pinned application's tag to the parent's (Landing Part 3b).
+    Only a `repointed` record is confirmed; until it is, a tag on its restore tag is a pin that
+    never happened."""
+
+    repository: str = Field(pattern=r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$", max_length=300)
+    pr_number: int = Field(gt=0)
+    idempotency_key: str = Field(min_length=1, max_length=400)
+    # The record's status the caller read: a confirmation is asked of a re-pointed record only.
+    expected_status: str
+
+
+class LandingRestoreCommandModel(BaseModel):
+    """The estate lander has put the moving tag back and production serves the revert (Landing
+    Part 3b). Only a landed revert that pinned production is recorded `restored`."""
+
+    repository: str = Field(pattern=r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$", max_length=300)
+    pr_number: int = Field(gt=0)
+    idempotency_key: str = Field(min_length=1, max_length=400)
+    # The record's status the caller read: a restore is asked of a landed revert only.
+    expected_status: str
 
 
 class LandingRevertResponse(BaseModel):

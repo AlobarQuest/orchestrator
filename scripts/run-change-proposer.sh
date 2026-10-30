@@ -125,9 +125,12 @@ fi
 
 # THE OBSERVER BEARER IS FETCHED ON EVERY RUN, dry or writing, because the member record is the
 # scope authority: which repositories this lane considers is read from it, so even a dry run needs
-# the read. It is the narrow read-only `sds-operator` identity's secret (project `SDS Operator`),
-# which the broad identity above cannot read, so it has its own Keychain item and its own variable.
-# It is exported only as `SDS_MEMBERS_OBSERVER_TOKEN`: this lane files no observation.
+# the read. Landing Part 3b reads the same bearer a second time, for `GET /api/v1/opened-reverts`:
+# which open pull requests are the SDS's own reverts, filed as `dependency-revert` and never as a
+# bump, so a dry run reports them truly too. It is the narrow read-only `sds-operator` identity's
+# secret (project `SDS Operator`), which the broad identity above cannot read, so it has its own
+# Keychain item and its own variable. It is exported only as `SDS_MEMBERS_OBSERVER_TOKEN`: this lane
+# files no observation.
 OBSERVER_BEARER_UUID="${CHANGE_PROPOSER_OBSERVER_BWS_UUID:-f793576f-e9aa-4f9d-8089-b4a000b9e2d5}"
 SDS_IDENTITY="${BWS_ACCESS_TOKEN_SDS:-$(/usr/bin/security find-generic-password \
   -s 'Claude' -a 'BWS_ACCESS_TOKEN_SDS' -w 2>/dev/null || true)}"

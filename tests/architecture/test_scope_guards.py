@@ -82,6 +82,9 @@ def test_production_post_route_inventory_is_explicit() -> None:
         # request its own re-composed admission refuses for a hold. SYSTEM-only, like the landings.
         "/api/v1/held-pr-close",
         "/api/v1/landing-revert",
+        "/api/v1/landing-repoint",
+        "/api/v1/landing-pinned",
+        "/api/v1/landing-restored",
         "/api/v1/work-units/{unit_id}/verify",
         "/api/v1/work-units/{unit_id}/verifier-evidence/named-check",
         "/api/v1/work-units/{unit_id}/release-artifacts",
@@ -207,6 +210,9 @@ def test_production_get_route_inventory_is_explicit() -> None:
         # permission, which is what the freshening pass acts on.
         "/api/v1/inert-pr-merge-admission",
         "/api/v1/landing-watch",
+        # Landing Part 3b: the reverts the SDS opened, from its own records, readable by the
+        # observer so the change producer can recognise a revert pull request. Reads no App.
+        "/api/v1/opened-reverts",
         "/api/v1/work-units/{unit_id}/readiness",
         "/api/v1/work-units/{unit_id}/release-artifacts",
         # ADR-0030: which completed units a machine-local working copy could bind a release

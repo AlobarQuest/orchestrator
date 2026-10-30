@@ -1,8 +1,13 @@
+from datetime import UTC, datetime
+
 import pytest
+from alembic import command
+from sqlalchemy import inspect
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from orchestrator.persistence.models import LandingRevert
+from tests._support.database import alembic_config
 
 BUMP = {
     "ecosystem": "npm",
@@ -70,3 +75,53 @@ def test_rerun_attempts_hold_each_reruns_run_and_attempt(
         rows = {row.pr_number: row for row in reader.query(LandingRevert).all()}
         assert rows[7].rerun_attempts == attempts
         assert rows[8].rerun_attempts is None
+
+
+def test_the_image_steps_are_stored_and_read_back(
+    migrated_session: Session, migrated_engine
+) -> None:
+    pinned = {"app-uuid-1": {"tag": "sha-" + "b" * 40, "digest": "sha256:" + "c" * 64}}
+    restored = datetime(2026, 10, 30, 12, 0, tzinfo=UTC)
+    migrated_session.add(_revert(status="restored", pinned_images=pinned, restored_at=restored))
+    migrated_session.add(_revert(pr_number=8, status="repointed"))
+    migrated_session.commit()
+    with Session(migrated_engine) as reader:
+        rows = {row.pr_number: row for row in reader.query(LandingRevert).all()}
+        assert rows[7].pinned_images == pinned
+        assert rows[7].restored_at == restored
+        assert rows[8].pinned_images is None
+        assert rows[8].restored_at is None
+
+
+def test_the_status_check_admits_the_image_statuses_and_still_refuses_others(
+    migrated_session: Session,
+) -> None:
+    for number, status in enumerate(("repointed", "restored"), start=20):
+        migrated_session.add(_revert(pr_number=number, status=status))
+    migrated_session.commit()
+    migrated_session.add(_revert(pr_number=30, status="exploded"))
+    with pytest.raises(IntegrityError):
+        migrated_session.commit()
+
+
+@pytest.mark.schema_rebuild
+def test_0045_downgrade_refuses_rows_holding_an_image_status_and_otherwise_reverts(
+    migrated_engine,
+) -> None:
+    config = alembic_config()
+    with Session(migrated_engine) as session:
+        session.add(_revert(status="repointed"))
+        session.commit()
+    with pytest.raises(Exception, match="repointed|restored|landing_reverts"):
+        command.downgrade(config, "0044_landing_reverts")
+    with Session(migrated_engine) as session:
+        session.query(LandingRevert).delete()
+        session.commit()
+    command.downgrade(config, "0044_landing_reverts")
+    columns = {c["name"] for c in inspect(migrated_engine).get_columns("landing_reverts")}
+    assert "pinned_images" not in columns
+    assert "restored_at" not in columns
+    command.upgrade(config, "head")
+    assert "pinned_images" in {
+        c["name"] for c in inspect(migrated_engine).get_columns("landing_reverts")
+    }

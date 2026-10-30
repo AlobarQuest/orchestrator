@@ -7,7 +7,9 @@ second session.
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Sequence
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -15,7 +17,15 @@ from sqlalchemy import Engine, select, text
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
-from orchestrator.persistence.models import Event, LandingRevert, SdsMemberHold
+from orchestrator.persistence.models import (
+    EstatePrMerge,
+    Event,
+    LandingRevert,
+    Observation,
+    ObservationSource,
+    SdsMemberApp,
+    SdsMemberHold,
+)
 from orchestrator.services.landing.estate_landing import LANDING_INERT, EstateAnswer
 from orchestrator.services.landing.inert_landing_admission import inert_landing_admission
 from orchestrator.services.landing.inert_landing_policy import InertLandingAnswer
@@ -32,10 +42,13 @@ from orchestrator.services.landing.interfaces import (
 )
 from orchestrator.services.landing.revert_act import (
     LANDING_REVERT_LANE_OFF,
+    LANDING_REVERT_NEEDS_REPOINT,
     LANDING_REVERT_NOT_WATCHED,
     LANDING_REVERT_RECORD_MOVED,
     LANDING_REVERT_RERUN_REFUSED,
+    RevertActOutcome,
     RevertCommand,
+    RevertLane,
     act_on_landing,
     landing_watch,
 )
@@ -43,8 +56,11 @@ from orchestrator.services.landing.terms import (
     LANDING_REPOSITORY_NOT_GRANTED,
     LANDING_VERSION_REVERTED,
 )
+from revision_watcher.census import Reading
+from revision_watcher.record import revision_observation
+from revision_watcher.subjects import Subject
 from tests.services.estate_doubles import FakeEstateLandingSource
-from tests.services.estate_landing_doubles import dependabot_commit, pull_request
+from tests.services.estate_landing_doubles import dependabot_commit, job_id_of, pull_request
 from tests.services.inert_landing_doubles import (
     INERT_REPOSITORY,
     LANDED_COMMIT,
@@ -85,13 +101,15 @@ def message(title: str = TITLE, version: str = "0.21.0") -> str:
 
 
 def job(name: str, conclusion: str | None, *, attempt: int = 1, event: str = "push") -> Job:
+    run_id = RUN if event == "push" else 7
     return Job(
         name=name,
         conclusion=conclusion,
-        run_id=RUN if event == "push" else 7,
+        run_id=run_id,
         attempt=attempt,
         workflow="CI",
         event=event,
+        job_id=job_id_of(name, run_id, attempt),
     )
 
 
@@ -155,10 +173,16 @@ class WatchGateway(ActingInertGateway):
         assert sha == LANDED_COMMIT
         return PARENT
 
-    def rerun_failed_jobs(self, *, repository: str, run_id: int) -> None:
+    def rerun_job(self, *, repository: str, job_id: int) -> None:
         if self._rerun_error is not None:
             raise self._rerun_error
-        self.reruns.append(run_id)
+        self.reruns.append(job_id)
+
+    def compare_status(self, *, repository: str, base: str, head: str) -> str:
+        raise AssertionError("an inert landing is judged by its checks alone")
+
+    def committed_at(self, *, repository: str, sha: str) -> datetime:
+        raise AssertionError("an inert landing is judged by its checks alone")
 
     def create_tree(self, *, repository: str, base_tree: str, changes: Sequence[TreeChange]) -> str:
         self.writes.append("tree")
@@ -269,10 +293,24 @@ def act(
             if isinstance(expected, _ReadIt)
             else expected,
         ),
-        gateway,
-        enabled=enabled,
-        credentials_configured=True,
+        **lanes(gateway, inert=enabled),
     )
+
+
+def lanes(
+    gateway: WatchGateway,
+    *,
+    inert: bool = True,
+    estate: bool = True,
+    estate_gateway: WatchGateway | None = None,
+    configured: bool = True,
+) -> dict[str, Any]:
+    """Both lanes' switches and gateways; one double serves both unless the estate's is given."""
+    return {
+        "inert": RevertLane(gateway, inert),
+        "estate": RevertLane(estate_gateway or gateway, estate),
+        "credentials_configured": configured,
+    }
 
 
 def stored(engine: Engine) -> LandingRevert | None:
@@ -294,23 +332,23 @@ def test_a_bad_landing_is_rerun_then_reverted_landed_held_and_never_lands_again(
     )
 
     # It failed once: the watch asks for one rerun, and the act asks for it.
-    [watched] = landing_watch(migrated_session, gateway, enabled=True, credentials_configured=True)
+    [watched] = landing_watch(migrated_session, **lanes(gateway))
     assert (watched.verdict, watched.status) == ("flaky_retry", None)
     assert watched.failed_runs == ((RUN, 1),)
     rerun = act(migrated_session, gateway, key="rerun")
     assert (rerun.verdict, rerun.acted, rerun.status) == ("flaky_retry", True, "rerun_requested")
-    assert gateway.reruns == [RUN]
+    assert gateway.reruns == [job_id_of("test", RUN, 1)]
     record = stored(migrated_engine)
     assert record is not None
     assert (record.parent_sha, record.rerun_attempts) == (PARENT, {str(RUN): 1})
 
     # Asked again before the rerun reports, nothing more happens.
     assert act(migrated_session, gateway, key="again").acted is False
-    assert gateway.reruns == [RUN]
+    assert gateway.reruns == [job_id_of("test", RUN, 1)]
 
     # The rerun failed too, and the commit before the bump passed: bad, and the revert opens.
     gateway.jobs = failing(attempt=2)
-    [watched] = landing_watch(migrated_session, gateway, enabled=True, credentials_configured=True)
+    [watched] = landing_watch(migrated_session, **lanes(gateway))
     assert watched.verdict == "bad"
     opened = act(migrated_session, gateway, key="revert")
     assert (opened.status, opened.revert_pr_number) == ("revert_opened", REVERT)
@@ -331,7 +369,7 @@ def test_a_bad_landing_is_rerun_then_reverted_landed_held_and_never_lands_again(
             "to_version": "0.21.0",
         }
     ]
-    [watched] = landing_watch(migrated_session, gateway, enabled=True, credentials_configured=True)
+    [watched] = landing_watch(migrated_session, **lanes(gateway))
     assert (watched.verdict, watched.status, watched.revert_pr_number) == (
         None,
         "revert_opened",
@@ -351,7 +389,7 @@ def test_a_bad_landing_is_rerun_then_reverted_landed_held_and_never_lands_again(
     # The revert's own landing is never watched, nor even read; the reverted landing is, until
     # its window ends.
     gateway.reads.clear()
-    [watched] = landing_watch(migrated_session, gateway, enabled=True, credentials_configured=True)
+    [watched] = landing_watch(migrated_session, **lanes(gateway))
     assert (INERT_REPOSITORY, REVERT) not in gateway.reads
     assert (watched.pr_number, watched.status) == (BUMP, "revert_landed")
     assert watched.hold_outcome == "held uv / typer at 0.20.0"
@@ -384,7 +422,7 @@ def test_a_clean_landing_is_watched_and_nothing_is_acted_on(migrated_session: Se
     landed_bump(migrated_session)
     gateway = WatchGateway(jobs={BUMP_HEAD: HEAD_GREEN, LANDED_COMMIT: (job("test", "success"),)})
 
-    [watched] = landing_watch(migrated_session, gateway, enabled=True, credentials_configured=True)
+    [watched] = landing_watch(migrated_session, **lanes(gateway))
     outcome = act(migrated_session, gateway)
 
     assert watched.verdict == "clean"
@@ -400,7 +438,7 @@ def test_a_landing_past_the_window_leaves_the_watch(migrated_session: Session) -
     )
     gateway = WatchGateway(jobs=failing())
 
-    assert landing_watch(migrated_session, gateway, enabled=True, credentials_configured=True) == ()
+    assert landing_watch(migrated_session, **lanes(gateway)) == ()
     with pytest.raises(DomainError) as raised:
         act(migrated_session, gateway)
     assert raised.value.code == LANDING_REVERT_NOT_WATCHED
@@ -425,12 +463,12 @@ def test_a_landing_whose_rerun_passed_leaves_the_watch_when_its_window_closes(
     gateway = WatchGateway(jobs=failing())
     act(migrated_session, gateway)
     gateway.jobs[LANDED_COMMIT] = (job("test", "success", attempt=2),)
-    [watched] = landing_watch(migrated_session, gateway, enabled=True, credentials_configured=True)
+    [watched] = landing_watch(migrated_session, **lanes(gateway))
     assert (watched.status, watched.verdict) == ("rerun_requested", "clean")
     _age(migrated_session, 49)
     gateway.job_reads.clear()
 
-    assert landing_watch(migrated_session, gateway, enabled=True, credentials_configured=True) == ()
+    assert landing_watch(migrated_session, **lanes(gateway)) == ()
     assert gateway.job_reads == []
 
 
@@ -443,7 +481,7 @@ def test_a_rerun_updated_inside_the_window_keeps_an_old_landing_watched(
     _age(migrated_session, 72)
     migrated_session.execute(text("UPDATE landing_reverts SET updated_at = now()"))
 
-    [watched] = landing_watch(migrated_session, gateway, enabled=True, credentials_configured=True)
+    [watched] = landing_watch(migrated_session, **lanes(gateway))
 
     assert (watched.status, watched.verdict) == ("rerun_requested", "pending")
 
@@ -456,7 +494,7 @@ def test_an_open_revert_keeps_its_landing_watched_however_old(migrated_session: 
     act(migrated_session, gateway, key="revert")
     _age(migrated_session, 72)
 
-    [watched] = landing_watch(migrated_session, gateway, enabled=True, credentials_configured=True)
+    [watched] = landing_watch(migrated_session, **lanes(gateway))
 
     assert (watched.status, watched.revert_pr_number) == ("revert_opened", REVERT)
 
@@ -478,7 +516,7 @@ def test_a_fork_sync_is_never_watched(migrated_session: Session) -> None:
         pulls={BUMP: bump_pull(author_login=SYNC_BOT, head_ref=SYNC_BRANCH)}, jobs=failing()
     )
 
-    assert landing_watch(migrated_session, gateway, enabled=True, credentials_configured=True) == ()
+    assert landing_watch(migrated_session, **lanes(gateway)) == ()
     with pytest.raises(DomainError) as raised:
         act(migrated_session, gateway)
     assert raised.value.code == LANDING_REVERT_NOT_WATCHED
@@ -492,7 +530,7 @@ def test_a_repository_the_record_no_longer_grants_is_never_read(
     grant_services(migrated_session, INERT_REPOSITORY, "dependency_updates", state="withdrawn")
     gateway = WatchGateway(jobs=failing())
 
-    [watched] = landing_watch(migrated_session, gateway, enabled=True, credentials_configured=True)
+    [watched] = landing_watch(migrated_session, **lanes(gateway))
     with pytest.raises(DomainError) as raised:
         act(migrated_session, gateway)
 
@@ -505,7 +543,7 @@ def test_an_unreadable_pull_request_is_reported_never_skipped(migrated_session: 
     landed_bump(migrated_session)
     gateway = WatchGateway(jobs=failing(), read_error=EstateGatewayError("read_status", 502))
 
-    [watched] = landing_watch(migrated_session, gateway, enabled=True, credentials_configured=True)
+    [watched] = landing_watch(migrated_session, **lanes(gateway))
 
     assert (watched.verdict, watched.detail) == ("unreadable", "read_status (HTTP 502)")
 
@@ -542,14 +580,22 @@ def test_a_new_failing_run_is_rerun_and_merged_into_the_record(
     other = RUN + 5
     gateway.jobs[LANDED_COMMIT] = (
         job("test", "failure", attempt=1),
-        Job("lint", "failure", run_id=other, attempt=1, workflow="Lint", event="push"),
+        Job(
+            "lint",
+            "failure",
+            run_id=other,
+            attempt=1,
+            workflow="Lint",
+            event="push",
+            job_id=job_id_of("lint", other, 1),
+        ),
     )
-    gateway.jobs[BUMP_HEAD] = (*HEAD_GREEN, Job("lint", "success", 8, 1, "Lint", "pull_request"))
+    gateway.jobs[BUMP_HEAD] = (*HEAD_GREEN, Job("lint", "success", 8, 1, "Lint", "pull_request", 9))
 
     outcome = act(migrated_session, gateway, key="second")
 
     assert (outcome.verdict, outcome.status) == ("flaky_retry", "rerun_requested")
-    assert gateway.reruns == [RUN, other]
+    assert gateway.reruns == [job_id_of("test", RUN, 1), job_id_of("lint", other, 1)]
     record = stored(migrated_engine)
     assert record is not None
     assert record.rerun_attempts == {str(RUN): 1, str(other): 1}
@@ -581,7 +627,7 @@ def test_a_repeated_key_answers_from_its_event_and_acts_no_more(
 
     assert second.replayed is True
     assert (second.status, second.verdict) == (first.status, first.verdict)
-    assert gateway.reruns == [RUN] and gateway.writes == []
+    assert gateway.reruns == [job_id_of("test", RUN, 1)] and gateway.writes == []
     with Session(migrated_engine) as reader:
         actions = list(reader.scalars(select(Event.action).where(Event.idempotency_key == "same")))
     assert actions == ["landing_revert.rerun_requested"]
@@ -757,7 +803,7 @@ def test_a_failed_revert_stays_watched_however_old(migrated_session: Session) ->
     gateway.reads.clear()
     gateway.job_reads.clear()
 
-    [watched] = landing_watch(migrated_session, gateway, enabled=True, credentials_configured=True)
+    [watched] = landing_watch(migrated_session, **lanes(gateway))
 
     assert watched.status == "revert_failed"
     assert gateway.reads == [] and gateway.job_reads == []
@@ -767,11 +813,12 @@ def test_the_watch_refuses_when_the_lane_is_off(migrated_session: Session) -> No
     landed_bump(migrated_session)
     gateway = WatchGateway(jobs=failing())
 
-    for enabled, configured in ((False, True), (True, False)):
+    for switched in (
+        lanes(gateway, inert=False, estate=False),
+        lanes(gateway, configured=False),
+    ):
         with pytest.raises(DomainError) as raised:
-            landing_watch(
-                migrated_session, gateway, enabled=enabled, credentials_configured=configured
-            )
+            landing_watch(migrated_session, **switched)
         assert raised.value.code == LANDING_REVERT_LANE_OFF
     assert gateway.reads == [] and gateway.job_reads == []
 
@@ -803,12 +850,12 @@ def test_a_landed_revert_stays_watched_while_its_hold_stands_and_leaves_when_it_
     gateway.reads.clear()
     gateway.job_reads.clear()
 
-    [watched] = landing_watch(migrated_session, gateway, enabled=True, credentials_configured=True)
+    [watched] = landing_watch(migrated_session, **lanes(gateway))
     assert (watched.pr_number, watched.status, watched.verdict) == (BUMP, "revert_landed", None)
     assert gateway.reads == [] and gateway.job_reads == []
 
     migrated_session.execute(text("DELETE FROM sds_member_holds"))
-    assert landing_watch(migrated_session, gateway, enabled=True, credentials_configured=True) == ()
+    assert landing_watch(migrated_session, **lanes(gateway)) == ()
 
 
 def test_a_hold_a_person_placed_on_the_same_dependency_keeps_a_landed_revert_watched(
@@ -823,7 +870,7 @@ def test_a_hold_a_person_placed_on_the_same_dependency_keeps_a_landed_revert_wat
     )
     _age(migrated_session, 72)
 
-    [watched] = landing_watch(migrated_session, gateway, enabled=True, credentials_configured=True)
+    [watched] = landing_watch(migrated_session, **lanes(gateway))
 
     assert (watched.pr_number, watched.status) == (BUMP, "revert_landed")
 
@@ -835,4 +882,549 @@ def test_a_landed_revert_whose_hold_is_on_another_dependency_leaves_after_its_wi
     migrated_session.execute(text("UPDATE sds_member_holds SET dependency = 'click'"))
     _age(migrated_session, 72)
 
-    assert landing_watch(migrated_session, gateway, enabled=True, credentials_configured=True) == ()
+    assert landing_watch(migrated_session, **lanes(gateway)) == ()
+
+
+# --------------------------------------------------------------------------------------------
+# Landing Part 3b: the estate lane's landings in the repositories that redeploy (brain #79's shape).
+# --------------------------------------------------------------------------------------------
+
+BRAIN = "alobarquest/brain"
+BRAINS = ("app-brain", "code-brain", "infra-brain", "open-brain")
+BRAIN_BUMP = 79
+BRAIN_TITLE = "chore(deps): bump sqlalchemy from 2.0.54 to 2.1.1"
+BRAIN_BRANCH = "dependabot/uv/sqlalchemy-2.1.1"
+BRAIN_HEAD = "5" * 40
+MERGE_79 = "271a2ac8de79a1dbc09bc5c05d4be73d08472449"
+BEFORE_79 = "80b620ce1799c1eeeaac83f494e6cd9a553d5503"
+
+
+class BrainGateway(WatchGateway):
+    """The App's surface for brain: its bump, its jobs, its parent and GitHub's compare."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        kwargs.setdefault(
+            "pulls",
+            {
+                BRAIN_BUMP: bump_pull(
+                    number=BRAIN_BUMP,
+                    head_sha=BRAIN_HEAD,
+                    title=BRAIN_TITLE,
+                    head_ref=BRAIN_BRANCH,
+                )
+            },
+        )
+        kwargs.setdefault(
+            "jobs",
+            {BRAIN_HEAD: HEAD_GREEN, MERGE_79: (job("test", "success"),)},
+        )
+        super().__init__(**kwargs)
+        self.compared: list[tuple[str, str]] = []
+        # The merge commit's time: three hours ago, when `landed_on_brain` lands it.
+        self.landed_at = datetime.now(UTC) - timedelta(hours=3)
+
+    def parent_of(self, *, repository: str, sha: str) -> str:
+        assert (repository, sha) == (BRAIN, MERGE_79)
+        return BEFORE_79
+
+    def committed_at(self, *, repository: str, sha: str) -> datetime:
+        assert (repository, sha) == (BRAIN, MERGE_79)
+        return self.landed_at
+
+    def compare_status(self, *, repository: str, base: str, head: str) -> str:
+        assert repository == BRAIN
+        self.compared.append((base, head))
+        against = {
+            MERGE_79: {MERGE_79: "identical", BEFORE_79: "behind"},
+            BEFORE_79: {BEFORE_79: "identical"},
+        }
+        return against[base][head]
+
+
+def landed_on_brain(session: Session, status: str = "merged") -> None:
+    """The estate lane's landing of brain #79, three hours ago, written in the shape `lane_act`
+    writes it (one row, its event naming the lane), and brain's four applications."""
+    member = grant_services(session, BRAIN, "dependency_updates", "security_patches")
+    for name in BRAINS:
+        session.add(
+            SdsMemberApp(
+                member_id=member.id,
+                name=name,
+                health_url=f"https://{name}.devonwatkins.com/api/health",
+                branch="main",
+            )
+        )
+    row = EstatePrMerge(
+        repository=BRAIN,
+        pr_number=BRAIN_BUMP,
+        head_sha=BRAIN_HEAD,
+        status=status,
+        merge_commit_sha=MERGE_79,
+        policy_version=13,
+        idempotency_key="estate-land-79",
+    )
+    session.add(row)
+    session.flush()
+    event = Event(
+        actor_id=SYSTEM.actor_id,
+        action=f"estate_pr_merge.{status}",
+        subject_type="estate_pr_merge",
+        subject_id=row.id,
+        payload={"repository": BRAIN, "pr_number": BRAIN_BUMP, "status": status},
+        correlation_id=uuid.uuid4(),
+        idempotency_key="estate-land-79:event",
+    )
+    session.add(event)
+    session.flush()
+    row.event_id = event.id
+    session.execute(
+        text("UPDATE estate_pr_merge SET created_at = now() - interval '3 hours' WHERE id = :id"),
+        {"id": row.id},
+    )
+    session.flush()
+
+
+def served(
+    session: Session,
+    application: str,
+    serving: str | None,
+    minutes_ago: int,
+    tip: str = MERGE_79,
+) -> None:
+    """One `production_revision` reading as `revision_watcher` files it, received `minutes_ago`.
+    A None `serving` is an `unstamped` reading, whose facts carry `serving: null`."""
+    reading = Reading(
+        subject=Subject(
+            application, f"https://{application}.devonwatkins.com/api/health", "AlobarQuest/brain"
+        ),
+        state="unstamped" if serving is None else "behind" if serving == BEFORE_79 else "current",
+        served=serving,
+        expected=tip,
+        observed_at="2026-10-02T07:15:20Z",
+        landing="redeploys",
+    )
+    command = revision_observation(reading)
+    event = Event(
+        actor_id="orchestrator-observer",
+        action="observation.recorded",
+        subject_type="observation",
+        subject_id=uuid.uuid4(),
+        payload={},
+        correlation_id=uuid.uuid4(),
+        idempotency_key=f"{command['idempotency_key']}:event",
+    )
+    session.add(event)
+    session.flush()
+    session.add(
+        Observation(
+            **{
+                key: command[key]
+                for key in (
+                    "source_system",
+                    "source_reference",
+                    "source_url",
+                    "trust_classification",
+                    "subject_type",
+                    "subject_reference",
+                    "environment",
+                    "observation_type",
+                    "status",
+                    "severity",
+                    "summary",
+                    "facts",
+                    "payload_digest",
+                    "idempotency_key",
+                )
+            },
+            observed_at=datetime.fromisoformat(command["observed_at"]),
+            received_at=datetime.now(UTC) - timedelta(minutes=minutes_ago),
+            normalized_fact_hash=f"sha256:{command['idempotency_key'][-64:]}",
+            recorded_by="orchestrator-observer",
+            event_id=event.id,
+        )
+    )
+    session.flush()
+
+
+def heard(session: Session, minutes_ago: int, applications: Sequence[str] = BRAINS) -> None:
+    """`revision_watcher`'s heartbeat for each application, as the ingest records it on every
+    accepted post about it."""
+    for name in applications:
+        session.merge(
+            ObservationSource(
+                source_system="revision_watcher",
+                subject_reference=name,
+                last_seen_at=datetime.now(UTC) - timedelta(minutes=minutes_ago),
+            )
+        )
+    session.flush()
+
+
+def everywhere(
+    session: Session, serving: str | None, minutes_ago: int, tip: str = MERGE_79
+) -> None:
+    for name in BRAINS:
+        served(session, name, serving, minutes_ago, tip)
+
+
+def act_on_brain(
+    session: Session, gateway: WatchGateway, *, key: str = "b1", **kwargs: Any
+) -> RevertActOutcome:
+    return act_on_landing(
+        session,
+        RevertCommand(
+            repository=BRAIN,
+            pr_number=BRAIN_BUMP,
+            actor=SYSTEM,
+            idempotency_key=key,
+            expected_status=_current(session, BRAIN_BUMP),
+        ),
+        **lanes(gateway, **kwargs),
+    )
+
+
+@pytest.mark.parametrize("status", ["merged", "already_merged"])
+def test_a_deploying_landing_is_watched_and_judged_by_what_production_serves(
+    migrated_session: Session, status: str
+) -> None:
+    landed_on_brain(migrated_session, status)
+    everywhere(migrated_session, MERGE_79, minutes_ago=120)
+    gateway = BrainGateway()
+
+    [watched] = landing_watch(migrated_session, **lanes(gateway))
+
+    assert (watched.repository, watched.pr_number, watched.verdict) == (BRAIN, BRAIN_BUMP, "clean")
+    assert watched.reason is None
+    # Measured against the merge commit and serving it: nothing to ask GitHub.
+    assert gateway.compared == []
+
+
+def test_a_deploying_landing_stuck_behind_is_bad_and_is_not_reverted_before_a_repoint(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    """Every brain on the build before for two and a half hours, the watcher reporting: `bad` by
+    what production serves. Nothing reverts a repository that redeploys until production has been
+    pointed back (Part 3b's Task 4), so the act refuses by name and writes nothing."""
+    landed_on_brain(migrated_session)
+    everywhere(migrated_session, BEFORE_79, minutes_ago=140)
+    heard(migrated_session, minutes_ago=10)
+    gateway = BrainGateway()
+
+    [watched] = landing_watch(migrated_session, **lanes(gateway))
+    with pytest.raises(DomainError) as raised:
+        act_on_brain(migrated_session, gateway)
+
+    assert (watched.verdict, watched.reason) == ("bad", "served")
+    assert raised.value.code == LANDING_REVERT_NEEDS_REPOINT
+    assert "served" in raised.value.message
+    assert gateway.writes == [] and gateway.reruns == []
+    assert stored(migrated_engine) is None
+
+
+def test_a_deploying_landing_whose_watcher_is_silent_is_pending(migrated_session: Session) -> None:
+    """The heartbeat is the watcher's own, never another reading: a fresh row of some other
+    application says nothing about whether the watcher has asked brain again."""
+    landed_on_brain(migrated_session)
+    everywhere(migrated_session, BEFORE_79, minutes_ago=140)
+    served(migrated_session, "orchestrator", "a" * 40, minutes_ago=10)
+    heard(migrated_session, minutes_ago=125)
+
+    [watched] = landing_watch(migrated_session, **lanes(BrainGateway()))
+
+    assert watched.verdict == "pending" and "watcher" in watched.detail
+
+
+def test_a_deploying_landing_the_watcher_was_never_heard_from_is_pending(
+    migrated_session: Session,
+) -> None:
+    landed_on_brain(migrated_session)
+    everywhere(migrated_session, BEFORE_79, minutes_ago=140)
+
+    [watched] = landing_watch(migrated_session, **lanes(BrainGateway()))
+
+    assert watched.verdict == "pending" and "watcher" in watched.detail
+
+
+def test_one_brain_behind_is_not_bad(migrated_session: Session) -> None:
+    landed_on_brain(migrated_session)
+    for name in BRAINS:
+        served(migrated_session, name, BEFORE_79 if name == "app-brain" else MERGE_79, 140)
+    heard(migrated_session, minutes_ago=10)
+
+    [watched] = landing_watch(migrated_session, **lanes(BrainGateway()))
+
+    assert watched.verdict == "pending"
+
+
+def test_a_check_failure_on_a_deploying_landing_is_rerun_as_on_an_inert_one(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    landed_on_brain(migrated_session)
+    everywhere(migrated_session, MERGE_79, minutes_ago=120)
+    gateway = BrainGateway(jobs={BRAIN_HEAD: HEAD_GREEN, MERGE_79: (job("test", "failure"),)})
+
+    rerun = act_on_brain(migrated_session, gateway)
+
+    assert (rerun.verdict, rerun.acted, rerun.status) == ("flaky_retry", True, "rerun_requested")
+    assert gateway.reruns == [job_id_of("test", RUN, 1)]
+    record = stored(migrated_engine)
+    assert record is not None and record.parent_sha == BEFORE_79
+
+
+def test_a_check_failure_surviving_its_rerun_on_a_deploying_landing_is_not_reverted_yet(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    landed_on_brain(migrated_session)
+    everywhere(migrated_session, MERGE_79, minutes_ago=120)
+    gateway = BrainGateway(jobs={BRAIN_HEAD: HEAD_GREEN, MERGE_79: (job("test", "failure"),)})
+    act_on_brain(migrated_session, gateway, key="rerun")
+    gateway.jobs = {
+        BRAIN_HEAD: HEAD_GREEN,
+        MERGE_79: (job("test", "failure", attempt=2),),
+        BEFORE_79: (job("test", "success"),),
+    }
+
+    [watched] = landing_watch(migrated_session, **lanes(gateway))
+    with pytest.raises(DomainError) as raised:
+        act_on_brain(migrated_session, gateway, key="revert")
+
+    assert (watched.verdict, watched.reason) == ("bad", "checks")
+    assert raised.value.code == LANDING_REVERT_NEEDS_REPOINT
+    assert gateway.writes == []
+    record = stored(migrated_engine)
+    assert record is not None and record.status == "rerun_requested"
+
+
+def test_an_inert_landing_reads_no_production(migrated_session: Session) -> None:
+    landed_bump(migrated_session)
+    everywhere(migrated_session, BEFORE_79, minutes_ago=140)
+    gateway = WatchGateway(jobs={BUMP_HEAD: HEAD_GREEN, LANDED_COMMIT: (job("test", "success"),)})
+
+    [watched] = landing_watch(migrated_session, **lanes(gateway))
+
+    assert watched.verdict == "clean"
+
+
+def test_an_unstamped_reading_in_the_store_never_counts(migrated_session: Session) -> None:
+    """Every brain behind, then answering health with no revision: the behind readings still
+    stand, and the unstamped ones are never compared."""
+    landed_on_brain(migrated_session)
+    everywhere(migrated_session, BEFORE_79, minutes_ago=140)
+    everywhere(migrated_session, None, minutes_ago=20)
+    heard(migrated_session, minutes_ago=10)
+    gateway = BrainGateway()
+
+    [watched] = landing_watch(migrated_session, **lanes(gateway))
+
+    assert (watched.verdict, watched.reason) == ("bad", "served")
+    assert gateway.compared == [(MERGE_79, BEFORE_79)]
+
+
+def test_only_the_watched_jobs_that_failed_are_rerun_one_at_a_time(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    """A push run where a watched job and a job the pull request never ran (a step that redeploys)
+    both failed: only the watched one is rerun, by its own id, never the run's failed jobs."""
+    landed_on_brain(migrated_session)
+    everywhere(migrated_session, MERGE_79, minutes_ago=120)
+    gateway = BrainGateway(
+        jobs={
+            BRAIN_HEAD: HEAD_GREEN,
+            MERGE_79: (job("test", "failure"), job("rollout", "failure")),
+        }
+    )
+
+    outcome = act_on_brain(migrated_session, gateway)
+
+    assert (outcome.verdict, outcome.status) == ("flaky_retry", "rerun_requested")
+    assert gateway.reruns == [job_id_of("test", RUN, 1)]
+    record = stored(migrated_engine)
+    assert record is not None
+    assert (record.failed_job_names, record.rerun_attempts) == (["test"], {str(RUN): 1})
+
+
+def test_a_refused_job_rerun_is_left_out_of_the_record_and_asked_again(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    """Two watched jobs failed in one run and the platform took only the first rerun: the second
+    is not recorded as rerun, so the next pass judges it new and asks for it."""
+    landed_bump(migrated_session)
+    gateway = RefusingSecond(
+        jobs={
+            BUMP_HEAD: (*HEAD_GREEN, job("lint", "success", event="pull_request")),
+            LANDED_COMMIT: (job("lint", "failure"), job("test", "failure")),
+        }
+    )
+
+    act(migrated_session, gateway)
+
+    record = stored(migrated_engine)
+    assert record is not None
+    assert record.failed_job_names == ["lint"]
+    assert record.detail is not None and "test" in record.detail
+    [watched] = landing_watch(migrated_session, **lanes(gateway))
+    assert (watched.verdict, watched.failed_job_names) == ("flaky_retry", ("test",))
+
+
+class RefusingSecond(WatchGateway):
+    def rerun_job(self, *, repository: str, job_id: int) -> None:
+        if self.reruns:
+            raise EstateGatewayError("rerun_status", 403)
+        self.reruns.append(job_id)
+
+
+def test_each_landing_is_read_through_its_own_lanes_gateway(migrated_session: Session) -> None:
+    """The inert lane's landing through the inert gateway, the estate lane's through the estate
+    App gateway: neither reads the other's."""
+    landed_bump(migrated_session)
+    landed_on_brain(migrated_session)
+    everywhere(migrated_session, MERGE_79, minutes_ago=120)
+    inert = WatchGateway(jobs={BUMP_HEAD: HEAD_GREEN, LANDED_COMMIT: (job("test", "success"),)})
+    estate = BrainGateway()
+
+    watched = landing_watch(migrated_session, **lanes(inert, estate_gateway=estate))
+
+    assert {(w.pr_number, w.verdict) for w in watched} == {(BUMP, "clean"), (BRAIN_BUMP, "clean")}
+    assert [number for _, number in inert.reads] == [BUMP]
+    assert [number for _, number in estate.reads] == [BRAIN_BUMP]
+
+
+def test_the_estate_switch_off_judges_no_deploying_landing(migrated_session: Session) -> None:
+    landed_bump(migrated_session)
+    landed_on_brain(migrated_session)
+    everywhere(migrated_session, BEFORE_79, minutes_ago=140)
+    heard(migrated_session, minutes_ago=10)
+    inert = WatchGateway(jobs={BUMP_HEAD: HEAD_GREEN, LANDED_COMMIT: (job("test", "success"),)})
+    estate = BrainGateway()
+
+    watched = {
+        w.pr_number: w
+        for w in landing_watch(
+            migrated_session, **lanes(inert, estate_gateway=estate, estate=False)
+        )
+    }
+    with pytest.raises(DomainError) as raised:
+        act_on_brain(migrated_session, estate, estate=False)
+
+    assert (watched[BUMP].verdict, watched[BRAIN_BUMP].verdict) == ("clean", "unreadable")
+    assert watched[BRAIN_BUMP].detail == LANDING_REVERT_LANE_OFF
+    assert raised.value.code == LANDING_REVERT_LANE_OFF
+    assert estate.reads == [] and estate.job_reads == [] and estate.compared == []
+
+
+def test_the_inert_switch_off_judges_no_inert_landing(migrated_session: Session) -> None:
+    landed_bump(migrated_session)
+    landed_on_brain(migrated_session)
+    everywhere(migrated_session, MERGE_79, minutes_ago=120)
+    inert = WatchGateway(jobs=failing())
+    estate = BrainGateway()
+
+    watched = {
+        w.pr_number: w
+        for w in landing_watch(migrated_session, **lanes(inert, estate_gateway=estate, inert=False))
+    }
+    with pytest.raises(DomainError) as raised:
+        act(migrated_session, inert, enabled=False)
+
+    assert (watched[BUMP].verdict, watched[BRAIN_BUMP].verdict) == ("unreadable", "clean")
+    assert watched[BUMP].detail == LANDING_REVERT_LANE_OFF
+    assert raised.value.code == LANDING_REVERT_LANE_OFF
+    assert inert.reads == [] and inert.job_reads == [] and inert.reruns == []
+
+
+def test_a_landing_recorded_after_its_merge_is_anchored_on_the_merge_commits_time(
+    migrated_session: Session,
+) -> None:
+    """`already_merged`: the lane found the pull request merged and recorded it later. The stuck
+    reading arrived after the merge but before the record; it still counts."""
+    landed_on_brain(migrated_session, "already_merged")
+    migrated_session.execute(text("UPDATE estate_pr_merge SET created_at = now()"))
+    everywhere(migrated_session, BEFORE_79, minutes_ago=140)
+    heard(migrated_session, minutes_ago=10)
+
+    [watched] = landing_watch(migrated_session, **lanes(BrainGateway()))
+
+    assert (watched.verdict, watched.reason) == ("bad", "served")
+
+
+def test_an_application_on_another_branch_is_not_judged(migrated_session: Session) -> None:
+    """A preview application serves a branch the bump never landed on: it is not production."""
+    landed_on_brain(migrated_session)
+    member = grant_services(migrated_session, BRAIN, "dependency_updates")
+    migrated_session.add(
+        SdsMemberApp(
+            member_id=member.id,
+            name="app-brain-preview",
+            health_url="https://app-brain-preview.devonwatkins.com/api/health",
+            branch="preview",
+        )
+    )
+    migrated_session.flush()
+    everywhere(migrated_session, BEFORE_79, minutes_ago=140)
+    heard(migrated_session, minutes_ago=10)
+
+    [watched] = landing_watch(migrated_session, **lanes(BrainGateway()))
+
+    assert (watched.verdict, watched.reason) == ("bad", "served")
+
+
+def test_one_application_the_watcher_has_stopped_posting_about_is_pending(
+    migrated_session: Session,
+) -> None:
+    landed_on_brain(migrated_session)
+    everywhere(migrated_session, BEFORE_79, minutes_ago=140)
+    heard(migrated_session, minutes_ago=10, applications=BRAINS[:3])
+    heard(migrated_session, minutes_ago=125, applications=BRAINS[3:])
+
+    [watched] = landing_watch(migrated_session, **lanes(BrainGateway()))
+
+    assert watched.verdict == "pending" and BRAINS[3] in watched.detail
+
+
+def test_a_rerun_attempt_already_recorded_never_moves_backwards(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    """The record says run RUN was rerun at attempt 2. A job of that run failing for the first
+    time at attempt 1 (never rerun) asks for its own rerun, and the run's attempt stays 2."""
+    landed_bump(migrated_session)
+    migrated_session.add(
+        LandingRevert(
+            repository=INERT_REPOSITORY,
+            pr_number=BUMP,
+            merge_commit_sha=LANDED_COMMIT,
+            parent_sha=PARENT,
+            failed_job_names=["test"],
+            failed_run_id=RUN,
+            rerun_attempts={str(RUN): 2},
+            status="rerun_requested",
+            bumps=[],
+        )
+    )
+    migrated_session.flush()
+    gateway = WatchGateway(
+        jobs={
+            BUMP_HEAD: (*HEAD_GREEN, job("lint", "success", event="pull_request")),
+            LANDED_COMMIT: (job("test", "success", attempt=2), job("lint", "failure")),
+        }
+    )
+
+    outcome = act(migrated_session, gateway)
+
+    assert (outcome.verdict, outcome.status) == ("flaky_retry", "rerun_requested")
+    record = stored(migrated_engine)
+    assert record is not None and record.rerun_attempts == {str(RUN): 2}
+
+
+def test_readings_taken_before_a_late_push_never_count(migrated_session: Session) -> None:
+    """`already_merged`, its merge commit committed five hours before it reached the branch: the
+    readings from before the push were measured against the parent and correctly show it. They
+    are not this landing's, however early the committer date anchors it."""
+    landed_on_brain(migrated_session, "already_merged")
+    everywhere(migrated_session, BEFORE_79, minutes_ago=240, tip=BEFORE_79)
+    heard(migrated_session, minutes_ago=5)
+    gateway = BrainGateway()
+    gateway.landed_at = datetime.now(UTC) - timedelta(hours=5)
+
+    [watched] = landing_watch(migrated_session, **lanes(gateway))
+
+    assert watched.verdict == "pending" and "no reading since the landing" in watched.detail

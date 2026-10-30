@@ -8,6 +8,7 @@ from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 from sqlalchemy import select, text
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -24,6 +25,7 @@ from orchestrator.persistence.models import (
     OBSERVATION_TYPES,
     Event,
     Observation,
+    ObservationSource,
 )
 from orchestrator.services.release.release_artifacts import SHA256_DIGEST
 
@@ -130,6 +132,7 @@ def _record_observation(session: Session, command: ObservationCommand) -> Observ
     )
     if existing is not None:
         _validate_idempotent_replay(session, existing, payload)
+        _seen(session, command.source_system, command.subject_reference)
         return existing
 
     event_with_key = session.scalar(
@@ -148,6 +151,7 @@ def _record_observation(session: Session, command: ObservationCommand) -> Observ
         .with_for_update()
     )
     if same_fact is not None:
+        _seen(session, command.source_system, command.subject_reference)
         return same_fact
 
     same_source = session.scalar(
@@ -209,7 +213,27 @@ def _record_observation(session: Session, command: ObservationCommand) -> Observ
     )
     session.add(row)
     session.flush()
+    _seen(session, command.source_system, command.subject_reference)
     return row
+
+
+def _seen(session: Session, source_system: str, subject_reference: str) -> None:
+    """The producer ran and asked about this subject: move its `last_seen_at` to this
+    transaction's time.
+
+    Called on every path that accepts the observation, the two repeats included, and only there;
+    a refused one raises before it and the caller rolls the whole transaction back.
+    """
+    now = TransactionClock().now(session)
+    statement = insert(ObservationSource).values(
+        source_system=source_system, subject_reference=subject_reference, last_seen_at=now
+    )
+    session.execute(
+        statement.on_conflict_do_update(
+            index_elements=[ObservationSource.source_system, ObservationSource.subject_reference],
+            set_={"last_seen_at": statement.excluded.last_seen_at},
+        )
+    )
 
 
 OBSERVATION_ROLES = frozenset({ActorRole.SYSTEM, ActorRole.OBSERVER})

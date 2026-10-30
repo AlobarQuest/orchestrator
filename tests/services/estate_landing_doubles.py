@@ -10,6 +10,8 @@ green suite over a wire nobody read.
 
 from __future__ import annotations
 
+import zlib
+
 from orchestrator.services.landing.change_record import (
     ChangeRecord,
     ChangeRecordAnswer,
@@ -105,6 +107,8 @@ def approved(
     objections: tuple[str, ...] = (),
     record_id: int | None = 52,
     landing_conditions: LandingConditions | None | object = _DEFAULT,
+    change_class: str | None = "dependency-update",
+    pull_request_number: int = 49,
 ) -> ChangeRecordAnswer:
     """A record as change-manager serves one.
 
@@ -118,7 +122,7 @@ def approved(
         record=ChangeRecord(
             status=status,
             target_repository=REPOSITORY,
-            pull_request_number=49,
+            pull_request_number=pull_request_number,
             record_id=record_id,
             policy_version=policy_version,
             policy_objections=objections,
@@ -126,6 +130,7 @@ def approved(
             conditions=(
                 conditions() if landing_conditions is _DEFAULT else landing_conditions  # type: ignore[arg-type]
             ),
+            change_class=change_class,
         ),
     )
 
@@ -415,3 +420,9 @@ class SiblingGateway(FakeEstateGateway):
         if self._runs_error is not None:
             raise self._runs_error
         return self._runs_by.get(self._number_at(head_sha) or -1, ())
+
+
+def job_id_of(name: str, run_id: int, attempt: int) -> int:
+    """A stable job id for a double's job: one per (name, run, attempt), as the platform gives a
+    rerun attempt of a job an id of its own."""
+    return zlib.crc32(f"{name}/{run_id}/{attempt}".encode()) + 10_000_000_000

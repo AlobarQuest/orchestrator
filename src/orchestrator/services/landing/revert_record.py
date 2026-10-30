@@ -1,8 +1,8 @@
 """What the landing admissions read from the revert record. Landing Part 3a.
 
-Three questions, each asked of `landing_reverts` for one repository (stored lower-cased): is this
+Four questions, each asked of `landing_reverts` for one repository (stored lower-cased): is this
 pull request a revert the SDS opened, which versions has the SDS reverted from the default branch,
-and is a revert in progress there.
+and is a revert in progress there; and, for every repository, which reverts are open (Part 3b).
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Final
 
-from sqlalchemy import exists, func, or_, select
+from sqlalchemy import ColumnElement, and_, exists, func, or_, select
 from sqlalchemy.orm import Session
 
 from orchestrator.persistence.models import LandingRevert
@@ -22,6 +22,32 @@ from orchestrator.services.membership.holds import Bump
 REVERT_OPENED: Final = "revert_opened"
 REVERT_LANDED: Final = "revert_landed"
 RERUN_REQUESTED: Final = "rerun_requested"
+# Landing Part 3b: production points at the bump's parent's image and the revert is not yet open;
+# and the moving tag is back. A record restored after its revert landed (it names the revert's
+# merge commit) has landed too, and every read of a landed revert reads both; one a person
+# restored by hand after a revert that was refused or failed reverted nothing.
+REPOINTED: Final = "repointed"
+RESTORED: Final = "restored"
+
+
+def landed_revert() -> ColumnElement[bool]:
+    """A record whose revert landed: `revert_landed`, or `restored` after its revert landed."""
+    return or_(
+        LandingRevert.status == REVERT_LANDED,
+        and_(LandingRevert.status == RESTORED, LandingRevert.revert_merge_sha.is_not(None)),
+    )
+
+
+def is_landed_revert(record: LandingRevert) -> bool:
+    """`landed_revert`, of one record in hand."""
+    return record.status == REVERT_LANDED or (
+        record.status == RESTORED and record.revert_merge_sha is not None
+    )
+
+
+def pinned() -> ColumnElement[bool]:
+    """A record whose re-point still holds production on the build before the bump."""
+    return and_(LandingRevert.pinned_images.is_not(None), LandingRevert.status != RESTORED)
 
 
 @dataclass(frozen=True)
@@ -48,6 +74,35 @@ def recorded_revert(session: Session, repository: str, pr_number: int) -> Revert
     return RevertSubject(row.pr_number, row.merge_commit_sha, row.parent_sha)
 
 
+@dataclass(frozen=True)
+class OpenedRevert:
+    """A revert the SDS opened and has not landed: the bump's pull request and the revert's."""
+
+    repository: str
+    pr_number: int
+    revert_pr_number: int
+
+
+def opened_reverts(session: Session) -> tuple[OpenedRevert, ...]:
+    """Every `revert_opened` record, ordered. Landing Part 3b: `change_proposer` files a revert
+    pull request's change record only when one of these names it, so a pull request on a revert
+    branch that no record names is never filed as anything. Database rows only: no App read.
+    """
+    rows = session.scalars(
+        select(LandingRevert)
+        .where(
+            LandingRevert.status == REVERT_OPENED,
+            LandingRevert.revert_pr_number.is_not(None),
+        )
+        .order_by(LandingRevert.repository, LandingRevert.pr_number)
+    )
+    return tuple(
+        OpenedRevert(row.repository, row.pr_number, row.revert_pr_number)
+        for row in rows
+        if row.revert_pr_number is not None
+    )
+
+
 def reverted_versions(session: Session, repository: str) -> tuple[Bump, ...]:
     """Every bump a landed revert took back out of this repository, at the version it brought.
 
@@ -57,7 +112,7 @@ def reverted_versions(session: Session, repository: str) -> tuple[Bump, ...]:
     rows = session.scalars(
         select(LandingRevert).where(
             LandingRevert.repository == repository.lower(),
-            LandingRevert.status == REVERT_LANDED,
+            landed_revert(),
         )
     )
     return tuple(
@@ -74,7 +129,9 @@ def reverted_versions(session: Session, repository: str) -> tuple[Bump, ...]:
 
 def revert_in_progress(session: Session, repository: str) -> bool:
     """Is a landing in this repository on its way to a revert: a rerun asked for and still in the
-    watch, or a revert opened and not yet landed?
+    watch, production pointed back at the build before the bump and not yet restored (in any
+    status, Part 3b: a bump landed behind the pin is never served), or a revert opened and not yet
+    landed?
 
     A `rerun_requested` record counts only while it is in the watch (`WATCH_HOURS` since it last
     changed), as `revert_act` keeps it: a rerun that passed leaves its record in that status for
@@ -89,6 +146,7 @@ def revert_in_progress(session: Session, repository: str) -> bool:
                     LandingRevert.repository == repository.lower(),
                     or_(
                         LandingRevert.status == REVERT_OPENED,
+                        pinned(),
                         (LandingRevert.status == RERUN_REQUESTED)
                         & (LandingRevert.updated_at >= window),
                     ),

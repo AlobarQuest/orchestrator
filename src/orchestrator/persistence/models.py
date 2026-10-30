@@ -1024,6 +1024,24 @@ class Observation(UUIDPrimaryKey, Base):
     idempotency_key: Mapped[str] = mapped_column(String)
 
 
+class ObservationSource(Base):
+    """When each observation producer last posted about each subject. Landing Part 3b.
+
+    One row per (`source_system`, `subject_reference`), its `last_seen_at` moved by EVERY accepted
+    observation, a repeat of a stored one included. Per subject, because a pass that reached three
+    applications and not the fourth has not asked the fourth. A content-addressed producer writes
+    no observation while nothing it measures changes, so the observations alone cannot tell "stuck
+    on one fact" from "stopped"; this row can. Written in the ingest's own transaction, so a
+    refused observation moves nothing.
+    """
+
+    __tablename__ = "observation_sources"
+
+    source_system: Mapped[str] = mapped_column(String, primary_key=True)
+    subject_reference: Mapped[str] = mapped_column(Text, primary_key=True)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 # Tier 3 item 24a (2026-09-28) deleted every reader and writer of this table; the table and
 # this mapping stay because its production rows are cited by UUID as Phase-6 exit evidence
 # (~/docs/software-delivery-system/2026-07-09-ws63-governed-promotion-closeout-evidence.md).
@@ -1582,6 +1600,10 @@ LANDING_REVERT_STATUSES = (
     "revert_landed",
     "refused_overlap",
     "revert_failed",
+    # Production points at the parent's image and the revert is not yet open.
+    "repointed",
+    # The moving tag is back after the revert landed.
+    "restored",
 )
 
 
@@ -1619,6 +1641,9 @@ class LandingRevert(UUIDPrimaryKey, Base):
     # [{ecosystem, directory, dependency, from_version (nullable), to_version}]
     bumps: Mapped[list[dict[str, Any]]] = mapped_column(JSONB)
     hold_outcome: Mapped[str | None] = mapped_column(Text)
+    # {"<app uuid>": {"tag", "digest"}} -- the image each deploying application was pinned to.
+    pinned_images: Mapped[dict[str, dict[str, str]] | None] = mapped_column(JSONB)
+    restored_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # Why the record stands where it does, in words a person reads: the paths that moved for
     # `refused_overlap`, the failure for `revert_failed` (named by its code, e.g.
     # `tree_response_invalid`), and a dependency list that couldn't be read for `revert_opened`.

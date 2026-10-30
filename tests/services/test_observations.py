@@ -1,12 +1,12 @@
 from dataclasses import replace
 from datetime import UTC, datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole
-from orchestrator.persistence.models import Event, Observation, WorkUnit
+from orchestrator.persistence.models import Event, Observation, ObservationSource, WorkUnit
 from orchestrator.services.release.observations import (
     ObservationCommand,
     ObservationFilters,
@@ -236,3 +236,82 @@ def test_observation_refuses_a_key_only_the_deployment_ingress_used_to_refuse(
 
     assert isinstance(result, DomainError)
     assert result.code == "observation_secret_rejected"
+
+
+# Landing Part 3b: the producer heartbeat. Every accepted POST says its producer ran, including a
+# repeat of a stored observation, which writes no row: a content-addressed producer stuck on one
+# fact is otherwise indistinguishable from one that stopped.
+
+
+def _last_seen(
+    engine: Engine, source_system: str, subject: str = "AlobarQuest/orchestrator"
+) -> datetime | None:
+    with Session(engine) as reader:
+        return reader.scalar(
+            select(ObservationSource.last_seen_at).where(
+                ObservationSource.source_system == source_system,
+                ObservationSource.subject_reference == subject,
+            )
+        )
+
+
+def test_an_accepted_observation_records_its_source_as_seen(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    assert _last_seen(migrated_engine, "github") is None
+
+    assert isinstance(record_observation(migrated_session, command()), Observation)
+
+    assert _last_seen(migrated_engine, "github") is not None
+
+
+def test_a_repeated_observation_still_bumps_its_source_last_seen(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    """Both repeats: the same idempotency key, and the same fact under a new key."""
+    record_observation(migrated_session, command())
+    first = _last_seen(migrated_engine, "github")
+
+    replay = record_observation(migrated_session, command())
+    after_replay = _last_seen(migrated_engine, "github")
+    same_fact = record_observation(migrated_session, replace(command(key="same-fact-new-key")))
+    after_same_fact = _last_seen(migrated_engine, "github")
+
+    assert isinstance(replay, Observation) and isinstance(same_fact, Observation)
+    assert first is not None and after_replay is not None and after_same_fact is not None
+    assert first < after_replay < after_same_fact
+    assert migrated_session.scalar(select(func.count()).select_from(Observation)) == 1
+
+
+def test_a_refused_observation_does_not_count_as_seen(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    record_observation(migrated_session, command())
+    first = _last_seen(migrated_engine, "github")
+
+    changed = record_observation(
+        migrated_session,
+        replace(command(key="changed-fact"), facts={**command().facts, "conclusion": "failure"}),
+    )
+
+    assert isinstance(changed, DomainError)
+    assert _last_seen(migrated_engine, "github") == first
+
+
+def test_the_heartbeat_is_kept_per_subject(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    """A producer that asks several subjects is heard from about each one: a pass that reached
+    three applications and not the fourth has not asked the fourth."""
+    record_observation(migrated_session, command())
+    first = _last_seen(migrated_engine, "github")
+
+    other = replace(
+        command(key="other-subject"),
+        subject_reference="AlobarQuest/factory-runner",
+        source_reference="github:AlobarQuest/factory-runner:check:1",
+    )
+    assert isinstance(record_observation(migrated_session, other), Observation)
+
+    assert _last_seen(migrated_engine, "github") == first
+    assert _last_seen(migrated_engine, "github", "AlobarQuest/factory-runner") is not None

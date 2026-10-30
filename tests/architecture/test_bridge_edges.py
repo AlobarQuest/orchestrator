@@ -32,6 +32,7 @@ from bump_proposer import change_manager as bump_change_manager
 from bump_proposer import landing_policy as bump_landing_policy
 from bump_proposer import orchestrator_client as bump_orchestrator
 from change_proposer import change_manager as change_change_manager
+from change_proposer import reverts as change_reverts
 from estate_clients.confined import TransportFailure
 from scripts.layers import load
 from sds_members import client as members_client
@@ -85,7 +86,8 @@ EDGES: dict[str, Edge] = {
                 ("GET", "/api/items"),
             }
         ),
-        orchestrator=frozenset({("GET", "/api/v1/members")}),
+        # Landing Part 3b: the reverts the SDS recorded opening, read with the observer bearer.
+        orchestrator=frozenset({("GET", "/api/v1/members"), ("GET", "/api/v1/opened-reverts")}),
         github=frozenset(),  # through deploy_watcher.github: GITHUB_THROUGH
         alert_hub=frozenset(),
         bearers=frozenset({PROPOSE_BEARER, OBSERVER_BEARER}),
@@ -267,8 +269,11 @@ PERMITS: dict[str, dict[str, Permits | None]] = {
     },
     "change_proposer": {
         "change_manager": lambda m, p: change_change_manager._permits(m, p),
-        # No client of its own: the member-record reader it imports.
-        "orchestrator": lambda m, p: members_client._permits(members_client._READ)(m, p),
+        # The member-record reader it imports, and its own recorded-revert reader.
+        "orchestrator": _either(
+            lambda m, p: members_client._permits(members_client._READ)(m, p),
+            lambda m, p: change_reverts._permits(m, p),
+        ),
         "github": None,
         "alert_hub": None,
     },
