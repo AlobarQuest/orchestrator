@@ -34,15 +34,19 @@ from orchestrator.persistence.models import (
     WorkPackageRevision,
     WorkUnit,
 )
-from orchestrator.reach_vocabulary import SOURCE_REPOSITORY, reach_from_snapshot
 from orchestrator.services.execution.run_activity import a_run_may_have_started
 from orchestrator.services.execution.target_grant import (
-    DEPENDENCY_UPDATE,
     DEPENDENCY_UPDATES_SERVICE,
     MemberRecordGrants,
 )
 from orchestrator.services.intake.authority_gate import human_authority_gate
 from orchestrator.services.intake.bump_binding import bump_binding_violations, bump_text_differs
+from orchestrator.services.intake.bump_policy import (
+    PolicyRefusal,
+    is_bump_revision,
+    recognised_only_by_bump_patterns,
+    standing_bump_refusal,
+)
 from orchestrator.services.intake.intake_reads import POLICY_NOT_APPLIED
 from orchestrator.services.intake.packages import (
     DependencySpec,
@@ -279,9 +283,9 @@ def _approve_by_policy(
                 ),
             )
     except DomainError as error:
-        if _is_bump_revision(revision):
+        if is_bump_revision(revision):
             _record_policy_not_applied(
-                session, proposal, actor, _PolicyRefusal("approval_failed", (error.code,))
+                session, proposal, actor, PolicyRefusal("approval_failed", (error.code,))
             )
         return proposal
 
@@ -289,8 +293,6 @@ def _approve_by_policy(
 # The approver a package revision carries when a standing approval policy approved it rather
 # than a person (ADR-0028; `package_sources`). Policy approves no rotation decomposition for one.
 _POLICY_APPROVER = "policy:"
-# The approval policy that approves a standing dependency-update revision.
-_BUMP_APPROVER = "policy:dependency-update@"
 
 
 def _policy_approval(
@@ -311,7 +313,7 @@ def _policy_approval(
     a proposal. A decomposition a person or a WORKER proposed is a person's to decide, whatever
     it holds.
     """
-    if _is_bump_revision(revision):
+    if is_bump_revision(revision):
         return _bump_policy_approval(session, proposal, revision, actor)
     if actor.role is not ActorRole.SYSTEM or revision.approved_by.startswith(_POLICY_APPROVER):
         return None
@@ -358,18 +360,6 @@ def _policy_approval(
     )
 
 
-@dataclass(frozen=True)
-class _PolicyRefusal:
-    """Why policy left a bump's proposal for a person: a fixed code, and what it read."""
-
-    reason: str
-    detail: tuple[str, ...] = ()
-
-
-def _is_bump_revision(revision: WorkPackageRevision) -> bool:
-    return revision.profile == DEPENDENCY_UPDATE or revision.approved_by.startswith(_BUMP_APPROVER)
-
-
 def _bump_policy_approval(
     session: Session,
     proposal: DecompositionProposal,
@@ -382,7 +372,7 @@ def _bump_policy_approval(
     since a person otherwise learns of the proposal only from the review queue.
     """
     outcome = _bump_policy_outcome(session, proposal, revision, actor)
-    if isinstance(outcome, _PolicyRefusal):
+    if isinstance(outcome, PolicyRefusal):
         _record_policy_not_applied(session, proposal, actor, outcome)
         return None
     return outcome
@@ -393,7 +383,7 @@ def _bump_policy_outcome(
     proposal: DecompositionProposal,
     revision: WorkPackageRevision,
     actor: ActorContext,
-) -> str | _PolicyRefusal:
+) -> str | PolicyRefusal:
     """Every condition of the graduation, in order: the first that fails is the refusal.
 
     The binding runs before the grant because it establishes that the target is a readable
@@ -402,7 +392,9 @@ def _bump_policy_outcome(
     bound: the Brains supply it, not the proposer. The proposal's ``rationale`` never reaches the
     agent.
     """
-    refusal = _bump_revision_refusal(revision, actor)
+    if actor.role is not ActorRole.SYSTEM:
+        return PolicyRefusal("proposer_not_system")
+    refusal = standing_bump_refusal(revision)
     if refusal is not None:
         return refusal
     units = tuple(
@@ -419,13 +411,7 @@ def _bump_policy_outcome(
     try:
         policy = load_factory_policy()
     except DomainError:
-        return _PolicyRefusal("policy_unreadable")
-    bump_patterns = {
-        pattern.name
-        for row in policy.rows.values()
-        for pattern in row.known_good
-        if pattern.change_class == DEPENDENCY_UPDATE
-    }
+        return PolicyRefusal("policy_unreadable")
     # The unit as approval would create it: its id is deterministic in the proposal's.
     gate = human_authority_gate(
         ProposedUnitTerms(
@@ -435,19 +421,19 @@ def _bump_policy_outcome(
         ),
         revision,
     )
-    if gate.refusals or not set(gate.recognised_by) <= bump_patterns:
-        return _PolicyRefusal("envelope_not_recognised", (*gate.refusals, *gate.recognised_by))
+    if not recognised_only_by_bump_patterns(gate, policy):
+        return PolicyRefusal("envelope_not_recognised", (*gate.refusals, *gate.recognised_by))
     fields = revision.enforcement_snapshot["profile_fields"]
     violations = bump_binding_violations(
         proposed.authority, fields, revision.work_package.package_id
     )
     if violations:
-        return _PolicyRefusal("binding_violated", violations)
+        return PolicyRefusal("binding_violated", violations)
     if bump_text_differs(proposed.title, proposed.outcome, proposed.authority, fields):
-        return _PolicyRefusal("unit_text_differs")
+        return PolicyRefusal("unit_text_differs")
     target = str(normalize_authority(proposed.authority).constraints["target_repository"])
     if not MemberRecordGrants(session).is_granted(target, DEPENDENCY_UPDATES_SERVICE):
-        return _PolicyRefusal("repository_not_granted", (target,))
+        return PolicyRefusal("repository_not_granted", (target,))
     return (
         "approved by policy (ADR-0006 amendment 2): a standing dependency update, recognised by "
         f"{', '.join(sorted(gate.recognised_by))} (policy version {policy.version}), bound to "
@@ -456,30 +442,11 @@ def _bump_policy_outcome(
     )
 
 
-def _bump_revision_refusal(
-    revision: WorkPackageRevision, actor: ActorContext
-) -> _PolicyRefusal | None:
-    if actor.role is not ActorRole.SYSTEM:
-        return _PolicyRefusal("proposer_not_system")
-    if not revision.approved_by.startswith(_BUMP_APPROVER):
-        return _PolicyRefusal("revision_not_approved_by_bump_policy")
-    if revision.profile != DEPENDENCY_UPDATE:
-        return _PolicyRefusal("revision_not_dependency_update")
-    snapshot = revision.enforcement_snapshot
-    fields = snapshot.get("profile_fields") if isinstance(snapshot, dict) else None
-    if not isinstance(fields, dict) or fields.get("standing") is not True:
-        return _PolicyRefusal("revision_not_standing")
-    reach = reach_from_snapshot(snapshot)
-    if reach != (SOURCE_REPOSITORY,):
-        return _PolicyRefusal("reach_not_inert", tuple(reach or ()))
-    return None
-
-
 def _bump_shape_refusal(
     session: Session,
     proposal: DecompositionProposal,
     units: Sequence[DecompositionProposalUnit],
-) -> _PolicyRefusal | None:
+) -> PolicyRefusal | None:
     """One unit, waiting on nothing, within its budget, and answerable to every criterion.
 
     A retained criterion is one no unit answers, and a unit with no criteria completes without
@@ -487,14 +454,14 @@ def _bump_shape_refusal(
     validated, so with one unit and no retained row every criterion is the unit's.
     """
     if len(units) != 1:
-        return _PolicyRefusal("not_exactly_one_unit")
+        return PolicyRefusal("not_exactly_one_unit")
     if _any_row(session, DecompositionProposalDependency, proposal.id):
-        return _PolicyRefusal("unit_has_dependencies")
+        return PolicyRefusal("unit_has_dependencies")
     if _any_row(session, DecompositionProposalRetainedAc, proposal.id):
-        return _PolicyRefusal("criteria_not_all_mapped")
+        return PolicyRefusal("criteria_not_all_mapped")
     budget = normalize_authority(units[0].authority).budgets.max_attempts
     if budget is None or units[0].max_attempts > budget:
-        return _PolicyRefusal("attempts_over_budget")
+        return PolicyRefusal("attempts_over_budget")
     return None
 
 
@@ -513,7 +480,7 @@ def _record_policy_not_applied(
     session: Session,
     proposal: DecompositionProposal,
     actor: ActorContext,
-    refusal: _PolicyRefusal,
+    refusal: PolicyRefusal,
 ) -> None:
     session.add(
         Event(

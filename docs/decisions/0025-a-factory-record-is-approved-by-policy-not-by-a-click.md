@@ -164,3 +164,44 @@ criteria or the authority fingerprint. The lander selects subjects by `_LANE_CLA
 `src/estate_lander/cli.py`, which holds only `dependency-update`. Factory records, and any class
 the lander doesn't know, are set aside and counted as deferrals by class. The factory lane
 (`pr_merge_admission`) lands them.
+
+## Amendment 4 — 2026-10-30 (Landing Part 4: a standing bump lands without a click)
+
+**Decided by Devon, 2026-10-29 and 2026-10-30** (dependency bumps need no human approval; Landing
+Part 4, decision 1). This graduates amendment 2's two human gates for standing dependency-update
+units whose package stays inside the repository, and leaves them standing for a `live_estate`
+package. ADR-0006 amendment 2 graduates the decomposition decision. This amendment graduates the
+other gate, `pr_merge_admission`'s authority term.
+
+The term now reads "a bound approval, or the policy path". A human approval bound to the unit's
+exact fingerprint stays sufficient for every change class. Without one, the policy path meets the
+term only when all of these hold:
+
+- the envelope's `change_class` is `dependency-update`;
+- the revision's approver starts `policy:dependency-update@`, its profile is `dependency-update`,
+  `profile_fields.standing` is true, and its declared reach is exactly `source_repository`. These
+  are the decomposition gate's own conditions (`bump_policy.standing_bump_refusal`);
+- `human_authority_gate` reports no refusals and only dependency-update known-good patterns
+  recognise the envelope, judged against the policy as loaded at the merge, so a policy narrowed
+  since dispatch refuses;
+- the member record grants `dependency_updates` on the repository;
+- `ORCHESTRATOR_BUMP_MERGE_ENABLED` is on.
+
+Every other term is unchanged: a completed unit, verifier-decided criteria from observed evidence,
+no open reconciliation condition, the merge capability, the adjudicated head, the estate's answer
+and the holds. A repository the estate routes still needs its approved change record and window,
+whatever reach the package declared. An inert landing's term is as it was.
+
+**The switch governs the policy path alone.** The no-off-switch ruling in `pr_merge.py` said it was
+void if a scheduled caller was proposed, and the bump driver is one. With the switch off, a unit the
+path would otherwise admit refuses `merge_policy_path_off`, and that code alone, so the lane reads it
+as waiting. A unit outside the path still refuses `authority_approval_not_bound`, since the switch
+isn't what holds it. A landing on a bound approval never asks the switch.
+
+**The record.** "Policy lifted the gate" and "a person approved" stay different records: the act
+writes `authority.human_gate_not_required` with `at: merge`, the patterns, the policy version and
+source and the fingerprint, in the transaction that records the merge, and
+`authority_approval_id` stays null. The admission answer serves the same names and writes nothing.
+
+The residual ADR-0006 amendment 2 accepts applies here too: `approved_by` and `standing` on a SYSTEM
+intake are attested by the caller.

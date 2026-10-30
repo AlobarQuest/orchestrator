@@ -26,25 +26,26 @@ It is deliberately NOT `reach_admission.estate_refusal`: that term answers *does
 declaration agree with the estate*, which is a different question off the same source, and reusing
 it would be the correct-about-the-wrong-noun error this repository has made four times.
 
-**Nothing here is a substitute for the human authority approval.** The approval is the gate that
-remains, and one term below requires it to be bound to the unit's exact current fingerprint --
-the same binding `exact_authority_approval` enforces for readiness, and unconditionally: the
-policy-pattern substitute that admission allows (ADR-0011) has no counterpart here. The
-dependency-update known-good patterns carry this capability, because the profile stamps it into
-every such envelope, so admission may recognise one without a person; this answer still requires
-a human authority approval bound to the unit's exact fingerprint before it says a unit may land.
+**The authority term has two ways to be met, and only one of them is a person's.** A human approval
+bound to the unit's exact current fingerprint -- the binding `exact_authority_approval` enforces for
+readiness -- is enough for every change class. Short of one, a standing dependency update meets the
+term on the policy path (ADR-0025 amendment 4): a standing bump's revision in the inert reach,
+recognised now and only by dependency-update known-good patterns, on a repository whose
+`dependency_updates` grant holds, while `bump_merge_enabled` is on. Recognition is asked here
+against the policy as loaded at this moment, never inherited from what admitted the unit to run,
+so a policy narrowed since then refuses. This answer writes nothing: the act records the lifted
+requirement, and no other change class has any substitute for the approval.
 
 **What this answer INHERITS FROM NOTHING, said out loud rather than left to be discovered.** It is
 not admission and shares none of admission's environment gates: there is no target-repository
-allowlist here and no hard off-switch, and admission's change window -- asked of the PACKAGE's
-reach -- is not asked here either. Each absence is a position rather than an oversight. The
-allowlist governs where work may be SENT, and a unit that was never sent can still finish by hand.
+allowlist here, and admission's change window -- asked of the PACKAGE's reach -- is not asked here
+either. Each absence is a position rather than an oversight. The allowlist governs where work may
+be SENT, and a unit that was never sent can still finish by hand.
 The window this answer asks is the LANDING's: the `live_estate` window, asked only when the estate
 routes the repository, whatever reach the package declared (a deploying dependency-update package
-declares `live_estate` since ADR-0028 amendment 3, and is still asked here). **The off-switch is
-the one that is genuinely open**: the flag admission reads is matched against
-`unit.required_capability`, and a grant to land is a secondary entry in the capabilities map, so
-no existing environment term could ever see it.
+declares `live_estate` since ADR-0028 amendment 3, and is still asked here). The one switch here
+is `bump_merge_enabled`, and it governs the policy path alone: a landing on a bound approval has one
+accountable person behind each act and is unaffected by it.
 """
 
 from __future__ import annotations
@@ -59,7 +60,7 @@ from orchestrator.change_window_override import ChangeWindowOverride, suppressed
 from orchestrator.clock import Clock, TransactionClock
 from orchestrator.errors import DomainError
 from orchestrator.factory_policy import load_factory_policy
-from orchestrator.kernel.authority import normalize_authority
+from orchestrator.kernel.authority import AuthorityEnvelope, normalize_authority
 from orchestrator.kernel.states import WorkUnitState
 from orchestrator.persistence.models import (
     UnitPrBinding,
@@ -73,6 +74,11 @@ from orchestrator.services.execution.target_grant import (
     DEPENDENCY_UPDATE,
     MemberRecordGrants,
     service_for_change_class,
+)
+from orchestrator.services.intake.authority_gate import AuthorityGate, human_authority_gate
+from orchestrator.services.intake.bump_policy import (
+    recognised_only_by_bump_patterns,
+    standing_bump_refusal,
 )
 from orchestrator.services.landing.change_record import (
     RECORD_AMBIGUOUS,
@@ -134,8 +140,14 @@ OPEN_RECONCILIATION_CONDITION: Final = "open_reconciliation_condition"
 # falling through.
 MERGE_CAPABILITY_NOT_AUTHORIZED: Final = "merge_capability_not_authorized"
 
-# No human approval bound to this unit's exact current authority fingerprint.
+# No human approval bound to this unit's exact current authority fingerprint, and the unit is not
+# one the policy path admits.
 AUTHORITY_APPROVAL_NOT_BOUND: Final = "authority_approval_not_bound"
+
+# The policy path would admit this unit, and `ORCHESTRATOR_BUMP_MERGE_ENABLED` is off. Reported
+# alone, in place of the code above: a lane reads it as waiting on a switch, so it never describes
+# a unit the switch wouldn't release.
+MERGE_POLICY_PATH_OFF: Final = "merge_policy_path_off"
 
 # There is no pull request recorded for this unit, so there is nothing to land.
 PR_BINDING_MISSING: Final = "pr_binding_missing"
@@ -241,6 +253,9 @@ class MergeAdmission:
     head this side holds is one somebody REPORTED, so an unreported push is invisible to the terms
     below. Naming the armed head at the moment of the act is what makes the remote refuse a tree
     the criteria were not decided about, which is a guarantee no local comparison can offer.
+
+    The `authority_*` fields are set only when the policy path met the authority term: what lifted
+    the human requirement, for the act to record. Empty on a bound approval and on any refusal.
     """
 
     satisfied: bool
@@ -249,6 +264,9 @@ class MergeAdmission:
     pr_number: int | None
     verified_head_sha: str | None
     change_window_override_applied: bool = False
+    authority_recognised_by: tuple[str, ...] = ()
+    authority_policy_version: int | None = None
+    authority_policy_source: str | None = None
 
 
 def pr_merge_admission(
@@ -257,6 +275,8 @@ def pr_merge_admission(
     landing_source: EstateLandingSource,
     record_source: ChangeRecordSource,
     clock: Clock | None = None,
+    *,
+    bump_merge_enabled: bool = False,
 ) -> MergeAdmission:
     """Compose the answer for one unit. Reads only; writes nothing, and never acts."""
     unit = session.get(WorkUnit, unit_id)
@@ -265,7 +285,15 @@ def pr_merge_admission(
     revision = session.get(WorkPackageRevision, unit.work_package_revision_id)
     if revision is None:
         raise DomainError("revision_not_found", "package revision does not exist", None)
-    return admission_for(session, unit, revision, landing_source, record_source, clock)
+    return admission_for(
+        session,
+        unit,
+        revision,
+        landing_source,
+        record_source,
+        clock,
+        bump_merge_enabled=bump_merge_enabled,
+    )
 
 
 def admission_for(
@@ -276,6 +304,8 @@ def admission_for(
     record_source: ChangeRecordSource,
     clock: Clock | None = None,
     change_window_override: ChangeWindowOverride | None = None,
+    *,
+    bump_merge_enabled: bool = False,
 ) -> MergeAdmission:
     """Every term, over a unit the caller already holds.
 
@@ -292,7 +322,11 @@ def admission_for(
 
     The envelope is normalized EXACTLY ONCE here, for the reason admission normalizes once: the
     envelope is what a human's authority approval attests, and a second normalization is a second
-    reading of it.
+    reading of it. `human_authority_gate` reads the unit's envelope for itself, as it does for
+    dispatch, because recognition is policy's reading rather than this module's.
+
+    `bump_merge_enabled` has no setting behind it here: a caller that doesn't say gets the policy
+    path off, which leaves it refusing rather than landing.
     """
     if revision.id != unit.work_package_revision_id:
         raise DomainError(
@@ -307,7 +341,6 @@ def admission_for(
     completed = unit.state == WorkUnitState.COMPLETED.value
     criteria = verifier_decided_completion(session, revision, unit)
     capability_authorized = envelope.level_for(MERGE_CAPABILITY) == "allowed"
-    authority_bound = PackageRepository(session).exact_authority_approval(unit) is not None
 
     nothing_open = not open_conditions(session, unit.id)
 
@@ -328,6 +361,9 @@ def admission_for(
         target_repository,
         (service_for_change_class(envelope.change_class or unit.required_capability),),
     )
+    authority = _authority_term(
+        session, unit, revision, envelope, granted=granted.met, enabled=bump_merge_enabled
+    )
 
     refusals: list[str] = []
     if not completed:
@@ -340,14 +376,14 @@ def admission_for(
         refusals.append(OPEN_RECONCILIATION_CONDITION)
     if not capability_authorized:
         refusals.append(MERGE_CAPABILITY_NOT_AUTHORIZED)
-    if not authority_bound:
-        refusals.append(AUTHORITY_APPROVAL_NOT_BOUND)
+    refusals.extend(authority.term.refusals)
     refusals.extend(head.refusals)
     refusals.extend(estate.refusals)
     refusals.extend(held.refusals)
     if not granted.met:
         refusals.append(MERGE_REPOSITORY_NOT_GRANTED)
 
+    gate = authority.lifted_by
     return MergeAdmission(
         satisfied=(
             completed
@@ -355,7 +391,7 @@ def admission_for(
             and criteria.evidence_observed
             and nothing_open
             and capability_authorized
-            and authority_bound
+            and authority.term.met
             and head.met
             and estate.met
             and held.met
@@ -366,6 +402,9 @@ def admission_for(
         pr_number=binding.pr_number if binding is not None else None,
         verified_head_sha=binding.verification_read_head_sha if binding is not None else None,
         change_window_override_applied=estate.change_window_override_applied,
+        authority_recognised_by=gate.recognised_by if gate is not None else (),
+        authority_policy_version=gate.policy_version if gate is not None else None,
+        authority_policy_source=gate.policy_source if gate is not None else None,
     )
 
 
@@ -378,6 +417,65 @@ class _Term:
     # than that one was offered -- a landing inside the declared hours, or onto a repository where
     # landing changes nothing already serving, never reaches that term at all.
     change_window_override_applied: bool = False
+
+
+@dataclass(frozen=True)
+class _AuthorityTerm:
+    term: _Term
+    # What lifted the human requirement; set only when the policy path met the term.
+    lifted_by: AuthorityGate | None = None
+
+
+def _authority_term(
+    session: Session,
+    unit: WorkUnit,
+    revision: WorkPackageRevision,
+    envelope: AuthorityEnvelope,
+    *,
+    granted: bool,
+    enabled: bool,
+) -> _AuthorityTerm:
+    """A bound approval, or the policy path.
+
+    A bound approval ends the question, so policy isn't read and the switch isn't asked. Without
+    one, the switch is asked last: it is named only for a unit it alone is holding back, so a
+    lane that reads the refusal as waiting never waits on a unit that would refuse anyway.
+    """
+    if PackageRepository(session).exact_authority_approval(unit) is not None:
+        return _AuthorityTerm(_Term(True, ()))
+    gate = _policy_path_gate(unit, revision, envelope, granted)
+    if gate is None:
+        return _AuthorityTerm(_Term(False, (AUTHORITY_APPROVAL_NOT_BOUND,)))
+    if not enabled:
+        return _AuthorityTerm(_Term(False, (MERGE_POLICY_PATH_OFF,)))
+    return _AuthorityTerm(_Term(True, ()), gate)
+
+
+def _policy_path_gate(
+    unit: WorkUnit,
+    revision: WorkPackageRevision,
+    envelope: AuthorityEnvelope,
+    granted: bool,
+) -> AuthorityGate | None:
+    """Policy's answer for a unit the policy path covers, or ``None`` when it doesn't cover it.
+
+    `granted` is the composed answer's own grant term, which for this change class is the
+    `dependency_updates` grant. The landing's own terms still apply to everything this admits: a
+    repository the estate routes needs its approved record and its window whatever reach the
+    package declared.
+    """
+    if (
+        envelope.change_class != DEPENDENCY_UPDATE
+        or standing_bump_refusal(revision) is not None
+        or not granted
+    ):
+        return None
+    gate = human_authority_gate(unit, revision)
+    try:
+        policy = load_factory_policy()
+    except DomainError:
+        return None
+    return gate if recognised_only_by_bump_patterns(gate, policy) else None
 
 
 def _hold_term(

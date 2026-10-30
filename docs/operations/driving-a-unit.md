@@ -206,7 +206,8 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   one caller** — `POST /work-units/{id}/dispatch`; no sweeper, no cron, no background loop — so an
   open window dispatches **nothing** on its own. A dispatch still requires `ready` state, an
   authority approval bound to the exact fingerprint (a human click), an allowlisted
-  repo/change-class/capability, declared reach the estate agrees with, and the change window.
+  repo/change-class/capability, declared reach the estate agrees with, and the change window. (Policy
+  stands in for the click only where ADR-0011 and its amendments say so.)
   Toggling, meanwhile, costs a restart, and a restart during a live run is the one thing that
   genuinely strands a unit. Per-run toggling was buying a gate that stops nothing the seven inner
   gates don't, while creating a hazard they cannot prevent. The other three gates are unchanged and

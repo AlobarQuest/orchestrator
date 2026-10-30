@@ -8,11 +8,11 @@ event, which the proposal routes serve.
 
 from __future__ import annotations
 
+import inspect
 import re
 import uuid
 from collections.abc import Iterator
 from dataclasses import replace
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -30,7 +30,7 @@ from orchestrator.persistence.models import (
     WorkPackageRevision,
     WorkUnit,
 )
-from orchestrator.services.intake import decomposition
+from orchestrator.services.intake import bump_policy, decomposition
 from orchestrator.services.intake.decomposition import (
     AcMapping,
     DecompositionProposalCommand,
@@ -454,8 +454,8 @@ def test_an_earlier_proposal_s_rows_don_t_count_against_this_one(granted: Sessio
 
 def test_no_refusal_code_is_a_substring_of_another() -> None:
     """Later lanes key on these, and a report is read by substring."""
-    source = Path(decomposition.__file__).read_text(encoding="utf-8")
-    codes = set(re.findall(r'_PolicyRefusal\(\s*"([a-z_]+)"', source))
+    source = inspect.getsource(decomposition) + inspect.getsource(bump_policy)
+    codes = set(re.findall(r'PolicyRefusal\(\s*"([a-z_]+)"', source))
     assert len(codes) >= 13
     assert not [(a, b) for a in codes for b in codes if a != b and a in b]
 

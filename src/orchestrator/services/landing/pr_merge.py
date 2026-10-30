@@ -45,15 +45,22 @@ before a call that then fails is a lie in the ledger. A landing whose record is 
 recoverable: the landing ledger observes GitHub independently and would report it as basis-less
 rather than silently.
 
-## There is no off-switch, and that is decided rather than overlooked
+## One off-switch, and it governs the policy path alone
 
-Devon, 2026-08-09, following the same reasoning that retired the workflow-trigger flag: a
-non-per-unit switch stops nothing here, because this command has exactly one caller and no
-scheduler, while toggling costs a release and a restart — and a restart during a live run is the
-one thing that genuinely strands a unit. Four stops exist and none needs a release: withhold the
-authority approval, withhold the capability in the envelope, branch protection, and revoking the
-App installation's write. **If a SCHEDULED caller is ever proposed, that decision is void** — a
-switch is ceremony against one human-invoked caller and a real control against a loop.
+A scheduled lane lands standing dependency updates here on their recognition and grant, with no
+person behind each act (ADR-0025 amendment 4), and a switch is a real control against a loop:
+`ORCHESTRATOR_BUMP_MERGE_ENABLED=false` stops that path with the named refusal
+`merge_policy_path_off`. A landing on a bound human approval doesn't ask it, because that has one
+accountable person behind each act, where a process-wide switch stops nothing a per-unit stop
+doesn't and toggling it costs a restart, the one thing that strands a live run. Its stops are to
+withhold the authority approval, withhold the capability in the envelope, branch protection, and
+revoking the App installation's write.
+
+## The lifted requirement is recorded by the act
+
+The policy path's trace is `authority.human_gate_not_required`, written beside the merge record in
+one transaction, so it exists exactly when an outcome was recorded. It is written here rather than
+by the admission answer, which is also served to readers and writes nothing.
 """
 
 from __future__ import annotations
@@ -161,6 +168,8 @@ def land_unit_pull_request(
     record_source: ChangeRecordSource,
     credentials_configured: bool = True,
     clock: Clock | None = None,
+    *,
+    bump_merge_enabled: bool = False,
 ) -> UnitPrMerge:
     """Own the transaction, the way every request entry point in this repository does.
 
@@ -170,7 +179,14 @@ def land_unit_pull_request(
     """
     try:
         record = _land_unit_pull_request(
-            session, command, gateway, landing_source, record_source, credentials_configured, clock
+            session,
+            command,
+            gateway,
+            landing_source,
+            record_source,
+            credentials_configured,
+            clock,
+            bump_merge_enabled,
         )
         session.commit()
         return record
@@ -187,6 +203,7 @@ def _land_unit_pull_request(
     record_source: ChangeRecordSource,
     credentials_configured: bool,
     clock: Clock | None,
+    bump_merge_enabled: bool,
 ) -> UnitPrMerge:
     _authorize_actor(command.actor)
     unit = session.scalar(select(WorkUnit).where(WorkUnit.id == command.unit_id).with_for_update())
@@ -243,6 +260,7 @@ def _land_unit_pull_request(
         record_source,
         clock,
         command.change_window_override,
+        bump_merge_enabled=bump_merge_enabled,
     )
     if not admission.satisfied:
         # No record: this unit was never acted on, and consuming its one row here would refuse
@@ -483,8 +501,39 @@ def _record(
     session.add(event)
     session.flush()
     record.event_id = event.id
+    if admission.authority_recognised_by:
+        _record_gate_not_required(session, command, unit, admission)
     session.flush()
     return record
+
+
+def _record_gate_not_required(
+    session: Session, command: MergeCommand, unit: WorkUnit, admission: MergeAdmission
+) -> None:
+    """The trace dispatch and the claim leave when policy lifted the requirement, at the merge.
+
+    Not an approval: `unit.authority_approval_id` stays null, and the event names the patterns, the
+    artifact version and the fingerprint they recognised, as they stood at this act.
+    """
+    session.add(
+        Event(
+            actor_id=command.actor.actor_id,
+            action="authority.human_gate_not_required",
+            subject_type="work_unit",
+            subject_id=unit.id,
+            from_state=unit.state,
+            to_state=unit.state,
+            payload={
+                "at": "merge",
+                "recognised_by": list(admission.authority_recognised_by),
+                "policy_version": admission.authority_policy_version,
+                "policy_source": admission.authority_policy_source,
+                "authority_fingerprint": unit.authority_fingerprint,
+            },
+            correlation_id=uuid.uuid4(),
+            idempotency_key=f"{command.idempotency_key}:authority-gate",
+        )
+    )
 
 
 class GitHubPullRequests:

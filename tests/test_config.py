@@ -39,6 +39,7 @@ LANE_SWITCHES = {
     "dispatch_enabled": "ORCHESTRATOR_DISPATCH_ENABLED",
     "estate_landing_enabled": "ORCHESTRATOR_ESTATE_LANDING_ENABLED",
     "inert_landing_enabled": "ORCHESTRATOR_INERT_LANDING_ENABLED",
+    "bump_merge_enabled": "ORCHESTRATOR_BUMP_MERGE_ENABLED",
 }
 
 

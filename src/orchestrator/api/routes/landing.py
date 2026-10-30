@@ -167,19 +167,26 @@ def pr_merge_admission_route(
     unit_id: UUID,
     _actor: ActorDep,
     session: SessionDep,
+    settings: SettingsDep,
     landing_source: LandingSourceDep,
     record_source: ChangeRecordSourceDep,
 ) -> object:
     """ADR-0020 Increment 4a: may the factory land this unit's pull request, and if not, why?
 
-    **Report-only. Nothing here acts, and nothing that acts exists yet.** It is served so the
-    composed answer can be read against real completed units before anything obeys it.
+    **Report-only. Nothing here acts.** It composes the terms the act re-asks, so what it says of
+    a unit is what the act would have said at this moment.
 
     Authentication-only, no role gate, matching the evidence-pack routes: it is a read over
     canonical rows plus one read-only question to the estate, and every actor that can read a
     unit's evidentiary record can read this.
     """
-    return pr_merge_admission(session, unit_id, landing_source, record_source)
+    return pr_merge_admission(
+        session,
+        unit_id,
+        landing_source,
+        record_source,
+        bump_merge_enabled=settings.bump_merge_enabled,
+    )
 
 
 @router.get("/estate-pr-merge-admission", response_model=EstateLandingAdmissionResponse)
@@ -442,10 +449,9 @@ def pr_merge_route(
 ) -> object:
     """ADR-0020 Increment 4b: the factory lands its own pull request.
 
-    **Its caller is whoever drives verification, immediately afterwards.** Nothing in this
-    repository is scheduled except the landing ledger, and this is deliberately not the exception:
-    a scheduled closer is its own increment with its own decision, and the no-off-switch ruling is
-    explicitly void if one is ever proposed.
+    **Its callers are whoever drives verification, immediately afterwards, and the scheduled bump
+    driver**, which lands standing dependency updates on the policy path. That path has an off
+    switch, `bump_merge_enabled`; a landing on a bound human approval doesn't ask it.
 
     One credential resolution feeds the gateway, exactly as the workflow trigger does — so the
     thing that acts and the thing that reports what it may do can never disagree about which
@@ -467,6 +473,7 @@ def pr_merge_route(
         landing_source,
         record_source,
         credentials is not None,
+        bump_merge_enabled=settings.bump_merge_enabled,
     )
 
 

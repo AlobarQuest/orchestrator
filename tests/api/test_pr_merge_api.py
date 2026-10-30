@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterator
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -192,3 +193,35 @@ def test_a_landing_override_with_no_stated_reason_is_refused_by_name(
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "change_window_override_reason_required"
     assert FakeGateway.calls == []
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_both_routes_pass_the_deployments_switch(
+    merge_client: TestClient, monkeypatch: pytest.MonkeyPatch, enabled: bool
+) -> None:
+    """Both default off when unset, so a route that drops the setting stops the lane in silence."""
+    monkeypatch.setenv("ORCHESTRATOR_BUMP_MERGE_ENABLED", str(enabled).lower())
+    seen: list[bool] = []
+    real_answer = landing_routes.pr_merge_admission
+    real_act = landing_routes.land_unit_pull_request
+
+    def answer(*args: Any, bump_merge_enabled: bool) -> object:
+        seen.append(bump_merge_enabled)
+        return real_answer(*args, bump_merge_enabled=bump_merge_enabled)
+
+    def act(*args: Any, bump_merge_enabled: bool) -> object:
+        seen.append(bump_merge_enabled)
+        return real_act(*args, bump_merge_enabled=bump_merge_enabled)
+
+    monkeypatch.setattr(landing_routes, "pr_merge_admission", answer)
+    monkeypatch.setattr(landing_routes, "land_unit_pull_request", act)
+    unit_id = _register_ready_unit(merge_client, f"merge-switch-{enabled}")
+
+    merge_client.get(f"/api/v1/work-units/{unit_id}/pr-merge-admission", headers=SYSTEM)
+    merge_client.post(
+        f"/api/v1/work-units/{unit_id}/pr-merge",
+        headers=SYSTEM,
+        json={"idempotency_key": f"switch-{enabled}", "expected_version": 2},
+    )
+
+    assert seen == [enabled, enabled]
