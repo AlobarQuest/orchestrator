@@ -41,8 +41,8 @@ from tests.architecture.test_bridge_edges import (
 
 # The landers' GitHub token is not a BWS secret: each launcher takes it from the gh CLI.
 GH_AUTH_TOKEN = "gh auth token"
-# Landing Part 3b. The estate lander's Coolify token: a placeholder until a person mints it.
-COOLIFY_TOKEN = "00000000-0000-0000-0000-000000000000"
+# Landing Part 3b. The estate lander's Coolify token (BWS `COOLIFY_TOKEN_SDS_ESTATE_LANDER`).
+COOLIFY_TOKEN = "f9f59233-0794-4ea8-9806-b4f3011e6147"
 
 _HELD_CLOSE = ("POST", "/api/v1/held-pr-close")
 _ALERTS = frozenset({("POST", "/v1/alerts")})

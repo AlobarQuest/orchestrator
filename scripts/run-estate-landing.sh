@@ -77,10 +77,9 @@ CHANGE_MANAGER_UUID="314f276d-55ca-4ddc-a24d-b4a3013508cd"
 SDS_BRIDGE_ALERT_UUID="b415d03b-f92d-46b1-8a9d-b4f10103df49"
 # The estate lander's own Coolify token (Landing Part 3b): `read`, `write` and `deploy`, minted by a
 # person in Coolify and stored in `SDS Operator`, read with the narrow identity. The client bounds it
-# to one repository's applications (`estate_lander.image_repoint`). PLACEHOLDER until it is minted:
-# the all-zero UUID fetches nothing. `ESTATE_LANDING_COOLIFY_UUID` overrides it.
-COOLIFY_TOKEN_PLACEHOLDER="00000000-0000-0000-0000-000000000000"
-COOLIFY_TOKEN_UUID="${ESTATE_LANDING_COOLIFY_UUID:-$COOLIFY_TOKEN_PLACEHOLDER}"
+# to one repository's applications (`estate_lander.image_repoint`). BWS
+# `COOLIFY_TOKEN_SDS_ESTATE_LANDER`; `ESTATE_LANDING_COOLIFY_UUID` overrides it.
+COOLIFY_TOKEN_UUID="${ESTATE_LANDING_COOLIFY_UUID:-f9f59233-0794-4ea8-9806-b4f3011e6147}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # ACTIVATION — a merged change is not live on this machine until the code is pulled. The estate's
@@ -185,14 +184,9 @@ case " $* " in
     fi
     export SDS_BRIDGE_ALERT_TOKEN
     if [ -z "${ESTATE_LANDING_COOLIFY_TOKEN:-}" ]; then
-      if [ "$COOLIFY_TOKEN_UUID" = "$COOLIFY_TOKEN_PLACEHOLDER" ]; then
-        echo "[estate-landing] no Coolify token is registered yet: re-points are refused" >&2
-      else
-        ESTATE_LANDING_COOLIFY_TOKEN="$(sds_bws_value "$COOLIFY_TOKEN_UUID" "$SDS_IDENTITY" \
-          || true)"
-        if [ -z "$ESTATE_LANDING_COOLIFY_TOKEN" ]; then
-          echo "[estate-landing] the Coolify token could not be read: re-points are refused" >&2
-        fi
+      ESTATE_LANDING_COOLIFY_TOKEN="$(sds_bws_value "$COOLIFY_TOKEN_UUID" "$SDS_IDENTITY" || true)"
+      if [ -z "$ESTATE_LANDING_COOLIFY_TOKEN" ]; then
+        echo "[estate-landing] the Coolify token could not be read: re-points are refused" >&2
       fi
       export ESTATE_LANDING_COOLIFY_TOKEN
     fi
