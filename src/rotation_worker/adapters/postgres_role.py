@@ -33,33 +33,39 @@ health endpoint (`health_url`).
 service this type restarts, so a host step can't leave it down and wait for a person. Any exception
 from the writes runs the same writes with the old value and then raises `ContractError`, so the
 unit fails with the service on the old value, the keeper unchanged and staging holding the unused
-value. A first variable write that failed with every consumer still on the old value changed
-nothing, so it isn't restarted. "Restored" is only ever reported after a restart Coolify accepted
-and the wait that follows, or in that one case. If the undo fails too, the error names both
-failures and recovery is `restore` with the keeper's value, from `rotation-worker pg-restore`.
+value. A first variable write that failed, with the database not yet on the new value and every
+consumer still on the old, changed nothing, so it isn't restarted. "Restored" is only ever reported
+after a restart Coolify accepted and the wait that follows, or in that one case. If the undo fails
+too, the error names both failures and recovery is `restore` with the keeper's value, from
+`rotation-worker pg-restore`.
 
 **WITHOUT COOLIFY.** When `restore` can't write the variable it can't restart either, so the only
 thing it can move is the role, and the role must follow what the consumers loaded. It reads
-`loaded`. All on the value being restored: it sets the role to it. All on another value: it stops,
-since that is host's finished state. Otherwise it keeps reading to the end of the window, and if
-they come up on the value being replaced, a restart that landed with its answer lost, the role
-follows them. A `loaded` read that fails leaves everything alone. Each case raises, saying the
-variable may still hold the replaced value and `pg-restore` is due once Coolify returns.
+`loaded`. All on the value being restored: it sets the role to it. All on another value: it leaves
+the role alone, since that is host's finished state. Otherwise it keeps reading to the end of the
+window, and if they come up on the value being replaced, a restart that landed with its answer
+lost, the role follows them. A `loaded` read that fails leaves everything alone. Each case raises,
+saying `pg-restore` is due once Coolify returns. A refused restart takes the same path, except
+that `restore` has just set the role itself, so consumers on the replaced value are followed at
+the first read too: they can't reload, and the role must not stay away from them.
 
 **THE WORST CASE IS BELOW THE 15-MINUTE LEASE**, which is renewed only before each step, so all of
 this runs on one renewal. One deadline covers each write sequence, from its start, not one per
-stage, and a retry or a poll only starts inside it. In seconds, with every call taking just under
-its limit:
+stage. A step in the wait starts inside it; following the consumers sleeps first, so its last read
+can start one poll past it. In seconds, with every call taking just under its limit:
 
     before the writes: 4 probes                       4 x 30                     = 120
     host's writes:     LOADED_WAIT + a last poll      170 + (30 + 2 x 30)        = 260
-    undo, no Coolify:  LOADED_WAIT + a read + a set   170 + 30 + 90              = 290
-    total                                                                        = 670, 11m10s
+    undo, worst of:
+      no Coolify:      LOADED_WAIT + poll + read + set  170 + 5 + 30 + 90        = 295
+      restart refused: the writes' calls + read + set   215 + 30 + 90            = 335
+    total                                             120 + 260 + 335            = 715, 11m55s
 
-The undo's ordinary writes are bounded by host's. So are writes that use up their calls instead of
-the wait: a `set` starts by `SET_RETRY` plus one poll, then a set, a restart, and no poll past
-`LOADED_WAIT`: 95 + 90 + 60 = 245. Reading a secret isn't included, since BWS's own retries
-(`secret_store.RETRY_DELAYS`) can add about three minutes per secret, and a provider reads two.
+"The writes' calls" is writes that use up their calls instead of the wait: a `set` starts by
+`SET_RETRY` plus one poll, then a set and a restart, 65 + 90 + 60 = 215, below host's 260. The
+undo's ordinary writes are bounded by host's. Reading a secret isn't included, since BWS's own
+retries (`secret_store.RETRY_DELAYS`) can add about three minutes per secret, and a provider reads
+two, both before any write.
 
 **NO VALUE IN ANY MESSAGE.** A `ContractError`'s text is scrubbed, and any other exception is named
 by its type alone, since its text could hold anything. Nothing is chained.
@@ -106,7 +112,7 @@ PASSWORD_BYTES: Final = 32
 # One write sequence's deadline, from its start.
 LOADED_WAIT: Final = timedelta(seconds=170)
 # How long, from the same start, a `set` the database wasn't up for is tried again.
-SET_RETRY: Final = timedelta(seconds=90)
+SET_RETRY: Final = timedelta(seconds=60)
 POLL_SECONDS: Final = 5.0
 # The module docstring's arithmetic, in seconds.
 BEFORE_WRITES: Final = 4 * PROBE_TIMEOUT_SECONDS
@@ -115,14 +121,18 @@ HOST_WRITES: Final = LOADED_WAIT.total_seconds() + LAST_POLL
 WRITES_BY_CALLS: Final = (
     SET_RETRY.total_seconds() + POLL_SECONDS + SET_TIMEOUT_SECONDS + COOLIFY_TIMEOUT_SECONDS
 )
-UNDO_WITHOUT_COOLIFY: Final = (
-    LOADED_WAIT.total_seconds() + LOADED_TIMEOUT_SECONDS + SET_TIMEOUT_SECONDS
-)
+FOLLOW: Final = LOADED_TIMEOUT_SECONDS + SET_TIMEOUT_SECONDS
+UNDO_WITHOUT_COOLIFY: Final = LOADED_WAIT.total_seconds() + POLL_SECONDS + FOLLOW
+UNDO_RESTART_REFUSED: Final = WRITES_BY_CALLS + FOLLOW
 WORST_CASE: Final = timedelta(
-    seconds=BEFORE_WRITES + max(HOST_WRITES, WRITES_BY_CALLS) + UNDO_WITHOUT_COOLIFY
+    seconds=BEFORE_WRITES
+    + max(HOST_WRITES, WRITES_BY_CALLS)
+    + max(HOST_WRITES, UNDO_WITHOUT_COOLIFY, UNDO_RESTART_REFUSED)
 )
 # The refusal that means the database wasn't up. Anything else the helper refuses won't change.
 SET_RETRIED: Final = "probe_unavailable"
+NO_VARIABLE: Final = "the variable may still hold the replaced value"
+NOT_RESTARTED: Final = "the consumers may not have loaded the value"
 UNREADABLE: Final = "what the consumers loaded couldn't be read, so nothing else was touched"
 WRITTEN: Final = "wrote the variable, set the role, restarted, and every consumer loaded the value"
 # This type has no packages from before derivation, so its one candidate is the derived plan of a
@@ -266,11 +276,18 @@ class PostgresRoleProvider:
         return self.probe(value)
 
     def host(self, new: Value, old: Value) -> str:
-        if accepts(self, new):
-            if self._loaded_now(new):
-                # No undo here: nothing else changes, and a service on the new value stays on it.
-                self._service().set_variable(self._variable, new.reveal())
-                return "the role and every consumer already hold the new value"
+        accepted_new = accepts(self, new)
+        if accepted_new:
+            prints = self._read_loaded()
+            if prints is None:
+                # A healthy service isn't restarted over one failed read, and after store an undo
+                # would move the role away from the keeper.
+                raise ContractError(
+                    "the database accepts the new value and what the consumers loaded couldn't be "
+                    "read: nothing was written"
+                )
+            if _all_on(prints, new):
+                return self._write_the_variable_alone(new)
         elif not accepts(self, old):
             raise ContractError("the database accepts neither value, or may be down: never guess")
         # Read here, not inside the writes: a token that can't be read has changed nothing.
@@ -279,12 +296,26 @@ class PostgresRoleProvider:
         try:
             service.set_variable(self._variable, new.reveal())
         except Exception as failure:
-            self._undo(old, new, failure, only_if_changed=True)
+            # A role already on the new value is a change, whatever the consumers show.
+            self._undo(old, new, failure, only_if_changed=not accepted_new)
         try:
-            self._finish(service, new, start)
+            self._set(new, start)
+            service.restart()
+            self._await_loaded(new, start)
         except Exception as failure:
             self._undo(old, new, failure)
         return WRITTEN
+
+    def _write_the_variable_alone(self, new: Value) -> str:
+        # A crash may have left it on the old value. No undo: the service is healthy on the new.
+        try:
+            self._service().set_variable(self._variable, new.reveal())
+        except Exception as failure:
+            raise ContractError(
+                f"Coolify took no variable ({_described(failure)}): the next restart loads the old "
+                "value and stops the service, so retry or run rotation-worker pg-restore"
+            ) from None
+        return "the role and every consumer already hold the new value"
 
     def restore(self, value: Value, replaced: Value | None = None) -> str:
         """Put `value` everywhere host would, and confirm every consumer loaded it.
@@ -318,13 +349,18 @@ class PostgresRoleProvider:
         try:
             service.set_variable(self._variable, value.reveal())
         except Exception as failure:
-            raise ContractError(self._without_coolify(value, replaced, start, failure)) from None
-        if not unchanged:
-            self._finish(service, value, start)
-
-    def _finish(self, service: CoolifyClient, value: Value, start: datetime) -> None:
+            lead = f"Coolify took no variable ({_described(failure)})"
+            raise ContractError(self._left(lead, NO_VARIABLE, value, replaced, start)) from None
+        if unchanged:
+            return
         self._set(value, start)
-        service.restart()
+        try:
+            service.restart()
+        except Exception as failure:
+            lead = f"Coolify took no restart ({_described(failure)})"
+            raise ContractError(
+                self._left(lead, NOT_RESTARTED, value, replaced, start, role_moved=True)
+            ) from None
         self._await_loaded(value, start)
 
     def _set(self, value: Value, start: datetime) -> None:
@@ -367,27 +403,37 @@ class PostgresRoleProvider:
         except ContractError:
             return False
 
-    def _without_coolify(
-        self, value: Value, replaced: Value | None, start: datetime, failure: Exception
+    def _left(
+        self,
+        lead: str,
+        risk: str,
+        value: Value,
+        replaced: Value | None,
+        start: datetime,
+        *,
+        role_moved: bool = False,
     ) -> str:
+        """What Coolify's failure left, once the role has followed the consumers if it can."""
         try:
-            outcome = self._follow_the_consumers(value, replaced, start)
+            outcome = self._follow_the_consumers(value, replaced, start, role_moved)
         except ContractError as error:
             outcome = f"setting the role failed too ({_described(error)})"
-        return (
-            f"Coolify took no variable ({_described(failure)}); {outcome}; the variable may still "
-            "hold the replaced value: run rotation-worker pg-restore once Coolify returns"
-        )
+        return f"{lead}; {outcome}; {risk}: run rotation-worker pg-restore once Coolify returns"
 
-    def _follow_the_consumers(self, value: Value, replaced: Value | None, start: datetime) -> str:
+    def _follow_the_consumers(
+        self, value: Value, replaced: Value | None, start: datetime, role_moved: bool
+    ) -> str:
         prints = self._read_loaded()
         if prints is None:
             return UNREADABLE
         if _all_on(prints, value):
             self._set(value, start)
             return "every consumer is on the value, and the role is too"
+        if role_moved and replaced is not None and _all_on(prints, replaced):
+            self._set(replaced, start)
+            return "every consumer is on the replaced value, and the role followed"
         if _agree_on_another(prints):
-            return "every consumer is on another value, so the role stays with them"
+            return "every consumer is on another value, so the role was left alone"
         deadline = start + LOADED_WAIT
         while self._clock() < deadline:
             self._sleep(POLL_SECONDS)
