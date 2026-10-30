@@ -130,10 +130,10 @@ def test_every_command_is_git_and_only_clone_fetch_reset_clean(
     mirrors.fresh(REPOSITORY)
     mirrors.fresh(REPOSITORY)
     assert {argv[0] for argv in calls} == {"git"}
-    verbs = [
-        next(a for a in argv[1:] if a in {"clone", "fetch", "reset", "clean"}) for argv in calls
-    ]
-    assert verbs == ["clone", "fetch", "reset", "clean"]
+    allowed = {"clone", "fetch", "reset", "clean", "remote", "status", "rev-parse"}
+    verbs = [next(a for a in argv[1:] if a in allowed) for argv in calls]
+    proof = ["remote", "status", "rev-parse"]
+    assert verbs == ["clone", *proof, "fetch", "reset", "clean", *proof]
     assert not any(TOKEN in " ".join(argv) for argv in calls)
 
 
@@ -158,10 +158,58 @@ def test_the_token_reaches_no_argument_and_no_config(origin: Path, tmp_path: Pat
     assert pairs["core.hooksPath"] == "/dev/null"
 
 
-def test_the_git_environment_is_what_the_generator_inherits(tmp_path: Path) -> None:
+def test_the_generators_git_environment_has_hooks_off_and_no_token(tmp_path: Path) -> None:
+    environment = _mirrors(tmp_path).generator_environment()
+    assert environment["GIT_CONFIG_GLOBAL"] == "/dev/null"
+    assert environment["GIT_CONFIG_COUNT"] == "1"
+    assert environment["GIT_CONFIG_KEY_0"] == "core.hooksPath"
+    assert environment["GIT_CONFIG_VALUE_0"] == "/dev/null"
+    assert not any("extraheader" in v or "basic" in v for v in environment.values())
+
+
+def test_the_generators_fetch_answers_with_no_network_and_no_token(
+    origin: Path, tmp_path: Path
+) -> None:
     mirrors = _mirrors(tmp_path)
-    assert mirrors.environment()["GIT_CONFIG_GLOBAL"] == "/dev/null"
-    assert "GIT_CONFIG_COUNT" in mirrors.environment()
+    path = mirrors.fresh(REPOSITORY)
+    assert _git(path, "remote", "get-url", "origin") == str(path)
+    (tmp_path / "served").rename(tmp_path / "gone")
+    subprocess.run(
+        ["git", "fetch", "--quiet", "origin", "main"],
+        cwd=path,
+        env={**ENV, **mirrors.generator_environment()},
+        check=True,
+    )
+    assert _git(path, "rev-parse", "HEAD") == _git(path, "rev-parse", "origin/main")
+
+
+def _answering(**stdout: str) -> Any:
+    def run(argv: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        verb = next((a for a in argv if a in stdout), "")
+        return subprocess.CompletedProcess(argv, 0, stdout.get(verb, ""), "")
+
+    return run
+
+
+def test_a_tree_that_isnt_clean_is_refused(tmp_path: Path) -> None:
+    run = _answering(**{"status": "?? stray.txt\n", "rev-parse": "a\na\n"})
+    with pytest.raises(MirrorRefused, match="clean"):
+        _mirrors(tmp_path, run=run).fresh(REPOSITORY)
+
+
+def test_a_head_that_isnt_origin_main_is_refused(tmp_path: Path) -> None:
+    with pytest.raises(MirrorRefused, match="origin/main"):
+        _mirrors(tmp_path, run=_answering(**{"rev-parse": "a\nb\n"})).fresh(REPOSITORY)
+
+
+def test_a_head_that_cant_be_read_is_refused(tmp_path: Path) -> None:
+    with pytest.raises(MirrorRefused, match="origin/main"):
+        _mirrors(tmp_path, run=_answering()).fresh(REPOSITORY)
+
+
+def test_a_proved_mirror_is_handed_over(tmp_path: Path) -> None:
+    run = _answering(**{"rev-parse": "a\na\n"})
+    assert _mirrors(tmp_path, run=run).fresh(REPOSITORY).name == "example"
 
 
 def test_a_failing_command_is_mirror_failed_naming_no_secret(tmp_path: Path) -> None:

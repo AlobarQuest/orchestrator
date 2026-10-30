@@ -1,11 +1,14 @@
 """What this lane tells a person, through alert-hub (sender `sds-bridge`).
 
-`bump-unit-failed:<repo>:<unit>` for a unit that ended `failed` or `revision_required`, and
+`bump-unit-failed:<repo>:<unit>` for a unit in `revision_required`,
 `bump-decompose-refused:<repo>:<revision>` for a revision the generator refused or policy didn't
-approve. Each fires once, stays while its subject stays, and resolves on the first pass that no
-longer raises it. A repository whose records this pass couldn't read says nothing about its
-subjects, so its remembered keys are held, never resolved, and an `unread` with no repository holds
-every key.
+approve, `bump-act-refused:<repo>:<unit>` for a refused dispatch or merge, and
+`bump-run-unclaimed:<repo>:<unit>` for a dispatched run no runner claimed. A `failed` unit raises
+none here: `work_watcher` already holds `dependency-unit-failed` for it.
+
+Each fires once, stays while its subject stays, and resolves on the first pass that no longer
+raises it. A repository whose records this pass couldn't read says nothing about its subjects, so
+its remembered keys are held, never resolved, and an `unread` with no repository holds every key.
 """
 
 from __future__ import annotations
@@ -25,13 +28,16 @@ ALERTS_FILE: Final = "alerts.json"
 UNREAD: Final = "unread"
 _UNIT_FAILED: Final = "bump-unit-failed"
 _DECOMPOSE_REFUSED: Final = "bump-decompose-refused"
+_ACT_REFUSED: Final = "bump-act-refused"
+_RUN_UNCLAIMED: Final = "bump-run-unclaimed"
+_KEY_PREFIXES: Final = (_UNIT_FAILED, _DECOMPOSE_REFUSED, _ACT_REFUSED, _RUN_UNCLAIMED)
 
 
 @dataclass(frozen=True)
 class Outcome:
     subject: str
     # approved, would-propose, awaiting-approval, superseded, declined, refused, dispatched,
-    # would-dispatch, running, busy, waiting, merged, would-merge, failed or unread
+    # would-dispatch, running, unclaimed, busy, waiting, merged, would-merge, failed or unread
     result: str
     detail: str = ""
     repository: str | None = None
@@ -45,6 +51,14 @@ def bump_failed_key(repository: str, unit_id: str) -> str:
 
 def decompose_refused_key(repository: str, revision_id: str) -> str:
     return alert_key(_DECOMPOSE_REFUSED, repository.lower(), revision_id)
+
+
+def act_refused_key(repository: str, unit_id: str) -> str:
+    return alert_key(_ACT_REFUSED, repository.lower(), unit_id)
+
+
+def run_unclaimed_key(repository: str, unit_id: str) -> str:
+    return alert_key(_RUN_UNCLAIMED, repository.lower(), unit_id)
 
 
 def _firing(outcomes: Iterable[Outcome]) -> dict[str, Alert]:
@@ -66,7 +80,7 @@ def _held(outcomes: Iterable[Outcome], remembered: set[str]) -> set[str]:
     prefixes = tuple(
         alert_key(prefix, str(outcome.repository).lower()) + ":"
         for outcome in unread
-        for prefix in (_UNIT_FAILED, _DECOMPOSE_REFUSED)
+        for prefix in _KEY_PREFIXES
     )
     return {key for key in remembered if key.startswith(prefixes)} if prefixes else set()
 

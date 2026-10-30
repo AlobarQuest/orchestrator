@@ -12,8 +12,8 @@
 # EXIT CODES (`bump_driver/cli.py`):
 #   0  every bump moved, or waits on something that clears by itself.
 #   1  the tool itself failed (a missing credential, an unusable URL).
-#   2  a person decides something: a refused decomposition, a declined or superseded proposal, a
-#      refused dispatch or merge, or a failed unit.
+#   2  a person decides something: a refused decomposition, dispatch or merge, a unit in
+#      revision_required, or a run nobody claimed. A proposal a person declined isn't a finding.
 #   3  a record, a unit or a pull request could not be read, or alert-hub could not be told.
 #
 # CREDENTIALS, each read straight into its own variable, never an ambient `BWS_ACCESS_TOKEN` (the
@@ -23,13 +23,14 @@
 #     record;
 #   - the change-manager READ bearer (BWS `314f276d-…`) and the two Brain contributor keys (BWS
 #     `750f737f-…`, `da8134b0-…`, project `brains`), through the broad identity;
-#   - GitHub: the operator's own `gh` login, which has no BWS record. It reaches git through the
-#     mirror's environment, never an argument or `.git/config`.
+#   - GitHub: the operator's own `gh` login, which has no BWS record. It reaches the lane's own
+#     git commands through their environment, never an argument, `.git/config` or `factory`.
 #
 # WHAT `factory` NEEDS. It runs from intent-packages' own venv, so that goes on PATH, with this
 # repository's venv for the `orchestrator conformance-claim` it shells out to. The claim reads
 # project-standards' compliance matrix, so `FACTORY_PYTHONPATH` names that, and the lane hands it to
-# `factory` alone as PYTHONPATH. A claim that can't be produced refuses the decomposition.
+# `factory` alone as PYTHONPATH. A claim that can't be produced refuses the decomposition. `factory`
+# runs on an allowlist of variables holding only the Brain keys as secrets (`cli.py`).
 #
 # Usage:
 #   scripts/run-bump-driver.sh [--dry-run]

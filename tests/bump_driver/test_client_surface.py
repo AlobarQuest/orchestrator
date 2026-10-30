@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
+import httpx
 import pytest
 
-from bump_driver.client import change_manager_permits, github_permits, orchestrator_permits
+from bump_driver.client import (
+    GitHub,
+    change_manager_permits,
+    github_permits,
+    orchestrator_permits,
+)
 
 UNIT = "0c7a484c-1111-4111-8111-111111111111"
 REVISION = "f962475a-1964-46df-81ac-2b3029dec2a7"
@@ -57,6 +63,22 @@ def test_the_orchestrator_surface_is_what_a_pass_asks(method: str, path: str) ->
 )
 def test_anything_else_on_the_orchestrator_is_refused(method: str, path: str) -> None:
     assert not orchestrator_permits(method, path)
+
+
+@pytest.mark.parametrize(
+    ("body", "state"),
+    [
+        ({"state": "open", "merged": False}, "open"),
+        ({"state": "closed", "merged": True}, "merged"),
+        ({"state": "closed", "merged": False}, "closed"),
+        ({"state": "closed"}, "closed"),
+    ],
+)
+def test_a_pull_requests_state_tells_merged_from_closed(body: dict, state: str) -> None:
+    github = GitHub(
+        token="t", transport=httpx.MockTransport(lambda _: httpx.Response(200, json=body))
+    )
+    assert github.pull_state("AlobarQuest/orchestrator", 506) == state
 
 
 def test_change_manager_is_read_only_and_only_its_listing() -> None:

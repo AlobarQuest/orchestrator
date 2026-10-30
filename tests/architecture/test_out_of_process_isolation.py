@@ -278,7 +278,9 @@ TABLE: dict[str, Row] = {
         "base64",
         "collections",
         "dataclasses",
+        "datetime",
         "estate_clients",
+        "http",
         "httpx",
         "json",
         "os",
@@ -289,6 +291,7 @@ TABLE: dict[str, Row] = {
         "subprocess",
         "sys",
         "tempfile",
+        "time",
         "typing",
     ),
     "image_release": _row(

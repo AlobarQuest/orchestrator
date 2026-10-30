@@ -15,16 +15,20 @@ The acts, in order, each on a fresh read of the unit:
    first, so the off switch can be told apart: `merge_policy_path_off` is waiting only as the sole
    refusal.
 
-A unit that ended `failed` or `revision_required` raises `bump-unit-failed` and is left there.
-Nothing here retries a unit: requeueing is a SYSTEM act this lane doesn't hold, and a person
-decides. This lane never touches a unit whose envelope isn't a dependency update, a rotation's
-above all.
+A unit in `revision_required` raises `bump-unit-failed` and is left there, and a `failed` one is
+left to `work_watcher`'s alert. Requeueing is a SYSTEM act this lane doesn't hold, so a person
+decides. A dispatch the orchestrator couldn't start is asked again on the next pass, under a new
+key, until its failure-signature breaker opens. A run no runner has claimed `UNCLAIMED_HOURS` after
+its dispatch raises `bump-run-unclaimed` and keeps holding its repository: it is never dispatched
+again by machine. This lane never touches a unit whose envelope isn't a dependency update, a
+rotation's above all.
 
 EXIT CODES:
   0  every bump moved, or waits on something that clears by itself.
   1  the tool itself failed (a missing credential, an unusable URL).
-  2  something was found that a person decides: a refused decomposition, a declined or superseded
-     proposal, a refused dispatch or merge, or a failed unit.
+  2  something was found that a person decides: a refused decomposition, dispatch or merge, a
+     unit in `revision_required`, or a run nobody claimed. Each has its own keyed alert. A proposal
+     a person declined or superseded is reported and isn't a finding: they decided.
   3  a record, a unit or a pull request could not be read, or alert-hub could not be told, so the
      answer is missing rather than clean.
 3 outranks 2: an incomplete pass cannot claim it found everything there was to find.
@@ -37,6 +41,7 @@ import os
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Final
 
@@ -44,11 +49,15 @@ from bump_driver.alerts import (
     TOKEN_ENV,
     UNREAD,
     Outcome,
+    act_refused_key,
     bump_failed_key,
     decompose_refused_key,
+    run_unclaimed_key,
     sync_alerts,
 )
 from bump_driver.client import (
+    CLOSED_PULL,
+    MERGED_PULL,
     CallError,
     ChangeManagerReader,
     GitHub,
@@ -67,7 +76,15 @@ from bump_driver.mirror import MirrorFailed, MirrorRefused, Mirrors, state_direc
 from sds_members.client import MembersUnreadable, read_members
 from sds_members.populations import granted as granted_repositories
 
-__all__ = ["FOUND", "INCOMPLETE", "Outcome", "bump_failed_key", "decompose_refused_key"]
+__all__ = [
+    "FOUND",
+    "INCOMPLETE",
+    "Outcome",
+    "act_refused_key",
+    "bump_failed_key",
+    "decompose_refused_key",
+    "run_unclaimed_key",
+]
 
 FOUND, INCOMPLETE = 2, 3
 CHANGE_MANAGER_URL: Final = "https://change-mgr.alobar.net"
@@ -81,7 +98,10 @@ ROTATION_UNIT: Final = "rotation_unit"
 LIVE_RECORD_STATUSES: Final = frozenset({"approved", "resolved"})
 DECOMPOSED_STATUS: Final = "approved"
 LIVE_RUN_STATES: Final = frozenset({"claimed", "executing"})  # not-a-vocabulary: as above
-ENDED_STATES: Final = frozenset({"failed", "revision_required"})  # not-a-vocabulary: as above
+# `failed` isn't alerted here: `work_watcher` holds `dependency-unit-failed` for it, per dependency.
+REVISION_REQUIRED: Final = "revision_required"
+# How long a dispatched run may go unclaimed before a person is told it holds its repository.
+UNCLAIMED_HOURS = 2
 READY: Final = "ready"
 COMPLETED: Final = "completed"
 # A dispatch the orchestrator refused to start for now; nothing is wrong with the unit.
@@ -95,7 +115,7 @@ OFF_SWITCH: Final = "merge_policy_path_off"
 LANDED: Final = frozenset({"merged", "already_merged"})  # not-a-vocabulary: as above
 VERSION_CONFLICT: Final = "version_conflict"
 FINDINGS: Final = frozenset(  # not-a-vocabulary: this lane's own report words
-    {"declined", "refused", "superseded", "failed"}
+    {"refused", "failed", "unclaimed"}
 )
 
 
@@ -127,6 +147,7 @@ def run_pass(
     generate: Generate,
     *,
     dry_run: bool = False,
+    now: datetime | None = None,
 ) -> list[Outcome]:
     outcomes: list[Outcome] = []
     bumps = _bumps(records, orchestrator, granted, outcomes)
@@ -139,11 +160,11 @@ def run_pass(
             )
     # Read after decomposing, so a unit policy just approved is dispatched in this pass.
     units = _units(bumps, orchestrator, outcomes)
-    outcomes.extend(_dispatch_all(units, orchestrator, dry_run))
+    outcomes.extend(_dispatch_all(units, orchestrator, now or datetime.now(UTC), dry_run))
     for bump, row in units:
         if row.get("state") == COMPLETED:
             _isolated(bump, outcomes, lambda b, r=row: _merge(b, r, orchestrator, github, dry_run))
-        elif row.get("state") in ENDED_STATES:
+        elif row.get("state") == REVISION_REQUIRED:
             _isolated(bump, outcomes, lambda b, r=row: _failed(b, r, orchestrator))
     return outcomes
 
@@ -341,26 +362,80 @@ def _is_bump_unit(unit: Mapping[str, Any], repository: str) -> bool:
     return isinstance(target, str) and target.casefold() == repository.casefold()
 
 
-def _pending_run(history: Sequence[Mapping[str, Any]]) -> bool:
-    """A run the orchestrator started and the runner hasn't claimed: it is starting now."""
-    pending = False
+def _unclaimed_since(history: Sequence[Mapping[str, Any]]) -> datetime | None:
+    """When a run started that the runner hasn't claimed, or `None` when none has."""
+    since: datetime | None = None
     for event in history:
         if event.get("action") == DISPATCHED_ACTION:
-            pending = True
+            since = datetime.fromisoformat(str(event["occurred_at"]))
         elif event.get("to_state") == "claimed":
-            pending = False
-    return pending
+            since = None
+    return since
 
 
 def _dispatch_all(
-    units: Sequence[tuple[_Bump, dict[str, Any]]], orchestrator: Orchestrator, dry_run: bool
+    units: Sequence[tuple[_Bump, dict[str, Any]]],
+    orchestrator: Orchestrator,
+    now: datetime,
+    dry_run: bool,
 ) -> list[Outcome]:
+    """Every ready unit is read first, so an unclaimed run holds its repository whichever order the
+    units come in; only then is anything started."""
     busy = {b.repository for b, row in units if row.get("state") in LIVE_RUN_STATES}
     outcomes: list[Outcome] = []
+    startable: list[tuple[_Bump, dict[str, Any], list[dict[str, Any]]]] = []
     ready = [(b, r) for b, r in units if r.get("state") == READY]
     for bump, row in sorted(ready, key=lambda pair: str(pair[1].get("unit_id"))):
-        _isolated(bump, outcomes, lambda b, r=row: _dispatch(b, r, orchestrator, busy, dry_run))
+        _isolated(
+            bump,
+            outcomes,
+            lambda b, r=row: _survey(b, r, orchestrator, busy, startable, now),
+        )
+    for bump, unit, history in startable:
+        _isolated(
+            bump,
+            outcomes,
+            lambda b, u=unit, h=history: _dispatch(b, u, h, orchestrator, busy, dry_run),
+        )
     return outcomes
+
+
+def _survey(
+    bump: _Bump,
+    row: Mapping[str, Any],
+    orchestrator: Orchestrator,
+    busy: set[str],
+    startable: list[tuple[_Bump, dict[str, Any], list[dict[str, Any]]]],
+    now: datetime,
+) -> Outcome | None:
+    """One ready unit: a run already starting holds the repository, and any other is startable."""
+    unit_id = str(row["unit_id"])
+    unit = orchestrator.unit(unit_id)
+    if not _is_bump_unit(unit, bump.repository) or unit.get("state") != READY:
+        return None
+    history = orchestrator.history(unit_id)
+    since = _unclaimed_since(history)
+    if since is None:
+        startable.append((bump, unit, history))
+        return None
+    busy.add(bump.repository)
+    subject = _unit_subject(unit, bump)
+    if now - since < timedelta(hours=UNCLAIMED_HOURS):
+        return Outcome(subject, "running", "its run hasn't claimed yet", bump.repository)
+    return Outcome(
+        subject,
+        "unclaimed",
+        f"its run was dispatched at {since.isoformat()} and nothing has claimed it. This holds "
+        f"every bump in {bump.repository} and blocks orchestrator deploys, which refuse on the "
+        "same signal. Look for the run in that repository's Actions, then dispatch the unit "
+        "again or retire it (fail it, then cancel it); the lane never dispatches it by itself",
+        bump.repository,
+        run_unclaimed_key(bump.repository, unit_id),
+    )
+
+
+def _unit_subject(unit: Mapping[str, Any], bump: _Bump) -> str:
+    return f"unit {unit.get('unit_key')} ({bump.repository})"
 
 
 def _dispatch_key(unit_id: str, version: Any, history: Sequence[Mapping[str, Any]]) -> str:
@@ -378,26 +453,21 @@ def _dispatch_key(unit_id: str, version: Any, history: Sequence[Mapping[str, Any
 
 def _dispatch(
     bump: _Bump,
-    row: Mapping[str, Any],
+    unit: Mapping[str, Any],
+    history: Sequence[Mapping[str, Any]],
     orchestrator: Orchestrator,
     busy: set[str],
     dry_run: bool,
-) -> Outcome | None:
-    unit_id = str(row["unit_id"])
-    unit = orchestrator.unit(unit_id)
-    if not _is_bump_unit(unit, bump.repository) or unit.get("state") != READY:
-        return None
-    subject = f"unit {unit.get('unit_key')} ({bump.repository})"
+) -> Outcome:
+    unit_id = str(unit["id"])
+    subject = _unit_subject(unit, bump)
     if bump.repository in busy:
         return Outcome(subject, "busy", "one run per repository", bump.repository)
-    history = orchestrator.history(unit_id)
-    if _pending_run(history):
-        busy.add(bump.repository)
-        return Outcome(subject, "running", "its run hasn't claimed yet", bump.repository)
     if dry_run:
         busy.add(bump.repository)
         return Outcome(subject, "would-dispatch", repository=bump.repository)
     version = unit["version"]
+    refused_key = act_refused_key(bump.repository, unit_id)
     try:
         answer = orchestrator.dispatch(
             unit_id,
@@ -407,24 +477,24 @@ def _dispatch(
             },
         )
     except CallError as error:
-        return _call_refused(subject, error, bump.repository)
+        return _call_refused(subject, error, bump.repository, refused_key)
     status, reason = answer.get("status"), answer.get("reason_code")
     if status == DISPATCHED:
         busy.add(bump.repository)
         return Outcome(subject, DISPATCHED, repository=bump.repository)
     if reason in WAITING_DISPATCH:
         return Outcome(subject, "waiting", str(reason), bump.repository)
-    return Outcome(subject, "refused", f"dispatch {status}: {reason}", bump.repository)
+    return Outcome(subject, "refused", f"dispatch {status}: {reason}", bump.repository, refused_key)
 
 
-def _call_refused(subject: str, error: CallError, repository: str) -> Outcome:
-    """A version that moved waits for the next pass's read; a refusal is reported; a call nothing
-    answered is unread."""
+def _call_refused(subject: str, error: CallError, repository: str, key: str) -> Outcome:
+    """A version that moved waits for the next pass's read; a refusal is reported and alerted; a
+    call nothing answered is unread."""
     if error.code == VERSION_CONFLICT:
         return Outcome(subject, "waiting", "the unit moved under this pass", repository)
     if error.status is None or error.status >= 500:
         return Outcome(subject, UNREAD, str(error), repository)
-    return Outcome(subject, "refused", str(error), repository)
+    return Outcome(subject, "refused", str(error), repository, key)
 
 
 def _merge(
@@ -434,23 +504,34 @@ def _merge(
     github: GitHub,
     dry_run: bool,
 ) -> Outcome | None:
+    """A closed pull request is nothing to do. A merged one is still asked, while its unit's terms
+    hold, so `pr-merge` records `already_merged` for a landing it lost track of; its refusal or
+    its replay says nothing a person needs, or every old unit would report on every pass."""
     unit_id = str(row["unit_id"])
     unit = orchestrator.unit(unit_id)
     number = unit.get("pr_number")
     if not _is_bump_unit(unit, bump.repository) or not isinstance(number, int):
         return None
-    if not github.pull_is_open(bump.repository, number):
+    pull = github.pull_state(bump.repository, number)
+    if pull == CLOSED_PULL:
         return None
     subject = f"{bump.repository}#{number}"
+    refused_key = act_refused_key(bump.repository, unit_id)
     admission = orchestrator.merge_admission(unit_id)
     if not admission.get("satisfied"):
+        if pull == MERGED_PULL:
+            return None
         refusals = [str(code) for code in admission.get("refusals") or []]
         if refusals == [OFF_SWITCH]:
             return Outcome(subject, "waiting", OFF_SWITCH, bump.repository)
         reasons = ", ".join(refusals) or "no reason given"
-        return Outcome(subject, "refused", reasons, bump.repository)
+        return Outcome(subject, "refused", reasons, bump.repository, refused_key)
     if dry_run:
-        return Outcome(subject, "would-merge", repository=bump.repository)
+        return (
+            None
+            if pull == MERGED_PULL
+            else Outcome(subject, "would-merge", repository=bump.repository)
+        )
     # Evidence writes move the version, so it is read at the last moment.
     version = orchestrator.unit(unit_id)["version"]
     try:
@@ -459,21 +540,26 @@ def _merge(
             {"idempotency_key": f"bump-driver:merge:{unit_id}", "expected_version": version},
         )
     except CallError as error:
-        return _call_refused(subject, error, bump.repository)
+        return _call_refused(subject, error, bump.repository, refused_key)
     if answer.get("status") in LANDED:
+        if pull == MERGED_PULL:
+            return None
         return Outcome(subject, "merged", str(answer.get("status")), bump.repository)
-    return Outcome(subject, "refused", f"merge: {answer.get('reason_code')}", bump.repository)
+    return Outcome(
+        subject, "refused", f"merge: {answer.get('reason_code')}", bump.repository, refused_key
+    )
 
 
 def _failed(bump: _Bump, row: Mapping[str, Any], orchestrator: Orchestrator) -> Outcome | None:
     unit_id = str(row["unit_id"])
     unit = orchestrator.unit(unit_id)
-    if not _is_bump_unit(unit, bump.repository) or unit.get("state") not in ENDED_STATES:
+    if not _is_bump_unit(unit, bump.repository) or unit.get("state") != REVISION_REQUIRED:
         return None
     return Outcome(
-        f"unit {unit.get('unit_key')} ({bump.repository})",
+        _unit_subject(unit, bump),
         "failed",
-        f"it ended {unit.get('state')}; nothing retries it, a person decides",
+        "a required check failed, so it is in revision_required; nothing requeues it, a person "
+        "decides",
         bump.repository,
         bump_failed_key(bump.repository, unit_id),
     )
@@ -535,7 +621,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             github,
             granted,
             mirrors.fresh,
-            Generator(factory_binary(home), _generator_environment(environ, token, mirrors)),
+            Generator(factory_binary(home), _generator_environment(environ, mirrors)),
             dry_run=args.dry_run,
         )
     except (CallError, MembersUnreadable) as error:
@@ -559,21 +645,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     return code
 
 
-def _generator_environment(
-    environ: Mapping[str, str], token: str, mirrors: Mirrors
-) -> dict[str, str]:
-    """All `factory decompose` is given. Its reads need the SYSTEM bearer under the name it reads,
-    the conformance scanner on `PYTHONPATH`, and the Brain keys, so it never asks BWS itself; its
-    own `git fetch` in the mirror needs the mirror's environment."""
+def _generator_environment(environ: Mapping[str, str], mirrors: Mirrors) -> dict[str, str]:
+    """All `factory decompose` is given, named one by one. Its conformance claim runs
+    `code-standards` inside the mirror, so nothing here may be a credential that reaches beyond a
+    Brain's contributor key: no GitHub token, no SYSTEM bearer, no BWS identity, no Coolify token.
+    `Generator` adds the intake's loopback address."""
     return {
         "PATH": environ.get("PATH", ""),
         "HOME": environ.get("HOME", ""),
         "PYTHONPATH": environ.get("FACTORY_PYTHONPATH", ""),
-        "ORCHESTRATOR_API_URL": environ.get("ORCHESTRATOR_API_URL", ORCHESTRATOR_URL),
-        "ORCHESTRATOR_SYSTEM_TOKEN": token,
         "CODE_BRAIN_KEY": environ.get("CODE_BRAIN_KEY", ""),
         "INFRA_BRAIN_KEY": environ.get("INFRA_BRAIN_KEY", ""),
-        **mirrors.environment(),
+        **mirrors.generator_environment(),
     }
 
 

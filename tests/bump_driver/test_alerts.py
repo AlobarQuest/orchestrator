@@ -9,7 +9,13 @@ import httpx
 import pytest
 
 from bump_driver.alerts import sync_alerts
-from bump_driver.cli import Outcome, bump_failed_key, decompose_refused_key
+from bump_driver.cli import (
+    Outcome,
+    act_refused_key,
+    bump_failed_key,
+    decompose_refused_key,
+    run_unclaimed_key,
+)
 
 REPOSITORY = "AlobarQuest/orchestrator"
 UNIT = "0c7a484c-1111-4111-8111-111111111111"
@@ -70,6 +76,27 @@ def test_a_refused_revision_alerts_and_resolves_when_it_clears(hub: Hub, tmp_pat
     _sync(hub, tmp_path, [REFUSED])
     _sync(hub, tmp_path, [Outcome("rev", "approved", repository=REPOSITORY)])
     assert _sent(hub) == [(REFUSED.key, "firing"), (REFUSED.key, "resolved")]
+
+
+def test_the_new_keys_are_the_ones_the_ruling_names() -> None:
+    assert act_refused_key(REPOSITORY, UNIT) == f"bump-act-refused:alobarquest/orchestrator:{UNIT}"
+    assert run_unclaimed_key(REPOSITORY, UNIT) == (
+        f"bump-run-unclaimed:alobarquest/orchestrator:{UNIT}"
+    )
+
+
+@pytest.mark.parametrize(
+    "key", [act_refused_key(REPOSITORY, UNIT), run_unclaimed_key(REPOSITORY, UNIT)]
+)
+def test_every_key_is_held_while_its_repository_is_unread(
+    hub: Hub, tmp_path: Path, key: str
+) -> None:
+    outcome = Outcome("unit", "refused", "no", repository=REPOSITORY, key=key)
+    _sync(hub, tmp_path, [outcome])
+    _sync(hub, tmp_path, [Outcome("record", "unread", "503", repository=REPOSITORY)])
+    assert _sent(hub) == [(key, "firing")]
+    _sync(hub, tmp_path, [])
+    assert _sent(hub) == [(key, "firing"), (key, "resolved")]
 
 
 def test_an_unread_repository_holds_its_alerts(hub: Hub, tmp_path: Path) -> None:

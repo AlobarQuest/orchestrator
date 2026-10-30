@@ -3,6 +3,7 @@ isn't a standing bump in a granted repository."""
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 
@@ -12,15 +13,19 @@ from bump_driver import cli
 from bump_driver.cli import (
     FOUND,
     INCOMPLETE,
+    UNCLAIMED_HOURS,
+    act_refused_key,
     bump_failed_key,
     decompose_refused_key,
     exit_code,
     run_pass,
+    run_unclaimed_key,
 )
 from bump_driver.client import CallError, GitHub, Orchestrator
 from bump_driver.decompose import DecomposeRefused
 from bump_driver.mirror import MirrorFailed, MirrorRefused
 
+NOW = datetime(2026, 10, 30, 12, 0, tzinfo=UTC)
 REPOSITORY = "AlobarQuest/orchestrator"
 GRANTED = {REPOSITORY.lower(): REPOSITORY}
 REVISION = "f962475a-1964-46df-81ac-2b3029dec2a7"
@@ -54,6 +59,11 @@ BUMP_AUTHORITY = {
 }
 
 
+def _dispatched(hours_ago: float = 0.5) -> dict[str, Any]:
+    moment = NOW - timedelta(hours=hours_ago)
+    return {"action": "dispatch.dispatched", "occurred_at": moment.isoformat()}
+
+
 def _unit(unit: str, state: str, version: int = 3, **extra: Any) -> dict[str, Any]:
     return {
         "id": unit,
@@ -80,6 +90,8 @@ class FakeOrchestrator:
         self.dispatch_answer: dict[str, Any] = {"status": "dispatched", "reason_code": None}
         self.merge_answer: dict[str, Any] = {"status": "merged", "reason_code": None}
         self.refuse: dict[str, CallError] = {}
+        # What the record's work lists for a unit, where it differs from the unit's own read.
+        self.listed: dict[str, str] = {}
         self.unit_reads: list[str] = []
 
     def _refused(self, name: str) -> None:
@@ -91,7 +103,11 @@ class FakeOrchestrator:
         return {
             "revision_ids": [REVISION],
             "units": [
-                {"unit_id": u["id"], "revision_id": REVISION, "state": u["state"]}
+                {
+                    "unit_id": u["id"],
+                    "revision_id": REVISION,
+                    "state": self.listed.get(u["id"], u["state"]),
+                }
                 for u in self.units.values()
             ],
         }
@@ -131,13 +147,13 @@ class FakeOrchestrator:
 
 class FakeGitHub:
     def __init__(self) -> None:
-        self.open = True
+        self.state = "open"
         self.fail = False
 
-    def pull_is_open(self, repository: str, number: int) -> bool:
+    def pull_state(self, repository: str, number: int) -> str:
         if self.fail:
             raise CallError("GitHub unreachable")
-        return self.open
+        return self.state
 
 
 class Generator:
@@ -192,6 +208,7 @@ def _run(
         generator.mirror,
         generator.generate,
         dry_run=dry_run,
+        now=NOW,
     )
 
 
@@ -233,7 +250,7 @@ def test_a_decided_proposal_is_never_re_proposed(orch, github, generator, state,
     assert _results(outcomes) == [result]
     assert orch.posted == []
     assert generator.mirrors == []
-    assert exit_code(outcomes) == FOUND
+    assert exit_code(outcomes) == 0
     assert outcomes[0].key is None
 
 
@@ -418,7 +435,7 @@ def test_a_unit_dispatched_and_unclaimed_is_running_and_not_dispatched_again(
     orch, github, generator
 ) -> None:
     orch.units[UNIT] = _unit(UNIT, "ready")
-    orch.histories[UNIT] = [{"action": "dispatch.dispatched"}]
+    orch.histories[UNIT] = [_dispatched()]
     assert _results(_run(orch, github, generator)) == ["running"]
     assert orch.dispatched == []
 
@@ -428,7 +445,7 @@ def test_a_ready_unit_whose_last_dispatch_was_claimed_is_dispatched_again(
 ) -> None:
     orch.units[UNIT] = _unit(UNIT, "ready", version=9)
     orch.histories[UNIT] = [
-        {"action": "dispatch.dispatched"},
+        _dispatched(),
         {"action": "work_unit.transition", "to_state": "claimed"},
     ]
     _run(orch, github, generator)
@@ -468,6 +485,7 @@ def test_any_other_dispatch_answer_is_reported(orch, github, generator, answer) 
     outcomes = _run(orch, github, generator)
     assert _results(outcomes) == ["refused"]
     assert answer["reason_code"] in outcomes[0].detail
+    assert outcomes[0].key == act_refused_key(REPOSITORY, UNIT)
     assert exit_code(outcomes) == FOUND
 
 
@@ -482,7 +500,9 @@ def test_a_refused_dispatch_is_reported_and_an_unanswered_one_unread(
 ) -> None:
     orch.units[UNIT] = _unit(UNIT, "ready")
     orch.refuse["dispatch"] = CallError("no", 403, "role_forbidden")
-    assert _results(_run(orch, github, generator)) == ["refused"]
+    [outcome] = _run(orch, github, generator)
+    assert outcome.result == "refused"
+    assert outcome.key == act_refused_key(REPOSITORY, UNIT)
     orch.refuse["dispatch"] = CallError("down", None)
     assert _results(_run(orch, github, generator)) == ["unread"]
 
@@ -502,14 +522,41 @@ def test_one_run_per_repository_a_pass_dispatches_one_unit(orch, github, generat
     assert len(orch.dispatched) == 1
 
 
+@pytest.mark.parametrize("pending", [UNIT, OTHER_UNIT], ids=["sorts-first", "sorts-last"])
 def test_one_run_per_repository_an_unclaimed_dispatch_holds_the_rest(
-    orch, github, generator
+    orch, github, generator, pending
 ) -> None:
     orch.units[UNIT] = _unit(UNIT, "ready")
     orch.units[OTHER_UNIT] = _unit(OTHER_UNIT, "ready")
-    orch.histories[UNIT] = [{"action": "dispatch.dispatched"}]
+    orch.histories[pending] = [_dispatched()]
     assert sorted(_results(_run(orch, github, generator))) == ["busy", "running"]
     assert orch.dispatched == []
+
+
+def test_a_run_unclaimed_past_the_limit_alerts_and_keeps_holding(orch, github, generator) -> None:
+    orch.units[UNIT] = _unit(UNIT, "ready")
+    orch.units[OTHER_UNIT] = _unit(OTHER_UNIT, "ready")
+    orch.histories[UNIT] = [_dispatched(UNCLAIMED_HOURS)]
+    outcomes = _run(orch, github, generator)
+    assert sorted(_results(outcomes)) == ["busy", "unclaimed"]
+    assert orch.dispatched == []
+    alert = next(o for o in outcomes if o.result == "unclaimed")
+    assert alert.key == run_unclaimed_key(REPOSITORY, UNIT)
+    assert "orchestrator deploys" in alert.detail
+    assert "again or retire it" in alert.detail
+    assert exit_code(outcomes) == FOUND
+
+
+def test_a_run_just_inside_the_limit_is_still_running(orch, github, generator) -> None:
+    orch.units[UNIT] = _unit(UNIT, "ready")
+    orch.histories[UNIT] = [_dispatched(UNCLAIMED_HOURS - 0.01)]
+    [outcome] = _run(orch, github, generator)
+    assert outcome.result == "running"
+    assert outcome.key is None
+
+
+def test_the_limit_is_two_hours() -> None:
+    assert UNCLAIMED_HOURS == 2
 
 
 def test_a_blocked_dispatch_doesnt_hold_the_repository(orch, github, generator) -> None:
@@ -592,9 +639,35 @@ def test_the_unit_is_re_read_for_the_version_it_acts_on(orch, github, generator)
 
 def test_a_closed_pull_request_is_nothing_to_do(orch, github, generator) -> None:
     orch.units[UNIT] = _unit(UNIT, "completed")
-    github.open = False
+    github.state = "closed"
     assert _run(orch, github, generator) == []
     assert orch.merged == []
+
+
+def test_a_merged_pull_request_is_asked_so_already_merged_is_recorded(
+    orch, github, generator
+) -> None:
+    orch.units[UNIT] = _unit(UNIT, "completed")
+    github.state = "merged"
+    orch.merge_answer = {"status": "already_merged"}
+    assert _run(orch, github, generator) == []
+    assert len(orch.merged) == 1
+
+
+def test_a_merged_pull_request_whose_unit_doesnt_qualify_is_nothing_to_do(
+    orch, github, generator
+) -> None:
+    orch.units[UNIT] = _unit(UNIT, "completed")
+    github.state = "merged"
+    orch.admissions[UNIT] = {"satisfied": False, "refusals": ["criteria_not_verifier_decided"]}
+    assert _run(orch, github, generator) == []
+    assert orch.merged == []
+
+
+def test_a_dry_run_says_nothing_of_a_merged_pull_request(orch, github, generator) -> None:
+    orch.units[UNIT] = _unit(UNIT, "completed")
+    github.state = "merged"
+    assert _run(orch, github, generator, dry_run=True) == []
 
 
 def test_a_unit_with_no_bound_pull_request_is_nothing_to_do(orch, github, generator) -> None:
@@ -629,6 +702,7 @@ def test_a_refusal_beside_the_off_switch_is_reported(orch, github, generator) ->
     }
     outcomes = _run(orch, github, generator)
     assert _results(outcomes) == ["refused"]
+    assert outcomes[0].key == act_refused_key(REPOSITORY, UNIT)
     assert "pr_binding_missing" in outcomes[0].detail
     assert orch.merged == []
     assert exit_code(outcomes) == FOUND
@@ -650,7 +724,9 @@ def test_an_unsatisfied_answer_with_no_refusal_is_reported(orch, github, generat
 def test_a_pass_that_lost_the_race_reports_the_refusal(orch, github, generator) -> None:
     orch.units[UNIT] = _unit(UNIT, "completed")
     orch.refuse["merge"] = CallError("refused", 409, "pr_merge_not_admissible")
-    assert _results(_run(orch, github, generator)) == ["refused"]
+    [outcome] = _run(orch, github, generator)
+    assert outcome.result == "refused"
+    assert outcome.key == act_refused_key(REPOSITORY, UNIT)
 
 
 def test_a_version_that_moved_before_the_merge_waits(orch, github, generator) -> None:
@@ -670,7 +746,9 @@ def test_a_version_that_moved_before_the_merge_waits(orch, github, generator) ->
 def test_the_merge_answer_is_classified(orch, github, generator, answer, result) -> None:
     orch.units[UNIT] = _unit(UNIT, "completed")
     orch.merge_answer = answer
-    assert _results(_run(orch, github, generator)) == [result]
+    [outcome] = _run(orch, github, generator)
+    assert outcome.result == result
+    assert outcome.key == (act_refused_key(REPOSITORY, UNIT) if result == "refused" else None)
 
 
 def test_a_dry_run_merges_nothing(orch, github, generator) -> None:
@@ -682,9 +760,29 @@ def test_a_dry_run_merges_nothing(orch, github, generator) -> None:
 # Failed units
 
 
-@pytest.mark.parametrize("state", ["failed", "revision_required"])
-def test_a_failed_unit_raises_its_key(orch, github, generator, state) -> None:
-    orch.units[UNIT] = _unit(UNIT, state)
+def test_a_failed_unit_is_left_to_the_work_watchers_alert(orch, github, generator) -> None:
+    orch.units[UNIT] = _unit(UNIT, "failed")
+    assert _run(orch, github, generator) == []
+
+
+def test_a_unit_listed_failed_raises_nothing_whatever_its_own_read_says(
+    orch, github, generator
+) -> None:
+    orch.units[UNIT] = _unit(UNIT, "revision_required")
+    orch.listed[UNIT] = "failed"
+    assert _run(orch, github, generator) == []
+
+
+def test_a_unit_that_moved_to_failed_after_its_listing_raises_nothing(
+    orch, github, generator
+) -> None:
+    orch.units[UNIT] = _unit(UNIT, "failed")
+    orch.listed[UNIT] = "revision_required"
+    assert _run(orch, github, generator) == []
+
+
+def test_a_revision_required_unit_raises_its_key(orch, github, generator) -> None:
+    orch.units[UNIT] = _unit(UNIT, "revision_required")
     outcomes = _run(orch, github, generator)
     assert _results(outcomes) == ["failed"]
     assert outcomes[0].key == bump_failed_key(REPOSITORY, UNIT)

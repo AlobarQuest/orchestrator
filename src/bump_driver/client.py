@@ -32,6 +32,9 @@ _HISTORY = re.compile(rf"^/api/v1/work-units/{UUID_SHAPE}/history$")
 _ADMISSION = re.compile(rf"^/api/v1/work-units/{UUID_SHAPE}/pr-merge-admission$")
 _DISPATCH = re.compile(rf"^/api/v1/work-units/{UUID_SHAPE}/dispatch$")
 _MERGE = re.compile(rf"^/api/v1/work-units/{UUID_SHAPE}/pr-merge$")
+OPEN_PULL: Final = "open"
+MERGED_PULL: Final = "merged"
+CLOSED_PULL: Final = "closed"
 _PULL = re.compile(r"^/repos/[A-Za-z0-9-]+/[A-Za-z0-9._-]+/pulls/[1-9][0-9]*$")
 
 
@@ -159,8 +162,12 @@ class GitHub(_Client):
             transport=transport,
         )
 
-    def pull_is_open(self, repository: str, number: int) -> bool:
-        return self._object("GET", f"/repos/{repository}/pulls/{number}").get("state") == "open"
+    def pull_state(self, repository: str, number: int) -> str:
+        """`open`, `merged`, or `closed` for one closed without landing."""
+        body = self._object("GET", f"/repos/{repository}/pulls/{number}")
+        if body.get("state") == OPEN_PULL:
+            return OPEN_PULL
+        return MERGED_PULL if body.get("merged") is True else CLOSED_PULL
 
 
 class Orchestrator(_Client):

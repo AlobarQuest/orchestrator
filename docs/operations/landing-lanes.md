@@ -715,33 +715,51 @@ standing dependency-update work as SYSTEM with no person acting. Verification st
 - **Decompose.** A revision with no units and no proposal: `factory decompose --no-execute` against
   a shallow mirror under `~/Library/Application Support/sds/bump-driver/mirrors/`, posted with key
   `bump-driver:<revision>`. The mirrors run only git, with hooks off and the token in the
-  environment. The bump's terms come from `enforcement_snapshot.profile_fields`. A proposal a person
-  rejected, sent back or superseded is never proposed over.
+  environment, and `fresh` refuses unless the tree is clean and HEAD is `origin/main`. The bump's
+  terms come from `enforcement_snapshot.profile_fields`. A proposal a person rejected, sent back or
+  superseded is never proposed over; it is reported and isn't a finding, because a person decided.
+- **`factory` holds no credential but the Brain keys.** Its conformance claim runs `code-standards`
+  inside the mirror with its whole environment, which spawns no linter only because the tree is
+  clean. So its environment is an allowlist (`cli.py::_generator_environment`, keys pinned by
+  `test_decompose.py`). It gets no SYSTEM bearer: the lane answers with the intake it already read on
+  a loopback port while `factory` runs, and sets `ORCHESTRATOR_API_URL` there with a placeholder token. It
+  gets no GitHub token: a mirror's `origin` is the mirror itself, so its `git fetch origin main`
+  answers locally, for a private repository too.
 - **Dispatch.** One run per repository: a `claimed` or `executing` unit holds it, and so does a run
-  dispatched but not yet claimed (the unit is still `ready`, and history says so). The key is
+  dispatched but not yet claimed (the unit is still `ready`, and history says so), found across
+  every ready unit before anything starts. Such a run still unclaimed after `UNCLAIMED_HOURS` (2)
+  raises `bump-run-unclaimed` and keeps holding: the lane never dispatches it again, and
+  `deploy_orchestrator.py` refuses on the same signal. Look for the run in the repository's Actions,
+  then dispatch the unit again or retire it (fail it, then cancel it). The key is
   `bump-driver:dispatch:<unit>:<version>`, with `:<n>` added once `n` earlier dispatch records didn't
   start a run: such a record holds its key and moves no version, so reusing the key would replay it
-  for ever. `dispatch_disabled` and `outside_change_window` are `waiting`. Each pass while the
-  switch is off writes one skipped record per ready unit.
-- **Merge.** A completed unit whose bound pull request is open. The lane reads `pr-merge-admission`
-  first, because the act puts its refusals in a message: `merge_policy_path_off` alone is `waiting`,
-  and any other refusal is reported. A closed or merged pull request is nothing to do.
+  for ever. So a `dispatch.failed` is asked again every pass until its failure-signature breaker
+  opens. `dispatch_disabled` and `outside_change_window` are `waiting`. Each pass while the switch
+  is off writes one skipped record per ready unit.
+- **Merge.** A completed unit whose bound pull request isn't closed unmerged. The lane reads
+  `pr-merge-admission` first, because the act puts its refusals in a message:
+  `merge_policy_path_off` alone is `waiting`, and any other refusal is reported. A pull request
+  already merged is still asked, so a landing the orchestrator lost track of records
+  `already_merged`, but only while the unit's terms hold: admission runs before that branch, so a
+  unit that doesn't qualify writes no row, and the lane says nothing about it.
 - **Alerts** (sender `sds-bridge`, memory in the state directory's `alerts.json`):
-  `bump-unit-failed:<repo>:<unit>` for a unit `failed` or `revision_required`, and
-  `bump-decompose-refused:<repo>:<revision>` for a generator refusal or a proposal of this lane's
-  policy didn't approve (`policy_not_applied`). Each resolves when its subject clears, and is held
-  while its repository's records can't be read. A person's own proposal never alerts.
-- **Nothing retries a failed unit.** `revision_required` has a SYSTEM edge back to `ready`, but
-  `requeue` takes only failed or blocked work and no lane drives it, so the alert is the end state
-  and a person decides.
+  `bump-unit-failed:<repo>:<unit>` for a unit in `revision_required` (a `failed` unit already holds
+  `work_watcher`'s `dependency-unit-failed`), `bump-decompose-refused:<repo>:<revision>` for a
+  generator refusal or a proposal of this lane's policy didn't approve (`policy_not_applied`),
+  `bump-act-refused:<repo>:<unit>` for a refused dispatch or merge, and
+  `bump-run-unclaimed:<repo>:<unit>` above. Each resolves when its subject clears, and is held while
+  its repository's records can't be read. A person's own proposal never alerts.
+- **Nothing requeues a unit.** `revision_required` has a SYSTEM edge back to `ready`, but `requeue`
+  takes only failed or blocked work and no lane drives it, so the alert is the end state and a
+  person decides.
 - **What `factory` needs from the launcher:** intent-packages' venv and this repository's on `PATH`
   (`factory` shells out to `orchestrator conformance-claim`), project-standards and
-  security-standards on `FACTORY_PYTHONPATH`, the SYSTEM bearer as `ORCHESTRATOR_SYSTEM_TOKEN`, and
-  the Brain keys as `CODE_BRAIN_KEY` and `INFRA_BRAIN_KEY`. Nothing else reaches it. A
+  security-standards on `FACTORY_PYTHONPATH`, and the Brain keys as `CODE_BRAIN_KEY` and
+  `INFRA_BRAIN_KEY`. A
   `--no-execute` the intent-packages checkout doesn't know is a refusal like any other, so that
   checkout must be current.
 - **Deploying the orchestrator.** `deploy_orchestrator.py` refuses while a unit is live or a dispatch
-  is unclaimed, and this lane can start one at :50, so deploy away from it.
+  is unclaimed, and this lane can start one at :50, so deploy away from :50.
 
 ### The landers' outbound surface (Landing Part 1)
 
