@@ -1582,6 +1582,10 @@ LANDING_REVERT_STATUSES = (
     "revert_landed",
     "refused_overlap",
     "revert_failed",
+    # Production points at the parent's image and the revert is not yet open.
+    "repointed",
+    # The moving tag is back after the revert landed.
+    "restored",
 )
 
 
@@ -1619,6 +1623,9 @@ class LandingRevert(UUIDPrimaryKey, Base):
     # [{ecosystem, directory, dependency, from_version (nullable), to_version}]
     bumps: Mapped[list[dict[str, Any]]] = mapped_column(JSONB)
     hold_outcome: Mapped[str | None] = mapped_column(Text)
+    # {"<app uuid>": {"tag", "digest"}} -- the image each deploying application was pinned to.
+    pinned_images: Mapped[dict[str, dict[str, str]] | None] = mapped_column(JSONB)
+    restored_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # Why the record stands where it does, in words a person reads: the paths that moved for
     # `refused_overlap`, the failure for `revert_failed` (named by its code, e.g.
     # `tree_response_invalid`), and a dependency list that couldn't be read for `revert_opened`.
