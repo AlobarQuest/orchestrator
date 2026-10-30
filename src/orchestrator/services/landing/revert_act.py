@@ -149,6 +149,8 @@ from orchestrator.services.membership.members import apps_for, holds_for
 # Refusals. Nothing is read, written or recorded under any of them.
 LANDING_REVERT_LANE_OFF: Final = "landing_revert_lane_off"
 LANDING_REVERT_NOT_WATCHED: Final = "landing_revert_not_watched"
+# The watch asked for a lane it does not name: neither the inert nor the estate lane.
+LANDING_WATCH_LANE_UNKNOWN: Final = "landing_watch_lane_unknown"
 # Every rerun the act asked for was refused, so nothing was recorded and the next pass asks again.
 LANDING_REVERT_RERUN_REFUSED: Final = "landing_revert_rerun_refused"
 # The record is not in the status the caller read: someone acted between the read and the request.
@@ -333,19 +335,25 @@ def landing_watch(
     inert: RevertLane,
     estate: RevertLane,
     credentials_configured: bool,
+    only_lane: str | None = None,
 ) -> tuple[WatchedLanding, ...]:
     """Every watched landing, judged or reported, oldest first. Reads only; writes nothing.
 
     Refused, before any read, when no lane may act. A landing whose own lane is switched off is
     reported `unreadable` by the refusal's name and read through nothing; one reported by its
     record's status alone reads nothing either way.
+
+    With `only_lane` named, only that lane's landings are watched: the other lane's are skipped
+    before their record or any App read, since each read is serial and a lander discards the rest.
     """
     _refuse_unless_lane_on((inert.enabled or estate.enabled) and credentials_configured)
     grants = MemberRecordGrants(session)
     watched: list[WatchedLanding] = []
     for landing in _watched_landings(session):
-        record = _record(session, landing.repository, landing.pr_number, lock=False)
         redeploys = _redeploys(session, landing)
+        if only_lane is not None and only_lane != (ESTATE_LANE if redeploys else INERT_LANE):
+            continue
+        record = _record(session, landing.repository, landing.pr_number, lock=False)
         lane = estate if redeploys else inert
         verdict: Verdict | None = None
         if not grant_term(grants, landing.repository, (DEPENDENCY_UPDATES_SERVICE,)).met:

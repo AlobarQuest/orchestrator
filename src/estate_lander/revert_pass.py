@@ -166,7 +166,8 @@ class _Refused(Exception):
 
 
 def lane_rows(watch: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    """This lane's rows of the watch: the landings that redeploy."""
+    """This lane's rows of the watch: the landings that redeploy. The client asks for this lane
+    alone; the filter stays as defence in depth."""
     return [dict(row) for row in watch if row.get("lane") == ESTATE_LANE]
 
 

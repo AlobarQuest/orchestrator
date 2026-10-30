@@ -23,6 +23,9 @@ import httpx
 import pytest
 
 from inert_lander.orchestrator_client import (
+    DEFAULT_BASE_URL,
+    TIMEOUT_SECONDS,
+    WATCH_TIMEOUT_SECONDS,
     ForbiddenEndpointError,
     OrchestratorClient,
     is_allowed_read,
@@ -70,9 +73,12 @@ def test_the_write_surface_is_three_routes_and_no_more() -> None:
         assert not is_allowed_write(forbidden), forbidden
 
 
-def test_the_read_surface_is_one_route_and_no_more() -> None:
+def test_the_read_surface_is_two_routes_and_no_more() -> None:
     assert is_allowed_read("/api/v1/inert-pr-merge-admission")
+    # Landing Part 3a: the watch of this lane's landings.
+    assert is_allowed_read("/api/v1/landing-watch")
     for forbidden in (
+        "/api/v1/landing-watch/",
         "/api/v1/inert-pr-merge",
         # A write path is not thereby readable: the two allowlists are separate and each names
         # its own paths, so the branch-update route cannot be reached by a GET.
@@ -147,3 +153,25 @@ def test_a_close_names_this_lanes_own_literal_and_the_callers_key() -> None:
             },
         )
     ]
+
+
+def test_the_watch_asks_for_this_lanes_own_landings_with_the_longer_timeout() -> None:
+    """The orchestrator reads nothing for the estate lane's landings when this lane names its own,
+    and only the watch, whose reads are serial per landing, waits longer than every other call."""
+    sent: list[tuple[str, dict[str, float | None]]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(
+            (str(request.url).removeprefix(DEFAULT_BASE_URL), request.extensions["timeout"])
+        )
+        return httpx.Response(200, json={"landings": [], "allowed": True})
+
+    client = OrchestratorClient("t", "k", transport=httpx.MockTransport(handler))
+    client.landing_watch()
+    client.admission("alobarquest/x", 7)
+
+    [(watch, watch_timeout), (admission, admission_timeout)] = sent
+    assert watch == "/api/v1/landing-watch?lane=inert"
+    assert admission.startswith("/api/v1/inert-pr-merge-admission?")
+    assert set(watch_timeout.values()) == {WATCH_TIMEOUT_SECONDS} == {240.0}
+    assert set(admission_timeout.values()) == {TIMEOUT_SECONDS} == {60.0}

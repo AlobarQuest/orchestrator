@@ -36,6 +36,7 @@ from orchestrator.api.schemas.landing import (
     PrMergeResponse,
 )
 from orchestrator.config import Settings
+from orchestrator.errors import DomainError
 from orchestrator.services.github_app import GitHubAppCredentials, token_provider_for
 from orchestrator.services.landing.branch_update_serialization import (
     branch_update_sibling_outcome,
@@ -82,6 +83,9 @@ from orchestrator.services.landing.pr_merge import (
 )
 from orchestrator.services.landing.pr_merge_admission import pr_merge_admission
 from orchestrator.services.landing.revert_act import (
+    ESTATE_LANE,
+    INERT_LANE,
+    LANDING_WATCH_LANE_UNKNOWN,
     PinnedCommand,
     RepointCommand,
     RestoreCommand,
@@ -512,15 +516,24 @@ def held_pr_close_route(
 
 
 @router.get("/landing-watch", response_model=LandingWatchResponse)
-def landing_watch_route(actor: ActorDep, session: SessionDep, settings: SettingsDep) -> object:
+def landing_watch_route(
+    actor: ActorDep, session: SessionDep, settings: SettingsDep, lane: str | None = None
+) -> object:
     """Landing Part 3: the landing lanes' recent landings, each judged by its own checks on the
     default branch and, where landing redeploys, by what production serves; and every revert record
     still in the watch.
 
     Reads only, but reads through the App, so the system actor alone may ask: the same actor that
     acts on what it answers. Each repository's reads are bounded by the inert lane's grant term.
+    `lane` (`inert` or `estate`) narrows the watch to that lane's landings; absent, both are served.
     """
     authorize_actor(actor, "read the landing watch")
+    if lane is not None and lane not in (INERT_LANE, ESTATE_LANE):
+        raise DomainError(
+            LANDING_WATCH_LANE_UNKNOWN,
+            f"the landing watch has no lane {lane!r}",
+            f"name {INERT_LANE!r} or {ESTATE_LANE!r}, or no lane for both",
+        )
     credentials = github_app_credentials_for(settings)
     inert, estate = _revert_lanes(settings, credentials)
     return {
@@ -529,6 +542,7 @@ def landing_watch_route(actor: ActorDep, session: SessionDep, settings: Settings
             inert=inert,
             estate=estate,
             credentials_configured=credentials is not None,
+            only_lane=lane,
         )
     }
 

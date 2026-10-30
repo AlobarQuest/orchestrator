@@ -734,6 +734,10 @@ Repositories that deploy on landing follow "Automatic reverts (deploying reposit
 - **Routes.** `GET /api/v1/landing-watch` reads and judges; `POST /api/v1/landing-revert` acts once
   per judgment. Both are SYSTEM-only, ask the member record's `dependency_updates` grant for the
   repository first, and the act judges again inside its transaction.
+  Each lander asks the watch for its own lane (`?lane=inert` or `?lane=estate`; any other value is
+  refused `landing_watch_lane_unknown`), so the other lane's landings cost no GitHub read. The
+  reads are serial, about 6.5 s per watched landing, so the watch call alone has a 240 s client
+  timeout (`WATCH_TIMEOUT_SECONDS`); every other call keeps 60 s.
 - **Order.** An acting pass reads the watch and acts on it before its landing pass, so a bad landing
   is rerun or reverted before a sibling lands on top of it.
 - **Siblings wait.** While a repository has a rerun asked for (inside the watch) or a revert opened,

@@ -21,6 +21,7 @@ import typing
 from collections.abc import Iterator
 from pathlib import Path
 
+import httpx
 import pytest
 
 from estate_lander import change_manager as estate_change_manager
@@ -88,6 +89,14 @@ EDGES: dict[str, Edge] = {
         bearers=frozenset({SYSTEM_BEARER, READ_BEARER, SDS_BRIDGE_ALERT_BEARER, GH_AUTH_TOKEN}),
     ),
 }
+
+# The watch serves both lanes unless asked for one, so each lander's one watch read names its own
+# lane in the query. The rows above are path-keyed, as the predicates are; the query is pinned here.
+WATCH_QUERIES: dict[str, str] = {
+    "estate_lander": "lane=estate",
+    "inert_lander": "lane=inert",
+}
+_WATCH = ("GET", "/api/v1/landing-watch")
 
 GITHUB_THROUGH: dict[str, tuple[str, str]] = {
     "inert_lander": ("src/inert_lander/cli.py", "deploy_watcher.github"),
@@ -210,6 +219,25 @@ def disagreements(lane: str) -> frozenset[tuple[str, str, str, bool]]:
 @pytest.mark.parametrize("lane", sorted(EDGES))
 def test_each_lander_accepts_exactly_its_routes_among_the_corpus(lane: str) -> None:
     assert sorted(disagreements(lane)) == []
+
+
+@pytest.mark.parametrize("lane", sorted(EDGES))
+def test_each_lander_reads_the_watch_for_its_own_lane_alone(lane: str) -> None:
+    sent: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(f"{request.method} {request.url.path}?{request.url.query.decode()}")
+        return httpx.Response(200, json={"landings": []})
+
+    client_class = {
+        "estate_lander": estate_orchestrator.OrchestratorClient,
+        "inert_lander": inert_orchestrator.OrchestratorClient,
+    }[lane]
+    with client_class("t", "k", transport=httpx.MockTransport(handler)) as client:
+        client.landing_watch()
+
+    assert _WATCH in EDGES[lane].orchestrator
+    assert sent == [f"{_WATCH[0]} {_WATCH[1]}?{WATCH_QUERIES[lane]}"]
 
 
 def _imports(source: str) -> set[str]:
