@@ -573,6 +573,10 @@ it names the state it left.
   is one of: the role on the new value with the service on the old (Coolify unreachable); the role
   on the old with the variable on the new; or a restart that didn't land. The keeper still holds the
   old value, which is the target. Run `pg-restore` (below) in the VM, then requeue.
+- **Host's first Coolify write is what failed, and the undo's too.** The first failure the reason
+  names is the variable write, and it says the consumers are on the value: nothing changed. It
+  still says to run `pg-restore`, but the recovery is a requeue once Coolify returns, since
+  `pg-restore` would restart a service that's healthy on the old value.
 - **"the database accepts neither value, or may be down".** Host wrote nothing. Read the helper's
   state first (`docker ps` on the VPS), then requeue.
 - **"the database accepts the new value and what the consumers loaded couldn't be read".** Host
@@ -948,9 +952,11 @@ On the VPS, as root. Its only dependency is Python 3.12 and Docker.
    as `bad_target` before anything runs. The name after `target.` is what the registry row's
    `helper_target` must equal.
 3. Create the executor's key in the VM, as the `rotation` user, and nowhere else: `ssh-keygen -t
-   ed25519 -N '' -f /tmp/pg-helper-key`. Store the private half in `Rotation / Admin` from the
-   console, then delete the file; put its secret id in the executor's configuration as
-   `pg_helper_key_id`.
+   ed25519 -N '' -f /tmp/pg-helper-key`. Never print the private half. On the Mac, run `orb -m
+   rotation-executor -u rotation cat /tmp/pg-helper-key | pbcopy` and paste it into a new secret in
+   `Rotation / Admin` from the console. Then remove the file (`orb -m rotation-executor -u rotation
+   rm /tmp/pg-helper-key`) and clear the clipboard with `pbcopy < /dev/null`. Put the secret's id in
+   the executor's configuration as `pg_helper_key_id`.
 4. Add the public half to the VPS's `/root/.ssh/authorized_keys` as one line, with the forced
    command, so the key can run nothing else:
 
@@ -1000,12 +1006,13 @@ Prove two things from the VM, as the `rotation` user, before the first rotation.
 ```sh
 echo '{}' | ssh -F /dev/null -o GlobalKnownHostsFile=/dev/null \
   -o UserKnownHostsFile=<known_hosts file> -o StrictHostKeyChecking=yes \
-  -o IdentitiesOnly=yes -i <key> root@<VPS>
+  -o BatchMode=yes -o IdentitiesOnly=yes -i <key> root@<VPS>
 ```
 
 - **The key runs nothing else.** With the real pinned line in the file, the helper answers one JSON
-  line, `{"refused": "unknown_verb"}`, and ssh exits 2. Passing a command (`... root@<VPS> id
-  </dev/null`) must print the same refusal, not a user id: the forced command ignores it.
+  line, `{"refused": "unknown_verb"}`, and ssh exits 2. Passing a command, with no stdin (`... -o
+  BatchMode=yes ... root@<VPS> id </dev/null`), must print `{"refused": "bad_request"}`, not a user
+  id: the forced command ignores it, and the helper reads an empty request.
 - **The wrong host key is refused.** Put a line in the file that carries the VPS's own host field
   with a different key (a throwaway host's). ssh must exit 255 with "Host key verification failed"
   on stderr, and the helper never answers, so nothing is sent to whatever replied. A run that
@@ -1026,18 +1033,19 @@ security find-generic-password -s Claude -a AUTHENTIK_POSTGRES_PASSWORD -w | orb
 ```
 
 The command refuses unless the registry row's class is `postgres-role-password` and the value is
-exactly 64 lowercase hex characters, refuses to overwrite a keeper that exists, and prints the secret id and
-fingerprint, never the value. Put the
-id in the registry row's `bws_uuid` and in its `bws-secret` consumer. When the fingerprint matches
-the one the role's consumers report, delete the Keychain item.
+exactly 64 lowercase hex characters, refuses to overwrite a keeper that exists, and prints the
+secret id and fingerprint, never the value. Put the id in the registry row's `bws_uuid` and in its
+`bws-secret` consumer. When the fingerprint matches the one the role's consumers report, delete the
+Keychain item.
 
 ### What an outage looks like
 
 From host's restart until the consumers load the new value, the service answers 5xx and its health
-endpoint fails. Host waits for the database to accept the value, every consumer to show its
-fingerprint, and the row's `health_url` to answer exactly 200. Measured against the lease, the worst
-case is under twelve minutes. If the wait ends first, host undoes itself ("A failed Postgres
-host"); a service that is still down after that is the case below.
+endpoint fails. Host waits for the database to accept the value and every consumer to show its
+fingerprint; the row's `health_url` answering exactly 200 is the consumer step's check, not host's.
+The worst case, host's wait and its undo together, is within the 15-minute lease with two minutes
+to spare. If the wait ends first, host undoes itself ("A failed Postgres host"); a service that is
+still down after that is the case below.
 
 ### Recover with sign-in down
 
@@ -1046,8 +1054,10 @@ usual place. Two levers need neither:
 
 - **Requeue over M2M.** `POST /work-units/{id}/requeue` as SYSTEM, with its bearer (see
   `docs/operations/driving-a-unit.md`). It retries the unit against the state host left.
-- **`pg-restore`**, in the VM. It reads the keeper and repeats host's writes with that value: the
-  Coolify variable, the role through the helper, the restart, and the wait for every consumer:
+- **`pg-restore`**, in the VM. First check that no pass is running: `orb -m rotation-executor -u
+  root systemctl status rotation-worker` must not show the service active. It reads the keeper and
+  repeats host's writes with that value: the Coolify variable, the role through the helper, the
+  restart, and the wait for every consumer:
 
   ```sh
   orb -m rotation-executor -u root runuser -u rotation -- env -i PATH=/usr/bin:/bin \

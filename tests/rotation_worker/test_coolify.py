@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Literal
+from typing import Any, Literal, cast
 
 import httpx
 import pytest
@@ -46,7 +46,7 @@ def test_application_write_still_sends_two_rows() -> None:
 
 def test_an_unknown_resource_type_is_refused() -> None:
     with pytest.raises(ContractError, match="application or a service"):
-        CoolifyClient(URL, Value("throwaway-coolify-token"), "database", UUID)  # type: ignore[arg-type]
+        CoolifyClient(URL, Value("throwaway-coolify-token"), cast(Any, "database"), UUID)
 
 
 def test_permits_is_exact_for_a_service() -> None:

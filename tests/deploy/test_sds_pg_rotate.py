@@ -108,7 +108,13 @@ def test_set_alters_role_with_a_verifier_over_stdin(helper, tmp_path):
     answer, code = ask(helper, verb="set", target="app", password=NEW)
     assert (answer, code) == ({"changed": True}, 0)
     alter = next(c for c in calls(tmp_path) if "-v" in c["argv"])
-    assert alter["argv"][:3] == ["exec", "-i", "db1"]
+    assert alter["argv"][:5] == [
+        "exec",
+        "-i",
+        "-e",
+        "PGOPTIONS=-c statement_timeout=20000",
+        "db1",
+    ]
     assert "ON_ERROR_STOP=1" in alter["argv"]
     assert alter["stdin"].startswith('ALTER ROLE "app" WITH PASSWORD \'SCRAM-SHA-256$4096:')
     assert NEW not in alter["stdin"]

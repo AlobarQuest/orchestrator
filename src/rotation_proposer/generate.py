@@ -76,7 +76,7 @@ _CONDITIONS: Final[dict[StepKind, str]] = {
 # A type whose provider keeps no old value alive (`Capabilities.overlap` false) replaces it at the
 # host step, and what depends on the service restarts. The package states that outage, because the
 # person approving the revision is approving it.
-_HOST_WITHOUT_OVERLAP: Final = (
+_HOST_REPLACES: Final = (
     "The hosted service replaces the old value with the new one, and its dependents restart; "
     "they're unavailable until the restart finishes."
 )
@@ -102,9 +102,7 @@ def acceptance(plan: Plan, overlap: bool = True) -> list[dict[str, str]]:
     """One criterion per machine step, in the plan's numbering.
 
     A type with no overlap states its host step as the replacement and restart it is."""
-    conditions = (
-        {**_CONDITIONS, StepKind.HOST: _HOST_WITHOUT_OVERLAP} if not overlap else _CONDITIONS
-    )
+    conditions = {**_CONDITIONS, StepKind.HOST: _HOST_REPLACES} if not overlap else _CONDITIONS
     steps = criteria_steps(plan)
     units_per_kind = Counter(kind for _, kind in set(steps.values()))
     criteria = []

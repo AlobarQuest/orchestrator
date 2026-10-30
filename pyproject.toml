@@ -130,6 +130,8 @@ line-length = 100
 # files here are ADRs and historical plan documents — the record, not code — so the
 # formatter is excluded from them rather than allowed to rewrite them.
 extend-exclude = ["*.md"]
+# An extensionless script, so ruff doesn't find it by itself.
+extend-include = ["deploy/vps/sds-pg-rotate"]
 
 # The VPS helper runs on the host's Python 3.12; the project target would let the formatter strip
 # the parentheses 3.12 requires around a multi-exception `except`.

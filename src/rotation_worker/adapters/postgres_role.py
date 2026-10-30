@@ -55,25 +55,27 @@ landed and brought them up on the restored value. So it reads to the end of the 
 that show the role's value end it, with the role staying, and only consumers still on the replaced
 value at the end are followed.
 
-**THE WORST CASE IS BELOW THE 15-MINUTE LEASE**, which is renewed only before each step, so all of
-this runs on one renewal. One deadline covers each write sequence, from its start, not one per
-stage, and the undo's own starts when the undo does, so its `SET_RETRY` is measured from there. A
-step in the wait starts inside it, and nothing sleeps after the last one; following the consumers
+**THE WORST CASE IS WITHIN THE 15-MINUTE LEASE, WITH MARGIN**, and the lease is renewed only before
+each step, so all of this runs on one renewal. One deadline covers each write sequence, from its
+start, not one per stage, and the undo's own starts when the undo does, so its `SET_RETRY` is
+measured from there. A `set` that follows the consumers has its own `SET_RETRY`, from the read that
+decided it: it can come after most of the wait, with the database still coming up from the restart.
+A step in the wait starts inside it, and nothing sleeps after the last one; following the consumers
 sleeps first, so its last read can start one poll past it. In seconds, with every call taking just
 under its limit:
 
     before the writes: 4 probes                       4 x 30                     = 120
     host's writes:     LOADED_WAIT + a last poll      170 + (30 + 2 x 30)        = 260
     undo, worst of:
-      no Coolify:      LOADED_WAIT + poll + read + set  170 + 5 + 30 + 90        = 295
-      restart refused: the writes' calls + read + set   215 + 30 + 90            = 335
-    total                                             120 + 260 + 335            = 715, 11m55s
+      no Coolify:      LOADED_WAIT + poll + read + set  170 + 5 + 30 + 155       = 360
+      restart refused: the writes' calls + read + set   215 + 30 + 155           = 400
+    total                                             120 + 260 + 400            = 780, 13m00s
 
-"The writes' calls" is writes that use up their calls instead of the wait: a `set` starts by
-`SET_RETRY` plus one poll, then a set and a restart, 65 + 90 + 60 = 215, below host's 260. The
-undo's ordinary writes are bounded by host's. Reading a secret isn't included, since BWS's own
-retries (`secret_store.RETRY_DELAYS`) can add about three minutes per secret, and a provider reads
-two, both before any write.
+A `set` starts by `SET_RETRY` plus one poll and then runs to its limit, 65 + 90 = 155. "The writes'
+calls" is writes that use up their calls instead of the wait: that `set` and a restart, 155 + 60 =
+215, below host's 260. The undo's ordinary writes are bounded by host's. Reading a secret isn't
+included, since BWS's own retries (`secret_store.RETRY_DELAYS`) can add about three minutes per
+secret, and a provider reads two, both before any write.
 
 **NO VALUE IN ANY MESSAGE.** A `ContractError`'s text is scrubbed, and any other exception is named
 by its type alone, since its text could hold anything. Nothing is chained.
@@ -119,17 +121,16 @@ INSTANCE: Final = "prod"
 PASSWORD_BYTES: Final = 32
 # One write sequence's deadline, from its start.
 LOADED_WAIT: Final = timedelta(seconds=170)
-# How long, from the same start, a `set` the database wasn't up for is tried again.
+# How long, from the start it's given, a `set` the database wasn't up for is tried again.
 SET_RETRY: Final = timedelta(seconds=60)
 POLL_SECONDS: Final = 5.0
 # The module docstring's arithmetic, in seconds.
 BEFORE_WRITES: Final = 4 * PROBE_TIMEOUT_SECONDS
 LAST_POLL: Final = LOADED_TIMEOUT_SECONDS + 2 * PROBE_TIMEOUT_SECONDS
 HOST_WRITES: Final = LOADED_WAIT.total_seconds() + LAST_POLL
-WRITES_BY_CALLS: Final = (
-    SET_RETRY.total_seconds() + POLL_SECONDS + SET_TIMEOUT_SECONDS + COOLIFY_TIMEOUT_SECONDS
-)
-FOLLOW: Final = LOADED_TIMEOUT_SECONDS + SET_TIMEOUT_SECONDS
+SET_AT_ITS_LIMIT: Final = SET_RETRY.total_seconds() + POLL_SECONDS + SET_TIMEOUT_SECONDS
+WRITES_BY_CALLS: Final = SET_AT_ITS_LIMIT + COOLIFY_TIMEOUT_SECONDS
+FOLLOW: Final = LOADED_TIMEOUT_SECONDS + SET_AT_ITS_LIMIT
 UNDO_WITHOUT_COOLIFY: Final = LOADED_WAIT.total_seconds() + POLL_SECONDS + FOLLOW
 UNDO_RESTART_REFUSED: Final = WRITES_BY_CALLS + FOLLOW
 WORST_CASE: Final = timedelta(
@@ -137,6 +138,8 @@ WORST_CASE: Final = timedelta(
     + max(HOST_WRITES, WRITES_BY_CALLS)
     + max(HOST_WRITES, UNDO_WITHOUT_COOLIFY, UNDO_RESTART_REFUSED)
 )
+# The server grants at least 15 minutes (`kernel/leases.py`); the worst case must stay under this.
+LEASE_WITH_MARGIN: Final = timedelta(minutes=14)
 # The refusal that means the database wasn't up. Anything else the helper refuses won't change.
 SET_RETRIED: Final = "probe_unavailable"
 NO_VARIABLE: Final = "the variable may still hold the replaced value"
@@ -454,10 +457,10 @@ class PostgresRoleProvider:
         if prints is None:
             return f"{UNREADABLE}, {role}"
         if _all_on(prints, value):
-            self._set(value, start)
+            self._set(value, self._clock())
             return f"every consumer is on the value, and the role is on {_word(replaced)}"
         if role_moved and replaced is not None and _all_on(prints, replaced):
-            self._set(replaced, start)
+            self._set(replaced, self._clock())
             return f"every consumer is on the replaced value, and {FOLLOWED}"
         if _agree_on_another(prints):
             return f"every consumer is on another value, {role}"
@@ -468,10 +471,10 @@ class PostgresRoleProvider:
             if prints is None:
                 return f"{UNREADABLE}, {role}"
             if _all_on(prints, value):
-                self._set(value, start)
+                self._set(value, self._clock())
                 return f"every consumer came up on the value, and the role is on {_word(replaced)}"
             if replaced is not None and _all_on(prints, replaced):
-                self._set(replaced, start)
+                self._set(replaced, self._clock())
                 return f"every consumer came up on the replaced value, and {FOLLOWED}"
         return f"the consumers never agreed, {role}"
 
@@ -489,7 +492,7 @@ class PostgresRoleProvider:
         if _all_on(prints, value):
             return f"every consumer is on the value, {role}"
         if replaced is not None and _all_on(prints, replaced):
-            self._set(replaced, start)
+            self._set(replaced, self._clock())
             return f"every consumer stayed on the replaced value, and {FOLLOWED}"
         return f"the consumers never agreed, {role}"
 

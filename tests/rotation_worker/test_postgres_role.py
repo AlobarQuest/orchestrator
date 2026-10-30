@@ -17,6 +17,7 @@ from typing import Any, cast
 import httpx
 import pytest
 
+from orchestrator.kernel.leases import DEFAULT_LEASE
 from rotation_worker import values
 from rotation_worker.adapters import ADAPTERS, AdapterContext
 from rotation_worker.adapters import postgres_role as pg
@@ -94,6 +95,8 @@ class Authentik:
         # The compose orders nothing, so a restart takes the database down past the consumers.
         self.down_after_restart = 2
         self.down = 0
+        # How long a POST takes the database down whatever Coolify answers: it may run regardless.
+        self.down_at_post = 0
         self.ignores_restart = False
         # How many more requests Coolify answers; `None` means it stays up.
         self.requests_left: int | None = None
@@ -147,6 +150,7 @@ class Authentik:
             self.log.append(f"set_variable:{self.variable[:2]}")
         else:
             self.posts += 1
+            self.down += self.down_at_post
             if self.posts == self.refused_post:
                 return httpx.Response(409, json={})
             if self.posts in self.post_answers:
@@ -482,10 +486,12 @@ def test_host_refuses_before_any_write_when_neither_value_is_accepted() -> None:
     assert built.authentik.writes() == []
 
 
-def test_host_refuses_before_any_write_when_the_control_is_not_refused() -> None:
+def test_host_refuses_before_any_write_when_the_control_is_not_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A probe that accepts everything would make "already in place" read true."""
     built = Built()
-    built.authentik.probe = lambda _target, _value: 200  # type: ignore[method-assign]
+    monkeypatch.setattr(built.authentik, "probe", lambda _target, _value: 200)
     with pytest.raises(ContractError, match="never guess"):
         built.provider.host(NEW, OLD)
     assert built.authentik.writes() == []
@@ -733,16 +739,83 @@ def test_a_restart_that_landed_with_every_consumer_on_new_is_left_alone() -> Non
     assert "role was left alone" in str(caught.value)
 
 
-def test_a_restart_that_landed_late_has_the_role_follow_the_consumers_onto_new() -> None:
+@pytest.mark.parametrize("blank_reads", [2, 14])
+def test_a_restart_that_landed_late_has_the_role_follow_the_consumers_onto_new(
+    blank_reads: int,
+) -> None:
+    """The database is still coming up. 14 reads is past `SET_RETRY` from the undo's start."""
     built = Built()
     _coolify_dies_at_the_restart(built, lands=True)
-    built.authentik.loaded_script = [dict.fromkeys(CONSUMERS, "")] * 2
-    built.authentik.down_after_restart = 0
+    built.authentik.loaded_script = [dict.fromkeys(CONSUMERS, "")] * blank_reads
     with pytest.raises(ContractError, match="the role followed") as caught:
         built.provider.host(NEW, OLD)
     _says_pg_restore_is_due(caught.value)
     assert built.authentik.password == NEW.reveal()
     assert built.authentik.writes() == ["set_variable:b1", "set:b1", "set:b1"]
+
+
+def _calls_but_not_sets_take_their_limit(built: Built) -> None:
+    """Past `SET_RETRY` from the start of the writes, with each `set` quick enough to retry."""
+    built.authentik.tick = lambda seconds: built.clock.sleep(0 if seconds == 89 else seconds)
+
+
+def _coolify_gone_with_the_database_down(built: Built) -> None:
+    built.authentik.requests_left = 0
+    built.authentik.down = 1
+
+
+def test_a_follow_at_the_first_read_has_its_own_retry_onto_the_restored_value() -> None:
+    built = Built()
+    _calls_but_not_sets_take_their_limit(built)
+    _coolify_gone_with_the_database_down(built)
+    built.authentik.password = NEW.reveal()
+    with pytest.raises(ContractError, match="every consumer is on the value"):
+        built.provider.restore(OLD, NEW)
+    assert built.authentik.password == OLD.reveal()
+
+
+def test_a_follow_at_the_first_read_has_its_own_retry_onto_the_replaced_value() -> None:
+    built = Built()
+    _calls_but_not_sets_take_their_limit(built)
+    built.authentik.refused_post = 1
+    built.authentik.down_at_post = 1
+    built.authentik.running = dict.fromkeys(CONSUMERS, NEW.reveal())
+    with pytest.raises(ContractError, match="every consumer is on the replaced value"):
+        built.provider.restore(OLD, NEW)
+    assert built.authentik.password == NEW.reveal()
+
+
+def test_consumers_coming_up_late_have_the_role_retry_onto_the_restored_value() -> None:
+    built = Built()
+    _calls_but_not_sets_take_their_limit(built)
+    _coolify_gone_with_the_database_down(built)
+    built.authentik.password = NEW.reveal()
+    built.authentik.loaded_script = [dict.fromkeys(CONSUMERS, "")]
+    with pytest.raises(ContractError, match="came up on the value"):
+        built.provider.restore(OLD, NEW)
+    assert built.authentik.password == OLD.reveal()
+
+
+def test_consumers_coming_up_late_have_the_role_retry_onto_the_replaced_value() -> None:
+    built = Built()
+    _calls_but_not_sets_take_their_limit(built)
+    _coolify_gone_with_the_database_down(built)
+    built.authentik.running = dict.fromkeys(CONSUMERS, NEW.reveal())
+    built.authentik.loaded_script = [dict.fromkeys(CONSUMERS, "")]
+    with pytest.raises(ContractError, match="came up on the replaced value"):
+        built.provider.restore(OLD, NEW)
+    assert built.authentik.password == NEW.reveal()
+
+
+def test_a_watched_restart_has_the_role_retry_onto_the_value_they_stayed_on() -> None:
+    built = Built()
+    _calls_but_not_sets_take_their_limit(built)
+    built.authentik.post_answers[1] = (502, False)
+    built.authentik.down_at_post = 1
+    built.authentik.running = dict.fromkeys(CONSUMERS, NEW.reveal())
+    with pytest.raises(ContractError, match="stayed on the replaced value"):
+        built.provider.restore(OLD, NEW)
+    assert built.authentik.password == NEW.reveal()
 
 
 def test_a_variable_write_failing_with_no_refusal_takes_the_same_branch() -> None:
@@ -1173,19 +1246,20 @@ def test_a_queued_restart_finishing_after_restored_strands_the_consumers() -> No
 # ---- the worst case --------------------------------------------------------------------------
 
 
-def test_the_worst_case_arithmetic_is_below_twelve_minutes() -> None:
+def test_the_worst_case_is_within_the_lease_with_margin() -> None:
     assert pg.BEFORE_WRITES == 4 * pg.PROBE_TIMEOUT_SECONDS
     assert pg.LAST_POLL == pg.LOADED_TIMEOUT_SECONDS + 2 * pg.PROBE_TIMEOUT_SECONDS
     assert pg.WRITES_BY_CALLS == 215 < pg.HOST_WRITES == 260
-    assert pg.UNDO_WITHOUT_COOLIFY == 295
-    assert pg.UNDO_RESTART_REFUSED == 335
-    assert pg.WORST_CASE == timedelta(seconds=120 + 260 + 335)
-    assert pg.WORST_CASE < timedelta(minutes=12)
+    assert pg.SET_AT_ITS_LIMIT == 155
+    assert pg.UNDO_WITHOUT_COOLIFY == 360
+    assert pg.UNDO_RESTART_REFUSED == 400
+    assert pg.WORST_CASE == timedelta(seconds=120 + 260 + 400)
+    assert pg.WORST_CASE < pg.LEASE_WITH_MARGIN < DEFAULT_LEASE
 
 
 class SlowestHelper:
     """Each call just under its limit, a database that takes the value and never proves it, and
-    an undo whose first `set` is refused just inside `SET_RETRY`."""
+    two `set`s refused just inside `SET_RETRY`: the undo's first, and the follow's first."""
 
     def __init__(self, authentik: Authentik, clock: Clock) -> None:
         self.authentik, self.clock = authentik, clock
@@ -1194,6 +1268,9 @@ class SlowestHelper:
     def set(self, _target: str, value: Value) -> bool:
         self.sets += 1
         if self.sets == 2:
+            raise HelperRefused("set", "probe_unavailable")
+        if self.sets == 4:
+            self.clock.sleep(59.9)
             raise HelperRefused("set", "probe_unavailable")
         self.clock.sleep(89.9)
         self.authentik.password = value.reveal()
@@ -1212,7 +1289,8 @@ class SlowestHelper:
 
 def test_the_longest_path_there_is_comes_within_five_seconds_of_the_figure() -> None:
     """Host's restart is quick enough to enter the wait, whose one poll then runs to its limit;
-    the undo's set retries, and its restart is refused. Close to the figure, so it can fail."""
+    the undo's set retries, its restart is refused, and the follow's set retries too. Close to
+    the figure, so it can fail."""
     clock = Clock()
     authentik = Authentik()
     helper = SlowestHelper(authentik, clock)
