@@ -12,7 +12,7 @@ from typing import Any
 import httpx
 import pytest
 
-from change_proposer.cli import BOT_CHANGE_CLASS, FACTORY_CHANGE_CLASS
+from change_proposer.cli import BOT_CHANGE_CLASS, FACTORY_CHANGE_CLASS, REVERT_CHANGE_CLASS
 from estate_lander.change_manager import ChangeManagerError
 from estate_lander.cli import (
     LANE,
@@ -1177,6 +1177,16 @@ def test_a_factory_record_is_never_asked_about() -> None:
     assert client.landed == []
 
 
+def test_a_revert_record_is_a_subject_of_this_lane() -> None:
+    """Landing Part 3b. The SDS's own revert of a bump in a deploying repository lands through this
+    lane, under deploy policy 14's conditions for the class, which the orchestrator's admission
+    asks; this program only selects it."""
+    selection = _subjects(FakeRecords([_row(51, change_class=REVERT_CHANGE_CLASS)]))
+
+    assert selection.subjects == [(REPOSITORY, 51)]
+    assert selection.deferred == {}
+
+
 def test_a_deferred_record_is_counted_rather_than_silently_dropped() -> None:
     """The other half, and the reason this is not a bare filter. A subject that disappears without
     a line is the silent failure this program is written against everywhere else."""
@@ -1307,7 +1317,7 @@ def test_the_lane_classes_are_the_producers_own_constants() -> None:
     estate keeps paying for, in a place where the cost is landing somebody else's pull request."""
     from estate_lander.cli import _LANE_CLASSES
 
-    assert _LANE_CLASSES == {BOT_CHANGE_CLASS}
+    assert _LANE_CLASSES == {BOT_CHANGE_CLASS, REVERT_CHANGE_CLASS}
     assert FACTORY_CHANGE_CLASS not in _LANE_CLASSES
 
 

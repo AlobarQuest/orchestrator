@@ -1,0 +1,71 @@
+{
+  "change_classes": [
+    "dependency-revert",
+    "dependency-update",
+    "factory-delivery"
+  ],
+  "decided": "2026-10-30",
+  "inert_landing": {
+    "excluded_ecosystems": [
+      "docker"
+    ],
+    "non_ecosystem_authors": [
+      "fork-secure-upstream-sync[bot]"
+    ],
+    "permitted_authors": [
+      "dependabot[bot]",
+      "fork-secure-upstream-sync[bot]"
+    ],
+    "rationale": "The rule ADR-0038 declared, over the 12 repositories version 13 named, with the same authors. NOTHING IS ADDED OR WIDENED: the population, the authors, the excluded ecosystems, the freshness condition and the exempted authors are version 13's. Version 14 changes only the deploying lane. The two populations remain disjoint.",
+    "repositories": [
+      "alobarquest/claude-octopus",
+      "alobarquest/factory-runner",
+      "alobarquest/infraops-mcp-server",
+      "alobarquest/intent-packages",
+      "alobarquest/n8n-as-code",
+      "alobarquest/n8n-manager",
+      "alobarquest/orchestrator",
+      "alobarquest/project-standards",
+      "alobarquest/rea",
+      "alobarquest/rtk",
+      "alobarquest/sds-canary",
+      "alobarquest/security-standards"
+    ],
+    "require_head_current_with_base": true
+  },
+  "landing": {
+    "excluded_ecosystems": [
+      "github_actions"
+    ],
+    "rationale": "WHAT DECIDES IS THE OUTCOME. A pull request the update bot opened may be landed unattended when its required checks pass, whatever version delta it states or fails to state. Versions 1 to 4 permitted patch and minor only, which asked about the version NUMBER and said nothing about whether the bump works -- both this lane and the cascade governing the repositories where landing changes nothing already serving ALREADY gate on the required checks passing, so the update-type condition sat on top of that gate. And it could not reach the population it was holding: a requirement RANGE states no single delta, so no rule about deltas applies to it, and five green pull requests across these two repositories were unlandable for want of a parseable version number while a patch that broke at runtime would have passed. ADR-0036, and ADR-0034's rule applied to the deploying half of the estate. THE EXCLUSION IS THE SAME PRINCIPLE ADR-0034 KEPT: exclude where the required checks do not exercise what changed. The rollout job on both these repositories is gated on a push to the default branch and runs on no pull request, which is visible on every subject as a skipped job beside the passing ones -- so a change reaching it would be exercised for the first time by the very rollout it is supposed to gate. That is the workflow-automation ecosystem, named here as the thing it is rather than inferred from a delta, and read by the landing party from the second segment of the branch the update bot opened. It is not the whole of the protection: the rollout pin below compares the pinned workflow's bytes at the pull request's own head, so a change to that FILE is refused whatever ecosystem it came from. The exclusion reaches what the pin cannot -- a workflow this estate runs that no required check executes and no record pins. WHAT IS GIVEN UP: a major bump whose tests pass but which breaks at runtime in a way those tests do not cover would reach production. It is bounded by one landing per repository per occurrence of the change window, by the rollback plan pinned above, and by the watcher that observes the rollout -- and it is the exposure already accepted for patch and minor at a larger blast radius. `update_types` is served EMPTY and that is a floor for a landing party running the previous build, not a statement that this version permits no delta: such a reader cannot see the rule above, and must permit nothing under a version it does not understand. Freshness is unchanged and is a policy condition rather than a strict branch, because a strict branch serialises human merges too and applies estate-wide behaviour nobody versions. VERSION 9 RE-PINS BOTH ROLLOUTS -- brain at `2017c1ed`, change-manager at `b92f812c` -- after the Python 3.14 move edited each workflow's setup steps. What either rollout proves has not moved. Nothing else about the act changes. VERSION 14 DECLARES THE CONDITIONS ON THE SDS'S OWN REVERT (`dependency-revert`), and changes nothing about the bump's. When the orchestrator judges a bump it landed here bad, it points production back at the previous image and opens the revert through its Dispatch App; until the revert lands, the default branch describes a build production is not serving. So the revert is exempt from the pace and the change window, which exist to bound CHANGES and would here hold back the remedy, and it may be opened by the Dispatch App alone. This service cannot read who opened a pull request: the author is declared here and enforced by the landing party, which also asks itself whether it recorded opening this revert and whether it is the exact inverse of the bump.",
+    "require_head_current_with_base": true,
+    "revert_landing": {
+      "change_class": "dependency-revert",
+      "exempt_from_change_window": true,
+      "exempt_from_pace": true,
+      "permitted_authors": [
+        "alobar-sds-dispatch[bot]"
+      ]
+    },
+    "rollout_workflows": {
+      "alobarquest/brain": {
+        "blob_sha": "2017c1ed0fcfbb844d2b933c542c9a5f29a1f17a",
+        "path": ".github/workflows/ci.yml"
+      },
+      "alobarquest/change-manager": {
+        "blob_sha": "b92f812ccb036027d4bc8682405ab092ec32eb17",
+        "path": ".github/workflows/deploy.yml"
+      }
+    },
+    "update_types": []
+  },
+  "rationale": "Version 13's populations and terms, with one change class added to the deploying lane: dependency-revert, the SDS's own revert of a bump it landed and judged bad (orchestrator Landing Part 3b). Such a record is approved by policy on the same repositories, risk and acceptance criteria as any other -- the revert's merge runs the same rollout -- with a remedy of its own (restore the bump) and conditions on the act of its own: no pace, no change window, and the Dispatch App as the only author. Nothing else is widened: the same deploying repositories, the same criteria, the same bump remedies, the same rollout pins, the same conditions on a bump, and the same inert population and terms.",
+  "repositories": [
+    "alobarquest/brain",
+    "alobarquest/change-manager"
+  ],
+  "risks": [
+    "caution"
+  ],
+  "version": 14
+}

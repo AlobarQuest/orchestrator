@@ -72,19 +72,64 @@ _ROLLBACKS: Final[dict[str, Rollback]] = {
 }
 
 
+# The SDS's own revert of a bump it judged bad (Landing Part 3b), as this producer writes it on the
+# record. Deploy policy 14 admits it, with the remedy below rather than the repository's.
+REVERT_CHANGE_CLASS: Final = "dependency-revert"
+
+# A REMEDY PER CLASS, for a class whose remedy is not its repository's. Undoing a revert is
+# restoring the bump: production goes back onto the reverted merge's image, and the revert is
+# itself reverted so the default branch and production agree again. Shaped like each repository's
+# own plan, for the same reasons.
+#
+# BYTE-COMPARED against change-manager's `_V14_REVERT_ROLLBACKS` by the policy's `objections`, and
+# held to it by `scripts/check_rollout_policy_ratification.py` through the published contract.
+_CLASS_ROLLBACKS: Final[dict[str, dict[str, Rollback]]] = {
+    REVERT_CHANGE_CLASS: {
+        "alobarquest/change-manager": Rollback(
+            steps=(
+                "re-point the moving image tag at the reverted merge's per-SHA tag and redeploy",
+                "revert this revert on main, restoring the bump, so main and production agree "
+                "again",
+            ),
+            target="image",
+        ),
+        "alobarquest/brain": Rollback(
+            steps=(
+                "re-point each affected app's moving image tag at the reverted merge's per-SHA "
+                "tag and redeploy",
+                "revert this revert on main, restoring the bump, so main and production agree "
+                "again",
+            ),
+            target="image",
+        ),
+    },
+}
+
+# The classes with a remedy of their own, which the ratification check expects the policy to
+# ratify for every repository.
+CLASSES_WITH_OWN_ROLLBACK: Final = frozenset(_CLASS_ROLLBACKS)
+
+
 class CriteriaUnavailable(Exception):
     """Nothing here can honestly say what this merge must be held to, so nothing is proposed."""
 
 
-def rollback_for(repository: str) -> Rollback:
-    """The plan for this repository, matched case-insensitively.
+def rollback_for(repository: str, change_class: str | None = None) -> Rollback:
+    """The plan for this repository -- or, for a class with a remedy of its own, that class's
+    plan for it -- matched case-insensitively.
 
     GitHub answers `AlobarQuest/change-manager` while this table is keyed lowercase, and
     `_consider` already folds case for the workflow lookup — so a case-sensitive match here would
     make the module tolerate GitHub's own casing for one lookup and refuse it for the other. A
     mutation pass found the inconsistency; no control passed mixed case.
     """
-    plan = _ROLLBACKS.get(repository.lower())
+    if change_class is None:
+        table = _ROLLBACKS
+    else:
+        table = _CLASS_ROLLBACKS.get(change_class)
+        if table is None:
+            raise CriteriaUnavailable(f"no rollback plan is transcribed for class {change_class}")
+    plan = table.get(repository.lower())
     if plan is None:
         raise CriteriaUnavailable(
             f"no rollback plan is transcribed for {repository}; "

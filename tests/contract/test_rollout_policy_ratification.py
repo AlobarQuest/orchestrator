@@ -15,7 +15,7 @@ from typing import Any
 
 import pytest
 
-from change_proposer.criteria import acceptance_criteria, rollback_for
+from change_proposer.criteria import REVERT_CHANGE_CLASS, acceptance_criteria, rollback_for
 from deploy_watcher.workflows import attestation_for
 from scripts import check_rollout_policy_ratification as check
 
@@ -100,6 +100,80 @@ def test_it_compares_the_revision_the_policy_pins_not_the_newest_transcription()
     assert _run(document) == 0
 
 
+# Schema 2 (deploy policy 14): each entry also carries the remedy of every class that has one of
+# its own, the revert's among them.
+
+
+def _schema_two() -> dict[str, Any]:
+    document = _document()
+    document["schema_version"] = 2
+    document["policy_version"] = 14
+    for repository, entry in document["repositories"].items():
+        plan = rollback_for(repository, REVERT_CHANGE_CLASS)
+        entry["class_rollback_plans"] = {
+            REVERT_CHANGE_CLASS: {"steps": list(plan.steps), "target": plan.target}
+        }
+    return document
+
+
+def test_schema_two_passes_when_every_class_remedy_agrees(capsys) -> None:
+    assert _run(_schema_two()) == 0
+    assert "PASS" in capsys.readouterr().out
+
+
+def test_it_fires_when_only_the_revert_remedy_moves(capsys) -> None:
+    document = _schema_two()
+    document["repositories"][BRAIN]["class_rollback_plans"][REVERT_CHANGE_CLASS]["steps"].pop()
+
+    assert _run(document) == 1
+    assert f"{REVERT_CHANGE_CLASS} rollback plan differs" in capsys.readouterr().err
+
+
+def test_it_fires_when_the_policy_ratifies_no_remedy_for_a_class_this_side_files(capsys) -> None:
+    """Every record of that class would stay pending: the far side has no remedy to compare."""
+    document = _schema_two()
+    document["repositories"][CHANGE_MANAGER]["class_rollback_plans"] = {}
+
+    assert _run(document) == 1
+    assert f"no {REVERT_CHANGE_CLASS} rollback plan is ratified" in capsys.readouterr().err
+
+
+def test_it_fires_for_a_class_remedy_this_side_cannot_derive(capsys) -> None:
+    document = _schema_two()
+    remedies = document["repositories"][BRAIN]["class_rollback_plans"]
+    remedies["some-other-class"] = remedies[REVERT_CHANGE_CLASS]
+
+    assert _run(document) == 1
+    assert "some-other-class" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda d: d["repositories"][BRAIN].pop("class_rollback_plans"),
+        lambda d: d["repositories"][BRAIN].update(class_rollback_plans=[]),
+        lambda d: d["repositories"][BRAIN]["class_rollback_plans"].update({REVERT_CHANGE_CLASS: 1}),
+        lambda d: d["repositories"][BRAIN]["class_rollback_plans"][REVERT_CHANGE_CLASS].pop(
+            "steps"
+        ),
+    ],
+    ids=["absent", "not-an-object", "plan-not-an-object", "plan-no-steps"],
+)
+def test_schema_two_without_readable_class_remedies_fails_closed(mutate, capsys) -> None:
+    """Under schema 2 the key is required: a reader that compared half the file would pass a revert
+    remedy nobody checked."""
+    document = _schema_two()
+    mutate(document)
+
+    assert _run(document) == 1
+    assert capsys.readouterr().err.startswith("FAIL: ")
+
+
+def test_schema_one_compares_no_class_remedy() -> None:
+    """Versions up to 13 publish schema 1, which names no class remedy and admits no revert."""
+    assert _run(_document()) == 0
+
+
 def _broken(mutate) -> dict[str, Any]:
     document = _document()
     mutate(document)
@@ -112,7 +186,7 @@ def _broken(mutate) -> dict[str, Any]:
         (None, "not json {"),
         (None, "[]"),
         (None, ""),
-        (_broken(lambda d: d.update(schema_version=2)), None),
+        (_broken(lambda d: d.update(schema_version=3)), None),
         (_broken(lambda d: d.pop("schema_version")), None),
         (_broken(lambda d: d.update(policy_version="8")), None),
         (_broken(lambda d: d.update(repositories={})), None),

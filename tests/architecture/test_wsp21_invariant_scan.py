@@ -736,6 +736,11 @@ OUTBOUND_ALLOWLIST = {
     # tests/architecture/test_bridge_edges.py. Its egress is not the
     # orchestrator's.
     Path("src/change_proposer/change_manager.py"),
+    # Landing Part 3b. The same program's ONE orchestrator read, `GET /api/v1/opened-reverts`, with
+    # the observer bearer it already holds for the member record: which pull requests are the
+    # SDS's own reverts, so it files them as `dependency-revert` and never as a bump. Reads the
+    # orchestrator's records only; held to the one route by tests/change_proposer.
+    Path("src/change_proposer/reverts.py"),
     # ADR-0030. The machine-activation sweep is a SEPARATE program (ADR-0002's shape), out of
     # process and on a clock. Its subject is local git on the operator machine, which it reads
     # through a subcommand allowlist that makes `pull` unreachable rather than merely unused --

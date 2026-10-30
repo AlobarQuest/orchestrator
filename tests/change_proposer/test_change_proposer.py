@@ -84,6 +84,17 @@ def _every_transcribed_repository_is_granted(monkeypatch) -> list[Member]:
     return _grant(monkeypatch, CM, BRAIN)
 
 
+@pytest.fixture(autouse=True)
+def _no_revert_is_recorded(monkeypatch) -> None:
+    """The orchestrator's recorded reverts read as none, so a pass here reads no network; the
+    revert cases are `tests/change_proposer/test_revert_records.py`."""
+    from change_proposer import cli as cli_module
+
+    monkeypatch.setattr(
+        cli_module, "read_recorded_reverts_from_environment", lambda **_: frozenset()
+    )
+
+
 def _attestation(level: str = ATTESTS_REVISION) -> Attestation:
     return Attestation(
         revision="a" * 40,

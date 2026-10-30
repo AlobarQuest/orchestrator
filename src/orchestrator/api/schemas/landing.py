@@ -418,6 +418,20 @@ class LandingWatchResponse(BaseModel):
     landings: list[WatchedLandingModel]
 
 
+class OpenedRevertModel(BaseModel):
+    """A revert the SDS opened and has not landed (Landing Part 3b)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    repository: str
+    pr_number: int
+    revert_pr_number: int
+
+
+class OpenedRevertsResponse(BaseModel):
+    reverts: list[OpenedRevertModel]
+
+
 class LandingRevertCommandModel(BaseModel):
     """Ask the orchestrator to act on one watched landing (Landing Part 3a). It judges the landing
     again and acts only on its own answer: a rerun for `flaky_retry`, a revert for `bad`."""

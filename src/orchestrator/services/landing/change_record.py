@@ -97,6 +97,21 @@ class WorkflowPin:
 
 
 @dataclass(frozen=True)
+class RevertLandingConditions:
+    """What the policy requires of landing the SDS's own revert of a bump (deploy policy 14).
+
+    The record class it applies to, the only accounts that may have opened the pull request, and
+    whether the pace and the change window are waived for it. Read, never held here: a landing of
+    a revert asks these, and a version that serves no such block lands no revert by it.
+    """
+
+    change_class: str
+    permitted_authors: frozenset[str]
+    exempt_from_pace: bool
+    exempt_from_change_window: bool
+
+
+@dataclass(frozen=True)
 class LandingConditions:
     """What the party holding the policy requires of the ACT, projected onto the record.
 
@@ -127,6 +142,11 @@ class LandingConditions:
     # and the only safe reading of "this version said nothing about it" is the rule that version
     # actually declared.
     excluded_ecosystems: frozenset[str] | None = None
+    # Landing Part 3b (deploy policy 14). The conditions on landing a revert record's pull request,
+    # or None when the version in force serves none -- every version before the fourteenth, which
+    # admits no revert class. A malformed block refuses the whole conditions, as a malformed
+    # exclusion does.
+    revert_landing: RevertLandingConditions | None = None
 
     def pin_for(self, repository: str) -> WorkflowPin | None:
         """The pin for a repository, matched case-insensitively as its identity key is.
@@ -342,6 +362,26 @@ def _conditions(row: dict[str, Any]) -> LandingConditions | None:
         # Folded on arrival, as the pin keys below are, so the comparison has one normal form
         # rather than two hopeful ones.
         excluded = frozenset(name.lower() for name in names)
+    revert: RevertLandingConditions | None = None
+    if "revert_landing" in served:
+        revert = _revert_landing(served["revert_landing"])
+        if revert is None:
+            return None
+    parsed = _pins(pins)
+    if parsed is None:
+        return None
+    return LandingConditions(
+        version=version,
+        update_types=frozenset(update_types),
+        require_head_current_with_base=fresh,
+        rollout_workflows=parsed,
+        excluded_ecosystems=excluded,
+        revert_landing=revert,
+    )
+
+
+def _pins(pins: dict[Any, Any]) -> dict[str, WorkflowPin] | None:
+    """The rollout pins keyed by folded repository, or None when any one does not read as a pin."""
     parsed: dict[str, WorkflowPin] = {}
     for repository, pin in pins.items():
         if not isinstance(repository, str) or not isinstance(pin, dict):
@@ -350,12 +390,31 @@ def _conditions(row: dict[str, Any]) -> LandingConditions | None:
         if not isinstance(path, str) or not path or not isinstance(blob, str) or not blob:
             return None
         parsed[repository.lower()] = WorkflowPin(path=path, blob_sha=blob)
-    return LandingConditions(
-        version=version,
-        update_types=frozenset(update_types),
-        require_head_current_with_base=fresh,
-        rollout_workflows=parsed,
-        excluded_ecosystems=excluded,
+    return parsed
+
+
+def _revert_landing(served: Any) -> RevertLandingConditions | None:
+    """The revert block, or None when it does not read as one. Every field is required: a waiver
+    nobody stated is not a waiver, and an author list nobody stated permits nobody."""
+    if not isinstance(served, dict):
+        return None
+    change_class = served.get("change_class")
+    authors = served.get("permitted_authors")
+    pace = served.get("exempt_from_pace")
+    window = served.get("exempt_from_change_window")
+    if not isinstance(change_class, str) or not change_class:
+        return None
+    if not isinstance(authors, list) or not authors:
+        return None
+    if not all(isinstance(author, str) and author for author in authors):
+        return None
+    if not isinstance(pace, bool) or not isinstance(window, bool):
+        return None
+    return RevertLandingConditions(
+        change_class=change_class,
+        permitted_authors=frozenset(authors),
+        exempt_from_pace=pace,
+        exempt_from_change_window=window,
     )
 
 

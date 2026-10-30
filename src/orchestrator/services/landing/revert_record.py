@@ -1,8 +1,8 @@
 """What the landing admissions read from the revert record. Landing Part 3a.
 
-Three questions, each asked of `landing_reverts` for one repository (stored lower-cased): is this
+Four questions, each asked of `landing_reverts` for one repository (stored lower-cased): is this
 pull request a revert the SDS opened, which versions has the SDS reverted from the default branch,
-and is a revert in progress there.
+and is a revert in progress there; and, for every repository, which reverts are open (Part 3b).
 """
 
 from __future__ import annotations
@@ -46,6 +46,35 @@ def recorded_revert(session: Session, repository: str, pr_number: int) -> Revert
     if row is None:
         return None
     return RevertSubject(row.pr_number, row.merge_commit_sha, row.parent_sha)
+
+
+@dataclass(frozen=True)
+class OpenedRevert:
+    """A revert the SDS opened and has not landed: the bump's pull request and the revert's."""
+
+    repository: str
+    pr_number: int
+    revert_pr_number: int
+
+
+def opened_reverts(session: Session) -> tuple[OpenedRevert, ...]:
+    """Every `revert_opened` record, ordered. Landing Part 3b: `change_proposer` files a revert
+    pull request's change record only when one of these names it, so a pull request on a revert
+    branch that no record names is never filed as anything. Database rows only: no App read.
+    """
+    rows = session.scalars(
+        select(LandingRevert)
+        .where(
+            LandingRevert.status == REVERT_OPENED,
+            LandingRevert.revert_pr_number.is_not(None),
+        )
+        .order_by(LandingRevert.repository, LandingRevert.pr_number)
+    )
+    return tuple(
+        OpenedRevert(row.repository, row.pr_number, row.revert_pr_number)
+        for row in rows
+        if row.revert_pr_number is not None
+    )
 
 
 def reverted_versions(session: Session, repository: str) -> tuple[Bump, ...]:

@@ -10,6 +10,9 @@ that has stopped deciding.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import httpx
 import pytest
 
@@ -352,3 +355,15 @@ def test_a_PRESENT_but_malformed_exemption_list_refuses(value: object) -> None:
 
     assert answer.rules is None
     assert answer.reason == SOURCE_UNREADABLE
+
+
+def test_the_version_fourteen_document_parses_into_the_inert_population() -> None:
+    """Deploy policy 14 adds a revert block to the DEPLOYING lane's conditions; the inert lane
+    reads its own block, which version 14 left as version 13 declared it. The fixture is
+    change-manager's own `policy_dict(V14)`."""
+    answer = _rules_from_body(json.loads(Path("tests/fixtures/deploy_policy_v14.json").read_text()))
+
+    assert answer.reason is None and answer.rules is not None
+    assert answer.rules.version == 14
+    assert "alobarquest/sds-canary" in answer.rules.repositories
+    assert "alobar-sds-dispatch[bot]" not in answer.rules.permitted_authors

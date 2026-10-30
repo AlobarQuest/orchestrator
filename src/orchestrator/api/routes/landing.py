@@ -27,6 +27,7 @@ from orchestrator.api.schemas.landing import (
     LandingRevertCommandModel,
     LandingRevertResponse,
     LandingWatchResponse,
+    OpenedRevertsResponse,
     PrMergeAdmissionResponse,
     PrMergeCommandModel,
     PrMergeResponse,
@@ -83,6 +84,7 @@ from orchestrator.services.landing.revert_act import (
     act_on_landing,
     landing_watch,
 )
+from orchestrator.services.landing.revert_record import opened_reverts
 
 router = APIRouter(prefix="/api/v1", responses=ERROR_RESPONSES)
 
@@ -520,6 +522,18 @@ def landing_watch_route(actor: ActorDep, session: SessionDep, settings: Settings
             credentials_configured=credentials is not None,
         )
     }
+
+
+@router.get("/opened-reverts", response_model=OpenedRevertsResponse)
+def opened_reverts_route(actor: ActorDep, session: SessionDep) -> object:
+    """Landing Part 3b: every revert the SDS opened and has not landed, from its own records.
+
+    Any authenticated role may read, OBSERVER included: `change_proposer` reads it with the
+    observer bearer to file a revert pull request's change record only when a record here names
+    it. Database rows only -- unlike the landing watch, nothing here reads through the App.
+    """
+    del actor
+    return {"reverts": opened_reverts(session)}
 
 
 def _revert_lanes(
