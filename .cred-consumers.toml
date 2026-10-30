@@ -531,3 +531,30 @@ rotated_by_sds = true
   kind = "runtime-fetch"
   repo = "orchestrator"
   ref = "none; a person attests"
+
+# ── Estate lander's Coolify API token ────────────────────────────────────────────
+# Landing Part 3b (ADR-0019 amendment 3). Minted by Devon in Coolify on 2026-10-30 with
+# read, write and deploy, never read:sensitive (probed in-process that day: env values come
+# back hidden). The lander's client bounds it to one repository's member-record applications.
+# sha256[:8] computed in-process 2026-10-30.
+[[credential]]
+id = "coolify-estate-lander-token"
+class = "coolify-api-token"
+fingerprint_sha256_8 = "594d2c0d"
+provider = "coolify"
+provider_identity = "Coolify API token sds-estate-lander (prod; read, write, deploy)"
+bws_uuid = "f9f59233-0794-4ea8-9806-b4f3011e6147"
+created = "2026-10-30"
+disposition = "reissue"
+
+  [[credential.consumer]]
+  kind = "bws-secret"
+  uuid = "f9f59233-0794-4ea8-9806-b4f3011e6147"
+  note = "COOLIFY_TOKEN_SDS_ESTATE_LANDER (SDS Operator) — keeper; the launcher fetches by UUID"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
+  ref = "scripts/run-estate-landing.sh"
+  healthchecks_check = "sds-estate-landing"
+  note = "reads it on --submit passes with the narrow sds-operator identity, as ESTATE_LANDING_COOLIFY_TOKEN; pings sds-estate-landing"
