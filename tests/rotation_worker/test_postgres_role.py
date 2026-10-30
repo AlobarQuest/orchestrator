@@ -29,6 +29,7 @@ from rotation_worker.contract import (
     StepKind,
     UnitRun,
 )
+from rotation_worker.coolify import CoolifyRefused
 from rotation_worker.destinations import credential_destinations
 from rotation_worker.evidence import StepEvidence
 from rotation_worker.helper_client import HelperClient, HelperRefused
@@ -103,6 +104,10 @@ class Authentik:
         # Which POST, counting from 1, Coolify refuses with a 409.
         self.refused_post: int | None = None
         self.posts = 0
+        # An undo's POST, by number: the status it answers (0 for no answer), and whether the
+        # restart ran anyway, bringing the consumers up after the next `loaded` read.
+        self.post_answers: dict[int, tuple[int, bool]] = {}
+        self.landing = False
         self.patched_at: list[datetime] = []
         self.now: Callable[[], datetime] = lambda: START
         # Each call taking just under its limit, on the test's clock.
@@ -144,6 +149,11 @@ class Authentik:
             self.posts += 1
             if self.posts == self.refused_post:
                 return httpx.Response(409, json={})
+            if self.posts in self.post_answers:
+                status, self.landing = self.post_answers[self.posts]
+                if status == 0:
+                    raise httpx.ConnectTimeout("no answer", request=request)
+                return httpx.Response(status, json={})
             self._failing("restart")
             self.log.append("restart")
             self._restarted()
@@ -183,7 +193,11 @@ class Authentik:
             return answer
         if self.loaded_answer is not None:
             return self.loaded_answer
-        return {name: _print(value) for name, value in self.running.items()}
+        answer = {name: _print(value) for name, value in self.running.items()}
+        if self.landing:
+            self.landing = False
+            self._restarted()
+        return answer
 
     def health_check(self, request: httpx.Request) -> httpx.Response:
         self.health_paths.append(request.url.path)
@@ -405,7 +419,7 @@ def test_a_failed_blind_write_fails_host_and_changes_nothing_else() -> None:
     built.provider.host(NEW, OLD)
     built.authentik.log.clear()
     built.authentik.fail["set_variable"] = (ContractError("Coolify PATCH answered HTTP 500"), None)
-    with pytest.raises(ContractError, match="HTTP 500.*next restart.*pg-restore"):
+    with pytest.raises(ContractError, match="HTTP 500.*next restart may.*pg-restore"):
         built.provider.host(NEW, OLD)
     assert built.authentik.writes() == []
     assert built.authentik.password == NEW.reveal()
@@ -909,22 +923,141 @@ def test_a_refused_undo_restart_with_consumers_on_old_stays_on_old() -> None:
     assert built.authentik.password == OLD.reveal()
 
 
-def test_a_restart_failing_with_no_refusal_takes_the_same_branch() -> None:
+def test_a_restart_failing_with_no_refusal_is_unconfirmed_too() -> None:
     built = Built()
     built.authentik.fail["restart"] = (KeyError(OLD.reveal()), None)
-    with pytest.raises(ContractError, match="took no restart.*KeyError") as caught:
+    with pytest.raises(ContractError, match="unconfirmed.*KeyError") as caught:
         built.provider.restore(OLD)
     assert "pg-restore once Coolify returns" in str(caught.value)
     assert OLD.reveal() not in str(caught.value)
 
 
-def test_restore_with_a_refused_restart_and_no_replaced_value_leaves_the_role_alone() -> None:
+def _undo_restart_answers(built: Built, status: int, *, landed: bool) -> None:
+    """Host's restart landed and its wait saw nothing; the undo's POST answers `status`."""
+    _restart_refused_after_the_wait(built)
+    built.authentik.refused_post = None
+    built.authentik.post_answers[2] = (status, landed)
+
+
+@pytest.mark.parametrize("status", [0, 502])
+def test_a_restart_that_landed_unconfirmed_leaves_the_role_with_what_comes_up(status: int) -> None:
+    """The consumers show new at the first read, and following them there would strand them."""
     built = Built()
-    built.authentik.running = dict.fromkeys(CONSUMERS, NEW.reveal())
+    _undo_restart_answers(built, status, landed=True)
+    with pytest.raises(ContractError, match="unconfirmed.*the role is on the old value") as caught:
+        built.provider.host(NEW, OLD)
+    authentik = built.authentik
+    assert (authentik.password, set(authentik.running.values())) == (OLD.reveal(), {OLD.reveal()})
+    assert authentik.writes()[-2:] == ["set_variable:a0", "set:a0"]
+    assert "pg-restore once Coolify returns" in str(caught.value)
+    # Consumers on the role's value end the watch: sign-in is back, and nothing is left to wait for.
+    assert _undo_elapsed(built) < timedelta(seconds=pg.POLL_SECONDS * 2)
+
+
+@pytest.mark.parametrize("status", [0, 502])
+def test_a_restart_that_never_landed_is_followed_only_at_the_end_of_the_window(
+    status: int,
+) -> None:
+    built = Built()
+    _undo_restart_answers(built, status, landed=False)
+    with pytest.raises(ContractError, match="stayed on the replaced value.*the role followed"):
+        built.provider.host(NEW, OLD)
+    authentik = built.authentik
+    assert (authentik.password, set(authentik.running.values())) == (NEW.reveal(), {NEW.reveal()})
+    assert _undo_elapsed(built) >= pg.LOADED_WAIT
+
+
+def _undo_elapsed(built: Built) -> timedelta:
+    """How long the undo ran: everything after host's own wait."""
+    return _elapsed(built) - pg.LOADED_WAIT
+
+
+def test_a_409_proves_no_restart_ran_so_the_role_follows_at_once() -> None:
+    built = Built()
+    _restart_refused_after_the_wait(built)
+    with pytest.raises(ContractError, match="HTTP 409.*onto the new value"):
+        built.provider.host(NEW, OLD)
+    assert built.authentik.password == NEW.reveal()
+    assert _undo_elapsed(built) < timedelta(seconds=pg.POLL_SECONDS)
+
+
+def test_only_a_4xx_is_coolify_refusing() -> None:
+    built = Built()
     built.authentik.refused_post = 1
-    with pytest.raises(ContractError, match="role was left alone") as caught:
+    with pytest.raises(CoolifyRefused) as caught:
+        built.provider._service().restart()
+    assert caught.value.status == 409
+
+    built = Built()
+    built.authentik.post_answers[1] = (502, False)
+    with pytest.raises(ContractError) as answered:
+        built.provider._service().restart()
+    assert not isinstance(answered.value, CoolifyRefused)
+
+
+def test_a_refused_restart_with_consumers_split_reports_where_the_role_went() -> None:
+    built = Built()
+    authentik = built.authentik
+    authentik.variable, authentik.password = NEW.reveal(), NEW.reveal()
+    authentik.running = {CONSUMERS[0]: NEW.reveal(), CONSUMERS[1]: OLD.reveal()}
+    authentik.refused_post = 1
+    with pytest.raises(ContractError, match="never agreed, and the role is on the old value"):
+        built.provider.restore(OLD, NEW)
+    assert authentik.password == OLD.reveal()
+
+
+def test_an_unconfirmed_restart_with_consumers_split_reports_where_the_role_went() -> None:
+    built = Built()
+    authentik = built.authentik
+    authentik.running = {CONSUMERS[0]: NEW.reveal(), CONSUMERS[1]: OLD.reveal()}
+    authentik.post_answers[1] = (502, False)
+    with pytest.raises(ContractError, match="never agreed, and the role is on the old value"):
+        built.provider.restore(OLD, NEW)
+    assert authentik.password == OLD.reveal()
+
+
+def test_an_unconfirmed_restart_with_no_replaced_value_never_guesses_one() -> None:
+    built = Built()
+    authentik = built.authentik
+    authentik.running = dict.fromkeys(CONSUMERS, NEW.reveal())
+    authentik.post_answers[1] = (502, False)
+    with pytest.raises(ContractError, match="never agreed, and the role is on the value being"):
+        built.provider.restore(OLD)
+    assert authentik.password == OLD.reveal()
+
+
+def test_a_failed_read_after_an_unconfirmed_restart_says_where_the_role_is() -> None:
+    built = Built()
+    authentik = built.authentik
+    authentik.post_answers[1] = (502, False)
+    authentik.fail["loaded"] = (HelperRefused("loaded", "docker_unavailable"), None)
+    with pytest.raises(ContractError, match="couldn't be read.*the role is on the old value"):
+        built.provider.restore(OLD, NEW)
+    assert authentik.writes() == ["set_variable:a0", "set:a0"]
+
+
+def test_a_failed_read_after_a_refused_restart_says_where_the_role_is() -> None:
+    built = Built()
+    built.authentik.refused_post = 1
+    built.authentik.fail["loaded"] = (HelperRefused("loaded", "docker_unavailable"), None)
+    with pytest.raises(ContractError, match="couldn't be read.*the role is on the old value"):
+        built.provider.restore(OLD, NEW)
+
+
+def test_restore_with_a_refused_restart_and_no_replaced_value_says_the_role_moved() -> None:
+    """`set` ran before the restart was refused, so "left alone" would be false."""
+    built = Built()
+    authentik = built.authentik
+    authentik.variable, authentik.password = NEW.reveal(), NEW.reveal()
+    authentik.running = dict.fromkeys(CONSUMERS, NEW.reveal())
+    authentik.refused_post = 1
+    with pytest.raises(ContractError) as caught:
         built.provider.restore(OLD)
     _says_the_restart_is_owed(caught.value)
+    assert "the role is on the value being restored" in str(caught.value)
+    assert "left alone" not in str(caught.value)
+    assert authentik.password == OLD.reveal()
+    assert authentik.writes() == ["set_variable:a0", "set:a0"]
 
 
 def test_a_role_left_on_old_under_consumers_on_new_isnt_claimed_to_match() -> None:
@@ -953,6 +1086,90 @@ def test_an_accepted_restart_that_hasnt_happened_yet_is_reported_restored() -> N
     assert built.authentik.writes()[-1] == "restart"
 
 
+class Cycling:
+    """A helper on a clock: the database is down for a time after a restart, not for some calls."""
+
+    def __init__(self, authentik: Authentik, clock: Clock) -> None:
+        self.authentik, self.clock = authentik, clock
+        self.down_until: datetime | None = None
+
+    def _up(self) -> bool:
+        return self.down_until is None or self.clock.now >= self.down_until
+
+    def set(self, _target: str, value: Value) -> bool:
+        self.clock.sleep(2)
+        if not self._up():
+            raise HelperRefused("set", "probe_unavailable")
+        self.authentik.password = value.reveal()
+        return True
+
+    def probe(self, _target: str, value: Value) -> int | None:
+        self.clock.sleep(1)
+        if not self._up():
+            return None
+        return 200 if value.reveal() == self.authentik.password else 401
+
+    def loaded(self, _target: str) -> dict[str, str]:
+        self.clock.sleep(1)
+        running = self.authentik.running.items()
+        return {name: _print(value) if self._up() else "" for name, value in running}
+
+
+def _cycle_of(seconds: int) -> Built:
+    """Host's restart answers 502, runs anyway, and takes the database down for `seconds`."""
+    clock = Clock()
+    authentik = Authentik()
+    helper = Cycling(authentik, clock)
+    posts: list[int] = []
+
+    def coolify(request: httpx.Request) -> httpx.Response:
+        if request.method == "PATCH":
+            authentik.variable = json.loads(request.content)["value"]
+            return httpx.Response(200, json={})
+        posts.append(1)
+        authentik.running = dict.fromkeys(CONSUMERS, authentik.variable)
+        helper.down_until = clock.now + timedelta(seconds=seconds)
+        return httpx.Response(502 if len(posts) == 1 else 200, json={})
+
+    built = Built(
+        pg_helper=lambda: cast(HelperClient, helper),
+        coolify_transport=httpx.MockTransport(coolify),
+        clock=clock,
+        sleep=clock.sleep,
+    )
+    built.authentik = authentik
+    return built
+
+
+def test_a_cycle_inside_set_retry_is_restored() -> None:
+    """`SET_RETRY`'s window is measured from when the undo starts."""
+    built = _cycle_of(30)
+    with pytest.raises(ContractError, match="the old value is restored"):
+        built.provider.host(NEW, OLD)
+    assert (built.authentik.password, built.authentik.variable) == (OLD.reveal(), OLD.reveal())
+
+
+def test_a_cycle_longer_than_set_retry_fails_the_undo_and_names_pg_restore() -> None:
+    built = _cycle_of(90)
+    with pytest.raises(ContractError, match="probe_unavailable.*pg-restore") as caught:
+        built.provider.host(NEW, OLD)
+    assert "is restored" not in str(caught.value)
+    assert built.authentik.password == NEW.reveal()
+
+
+def test_a_queued_restart_finishing_after_restored_strands_the_consumers() -> None:
+    """Open for the live run: if Coolify renders the variable when it accepts a restart, a restart
+    queued by host and finishing after the undo brings the consumers up on new under a role on
+    old. Pinned so the measurement has a named state to compare with."""
+    built = Built()
+    authentik = built.authentik
+    authentik.ignores_restart = True
+    with pytest.raises(ContractError, match="restored"):
+        built.provider.host(NEW, OLD)
+    authentik.running = dict.fromkeys(CONSUMERS, NEW.reveal())
+    assert built.provider.probe(NEW) == 401
+
+
 # ---- the worst case --------------------------------------------------------------------------
 
 
@@ -964,6 +1181,61 @@ def test_the_worst_case_arithmetic_is_below_twelve_minutes() -> None:
     assert pg.UNDO_RESTART_REFUSED == 335
     assert pg.WORST_CASE == timedelta(seconds=120 + 260 + 335)
     assert pg.WORST_CASE < timedelta(minutes=12)
+
+
+class SlowestHelper:
+    """Each call just under its limit, a database that takes the value and never proves it, and
+    an undo whose first `set` is refused just inside `SET_RETRY`."""
+
+    def __init__(self, authentik: Authentik, clock: Clock) -> None:
+        self.authentik, self.clock = authentik, clock
+        self.sets = 0
+
+    def set(self, _target: str, value: Value) -> bool:
+        self.sets += 1
+        if self.sets == 2:
+            raise HelperRefused("set", "probe_unavailable")
+        self.clock.sleep(89.9)
+        self.authentik.password = value.reveal()
+        return True
+
+    def probe(self, _target: str, value: Value) -> int | None:
+        self.clock.sleep(29.9)
+        if value.reveal() == NEW.reveal() == self.authentik.password:
+            return None
+        return 200 if value.reveal() == self.authentik.password else 401
+
+    def loaded(self, _target: str) -> dict[str, str]:
+        self.clock.sleep(29.9)
+        return dict.fromkeys(CONSUMERS, _print(NEW.reveal()))
+
+
+def test_the_longest_path_there_is_comes_within_five_seconds_of_the_figure() -> None:
+    """Host's restart is quick enough to enter the wait, whose one poll then runs to its limit;
+    the undo's set retries, and its restart is refused. Close to the figure, so it can fail."""
+    clock = Clock()
+    authentik = Authentik()
+    helper = SlowestHelper(authentik, clock)
+    posts: list[int] = []
+
+    def coolify(request: httpx.Request) -> httpx.Response:
+        if request.method == "PATCH":
+            clock.sleep(59.9)
+            authentik.variable = json.loads(request.content)["value"]
+            return httpx.Response(200, json={})
+        posts.append(1)
+        clock.sleep(19.9 if len(posts) == 1 else 59.9)
+        return httpx.Response(200 if len(posts) == 1 else 409, json={})
+
+    built = Built(
+        pg_helper=lambda: cast(HelperClient, helper),
+        coolify_transport=httpx.MockTransport(coolify),
+        clock=clock,
+        sleep=clock.sleep,
+    )
+    with pytest.raises(ContractError, match="the role followed"):
+        built.provider.host(NEW, OLD)
+    assert pg.WORST_CASE - timedelta(seconds=5) <= clock.now - START <= pg.WORST_CASE
 
 
 def _at_every_limit(built: Built) -> Authentik:
@@ -1014,6 +1286,16 @@ def test_following_the_consumers_is_measured_from_the_start_of_the_writes() -> N
     assert _elapsed(built) <= pg.LOADED_WAIT + timedelta(
         seconds=pg.POLL_SECONDS + pg.LOADED_TIMEOUT_SECONDS
     )
+
+
+def test_watching_an_unconfirmed_restart_is_measured_from_the_start_of_the_writes() -> None:
+    built = Built()
+    authentik = _at_every_limit(built)
+    authentik.post_answers[1] = (502, False)
+    with pytest.raises(ContractError, match="never agreed"):
+        built.provider.restore(OLD, NEW)
+    # The calls used up the window, so one read is all that's left.
+    assert _elapsed(built) <= timedelta(seconds=pg.WRITES_BY_CALLS + pg.LOADED_TIMEOUT_SECONDS)
 
 
 def test_the_undo_without_coolify_stays_inside_its_figure() -> None:

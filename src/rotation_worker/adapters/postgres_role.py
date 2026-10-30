@@ -45,14 +45,22 @@ thing it can move is the role, and the role must follow what the consumers loade
 the role alone, since that is host's finished state. Otherwise it keeps reading to the end of the
 window, and if they come up on the value being replaced, a restart that landed with its answer
 lost, the role follows them. A `loaded` read that fails leaves everything alone. Each case raises,
-saying `pg-restore` is due once Coolify returns. A refused restart takes the same path, except
-that `restore` has just set the role itself, so consumers on the replaced value are followed at
-the first read too: they can't reload, and the role must not stay away from them.
+saying `pg-restore` is due once Coolify returns.
+
+**A RESTART WITH NO CLEAR ANSWER.** `restore` has just set the role itself when its restart fails,
+and what the consumers show depends on whether the restart ran. A 4xx proves it didn't: they can't
+reload, so consumers on the replaced value are followed at the first read. A 5xx or a lost answer
+proves nothing, and following at the first read would move the role away just as the restart
+landed and brought them up on the restored value. So it reads to the end of the window: consumers
+that show the role's value end it, with the role staying, and only consumers still on the replaced
+value at the end are followed.
 
 **THE WORST CASE IS BELOW THE 15-MINUTE LEASE**, which is renewed only before each step, so all of
 this runs on one renewal. One deadline covers each write sequence, from its start, not one per
-stage. A step in the wait starts inside it; following the consumers sleeps first, so its last read
-can start one poll past it. In seconds, with every call taking just under its limit:
+stage, and the undo's own starts when the undo does, so its `SET_RETRY` is measured from there. A
+step in the wait starts inside it, and nothing sleeps after the last one; following the consumers
+sleeps first, so its last read can start one poll past it. In seconds, with every call taking just
+under its limit:
 
     before the writes: 4 probes                       4 x 30                     = 120
     host's writes:     LOADED_WAIT + a last poll      170 + (30 + 2 x 30)        = 260
@@ -85,7 +93,7 @@ import httpx
 from estate_clients.confined import ConfinedClient, TransportFailure, base_url_problem
 from rotation_worker.contract import ContractError, Rotation, accepts
 from rotation_worker.coolify import TIMEOUT_SECONDS as COOLIFY_TIMEOUT_SECONDS
-from rotation_worker.coolify import CoolifyClient
+from rotation_worker.coolify import CoolifyClient, CoolifyRefused
 from rotation_worker.destinations import (
     HOSTED_KINDS,
     DestinationError,
@@ -134,6 +142,8 @@ SET_RETRIED: Final = "probe_unavailable"
 NO_VARIABLE: Final = "the variable may still hold the replaced value"
 NOT_RESTARTED: Final = "the consumers may not have loaded the value"
 UNREADABLE: Final = "what the consumers loaded couldn't be read, so nothing else was touched"
+LEFT_ALONE: Final = "so the role was left alone"
+FOLLOWED: Final = "the role followed onto the new value"
 WRITTEN: Final = "wrote the variable, set the role, restarted, and every consumer loaded the value"
 # This type has no packages from before derivation, so its one candidate is the derived plan of a
 # credential with no copies to distribute.
@@ -312,8 +322,8 @@ class PostgresRoleProvider:
             self._service().set_variable(self._variable, new.reveal())
         except Exception as failure:
             raise ContractError(
-                f"Coolify took no variable ({_described(failure)}): the next restart loads the old "
-                "value and stops the service, so retry or run rotation-worker pg-restore"
+                f"Coolify took no variable ({_described(failure)}): the next restart may load the "
+                "old value and stop the service, so retry or run rotation-worker pg-restore"
             ) from None
         return "the role and every consumer already hold the new value"
 
@@ -350,16 +360,35 @@ class PostgresRoleProvider:
             service.set_variable(self._variable, value.reveal())
         except Exception as failure:
             lead = f"Coolify took no variable ({_described(failure)})"
-            raise ContractError(self._left(lead, NO_VARIABLE, value, replaced, start)) from None
+            raise ContractError(
+                self._left(
+                    lead,
+                    NO_VARIABLE,
+                    lambda: self._follow_the_consumers(value, replaced, start),
+                )
+            ) from None
         if unchanged:
             return
         self._set(value, start)
         try:
             service.restart()
-        except Exception as failure:
-            lead = f"Coolify took no restart ({_described(failure)})"
+        except CoolifyRefused as refusal:
+            lead = f"Coolify took no restart ({_described(refusal)})"
             raise ContractError(
-                self._left(lead, NOT_RESTARTED, value, replaced, start, role_moved=True)
+                self._left(
+                    lead,
+                    NOT_RESTARTED,
+                    lambda: self._follow_the_consumers(value, replaced, start, role_moved=True),
+                )
+            ) from None
+        except Exception as failure:
+            lead = f"Coolify's restart is unconfirmed ({_described(failure)})"
+            raise ContractError(
+                self._left(
+                    lead,
+                    NOT_RESTARTED,
+                    lambda: self._watch_the_restart(value, replaced, start),
+                )
             ) from None
         self._await_loaded(value, start)
 
@@ -387,7 +416,8 @@ class PostgresRoleProvider:
         while self._clock() < deadline:
             if self._settled(value):
                 return
-            self._sleep(POLL_SECONDS)
+            if self._clock() < deadline:
+                self._sleep(POLL_SECONDS)
         raise ContractError("the consumers and the database didn't take the value in time")
 
     def _settled(self, value: Value) -> bool:
@@ -403,50 +433,65 @@ class PostgresRoleProvider:
         except ContractError:
             return False
 
-    def _left(
+    def _left(self, lead: str, risk: str, follow: Callable[[], str]) -> str:
+        """What Coolify's failure left, once the role has followed the consumers if it can."""
+        try:
+            outcome = follow()
+        except ContractError as error:
+            outcome = f"setting the role failed too ({_described(error)})"
+        return f"{lead}; {outcome}; {risk}: run rotation-worker pg-restore once Coolify returns"
+
+    def _follow_the_consumers(
         self,
-        lead: str,
-        risk: str,
         value: Value,
         replaced: Value | None,
         start: datetime,
         *,
         role_moved: bool = False,
     ) -> str:
-        """What Coolify's failure left, once the role has followed the consumers if it can."""
-        try:
-            outcome = self._follow_the_consumers(value, replaced, start, role_moved)
-        except ContractError as error:
-            outcome = f"setting the role failed too ({_described(error)})"
-        return f"{lead}; {outcome}; {risk}: run rotation-worker pg-restore once Coolify returns"
-
-    def _follow_the_consumers(
-        self, value: Value, replaced: Value | None, start: datetime, role_moved: bool
-    ) -> str:
+        role = f"and the role is on {_word(replaced)}" if role_moved else LEFT_ALONE
         prints = self._read_loaded()
         if prints is None:
-            return UNREADABLE
+            return f"{UNREADABLE}, {role}"
         if _all_on(prints, value):
             self._set(value, start)
-            return "every consumer is on the value, and the role is too"
+            return f"every consumer is on the value, and the role is on {_word(replaced)}"
         if role_moved and replaced is not None and _all_on(prints, replaced):
             self._set(replaced, start)
-            return "every consumer is on the replaced value, and the role followed"
+            return f"every consumer is on the replaced value, and {FOLLOWED}"
         if _agree_on_another(prints):
-            return "every consumer is on another value, so the role was left alone"
+            return f"every consumer is on another value, {role}"
         deadline = start + LOADED_WAIT
         while self._clock() < deadline:
             self._sleep(POLL_SECONDS)
             prints = self._read_loaded()
             if prints is None:
-                return UNREADABLE
+                return f"{UNREADABLE}, {role}"
             if _all_on(prints, value):
                 self._set(value, start)
-                return "every consumer came up on the value, and the role is too"
+                return f"every consumer came up on the value, and the role is on {_word(replaced)}"
             if replaced is not None and _all_on(prints, replaced):
                 self._set(replaced, start)
-                return "every consumer came up on the replaced value, and the role followed"
-        return "the consumers never agreed, so the role was left alone"
+                return f"every consumer came up on the replaced value, and {FOLLOWED}"
+        return f"the consumers never agreed, {role}"
+
+    def _watch_the_restart(self, value: Value, replaced: Value | None, start: datetime) -> str:
+        """The restart may have run, so the first read proves nothing. The role, already on
+        `value`, stays if they show it, and follows only what they still show at the end."""
+        deadline = start + LOADED_WAIT
+        role = f"and the role is on {_word(replaced)}"
+        prints = self._read_loaded()
+        while prints is not None and not _all_on(prints, value) and self._clock() < deadline:
+            self._sleep(POLL_SECONDS)
+            prints = self._read_loaded()
+        if prints is None:
+            return f"{UNREADABLE}, {role}"
+        if _all_on(prints, value):
+            return f"every consumer is on the value, {role}"
+        if replaced is not None and _all_on(prints, replaced):
+            self._set(replaced, start)
+            return f"every consumer stayed on the replaced value, and {FOLLOWED}"
+        return f"the consumers never agreed, {role}"
 
     def _read_loaded(self) -> dict[str, str] | None:
         try:
@@ -485,6 +530,11 @@ def _all_on(prints: Mapping[str, str], value: Value) -> bool:
 def _agree_on_another(prints: Mapping[str, str]) -> bool:
     """Whether every consumer shows one value. `_all_on` has already ruled out the restored one."""
     return len(set(prints.values())) == 1 and "" not in prints.values()
+
+
+def _word(replaced: Value | None) -> str:
+    """The value `restore` was given, in an error's words: the undo always restores the old one."""
+    return "the value being restored" if replaced is None else "the old value"
 
 
 def _same(print_: str, value: Value) -> bool:

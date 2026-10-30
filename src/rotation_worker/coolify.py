@@ -51,6 +51,14 @@ def url_problem(base_url: str) -> str | None:
     return base_url_problem(base_url)
 
 
+class CoolifyRefused(ContractError):
+    """Coolify answered 4xx, which proves it did not do what was asked. `status` is the code."""
+
+    def __init__(self, method: str, status: int) -> None:
+        super().__init__(f"Coolify {method} answered HTTP {status}")
+        self.status = status
+
+
 class CoolifyClient:
     def __init__(
         self,
@@ -107,6 +115,8 @@ class CoolifyClient:
             response = self._client.request(method, path, **kwargs)
         except TransportFailure as failure:
             raise ContractError(f"Coolify {method} got no answer: {failure.error_type}") from None
+        if 400 <= response.status_code < 500:
+            raise CoolifyRefused(method, response.status_code)
         if not 200 <= response.status_code < 300:
             # The body may echo the request, so only the status is kept.
             raise ContractError(f"Coolify {method} answered HTTP {response.status_code}")
