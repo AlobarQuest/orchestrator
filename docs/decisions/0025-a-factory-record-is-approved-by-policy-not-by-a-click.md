@@ -185,23 +185,28 @@ term only when all of these hold:
   recognise the envelope, judged against the policy as loaded at the merge, so a policy narrowed
   since dispatch refuses;
 - the member record grants `dependency_updates` on the repository;
+- the estate answers `inert` for the repository;
 - `ORCHESTRATOR_BUMP_MERGE_ENABLED` is on.
 
 Every other term is unchanged: a completed unit, verifier-decided criteria from observed evidence,
 no open reconciliation condition, the merge capability, the adjudicated head, the estate's answer
-and the holds. A repository the estate routes still needs its approved change record and window,
-whatever reach the package declared. An inert landing's term is as it was.
+and the holds. Declared reach and the estate's answer are both asked because they can disagree: a
+`source_repository` package in a repository that redeploys is outside the path, and an approved
+change record doesn't bring it in, so a person's bound approval is needed there too. An inert
+landing's term is as it was.
 
 **The switch governs the policy path alone.** The no-off-switch ruling in `pr_merge.py` said it was
-void if a scheduled caller was proposed, and the bump driver is one. With the switch off, a unit the
-path would otherwise admit refuses `merge_policy_path_off`, and that code alone, so the lane reads it
-as waiting. A unit outside the path still refuses `authority_approval_not_bound`, since the switch
-isn't what holds it. A landing on a bound approval never asks the switch.
+void if a scheduled caller was proposed, and the bump driver is one. With the switch off, a unit
+the path covers refuses `merge_policy_path_off` in place of `authority_approval_not_bound`, and a
+unit outside the path refuses `authority_approval_not_bound`, since the switch isn't what holds it.
+Other terms still report their own refusals beside it, so the lane reads a unit as waiting only
+when `merge_policy_path_off` is the sole refusal. A landing on a bound approval never asks the
+switch.
 
 **The record.** "Policy lifted the gate" and "a person approved" stay different records: the act
 writes `authority.human_gate_not_required` with `at: merge`, the patterns, the policy version and
-source and the fingerprint, in the transaction that records the merge, and
-`authority_approval_id` stays null. The admission answer serves the same names and writes nothing.
+source and the fingerprint, in the transaction that records the merge, only when this call landed
+the pull request (status `merged`), and `authority_approval_id` stays null. The admission answer serves the same names and writes nothing.
 
 The residual ADR-0006 amendment 2 accepts applies here too: `approved_by` and `standing` on a SYSTEM
 intake are attested by the caller.

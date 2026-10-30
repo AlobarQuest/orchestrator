@@ -666,13 +666,14 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   factory update of it.
 - **A standing bump lands on the policy path (ADR-0025 amendment 4).** `POST
   /work-units/{id}/pr-merge` accepts a unit with no bound human approval only when it is a
-  `dependency-update` unit on a standing bump's revision, reach exactly `source_repository`,
-  recognised at merge time by dependency-update patterns alone, with the `dependency_updates`
-  grant. `ORCHESTRATOR_BUMP_MERGE_ENABLED=false` stops that path, and a unit it would admit then
-  refuses `merge_policy_path_off`; a lane reads that as `waiting`, and any other refusal as a
-  finding. A landing on a bound approval doesn't read the switch. Each policy-path outcome
-  writes `authority.human_gate_not_required` (`at: merge`) beside the merge record, and
-  `authority_recognised_by` on `pr-merge-admission` shows what would lift it.
+  `dependency-update` unit on a standing bump's revision, reach exactly `source_repository`, where
+  the estate answers `inert`, recognised at merge time by dependency-update patterns alone, with
+  the `dependency_updates` grant. `ORCHESTRATOR_BUMP_MERGE_ENABLED=false` stops that path, and a
+  unit it covers then refuses `merge_policy_path_off`. Other terms report beside that code, so a
+  lane reads it as `waiting` only when it is the sole refusal. A landing on a bound approval
+  doesn't read the switch. A policy-path landing writes `authority.human_gate_not_required`
+  (`at: merge`) beside a `merged` record only, and `authority_recognised_by` on
+  `pr-merge-admission` shows what would lift it.
 - **Every merge and propose path is classified** in `tests/architecture/test_hold_paths.py`:
   honours (names the function that calls the matcher), covered by an honouring gate, or not a bump.
   A new `MERGE_EXEMPT_PATHS` entry fails until it is classified. The residuals are in ADR-0028

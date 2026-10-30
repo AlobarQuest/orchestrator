@@ -30,11 +30,12 @@ it would be the correct-about-the-wrong-noun error this repository has made four
 bound to the unit's exact current fingerprint -- the binding `exact_authority_approval` enforces for
 readiness -- is enough for every change class. Short of one, a standing dependency update meets the
 term on the policy path (ADR-0025 amendment 4): a standing bump's revision in the inert reach,
-recognised now and only by dependency-update known-good patterns, on a repository whose
-`dependency_updates` grant holds, while `bump_merge_enabled` is on. Recognition is asked here
-against the policy as loaded at this moment, never inherited from what admitted the unit to run,
-so a policy narrowed since then refuses. This answer writes nothing: the act records the lifted
-requirement, and no other change class has any substitute for the approval.
+landing where the estate answers `inert`, recognised now and only by dependency-update known-good
+patterns, on a repository whose `dependency_updates` grant holds, while `bump_merge_enabled` is
+on. Recognition is asked here against the policy as loaded at this moment, never inherited from
+what admitted the unit to run, so a policy narrowed since then refuses. This answer writes
+nothing: the act records the lifted requirement, and no other change class has any substitute for
+the approval.
 
 **What this answer INHERITS FROM NOTHING, said out loud rather than left to be discovered.** It is
 not admission and shares none of admission's environment gates: there is no target-repository
@@ -144,9 +145,10 @@ MERGE_CAPABILITY_NOT_AUTHORIZED: Final = "merge_capability_not_authorized"
 # one the policy path admits.
 AUTHORITY_APPROVAL_NOT_BOUND: Final = "authority_approval_not_bound"
 
-# The policy path would admit this unit, and `ORCHESTRATOR_BUMP_MERGE_ENABLED` is off. Reported
-# alone, in place of the code above: a lane reads it as waiting on a switch, so it never describes
-# a unit the switch wouldn't release.
+# The policy path covers this unit, and `ORCHESTRATOR_BUMP_MERGE_ENABLED` is off. In place of the
+# code above, never beside it, so it is never reported for a unit the path doesn't cover. Other
+# terms still report their own refusals beside it, so a lane reads a unit as waiting on the switch
+# only when this is the sole refusal.
 MERGE_POLICY_PATH_OFF: Final = "merge_policy_path_off"
 
 # There is no pull request recorded for this unit, so there is nothing to land.
@@ -362,7 +364,13 @@ def admission_for(
         (service_for_change_class(envelope.change_class or unit.required_capability),),
     )
     authority = _authority_term(
-        session, unit, revision, envelope, granted=granted.met, enabled=bump_merge_enabled
+        session,
+        unit,
+        revision,
+        envelope,
+        granted=granted.met,
+        inert=estate.inert,
+        enabled=bump_merge_enabled,
     )
 
     refusals: list[str] = []
@@ -417,6 +425,9 @@ class _Term:
     # than that one was offered -- a landing inside the declared hours, or onto a repository where
     # landing changes nothing already serving, never reaches that term at all.
     change_window_override_applied: bool = False
+    # Set only by the estate term, and only on an explicit `inert` answer. The policy path reads
+    # it, so that path rests on the one answer this composition already asked for.
+    inert: bool = False
 
 
 @dataclass(frozen=True)
@@ -433,17 +444,19 @@ def _authority_term(
     envelope: AuthorityEnvelope,
     *,
     granted: bool,
+    inert: bool,
     enabled: bool,
 ) -> _AuthorityTerm:
     """A bound approval, or the policy path.
 
     A bound approval ends the question, so policy isn't read and the switch isn't asked. Without
-    one, the switch is asked last: it is named only for a unit it alone is holding back, so a
-    lane that reads the refusal as waiting never waits on a unit that would refuse anyway.
+    one, the switch is asked last, so its refusal is named only for a unit the path covers. Other
+    terms report beside it: turning the switch on releases the unit only when this term's refusal
+    is the sole one.
     """
     if PackageRepository(session).exact_authority_approval(unit) is not None:
         return _AuthorityTerm(_Term(True, ()))
-    gate = _policy_path_gate(unit, revision, envelope, granted)
+    gate = _policy_path_gate(unit, revision, envelope, granted=granted, inert=inert)
     if gate is None:
         return _AuthorityTerm(_Term(False, (AUTHORITY_APPROVAL_NOT_BOUND,)))
     if not enabled:
@@ -455,19 +468,23 @@ def _policy_path_gate(
     unit: WorkUnit,
     revision: WorkPackageRevision,
     envelope: AuthorityEnvelope,
+    *,
     granted: bool,
+    inert: bool,
 ) -> AuthorityGate | None:
     """Policy's answer for a unit the policy path covers, or ``None`` when it doesn't cover it.
 
     `granted` is the composed answer's own grant term, which for this change class is the
-    `dependency_updates` grant. The landing's own terms still apply to everything this admits: a
-    repository the estate routes needs its approved record and its window whatever reach the
-    package declared.
+    `dependency_updates` grant. `inert` is the estate's answer for the repository, asked beside
+    the package's declared reach because the two can disagree: this path never lands where landing
+    changes something already serving, whatever the package declared or a record approved. A person
+    has to approve that unit.
     """
     if (
         envelope.change_class != DEPENDENCY_UPDATE
         or standing_bump_refusal(revision) is not None
         or not granted
+        or not inert
     ):
         return None
     gate = human_authority_gate(unit, revision)
@@ -597,7 +614,7 @@ def _landing_terms(
         return _Term(False, (MERGE_TARGET_REPOSITORY_MISSING,))
     answer = landing_source.landing_for(target_repository)
     if answer.landing == LANDING_INERT:
-        return _Term(True, ())
+        return _Term(True, (), inert=True)
     if answer.landing == LANDING_REDEPLOYS:
         return _routed_terms(
             session, target_repository, binding, record_source, clock, change_window_override

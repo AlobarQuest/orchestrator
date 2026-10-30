@@ -589,11 +589,13 @@ Placement rule: global CLAUDE.md §7.
 - `pr-merge`'s authority term is a bound human approval, sufficient for every change class and
   blind to any switch, or the policy path (ADR-0025 amendment 4): a `dependency-update` envelope on
   a `standing_bump_refusal`-clean revision (the decomposition gate's own conditions, reach exactly
-  `source_repository`), recognised at merge time only by dependency-update patterns, with the
-  `dependency_updates` grant, while `ORCHESTRATOR_BUMP_MERGE_ENABLED` is on. Off, a unit the path
-  would admit refuses `merge_policy_path_off` alone, and every other unapproved unit
-  `authority_approval_not_bound`. The admission answer writes nothing; the act records
-  `authority.human_gate_not_required` beside the merge. Detail: `docs/operations/landing-lanes.md`.
+  `source_repository`), where the estate answers `inert`, recognised at merge time only by
+  dependency-update patterns, with the `dependency_updates` grant, while
+  `ORCHESTRATOR_BUMP_MERGE_ENABLED` is on. Off, a unit the path covers refuses
+  `merge_policy_path_off` in place of `authority_approval_not_bound`; other terms report beside it,
+  so it means waiting only as the sole refusal. The admission answer writes nothing; the act records
+  `authority.human_gate_not_required` beside a `merged` record only. Detail:
+  `docs/operations/landing-lanes.md`.
 - A person's mint reaches a rotation only through its instance's `rotation-inbox` BWS secret or a
   staging secret written by hand: the unit after the mint waits, unclaimed, until one is staged
   (`worker._mint_waits`). The inbox binds a value only while no other rotation on either

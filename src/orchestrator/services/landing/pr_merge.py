@@ -59,8 +59,8 @@ revoking the App installation's write.
 ## The lifted requirement is recorded by the act
 
 The policy path's trace is `authority.human_gate_not_required`, written beside the merge record in
-one transaction, so it exists exactly when an outcome was recorded. It is written here rather than
-by the admission answer, which is also served to readers and writes nothing.
+one transaction, and only when this call landed the pull request (status `merged`). It is written
+here rather than by the admission answer, which is also served to readers and writes nothing.
 """
 
 from __future__ import annotations
@@ -501,7 +501,7 @@ def _record(
     session.add(event)
     session.flush()
     record.event_id = event.id
-    if admission.authority_recognised_by:
+    if admission.authority_recognised_by and status == "merged":
         _record_gate_not_required(session, command, unit, admission)
     session.flush()
     return record

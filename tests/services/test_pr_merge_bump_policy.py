@@ -32,6 +32,7 @@ from orchestrator.services.landing import pr_merge_admission as admission_module
 from orchestrator.services.landing.pr_merge import (
     GitHubGatewayError,
     MergeCommand,
+    MergeOutcome,
     PullRequestState,
     land_unit_pull_request,
 )
@@ -43,7 +44,14 @@ from orchestrator.services.landing.pr_merge_admission import (
 )
 from tests._support.seeding import NOW
 from tests.services.change_record_doubles import approved_record_source, no_record_source
-from tests.services.estate_doubles import inert_source, redeploying_source
+from tests.services.estate_doubles import (
+    LANDING_UNKNOWN,
+    SOURCE_UNREADABLE,
+    EstateAnswer,
+    FakeEstateLandingSource,
+    inert_source,
+    redeploying_source,
+)
 from tests.services.test_adjudications import FROM_EVALUATION, add_criterion
 from tests.services.test_bump_decomposition_policy import _criterion, _propose
 from tests.services.test_bump_decomposition_policy import _envelope as _bump_envelope
@@ -175,6 +183,15 @@ def _land(
     )
 
 
+class AmbiguousGateway(FakeGateway):
+    """The remote refused and the confirming read failed too."""
+
+    def read_pull_request(self, *, repository: str, number: int) -> PullRequestState:
+        if self.merges:
+            raise GitHubGatewayError("read_status", 502)
+        return super().read_pull_request(repository=repository, number=number)
+
+
 def _gate_events(session: Session, unit: WorkUnit) -> list[Event]:
     return list(
         session.scalars(
@@ -299,6 +316,60 @@ def test_a_confirmed_remote_refusal_leaves_no_record_of_the_gate(
     with pytest.raises(DomainError):
         _land(migrated_session, unit, gateway)
 
+    assert _gate_events(migrated_session, unit) == []
+
+
+def test_landing_after_a_lost_response_is_not_recorded_as_policy_lifted(
+    migrated_session: Session,
+) -> None:
+    unit = _bump(migrated_session, "reconciled")
+    gateway = FakeGateway(
+        merge_error=GitHubGatewayError("merge_status", 405),
+        state_after_refusal=PullRequestState(
+            base_ref="main", default_branch="main", open=False, landed=True
+        ),
+    )
+
+    record = _land(migrated_session, unit, gateway)
+
+    assert record.status == "already_merged"
+    assert _gate_events(migrated_session, unit) == []
+
+
+def test_a_pull_request_somebody_else_landed_records_no_lifted_gate(
+    migrated_session: Session,
+) -> None:
+    unit = _bump(migrated_session, "landed-elsewhere")
+    gateway = FakeGateway(
+        state=PullRequestState(base_ref="main", default_branch="main", open=False, landed=True)
+    )
+
+    record = _land(migrated_session, unit, gateway)
+
+    assert record.status == "already_merged"
+    assert gateway.merges == []
+    assert _gate_events(migrated_session, unit) == []
+
+
+def test_a_remote_answer_that_did_not_land_records_no_lifted_gate(
+    migrated_session: Session,
+) -> None:
+    unit = _bump(migrated_session, "not-landed")
+    gateway = FakeGateway(outcome=MergeOutcome(landed=False, commit_sha=None, status_code=200))
+
+    record = _land(migrated_session, unit, gateway)
+
+    assert record.status == "refused"
+    assert _gate_events(migrated_session, unit) == []
+
+
+def test_an_ambiguous_refusal_records_no_lifted_gate(migrated_session: Session) -> None:
+    unit = _bump(migrated_session, "ambiguous")
+    gateway = AmbiguousGateway(merge_error=GitHubGatewayError("merge_status", 405))
+
+    record = _land(migrated_session, unit, gateway)
+
+    assert record.status == "refused"
     assert _gate_events(migrated_session, unit) == []
 
 
@@ -457,13 +528,62 @@ def test_an_open_reconciliation_condition_still_refuses(migrated_session: Sessio
     assert answer.refusals == ("open_reconciliation_condition",)
 
 
-def test_a_redeploying_repository_still_needs_its_record(migrated_session: Session) -> None:
+def test_a_redeploying_repository_stays_with_a_person_even_with_its_record(
+    migrated_session: Session,
+) -> None:
+    """A `source_repository` declaration, an approved record and an open window: every landing
+    term is met, and the estate's answer alone keeps this unit off the policy path."""
     unit = _bump(migrated_session, "redeploying")
 
-    answer = _answer(migrated_session, unit, source=redeploying_source())
+    answer = admission_for(
+        migrated_session,
+        unit,
+        _revision(migrated_session, unit),
+        redeploying_source(),
+        approved_record_source(REPOSITORY, 7),
+        FixedClock(IN_WINDOW),
+        bump_merge_enabled=True,
+    )
 
     assert answer.satisfied is False
-    assert answer.refusals == ("change_record_absent",)
+    assert answer.refusals == (AUTHORITY_APPROVAL_NOT_BOUND,)
+    assert answer.authority_recognised_by == ()
+
+
+def test_a_bound_approval_still_lands_in_a_redeploying_repository(
+    migrated_session: Session,
+) -> None:
+    unit = _bump(migrated_session, "redeploying-human")
+    _approve_authority(migrated_session, unit)
+
+    answer = admission_for(
+        migrated_session,
+        unit,
+        _revision(migrated_session, unit),
+        redeploying_source(),
+        approved_record_source(REPOSITORY, 7),
+        FixedClock(IN_WINDOW),
+    )
+
+    assert answer.satisfied is True
+
+
+@pytest.mark.parametrize(
+    "estate",
+    [
+        pytest.param(EstateAnswer(landing=LANDING_UNKNOWN, reason=None), id="not-assessed"),
+        pytest.param(EstateAnswer(landing=None, reason=SOURCE_UNREADABLE), id="unreadable"),
+    ],
+)
+def test_an_estate_with_no_inert_answer_is_outside_the_path(
+    migrated_session: Session, estate: EstateAnswer
+) -> None:
+    unit = _bump(migrated_session, "no-answer")
+
+    answer = _answer(migrated_session, unit, source=FakeEstateLandingSource(default=estate))
+
+    assert answer.satisfied is False
+    assert answer.refusals[0] == AUTHORITY_APPROVAL_NOT_BOUND
 
 
 # ---------------------------------------------------------------------------------------------
@@ -489,7 +609,7 @@ def test_the_refusal_is_no_substring_of_another_and_contains_none() -> None:
 def test_the_switch_off_refuses_a_unit_the_policy_path_would_admit(
     migrated_session: Session,
 ) -> None:
-    """Named alone: a second refusal beside it would read as a finding rather than `waiting`."""
+    """Named in place of the not-bound refusal, never beside it."""
     unit = _bump(migrated_session, "off")
 
     answer = _answer(migrated_session, unit, enabled=False)
@@ -497,6 +617,16 @@ def test_the_switch_off_refuses_a_unit_the_policy_path_would_admit(
     assert answer.satisfied is False
     assert answer.refusals == (MERGE_POLICY_PATH_OFF,)
     assert answer.authority_recognised_by == ()
+
+
+def test_the_switch_off_reports_beside_another_terms_refusal(migrated_session: Session) -> None:
+    """Why a lane may read it as `waiting` only when it is the sole refusal."""
+    unit = _bump(migrated_session, "off-open")
+    _open_condition(migrated_session, unit)
+
+    answer = _answer(migrated_session, unit, enabled=False)
+
+    assert answer.refusals == ("open_reconciliation_condition", MERGE_POLICY_PATH_OFF)
 
 
 def test_the_switch_off_refuses_the_act(migrated_session: Session) -> None:
