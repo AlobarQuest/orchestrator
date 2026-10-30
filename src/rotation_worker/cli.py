@@ -324,13 +324,13 @@ def adopt_keeper(config: Config, credential_id: str, mirror: RepoMirror, stdin: 
     except (StoreError, ConfigError) as error:
         print(f"adopt-keeper: {error}", file=sys.stderr)
         return EXIT_UNREADABLE
-    print_ = value.fingerprint
+    fingerprint = value.fingerprint
     print(
         json.dumps(
             {
                 "secret_id": created.id,
-                "sha256_prefix": print_.sha256_prefix,
-                "length": print_.length,
+                "sha256_prefix": fingerprint.sha256_prefix,
+                "length": fingerprint.length,
             }
         )
     )
