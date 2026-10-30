@@ -181,7 +181,6 @@ def test_existing_generated_packages_are_unchanged() -> None:
     expected = json.loads(BEFORE_OVERLAP.read_text(encoding="utf-8"))
     assert expected and "postgres-role-password" not in expected
     for credential_class, package in expected.items():
-        entry = _entry(credential_class, rotated_by_sds=None)
-        entry.credential.pop("rotated_by_sds")
+        entry = _entry(credential_class)
         rendered = render(entry, "2026-10-29-requested", "2026-10-29T12:00:00Z")
         assert rendered == package, credential_class

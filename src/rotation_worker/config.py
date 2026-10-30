@@ -45,6 +45,7 @@ VM_ONLY: Final = (
     "pg_helper_key_id",
     "pg_helper_host",
     "pg_helper_known_host",
+    "keepers_project_id",
 )
 
 
@@ -90,6 +91,8 @@ class Config:
     pg_helper_key_id: str | None = None
     pg_helper_host: str | None = None
     pg_helper_known_host: str | None = None
+    # `Rotation / Keepers`, where `adopt-keeper` creates a keeper. Read by no rotation step.
+    keepers_project_id: str | None = None
     # This instance's alert-hub sender token: a BWS UUID, or a Keychain account name. Absent, no
     # act is announced (ADR-0055 amendment 15, increment 3).
     alert_hub_token_id: str | None = None
@@ -152,6 +155,7 @@ def load(path: Path) -> Config:
         pg_helper_key_id=helper_key,
         pg_helper_host=helper_host,
         pg_helper_known_host=helper_known_host,
+        keepers_project_id=_optional_uuid(raw, "keepers_project_id"),
         alert_hub_token_id=alert_hub_token,
         inbox_secret_id=_optional_uuid(raw, "inbox_secret_id"),
     )

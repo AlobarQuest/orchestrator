@@ -175,3 +175,132 @@ def test_the_rotation_app_is_built_only_when_configured(tmp_path: Path) -> None:
     assert open_github_app(config, store) is None
     configured = replace(config, github_app_id="5383095", github_app_key_id="id")
     assert isinstance(open_github_app(configured, store), RotationApp)
+
+
+# ---- adopt-keeper and pg-restore, through the entry point ------------------------------------
+
+KEEPERS = "33333333-3333-4333-8333-333333333333"
+PASSWORD = "5ab2e4d8eec1" + "0" * 52
+
+
+def _pg_config(tmp_path: Path) -> Config:
+    from dataclasses import replace
+
+    return replace(_config(tmp_path), keepers_project_id=KEEPERS)
+
+
+def _entry(**changes: object) -> RegistryEntry:
+    credential = {
+        "id": "alobar-id-postgres",
+        "class": "postgres-role-password",
+        "provider": "postgres-role",
+        "bws_uuid": "00000000-0000-4000-8000-000000000000",
+        "consumer": [],
+    }
+    return RegistryEntry("r", "c" * 40, {**credential, **changes})
+
+
+@pytest.fixture
+def entry_point(tmp_path: Path, store: MemoryStore, monkeypatch: pytest.MonkeyPatch) -> MemoryStore:
+    """`cli.main` with the configuration, the registry and the clones faked, and stdin to set."""
+    monkeypatch.setattr(cli, "load", lambda path: _pg_config(tmp_path))
+    monkeypatch.setattr(cli, "configure", lambda: None)
+    monkeypatch.setattr(cli, "find_credential", lambda mirror, cid: _entry())
+    monkeypatch.setattr(cli, "RepoMirror", lambda root: None)
+    return store
+
+
+def _stdin(monkeypatch: pytest.MonkeyPatch, text: str) -> None:
+    import io
+
+    monkeypatch.setattr("sys.stdin", io.StringIO(text))
+
+
+def test_adopt_keeper_reads_stdin_not_argv(
+    entry_point: MemoryStore, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _stdin(monkeypatch, PASSWORD + "\n")
+    assert cli.main(["adopt-keeper", "alobar-id-postgres"]) == 0
+    printed = capsys.readouterr()
+    project, key, value = next(iter(entry_point.secrets.values()))
+    assert (project, key, value.reveal()) == (KEEPERS, "alobar-id-postgres", PASSWORD)
+    assert json.loads(printed.out)["sha256_prefix"] == value.fingerprint.sha256_prefix
+    assert PASSWORD not in printed.out + printed.err
+    with pytest.raises(SystemExit):
+        cli.main(["adopt-keeper", "alobar-id-postgres", PASSWORD])
+
+
+@pytest.mark.parametrize(
+    "text", ["", "short", PASSWORD.upper(), PASSWORD + "0", "g" * 64, PASSWORD[:-1] + "\n0"]
+)
+def test_adopt_keeper_refuses_a_wrong_shape(
+    entry_point: MemoryStore,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    text: str,
+) -> None:
+    _stdin(monkeypatch, text)
+    assert cli.main(["adopt-keeper", "alobar-id-postgres"]) == cli.EXIT_UNREADABLE
+    assert entry_point.secrets == {}
+    assert text.strip() not in capsys.readouterr().err or not text.strip()
+
+
+def test_adopt_keeper_refuses_another_class_and_an_existing_secret(
+    entry_point: MemoryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(cli, "find_credential", lambda mirror, cid: _entry(**{"class": "x"}))
+    _stdin(monkeypatch, PASSWORD)
+    assert cli.main(["adopt-keeper", "alobar-id-postgres"]) == cli.EXIT_UNREADABLE
+    monkeypatch.setattr(cli, "find_credential", lambda mirror, cid: _entry())
+    entry_point.put(KEEPERS, "alobar-id-postgres", Value("earlier"))
+    _stdin(monkeypatch, PASSWORD)
+    assert cli.main(["adopt-keeper", "alobar-id-postgres"]) == cli.EXIT_UNREADABLE
+    assert [v.reveal() for _, _, v in entry_point.secrets.values()] == ["earlier"]
+
+
+def test_pg_restore_uses_the_keepers_value(
+    entry_point: MemoryStore,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    keeper = entry_point.put(KEEPERS, "alobar-id-postgres", Value(PASSWORD))
+    monkeypatch.setattr(cli, "find_credential", lambda mirror, cid: _entry(bws_uuid=keeper))
+    restored: list[Value] = []
+
+    class Provider(cli.postgres_role.PostgresRoleProvider):
+        def __init__(self) -> None:
+            pass
+
+        def restore(self, value: Value, replaced: Value | None = None) -> str:
+            restored.append(value)
+            return "put it back"
+
+    seen: list[AdapterContext] = []
+
+    def build(context: AdapterContext) -> Provider:
+        seen.append(context)
+        return Provider()
+
+    monkeypatch.setitem(
+        cli.ADAPTERS,
+        "postgres-role",
+        SimpleNamespace(build=build),  # type: ignore[arg-type]
+    )
+    setup = SimpleNamespace(
+        mirror=None,
+        store=entry_point,
+        work_project_id=WORK,
+        state_dir=tmp_path,
+        admin_secrets={"postgres-role": "tok"},
+        coolify_url="https://coolify.test",
+        pg_helper=None,
+    )
+    monkeypatch.setattr(cli, "build_setup", lambda config: setup)
+    assert cli.main(["pg-restore", "alobar-id-postgres"]) == 0
+    assert [v.reveal() for v in restored] == [PASSWORD]
+    assert seen[0].rotation is not None and seen[0].rotation.keeper_id == keeper
+    assert seen[0].admin_secret_id == "tok"
+    out = capsys.readouterr()
+    assert out.out == "pg-restore: put it back\n"
+    assert PASSWORD not in out.out + out.err
