@@ -121,10 +121,11 @@ from orchestrator.services.landing.revert_build import (
     plan_revert,
 )
 from orchestrator.services.landing.revert_record import (
-    LANDED_REVERTS,
     REPOINTED,
     REVERT_LANDED,
     REVERT_OPENED,
+    is_landed_revert,
+    landed_revert,
 )
 from orchestrator.services.landing.revert_watch import (
     BAD,
@@ -174,6 +175,11 @@ _ALWAYS_WATCHED: Final = frozenset(  # not-a-vocabulary: record statuses
     {REVERT_OPENED, REFUSED_OVERLAP, REVERT_FAILED}
 )
 RESTORED: Final = "restored"
+# The statuses production may be recorded restored from: the revert landed, or it never could and
+# a person put the moving tags back by hand (the lander confirms the tags before it asks).
+_RESTORABLE: Final = frozenset(  # not-a-vocabulary: record statuses
+    {REVERT_LANDED, REVERT_FAILED, REFUSED_OVERLAP}
+)
 # The statuses a re-point may be recorded from: no record yet, or a rerun's.
 _REPOINTABLE: Final = (None, RERUN_REQUESTED)
 # An image a re-point names: the bump's parent's full commit as its tag, and the digest it resolved.
@@ -571,10 +577,10 @@ def _restore(
             "read it",
             "re-read the landing watch and ask again",
         )
-    if record is None or record.status != REVERT_LANDED or record.pinned_images is None:
+    if record is None or record.status not in _RESTORABLE or record.pinned_images is None:
         raise DomainError(
             LANDING_RESTORE_NOT_LANDED,
-            f"{repository}#{command.pr_number} has no landed revert that pinned production "
+            f"{repository}#{command.pr_number} has no pinned record that may be restored "
             f"(the record is {'absent' if record is None else record.status})",
             "production stays pinned until the revert lands",
         )
@@ -843,7 +849,7 @@ def _watched_landings(
         ),
     )
     # A landed revert past its window is a candidate, kept only while its dependency is held.
-    landed = LandingRevert.status.in_(LANDED_REVERTS)
+    landed = landed_revert()
     if repository is not None:
         conditions.append(EstatePrMerge.repository == repository)
     if pr_number is not None:
@@ -938,7 +944,7 @@ def _fact(facts: object, key: str) -> str | None:
 def _still_held(session: Session, landing: EstatePrMerge) -> bool:
     """Is any dependency its landed revert took back out still held in the member record?"""
     record = _record(session, landing.repository, landing.pr_number, lock=False)
-    if record is None or record.status not in LANDED_REVERTS:
+    if record is None or not is_landed_revert(record):
         return False
     holds = holds_for(session, landing.repository)
     return any(

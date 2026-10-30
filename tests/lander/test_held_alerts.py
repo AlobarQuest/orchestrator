@@ -670,3 +670,15 @@ def test_a_served_revert_alert_says_production_never_served_the_bump(tmp_path) -
 
     reverted = next(b for b in hub.sent if str(b["key"]).startswith("landing-reverted:"))
     assert "production never served" in str(reverted["message"])
+
+
+def test_a_hand_restore_of_a_failed_revert_resolves_the_pinned_alert(tmp_path) -> None:
+    hub = Hub()
+    env = _env(tmp_path)
+
+    sync_revert_alerts(
+        LANE, [_pinned_record("revert_failed")], environ=env, transport=hub.transport()
+    )
+    sync_revert_alerts(LANE, [_pinned_record("restored")], environ=env, transport=hub.transport())
+
+    assert [b["status"] for b in hub.sent if b["key"] == PINNED_KEY] == ["firing", "resolved"]

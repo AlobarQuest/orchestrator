@@ -224,6 +224,9 @@ def test_a_bad_landing_is_recorded_repointed_before_production_is_touched() -> N
         "confine",
         f"digest {IMAGE} {PARENT[:12]}",
         "repoint",
+        # What each application serves now: one already on the parent needs no deploy.
+        "served app-brain",
+        "served code-brain",
         f"tag u1 {PARENT[:12]}",
         "start u1",
         f"tag u2 {PARENT[:12]}",
@@ -327,10 +330,9 @@ def test_the_revert_is_asked_for_once_every_application_serves_the_parent() -> N
 
 
 def test_an_application_not_on_the_parent_yet_holds_the_revert_and_is_pinned_again() -> None:
-    world = World(
-        _apps(tag=PARENT, code_brain="latest"),
-        serving={"app-brain": PARENT, "code-brain": MERGE},
-    )
+    """Its tag is still the parent's (a pin that failed part-way, or a deploy that never started):
+    it is pointed and deployed again; the application already serving is left alone."""
+    world = World(_apps(tag=PARENT), serving={"app-brain": PARENT, "code-brain": MERGE})
 
     result = world.run(_repointed())
 
@@ -483,8 +485,8 @@ def test_a_pass_that_does_not_submit_reads_and_writes_nothing() -> None:
     ("row", "status"),
     [
         (_row(None, "revert_landed"), "reverted"),
-        (_row(None, "refused_overlap", pinned_images=_pins()), "revert-refused"),
-        (_row(None, "revert_failed", pinned_images=_pins()), "revert-failed"),
+        (_row(None, "refused_overlap"), "revert-refused"),
+        (_row(None, "revert_failed"), "revert-failed"),
         (_row("unreadable"), "unreadable"),
     ],
 )
@@ -544,3 +546,109 @@ def test_a_restored_tag_not_yet_serving_the_revert_is_deployed_again() -> None:
     world.run(_landed())
 
     assert [e for e in world.log if e.startswith(("tag ", "start "))] == ["start u2"]
+
+
+# --------------------------------------------------------------------------------------------
+# Fix round 1.
+# --------------------------------------------------------------------------------------------
+
+
+def _stuck(status: str) -> dict[str, Any]:
+    """A pinned record whose revert could not be opened or landed."""
+    return _row(
+        None,
+        status,
+        pinned_images={
+            "u1": {"tag": PARENT, "digest": DIGEST, "restore_tag": "latest"},
+            "u2": {"tag": PARENT, "digest": DIGEST, "restore_tag": "main"},
+        },
+    )
+
+
+@pytest.mark.parametrize("status", ["revert_failed", "refused_overlap"])
+def test_a_hand_restore_of_a_record_with_no_revert_is_recorded_restored(status: str) -> None:
+    """A person put every moving tag back: the pinned alert has no other way to resolve."""
+    world = World(_apps(code_brain="main"))
+
+    result = world.run(_stuck(status))
+
+    assert _only(result)[0] == "restored"
+    [(act, body)] = world.acts.calls
+    assert (act, body["expected_status"]) == ("restored", status)
+    assert not any(entry.startswith(("tag ", "start ")) for entry in world.log)
+
+
+@pytest.mark.parametrize(
+    ("status", "reported"),
+    [("revert_failed", "revert-failed"), ("refused_overlap", "revert-refused")],
+)
+def test_a_partial_hand_restore_leaves_the_record_and_its_alert(status: str, reported: str) -> None:
+    world = World(_apps(code_brain=PARENT))
+
+    result = world.run(_stuck(status))
+
+    assert _only(result)[0] == reported
+    assert world.acts.calls == []
+    assert not any(entry.startswith(("tag ", "start ")) for entry in world.log)
+
+
+def test_a_record_with_no_revert_reports_itself_on_a_pass_that_does_not_submit() -> None:
+    world = World(_apps(code_brain="main"))
+
+    assert _only(world.run(_stuck("revert_failed"), submit=False))[0] == "revert-failed"
+    assert world.log == []
+
+
+def test_a_hand_restored_tag_while_pinned_is_left_alone() -> None:
+    """A person put code-brain back while the revert waits: the pass does not undo it."""
+    world = World(
+        _apps(tag=PARENT, code_brain="latest"),
+        serving={"app-brain": PARENT, "code-brain": MERGE},
+    )
+
+    status, detail = _only(world.run(_repointed()))
+
+    assert status == "pinned" and "code-brain" in detail and "by hand" in detail
+    assert not any(entry.startswith(("tag u2", "start u2")) for entry in world.log)
+    assert world.acts.calls == []
+
+
+@pytest.mark.parametrize(
+    ("code", "status", "alerted"),
+    [
+        ("landing_repoint_not_bad", "waiting", False),
+        ("landing_revert_record_moved", "waiting", False),
+        ("landing_revert_lane_off", "repoint-refused", True),
+        ("landing_repository_not_granted", "repoint-refused", True),
+    ],
+)
+def test_a_refused_repoint_is_waiting_only_when_the_answer_moved(
+    code: str, status: str, alerted: bool
+) -> None:
+    world = World(acts_error=LandingRefused("refused", code))
+
+    result = world.run(_row("bad"))
+
+    assert _only(result)[0] == status
+    assert ((BRAIN, PR) in result.unpinned) is alerted
+
+
+def test_an_application_already_serving_the_parent_is_pinned_without_a_deploy() -> None:
+    """Brain #79's shape: the bump's image never came up, so production already runs the parent.
+    The tag is pinned so a later deploy keeps it; no deploy is started for it."""
+    world = World(serving={"app-brain": PARENT})
+
+    world.run(_row("bad"))
+
+    pins = [e for e in world.log if e.startswith(("tag ", "start "))]
+    assert pins == [f"tag u1 {PARENT[:12]}", f"tag u2 {PARENT[:12]}", "start u2"]
+
+
+def test_an_image_that_is_not_the_repositorys_refuses_the_repoint() -> None:
+    other = [replace(app, image="ghcr.io/alobarquest/change-manager") for app in _apps()]
+    world = World(other)
+
+    status, detail = _only(world.run(_row("bad")))
+
+    assert status == "repoint-refused" and "change-manager" in detail
+    assert "repoint" not in world.log

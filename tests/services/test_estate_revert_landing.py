@@ -124,7 +124,10 @@ def _gateway(**kwargs: Any) -> FakeEstateGateway:
     )
 
 
-def _opened(session: Session, status: str = "revert_opened") -> None:
+PINS = {"u1": {"tag": PARENT, "digest": "sha256:" + "a" * 64, "restore_tag": "latest"}}
+
+
+def _opened(session: Session, status: str = "revert_opened", *, pinned: bool = False) -> None:
     row = revert_record(
         session,
         status=status,
@@ -133,6 +136,8 @@ def _opened(session: Session, status: str = "revert_opened") -> None:
         revert_pr_number=REVERT,
     )
     row.merge_commit_sha, row.parent_sha = MERGE, PARENT
+    if pinned:
+        row.pinned_images = PINS
     session.flush()
 
 
@@ -326,9 +331,19 @@ def test_a_bump_record_the_app_opened_is_refused_as_not_the_update_bot(
     assert LANDING_AUTHOR_NOT_THE_UPDATE_BOT in answer.refusals
 
 
-@pytest.mark.parametrize("status", ["repointed", "revert_opened"])
+@pytest.mark.parametrize(
+    ("status", "pinned"),
+    [
+        ("revert_opened", False),
+        ("repointed", True),
+        ("revert_opened", True),
+        ("refused_overlap", True),
+        ("revert_failed", True),
+        ("revert_landed", True),
+    ],
+)
 def test_a_bump_waits_while_a_revert_is_in_progress_in_its_repository(
-    migrated_session: Session, status: str
+    migrated_session: Session, status: str, pinned: bool
 ) -> None:
     """Production is pinned (`repointed`) or the revert is open: a bump landed on top of the bad
     one would make the revert an overlap, and would redeploy past the pin's intent."""
@@ -340,7 +355,7 @@ def test_a_bump_waits_while_a_revert_is_in_progress_in_its_repository(
         number=49,
     )
     assert control.satisfied, control.refusals
-    _opened(migrated_session, status)
+    _opened(migrated_session, status, pinned=pinned)
 
     answer = _ask(
         migrated_session,
@@ -405,3 +420,21 @@ def test_a_bump_record_on_a_revert_branch_is_refused_under_the_update_type_rule_
 
     assert answer.refusals == (LANDING_RECORD_CLASS_MISMATCH,)
     assert answer.satisfied is False
+
+
+@pytest.mark.parametrize("status", ["refused_overlap", "revert_failed"])
+def test_an_unpinned_refused_or_failed_revert_holds_no_bump(
+    migrated_session: Session, status: str
+) -> None:
+    """Part 3a's rule, unchanged: only a pin, or an open revert, holds the repository."""
+    _opened(migrated_session, status)
+
+    answer = _ask(
+        migrated_session,
+        record=approved(policy_version=14, landing_conditions=v14()),
+        gateway=FakeEstateGateway(),
+        moment=IN_WINDOW,
+        number=49,
+    )
+
+    assert LANDING_REPOSITORY_REVERTING not in answer.refusals

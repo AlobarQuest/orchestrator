@@ -18,6 +18,19 @@ STEP PER PASS, each recorded before the next:
    application back to the moving tag it had and start a deploy; once every application serves the
    revert's merge commit (or a later one), ask the orchestrator to record `restored`.
 
+A record that pinned production but whose revert was refused (`refused_overlap`) or failed
+(`revert_failed`) has no revert to land; a person fixes the default branch and puts the moving tags
+back by hand. Once every pinned application's tag is its recorded restore tag again, the pass asks
+the orchestrator to record `restored`, and the pinned alert resolves.
+
+A person's change to an application's tag while production is pinned is never undone by the
+confirm step: only an application still on the parent's tag is deployed again. The restore after a
+landed revert, though, sets every application back to the tag it had before the pin, overwriting
+whatever a person set in between.
+
+A Compose application whose domains live in Traefik labels has an empty Coolify `fqdn`, so no
+Coolify application matches its health host and the re-point is refused by design (alerted).
+
 A `flaky_retry` is rerun as in the inert lane. Every exit before `restored` leaves production
 pinned or untouched and an alert open (`lander.held_alerts`): pinned for every record that pinned
 images, and `landing-not-pointed-back` for a bad landing this pass could not point back at all --
@@ -41,6 +54,7 @@ from estate_lander.image_repoint import (
     AppSpec,
     RegistryUnreadable,
     RepointRefused,
+    image_name,
 )
 from estate_lander.served import ServedUnreadable, serves
 from lander.core import Outcome
@@ -60,6 +74,13 @@ _REPORTED_RECORDS: Final = {  # not-a-vocabulary: the watch's record statuses, r
     "refused_overlap": "revert-refused",
     "revert_failed": "revert-failed",
 }
+# The step a pinned record with no revert to land waits on: a person's hand restore.
+_HAND_RESTORE: Final = "hand_restore"
+# The orchestrator's refusals of a re-point that say only that its answer moved since the watch was
+# read: nothing was touched, and the next pass asks again. Every other refusal is alerted.
+_ANSWER_MOVED: Final = frozenset(  # not-a-vocabulary: the orchestrator's refusal codes, relayed
+    {"landing_revert_record_moved", "landing_repoint_not_bad"}
+)
 _ACT_ANSWERS: Final = {  # not-a-vocabulary: the act's answers, relayed
     "rerun_requested": "reran",
     "revert_opened": "revert-opened",
@@ -171,6 +192,8 @@ def _step(
     if step is None:
         return _reported(row, repository, number)
     if production is None:
+        if step == _HAND_RESTORE:
+            return _reported(row, repository, number)
         return Outcome(repository, number, _DRY_RUN[step], str(row.get("detail") or ""))
     if step == _FLAKY_RETRY:
         return _rerun(row, repository, number, client)
@@ -178,6 +201,8 @@ def _step(
         return _repoint(row, repository, number, client, production, result)
     if step == _REPOINTED:
         return _confirm_parent(row, repository, number, client, production)
+    if step == _HAND_RESTORE:
+        return _hand_restored(row, repository, number, client, production)
     return _restore(row, repository, number, client, production)
 
 
@@ -199,6 +224,8 @@ def _next_step(row: Mapping[str, Any]) -> str | None:
         return _REPOINTED
     if verdict is None and status == _REVERT_LANDED and row.get("pinned_images"):
         return _REVERT_LANDED
+    if verdict is None and status in _REPORTED_RECORDS and row.get("pinned_images"):
+        return _HAND_RESTORE
     return None
 
 
@@ -276,6 +303,8 @@ def _repoint(
         try:
             applications = images.confine(production.apps(repository))
             image = _unpinned_image(applications)
+            if image_name(image) != repository.split("/")[-1].lower():
+                raise _Refused(f"the applications run {image}, not {repository}'s image")
             digest = production.registry.digest(image, parent)
             if digest is None:
                 raise _Refused(f"the registry holds no {image}:{parent[:12]}")
@@ -290,13 +319,17 @@ def _repoint(
                 idempotency_key=f"estate-landing-repoint:{repository}:{number}:{parent}:{digest}",
             )
         except LandingRefused as refused:
-            # The orchestrator judged again and found nothing to point back, or the record moved:
-            # nothing was recorded and nothing was touched.
-            return Outcome(repository, number, "waiting", str(refused))
+            if refused.code in _ANSWER_MOVED:
+                # Judged again and found nothing to point back, or the record moved: nothing was
+                # recorded and nothing was touched, and the next pass asks again.
+                return Outcome(repository, number, "waiting", str(refused))
+            result.unpinned[(repository, number)] = str(refused)
+            return Outcome(repository, number, "repoint-refused", str(refused))
         except (_Refused, RepointRefused, RegistryUnreadable, OrchestratorError) as error:
             result.unpinned[(repository, number)] = str(error)
             return Outcome(repository, number, "repoint-refused", str(error))
-        failed = _point(images, applications, parent)
+        already = _serving(production, applications, parent)
+        failed = _point(images, applications, parent, serving=already)
     finally:
         images.close()
     if failed is not None:
@@ -306,26 +339,49 @@ def _repoint(
     )
 
 
-def _point(images: Images, applications: Sequence[Application], tag: str) -> str | None:
-    """Set each application's tag and start a deploy of it; None when all succeeded, else what was
-    done and what refused. Production stays recorded as pinned either way."""
+def _point(
+    images: Images,
+    applications: Sequence[Application],
+    tag: str,
+    *,
+    serving: frozenset[str] = frozenset(),
+) -> str | None:
+    """Set each application's tag and start a deploy of it -- none for an application `serving`
+    names, which already runs that build; None when all succeeded, else what was done and what
+    refused. Production stays recorded as pinned either way."""
     done: list[str] = []
     for app in applications:
         try:
             images.set_tag(app.uuid, tag)
-            images.start(app.uuid)
+            if app.name not in serving:
+                images.start(app.uuid)
         except RepointRefused as error:
             return f"{app.name}: {error}; {len(done)} of {len(applications)} pointed at {tag[:12]}"
         done.append(app.name)
     return None
 
 
+def _serving(
+    production: Production, applications: Sequence[Application], commit: str
+) -> frozenset[str]:
+    """The applications that already serve `commit`; one that cannot be read is not among them."""
+    serving: set[str] = set()
+    for app in applications:
+        try:
+            if serves(production.served(app.health_url), commit):
+                serving.add(app.name)
+        except ServedUnreadable:
+            continue
+    return frozenset(serving)
+
+
 def _confirm_parent(
     row: Mapping[str, Any], repository: str, number: int, client: Acts, production: Production
 ) -> Outcome:
-    """Step 2: every application serves the parent, so ask for the revert; else point every
-    application not serving it at the parent again and start a deploy of it -- its tag may have
-    moved, or its last deploy may never have started."""
+    """Step 2: every application serves the parent, so ask for the revert; else start a deploy of
+    each application not serving it whose tag is still the parent's (its deploy never started, or
+    the pin failed part-way). An application whose tag a person changed is left alone and named;
+    production stays pinned and the alert open."""
     parent = str(row.get("parent_sha") or "").lower()
     try:
         images = _open(production)
@@ -343,22 +399,62 @@ def _confirm_parent(
                 idempotency_key=f"estate-landing-revert:{repository}:{number}:{_REPOINTED}",
             )
             return _answered(answer, repository, number)
-        moved = [app for app in applications if app.name in off]
-        failed = _point(images, moved, parent)
+        lagging = [app for app in applications if app.name in off]
+        again = [app for app in lagging if app.tag.lower() == parent]
+        by_hand = sorted(app.name for app in lagging if app.tag.lower() != parent)
+        failed = _point(images, again, parent)
         if failed is not None:
             return Outcome(repository, number, "error", failed)
-        return Outcome(
-            repository,
-            number,
-            "pinned",
-            f"not serving {parent[:12]} yet, pointed at it again: {', '.join(off)}",
-        )
+        detail = f"not serving {parent[:12]} yet: {', '.join(off)}"
+        if by_hand:
+            detail += f"; tag changed by hand on {', '.join(by_hand)}, left alone"
+        return Outcome(repository, number, "pinned", detail)
     except (_Refused, RepointRefused, ServedUnreadable) as error:
         return Outcome(repository, number, "error", f"production stays pinned: {error}")
     except (LandingRefused, OrchestratorError) as error:
         return Outcome(repository, number, "error", str(error))
     finally:
         images.close()
+
+
+def _hand_restored(
+    row: Mapping[str, Any], repository: str, number: int, client: Acts, production: Production
+) -> Outcome:
+    """A pinned record with no revert to land: once a person has put every moving tag back, ask
+    the orchestrator to record `restored`; until then it is reported as it was, still a finding."""
+    status = str(row.get("status"))
+    pinned = row.get("pinned_images")
+    waiting = Outcome(
+        repository,
+        number,
+        _REPORTED_RECORDS[status],
+        f"{row.get('detail') or status}; production stays pinned until a person restores it",
+    )
+    if not isinstance(pinned, Mapping):
+        return waiting
+    try:
+        images = _open(production)
+    except _Refused as error:
+        return Outcome(repository, number, "error", f"production stays pinned: {error}")
+    try:
+        applications = _pinned_applications(images, row, production, repository)
+        if any(app.tag != str(pinned[app.uuid].get("restore_tag")) for app in applications):
+            return waiting
+        answer = client.restored(
+            repository,
+            number,
+            expected_status=status,
+            idempotency_key=f"estate-landing-restored:{repository}:{number}:{status}",
+        )
+    except (_Refused, RepointRefused) as error:
+        return Outcome(repository, number, "error", f"production stays pinned: {error}")
+    except (LandingRefused, OrchestratorError) as error:
+        return Outcome(repository, number, "error", str(error))
+    finally:
+        images.close()
+    if answer.get("status") != _RESTORED:
+        return Outcome(repository, number, "unreadable", str(answer.get("detail") or ""))
+    return Outcome(repository, number, "restored", "the moving tags were put back by hand")
 
 
 def _restore(

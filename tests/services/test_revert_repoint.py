@@ -362,7 +362,7 @@ def test_a_landed_revert_is_recorded_restored(
     assert revert_in_progress(migrated_session, BRAIN) is False
 
 
-@pytest.mark.parametrize("status", ["repointed", "revert_opened", "refused_overlap"])
+@pytest.mark.parametrize("status", ["repointed", "revert_opened"])
 def test_nothing_is_restored_before_its_revert_has_landed(
     migrated_session: Session, migrated_engine: Engine, status: str
 ) -> None:
@@ -465,3 +465,76 @@ def test_a_landing_already_repointed_is_not_repointed_again(migrated_session: Se
         repoint(migrated_session, brain_gateway(), key="repoint-2", expected="repointed")
 
     assert raised.value.code == LANDING_REVERT_RECORD_MOVED
+
+
+# --------------------------------------------------------------------------------------------
+# Fix round 1: a pinned record that cannot be reverted has a way out, and holds bumps meanwhile.
+# --------------------------------------------------------------------------------------------
+
+
+def _pinned_at(session: Session, status: str) -> None:
+    stuck_on_the_parent(session)
+    repoint(session, brain_gateway())
+    row = session.scalar(select(LandingRevert))
+    assert row is not None
+    row.status = status
+    row.bumps = [
+        {
+            "ecosystem": "uv",
+            "directory": "/",
+            "dependency": "sqlalchemy",
+            "from_version": "2.0.54",
+            "to_version": "2.1.1",
+        }
+    ]
+    session.commit()
+
+
+@pytest.mark.parametrize("status", ["revert_failed", "refused_overlap"])
+def test_a_person_restoring_a_pinned_record_that_never_reverted_clears_it(
+    migrated_session: Session, migrated_engine: Engine, status: str
+) -> None:
+    """Nothing was reverted, so a person put the moving tags back by hand: the lander asks for
+    `restored`, which is accepted from the status it read. It is not a landed revert, so the
+    version it would have taken out is not barred, and nothing reverts here any more."""
+    _pinned_at(migrated_session, status)
+
+    outcome = restore(migrated_session, brain_gateway())
+
+    assert (outcome.acted, outcome.status) == (True, "restored")
+    record = stored(migrated_engine)
+    assert record is not None and record.status == "restored" and record.restored_at
+    assert reverted_versions(migrated_session, BRAIN) == ()
+    assert revert_in_progress(migrated_session, BRAIN) is False
+
+
+@pytest.mark.parametrize("status", ["repointed", "revert_opened", "revert_failed"])
+def test_a_restore_names_the_status_it_read(migrated_session: Session, status: str) -> None:
+    _pinned_at(migrated_session, status)
+
+    with pytest.raises(DomainError) as raised:
+        record_restored(
+            migrated_session,
+            RestoreCommand(BRAIN, BRAIN_BUMP, SYSTEM, "restore-x", expected_status="revert_landed"),
+            **lanes(brain_gateway()),
+        )
+
+    assert raised.value.code == LANDING_REVERT_RECORD_MOVED
+
+
+@pytest.mark.parametrize(
+    "status", ["repointed", "revert_opened", "refused_overlap", "revert_failed", "revert_landed"]
+)
+def test_every_bump_waits_while_production_is_pinned(
+    migrated_session: Session, status: str
+) -> None:
+    """A bump landed behind the pin is never served, and would move the base under the revert."""
+    _pinned_at(migrated_session, status)
+
+    assert revert_in_progress(migrated_session, BRAIN) is True
+
+    row = migrated_session.scalar(select(LandingRevert))
+    assert row is not None
+    row.status = "restored"
+    migrated_session.commit()
+    assert revert_in_progress(migrated_session, BRAIN) is False

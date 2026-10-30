@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Final
 
-from sqlalchemy import exists, func, or_, select
+from sqlalchemy import ColumnElement, and_, exists, func, or_, select
 from sqlalchemy.orm import Session
 
 from orchestrator.persistence.models import LandingRevert
@@ -23,11 +23,31 @@ REVERT_OPENED: Final = "revert_opened"
 REVERT_LANDED: Final = "revert_landed"
 RERUN_REQUESTED: Final = "rerun_requested"
 # Landing Part 3b: production points at the bump's parent's image and the revert is not yet open;
-# and, after the revert landed, the moving tag is back. A restored revert has landed too: every
-# read of a landed revert reads both.
+# and the moving tag is back. A record restored after its revert landed (it names the revert's
+# merge commit) has landed too, and every read of a landed revert reads both; one a person
+# restored by hand after a revert that was refused or failed reverted nothing.
 REPOINTED: Final = "repointed"
 RESTORED: Final = "restored"
-LANDED_REVERTS: Final = (REVERT_LANDED, RESTORED)
+
+
+def landed_revert() -> ColumnElement[bool]:
+    """A record whose revert landed: `revert_landed`, or `restored` after its revert landed."""
+    return or_(
+        LandingRevert.status == REVERT_LANDED,
+        and_(LandingRevert.status == RESTORED, LandingRevert.revert_merge_sha.is_not(None)),
+    )
+
+
+def is_landed_revert(record: LandingRevert) -> bool:
+    """`landed_revert`, of one record in hand."""
+    return record.status == REVERT_LANDED or (
+        record.status == RESTORED and record.revert_merge_sha is not None
+    )
+
+
+def pinned() -> ColumnElement[bool]:
+    """A record whose re-point still holds production on the build before the bump."""
+    return and_(LandingRevert.pinned_images.is_not(None), LandingRevert.status != RESTORED)
 
 
 @dataclass(frozen=True)
@@ -92,7 +112,7 @@ def reverted_versions(session: Session, repository: str) -> tuple[Bump, ...]:
     rows = session.scalars(
         select(LandingRevert).where(
             LandingRevert.repository == repository.lower(),
-            LandingRevert.status.in_(LANDED_REVERTS),
+            landed_revert(),
         )
     )
     return tuple(
@@ -109,8 +129,9 @@ def reverted_versions(session: Session, repository: str) -> tuple[Bump, ...]:
 
 def revert_in_progress(session: Session, repository: str) -> bool:
     """Is a landing in this repository on its way to a revert: a rerun asked for and still in the
-    watch, production pointed back at the build before the bump (`repointed`, Part 3b), or a revert
-    opened and not yet landed?
+    watch, production pointed back at the build before the bump and not yet restored (in any
+    status, Part 3b: a bump landed behind the pin is never served), or a revert opened and not yet
+    landed?
 
     A `rerun_requested` record counts only while it is in the watch (`WATCH_HOURS` since it last
     changed), as `revert_act` keeps it: a rerun that passed leaves its record in that status for
@@ -124,7 +145,8 @@ def revert_in_progress(session: Session, repository: str) -> bool:
                 exists().where(
                     LandingRevert.repository == repository.lower(),
                     or_(
-                        LandingRevert.status.in_((REVERT_OPENED, REPOINTED)),
+                        LandingRevert.status == REVERT_OPENED,
+                        pinned(),
                         (LandingRevert.status == RERUN_REQUESTED)
                         & (LandingRevert.updated_at >= window),
                     ),
