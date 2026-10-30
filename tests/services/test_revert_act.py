@@ -1042,7 +1042,7 @@ def test_a_deploying_landing_stuck_behind_is_bad_and_is_not_reverted_before_a_re
     what production serves. Nothing reverts a repository that redeploys until production has been
     pointed back (Part 3b's Task 4), so the act refuses by name and writes nothing."""
     landed_on_brain(migrated_session)
-    everywhere(migrated_session, BEFORE_79, minutes_ago=150)
+    everywhere(migrated_session, BEFORE_79, minutes_ago=140)
     served(migrated_session, "orchestrator", "a" * 40, minutes_ago=10)
     gateway = BrainGateway()
 
@@ -1059,19 +1059,19 @@ def test_a_deploying_landing_stuck_behind_is_bad_and_is_not_reverted_before_a_re
 
 def test_a_deploying_landing_whose_watcher_is_silent_is_pending(migrated_session: Session) -> None:
     landed_on_brain(migrated_session)
-    everywhere(migrated_session, BEFORE_79, minutes_ago=150)
+    everywhere(migrated_session, BEFORE_79, minutes_ago=140)
 
     [watched] = landing_watch(
         migrated_session, BrainGateway(), enabled=True, credentials_configured=True
     )
 
-    assert watched.verdict == "pending"
+    assert watched.verdict == "pending" and "watcher" in watched.detail
 
 
 def test_one_brain_behind_is_not_bad(migrated_session: Session) -> None:
     landed_on_brain(migrated_session)
     for name in BRAINS:
-        served(migrated_session, name, BEFORE_79 if name == "app-brain" else MERGE_79, 150)
+        served(migrated_session, name, BEFORE_79 if name == "app-brain" else MERGE_79, 140)
     served(migrated_session, "orchestrator", "a" * 40, minutes_ago=10)
 
     [watched] = landing_watch(
@@ -1122,7 +1122,7 @@ def test_a_check_failure_surviving_its_rerun_on_a_deploying_landing_is_not_rever
 
 def test_an_inert_landing_reads_no_production(migrated_session: Session) -> None:
     landed_bump(migrated_session)
-    everywhere(migrated_session, BEFORE_79, minutes_ago=150)
+    everywhere(migrated_session, BEFORE_79, minutes_ago=140)
     gateway = WatchGateway(jobs={BUMP_HEAD: HEAD_GREEN, LANDED_COMMIT: (job("test", "success"),)})
 
     [watched] = landing_watch(migrated_session, gateway, enabled=True, credentials_configured=True)
@@ -1134,7 +1134,7 @@ def test_an_unstamped_reading_in_the_store_never_counts(migrated_session: Sessio
     """Every brain behind, then answering health with no revision: the behind readings still
     stand, and the unstamped ones are never compared."""
     landed_on_brain(migrated_session)
-    everywhere(migrated_session, BEFORE_79, minutes_ago=150)
+    everywhere(migrated_session, BEFORE_79, minutes_ago=140)
     everywhere(migrated_session, None, minutes_ago=20)
     gateway = BrainGateway()
 
