@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 
 from rotation_worker.contract import ContractError
-from rotation_worker.helper_client import HelperClient
+from rotation_worker.helper_client import HelperClient, HelperRefused
 from rotation_worker.values import Value
 
 PASSWORD = Value("ab" * 32)
@@ -35,7 +35,8 @@ class Ssh:
     def __call__(self, argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
         self.argv = argv
         self.stdin = kwargs["input"].decode()
-        assert kwargs["timeout"] == 300 and kwargs["capture_output"]
+        self.timeout = kwargs["timeout"]
+        assert kwargs["capture_output"]
         self.key_path = Path(argv[argv.index("-i") + 1])
         self.key_mode = stat.S_IMODE(os.stat(self.key_path).st_mode)
         self.key_text = self.key_path.read_text()
@@ -46,6 +47,25 @@ class Ssh:
 
 def client(ssh: Ssh, tmp_path: Path) -> HelperClient:
     return HelperClient("root@ovh-vps1", KNOWN, KEY, tmp_path, run=ssh)
+
+
+def test_each_verb_has_its_own_timeout_and_ssh_a_connect_timeout(tmp_path: Path) -> None:
+    ssh = Ssh('{"changed": true}')
+    client(ssh, tmp_path).set("alobar-id", PASSWORD)
+    assert ssh.timeout == 90
+    assert "ConnectTimeout=10" in ssh.argv
+    ssh = Ssh('{"status": 200}')
+    client(ssh, tmp_path).probe("alobar-id", PASSWORD)
+    assert ssh.timeout == 30
+    ssh = Ssh('{"fingerprints": {}}')
+    client(ssh, tmp_path).loaded("alobar-id")
+    assert ssh.timeout == 30
+
+
+def test_a_refusal_carries_the_helpers_reason(tmp_path: Path) -> None:
+    with pytest.raises(HelperRefused, match="alter_failed") as caught:
+        client(Ssh('{"refused": "alter_failed"}', 2), tmp_path).set("alobar-id", PASSWORD)
+    assert caught.value.reason == "alter_failed"
 
 
 def test_ssh_argv_pins_the_host_key_and_batch_mode(tmp_path: Path) -> None:
