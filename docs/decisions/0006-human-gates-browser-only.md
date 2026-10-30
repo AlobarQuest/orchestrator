@@ -147,3 +147,43 @@ paste and becomes a decision surface.
   that action, and stamps who withdrew it, when and why. A withdrawn row leaves the queue, refuses
   the confirm, and stays withdrawn; withdrawing it again changes nothing. A registered row cannot
   be withdrawn. To bring a withdrawn intake back, stage it again under a new key.
+
+## Amendment 2, 2026-10-30: a standing bump's decomposition decision graduates
+
+**Decided by Devon, 2026-10-29 and 2026-10-30** (dependency bumps need no human approval; Landing
+Part 4, decision 1). The decomposition decision of a standing dependency update stops being a human
+gate when the conditions below all hold. No credential changes: there is still no HUMAN
+credential, and this removes a gate rather than crossing one by machine. A person keeps every
+decomposition these conditions don't cover.
+
+`decomposition._bump_policy_approval` approves, in the proposal's own transaction, only when:
+
+- SYSTEM proposed it;
+- the revision's approver starts `policy:dependency-update@`, its profile is `dependency-update`,
+  and `profile_fields.standing` is true;
+- there is exactly one proposed unit, with no dependencies, and `max_attempts` is at or below the
+  envelope's budget;
+- `human_authority_gate` reports no refusals, and only dependency-update known-good patterns
+  recognise the stamped envelope;
+- `bump_binding_violations` is empty: every command is the one intent-packages' generator emits
+  for the package's own dependency, versions and tooling (ADR-0028 amendment 1 asks for this
+  binding), and the target repository is the package's;
+- the member record grants `dependency_updates` on that repository.
+
+The recorded approver is the proposing SYSTEM identity, as on the rotation path (ADR-0055
+amendment 16). The decision reason names the patterns, the policy version and the revision's
+approver, so "policy approved" and "a person approved" stay different records.
+
+Each refusal leaves the proposal on `/review` and records `decomposition.policy_not_applied` with a
+fixed reason code and what was read. So does an approval that fails after policy said yes. No route
+serves `events` rows for a proposal, so `DecompositionProposalResponse.policy_not_applied` carries
+the reason on `GET /api/v1/decomposition-proposals/{id}` and on the revision's proposal list.
+
+**Cost accepted, Devon, 2026-10-30:** the decomposition is built without a local dry run, because
+that run installs the bumped dependency, lifecycle scripts included, on the operator machine where
+infrastructure credentials live. There is no local proof. A bad envelope fails its attempts, the
+bump stays held, and an alert fires. A session-authored decomposition still dry-runs.
+
+The binding also covers `allowed_commands` and `verify_commands`, which goes past mutation commands
+alone: `allowed_commands` is the coding agent's whole vocabulary and a known-good pattern bounds
+only each command's shape, so a second `uv add` listed there would be a bump nothing named.

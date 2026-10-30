@@ -22,6 +22,25 @@ from orchestrator.persistence.models import (
     PackageAcceptanceCriterion,
 )
 
+# The event that says why policy left a dependency-update proposal for a person, one per proposal.
+POLICY_NOT_APPLIED = "decomposition.policy_not_applied"
+
+
+def policy_refusals(
+    session: Session, proposal_ids: Collection[uuid.UUID]
+) -> dict[uuid.UUID, dict[str, object]]:
+    """The payload of each proposal's `POLICY_NOT_APPLIED` event, keyed by proposal id."""
+    if not proposal_ids:
+        return {}
+    events = session.scalars(
+        select(Event).where(
+            Event.action == POLICY_NOT_APPLIED,
+            Event.subject_type == "decomposition_proposal",
+            Event.subject_id.in_(proposal_ids),
+        )
+    )
+    return {event.subject_id: dict(event.payload) for event in events}
+
 
 def revision_acceptance_criteria(
     session: Session, revision_id: uuid.UUID

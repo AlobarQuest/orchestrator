@@ -100,8 +100,11 @@ Placement rule: global CLAUDE.md §7.
   security-standards' git tree; attribution is permanent, so adding an actor needs a merged commit
   plus rebuild. Never borrow another identity. Detail: `docs/operations/credentials.md`.
 - Envelopes are write-once, and an approved decomposition can be superseded only while none of its
-  units has been claimed or dispatched (ADR-0052): dry-run every unit's commands against the real
-  target repo (twice, clean clone) before work starts. Detail: `docs/operations/driving-a-unit.md`.
+  units has been claimed or dispatched (ADR-0052): dry-run every session-authored unit's commands
+  against the real target repo (twice, clean clone) before work starts. A standing bump's
+  decomposition is built without a local run, by Devon's decision of 2026-10-30 (installing the
+  bumped dependency runs its lifecycle scripts where infrastructure credentials live): a bad
+  envelope fails its attempts and the bump stays held. Detail: `docs/operations/driving-a-unit.md`.
 - `make check` here needs Postgres, `SECURITY_STANDARDS_DIR` and a migrated DB, so it must never
   appear in this repo's authority envelope; the dependency-update profile's verifier is
   `uv lock --check`, and CI's `Quality` job runs the tests.
@@ -564,13 +567,22 @@ Placement rule: global CLAUDE.md §7.
   person-act dependency. It never proposes over a proposal a person rejected, sent back or
   superseded; a package on a pre-derivation plan is refused. Detail:
   `docs/operations/rotation-executor.md`, "The rotation decomposer".
-- A rotation's one click is its package revision approval (ADR-0055 amendment 16). change-manager
-  approves its `work` record by policy, and the orchestrator approves a decomposition SYSTEM
-  proposes, in the proposal's own transaction (`decomposition._policy_approval`), only when the
-  revision is a standing rotation package with a recorded approval, every dependency is
-  unit-on-unit `completed`, and every unit is a rotation unit `human_authority_gate` finds
-  recognised. `register_approved_unit` admits SYSTEM only with `approved_by_policy`. A human's or
-  WORKER's proposal, and every other decomposition, waits for a person on `/review`.
+- `decomposition._policy_approval` approves a decomposition SYSTEM proposes, in the proposal's own
+  transaction, on one of two branches. A rotation's one click is its package revision approval
+  (ADR-0055 amendment 16): change-manager approves its `work` record by policy, and the rotation
+  branch approves only when the revision is a standing rotation package with a recorded approval,
+  every dependency is unit-on-unit `completed`, and every unit is a rotation unit
+  `human_authority_gate` finds recognised. A standing bump needs no click (ADR-0006 amendment 2):
+  the bump branch takes any revision with the `dependency-update` profile or a
+  `policy:dependency-update@` approver, and approves only when that approver and profile both hold,
+  `standing` is true, there is one unit with no dependencies and attempts within its budget, only
+  dependency-update patterns recognise it, `bump_binding_violations` is empty and the member record
+  grants `dependency_updates`. The binding is a whole-command allowlist of the generator's forms,
+  and covers `allowed_commands` and `verify_commands` too. Each bump refusal, and an approval that
+  fails after policy said yes, records `decomposition.policy_not_applied`, served as
+  `policy_not_applied` on the proposal routes. `register_approved_unit` admits SYSTEM only with
+  `approved_by_policy`. A human's or WORKER's proposal, and every other decomposition, waits for a
+  person on `/review`.
 - A person's mint reaches a rotation only through its instance's `rotation-inbox` BWS secret or a
   staging secret written by hand: the unit after the mint waits, unclaimed, until one is staged
   (`worker._mint_waits`). The inbox binds a value only while no other rotation on either

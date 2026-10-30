@@ -35,7 +35,14 @@ from orchestrator.persistence.models import (
     WorkUnit,
 )
 from orchestrator.services.execution.run_activity import a_run_may_have_started
+from orchestrator.services.execution.target_grant import (
+    DEPENDENCY_UPDATE,
+    DEPENDENCY_UPDATES_SERVICE,
+    MemberRecordGrants,
+)
 from orchestrator.services.intake.authority_gate import human_authority_gate
+from orchestrator.services.intake.bump_binding import bump_binding_violations
+from orchestrator.services.intake.intake_reads import POLICY_NOT_APPLIED
 from orchestrator.services.intake.packages import (
     DependencySpec,
     register_approved_unit,
@@ -247,6 +254,16 @@ def submit_decomposition_proposal(
     reason = _policy_approval(session, proposal, revision, actor)
     if reason is None:
         return proposal
+    return _approve_by_policy(session, proposal, revision, actor, reason)
+
+
+def _approve_by_policy(
+    session: Session,
+    proposal: DecompositionProposal,
+    revision: WorkPackageRevision,
+    actor: ActorContext,
+    reason: str,
+) -> DecompositionProposal:
     try:
         # A savepoint, so an approval that cannot complete leaves the proposal for a person
         # instead of refusing the proposal itself.
@@ -257,16 +274,22 @@ def submit_decomposition_proposal(
                 actor=actor,
                 reason=reason,
                 idempotency_key=_derived_idempotency_key(
-                    command.idempotency_key, "policy-approval"
+                    proposal.idempotency_key, "policy-approval"
                 ),
             )
-    except DomainError:
+    except DomainError as error:
+        if _is_bump_revision(revision):
+            _record_policy_not_applied(
+                session, proposal, actor, _PolicyRefusal("approval_failed", (error.code,))
+            )
         return proposal
 
 
 # The approver a package revision carries when a standing approval policy approved it rather
 # than a person (ADR-0028; `package_sources`). Policy approves no rotation decomposition for one.
 _POLICY_APPROVER = "policy:"
+# The approval policy that approves a standing dependency-update revision.
+_BUMP_APPROVER = "policy:dependency-update@"
 
 
 def _policy_approval(
@@ -277,14 +300,18 @@ def _policy_approval(
 ) -> str | None:
     """The reason policy approves this decomposition, or ``None``: a person decides it.
 
-    ADR-0055 amendment 16. Only a rotation's, proposed by SYSTEM, for a revision a person (not an
-    approval policy) approved, whose dependencies are all unit-on-unit and whose every unit is a
-    rotation unit that only a rotation pattern recognises, through the claim's own gate
-    (``human_authority_gate``), with no more attempts than its envelope budgets. The rotation
-    decomposer is the one SYSTEM lane that may post a proposal
-    (``tests/architecture/test_external_content_observes_only.py``). A decomposition a person or
-    a WORKER proposed is a person's to decide, whatever it holds.
+    Two branches, each for a SYSTEM proposal only. A revision that has the dependency-update
+    profile, or the bump approval policy's approver, is a bump's (``_bump_policy_approval``),
+    whose every refusal is recorded. Any other revision is a rotation's (ADR-0055 amendment 16):
+    one a person (not an approval policy) approved, whose dependencies are all unit-on-unit and
+    whose every unit is a rotation unit that only a rotation pattern recognises, through the
+    claim's own gate (``human_authority_gate``), with no more attempts than its envelope budgets.
+    ``tests/architecture/test_external_content_observes_only.py`` holds which SYSTEM lanes may post
+    a proposal. A decomposition a person or a WORKER proposed is a person's to decide, whatever
+    it holds.
     """
+    if _is_bump_revision(revision):
+        return _bump_policy_approval(session, proposal, revision, actor)
     if actor.role is not ActorRole.SYSTEM or revision.approved_by.startswith(_POLICY_APPROVER):
         return None
     try:
@@ -330,6 +357,152 @@ def _policy_approval(
     )
 
 
+@dataclass(frozen=True)
+class _PolicyRefusal:
+    """Why policy left a bump's proposal for a person: a fixed code, and what it read."""
+
+    reason: str
+    detail: tuple[str, ...] = ()
+
+
+def _is_bump_revision(revision: WorkPackageRevision) -> bool:
+    return revision.profile == DEPENDENCY_UPDATE or revision.approved_by.startswith(_BUMP_APPROVER)
+
+
+def _bump_policy_approval(
+    session: Session,
+    proposal: DecompositionProposal,
+    revision: WorkPackageRevision,
+    actor: ActorContext,
+) -> str | None:
+    """Policy's approval of a standing bump's decomposition, or ``None`` and the recorded reason.
+
+    ADR-0006 amendment 2. The event is what tells the lane that proposed it to raise an alert,
+    since a person otherwise learns of the proposal only from the review queue.
+    """
+    outcome = _bump_policy_outcome(session, proposal, revision, actor)
+    if isinstance(outcome, _PolicyRefusal):
+        _record_policy_not_applied(session, proposal, actor, outcome)
+        return None
+    return outcome
+
+
+def _bump_policy_outcome(
+    session: Session,
+    proposal: DecompositionProposal,
+    revision: WorkPackageRevision,
+    actor: ActorContext,
+) -> str | _PolicyRefusal:
+    """Every condition of the graduation, in order: the first that fails is the refusal.
+
+    The binding runs before the grant because it establishes that the target is a readable
+    string naming the package's own repository. ``recognised_by`` can't be empty beside no
+    refusals: an empty or undeclared reach draws ``reach_undeclared``.
+    """
+    refusal = _bump_revision_refusal(revision, actor)
+    if refusal is not None:
+        return refusal
+    units = tuple(
+        session.scalars(
+            select(DecompositionProposalUnit).where(
+                DecompositionProposalUnit.proposal_id == proposal.id
+            )
+        )
+    )
+    if len(units) != 1:
+        return _PolicyRefusal("not_exactly_one_unit")
+    dependency = session.scalar(
+        select(DecompositionProposalDependency.id)
+        .where(DecompositionProposalDependency.proposal_id == proposal.id)
+        .limit(1)
+    )
+    if dependency is not None:
+        return _PolicyRefusal("unit_has_dependencies")
+    proposed = units[0]
+    envelope = normalize_authority(proposed.authority)
+    budget = envelope.budgets.max_attempts
+    if budget is None or proposed.max_attempts > budget:
+        return _PolicyRefusal("attempts_over_budget")
+    try:
+        policy = load_factory_policy()
+    except DomainError:
+        return _PolicyRefusal("policy_unreadable")
+    bump_patterns = {
+        pattern.name
+        for row in policy.rows.values()
+        for pattern in row.known_good
+        if pattern.change_class == DEPENDENCY_UPDATE
+    }
+    # The unit as approval would create it: its id is deterministic in the proposal's.
+    gate = human_authority_gate(
+        ProposedUnitTerms(
+            id=decomposition_unit_id(proposal.id, proposed.unit_key),
+            authority=proposed.authority,
+            required_capability=proposed.required_capability,
+        ),
+        revision,
+    )
+    if gate.refusals or not set(gate.recognised_by) <= bump_patterns:
+        return _PolicyRefusal("envelope_not_recognised", (*gate.refusals, *gate.recognised_by))
+    violations = bump_binding_violations(
+        proposed.authority,
+        revision.enforcement_snapshot["profile_fields"],
+        revision.work_package.package_id,
+    )
+    if violations:
+        return _PolicyRefusal("binding_violated", violations)
+    target = str(envelope.constraints["target_repository"])
+    if not MemberRecordGrants(session).is_granted(target, DEPENDENCY_UPDATES_SERVICE):
+        return _PolicyRefusal("repository_not_granted", (target,))
+    return (
+        "approved by policy (ADR-0006 amendment 2): a standing dependency update, recognised by "
+        f"{', '.join(sorted(gate.recognised_by))} (policy version {policy.version}), bound to "
+        f"the package revision {revision.approved_by} approved, in a repository the member "
+        "record grants"
+    )
+
+
+def _bump_revision_refusal(
+    revision: WorkPackageRevision, actor: ActorContext
+) -> _PolicyRefusal | None:
+    if actor.role is not ActorRole.SYSTEM:
+        return _PolicyRefusal("proposer_not_system")
+    if not revision.approved_by.startswith(_BUMP_APPROVER):
+        return _PolicyRefusal("revision_not_approved_by_bump_policy")
+    if revision.profile != DEPENDENCY_UPDATE:
+        return _PolicyRefusal("revision_not_dependency_update")
+    snapshot = revision.enforcement_snapshot
+    fields = snapshot.get("profile_fields") if isinstance(snapshot, dict) else None
+    if not isinstance(fields, dict) or fields.get("standing") is not True:
+        return _PolicyRefusal("revision_not_standing")
+    return None
+
+
+def _record_policy_not_applied(
+    session: Session,
+    proposal: DecompositionProposal,
+    actor: ActorContext,
+    refusal: _PolicyRefusal,
+) -> None:
+    session.add(
+        Event(
+            occurred_at=TransactionClock().now(session),
+            actor_id=actor.actor_id,
+            action=POLICY_NOT_APPLIED,
+            subject_type="decomposition_proposal",
+            subject_id=proposal.id,
+            from_state=proposal.state,
+            to_state=proposal.state,
+            payload={"reason": refusal.reason, "detail": list(refusal.detail)},
+            correlation_id=uuid.uuid4(),
+            idempotency_key=_derived_idempotency_key(
+                proposal.idempotency_key, "policy-not-applied"
+            ),
+        )
+    )
+    session.flush()
+
+
 def approve_decomposition_proposal(
     session: Session,
     proposal_id: uuid.UUID,
@@ -364,8 +537,8 @@ def _approve(
     idempotency_key: str,
 ) -> DecompositionProposal:
     """Approve a proposal: create its units and dependencies. The caller has established who may
-    decide it: a person (`approve_decomposition_proposal`), or policy for a rotation
-    (`_policy_approval`)."""
+    decide it: a person (`approve_decomposition_proposal`), or policy for a rotation or a
+    standing bump (`_policy_approval`)."""
     proposal = _proposal_for_decision(session, proposal_id)
     revision = session.get(
         WorkPackageRevision,

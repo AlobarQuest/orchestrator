@@ -26,8 +26,9 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   `authority` has no mutation path.** While none of the approval's units has been claimed or
   dispatched, a human can supersede the approval from its proposal page in `/review` and submit a
   corrected breakdown (ADR-0052). Once a unit has been worked, a wrong envelope costs a whole new
-  package revision plus a fresh human approval per unit. Before spending any of that, dry-run each unit against its
-  real target repo, read-only: prove the mutator yields a diff (`uv lock --upgrade
+  package revision plus a fresh human approval per unit. Before spending any of that, dry-run each
+  session-authored unit (a standing bump's decomposition is built without a local run, ADR-0006
+  amendment 2) against its real target repo, read-only: prove the mutator yields a diff (`uv lock --upgrade
   --dry-run`, `npm outdated`) and prove the verifier actually executes tools (no
   `"… not installed — skipping"`, a real `collected N items`). Verifying a manifest's
   *type* is not verifying an upgrade is *available*: a `==` pin makes `uv lock
@@ -110,12 +111,15 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
 ### #40
 
 - **A person approves a decomposition only through the `/review` GUI, never the raw `/api`
-  path, and policy approves only a rotation's.** A decomposition SYSTEM proposes for a standing
-  rotation package a person approved, whose dependencies are all unit-on-unit and whose every
-  unit only a rotation pattern recognises within its budgeted attempts, is approved by policy in
-  the proposal's own transaction (`decomposition._policy_approval`, ADR-0055 amendment 16),
-  attributed to SYSTEM with the pattern and policy version in its reason; if that approval can't
-  complete, the proposal waits for a person. Every other decomposition is a person's. **The raw `/api` approve and reject routes, and their `approve-decomposition` /
+  path, and policy approves only a rotation's or a standing bump's.** A decomposition SYSTEM
+  proposes for a standing rotation package a person approved, whose dependencies are all
+  unit-on-unit and whose every unit only a rotation pattern recognises within its budgeted attempts,
+  is approved by policy in the proposal's own transaction (`decomposition._policy_approval`,
+  ADR-0055 amendment 16), attributed to SYSTEM with the pattern and policy version in its reason;
+  if that approval can't complete, the proposal waits for a person. A standing dependency update
+  in a granted repository is approved the same way (ADR-0006 amendment 2, which lists its
+  conditions); each refusal is served as `policy_not_applied` on the proposal.
+  Every other decomposition is a person's. **The raw `/api` approve and reject routes, and their `approve-decomposition` /
   `reject-decomposition` CLI commands, were DELETED on 2026-09-28 (Tier 3 item 24b); the rest of
   this bullet is why they could never have been used.** `approve_decomposition_proposal` calls `_require_decision_actor`, which
   raises unless `actor.role is ActorRole.HUMAN`. But the raw `POST
