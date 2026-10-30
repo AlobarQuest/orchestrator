@@ -44,6 +44,11 @@ def test_application_write_still_sends_two_rows() -> None:
     assert {r.url.path for r in seen} == {f"/api/v1/applications/{UUID}/envs"}
 
 
+def test_an_unknown_resource_type_is_refused() -> None:
+    with pytest.raises(ContractError, match="application or a service"):
+        CoolifyClient(URL, Value("throwaway-coolify-token"), "database", UUID)  # type: ignore[arg-type]
+
+
 def test_permits_is_exact_for_a_service() -> None:
     client = build("service", [])
     assert client.permits("PATCH", f"/api/v1/services/{UUID}/envs")

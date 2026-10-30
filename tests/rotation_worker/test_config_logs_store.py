@@ -426,3 +426,22 @@ def test_helper_settings_are_all_or_none(tmp_path: Path) -> None:
     path.write_text(CONFIG + HELPER.replace("root@ovh-vps1", "-oProxyCommand=x"))
     with pytest.raises(ConfigError, match="pg_helper_host"):
         load(path)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "@cert-authority ovh-vps1 ssh-ed25519 AAAAthrowaway",
+        "*.vps1 ssh-ed25519 AAAAthrowaway",
+        "ovh-vps? ssh-ed25519 AAAAthrowaway",
+        "ovh-vps1,other ssh-ed25519 AAAAthrowaway",
+        "other-host ssh-ed25519 AAAAthrowaway",
+        "ovh-vps1 ssh-ed25519",
+        "ovh-vps1 ssh-ed25519 AAAA extra",
+    ],
+)
+def test_the_pinned_host_key_line_must_be_exact(tmp_path: Path, line: str) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(CONFIG + HELPER.replace("ovh-vps1 ssh-ed25519 AAAAthrowaway", line))
+    with pytest.raises(ConfigError, match="pg_helper_known_host"):
+        load(path)

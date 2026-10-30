@@ -1,10 +1,11 @@
-"""The executor's Coolify writes: one approved application's variable, and its restart.
+"""The executor's Coolify writes: one approved resource's variable (an application or a service),
+and its restart.
 
 ADR-0055 amendment 1 measured the token the executor holds: `read`, `write` and `deploy`, without
 `read:sensitive`, so it writes a variable it can never read back. Coolify tokens name actions, not
 resources, so the token itself could change any application on the instance. This client is the
-bound: it is built for the one application uuid an approved destination names, and its `permits`
-allows exactly that application's env PATCH and restart, so a bug elsewhere can't reach another.
+bound: it is built for the one resource uuid an approved destination names, and its `permits`
+allows exactly that resource's env PATCH and restart, so a bug elsewhere can't reach another.
 
 Each variable is stored twice, once per `is_preview` value, and a PATCH changes one (amendment 1),
 so a write sends both (a service's variable has one row). A refused write stops: the
@@ -59,6 +60,8 @@ class CoolifyClient:
         uuid: str,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
+        if resource_type not in ("application", "service"):
+            raise ContractError("a Coolify resource is an application or a service")
         problem = url_problem(base_url)
         if problem is not None:
             raise ContractError(f"the Coolify URL {problem}")

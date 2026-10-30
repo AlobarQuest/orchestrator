@@ -31,6 +31,7 @@ REVISION_PATTERN: Final = re.compile(r"^[0-9a-f]{7,12}$")
 APP_ID_PATTERN: Final = re.compile(r"^[1-9][0-9]{0,11}$")
 KEYCHAIN_NAME: Final = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 SSH_DESTINATION: Final = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.@-]{0,127}$")
+KNOWN_HOST_KEY: Final = re.compile(r"^(?:ssh|ecdsa|sk)-[a-z0-9@.-]+ [A-Za-z0-9+/]+={0,2}$")
 STORES: Final = ("bws", "keychain")
 # What only the VM instance's configuration may name.
 VM_ONLY: Final = (
@@ -227,9 +228,19 @@ def _pg_helper(raw: dict[str, Any]) -> tuple[str | None, str | None, str | None]
         raise ConfigError(
             "pg_helper_host is an ssh destination, with the helper's key and host key"
         )
-    if not isinstance(known_host, str) or not known_host.strip() or "\n" in known_host.strip():
-        raise ConfigError("pg_helper_known_host is one known_hosts line, with the helper's key")
+    if not isinstance(known_host, str) or not _pins(host, known_host.strip()):
+        raise ConfigError(
+            "pg_helper_known_host is exactly '<host> <keytype> <base64>' for pg_helper_host"
+        )
     return key, host, known_host.strip()
+
+
+def _pins(destination: str, line: str) -> bool:
+    """Whether `line` pins one key for exactly the destination's host: no marker, no pattern."""
+    fields = line.split(" ")
+    if len(fields) != 3 or not KNOWN_HOST_KEY.fullmatch(" ".join(fields[1:])):
+        return False
+    return fields[0] == destination.rsplit("@", 1)[-1]
 
 
 def read_root_token(path: Path) -> Value:

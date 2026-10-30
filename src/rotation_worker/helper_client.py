@@ -22,9 +22,11 @@ from rotation_worker.contract import ContractError
 from rotation_worker.values import Value
 
 SSH: Final = "/usr/bin/ssh"
-TIMEOUT_SECONDS: Final = 120
+# Above the helper's worst case (a 60 second statement and a probe, each).
+TIMEOUT_SECONDS: Final = 300
 REFUSED_EXIT: Final = 2
 REASON: Final = re.compile(r"^[a-z_]{1,64}$")
+FINGERPRINT: Final = re.compile(r"^(?:[0-9a-f]{16}:[0-9]+)?$")
 FINGERPRINT_KEY: Final = re.compile(r"^[A-Za-z0-9_.-]+/[A-Z_][A-Z0-9_]*$")
 
 Runner = Callable[..., subprocess.CompletedProcess[bytes]]
@@ -56,8 +58,10 @@ class HelperClient:
     def probe(self, target: str, value: Value) -> int | None:
         """The HTTP-style status the target's login gives `value`: 200, 401, or None if unknown."""
         answer = self._call({"verb": "probe", "target": target, "password": value.reveal()})
-        status = answer.get("status")
-        if status is not None and (isinstance(status, bool) or status not in (200, 401)):
+        if "status" not in answer:
+            raise ContractError("the helper's probe answer has no status")
+        status = answer["status"]
+        if status is not None and (type(status) is not int or status not in (200, 401)):
             raise ContractError("the helper's probe answer has an unknown status")
         return status
 
@@ -66,7 +70,10 @@ class HelperClient:
         answer = self._call({"verb": "loaded", "target": target})
         prints = answer.get("fingerprints")
         if not isinstance(prints, dict) or not all(
-            isinstance(name, str) and FINGERPRINT_KEY.fullmatch(name) and isinstance(print_, str)
+            isinstance(name, str)
+            and FINGERPRINT_KEY.fullmatch(name)
+            and isinstance(print_, str)
+            and FINGERPRINT.fullmatch(print_)
             for name, print_ in prints.items()
         ):
             raise ContractError("the helper's loaded answer is malformed")
@@ -74,6 +81,7 @@ class HelperClient:
 
     def _call(self, request: dict[str, str]) -> dict[str, Any]:
         self._state_dir.mkdir(parents=True, exist_ok=True)
+        self._sweep()
         scratch = Path(tempfile.mkdtemp(prefix="pg-helper-", dir=self._state_dir))
         try:
             key_file, known_hosts = scratch / "key", scratch / "known_hosts"
@@ -96,10 +104,19 @@ class HelperClient:
             _remove(scratch)
         return _answer(request["verb"], result)
 
+    def _sweep(self) -> None:
+        """Remove a scratch directory a killed call left behind: a unit makes one call at a
+        time, so any `pg-helper-*` found at the start is stale, and may hold the key."""
+        for stale in self._state_dir.glob("pg-helper-*"):
+            if stale.is_dir():
+                _remove(stale)
+
 
 def ssh_argv(host: str, key_file: Path, known_hosts: Path) -> list[str]:
     return [
         SSH,
+        "-F",
+        "/dev/null",
         "-i",
         str(key_file),
         "-o",
@@ -110,14 +127,21 @@ def ssh_argv(host: str, key_file: Path, known_hosts: Path) -> list[str]:
         "StrictHostKeyChecking=yes",
         "-o",
         f"UserKnownHostsFile={known_hosts}",
+        "-o",
+        "GlobalKnownHostsFile=/dev/null",
+        "--",
         host,
     ]
 
 
 def _remove(scratch: Path) -> None:
-    for name in ("key", "known_hosts"):
-        (scratch / name).unlink(missing_ok=True)
-    scratch.rmdir()
+    """Best effort: a failure here must not mask the call's own error or discard its answer."""
+    try:
+        for entry in scratch.iterdir():
+            entry.unlink(missing_ok=True)
+        scratch.rmdir()
+    except OSError:
+        pass
 
 
 def _write_private(path: Path, text: str) -> None:
