@@ -516,6 +516,8 @@ paths = [
   "tests/services/test_revert_build.py",
   "tests/services/test_revert_landing.py",
   "tests/services/test_revert_act.py",
+  "tests/services/test_revert_repoint.py",
+  "tests/services/test_estate_revert_landing.py",
   "tests/services/test_revert_watch.py",
   "tests/contract/test_landing_fact_contract.py",
   "tests/contract/test_landing_trailer_contract.py",

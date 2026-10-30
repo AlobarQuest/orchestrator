@@ -201,6 +201,10 @@ class ChangeRecord:
     # and poisoning every record because a field is missing would refuse work that has its own
     # per-unit human approval. The landing that DOES need them refuses when they are absent.
     conditions: LandingConditions | None = None
+    # The record's class as the producer filed it (Landing Part 3b): the estate landing tells the
+    # SDS's revert of a bump from a bump by it. None when the row serves none; a class of the
+    # wrong shape makes the whole record unreadable, like every other qualifier.
+    change_class: str | None = None
 
     @property
     def approved(self) -> bool:
@@ -315,6 +319,9 @@ def _answer_from_body(
     if qualifiers is None:
         return ChangeRecordAnswer(False, reason=SOURCE_UNREADABLE)
     record_id, policy_version, objections, decided_by = qualifiers
+    change_class = row.get("change_class")
+    if change_class is not None and (not isinstance(change_class, str) or not change_class):
+        return ChangeRecordAnswer(False, reason=SOURCE_UNREADABLE)
     return ChangeRecordAnswer(
         True,
         record=ChangeRecord(
@@ -326,6 +333,7 @@ def _answer_from_body(
             policy_objections=objections,
             decided_by=decided_by,
             conditions=_conditions(row),
+            change_class=change_class,
         ),
     )
 

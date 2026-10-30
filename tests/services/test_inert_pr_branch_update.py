@@ -445,9 +445,7 @@ def test_the_callers_WAITING_ON_A_REVERT_code_is_the_one_the_admission_raises() 
     """Renamed on this side alone, every bump in a repository with a revert in progress would be
     a nightly finding until the revert lands."""
     from lander.core import REVERTING
-    from orchestrator.services.landing.inert_landing_admission import (
-        LANDING_REPOSITORY_REVERTING,
-    )
+    from orchestrator.services.landing.revert_subject import LANDING_REPOSITORY_REVERTING
 
     assert REVERTING == LANDING_REPOSITORY_REVERTING
 

@@ -37,7 +37,6 @@ from orchestrator.services.landing.estate_landing_admission import (
 from orchestrator.services.landing.inert_landing_admission import (
     INERT_LANDING_POLICY_SOURCE_UNCONFIGURED,
     INERT_LANDING_POLICY_SOURCE_UNREADABLE,
-    LANDING_REVERT_UNREADABLE,
     inert_landing_admission,
 )
 from orchestrator.services.landing.interfaces import (
@@ -61,6 +60,7 @@ from orchestrator.services.landing.interfaces import (
     PullRequestCommit,
     SiblingReadGateway,
 )
+from orchestrator.services.landing.revert_subject import LANDING_REVERT_UNREADABLE
 from orchestrator.services.landing.terms import (
     freshness_derived_refusals,
 )

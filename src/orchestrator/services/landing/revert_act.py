@@ -34,10 +34,27 @@ judged.
 An estate-lane landing is judged by what production serves as well as by its checks
 (`revert_watch`): its applications are the member record's `apps` for the repository, and their
 readings are `revision_watcher`'s `production_revision` observations, read here from the store. A
-`flaky_retry` on one reruns as on an inert landing. A `bad` one, for either reason, is refused
-`landing_revert_needs_repoint` and nothing is written: the revert of a repository that redeploys
-waits until production has been pointed back at the build before the bump, which this act does not
-do. The watch reports the verdict and its reason meanwhile.
+`flaky_retry` on one reruns as on an inert landing. A `bad` one, for either reason, is not reverted
+straight away: `act_on_landing` refuses it `landing_revert_needs_repoint` and writes nothing,
+because production must first serve the build before the bump. Three more entry points, each one
+step the estate lander drives, one per pass:
+
+1. `record_repoint` -- the lander names the images it is about to pin each application to. The
+   landing is judged again here and must still be `bad`; every image must be the bump's parent's
+   tag with a digest and the moving tag to restore. The record moves to `repointed` with
+   `pinned_images` BEFORE the lander touches production, so every pin it makes has a record (and
+   the lander's `landing-production-pinned` alert) behind it; a pin that then fails part-way is
+   repeated by the next pass, and the record already says production may be pinned.
+2. `act_on_landing` on a `repointed` record -- the lander has confirmed every application serves
+   the parent -- opens the revert from the record, without judging again: production serves the
+   parent by the SDS's own act now, so a fresh judgment would read `clean`. The revert pull
+   request's number is written in the same transaction that opens it.
+3. `record_restored` -- the revert landed (the estate merge path records `revert_landed` and the
+   hold), the lander put the moving tag back and confirmed production serves the revert's merge
+   commit: the record moves to `restored`. A restored revert has landed in every other read.
+
+A record that pinned production stays in the watch until it is restored, whatever its status and
+age, so the lander's pinned alert stays open until then.
 
 ## Each landing is under its own lane
 
@@ -63,7 +80,9 @@ nothing. Each act also writes one `Event` under the caller's key; a repeated key
 
 from __future__ import annotations
 
+import re
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Final
@@ -101,7 +120,12 @@ from orchestrator.services.landing.revert_build import (
     open_revert,
     plan_revert,
 )
-from orchestrator.services.landing.revert_record import REVERT_LANDED, REVERT_OPENED
+from orchestrator.services.landing.revert_record import (
+    LANDED_REVERTS,
+    REPOINTED,
+    REVERT_LANDED,
+    REVERT_OPENED,
+)
 from orchestrator.services.landing.revert_watch import (
     BAD,
     FLAKY_RETRY,
@@ -130,6 +154,12 @@ LANDING_REVERT_RERUN_REFUSED: Final = "landing_revert_rerun_refused"
 LANDING_REVERT_RECORD_MOVED: Final = "landing_revert_record_moved"
 # A landing that redeploys was judged bad: production must be pointed back before it is reverted.
 LANDING_REVERT_NEEDS_REPOINT: Final = "landing_revert_needs_repoint"
+# Landing Part 3b. A re-point asked of a landing that does not redeploy, of one not judged bad now,
+# or naming images other than the bump's parent's; and a restore asked before the revert landed.
+LANDING_REPOINT_NOT_SERVING: Final = "landing_repoint_not_serving"
+LANDING_REPOINT_NOT_BAD: Final = "landing_repoint_not_bad"
+LANDING_REPOINT_IMAGES_INVALID: Final = "landing_repoint_images_invalid"
+LANDING_RESTORE_NOT_LANDED: Final = "landing_restore_not_landed"
 
 # The record statuses, as the act writes them.
 RERUN_REQUESTED: Final = "rerun_requested"
@@ -141,8 +171,17 @@ REVERT_FAILED: Final = "revert_failed"
 # branch possibly broken with no revert, which only a person clears. Never `rerun_requested`: a
 # rerun that passed leaves its record there for good, and it would be re-judged on every pass.
 _ALWAYS_WATCHED: Final = frozenset(  # not-a-vocabulary: record statuses
-    {REVERT_OPENED, REFUSED_OVERLAP, REVERT_FAILED}
+    {REVERT_OPENED, REFUSED_OVERLAP, REVERT_FAILED, REPOINTED}
 )
+RESTORED: Final = "restored"
+# The statuses a re-point may be recorded from: no record yet, or a rerun's.
+_REPOINTABLE: Final = (None, RERUN_REQUESTED)
+# An image a re-point names: the bump's parent's full commit as its tag, and the digest it resolved.
+_FULL_SHA: Final = re.compile(r"[0-9a-f]{40}")
+_DIGEST: Final = re.compile(r"sha256:[0-9a-f]{64}")
+# The lanes, as the watch names them: the landing lane each watched landing came through.
+ESTATE_LANE: Final = "estate"
+INERT_LANE: Final = "inert"
 
 # The events a watched landing writes: each lane's, one per landed status. The estate lane's are
 # the landings that redeploy, which are judged by what production serves too.
@@ -195,6 +234,36 @@ class WatchedLanding:
     revert_pr_number: int | None
     hold_outcome: str | None
     reason: str | None
+    # Landing Part 3b. Which lane landed it (`estate` redeploys, `inert` does not), the bump's
+    # parent (the record's, else a served `bad` verdict's), the images a re-point pinned, and the
+    # revert's own merge commit once landed: what the estate lander needs to pin and restore.
+    lane: str = INERT_LANE
+    parent_sha: str | None = None
+    pinned_images: dict[str, dict[str, str]] | None = None
+    revert_merge_sha: str | None = None
+
+
+@dataclass(frozen=True)
+class RepointCommand:
+    """The estate lander's statement that it is pointing each application at the bump's parent's
+    image: `pinned_images` is `{application uuid: {tag, digest, restore_tag}}`."""
+
+    repository: str
+    pr_number: int
+    actor: ActorContext
+    idempotency_key: str
+    expected_status: str | None
+    pinned_images: Mapping[str, object]
+
+
+@dataclass(frozen=True)
+class RestoreCommand:
+    repository: str
+    pr_number: int
+    actor: ActorContext
+    idempotency_key: str
+    # The record's status the caller read: only `revert_landed` is restored.
+    expected_status: str
 
 
 @dataclass(frozen=True)
@@ -269,7 +338,7 @@ def landing_watch(
             )
         else:
             verdict = _judgment(session, lane.gateway, landing, record, redeploys)
-        watched.append(_entry(landing, record, verdict))
+        watched.append(_entry(landing, record, verdict, redeploys))
     return tuple(watched)
 
 
@@ -309,19 +378,11 @@ def _act(
     estate: RevertLane,
     credentials_configured: bool,
 ) -> RevertActOutcome:
-    authorize_actor(command.actor, _VERB)
-    repository = command.repository.lower()
-    _refuse_unless_permitted(
-        session, repository, (inert.enabled or estate.enabled) and credentials_configured
+    landing, record, repository = _locked_landing(
+        session, command, (inert.enabled or estate.enabled) and credentials_configured
     )
-    lock_repository(session, _LOCK, repository)
-    spent = session.scalar(select(Event).where(Event.idempotency_key == command.idempotency_key))
-    if spent is not None:
-        return _replay(spent, command, repository)
-    landing = next(iter(_watched_landings(session, repository, command.pr_number)), None)
-    record = _record(session, repository, command.pr_number, lock=True)
-    if landing is None:
-        raise _not_watched(repository, command.pr_number)
+    if isinstance(landing, RevertActOutcome):
+        return landing
     redeploys = _redeploys(session, landing)
     lane = estate if redeploys else inert
     _refuse_unless_lane_on(lane.enabled)
@@ -332,6 +393,10 @@ def _act(
             f"the record is not {command.expected_status or 'absent'} as the caller read it",
             "re-read the landing watch and ask again",
         )
+    if record is not None and record.status == REPOINTED and redeploys:
+        # Production serves the parent by the SDS's own act now, so a fresh judgment would read
+        # clean: the revert opens from the record that judged it bad.
+        return _revert(session, command, gateway, landing, record, _stored_verdict(record))
     if record is None:
         pull = _bump_pull(gateway, landing)
         if pull is None:
@@ -352,6 +417,215 @@ def _act(
     if verdict.kind == BAD and record is not None:
         return _revert(session, command, gateway, landing, record, verdict)
     return _outcome(landing, verdict, record, acted=False)
+
+
+def record_repoint(
+    session: Session,
+    command: RepointCommand,
+    *,
+    inert: RevertLane,
+    estate: RevertLane,
+    credentials_configured: bool,
+) -> RevertActOutcome:
+    """Record that production is being pointed at the bump's parent's image (Landing Part 3b).
+
+    The landing must redeploy, be judged `bad` again here, and the record must be absent or a
+    rerun's, as the caller read it. Each named image must be the parent's tag with its digest and
+    the moving tag to restore. Owns its transaction.
+    """
+    try:
+        outcome = _repoint(session, command, estate, inert, credentials_configured)
+        session.commit()
+        return outcome
+    except Exception:
+        session.rollback()
+        raise
+
+
+def _repoint(
+    session: Session,
+    command: RepointCommand,
+    estate: RevertLane,
+    inert: RevertLane,
+    credentials_configured: bool,
+) -> RevertActOutcome:
+    landing, record, repository = _locked_landing(
+        session, command, (inert.enabled or estate.enabled) and credentials_configured
+    )
+    if isinstance(landing, RevertActOutcome):
+        return landing
+    if not _redeploys(session, landing):
+        raise DomainError(
+            LANDING_REPOINT_NOT_SERVING,
+            f"{repository}#{command.pr_number} landed where landing redeploys nothing",
+            "only a landing that redeploys is pointed back; an inert one is reverted directly",
+        )
+    _refuse_unless_lane_on(estate.enabled)
+    status = None if record is None else record.status
+    if status != command.expected_status or status not in _REPOINTABLE:
+        raise DomainError(
+            LANDING_REVERT_RECORD_MOVED,
+            f"the record is {status or 'absent'}, not {command.expected_status or 'absent'} "
+            "awaiting a re-point",
+            "re-read the landing watch and ask again",
+        )
+    verdict = _judgment(session, estate.gateway, landing, record, True)
+    parent = verdict.parent_sha or (None if record is None else record.parent_sha)
+    if verdict.kind != BAD or parent is None:
+        raise DomainError(
+            LANDING_REPOINT_NOT_BAD,
+            f"{repository}#{command.pr_number} is judged {verdict.kind} now: {verdict.detail}",
+            "nothing is pointed back; the next pass judges it again",
+        )
+    images = _valid_images(command.pinned_images, parent)
+    now = datetime.now(UTC)
+    if record is None:
+        record = LandingRevert(
+            repository=landing.repository,
+            pr_number=landing.pr_number,
+            merge_commit_sha=landing.merge_commit_sha or "",
+            parent_sha=parent,
+            failed_job_names=[],
+            # Not null in the table; a served `bad` names no run.
+            failed_run_id=verdict.run_id or 0,
+            status=REPOINTED,
+            bumps=[],
+            created_at=now,
+        )
+        session.add(record)
+    record.status = REPOINTED
+    record.pinned_images = images
+    record.failed_job_names = list(verdict.failed_job_names) or list(record.failed_job_names)
+    record.failed_run_id = verdict.run_id or record.failed_run_id
+    record.detail = f"bad by what it {verdict.reason}: {verdict.detail}"
+    record.updated_at = now
+    return _recorded(session, _as_revert_command(command), landing, record, verdict)
+
+
+def _valid_images(images: Mapping[str, object], parent: str) -> dict[str, dict[str, str]]:
+    """The images a re-point names, each the parent's full commit as its tag, a digest, and the
+    moving tag to put back; else refused, naming nothing it was given."""
+    valid: dict[str, dict[str, str]] = {}
+    for application, image in images.items():
+        if not isinstance(application, str) or not application or not isinstance(image, Mapping):
+            break
+        tag, digest, restore = (image.get(key) for key in ("tag", "digest", "restore_tag"))
+        if not (isinstance(tag, str) and isinstance(digest, str) and isinstance(restore, str)):
+            break
+        if tag.lower() != parent.lower() or not _FULL_SHA.fullmatch(tag.lower()):
+            break
+        if not _DIGEST.fullmatch(digest) or not restore or _FULL_SHA.fullmatch(restore.lower()):
+            break
+        valid[application] = {"tag": tag.lower(), "digest": digest, "restore_tag": restore}
+    else:
+        if valid:
+            return valid
+    raise DomainError(
+        LANDING_REPOINT_IMAGES_INVALID,
+        f"each application must be pinned to the parent {parent[:12]} by its full commit, with "
+        "a sha256 digest and a moving tag to restore",
+        "resolve the parent's image again and name it",
+    )
+
+
+def record_restored(
+    session: Session,
+    command: RestoreCommand,
+    *,
+    inert: RevertLane,
+    estate: RevertLane,
+    credentials_configured: bool,
+) -> RevertActOutcome:
+    """Record that the moving tag is back and production serves the revert (Landing Part 3b).
+
+    Only a landed revert that pinned production may be restored. The lander confirms what
+    production serves before it asks; this side has no way to read it. Owns its transaction.
+    """
+    try:
+        outcome = _restore(session, command, estate, inert, credentials_configured)
+        session.commit()
+        return outcome
+    except Exception:
+        session.rollback()
+        raise
+
+
+def _restore(
+    session: Session,
+    command: RestoreCommand,
+    estate: RevertLane,
+    inert: RevertLane,
+    credentials_configured: bool,
+) -> RevertActOutcome:
+    landing, record, repository = _locked_landing(
+        session, command, (inert.enabled or estate.enabled) and credentials_configured
+    )
+    if isinstance(landing, RevertActOutcome):
+        return landing
+    _refuse_unless_lane_on(estate.enabled)
+    status = None if record is None else record.status
+    if status != command.expected_status:
+        raise DomainError(
+            LANDING_REVERT_RECORD_MOVED,
+            f"the record is {status or 'absent'}, not {command.expected_status} as the caller "
+            "read it",
+            "re-read the landing watch and ask again",
+        )
+    if record is None or record.status != REVERT_LANDED or record.pinned_images is None:
+        raise DomainError(
+            LANDING_RESTORE_NOT_LANDED,
+            f"{repository}#{command.pr_number} has no landed revert that pinned production "
+            f"(the record is {'absent' if record is None else record.status})",
+            "production stays pinned until the revert lands",
+        )
+    now = datetime.now(UTC)
+    record.status = RESTORED
+    record.restored_at = now
+    record.updated_at = now
+    verdict = _stored_verdict(record)
+    return _recorded(session, _as_revert_command(command), landing, record, verdict)
+
+
+def _locked_landing(
+    session: Session, command: RevertCommand | RepointCommand | RestoreCommand, lane_on: bool
+) -> tuple[EstatePrMerge | RevertActOutcome, LandingRevert | None, str]:
+    """The act's common start: the actor, the switch and grant, the repository's lock, a replay of
+    a spent key, and the watched landing with its record read under `FOR UPDATE`."""
+    authorize_actor(command.actor, _VERB)
+    repository = command.repository.lower()
+    _refuse_unless_permitted(session, repository, lane_on)
+    lock_repository(session, _LOCK, repository)
+    spent = session.scalar(select(Event).where(Event.idempotency_key == command.idempotency_key))
+    if spent is not None:
+        return _replay(spent, _as_revert_command(command), repository), None, repository
+    landing = next(iter(_watched_landings(session, repository, command.pr_number)), None)
+    record = _record(session, repository, command.pr_number, lock=True)
+    if landing is None:
+        raise _not_watched(repository, command.pr_number)
+    return landing, record, repository
+
+
+def _as_revert_command(command: RevertCommand | RepointCommand | RestoreCommand) -> RevertCommand:
+    """The fields the shared recording and replay read, from any step's command."""
+    if isinstance(command, RevertCommand):
+        return command
+    return RevertCommand(
+        repository=command.repository,
+        pr_number=command.pr_number,
+        actor=command.actor,
+        idempotency_key=command.idempotency_key,
+        expected_status=command.expected_status,
+    )
+
+
+def _stored_verdict(record: LandingRevert) -> Verdict:
+    """The `bad` a record past the judgment was recorded on: its failed jobs and run."""
+    return Verdict(
+        kind=BAD,
+        failed_job_names=tuple(record.failed_job_names),
+        run_id=record.failed_run_id or None,
+        detail=record.detail or "judged bad before production was pointed back",
+    )
 
 
 def _refuse_unless_lane_on(lane_on: bool) -> None:
@@ -487,7 +761,17 @@ def _revert(
                     gateway,
                     repository,
                     plan,
-                    RevertOf(landing.pr_number, pull.title, verdict.failed_job_names),
+                    RevertOf(
+                        landing.pr_number,
+                        pull.title,
+                        verdict.failed_job_names,
+                        production_reason=(
+                            None
+                            if verdict.failed_job_names
+                            else "production never served it and was pointed back at "
+                            f"{record.parent_sha[:12]}"
+                        ),
+                    ),
                 )
             except EstateGatewayError as error:
                 record.status = REVERT_FAILED
@@ -550,11 +834,16 @@ def _watched_landings(
         EstatePrMerge.created_at >= window,
         exists().where(
             is_record,
-            or_(LandingRevert.status.in_(_ALWAYS_WATCHED), LandingRevert.updated_at >= window),
+            or_(
+                LandingRevert.status.in_(_ALWAYS_WATCHED),
+                LandingRevert.updated_at >= window,
+                # Landing Part 3b: production pinned and not yet restored.
+                and_(LandingRevert.pinned_images.is_not(None), LandingRevert.status != RESTORED),
+            ),
         ),
     )
     # A landed revert past its window is a candidate, kept only while its dependency is held.
-    landed = LandingRevert.status == REVERT_LANDED
+    landed = LandingRevert.status.in_(LANDED_REVERTS)
     if repository is not None:
         conditions.append(EstatePrMerge.repository == repository)
     if pr_number is not None:
@@ -649,7 +938,7 @@ def _fact(facts: object, key: str) -> str | None:
 def _still_held(session: Session, landing: EstatePrMerge) -> bool:
     """Is any dependency its landed revert took back out still held in the member record?"""
     record = _record(session, landing.repository, landing.pr_number, lock=False)
-    if record is None or record.status != REVERT_LANDED:
+    if record is None or record.status not in LANDED_REVERTS:
         return False
     holds = holds_for(session, landing.repository)
     return any(
@@ -707,7 +996,7 @@ def _not_watched(repository: str, pr_number: int) -> DomainError:
 
 
 def _entry(
-    landing: EstatePrMerge, record: LandingRevert | None, verdict: Verdict | None
+    landing: EstatePrMerge, record: LandingRevert | None, verdict: Verdict | None, redeploys: bool
 ) -> WatchedLanding:
     """A judged landing reports its verdict; a record past the rerun reports itself."""
     names = verdict.failed_job_names if verdict is not None else ()
@@ -730,6 +1019,14 @@ def _entry(
         revert_pr_number=None if record is None else record.revert_pr_number,
         hold_outcome=None if record is None else record.hold_outcome,
         reason=None if verdict is None else verdict.reason,
+        lane=ESTATE_LANE if redeploys else INERT_LANE,
+        parent_sha=(
+            record.parent_sha
+            if record is not None
+            else (None if verdict is None else verdict.parent_sha)
+        ),
+        pinned_images=None if record is None else record.pinned_images,
+        revert_merge_sha=None if record is None else record.revert_merge_sha,
     )
 
 

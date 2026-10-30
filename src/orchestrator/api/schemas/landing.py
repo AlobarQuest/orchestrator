@@ -412,6 +412,12 @@ class WatchedLandingModel(BaseModel):
     revert_pr_number: int | None
     hold_outcome: str | None
     reason: str | None
+    # Landing Part 3b: the lane that landed it, the bump's parent, the images a re-point pinned
+    # (`{application uuid: {tag, digest, restore_tag}}`) and the revert's own merge commit.
+    lane: str
+    parent_sha: str | None
+    pinned_images: dict[str, dict[str, str]] | None
+    revert_merge_sha: str | None
 
 
 class LandingWatchResponse(BaseModel):
@@ -441,6 +447,30 @@ class LandingRevertCommandModel(BaseModel):
     idempotency_key: str = Field(min_length=1, max_length=400)
     # The record's status the caller read in the watch, `null` when it had none. Required.
     expected_status: str | None
+
+
+class LandingRepointCommandModel(BaseModel):
+    """The estate lander names the images it points each application at (Landing Part 3b): the
+    bump's parent's full commit as the tag, the digest it resolved, and the moving tag to restore.
+    The orchestrator judges the landing again and records `repointed` only on its own `bad`."""
+
+    repository: str = Field(pattern=r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$", max_length=300)
+    pr_number: int = Field(gt=0)
+    idempotency_key: str = Field(min_length=1, max_length=400)
+    # The record's status the caller read in the watch, `null` when it had none. Required.
+    expected_status: str | None
+    pinned_images: dict[str, dict[str, str]] = Field(min_length=1, max_length=20)
+
+
+class LandingRestoreCommandModel(BaseModel):
+    """The estate lander has put the moving tag back and production serves the revert (Landing
+    Part 3b). Only a landed revert that pinned production is recorded `restored`."""
+
+    repository: str = Field(pattern=r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$", max_length=300)
+    pr_number: int = Field(gt=0)
+    idempotency_key: str = Field(min_length=1, max_length=400)
+    # The record's status the caller read: a restore is asked of a landed revert only.
+    expected_status: str
 
 
 class LandingRevertResponse(BaseModel):

@@ -58,6 +58,7 @@ from orchestrator.factory_policy import load_factory_policy
 from orchestrator.persistence.models import EstatePrMerge
 from orchestrator.reach_vocabulary import LIVE_ESTATE
 from orchestrator.services.execution.target_grant import (
+    DEPENDENCY_UPDATE,
     DEPENDENCY_UPDATES_SERVICE,
     MemberRecordGrants,
 )
@@ -65,6 +66,7 @@ from orchestrator.services.landing.change_record import (
     RECORD_AMBIGUOUS,
     ChangeRecordSource,
     LandingConditions,
+    RevertLandingConditions,
 )
 from orchestrator.services.landing.change_record import (
     SOURCE_UNCONFIGURED as RECORD_SOURCE_UNCONFIGURED,
@@ -96,7 +98,17 @@ from orchestrator.services.landing.interfaces import (
     EstateReadGateway,
     Term,
 )
-from orchestrator.services.landing.revert_record import reverted_versions
+from orchestrator.services.landing.revert_build import REVERT_BRANCH_PREFIX
+from orchestrator.services.landing.revert_record import (
+    RevertSubject,
+    recorded_revert,
+    revert_in_progress,
+    reverted_versions,
+)
+from orchestrator.services.landing.revert_subject import (
+    LANDING_REPOSITORY_REVERTING,
+    revert_subject_term,
+)
 from orchestrator.services.landing.terms import (
     UpdateBumps,
     checks_term,
@@ -163,6 +175,17 @@ LANDING_POLICY_UNREADABLE: Final = "landing_policy_unreadable"
 
 # What GitHub says about the pull request itself.
 LANDING_AUTHOR_NOT_THE_UPDATE_BOT: Final = "landing_author_not_the_update_bot"
+
+# Landing Part 3b. The record's class says what the subject is, and the pull request must agree.
+# A class this lane does not land: neither the bump's nor the revert class the served conditions
+# name (a version before the fourteenth names none, so it lands no revert), or none at all.
+LANDING_RECORD_CLASS_UNKNOWN: Final = "landing_record_class_unknown"
+# The class and the pull request disagree: a revert record whose pull request is not on a revert
+# branch, or a bump's record whose pull request is.
+LANDING_RECORD_CLASS_MISMATCH: Final = "landing_record_class_mismatch"
+# A revert record's pull request was opened by an account the served conditions do not permit, or
+# by one that is not a machine.
+LANDING_REVERT_AUTHOR_NOT_PERMITTED: Final = "landing_revert_author_not_permitted"
 
 # The version delta, parsed from the title at the moment of the act rather than frozen into the
 # record. The update bot rewrites a pull request IN PLACE when a newer version appears, so the
@@ -310,24 +333,49 @@ def estate_landing_admission(
 
     estate = _estate_term(repository, landing_source)
     record = _record_term(repository, pr_number, record_source)
-    window = _window_term(now)
-    pace = _pace_term(session, repository, now)
-    # Landing Part 2: the member record must grant `dependency_updates` on the repository.
+    conditions = record.conditions
+    # Landing Part 3b. A revert record is landed by the served revert conditions, which say whether
+    # the window and the pace apply to it; a bump by the bump's terms, and it waits while a revert
+    # is in progress in its repository.
+    revert_rule = _revert_rule(record, conditions)
+    landed_class = _class_term(record, revert_rule)
+    window = (
+        Term(True, ())
+        if revert_rule is not None and revert_rule.exempt_from_change_window
+        else _window_term(now)
+    )
+    pace = (
+        Term(True, ())
+        if revert_rule is not None and revert_rule.exempt_from_pace
+        else _pace_term(session, repository, now)
+    )
+    # Landing Part 2: the member record must grant `dependency_updates` on the repository. A revert
+    # subject asks a bump's grant: it undoes one.
     granted = grant_term(MemberRecordGrants(session), repository, (DEPENDENCY_UPDATES_SERVICE,))
 
-    conditions = record.conditions
-    remote = _remote_terms(
-        repository,
-        pr_number,
-        conditions,
-        holds_for(session, repository),
-        reverted_versions(session, repository),
-        gateway,
-    )
+    if revert_rule is not None:
+        remote = _revert_remote_terms(
+            repository,
+            pr_number,
+            revert_rule,
+            recorded_revert(session, repository, pr_number),
+            gateway,
+        )
+    else:
+        remote = _remote_terms(
+            repository,
+            pr_number,
+            conditions,
+            holds_for(session, repository),
+            reverted_versions(session, repository),
+            revert_in_progress(session, repository),
+            gateway,
+        )
 
     refusals.extend(estate.refusals)
     refusals.extend(granted.refusals)
     refusals.extend(record.term.refusals)
+    refusals.extend(landed_class.refusals)
     refusals.extend(window.refusals)
     refusals.extend(pace.refusals)
     refusals.extend(remote.term.refusals)
@@ -339,6 +387,7 @@ def estate_landing_admission(
         and estate.met
         and granted.met
         and record.term.met
+        and landed_class.met
         and window.met
         and pace.met
         and remote.term.met
@@ -389,6 +438,10 @@ class _RecordTerms:
     record_id: int | None
     policy_version: int | None
     conditions: LandingConditions | None
+    # Landing Part 3b. The record's class, and whether a record was read at all: an absent or
+    # unreadable record is refused by the record term, and its class is then not asked.
+    change_class: str | None = None
+    present: bool = False
 
 
 def _record_term(
@@ -434,7 +487,31 @@ def _record_term(
         record.record_id,
         record.policy_version,
         record.conditions,
+        record.change_class,
+        present=True,
     )
+
+
+def _revert_rule(
+    record: _RecordTerms, conditions: LandingConditions | None
+) -> RevertLandingConditions | None:
+    """The served revert conditions when this record is of the class they name, else None: the
+    subject is then landed, or refused, as a bump. Landing Part 3b."""
+    rule = conditions.revert_landing if conditions is not None else None
+    if rule is None or record.change_class != rule.change_class:
+        return None
+    return rule
+
+
+def _class_term(record: _RecordTerms, revert_rule: RevertLandingConditions | None) -> Term:
+    """Is the record of a class this lane lands: the bump's, or the revert class the served
+    conditions name? Not asked when no record was read (the record term refuses that), and a
+    record whose conditions did not read is already refused by `landing_conditions_unreadable`."""
+    if not record.present or record.conditions is None:
+        return Term(True, ())
+    if revert_rule is not None or record.change_class == DEPENDENCY_UPDATE:
+        return Term(True, ())
+    return Term(False, (LANDING_RECORD_CLASS_UNKNOWN,))
 
 
 def _unread_reason(reason: str | None) -> str:
@@ -515,6 +592,7 @@ def _remote_terms(
     conditions: LandingConditions | None,
     holds: tuple[HoldView, ...],
     reverted: tuple[Bump, ...],
+    reverting: bool,
     gateway: EstateReadGateway,
 ) -> _RemoteTerms:
     """Every question only GitHub can answer, asked at the moment the answer has to be true.
@@ -536,12 +614,20 @@ def _remote_terms(
     bot = pull.author_login == UPDATE_BOT_LOGIN and pull.author_is_bot
     if not bot:
         refusals.append(LANDING_AUTHOR_NOT_THE_UPDATE_BOT)
+    # Landing Part 3b. A bump's record names the update bot's branch, never one the SDS opened.
+    on_revert_branch = pull.head_ref.startswith(REVERT_BRANCH_PREFIX)
+    if on_revert_branch:
+        refusals.append(LANDING_RECORD_CLASS_MISMATCH)
     if pull.mergeable_state == MERGEABLE_UNKNOWN:
         refusals.append(LANDING_MERGEABILITY_UNKNOWN)
         checks = Term(False, ())
     else:
         checks = checks_term(repository, pull, gateway)
         refusals.extend(checks.refusals)
+    # Landing Part 3b: a revert in progress here (production pinned, or the revert open) holds
+    # every bump until it has landed. The landers report it `waiting`.
+    if reverting:
+        refusals.append(LANDING_REPOSITORY_REVERTING)
 
     # Bridge layer Part 4. Asked BEFORE the record's early return: a held update often has no
     # record (the proposer refuses it), and the close act keys on the ceiling code being present.
@@ -578,6 +664,8 @@ def _remote_terms(
         and not pull.landed
         and pull.base_ref == pull.default_branch
         and bot
+        and not on_revert_branch
+        and not reverting
         and pull.mergeable_state != MERGEABLE_UNKNOWN
         and checks.met
         and fresh.met
@@ -593,6 +681,58 @@ def _remote_terms(
         ceiling.breaches,
         bot,
     )
+
+
+def _revert_remote_terms(
+    repository: str,
+    pr_number: int,
+    rule: RevertLandingConditions,
+    revert: RevertSubject | None,
+    gateway: EstateReadGateway,
+) -> _RemoteTerms:
+    """May the SDS's revert of a bump land here? Landing Part 3b.
+
+    A revert is not a bump, so it is asked none of a bump's questions -- the update bot as author,
+    the update type or ecosystem, the hold, the reverted version, the rollout pin -- and is asked
+    the pull request's own state, the author the served conditions permit (a machine account), and
+    Part 3a's revert terms (`revert_subject`): recorded, current with its base, the exact inverse.
+    A revert record whose pull request is not on a revert branch is a mismatch, and nothing further
+    is read. The rollout pin is not asked: the exact inverse of a bump the pin admitted cannot move
+    the pinned workflow, and a pin that moved since would strand production on the parent's image.
+    """
+    try:
+        pull = gateway.read_pull_request(repository=repository, number=pr_number)
+    except EstateGatewayError:
+        return _RemoteTerms(Term(False, (LANDING_PULL_REQUEST_UNREADABLE,)), None, False)
+    if not pull.head_ref.startswith(REVERT_BRANCH_PREFIX):
+        return _RemoteTerms(Term(False, (LANDING_RECORD_CLASS_MISMATCH,)), pull.head_sha, False)
+
+    refusals: list[str] = []
+    if pull.landed or not pull.open:
+        refusals.append(LANDING_PULL_REQUEST_NOT_OPEN)
+    if pull.base_ref != pull.default_branch:
+        refusals.append(LANDING_BASE_NOT_DEFAULT_BRANCH)
+    author = pull.author_login in rule.permitted_authors and pull.author_is_bot
+    if not author:
+        refusals.append(LANDING_REVERT_AUTHOR_NOT_PERMITTED)
+    if pull.mergeable_state == MERGEABLE_UNKNOWN:
+        refusals.append(LANDING_MERGEABILITY_UNKNOWN)
+        checks = Term(False, ())
+    else:
+        checks = checks_term(repository, pull, gateway)
+        refusals.extend(checks.refusals)
+    subject = revert_subject_term(repository, pull, revert, gateway)
+    refusals.extend(subject.refusals)
+    met = (
+        pull.open
+        and not pull.landed
+        and pull.base_ref == pull.default_branch
+        and author
+        and pull.mergeable_state != MERGEABLE_UNKNOWN
+        and checks.met
+        and subject.met
+    )
+    return _RemoteTerms(Term(met, tuple(refusals)), pull.head_sha, False)
 
 
 def _bump_term(pull: EstatePullRequest, conditions: LandingConditions) -> Term:

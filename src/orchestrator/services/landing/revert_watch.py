@@ -68,21 +68,26 @@ landing serves this one too), behind is `behind`, anything else `diverged`.
 * `bad` when every application's standing reading is `behind` or `diverged`; the watcher has
   posted about every application within `WATCHER_SILENT_HOURS`; production has stood still for
   `ROLLOUT_STUCK_HOURS`, timed from the newest standing reading or from the end of
-  `ROLLOUT_SETTLE_MINUTES` after the landing, whichever is later; and no application serves a
-  commit strictly behind the bump's parent or off the default branch altogether (diverged from
-  both the merge commit and its parent). One application of several behind is never bad:
-  app-brain alone has stayed on a build its three siblings left, for days, on bumps that were
-  fine.
+  `ROLLOUT_SETTLE_MINUTES` after the landing, whichever is later; and every application serves
+  EXACTLY the bump's parent (brain #79's shape: the bump's image never came up, so production kept
+  the build before it). One application of several behind is never bad: app-brain alone has
+  stayed on a build its three siblings left, for days, on bumps that were fine.
 * `pending` otherwise, including when an application has no reading since the landing.
 
 **The settle time delays the verdict; it never drops a reading.** A stuck application writes ONE
 reading, on the first pass after the landing (the branch it is measured against moved), and
 nothing after; dropping that reading for arriving early would leave the rule nothing to fire on.
 
-**Behind the parent is not this bump's fault.** If any application serves a commit older than the
-commit before the bump, production was already stale before it landed -- a bump landed during
-another's outage, or a default branch already broken -- and reverting this one would fix nothing.
-Nor is a commit that was never on the default branch: production serves something else entirely.
+**Anything but the parent is not this bump's fault.** If any application serves a commit older
+than the commit before the bump, production was already stale before it landed -- a bump landed
+during another's outage, or a default branch already broken -- and reverting this one would fix
+nothing. Nor is a side-branch build, or a commit that was never on the default branch: production
+runs a stray build, and pointing it back at the parent would change what serves for a reason this
+bump did not cause. Each is `pending`, never `bad`. A served `bad` names that parent
+(`parent_sha`), which the act points production back at.
+
+A commit compared with itself is `identical` without asking GitHub: the merge commit as the tip a
+reading was measured against, and the parent as what an application serves.
 
 **Time is `received_at`, never `observed_at`**, which the watcher sets to the served commit's
 committer date. The readings are content-addressed, so an application stuck on one commit leaves
@@ -99,7 +104,7 @@ had overnight gaps: through one, a stuck landing stays `pending`, never `bad`.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import Final
 
@@ -137,7 +142,7 @@ DIVERGED: Final = "diverged"
 # GitHub's compare statuses that mean the served commit holds the merge commit.
 _HOLDS_THE_MERGE: Final = frozenset({"identical", "ahead"})  # not-a-vocabulary: GitHub's statuses
 _GITHUB_BEHIND: Final = "behind"
-_GITHUB_DIVERGED: Final = "diverged"
+_IDENTICAL: Final = "identical"
 
 # The one record status this judgment reads on; every later status is reported by itself.
 _RERUN_REQUESTED: Final = "rerun_requested"
@@ -165,6 +170,8 @@ class Verdict:
     reason: str | None = None
     # Every failed watched job, which a `flaky_retry` reruns one at a time by its id.
     failed_jobs: tuple[Job, ...] = ()
+    # On a served `bad`: the bump's parent, which every application serves.
+    parent_sha: str | None = None
 
 
 @dataclass(frozen=True)
@@ -254,6 +261,8 @@ def judge(
     compared: dict[tuple[str, str], str] = {}
 
     def compare(base: str, served: str) -> str:
+        if base.lower() == served.lower():
+            return _IDENTICAL
         if (base, served) not in compared:
             compared[(base, served)] = gateway.compare_status(
                 repository=landing.repository, base=base, head=served
@@ -273,6 +282,8 @@ def judge(
         )
     except EstateGatewayError as error:
         return _verdict(UNREADABLE, gateway_failure_detail(error))
+    if served.kind == BAD:
+        served = replace(served, parent_sha=parent[0])
     return _both(checks, served)
 
 
@@ -335,27 +346,18 @@ def served_verdict(
     stood = production.now - max(settled, *(reading.received_at for reading in standing.values()))
     if stood < timedelta(hours=ROLLOUT_STUCK_HOURS):
         return _verdict(PENDING, f"not serving the merge commit yet: {serving}")
-    to_parent = {
-        str(reading.serving)[:12]: against_parent(str(reading.serving))
-        for reading in standing.values()
-    }
-    stale = sorted(served for served, status in to_parent.items() if status == _GITHUB_BEHIND)
-    if stale:
-        return _verdict(
-            PENDING,
-            f"production was already behind the commit before the bump ({', '.join(stale)}): "
-            "not this bump's fault",
-        )
-    off_main = sorted(
-        str(reading.serving)[:12]
-        for app, reading in standing.items()
-        if relations[app] == DIVERGED and to_parent[str(reading.serving)[:12]] == _GITHUB_DIVERGED
+    elsewhere = sorted(
+        {
+            str(reading.serving)[:12]
+            for reading in standing.values()
+            if against_parent(str(reading.serving)) != _IDENTICAL
+        }
     )
-    if off_main:
+    if elsewhere:
         return _verdict(
             PENDING,
-            f"production serves a commit not on the default branch ({', '.join(off_main)}): "
-            "not this bump's doing",
+            f"production serves a build other than the commit before the bump "
+            f"({', '.join(elsewhere)}): not this bump's doing",
         )
     return Verdict(
         kind=BAD,

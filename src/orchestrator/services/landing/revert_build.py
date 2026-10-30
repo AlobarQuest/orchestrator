@@ -85,6 +85,9 @@ class RevertOf:
     number: int
     title: str
     failed_job_names: tuple[str, ...]
+    # Landing Part 3b: why, when no job failed -- a landing that redeploys judged bad by what
+    # production served. A revert names its failed jobs, or this.
+    production_reason: str | None = None
 
 
 def _touched(before: dict[str, TreeEntry], after: dict[str, TreeEntry]) -> set[str]:
@@ -142,16 +145,18 @@ def open_revert(
     for the same pull request is refused when the branch is created. The caller records the act once
     either way.
 
-    Everything that can refuse is decided before the first write: a revert with no failed job
-    raises `REVERT_NAMES_NO_FAILED_JOB`, and a title that would pass GitHub's limit is shortened.
+    Everything that can refuse is decided before the first write: a revert with no failed job and
+    no production reason raises `REVERT_NAMES_NO_FAILED_JOB`, and a title that would pass GitHub's
+    limit is shortened.
     """
-    if not original.failed_job_names:
+    if not original.failed_job_names and not original.production_reason:
         raise EstateGatewayError(REVERT_NAMES_NO_FAILED_JOB)
     title = _revert_title(original.title)
-    body = (
-        f"Reverts #{original.number}: {', '.join(original.failed_job_names)} "
-        f"failed on {plan.merge_sha}."
-    )
+    if original.failed_job_names:
+        why = f"{', '.join(original.failed_job_names)} failed on {plan.merge_sha}."
+    else:
+        why = f"{original.production_reason} ({plan.merge_sha})."
+    body = f"Reverts #{original.number}: {why}"
     tree = gateway.create_tree(
         repository=repository, base_tree=plan.base_tree_sha, changes=plan.changes
     )

@@ -82,6 +82,8 @@ def test_production_post_route_inventory_is_explicit() -> None:
         # request its own re-composed admission refuses for a hold. SYSTEM-only, like the landings.
         "/api/v1/held-pr-close",
         "/api/v1/landing-revert",
+        "/api/v1/landing-repoint",
+        "/api/v1/landing-restored",
         "/api/v1/work-units/{unit_id}/verify",
         "/api/v1/work-units/{unit_id}/verifier-evidence/named-check",
         "/api/v1/work-units/{unit_id}/release-artifacts",

@@ -336,6 +336,12 @@ class EstateReadGateway(Protocol):
         self, *, repository: str, number: int
     ) -> tuple[PullRequestCommit, ...]: ...
 
+    # Landing Part 3b: the reads a revert subject's exact-inverse check makes, which the estate
+    # lane now asks as the inert lane does (`revert_subject`).
+    def default_branch_head(self, *, repository: str) -> BranchHead: ...
+
+    def tree(self, *, repository: str, commit_sha: str) -> Tree: ...
+
 
 @dataclass(frozen=True)
 class OpenPullRequest:

@@ -22,6 +22,12 @@ from orchestrator.services.membership.holds import Bump
 REVERT_OPENED: Final = "revert_opened"
 REVERT_LANDED: Final = "revert_landed"
 RERUN_REQUESTED: Final = "rerun_requested"
+# Landing Part 3b: production points at the bump's parent's image and the revert is not yet open;
+# and, after the revert landed, the moving tag is back. A restored revert has landed too: every
+# read of a landed revert reads both.
+REPOINTED: Final = "repointed"
+RESTORED: Final = "restored"
+LANDED_REVERTS: Final = (REVERT_LANDED, RESTORED)
 
 
 @dataclass(frozen=True)
@@ -86,7 +92,7 @@ def reverted_versions(session: Session, repository: str) -> tuple[Bump, ...]:
     rows = session.scalars(
         select(LandingRevert).where(
             LandingRevert.repository == repository.lower(),
-            LandingRevert.status == REVERT_LANDED,
+            LandingRevert.status.in_(LANDED_REVERTS),
         )
     )
     return tuple(
@@ -103,7 +109,8 @@ def reverted_versions(session: Session, repository: str) -> tuple[Bump, ...]:
 
 def revert_in_progress(session: Session, repository: str) -> bool:
     """Is a landing in this repository on its way to a revert: a rerun asked for and still in the
-    watch, or a revert opened and not yet landed?
+    watch, production pointed back at the build before the bump (`repointed`, Part 3b), or a revert
+    opened and not yet landed?
 
     A `rerun_requested` record counts only while it is in the watch (`WATCH_HOURS` since it last
     changed), as `revert_act` keeps it: a rerun that passed leaves its record in that status for
@@ -117,7 +124,7 @@ def revert_in_progress(session: Session, repository: str) -> bool:
                 exists().where(
                     LandingRevert.repository == repository.lower(),
                     or_(
-                        LandingRevert.status == REVERT_OPENED,
+                        LandingRevert.status.in_((REVERT_OPENED, REPOINTED)),
                         (LandingRevert.status == RERUN_REQUESTED)
                         & (LandingRevert.updated_at >= window),
                     ),

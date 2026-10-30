@@ -24,6 +24,7 @@ from orchestrator.services.landing import (
     estate_landing_admission,
     inert_landing_admission,
     interfaces,
+    revert_subject,
     terms,
 )
 from orchestrator.services.landing.branch_update_serialization import (
@@ -315,11 +316,15 @@ RELEASING = {
     "landing_pull_request_conflicted",
     "landing_pull_request_not_open",
     "landing_record_absent",
+    # Landing Part 3b: the record's class against its pull request, and a revert's author.
+    "landing_record_class_mismatch",
+    "landing_record_class_unknown",
     "landing_record_has_live_objections",
     "landing_record_not_approved",
     "landing_record_not_policy_approved",
     "landing_repository_not_granted",
     "landing_repository_reverting",
+    "landing_revert_author_not_permitted",
     "landing_revert_not_exact_inverse",
     "landing_revert_not_recorded",
     "landing_rollout_unpinned",
@@ -344,14 +349,21 @@ HOLDING = (
 def _refusal_codes() -> set[str]:
     """Every refusal-code constant the two admission modules and their shared vocabulary define.
 
-    By VALUE. The shared vocabulary is `interfaces`, where most codes both lanes raise live, and
-    `terms`, which defines the grant term's code.
+    By VALUE. The shared vocabulary is `interfaces`, where most codes both lanes raise live,
+    `terms`, which defines the grant term's code, and `revert_subject`, the revert terms both lanes
+    ask (Landing Part 3b).
 
     The value predicate excludes the platform words (`clean`, `blocked`...), the run vocabulary,
     the update-type labels, the bot login and the branch prefix, none of which is a refusal.
     """
     codes: set[str] = set()
-    for module in (interfaces, terms, estate_landing_admission, inert_landing_admission):
+    for module in (
+        interfaces,
+        terms,
+        revert_subject,
+        estate_landing_admission,
+        inert_landing_admission,
+    ):
         for name, value in vars(module).items():
             if (
                 name.isupper()
@@ -374,7 +386,7 @@ def test_every_refusal_code_is_classified_exactly_once() -> None:
     assert not HOLDING & READ_FAILURE_REFUSALS
     assert not HOLDING & RELEASING
     assert not READ_FAILURE_REFUSALS & RELEASING
-    assert (len(HOLDING), len(READ_FAILURE_REFUSALS), len(RELEASING)) == (7, 20, 28)
+    assert (len(HOLDING), len(READ_FAILURE_REFUSALS), len(RELEASING)) == (7, 20, 31)
 
 
 def _class(*refusals: str, base_matches: bool = False) -> str:

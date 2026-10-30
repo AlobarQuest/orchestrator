@@ -107,6 +107,8 @@ def approved(
     objections: tuple[str, ...] = (),
     record_id: int | None = 52,
     landing_conditions: LandingConditions | None | object = _DEFAULT,
+    change_class: str | None = "dependency-update",
+    pull_request_number: int = 49,
 ) -> ChangeRecordAnswer:
     """A record as change-manager serves one.
 
@@ -120,7 +122,7 @@ def approved(
         record=ChangeRecord(
             status=status,
             target_repository=REPOSITORY,
-            pull_request_number=49,
+            pull_request_number=pull_request_number,
             record_id=record_id,
             policy_version=policy_version,
             policy_objections=objections,
@@ -128,6 +130,7 @@ def approved(
             conditions=(
                 conditions() if landing_conditions is _DEFAULT else landing_conditions  # type: ignore[arg-type]
             ),
+            change_class=change_class,
         ),
     )
 

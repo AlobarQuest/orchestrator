@@ -743,8 +743,8 @@ def test_a_descendant_of_the_merge_commit_is_fine() -> None:
     verdict = _judged(_production(_everywhere(FIX_FORWARD, 40), now=300, seen=299), gateway)
 
     assert verdict.kind == "clean"
-    # Four brains on one commit, measured against one tip: one compare each.
-    assert gateway.compared == [(MERGE_79, MERGE_79), (MERGE_79, FIX_FORWARD)]
+    # Four brains on one commit, measured against the merge commit itself: no self-compare.
+    assert gateway.compared == [(MERGE_79, FIX_FORWARD)]
 
 
 def test_every_application_behind_for_two_hours_is_bad_by_what_production_serves() -> None:
@@ -761,12 +761,31 @@ def test_every_application_behind_for_just_under_two_hours_is_pending() -> None:
     assert verdict.kind == "pending"
 
 
-def test_every_application_on_a_side_branch_from_the_parent_is_bad_too() -> None:
+def test_every_application_on_a_side_branch_from_the_parent_is_pending() -> None:
     """Diverged from the merge commit but ahead of its parent: a build of main before the bump
-    plus something else. Still not the bump."""
+    plus something else. Production runs a stray build, which is not the bump's fault: a served
+    `bad` needs every application on exactly the bump's parent (the #79 shape)."""
     verdict = _judged(_production(_everywhere(SIDE, 40), now=300, seen=299))
 
-    assert (verdict.kind, verdict.reason) == ("bad", "served")
+    assert verdict.kind == "pending" and "other than the commit before the bump" in verdict.detail
+
+
+def test_three_on_the_parent_and_one_on_a_side_branch_is_pending() -> None:
+    readings = tuple(_reading(app, BEFORE_79, 37) for app in BRAINS if app != "open-brain") + (
+        _reading("open-brain", SIDE, 37),
+    )
+
+    verdict = _judged(_production(readings, now=600, seen=599))
+
+    assert verdict.kind == "pending" and SIDE[:12] in verdict.detail
+
+
+def test_a_served_bad_names_the_parent_production_serves() -> None:
+    """The act re-points production at the parent's image, so the verdict says which commit that
+    is: the one every application serves."""
+    verdict = _judged(_production(_everywhere(BEFORE_79, 37), now=600, seen=599))
+
+    assert (verdict.kind, verdict.parent_sha) == ("bad", BEFORE_79)
 
 
 def test_production_on_a_commit_not_on_the_default_branch_is_pending() -> None:
@@ -774,7 +793,7 @@ def test_production_on_a_commit_not_on_the_default_branch_is_pending() -> None:
     that never was main. Whatever it is, it is not this bump's doing."""
     verdict = _judged(_production(_everywhere(UNRELATED, 40), now=300, seen=299))
 
-    assert verdict.kind == "pending" and "not on the default branch" in verdict.detail
+    assert verdict.kind == "pending" and "other than the commit before the bump" in verdict.detail
 
 
 def test_a_reading_measured_against_an_older_tip_never_counts() -> None:
@@ -940,7 +959,7 @@ def test_brain_79_serving_its_own_parent_is_still_bad_and_compares_each_commit_o
     verdict = _judged(_production(_everywhere(BEFORE_79, 37), now=600, seen=599), gateway)
 
     assert (verdict.kind, verdict.reason) == ("bad", "served")
-    assert gateway.compared == [(MERGE_79, MERGE_79), (MERGE_79, BEFORE_79), (BEFORE_79, BEFORE_79)]
+    assert gateway.compared == [(MERGE_79, BEFORE_79)]
 
 
 def test_an_application_with_no_reading_yet_is_pending() -> None:

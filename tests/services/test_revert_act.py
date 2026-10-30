@@ -1095,7 +1095,8 @@ def test_a_deploying_landing_is_watched_and_judged_by_what_production_serves(
 
     assert (watched.repository, watched.pr_number, watched.verdict) == (BRAIN, BRAIN_BUMP, "clean")
     assert watched.reason is None
-    assert gateway.compared == [(MERGE_79, MERGE_79)]
+    # Measured against the merge commit and serving it: nothing to ask GitHub.
+    assert gateway.compared == []
 
 
 def test_a_deploying_landing_stuck_behind_is_bad_and_is_not_reverted_before_a_repoint(
@@ -1216,7 +1217,7 @@ def test_an_unstamped_reading_in_the_store_never_counts(migrated_session: Sessio
     [watched] = landing_watch(migrated_session, **lanes(gateway))
 
     assert (watched.verdict, watched.reason) == ("bad", "served")
-    assert gateway.compared == [(MERGE_79, MERGE_79), (MERGE_79, BEFORE_79), (BEFORE_79, BEFORE_79)]
+    assert gateway.compared == [(MERGE_79, BEFORE_79)]
 
 
 def test_only_the_watched_jobs_that_failed_are_rerun_one_at_a_time(

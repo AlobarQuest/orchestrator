@@ -79,6 +79,10 @@ SHARED = frozenset(
         "revert_build",
         "revert_record",
         "revert_watch",
+        # Landing Part 3b: the revert subject's terms, which both lanes' admissions ask, and the
+        # hook both lanes' merge paths call when a revert lands.
+        "revert_subject",
+        "revert_landed",
     }
 )
 
@@ -109,6 +113,8 @@ NEITHER = frozenset(
         "revert_build",
         "revert_record",
         "revert_watch",
+        "revert_subject",
+        "revert_landed",
     }
 )
 

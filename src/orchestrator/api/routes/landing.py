@@ -24,6 +24,8 @@ from orchestrator.api.schemas.landing import (
     InertLandingAdmissionResponse,
     InertPrMergeCommandModel,
     InertPrMergeResponse,
+    LandingRepointCommandModel,
+    LandingRestoreCommandModel,
     LandingRevertCommandModel,
     LandingRevertResponse,
     LandingWatchResponse,
@@ -79,10 +81,14 @@ from orchestrator.services.landing.pr_merge import (
 )
 from orchestrator.services.landing.pr_merge_admission import pr_merge_admission
 from orchestrator.services.landing.revert_act import (
+    RepointCommand,
+    RestoreCommand,
     RevertCommand,
     RevertLane,
     act_on_landing,
     landing_watch,
+    record_repoint,
+    record_restored,
 )
 from orchestrator.services.landing.revert_record import opened_reverts
 
@@ -565,6 +571,62 @@ def landing_revert_route(
     return act_on_landing(
         session,
         RevertCommand(
+            repository=body.repository,
+            pr_number=body.pr_number,
+            actor=actor,
+            idempotency_key=body.idempotency_key,
+            expected_status=body.expected_status,
+        ),
+        inert=inert,
+        estate=estate,
+        credentials_configured=credentials is not None,
+    )
+
+
+@router.post("/landing-repoint", response_model=LandingRevertResponse)
+def landing_repoint_route(
+    body: LandingRepointCommandModel,
+    actor: ActorDep,
+    session: SessionDep,
+    settings: SettingsDep,
+) -> object:
+    """Landing Part 3b: the estate lander is pointing a landing that redeploys at the image of the
+    bump's parent. The landing is judged again here and recorded `repointed`, with the images, only
+    when it is still `bad`. The estate lane's switch, credentials and grant term bound it.
+    """
+    credentials = github_app_credentials_for(settings)
+    inert, estate = _revert_lanes(settings, credentials)
+    return record_repoint(
+        session,
+        RepointCommand(
+            repository=body.repository,
+            pr_number=body.pr_number,
+            actor=actor,
+            idempotency_key=body.idempotency_key,
+            expected_status=body.expected_status,
+            pinned_images=body.pinned_images,
+        ),
+        inert=inert,
+        estate=estate,
+        credentials_configured=credentials is not None,
+    )
+
+
+@router.post("/landing-restored", response_model=LandingRevertResponse)
+def landing_restored_route(
+    body: LandingRestoreCommandModel,
+    actor: ActorDep,
+    session: SessionDep,
+    settings: SettingsDep,
+) -> object:
+    """Landing Part 3b: the revert landed, the moving tag is back and production serves the revert:
+    record `restored`. Only a landed revert that pinned production is restored.
+    """
+    credentials = github_app_credentials_for(settings)
+    inert, estate = _revert_lanes(settings, credentials)
+    return record_restored(
+        session,
+        RestoreCommand(
             repository=body.repository,
             pr_number=body.pr_number,
             actor=actor,

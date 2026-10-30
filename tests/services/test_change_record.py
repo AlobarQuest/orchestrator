@@ -665,3 +665,26 @@ def test_a_revert_landing_that_is_not_an_object_refuses_the_whole_conditions() -
     served = {**V14_CONDITIONS, "revert_landing": ["dependency-revert"]}
     row = _served_row(landing_policy_version=14, landing_conditions=served)
     assert _read([row]).record.conditions is None  # type: ignore[union-attr]
+
+
+# Landing Part 3b, Task 4: the record's class, which the estate admission reads to tell a revert
+# record from a bump's.
+
+
+def test_the_record_carries_its_change_class() -> None:
+    record = _read([_served_row(change_class="dependency-revert")]).record
+
+    assert record is not None and record.change_class == "dependency-revert"
+
+
+def test_a_record_serving_no_change_class_reads_as_none() -> None:
+    record = _read([_served_row()]).record
+
+    assert record is not None and record.change_class is None
+
+
+@pytest.mark.parametrize("value", [7, ["dependency-update"], True, ""])
+def test_a_change_class_of_the_wrong_shape_makes_the_record_unreadable(value: object) -> None:
+    answer = _read([_served_row(change_class=value)])
+
+    assert answer.answered is False and answer.record is None

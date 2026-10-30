@@ -86,6 +86,7 @@ from orchestrator.services.landing.interfaces import (
     TreeEntry,
 )
 from orchestrator.services.landing.lane_act import LandingLane, land_pull_request
+from orchestrator.services.landing.revert_landed import record_revert_landed
 
 GITHUB_API_URL: Final = "https://api.github.com"
 
@@ -182,6 +183,9 @@ def land_estate_pull_request(
         ),
         remote_call=lambda admission, head_sha: _act(gateway, admission, head_sha),
         change_record_id=lambda admission: admission.change_record_id,
+        # Landing Part 3b: a revert the SDS opened lands here too, and is recorded and held as
+        # the inert lane's are.
+        on_landed=lambda record: record_revert_landed(session, record, command.actor),
     )
 
 
