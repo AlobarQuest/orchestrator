@@ -6,19 +6,19 @@
      No secrets live here: the wrapper fetches the read-scoped change-manager bearer and the
      orchestrator's system bearer from BWS at runtime.
 
-     IN THE CHANGE WINDOW, and that is the setting worth arguing about. The producer runs hourly
-     because proposing is not acting; this pass ends in something changing a running service, and
-     policy declares the hours in which something already serving may change. The orchestrator
-     refuses outside them regardless — this schedule is so the pass HAPPENS then, not so that it
-     is permitted to. StartCalendarInterval fires at 02:15, 03:15, 04:15 and 05:15 New York;
-     launchd reads the machine's local zone, which is the zone the policy declares its hours in.
+     HOURLY, AT :15 (Landing Part 3b). Every pass reads the watch of this lane's landings and steps
+     a bad one on -- production pointed back at the build before the bump, the revert opened and
+     landed, the moving tag put back -- so a broken production waits an hour, not a day. Ordinary
+     bumps are still landed only between 02:00 and 06:00 New York: the program asks about them
+     only in those passes (`estate_lander.cli.LANDING_HOURS`), and the orchestrator refuses
+     outside its window regardless. The dead-man check `sds-estate-landing` must expect an hourly
+     ping.
 
      THE PASS IS BOUNDED BY THE ORCHESTRATOR, not by this schedule. One landing per repository per
-     window is an admission term, so four firings do not mean four landings — the later ones
-     report the earlier one's row and hold.
+     window is an admission term, so four firings in the hours do not mean four landings — the
+     later ones report the earlier one's row and hold.
 
-     RunAtLoad is false. A pass at login would fire outside the window and be refused, which is
-     harmless and confusing; there is nothing to catch up on.
+     RunAtLoad is false; the next hour catches up.
 
      The exit code is the report. launchd discards it, so read the log — 0 clean, 1 the tool
      failed, 3 a pull request is held on a condition somebody has to act on. A first pass that
@@ -39,12 +39,7 @@
     </array>
 
     <key>StartCalendarInterval</key>
-    <array>
-        <dict><key>Hour</key><integer>2</integer><key>Minute</key><integer>15</integer></dict>
-        <dict><key>Hour</key><integer>3</integer><key>Minute</key><integer>15</integer></dict>
-        <dict><key>Hour</key><integer>4</integer><key>Minute</key><integer>15</integer></dict>
-        <dict><key>Hour</key><integer>5</integer><key>Minute</key><integer>15</integer></dict>
-    </array>
+    <dict><key>Minute</key><integer>15</integer></dict>
 
     <key>EnvironmentVariables</key>
     <dict>

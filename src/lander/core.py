@@ -179,6 +179,15 @@ NOT_A_FINDING = frozenset(
         "revert-opened",
         "would-revert",
         "reverted",
+        # Landing Part 3b, the estate lane's watch: production pointed back at the build before a
+        # bad bump, pinned there until the revert lands, and pointed forward again. Each pinned
+        # record raises its own alert; a re-point refused before anything was pinned is a finding.
+        "repointed",
+        "would-repoint",
+        "pinned",
+        "restoring",
+        "restored",
+        "would-restore",
     }
 )
 
@@ -212,6 +221,13 @@ REPORTED = (
     "revert-refused",
     "revert-failed",
     "revert-stranded",
+    "repointed",
+    "would-repoint",
+    "repoint-refused",
+    "pinned",
+    "restoring",
+    "restored",
+    "would-restore",
 )
 
 

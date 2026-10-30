@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
+import pytest
 
 from lander.core import Outcome
 from lander.held_alerts import (
@@ -565,3 +566,107 @@ def test_a_stranded_revert_raises_its_own_alert_and_is_held_when_its_listing_fai
         ("landing-revert-stranded:alobarquest/veritok:41", "resolved"),
     ]
     assert hub.sent[0]["link"] == "https://github.com/alobarquest/veritok/pull/42"
+
+
+# ------------------------------------------------------------------------------------------------
+# Landing Part 3b: production pinned to the build before a bad bump (review focus 3).
+# ------------------------------------------------------------------------------------------------
+
+PINNED = {"u1": {"tag": "8" * 40, "digest": "sha256:" + "a" * 64, "restore_tag": "latest"}}
+PINNED_KEY = "landing-production-pinned:alobarquest/brain:79"
+
+
+def _pinned_record(status: str, **overrides: object) -> dict[str, object]:
+    return _record(
+        status,
+        repository="alobarquest/brain",
+        pr_number=79,
+        failed_job_names=[],
+        pinned_images=PINNED,
+        parent_sha="8" * 40,
+        **overrides,
+    )
+
+
+@pytest.mark.parametrize(
+    "status", ["repointed", "revert_opened", "refused_overlap", "revert_failed", "revert_landed"]
+)
+def test_every_status_before_restored_keeps_production_pinned_and_says_so(
+    tmp_path, status: str
+) -> None:
+    hub = Hub()
+
+    sync_revert_alerts(
+        LANE, [_pinned_record(status)], environ=_env(tmp_path), transport=hub.transport()
+    )
+
+    pinned = [body for body in hub.sent if body["key"] == PINNED_KEY]
+    assert [body["status"] for body in pinned] == ["firing"]
+    message = str(pinned[0]["message"])
+    assert "8" * 12 in message and "u1" in message
+    assert "latest" in message
+
+
+def test_a_stranded_revert_keeps_production_pinned_and_raises_both(tmp_path) -> None:
+    hub = Hub()
+
+    sync_revert_alerts(
+        LANE,
+        [_pinned_record("revert_opened")],
+        stranded={("alobarquest/brain", 79)},
+        environ=_env(tmp_path),
+        transport=hub.transport(),
+    )
+
+    assert sorted(str(body["key"]) for body in hub.sent) == [
+        PINNED_KEY,
+        "landing-revert-stranded:alobarquest/brain:79",
+    ]
+
+
+def test_the_pinned_alert_stays_open_until_restored_and_is_held_when_the_watch_is_unread(
+    tmp_path,
+) -> None:
+    hub = Hub()
+    env = _env(tmp_path)
+    for status in ("repointed", "revert_opened", "revert_landed"):
+        sync_revert_alerts(LANE, [_pinned_record(status)], environ=env, transport=hub.transport())
+    sync_revert_alerts(LANE, None, environ=env, transport=hub.transport())
+    assert [b["status"] for b in hub.sent if b["key"] == PINNED_KEY] == ["firing"]
+
+    sync_revert_alerts(LANE, [_pinned_record("restored")], environ=env, transport=hub.transport())
+
+    assert [b["status"] for b in hub.sent if b["key"] == PINNED_KEY] == ["firing", "resolved"]
+
+
+def test_a_landing_that_could_not_be_pointed_back_raises_its_own_alert_until_it_is(
+    tmp_path,
+) -> None:
+    """A re-point refused before anything was pinned: production still serves the bad build and
+    nothing is pinned, so it is a different alert from the pinned one, open while it is refused."""
+    hub = Hub()
+    env = _env(tmp_path)
+    bad = _record("", repository="alobarquest/brain", pr_number=79, verdict="bad")
+    refused = {("alobarquest/brain", 79): "no application on the platform serves app-brain"}
+
+    sync_revert_alerts(LANE, [bad], unpinned=refused, environ=env, transport=hub.transport())
+    sync_revert_alerts(LANE, [bad], unpinned=refused, environ=env, transport=hub.transport())
+    sync_revert_alerts(LANE, [_pinned_record("repointed")], environ=env, transport=hub.transport())
+
+    unpinned = [b for b in hub.sent if str(b["key"]).startswith("landing-not-pointed-back:")]
+    assert [(b["key"], b["status"]) for b in unpinned] == [
+        ("landing-not-pointed-back:alobarquest/brain:79", "firing"),
+        ("landing-not-pointed-back:alobarquest/brain:79", "resolved"),
+    ]
+    assert "no application on the platform serves app-brain" in str(unpinned[0]["message"])
+
+
+def test_a_served_revert_alert_says_production_never_served_the_bump(tmp_path) -> None:
+    hub = Hub()
+
+    sync_revert_alerts(
+        LANE, [_pinned_record("revert_landed")], environ=_env(tmp_path), transport=hub.transport()
+    )
+
+    reverted = next(b for b in hub.sent if str(b["key"]).startswith("landing-reverted:"))
+    assert "production never served" in str(reverted["message"])

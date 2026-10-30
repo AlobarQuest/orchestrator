@@ -38,19 +38,23 @@ WRITE_PATHS = frozenset(
         "/api/v1/estate-pr-merge",
         "/api/v1/estate-pr-branch-update",
         "/api/v1/held-pr-close",
+        "/api/v1/landing-revert",
+        "/api/v1/landing-repoint",
+        "/api/v1/landing-restored",
     }
 )
 
 
-def test_the_write_surface_is_three_routes_and_no_more() -> None:
-    """THREE since bridge layer Part 4, and the count is in the name so each addition had to be
-    written down rather than acquired. The surface GREW by named paths; it did not open. The
-    branch update is much the smaller act -- it brings a topic branch up to date with its base,
-    where the landing rewrites a default branch and starts a rollout on a running service -- and
-    the third closes a held bump with a comment, bounded by this lane's own admission."""
-    assert is_allowed_write("/api/v1/estate-pr-merge")
-    assert is_allowed_write("/api/v1/estate-pr-branch-update")
-    assert is_allowed_write("/api/v1/held-pr-close")
+def test_the_write_surface_is_six_routes_and_no_more() -> None:
+    """SIX since Landing Part 3b, and the count is in the name so each addition had to be written
+    down rather than acquired. The surface GREW by named paths; it did not open. The branch update
+    is much the smaller act -- it brings a topic branch up to date with its base, where the landing
+    rewrites a default branch and starts a rollout on a running service -- and the third closes a
+    held bump with a comment, bounded by this lane's own admission. The last three are the watch's
+    acts on a landing that went bad: rerun or open its revert, record that production is being
+    pointed back at the build before it, and record that it was pointed forward again."""
+    for allowed in WRITE_PATHS:
+        assert is_allowed_write(allowed), allowed
     for forbidden in (
         "/api/v1/estate-pr-merge/",
         "/api/v1/held-pr-close/",
@@ -64,9 +68,13 @@ def test_the_write_surface_is_three_routes_and_no_more() -> None:
         assert not is_allowed_write(forbidden), forbidden
 
 
-def test_the_read_surface_is_one_route_and_no_more() -> None:
+def test_the_read_surface_is_two_routes_and_no_more() -> None:
     assert is_allowed_read("/api/v1/estate-pr-merge-admission")
+    # Landing Part 3b: the watch of the lanes' landings.
+    assert is_allowed_read("/api/v1/landing-watch")
     for forbidden in (
+        "/api/v1/landing-watch/",
+        "/api/v1/opened-reverts",
         "/api/v1/estate-pr-merge",
         # A write path is not thereby readable: the two allowlists are separate and each names
         # its own paths, so the branch-update route cannot be reached by a GET.

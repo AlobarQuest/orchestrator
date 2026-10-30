@@ -377,7 +377,8 @@ def test_nothing_is_restored_before_its_revert_has_landed(
         restore(migrated_session, brain_gateway())
 
     assert raised.value.code == LANDING_RESTORE_NOT_LANDED
-    assert stored(migrated_engine).status == status  # type: ignore[union-attr]
+    record = stored(migrated_engine)
+    assert record is not None and record.status == status
 
 
 def test_a_pinned_landing_stays_watched_until_it_is_restored(
@@ -423,3 +424,44 @@ def test_a_repeated_restore_key_answers_from_its_event(
     with pytest.raises(DomainError) as raised:
         restore(migrated_session, brain_gateway(), key="restore-2")
     assert raised.value.code == LANDING_RESTORE_NOT_LANDED
+
+
+def test_a_rerun_record_whose_landing_is_no_longer_bad_is_never_repointed(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    """The record names the parent, so only the judgment made here stands between a caller and
+    a re-point: production now serves the merge commit, so nothing is recorded."""
+    landed_on_brain(migrated_session)
+    everywhere(migrated_session, MERGE_79, minutes_ago=140)
+    heard(migrated_session, minutes_ago=10)
+    migrated_session.add(
+        LandingRevert(
+            repository=BRAIN,
+            pr_number=BRAIN_BUMP,
+            merge_commit_sha=MERGE_79,
+            parent_sha=BEFORE_79,
+            failed_job_names=["test"],
+            failed_run_id=1,
+            rerun_attempts={"1": 1},
+            status="rerun_requested",
+            bumps=[],
+        )
+    )
+    migrated_session.commit()
+
+    with pytest.raises(DomainError) as raised:
+        repoint(migrated_session, brain_gateway(), expected="rerun_requested")
+
+    assert raised.value.code == LANDING_REPOINT_NOT_BAD
+    record = stored(migrated_engine)
+    assert record is not None and record.status == "rerun_requested"
+
+
+def test_a_landing_already_repointed_is_not_repointed_again(migrated_session: Session) -> None:
+    stuck_on_the_parent(migrated_session)
+    repoint(migrated_session, brain_gateway())
+
+    with pytest.raises(DomainError) as raised:
+        repoint(migrated_session, brain_gateway(), key="repoint-2", expected="repointed")
+
+    assert raised.value.code == LANDING_REVERT_RECORD_MOVED

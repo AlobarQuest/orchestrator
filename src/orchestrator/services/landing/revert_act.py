@@ -171,7 +171,7 @@ REVERT_FAILED: Final = "revert_failed"
 # branch possibly broken with no revert, which only a person clears. Never `rerun_requested`: a
 # rerun that passed leaves its record there for good, and it would be re-judged on every pass.
 _ALWAYS_WATCHED: Final = frozenset(  # not-a-vocabulary: record statuses
-    {REVERT_OPENED, REFUSED_OVERLAP, REVERT_FAILED, REPOINTED}
+    {REVERT_OPENED, REFUSED_OVERLAP, REVERT_FAILED}
 )
 RESTORED: Final = "restored"
 # The statuses a re-point may be recorded from: no record yet, or a rerun's.

@@ -1,0 +1,546 @@
+"""The estate lane's watch pass: point back, revert, restore (Landing Part 3b, Task 4).
+
+Each step is exercised against recording doubles of the confined hosting-platform client, the
+registry, what production serves and the orchestrator's acts, so a test can say what was NOT done
+as well as what was. Review focus 3: every exit before `restored` either leaves production as it
+was with `landing-not-pointed-back` raised, or leaves it pinned with a record whose pinned alert is
+open (`tests/lander/test_held_alerts.py` pins the alert per status).
+"""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+from dataclasses import replace
+from typing import Any
+
+import pytest
+
+from estate_lander.image_repoint import (
+    Application,
+    AppSpec,
+    RegistryUnreadable,
+    RepointRefused,
+)
+from estate_lander.revert_pass import Production, RevertPass, lane_rows, revert_pass
+from estate_lander.served import ServedUnreadable
+from lander.errors import LandingRefused, OrchestratorError
+
+BRAIN = "alobarquest/brain"
+PR = 79
+PARENT = "80b620ce1799c1eeeaac83f494e6cd9a553d5503"
+MERGE = "271a2ac8de79a1dbc09bc5c05d4be73d08472449"
+REVERT_MERGE = "f" * 40
+LATER = "e" * 40
+DIGEST = "sha256:" + "a" * 64
+IMAGE = "ghcr.io/alobarquest/brain"
+APPS = (
+    AppSpec("app-brain", "https://app-brain.devonwatkins.com/api/health"),
+    AppSpec("code-brain", "https://code-brain.devonwatkins.com/api/health"),
+)
+
+
+def _apps(tag: str = "latest", **tags: str) -> list[Application]:
+    return [
+        Application(
+            uuid=f"u{i}",
+            name=spec.name,
+            health_url=spec.health_url,
+            image=IMAGE,
+            tag=tags.get(spec.name.replace("-", "_"), tag),
+        )
+        for i, spec in enumerate(APPS, start=1)
+    ]
+
+
+def _pins(restore: str = "latest") -> dict[str, dict[str, str]]:
+    return {
+        uuid: {"tag": PARENT, "digest": DIGEST, "restore_tag": restore} for uuid in ("u1", "u2")
+    }
+
+
+class Log(list[str]):
+    """One ordered record of every act across the doubles, so order is assertable."""
+
+
+class FakeImages:
+    def __init__(
+        self,
+        log: Log,
+        applications: list[Application],
+        *,
+        confine_error: Exception | None = None,
+        fail_on: str | None = None,
+    ) -> None:
+        self.log, self.applications = log, applications
+        self.confine_error, self.fail_on = confine_error, fail_on
+        self.closed = False
+
+    def confine(self, apps: Sequence[AppSpec]) -> tuple[Application, ...]:
+        assert tuple(apps) == APPS
+        self.log.append("confine")
+        if self.confine_error is not None:
+            raise self.confine_error
+        return tuple(self.applications)
+
+    def set_tag(self, uuid: str, tag: str) -> None:
+        self.log.append(f"tag {uuid} {tag[:12]}")
+        if self.fail_on == uuid:
+            raise RepointRefused("Coolify PATCH answered HTTP 500")
+
+    def start(self, uuid: str) -> None:
+        self.log.append(f"start {uuid}")
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class FakeRegistry:
+    def __init__(self, log: Log, held: dict[str, str] | None = None, error: bool = False) -> None:
+        self.log, self.held, self.error = log, {PARENT: DIGEST} if held is None else held, error
+
+    def digest(self, image: str, tag: str) -> str | None:
+        self.log.append(f"digest {image} {tag[:12]}")
+        if self.error:
+            raise RegistryUnreadable("GHCR got no answer: ConnectError")
+        return self.held.get(tag)
+
+
+class FakeActs:
+    def __init__(self, log: Log, *, error: Exception | None = None) -> None:
+        self.log, self.error = log, error
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    def _call(self, act: str, answer: dict[str, Any], **body: Any) -> dict[str, Any]:
+        self.log.append(act)
+        self.calls.append((act, body))
+        if self.error is not None:
+            raise self.error
+        return answer
+
+    def revert_landing(self, repository: str, pr_number: int, **body: Any) -> dict[str, Any]:
+        answer = {"acted": True, "status": "revert_opened", "detail": ""}
+        if body.get("expected_status") != "repointed":
+            answer["status"] = "rerun_requested"
+        return self._call("revert", answer, repository=repository, pr_number=pr_number, **body)
+
+    def repoint(self, repository: str, pr_number: int, **body: Any) -> dict[str, Any]:
+        answer = {"acted": True, "status": "repointed", "detail": ""}
+        return self._call("repoint", answer, repository=repository, pr_number=pr_number, **body)
+
+    def restored(self, repository: str, pr_number: int, **body: Any) -> dict[str, Any]:
+        answer = {"acted": True, "status": "restored", "detail": ""}
+        return self._call("restored", answer, repository=repository, pr_number=pr_number, **body)
+
+
+class World:
+    """The doubles a pass is run against, with production serving `serving` per application."""
+
+    def __init__(
+        self,
+        applications: list[Application] | None = None,
+        *,
+        serving: dict[str, str | None] | None = None,
+        token: bool = True,
+        acts_error: Exception | None = None,
+        registry: dict[str, str] | None = None,
+        registry_error: bool = False,
+        confine_error: Exception | None = None,
+        fail_on: str | None = None,
+        later: bool = False,
+    ) -> None:
+        self.log = Log()
+        self.images = FakeImages(
+            self.log,
+            _apps() if applications is None else applications,
+            confine_error=confine_error,
+            fail_on=fail_on,
+        )
+        self.registry = FakeRegistry(self.log, registry, registry_error)
+        self.acts = FakeActs(self.log, error=acts_error)
+        self.serving = serving or {}
+        self.token = token
+        self.later = later
+
+    def served(self, url: str) -> str | None:
+        name = url.split("//")[1].split(".")[0]
+        self.log.append(f"served {name}")
+        value = self.serving.get(name)
+        if value == "unreadable":
+            raise ServedUnreadable("ConnectError")
+        return value
+
+    def production(self) -> Production:
+        return Production(
+            images=(lambda: self.images) if self.token else None,
+            registry=self.registry,
+            apps=lambda repository: APPS if repository == BRAIN else (),
+            served=self.served,
+            at_or_after=lambda repository, commit, served: self.later,
+        )
+
+    def run(self, *rows: dict[str, Any], submit: bool = True) -> RevertPass:
+        return revert_pass(list(rows), self.acts, self.production(), submit)
+
+
+def _row(verdict: str | None, status: str | None = None, **extra: Any) -> dict[str, Any]:
+    row: dict[str, Any] = {
+        "repository": BRAIN,
+        "pr_number": PR,
+        "merge_commit_sha": MERGE,
+        "verdict": verdict,
+        "detail": f"{verdict or status}: test",
+        "failed_job_names": [],
+        "failed_runs": [],
+        "status": status,
+        "revert_pr_number": None,
+        "hold_outcome": None,
+        "reason": "served" if verdict == "bad" else None,
+        "lane": "estate",
+        "parent_sha": PARENT,
+        "pinned_images": None,
+        "revert_merge_sha": None,
+    }
+    row.update(extra)
+    return row
+
+
+def _only(result: RevertPass) -> tuple[str, str]:
+    [outcome] = result.outcomes
+    return outcome.status, outcome.detail
+
+
+# --------------------------------------------------------------------------------------------
+# Step 1: a bad landing is pointed back.
+# --------------------------------------------------------------------------------------------
+
+
+def test_a_bad_landing_is_recorded_repointed_before_production_is_touched() -> None:
+    world = World(_apps(code_brain="main"))
+
+    result = world.run(_row("bad"))
+
+    assert _only(result)[0] == "repointed"
+    assert world.log == [
+        "confine",
+        f"digest {IMAGE} {PARENT[:12]}",
+        "repoint",
+        f"tag u1 {PARENT[:12]}",
+        "start u1",
+        f"tag u2 {PARENT[:12]}",
+        "start u2",
+    ]
+    [(act, body)] = world.acts.calls
+    assert body["expected_status"] is None
+    assert body["pinned_images"] == {
+        "u1": {"tag": PARENT, "digest": DIGEST, "restore_tag": "latest"},
+        "u2": {"tag": PARENT, "digest": DIGEST, "restore_tag": "main"},
+    }
+    assert body["idempotency_key"] == f"estate-landing-repoint:{BRAIN}:{PR}:{PARENT}:{DIGEST}"
+    assert result.unpinned == {} and world.images.closed
+
+
+def test_a_checks_bad_names_the_rerun_record_it_read() -> None:
+    world = World()
+
+    world.run(_row("bad", "rerun_requested", reason="checks"))
+
+    assert world.acts.calls[0][1]["expected_status"] == "rerun_requested"
+
+
+@pytest.mark.parametrize(
+    ("world", "row", "reason"),
+    [
+        (World(token=False), _row("bad"), "no Coolify token"),
+        (World(), _row("bad", parent_sha=None), "no commit before the bump"),
+        (
+            World(confine_error=RepointRefused("app-brain: no application on the platform")),
+            _row("bad"),
+            "no application",
+        ),
+        (World(registry={}), _row("bad"), "registry holds no"),
+        (World(registry_error=True), _row("bad"), "GHCR got no answer"),
+        (
+            World(
+                [*_apps()[:1], *[a.__class__(**{**a.__dict__, "image": "x"}) for a in _apps()[1:]]]
+            ),
+            _row("bad"),
+            "2 different images",
+        ),
+        (World(_apps(app_brain=MERGE)), _row("bad"), "already pinned to a commit: app-brain"),
+        (World(acts_error=OrchestratorError("unreachable")), _row("bad"), "unreachable"),
+    ],
+)
+def test_a_repoint_refused_before_anything_changed_leaves_production_and_raises_its_alert(
+    world: World, row: dict[str, Any], reason: str
+) -> None:
+    """Review focus 3, the first exit: nothing pinned, the bad build still serves, and
+    `landing-not-pointed-back` names why."""
+    result = world.run(row)
+
+    status, detail = _only(result)
+    assert status == "repoint-refused" and reason in detail
+    assert result.unpinned == {(BRAIN, PR): detail}
+    assert not any(entry.startswith(("tag ", "start ")) for entry in world.log)
+
+
+def test_a_landing_the_orchestrator_no_longer_judges_bad_is_left_alone_unalerted() -> None:
+    world = World(acts_error=LandingRefused("judged pending now", "landing_repoint_not_bad"))
+
+    result = world.run(_row("bad"))
+
+    assert _only(result)[0] == "waiting"
+    assert result.unpinned == {}
+    assert not any(entry.startswith(("tag ", "start ")) for entry in world.log)
+
+
+def test_a_pin_that_fails_part_way_is_an_error_and_the_record_already_says_pinned() -> None:
+    """The record was written first, so its pinned alert is open; the next pass repairs."""
+    world = World(fail_on="u2")
+
+    result = world.run(_row("bad"))
+
+    status, detail = _only(result)
+    assert status == "error" and "1 of 2" in detail
+    assert world.log.index("repoint") < world.log.index(f"tag u1 {PARENT[:12]}")
+    assert result.unpinned == {}
+
+
+# --------------------------------------------------------------------------------------------
+# Step 2: once production serves the parent, the revert opens.
+# --------------------------------------------------------------------------------------------
+
+
+def _repointed(**extra: Any) -> dict[str, Any]:
+    return _row(None, "repointed", pinned_images=_pins(), **extra)
+
+
+def test_the_revert_is_asked_for_once_every_application_serves_the_parent() -> None:
+    world = World(_apps(tag=PARENT), serving={"app-brain": PARENT, "code-brain": PARENT.upper()})
+
+    result = world.run(_repointed())
+
+    assert _only(result)[0] == "revert-opened"
+    [(act, body)] = world.acts.calls
+    assert (act, body["expected_status"]) == ("revert", "repointed")
+    assert body["idempotency_key"] == f"estate-landing-revert:{BRAIN}:{PR}:repointed"
+    assert not any(entry.startswith("tag ") for entry in world.log)
+
+
+def test_an_application_not_on_the_parent_yet_holds_the_revert_and_is_pinned_again() -> None:
+    world = World(
+        _apps(tag=PARENT, code_brain="latest"),
+        serving={"app-brain": PARENT, "code-brain": MERGE},
+    )
+
+    result = world.run(_repointed())
+
+    status, detail = _only(result)
+    assert status == "pinned" and "code-brain" in detail
+    assert world.acts.calls == []
+    assert f"tag u2 {PARENT[:12]}" in world.log and f"tag u1 {PARENT[:12]}" not in world.log
+
+
+@pytest.mark.parametrize(
+    "world",
+    [
+        World(_apps(tag=PARENT), serving={"app-brain": PARENT, "code-brain": "unreadable"}),
+        World(token=False),
+        World(_apps(tag=PARENT)[:1], serving={"app-brain": PARENT}),
+        World(confine_error=RepointRefused("app-brain: 2 applications on the platform")),
+    ],
+)
+def test_production_stays_pinned_and_no_revert_is_asked_when_it_cannot_be_confirmed(
+    world: World,
+) -> None:
+    result = world.run(_repointed())
+
+    status, detail = _only(result)
+    assert status == "error" and "production stays pinned" in detail
+    assert world.acts.calls == []
+
+
+# --------------------------------------------------------------------------------------------
+# Step 4: after the revert landed, the moving tag comes back.
+# --------------------------------------------------------------------------------------------
+
+
+def _landed(**extra: Any) -> dict[str, Any]:
+    return _row(
+        None,
+        "revert_landed",
+        pinned_images={
+            "u1": {"tag": PARENT, "digest": DIGEST, "restore_tag": "latest"},
+            "u2": {"tag": PARENT, "digest": DIGEST, "restore_tag": "main"},
+        },
+        revert_merge_sha=REVERT_MERGE,
+        **extra,
+    )
+
+
+def test_nothing_moves_until_the_reverts_own_image_is_built() -> None:
+    world = World(_apps(tag=PARENT))
+
+    result = world.run(_landed())
+
+    status, detail = _only(result)
+    assert status == "pinned" and "not built yet" in detail
+    assert not any(entry.startswith("tag ") for entry in world.log)
+    assert world.acts.calls == []
+
+
+def test_each_application_gets_back_the_moving_tag_it_had() -> None:
+    world = World(_apps(tag=PARENT), registry={PARENT: DIGEST, REVERT_MERGE: DIGEST})
+
+    result = world.run(_landed())
+
+    assert _only(result)[0] == "restoring"
+    assert [e for e in world.log if e.startswith(("tag ", "start "))] == [
+        "tag u1 latest",
+        "start u1",
+        "tag u2 main",
+        "start u2",
+    ]
+    assert world.acts.calls == []
+
+
+def test_restored_is_recorded_once_every_application_serves_the_revert() -> None:
+    world = World(
+        _apps(code_brain="main"),
+        registry={REVERT_MERGE: DIGEST},
+        serving={"app-brain": REVERT_MERGE, "code-brain": REVERT_MERGE},
+    )
+
+    result = world.run(_landed())
+
+    assert _only(result)[0] == "restored"
+    [(act, body)] = world.acts.calls
+    assert (act, body["expected_status"]) == ("restored", "revert_landed")
+    assert body["idempotency_key"] == f"estate-landing-restored:{BRAIN}:{PR}:{REVERT_MERGE}"
+
+
+def test_a_later_build_than_the_revert_counts_as_serving_it() -> None:
+    world = World(
+        _apps(code_brain="main"),
+        registry={REVERT_MERGE: DIGEST},
+        serving={"app-brain": LATER, "code-brain": REVERT_MERGE},
+        later=True,
+    )
+
+    assert _only(world.run(_landed()))[0] == "restored"
+
+
+def test_an_application_still_on_the_parent_holds_the_restore() -> None:
+    world = World(
+        _apps(code_brain="main"),
+        registry={REVERT_MERGE: DIGEST},
+        serving={"app-brain": REVERT_MERGE, "code-brain": PARENT},
+    )
+
+    status, detail = _only(world.run(_landed()))
+
+    assert status == "restoring" and "code-brain" in detail
+    assert world.acts.calls == []
+
+
+# --------------------------------------------------------------------------------------------
+# The rest of the watch.
+# --------------------------------------------------------------------------------------------
+
+
+def test_a_flaky_landing_is_rerun_by_its_failing_runs() -> None:
+    world = World()
+
+    result = world.run(_row("flaky_retry", failed_runs=[[18_000_000_001, 1]]))
+
+    assert _only(result)[0] == "reran"
+    [(act, body)] = world.acts.calls
+    assert body["idempotency_key"] == (
+        f"estate-landing-revert:{BRAIN}:{PR}:flaky_retry:18000000001.1"
+    )
+
+
+def test_a_pass_that_does_not_submit_reads_and_writes_nothing() -> None:
+    world = World()
+    rows = [
+        _row("bad"),
+        _row("flaky_retry", pr_number=80),
+        _repointed(pr_number=81),
+        _landed(pr_number=82),
+    ]
+
+    result = world.run(*rows, submit=False)
+
+    assert [o.status for o in result.outcomes] == [
+        "would-repoint",
+        "would-rerun",
+        "pinned",
+        "would-restore",
+    ]
+    assert world.log == []
+
+
+@pytest.mark.parametrize(
+    ("row", "status"),
+    [
+        (_row(None, "revert_landed"), "reverted"),
+        (_row(None, "refused_overlap", pinned_images=_pins()), "revert-refused"),
+        (_row(None, "revert_failed", pinned_images=_pins()), "revert-failed"),
+        (_row("unreadable"), "unreadable"),
+    ],
+)
+def test_a_record_past_its_acts_is_reported_by_its_status(row: dict[str, Any], status: str) -> None:
+    world = World()
+
+    assert _only(world.run(row))[0] == status
+    assert world.log == []
+
+
+def test_the_restored_and_clean_rows_say_nothing() -> None:
+    world = World()
+
+    result = world.run(_row(None, "restored", pinned_images=_pins()), _row("clean"))
+
+    assert result.outcomes == []
+
+
+def test_only_this_lanes_rows_are_its_own() -> None:
+    rows = [_row("bad"), _row("bad", lane="inert"), _row("bad", lane=None)]
+
+    assert lane_rows(rows) == [rows[0]]
+
+
+def test_a_platform_client_that_cannot_be_built_refuses_the_repoint_by_name() -> None:
+    world = World()
+
+    def unbuildable() -> Any:
+        raise RepointRefused("the Coolify URL must be https, or http to a tailnet address")
+
+    production = replace(world.production(), images=unbuildable)
+    result = revert_pass([_row("bad")], world.acts, production, True)
+
+    status, detail = _only(result)
+    assert status == "repoint-refused" and "tailnet" in detail
+    assert result.unpinned == {(BRAIN, PR): detail}
+
+
+def test_an_application_on_the_parents_tag_but_not_serving_it_is_deployed_again() -> None:
+    """Its tag is right but its deploy never started (or failed): the next pass starts one."""
+    world = World(_apps(tag=PARENT), serving={"app-brain": PARENT, "code-brain": MERGE})
+
+    status, detail = _only(world.run(_repointed()))
+
+    assert status == "pinned" and "code-brain" in detail
+    assert "start u2" in world.log and "start u1" not in world.log
+    assert world.acts.calls == []
+
+
+def test_a_restored_tag_not_yet_serving_the_revert_is_deployed_again() -> None:
+    world = World(
+        _apps(code_brain="main"),
+        registry={REVERT_MERGE: DIGEST},
+        serving={"app-brain": REVERT_MERGE, "code-brain": PARENT},
+    )
+
+    world.run(_landed())
+
+    assert [e for e in world.log if e.startswith(("tag ", "start "))] == ["start u2"]

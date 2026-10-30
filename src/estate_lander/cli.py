@@ -43,6 +43,16 @@ it with a comment naming the hold, and the orchestrator decides again in its own
 acting and reporting live in `lander.core`, parameterised by `LANE` below; this module keeps what
 is this lane's alone -- its enumeration from change records, its credentials, its client, and the
 refusal sets `LANE` names. It stays a separate program from `inert_lander` (ADR-0038).
+
+**IT RUNS HOURLY; IT LANDS BUMPS ONLY BETWEEN 02:00 AND 06:00 NEW YORK** (Landing Part 3b). Every
+pass first reads the watch of this lane's landings and takes the next step for any that went bad
+(`revert_pass`: point production back at the build before the bump, open the revert, restore the
+moving tag), and lands and freshens the SDS's own revert pull requests, which policy exempts from
+the pace and the window. Ordinary bumps are landed and freshened only in passes inside those hours,
+keeping the cadence they always had -- the orchestrator refuses outside its window regardless --
+and only those passes sync the held-pull-request alerts, which would otherwise resolve every bump
+the other twenty hours do not look at. Without `--submit` nothing is asked for and nothing on the
+hosting platform or in the registry is read.
 """
 
 from __future__ import annotations
@@ -50,21 +60,35 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from dataclasses import dataclass
+from collections.abc import Sequence
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, Protocol
+from typing import Any, Final, Protocol
+from zoneinfo import ZoneInfo
 
-from change_proposer.cli import BOT_CHANGE_CLASS
+from change_proposer.cli import BOT_CHANGE_CLASS, REVERT_CHANGE_CLASS
+from deploy_watcher.github import GitHubReader, ReadError
 from estate_lander.change_manager import DEFAULT_BASE_URL as CM_DEFAULT_BASE_URL
 from estate_lander.change_manager import ChangeManagerClient, ChangeManagerError
+from estate_lander.image_repoint import (
+    DEFAULT_COOLIFY_URL,
+    AppSpec,
+    CoolifyImages,
+    Registry,
+    RegistryUnreadable,
+    RepointRefused,
+)
 from estate_lander.orchestrator_client import (
     DEFAULT_BASE_URL,
     OrchestratorClient,
     OrchestratorError,
 )
+from estate_lander.revert_pass import Production, lane_rows, revert_pass
+from estate_lander.served import served_revision
 from lander import core
 from lander.core import EXIT_TOOL_FAILURE, EXIT_UNUSABLE, LandingClient, Lane, Outcome
-from lander.held_alerts import sync_held_alerts
+from lander.held_alerts import sync_held_alerts, sync_revert_alerts
+from sds_members.client import Member, MembersUnreadable, read_members
 
 # The credential key id the orchestrator resolves the bearer against. A constant rather than a
 # setting: an operator who could change it could only ever make the call unauthenticated.
@@ -101,10 +125,22 @@ _ASK_ABOUT = frozenset({"approved"})
 # third spelling here would be a copy of a vocabulary that already has two, which is the defect
 # this estate keeps paying for.
 #
-# NOT YET `dependency-revert` (Landing Part 3b). The SDS's own revert of a bump will land here, but
-# the admission this lane asks reads no record class and would judge a revert as a bump. Until the
-# revert admission exists, the class defers like any class this lane does not land: fail closed.
-_LANE_CLASSES = frozenset({BOT_CHANGE_CLASS})
+# `dependency-revert` (Landing Part 3b): the SDS's own revert of a bump in a repository that
+# redeploys. The admission reads the record's class and asks a revert the revert's terms -- the
+# served `revert_landing` conditions and Part 3a's revert terms -- and refuses a class and pull
+# request that disagree, either way.
+_LANE_CLASSES = frozenset({BOT_CHANGE_CLASS, REVERT_CHANGE_CLASS})
+
+# The hours in which this lane lands and freshens ordinary bumps: 02:00 to 06:00 in the zone policy
+# declares its change window in. A revert subject, and the watch's steps, are every pass.
+LANDING_ZONE: Final = ZoneInfo("America/New_York")
+LANDING_HOURS: Final = range(2, 6)
+_WATCH_ROW: Final = "landing-watch"
+# The member record's applications that serve a repository's default branch: every member here
+# lands on `main` (the estate's convention), and an application on any other branch is a preview.
+_SERVED_BRANCH: Final = "main"
+# GitHub's compare statuses that mean the served commit holds the one asked about.
+_HOLDS: Final = frozenset({"identical", "ahead"})  # not-a-vocabulary: GitHub's compare statuses
 
 # What a deferral is called in the report, keyed by the class that caused it. Named rather than
 # counted as one lump, because "it belongs to the factory lane" and "nobody has taught this program
@@ -171,6 +207,8 @@ class Selection:
 
     subjects: list[tuple[str, int]]
     deferred: dict[str, int]
+    # Landing Part 3b: the subjects whose record is the SDS's revert of a bump, landed every pass.
+    reverts: frozenset[tuple[str, int]] = field(default_factory=frozenset)
 
 
 def _deferral_reason(row: dict[str, Any]) -> str | None:
@@ -207,6 +245,7 @@ def _subjects(records: RecordSource) -> Selection:
     """
     subjects: list[tuple[str, int]] = []
     deferred: dict[str, int] = {}
+    reverts: set[tuple[str, int]] = set()
     rows = sorted(
         (row for row in records.records() if isinstance(row, dict)),
         key=lambda row: (str(row.get("target_repository") or ""), row.get("id") or 0),
@@ -230,7 +269,9 @@ def _subjects(records: RecordSource) -> Selection:
             deferred[reason] = deferred.get(reason, 0) + 1
             continue
         subjects.append((repository, number))
-    return Selection(subjects=subjects, deferred=deferred)
+        if row.get("change_class") == REVERT_CHANGE_CLASS:
+            reverts.add((repository, number))
+    return Selection(subjects=subjects, deferred=deferred, reverts=frozenset(reverts))
 
 
 def _pass(subjects: list[tuple[str, int]], client: LandingClient, submit: bool) -> list[Outcome]:
@@ -243,6 +284,111 @@ def _branch_updates(
 ) -> list[Outcome]:
     """Bring up to date the branches whose only obstacle is being behind; see `core`."""
     return core.branch_updates(LANE, subjects, client, submit)
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+def in_landing_hours(now: datetime) -> bool:
+    """Is `now` inside the hours this lane lands ordinary bumps?"""
+    return now.astimezone(LANDING_ZONE).hour in LANDING_HOURS
+
+
+def _read_watch(client: OrchestratorClient) -> tuple[list[dict[str, Any]] | None, list[Outcome]]:
+    """This lane's rows of the watch, or None and the one row saying it could not be read. A watch
+    the orchestrator cannot answer for does not stop the landing pass; the alerts hold."""
+    try:
+        return lane_rows(client.landing_watch()), []
+    except OrchestratorError as error:
+        return None, [Outcome(_WATCH_ROW, 0, "unreadable", str(error))]
+
+
+def _production(
+    reader: GitHubReader,
+    registry: Registry,
+    members: _Members,
+    coolify_url: str,
+    coolify_token: str,
+) -> Production:
+    """What the watch pass reaches production through. No Coolify token: every step that would
+    change production is refused by name, and alerted."""
+
+    def apps(repository: str) -> tuple[AppSpec, ...]:
+        return members.apps(repository)
+
+    def at_or_after(repository: str, commit: str, served: str) -> bool:
+        try:
+            return reader.compare_status(repository, commit, served) in _HOLDS
+        except ReadError:
+            return False
+
+    return Production(
+        images=(lambda: CoolifyImages(coolify_url, coolify_token)) if coolify_token else None,
+        registry=registry,
+        apps=apps,
+        served=served_revision,
+        at_or_after=at_or_after,
+    )
+
+
+class _Members:
+    """The member record, read once, on first need: the applications of one repository."""
+
+    def __init__(self, token: str, base_url: str) -> None:
+        self._token, self._base_url = token, base_url
+        self._members: list[Member] | None = None
+
+    def apps(self, repository: str) -> tuple[AppSpec, ...]:
+        if self._members is None:
+            try:
+                self._members = read_members(
+                    token=self._token, credential_key_id=SYSTEM_KEY_ID, base_url=self._base_url
+                )
+            except MembersUnreadable as error:
+                raise RepointRefused(f"the member record could not be read: {error}") from None
+        return tuple(
+            AppSpec(app.name, app.health_url)
+            for member in self._members
+            if member.repository.lower() == repository.lower() and member.state != "retired"
+            for app in member.apps
+            if app.branch == _SERVED_BRANCH
+        )
+
+
+def _stranded(
+    rows: Sequence[dict[str, Any]] | None, reader: GitHubReader
+) -> tuple[frozenset[tuple[str, int]], frozenset[tuple[str, int]]]:
+    """The landings whose recorded revert pull request GitHub no longer lists open, and those whose
+    repository could not be listed (their alert is held)."""
+    stranded: set[tuple[str, int]] = set()
+    unknown: set[tuple[str, int]] = set()
+    listed: dict[str, set[int] | None] = {}
+    for row in rows or []:
+        repository, number, revert = (
+            row.get("repository"),
+            row.get("pr_number"),
+            row.get("revert_pr_number"),
+        )
+        if row.get("status") != "revert_opened" or not isinstance(repository, str):
+            continue
+        if not isinstance(number, int) or not isinstance(revert, int):
+            continue
+        if repository not in listed:
+            try:
+                listed[repository] = {
+                    pull["number"]
+                    for pull in reader.open_pull_requests(repository)
+                    if isinstance(pull.get("number"), int)
+                }
+            except ReadError:
+                listed[repository] = None
+        open_numbers = listed[repository]
+        if open_numbers is None:
+            unknown.add((repository, number))
+        elif revert not in open_numbers:
+            stranded.add((repository, number))
+    return frozenset(stranded), frozenset(unknown)
 
 
 def run(argv: list[str] | None = None) -> int:
@@ -258,40 +404,93 @@ def run(argv: list[str] | None = None) -> int:
     cm_url = os.environ.get("ESTATE_LANDING_CHANGE_MANAGER_URL", "")
     token = os.environ.get("ESTATE_LANDING_ORCHESTRATOR_TOKEN", "")
     url = os.environ.get("ESTATE_LANDING_ORCHESTRATOR_URL", "")
-    if not cm_token:
-        print("ESTATE_LANDING_CHANGE_MANAGER_TOKEN is unset", file=sys.stderr)
-        return EXIT_UNUSABLE
-    if not token:
-        print("ESTATE_LANDING_ORCHESTRATOR_TOKEN is unset", file=sys.stderr)
-        return EXIT_UNUSABLE
+    github_token = os.environ.get("ESTATE_LANDING_GITHUB_TOKEN", "")
+    # Optional: fetched by the launcher on `--submit` only. Without it the watch's steps that
+    # change production are refused by name and alerted; nothing else is affected.
+    coolify_token = os.environ.get("ESTATE_LANDING_COOLIFY_TOKEN", "")
+    coolify_url = os.environ.get("ESTATE_LANDING_COOLIFY_URL", "") or DEFAULT_COOLIFY_URL
+    for name, value in (
+        ("ESTATE_LANDING_CHANGE_MANAGER_TOKEN", cm_token),
+        ("ESTATE_LANDING_ORCHESTRATOR_TOKEN", token),
+        ("ESTATE_LANDING_GITHUB_TOKEN", github_token),
+    ):
+        if not value:
+            print(f"{name} is unset", file=sys.stderr)
+            return EXIT_UNUSABLE
 
+    now = _now()
+    in_hours = in_landing_hours(now)
+    base_url = url or DEFAULT_BASE_URL
     try:
         with (
             ChangeManagerClient(cm_token, base_url=cm_url or CM_DEFAULT_BASE_URL) as records,
-            OrchestratorClient(token, SYSTEM_KEY_ID, base_url=url or DEFAULT_BASE_URL) as client,
+            OrchestratorClient(token, SYSTEM_KEY_ID, base_url=base_url) as client,
+            GitHubReader(github_token) as reader,
+            Registry(github_token) as registry,
         ):
+            # The watch first (Landing Part 3b): a bad landing is pointed back before anything
+            # else lands on top of it.
+            rows, watched = _read_watch(client)
+            production = (
+                _production(reader, registry, _Members(token, base_url), coolify_url, coolify_token)
+                if args.submit
+                else None
+            )
+            stepped = revert_pass(rows or [], client, production, args.submit)
+            watched.extend(stepped.outcomes)
             # READ ONCE, used by both passes. Reading again between them would put a second
             # network call inside the `try`, where its failure discards `outcomes` entirely and
             # returns a bare tool error -- losing the report of a landing that already happened.
             selection = _subjects(records)
-            outcomes = _pass(selection.subjects, client, args.submit)
-            outcomes.extend(_branch_updates(selection.subjects, client, args.submit))
-    except (ChangeManagerError, OrchestratorError) as error:
+            subjects = (
+                selection.subjects
+                if in_hours
+                else [subject for subject in selection.subjects if subject in selection.reverts]
+            )
+            outcomes = _pass(subjects, client, args.submit)
+            outcomes.extend(_branch_updates(subjects, client, args.submit))
+            stranded, unknown = _stranded(rows, reader)
+            watched.extend(
+                Outcome(repository, number, "revert-stranded", "its revert closed without landing")
+                for repository, number in sorted(stranded)
+            )
+    except (ChangeManagerError, OrchestratorError, ReadError, RegistryUnreadable) as error:
         print(str(error), file=sys.stderr)
         return EXIT_TOOL_FAILURE
 
-    code = report(outcomes, selection.deferred)
+    hours = "inside" if in_hours else "outside"
+    code = report([*outcomes, *watched], selection.deferred, [f"{hours} the landing hours"])
     if args.submit:
-        # A pull request held for a day raises one alert (`lander.held_alerts`). Only a submitting
-        # pass sends; a pass that returned above measured nothing and must not resolve anything.
-        reason = sync_held_alerts("estate-landing", outcomes, now=datetime.now(UTC))
-        if reason is not None:
-            print(f"alert-hub: {reason}", file=sys.stderr)
+        # A pull request held for a day raises one alert (`lander.held_alerts`), only from a pass
+        # that looked at every bump: outside the hours the bumps are not asked about, and a sync
+        # would resolve their alerts. Each revert record raises its own, every pass, and so does a
+        # landing this pass could not point back. A pass that returned above measured nothing and
+        # must not resolve anything.
+        reasons = [
+            reason
+            for reason in (
+                sync_held_alerts("estate-landing", outcomes, now=now) if in_hours else None,
+                sync_revert_alerts(
+                    "estate-landing",
+                    rows,
+                    stranded=stranded,
+                    unknown=unknown,
+                    unpinned=stepped.unpinned,
+                ),
+            )
+            if reason is not None
+        ]
+        if reasons:
+            print(f"alert-hub: {'; '.join(reasons)}", file=sys.stderr)
             return EXIT_TOOL_FAILURE
     return code
 
 
-def report(outcomes: list[Outcome], deferred: dict[str, int] | None = None) -> int:
+def report(
+    outcomes: list[Outcome],
+    deferred: dict[str, int] | None = None,
+    preamble: list[str] | None = None,
+) -> int:
     """Print every act considered, then what was left to another lane, then the summary.
 
     IT DOES NOT AFFECT THE EXIT CODE that something was deferred. Deferring is this program
@@ -305,7 +504,7 @@ def report(outcomes: list[Outcome], deferred: dict[str, int] | None = None) -> i
         f"{count} {reason} record(s) not considered; they belong to another lane"
         for reason, count in sorted((deferred or {}).items())
     ]
-    return core.report(outcomes, [], deferral_lines)
+    return core.report(outcomes, preamble or [], deferral_lines)
 
 
 def main() -> None:

@@ -1,4 +1,4 @@
-"""The confined orchestrator surface for the lander. FOUR paths, checked before the transport.
+"""The confined orchestrator surface for the lander. EIGHT paths, checked before the transport.
 
 It asks whether a pull request may be landed and, when told to, asks for the landing, for the
 much smaller act of bringing a stale branch up to date with its base, or for a held bump to be
@@ -49,17 +49,26 @@ _BRANCH_UPDATE = "/api/v1/estate-pr-branch-update"
 # comment. The orchestrator re-composes this lane's own admission and closes only on its answer.
 _CLOSE_HELD = "/api/v1/held-pr-close"
 
+# Landing Part 3b. The watch of the lanes' landings, read every pass, and the three acts on one of
+# this lane's that went bad: rerun its failed jobs or open its revert (the inert lander's act too),
+# record that production is being pointed back at the build before the bump, and record that it
+# was pointed forward again. The orchestrator judges each inside its own transaction.
+_WATCH = "/api/v1/landing-watch"
+_REVERT = "/api/v1/landing-revert"
+_REPOINT = "/api/v1/landing-repoint"
+_RESTORED = "/api/v1/landing-restored"
+
 
 class ForbiddenEndpointError(OrchestratorError):
     """This program tried to reach a path it is not allowed to reach."""
 
 
 def is_allowed_read(path: str) -> bool:
-    return path == _ADMISSION
+    return path in (_ADMISSION, _WATCH)
 
 
 def is_allowed_write(path: str) -> bool:
-    return path in (_LAND, _BRANCH_UPDATE, _CLOSE_HELD)
+    return path in (_LAND, _BRANCH_UPDATE, _CLOSE_HELD, _REVERT, _REPOINT, _RESTORED)
 
 
 def _permits(method: str, path: str) -> bool:
@@ -221,3 +230,71 @@ class OrchestratorClient:
         if not isinstance(body, dict):
             raise OrchestratorError("the close response was not an object")
         return body
+
+    def _object(self, response: httpx.Response, what: str) -> dict[str, Any]:
+        try:
+            body = response.json()
+        except ValueError as error:
+            raise OrchestratorError(f"the {what} was not JSON") from error
+        if not isinstance(body, dict):
+            raise OrchestratorError(f"the {what} was not an object")
+        return body
+
+    def landing_watch(self) -> list[dict[str, Any]]:
+        """Both lanes' watched landings, each with its verdict or its record's status."""
+        body = self._object(self._send("GET", _WATCH), "landing watch")
+        landings = body.get("landings")
+        if not isinstance(landings, list) or not all(isinstance(row, dict) for row in landings):
+            raise OrchestratorError("the landing watch carried no list of landings")
+        return landings
+
+    def revert_landing(
+        self,
+        repository: str,
+        pr_number: int,
+        *,
+        expected_status: str | None,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        """Ask the orchestrator to act on one watched landing: it judges again and acts on its own
+        answer (a rerun, or -- from `repointed` -- the revert)."""
+        body = {
+            "repository": repository,
+            "pr_number": pr_number,
+            "expected_status": expected_status,
+            "idempotency_key": idempotency_key,
+        }
+        return self._object(self._send("POST", _REVERT, json=body), "revert response")
+
+    def repoint(
+        self,
+        repository: str,
+        pr_number: int,
+        *,
+        expected_status: str | None,
+        pinned_images: dict[str, dict[str, str]],
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        """Ask the orchestrator to record that production is being pointed at these images. It
+        judges the landing again and refuses unless it is still bad."""
+        body = {
+            "repository": repository,
+            "pr_number": pr_number,
+            "expected_status": expected_status,
+            "pinned_images": pinned_images,
+            "idempotency_key": idempotency_key,
+        }
+        return self._object(self._send("POST", _REPOINT, json=body), "repoint response")
+
+    def restored(
+        self, repository: str, pr_number: int, *, expected_status: str, idempotency_key: str
+    ) -> dict[str, Any]:
+        """Ask the orchestrator to record that the moving tag is back and production serves the
+        revert."""
+        body = {
+            "repository": repository,
+            "pr_number": pr_number,
+            "expected_status": expected_status,
+            "idempotency_key": idempotency_key,
+        }
+        return self._object(self._send("POST", _RESTORED, json=body), "restore response")

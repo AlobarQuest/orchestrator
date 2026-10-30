@@ -7,6 +7,7 @@ head the landing names is the head the answer was about.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -76,6 +77,9 @@ class FakeOrchestrator:
         # asked and then reported the refusal would satisfy a status assertion and fail this.
         self.updated: list[tuple[str, int, str, str]] = []
         self.closed: list[tuple[str, int, str]] = []
+        self.watch: list[dict[str, Any]] = []
+        self.watch_error: Exception | None = None
+        self.acts: list[tuple[str, str, int]] = []
 
     def admission(self, repository: str, pr_number: int) -> dict[str, Any]:
         self.asked.append((repository, pr_number))
@@ -106,6 +110,24 @@ class FakeOrchestrator:
             "head_sha": head_sha,
             "replayed": self._replayed,
         }
+
+    # Landing Part 3b: the watch, empty unless a test sets one, and each act asked of it.
+    def landing_watch(self) -> list[dict[str, Any]]:
+        if self.watch_error is not None:
+            raise self.watch_error
+        return self.watch
+
+    def revert_landing(self, repository, pr_number, *, expected_status, idempotency_key):
+        self.acts.append(("revert", repository, pr_number))
+        return {"acted": True, "status": "rerun_requested", "detail": ""}
+
+    def repoint(self, repository, pr_number, **_: Any):
+        self.acts.append(("repoint", repository, pr_number))
+        return {"acted": True, "status": "repointed", "detail": ""}
+
+    def restored(self, repository, pr_number, **_: Any):
+        self.acts.append(("restored", repository, pr_number))
+        return {"acted": True, "status": "restored", "detail": ""}
 
 
 def _row(
@@ -761,9 +783,9 @@ def test_the_summary_counts_every_status_so_its_parts_sum_to_what_was_considered
         "would-close",
         # A held bump closed before and reopened by a person; the close is not repeated.
         "reopened",
-        # Landing Part 3a, the inert lane's watch (the shared body reports them; this lane never
-        # produces one): a rerun asked for, a revert opened or landed, and their dry runs are not
-        # findings; a refused or failed revert is.
+        # Landing Part 3a, the watch: a rerun asked for, a revert opened or landed, and their dry
+        # runs are not findings; a refused or failed revert is. This lane produces them too since
+        # Part 3b.
         "reran",
         "would-rerun",
         "revert-opened",
@@ -772,9 +794,20 @@ def test_the_summary_counts_every_status_so_its_parts_sum_to_what_was_considered
         "revert-refused",
         "revert-failed",
         "revert-stranded",
+        # Landing Part 3b, this lane's watch: production pointed back at the build before a bad
+        # bump, pinned there, and pointed forward again, each alerted on its own; a re-point
+        # refused before anything was pinned is a finding.
+        "repointed",
+        "would-repoint",
+        "repoint-refused",
+        "pinned",
+        "restoring",
+        "restored",
+        "would-restore",
     }
     assert NOT_A_FINDING < set(REPORTED)
     assert "waiting" in NOT_A_FINDING
+    assert "repoint-refused" not in NOT_A_FINDING
 
 
 # ------------------------------------------------------------------------------------------------
@@ -1177,17 +1210,21 @@ def test_a_factory_record_is_never_asked_about() -> None:
     assert client.landed == []
 
 
-def test_a_revert_record_is_deferred_until_its_admission_exists() -> None:
-    """Landing Part 3b. `ChangeRecord` carries no class, so the admission would judge the SDS's
-    revert as a bump. Until the revert admission exists (Task 4), the class defers, fail closed."""
+def test_a_revert_record_is_a_subject_and_is_named_as_one() -> None:
+    """Landing Part 3b. The admission reads the record's class and asks a revert the revert's
+    terms, so the SDS's revert of a bump is this lane's subject -- and is named, because it lands
+    in every pass where an ordinary bump lands only in the hours."""
     client = FakeOrchestrator({(REPOSITORY, 51): _admissible()})
 
-    selection = _subjects(FakeRecords([_row(51, change_class=REVERT_CHANGE_CLASS)]))
+    selection = _subjects(
+        FakeRecords([_row(49), _row(51, change_class=REVERT_CHANGE_CLASS, item_id=51)])
+    )
     outcomes = _pass(selection.subjects, client, submit=True)  # type: ignore[arg-type]
 
-    assert selection.subjects == []
-    assert selection.deferred == {REVERT_CHANGE_CLASS: 1}
-    assert outcomes == [] and client.asked == []
+    assert selection.subjects == [(REPOSITORY, 49), (REPOSITORY, 51)]
+    assert selection.reverts == {(REPOSITORY, 51)}
+    assert selection.deferred == {}
+    assert [o.status for o in outcomes if o.number == 51] == ["landed"]
 
 
 def test_a_deferred_record_is_counted_rather_than_silently_dropped() -> None:
@@ -1320,8 +1357,7 @@ def test_the_lane_classes_are_the_producers_own_constants() -> None:
     estate keeps paying for, in a place where the cost is landing somebody else's pull request."""
     from estate_lander.cli import _LANE_CLASSES
 
-    assert _LANE_CLASSES == {BOT_CHANGE_CLASS}
-    assert REVERT_CHANGE_CLASS not in _LANE_CLASSES
+    assert _LANE_CLASSES == {BOT_CHANGE_CLASS, REVERT_CHANGE_CLASS}
     assert FACTORY_CHANGE_CLASS not in _LANE_CLASSES
 
 
@@ -1485,6 +1521,67 @@ def alerts(monkeypatch) -> AlertCalls:
     return calls
 
 
+class RevertAlertCalls:
+    """Stands in for `sync_revert_alerts`: each call's lane, watch rows and keyword arguments."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, Any, dict[str, Any]]] = []
+
+    def __call__(self, lane: str, rows: Any, **kwargs: Any) -> str | None:
+        self.calls.append((lane, rows, kwargs))
+        return None
+
+
+class FakeReader:
+    """GitHub, read only for the open pull requests of a repository a revert is open in."""
+
+    def __init__(self, open_pulls: dict[str, list[int]] | None = None) -> None:
+        self.open_pulls = open_pulls or {}
+
+    def __enter__(self) -> FakeReader:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        return None
+
+    def open_pull_requests(self, repository: str) -> list[dict[str, Any]]:
+        return [{"number": n} for n in self.open_pulls.get(repository, [])]
+
+    def compare_status(self, repository: str, base_sha: str, head_sha: str) -> str:
+        return "identical"
+
+
+class FakeRegistry:
+    def __enter__(self) -> FakeRegistry:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        return None
+
+    def digest(self, image: str, tag: str) -> str | None:
+        return None
+
+
+# Inside the landing hours: 03:15 New York.
+IN_HOURS = datetime(2026, 10, 30, 7, 15, tzinfo=UTC)
+# Outside them: 10:15 New York.
+OUT_OF_HOURS = datetime(2026, 10, 30, 14, 15, tzinfo=UTC)
+
+
+@pytest.fixture(autouse=True)
+def revert_alerts(monkeypatch) -> RevertAlertCalls:
+    """Every run here is in the landing hours, holds a GitHub token, and reaches no GitHub, no
+    registry and no alert-hub, unless a test says otherwise."""
+    calls = RevertAlertCalls()
+    monkeypatch.setattr("estate_lander.cli.sync_revert_alerts", calls)
+    monkeypatch.setattr("estate_lander.cli._now", lambda: IN_HOURS)
+    monkeypatch.setenv("ESTATE_LANDING_GITHUB_TOKEN", "gh")
+    monkeypatch.delenv("ESTATE_LANDING_COOLIFY_TOKEN", raising=False)
+    monkeypatch.setattr("estate_lander.cli.GitHubReader", lambda *a, **k: FakeReader())
+    monkeypatch.setattr("estate_lander.cli.Registry", lambda *a, **k: FakeRegistry())
+    return calls
+
+
 class _Records(FakeRecords):
     def __enter__(self):
         return self
@@ -1577,3 +1674,159 @@ def test_an_alert_failure_exits_one_after_printing_the_report(monkeypatch, alert
     captured = capsys.readouterr()
     assert "landing_checks_not_clean" in captured.out
     assert "alert-hub: SDS_BRIDGE_ALERT_TOKEN is unset" in captured.err
+
+
+# ------------------------------------------------------------------------------------------------
+# Landing Part 3b: hourly, landing bumps only in the hours, and the watch every pass.
+# ------------------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("moment", "inside"),
+    [
+        (datetime(2026, 10, 30, 6, 0, tzinfo=UTC), True),  # 02:00 New York
+        (datetime(2026, 10, 30, 9, 59, tzinfo=UTC), True),  # 05:59
+        (datetime(2026, 10, 30, 10, 0, tzinfo=UTC), False),  # 06:00
+        (datetime(2026, 10, 30, 5, 59, tzinfo=UTC), False),  # 01:59
+        (datetime(2026, 1, 15, 7, 0, tzinfo=UTC), True),  # 02:00 in winter (EST)
+        (datetime(2026, 1, 15, 6, 0, tzinfo=UTC), False),  # 01:00 in winter
+    ],
+)
+def test_the_landing_hours_are_two_to_six_new_york(moment: datetime, inside: bool) -> None:
+    from estate_lander.cli import in_landing_hours
+
+    assert in_landing_hours(moment) is inside
+
+
+def _wired(monkeypatch, client: _Orchestrator, rows: list[dict[str, Any]]) -> None:
+    monkeypatch.setenv("ESTATE_LANDING_CHANGE_MANAGER_TOKEN", "cm")
+    monkeypatch.setenv("ESTATE_LANDING_ORCHESTRATOR_TOKEN", "orch")
+    monkeypatch.setattr("estate_lander.cli.ChangeManagerClient", lambda *a, **k: _Records(rows))
+    monkeypatch.setattr("estate_lander.cli.OrchestratorClient", lambda *a, **k: client)
+
+
+def test_outside_the_hours_only_the_sds_reverts_are_landed_and_held_alerts_are_left(
+    monkeypatch, alerts, revert_alerts, capsys
+) -> None:
+    client = _Orchestrator({(REPOSITORY, 49): _admissible(), (REPOSITORY, 51): _admissible()})
+    _wired(monkeypatch, client, [_row(49), _row(51, change_class=REVERT_CHANGE_CLASS)])
+    monkeypatch.setattr("estate_lander.cli._now", lambda: OUT_OF_HOURS)
+
+    assert run(["--submit"]) == EXIT_OK
+
+    assert set(client.asked) == {(REPOSITORY, 51)}
+    assert [number for _, number, _, _ in client.landed] == [51]
+    # The bumps were not looked at, so their held alerts are neither raised nor resolved.
+    assert alerts.calls == []
+    assert len(revert_alerts.calls) == 1
+    assert "outside the landing hours" in capsys.readouterr().out
+
+
+def test_inside_the_hours_every_subject_is_asked_and_held_alerts_sync(
+    monkeypatch, alerts, revert_alerts
+) -> None:
+    client = _Orchestrator({(REPOSITORY, 49): _admissible()})
+    _wired(monkeypatch, client, [_row(49), _row(51, change_class=REVERT_CHANGE_CLASS)])
+
+    run(["--submit"])
+
+    assert sorted(set(client.asked)) == [(REPOSITORY, 49), (REPOSITORY, 51)]
+    assert len(alerts.calls) == 1 and len(revert_alerts.calls) == 1
+
+
+def _watched(verdict: str | None, status: str | None = None, **extra: Any) -> dict[str, Any]:
+    row: dict[str, Any] = {
+        "repository": "alobarquest/brain",
+        "pr_number": 79,
+        "verdict": verdict,
+        "detail": "test",
+        "failed_job_names": [],
+        "failed_runs": [],
+        "status": status,
+        "revert_pr_number": None,
+        "hold_outcome": None,
+        "reason": None,
+        "lane": "estate",
+        "parent_sha": "8" * 40,
+        "pinned_images": None,
+        "revert_merge_sha": None,
+    }
+    row.update(extra)
+    return row
+
+
+def test_a_bad_landing_with_no_coolify_token_is_refused_and_alerted_every_pass(
+    monkeypatch, revert_alerts, capsys
+) -> None:
+    """The launcher fetches the token on `--submit`; until it exists the re-point is refused by
+    name, nothing is pinned, and `landing-not-pointed-back` is raised."""
+    client = _Orchestrator({})
+    client.watch = [_watched("bad"), _watched("bad", lane="inert", pr_number=7)]
+    _wired(monkeypatch, client, [])
+
+    assert run(["--submit"]) == EXIT_FINDINGS
+
+    assert client.acts == []
+    [(lane, rows, kwargs)] = revert_alerts.calls
+    assert lane == "estate-landing"
+    assert [row["pr_number"] for row in rows] == [79]
+    assert list(kwargs["unpinned"]) == [("alobarquest/brain", 79)]
+    assert "no Coolify token" in kwargs["unpinned"][("alobarquest/brain", 79)]
+    assert "repoint-refused" in capsys.readouterr().out
+
+
+def test_a_report_run_reads_the_watch_and_asks_for_nothing(
+    monkeypatch, revert_alerts, capsys
+) -> None:
+    client = _Orchestrator({})
+    client.watch = [_watched("bad")]
+    _wired(monkeypatch, client, [])
+
+    run([])
+
+    assert client.acts == [] and revert_alerts.calls == []
+    assert "would-repoint" in capsys.readouterr().out
+
+
+def test_an_unreadable_watch_still_lands_and_holds_every_revert_alert(
+    monkeypatch, revert_alerts, capsys
+) -> None:
+    client = _Orchestrator({(REPOSITORY, 49): _admissible()})
+    client.watch_error = OrchestratorError("the orchestrator answered 500")
+    _wired(monkeypatch, client, [_row(49)])
+
+    assert run(["--submit"]) == EXIT_FINDINGS
+
+    assert [number for _, number, _, _ in client.landed] == [49]
+    [(lane, rows, _)] = revert_alerts.calls
+    assert rows is None
+    assert "landing-watch#0  unreadable" in capsys.readouterr().out
+
+
+def test_a_revert_closed_without_landing_is_stranded_and_its_listing_failure_is_held(
+    monkeypatch, revert_alerts
+) -> None:
+    client = _Orchestrator({})
+    client.watch = [_watched(None, "revert_opened", revert_pr_number=80, pinned_images={"u": {}})]
+    _wired(monkeypatch, client, [])
+
+    run(["--submit"])
+
+    [(_, _, kwargs)] = revert_alerts.calls
+    assert kwargs["stranded"] == {("alobarquest/brain", 79)}
+
+    monkeypatch.setattr(
+        "estate_lander.cli.GitHubReader",
+        lambda *a, **k: FakeReader({"alobarquest/brain": [80]}),
+    )
+    run(["--submit"])
+    assert revert_alerts.calls[-1][2]["stranded"] == frozenset()
+
+
+def test_the_github_token_is_required(monkeypatch, capsys) -> None:
+    monkeypatch.setenv("ESTATE_LANDING_CHANGE_MANAGER_TOKEN", "cm")
+    monkeypatch.setenv("ESTATE_LANDING_ORCHESTRATOR_TOKEN", "orch")
+    monkeypatch.delenv("ESTATE_LANDING_GITHUB_TOKEN")
+
+    assert run([]) == EXIT_UNUSABLE
+    assert "ESTATE_LANDING_GITHUB_TOKEN is unset" in capsys.readouterr().err

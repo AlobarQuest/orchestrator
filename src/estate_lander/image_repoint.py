@@ -52,8 +52,9 @@ DEFAULT_COOLIFY_URL: Final = "http://100.92.138.19:8000"
 TAG_FIELD: Final = "docker_registry_image_tag"
 _IMAGE_FIELD: Final = "docker_registry_image_name"
 _APPLICATIONS: Final = "/api/v1/applications"
-# One application, or its deploy. A Coolify uuid is lower-case letters and digits.
-_ONE: Final = re.compile(r"/api/v1/applications/([a-z0-9]+)(/start)?")
+# The segments of one application's path (`/api/v1/applications/<uuid>`), and its deploy's.
+_ONE: Final = ("", "api", "v1", "applications")
+_DEPLOY: Final = "start"
 
 GHCR: Final = "https://ghcr.io"
 # This estate's images, and only them: `ghcr.io/alobarquest/<name>`.
@@ -107,11 +108,11 @@ def _permits(allowed: frozenset[str], method: str, path: str) -> bool:
     application and POST of its deploy; nothing else."""
     if path == _APPLICATIONS:
         return method == "GET"
-    match = _ONE.fullmatch(path)
-    if match is None or match.group(1) not in allowed:
+    parts = path.split("/")
+    if tuple(parts[:4]) != _ONE or len(parts) not in (5, 6) or parts[4] not in allowed:
         return False
-    if match.group(2):
-        return method == "POST"
+    if len(parts) == 6:
+        return parts[5] == _DEPLOY and method == "POST"
     return method in ("GET", "PATCH")
 
 
@@ -189,18 +190,18 @@ class CoolifyImages:
 
     def application(self, uuid: str) -> Application:
         """One allowed application as the platform has it now."""
-        row = self._send("GET", f"{_APPLICATIONS}/{uuid}").json()
+        row = self._send("GET", f"/api/v1/applications/{uuid}").json()
         if not isinstance(row, dict):
             raise RepointRefused("the platform's application did not read")
         return self._application(row, AppSpec(str(row.get("name") or uuid), ""))
 
     def set_tag(self, uuid: str, tag: str) -> None:
         """Change one allowed application's image tag. The body is that one field."""
-        self._send("PATCH", f"{_APPLICATIONS}/{uuid}", json={TAG_FIELD: tag})
+        self._send("PATCH", f"/api/v1/applications/{uuid}", json={TAG_FIELD: tag})
 
     def start(self, uuid: str) -> None:
         """Start a deploy of one allowed application, which pulls its image tag."""
-        self._send("POST", f"{_APPLICATIONS}/{uuid}/start")
+        self._send("POST", f"/api/v1/applications/{uuid}/start")
 
     @staticmethod
     def _application(row: dict[str, Any], app: AppSpec) -> Application:

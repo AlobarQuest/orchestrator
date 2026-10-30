@@ -207,15 +207,29 @@ TABLE: dict[str, Row] = {
         "__future__",
         "argparse",
         "change_proposer",
+        "collections",
         "dataclasses",
         # The clock a held pull request's first sighting is measured against.
         "datetime",
+        # Landing Part 3b: the open pull requests a revert is in, and whether production serves a
+        # commit at or after the revert's -- the inert lander's own read-only reader.
+        "deploy_watcher",
         "estate_clients",
         "httpx",
         "lander",
         "os",
+        "re",
+        # Landing Part 3b: an application's served revision, through that lane's reader and parser
+        # rather than a copy of them.
+        "revision_watcher",
+        # Landing Part 3b: the member record's applications, the re-point's derived allowlist.
+        "sds_members",
         "sys",
         "typing",
+        # `urllib.parse` only: an application's health host, matched to the platform's fqdn.
+        "urllib",
+        # The landing hours are New York's, the zone policy declares its change window in.
+        "zoneinfo",
     ),
     # SDS 1.1 item 5a: the deploy-time image binder, the one program ADR-0039's amendment lets
     # mint a post-deploy unit. It borrows from no other lane -- its git reads and its three
@@ -316,6 +330,8 @@ TABLE: dict[str, Row] = {
         "__future__",
         "collections",
         "httpx",
+        # Whether a plain-HTTP base URL is a tailnet address (the Coolify write token's rule).
+        "ipaddress",
         "typing",
         # `urllib.parse` only, for the base-URL shape check.
         "urllib",

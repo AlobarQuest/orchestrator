@@ -351,6 +351,7 @@ def test_a_bump_waits_while_a_revert_is_in_progress_in_its_repository(
     )
 
     assert answer.refusals == (LANDING_REPOSITORY_REVERTING,)
+    assert answer.satisfied is False
 
 
 def test_a_revert_landed_by_the_estate_lane_is_recorded_and_holds_the_dependency(
@@ -391,3 +392,16 @@ def test_a_revert_landed_by_the_estate_lane_is_recorded_and_holds_the_dependency
         assert stored.hold_outcome == "held uv / typer at 0.20.0"
         hold = reader.scalars(select(SdsMemberHold)).one()
         assert (hold.dependency, hold.ceiling, hold.set_by) == ("typer", "0.20.0", "sds-revert")
+
+
+def test_a_bump_record_on_a_revert_branch_is_refused_under_the_update_type_rule_too(
+    migrated_session: Session,
+) -> None:
+    """A version deciding by update type reads no ecosystem, so nothing else refuses a parseable
+    title on a revert branch: the mismatch alone must."""
+    gateway = FakeEstateGateway(pull=pull_request(head_ref=BRANCH))
+
+    answer = _ask(migrated_session, record=approved(), gateway=gateway, moment=IN_WINDOW, number=49)
+
+    assert answer.refusals == (LANDING_RECORD_CLASS_MISMATCH,)
+    assert answer.satisfied is False
