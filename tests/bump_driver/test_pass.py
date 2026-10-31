@@ -559,6 +559,88 @@ def test_the_limit_is_two_hours() -> None:
     assert UNCLAIMED_HOURS == 2
 
 
+@pytest.mark.parametrize("failing", ["unit", "history"])
+@pytest.mark.parametrize("broken", [UNIT, OTHER_UNIT], ids=["sorts-first", "sorts-last"])
+def test_a_ready_unit_that_cant_be_read_holds_its_repository(
+    orch, github, generator, failing, broken
+) -> None:
+    """It may be the one with a run starting, so nothing else there may start."""
+    orch.units[UNIT] = _unit(UNIT, "ready")
+    orch.units[OTHER_UNIT] = _unit(OTHER_UNIT, "ready")
+    original = getattr(orch, failing)
+
+    def read(unit_id: str) -> Any:
+        if unit_id == broken:
+            raise CallError("503", 503)
+        return original(unit_id)
+
+    setattr(orch, failing, read)
+    outcomes = _run(orch, github, generator)
+    assert orch.dispatched == []
+    assert sorted(_results(outcomes)) == ["busy", "unread"]
+    assert exit_code(outcomes) == INCOMPLETE
+
+
+def test_an_unreadable_history_entry_holds_its_repository(orch, github, generator) -> None:
+    orch.units[UNIT] = _unit(UNIT, "ready")
+    orch.units[OTHER_UNIT] = _unit(OTHER_UNIT, "ready")
+    orch.histories[UNIT] = [{"action": "dispatch.dispatched", "occurred_at": "not a time"}]
+    _run(orch, github, generator)
+    assert orch.dispatched == []
+
+
+def test_a_record_whose_work_cant_be_read_holds_its_repository(orch, github, generator) -> None:
+    orch.units[UNIT] = _unit(UNIT, "ready")
+    original = orch.work
+
+    def work(change_record_id: int) -> dict[str, Any]:
+        if change_record_id == 999:
+            raise CallError("503", 503)
+        return original(change_record_id)
+
+    orch.work = work
+    outcomes = _run(orch, github, generator, [{**RECORD, "id": 999}, RECORD])
+    assert orch.dispatched == []
+    assert sorted(_results(outcomes)) == ["busy", "unread"]
+
+
+def test_a_record_that_goes_unreadable_after_decomposing_holds_its_repository(
+    orch, github, generator
+) -> None:
+    orch.units[UNIT] = _unit(UNIT, "ready")
+    original = orch.work
+    calls: list[int] = []
+
+    def work(change_record_id: int) -> dict[str, Any]:
+        calls.append(change_record_id)
+        if change_record_id == 999 and calls.count(999) > 2:
+            raise CallError("503", 503)
+        return original(change_record_id)
+
+    orch.work = work
+    _run(orch, github, generator, [{**RECORD, "id": 999}, RECORD])
+    assert orch.dispatched == []
+
+
+def test_an_unreadable_repository_holds_only_itself(orch, github, generator) -> None:
+    other = "AlobarQuest/brain"
+    orch.units[UNIT] = _unit(UNIT, "ready")
+    original = orch.work
+
+    def work(change_record_id: int) -> dict[str, Any]:
+        if change_record_id == 999:
+            raise CallError("503", 503)
+        return original(change_record_id)
+
+    orch.work = work
+    record = {**RECORD, "id": 999, "target_repository": other, "package_id": "brain-uv-httpx2"}
+    granted = {**GRANTED, other.lower(): other}
+    assert sorted(_results(_run(orch, github, generator, [record, RECORD], granted=granted))) == [
+        "dispatched",
+        "unread",
+    ]
+
+
 def test_a_blocked_dispatch_doesnt_hold_the_repository(orch, github, generator) -> None:
     orch.units[UNIT] = _unit(UNIT, "ready")
     orch.units[OTHER_UNIT] = _unit(OTHER_UNIT, "ready")
@@ -811,7 +893,7 @@ def test_one_unreadable_record_doesnt_stop_the_pass(orch, github, generator) -> 
 
     orch.work = work
     outcomes = _run(orch, github, generator, [{**RECORD, "id": 999}, RECORD])
-    assert _results(outcomes) == ["unread", "dispatched"]
+    assert _results(outcomes) == ["unread", "busy"]
     assert exit_code(outcomes) == INCOMPLETE
     assert outcomes[0].repository == REPOSITORY
 

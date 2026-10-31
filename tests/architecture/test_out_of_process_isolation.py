@@ -280,6 +280,7 @@ TABLE: dict[str, Row] = {
         "dataclasses",
         "datetime",
         "estate_clients",
+        "fcntl",
         "httpx",
         "json",
         "os",

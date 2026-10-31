@@ -37,6 +37,7 @@ EXIT CODES:
 from __future__ import annotations
 
 import argparse
+import fcntl
 import os
 import sys
 from collections.abc import Callable, Mapping, Sequence
@@ -102,6 +103,10 @@ LIVE_RUN_STATES: Final = frozenset({"claimed", "executing"})  # not-a-vocabulary
 REVISION_REQUIRED: Final = "revision_required"
 # How long a dispatched run may go unclaimed before a person is told it holds its repository.
 UNCLAIMED_HOURS = 2
+# Held for a whole acting pass, so a second one can't reset a mirror under a running generator.
+LOCK_FILE: Final = "pass.lock"
+# What reading a subject can raise; one subject's failure never stops the pass.
+READ_FAILURES: Final = (CallError, KeyError, TypeError, ValueError)
 READY: Final = "ready"
 COMPLETED: Final = "completed"
 # A dispatch the orchestrator refused to start for now; nothing is wrong with the unit.
@@ -151,6 +156,8 @@ def run_pass(
 ) -> list[Outcome]:
     outcomes: list[Outcome] = []
     bumps = _bumps(records, orchestrator, granted, outcomes)
+    # A record that can't be read may hold the run that is live, so its repository starts nothing.
+    held = {outcome.repository for outcome in outcomes if outcome.repository is not None}
     for bump in bumps:
         if bump.record_status == DECOMPOSED_STATUS:
             _isolated(
@@ -159,8 +166,8 @@ def run_pass(
                 lambda b: _decompose(b, orchestrator, mirror, generate, dry_run),
             )
     # Read after decomposing, so a unit policy just approved is dispatched in this pass.
-    units = _units(bumps, orchestrator, outcomes)
-    outcomes.extend(_dispatch_all(units, orchestrator, now or datetime.now(UTC), dry_run))
+    units = _units(bumps, orchestrator, outcomes, held)
+    outcomes.extend(_dispatch_all(units, orchestrator, held, now or datetime.now(UTC), dry_run))
     for bump, row in units:
         if row.get("state") == COMPLETED:
             _isolated(bump, outcomes, lambda b, r=row: _merge(b, r, orchestrator, github, dry_run))
@@ -177,7 +184,7 @@ def _isolated(
     """One subject's failure to read never stops the pass."""
     try:
         outcome = act(bump)
-    except (CallError, MirrorFailed, KeyError, TypeError, ValueError) as error:
+    except (*READ_FAILURES, MirrorFailed) as error:
         outcome = Outcome(bump.subject, UNREAD, str(error), bump.repository)
     if outcome is not None:
         outcomes.append(outcome)
@@ -232,15 +239,16 @@ def _bumps(
                             intake,
                         )
                     )
-        except (CallError, KeyError, TypeError, ValueError) as error:
+        except READ_FAILURES as error:
             outcomes.append(Outcome(f"record {record.get('id')}", UNREAD, str(error), repository))
     return bumps
 
 
 def _units(
-    bumps: Sequence[_Bump], orchestrator: Orchestrator, outcomes: list[Outcome]
+    bumps: Sequence[_Bump], orchestrator: Orchestrator, outcomes: list[Outcome], held: set[str]
 ) -> list[tuple[_Bump, dict[str, Any]]]:
-    """Each bump's units as the record's work lists them, one read per record."""
+    """Each bump's units as the record's work lists them, one read per record. A record that
+    can't be read holds its repository."""
     work: dict[int, dict[str, Any] | None] = {}
     rows: list[tuple[_Bump, dict[str, Any]]] = []
     for bump in bumps:
@@ -249,6 +257,7 @@ def _units(
                 work[bump.record_id] = orchestrator.work(bump.record_id)
             except CallError as error:
                 work[bump.record_id] = None
+                held.add(bump.repository)
                 outcomes.append(Outcome(bump.subject, UNREAD, str(error), bump.repository))
         answer = work[bump.record_id] or {}
         rows.extend(
@@ -376,12 +385,14 @@ def _unclaimed_since(history: Sequence[Mapping[str, Any]]) -> datetime | None:
 def _dispatch_all(
     units: Sequence[tuple[_Bump, dict[str, Any]]],
     orchestrator: Orchestrator,
+    held: set[str],
     now: datetime,
     dry_run: bool,
 ) -> list[Outcome]:
     """Every ready unit is read first, so an unclaimed run holds its repository whichever order the
-    units come in; only then is anything started."""
-    busy = {b.repository for b, row in units if row.get("state") in LIVE_RUN_STATES}
+    units come in; only then is anything started. A unit that can't be read may be the one with
+    the run, so it holds its repository too."""
+    busy = held | {b.repository for b, row in units if row.get("state") in LIVE_RUN_STATES}
     outcomes: list[Outcome] = []
     startable: list[tuple[_Bump, dict[str, Any], list[dict[str, Any]]]] = []
     ready = [(b, r) for b, r in units if r.get("state") == READY]
@@ -389,7 +400,7 @@ def _dispatch_all(
         _isolated(
             bump,
             outcomes,
-            lambda b, r=row: _survey(b, r, orchestrator, busy, startable, now),
+            lambda b, r=row: _survey_holding(b, r, orchestrator, busy, startable, now),
         )
     for bump, unit, history in startable:
         _isolated(
@@ -398,6 +409,21 @@ def _dispatch_all(
             lambda b, u=unit, h=history: _dispatch(b, u, h, orchestrator, busy, dry_run),
         )
     return outcomes
+
+
+def _survey_holding(
+    bump: _Bump,
+    row: Mapping[str, Any],
+    orchestrator: Orchestrator,
+    busy: set[str],
+    startable: list[tuple[_Bump, dict[str, Any], list[dict[str, Any]]]],
+    now: datetime,
+) -> Outcome | None:
+    try:
+        return _survey(bump, row, orchestrator, busy, startable, now)
+    except READ_FAILURES:
+        busy.add(bump.repository)
+        raise
 
 
 def _survey(
@@ -580,34 +606,57 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--dry-run", action="store_true", help="list what would be done")
     args = parser.parse_args(argv)
     environ = os.environ
-    token = environ.get("ORCHESTRATOR_API_TOKEN", "")
-    key_id = environ.get("ORCHESTRATOR_API_CREDENTIAL_KEY_ID", "")
-    change_manager_token = environ.get("CHANGE_MANAGER_TOKEN", "")
-    github_token = environ.get("BUMP_DRIVER_GITHUB_TOKEN", "")
-    if not all((token, key_id, change_manager_token, github_token)):
+    required = (
+        "ORCHESTRATOR_API_TOKEN",
+        "ORCHESTRATOR_API_CREDENTIAL_KEY_ID",
+        "CHANGE_MANAGER_TOKEN",
+        "BUMP_DRIVER_GITHUB_TOKEN",
+    )
+    if not all(environ.get(name) for name in required):
         print(
             "FATAL: ORCHESTRATOR_API_TOKEN, its key id, CHANGE_MANAGER_TOKEN and "
             "BUMP_DRIVER_GITHUB_TOKEN are required",
             file=sys.stderr,
         )
         return 1
-    alert_token = environ.get(TOKEN_ENV, "")
-    if not args.dry_run and not alert_token:
+    if not args.dry_run and not environ.get(TOKEN_ENV, ""):
         print(f"FATAL: {TOKEN_ENV} is required", file=sys.stderr)
         return 1
+    home = Path(environ.get("HOME", str(Path.home())))
+    state = Path(environ.get("BUMP_DRIVER_STATE_DIR", str(state_directory(home))))
+    if args.dry_run:
+        return _pass(environ, state, home, dry_run=True)
+    try:
+        state.mkdir(parents=True, exist_ok=True)
+        lock = (state / LOCK_FILE).open("w")
+    except OSError as error:
+        print(f"FATAL: the state directory is unusable: {type(error).__name__}", file=sys.stderr)
+        return 1
+    with lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            # Not a finding: that pass reports for itself, and this one touched nothing.
+            print("another bump-driver pass is running; this one did nothing")
+            return 0
+        return _pass(environ, state, home, dry_run=False)
+
+
+def _pass(environ: Mapping[str, str], state: Path, home: Path, *, dry_run: bool) -> int:
+    token = environ["ORCHESTRATOR_API_TOKEN"]
+    key_id = environ["ORCHESTRATOR_API_CREDENTIAL_KEY_ID"]
+    github_token = environ["BUMP_DRIVER_GITHUB_TOKEN"]
     base_url = environ.get("ORCHESTRATOR_API_URL", ORCHESTRATOR_URL)
     try:
         reader = ChangeManagerReader(
             base_url=environ.get("CHANGE_MANAGER_URL", CHANGE_MANAGER_URL),
-            token=change_manager_token,
+            token=environ["CHANGE_MANAGER_TOKEN"],
         )
         orchestrator = Orchestrator(base_url=base_url, credential_key_id=key_id, token=token)
         github = GitHub(token=github_token)
     except UnusableEndpointError as error:
         print(f"FATAL: {error}", file=sys.stderr)
         return 1
-    home = Path(environ.get("HOME", str(Path.home())))
-    state = Path(environ.get("BUMP_DRIVER_STATE_DIR", str(state_directory(home))))
     try:
         members = read_members(token=token, credential_key_id=key_id, base_url=base_url)
         granted = {
@@ -622,7 +671,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             granted,
             mirrors.fresh,
             Generator(factory_binary(home), _generator_environment(environ, mirrors)),
-            dry_run=args.dry_run,
+            dry_run=dry_run,
         )
     except (CallError, MembersUnreadable) as error:
         # No alert is touched: a pass that read nothing says nothing about what it remembers.
@@ -636,9 +685,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"{outcome.subject:<60}  {outcome.result:<17}  {outcome.detail}".rstrip())
     print(f"\n{len(outcomes)} bump subject(s) reported")
     code = exit_code(outcomes)
-    if args.dry_run:
+    if dry_run:
         return code
-    problem = sync_alerts(outcomes, token=alert_token, state_dir=state)
+    problem = sync_alerts(outcomes, token=environ[TOKEN_ENV], state_dir=state)
     if problem is not None:
         print(f"alert-hub could not be told: {problem}", file=sys.stderr)
         return INCOMPLETE

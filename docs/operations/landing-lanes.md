@@ -725,7 +725,8 @@ standing dependency-update work as SYSTEM with no person acting. Verification st
   intake it read through its own client, and `--assume-checkout-current`, resting on `fresh`'s proof.
 - **Dispatch.** One run per repository: a `claimed` or `executing` unit holds it, and so does a run
   dispatched but not yet claimed (the unit is still `ready`, and history says so), found across
-  every ready unit before anything starts. Such a run still unclaimed after `UNCLAIMED_HOURS` (2)
+  every ready unit before anything starts. A record or ready unit that can't be read holds its
+  repository for that pass, since it may be the one with the run. Such a run still unclaimed after `UNCLAIMED_HOURS` (2)
   raises `bump-run-unclaimed` and keeps holding: the lane never dispatches it again, and
   `deploy_orchestrator.py` refuses on the same signal. Look for the run in the repository's Actions,
   then dispatch the unit again or retire it (fail it, then cancel it). The key is
@@ -747,6 +748,9 @@ standing dependency-update work as SYSTEM with no person acting. Verification st
   `bump-act-refused:<repo>:<unit>` for a refused dispatch or merge, and
   `bump-run-unclaimed:<repo>:<unit>` above. Each resolves when its subject clears, and is held while
   its repository's records can't be read. A person's own proposal never alerts.
+- **One acting pass at a time.** It holds an `fcntl` lock on `pass.lock` in the state directory, so a
+  hand-run pass can't reset a mirror under a running `factory`. A second acting pass prints that and
+  exits 0, a finding in neither. `--dry-run` takes no lock.
 - **Nothing requeues a unit.** `revision_required` has a SYSTEM edge back to `ready`, but `requeue`
   takes only failed or blocked work and no lane drives it, so the alert is the end state and a
   person decides.
