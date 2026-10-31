@@ -20,9 +20,10 @@ from sqlalchemy.orm import Session
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import EstatePrMerge, Event
-from orchestrator.services.landing import estate_pr_merge
+from orchestrator.services.landing import estate_pr_merge, lane_act
 from orchestrator.services.landing.estate_pr_merge import (
     CHANGE_RECORD_TRAILER,
+    ESTATE_MERGE_NOT_ADMISSIBLE,
     POLICY_VERSION_TRAILER,
     EstateMergeCommand,
     GitHubEstatePullRequests,
@@ -34,7 +35,9 @@ from orchestrator.services.landing.interfaces import (
     SQUASH,
     EstateGatewayError,
     MergeOutcome,
+    outcome_is_unknown,
 )
+from orchestrator.services.landing.lane_act import unknown_outcomes
 from tests.services.change_record_doubles import FakeChangeRecordSource
 from tests.services.estate_doubles import inert_source, redeploying_source
 from tests.services.estate_landing_doubles import (
@@ -398,6 +401,30 @@ def test_a_refusal_over_a_landing_that_actually_happened_is_recorded_as_already_
         assert stored is not None and stored.status == "already_merged"
 
 
+def test_a_reconciling_read_at_another_head_is_not_a_landing_the_watch_reads(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    class MovedThenLanded(ActingGateway):
+        def read_pull_request(self, *, repository: str, number: int):
+            if self.merges:
+                return pull_request(
+                    head_sha="e" * 40, landed=True, is_open=False, merge_commit=LANDED_COMMIT
+                )
+            return super().read_pull_request(repository=repository, number=number)
+
+    record = _land(
+        migrated_session, MovedThenLanded(merge_error=EstateGatewayError("merge_status", 502))
+    )
+
+    assert record.status == "already_merged"
+    with Session(migrated_engine) as reader:
+        stored = reader.scalar(select(EstatePrMerge))
+        assert stored is not None
+        event = reader.get(Event, stored.event_id)
+        assert event is not None
+        assert event.action == "estate_pr_merge.already_merged_other_head"
+
+
 def test_an_unreconcilable_refusal_is_recorded_as_ambiguous(
     migrated_session: Session, migrated_engine: Engine
 ) -> None:
@@ -414,6 +441,255 @@ def test_an_unreconcilable_refusal_is_recorded_as_ambiguous(
     assert record.reason_code.startswith("merge_refused_by_remote:")
     with Session(migrated_engine) as reader:
         assert reader.scalar(select(EstatePrMerge)) is not None
+
+
+# ---------------------------------------------------------------------------
+# A landing whose outcome is unknown gets settled. Every replay carries the row's OWN key, which is
+# what the lander sends while the head has not moved: a test using a fresh key would pass over an
+# event key the fall-through collides with.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("status", "reason_code", "unknown"),
+    [
+        ("refused", "merge_refused_by_remote:merge_status", True),
+        ("refused", "merge_refused_by_remote", False),
+        ("refused", None, False),
+        ("merged", "merge_refused_by_remote:merge_status", False),
+    ],
+)
+def test_only_a_refusal_with_the_gateways_code_is_unknown(
+    status: str, reason_code: str | None, unknown: bool
+) -> None:
+    assert outcome_is_unknown(status, reason_code) is unknown
+
+
+def _unknown_row(session: Session) -> None:
+    _land(
+        session,
+        ActingGateway(
+            merge_error=EstateGatewayError("merge_status", 502),
+            reconcile_error=EstateGatewayError("read_status", 502),
+        ),
+    )
+
+
+def _on_landed(monkeypatch: pytest.MonkeyPatch) -> list[EstatePrMerge]:
+    ran: list[EstatePrMerge] = []
+    monkeypatch.setattr(
+        estate_pr_merge, "record_revert_landed", lambda _session, record, _actor: ran.append(record)
+    )
+    return ran
+
+
+def _landed_replay() -> ActingGateway:
+    return ActingGateway(pull=pull_request(landed=True, is_open=False, merge_commit=LANDED_COMMIT))
+
+
+def test_a_replay_that_finds_it_landed_records_already_merged_and_runs_on_landed(
+    migrated_session: Session, migrated_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _unknown_row(migrated_session)
+    ran = _on_landed(monkeypatch)
+    gateway = _landed_replay()
+
+    record = _land(migrated_session, gateway)
+
+    assert record.status == "already_merged"
+    assert [row.pr_number for row in ran] == [PR]
+    assert gateway.merges == []
+    with Session(migrated_engine) as reader:
+        stored = reader.scalar(select(EstatePrMerge))
+        assert stored is not None
+        assert stored.status == "already_merged"
+        assert stored.reason_code is None
+        assert stored.merge_commit_sha == LANDED_COMMIT
+        assert stored.updated_at > stored.created_at
+        # The permission stays as it was exercised.
+        assert stored.change_record_id is not None
+        assert stored.policy_version is not None
+        # The revert watch finds a landing through the row's event, by its action.
+        event = reader.get(Event, stored.event_id)
+        assert event is not None
+        assert event.action == "estate_pr_merge.already_merged"
+        assert event.subject_id == stored.id
+        assert event.payload["merge_commit_sha"] == LANDED_COMMIT
+        assert event.payload["change_record_id"] == stored.change_record_id
+
+
+def test_a_second_replay_runs_on_landed_nothing(
+    migrated_session: Session, migrated_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _unknown_row(migrated_session)
+    ran = _on_landed(monkeypatch)
+    _land(migrated_session, _landed_replay())
+    gateway = _landed_replay()
+
+    _land(migrated_session, gateway)
+
+    assert len(ran) == 1
+    assert gateway.reads == []
+    with Session(migrated_engine) as reader:
+        assert len(list(reader.scalars(select(EstatePrMerge)))) == 1
+
+
+def test_a_replay_that_finds_it_unlanded_removes_the_row_and_acts_normally(
+    migrated_session: Session, migrated_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Nothing landed, so the row's window pace is released with it and the landing is made."""
+    _unknown_row(migrated_session)
+    ran = _on_landed(monkeypatch)
+    with Session(migrated_engine) as reader:
+        first = reader.scalar(select(EstatePrMerge))
+        assert first is not None
+        removed = first.id
+    gateway = ActingGateway()
+
+    record = _land(migrated_session, gateway)
+
+    assert record.status == "merged"
+    assert len(gateway.merges) == 1
+    assert len(ran) == 1
+    with Session(migrated_engine) as reader:
+        stored = list(reader.scalars(select(EstatePrMerge)))
+        assert [row.status for row in stored] == ["merged"]
+        assert stored[0].id != removed
+        removal = reader.scalar(
+            select(Event).where(
+                Event.subject_id == removed, Event.action == "estate_pr_merge.unlanded"
+            )
+        )
+        assert removal is not None
+        assert removal.payload["reason_code"] == "merge_refused_by_remote:merge_status"
+
+
+def test_an_unlanded_replay_that_fails_the_same_way_can_be_settled_again(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    """The third row carries the same key again, so each event key must be new."""
+    _unknown_row(migrated_session)
+    _land(
+        migrated_session,
+        ActingGateway(
+            merge_error=EstateGatewayError("merge_status", 502),
+            reconcile_error=EstateGatewayError("read_status", 502),
+        ),
+    )
+
+    assert _land(migrated_session, ActingGateway()).status == "merged"
+    with Session(migrated_engine) as reader:
+        assert [row.status for row in reader.scalars(select(EstatePrMerge))] == ["merged"]
+
+
+def test_a_replay_whose_read_fails_leaves_the_row(
+    migrated_session: Session, migrated_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _unknown_row(migrated_session)
+    ran = _on_landed(monkeypatch)
+    gateway = ActingGateway(read_error=EstateGatewayError("read_status", 502))
+
+    record = _land(migrated_session, gateway)
+
+    assert record.status == "refused"
+    assert ran == []
+    assert gateway.merges == []
+    with Session(migrated_engine) as reader:
+        stored = reader.scalar(select(EstatePrMerge))
+        assert stored is not None
+        assert stored.reason_code == "merge_refused_by_remote:merge_status"
+        assert stored.merge_commit_sha is None
+
+
+def test_a_confirmed_refusal_row_stays_terminal(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    """The remote answered that it did not land: nothing is unknown, so nothing is asked."""
+    _land(
+        migrated_session,
+        ActingGateway(outcome=MergeOutcome(landed=False, commit_sha=None, status_code=200)),
+    )
+    gateway = ActingGateway()
+
+    record = _land(migrated_session, gateway)
+
+    assert record.status == "refused"
+    assert gateway.reads == []
+    assert gateway.merges == []
+
+
+def test_a_removed_row_stays_removed_when_admission_refuses(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    """What the read found stands whatever the terms say. Then the head's next request, carrying
+    the same key with no row to name, still lands: the removed row's event keeps that key."""
+    _unknown_row(migrated_session)
+    gateway = ActingGateway(behind=2)
+
+    with pytest.raises(DomainError) as refused:
+        _land(migrated_session, gateway)
+
+    assert refused.value.code == ESTATE_MERGE_NOT_ADMISSIBLE
+    assert gateway.merges == []
+    with Session(migrated_engine) as reader:
+        assert reader.scalar(select(EstatePrMerge)) is None
+        assert reader.scalar(select(Event).where(Event.action.endswith(".unlanded"))) is not None
+
+    assert _land(migrated_session, ActingGateway()).status == "merged"
+
+
+def test_a_row_is_settled_with_the_lanes_switch_off(
+    migrated_session: Session, migrated_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Settling records the truth and writes nothing to the remote."""
+    _unknown_row(migrated_session)
+    ran = _on_landed(monkeypatch)
+    gateway = _landed_replay()
+
+    record = _land(migrated_session, gateway, enabled=False)
+
+    assert record.status == "already_merged"
+    assert len(ran) == 1
+    assert gateway.merges == []
+
+
+def test_a_terminal_refusal_is_not_listed_as_unknown(migrated_session: Session) -> None:
+    _land(
+        migrated_session,
+        ActingGateway(outcome=MergeOutcome(landed=False, commit_sha=None, status_code=200)),
+    )
+
+    assert unknown_outcomes(migrated_session, "estate_pr_merge") == []
+
+
+def test_the_ordinary_path_takes_the_lock_again_after_the_settling_commit(
+    migrated_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The commit releases the repository lock, and the act must still happen under it."""
+    held: list[str] = []
+    real = lane_act.lock_repository
+
+    def recording(session: Session, namespace: str, repository: str) -> None:
+        held.append(repository)
+        real(session, namespace, repository)
+
+    monkeypatch.setattr(lane_act, "lock_repository", recording)
+
+    _land(migrated_session, ActingGateway())
+
+    assert held == [REPOSITORY, REPOSITORY]
+
+
+def test_each_lanes_list_names_its_own_unknown_rows_and_no_settled_one(
+    migrated_session: Session,
+) -> None:
+    _unknown_row(migrated_session)
+
+    assert unknown_outcomes(migrated_session, "estate_pr_merge") == [(REPOSITORY, PR)]
+    assert unknown_outcomes(migrated_session, "inert_pr_merge") == []
+
+    _land(migrated_session, _landed_replay())
+    assert unknown_outcomes(migrated_session, "estate_pr_merge") == []
 
 
 def test_a_pull_request_found_already_landed_is_refused_and_leaves_no_row(

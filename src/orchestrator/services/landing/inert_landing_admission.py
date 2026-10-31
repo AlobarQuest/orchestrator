@@ -98,6 +98,7 @@ from orchestrator.services.landing.interfaces import (
     LANDING_ESTATE_UNKNOWN,
     LANDING_MERGEABILITY_UNKNOWN,
     LANDING_NOT_ENABLED,
+    LANDING_OUTCOME_UNKNOWN,
     LANDING_PULL_REQUEST_NOT_OPEN,
     LANDING_PULL_REQUEST_UNREADABLE,
     MERGE_COMMIT,
@@ -108,6 +109,7 @@ from orchestrator.services.landing.interfaces import (
     EstatePullRequest,
     InertReadGateway,
     Term,
+    outcome_is_unknown,
 )
 from orchestrator.services.landing.revert_build import REVERT_BRANCH_PREFIX
 from orchestrator.services.landing.revert_record import (
@@ -226,11 +228,11 @@ def inert_landing_admission(
     repository = repository.lower()
 
     # The SAME table the deploying lane records into, read for the same reason: one row per
-    # (repository, pull request) ever, with no delete path, so "did we already act on this?" is
-    # answered here rather than by asking GitHub afterwards, where a lost success and a refusal
-    # answer alike. The two lanes share it because the two populations cannot overlap -- each
-    # requires the opposite answer from the estate, and the estate gives one answer per
-    # repository -- so a pull request is a subject of exactly one of them.
+    # (repository, pull request), so "did we already act on this?" is answered here rather than
+    # by asking GitHub afterwards, where a lost success and a refusal answer alike. The two lanes
+    # share it because the two populations cannot overlap -- each requires the opposite answer
+    # from the estate, and the estate gives one answer per repository -- so a pull request is a
+    # subject of exactly one of them.
     prior = session.scalar(
         select(EstatePrMerge).where(
             EstatePrMerge.repository == repository,
@@ -244,7 +246,11 @@ def inert_landing_admission(
     if not credentials_configured:
         refusals.append(LANDING_APP_CREDENTIALS_MISSING)
     if prior is not None:
-        refusals.append(LANDING_ALREADY_RECORDED)
+        refusals.append(
+            LANDING_OUTCOME_UNKNOWN
+            if outcome_is_unknown(prior.status, prior.reason_code)
+            else LANDING_ALREADY_RECORDED
+        )
 
     estate = _inert_estate_term(repository, landing_source)
     policy = _policy_term(repository, policy_source)

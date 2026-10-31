@@ -111,6 +111,8 @@ class FakeOrchestrator:
         watch_error: Exception | None = None,
         revert_answers: dict[tuple[str, int], dict[str, Any]] | None = None,
     ) -> None:
+        self.unknown: list[dict[str, Any]] = []
+        self.unknown_error: Exception | None = None
         self._answers = answers or {}
         self._land_error = land_error
         self._admission_error = admission_error
@@ -173,6 +175,11 @@ class FakeOrchestrator:
         self.closed.append((repository, pr_number, idempotency_key))
         closed: dict[str, Any] = {"commented": True, "replayed": False, "ceilings": []}
         return closed
+
+    def unknown_outcomes(self) -> list[dict[str, Any]]:
+        if self.unknown_error is not None:
+            raise self.unknown_error
+        return self.unknown
 
     def landing_watch(self) -> list[dict[str, Any]]:
         if self._watch_error is not None:
@@ -1471,3 +1478,95 @@ def test_the_estate_lanes_landings_in_the_watch_are_never_this_lanes(
     assert revert_alerts.calls == [("inert-landing", [mine])]
     out = capsys.readouterr().out
     assert all(f"{REPOSITORY}#{number}" not in out for number in (79, 80, 81))
+
+
+# ---- Unknown landing outcomes (Landing Part 5) -----------------------------------------------
+
+
+def _an_acting_pass(monkeypatch, client: FakeOrchestrator, github: FakeGitHub) -> list[Any]:
+    _wire(monkeypatch, github, client, _rule(REPOSITORY))
+    calls: list[Any] = []
+    monkeypatch.setattr("inert_lander.cli.sync_held_alerts", lambda *a, **k: None)
+
+    def sync(*_: Any, **kwargs: Any) -> None:
+        calls.append(kwargs)
+
+    monkeypatch.setattr("inert_lander.cli.sync_revert_alerts", sync)
+    run(["--submit"])
+    return calls
+
+
+UNKNOWN_ANSWER = {
+    "satisfied": False,
+    "refusals": ["landing_outcome_unknown", "landing_pull_request_not_open"],
+    "head_sha": "a" * 40,
+}
+
+
+def test_an_unknown_row_is_asked_about_though_no_listing_names_it(monkeypatch) -> None:
+    client = FakeOrchestrator({(REPOSITORY, 9): UNKNOWN_ANSWER})
+    client.unknown = [{"repository": REPOSITORY, "pr_number": 9}]
+
+    _an_acting_pass(monkeypatch, client, FakeGitHub({REPOSITORY: []}))
+
+    assert [(repository, number) for repository, number, _, _ in client.landed] == [(REPOSITORY, 9)]
+
+
+def test_a_subject_that_is_also_unknown_is_asked_about_once(monkeypatch) -> None:
+    client = FakeOrchestrator({(REPOSITORY, 9): UNKNOWN_ANSWER})
+    client.unknown = [{"repository": REPOSITORY.upper(), "pr_number": 9}]
+    client._answers[(REPOSITORY.upper(), 9)] = UNKNOWN_ANSWER
+    pulls = [{"number": 9, "author": "dependabot[bot]"}]
+
+    _an_acting_pass(monkeypatch, client, FakeGitHub({REPOSITORY: pulls}))
+
+    assert len(client.landed) == 1
+
+
+def test_an_unreadable_list_of_unknown_rows_is_a_finding_and_the_pass_runs(
+    monkeypatch, capsys
+) -> None:
+    client = FakeOrchestrator({(REPOSITORY, 9): {"satisfied": True, "head_sha": "a" * 40}})
+    client.unknown_error = OrchestratorError("no answer")
+    pulls = [{"number": 9, "author": "dependabot[bot]"}]
+
+    _an_acting_pass(monkeypatch, client, FakeGitHub({REPOSITORY: pulls}))
+
+    assert "landing-unknown-outcomes#0  unreadable" in capsys.readouterr().out
+    assert len(client.landed) == 1
+
+
+def _opened_revert() -> dict[str, Any]:
+    return {
+        "repository": REPOSITORY,
+        "pr_number": 5,
+        "verdict": None,
+        "status": "revert_opened",
+        "revert_pr_number": 6,
+        "lane": "inert",
+    }
+
+
+@pytest.mark.parametrize("unreadable", [False, True], ids=["unknown-row", "list-unread"])
+def test_a_closed_revert_whose_row_is_unknown_is_not_called_stranded(
+    monkeypatch, capsys, unreadable: bool
+) -> None:
+    client = FakeOrchestrator({(REPOSITORY, 6): UNKNOWN_ANSWER}, watch=[_opened_revert()])
+    if unreadable:
+        client.unknown_error = OrchestratorError("no answer")
+    else:
+        client.unknown = [{"repository": REPOSITORY, "pr_number": 6}]
+
+    [alerted] = _an_acting_pass(monkeypatch, client, FakeGitHub({REPOSITORY: []}))
+
+    assert "closed without landing" not in capsys.readouterr().out
+    assert alerted["stranded"] == frozenset()
+    assert alerted["unknown"] == {(REPOSITORY, 5)}
+
+
+def test_a_closed_revert_with_no_unknown_row_is_still_stranded(monkeypatch, capsys) -> None:
+    client = FakeOrchestrator(watch=[_opened_revert()])
+
+    _an_acting_pass(monkeypatch, client, FakeGitHub({REPOSITORY: []}))
+
+    assert "closed without landing" in capsys.readouterr().out

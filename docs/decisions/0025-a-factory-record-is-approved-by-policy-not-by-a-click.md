@@ -243,3 +243,41 @@ the branch and the trailer are text its holder could write.
 The manifest move is now observed rather than attested. The agent can still weaken tests: only
 workflow and gate files are refused, so a test file, a script a workflow runs, or the `scripts` and
 tool configuration inside a manifest all land unread.
+
+## Amendment 5 — 2026-10-31 (Landing Part 5: a lost factory merge is settled and watched)
+
+Amendment 4 made `pr-merge` unattended, so its one ambiguous outcome, a refusal whose confirming
+read also failed, is no longer something a person sees. Its row was terminal, and `already_merged`
+was unwatched, so a policy landing whose answer was lost stayed in production with no watch on it.
+
+**What changes.** A row whose outcome is unknown is settled by a read, as the two landing lanes
+settle theirs, in a step committed before the ordinary path. Landed makes it `already_merged`;
+confirmed unlanded removes it and writes `pr_merge.unlanded`, and the ordinary path runs. The row's
+own `pr_merge.*` event is the source of everything the settling records, since no term is asked
+again: `_require_only_the_bump` and the admission ran before the original call, and a settling makes
+no new merge, so it runs with the switch off and under a narrowed policy.
+
+**Whose act.** `already_merged` found after our call at the head it named is ours; found before any
+call, or at any other head, it is not, and the status can't say which. So the event carries
+`landing_inert` and a new `policy_path` only for the first: a landing at another head is a tree
+`_require_only_the_bump` never read, and a revert would take a person's work out with the bump. The
+two landing lanes do the same with an event action the watch doesn't select. The watch selects
+`merged` and `already_merged` and requires `landing_inert`, and
+`authority.human_gate_not_required` is written for a landing reconciled by either route.
+
+**The re-ask.** `pr-merge-admission` answers `landing_outcome_unknown`, and the bump driver's merge
+step acts on that before anything about the pull request, because a landed row's pull request is
+merged and the terms may no longer hold. Its hourly pass is the only caller a bump needs. Only a
+replay that leaves the row unknown alerts `bump-act-refused`.
+
+**Rejected:** re-asking the terms when a row settles (they decide whether to call, and the call was
+made), and having the driver read unit history to find a row (the admission answer already tells
+every reader, in the word the two lanes use).
+
+**Residuals.** A person landing the same head after our refused call still reads as ours: the
+content was vetted, and only the actor is wrong. A unit outside the bump driver settles only when
+something asks `pr-merge` again. A confirmed removal trusts one read. The landing ledger still
+reports a reconciled landing as `factory_landing_not_claimed_by_the_orchestrator`, and
+`deploy_watcher` binds only `merged`, because on a deploying repository no stamp tells our act from a person's. `already_merged` rows written before this change
+carry `landing_inert` and no merge commit, so one still inside its 48 hours reads `unreadable` and
+is never acted on.

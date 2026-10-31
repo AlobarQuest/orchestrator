@@ -33,6 +33,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Final, Protocol
 
 from sqlalchemy import select, text
@@ -56,6 +57,7 @@ from orchestrator.services.landing.interfaces import (
     MergeOutcome,
     SiblingReadGateway,
     gateway_failure_detail,
+    outcome_is_unknown,
 )
 
 # The advisory lock namespaces, one per act and shared by both lanes.
@@ -67,7 +69,14 @@ _LANDING_VERB: Final = "land a pull request"
 # The recorded statuses that say the pull request landed: this lane's own landing, and a refusal
 # the confirming read showed had landed after all.
 _LANDED: Final = frozenset({"merged", "already_merged"})  # not-a-vocabulary: `_record`'s statuses
+# The event of a pull request that landed at a head other than the one this lane's call named. The
+# revert watch selects a lane's landings by event action and doesn't read this one, because a
+# revert of that merge would take out work no term read. The row's status stays `already_merged`.
+_LANDED_AT_ANOTHER_HEAD: Final = "already_merged_other_head"
 _BRANCH_UPDATE_VERB: Final = "bring a pull request's branch up to date"
+
+# The unknown-outcomes read names a lane neither lander is.
+LANDING_UNKNOWN_OUTCOMES_LANE_UNKNOWN: Final = "unknown_outcomes_lane_unknown"
 
 
 class LaneCommand(Protocol):
@@ -108,8 +117,9 @@ class LaneAdmission(Protocol):
 class LandingLane:
     """What a lane's landing names that the other lane's does not."""
 
-    # The event action is `<event_prefix>.<status>`, and it is what tells the two lanes' rows
-    # apart: both write the one table, under one subject type.
+    # The event action is `<event_prefix>.<event status>`, and it is what tells the two lanes' rows
+    # apart: both write the one table, under one subject type. The event status is the row's
+    # status, except `already_merged_other_head`, which only the event carries.
     event_prefix: str
     not_admissible: str
     head_moved: str
@@ -174,11 +184,29 @@ def land_pull_request[Admission: LaneAdmission](
     `admit` composes the lane's answer for the lower-cased repository. `remote_call` performs the
     lane's landing of the head that answer named. `change_record_id` reads the change record the
     row names; a lane that has no change record passes None, and its row and event name none.
-    `on_landed` runs in the same transaction, after a NEW row records the pull request as landed
-    (`merged`, or `already_merged` on a refusal the confirming read contradicted); a replayed row
-    never runs it.
+    `on_landed` runs in the same transaction, after a row newly records the pull request as landed:
+    `merged`, `already_merged` on a refusal the confirming read contradicted, or a row whose unknown
+    outcome a later read settled as landed. A replayed row never runs it.
+
+    **A row whose outcome is unknown is settled in a step of its own, committed before the ordinary
+    path starts.** What the read found stays true whatever the terms say next: under one
+    transaction a refusal would restore a removed row, and a row behind its base could then never
+    be brought up to date, because the row is what disqualifies it. The commit releases the
+    repository lock, so `_land` takes it again and reads the row again. Settling records the truth
+    and writes nothing to the remote, so it runs with the lane's switch off.
     """
     try:
+        settled = _settle(
+            session,
+            command,
+            lane,
+            gateway,
+            names_change_record=change_record_id is not None,
+            on_landed=on_landed,
+        )
+        session.commit()
+        if settled is not None:
+            return settled
         record = _land(
             session,
             command,
@@ -196,6 +224,62 @@ def land_pull_request[Admission: LaneAdmission](
         raise
 
 
+def _settle(
+    session: Session,
+    command: LaneCommand,
+    lane: LandingLane,
+    gateway: EstateReadGateway,
+    *,
+    names_change_record: bool,
+    on_landed: Callable[[EstatePrMerge], None] | None,
+) -> EstatePrMerge | None:
+    """The row this request is answered from, settling it first if its outcome is unknown; `None`
+    when there is none, or it was just removed, and the ordinary path runs."""
+    authorize_actor(command.actor, _LANDING_VERB)
+    repository = command.repository.lower()
+    lock_repository(session, _LANDING_LOCK, repository)
+    existing = _recorded(session, repository, command.pr_number)
+    if existing is None or not outcome_is_unknown(existing.status, existing.reason_code):
+        return existing
+    return _resettle(
+        session,
+        command,
+        lane,
+        gateway,
+        existing,
+        names_change_record=names_change_record,
+        on_landed=on_landed,
+    )
+
+
+def _recorded(session: Session, repository: str, pr_number: int) -> EstatePrMerge | None:
+    return session.scalar(
+        select(EstatePrMerge).where(
+            EstatePrMerge.repository == repository,
+            EstatePrMerge.pr_number == pr_number,
+        )
+    )
+
+
+def unknown_outcomes(session: Session, event_prefix: str) -> list[tuple[str, int]]:
+    """Every pull request a lane holds a row for whose outcome is unknown.
+
+    The lanes share one table, and a row's lane is named by its event's action. It is this list
+    that gets a landed pull request asked about at all: neither lane's enumeration reaches one.
+    """
+    rows = session.execute(
+        select(EstatePrMerge.repository, EstatePrMerge.pr_number, EstatePrMerge.reason_code)
+        .join(Event, Event.id == EstatePrMerge.event_id)
+        .where(EstatePrMerge.status == "refused", Event.action == f"{event_prefix}.refused")
+        .order_by(EstatePrMerge.repository, EstatePrMerge.pr_number)
+    ).all()
+    return [
+        (row.repository, row.pr_number)
+        for row in rows
+        if outcome_is_unknown("refused", row.reason_code)
+    ]
+
+
 def _land[Admission: LaneAdmission](
     session: Session,
     command: LaneCommand,
@@ -207,7 +291,6 @@ def _land[Admission: LaneAdmission](
     change_record_id: Callable[[Admission], int | None] | None,
     on_landed: Callable[[EstatePrMerge], None] | None,
 ) -> EstatePrMerge:
-    authorize_actor(command.actor, _LANDING_VERB)
     repository = command.repository.lower()
 
     # SERIALISE ON THE REPOSITORY before anything is read. There is no unit row to lock here, and
@@ -216,12 +299,7 @@ def _land[Admission: LaneAdmission](
     # lock. Two requests would otherwise each read an absence and each act on it.
     lock_repository(session, _LANDING_LOCK, repository)
 
-    existing = session.scalar(
-        select(EstatePrMerge).where(
-            EstatePrMerge.repository == repository,
-            EstatePrMerge.pr_number == command.pr_number,
-        )
-    )
+    existing = _recorded(session, repository, command.pr_number)
     if existing is not None:
         return existing
 
@@ -270,8 +348,76 @@ def _land[Admission: LaneAdmission](
         remote_call=remote_call,
         change_record_id=None if change_record_id is None else change_record_id(admission),
         names_change_record=change_record_id is not None,
+        event_key=_event_key(session, command),
     )
     if on_landed is not None and record.status in _LANDED:
+        on_landed(record)
+    return record
+
+
+def _event_key(session: Session, command: LaneCommand) -> str:
+    """The key this landing's event carries. A removed row's event keeps the row's key, in a table
+    that is unique on it and append-only, and the lander's key names the pull request and head, so
+    any later request for that head carries it. Without a key of its own that request's event
+    would be an unhandled 500 after a real landing."""
+    key = f"{command.idempotency_key}:event"
+    spent = session.scalar(select(Event.id).where(Event.idempotency_key == key))
+    return key if spent is None else f"{key}:{uuid.uuid4()}"
+
+
+def _resettle(
+    session: Session,
+    command: LaneCommand,
+    lane: LandingLane,
+    gateway: EstateReadGateway,
+    record: EstatePrMerge,
+    *,
+    names_change_record: bool,
+    on_landed: Callable[[EstatePrMerge], None] | None,
+) -> EstatePrMerge | None:
+    """Settle a row whose outcome was unknown, if the remote can now say. `None` means the row was
+    removed and the caller proceeds as though it had never been written.
+
+    Still unknown: the row is returned as it stands. Landed: the row becomes the `already_merged`
+    it should have been, with the permission it was written with, and its event moves to one
+    naming that action, because the revert watch finds landings through the row's event (at any
+    head but the row's, `_landed_event` names one the watch doesn't read). Not landed: nothing
+    happened, so the row is removed; its event stays, and the removal has its own.
+
+    Nothing here writes to the remote, so a lane that is switched off still settles.
+    """
+    reread = _reread(gateway, record.repository, record.pr_number)
+    if reread is None:
+        return record
+    if not reread.landed:
+        _write_event(
+            session,
+            command,
+            lane,
+            record,
+            status="unlanded",
+            names_change_record=names_change_record,
+            idempotency_key=f"{record.idempotency_key}:unlanded:{record.id}",
+        )
+        session.delete(record)
+        session.flush()
+        return None
+    record.status = "already_merged"
+    record.reason_code = None
+    record.merge_commit_sha = reread.merge_commit_sha
+    record.updated_at = datetime.now(UTC)
+    event = _write_event(
+        session,
+        command,
+        lane,
+        record,
+        status=_landed_event(reread, record.head_sha),
+        names_change_record=names_change_record,
+        idempotency_key=f"{record.idempotency_key}:already_merged:{record.id}",
+    )
+    record.event_id = event.id
+    session.flush()
+    if on_landed is not None:
         on_landed(record)
     return record
 
@@ -286,13 +432,14 @@ def _act[Admission: LaneAdmission](
     remote_call: Callable[[Admission, str], MergeOutcome],
     change_record_id: int | None,
     names_change_record: bool,
+    event_key: str,
 ) -> EstatePrMerge:
     """The call and the reconciling re-read.
 
     **A RECORD IS WRITTEN ONLY FOR AN OUTCOME THAT CANNOT BE RETRIED.** The row is unique per pull
-    request with no delete path, so every recorded outcome is permanent -- correct for *it landed*
-    and for *we cannot rule out that it landed*, and badly wrong for *the remote answered 502
-    once*, which would bar the pull request forever on one bad response.
+    request, so a recorded outcome bars another attempt -- correct for *it landed* and for *we
+    cannot rule out that it landed*, which only a later read may settle (`_resettle`), and badly
+    wrong for *the remote answered 502 once*, which would bar the pull request on one bad response.
     """
     head_sha = admission.head_sha
     if not head_sha:
@@ -315,7 +462,7 @@ def _act[Admission: LaneAdmission](
                 f"the landing was not attempted: {gateway_failure_detail(error)}",
                 "retry once the credential can be minted",
             ) from error
-        reread = _reread(gateway, admission)
+        reread = _reread(gateway, admission.repository, admission.pr_number)
         landed = None if reread is None else reread.landed
         if landed is True:
             return _record(
@@ -326,10 +473,12 @@ def _act[Admission: LaneAdmission](
                 head_sha,
                 change_record_id,
                 names_change_record=names_change_record,
+                event_key=event_key,
                 status="already_merged",
                 reason_code=None,
                 merge_commit_sha=reread.merge_commit_sha if reread is not None else None,
                 github_status=error.status_code,
+                event_status=None if reread is None else _landed_event(reread, head_sha),
             )
         if landed is False:
             # CONFIRMED not landed, so nothing happened and this is retryable -- a required check
@@ -339,9 +488,9 @@ def _act[Admission: LaneAdmission](
                 f"the remote refused to land the pull request: {gateway_failure_detail(error)}",
                 "resolve what the remote objected to, then ask again",
             ) from error
-        # The reconciling read ITSELF failed, so a landing cannot be ruled out. Terminal and
-        # conservative: a retry would meet the same refusal no better informed, and the ledger
-        # observes the landing independently and can settle it.
+        # The reconciling read ITSELF failed, so a landing cannot be ruled out, and retrying the
+        # call would meet the same refusal no better informed. The row bars the call, and each
+        # lander asks about every such row first (`unknown_outcomes`), which settles it.
         return _record(
             session,
             command,
@@ -350,6 +499,7 @@ def _act[Admission: LaneAdmission](
             head_sha,
             change_record_id,
             names_change_record=names_change_record,
+            event_key=event_key,
             status="refused",
             reason_code=f"{MERGE_REFUSED_BY_REMOTE}:{error.code}",
             github_status=error.status_code,
@@ -363,6 +513,7 @@ def _act[Admission: LaneAdmission](
         head_sha,
         change_record_id,
         names_change_record=names_change_record,
+        event_key=event_key,
         status="merged" if outcome.landed else "refused",
         reason_code=None if outcome.landed else MERGE_REFUSED_BY_REMOTE,
         merge_commit_sha=outcome.commit_sha,
@@ -370,7 +521,12 @@ def _act[Admission: LaneAdmission](
     )
 
 
-def _reread(gateway: EstateReadGateway, admission: LaneAdmission) -> EstatePullRequest | None:
+def _landed_event(reread: EstatePullRequest, head_sha: str) -> str:
+    """The event status of a landing a re-read found: ours only at the head our call named."""
+    return "already_merged" if reread.head_sha == head_sha else _LANDED_AT_ANOTHER_HEAD
+
+
+def _reread(gateway: EstateReadGateway, repository: str, number: int) -> EstatePullRequest | None:
     """Did the pull request land despite the refusal? `None` means WE DO NOT KNOW; otherwise the
     re-read pull request, whose `landed` answers and whose merge commit names the landing.
 
@@ -379,9 +535,7 @@ def _reread(gateway: EstateReadGateway, admission: LaneAdmission) -> EstatePullR
     as a clean refusal.
     """
     try:
-        return gateway.read_pull_request(
-            repository=admission.repository, number=admission.pr_number
-        )
+        return gateway.read_pull_request(repository=repository, number=number)
     except EstateGatewayError:
         return None
 
@@ -395,10 +549,12 @@ def _record(
     change_record_id: int | None,
     *,
     names_change_record: bool,
+    event_key: str,
     status: str,
     reason_code: str | None,
     merge_commit_sha: str | None = None,
     github_status: int | None = None,
+    event_status: str | None = None,
 ) -> EstatePrMerge:
     """Write the outcome into the table both lanes share.
 
@@ -421,18 +577,43 @@ def _record(
     )
     session.add(record)
     session.flush()
+    event = _write_event(
+        session,
+        command,
+        lane,
+        record,
+        status=event_status or status,
+        names_change_record=names_change_record,
+        idempotency_key=event_key,
+    )
+    record.event_id = event.id
+    session.flush()
+    return record
+
+
+def _write_event(
+    session: Session,
+    command: LaneCommand,
+    lane: LandingLane,
+    record: EstatePrMerge,
+    *,
+    status: str,
+    names_change_record: bool,
+    idempotency_key: str,
+) -> Event:
+    """One event about a row, in the shape every event about that row has."""
     payload: dict[str, object] = {
         "estate_pr_merge_record_id": str(record.id),
-        "repository": admission.repository,
-        "pr_number": admission.pr_number,
-        "head_sha": head_sha,
+        "repository": record.repository,
+        "pr_number": record.pr_number,
+        "head_sha": record.head_sha,
         "status": status,
-        "reason_code": reason_code,
-        "merge_commit_sha": merge_commit_sha,
+        "reason_code": record.reason_code,
+        "merge_commit_sha": record.merge_commit_sha,
     }
     if names_change_record:
-        payload["change_record_id"] = change_record_id
-    payload["policy_version"] = admission.policy_version
+        payload["change_record_id"] = record.change_record_id
+    payload["policy_version"] = record.policy_version
     event = Event(
         actor_id=command.actor.actor_id,
         action=f"{lane.event_prefix}.{status}",
@@ -440,13 +621,11 @@ def _record(
         subject_id=record.id,
         payload=payload,
         correlation_id=uuid.uuid4(),
-        idempotency_key=f"{command.idempotency_key}:event",
+        idempotency_key=idempotency_key,
     )
     session.add(event)
     session.flush()
-    record.event_id = event.id
-    session.flush()
-    return record
+    return event
 
 
 def update_pull_request_branch[Admission: LaneAdmission](

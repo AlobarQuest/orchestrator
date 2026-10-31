@@ -441,6 +441,18 @@ def test_the_callers_SETTLED_set_is_exactly_the_refusals_that_mean_there_is_noth
     assert SETTLED == {LANDING_ALREADY_RECORDED, LANDING_PULL_REQUEST_NOT_OPEN}
 
 
+def test_the_callers_OUTCOME_UNKNOWN_code_is_the_one_the_admission_raises() -> None:
+    """Renamed on this side alone, the row would never be replayed and never be settled."""
+    from lander.core import OUTCOME_UNKNOWN, STILL_UNKNOWN_REASON
+    from orchestrator.services.landing.interfaces import (
+        LANDING_OUTCOME_UNKNOWN,
+        MERGE_REFUSED_BY_REMOTE,
+    )
+
+    assert OUTCOME_UNKNOWN == LANDING_OUTCOME_UNKNOWN
+    assert STILL_UNKNOWN_REASON == f"{MERGE_REFUSED_BY_REMOTE}:"
+
+
 def test_the_callers_WAITING_ON_A_REVERT_code_is_the_one_the_admission_raises() -> None:
     """Renamed on this side alone, every bump in a repository with a revert in progress would be
     a nightly finding until the revert lands."""

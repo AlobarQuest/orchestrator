@@ -18,16 +18,17 @@ and a `dependabot/<ecosystem>/` branch, read from the pull request), so a fork's
 never watched either.
 
 **The factory's own merges are watched beside them (Landing Part 4).** A `unit_pr_merge` row is
-watched when its status is `merged`, its unit is a dependency update by both its envelope's change
-class and its revision's profile, and its event records that the estate answered `inert` at the
-merge (`landing_inert`). So `already_merged`, somebody else's landing, is not; any other unit is
-not, so an app change is never reverted by this watch; a pull request a record names as its revert
-is not, whatever bound it to a unit; and a landing that redeployed is not, since the
-estate lane's pointing back rests on a change record and images a factory merge doesn't carry.
-Such a landing is its record: no pull request is read to decide it is a bump, its bumps come from
-its revision (`terms.revision_bump`), and it goes through the inert lane, whose revert subject
-asks nothing of the original's author. Its directory is the repository root, because every form
-of the generator's commands (`bump_binding`) runs there.
+watched when its status is `merged` or `already_merged`, its unit is a dependency update by both
+its envelope's change class and its revision's profile, and its event records that the estate
+answered `inert` at the merge (`landing_inert`). That stamp alone separates our act from a
+person's: a row reconciled after our own call carries it, and one found landed before any call
+never does. Any other unit is not watched, so an app change is never reverted by this watch; a pull
+request a record names as its revert is not, whatever bound it to a unit; and a landing that
+redeployed is not, since the estate lane's pointing back rests on a change record and images a
+factory merge doesn't carry. Such a landing is its record: no pull request is read to decide it is
+a bump, its bumps come from its revision (`terms.revision_bump`), and it goes through the inert
+lane, whose revert subject asks nothing of the original's author. Its directory is the repository
+root, because every form of the generator's commands (`bump_binding`) runs there.
 
 A landing stays in the watch for `WATCH_HOURS` after it landed, and for as long after that as its
 record keeps it there: `revert_opened`, `refused_overlap` and `revert_failed` until they move;
@@ -246,7 +247,10 @@ _PLAN_FAILS_FOR_GOOD: Final = frozenset({REVERT_TOUCHED_NOTHING, "tree_response_
 
 # The status of a merge the factory itself made, and the directory of a bump it installs: every
 # form of the generator's commands runs at the repository root.
-_MERGED: Final = "merged"
+# The factory statuses that say the pull request landed; `landing_inert` says whose act it was.
+_FACTORY_LANDED: Final = frozenset(  # not-a-vocabulary: `pr_merge`'s statuses, used only to select
+    {"merged", "already_merged"}
+)
 _REPOSITORY_ROOT: Final = "/"
 
 _REVISION_UNREADABLE: Final = (
@@ -1054,7 +1058,7 @@ def _factory_landings(
     folded = func.lower(UnitPrMerge.repository)
     recent, candidate = _in_the_watch(folded, UnitPrMerge.pr_number, UnitPrMerge.created_at)
     conditions: list[ColumnElement[bool]] = [
-        UnitPrMerge.status == _MERGED,
+        UnitPrMerge.status.in_(_FACTORY_LANDED),
         ~exists().where(
             LandingRevert.repository == folded,
             LandingRevert.revert_pr_number == UnitPrMerge.pr_number,

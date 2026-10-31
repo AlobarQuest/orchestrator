@@ -25,9 +25,9 @@ untouched, and what moves is the branch rather than the rule.
 
 ## What it writes down: an event, and NO row of its own
 
-The landing keeps a row because its act cannot be retried: that row is unique per pull request
-with no delete path, so recording an outcome bars the subject forever, which is right for *it
-landed* and would be badly wrong here. This act is the opposite kind -- repeatable by design,
+The landing keeps a row because its act cannot be retried: that row is unique per pull request,
+so recording an outcome bars the subject, which is right for *it landed* and would be badly wrong
+here. This act is the opposite kind -- repeatable by design,
 because whenever the base moves again it is right to do again.
 
 So the durable trace is an event and nothing else, and the difference that makes it safe is WHAT

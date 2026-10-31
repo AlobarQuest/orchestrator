@@ -23,6 +23,8 @@ class ChangeRecord:
     target_repository: str
     pull_request_number: int
     acceptance_criteria: tuple[str, ...]
+    status: str = ""
+    decided_by: str = ""
 
 
 @dataclass(frozen=True)

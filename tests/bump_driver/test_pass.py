@@ -24,6 +24,10 @@ from bump_driver.cli import (
 from bump_driver.client import CallError, GitHub, Orchestrator
 from bump_driver.decompose import DecomposeRefused
 from bump_driver.mirror import MirrorFailed, MirrorRefused
+from orchestrator.services.landing.interfaces import (
+    LANDING_OUTCOME_UNKNOWN,
+    MERGE_REFUSED_BY_REMOTE,
+)
 
 NOW = datetime(2026, 10, 30, 12, 0, tzinfo=UTC)
 REPOSITORY = "AlobarQuest/orchestrator"
@@ -866,7 +870,8 @@ def test_a_version_that_moved_before_the_merge_waits(orch, github, generator) ->
     [
         ({"status": "merged"}, "merged"),
         ({"status": "already_merged"}, "merged"),
-        ({"status": "refused", "reason_code": "merge_refused_by_remote:x"}, "refused"),
+        ({"status": "refused", "reason_code": "merge_refused_by_remote"}, "refused"),
+        ({"status": "refused", "reason_code": "merge_refused_by_remote:x"}, "waiting"),
     ],
 )
 def test_the_merge_answer_is_classified(orch, github, generator, answer, result) -> None:
@@ -951,3 +956,117 @@ def test_an_unreadable_intake_is_unread_and_names_its_repository(orch, github, g
 
 def test_unread_outranks_found() -> None:
     assert exit_code([cli.Outcome("a", "refused"), cli.Outcome("b", "unread")]) == INCOMPLETE
+
+
+# An unknown landing outcome (Landing Part 5)
+
+UNKNOWN_ANSWER = {"status": "refused", "reason_code": "merge_refused_by_remote:merge_status"}
+UNKNOWN_ADMISSION = {"satisfied": False, "refusals": ["landing_outcome_unknown"]}
+
+
+def test_the_lanes_copies_are_the_orchestrators() -> None:
+    assert cli.OUTCOME_UNKNOWN == LANDING_OUTCOME_UNKNOWN
+    assert cli.UNKNOWN_REASON_PREFIX == f"{MERGE_REFUSED_BY_REMOTE}:"
+
+
+def test_an_unknown_outcome_row_is_waiting_not_refused(orch, github, generator) -> None:
+    orch.units[UNIT] = _unit(UNIT, "completed")
+    orch.merge_answer = UNKNOWN_ANSWER
+    outcomes = _run(orch, github, generator)
+    assert _results(outcomes) == ["waiting"]
+    assert outcomes[0].key is None
+    assert exit_code(outcomes) == 0
+
+
+def test_a_bare_refusal_is_still_refused(orch, github, generator) -> None:
+    orch.units[UNIT] = _unit(UNIT, "completed")
+    orch.merge_answer = {"status": "refused", "reason_code": "merge_refused_by_remote"}
+    outcomes = _run(orch, github, generator)
+    assert _results(outcomes) == ["refused"]
+    assert outcomes[0].key == act_refused_key(REPOSITORY, UNIT)
+
+
+@pytest.mark.parametrize("pull", ["open", "merged", "closed"])
+def test_a_replay_left_unknown_raises_the_alert(orch, github, generator, pull) -> None:
+    orch.units[UNIT] = _unit(UNIT, "completed")
+    orch.admissions[UNIT] = UNKNOWN_ADMISSION
+    orch.merge_answer = UNKNOWN_ANSWER
+    github.state = pull
+    outcomes = _run(orch, github, generator)
+    assert _results(outcomes) == ["refused"]
+    assert outcomes[0].key == act_refused_key(REPOSITORY, UNIT)
+    assert "could not settle" in outcomes[0].detail
+    assert exit_code(outcomes) == FOUND
+
+
+@pytest.mark.parametrize("pull", ["open", "merged", "closed"])
+def test_a_replay_that_settles_reports_it(orch, github, generator, pull) -> None:
+    """Asked whatever the pull request's state, or a landed one is never settled, and reported
+    even on a merged one: this pass changed a record."""
+    orch.units[UNIT] = _unit(UNIT, "completed")
+    orch.admissions[UNIT] = UNKNOWN_ADMISSION
+    orch.merge_answer = {"status": "already_merged", "reason_code": None}
+    github.state = pull
+    outcomes = _run(orch, github, generator)
+    assert _results(outcomes) == ["merged"]
+    assert len(orch.merged) == 1
+
+
+def test_a_replay_on_a_resolved_record_is_asked(orch, github, generator) -> None:
+    orch.units[UNIT] = _unit(UNIT, "completed")
+    orch.admissions[UNIT] = UNKNOWN_ADMISSION
+    orch.merge_answer = {"status": "already_merged", "reason_code": None}
+    github.state = "merged"
+    outcomes = _run(orch, github, generator, [{**RECORD, "status": "resolved"}])
+    assert _results(outcomes) == ["merged"]
+
+
+def test_a_dry_run_settles_nothing(orch, github, generator) -> None:
+    orch.units[UNIT] = _unit(UNIT, "completed")
+    orch.admissions[UNIT] = UNKNOWN_ADMISSION
+    outcomes = _run(orch, github, generator, dry_run=True)
+    assert _results(outcomes) == ["would-settle"]
+    assert orch.merged == []
+
+
+@pytest.mark.parametrize("code", ["pr_merge_not_open", "pr_merge_not_admissible"])
+def test_a_closed_pull_request_settled_then_refused_says_nothing(
+    orch, github, generator, code
+) -> None:
+    orch.units[UNIT] = _unit(UNIT, "completed")
+    orch.admissions[UNIT] = UNKNOWN_ADMISSION
+    orch.refuse["merge"] = CallError("refused", 409, code)
+    github.state = "closed"
+    assert _run(orch, github, generator) == []
+
+
+def test_a_row_removed_while_the_switch_is_off_waits(orch, github, generator) -> None:
+    orch.units[UNIT] = _unit(UNIT, "completed")
+    orch.admissions[UNIT] = {
+        "satisfied": False,
+        "refusals": ["landing_outcome_unknown", "merge_policy_path_off"],
+    }
+    orch.refuse["merge"] = CallError("refused", 409, "pr_merge_not_admissible")
+    outcomes = _run(orch, github, generator)
+    assert _results(outcomes) == ["waiting"]
+    assert outcomes[0].detail == "merge_policy_path_off"
+
+
+def test_a_row_removed_and_then_refused_for_a_reason_is_refused(orch, github, generator) -> None:
+    orch.units[UNIT] = _unit(UNIT, "completed")
+    orch.admissions[UNIT] = {
+        "satisfied": False,
+        "refusals": ["landing_outcome_unknown", "merge_version_reverted"],
+    }
+    orch.refuse["merge"] = CallError("refused", 409, "pr_merge_not_admissible")
+    outcomes = _run(orch, github, generator)
+    assert _results(outcomes) == ["refused"]
+    assert outcomes[0].key == act_refused_key(REPOSITORY, UNIT)
+
+
+def test_a_replay_nothing_answered_is_unread(orch, github, generator) -> None:
+    orch.units[UNIT] = _unit(UNIT, "completed")
+    orch.admissions[UNIT] = UNKNOWN_ADMISSION
+    orch.refuse["merge"] = CallError("nothing answered")
+    github.state = "closed"
+    assert _results(_run(orch, github, generator)) == ["unread"]

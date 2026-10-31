@@ -68,7 +68,7 @@ from typing import Final
 import httpx
 
 from alert_hub_client import Alert, AlertHubError, KeyedAlerts, alert_key
-from lander.core import Outcome
+from lander.core import UNKNOWN_OUTCOMES_ROW, Outcome
 
 # not-a-vocabulary: lander report statuses, read here and never exchanged with another system.
 ALERTING_STATUSES: Final = frozenset({"held", "unreadable", "error"})
@@ -78,6 +78,8 @@ STATE_DIR_ENV: Final = "LANDER_STATE_DIR"
 HELD_SINCE_FILE: Final = "held-since.json"
 ALERTS_FILE: Final = "alerts.json"
 REVERT_ALERTS_FILE: Final = "revert-alerts.json"
+# Where the unreadable list is served; the alert's link, since no repository is at fault.
+UNKNOWN_OUTCOMES_URL: Final = "https://sds.alobar.net/openapi.json"
 
 # The record statuses that raise an alert, and the key prefix each raises it under.
 _REVERT_ALERTS: Final = {
@@ -133,6 +135,12 @@ def _parse(value: str) -> datetime | None:
 
 def _alert(outcome: Outcome, hours: int) -> Alert:
     message = f"{outcome.status} for {hours} hours: {outcome.detail}"
+    if outcome.repository == UNKNOWN_OUTCOMES_ROW:
+        return Alert(
+            "The unknown-outcome list could not be read",
+            message,
+            UNKNOWN_OUTCOMES_URL,
+        )
     if outcome.number == 0:
         return Alert(
             f"Repository could not be listed: {outcome.repository}",

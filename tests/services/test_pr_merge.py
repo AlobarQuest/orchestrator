@@ -241,12 +241,12 @@ def test_a_repeat_replays_the_record_and_never_calls_the_remote_again(
     assert len(gateway.merges) == 1
 
 
-def test_a_refusal_we_could_not_confirm_is_terminal_and_does_not_call_again(
+def test_a_refusal_we_could_not_confirm_is_recorded_and_does_not_call_again(
     migrated_session: Session,
 ) -> None:
     """The ONE ambiguous outcome: the remote refused and the confirming read also failed, so a
-    landing cannot be ruled out. Recorded, and terminal — a retry would meet the same refusal and
-    be no better informed, and the ledger observes the landing independently."""
+    landing cannot be ruled out. Recorded, and a repeat while the read still fails replays it: the
+    call is never made again on an outcome nobody knows."""
     unit = _ready_unit(migrated_session, "repeat-after-refusal")
 
     class Blind(FakeGateway):

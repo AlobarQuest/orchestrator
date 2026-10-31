@@ -194,8 +194,13 @@ LANDING_DEPENDENCY_LIST_UNREADABLE: Final = "landing_dependency_list_unreadable"
 LANDING_PACE_EXHAUSTED: Final = "landing_pace_exhausted"
 
 # A row already records an act against this pull request. Terminal: the row is unique per pull
-# request and there is no delete path, so a second act is never attempted.
+# request, so a second act is never attempted.
 LANDING_ALREADY_RECORDED: Final = "landing_already_recorded"
+
+# A row records a landing whose outcome nobody could establish (`outcome_is_unknown`). The lanes
+# ask to land it again, and that request re-reads the pull request before anything else: only that
+# read can settle the row.
+LANDING_OUTCOME_UNKNOWN: Final = "landing_outcome_unknown"
 
 # Refusals the system raises ON PURPOSE, each of which clears itself when the window next opens.
 # Neither names a condition anybody can act on: the day's pace for this repository is spent, or the
@@ -212,13 +217,26 @@ DELIBERATE_REFUSALS: Final = frozenset({LANDING_PACE_EXHAUSTED, LANDING_OUTSIDE_
 # same row and one column may not carry two vocabularies.
 MERGE_REFUSED_BY_REMOTE: Final = "merge_refused_by_remote"
 
+
+def outcome_is_unknown(status: str, reason_code: str | None) -> bool:
+    """Does this record say a landing can't be ruled out, rather than that the remote declined?
+
+    The ambiguous outcome's reason is `MERGE_REFUSED_BY_REMOTE` and the gateway's code joined by a
+    colon. The bare code is the remote answering that it did not land, which is settled.
+    """
+    return (
+        status == "refused"
+        and reason_code is not None
+        and reason_code.startswith(f"{MERGE_REFUSED_BY_REMOTE}:")
+    )
+
+
 # The prefix of every gateway code raised BEFORE anything is sent. The gateway's `_headers()`
 # (`GitHubEstatePullRequests`, in `estate_pr_merge`) mints the App token first, so a mint failure
 # means the request provably did not leave this process -- and a landing that cannot have happened
-# must never be recorded, because the row is permanent and would bar the pull request forever on
-# one transient outage. Everything else in `submit_merge`
-# happens at or after the send, where a lost response and a refusal are indistinguishable and the
-# conservative record is the right answer.
+# must never be recorded, because the row would bar the pull request on one transient outage.
+# Everything else in `submit_merge` happens at or after the send, where a lost response and a
+# refusal are indistinguishable and the conservative record is the right answer.
 NEVER_SENT: Final = "app_token_mint:"
 
 # How the remote is asked to bring a branch onto the default branch. GitHub's vocabulary, spelled

@@ -218,13 +218,14 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
      `body["error"]["code"]` — and must, because this estate HAS served a release whose routes
      production did not carry, and reading every 404 as absence turns that into a finding accusing
      the orchestrator of losing every subject at once.
-  2. **`UnitPrMerge.status` has five writers across three values, and only `merged` asserts the
-     orchestrator made the landing.** `already_merged` covers both the lost-response retry (ours,
-     reconciled) and — *before the merge call* — a pull request somebody else had landed.
-     `refused` covers both the genuinely ambiguous outcome and a confirmed non-landing. The two
-     cases are indistinguishable within a status, so **no status carries authorship**, and a
-     consumer keyed on the name alone is wrong in both directions. Two adversarial reviews
-     falsified this from opposite sides in one afternoon.
+  2. **`UnitPrMerge.status` has six writers across three values, and only `merged` asserts the
+     orchestrator made the landing.** `already_merged` covers the lost-response retry and a later
+     settling of an unknown row (both ours, reconciled) and — *before the merge call* — a pull
+     request somebody else had landed. `refused` covers both the genuinely ambiguous outcome and a
+     confirmed non-landing. The cases are indistinguishable within a status, so **no status carries
+     authorship**, and a consumer keyed on the name alone is wrong in both directions. On an inert
+     repository the event's `landing_inert` separates them, which is what the watch reads. Two
+     adversarial reviews falsified this from opposite sides in one afternoon.
   3. **The squash body is a REPOSITORY SETTING, not the merge call.** `pr_merge.py` sends no
      `commit_message`, so whether the landing commit carries the branch's messages — and therefore
      factory-runner's `SDS-Unit:` trailer — is governed by `squash_merge_commit_message`, a web
@@ -363,7 +364,10 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   matches — and change-manager's `propose` scope refuses every status-moving route server-side
   whatever the client sends; the work watcher's one write is `work-retirement`, which can only
   remove permission. The `deploy` source has a `deploy-retirement` route whose closed vocabulary
-  has exactly one member (`pull_request_closed_unmerged`). The propose credential lives in a BWS
+  has exactly one member (`pull_request_closed_unmerged`), and `deploy-supersession`, in the
+  `observe` scope, retires a record whose failed rollout a later green rollout passed (ADR-0022
+  amendment 1). The deploy watcher then skips that record before any GitHub read. The propose
+  credential lives in a BWS
   project the narrow `sds-operator` identity cannot read — `bws` answers `404 Resource not found`,
   which reads like a missing secret rather than a denied one. Use the broad identity for it.
 - **The bump proposer creates a missing standing package, and alerts on a bump it cannot route.**
@@ -697,9 +701,10 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   pull request the update bot opened. Asking it last means a row that already has metadata can't
   move. Measured on 2026-10-29: re-deriving all 541 stored landings in the 30-day window across the
   13 ledger repositories reproduced every row except the four `KNOWN_UNDERCOUNTED_CHECK_LANDINGS`.
-- **The hold term asks a different question.** `services/landing/terms.py::_update_bot_message`
-  takes the one bot-authored commit anywhere on the branch. The two agree on every ordinary pull
-  request.
+- **The hold term applies the same rule.** `services/landing/terms.py::_update_bot_message` takes
+  `commits[0]` only when the update bot authored it and it is verified, so the hold term and the
+  gate never read different commits. `tests/contract/test_update_bot_commit_agreement.py` feeds
+  both the same commit lists.
 
 ### The bump driver (Landing Part 4)
 
@@ -742,7 +747,8 @@ standing dependency-update work as SYSTEM with no person acting. Verification st
   other refusal is reported. A pull request
   already merged is still asked, so a landing the orchestrator lost track of records
   `already_merged`, but only while the unit's terms hold: admission runs before that branch, so a
-  unit that doesn't qualify writes no row, and the lane says nothing about it.
+  unit that doesn't qualify writes no row, and the lane says nothing about it. A unit whose answer
+  carries `landing_outcome_unknown` is the exception: see "An unknown factory merge" below.
   The act then reads the pull request itself (ADR-0025 amendment 4): the unit's runner branch and
   head, the `SDS-Unit:` trailer, a complete file list that touches no workflow or gate file and
   changes the package's manifest. A failure is a named `pr_merge_*` refusal with no record, alerted
@@ -813,6 +819,93 @@ nothing to do.
   hours or more turns every in-scope open pull request `unreadable`, so each fires its one keyed
   alert: noise in proportion to the open pull requests, never a repeat.
 
+### An unknown landing outcome (Landing Part 5)
+
+When the remote refuses a landing and the confirming read fails too, nobody knows whether it
+landed. The row records `refused` with reason `merge_refused_by_remote:<code>`
+(`interfaces.outcome_is_unknown`); the bare code is the remote declining, which is settled and
+terminal. The row stays because a lost success with no row would lose `on_landed`, which places a
+revert's hold, and the next pass would read `landing_pull_request_not_open` and never ask again.
+
+- The admissions answer `landing_outcome_unknown` instead of `landing_already_recorded`.
+- Each lander reads `GET /api/v1/landing-unknown-outcomes?lane=<name>` (SYSTEM only) after the watch
+  and ahead of its own enumeration, on every pass, in or out of the landing hours, and asks about
+  each row through `consider`, once. The route names a row's lane from its stored event's action.
+  It exists because neither enumeration reaches a landed pull request: the inert lander lists open
+  pull requests and the estate lander `approved` records. An unreadable list is a finding, and the
+  pass still runs.
+- `consider` checks for the code before `SETTLED`, since a pull request that landed also answers
+  `not open`, and asks to land with the answer's head. A dry run reports `unreadable` and sends
+  nothing. A sibling carrying the code releases (ADR-0045): the pass asks about it first, so it
+  still carries the code only when its read failed.
+- `lane_act.land_pull_request` settles in a step of its own, committed before the ordinary path,
+  which then takes the repository lock again. `_resettle` reads the pull request first. Read
+  failed: the row stands, and the lander reports `unreadable`. Landed: the row becomes
+  `already_merged` with the re-read's commit, keeps its permission columns, moves its `event_id` to
+  a new `<lane>.already_merged` event (the revert watch finds landings through it) and runs
+  `on_landed`, once; the line reads `settled`. A revert's hold is placed there, which also ends
+  `revert_in_progress`. Not landed: a `<lane>.unlanded` event is written and the row is removed,
+  which frees the window's pace.
+- A removal stands whatever the ordinary path answers, so a row behind its base can be freshened
+  and a closed, unlanded pull request loses its row. The line reads as the answer's other refusals
+  when the terms refuse: `deliberate` outside a window, `settled` for a closed pull request. A
+  refusal of any other kind is `held`, so a remote refusal is never masked. If the ordinary path
+  then has the remote decline outright, the row is terminal and that pass reads `held`.
+- Settling records the truth and calls no remote write, so it runs with `estate_landing_enabled` or
+  the inert lane's switch off.
+- A closed revert whose row is unknown is never reported `revert-stranded`: the landing joins the
+  landers' `unknown` set, its alert held, and the same is true of every closed revert while the
+  list is unreadable.
+- A landing a re-read finds at a head other than the row's, on the reconciling read or a settling,
+  is `already_merged` with the event action `<lane>.already_merged_other_head`, which the revert
+  watch doesn't select: `_watched_subject` reads only the author and branch, which a person's push
+  keeps, and `_revert` reverts the whole merge. `on_landed` still runs, so a revert landed that way
+  is recorded and holds its dependency.
+- A removed row's event keeps its key, and events are append-only and unique on it, while the
+  lander's key names the pull request and head. `_event_key` gives a landing a key of its own when
+  that one is spent, on this pass or a later one.
+
+The watch's 48 hours run from the row's `created_at`, so a landing settled late has less of its
+watch left.
+
+### An unknown factory merge (Landing Part 5)
+
+`pr-merge` has the same row as the lanes: `refused` with `merge_refused_by_remote:<code>` when the
+remote refused and the confirming read failed. The bump driver made that path unattended, so it
+settles the same way, on the unit table.
+
+- `pr_merge.land_unit_pull_request` settles in a step committed of its own, before the ordinary
+  path, under the unit's row lock, and `pr_merge._resettle` is the only code that changes or removes
+  a `UnitPrMerge` row. Read failed: the row stands. Landed: the row becomes `already_merged` with the
+  re-read's commit, and `event_id` moves to a new `pr_merge.already_merged` event. Not landed: a
+  `pr_merge.unlanded` event is written and the row is removed, which stands whatever the terms then
+  say. The unit's state and version don't move.
+- No term is asked to settle, and no merge is made: the terms ran before the call the row records,
+  so policy narrowing since, or `ORCHESTRATOR_BUMP_MERGE_ENABLED` going off, doesn't stop it. Each
+  new event is the stored event with its outcome changed, so `landing_inert` and `policy_path` are
+  what the call was made on, and `authority.human_gate_not_required` comes from that `policy_path`.
+- A row the call left unknown carries `landing_inert` and `policy_path` from the start, for that
+  reason. `already_merged` found before any call carries neither: it is somebody else's act, or a
+  crash nobody can attribute. Nor does one found landed after the call at a head other than the
+  row's, or with no head to read, on either the reconciling read or a settling: that tree is one
+  no term read, and a revert would take a person's work out with the bump.
+- `pr-merge-admission` answers `landing_outcome_unknown` for such a row, and that is the bump
+  driver's cue. Its merge step reads the answer before testing the pull request's state, because a
+  landed row's pull request is merged or closed, and it asks to land whatever else the answer
+  refuses. Its record is read while `resolved` as well as `approved`, so the hourly pass is the
+  re-ask. A call that leaves a row unknown reports `waiting`. A replay that leaves it unknown
+  reports `refused` and holds `bump-act-refused`. A replay that settles it reports `merged`. A
+  removal on a closed pull request says nothing; on an open one, what any unit with no row reports.
+- A unit no bump lane reads (an app change, or a bump outside a granted repository) settles only
+  when something asks `pr-merge` again; nothing asks by itself. The ledger reports the landing.
+- The keys. The driver sends one key per unit, and a removed row's events keep it, so `_unspent`
+  gives a later event a key of its own, as `lane_act._event_key` does.
+- Readers. The watch reads `merged` and `already_merged` with `landing_inert`, below. The landing
+  ledger's audit reads the newest `pr_merge.*` record, so a settled row isn't judged on its
+  `refused` event, and still reports any `already_merged` as `factory_landing_not_claimed_by_the_orchestrator`: a
+  reconciled landing goes in front of a person. `deploy_watcher.binds` still binds only `merged`, so
+  a reconciled landing on a deploying repository gets no unit observation.
+
 ## Automatic reverts (inert repositories)
 
 The inert lander reverts a bump the SDS landed when the default branch's own checks fail because of
@@ -825,13 +918,15 @@ on landing follow "Automatic reverts (deploying repositories)" below.
 - **What is watched.** A landing of this lane (`inert_pr_merge.merged` or `.already_merged`) for 48
   hours (`WATCH_HOURS`). A revert landing is never watched, and a landing with no record must be the
   update bot's, so a fork's upstream sync is never watched.
-- **The factory's merges.** Also watched, for the same 48 hours: a `unit_pr_merge` row with status
-  `merged`, of a unit that is a dependency update by both its envelope's class and its revision's
-  profile, whose event says the estate answered `inert` at the merge (`landing_inert`).
-  `already_merged` is someone else's landing and isn't watched. Nor is any other unit, so an
-  `app-change` is never reverted automatically, nor a pull request a record names as its revert, a
-  merge that redeployed, or a merge made before `landing_inert` was recorded. Nothing is read to
-  select them, and no pull request is read to judge one.
+- **The factory's merges.** Also watched, for the same 48 hours from the row's `created_at`: a
+  `unit_pr_merge` row with status `merged` or `already_merged`, of a unit that is a dependency
+  update by both its envelope's class and its revision's profile, whose event says the estate
+  answered `inert` at the merge (`landing_inert`). That stamp alone separates our act from a
+  person's: a landing reconciled after our own call at the head it named carries it, and an
+  `already_merged` found before any call, or at another head, never does. No other unit is watched, so an `app-change` is never reverted automatically,
+  nor is a pull request a record names as its revert, a merge that redeployed, or a merge made
+  before `landing_inert` was recorded. Nothing is read to select them, and no pull request is read
+  to judge one. A landing settled late has that much less of the watch left.
 - **Which jobs.** A job is a (workflow, job) pair. It counts when it passed at the pull request's
   head and its workflow has a `push` run at the merge commit. A `pull_request`-only workflow, or a
   job absent from the push run, is never watched.

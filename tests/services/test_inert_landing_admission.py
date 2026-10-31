@@ -62,6 +62,7 @@ from orchestrator.services.landing.interfaces import (
     LANDING_MERGEABILITY_UNKNOWN,
     LANDING_MERGEABILITY_UNRECOGNISED,
     LANDING_NOT_ENABLED,
+    LANDING_OUTCOME_UNKNOWN,
     LANDING_PULL_REQUEST_CONFLICTED,
     LANDING_PULL_REQUEST_NOT_OPEN,
     LANDING_PULL_REQUEST_UNREADABLE,
@@ -635,6 +636,27 @@ def test_a_pull_request_this_lane_has_already_acted_on_is_refused(
     assert LANDING_ALREADY_RECORDED in answer.refusals
 
 
+def test_an_unknown_row_answers_outcome_unknown_not_recorded(migrated_session: Session) -> None:
+    migrated_session.add(
+        EstatePrMerge(
+            repository=INERT_REPOSITORY,
+            pr_number=PR,
+            head_sha=HEAD,
+            status="refused",
+            reason_code="merge_refused_by_remote:merge_status",
+            policy_version=INERT_POLICY_VERSION,
+            idempotency_key="already-here",
+        )
+    )
+    migrated_session.flush()
+
+    answer = _answer(migrated_session)
+
+    assert answer.satisfied is False
+    assert LANDING_OUTCOME_UNKNOWN in answer.refusals
+    assert LANDING_ALREADY_RECORDED not in answer.refusals
+
+
 # ---------------------------------------------------------------------------------------------
 # The shape of the answer itself.
 # ---------------------------------------------------------------------------------------------
@@ -1119,13 +1141,13 @@ def test_the_list_is_read_from_the_update_bots_commit_after_a_branch_update(
         _typer_gateway(commits=(foreign_commit(HEAD),)),
         _typer_gateway(
             commits=(
-                dependabot_commit("one", trailer(("typer", "0.21.0"))),
+                foreign_commit("one"),
                 dependabot_commit(HEAD, trailer(("typer", "0.21.0"))),
             )
         ),
         _typer_gateway(commits_error=EstateGatewayError("commits_list_truncated")),
     ],
-    ids=["no-block", "no-message", "no-bot-commit", "two-bot-commits", "read-failed"],
+    ids=["no-block", "no-message", "no-bot-commit", "person-first", "read-failed"],
 )
 def test_a_list_that_cannot_be_read_in_a_held_repository_is_refused_by_its_own_name(
     migrated_session: Session, gateway: FakeEstateGateway

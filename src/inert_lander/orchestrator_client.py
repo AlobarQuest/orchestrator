@@ -1,4 +1,4 @@
-"""The confined orchestrator surface for the inert-population lander. SIX paths, checked
+"""The confined orchestrator surface for the inert-population lander. SEVEN paths, checked
 before the transport.
 
 It asks whether a pull request the update bot opened may be landed into a repository where
@@ -63,6 +63,9 @@ _CLOSE_HELD = "/api/v1/held-pr-close"
 # act on one that went bad (rerun its failing runs, or open its revert). The orchestrator judges
 # again inside the act and acts only on its own answer.
 _WATCH = "/api/v1/landing-watch"
+# Landing Part 5. Read first on every pass: the rows whose outcome nobody knows, which no
+# enumeration of pull requests can reach once one has landed.
+_UNKNOWN_OUTCOMES = "/api/v1/landing-unknown-outcomes"
 _REVERT = "/api/v1/landing-revert"
 
 
@@ -71,7 +74,7 @@ class ForbiddenEndpointError(OrchestratorError):
 
 
 def is_allowed_read(path: str) -> bool:
-    return path in (_ADMISSION, _WATCH)
+    return path in (_ADMISSION, _WATCH, _UNKNOWN_OUTCOMES)
 
 
 def is_allowed_write(path: str) -> bool:
@@ -222,6 +225,14 @@ class OrchestratorClient:
             },
         )
         return self._object(response, "close response")
+
+    def unknown_outcomes(self) -> list[dict[str, Any]]:
+        """This lane's landings whose outcome is unknown, each naming a pull request."""
+        response = self._send("GET", _UNKNOWN_OUTCOMES, params={"lane": "inert"})
+        outcomes = self._object(response, "unknown outcomes").get("outcomes")
+        if not isinstance(outcomes, list) or not all(isinstance(row, dict) for row in outcomes):
+            raise OrchestratorError("the unknown outcomes carried no list of outcomes")
+        return outcomes
 
     def landing_watch(self) -> list[dict[str, Any]]:
         """This lane's watched landings, each with its verdict or its record's status. Asks for

@@ -370,7 +370,7 @@ Placement rule: global CLAUDE.md §7.
   population, or a standing rotation package's record (`rotation-<credential>`, intent-packages
   source, risk `caution`, change class `credential-rotation`, no target repository; ADR-0055
   amendment 16, and the carrier refuses that class on a package of any other profile); a person
-  moves every other one. No producer credential moves a status:
+  moves every other one. No producer credential moves a `work` record's status:
   `bump_proposer` is propose-and-read and the `propose` scope refuses status routes.
   `bump_proposer` creates a missing package for a declared repository's failed npm, pip or uv bump
   (reach `live_estate` if it deploys, else `source_repository`), judges each bump by its own
@@ -412,10 +412,11 @@ Placement rule: global CLAUDE.md §7.
   the landing ledger's `landing` observation, confirmed against `UnitPrBinding.head_sha`, pinned by
   `tests/contract/test_landing_fact_contract.py`. History:
   `docs/history/claude-md-invariants-archive.md` #228.
-- The post-landing watch selects a factory merge from rows alone: status `merged`, a
-  unit that is a dependency update by both class and profile, `landing_inert` on its
-  `pr_merge.merged` event (the estate's answer at the act; an event without it is never watched),
-  and no record naming it as a revert. `UnitPrMerge.repository` is the envelope's
+- The post-landing watch selects a factory merge from rows alone: status `merged` or
+  `already_merged`, a unit that is a dependency update by both class and profile, `landing_inert`
+  on the row's event (the estate's answer when our call was made; an `already_merged` found before
+  any call, or at a head other than the row's, never carries it, and an event without it is never
+  watched), and no record naming it as a revert. `UnitPrMerge.repository` is the envelope's
   spelling and `landing_reverts` is folded, so every join folds it. Detail:
   `docs/operations/landing-lanes.md`, "Automatic reverts (inert repositories)".
 - Making a UNIQUE constraint's column nullable disables it for NULL rows; use
@@ -438,9 +439,24 @@ Placement rule: global CLAUDE.md §7.
   `observation_conflict`. Detail: `docs/operations/landing-lanes.md`.
 - Dependabot's update block is read from the commit the gate's `fetch-metadata` reads:
   `commits[0]`, only when the update bot authored it and it is verified
-  (`landing_ledger/github.py::_gate_message`), never the head, which a branch update makes a
-  merge commit. A landing asks it last, after the landing commit and the head. Detail:
-  `docs/operations/landing-lanes.md`, "Dependabot's update block".
+  (`landing_ledger/github.py::_gate_message`, and the hold term's
+  `terms._update_bot_message`, held equal by `test_update_bot_commit_agreement.py`), never the
+  head, which a branch update makes a merge commit. A landing asks it last, after the landing
+  commit and the head. Detail: `docs/operations/landing-lanes.md`, "Dependabot's update block".
+- A landing row whose reason is `merge_refused_by_remote:<code>` is an unknown outcome
+  (`interfaces.outcome_is_unknown`), answered `landing_outcome_unknown`; the bare reason is
+  terminal. Each lander asks about every such row first, from `GET
+  /api/v1/landing-unknown-outcomes`, because no enumeration reaches a landed pull request.
+  `lane_act._resettle`, in its own committed step, is the only code that may change or remove a
+  landing row (`test_only_lane_act_may_write_a_landing_row_and_only_resettle_changes_one`, which
+  tracks rows passed as parameters, built by calling the model, or held in locals assigned from
+  `select(Model)` or `session.get(Model, ...)`; a row reached any other way escapes it): landed
+  makes it `already_merged`, repoints `event_id` to an event with that action and runs `on_landed`
+  (at a head other than the row's, on this or the reconciling read, the event's action is
+  `<lane>.already_merged_other_head`, which the revert watch never selects);
+  confirmed unlanded removes it, and that stands whatever admission then says. Events are unique
+  and append-only, so a removed row's key is spent (`_event_key`). Detail:
+  `docs/operations/landing-lanes.md`, "An unknown landing outcome".
 - No reported finding kind may be a substring of another;
   `test_no_reported_kind_is_a_substring_of_another` guards it. Detail:
   `docs/operations/landing-lanes.md`.
@@ -600,9 +616,16 @@ Placement rule: global CLAUDE.md §7.
   `ORCHESTRATOR_BUMP_MERGE_ENABLED` is on. Off, a unit the path covers refuses
   `merge_policy_path_off` in place of `authority_approval_not_bound`; other terms report beside it,
   so it means waiting only as the sole refusal. The admission answer writes nothing; the act records
-  `authority.human_gate_not_required` beside a `merged` record only. The policy path alone also
-  reads the pull request in `pr_merge._act`, after it is known open and before landing: the head is
-  `sds/<unit8>-attempt-<attempt_count>` in the repository itself and is the adjudicated head, the
+  `authority.human_gate_not_required` beside a landing its own call made, including one reconciled
+  after that call at the head it named, never beside an `already_merged` found before it or at
+  another head. A row whose reason is
+  `merge_refused_by_remote:<code>` is an unknown outcome: `pr-merge-admission` answers
+  `landing_outcome_unknown`, the bump driver replays it whatever the pull request's state or the
+  other refusals, and `pr_merge._resettle`, in its own committed step and asking no term, is the
+  only code that may change or remove a `UnitPrMerge` row (ADR-0025 amendment 5). The policy path
+  alone also reads the pull request in `pr_merge._act`, after it is known open and before landing:
+  the head is `sds/<unit8>-attempt-<attempt_count>` in the repository itself and is the
+  adjudicated head, the
   body has the whole-line `SDS-Unit:` trailer, and `pulls/{n}/files` reads fully (its length equals
   `changed_files`), neither end of any entry is a workflow or gate file, and a tooling manifest
   changed. Each failure is a `pr_merge_*` refusal with no `UnitPrMerge` row, so a person can still
@@ -700,7 +723,7 @@ Placement rule: global CLAUDE.md §7.
   `docs/operations/architecture-guards.md`, "The layer manifest".
 - Only `services/membership/proposals.py` writes the member tables, reached only by a human
   confirming on `/review`, with one exception: `revert_hold.place` inserts a ceiling hold, only
-  through `revert_landed.record_revert_landed`, in either landing lane's merge transaction (inert
+  through `revert_landed.record_revert_landed`, in either landing lane's landing transaction (inert
   or estate) for a landed SDS revert, and never updates or deletes. Reads return frozen records,
   never ORM objects. `test_membership_writers.py` pins both writers, the hook's two callers, every
   write route and its role. The deploys service's wire value is `rollouts` (word guards). Detail:

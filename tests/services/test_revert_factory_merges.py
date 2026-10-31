@@ -7,6 +7,7 @@ landing's facts come from, and which of its merges are watched.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -25,6 +26,7 @@ from orchestrator.persistence.models import (
 from orchestrator.services.landing.inert_landing_admission import inert_landing_admission
 from orchestrator.services.landing.interfaces import EstatePullRequest, MergeOutcome
 from orchestrator.services.landing.pr_merge import (
+    GitHubGatewayError,
     MergeCommand,
     PullRequestState,
     land_unit_pull_request,
@@ -376,6 +378,159 @@ def test_a_merge_the_factory_did_not_make_is_not_watched(migrated_session: Sessi
     )
     assert record.status == "already_merged"
     assert landing_watch(migrated_session, **lanes(gateway_for())) == ()
+
+
+def _lost_response(session: Session, unit: WorkUnit, read: Any) -> Any:
+    """The factory's call is refused, and the confirming read answers as `read` says."""
+
+    class Gateway(FakeGateway):
+        def read_pull_request(self, *, repository: str, number: int) -> PullRequestState:
+            if not self.merges:
+                return super().read_pull_request(repository=repository, number=number)
+            return read()
+
+    gateway = Gateway(merge_error=GitHubGatewayError("merge_status", 405))
+    gateway.serve_the_runners_pull_request(unit, REPOSITORY, HEAD)
+    return land_unit_pull_request(
+        session,
+        MergeCommand(
+            unit_id=unit.id,
+            actor=SYSTEM,
+            idempotency_key="lost",
+            expected_version=unit.version,
+        ),
+        gateway,
+        inert_source(),
+        no_record_source(),
+        clock=FixedClock(IN_WINDOW),
+        bump_merge_enabled=True,
+    )
+
+
+def _landed_state() -> PullRequestState:
+    return PullRequestState(
+        base_ref="main",
+        default_branch="main",
+        open=False,
+        landed=True,
+        head_sha=HEAD,
+        merge_commit_sha=LANDED_COMMIT,
+    )
+
+
+def _read_fails() -> PullRequestState:
+    raise GitHubGatewayError("read_status", 502)
+
+
+def test_a_lost_response_policy_landing_is_watched(migrated_session: Session) -> None:
+    unit = _bump(migrated_session, "lost-response")
+    assert _lost_response(migrated_session, unit, _landed_state).status == "already_merged"
+
+    [watched] = landing_watch(migrated_session, **lanes(gateway_for()), only_lane="inert")
+
+    assert watched.pr_number == FACTORY_PR
+    assert watched.merge_commit_sha == LANDED_COMMIT
+    assert watched.verdict == "flaky_retry"
+
+
+def test_a_settled_unknown_policy_landing_is_watched(migrated_session: Session) -> None:
+    unit = _bump(migrated_session, "settled-unknown")
+    row = _lost_response(migrated_session, unit, _read_fails)
+    assert row.status == "refused"
+    assert landing_watch(migrated_session, **lanes(gateway_for()), only_lane="inert") == ()
+
+    land_unit_pull_request(
+        migrated_session,
+        MergeCommand(
+            unit_id=unit.id,
+            actor=SYSTEM,
+            idempotency_key="lost",
+            expected_version=unit.version,
+        ),
+        FakeGateway(state=_landed_state()),
+        inert_source(),
+        no_record_source(),
+        clock=FixedClock(IN_WINDOW),
+        bump_merge_enabled=False,
+    )
+
+    [watched] = landing_watch(migrated_session, **lanes(gateway_for()), only_lane="inert")
+    assert watched.merge_commit_sha == LANDED_COMMIT
+    assert watched.verdict == "flaky_retry"
+
+
+def test_an_already_merged_found_before_the_call_is_never_watched(
+    migrated_session: Session,
+) -> None:
+    """Somebody else's act, in the same status as a lost response of ours."""
+    unit = _bump(migrated_session, "someone-elses")
+    row = land_unit_pull_request(
+        migrated_session,
+        MergeCommand(
+            unit_id=unit.id,
+            actor=SYSTEM,
+            idempotency_key="elses",
+            expected_version=unit.version,
+        ),
+        FakeGateway(state=_landed_state()),
+        inert_source(),
+        no_record_source(),
+        clock=FixedClock(IN_WINDOW),
+        bump_merge_enabled=True,
+    )
+
+    assert row.status == "already_merged"
+    event = migrated_session.get(Event, row.event_id)
+    assert event is not None
+    assert event.payload["landing_inert"] is False
+    assert event.payload["policy_path"] is None
+    assert landing_watch(migrated_session, **lanes(gateway_for()), only_lane="inert") == ()
+
+
+def _another_head() -> PullRequestState:
+    return replace(_landed_state(), head_sha="e" * 40)
+
+
+def test_a_landing_at_another_head_is_never_watched(migrated_session: Session) -> None:
+    unit = _bump(migrated_session, "another-head")
+    assert _lost_response(migrated_session, unit, _another_head).status == "already_merged"
+    assert landing_watch(migrated_session, **lanes(gateway_for()), only_lane="inert") == ()
+
+
+def test_a_settled_landing_at_another_head_is_never_watched(migrated_session: Session) -> None:
+    unit = _bump(migrated_session, "settled-another-head")
+    _lost_response(migrated_session, unit, _read_fails)
+
+    land_unit_pull_request(
+        migrated_session,
+        MergeCommand(
+            unit_id=unit.id, actor=SYSTEM, idempotency_key="lost", expected_version=unit.version
+        ),
+        FakeGateway(state=_another_head()),
+        inert_source(),
+        no_record_source(),
+        clock=FixedClock(IN_WINDOW),
+        bump_merge_enabled=True,
+    )
+
+    assert landing_watch(migrated_session, **lanes(gateway_for()), only_lane="inert") == ()
+
+
+def test_a_stored_stamped_row_with_no_commit_is_read_and_never_acted_on(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    """A row the previous code wrote: `already_merged` found before the call, stamped anyway."""
+    row = merged(migrated_session, key="stored-before")
+    row.status, row.merge_commit_sha = "already_merged", None
+    migrated_session.commit()
+    gateway = gateway_for()
+
+    [watched] = landing_watch(migrated_session, **lanes(gateway), only_lane="inert")
+    assert watched.verdict == "unreadable"
+
+    assert act(migrated_session, gateway, key="act").acted is False
+    assert record_of(migrated_engine) is None
+    assert gateway.reruns == []
 
 
 def test_a_factory_merge_leaves_the_watch_with_its_window(migrated_session: Session) -> None:

@@ -204,3 +204,33 @@ hardcoded `main` given today's registry) and the third was a dead clause, split 
 guard and a type-narrowing assert. The nineteenth mutant is the unstarted-run clause the `datetime`
 fix above added; it is killed by that fix's own control, and the two `github.py` anchors it moved
 were re-pointed rather than left to match nothing.
+
+## Amendment 1, 2026-10-31 — the exception twin is gone, and Option D is built
+
+Devon decided on 2026-10-31 that a machine retires a landed record once a later green rollout is
+ahead of its failed one. ADR-0022 amendment 1 builds that, and it replaces two things above.
+
+- **The exception twin is gone.** `closed_record_production_has_moved_past` is deleted. For a terminal
+  record with a superseded rollout the watcher now reports nothing, neither the twin nor the rollout's
+  own `[exception]`: that run will have failed for ever, so both lines would repeat every pass, and
+  the record's `superseded` event already holds the fact. This covers a record a person closed as
+  well as one a prior pass retired. `a_closed_record_whose_latest_rollout_did_not_succeed` stays,
+  for a closed record nothing has superseded.
+- **Option D is built**, as change-manager's `deploy-supersession` route. The retiring pass still
+  prints the rollout's `[exception]`, followed by `[retired]`. The consequence above that two records
+  stay open with no machine path no longer holds.
+
+The four clauses are unchanged, and they now also decide a retirement, which `resolved` makes
+irreversible. Both known residuals err the safe way: an excuse withheld is a retirement withheld and
+never one wrongly granted.
+
+**A record this watcher retired is finished.** Its fact is permanent and held in its `superseded`
+event, so the pass skips it before any GitHub read: a terminal record whose `decided_by` is
+`deploy-watcher` prints one `[finished]` line and nothing else. Without this, `superseded_by`
+re-derives each pass and returns None on a read error, a sibling run in flight at the newest head or
+an untranscribed workflow edit, and a resolved record would report two findings and exit 2 with
+nothing a reader can do. A record a person closed is still read every pass, so it can flap to
+`a_closed_record_whose_latest_rollout_did_not_succeed` when the excuse is withheld.
+
+`Outcome.supersession` carries the superseding run and commit as data, so the retirement never parses
+them from the exception's text.

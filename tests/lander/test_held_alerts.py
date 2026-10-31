@@ -13,13 +13,14 @@ from pathlib import Path
 import httpx
 import pytest
 
-from lander.core import Outcome
+from lander.core import UNKNOWN_OUTCOMES_ROW, Outcome
 from lander.held_alerts import (
     ALERTING_STATUSES,
     HELD_ALERT_HOURS,
     LIFT_A_HOLD,
     STATE_DIR_ENV,
     TOKEN_ENV,
+    UNKNOWN_OUTCOMES_URL,
     firing,
     held_key,
     revert_alerts,
@@ -267,6 +268,18 @@ def test_an_unlisted_repository_keeps_its_sightings_and_forgets_another_reposito
 
     assert alerts == {}, "an unread pull request is neither fired nor resolved"
     assert kept == {KEY: mine, held_key(LANE, REPOSITORY, 0): _iso(NOW)}
+
+
+def test_the_unreadable_unknown_outcome_list_is_not_reported_as_a_repository() -> None:
+    row = held_key(LANE, UNKNOWN_OUTCOMES_ROW, 0)
+    seen = {row: _iso(NOW - timedelta(hours=HELD_ALERT_HOURS + 1))}
+
+    alerts, _ = firing(LANE, [_unlisted(UNKNOWN_OUTCOMES_ROW)], seen, NOW)
+
+    alert = alerts[row]
+    assert alert.title == "The unknown-outcome list could not be read"
+    assert alert.link == UNKNOWN_OUTCOMES_URL
+    assert "github.com" not in alert.link
 
 
 def test_a_repository_level_row_past_the_threshold_fires_its_own_alert() -> None:

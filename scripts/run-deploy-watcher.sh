@@ -19,8 +19,10 @@
 #   3  some part of reality could not be read, so the answer is missing rather than clean.
 # 3 outranks 2: an incomplete pass cannot claim it found everything there was to find.
 #
-# NOTHING HERE ACTS. No image is re-pointed, no commit reverted, no application redeployed, and
-# no change record's state is moved. A failed rollout produces a row and an exit code.
+# NOTHING HERE REMEDIATES. No image is re-pointed, no commit reverted and no application
+# redeployed. A failed rollout produces a row and an exit code. A change record's state moves only
+# through a stated fact: the observation that settles it, or the later green rollout that retires
+# it (ADR-0022 amendment 1), with change-manager choosing the outcome.
 #
 # Usage:
 #   scripts/run-deploy-watcher.sh [--dry-run]

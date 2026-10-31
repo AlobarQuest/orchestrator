@@ -18,10 +18,13 @@ orchestrator nothing from here, and the dependency allowlist -- is now a row of
 
 from __future__ import annotations
 
+import json
+
 import httpx
 import pytest
 
 from deploy_watcher.change_manager import (
+    SUPERSEDING_ACTOR,
     ChangeManagerClient,
     ForbiddenEndpointError,
     is_allowed_read,
@@ -42,10 +45,15 @@ from deploy_watcher.orchestrator import (
 )
 
 
-def test_the_write_surface_is_one_route_and_no_more() -> None:
+def test_only_the_two_writes_are_allowed() -> None:
     assert is_allowed_write("/api/items/44/deploy-observation")
+    assert is_allowed_write("/api/items/44/deploy-supersession")
     for forbidden in (
         "/api/items/44/deploy-observation/",
+        "/api/items/44/deploy-supersession/",
+        "/api/items/44/deploy-supersessions",
+        "/api/items/44/deploy-retirement",
+        "/api/items/../44/deploy-supersession",
         "/api/items/44/outcome",
         "/api/items/44/claim",
         "/api/items/44/handoff",
@@ -72,9 +80,37 @@ def test_the_execution_lifecycle_stays_out_of_reach_and_that_is_a_DECISION() -> 
 
 
 def test_the_decision_routes_stay_out_of_reach_and_that_is_also_a_DECISION() -> None:
-    """Terminating a change is a judgment. This program observes; a human decides."""
+    """Choosing a change's status is a judgment. This program states a fact (ADR-0022 amendment 1);
+    change-manager's supersession route chooses the one outcome, and these stay a person's."""
     for verb in ("approve", "defer", "wontfix", "resolve", "reactivate"):
         assert not is_allowed_write(f"/api/items/44/{verb}")
+
+
+def test_a_supersession_states_coordinates_and_no_status() -> None:
+    """The wire body is the whole of what the watcher asserts, and the server forbids extras."""
+    sent: list[tuple[str, dict]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append((request.url.path, json.loads(request.read())))
+        return httpx.Response(200, json={"id": 44, "status": "resolved"})
+
+    with ChangeManagerClient("t", transport=httpx.MockTransport(handler)) as client:
+        answer = client.supersede(
+            44, pull_request_number=46, superseding_run_id=7, superseding_commit="a" * 40
+        )
+
+    assert answer["status"] == "resolved"
+    assert sent == [
+        (
+            "/api/items/44/deploy-supersession",
+            {
+                "pull_request_number": 46,
+                "superseding_run_id": 7,
+                "superseding_commit": "a" * 40,
+                "actor": SUPERSEDING_ACTOR,
+            },
+        )
+    ]
 
 
 def test_the_read_surface_is_the_two_paths_the_pass_needs() -> None:
@@ -150,6 +186,15 @@ def test_a_forbidden_write_never_reaches_the_transport() -> None:
     assert seen == []
 
 
+def test_a_forbidden_supersession_never_reaches_the_transport() -> None:
+    client, seen = _seen_client()
+    with pytest.raises(ForbiddenEndpointError):
+        client.supersede(
+            -1, pull_request_number=46, superseding_run_id=7, superseding_commit="a" * 40
+        )
+    assert seen == []
+
+
 def test_a_forbidden_read_never_reaches_the_transport() -> None:
     client, seen = _seen_client()
     with pytest.raises(ForbiddenEndpointError):
@@ -173,6 +218,21 @@ def test_the_listing_always_names_the_source() -> None:
     client = ChangeManagerClient("t", transport=httpx.MockTransport(handler))
     client.deploy_changes()
     assert seen == ["https://change-mgr.alobar.net/api/items?source=deploy"]
+
+
+def test_the_listing_carries_each_records_status() -> None:
+    """A terminal record is quiet, or finished, only because the listing says what it is."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, json=[{"id": 78, "status": "resolved", "decided_by": SUPERSEDING_ACTOR}]
+        )
+
+    with ChangeManagerClient("t", transport=httpx.MockTransport(handler)) as client:
+        [record] = client.deploy_changes()
+
+    assert record.status == "resolved"
+    assert record.decided_by == SUPERSEDING_ACTOR
 
 
 @pytest.mark.parametrize("base_url", ["https://sds..alobar.net", "https://" + "a" * 64 + ".net"])

@@ -130,6 +130,7 @@ SYSTEM_KEY_ID = "orchestrator-system"
 # reddens if it is collapsed into the estate lane's.
 LANE = Lane(
     name="inert",
+    not_admissible="inert_merge_not_admissible",
     # NONE, and that is derived rather than omitted -- see the module docstring. This lane has no
     # clock, so no refusal it raises clears on one.
     deliberate=frozenset(),
@@ -513,11 +514,15 @@ def run(argv: list[str] | None = None) -> int:
             watch, watched = _read_watch(client)
             if watch is not None:
                 watched.extend(_revert_pass(watch, client, args.submit))
+            asked, settled = core.settle_unknown_outcomes(LANE, client, args.submit)
             selection = _subjects(reader, rule, _open_reverts(watch))
-            outcomes = list(selection.unreadable)
-            outcomes.extend(_pass(selection.subjects, client, args.submit))
+            outcomes = [*settled, *selection.unreadable]
+            remaining = core.not_yet_asked(selection.subjects, asked)
+            outcomes.extend(_pass(remaining, client, args.submit))
             outcomes.extend(_branch_updates(selection.subjects, client, args.submit))
             stranded, unknown, outside = _stranded(watch, selection, rule.inert)
+            in_doubt = core.stranded_in_doubt(watch, stranded - outside, asked)
+            stranded, unknown = stranded - in_doubt, unknown | in_doubt
             watched.extend(
                 Outcome(
                     repository,

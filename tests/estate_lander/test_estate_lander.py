@@ -66,6 +66,8 @@ class FakeOrchestrator:
         update_error: Exception | None = None,
         replayed: bool = False,
     ) -> None:
+        self.unknown: list[dict[str, Any]] = []
+        self.unknown_error: Exception | None = None
         self._answers = answers or {}
         self._land_error = land_error
         self._admission_error = admission_error
@@ -112,6 +114,11 @@ class FakeOrchestrator:
         }
 
     # Landing Part 3b: the watch, empty unless a test sets one, and each act asked of it.
+    def unknown_outcomes(self) -> list[dict[str, Any]]:
+        if self.unknown_error is not None:
+            raise self.unknown_error
+        return self.unknown
+
     def landing_watch(self) -> list[dict[str, Any]]:
         if self.watch_error is not None:
             raise self.watch_error
@@ -1825,6 +1832,71 @@ def test_a_revert_closed_without_landing_is_stranded_and_its_listing_failure_is_
     )
     run(["--submit"])
     assert revert_alerts.calls[-1][2]["stranded"] == frozenset()
+
+
+UNKNOWN_ANSWER = {
+    "satisfied": False,
+    "refusals": ["landing_outcome_unknown", "landing_pull_request_not_open"],
+    "head_sha": HEAD,
+}
+
+
+def test_an_unknown_row_is_asked_about_outside_the_hours_with_no_record(
+    monkeypatch, alerts, revert_alerts
+) -> None:
+    client = _Orchestrator({(REPOSITORY, 9): UNKNOWN_ANSWER})
+    client.unknown = [{"repository": REPOSITORY, "pr_number": 9}]
+    _wired(monkeypatch, client, [])
+    monkeypatch.setattr("estate_lander.cli._now", lambda: OUT_OF_HOURS)
+
+    run(["--submit"])
+
+    assert [number for _, number, _, _ in client.landed] == [9]
+
+
+def test_a_subject_that_is_also_unknown_is_asked_about_once(
+    monkeypatch, alerts, revert_alerts
+) -> None:
+    client = _Orchestrator({(REPOSITORY, 49): UNKNOWN_ANSWER})
+    client.unknown = [{"repository": REPOSITORY, "pr_number": 49}]
+    _wired(monkeypatch, client, [_row(49)])
+
+    run(["--submit"])
+
+    assert len(client.landed) == 1
+
+
+def test_an_unreadable_list_of_unknown_rows_is_a_finding_and_the_pass_runs(
+    monkeypatch, alerts, revert_alerts, capsys
+) -> None:
+    client = _Orchestrator({(REPOSITORY, 49): _admissible()})
+    client.unknown_error = OrchestratorError("no answer")
+    _wired(monkeypatch, client, [_row(49)])
+
+    run(["--submit"])
+
+    assert "landing-unknown-outcomes#0  unreadable" in capsys.readouterr().out
+    assert len(client.landed) == 1
+
+
+@pytest.mark.parametrize("unreadable", [False, True], ids=["unknown-row", "list-unread"])
+def test_a_closed_revert_whose_row_is_unknown_is_not_called_stranded(
+    monkeypatch, alerts, revert_alerts, capsys, unreadable: bool
+) -> None:
+    client = _Orchestrator({("alobarquest/brain", 80): UNKNOWN_ANSWER})
+    client.watch = [_watched(None, "revert_opened", revert_pr_number=80, pinned_images={"u": {}})]
+    if unreadable:
+        client.unknown_error = OrchestratorError("no answer")
+    else:
+        client.unknown = [{"repository": "alobarquest/brain", "pr_number": 80}]
+    _wired(monkeypatch, client, [])
+
+    run(["--submit"])
+
+    [(_, _, kwargs)] = revert_alerts.calls
+    assert kwargs["stranded"] == frozenset()
+    assert kwargs["unknown"] == {("alobarquest/brain", 79)}
+    assert "closed without landing" not in capsys.readouterr().out
 
 
 def test_the_github_token_is_required(monkeypatch, capsys) -> None:

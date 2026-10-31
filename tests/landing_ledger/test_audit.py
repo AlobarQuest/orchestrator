@@ -812,6 +812,13 @@ def test_only_a_MERGED_record_asserts_the_orchestrator_made_this_landing() -> No
         assert caveats == (), status
 
 
+def test_the_record_that_stands_is_the_newest_one() -> None:
+    """A row whose outcome was unknown leaves a `refused` event behind the one that settled it."""
+    settled = [*history(status="refused", merge_commit=None), history()[1]]
+    assert audit_factory_landing(factory_landing(), units(unit_history=settled)) == ((), ())
+    assert audit_factory_landing(factory_landing(), units(unit_history=list(reversed(settled))))[0]
+
+
 def test_nothing_about_a_factory_landing_is_reported_as_a_CAVEAT() -> None:
     """A caveat drives no exit code, so it is where a doubt goes to be ignored. Every doubt about
     an act this estate cannot undo belongs in the lane a person actually reads."""

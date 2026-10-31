@@ -245,18 +245,18 @@ VERIFIER_ROLE = "verifier"
 # row names this repository and this pull request whatever it concluded -- but only ONE of them
 # asserts that the orchestrator made this landing, and the other two are findings.
 #
-# READ ALL FIVE WRITERS IN `pr_merge.py` BEFORE CHANGING THIS. Neither of the other two statuses
+# READ EVERY WRITER IN `pr_merge.py` BEFORE CHANGING THIS. Neither of the other two statuses
 # means what its name suggests, and a first draft of this module widened the binding on a premise
 # that two adversarial reviews falsified from opposite directions:
 #
-#  * `already_merged` has two writers. One is the lost-response retry, which IS the factory's own
-#    act reconciled after the fact. The other fires BEFORE the merge call, when the pull request
-#    was already landed -- and its own comment says it records "somebody else's act, never as
-#    ours". They are indistinguishable in the row, so the status cannot assert authorship.
+#  * `already_merged` has three writers. Two are the factory's own act reconciled after the fact:
+#    the lost-response retry and a later settling of an unknown row. The third fires BEFORE the
+#    merge call, when the pull request was already landed -- and its own comment says it records
+#    "somebody else's act, never as ours". The status can't tell them apart, so it cannot assert
+#    authorship. The event's `landing_inert` tells them apart only on an inert repository.
 #  * `refused` has two writers as well. One is "the one genuinely ambiguous outcome", where the
-#    call failed and the reconciling read failed too, and `pr_merge.py` says in as many words that
-#    the ledger observes the landing independently and can settle it. The other is a CONFIRMED
-#    non-landing: the remote answered 200 and said it had not merged.
+#    call failed and the reconciling read failed too, which a later request settles. The other is a
+#    CONFIRMED non-landing: the remote answered 200 and said it had not merged.
 #
 # So a landing whose only record is either of those is reported, never excused. Settling an
 # ambiguity is exactly what a finding does -- it puts the thing in front of a person -- while a
@@ -568,8 +568,11 @@ def _merge_event(history: list[dict[str, Any]], repository: str, pull_request: A
     Matched on repository AND pull-request number, never on the action alone: the question is
     whether this landing is the unit's landing, and a unit that landed some other pull request
     would satisfy an action-only match while proving nothing about this commit.
+
+    Newest first: a row whose unknown outcome settled has a `refused` event behind the one that
+    stands, and the history runs oldest to newest.
     """
-    for event in history:
+    for event in reversed(history):
         if not isinstance(event, dict) or not str(event.get("action", "")).startswith("pr_merge."):
             continue
         payload = event.get("payload")

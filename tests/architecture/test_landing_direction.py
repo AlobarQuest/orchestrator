@@ -308,3 +308,73 @@ def test_the_shared_act_steps_name_no_lane_and_no_landing_call() -> None:
     tree = ast.parse((LANDING / "lane_act.py").read_text(), filename="lane_act.py")
     attributes = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
     assert not attributes & {"merge", "submit_merge"}
+
+
+def _landing_row_writes(tree: ast.Module, model: str) -> set[str]:
+    """Each function here that builds, updates or deletes a landing row, by name.
+
+    A row reaches a function as a parameter annotated `model`, as a local assigned from
+    `select(model)` or `session.get(model, ...)`, or is built by calling it.
+    """
+    writers: set[str] = set()
+    for function in ast.walk(tree):
+        if not isinstance(function, ast.FunctionDef):
+            continue
+        rows = {
+            parameter.arg
+            for parameter in [*function.args.args, *function.args.kwonlyargs]
+            if parameter.annotation is not None and model in ast.unparse(parameter.annotation)
+        }
+        for node in ast.walk(function):
+            # A row held in a local read from `select(Model)` or `session.get(Model, ...)`.
+            if isinstance(node, ast.Assign) and any(
+                marker in ast.unparse(node.value) for marker in (f"select({model}", f"get({model},")
+            ):
+                rows |= {target.id for target in node.targets if isinstance(target, ast.Name)}
+        for node in ast.walk(function):
+            written = False
+            if isinstance(node, ast.Call):
+                written = (
+                    isinstance(node.func, ast.Name)
+                    and (
+                        node.func.id == model
+                        or node.func.id in {"update", "delete"}
+                        and model in ast.unparse(node)
+                    )
+                ) or (
+                    isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "delete"
+                    and any(isinstance(arg, ast.Name) and arg.id in rows for arg in node.args)
+                )
+            elif isinstance(node, ast.Assign):
+                written = any(
+                    isinstance(target, ast.Attribute)
+                    and isinstance(target.value, ast.Name)
+                    and target.value.id in rows
+                    for target in node.targets
+                )
+            if written:
+                writers.add(function.name)
+    return writers
+
+
+def test_only_lane_act_may_write_a_landing_row_and_only_resettle_changes_one() -> None:
+    """`_record` writes the row after an act. `_resettle` alone changes or removes one, because a
+    row is what bars a second landing."""
+    found = {
+        (path.name, name)
+        for path in sorted((SRC / "orchestrator").rglob("*.py"))
+        for name in _landing_row_writes(ast.parse(path.read_text()), "EstatePrMerge")
+    }
+
+    assert found == {("lane_act.py", "_record"), ("lane_act.py", "_resettle")}
+
+
+def test_only_pr_merge_may_write_a_factory_row_and_only_resettle_changes_one() -> None:
+    found = {
+        (path.name, name)
+        for path in sorted((SRC / "orchestrator").rglob("*.py"))
+        for name in _landing_row_writes(ast.parse(path.read_text()), "UnitPrMerge")
+    }
+
+    assert found == {("pr_merge.py", "_record"), ("pr_merge.py", "_resettle")}

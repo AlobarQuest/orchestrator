@@ -209,6 +209,7 @@ def test_production_get_route_inventory_is_explicit() -> None:
         # population reads before it asks for anything. It also carries the branch-update
         # permission, which is what the freshening pass acts on.
         "/api/v1/inert-pr-merge-admission",
+        "/api/v1/landing-unknown-outcomes",
         "/api/v1/landing-watch",
         # Landing Part 3b: the reverts the SDS opened, from its own records, readable by the
         # observer so the change producer can recognise a revert pull request. Reads no App.

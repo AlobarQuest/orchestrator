@@ -39,7 +39,7 @@ EXIT_FINDINGS = 3
 
 
 class LandingClient(Protocol):
-    """The whole orchestrator surface these passes use: one question and three acts.
+    """The whole orchestrator surface these passes use: two questions and three acts.
 
     Each lane's client satisfies it with its OWN four literal paths, checked before the transport
     -- which is the control. A shared client taking paths from its caller was rejected for exactly
@@ -47,6 +47,8 @@ class LandingClient(Protocol):
     """
 
     def admission(self, repository: str, pr_number: int) -> dict[str, Any]: ...
+
+    def unknown_outcomes(self) -> list[dict[str, Any]]: ...
 
     def land(
         self, repository: str, pr_number: int, *, head_sha: str, idempotency_key: str
@@ -83,6 +85,9 @@ class Lane:
     orchestrator, which is why this could never have been one set. Each lane's
     `*_branch_update_siblings_unreadable` is DELIBERATELY absent: not knowing clears on nothing.
 
+    `not_admissible`: the code the landing act refuses with when the lane's answer is no, as
+    opposed to the remote refusing a request that was admitted.
+
     `reads_rollout_pin`: whether a rollout-pin refusal can be caused by a stale head (ADR-0024).
     Only the estate lane evaluates a rollout pin; the inert admission answer deliberately does not
     carry the key. **False is load-bearing, not a default**: were the inert lane to read the key,
@@ -93,11 +98,12 @@ class Lane:
     deliberate: frozenset[str]
     exception: frozenset[str]
     update_self_clearing: frozenset[str]
+    not_admissible: str
     reads_rollout_pin: bool
 
 
 # Refusals that mean the SUBJECT IS SETTLED rather than that a condition is unmet -- the pull
-# request is gone, or this lane has already acted on it and the row it wrote has no delete path.
+# request is gone, or this lane has already acted on it and the row it wrote says what happened.
 # Neither is something a person can act on, and reporting them as findings would make one landing
 # -- or one pull request a person merged themselves -- a nightly page forever.
 #
@@ -105,6 +111,17 @@ class Lane:
 # settled subject's other refusals are meaningless because there is nothing left to land. The
 # same for both lanes.
 SETTLED = frozenset({"landing_already_recorded", "landing_pull_request_not_open"})
+
+# Landing Part 5. The row records a landing nobody could confirm or rule out. It is asked about
+# before `SETTLED`, because a pull request that did land also answers `not open`, and only a land
+# request re-reads the pull request and settles the row. The orchestrator's code, not imported;
+# held equal by a test that may import both.
+OUTCOME_UNKNOWN = "landing_outcome_unknown"
+# The start of the reason on a row whose outcome is still unknown. The bare code without the colon
+# is the remote declining, which is settled. The orchestrator's, held equal by the same test.
+STILL_UNKNOWN_REASON = "merge_refused_by_remote:"
+# The line a pass prints when it can't read which rows are unknown.
+UNKNOWN_OUTCOMES_ROW = "landing-unknown-outcomes"
 
 # The refusal that says only THIS BRANCH IS BEHIND ITS BASE. It belongs to NO set: alone it is a
 # FINDING -- transient, and the branch-update pass clears it on a later run -- while beside an
@@ -373,22 +390,10 @@ def consider(
         return Outcome(repository, number, "unreadable", str(error))
 
     refusals = [str(r) for r in (answer.get("refusals") or [])]
-    if SETTLED & set(refusals):
-        return Outcome(repository, number, "settled", ", ".join(refusals))
-    if not answer.get("satisfied") and CEILING in refusals and NOT_GRANTED not in refusals:
-        return _close_held(client, repository, number, answer, submit)
-    if not answer.get("satisfied"):
-        # A MISSING key reads as False, which withholds the criterion's one conditional member and
-        # leaves the line a finding. That is the direction to fail in, and it is not hypothetical:
-        # the answer comes from a deployed orchestrator, and a release that has not reached
-        # production yet serves an answer with no such key.
-        status = held_status(
-            lane,
-            refusals,
-            rollout_base_matches_pin=answer.get(BASE_MATCHES_PIN) is True,
-            withheld_for_sibling=answer.get(WITHHELD_FOR_SIBLING) is True,
-        )
-        return Outcome(repository, number, status, ", ".join(refusals))
+    if OUTCOME_UNKNOWN in refusals:
+        return _settle_unknown(lane, client, repository, number, answer, refusals, submit)
+    if SETTLED & set(refusals) or not answer.get("satisfied"):
+        return _not_landable(lane, client, repository, number, answer, refusals, submit)
 
     head = answer.get("head_sha")
     if not isinstance(head, str) or not head:
@@ -411,6 +416,139 @@ def consider(
     except OrchestratorError as error:
         return Outcome(repository, number, "error", str(error))
     return Outcome(repository, number, "landed", f"status={landed.get('status')}")
+
+
+def _not_landable(
+    lane: Lane,
+    client: LandingClient,
+    repository: str,
+    number: int,
+    answer: dict[str, Any],
+    refusals: list[str],
+    submit: bool,
+) -> Outcome:
+    """What a line says when the answer is no, for these refusals."""
+    if SETTLED & set(refusals):
+        return Outcome(repository, number, "settled", ", ".join(refusals))
+    if CEILING in refusals and NOT_GRANTED not in refusals:
+        return _close_held(client, repository, number, answer, submit)
+    # A MISSING key reads as False, which withholds the criterion's one conditional member and
+    # leaves the line a finding. That is the direction to fail in, and it is not hypothetical: the
+    # answer comes from a deployed orchestrator, and a release that has not reached production yet
+    # serves an answer with no such key.
+    status = held_status(
+        lane,
+        refusals,
+        rollout_base_matches_pin=answer.get(BASE_MATCHES_PIN) is True,
+        withheld_for_sibling=answer.get(WITHHELD_FOR_SIBLING) is True,
+    )
+    return Outcome(repository, number, status, ", ".join(refusals))
+
+
+def _settle_unknown(
+    lane: Lane,
+    client: LandingClient,
+    repository: str,
+    number: int,
+    answer: dict[str, Any],
+    refusals: list[str],
+    submit: bool,
+) -> Outcome:
+    """Ask to land a pull request whose row can't say whether it landed.
+
+    The request is what settles it: the orchestrator re-reads before anything else, and calls the
+    remote only once that read confirms nothing landed and the terms admit it. Settling records the
+    truth and writes nothing to the remote, so it runs with the lane switched off.
+
+    A refusal of the terms reads as the answer's other refusals, so that a window or a closed pull
+    request stays as quiet as it is without a row. Any other refusal is the remote's, or the answer
+    moving, and stays `held` whatever the answer said. A dry run can't ask, so it reports that
+    nobody knows.
+    """
+    detail = ", ".join(refusals)
+    head = answer.get("head_sha")
+    if not isinstance(head, str) or not head:
+        return Outcome(repository, number, "unreadable", f"names no head: {detail}")
+    if not submit:
+        return Outcome(repository, number, "unreadable", detail)
+    try:
+        landed = client.land(
+            repository,
+            number,
+            head_sha=head,
+            idempotency_key=landing_key(lane, repository, number, head),
+        )
+    except LandingRefused as error:
+        others = [refusal for refusal in refusals if refusal != OUTCOME_UNKNOWN]
+        if error.code != lane.not_admissible or not others:
+            return Outcome(repository, number, "held", str(error))
+        return _not_landable(lane, client, repository, number, answer, others, submit)
+    except OrchestratorError as error:
+        return Outcome(repository, number, "error", str(error))
+    status = landed.get("status")
+    if status == "already_merged":
+        return Outcome(repository, number, "settled", "the re-read found it landed")
+    if status == "merged":
+        return Outcome(repository, number, "landed", f"status={status}")
+    reason = str(landed.get("reason_code"))
+    if status == "refused" and not reason.startswith(STILL_UNKNOWN_REASON):
+        # The row was removed and the remote then answered that it did not land: settled, and a
+        # person hears about it once, as any refused landing.
+        return Outcome(repository, number, "held", f"status={status} {reason}")
+    return Outcome(repository, number, "unreadable", f"status={status} {reason}")
+
+
+def settle_unknown_outcomes(
+    lane: Lane, client: LandingClient, submit: bool
+) -> tuple[frozenset[tuple[str, int]] | None, list[Outcome]]:
+    """Ask about every row whose outcome is unknown, first, on every pass, in or out of hours.
+
+    A landed pull request is on neither lane's enumeration, so this list is the only way one is
+    ever asked about. Returns the pull requests named, folded, or `None` when the list could not
+    be read, which is a finding and leaves the rest of the pass to run.
+    """
+    try:
+        rows = client.unknown_outcomes()
+    except OrchestratorError as error:
+        return None, [Outcome(UNKNOWN_OUTCOMES_ROW, 0, "unreadable", str(error))]
+    subjects = [
+        (row["repository"], row["pr_number"])
+        for row in rows
+        if isinstance(row.get("repository"), str) and isinstance(row.get("pr_number"), int)
+    ]
+    return (
+        frozenset((repository.lower(), number) for repository, number in subjects),
+        landing_pass(lane, subjects, client, submit),
+    )
+
+
+def not_yet_asked(
+    subjects: list[tuple[str, int]], asked: frozenset[tuple[str, int]] | None
+) -> list[tuple[str, int]]:
+    """The enumeration without what `settle_unknown_outcomes` already asked about, whose repository
+    may be spelled differently here."""
+    return [
+        (repository, number)
+        for repository, number in subjects
+        if (repository.lower(), number) not in (asked or frozenset())
+    ]
+
+
+def stranded_in_doubt(
+    rows: list[dict[str, Any]] | None,
+    stranded: frozenset[tuple[str, int]],
+    asked: frozenset[tuple[str, int]] | None,
+) -> frozenset[tuple[str, int]]:
+    """Of the landings whose revert GitHub no longer lists open, those that can't be called closed
+    without landing: the revert's own row is unknown, or the list of such rows went unread."""
+    if asked is None:
+        return stranded
+    return frozenset(
+        (row["repository"], row["pr_number"])
+        for row in rows or []
+        if (row.get("repository"), row.get("pr_number")) in stranded
+        and (str(row.get("repository")).lower(), row.get("revert_pr_number")) in asked
+    )
 
 
 def _close_held(

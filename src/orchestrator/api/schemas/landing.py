@@ -430,6 +430,17 @@ class LandingWatchResponse(BaseModel):
     landings: list[WatchedLandingModel]
 
 
+class LandingUnknownOutcomeModel(BaseModel):
+    """A pull request whose landing row can't say whether it landed (Landing Part 5)."""
+
+    repository: str
+    pr_number: int
+
+
+class LandingUnknownOutcomesResponse(BaseModel):
+    outcomes: list[LandingUnknownOutcomeModel]
+
+
 class OpenedRevertModel(BaseModel):
     """A revert the SDS opened and has not landed (Landing Part 3b)."""
 

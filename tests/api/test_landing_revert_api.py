@@ -48,6 +48,7 @@ from tests.services.test_revert_act import (
     landed_bump,
     landed_on_brain,
 )
+from tests.services.test_revert_landing import unknown_row
 from tests.services.test_revert_repoint import brain_gateway, pinned, stuck_on_the_parent
 
 WATCH = "/api/v1/landing-watch"
@@ -441,3 +442,23 @@ def test_only_the_system_actor_may_repoint_or_restore(watch_client) -> None:
             headers=WORKER,
         )
         assert response.status_code in (401, 403), (route, response.text)
+
+
+UNKNOWN = "/api/v1/landing-unknown-outcomes"
+
+
+def test_the_unknown_outcomes_are_served_per_lane_to_the_system_actor_alone(
+    watch_client, migrated_engine: Engine
+) -> None:
+    client, _slot = watch_client
+    with Session(migrated_engine) as seeding:
+        unknown_row(seeding, INERT_REPOSITORY, 77, "inert_pr_merge")
+
+    response = client.get(UNKNOWN, params={"lane": "inert"}, headers=SYSTEM)
+    assert response.status_code == 200, response.text
+    assert response.json() == {"outcomes": [{"repository": INERT_REPOSITORY, "pr_number": 77}]}
+    assert client.get(UNKNOWN, params={"lane": "estate"}, headers=SYSTEM).json() == {"outcomes": []}
+
+    assert client.get(UNKNOWN, params={"lane": "inert"}, headers=WORKER).status_code == 403
+    refused = client.get(UNKNOWN, params={"lane": "other"}, headers=SYSTEM)
+    assert refused.json()["error"]["code"] == "unknown_outcomes_lane_unknown"

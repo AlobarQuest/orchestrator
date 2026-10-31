@@ -25,7 +25,8 @@ from typer.testing import CliRunner
 from deploy_watcher import cli as watcher_cli
 from deploy_watcher import observe as observe_module
 from deploy_watcher import units as units_module
-from deploy_watcher.change_manager import ChangeManagerClient
+from deploy_watcher.change_manager import SUPERSEDING_ACTOR, ChangeManagerClient
+from deploy_watcher.github import GitHubReader
 from deploy_watcher.model import ChangeRecord, Finding
 from deploy_watcher.orchestrator import OrchestratorClient
 from deploy_watcher.units import UNIT_CLAIM_UNBOUND, UNIT_CLAIM_UNKNOWN
@@ -36,6 +37,7 @@ from tests.deploy_watcher.test_observe import (
     MERGE,
     NOW,
     REPO,
+    WORKFLOW,
     failed_rollout,
     reader_for,
     routes,
@@ -443,7 +445,7 @@ def test_a_stored_fact_that_no_longer_matches_github_is_reported(
 
 
 # ---------------------------------------------------------------------------
-# ADR-0044: the closed-record contradiction has an EXCEPTION twin
+# ADR-0044 and ADR-0022 amendment 1: a superseded rollout retires its record, then goes quiet
 # ---------------------------------------------------------------------------
 
 
@@ -452,36 +454,270 @@ def _superseded_routes() -> dict[str, object]:
     return failed_rollout(**supersession())
 
 
-def test_a_closed_record_whose_failed_rollout_was_SUPERSEDED_is_an_exception(
+def _status_record(status: str) -> ChangeRecord:
+    return ChangeRecord(
+        item_id=RECORD.item_id,
+        identity=RECORD.identity,
+        target_repository=RECORD.target_repository,
+        pull_request_number=RECORD.pull_request_number,
+        acceptance_criteria=(),
+        status=status,
+    )
+
+
+def _watch_retirement(
+    status: str,
+    *,
+    github_routes: dict[str, object] | None = None,
+    page: dict | None = None,
+    supersede: httpx.Response | None = None,
+    dry_run: bool = False,
+) -> tuple[tuple[bool, bool], list[dict]]:
+    """One pass over a record in `status`, returning the supersession bodies it sent."""
+    sent: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/deploy-supersession"):
+            sent.append(json.loads(request.read()))
+            return supersede or httpx.Response(200, json={"id": 52, "status": "resolved"})
+        if request.method == "POST":
+            return httpx.Response(201, json={**RECORDED, "item_status": status})
+        return httpx.Response(200, json=page or _page(verdict="failed"))
+
+    with (
+        _github(NO_TRAILER, github_routes or _superseded_routes()) as reader,
+        ChangeManagerClient("t", transport=httpx.MockTransport(handler)) as changes,
+        _orchestrator(_bound_history(), []) as units,
+    ):
+        answer = watcher_cli._watch_one(
+            reader,
+            changes,
+            units,
+            _status_record(status),
+            now=NOW,
+            actor="deploy-watcher",
+            settle_seconds=1800,
+            dry_run=dry_run,
+        )
+    return answer, sent
+
+
+def test_a_superseded_failed_rollout_retires_the_record(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """The whole point of ADR-0044 at this surface.
+    """ADR-0022 amendment 1. The server does not check the run was green or the commit later, so
+    these coordinates are exactly what `superseded_by` established, and nothing else."""
+    answer, sent = _watch_retirement("approved")
 
-    `SETTLED_ROLLOUT_NOT_SUCCESS` is LATENT on today's population -- records 78 and 79 are
-    `approved`, so it has never fired -- and becomes live the moment a person resolves one. Without
-    this branch that natural act converts a rollout nobody can act on into a permanently-red
-    finding, which is the shape the estate has now ruled against three times.
-    """
-    answer, _ = _watch(
-        github_routes=_superseded_routes(),
-        page=_page(verdict="failed"),
-        recorded={**RECORDED, "item_status": "resolved"},
+    assert answer == (False, False)
+    assert sent == [
+        {
+            "pull_request_number": 46,
+            "superseding_run_id": LATER_RUN,
+            "superseding_commit": LATER_HEAD,
+            "actor": SUPERSEDING_ACTOR,
+        }
+    ]
+    assert "[retired]" in capsys.readouterr().out
+
+
+def test_a_failed_rollout_with_no_later_green_run_retires_nothing(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The record stays open and the finding stays: only `superseded_by` opens this path."""
+    answer, sent = _watch_retirement(
+        "approved",
+        github_routes=failed_rollout(**{_SUCCESS_QUERY: {"total_count": 0, "workflow_runs": []}}),
+    )
+
+    assert answer == (True, False)
+    assert sent == []
+    assert observe_module.ROLLOUT_NOT_SUCCESS in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("compare", ["identical", "diverged", "behind"])
+def test_a_green_run_that_is_not_ahead_retires_nothing(compare: str) -> None:
+    answer, sent = _watch_retirement(
+        "approved", github_routes=failed_rollout(**supersession(compare=compare))
+    )
+
+    assert answer == (True, False)
+    assert sent == []
+
+
+@pytest.mark.parametrize("status", ["resolved", "wontfix"])
+def test_a_terminal_superseded_record_reports_nothing(
+    status: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A record a prior pass retired, or a person closed: its rollout will have failed for ever,
+    so anything reported here repeats every pass, and the record's event already holds the fact.
+    It sends nothing either: the server's 200 would be right, and the call would be noise."""
+    answer, sent = _watch_retirement(status)
+    out = capsys.readouterr().out
+
+    assert answer == (False, False)
+    assert sent == []
+    assert "[exception]" not in out
+    assert "[found]" not in out
+    assert "[retired]" not in out
+
+
+def test_a_green_run_of_a_different_workflow_retires_nothing() -> None:
+    """Every clause holds for `ci.yml`, whose green run says nothing about this rollout. The
+    rollout workflow itself has no later success, so nothing is superseded."""
+    other = {
+        key.replace(WORKFLOW, ".github/workflows/ci.yml"): value
+        for key, value in supersession().items()
+    }
+    answer, sent = _watch_retirement(
+        "approved",
+        github_routes=failed_rollout(
+            **other, **{_SUCCESS_QUERY: {"total_count": 0, "workflow_runs": []}}
+        ),
+    )
+
+    assert answer == (True, False)
+    assert sent == []
+
+
+def _pass_over(
+    monkeypatch: pytest.MonkeyPatch, decided_by: str, status: str = "resolved"
+) -> tuple[int, str, list[str]]:
+    """A whole `watch` pass over one record, with every GitHub read failing."""
+    reads: list[str] = []
+
+    def github(request: httpx.Request) -> httpx.Response:
+        reads.append(request.url.path)
+        return httpx.Response(500, json={})
+
+    def listing(request: httpx.Request) -> httpx.Response:
+        item = {
+            "id": RECORD.item_id,
+            "identity": RECORD.identity,
+            "target_repository": REPO,
+            "pull_request_number": 46,
+            "status": status,
+            "decided_by": decided_by,
+        }
+        return httpx.Response(200, json=[item])
+
+    def untouched(request: httpx.Request) -> httpx.Response:
+        raise AssertionError(f"the pass reached {request.url.path}")
+
+    for variable in (
+        watcher_cli.GITHUB_TOKEN_VAR,
+        watcher_cli.CHANGE_MANAGER_TOKEN_VAR,
+        watcher_cli.ORCHESTRATOR_TOKEN_VAR,
+    ):
+        monkeypatch.setenv(variable, "t")
+    monkeypatch.setattr(
+        watcher_cli,
+        "GitHubReader",
+        lambda token: GitHubReader(token, transport=httpx.MockTransport(github)),
+    )
+    monkeypatch.setattr(
+        watcher_cli,
+        "ChangeManagerClient",
+        lambda token, base_url: ChangeManagerClient(
+            token, base_url=base_url, transport=httpx.MockTransport(listing)
+        ),
+    )
+    monkeypatch.setattr(
+        watcher_cli,
+        "OrchestratorClient",
+        lambda token, base_url: OrchestratorClient(
+            token, base_url=base_url, transport=httpx.MockTransport(untouched)
+        ),
+    )
+    result = CliRunner().invoke(watcher_cli.app, ["watch"])
+    return result.exit_code, result.output, reads
+
+
+def test_a_record_this_watcher_retired_is_not_read_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A retired record is finished: a read that withheld the excuse must not turn it red."""
+    exit_code, output, reads = _pass_over(monkeypatch, SUPERSEDING_ACTOR)
+
+    assert exit_code == watcher_cli.EXIT_OK, output
+    assert reads == []
+    assert "[finished]" in output
+    assert "[found]" not in output
+
+
+def test_a_record_a_person_closed_is_still_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The control: the skip is keyed on who closed the record, not on its being closed."""
+    exit_code, output, reads = _pass_over(monkeypatch, "devon")
+
+    assert exit_code == watcher_cli.EXIT_INCOMPLETE, output
+    assert reads != []
+    assert "[finished]" not in output
+
+
+def test_an_open_record_is_read_whoever_last_decided_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`decided_by` is a latest-writer column, so only a terminal record is finished."""
+    exit_code, output, reads = _pass_over(monkeypatch, SUPERSEDING_ACTOR, status="approved")
+
+    assert exit_code == watcher_cli.EXIT_INCOMPLETE, output
+    assert reads != []
+    assert "[finished]" not in output
+
+
+def test_a_refused_retirement_is_a_finding(capsys: pytest.CaptureFixture[str]) -> None:
+    answer, _ = _watch_retirement(
+        "approved", supersede=httpx.Response(409, json={"detail": "nothing to supersede"})
     )
     out = capsys.readouterr().out
 
-    assert answer == (False, False)  # NOT found: an exception must not drive exit 2
-    assert watcher_cli.SETTLED_SUPERSEDED_ROLLOUT in out
-    assert watcher_cli.SETTLED_ROLLOUT_NOT_SUCCESS not in out
-    assert "[exception]" in out
+    assert answer == (True, False)
+    assert watcher_cli.CHANGE_MANAGER_REFUSED_RETIREMENT in out
+    assert "nothing to supersede" in out
+
+
+def test_a_retirement_that_fails_to_reach_the_server_is_incomplete() -> None:
+    """A 404 from an image that does not serve the route is not a fact about the record."""
+    answer, _ = _watch_retirement("approved", supersede=httpx.Response(404, json={}))
+    assert answer == (False, True)
+
+
+def test_a_dry_run_retires_nothing_and_says_what_it_would_do(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    answer, sent = _watch_retirement("approved", dry_run=True)
+
+    assert answer == (False, False)
+    assert sent == []
+    assert "would retire" in capsys.readouterr().out
+
+
+def test_a_dry_run_of_a_terminal_record_reports_nothing(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _watch_retirement("resolved", dry_run=True)
+    out = capsys.readouterr().out
+
+    assert "[exception]" not in out
+    assert "would retire" not in out
+
+
+def test_a_merge_divergence_retires_nothing() -> None:
+    """Two merge commits mean the rows disagree about which landing they describe, so what
+    `observe` superseded this pass may not be what the record holds."""
+    answer, sent = _watch_retirement(
+        "approved", page={**_page(commits=[MERGE, "0" * 40]), "current": None}
+    )
+
+    assert answer == (True, False)
+    assert sent == []
 
 
 def test_the_SAME_closed_record_is_a_FINDING_when_nothing_superseded_it(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """The discriminating half of the pair above: one fixture, one variable.
+    """The discriminating half of `test_a_terminal_superseded_record_reports_nothing`.
 
     Identical in every respect except that the branch's newest successful run is absent, so the
-    excuse cannot be found. If this stopped reporting, the exception would have become a blanket
+    excuse cannot be found. If this stopped reporting, the quiet would have become a blanket
     suppression of the contradiction rather than a reason for one instance of it.
     """
     answer, _ = _watch(
@@ -493,27 +729,6 @@ def test_the_SAME_closed_record_is_a_FINDING_when_nothing_superseded_it(
 
     assert answer == (True, False)
     assert watcher_cli.SETTLED_ROLLOUT_NOT_SUCCESS in out
-    assert watcher_cli.SETTLED_SUPERSEDED_ROLLOUT not in out
-
-
-def test_the_settled_exception_cites_the_SAME_superseding_run_as_the_rollout_one(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """The excuse is PASSED from `observe`, never recomputed here.
-
-    A second copy of the four-clause predicate is drift this estate has paid for repeatedly, and
-    the observable consequence of one copy is that both reports name the same run -- so a reader
-    disputing one disputes both.
-    """
-    _watch(
-        github_routes=_superseded_routes(),
-        page=_page(verdict="failed"),
-        recorded={**RECORDED, "item_status": "resolved"},
-    )
-    lines = [line for line in capsys.readouterr().out.splitlines() if "[exception]" in line]
-
-    assert len(lines) == 2
-    assert all(str(LATER_RUN) in line and LATER_HEAD[:8] in line for line in lines)
 
 
 def test_an_exception_alone_never_drives_exit_2(capsys: pytest.CaptureFixture[str]) -> None:
@@ -602,7 +817,7 @@ def test_the_kind_collector_sees_the_kinds_this_change_added() -> None:
     kinds = _reported_kinds()
 
     assert observe_module.SUPERSEDED_ROLLOUT in kinds
-    assert watcher_cli.SETTLED_SUPERSEDED_ROLLOUT in kinds
+    assert watcher_cli.CHANGE_MANAGER_REFUSED_RETIREMENT in kinds
     assert watcher_cli.SETTLED_ROLLOUT_NOT_SUCCESS in kinds
     assert watcher_cli.CHANGE_MANAGER_REFUSED in kinds, "the inline literal must be collected"
     assert units_module.UNIT_CLAIM_UNKNOWN in kinds
