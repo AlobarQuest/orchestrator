@@ -141,3 +141,30 @@ the one `sds-token.sh` loads) is documented as unable to read `Ops / Platform`; 
 should be assumed. I did not attempt a fresh-HOME read of the two brain keys (cached-session pitfall,
 and it would pull a key value into a process for no need). A launcher that needs them must use the broad
 identity, or Task N must probe each UUID under `env -i`.
+
+## Live proof, first units (2026-10-30 to 2026-10-31 EDT)
+
+| Time | Step | Actor |
+|---|---|---|
+| 23:50 | Records 170 and 171: proposals approved by policy; httpx2 unit dispatched, sqlalchemy unit `busy` | `bump-driver` (SYSTEM) |
+| 23:50 | Runner opened #563 (`sds/2ad51d97-attempt-1`) | factory-runner |
+| 23:58 | Quality failed on #563: `tests/web/test_csrf.py::test_csrf_is_secure_bound_and_expires`, 1 failed, 12060 passed | CI |
+| 00:50 | httpx2 unit reported `failed`; alert `bump-unit-failed` raised, nothing requeued | `bump-driver` |
+| 00:50 | sqlalchemy unit dispatched; runner opened #564 | `bump-driver`, factory-runner |
+
+Differential for #563: the test passes on httpx2 2.13.1 and fails on 2.16.0. In 2.16.0 a client holding two
+cookies of one name sends the later-set one first, so the server reads the original and the fixture's
+attacker cookie has no effect. The application is unchanged; the test's cookie replacement is what broke.
+| 00:58 | Quality failed on #564: 11 pyright errors in `graduation_ledger.py` and `traceability.py` | CI |
+| 01:50 | sqlalchemy unit reported `failed`; both units held, nothing requeued | `bump-driver` |
+
+Cause for #564: SQLAlchemy 2.1 changes `Select`'s type parameters, so `Select[tuple[UUID, int]]` annotations in
+repo code no longer type-check. Both bumps need a code change, which a dependency-update unit has no authority
+to make.
+
+Result: Step 5's second branch. Both records were proposed, approved by policy and dispatched with no person,
+and each failure ended in the alert with the bump held. No unit reached the verified, merged and watched steps
+live; those steps have test coverage only.
+
+A factory bump starts from a Dependabot pull request that failed its gate, and both of these failed for reasons
+the unit can't fix. A unit lands only when re-running the bump clears that failure.
