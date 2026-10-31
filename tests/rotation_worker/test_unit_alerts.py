@@ -1,0 +1,550 @@
+"""Every unit a person should hear about raises one alert, from the instance that owns it, and an
+alert or its clock never fails a unit or a pass (rotation Part 1)."""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, cast
+
+import pytest
+
+from alert_hub_client import alert_key
+from rotation_worker import worker
+from rotation_worker.notify import (
+    unit_failed_key,
+    unit_review_key,
+    unit_stuck_key,
+    unit_waiting_key,
+)
+from rotation_worker.orchestrator_client import OrchestratorError
+from tests.rotation_worker.stores import MemoryStore
+from tests.rotation_worker.test_keychain_instance import Recording
+from tests.rotation_worker.test_notify import Hub
+
+UNIT = "11111111-2222-3333-4444-555555555555"
+START = datetime(2026, 10, 1, tzinfo=UTC)
+
+
+class Estate:
+    """The ledger, the unit reads and the package reads, as a pass asks them."""
+
+    def __init__(self) -> None:
+        self.rows: list[dict[str, Any]] = []
+        self.units: dict[str, dict[str, Any]] = {}
+        self.ready: list[str] = []
+        self.unreachable: set[str] = set()
+        self.unit_reads: list[str] = []
+        self.ledger_down = False
+
+    def add(self, state: str, adapter: str | None = "github-pat", **row: Any) -> None:
+        constraints = {"rotation_adapter": adapter} if adapter else {}
+        self.units[UNIT] = {
+            "id": UNIT,
+            "version": 3,
+            "work_package_revision_id": "revision",
+            "authority": {"constraints": constraints},
+        }
+        self.rows = [
+            {
+                "unit_id": UNIT,
+                "unit_key": "pat-mint",
+                "unit_title": "pat: mint",
+                "unit_state": state,
+                "blockers": [],
+                **row,
+            }
+        ]
+
+    def active_units(self) -> list[dict[str, Any]]:
+        if self.ledger_down:
+            raise OrchestratorError("the ledger didn't answer")
+        return self.rows
+
+    def ready_units(self) -> list[str]:
+        return self.ready
+
+    def unit(self, unit_id: str) -> dict[str, Any]:
+        self.unit_reads.append(unit_id)
+        if unit_id in self.unreachable:
+            raise OrchestratorError("no answer")
+        return self.units[unit_id]
+
+    def package_intake(self, revision_id: str) -> dict[str, Any]:
+        return {"id": revision_id, "package_id": "rotation-github-pat"}
+
+    def claim(self, *_arguments: Any) -> Any:
+        raise OrchestratorError("the window is shut")
+
+
+class Pass:
+    """Passes run against one state directory, on a clock the test moves."""
+
+    def __init__(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, store: object | None = None
+    ) -> None:
+        self.estate = Estate()
+        self.hub = Hub()
+        self.state = tmp_path
+        self.now = START
+        self.notifier = self.hub.notifier(tmp_path)
+        self.store = store if store is not None else MemoryStore()
+        monkeypatch.setattr(worker, "_now", lambda: self.now)
+        monkeypatch.setattr(
+            worker, "approved_package", lambda _i, _m: {"profile_fields": {"occurrence": "o-7"}}
+        )
+
+    def run(self, hours: float = 0) -> list[tuple[str, str]]:
+        """A pass `hours` after the start; the alerts it sent, as (key, status)."""
+        self.now = START + timedelta(hours=hours)
+        before = len(self.hub.sent)
+        setup = SimpleNamespace(
+            client=self.estate,
+            store=self.store,
+            notifier=self.notifier,
+            state_dir=self.state,
+            mirror=None,
+            work_project_id="work",
+        )
+        worker.run_pass(cast(worker.Setup, setup))
+        return [(m["key"], m["status"]) for m in self.hub.sent[before:]]
+
+    def message(self, key: str) -> dict[str, Any]:
+        return next(m for m in reversed(self.hub.sent) if m["key"] == key)
+
+    def clock(self) -> dict[str, str]:
+        return json.loads((self.state / "wait-since.json").read_text())
+
+
+@pytest.fixture
+def run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Pass:
+    return Pass(monkeypatch, tmp_path)
+
+
+def _waits_in(monkeypatch: pytest.MonkeyPatch, wait: Callable[[worker.PassActs], None]) -> None:
+    """A `_take` that gets past `_ours` and stops on `wait`."""
+
+    def take(_setup: object, unit_id: str, found: worker.PassActs) -> int:
+        found.seen.add(unit_id)
+        wait(found)
+        return 0
+
+    monkeypatch.setattr(worker, "_take", take)
+
+
+def test_a_failed_owned_unit_raises_one_alert_naming_the_reason(run: Pass) -> None:
+    long = "x" * 600
+    run.estate.add("failed", last_failure={"reason": f"the host refused {long}"})
+    assert run.run() == [(unit_failed_key(UNIT), "firing")]
+    sent = run.message(unit_failed_key(UNIT))
+    assert "github-pat" in sent["message"]
+    assert "rotation/github-pat/o-7/staging" in sent["message"]
+    assert "the host refused" in sent["message"]
+    assert len(sent["message"]) < 500
+    assert sent["link"] == f"https://sds.alobar.net/review/units/{UNIT}"
+
+
+def test_a_revision_required_unit_alerts_as_failed(run: Pass) -> None:
+    run.estate.add("revision_required")
+    assert run.run() == [(unit_failed_key(UNIT), "firing")]
+
+
+def test_a_failed_foreign_unit_raises_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    run = Pass(monkeypatch, tmp_path, Recording())
+    run.estate.add("failed", last_failure={"reason": "no"})
+    assert run.run() == []
+
+
+def test_an_unknown_adapter_s_failure_is_the_vm_s(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    run = Pass(monkeypatch, tmp_path)
+    run.estate.add("failed", adapter="brand-new-adapter")
+    assert run.run() == [(unit_failed_key(UNIT), "firing")]
+    keychain = Pass(monkeypatch, tmp_path / "k", Recording())
+    (tmp_path / "k").mkdir()
+    keychain.estate.add("failed", adapter="brand-new-adapter")
+    assert keychain.run() == []
+
+
+def test_a_package_that_can_t_be_read_doesn_t_silence_a_failure(
+    run: Pass, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def refused(*_arguments: Any) -> None:
+        raise worker.ContractError("the commit isn't on main")
+
+    monkeypatch.setattr(worker, "approved_package", refused)
+    run.estate.add("failed", last_failure={"reason": "no"})
+    assert run.run() == [(unit_failed_key(UNIT), "firing")]
+    assert "the commit isn't on main" in run.message(unit_failed_key(UNIT))["message"]
+
+
+def test_a_requeued_unit_resolves_its_failed_alert(run: Pass) -> None:
+    run.estate.add("failed")
+    run.run()
+    run.estate.add("ready")
+    assert run.run() == [(unit_failed_key(UNIT), "resolved")]
+
+
+def test_a_bump_unit_in_revision_required_raises_nothing(run: Pass) -> None:
+    run.estate.add("revision_required", adapter=None)
+    assert run.run() == []
+
+
+def test_awaiting_review_alerts_at_48_hours_and_not_before(run: Pass) -> None:
+    run.estate.add("awaiting_review", last_event_at=START.isoformat())
+    assert run.run(47.9) == []
+    assert run.run(48) == [(unit_review_key(UNIT), "firing")]
+
+
+def test_a_row_with_nothing_to_say_is_not_read(run: Pass) -> None:
+    run.estate.add("awaiting_review", last_event_at=START.isoformat())
+    run.run(1)
+    run.estate.add("in_progress")
+    run.run(2)
+    assert run.estate.unit_reads == []
+
+
+def test_a_wait_alerts_at_48_hours_and_not_at_31(
+    run: Pass, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _waits_in(monkeypatch, lambda found: found.waits.update({UNIT: worker.Wait("a shut window")}))
+    run.estate.ready = [UNIT]
+    assert run.run(0) == []
+    assert run.run(31) == []
+    assert run.run(48) == [(unit_waiting_key(UNIT), "firing")]
+    assert "a shut window" in run.message(unit_waiting_key(UNIT))["message"]
+
+
+def _at_retire(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The real `_take` as far as the readers a retire waits for."""
+    approved = SimpleNamespace(reads={"r": object()}, rotation=SimpleNamespace(keeper_id="k"))
+    reads = SimpleNamespace(pending=lambda _at: ["weekly-reader"])
+    monkeypatch.setattr(worker, "check_unit", lambda *_a: approved)
+    monkeypatch.setattr(worker, "_held", lambda *_a: None)
+    monkeypatch.setattr(worker, "_verifies", lambda _a: True)
+    monkeypatch.setattr(worker, "_gates_retire", lambda _a: True)
+    monkeypatch.setattr(worker, "_consumer_reads", lambda *_a: reads)
+    monkeypatch.setattr(worker, "_overlap_until", lambda *_a: "2026-11-05")
+
+
+def test_a_reader_wait_alerts_at_192_hours_and_not_at_168(
+    run: Pass, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _at_retire(monkeypatch)
+    run.store = SimpleNamespace(read_back_kind="bws-secret", revised=lambda _k: START)
+    run.estate.add("ready")
+    run.estate.ready = [UNIT]
+    run.estate.rows = []
+    assert run.run(0) == []
+    assert run.run(168) == []
+    assert run.run(192) == [(unit_waiting_key(UNIT), "firing")]
+    message = run.message(unit_waiting_key(UNIT))["message"]
+    assert "weekly-reader" in message
+    assert "2026-11-05" in message
+
+
+def test_a_reader_mid_run_waits_on_the_reader_threshold(
+    run: Pass, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class Busy:
+        def readers_mid_run(self) -> list[str]:
+            return ["busy-reader"]
+
+    approved = SimpleNamespace(reads={})
+    monkeypatch.setattr(worker, "check_unit", lambda *_a: approved)
+    monkeypatch.setattr(worker, "_held", lambda *_a: None)
+    monkeypatch.setattr(worker, "_provider", lambda *_a: Busy())
+    monkeypatch.setattr(worker, "_writes", lambda _a: True)
+    for gate in ("_mint_waits", "_adapter_waits", "_revoke_waits", "_overlap_waits"):
+        monkeypatch.setattr(worker, gate, lambda *_a: False)
+    monkeypatch.setattr(worker, "_restart_waits", lambda *_a: False)
+    run.estate.add("ready")
+    run.estate.ready = [UNIT]
+    run.estate.rows = []
+    assert run.run(0) == []
+    assert run.run(168) == []
+    assert run.run(192) == [(unit_waiting_key(UNIT), "firing")]
+
+
+def test_an_adapter_wait_records_itself() -> None:
+    found = worker.PassActs()
+    setup = cast(worker.Setup, SimpleNamespace(client=SimpleNamespace(history=lambda _unit: [])))
+    adapter = SimpleNamespace(wait=lambda *_a: "the old value's sessions")
+    approved = cast(worker.Approved, SimpleNamespace(adapter=adapter, unit=None))
+    assert worker._adapter_waits(setup, approved, UNIT, found)
+    assert found.waits == {UNIT: worker.Wait("the old value's sessions")}
+
+
+def test_an_overlap_wait_records_itself(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(worker, "mid_overlap", lambda *_a: ["other (ready)"])
+    found = worker.PassActs()
+    adapter = SimpleNamespace(overlap_waits={"mint"})
+    approved = SimpleNamespace(adapter=adapter, unit=SimpleNamespace(name="mint"))
+    unit = {"id": UNIT, "work_package_revision_id": "r"}
+    setup = cast(worker.Setup, SimpleNamespace(client=None))
+    assert worker._overlap_waits(setup, cast(worker.Approved, approved), unit, found)
+    assert "other (ready)" in found.waits[UNIT].reason
+
+
+def test_a_restart_wait_records_itself(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(worker, "stranded_by_a_restart", lambda _c: ["a run"])
+    found = worker.PassActs()
+    step = SimpleNamespace(kind=worker.StepKind.DISTRIBUTE)
+    approved = SimpleNamespace(unit=SimpleNamespace(steps=[step]))
+    setup = cast(worker.Setup, SimpleNamespace(client=None))
+    held = cast(Any, object())
+    assert worker._restart_waits(setup, cast(worker.Approved, approved), held, UNIT, found)
+    assert "a run" in found.waits[UNIT].reason
+    assert found.waits[UNIT].hours == 48
+
+
+def test_a_requeued_unit_starts_its_clock_fresh(run: Pass, monkeypatch: pytest.MonkeyPatch) -> None:
+    _waits_in(monkeypatch, lambda found: found.waits.update({UNIT: worker.Wait("a window")}))
+    run.estate.ready = [UNIT]
+    run.run(0)
+    run.estate.ready = []
+    run.run(10)
+    assert run.clock() == {}
+    run.estate.ready = [UNIT]
+    assert run.run(47) == []
+    assert run.run(48) == []
+    assert run.run(47 + 48) == [(unit_waiting_key(UNIT), "firing")]
+
+
+def test_a_skip_past_ours_waits_on_the_clock(run: Pass, monkeypatch: pytest.MonkeyPatch) -> None:
+    def skip(_setup: object, unit_id: str, found: worker.PassActs) -> int:
+        found.seen.add(unit_id)
+        raise OrchestratorError("the window is shut")
+
+    monkeypatch.setattr(worker, "_take", skip)
+    run.estate.ready = [UNIT]
+    assert run.run(0) == []
+    assert run.run(48) == [(unit_waiting_key(UNIT), "firing")]
+    assert "the window is shut" in run.message(unit_waiting_key(UNIT))["message"]
+
+
+def test_a_skip_on_a_unit_never_reached_past_ours_starts_no_clock(run: Pass) -> None:
+    run.estate.add("ready")
+    run.estate.rows = []
+    run.estate.ready = [UNIT]
+    run.estate.unreachable = {UNIT}
+    assert run.run(0) == []
+    assert run.run(100) == []
+    assert run.clock() == {}
+
+
+def test_a_foreign_unit_starts_no_clock(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    run = Pass(monkeypatch, tmp_path, Recording())
+    run.estate.add("ready")
+    run.estate.rows = []
+    run.estate.ready = [UNIT]
+    assert run.run(0) == []
+    assert run.run(100) == []
+    assert run.clock() == {}
+
+
+def test_not_worked_raises_stuck_after_the_threshold(
+    run: Pass, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken(_setup: object, unit_id: str, found: worker.PassActs) -> int:
+        found.seen.add(unit_id)
+        raise KeyError("nobody foresaw this")
+
+    monkeypatch.setattr(worker, "_take", broken)
+    run.estate.ready = [UNIT]
+    assert run.run(0) == []
+    assert run.run(47) == []
+    assert run.run(48) == [(unit_stuck_key(UNIT), "firing")]
+
+
+def test_not_worked_before_ours_raises_nothing(run: Pass, monkeypatch: pytest.MonkeyPatch) -> None:
+    def broken(_setup: object, _unit_id: str, _found: worker.PassActs) -> int:
+        raise KeyError("the read was malformed")
+
+    monkeypatch.setattr(worker, "_take", broken)
+    run.estate.ready = [UNIT]
+    assert run.run(0) == []
+    assert run.run(100) == []
+
+
+def test_a_refusal_whose_claim_raised_is_stuck(run: Pass, monkeypatch: pytest.MonkeyPatch) -> None:
+    def refuse(*_arguments: Any) -> None:
+        raise worker.ContractError("the registry disagrees")
+
+    monkeypatch.setattr(worker, "check_unit", refuse)
+    run.estate.add("ready")
+    run.estate.rows = []
+    run.estate.ready = [UNIT]
+    assert run.run(0) == []
+    assert run.run(48) == [(unit_stuck_key(UNIT), "firing")]
+    assert "the registry disagrees" in run.message(unit_stuck_key(UNIT))["message"]
+
+
+def test_a_unit_alternating_between_stuck_and_waiting_still_comes_due(
+    run: Pass, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def alternate(_setup: object, unit_id: str, found: worker.PassActs) -> int:
+        found.seen.add(unit_id)
+        if run.now == START:
+            raise KeyError("nobody foresaw this")
+        found.waits[unit_id] = worker.Wait("a window")
+        return 0
+
+    monkeypatch.setattr(worker, "_take", alternate)
+    run.estate.ready = [UNIT]
+    run.run(0)
+    assert run.run(48) == [(unit_waiting_key(UNIT), "firing")]
+
+
+def test_a_stuck_unit_that_moves_to_waiting_changes_its_alert(
+    run: Pass, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def take(_setup: object, unit_id: str, found: worker.PassActs) -> int:
+        found.seen.add(unit_id)
+        if run.now <= START + timedelta(hours=48):
+            raise KeyError("nobody foresaw this")
+        raise OrchestratorError("the window is shut")
+
+    monkeypatch.setattr(worker, "_take", take)
+    run.estate.ready = [UNIT]
+    run.run(0)
+    assert run.run(48) == [(unit_stuck_key(UNIT), "firing")]
+    assert run.run(49) == [
+        (unit_waiting_key(UNIT), "firing"),
+        (unit_stuck_key(UNIT), "resolved"),
+    ]
+
+
+def test_the_clock_holds_one_entry_per_unit(run: Pass, monkeypatch: pytest.MonkeyPatch) -> None:
+    _waits_in(monkeypatch, lambda found: found.waits.update({UNIT: worker.Wait("x", stuck=True)}))
+    run.estate.ready = [UNIT]
+    run.run(0)
+    assert run.clock() == {unit_waiting_key(UNIT): START.isoformat()}
+
+
+def test_an_unread_unit_holds_its_keys(run: Pass) -> None:
+    run.estate.add("failed")
+    assert run.run(0) == [(unit_failed_key(UNIT), "firing")]
+    run.estate.unreachable = {UNIT}
+    assert run.run(1) == []
+    run.estate.unreachable = set()
+    run.estate.add("ready")
+    assert run.run(2) == [(unit_failed_key(UNIT), "resolved")]
+
+
+def test_a_row_that_can_t_be_read_holds_a_wait_on_a_unit_no_longer_ready(
+    run: Pass, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _waits_in(monkeypatch, lambda found: found.waits.update({UNIT: worker.Wait("a window")}))
+    run.estate.ready = [UNIT]
+    run.run(0)
+    run.run(48)
+    run.estate.ready = []
+    run.estate.add("failed")
+    run.estate.unreachable = {UNIT}
+    assert run.run(49) == []
+    assert run.clock() == {unit_waiting_key(UNIT): START.isoformat()}
+
+
+def test_a_failed_package_read_holds_the_unit_s_keys(
+    run: Pass, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run.estate.add("failed")
+    run.run(0)
+
+    def unreachable(*_arguments: Any) -> None:
+        raise worker.MirrorError("git didn't answer")
+
+    monkeypatch.setattr(worker, "approved_package", unreachable)
+    assert run.run(1) == []
+
+
+def test_a_wait_past_its_threshold_holds_through_an_unread_pass(
+    run: Pass, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Neither the alert nor the clock moves on a pass that never reached the unit."""
+    real_take = worker._take
+    _waits_in(monkeypatch, lambda found: found.waits.update({UNIT: worker.Wait("a window")}))
+    run.estate.ready = [UNIT]
+    run.run(0)
+    run.run(48)
+    monkeypatch.setattr(worker, "_take", real_take)
+    run.estate.add("ready")
+    run.estate.rows = []
+    run.estate.unreachable = {UNIT}
+    assert run.run(49) == []
+    assert run.clock() == {unit_waiting_key(UNIT): START.isoformat()}
+
+
+def test_a_skip_leaves_a_requeued_unit_s_failed_alert_free_to_resolve(
+    run: Pass, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run.estate.add("failed")
+    run.run(0)
+    run.estate.add("ready")
+    run.estate.ready = [UNIT]
+    run.estate.unreachable = {UNIT}
+    run.estate.rows[0]["blockers"] = []
+    assert run.run(1) == [(unit_failed_key(UNIT), "resolved")]
+
+
+def test_a_ledger_outage_resolves_nothing_and_the_pass_ends_normally(
+    run: Pass, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _waits_in(monkeypatch, lambda found: found.waits.update({UNIT: worker.Wait("a window")}))
+    run.estate.ready = [UNIT]
+    run.run(0)
+    run.run(48)
+    run.estate.ledger_down = True
+    run.estate.ready = []
+    assert run.run(49) == []
+    assert run.clock() == {unit_waiting_key(UNIT): START.isoformat()}
+
+
+def test_an_alert_hub_outage_never_fails_a_unit(run: Pass, monkeypatch: pytest.MonkeyPatch) -> None:
+    run.hub.__dict__["_answers"] = [503] * 10
+    _waits_in(monkeypatch, lambda found: found.waits.update({UNIT: worker.Wait("a window")}))
+    run.estate.add("failed")
+    run.estate.ready = [UNIT]
+    run.run(0)
+    assert [m["status"] for m in run.hub.sent] == ["firing"]
+    run.run(48)
+    assert len(run.hub.sent) == 3
+
+
+def test_a_clock_that_can_t_be_saved_holds_every_waiting_alert(
+    run: Pass, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _waits_in(monkeypatch, lambda found: found.waits.update({UNIT: worker.Wait("a window")}))
+    run.estate.ready = [UNIT]
+    run.run(0)
+    run.run(48)
+
+    (run.state / "wait-since.json.tmp").mkdir()
+    run.estate.add("failed")
+    assert run.run(49) == [(unit_failed_key(UNIT), "firing")]
+
+
+def test_a_corrupt_clock_file_restarts_the_clock(
+    run: Pass, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _waits_in(monkeypatch, lambda found: found.waits.update({UNIT: worker.Wait("a window")}))
+    run.estate.ready = [UNIT]
+    run.run(0)
+    (run.state / "wait-since.json").write_text("{not json")
+    assert run.run(48) == []
+    assert run.run(96) == [(unit_waiting_key(UNIT), "firing")]
+
+
+def test_act_keys_keep_their_bytes() -> None:
+    assert alert_key("rotation-act", UNIT) == f"rotation-act:{UNIT}"
+    assert unit_failed_key(UNIT) == f"rotation-unit-failed:{UNIT}"
+    assert unit_review_key(UNIT) == f"rotation-unit-review:{UNIT}"
+    assert unit_stuck_key(UNIT) == f"rotation-unit-stuck:{UNIT}"
+    assert unit_waiting_key(UNIT) == f"rotation-unit-waiting:{UNIT}"

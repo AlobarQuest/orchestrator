@@ -305,7 +305,7 @@ def test_a_confirm_unit_whose_revoke_isn_t_seen_is_left_unclaimed_and_announced(
 
 
 def test_a_pass_announces_its_waits_findings_and_keeps_what_it_couldn_t_tell(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     act = Act("rotation-revoke:u1", "Revoke the old x value", "m")
 
@@ -320,6 +320,14 @@ def test_a_pass_announces_its_waits_findings_and_keeps_what_it_couldn_t_tell(
     notifier = SimpleNamespace(announce=lambda acts, unread: announced.append((acts, unread)))
     client = SimpleNamespace(ready_units=lambda: ["u1", "u3"], active_units=lambda: [])
     monkeypatch.setattr(worker, "_take", take)
-    worker.run_pass(cast(worker.Setup, SimpleNamespace(client=client, notifier=notifier)))
-    kept = {"rotation-revoke:u2", "rotation-revoke:u3", "rotation-mint:u3", "rotation-inbox:u3"}
+    setup = SimpleNamespace(client=client, notifier=notifier, state_dir=tmp_path)
+    worker.run_pass(cast(worker.Setup, setup))
+    kept = {
+        "rotation-revoke:u2",
+        "rotation-revoke:u3",
+        "rotation-mint:u3",
+        "rotation-inbox:u3",
+        "rotation-unit-stuck:u3",
+        "rotation-unit-waiting:u3",
+    }
     assert announced == [({act.key: act}, kept)]

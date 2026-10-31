@@ -16,7 +16,7 @@ from rotation_worker.notify import ALERTS, Act, Notifier
 from rotation_worker.orchestrator_client import OrchestratorError
 from rotation_worker.secret_store import StoreError
 from rotation_worker.values import Value
-from rotation_worker.worker import Setup, run_pass, waiting_acts
+from rotation_worker.worker import Setup, run_pass, unit_alerts
 
 TOKEN = "alert-hub-sender-token-for-tests"
 
@@ -125,7 +125,7 @@ def test_a_corrupt_state_file_is_read_as_nothing_announced(tmp_path: Path) -> No
 
 
 class Ledger:
-    """The status ledger and unit reads, as `waiting_acts` asks them."""
+    """The status ledger and unit reads, as `unit_alerts` asks them."""
 
     def __init__(self) -> None:
         self.rows: list[dict[str, Any]] = []
@@ -183,21 +183,22 @@ def test_only_this_instance_s_rotation_units_blocked_on_a_person_are_announced()
     ledger.add("canary-store", "fake")
     ledger.add("misspelt", "github-pa", _act("d5", "an adapter nobody knows"))
     ledger.add("pat-failed", "github-pat", _act("d6", "a recorded failure", status="failed"))
-    acts, unread = waiting_acts(_setup(ledger))
-    assert (list(acts), unread) == (["rotation-act:d1"], set())
+    acts, unread = unit_alerts(_setup(ledger))
+    # An adapter this build doesn't know is the VM's to announce, as it is to refuse.
+    assert (list(acts), unread) == (["rotation-act:d1", "rotation-act:d5"], set())
     assert acts["rotation-act:d1"] == Act(
         "rotation-act:d1",
         "A rotation waits on you: pat-store: title",
         "Devon mints a PAT. Record it on the unit's review page.",
         "https://sds.alobar.net/review/units/pat-store",
     )
-    assert list(waiting_acts(_setup(ledger, kind="keychain"))[0]) == ["rotation-act:d2"]
+    assert list(unit_alerts(_setup(ledger, kind="keychain"))[0]) == ["rotation-act:d2"]
 
 
 def test_an_act_with_no_text_says_its_condition_and_a_long_title_fits() -> None:
     ledger = Ledger()
     ledger.add("x" * 300, "github-pat", _act("d1", None, condition="the PAT is minted"))
-    act = waiting_acts(_setup(ledger))[0]["rotation-act:d1"]
+    act = unit_alerts(_setup(ledger))[0]["rotation-act:d1"]
     assert act.message.startswith("the PAT is minted.")
     assert len(act.title) == 200
 
@@ -215,8 +216,9 @@ def test_an_unreadable_unit_keeps_its_alert_open_and_others_are_announced(tmp_pa
     hub = Hub()
     notifier = hub.notifier(tmp_path)
     notifier.announce({"rotation-act:d1": Act("rotation-act:d1", "t", "m")})
-    acts, unread = waiting_acts(_setup(ledger))
-    assert (list(acts), unread) == (["rotation-act:d2"], {"rotation-act:d1"})
+    acts, unread = unit_alerts(_setup(ledger))
+    assert list(acts) == ["rotation-act:d2"]
+    assert "rotation-act:d1" in unread
     notifier.announce(acts, unread)
     notifier.announce({}, {"rotation-act:d1"})
     # d1 was never resolved while unread; d2 was fired, then resolved once gone.

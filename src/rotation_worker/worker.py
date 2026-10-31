@@ -5,7 +5,8 @@ For each ready unit whose envelope names a rotation adapter, in order:
 1. **Check before claiming** (`checks.check_unit`), from git, with no side effect. A transient
    failure (git or the network) leaves the unit for the next pass. A refusal is a finding about
    the unit itself, so the executor claims it and fails it with the reason, where the dead-letter
-   report shows it to a person.
+   report shows it and the owning instance raises `rotation-unit-failed`. A refusal it can't claim
+   leaves nothing in the ledger, so it raises `rotation-unit-stuck` once the unit is overdue.
 2. **Wait, unclaimed, for a person's mint**, taking the value from the inbox once it binds
    (`inbox.py`), and **for the scheduled readers** (`readers.py`). Each one is read before any
    unit that verifies consumers is claimed, so a reader the registry names wrongly is refused
@@ -22,20 +23,25 @@ For each ready unit whose envelope names a rotation adapter, in order:
 
 Nothing here decides what a step does; the contract does. Nothing here holds a value; the
 contract's unit run does, for the length of the step that needs it.
+
+After the units, one alert sync (`notify.py`) tells a person about this instance's units only:
+acts they wait on, failed units, reviews overdue, and units that have stayed unmoved past a
+threshold, on a clock kept in the state directory. A unit this pass couldn't read keeps its alerts
+and its clock as they were, and no failure of the sync touches a unit or the pass.
 """
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Set
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Final, Protocol, runtime_checkable
 
-from rotation_worker.adapters import ADAPTERS, AdapterContext
+from rotation_worker.adapters import AdapterContext
 from rotation_worker.adapters.orchestrator_bearer import NAME as ORCHESTRATOR_PROVIDER
-from rotation_worker.checks import Approved, check_unit
+from rotation_worker.checks import Approved, approved_package, check_unit
 from rotation_worker.config import ConfigError
 from rotation_worker.contract import (
     HELD_KIND,
@@ -63,7 +69,15 @@ from rotation_worker.inbox import (
     other_mints,
 )
 from rotation_worker.live_runs import stranded_by_a_restart
-from rotation_worker.notify import Act, Notifier
+from rotation_worker.notify import (
+    Act,
+    Notifier,
+    first_sightings,
+    unit_failed_key,
+    unit_review_key,
+    unit_stuck_key,
+    unit_waiting_key,
+)
 from rotation_worker.orchestrator_client import Lease, OrchestratorClient, OrchestratorError
 from rotation_worker.overlaps import mid_overlap
 from rotation_worker.plans import WRITING_STEPS, person_acts_beside
@@ -74,7 +88,12 @@ from rotation_worker.readers import (
     ReadError,
     ReadUnavailable,
 )
-from rotation_worker.registry import RegistryError, find_credential, provider_entries
+from rotation_worker.registry import (
+    RegistryError,
+    find_credential,
+    provider_entries,
+    standing_credential,
+)
 from rotation_worker.revokes import ObservedRevokes, Revoke, person_revokes_beside, revoke_wait
 from rotation_worker.secret_store import SecretStore, StoreError
 from rotation_worker.values import Fingerprint, Value, scrub
@@ -89,6 +108,11 @@ MAX_REASON: Final = 400
 REFUSALS: Final = (ContractError, RegistryError, DestinationError, ReadError)
 # Nothing could be asked: try again next pass.
 TRANSIENT: Final = (MirrorError, OrchestratorError, StoreError)
+# Past the longest wait measured on a shut change window, about 31 hours.
+ROTATION_WAIT_ALERT_HOURS: Final = 48
+# Retire waits for weekly readers, so a healthy rotation can wait 7 days.
+ROTATION_READER_WAIT_ALERT_HOURS: Final = 192
+ROTATION_REVIEW_ALERT_HOURS: Final = 48
 
 
 @dataclass(frozen=True)
@@ -132,20 +156,29 @@ def run_pass(setup: Setup) -> int:
         except TRANSIENT as error:
             # Nothing was decided about the unit: a claim refused (a shut window, a version that
             # moved), or a service that didn't answer. The next pass asks again.
-            LOG.warning("unit_skipped", extra={"unit": unit_id, "reason": scrub(str(error))})
+            reason = scrub(str(error))
+            LOG.warning("unit_skipped", extra={"unit": unit_id, "reason": reason})
+            if unit_id in found.seen:
+                found.waits.setdefault(unit_id, Wait(reason))
         except Exception as error:
             # Something no handler foresaw, before or after the claim: logged, and the pass goes
             # on to the next unit rather than leaving every one behind it unworked.
             reason = scrub(f"{type(error).__name__}: {error}")
             LOG.error("unit_not_worked", extra={"unit": unit_id, "reason": reason})
+            if unit_id in found.seen:
+                found.waits[unit_id] = Wait(reason, stuck=True)
         else:
             continue
         # Nothing was learned of this unit's acts: their alerts stay as they were.
         found.keep |= {_revoke_key(unit_id), _mint_key(unit_id), _inbox_key(unit_id)}
+        if unit_id not in found.seen:
+            found.keep |= _clock_keys(unit_id)
     if setup.notifier is not None:
         try:
-            acts, unread = waiting_acts(setup)
-            setup.notifier.announce({**acts, **found.due}, unread | found.keep)
+            acts, unread = unit_alerts(setup)
+            hold = unread | found.keep
+            overdue, unsaved = _overdue(setup, found, hold)
+            setup.notifier.announce({**acts, **found.due, **overdue}, hold | unsaved)
         except Exception as error:
             # An unread ledger says nothing about what is pending: announce nothing this pass,
             # rather than resolve every open alert. Never fails the pass.
@@ -154,9 +187,10 @@ def run_pass(setup: Setup) -> int:
     return submitted
 
 
-def waiting_acts(setup: Setup) -> tuple[dict[str, Act], set[str]]:
-    """Each human act one of this instance's rotation units waits on, keyed for alert-hub, and
-    the keys of acts on units that couldn't be read this pass, which are left as they are."""
+def unit_alerts(setup: Setup) -> tuple[dict[str, Act], set[str]]:
+    """What this instance's rotation units need from a person, keyed for alert-hub: each act a
+    unit waits on, each failed unit and each review overdue. Also the keys of units that couldn't
+    be read this pass, which are left as they are. A row with nothing to say is never read."""
     acts: dict[str, Act] = {}
     unread: set[str] = set()
     for row in setup.client.active_units():
@@ -165,20 +199,24 @@ def waiting_acts(setup: Setup) -> tuple[dict[str, Act], set[str]]:
             for b in row.get("blockers") or []
             if b.get("kind") == "external_system" and b.get("status") == "pending"
         ]
-        if not pending:
+        failed = row.get("unit_state") in ("failed", "revision_required")
+        overdue = _review_overdue(row)
+        if not (pending or failed or overdue):
             continue
         unit_id = str(row["unit_id"])
         try:
             unit = setup.client.unit(unit_id)
+            ours = is_rotation_unit(unit) and _ours(setup, unit)
+            where = _where(setup, unit) if ours and failed else ""
         except TRANSIENT as error:
             LOG.warning("unit_unread", extra={"unit": unit_id, "reason": scrub(str(error))})
             unread |= {f"rotation-act:{b['dependency_id']}" for b in pending}
+            unread |= _clock_keys(unit_id) | {unit_failed_key(unit_id), unit_review_key(unit_id)}
             continue
-        adapter = ADAPTERS.get(str(envelope_constraints(unit).get(ADAPTER_KEY)))
-        # An adapter no instance knows is neither's to announce: both would.
-        if adapter is None or adapter.store_kind != setup.store.read_back_kind:
+        if not ours:
             continue
         name = row.get("unit_title") or row.get("unit_key")
+        link = f"{_REVIEW}/{unit_id}"
         for blocker in pending:
             key = f"rotation-act:{blocker['dependency_id']}"
             what = blocker.get("external_ref") or blocker.get("required_state_or_condition")
@@ -186,18 +224,107 @@ def waiting_acts(setup: Setup) -> tuple[dict[str, Act], set[str]]:
                 key,
                 f"A rotation waits on you: {name}"[:TITLE_LIMIT],
                 f"{what}. Record it on the unit's review page.",
-                f"{_REVIEW}/{unit_id}",
+                link,
+            )
+        if failed:
+            key = unit_failed_key(unit_id)
+            why = (row.get("last_failure") or {}).get("reason") or "no reason recorded"
+            acts[key] = Act(
+                key,
+                f"A rotation unit failed: {name}"[:TITLE_LIMIT],
+                f"{where} {scrub(str(why))[:MAX_REASON]}",
+                link,
+            )
+        if overdue:
+            key = unit_review_key(unit_id)
+            acts[key] = Act(
+                key,
+                f"A rotation unit awaits review: {name}"[:TITLE_LIMIT],
+                f"It has waited over {ROTATION_REVIEW_ALERT_HOURS} hours for a review.",
+                link,
             )
     return acts, unread
 
 
+def _review_overdue(row: Mapping[str, Any]) -> bool:
+    event = row.get("last_event_at")
+    if row.get("unit_state") != "awaiting_review" or not event:
+        return False
+    at = datetime.fromisoformat(str(event))
+    return _now() - at.replace(tzinfo=at.tzinfo or UTC) >= timedelta(
+        hours=ROTATION_REVIEW_ALERT_HOURS
+    )
+
+
+def _where(setup: Setup, unit: Mapping[str, Any]) -> str:
+    """The credential a failed unit rotates and its staging key's name, as far as can be told: a
+    package that can't be read may be why the unit failed, and doesn't silence its alert."""
+    intake = setup.client.package_intake(str(unit["work_package_revision_id"]))
+    credential = standing_credential(str(intake.get("package_id"))) or "unknown"
+    try:
+        occurrence = approved_package(intake, setup.mirror)["profile_fields"].get("occurrence")
+    except REFUSALS as error:
+        return f"Credential {credential}; its package can't be read: {scrub(str(error))}."
+    staging = Rotation(credential, str(occurrence), "", setup.work_project_id, ()).staging_key
+    return f"Credential {credential}, staging key {staging}."
+
+
+def _overdue(setup: Setup, found: PassActs, hold: Set[str]) -> tuple[dict[str, Act], set[str]]:
+    """Move the clock on, and return an alert for each unit past its threshold.
+
+    Each unit has one clock, under its `unit_waiting_key`, whether it is waiting or stuck, so a
+    unit that alternates between the two still comes due. A clock absent from `found.waits` and
+    `hold` is forgotten, so a unit that moved starts afresh. A clock that can't be saved says
+    nothing this pass, so the second value holds the alerts of every unit still waiting.
+    """
+    now = _now()
+    current = {unit_waiting_key(unit_id) for unit_id in found.waits}
+    since = first_sightings(setup.state_dir, current, now, hold)
+    if since is None:
+        return {}, {key for unit_id in found.waits for key in _clock_keys(unit_id)}
+    overdue = {}
+    for unit_id, wait in found.waits.items():
+        first = since[unit_waiting_key(unit_id)]
+        if now - first < timedelta(hours=wait.hours):
+            continue
+        key = unit_stuck_key(unit_id) if wait.stuck else unit_waiting_key(unit_id)
+        what = "can't be worked" if wait.stuck else "is waiting"
+        overdue[key] = Act(
+            key,
+            f"A rotation unit {what}: {unit_id}"[:TITLE_LIMIT],
+            f"Since {first.date().isoformat()}: {scrub(wait.reason)[:MAX_REASON]}",
+            f"{_REVIEW}/{unit_id}",
+        )
+    return overdue, set()
+
+
+def _clock_keys(unit_id: str) -> set[str]:
+    return {unit_stuck_key(unit_id), unit_waiting_key(unit_id)}
+
+
+@dataclass(frozen=True)
+class Wait:
+    """Why a unit stayed unmoved this pass. `stuck` says nothing in the ledger shows it."""
+
+    reason: str
+    reader: bool = False
+    stuck: bool = False
+
+    @property
+    def hours(self) -> int:
+        return ROTATION_READER_WAIT_ALERT_HOURS if self.reader else ROTATION_WAIT_ALERT_HOURS
+
+
 @dataclass
 class PassActs:
-    """What the executor's own waits learned of a person's acts this pass: the acts now due, and
-    the keys of acts nothing could tell about, whose alerts stay as they were."""
+    """What the executor's own waits learned this pass: the acts now due, the keys of acts nothing
+    could tell about, whose alerts stay as they were, why each unit stayed unmoved, by unit id,
+    and the units reached past `_ours`, the only ones this instance may say anything about."""
 
     due: dict[str, Act] = field(default_factory=dict)
     keep: set[str] = field(default_factory=set)
+    waits: dict[str, Wait] = field(default_factory=dict)
+    seen: set[str] = field(default_factory=set)
 
 
 def _revoke_key(unit_id: str) -> str:
@@ -216,6 +343,7 @@ def _take(setup: Setup, unit_id: str, found: PassActs) -> int:
     unit = setup.client.unit(unit_id)
     if not is_rotation_unit(unit) or not _ours(setup, unit):
         return 0
+    found.seen.add(unit_id)
     intake = setup.client.package_intake(str(unit["work_package_revision_id"]))
     reads: ConsumerReads | None = None
     try:
@@ -225,39 +353,41 @@ def _take(setup: Setup, unit_id: str, found: PassActs) -> int:
             reads = _consumer_reads(setup, approved)
             waiting = reads.pending(setup.store.revised(approved.rotation.keeper_id))
             if waiting and _gates_retire(approved):
+                until = _overlap_until(setup, approved)
                 LOG.info(
                     "unit_waiting",
-                    extra={
-                        "unit": str(unit["id"]),
-                        "readers": waiting,
-                        "overlap_until": _overlap_until(setup, approved),
-                    },
+                    extra={"unit": str(unit["id"]), "readers": waiting, "overlap_until": until},
+                )
+                backstop = f"; the overlap ends {until}" if until else ""
+                found.waits[unit_id] = Wait(
+                    f"Readers still to run: {', '.join(waiting)}{backstop}", reader=True
                 )
                 return 0
     except REFUSALS as error:
-        _refuse(setup, unit, scrub(str(error)))
+        _refuse(setup, unit, scrub(str(error)), found)
         return 0
     # Built before the claim: a provider that can't be built (an admin secret missing from the
     # configuration) is the executor's fault, not the unit's, so no attempt is spent on it.
     provider = _provider(setup, approved)
     if (
         _mint_waits(setup, approved, provider, unit, found)
-        or _adapter_waits(setup, approved, unit_id)
+        or _adapter_waits(setup, approved, unit_id, found)
         or _revoke_waits(setup, approved, provider, unit_id, found)
-        or _overlap_waits(setup, approved, unit)
-        or _restart_waits(setup, approved, held, unit_id)
+        or _overlap_waits(setup, approved, unit, found)
+        or _restart_waits(setup, approved, held, unit_id, found)
     ):
         return 0
     if isinstance(provider, GatedRestarts) and _writes(approved):
         try:
             busy = provider.readers_mid_run()
         except ReadError as error:
-            _refuse(setup, unit, scrub(str(error)))
+            _refuse(setup, unit, scrub(str(error)), found)
             return 0
         except ReadUnavailable as error:
             busy = [f"unreadable: {scrub(str(error))}"]
         if busy:
             LOG.info("unit_waiting", extra={"unit": str(unit["id"]), "readers_mid_run": busy})
+            found.waits[unit_id] = Wait(f"Readers mid-run: {', '.join(busy)}", reader=True)
             return 0
     return 1 if _work(setup, unit, approved, provider, reads, held) else 0
 
@@ -341,12 +471,13 @@ def _held(setup: Setup, approved: Approved) -> HeldSettings | None:
     return held
 
 
-def _adapter_waits(setup: Setup, approved: Approved, unit_id: str) -> bool:
+def _adapter_waits(setup: Setup, approved: Approved, unit_id: str, found: PassActs) -> bool:
     """Whether the adapter says the unit can't be claimed yet; the reason is logged."""
     wait = approved.adapter.wait
     reason = wait(approved.unit, setup.client.history(unit_id), _now()) if wait else None
     if reason is not None:
         LOG.info("unit_waiting", extra={"unit": unit_id, "reason": reason})
+        found.waits[unit_id] = Wait(reason)
     return reason is not None
 
 
@@ -521,7 +652,9 @@ def _revoke_waits(
     return True
 
 
-def _overlap_waits(setup: Setup, approved: Approved, unit: Mapping[str, Any]) -> bool:
+def _overlap_waits(
+    setup: Setup, approved: Approved, unit: Mapping[str, Any], found: PassActs
+) -> bool:
     """Whether the unit switches a value while another rotation is mid-overlap (ADR-0055
     amendment 12); the units it waits on are logged."""
     if approved.unit.name not in approved.adapter.overlap_waits:
@@ -529,11 +662,12 @@ def _overlap_waits(setup: Setup, approved: Approved, unit: Mapping[str, Any]) ->
     others = mid_overlap(setup.client, str(unit["work_package_revision_id"]))
     if others:
         LOG.info("unit_waiting", extra={"unit": str(unit["id"]), "mid_overlap": others})
+        found.waits[str(unit["id"])] = Wait(f"Rotations mid-overlap: {', '.join(others)}")
     return bool(others)
 
 
 def _restart_waits(
-    setup: Setup, approved: Approved, held: HeldSettings | None, unit_id: str
+    setup: Setup, approved: Approved, held: HeldSettings | None, unit_id: str, found: PassActs
 ) -> bool:
     """Whether writing the unit's held copy would restart the orchestrator under a live run.
 
@@ -545,6 +679,7 @@ def _restart_waits(
     stranded = stranded_by_a_restart(setup.client)
     if stranded:
         LOG.info("unit_waiting", extra={"unit": unit_id, "restart_would_strand": stranded})
+        found.waits[unit_id] = Wait(f"A restart would strand: {', '.join(stranded)}")
     return bool(stranded)
 
 
@@ -598,10 +733,14 @@ def _overlap_until(setup: Setup, approved: Approved) -> str | None:
     return str(previous.get("until")) if isinstance(previous, Mapping) else None
 
 
-def _refuse(setup: Setup, unit: Mapping[str, Any], reason: str) -> None:
+def _refuse(setup: Setup, unit: Mapping[str, Any], reason: str, found: PassActs) -> None:
     unit_id = str(unit["id"])
     LOG.error("unit_refused", extra={"unit": unit_id, "reason": reason})
-    lease, version = _claim(setup, unit)
+    try:
+        lease, version = _claim(setup, unit)
+    except TRANSIENT:
+        found.waits[unit_id] = Wait(f"Refused, and the claim to fail it: {reason}", stuck=True)
+        raise
     setup.client.fail(unit_id, version, lease, _key(unit_id, lease, "fail"), reason[:MAX_REASON])
 
 

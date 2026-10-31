@@ -9,6 +9,10 @@ so resending an open act every pass costs nothing and lets alert-hub repeat it o
 A send never fails a unit or a pass: an alert that can't be sent is logged `notify_failed` and
 tried again next pass. The keys sent as firing are kept in the state directory, so a later pass
 knows what to resolve; losing that file only leaves an alert open until a person closes it.
+
+The same sync carries what a person should know about a unit that isn't an act:
+`rotation-unit-failed`, `-review`, `-stuck` and `-waiting`, keyed by unit (`worker.unit_alerts`,
+`worker._overdue`).
 """
 
 from __future__ import annotations
@@ -16,6 +20,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Mapping, Set
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Final
 
@@ -25,9 +30,11 @@ from alert_hub_client import (
     ALERTS,
     Alert,
     AlertHubError,
+    FirstSightings,
     KeyedAlerts,
     StateUnwritable,
     TokenUnreadable,
+    alert_key,
 )
 from rotation_worker.contract import ContractError
 from rotation_worker.secret_store import StoreError
@@ -37,7 +44,36 @@ LOG = logging.getLogger("rotation_worker")
 USER_AGENT: Final = "rotation-worker/1 (+AlobarQuest/orchestrator)"
 STATE_FILE: Final = "announced-acts.json"
 
-__all__ = ["ALERTS", "STATE_FILE", "USER_AGENT", "Act", "Notifier"]
+WAIT_CLOCK_FILE: Final = "wait-since.json"
+
+__all__ = [
+    "ALERTS",
+    "STATE_FILE",
+    "USER_AGENT",
+    "Act",
+    "Notifier",
+    "first_sightings",
+    "unit_failed_key",
+    "unit_review_key",
+    "unit_stuck_key",
+    "unit_waiting_key",
+]
+
+
+def unit_failed_key(unit_id: str) -> str:
+    return alert_key("rotation-unit-failed", unit_id)
+
+
+def unit_review_key(unit_id: str) -> str:
+    return alert_key("rotation-unit-review", unit_id)
+
+
+def unit_stuck_key(unit_id: str) -> str:
+    return alert_key("rotation-unit-stuck", unit_id)
+
+
+def unit_waiting_key(unit_id: str) -> str:
+    return alert_key("rotation-unit-waiting", unit_id)
 
 
 @dataclass(frozen=True)
@@ -48,6 +84,17 @@ class Act:
     title: str
     message: str
     link: str | None = None
+
+
+def first_sightings(
+    state_dir: Path, current: Set[str], now: datetime, keep: Set[str]
+) -> dict[str, datetime] | None:
+    """When each key in `current` was first seen, or `None` if the clock file can't be saved."""
+    try:
+        return FirstSightings(state_dir / WAIT_CLOCK_FILE).update(current, now, keep)
+    except StateUnwritable as error:
+        LOG.warning("notify_state_unsaved", extra={"reason": scrub(error.reason)})
+        return None
 
 
 class Notifier:

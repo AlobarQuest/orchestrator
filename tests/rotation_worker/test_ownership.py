@@ -64,7 +64,7 @@ def test_an_unknown_adapter_on_the_vm_is_still_refused(monkeypatch: pytest.Monke
         raise worker.ContractError("unknown adapter")
 
     monkeypatch.setattr(worker, "check_unit", check)
-    monkeypatch.setattr(worker, "_refuse", lambda s, u, reason: refused.append(reason))
+    monkeypatch.setattr(worker, "_refuse", lambda s, u, reason, found: refused.append(reason))
     setup = cast(
         Setup,
         SimpleNamespace(store=MemoryStore(), client=Client(), mirror=None, work_project_id="p"),

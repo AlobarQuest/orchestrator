@@ -107,7 +107,7 @@ def check_unit(
     adapter = ADAPTERS.get(str(constraints.get(ADAPTER_KEY)))
     if adapter is None:
         raise ContractError(f"no adapter named {constraints.get(ADAPTER_KEY)!r}")
-    document = _approved_package(intake, mirror)
+    document = approved_package(intake, mirror)
     fields = document["profile_fields"]
     credential_id = str(fields.get("credential_id"))
     packaged = standing_destinations(fields, credential_id, "the approved revision")
@@ -177,7 +177,7 @@ def _declared_without_overlap(constraints: Mapping[str, Any], unit: UnitPlan) ->
     return True
 
 
-def _approved_package(package: Mapping[str, Any], mirror: RepoMirror) -> Mapping[str, Any]:
+def approved_package(package: Mapping[str, Any], mirror: RepoMirror) -> Mapping[str, Any]:
     """The approved package document, read at its revision's commit and hash-checked."""
     if package.get("source_repository") != PACKAGES_REPOSITORY:
         raise ContractError("the revision isn't from intent-packages")
