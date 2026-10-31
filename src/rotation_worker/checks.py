@@ -177,8 +177,11 @@ def _declared_without_overlap(constraints: Mapping[str, Any], unit: UnitPlan) ->
     return True
 
 
-def approved_package(package: Mapping[str, Any], mirror: RepoMirror) -> Mapping[str, Any]:
-    """The approved package document, read at its revision's commit and hash-checked."""
+def approved_package(
+    package: Mapping[str, Any], mirror: RepoMirror, main: str | None = None
+) -> Mapping[str, Any]:
+    """The approved package document, read at its revision's commit and hash-checked. `main` is
+    intent-packages' `main` for a caller that already fetched it; otherwise it is fetched here."""
     if package.get("source_repository") != PACKAGES_REPOSITORY:
         raise ContractError("the revision isn't from intent-packages")
     # The intake's source_path is the package directory on whichever machine emitted it, which git
@@ -188,7 +191,7 @@ def approved_package(package: Mapping[str, Any], mirror: RepoMirror) -> Mapping[
     if not isinstance(commit, str) or not COMMIT.fullmatch(commit) or expected is None:
         raise ContractError("the revision names no full commit and standing rotation package")
     path = package_path(expected)
-    main = mirror.sync(PACKAGES_REPOSITORY)
+    main = main or mirror.sync(PACKAGES_REPOSITORY)
     if not _local(mirror.is_ancestor, PACKAGES_REPOSITORY, commit, main):
         raise ContractError("the revision's commit isn't on intent-packages' main")
     document = load_package(_local(mirror.show, PACKAGES_REPOSITORY, commit, path))

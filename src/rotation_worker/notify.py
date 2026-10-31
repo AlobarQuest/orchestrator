@@ -54,6 +54,7 @@ __all__ = [
     "Notifier",
     "first_sightings",
     "unit_failed_key",
+    "unit_reader_clock_key",
     "unit_review_key",
     "unit_stuck_key",
     "unit_waiting_key",
@@ -66,6 +67,12 @@ def unit_failed_key(unit_id: str) -> str:
 
 def unit_review_key(unit_id: str) -> str:
     return alert_key("rotation-unit-review", unit_id)
+
+
+def unit_reader_clock_key(unit_id: str) -> str:
+    """A reader wait's entry in the wait clock. It names no alert: an overdue one raises
+    `unit_waiting_key`."""
+    return alert_key("rotation-unit-reader-wait", unit_id)
 
 
 def unit_stuck_key(unit_id: str) -> str:

@@ -328,6 +328,7 @@ def test_a_pass_announces_its_waits_findings_and_keeps_what_it_couldn_t_tell(
         "rotation-mint:u3",
         "rotation-inbox:u3",
         "rotation-unit-stuck:u3",
+        "rotation-unit-reader-wait:u3",
         "rotation-unit-waiting:u3",
     }
     assert announced == [({act.key: act}, kept)]

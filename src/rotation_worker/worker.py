@@ -74,6 +74,7 @@ from rotation_worker.notify import (
     Notifier,
     first_sightings,
     unit_failed_key,
+    unit_reader_clock_key,
     unit_review_key,
     unit_stuck_key,
     unit_waiting_key,
@@ -89,6 +90,7 @@ from rotation_worker.readers import (
     ReadUnavailable,
 )
 from rotation_worker.registry import (
+    PACKAGES_REPOSITORY,
     RegistryError,
     find_credential,
     provider_entries,
@@ -193,6 +195,7 @@ def unit_alerts(setup: Setup) -> tuple[dict[str, Act], set[str]]:
     be read this pass, which are left as they are. A row with nothing to say is never read."""
     acts: dict[str, Act] = {}
     unread: set[str] = set()
+    main: list[str | None] = []
     for row in setup.client.active_units():
         pending = [
             b
@@ -207,7 +210,7 @@ def unit_alerts(setup: Setup) -> tuple[dict[str, Act], set[str]]:
         try:
             unit = setup.client.unit(unit_id)
             ours = is_rotation_unit(unit) and _ours(setup, unit)
-            where = _where(setup, unit) if ours and failed else ""
+            where = _where(setup, unit, main) if ours and failed else ""
         except TRANSIENT as error:
             LOG.warning("unit_unread", extra={"unit": unit_id, "reason": scrub(str(error))})
             unread |= {f"rotation-act:{b['dependency_id']}" for b in pending}
@@ -256,35 +259,54 @@ def _review_overdue(row: Mapping[str, Any]) -> bool:
     )
 
 
-def _where(setup: Setup, unit: Mapping[str, Any]) -> str:
+def _where(setup: Setup, unit: Mapping[str, Any], main: list[str | None]) -> str:
     """The credential a failed unit rotates and its staging key's name, as far as can be told: a
     package that can't be read may be why the unit failed, and doesn't silence its alert."""
     intake = setup.client.package_intake(str(unit["work_package_revision_id"]))
     credential = standing_credential(str(intake.get("package_id"))) or "unknown"
+    omitted = f"Credential {credential}; its package can't be read, so the staging key's name is"
+    commit = _packages_main(setup, main)
+    if commit is None:
+        return f"{omitted} omitted: intent-packages couldn't be fetched."
     try:
-        occurrence = approved_package(intake, setup.mirror)["profile_fields"].get("occurrence")
+        document = approved_package(intake, setup.mirror, commit)
     except REFUSALS as error:
-        return f"Credential {credential}; its package can't be read: {scrub(str(error))}."
-    staging = Rotation(credential, str(occurrence), "", setup.work_project_id, ()).staging_key
+        return f"{omitted} omitted: {scrub(str(error))}."
+    occurrence = str(document["profile_fields"].get("occurrence"))
+    staging = Rotation(credential, occurrence, "", setup.work_project_id, ()).staging_key
     return f"Credential {credential}, staging key {staging}."
+
+
+def _packages_main(setup: Setup, main: list[str | None]) -> str | None:
+    """intent-packages' `main`, fetched once in `main`, this pass's memo; `None` if it can't be."""
+    if not main:
+        try:
+            main.append(setup.mirror.sync(PACKAGES_REPOSITORY))
+        except MirrorError as error:
+            LOG.warning("packages_unread", extra={"reason": scrub(str(error))})
+            main.append(None)
+    return main[0]
 
 
 def _overdue(setup: Setup, found: PassActs, hold: Set[str]) -> tuple[dict[str, Act], set[str]]:
     """Move the clock on, and return an alert for each unit past its threshold.
 
-    Each unit has one clock, under its `unit_waiting_key`, whether it is waiting or stuck, so a
-    unit that alternates between the two still comes due. A clock absent from `found.waits` and
-    `hold` is forgotten, so a unit that moved starts afresh. A clock that can't be saved says
-    nothing this pass, so the second value holds the alerts of every unit still waiting.
+    A unit has two clocks. The ordinary one, under its `unit_waiting_key`, runs whether it is
+    waiting or stuck, so a unit that alternates between the two still comes due. Reader waits run
+    their own, `unit_reader_clock_key`, so a healthy week on readers can't lend its hours to one
+    skip; a pass on the ordinary clock holds it, so one skip can't restart that week either. A clock
+    neither sighted nor held is forgotten, so a unit that moved starts afresh. A clock that can't be
+    saved says nothing this pass, so the second value holds the alerts of every unit still waiting.
     """
     now = _now()
-    current = {unit_waiting_key(unit_id) for unit_id in found.waits}
-    since = first_sightings(setup.state_dir, current, now, hold)
+    current = {_clock_key(unit_id, wait) for unit_id, wait in found.waits.items()}
+    readers = {unit_reader_clock_key(unit_id) for unit_id in found.waits}
+    since = first_sightings(setup.state_dir, current, now, hold | readers)
     if since is None:
         return {}, {key for unit_id in found.waits for key in _clock_keys(unit_id)}
     overdue = {}
     for unit_id, wait in found.waits.items():
-        first = since[unit_waiting_key(unit_id)]
+        first = since[_clock_key(unit_id, wait)]
         if now - first < timedelta(hours=wait.hours):
             continue
         key = unit_stuck_key(unit_id) if wait.stuck else unit_waiting_key(unit_id)
@@ -298,13 +320,19 @@ def _overdue(setup: Setup, found: PassActs, hold: Set[str]) -> tuple[dict[str, A
     return overdue, set()
 
 
+def _clock_key(unit_id: str, wait: Wait) -> str:
+    return unit_reader_clock_key(unit_id) if wait.reader else unit_waiting_key(unit_id)
+
+
 def _clock_keys(unit_id: str) -> set[str]:
-    return {unit_stuck_key(unit_id), unit_waiting_key(unit_id)}
+    return {unit_stuck_key(unit_id), unit_waiting_key(unit_id), unit_reader_clock_key(unit_id)}
 
 
 @dataclass(frozen=True)
 class Wait:
-    """Why a unit stayed unmoved this pass. `stuck` says nothing in the ledger shows it."""
+    """Why a unit stayed unmoved this pass. `reader` says it waits on a schedule measured in days:
+    a weekly reader's, or another rotation's overlap, which holds one. `stuck` says nothing in the
+    ledger shows it."""
 
     reason: str
     reader: bool = False
@@ -649,6 +677,9 @@ def _revoke_waits(
     if reason is None:
         return False
     LOG.info("unit_waiting", extra={"unit": unit_id, "reason": reason})
+    if state is Revoke.UNKNOWN:
+        # No act can be announced, so only the clock tells a person this has gone on too long.
+        found.waits[unit_id] = Wait(reason)
     return True
 
 
@@ -662,7 +693,9 @@ def _overlap_waits(
     others = mid_overlap(setup.client, str(unit["work_package_revision_id"]))
     if others:
         LOG.info("unit_waiting", extra={"unit": str(unit["id"]), "mid_overlap": others})
-        found.waits[str(unit["id"])] = Wait(f"Rotations mid-overlap: {', '.join(others)}")
+        found.waits[str(unit["id"])] = Wait(
+            f"Rotations mid-overlap: {', '.join(others)}", reader=True
+        )
     return bool(others)
 
 

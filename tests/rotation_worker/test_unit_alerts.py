@@ -91,10 +91,12 @@ class Pass:
         self.state = tmp_path
         self.now = START
         self.notifier = self.hub.notifier(tmp_path)
+        self.syncs = 0
+        self.fetch_fails = False
         self.store = store if store is not None else MemoryStore()
         monkeypatch.setattr(worker, "_now", lambda: self.now)
         monkeypatch.setattr(
-            worker, "approved_package", lambda _i, _m: {"profile_fields": {"occurrence": "o-7"}}
+            worker, "approved_package", lambda *_a: {"profile_fields": {"occurrence": "o-7"}}
         )
 
     def run(self, hours: float = 0) -> list[tuple[str, str]]:
@@ -106,11 +108,17 @@ class Pass:
             store=self.store,
             notifier=self.notifier,
             state_dir=self.state,
-            mirror=None,
+            mirror=SimpleNamespace(sync=self._sync),
             work_project_id="work",
         )
         worker.run_pass(cast(worker.Setup, setup))
         return [(m["key"], m["status"]) for m in self.hub.sent[before:]]
+
+    def _sync(self, _repository: str) -> str:
+        self.syncs += 1
+        if self.fetch_fails:
+            raise worker.MirrorError("git didn't answer")
+        return "main-commit"
 
     def message(self, key: str) -> dict[str, Any]:
         return next(m for m in reversed(self.hub.sent) if m["key"] == key)
@@ -290,6 +298,7 @@ def test_an_overlap_wait_records_itself(monkeypatch: pytest.MonkeyPatch) -> None
     setup = cast(worker.Setup, SimpleNamespace(client=None))
     assert worker._overlap_waits(setup, cast(worker.Approved, approved), unit, found)
     assert "other (ready)" in found.waits[UNIT].reason
+    assert found.waits[UNIT].hours == 192
 
 
 def test_a_restart_wait_records_itself(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -302,6 +311,135 @@ def test_a_restart_wait_records_itself(monkeypatch: pytest.MonkeyPatch) -> None:
     assert worker._restart_waits(setup, cast(worker.Approved, approved), held, UNIT, found)
     assert "a run" in found.waits[UNIT].reason
     assert found.waits[UNIT].hours == 48
+
+
+def _reader_wait_until(run: Pass, monkeypatch: pytest.MonkeyPatch, hours: int) -> None:
+    """Readers hold the unit for `hours`; after that, each pass is skipped on a shut window."""
+
+    def take(_setup: object, unit_id: str, found: worker.PassActs) -> int:
+        found.seen.add(unit_id)
+        if run.now < START + timedelta(hours=hours):
+            found.waits[unit_id] = worker.Wait("weekly reader", reader=True)
+            return 0
+        raise OrchestratorError("the window is shut")
+
+    monkeypatch.setattr(worker, "_take", take)
+    run.estate.ready = [UNIT]
+
+
+def test_a_window_skip_inside_a_reader_wait_raises_nothing(
+    run: Pass, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _reader_wait_until(run, monkeypatch, 168)
+    assert run.run(0) == []
+    assert run.run(100) == []
+    assert run.run(168) == []
+
+
+def test_an_ordinary_wait_after_a_reader_wait_runs_its_own_48_hours(
+    run: Pass, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _reader_wait_until(run, monkeypatch, 168)
+    run.run(0)
+    run.run(168)
+    assert run.run(168 + 47) == []
+    assert run.run(168 + 49) == [(unit_waiting_key(UNIT), "firing")]
+
+
+def test_a_skip_inside_a_reader_wait_keeps_the_reader_clock(
+    run: Pass, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def take(_setup: object, unit_id: str, found: worker.PassActs) -> int:
+        found.seen.add(unit_id)
+        if run.now == START + timedelta(hours=100):
+            raise OrchestratorError("the window is shut")
+        found.waits[unit_id] = worker.Wait("weekly reader", reader=True)
+        return 0
+
+    monkeypatch.setattr(worker, "_take", take)
+    run.estate.ready = [UNIT]
+    run.run(0)
+    run.run(100)
+    assert run.run(192) == [(unit_waiting_key(UNIT), "firing")]
+
+
+def test_an_unread_pass_keeps_the_reader_clock(run: Pass, monkeypatch: pytest.MonkeyPatch) -> None:
+    def take(_setup: object, unit_id: str, found: worker.PassActs) -> int:
+        if run.now == START + timedelta(hours=100):
+            raise OrchestratorError("the unit didn't answer")
+        found.seen.add(unit_id)
+        found.waits[unit_id] = worker.Wait("weekly reader", reader=True)
+        return 0
+
+    monkeypatch.setattr(worker, "_take", take)
+    run.estate.ready = [UNIT]
+    run.run(0)
+    run.run(100)
+    assert run.run(192) == [(unit_waiting_key(UNIT), "firing")]
+
+
+def test_an_ordinary_wait_does_not_outlive_a_pass_of_reader_wait(
+    run: Pass, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A skip, a long reader wait, then a skip: the second starts its 48 hours afresh."""
+
+    def take(_setup: object, unit_id: str, found: worker.PassActs) -> int:
+        found.seen.add(unit_id)
+        if run.now in (START, START + timedelta(hours=100)):
+            raise OrchestratorError("the window is shut")
+        found.waits[unit_id] = worker.Wait("weekly reader", reader=True)
+        return 0
+
+    monkeypatch.setattr(worker, "_take", take)
+    run.estate.ready = [UNIT]
+    run.run(0)
+    run.run(50)
+    assert run.run(100) == []
+
+
+def _revoke_state(
+    monkeypatch: pytest.MonkeyPatch, state: worker.Revoke, reason: str | None
+) -> worker.PassActs:
+    monkeypatch.setattr(worker, "person_revokes_beside", lambda *_a: True)
+    monkeypatch.setattr(worker, "revoke_wait", lambda *_a: (state, reason))
+    monkeypatch.setattr(worker, "ObservedRevokes", lambda _d: None)
+    rotation = SimpleNamespace(
+        credential_id="c", occurrence="o", work_project_id="w", quarantine_key="q"
+    )
+    approved = SimpleNamespace(
+        plan=None,
+        unit=None,
+        rotation=rotation,
+        adapter=SimpleNamespace(revoke_settles=None),
+    )
+    setup = SimpleNamespace(
+        store=SimpleNamespace(find=lambda *_a: None),
+        client=SimpleNamespace(history=lambda _u: []),
+        state_dir=None,
+    )
+    found = worker.PassActs()
+    worker._revoke_waits(
+        cast(worker.Setup, setup),
+        cast(worker.Approved, approved),
+        cast(Any, None),
+        UNIT,
+        found,
+    )
+    return found
+
+
+def test_a_revoke_nobody_can_look_for_waits_on_the_ordinary_clock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    found = _revoke_state(monkeypatch, worker.Revoke.UNKNOWN, "the provider didn't answer")
+    assert found.waits == {UNIT: worker.Wait("the provider didn't answer")}
+    assert f"rotation-revoke:{UNIT}" in found.keep
+
+
+def test_a_revoke_a_person_owes_takes_no_clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    found = _revoke_state(monkeypatch, worker.Revoke.LIVE, "the old value still works")
+    assert found.waits == {}
+    assert f"rotation-revoke:{UNIT}" in found.due
 
 
 def test_a_requeued_unit_starts_its_clock_fresh(run: Pass, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -452,17 +590,48 @@ def test_a_row_that_can_t_be_read_holds_a_wait_on_a_unit_no_longer_ready(
     assert run.clock() == {unit_waiting_key(UNIT): START.isoformat()}
 
 
-def test_a_failed_package_read_holds_the_unit_s_keys(
+def test_a_fetch_that_fails_still_raises_the_failed_alert(run: Pass) -> None:
+    run.estate.add("failed", last_failure={"reason": "the host refused"})
+    run.fetch_fails = True
+    assert run.run() == [(unit_failed_key(UNIT), "firing")]
+    message = run.message(unit_failed_key(UNIT))["message"]
+    assert "github-pat" in message
+    assert "the host refused" in message
+    assert "staging key's name is omitted" in message
+    assert "rotation/github-pat" not in message
+
+
+def test_a_failed_package_refusal_omits_the_staging_name(
     run: Pass, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    def refused(*_arguments: Any) -> None:
+        raise worker.ContractError("the commit isn't on main")
+
+    monkeypatch.setattr(worker, "approved_package", refused)
     run.estate.add("failed")
-    run.run(0)
+    run.run()
+    assert "staging key's name is omitted" in run.message(unit_failed_key(UNIT))["message"]
 
-    def unreachable(*_arguments: Any) -> None:
-        raise worker.MirrorError("git didn't answer")
 
-    monkeypatch.setattr(worker, "approved_package", unreachable)
-    assert run.run(1) == []
+@pytest.mark.parametrize("fetch_fails", [False, True])
+def test_packages_are_fetched_once_a_pass_however_many_units_failed(
+    run: Pass, fetch_fails: bool
+) -> None:
+    other = "99999999-2222-3333-4444-555555555555"
+    run.estate.add("failed")
+    run.estate.units[other] = {**run.estate.units[UNIT], "id": other}
+    run.estate.rows.append({**run.estate.rows[0], "unit_id": other})
+    run.fetch_fails = fetch_fails
+    assert len(run.run()) == 2
+    assert run.syncs == 1
+    run.run(1)
+    assert run.syncs == 2
+
+
+def test_no_failed_unit_fetches_nothing(run: Pass) -> None:
+    run.estate.add("in_progress")
+    run.run()
+    assert run.syncs == 0
 
 
 def test_a_wait_past_its_threshold_holds_through_an_unread_pass(
