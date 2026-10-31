@@ -16,6 +16,14 @@ REVISION = "0c7a484c-1111-4111-8111-111111111111"
 RECORD = {"id": 139, "package_id": "rotation-example", "package_revision": 2, "status": "approved"}
 
 
+def _member(repository: str, grant: str = "granted", state: str = "member") -> dict[str, Any]:
+    return {
+        "repository": repository,
+        "state": state,
+        "grants": {"credential_rotation": {"state": grant}},
+    }
+
+
 class FakeOrchestrator:
     def __init__(self) -> None:
         self.entry = _entry("openrouter-key")
@@ -28,6 +36,15 @@ class FakeOrchestrator:
         self.answer_state = "proposed"
         # The registered revision number, by revision id, where it isn't the record's.
         self.revisions: dict[str, int] = {}
+        # The member record's rows; `None` makes the read fail. `member_reads` counts the asks.
+        self.members_rows: list[dict[str, Any]] | None = [_member("AlobarQuest/example-registry")]
+        self.member_reads = 0
+
+    def members(self) -> list[dict[str, Any]]:
+        self.member_reads += 1
+        if self.members_rows is None:
+            raise CallError("the orchestrator refused GET /api/v1/members: 503", 503)
+        return self.members_rows
 
     def work(self, change_record_id: int) -> dict[str, Any]:
         if change_record_id in self.unreadable:
