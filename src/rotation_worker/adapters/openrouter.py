@@ -23,6 +23,10 @@ ADR-0055 increment 5. The provider facts are amendment 1's, measured in incremen
   the value, then `GET /keys/{that hash}` with the management key must answer 200 with the
   same `label` key-info gives for the value. Only then `DELETE`. The id is never taken from
   evidence or from the create response, and a label alone never picks a key (T8).
+* **Discard** a mint the contract couldn't keep, by the id `POST /keys` returned. The key's id is
+  its full hash, which evidence may not hold, so the id lives in this instance and dies with the
+  process: a crash between the mint and the stage leaves the key, bounded by its credit limit and
+  expiry. Listing keys to find it would break "deletes only the pinned hash".
 
 The management key is account-wide (a provider limit). It lives in `Rotation / Admin`, which only
 the executor's root reads, and is read from BWS by UUID only when a step mints or revokes.
@@ -52,7 +56,7 @@ from rotation_worker.contract import (
     validate_plan,
 )
 from rotation_worker.secret_store import SecretStore
-from rotation_worker.values import Value
+from rotation_worker.values import Fingerprint, Value
 
 NAME: Final = "openrouter"
 BASE_URL: Final = "https://openrouter.ai/api/v1"
@@ -171,6 +175,8 @@ class OpenRouterProvider:
         self._free_models: list[str] | None = None
         # Ids of the keys this provider deleted, so a probe can wait out inference's lag.
         self._deleted: set[str] = set()
+        # The id `POST /keys` returned for each key this instance minted. Never leaves it.
+        self._minted_ids: dict[Fingerprint, str] = {}
 
     # ---- the contract's provider ------------------------------------------------------------
 
@@ -198,7 +204,22 @@ class OpenRouterProvider:
                 "the minted key lacked its credit limit or expiry; deleting it answered "
                 f"{deleted.status_code}"
             )
+        returned = data.get("hash")
+        if isinstance(returned, str):
+            self._minted_ids[value.fingerprint] = returned
         return value
+
+    def discard_minted(self, value: Value) -> None:
+        """Delete a key this instance minted, by the id its mint returned and nothing else. That
+        id must also be the one derived from the value, or it names some other key."""
+        returned = self._minted_ids.pop(value.fingerprint, None)
+        if returned is None or not hmac.compare_digest(
+            returned.encode(), _key_hash(value).encode()
+        ):
+            raise ContractError("this instance did not mint that key under the id it was given")
+        deleted = self._send("DELETE", f"{KEYS}/{returned}", self._management(), "deleting")
+        if deleted.status_code != 200:
+            raise ContractError(f"deleting the minted key answered {deleted.status_code}")
 
     def probe(self, value: Value) -> int | None:
         status = self._probe_once(value)
