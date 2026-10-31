@@ -36,6 +36,7 @@ import yaml
 
 from bump_proposer import standing as shared
 from bump_proposer.standing import StandingError
+from rotation_worker.destinations import same
 
 PROFILE: Final = "non-software-operational"
 PACKAGE_PREFIX: Final = "rotation-"
@@ -76,7 +77,7 @@ class RotationPackage:
 
     def lists(self, destinations: Sequence[str]) -> bool:
         """Whether the package lists exactly these destinations, in any order."""
-        return sorted(self.destinations) == sorted(destinations)
+        return same(self.destinations, destinations)
 
 
 def discover(root: Path) -> dict[str, RotationPackage]:

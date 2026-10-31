@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import json
 import unicodedata
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any, Final
 
 # The kinds `.cred-consumers.toml` documents, each with the fields that say WHERE the value goes,
@@ -108,6 +108,12 @@ def parse(destination: str) -> dict[str, Any]:
     if render(consumer) != destination:
         raise DestinationError(f"{destination!r} is not in canonical form")
     return consumer
+
+
+def same(a: Sequence[str], b: Sequence[str]) -> bool:
+    """Whether two destination lists name the same destinations, in any order. A repeat counts: a
+    list carrying one twice is not the list that carries it once."""
+    return sorted(a) == sorted(b)
 
 
 def is_hosted(destination: str) -> bool:

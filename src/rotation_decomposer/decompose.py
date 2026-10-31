@@ -18,6 +18,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any, Final
 
 from rotation_worker.contract import ContractError, Plan, UnitPlan
+from rotation_worker.destinations import same
 from rotation_worker.plans import derive, select_plan, writes_hosted_service
 from rotation_worker.registry import RegistryEntry
 from rotation_worker.types import CLASS_TYPES, TYPES
@@ -25,6 +26,8 @@ from rotation_worker.types import CLASS_TYPES, TYPES
 PACKAGE_PREFIX: Final = "rotation-"
 CAPABILITY: Final = "operational_action"
 MAX_ATTEMPTS: Final = 3
+# Spelled here because this lane reads no provider; a test holds the four spellings equal.
+NON_HOSTED_KEY: Final = "touches_no_hosted_service"
 
 
 class DecomposeError(RuntimeError):
@@ -64,7 +67,7 @@ def decomposition(intake: Mapping[str, Any], entry: RegistryEntry) -> dict[str, 
             "one: revise the package onto the derived plan, or decompose it by hand"
         ) from None
     destinations = _destinations(intake)
-    if sorted(destinations) != sorted(entry.destinations):
+    if not same(destinations, entry.destinations):
         # The executor refuses every unit whose envelope, package and registry disagree, and an
         # approved envelope can't change: propose nothing, and let the next revision carry them.
         raise DecomposeError(
@@ -139,7 +142,7 @@ def _unit(
         "destinations": list(destinations),
     }
     if not writes_hosted_service(destinations, plan, unit):
-        constraints["touches_no_hosted_service"] = True
+        constraints[NON_HOSTED_KEY] = True
     steps = ", ".join(step.kind.value for step in unit.steps)
     return {
         "unit_key": key,

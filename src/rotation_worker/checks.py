@@ -45,7 +45,7 @@ from rotation_worker.contract import (
     StepKind,
     UnitPlan,
 )
-from rotation_worker.destinations import HOSTED_KINDS, parse
+from rotation_worker.destinations import HOSTED_KINDS, parse, same
 from rotation_worker.envelope import ADAPTER_KEY
 from rotation_worker.evidence import MAX_DESTINATION
 from rotation_worker.git_mirror import COMMIT_PATTERN as COMMIT
@@ -119,7 +119,12 @@ def check_unit(
             f"{credential_id}'s provider isn't the {adapter.provider_name} adapter's"
         )
     enveloped = constraints.get(DESTINATIONS_KEY)
-    if not (entry.destinations == packaged == enveloped):
+    if (
+        not isinstance(enveloped, list)
+        or not all(isinstance(destination, str) for destination in enveloped)
+        or not same(entry.destinations, packaged)
+        or not same(packaged, enveloped)
+    ):
         raise ContractError("the registry's, the package's and the envelope's destinations differ")
     keeper = _keeper_id(entry, packaged, store)
     reads = scheduled_reads(entry.credential)
