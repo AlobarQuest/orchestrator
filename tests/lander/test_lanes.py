@@ -528,5 +528,5 @@ def test_a_replay_the_orchestrator_could_not_answer_is_an_error() -> None:
 
 def test_an_asked_row_is_matched_to_a_subject_however_its_repository_is_spelled() -> None:
     assert core.not_yet_asked(
-        [("AlobarQuest/x", 7), ("AlobarQuest/x", 8)], {("alobarquest/x", 7)}
+        [("AlobarQuest/x", 7), ("AlobarQuest/x", 8)], frozenset({("alobarquest/x", 7)})
     ) == [("AlobarQuest/x", 8)]
