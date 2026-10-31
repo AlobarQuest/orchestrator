@@ -107,7 +107,7 @@ _REVIEW: Final = "https://sds.alobar.net/review/units"
 # alert-hub refuses a longer title.
 TITLE_LIMIT: Final = 200
 MAX_REASON: Final = 400
-FAILED_RUNBOOK: Final = "docs/operations/rotation-executor.md, \"If a rotation stalls after host\""
+FAILED_RUNBOOK: Final = 'docs/operations/rotation-executor.md, "If a rotation stalls after host"'
 # A refusal: the unit itself is wrong, and a person must see it.
 REFUSALS: Final = (ContractError, RegistryError, DestinationError, ReadError)
 # Nothing could be asked: try again next pass.

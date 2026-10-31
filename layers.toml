@@ -605,6 +605,7 @@ paths = [
   "deploy/vps/sds-pg-rotate",
   "tests/deploy/**",
   "tests/scripts/test_run_rotation_proposer.py",
+  "tests/scripts/test_provision_source_revision.py",
   "docs/operations/rotation-executor.md",
   "docs/operations/rotation-proposer.md",
   "docs/decisions/0054-*.md",
