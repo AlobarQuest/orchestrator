@@ -37,12 +37,12 @@ def hub() -> Hub:
     return Hub()
 
 
-def _sync(hub: Hub, tmp_path: Path, outcomes: list[Outcome], now: datetime = NOW) -> str | None:
+def _sync(hub: Hub, tmp_path: Path, outcomes: list[Outcome], hours: float = 0) -> str | None:
     return sync_alerts(
         outcomes,
         token="t",
         state_dir=tmp_path,
-        now=now,
+        now=NOW + timedelta(hours=hours),
         transport=httpx.MockTransport(hub),
     )
 
@@ -73,25 +73,23 @@ def test_a_status_that_is_not_a_finding_raises_nothing(hub: Hub, tmp_path: Path)
     assert hub.sent == []
 
 
-@pytest.mark.parametrize("status", ["awaiting-approval", "declined"])
-def test_an_approval_wait_fires_at_48_hours(hub: Hub, tmp_path: Path, status: str) -> None:
+@pytest.mark.parametrize(
+    "status",
+    [
+        pytest.param("awaiting-approval", id="test_awaiting_approval_waits_48_hours"),
+        pytest.param("declined", id="test_declined_waits_48_hours"),
+    ],
+)
+def test_approval_wait_48_hours(hub: Hub, tmp_path: Path, status: str) -> None:
     key = approval_key(CREDENTIAL)
     outcome = Outcome(CREDENTIAL, status, "needs a name")
     _sync(hub, tmp_path, [outcome])
-    _sync(hub, tmp_path, [outcome], NOW + timedelta(hours=47, minutes=59))
+    _sync(hub, tmp_path, [outcome], 47.98)
     assert hub.sent == []
-    _sync(hub, tmp_path, [outcome], NOW + timedelta(hours=48))
-    _sync(hub, tmp_path, [outcome], NOW + timedelta(hours=60))
+    _sync(hub, tmp_path, [outcome], 48)
+    _sync(hub, tmp_path, [outcome], 60)
     assert _sent(hub) == [(key, "firing")]
     assert "48 hours" in hub.sent[0]["message"]
-
-
-def test_awaiting_approval_waits_48_hours(hub: Hub, tmp_path: Path) -> None:
-    test_an_approval_wait_fires_at_48_hours(hub, tmp_path, "awaiting-approval")
-
-
-def test_declined_waits_48_hours(hub: Hub, tmp_path: Path) -> None:
-    test_an_approval_wait_fires_at_48_hours(hub, tmp_path, "declined")
 
 
 def test_an_approval_wait_that_ends_resolves_and_restarts_its_clock(
@@ -100,9 +98,9 @@ def test_an_approval_wait_that_ends_resolves_and_restarts_its_clock(
     key = approval_key(CREDENTIAL)
     waiting = Outcome(CREDENTIAL, "awaiting-approval", "x")
     _sync(hub, tmp_path, [waiting])
-    _sync(hub, tmp_path, [waiting], NOW + timedelta(hours=49))
-    _sync(hub, tmp_path, [Outcome(CREDENTIAL, "proposed", "x")], NOW + timedelta(hours=50))
-    _sync(hub, tmp_path, [waiting], NOW + timedelta(hours=51))
+    _sync(hub, tmp_path, [waiting], 49)
+    _sync(hub, tmp_path, [Outcome(CREDENTIAL, "proposed", "x")], 50)
+    _sync(hub, tmp_path, [waiting], 51)
     assert _sent(hub) == [(key, "firing"), (key, "resolved")]
 
 
@@ -110,11 +108,55 @@ def test_the_first_sighting_survives_an_alert_hub_outage(hub: Hub, tmp_path: Pat
     waiting = Outcome(CREDENTIAL, "awaiting-approval", "x")
     hub.status = 500
     _sync(hub, tmp_path, [waiting])
-    _sync(hub, tmp_path, [waiting], NOW + timedelta(hours=49))
+    _sync(hub, tmp_path, [waiting], 49)
     hub.status = 202
     hub.sent.clear()
-    _sync(hub, tmp_path, [waiting], NOW + timedelta(hours=50))
+    _sync(hub, tmp_path, [waiting], 50)
     assert _sent(hub) == [(approval_key(CREDENTIAL), "firing")]
+
+
+ERRORED = Outcome(CREDENTIAL, "error", "the registry: unreadable")
+
+
+def _about(hub: Hub, *keys: str) -> list[tuple[str, str]]:
+    """What was sent for `keys`, leaving out the `error` finding the failed pass itself raises."""
+    return [row for row in _sent(hub) if row[0] in keys]
+
+
+def test_a_credential_that_errored_keeps_its_other_alerts(hub: Hub, tmp_path: Path) -> None:
+    """A failed fetch turns every due credential into `error` for one pass. That says nothing
+    about the findings the credential had, so they are not resolved; another credential's are."""
+    stacked, other = finding_key(CREDENTIAL, "stacked"), finding_key("other", "stacked")
+    both = [Outcome(CREDENTIAL, "stacked", "x"), Outcome("other", "stacked", "x")]
+    _sync(hub, tmp_path, both)
+    _sync(hub, tmp_path, [ERRORED], 1)
+    assert _about(hub, stacked, other) == [
+        (stacked, "firing"),
+        (other, "firing"),
+        (other, "resolved"),
+    ]
+    _sync(hub, tmp_path, [Outcome(CREDENTIAL, "stacked", "x")], 2)
+    assert _about(hub, stacked).count((stacked, "firing")) == 1
+
+
+def test_a_wait_survives_one_error_pass_with_its_original_clock(hub: Hub, tmp_path: Path) -> None:
+    key = approval_key(CREDENTIAL)
+    waiting = Outcome(CREDENTIAL, "awaiting-approval", "x")
+    _sync(hub, tmp_path, [waiting])
+    _sync(hub, tmp_path, [ERRORED], 10)
+    _sync(hub, tmp_path, [waiting], 49)
+    assert _about(hub, key) == [(key, "firing")]
+    assert "49 hours" in next(row for row in hub.sent if row["key"] == key)["message"]
+
+
+def test_a_fired_approval_wait_is_not_resolved_by_an_error_pass(hub: Hub, tmp_path: Path) -> None:
+    key = approval_key(CREDENTIAL)
+    waiting = Outcome(CREDENTIAL, "awaiting-approval", "x")
+    _sync(hub, tmp_path, [waiting])
+    _sync(hub, tmp_path, [waiting], 5 * 24)
+    _sync(hub, tmp_path, [ERRORED], 5 * 24 + 1)
+    _sync(hub, tmp_path, [waiting], 5 * 24 + 2)
+    assert _about(hub, key) == [(key, "firing")]
 
 
 def test_a_hub_that_refuses_is_named(hub: Hub, tmp_path: Path) -> None:

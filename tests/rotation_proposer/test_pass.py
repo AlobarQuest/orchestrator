@@ -756,6 +756,12 @@ def test_an_unusable_pass_syncs_nothing(rig, monkeypatch) -> None:
     assert rig.synced == []
 
 
+def test_a_change_manager_that_cannot_list_records_syncs_nothing(rig, monkeypatch) -> None:
+    monkeypatch.setattr(rig.estate, "handler", lambda request: httpx.Response(503))
+    assert run(["--submit"]) == EXIT_UNUSABLE
+    assert rig.synced == []
+
+
 @pytest.mark.parametrize("unrecognised", [False, True], ids=["clean", "findings"])
 def test_a_sync_failure_keeps_the_exit_code(rig, monkeypatch, capsys, unrecognised) -> None:
     if unrecognised:
