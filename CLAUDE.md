@@ -440,8 +440,8 @@ Placement rule: global CLAUDE.md §7.
   `commits[0]`, only when the update bot authored it and it is verified
   (`landing_ledger/github.py::_gate_message`, and the hold term's
   `terms._update_bot_message`, held equal by `test_update_bot_commit_agreement.py`), never the
-  head, which a branch update makes a merge commit. A landing asks it last, after the landing commit and the head. Detail:
-  `docs/operations/landing-lanes.md`, "Dependabot's update block".
+  head, which a branch update makes a merge commit. A landing asks it last, after the landing
+  commit and the head. Detail: `docs/operations/landing-lanes.md`, "Dependabot's update block".
 - No reported finding kind may be a substring of another;
   `test_no_reported_kind_is_a_substring_of_another` guards it. Detail:
   `docs/operations/landing-lanes.md`.

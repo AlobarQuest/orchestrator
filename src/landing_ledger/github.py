@@ -708,7 +708,7 @@ def _gate_message(reader: GitHubReader, repository: str, number: int) -> str:
     commit = first.get("commit") or {}
     if (first.get("author") or {}).get("login") != UPSTREAM_AUTHOR:
         return ""
-    if not (commit.get("verification") or {}).get("verified"):
+    if (commit.get("verification") or {}).get("verified") is not True:
         return ""
     return str(commit.get("message") or "")
 

@@ -9,6 +9,8 @@ the same rows: the old hold-term rule (the one bot-authored commit on the branch
 rule (`commits[0]`, bot-authored and verified).
 
 - Open update-bot pull requests: **4** (brain 2, orchestrator 2; the other 12 members have none).
+- Commits per pull request: brain#110 1, brain#109 2, orchestrator#508 1, orchestrator#506 1, so
+  **1 of the 4** had more than one commit (all authored by the update bot).
 - Old and new rule agree on **4 of 4**; disagreements: **0**.
 
 The population is small, so this shows no case of the change moving a live answer; the

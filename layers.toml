@@ -528,6 +528,7 @@ paths = [
   "tests/services/test_revert_factory_merges.py",
   "tests/contract/test_landing_fact_contract.py",
   "tests/contract/test_landing_trailer_contract.py",
+  "tests/contract/test_update_bot_commit_agreement.py",
   "tests/contract/test_pr_title_marking_compatibility.py",
   "tests/contract/test_rollout_policy_ratification.py",
   "tests/architecture/test_landing_direction.py",
