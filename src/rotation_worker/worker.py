@@ -48,7 +48,7 @@ from rotation_worker.contract import (
 )
 from rotation_worker.coolify import CoolifyClient
 from rotation_worker.destinations import DestinationError, parse
-from rotation_worker.envelope import ADAPTER_KEY, is_rotation_unit
+from rotation_worker.envelope import ADAPTER_KEY, KEYCHAIN_ADAPTERS, is_rotation_unit
 from rotation_worker.envelope import constraints as envelope_constraints
 from rotation_worker.evidence import StepEvidence
 from rotation_worker.git_mirror import MirrorError, RepoMirror
@@ -263,14 +263,15 @@ def _take(setup: Setup, unit_id: str, found: PassActs) -> int:
 
 
 def _ours(setup: Setup, unit: Mapping[str, Any]) -> bool:
-    """Whether this instance's store keeps the unit's credentials (ADR-0055 amendment 12).
+    """Whether this instance owns the unit, by the orchestrator's rule (ADR-0055 amendment 12).
 
-    The other instance's units are left alone, unclaimed: the orchestrator would refuse this
-    instance's claim on them anyway, and failing them would spend their attempts. An adapter no
-    instance knows is the checks' to refuse, so it counts as ours.
+    The Keychain instance owns exactly the units whose adapter is in `KEYCHAIN_ADAPTERS`; the VM
+    instance owns every other rotation unit, including one naming an adapter this build does not
+    know, which its checks refuse. The orchestrator refuses the other instance's claim, so it is
+    left unclaimed rather than failed, which would spend the unit's attempts.
     """
-    adapter = ADAPTERS.get(str(envelope_constraints(unit).get(ADAPTER_KEY)))
-    return adapter is None or adapter.store_kind == setup.store.read_back_kind
+    name = str(envelope_constraints(unit).get(ADAPTER_KEY))
+    return (name in KEYCHAIN_ADAPTERS) == (setup.store.read_back_kind == "keychain")
 
 
 def _now() -> datetime:

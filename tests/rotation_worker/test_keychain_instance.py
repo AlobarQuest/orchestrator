@@ -164,7 +164,8 @@ def _unit(adapter: str) -> dict[str, Any]:
         (MemoryStore(), "bws-machine-token", False),
         (Recording(), "bws-machine-token", True),
         (Recording(), "bitbucket", False),
-        (Recording(), "no-such-adapter", True),
+        (Recording(), "no-such-adapter", False),
+        (MemoryStore(), "no-such-adapter", True),
     ],
 )
 def test_each_instance_takes_only_the_units_its_store_keeps(
