@@ -112,6 +112,14 @@ def is_allowed(path: str) -> bool:
     return bool(_ALLOWED.fullmatch(path))
 
 
+# The credential registry's file, whose PRESENCE `holds` reads (Rotation Part 2). The same route
+# shape as the declaration's with another filename, judged on the path the transport will send.
+REGISTRY_FILENAME: Final = ".cred-consumers.toml"
+_REGISTRY_ALLOWED = re.compile(
+    rf"^/repos/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/contents/{re.escape(REGISTRY_FILENAME)}$"
+)
+
+
 @dataclass(frozen=True)
 class Declaration:
     """A repository's answer, or the reason there is not one.
@@ -313,7 +321,41 @@ class GitHubDeclarationSource:
             return Declaration(None, f"{slug}'s {FILENAME} is not readable text: {error}")
         return parse(text)
 
-    def _confirm_absence(self, slug: str, contents_path: str) -> Declaration:
+    def holds_registry(self, slug: str) -> Declaration:
+        """Whether the repository's default branch holds `.cred-consumers.toml`.
+
+        `target` is `True` for a file that is there, `False` for one confirmed absent (the same
+        404-then-probe rule as `declaration`), `None` when this program could not tell. The file's
+        content is never read: presence is the whole question.
+        """
+        path = f"/repos/{slug}/contents/{REGISTRY_FILENAME}"
+        try:
+            request = self._client.build_request("GET", path)
+        except (httpx.HTTPError, httpx.InvalidURL, ValueError) as error:
+            return Declaration(
+                None,
+                f"{slug!r} is not a repository name this program may ask about "
+                f"({type(error).__name__})",
+            )
+        if not _REGISTRY_ALLOWED.fullmatch(request.url.path):
+            return Declaration(
+                None, f"{slug!r} is not a repository name this program may ask about"
+            )
+        try:
+            response = self._client.send(request)
+        except (httpx.HTTPError, httpx.InvalidURL, ValueError) as error:
+            return Declaration(None, f"github is unreachable for {slug}: {type(error).__name__}")
+        if response.status_code == 404:
+            return self._confirm_absence(slug, request.url.path, REGISTRY_FILENAME)
+        if 200 <= response.status_code < 300:
+            return Declaration(True, f"{slug} holds {REGISTRY_FILENAME}")
+        return Declaration(
+            None, f"github answered {response.status_code} for {slug}'s {REGISTRY_FILENAME}"
+        )
+
+    def _confirm_absence(
+        self, slug: str, contents_path: str, filename: str = FILENAME
+    ) -> Declaration:
         """A contents 404, read again against the repository itself.
 
         `False` when the repository answers -- the file is genuinely not on its
@@ -340,7 +382,7 @@ class GitHubDeclarationSource:
             probe = self._client.send(
                 self._client.build_request(
                     "GET",
-                    contents_path.removesuffix(f"/contents/{FILENAME}"),
+                    contents_path.removesuffix(f"/contents/{filename}"),
                     headers={"Accept": REPOSITORY_ACCEPT},
                 )
             )
@@ -348,7 +390,7 @@ class GitHubDeclarationSource:
             # The type name only, for the reason given one branch up.
             return Declaration(
                 None,
-                f"no {FILENAME} on {slug}'s default branch, and {slug} itself could not "
+                f"no {filename} on {slug}'s default branch, and {slug} itself could not "
                 f"be read either ({type(error).__name__}), so this is not an absence",
             )
         if not 200 <= probe.status_code < 300:
@@ -358,7 +400,7 @@ class GitHubDeclarationSource:
             # returns a definite `False` costs a held record, where the
             # alternative costs a manufactured refusal.
             why = _unanswered(slug, probe.status_code)
-            return Declaration(None, f"no {FILENAME} on {slug}'s default branch, and {why}")
+            return Declaration(None, f"no {filename} on {slug}'s default branch, and {why}")
         # WHAT THIS DOES NOT PROVE IS NAMED IN THE LINE, because the line is what
         # a person acts on. Metadata and contents are separate permissions, so a
         # credential holding the first and not the second answers 200 here and
@@ -369,7 +411,7 @@ class GitHubDeclarationSource:
         # hole closing. Whoever wants it closed should close it in both.
         return Declaration(
             False,
-            f"no {FILENAME} on {slug}'s default branch, so it has not opted in -- {slug} "
+            f"no {filename} on {slug}'s default branch, so it has not opted in -- {slug} "
             "itself answers, so this is not a name nothing knows; what it does NOT prove is "
             "that this credential may read the repository's CONTENTS, which is a separate "
             "permission from its metadata and answers exactly this way when it is missing",

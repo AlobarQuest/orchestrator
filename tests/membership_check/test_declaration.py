@@ -339,13 +339,14 @@ def test_the_declaration_read_surface_is_one_route_and_no_more() -> None:
 
 
 def test_the_declaration_reader_asks_and_can_do_nothing_else() -> None:
-    """One public read method. A second is a surface nobody decided on."""
+    """Two public read methods, each decided: the declaration, and (Rotation Part 2) whether a
+    repository holds the credential registry file. A third is a surface nobody decided on."""
     public = {
         name
         for name in vars(GitHubDeclarationSource)
         if not name.startswith("_") and name not in {"close"}
     }
-    assert public == {"declaration"}
+    assert public == {"declaration", "holds_registry"}
 
 
 def test_a_repository_name_this_program_may_not_ask_about_never_reaches_the_transport() -> None:
@@ -391,3 +392,36 @@ def test_a_repository_name_this_program_may_not_ask_about_never_reaches_the_tran
 
     assert source.declaration("AlobarQuest/brain").target is True
     assert seen == ["/repos/AlobarQuest/brain/contents/factory-target.toml"]
+
+
+def test_a_registry_file_is_present_absent_or_could_not_tell() -> None:
+    present = _reader(_routed(httpx.Response(200, text="[[credential]]"), httpx.Response(200))[0])
+    assert present.holds_registry("AlobarQuest/brain").target is True
+
+    transport, seen = _routed(httpx.Response(404), httpx.Response(200, json={}))
+    assert _reader(transport).holds_registry("AlobarQuest/brain").target is False
+    assert seen == [
+        "/repos/AlobarQuest/brain/contents/.cred-consumers.toml",
+        "/repos/AlobarQuest/brain",
+    ]
+
+    for contents, repository in (
+        (httpx.Response(404), httpx.Response(404)),
+        (httpx.Response(500), httpx.Response(200)),
+        (httpx.Response(403), httpx.Response(200)),
+    ):
+        answer = _reader(_routed(contents, repository)[0]).holds_registry("AlobarQuest/brain")
+        assert answer.target is None, (contents.status_code, repository.status_code)
+
+
+def test_a_registry_file_read_refuses_a_name_that_composes_another_route() -> None:
+    sent: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(request.url.path)
+        return httpx.Response(200)
+
+    reader = _reader(httpx.MockTransport(handler))
+    assert reader.holds_registry("../..").target is None
+    assert reader.holds_registry("o/r?x=1").target is None
+    assert sent == []

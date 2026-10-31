@@ -97,6 +97,9 @@ def check(
     standing_update_repositories: Iterable[str],
     auto_merge: Mapping[str, AutoMergeState],
     landing_decided: bool = True,
+    flagged_repositories: Iterable[str] = (),
+    registry_files: Iterable[str] = (),
+    registries_read: bool = True,
 ) -> Report:
     members = list(members)
     app_changes = _granted(members, "app_changes")
@@ -143,6 +146,9 @@ def check(
         _granted(members, "credential_rotation"),
         "credential_rotation",
     )
+    disagreements += _rotation_scope(
+        members, registry_repositories, flagged_repositories, registry_files, registries_read
+    )
     disagreements += _require("the rollback table", rollbacks, rollouts, "rollouts")
     disagreements += _require(
         "a standing dependency-update package",
@@ -153,6 +159,45 @@ def check(
     auto_disagreements, auto_gaps = _auto_merge(members, auto_merge)
     disagreements += auto_disagreements
     return Report(disagreements, [*declarations.gaps, *auto_gaps])
+
+
+def _rotation_scope(
+    members: list[Member],
+    registry_repositories: Iterable[str],
+    flagged: Iterable[str],
+    registry_files: Iterable[str],
+    registries_read: bool,
+) -> list[str]:
+    """The grant, the registry rows that hand a credential over, and the registry files agree.
+
+    A grant with no flagged row is skipped when the mirror was not read: an unread registry is
+    not an empty population. A copy of the file in a repository the executor does not read is a
+    disagreement whether or not the repository holds a grant; one in a repository that
+    `REGISTRY_REPOSITORIES` names is the tuple row's business.
+    """
+    rotation = _granted(members, "credential_rotation")
+    found = [
+        *_require("a rotated_by_sds registry row", flagged, rotation, "credential_rotation"),
+        *_reverse(members, rotation, {n.lower() for n in flagged}, registries_read),
+    ]
+    named = {n.lower() for n in registry_repositories}
+    return found + [
+        f"{repository}: holds .cred-consumers.toml, outside rotation_worker REGISTRY_REPOSITORIES"
+        for repository in sorted(set(registry_files), key=str.lower)
+        if repository.lower() not in named
+    ]
+
+
+def _reverse(
+    members: list[Member], rotation: set[str], flagged: set[str], registries_read: bool
+) -> list[str]:
+    if not registries_read:
+        return []
+    return [
+        f"{m.repository}: granted credential_rotation, but no rotated_by_sds registry row is there"
+        for m in sorted(members, key=lambda m: m.repository.lower())
+        if m.repository.lower() in rotation and m.repository.lower() not in flagged
+    ]
 
 
 def _auto_merge(
