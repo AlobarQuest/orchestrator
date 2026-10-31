@@ -13,7 +13,10 @@ The acts, in order, each on a fresh read of the unit:
    orchestrator started and the runner hasn't claimed is live too.
 3. **Merge** a completed bump unit whose bound pull request is open. The admission answer is read
    first, so a refusal that clears by itself can be told apart: `merge_policy_path_off` and
-   `merge_repository_reverting` are waiting only with no other refusal beside them.
+   `merge_repository_reverting` are waiting only with no other refusal beside them. A unit whose
+   landing outcome is unknown (`landing_outcome_unknown`) is asked again on every pass, whatever
+   its pull request's state and whatever else the answer refuses, because only that request settles
+   its row. A call that leaves a row unknown waits; a replay that leaves it unknown is refused.
 
 A unit in `revision_required` raises `bump-unit-failed` and is left there, and a `failed` one is
 left to `work_watcher`'s alert. Requeueing is a SYSTEM act this lane doesn't hold, so a person
@@ -59,6 +62,7 @@ from bump_driver.alerts import (
 from bump_driver.client import (
     CLOSED_PULL,
     MERGED_PULL,
+    OPEN_PULL,
     CallError,
     ChangeManagerReader,
     GitHub,
@@ -123,6 +127,14 @@ WAITING_REFUSALS: Final = frozenset(  # not-a-vocabulary: the merge admission's 
     {OFF_SWITCH, "merge_repository_reverting"}
 )
 LANDED: Final = frozenset({"merged", "already_merged"})  # not-a-vocabulary: as above
+# `interfaces.LANDING_OUTCOME_UNKNOWN` and `outcome_is_unknown`'s prefix, copied because this
+# program imports nothing from the orchestrator; `test_pass.py` holds them equal.
+OUTCOME_UNKNOWN: Final = "landing_outcome_unknown"
+UNKNOWN_REASON_PREFIX: Final = "merge_refused_by_remote:"
+# What refuses after a settling removed the row: the terms, or a pull request nobody will land.
+SETTLED_THEN_REFUSED: Final = frozenset(  # not-a-vocabulary: `pr_merge` refusal codes, relayed
+    {"pr_merge_not_admissible", "pr_merge_not_open"}
+)
 VERSION_CONFLICT: Final = "version_conflict"
 FINDINGS: Final = frozenset(  # not-a-vocabulary: this lane's own report words
     {"refused", "failed", "unclaimed"}
@@ -528,6 +540,16 @@ def _call_refused(subject: str, error: CallError, repository: str, key: str) -> 
     return Outcome(subject, "refused", str(error), repository, key)
 
 
+@dataclass(frozen=True)
+class _Act:
+    """The unit a merge asks about, and the names its report uses."""
+
+    repository: str
+    unit_id: str
+    subject: str
+    refused_key: str
+
+
 def _merge(
     bump: _Bump,
     row: Mapping[str, Any],
@@ -544,41 +566,98 @@ def _merge(
     if not _is_bump_unit(unit, bump.repository) or not isinstance(number, int):
         return None
     pull = github.pull_state(bump.repository, number)
+    act = _Act(
+        bump.repository,
+        unit_id,
+        f"{bump.repository}#{number}",
+        act_refused_key(bump.repository, unit_id),
+    )
+    admission = orchestrator.merge_admission(unit_id)
+    refusals = [str(code) for code in admission.get("refusals") or []]
+    if OUTCOME_UNKNOWN in refusals:
+        return _replay(act, pull, refusals, orchestrator, dry_run)
     if pull == CLOSED_PULL:
         return None
-    subject = f"{bump.repository}#{number}"
-    refused_key = act_refused_key(bump.repository, unit_id)
-    admission = orchestrator.merge_admission(unit_id)
     if not admission.get("satisfied"):
-        if pull == MERGED_PULL:
-            return None
-        refusals = [str(code) for code in admission.get("refusals") or []]
-        if refusals and set(refusals) <= WAITING_REFUSALS:
-            return Outcome(subject, "waiting", ", ".join(refusals), bump.repository)
-        reasons = ", ".join(refusals) or "no reason given"
-        return Outcome(subject, "refused", reasons, bump.repository, refused_key)
+        return None if pull == MERGED_PULL else _not_admitted(act, refusals)
     if dry_run:
         return (
             None
             if pull == MERGED_PULL
-            else Outcome(subject, "would-merge", repository=bump.repository)
+            else Outcome(act.subject, "would-merge", repository=bump.repository)
         )
-    # Only a state transition moves the version, and one can land between the read above and here.
-    version = orchestrator.unit(unit_id)["version"]
+    return _ask_to_land(act, pull, orchestrator)
+
+
+def _not_admitted(act: _Act, refusals: Sequence[str]) -> Outcome:
+    if refusals and set(refusals) <= WAITING_REFUSALS:
+        return Outcome(act.subject, "waiting", ", ".join(refusals), act.repository)
+    reasons = ", ".join(refusals) or "no reason given"
+    return Outcome(act.subject, "refused", reasons, act.repository, act.refused_key)
+
+
+def _ask_to_land(act: _Act, pull: str, orchestrator: Orchestrator) -> Outcome | None:
+    """The first time this unit is asked about, so an outcome left unknown only waits."""
+    subject, repository = act.subject, act.repository
     try:
-        answer = orchestrator.land(
-            unit_id,
-            {"idempotency_key": f"bump-driver:merge:{unit_id}", "expected_version": version},
-        )
+        answer = _land(act.unit_id, orchestrator)
     except CallError as error:
-        return _call_refused(subject, error, bump.repository, refused_key)
+        return _call_refused(subject, error, repository, act.refused_key)
     if answer.get("status") in LANDED:
         if pull == MERGED_PULL:
             return None
-        return Outcome(subject, "merged", str(answer.get("status")), bump.repository)
+        return Outcome(subject, "merged", str(answer.get("status")), repository)
+    if _unknown(answer):
+        detail = f"{answer.get('reason_code')}; the next pass asks again"
+        return Outcome(subject, "waiting", detail, repository)
     return Outcome(
-        subject, "refused", f"merge: {answer.get('reason_code')}", bump.repository, refused_key
+        subject, "refused", f"merge: {answer.get('reason_code')}", repository, act.refused_key
     )
+
+
+def _land(unit_id: str, orchestrator: Orchestrator) -> dict[str, Any]:
+    # Only a state transition moves the version, and one can land between a read and here.
+    version = orchestrator.unit(unit_id)["version"]
+    return orchestrator.land(
+        unit_id,
+        {"idempotency_key": f"bump-driver:merge:{unit_id}", "expected_version": version},
+    )
+
+
+def _unknown(answer: Mapping[str, Any]) -> bool:
+    """A row the call left unknown, the reason `interfaces.outcome_is_unknown` reads."""
+    return answer.get("status") == "refused" and str(answer.get("reason_code")).startswith(
+        UNKNOWN_REASON_PREFIX
+    )
+
+
+def _replay(
+    act: _Act, pull: str, refusals: Sequence[str], orchestrator: Orchestrator, dry_run: bool
+) -> Outcome | None:
+    """Ask about a row whose outcome is unknown. `pr-merge` settles it before any term, so this
+    runs with the switch off and on a pull request that has merged or closed; it calls nothing
+    unless the read finds the pull request open and unlanded and the terms then admit it."""
+    subject, repository = act.subject, act.repository
+    if dry_run:
+        return Outcome(subject, "would-settle", repository=repository)
+    try:
+        answer = _land(act.unit_id, orchestrator)
+    except CallError as error:
+        if error.code not in SETTLED_THEN_REFUSED:
+            return _call_refused(subject, error, repository, act.refused_key)
+        # The row is gone. What remains is what any pull request without one would report.
+        others = set(refusals) - {OUTCOME_UNKNOWN}
+        if pull != OPEN_PULL:
+            return None
+        if others and others <= WAITING_REFUSALS:
+            return Outcome(subject, "waiting", ", ".join(sorted(others)), repository)
+        return Outcome(subject, "refused", str(error), repository, act.refused_key)
+    if answer.get("status") in LANDED:
+        return Outcome(subject, "merged", str(answer.get("status")), repository)
+    detail = f"merge: {answer.get('reason_code')}"
+    if _unknown(answer):
+        detail = f"{detail}; a replay could not settle it"
+    return Outcome(subject, "refused", detail, repository, act.refused_key)
 
 
 def _failed(bump: _Bump, row: Mapping[str, Any], orchestrator: Orchestrator) -> Outcome | None:

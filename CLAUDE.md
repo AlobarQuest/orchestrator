@@ -412,11 +412,12 @@ Placement rule: global CLAUDE.md §7.
   the landing ledger's `landing` observation, confirmed against `UnitPrBinding.head_sha`, pinned by
   `tests/contract/test_landing_fact_contract.py`. History:
   `docs/history/claude-md-invariants-archive.md` #228.
-- The post-landing watch selects a factory merge from rows alone: status `merged`, a
-  unit that is a dependency update by both class and profile, `landing_inert` on its
-  `pr_merge.merged` event (the estate's answer at the act; an event without it is never watched),
-  and no record naming it as a revert. `UnitPrMerge.repository` is the envelope's
-  spelling and `landing_reverts` is folded, so every join folds it. Detail:
+- The post-landing watch selects a factory merge from rows alone: status `merged` or
+  `already_merged`, a unit that is a dependency update by both class and profile, `landing_inert`
+  on the row's event (the estate's answer when our call was made; an `already_merged` found before
+  any call never carries it, and an event without it is never watched), and no record naming it as
+  a revert. `UnitPrMerge.repository` is the envelope's spelling and `landing_reverts` is folded, so
+  every join folds it. Detail:
   `docs/operations/landing-lanes.md`, "Automatic reverts (inert repositories)".
 - Making a UNIQUE constraint's column nullable disables it for NULL rows; use
   `postgresql_nulls_not_distinct=True` and test by writing around the service. History:
@@ -611,8 +612,13 @@ Placement rule: global CLAUDE.md §7.
   `ORCHESTRATOR_BUMP_MERGE_ENABLED` is on. Off, a unit the path covers refuses
   `merge_policy_path_off` in place of `authority_approval_not_bound`; other terms report beside it,
   so it means waiting only as the sole refusal. The admission answer writes nothing; the act records
-  `authority.human_gate_not_required` beside a `merged` record only. The policy path alone also
-  reads the pull request in `pr_merge._act`, after it is known open and before landing: the head is
+  `authority.human_gate_not_required` beside a landing its own call made, including one reconciled
+  after that call, never beside an `already_merged` found before it. A row whose reason is
+  `merge_refused_by_remote:<code>` is an unknown outcome: `pr-merge-admission` answers
+  `landing_outcome_unknown`, the bump driver replays it whatever the pull request's state or the
+  other refusals, and `pr_merge._resettle`, in its own committed step and asking no term, is the
+  only code that may change or remove a `UnitPrMerge` row (ADR-0025 amendment 5). The policy path
+  alone also reads the pull request in `pr_merge._act`, after it is known open and before landing: the head is
   `sds/<unit8>-attempt-<attempt_count>` in the repository itself and is the adjudicated head, the
   body has the whole-line `SDS-Unit:` trailer, and `pulls/{n}/files` reads fully (its length equals
   `changed_files`), neither end of any entry is a workflow or gate file, and a tooling manifest

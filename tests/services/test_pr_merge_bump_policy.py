@@ -323,21 +323,29 @@ def test_a_confirmed_remote_refusal_leaves_no_record_of_the_gate(
     assert _gate_events(migrated_session, unit) == []
 
 
-def test_landing_after_a_lost_response_is_not_recorded_as_policy_lifted(
+def test_landing_after_a_lost_response_is_recorded_as_policy_lifted(
     migrated_session: Session,
 ) -> None:
     unit = _bump(migrated_session, "reconciled")
     gateway = FakeGateway(
         merge_error=GitHubGatewayError("merge_status", 405),
         state_after_refusal=PullRequestState(
-            base_ref="main", default_branch="main", open=False, landed=True
+            base_ref="main",
+            default_branch="main",
+            open=False,
+            landed=True,
+            merge_commit_sha="d" * 40,
         ),
     )
 
     record = _land(migrated_session, unit, gateway)
 
     assert record.status == "already_merged"
-    assert _gate_events(migrated_session, unit) == []
+    assert record.merge_commit_sha == "d" * 40
+    assert len(_gate_events(migrated_session, unit)) == 1
+    event = migrated_session.get(Event, record.event_id)
+    assert event is not None
+    assert event.payload["landing_inert"] is True
 
 
 def test_a_pull_request_somebody_else_landed_records_no_lifted_gate(

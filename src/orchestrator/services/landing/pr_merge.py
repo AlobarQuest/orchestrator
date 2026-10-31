@@ -49,21 +49,23 @@ lands it. The merge is left undone, the pull request open, and the bump driver a
 `bump-act-refused`. Tests can still be weakened: only workflow and gate files are refused (ADR-0025
 amendment 4).
 
-## Idempotency, and why the order is check, act, reconcile, record
+## Idempotency, and why the order is settle, check, act, reconcile, record
 
 A landing is not idempotent and its failure is asymmetric: if it succeeds and the response is
 lost, asking again answers 405, which is shaped exactly like a refusal. So:
 
-1. **Check.** The unit's row is locked and its merge record read. A record means the call was
+1. **Settle.** A row whose outcome is unknown is settled by a read, in a step committed of its own
+   (`_resettle`). Nothing here depends on the terms, which ran before the call that row records.
+2. **Check.** The unit's row is locked and its merge record read. A record means the call was
    already made; it is replayed, never repeated. This is the scar the workflow trigger left —
    there, a reused ordinal returns a success-shaped record having fired nothing, and a repeat here
    would be worse, because the second call reaches GitHub and comes back with a plausible refusal.
-2. **Act.**
-3. **Reconcile before recording a refusal.** A refusal from the remote is followed by re-reading
+3. **Act.**
+4. **Reconcile before recording a refusal.** A refusal from the remote is followed by re-reading
    the pull request: if it is in fact landed, the record says so. Without that, a retry after a
    lost response writes `refused` over something that happened, which is the one outcome nothing
    downstream could correct.
-4. **Record.**
+5. **Record.**
 
 Act-then-record, deliberately, because the two failure modes are not equal. A record written
 before a call that then fails is a lie in the ledger. A landing whose record is lost is
@@ -84,14 +86,24 @@ revoking the App installation's write.
 ## The lifted requirement is recorded by the act
 
 The policy path's trace is `authority.human_gate_not_required`, written beside the merge record in
-one transaction, and only when this call landed the pull request (status `merged`). It is written
-here rather than by the admission answer, which is also served to readers and writes nothing.
+one transaction, whenever this act's call landed the pull request: `merged`, or `already_merged`
+reconciled after the call, by the re-read or by a later settling. It is written here rather than
+by the admission answer, which is also served to readers and writes nothing.
+
+## Which `already_merged` is ours
+
+`already_merged` has two meanings the status can't tell apart. Found landed after our call, it is
+our act with a lost answer; found landed before any call, it is somebody else's, or a crash nobody
+can attribute. Only the first carries the event's `landing_inert` and `policy_path`, written when
+the call was made and copied when the row settles. The post-landing watch selects on that stamp.
 """
 
 from __future__ import annotations
 
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, Final, Protocol
 
 import httpx
@@ -112,6 +124,7 @@ from orchestrator.persistence.models import (
 from orchestrator.services.github_app import GitHubAppTokenError
 from orchestrator.services.landing.change_record import ChangeRecordSource
 from orchestrator.services.landing.estate_landing import EstateLandingSource
+from orchestrator.services.landing.interfaces import MERGE_REFUSED_BY_REMOTE, outcome_is_unknown
 from orchestrator.services.landing.pr_merge_admission import MergeAdmission, admission_for
 from orchestrator.services.membership.holds import (
     TOOLING_TO_DEPENDABOT,
@@ -170,11 +183,8 @@ FILES_PER_PAGE: Final = 100
 # `changed_files` is what refuses a longer pull request.
 MAX_FILE_PAGES: Final = 31
 
-# Recorded on the one ambiguous outcome: the remote refused and the confirming read also failed,
-# so a landing cannot be ruled out. Branch protection is the expected reason for a refusal and is
-# the floor under this whole increment -- the App cannot read protection settings, so a refusal is
-# learned by attempting and reading the answer, never by asking permission first.
-MERGE_REFUSED_BY_REMOTE: Final = "merge_refused_by_remote"
+# The recorded statuses that say the pull request landed. A confirmed non-landing is `refused`.
+_LANDED: Final = frozenset({"merged", "already_merged"})  # not-a-vocabulary: `_record`'s statuses
 
 
 @dataclass(frozen=True)
@@ -192,6 +202,8 @@ class PullRequestState:
     head_sha: str = ""
     body: str = ""
     changed_files: int = -1
+    # Only for a landed pull request: the remote names a test commit on an open one.
+    merge_commit_sha: str | None = None
 
 
 @dataclass(frozen=True)
@@ -262,8 +274,17 @@ def land_unit_pull_request(
     A flush alone would return a correct-looking response while the row is discarded when the
     session closes — leaving the record of an act that really happened absent, which is the one
     state the whole idempotency story depends on not reaching.
+
+    **A row whose outcome is unknown is settled in a step of its own, committed before the ordinary
+    path starts**, as `lane_act.land_pull_request` does and for its reason: what the read found
+    stands whatever the terms say next, and a rollback would restore a removed row. The commit
+    releases the unit's lock, so the ordinary path takes it again and reads the row again.
     """
     try:
+        settled = _settle(session, command, gateway)
+        session.commit()
+        if settled is not None:
+            return settled
         record = _land_unit_pull_request(
             session,
             command,
@@ -281,16 +302,19 @@ def land_unit_pull_request(
         raise
 
 
-def _land_unit_pull_request(
-    session: Session,
-    command: MergeCommand,
-    gateway: PullRequestGateway,
-    landing_source: EstateLandingSource,
-    record_source: ChangeRecordSource,
-    credentials_configured: bool,
-    clock: Clock | None,
-    bump_merge_enabled: bool,
-) -> UnitPrMerge:
+def _settle(
+    session: Session, command: MergeCommand, gateway: PullRequestGateway
+) -> UnitPrMerge | None:
+    """The row this request is answered from, settling it first if its outcome is unknown; `None`
+    when there is none, or it was just removed, and the ordinary path runs."""
+    unit = _locked_unit(session, command)
+    existing = _recorded(session, unit)
+    if existing is None or not outcome_is_unknown(existing.status, existing.reason_code):
+        return existing
+    return _resettle(session, command, unit, gateway, existing)
+
+
+def _locked_unit(session: Session, command: MergeCommand) -> WorkUnit:
     _authorize_actor(command.actor)
     unit = session.scalar(select(WorkUnit).where(WorkUnit.id == command.unit_id).with_for_update())
     if unit is None:
@@ -303,11 +327,88 @@ def _land_unit_pull_request(
             current_state=unit.state,
             current_version=unit.version,
         )
+    return unit
 
-    # Read BEFORE the call, under the unit's row lock, so two requests cannot both find nothing.
-    existing = session.scalar(
+
+def _recorded(session: Session, unit: WorkUnit) -> UnitPrMerge | None:
+    """Read BEFORE the call, under the unit's row lock, so two requests cannot both find nothing."""
+    return session.scalar(
         select(UnitPrMerge).where(UnitPrMerge.work_unit_id == unit.id).with_for_update()
     )
+
+
+def _resettle(
+    session: Session,
+    command: MergeCommand,
+    unit: WorkUnit,
+    gateway: PullRequestGateway,
+    record: UnitPrMerge,
+) -> UnitPrMerge | None:
+    """Settle a row whose outcome was unknown, if the remote can now say. `None` means the row was
+    removed and the caller proceeds as though it had never been written.
+
+    Still unknown: the row is returned as it stands. Landed: the row becomes the `already_merged`
+    it should have been and its event moves to one naming that action, because the post-landing
+    watch reads the row's event. Not landed: nothing happened, so the row is removed; its event
+    stays, and the removal has its own.
+
+    **Every new event is the row's stored event with its outcome changed.** That event was written
+    when the call was made, so `landing_inert` and `policy_path` are the answers the call was made
+    on. No term is asked again: policy may have narrowed since, and no new call is made. A unit's
+    state and version don't move, since a landing is not a transition.
+    """
+    state = _landed_after_all(gateway, record.repository, record.pr_number)
+    if state is None:
+        return record
+    stored = session.get(Event, record.event_id)
+    payload: dict[str, Any] = dict(stored.payload) if stored is not None else {}
+    if not state.landed:
+        _write_event(
+            session,
+            command,
+            unit,
+            {**payload, "status": "unlanded"},
+            key=f"{record.idempotency_key}:unlanded:{record.id}",
+        )
+        session.delete(record)
+        session.flush()
+        return None
+    record.status = "already_merged"
+    record.reason_code = None
+    record.merge_commit_sha = state.merge_commit_sha
+    record.updated_at = datetime.now(UTC)
+    event = _write_event(
+        session,
+        command,
+        unit,
+        {
+            **payload,
+            "status": record.status,
+            "reason_code": None,
+            "merge_commit_sha": record.merge_commit_sha,
+        },
+        key=f"{record.idempotency_key}:{record.status}:{record.id}",
+    )
+    record.event_id = event.id
+    policy_path = payload.get("policy_path")
+    if isinstance(policy_path, Mapping):
+        _record_gate_not_required(session, command, unit, policy_path)
+    session.flush()
+    return record
+
+
+def _land_unit_pull_request(
+    session: Session,
+    command: MergeCommand,
+    gateway: PullRequestGateway,
+    landing_source: EstateLandingSource,
+    record_source: ChangeRecordSource,
+    credentials_configured: bool,
+    clock: Clock | None,
+    bump_merge_enabled: bool,
+) -> UnitPrMerge:
+    unit = _locked_unit(session, command)
+    existing = _recorded(session, unit)
     if existing is not None:
         return existing
 
@@ -375,11 +476,11 @@ def _act(
 
     **A RECORD IS WRITTEN ONLY FOR AN OUTCOME THAT CANNOT BE RETRIED**, and getting that boundary
     wrong is how the row meant to protect the unit becomes the thing that bars it. The row is
-    unique per unit and there is no delete path, so every recorded outcome is permanent — which is
-    correct for *it landed* and *we cannot rule out that it landed*, and badly wrong for *GitHub
-    answered 502 once*. Two independent reviews found the first draft recording a transient read
-    failure here, which would have permanently barred a unit from being landed for the duration of
-    one bad response.
+    unique per unit, so a recorded outcome bars another call — which is correct for *it landed* and
+    for *we cannot rule out that it landed*, which only a later read may settle (`_resettle`), and
+    badly wrong for *GitHub answered 502 once*. Two independent reviews found the first draft
+    recording a transient read failure here, which would have permanently barred a unit from being
+    landed for the duration of one bad response.
 
     So the boundary is `submit_merge`, which is the only call that is not idempotent. Everything
     before it — a failed read, a base that is not the default branch, a closed pull request — is
@@ -423,6 +524,7 @@ def _act(
             head_sha,
             status="already_merged",
             reason_code=None,
+            called=False,
         )
     if not state.open:
         raise DomainError(
@@ -442,7 +544,8 @@ def _act(
         # A refusal is indistinguishable from a lost response to a call that succeeded, so ask
         # what is true before writing what happened. Asked ONCE and bound to a name: reading twice
         # would be two answers to one question.
-        landed = _landed_after_all(gateway, admission, number)
+        reread = _landed_after_all(gateway, admission.target_repository, number)
+        landed = None if reread is None else reread.landed
         if landed is True:
             return _record(
                 session,
@@ -454,6 +557,7 @@ def _act(
                 head_sha,
                 status="already_merged",
                 reason_code=None,
+                merge_commit_sha=reread.merge_commit_sha if reread is not None else None,
                 github_status=error.status_code,
             )
         if landed is False:
@@ -466,9 +570,8 @@ def _act(
                 "resolve what the remote objected to, then ask again",
             ) from error
         # The reconciling read ITSELF failed, so we cannot rule out that it landed. This is the
-        # one genuinely ambiguous outcome, and it is recorded — terminal and conservative, because
-        # a retry would meet the same refusal and be no better informed. The ledger observes the
-        # landing independently and can settle it.
+        # one genuinely ambiguous outcome, and it is recorded, because a repeat of the call would
+        # meet the same refusal no better informed. A later request settles it (`_resettle`).
         return _record(
             session,
             command,
@@ -566,18 +669,17 @@ def _manifests(session: Session, revision: WorkPackageRevision, repository: str)
 
 
 def _landed_after_all(
-    gateway: PullRequestGateway, admission: MergeAdmission, number: int
-) -> bool | None:
-    """Did the pull request land despite the refusal? `None` means WE DO NOT KNOW.
+    gateway: PullRequestGateway, repository: str, number: int
+) -> PullRequestState | None:
+    """Did the pull request land despite the refusal? `None` means WE DO NOT KNOW; otherwise the
+    re-read pull request, whose `landed` answers and whose merge commit names the landing.
 
     Three answers, not two, and the third is the one the caller must treat differently: a second
     failure to read cannot be collapsed into "it did not land", because that reads a lost success
     as a clean refusal — which is exactly the confusion this whole path exists to resolve.
     """
     try:
-        return gateway.read_pull_request(
-            repository=admission.target_repository, number=number
-        ).landed
+        return gateway.read_pull_request(repository=repository, number=number)
     except GitHubGatewayError:
         return None
 
@@ -609,7 +711,11 @@ def _record(
     reason_code: str | None,
     merge_commit_sha: str | None = None,
     github_status: int | None = None,
+    called: bool = True,
 ) -> UnitPrMerge:
+    """`called` is false only when the pull request was found landed before any call was made, so
+    the row is no act of ours and its event carries neither of the stamps that say so."""
+    policy_path = _policy_path(admission) if called else None
     record = UnitPrMerge(
         work_unit_id=unit.id,
         repository=admission.target_repository,
@@ -623,14 +729,11 @@ def _record(
     )
     session.add(record)
     session.flush()
-    event = Event(
-        actor_id=command.actor.actor_id,
-        action=f"pr_merge.{status}",
-        subject_type="work_unit",
-        subject_id=unit.id,
-        from_state=unit.state,
-        to_state=unit.state,
-        payload={
+    event = _write_event(
+        session,
+        command,
+        unit,
+        {
             "pr_merge_record_id": str(record.id),
             "work_package_revision_id": str(revision.id),
             "repository": admission.target_repository,
@@ -641,8 +744,10 @@ def _record(
             "merge_commit_sha": merge_commit_sha,
             "authority_fingerprint": unit.authority_fingerprint,
             # The estate's answer at this act: the post-landing watch reads it, and App Brain is
-            # not asked again for what this landing was.
-            "landing_inert": admission.landing_inert,
+            # not asked again for what this landing was. Only an act of ours carries it.
+            "landing_inert": called and admission.landing_inert,
+            # What lifted the human requirement, kept so a row settled later can say so.
+            "policy_path": policy_path,
             # Beside the fingerprint on purpose: the override's attribution is inherited from the
             # human approval bound to it, so the reason and the approval it rests on belong in one
             # row. `unit_pr_merge` carries no free-form column and this act writes a row only when
@@ -654,25 +759,66 @@ def _record(
                 authority_fingerprint=unit.authority_fingerprint,
             ),
         },
-        correlation_id=uuid.uuid4(),
-        idempotency_key=f"{command.idempotency_key}:event",
+        key=f"{command.idempotency_key}:event",
     )
-    session.add(event)
-    session.flush()
     record.event_id = event.id
-    if admission.authority_recognised_by and status == "merged":
-        _record_gate_not_required(session, command, unit, admission)
+    if policy_path is not None and status in _LANDED:
+        _record_gate_not_required(session, command, unit, policy_path)
     session.flush()
     return record
 
 
+def _policy_path(admission: MergeAdmission) -> dict[str, Any] | None:
+    """What lifted the human requirement, or `None` when a bound approval met the term."""
+    if not admission.authority_recognised_by:
+        return None
+    return {
+        "recognised_by": list(admission.authority_recognised_by),
+        "policy_version": admission.authority_policy_version,
+        "policy_source": admission.authority_policy_source,
+    }
+
+
+def _write_event(
+    session: Session,
+    command: MergeCommand,
+    unit: WorkUnit,
+    payload: Mapping[str, Any],
+    *,
+    key: str,
+) -> Event:
+    """One event about a unit's row. Its action is the payload's status."""
+    event = Event(
+        actor_id=command.actor.actor_id,
+        action=f"pr_merge.{payload['status']}",
+        subject_type="work_unit",
+        subject_id=unit.id,
+        from_state=unit.state,
+        to_state=unit.state,
+        payload=dict(payload),
+        correlation_id=uuid.uuid4(),
+        idempotency_key=_unspent(session, key),
+    )
+    session.add(event)
+    session.flush()
+    return event
+
+
+def _unspent(session: Session, key: str) -> str:
+    """The key this event carries. A removed row's event keeps the row's key, in a table that is
+    unique on it and append-only, and a caller's key names the unit, so its next request carries
+    it. Without a key of its own that request's event would be an unhandled 500 after a landing."""
+    spent = session.scalar(select(Event.id).where(Event.idempotency_key == key))
+    return key if spent is None else f"{key}:{uuid.uuid4()}"
+
+
 def _record_gate_not_required(
-    session: Session, command: MergeCommand, unit: WorkUnit, admission: MergeAdmission
+    session: Session, command: MergeCommand, unit: WorkUnit, policy_path: Mapping[str, Any]
 ) -> None:
     """The trace dispatch and the claim leave when policy lifted the requirement, at the merge.
 
     Not an approval: `unit.authority_approval_id` stays null, and the event names the patterns, the
-    artifact version and the fingerprint they recognised, as they stood at this act.
+    artifact version and the fingerprint they recognised, as they stood when the call was made.
     """
     session.add(
         Event(
@@ -684,13 +830,11 @@ def _record_gate_not_required(
             to_state=unit.state,
             payload={
                 "at": "merge",
-                "recognised_by": list(admission.authority_recognised_by),
-                "policy_version": admission.authority_policy_version,
-                "policy_source": admission.authority_policy_source,
+                **policy_path,
                 "authority_fingerprint": unit.authority_fingerprint,
             },
             correlation_id=uuid.uuid4(),
-            idempotency_key=f"{command.idempotency_key}:authority-gate",
+            idempotency_key=_unspent(session, f"{command.idempotency_key}:authority-gate"),
         )
     )
 
@@ -818,16 +962,18 @@ def _state_from_body(body: Any) -> PullRequestState:
     head = head if isinstance(head, dict) else {}
     head_repo = head.get("repo")
     head_repo = head_repo if isinstance(head_repo, dict) else {}
+    landed = bool(body.get("merged"))
     return PullRequestState(
         base_ref=base_ref,
         default_branch=default_branch,
         open=body.get("state") == "open",
-        landed=bool(body.get("merged")),
+        landed=landed,
         head_ref=_text(head.get("ref")),
         head_repository=_text(head_repo.get("full_name")),
         head_sha=_text(head.get("sha")),
         body=_text(body.get("body")),
         changed_files=_count(body.get("changed_files")),
+        merge_commit_sha=(_text(body.get("merge_commit_sha")) or None) if landed else None,
     )
 
 

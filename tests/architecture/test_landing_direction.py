@@ -310,10 +310,10 @@ def test_the_shared_act_steps_name_no_lane_and_no_landing_call() -> None:
     assert not attributes & {"merge", "submit_merge"}
 
 
-def _landing_row_writes(tree: ast.Module) -> set[str]:
+def _landing_row_writes(tree: ast.Module, model: str) -> set[str]:
     """Each function here that builds, updates or deletes a landing row, by name.
 
-    A row reaches a function as a parameter annotated `EstatePrMerge`, or is built by calling it.
+    A row reaches a function as a parameter annotated `model`, or is built by calling it.
     """
     writers: set[str] = set()
     for function in ast.walk(tree):
@@ -322,8 +322,7 @@ def _landing_row_writes(tree: ast.Module) -> set[str]:
         rows = {
             parameter.arg
             for parameter in [*function.args.args, *function.args.kwonlyargs]
-            if parameter.annotation is not None
-            and "EstatePrMerge" in ast.unparse(parameter.annotation)
+            if parameter.annotation is not None and model in ast.unparse(parameter.annotation)
         }
         for node in ast.walk(function):
             written = False
@@ -331,9 +330,9 @@ def _landing_row_writes(tree: ast.Module) -> set[str]:
                 written = (
                     isinstance(node.func, ast.Name)
                     and (
-                        node.func.id == "EstatePrMerge"
+                        node.func.id == model
                         or node.func.id in {"update", "delete"}
-                        and "EstatePrMerge" in ast.unparse(node)
+                        and model in ast.unparse(node)
                     )
                 ) or (
                     isinstance(node.func, ast.Attribute)
@@ -358,7 +357,17 @@ def test_only_lane_act_may_write_a_landing_row_and_only_resettle_changes_one() -
     found = {
         (path.name, name)
         for path in sorted((SRC / "orchestrator").rglob("*.py"))
-        for name in _landing_row_writes(ast.parse(path.read_text()))
+        for name in _landing_row_writes(ast.parse(path.read_text()), "EstatePrMerge")
     }
 
     assert found == {("lane_act.py", "_record"), ("lane_act.py", "_resettle")}
+
+
+def test_only_pr_merge_may_write_a_factory_row_and_only_resettle_changes_one() -> None:
+    found = {
+        (path.name, name)
+        for path in sorted((SRC / "orchestrator").rglob("*.py"))
+        for name in _landing_row_writes(ast.parse(path.read_text()), "UnitPrMerge")
+    }
+
+    assert found == {("pr_merge.py", "_record"), ("pr_merge.py", "_resettle")}

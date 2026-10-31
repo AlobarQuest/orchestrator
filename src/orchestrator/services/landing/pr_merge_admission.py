@@ -55,6 +55,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Final
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from orchestrator.change_window_override import ChangeWindowOverride, suppressed
@@ -65,6 +66,7 @@ from orchestrator.kernel.authority import AuthorityEnvelope, normalize_authority
 from orchestrator.kernel.states import WorkUnitState
 from orchestrator.persistence.models import (
     UnitPrBinding,
+    UnitPrMerge,
     WorkPackage,
     WorkPackageRevision,
     WorkUnit,
@@ -94,6 +96,7 @@ from orchestrator.services.landing.estate_landing import (
     SOURCE_UNCONFIGURED,
     EstateLandingSource,
 )
+from orchestrator.services.landing.interfaces import LANDING_OUTCOME_UNKNOWN, outcome_is_unknown
 from orchestrator.services.landing.revert_record import revert_in_progress, reverted_versions
 from orchestrator.services.landing.terms import (
     factory_brings_reverted,
@@ -412,6 +415,17 @@ def admission_for(
     if not granted.met:
         refusals.append(MERGE_REPOSITORY_NOT_GRANTED)
 
+    # Not a term of the act, which settles such a row first: an answer to whoever reads it, and
+    # the bump driver's cue to ask again.
+    prior = session.execute(
+        select(UnitPrMerge.status, UnitPrMerge.reason_code).where(
+            UnitPrMerge.work_unit_id == unit.id
+        )
+    ).first()
+    outcome_unknown = prior is not None and outcome_is_unknown(prior.status, prior.reason_code)
+    if outcome_unknown:
+        refusals.append(LANDING_OUTCOME_UNKNOWN)
+
     gate = authority.lifted_by
     return MergeAdmission(
         satisfied=(
@@ -425,6 +439,7 @@ def admission_for(
             and estate.met
             and held.met
             and granted.met
+            and not outcome_unknown
         ),
         refusals=tuple(refusals),
         target_repository=target_repository,

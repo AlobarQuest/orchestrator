@@ -161,6 +161,7 @@ paths = [
   "tests/services/test_bump_decomposition_policy.py",
   "tests/services/test_pr_merge_bump_diff.py",
   "tests/services/test_pr_merge_bump_policy.py",
+  "tests/services/test_pr_merge_settling.py",
   "tests/services/test_factory_policy.py",
   "tests/services/test_follow_ups.py",
   "tests/services/test_graduation_ledger.py",

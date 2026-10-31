@@ -1486,15 +1486,16 @@ PR_MERGE_STATUSES = ("merged", "already_merged", "refused")
 class UnitPrMerge(UUIDPrimaryKey, Base):
     """The orchestrator's own record that it asked GitHub to land a unit's pull request.
 
-    **One row per unit, ever, and the uniqueness is the point.** A landing is not idempotent and
-    its failure is asymmetric: if the call succeeds and the response is lost, asking again returns
-    405, which is shaped exactly like a refusal. So "did we already do this?" cannot be answered by
-    asking GitHub after the fact — it is answered here, before the call.
+    **One row per unit, and the uniqueness is the point.** A confirmed non-landing removes a row
+    whose outcome was unknown (`pr_merge._resettle`); nothing else does. A landing is not
+    idempotent and its failure is asymmetric: if the call succeeds and the response is lost, asking
+    again returns 405, which is shaped exactly like a refusal. So "did we already do this?" cannot
+    be answered by asking GitHub after the fact — it is answered here, before the call.
 
     **A row is written only when the factory ACTED.** An admission refusal writes nothing: it is
     already reportable from the read surface, and recording it here would consume the unit's one
     row and refuse every later legitimate attempt. So the presence of a row means the call was
-    made, which is exactly what a repeat needs to detect.
+    made, or that the pull request was found already landed, which is what a repeat needs to detect.
 
     This is deliberately NOT the ledger's record of the landing. The ledger observes GitHub
     independently and attributes what it finds; this is the orchestrator's account of its own act,
