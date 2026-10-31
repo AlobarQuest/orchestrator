@@ -159,6 +159,36 @@ def test_a_fired_approval_wait_is_not_resolved_by_an_error_pass(hub: Hub, tmp_pa
     assert _about(hub, key) == [(key, "firing")]
 
 
+def test_a_clock_that_can_t_be_saved_holds_an_open_wait(hub: Hub, tmp_path: Path) -> None:
+    outcome = Outcome(CREDENTIAL, "awaiting-approval", "detail")
+    _sync(hub, tmp_path, [outcome])
+    _sync(hub, tmp_path, [outcome], 48)
+    assert _sent(hub) == [(approval_key(CREDENTIAL), "firing")]
+    (tmp_path / "approval-since.json.tmp").mkdir()
+    reason = _sync(hub, tmp_path, [outcome], 49)
+    assert reason is not None and "state file unwritable" in reason
+    assert _sent(hub) == [(approval_key(CREDENTIAL), "firing")]
+
+
+def test_a_clock_that_can_t_be_saved_still_sends_findings(hub: Hub, tmp_path: Path) -> None:
+    (tmp_path / "approval-since.json.tmp").mkdir()
+    outcomes = [
+        Outcome(CREDENTIAL, "awaiting-approval", "detail"),
+        Outcome("other", sorted(FINDING_STATUSES)[0], "detail"),
+    ]
+    assert _sync(hub, tmp_path, outcomes) is not None
+    assert _sent(hub) == [(finding_key("other", sorted(FINDING_STATUSES)[0]), "firing")]
+
+
+def test_a_long_detail_stays_within_alert_hub_s_limit(hub: Hub, tmp_path: Path) -> None:
+    long = Outcome(CREDENTIAL, "awaiting-approval", "x" * 5000)
+    finding = Outcome("other", sorted(FINDING_STATUSES)[0], "y" * 5000)
+    _sync(hub, tmp_path, [long, finding])
+    _sync(hub, tmp_path, [long, finding], 48)
+    assert len(hub.sent) == 2
+    assert all(len(row["message"]) <= 4000 for row in hub.sent)
+
+
 def test_a_hub_that_refuses_is_named(hub: Hub, tmp_path: Path) -> None:
     hub.status = 500
     assert _sync(hub, tmp_path, [Outcome(CREDENTIAL, "stacked", "x")]) is not None

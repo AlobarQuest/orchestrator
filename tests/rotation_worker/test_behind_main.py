@@ -9,7 +9,7 @@ from typing import cast
 
 import pytest
 
-from rotation_worker import worker
+from rotation_worker import cli, worker
 from rotation_worker.git_mirror import MirrorError, RepoMirror
 from rotation_worker.notify import Act, behind_key
 from tests.rotation_worker.conftest import ENV, Origins
@@ -124,3 +124,10 @@ def test_a_behind_failure_of_any_kind_still_lets_unit_alerts_out(
     monkeypatch.setattr(worker, "unit_alerts", lambda _setup: ({failed.key: failed}, set()))
     worker.run_pass(run.setup("0123456789ab"))
     assert [(m["key"], m["status"]) for m in run.hub.sent] == [(failed.key, "firing")]
+
+
+def test_the_revision_prefix_is_written_once() -> None:
+    package = Path(worker.__file__).parent
+    holders = [p.name for p in package.rglob("*.py") if "rotation-worker@" in p.read_text()]
+    assert holders == ["worker.py"]
+    assert cli.SOURCE_PREFIX is worker.SOURCE_PREFIX

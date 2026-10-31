@@ -18,6 +18,8 @@ Either way a remembered key that stops firing is sent `resolved` and forgotten, 
   next pass anyway, so a 429 is an immediate failure.
 * **The token never leaves the request header.** Errors name the exception type and the status
   code, nothing the token store or `httpx` said.
+* **A message is cut to alert-hub's limit here**, the one place every lane's send passes through,
+  because alert-hub refuses a longer one outright and the alert would never go out.
 * **Keys follow alert-hub's grammar** (1-200 of `[A-Za-z0-9._:/-]`); `alert_key` builds one from
   free text deterministically, and `sync` refuses a key outside it before sending anything.
 """
@@ -48,6 +50,8 @@ RATE_LIMITED: Final = 429
 DEFAULT_RETRY_WAIT: Final = 15.0
 MAX_RETRY_WAIT: Final = 60.0
 MAX_KEY = 200
+# alert-hub's `MAX_MESSAGE` (src/ingest/validate.ts), which counts UTF-16 code units.
+MAX_MESSAGE: Final = 4000
 KEY_GRAMMAR: Final = re.compile(r"[A-Za-z0-9._:/-]{1,200}")
 # Left as they are inside a key part. `_` is the escape character and `:` the part separator, so
 # neither is left alone.
@@ -77,6 +81,11 @@ class Alert:
     title: str
     message: str = ""
     link: str | None = None
+
+
+def _clip_message(message: str) -> str:
+    units = message.encode("utf-16-le", errors="surrogatepass")[: MAX_MESSAGE * 2]
+    return units.decode("utf-16-le", errors="ignore")
 
 
 def _encode(part: str) -> str:
@@ -228,7 +237,7 @@ class KeyedAlerts:
             "kind": "alert",
             "status": status,
             "title": alert.title,
-            **({"message": alert.message} if alert.message else {}),
+            **({"message": _clip_message(alert.message)} if alert.message else {}),
             **({"link": alert.link} if alert.link else {}),
         }
         try:

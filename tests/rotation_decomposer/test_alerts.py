@@ -87,6 +87,23 @@ def test_an_unread_pass_holds_every_key(hub: Hub, tmp_path: Path) -> None:
     assert _sent(hub) == [(key, "firing"), (key, "resolved")]
 
 
+def test_a_clock_that_can_t_be_saved_holds_an_open_wait(hub: Hub, tmp_path: Path) -> None:
+    key = decomposition_key(SUBJECT)
+    _sync(hub, tmp_path, [WAITING])
+    _sync(hub, tmp_path, [WAITING], 48)
+    (tmp_path / "approval-since.json.tmp").mkdir()
+    reason = _sync(hub, tmp_path, [WAITING], 49)
+    assert reason is not None and "state file unwritable" in reason
+    assert _sent(hub) == [(key, "firing")]
+
+
+def test_a_long_detail_stays_within_alert_hub_s_limit(hub: Hub, tmp_path: Path) -> None:
+    long = Outcome(SUBJECT, "awaiting-approval", "x" * 5000)
+    _sync(hub, tmp_path, [long])
+    _sync(hub, tmp_path, [long], 48)
+    assert len(hub.sent[0]["message"]) <= 4000
+
+
 def test_an_unusable_state_directory_is_named(hub: Hub, tmp_path: Path) -> None:
     blocker = tmp_path / "file"
     blocker.write_text("")

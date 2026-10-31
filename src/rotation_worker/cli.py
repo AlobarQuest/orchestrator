@@ -59,7 +59,7 @@ from rotation_worker.registry import (
 )
 from rotation_worker.secret_store import BwsStore, KeychainStore, SecretStore, StoreError
 from rotation_worker.values import Value
-from rotation_worker.worker import Setup, consumer_reads, run_pass
+from rotation_worker.worker import SOURCE_PREFIX, Setup, consumer_reads, run_pass
 
 EXIT_EQUAL: Final = 0
 EXIT_DIFFERENT: Final = 1
@@ -201,7 +201,7 @@ def build_setup(config: Config) -> Setup:
         store=store,
         work_project_id=config.work_project_id,
         state_dir=config.state_dir,
-        source_revision=f"rotation-worker@{config.source_revision}",
+        source_revision=f"{SOURCE_PREFIX}{config.source_revision}",
         admin_secrets=config.admin_secrets,
         orchestrator_url=config.orchestrator_url,
         coolify_url=config.coolify_url,

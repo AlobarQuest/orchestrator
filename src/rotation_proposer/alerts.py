@@ -11,6 +11,7 @@ remembered key holds. A credential reporting `error` is held the same way: its s
 a fetch failed (the registry or the mirror), which says nothing about its other findings or its
 approval wait, so its remembered keys and its clock are held, never resolved or restarted. The
 code cannot tell that failure from a genuine error on one credential, so any `error` holds.
+A clock file that can't be saved says nothing that pass, so every approval wait's key is held too.
 
 Two files live in the state directory: `alerts.json`, `KeyedAlerts`' memory of what it fired, and
 `approval-since.json`, when each approval wait was first seen. The sightings are written before
@@ -96,17 +97,20 @@ def sync_alerts(
     waiting = _waiting(outcomes)
     unread = {outcome.credential_id for outcome in outcomes if outcome.status == "error"}
     reasons: list[str] = []
+    since: dict[str, datetime] = {}
+    unsaved: set[str] = set()
     try:
         since = FirstSightings(state_dir / APPROVAL_SINCE_FILE).update(
             waiting.keys(), now, {approval_key(credential) for credential in unread}
         )
     except StateUnwritable as error:
         reasons.append(str(error))
-        since = {key: now for key in waiting}
+        unsaved = set(waiting)
     firing = _findings(outcomes)
-    for key, outcome in waiting.items():
-        waited = now - since[key]
+    for key, first in since.items():
+        waited = now - first
         if waited >= timedelta(hours=APPROVAL_ALERT_HOURS):
+            outcome = waiting[key]
             firing[key] = Alert(
                 f"Rotation waiting on a person: {outcome.credential_id}",
                 f"{outcome.status} for {int(waited.total_seconds() // 3600)} hours: "
@@ -120,7 +124,7 @@ def sync_alerts(
         transport=transport,
     )
     try:
-        hub.sync(firing, _held(hub.remembered(), unread))
+        hub.sync(firing, _held(hub.remembered(), unread) | unsaved)
     except AlertHubError as error:
         reasons.append(str(error))
     return "; ".join(reasons) or None

@@ -159,9 +159,33 @@ def test_a_failed_owned_unit_raises_one_alert_naming_the_reason(run: Pass) -> No
     assert sent["link"] == f"https://sds.alobar.net/review/units/{UNIT}"
 
 
-def test_a_revision_required_unit_alerts_as_failed(run: Pass) -> None:
-    run.estate.add("revision_required")
+def test_a_revision_required_unit_leaves_the_decision_to_a_person(run: Pass) -> None:
+    run.estate.add("revision_required", last_failure={"reason": "an earlier attempt's failure"})
     assert run.run() == [(unit_failed_key(UNIT), "firing")]
+    sent = run.message(unit_failed_key(UNIT))
+    assert "/review" in sent["message"] and "decides" in sent["message"]
+    assert "github-pat" in sent["message"]
+    assert "requeue" not in sent["message"]
+    assert "earlier attempt" not in sent["message"]
+    assert "failed" not in sent["title"]
+
+
+def test_a_blocked_unit_alerts_with_the_requeue_step_and_no_stale_failure(run: Pass) -> None:
+    run.estate.add("blocked", last_failure={"reason": "an earlier attempt's failure"})
+    assert run.run() == [(unit_failed_key(UNIT), "firing")]
+    sent = run.message(unit_failed_key(UNIT))
+    assert "blocked" in sent["message"]
+    assert "requeue" in sent["message"]
+    assert "earlier attempt" not in sent["message"]
+    assert "failed" not in sent["title"]
+
+
+def test_a_blocked_foreign_unit_raises_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    run = Pass(monkeypatch, tmp_path, Recording())
+    run.estate.add("blocked")
+    assert run.run() == []
 
 
 def test_a_failed_foreign_unit_raises_nothing(
@@ -261,12 +285,15 @@ def test_a_reader_wait_alerts_at_192_hours_and_not_at_168(
     assert "2026-11-05" in message
 
 
-def test_a_reader_mid_run_waits_on_the_reader_threshold(
-    run: Pass, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("busy", [["busy-reader"], None])
+def test_a_reader_mid_run_waits_on_the_ordinary_clock(
+    run: Pass, monkeypatch: pytest.MonkeyPatch, busy: list[str] | None
 ) -> None:
     class Busy:
         def readers_mid_run(self) -> list[str]:
-            return ["busy-reader"]
+            if busy is None:
+                raise worker.ReadUnavailable("the listing didn't answer")
+            return busy
 
     approved = SimpleNamespace(reads={})
     monkeypatch.setattr(worker, "check_unit", lambda *_a: approved)
@@ -280,8 +307,9 @@ def test_a_reader_mid_run_waits_on_the_reader_threshold(
     run.estate.ready = [UNIT]
     run.estate.rows = []
     assert run.run(0) == []
-    assert run.run(168) == []
-    assert run.run(192) == [(unit_waiting_key(UNIT), "firing")]
+    assert run.run(47) == []
+    assert run.run(48) == [(unit_waiting_key(UNIT), "firing")]
+    assert "Readers mid-run" in run.message(unit_waiting_key(UNIT))["message"]
 
 
 def test_an_adapter_wait_records_itself() -> None:
@@ -382,23 +410,91 @@ def test_an_unread_pass_keeps_the_reader_clock(run: Pass, monkeypatch: pytest.Mo
     assert run.run(192) == [(unit_waiting_key(UNIT), "firing")]
 
 
-def test_an_ordinary_wait_does_not_outlive_a_pass_of_reader_wait(
-    run: Pass, monkeypatch: pytest.MonkeyPatch
+ORDINARY = worker.Wait("a shut window")
+READER = worker.Wait("weekly reader", reader=True)
+STUCK = worker.Wait("nobody foresaw this", stuck=True)
+
+
+def _waits_by_hour(
+    run: Pass, monkeypatch: pytest.MonkeyPatch, plan: dict[float, worker.Wait]
 ) -> None:
-    """A skip, a long reader wait, then a skip: the second starts its 48 hours afresh."""
+    """Each pass records the wait `plan` names for its hour."""
 
     def take(_setup: object, unit_id: str, found: worker.PassActs) -> int:
         found.seen.add(unit_id)
-        if run.now in (START, START + timedelta(hours=100)):
-            raise OrchestratorError("the window is shut")
-        found.waits[unit_id] = worker.Wait("weekly reader", reader=True)
+        found.waits[unit_id] = plan[(run.now - START) / timedelta(hours=1)]
         return 0
 
     monkeypatch.setattr(worker, "_take", take)
     run.estate.ready = [UNIT]
+
+
+def test_an_ordinary_clock_survives_a_pass_of_reader_wait(
+    run: Pass, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _waits_by_hour(run, monkeypatch, {0: ORDINARY, 47: ORDINARY, 48: READER, 49: ORDINARY})
+    assert run.run(0) == []
+    assert run.run(47) == []
+    assert run.run(48) == []
+    assert run.run(49) == [(unit_waiting_key(UNIT), "firing")]
+
+
+def test_a_reader_pass_keeps_both_clocks(run: Pass, monkeypatch: pytest.MonkeyPatch) -> None:
+    _waits_by_hour(run, monkeypatch, {0: ORDINARY, 1: READER, 2: ORDINARY})
     run.run(0)
-    run.run(50)
-    assert run.run(100) == []
+    run.run(1)
+    run.run(2)
+    assert set(run.clock()) == {unit_waiting_key(UNIT), f"rotation-unit-reader-wait:{UNIT}"}
+    assert run.clock()[unit_waiting_key(UNIT)] == START.isoformat()
+
+
+def test_a_reader_pass_past_the_ordinary_threshold_raises_nothing(
+    run: Pass, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _waits_by_hour(run, monkeypatch, {0: ORDINARY, 60: READER})
+    run.run(0)
+    assert run.run(60) == []
+
+
+def test_an_open_ordinary_alert_survives_a_reader_pass(
+    run: Pass, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _waits_by_hour(run, monkeypatch, {0: ORDINARY, 48: ORDINARY, 49: READER, 50: ORDINARY})
+    run.run(0)
+    assert run.run(48) == [(unit_waiting_key(UNIT), "firing")]
+    assert run.run(49) == []
+    assert run.run(50) == [(unit_waiting_key(UNIT), "firing")]
+
+
+def test_an_open_reader_alert_survives_an_ordinary_pass(
+    run: Pass, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _waits_by_hour(run, monkeypatch, {0: READER, 192: READER, 193: ORDINARY, 194: READER})
+    run.run(0)
+    assert run.run(192) == [(unit_waiting_key(UNIT), "firing")]
+    assert run.run(193) == []
+    assert run.run(194) == [(unit_waiting_key(UNIT), "firing")]
+
+
+def test_an_open_stuck_alert_survives_a_reader_pass(
+    run: Pass, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _waits_by_hour(run, monkeypatch, {0: STUCK, 48: STUCK, 49: READER})
+    run.run(0)
+    assert run.run(48) == [(unit_stuck_key(UNIT), "firing")]
+    assert run.run(49) == []
+
+
+def test_a_unit_no_longer_sighted_clears_its_clocks_and_alert(
+    run: Pass, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _waits_by_hour(run, monkeypatch, {0: ORDINARY, 48: ORDINARY, 49: READER})
+    run.run(0)
+    run.run(48)
+    run.run(49)
+    run.estate.ready = []
+    assert run.run(50) == [(unit_waiting_key(UNIT), "resolved")]
+    assert run.clock() == {}
 
 
 def _revoke_state(
@@ -721,3 +817,17 @@ def test_act_keys_keep_their_bytes() -> None:
     assert unit_review_key(UNIT) == f"rotation-unit-review:{UNIT}"
     assert unit_stuck_key(UNIT) == f"rotation-unit-stuck:{UNIT}"
     assert unit_waiting_key(UNIT) == f"rotation-unit-waiting:{UNIT}"
+
+
+def test_a_long_package_refusal_leaves_the_next_step_in_the_message(
+    run: Pass, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def refused(*_arguments: Any) -> None:
+        raise worker.ContractError("x" * 5000)
+
+    monkeypatch.setattr(worker, "approved_package", refused)
+    run.estate.add("failed")
+    run.run()
+    message = run.message(unit_failed_key(UNIT))["message"]
+    assert "requeue" in message
+    assert len(message) < 1200

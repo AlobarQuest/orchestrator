@@ -11,7 +11,7 @@ from typing import Any
 import httpx
 import pytest
 
-from alert_hub_client import ALERTS, Alert, AlertHubError, KeyedAlerts, alert_key
+from alert_hub_client import ALERTS, MAX_MESSAGE, Alert, AlertHubError, KeyedAlerts, alert_key
 
 TOKEN = "sender-token-that-must-never-be-printed"
 KEY_GRAMMAR = re.compile(r"[A-Za-z0-9._:/-]{1,200}")
@@ -266,3 +266,28 @@ def test_the_unit_failed_key_has_its_own_prefix_and_the_same_encoding() -> None:
     assert failed == "dependency-unit-failed:alobarquest/infraops-mcp-server:npm:_40types/node"
     assert failed != bump
     assert failed.split(":", 1)[1] == bump.split(":", 1)[1]
+
+
+def _utf16_units(text: str) -> int:
+    """What alert-hub's `message.length` counts."""
+    return len(text.encode("utf-16-le")) // 2
+
+
+def test_the_limit_is_alert_hub_s() -> None:
+    assert MAX_MESSAGE == 4000
+
+
+@pytest.mark.parametrize("char", ["x", "\N{GRINNING FACE}"])
+def test_a_long_message_is_cut_to_alert_hub_s_limit(tmp_path: Path, char: str) -> None:
+    hub = Hub()
+    hub.alerts(tmp_path / "s.json").sync({"k:a": Alert("t", char * (MAX_MESSAGE + 1))})
+    message = hub.sent[0]["message"]
+    assert message.startswith(char)
+    assert MAX_MESSAGE - 1 <= _utf16_units(message) <= MAX_MESSAGE
+
+
+def test_a_message_at_the_limit_is_left_alone(tmp_path: Path) -> None:
+    hub = Hub()
+    text = "x" * MAX_MESSAGE
+    hub.alerts(tmp_path / "s.json").sync({"k:a": Alert("t", text)})
+    assert hub.sent[0]["message"] == text

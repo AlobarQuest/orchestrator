@@ -7,7 +7,8 @@ Declined, refused and superseded outcomes already fail the outcome alarm and rai
 
 It fires once, stays while the proposal waits, and resolves on the first pass that no longer
 reports it. A pass with an `unread` outcome could not see every record, so it syncs nothing and
-every remembered key holds, clocks included. Two files live in the state directory: `alerts.json`,
+every remembered key holds, clocks included. A clock file that can't be saved says nothing that
+pass, so every waiting key is held too. Two files live in the state directory: `alerts.json`,
 `KeyedAlerts`' memory of what it fired, and `approval-since.json`, when each wait was first seen,
 written before alert-hub is asked and kept when it refuses.
 """
@@ -66,18 +67,21 @@ def sync_alerts(
         if outcome.result == AWAITING
     }
     reasons: list[str] = []
+    since: dict[str, datetime] = {}
+    unsaved: set[str] = set()
     try:
         since = FirstSightings(state_dir / APPROVAL_SINCE_FILE).update(waiting.keys(), now)
     except StateUnwritable as error:
         reasons.append(str(error))
-        since = {key: now for key in waiting}
+        unsaved = set(waiting)
     firing: dict[str, Alert] = {}
-    for key, outcome in waiting.items():
-        waited = now - since[key]
+    for key, first in since.items():
+        waited = now - first
         if waited >= timedelta(hours=APPROVAL_ALERT_HOURS):
             firing[key] = Alert(
-                f"Rotation decomposition waiting on a person: {outcome.subject}",
-                f"{AWAITING} for {int(waited.total_seconds() // 3600)} hours: {outcome.detail}",
+                f"Rotation decomposition waiting on a person: {waiting[key].subject}",
+                f"{AWAITING} for {int(waited.total_seconds() // 3600)} hours: "
+                f"{waiting[key].detail}",
             )
     hub = KeyedAlerts(
         lambda: token,
@@ -87,7 +91,7 @@ def sync_alerts(
         transport=transport,
     )
     try:
-        hub.sync(firing)
+        hub.sync(firing, unsaved)
     except AlertHubError as error:
         reasons.append(str(error))
     return "; ".join(reasons) or None

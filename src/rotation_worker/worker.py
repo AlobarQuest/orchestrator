@@ -26,8 +26,8 @@ contract's unit run does, for the length of the step that needs it.
 
 After the units, one alert sync (`notify.py`) tells a person about this instance's units only:
 acts they wait on, failed units, reviews overdue, and units that have stayed unmoved past a
-threshold, on a clock kept in the state directory. A unit this pass couldn't read keeps its alerts
-and its clock as they were, and no failure of the sync touches a unit or the pass.
+threshold, on clocks kept in the state directory. A unit this pass couldn't read keeps its alerts
+and its clocks as they were, and no failure of the sync touches a unit or the pass.
 """
 
 from __future__ import annotations
@@ -211,7 +211,7 @@ def unit_alerts(setup: Setup) -> tuple[dict[str, Act], set[str]]:
             for b in row.get("blockers") or []
             if b.get("kind") == "external_system" and b.get("status") == "pending"
         ]
-        failed = row.get("unit_state") in ("failed", "revision_required")
+        failed = row.get("unit_state") in ("failed", "blocked", "revision_required")
         overdue = _review_overdue(row)
         if not (pending or failed or overdue):
             continue
@@ -240,13 +240,9 @@ def unit_alerts(setup: Setup) -> tuple[dict[str, Act], set[str]]:
             )
         if failed:
             key = unit_failed_key(unit_id)
-            why = (row.get("last_failure") or {}).get("reason") or "no reason recorded"
+            state, message = _stopped(row)
             acts[key] = Act(
-                key,
-                f"A rotation unit failed: {name}"[:TITLE_LIMIT],
-                f"{where} {scrub(str(why))[:MAX_REASON]} Next: requeue it as SYSTEM while attempts "
-                f"remain, retry on /review once spent, else cancel ({FAILED_RUNBOOK}).",
-                link,
+                key, f"A rotation unit {state}: {name}"[:TITLE_LIMIT], f"{where} {message}", link
             )
         if overdue:
             key = unit_review_key(unit_id)
@@ -257,6 +253,21 @@ def unit_alerts(setup: Setup) -> tuple[dict[str, Act], set[str]]:
                 link,
             )
     return acts, unread
+
+
+def _stopped(row: Mapping[str, Any]) -> tuple[str, str]:
+    """What a stopped unit's alert says. `last_failure` is the newest move to `failed`, so only a
+    unit now failed may quote it, and requeue takes only a failed or blocked unit."""
+    if row.get("unit_state") == "revision_required":
+        return "needs revision", "It needs revision: a person decides what happens on /review."
+    next_step = (
+        "Next: requeue it as SYSTEM while attempts remain, retry on /review once spent, "
+        f"else cancel ({FAILED_RUNBOOK})."
+    )
+    if row.get("unit_state") == "blocked":
+        return "is blocked", f"It is blocked. {next_step}"
+    why = (row.get("last_failure") or {}).get("reason") or "no reason recorded"
+    return "failed", f"{scrub(str(why))[:MAX_REASON]} {next_step}"
 
 
 def behind(setup: Setup, now: datetime) -> tuple[dict[str, Act], set[str]]:
@@ -306,7 +317,7 @@ def _where(setup: Setup, unit: Mapping[str, Any], main: list[str | None]) -> str
     try:
         document = approved_package(intake, setup.mirror, commit)
     except REFUSALS as error:
-        return f"{omitted} omitted: {scrub(str(error))}."
+        return f"{omitted} omitted: {scrub(str(error))[:MAX_REASON]}."
     occurrence = str(document["profile_fields"].get("occurrence"))
     staging = Rotation(credential, occurrence, "", setup.work_project_id, ()).staging_key
     return f"Credential {credential}, staging key {staging}."
@@ -329,20 +340,26 @@ def _overdue(setup: Setup, found: PassActs, hold: Set[str]) -> tuple[dict[str, A
     A unit has two clocks. The ordinary one, under its `unit_waiting_key`, runs whether it is
     waiting or stuck, so a unit that alternates between the two still comes due. Reader waits run
     their own, `unit_reader_clock_key`, so a healthy week on readers can't lend its hours to one
-    skip; a pass on the ordinary clock holds it, so one skip can't restart that week either. A clock
-    neither sighted nor held is forgotten, so a unit that moved starts afresh. A clock that can't be
-    saved says nothing this pass, so the second value holds the alerts of every unit still waiting.
+    skip. A pass sights only its own clock and judges only by it, and keeps the other: a wait
+    alternating between the two kinds still comes due on either. A clock neither sighted nor held
+    is forgotten, so a unit no longer waiting starts afresh.
+
+    The second value is the alert keys to hold: a unit still waiting that isn't overdue on this
+    pass's clock keeps an alert the other kind of pass raised, and a clock that can't be saved
+    says nothing this pass, so it holds every waiting unit's.
     """
     now = _now()
     current = {_clock_key(unit_id, wait) for unit_id, wait in found.waits.items()}
-    readers = {unit_reader_clock_key(unit_id) for unit_id in found.waits}
-    since = first_sightings(setup.state_dir, current, now, hold | readers)
+    waiting = {key for unit_id in found.waits for key in _clock_keys(unit_id)}
+    since = first_sightings(setup.state_dir, current, now, hold | waiting)
     if since is None:
-        return {}, {key for unit_id in found.waits for key in _clock_keys(unit_id)}
+        return {}, waiting
     overdue = {}
+    not_due: set[str] = set()
     for unit_id, wait in found.waits.items():
         first = since[_clock_key(unit_id, wait)]
         if now - first < timedelta(hours=wait.hours):
+            not_due |= _clock_keys(unit_id)
             continue
         key = unit_stuck_key(unit_id) if wait.stuck else unit_waiting_key(unit_id)
         what = "can't be worked" if wait.stuck else "is waiting"
@@ -352,7 +369,7 @@ def _overdue(setup: Setup, found: PassActs, hold: Set[str]) -> tuple[dict[str, A
             f"Since {first.date().isoformat()}: {scrub(wait.reason)[:MAX_REASON]}",
             f"{_REVIEW}/{unit_id}",
         )
-    return overdue, set()
+    return overdue, not_due
 
 
 def _clock_key(unit_id: str, wait: Wait) -> str:
@@ -366,8 +383,8 @@ def _clock_keys(unit_id: str) -> set[str]:
 @dataclass(frozen=True)
 class Wait:
     """Why a unit stayed unmoved this pass. `reader` says it waits on a schedule measured in days:
-    a weekly reader's, or another rotation's overlap, which holds one. `stuck` says nothing in the
-    ledger shows it."""
+    a weekly reader still to run, or another rotation's overlap, which holds one. A reader mid-run
+    ends within its run, so it is an ordinary wait. `stuck` says nothing in the ledger shows it."""
 
     reason: str
     reader: bool = False
@@ -450,7 +467,7 @@ def _take(setup: Setup, unit_id: str, found: PassActs) -> int:
             busy = [f"unreadable: {scrub(str(error))}"]
         if busy:
             LOG.info("unit_waiting", extra={"unit": str(unit["id"]), "readers_mid_run": busy})
-            found.waits[unit_id] = Wait(f"Readers mid-run: {', '.join(busy)}", reader=True)
+            found.waits[unit_id] = Wait(f"Readers mid-run: {', '.join(busy)}")
             return 0
     return 1 if _work(setup, unit, approved, provider, reads, held) else 0
 
@@ -565,8 +582,12 @@ def _mint_waits(
     try:
         new = setup.inbox.read()
     except StoreError as error:
-        LOG.warning("inbox_unread", extra={"unit": unit_id, "reason": scrub(str(error))})
+        reason = scrub(str(error))
+        LOG.warning("inbox_unread", extra={"unit": unit_id, "reason": reason})
         found.keep |= {_mint_key(unit_id), _inbox_key(unit_id)}
+        if staged is None:
+            # No act can be announced, so only the clock tells a person this has gone on too long.
+            found.waits[unit_id] = Wait(f"the inbox can't be read: {reason}")
         return staged is None
     if staged is not None:
         if new is not None:
