@@ -190,3 +190,16 @@ This task writes to production. It runs only after Devon approves this plan.
 - [ ] **Step 7: Update the SDS Layer Map and SDS year plan artifacts**, and list every ruling with its cost if wrong.
 
 **No live proof in this part, stated plainly:** `rotation-unit-failed`, `-review`, `-stuck`, `-waiting`, `rotation-instance-behind`, and the findings alerts have tests only, until a real event. A canary rotation failed on purpose could prove the reporting path, and that needs Devon's say-so. Worker liveness is proven live on the Mac only; the VM uses the same code and a different sender.
+
+## Live proof, recorded 2026-10-31
+
+Merged as `4e850fbc` (#570). Both instances run that commit, and each `source_revision` matches. No orchestrator image changed.
+
+- **Heartbeat:** each sender's `lastSeenAt` advanced on its pass, and alert-hub's history gained no row.
+- **Silence watch:** with `expectedIntervalS: 1800` set and the Mac agent stopped at 20:49:32 UTC, `silent:rotation-executor-keychain` opened at 21:20:19. After the agent restarted, it resolved at 21:26:19.
+- **Launchers:** the decomposer and proposer each passed with exit 0 at this commit, and the proposer wrote `alerts.json` and `approval-since.json`, so it read the `sds-bridge` token.
+- **First run:** no worker or lane alert fired on production state.
+
+Not proven live: `rotation-unit-failed`, `-review`, `-stuck`, `-waiting`, `rotation-instance-behind`, the findings alerts, and the VM's silence alert. These have tests only until a real event.
+
+Deferred, with their cost if wrong in the session's rulings: the duplicated `alerts.py` shape in two lanes, per-pass reads of failed non-rotation units, and the per-pass fetch of the behind check. The `rotation-executor.` sender keeps its trailing dot.
