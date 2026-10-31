@@ -7,9 +7,10 @@
 #
 # It installs a pinned uv (checksum-verified), checks the orchestrator out at exactly that commit,
 # builds the executor's environment from the lockfile (`--no-dev --group rotation-worker`), and
-# installs the systemd service and timer. It writes no configuration and no credential: the
-# config file (ids and paths only) and the root token are separate steps, so this script is safe
-# to re-run for every update. Nothing here depends on OrbStack: on a VPS it runs unchanged.
+# installs the systemd service and timer. It writes no credential and creates no configuration: the
+# config file (ids and paths only) and the root token are separate steps. When the config already
+# exists it rewrites its one `source_revision` line to the installed commit and changes nothing
+# else, so the script is safe to re-run for every update. Nothing here depends on OrbStack: on a VPS it runs unchanged.
 set -euo pipefail
 
 commit="${1:-}"
@@ -77,6 +78,14 @@ install -m 0644 "$opt/src/scripts/rotation-worker-vm/rotation-worker.service" \
 install -m 0644 "$opt/src/scripts/rotation-worker-vm/rotation-worker.timer" \
   /etc/systemd/system/rotation-worker.timer
 install -m 0755 "$opt/src/scripts/rotation-worker-vm/set-root-token.sh" "$opt/bin/set-root-token"
+# BEGIN source-revision
+if [[ -f "$etc/config.toml" ]]; then
+  sed "s/^source_revision = .*/source_revision = \"${commit:0:12}\"/" "$etc/config.toml" \
+    > "$etc/config.toml.new"
+  cat "$etc/config.toml.new" > "$etc/config.toml"
+  rm -- "$etc/config.toml.new"
+fi
+# END source-revision
 systemctl daemon-reload
 
 echo "provision: installed ${commit:0:12}; the service runs once $etc/config.toml and the root token exist"

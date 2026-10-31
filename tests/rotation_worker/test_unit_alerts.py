@@ -153,7 +153,9 @@ def test_a_failed_owned_unit_raises_one_alert_naming_the_reason(run: Pass) -> No
     assert "github-pat" in sent["message"]
     assert "rotation/github-pat/o-7/staging" in sent["message"]
     assert "the host refused" in sent["message"]
-    assert len(sent["message"]) < 500
+    assert "/work-units/" not in sent["message"] and "requeue" in sent["message"]
+    assert "If a rotation stalls after host" in sent["message"]
+    assert len(sent["message"]) < 700
     assert sent["link"] == f"https://sds.alobar.net/review/units/{UNIT}"
 
 

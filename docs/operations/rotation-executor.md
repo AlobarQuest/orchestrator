@@ -82,7 +82,7 @@ raises it and resolved by the first pass that no longer finds its cause.
 | Key | Raised when | Clears when | Next step |
 | --- | --- | --- | --- |
 | `rotation-act:<dependency id>` | a human act is pending (see "When a rotation waits on you") | the act is recorded or no longer pending | do the act |
-| `rotation-unit-failed:<unit>` | the unit is `failed` or `revision_required`; the message names the credential and its staging key | the unit leaves those states | read the reason on its review page, then retry or supersede |
+| `rotation-unit-failed:<unit>` | the unit is `failed` or `revision_required`; the message names the credential and its staging key | the unit leaves those states | read the reason on its review page, then requeue it (`POST /work-units/{id}/requeue`, as SYSTEM) while attempts remain, retry on `/review` once they are spent, else cancel; supersede is refused once any unit was claimed (see "If a rotation stalls after host") |
 | `rotation-unit-review:<unit>` | the unit has been `awaiting_review` over 48 hours | the review is decided | decide it on `/review` |
 | `rotation-unit-waiting:<unit>` | the unit has stayed unmoved past its threshold: 48 hours, or 192 hours for a reader wait | the unit moves | read the reason in the message, which is the wait's own |
 | `rotation-unit-stuck:<unit>` | a refusal couldn't be claimed to fail the unit, and 48 hours have passed | the unit moves | fix what the refusal names |

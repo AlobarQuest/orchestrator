@@ -107,6 +107,7 @@ _REVIEW: Final = "https://sds.alobar.net/review/units"
 # alert-hub refuses a longer title.
 TITLE_LIMIT: Final = 200
 MAX_REASON: Final = 400
+FAILED_RUNBOOK: Final = "docs/operations/rotation-executor.md, \"If a rotation stalls after host\""
 # A refusal: the unit itself is wrong, and a person must see it.
 REFUSALS: Final = (ContractError, RegistryError, DestinationError, ReadError)
 # Nothing could be asked: try again next pass.
@@ -243,7 +244,8 @@ def unit_alerts(setup: Setup) -> tuple[dict[str, Act], set[str]]:
             acts[key] = Act(
                 key,
                 f"A rotation unit failed: {name}"[:TITLE_LIMIT],
-                f"{where} {scrub(str(why))[:MAX_REASON]}",
+                f"{where} {scrub(str(why))[:MAX_REASON]} Next: requeue it as SYSTEM while attempts "
+                f"remain, retry on /review once spent, else cancel ({FAILED_RUNBOOK}).",
                 link,
             )
         if overdue:
