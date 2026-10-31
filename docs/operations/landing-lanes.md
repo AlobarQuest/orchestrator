@@ -827,7 +827,9 @@ revert's hold, and the next pass would read `landing_pull_request_not_open` and 
 
 - The admissions answer `landing_outcome_unknown` instead of `landing_already_recorded`. The lander
   checks for it before `SETTLED`, since a pull request that landed also answers `not open`, and asks
-  to land with the answer's head. A sibling carrying it releases (ADR-0045): it isn't queued.
+  to land with the answer's head. A sibling carrying it releases (ADR-0045). An open, unlanded
+  sibling does wait to land, but the landing pass replays it before the branch-update pass reads
+  it, so it still carries the code only when its read failed or its landing was refused.
 - `lane_act._resettle` reads the pull request first. Read failed: the row stands, and the lander
   reports `unreadable`. Landed: the row becomes `already_merged` with the re-read's commit, keeps its
   permission columns, moves its `event_id` to a new `<lane>.already_merged` event (the revert watch
@@ -847,7 +849,8 @@ watch left.
 **Known gap: a settled answer needs the pull request to be asked about.** The inert lander enumerates
 open pull requests and the estate lander `approved` change records, so a row whose pull request did
 land reaches `_resettle` only while the estate lander's record stays `approved`. In the inert lane,
-it never does.
+it never does. A revert in that state is reported `revert-stranded` by each lander's `_stranded`,
+and never asked about, so its row stays unknown and its hold unplaced.
 
 ## Automatic reverts (inert repositories)
 
