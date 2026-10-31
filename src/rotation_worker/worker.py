@@ -259,15 +259,16 @@ def unit_alerts(setup: Setup) -> tuple[dict[str, Act], set[str]]:
 
 def behind(setup: Setup, now: datetime) -> tuple[dict[str, Act], set[str]]:
     """An alert when `main` holds a change to the code this build runs that is over
-    `ROTATION_BEHIND_ALERT_DAYS` old. A fetch or a revision git can't answer holds the key."""
+    `ROTATION_BEHIND_ALERT_DAYS` old. Anything that stops it reading holds the key."""
     key = behind_key(setup.store.read_back_kind)
     try:
         setup.mirror.sync(BEHIND_REPOSITORY)
         since = setup.mirror.oldest_change_since(
             BEHIND_REPOSITORY, setup.source_revision.removeprefix(SOURCE_PREFIX), BEHIND_PATHS
         )
-    except MirrorError as error:
-        LOG.warning("behind_unread", extra={"reason": scrub(str(error))})
+    except Exception as error:
+        # Whatever went wrong, this alert's key is held and the pass's other alerts go out.
+        LOG.warning("behind_unread", extra={"reason": scrub(f"{type(error).__name__}: {error}")})
         return {}, {key}
     if since is None or now - since < timedelta(days=ROTATION_BEHIND_ALERT_DAYS):
         return {}, set()

@@ -13,15 +13,13 @@ from rotation_worker.notify import Notifier, heartbeat_key
 from rotation_worker.secret_store import StoreError
 from rotation_worker.values import Value
 from tests.rotation_worker.stores import MemoryStore
-from tests.rotation_worker.test_notify import TOKEN, Hub
+from tests.rotation_worker.test_notify import Hub
 
-
-def _config() -> Any:
-    return SimpleNamespace(source_revision="0123456789ab")
+CONFIG: Any = SimpleNamespace(source_revision="0123456789ab")
 
 
 @pytest.fixture
-def pass_with(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Any:
+def pass_with(monkeypatch: pytest.MonkeyPatch) -> Any:
     def arrange(notifier: Notifier | None, passes: Any = lambda _s: 2) -> None:
         setup = SimpleNamespace(notifier=notifier, store=MemoryStore())
         monkeypatch.setattr(cli, "build_setup", lambda _c: setup)
@@ -33,7 +31,7 @@ def pass_with(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Any:
 def test_a_finished_pass_sends_one_heartbeat(pass_with: Any, tmp_path: Path) -> None:
     hub = Hub()
     pass_with(hub.notifier(tmp_path))
-    assert cli.run(_config()) == 0
+    assert cli.run(CONFIG) == 0
     assert [(m["key"], m["status"]) for m in hub.sent] == [
         (heartbeat_key("bws-secret"), "resolved")
     ]
@@ -48,13 +46,13 @@ def test_a_crashed_pass_sends_none(pass_with: Any, tmp_path: Path) -> None:
 
     pass_with(hub.notifier(tmp_path), crash)
     with pytest.raises(RuntimeError):
-        cli.run(_config())
+        cli.run(CONFIG)
     assert hub.sent == []
 
 
 def test_a_heartbeat_failure_still_returns_0(pass_with: Any, tmp_path: Path) -> None:
     pass_with(Hub(500, 500, 500, 500).notifier(tmp_path))
-    assert cli.run(_config()) == 0
+    assert cli.run(CONFIG) == 0
 
 
 def test_an_unreadable_token_still_returns_0(pass_with: Any, tmp_path: Path) -> None:
@@ -62,13 +60,9 @@ def test_an_unreadable_token_still_returns_0(pass_with: Any, tmp_path: Path) -> 
         raise StoreError("the store is down")
 
     pass_with(Notifier(unreadable, tmp_path))
-    assert cli.run(_config()) == 0
+    assert cli.run(CONFIG) == 0
 
 
 def test_no_notifier_means_no_heartbeat(pass_with: Any) -> None:
     pass_with(None)
-    assert cli.run(_config()) == 0
-
-
-def test_the_token_is_the_senders() -> None:
-    assert TOKEN
+    assert cli.run(CONFIG) == 0

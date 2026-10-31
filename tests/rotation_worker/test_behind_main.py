@@ -11,7 +11,7 @@ import pytest
 
 from rotation_worker import worker
 from rotation_worker.git_mirror import MirrorError, RepoMirror
-from rotation_worker.notify import behind_key
+from rotation_worker.notify import Act, behind_key
 from tests.rotation_worker.conftest import ENV, Origins
 from tests.rotation_worker.stores import MemoryStore
 from tests.rotation_worker.test_notify import Hub
@@ -109,3 +109,18 @@ def test_the_alert_rides_the_pass_s_one_sync(run: Run, monkeypatch: pytest.Monke
     setup = run.setup(installed)
     worker.run_pass(setup)
     assert [(m["key"], m["status"]) for m in run.hub.sent] == [(behind_key("bws-secret"), "firing")]
+
+
+@pytest.mark.parametrize("breaks", ["sync", "oldest_change_since"])
+def test_a_behind_failure_of_any_kind_still_lets_unit_alerts_out(
+    run: Run, monkeypatch: pytest.MonkeyPatch, breaks: str
+) -> None:
+    def broken(*_arguments: object) -> None:
+        raise ValueError("not a timestamp")
+
+    failed = Act("rotation-unit-failed:u1", "A rotation unit failed", "why")
+    monkeypatch.setattr(run.mirror, breaks, broken)
+    monkeypatch.setattr(worker, "_now", lambda: NOW)
+    monkeypatch.setattr(worker, "unit_alerts", lambda _setup: ({failed.key: failed}, set()))
+    worker.run_pass(run.setup("0123456789ab"))
+    assert [(m["key"], m["status"]) for m in run.hub.sent] == [(failed.key, "firing")]
