@@ -390,8 +390,16 @@ Placement rule: global CLAUDE.md §7.
   `CLASS_TYPES`), validated and written by intent-packages' `create-rotation`. The work
   carrier carries a standing rotation package only when its credential's registry row sets
   `rotated_by_sds` and the member record grants `credential_rotation` on that registry's
-  repository. Detail:
+  repository. The proposer and the decomposer read the same grant before they write for a
+  credential and refuse one it does not name. Detail:
   `docs/operations/rotation-proposer.md`.
+- The rotation executor reads the member record's `credential_rotation` grant (`GET
+  /api/v1/members`, `rotation_worker/grants.py`) before it claims a unit, which stays unclaimed
+  while the grant is absent, and before each step, where a withdrawn grant fails the unit as a
+  handed-back `rotated_by_sds` flag does and can leave an overlap open. An empty or unreadable
+  record is unread, never a withdrawal: before the claim the unit waits, and mid-rotation the step
+  proceeds. That protects the grant read only; a failed `renew` still fails the unit. Detail:
+  `docs/operations/rotation-executor.md`, "The member grant".
 - change-manager's `resolved` is terminal by design and will not be made recoverable; `reactivate`
   applies only to `wontfix`. Do not re-propose recoverability. History:
   `docs/history/claude-md-invariants-archive.md` #209.

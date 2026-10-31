@@ -63,7 +63,7 @@ For a due credential whose package is `rotation-<credential_id>`:
      that approval: read it as a change to what the rotation will write.
    - **Compare it with the registry.** Run
      `.venv/bin/rotation-worker compare-destinations <credential_id>`. It fetches intent-packages
-     and the four registry repositories into its own mirrors (`~/.cache/rotation-worker/mirrors`),
+     and the registry repositories (`REGISTRY_REPOSITORIES`) into its own mirrors (`~/.cache/rotation-worker/mirrors`),
      and prints the registry's destinations as a package lists them, then compares them with the
      package's, both at `main`: `both`, `registry` (missing from the package) or `package` (not in
      the registry) on each line, then the verdict. Exit 0 means equal; 1 means the registry
@@ -126,6 +126,9 @@ changes the exit code.
   credential `rotated_by_sds`. The pass never acts on it, because infraops' window still could.
   Set the flag in the credential's `.cred-consumers.toml`, and only when no legacy rotation of it is
   in flight.
+- **`ungranted`** (a finding): the registry hands the credential to the SDS, but the member record
+  does not grant `credential_rotation` on its repository. The pass writes nothing for it. Grant it
+  with a member proposal (`docs/operations/membership.md`), or clear the flag.
 - **`unlaned`** (a finding): the registry hands the credential to the SDS, so infraops' window
   refuses it, but no standing package exists and none can be generated: its registry `class`
   names no type the SDS rotates (`rotation_worker.types.CLASS_TYPES`).
@@ -153,7 +156,12 @@ proposer then takes it to `ready_for_review` and publishes it like any revision,
 approves it by name. The proposer sees only due credentials, so a newly flagged credential gets
 its package when it first comes due. Onboarding a credential is therefore its registry row: a
 `class` the SDS rotates and `rotated_by_sds = true`, in a registry repository the member record
-grants `credential_rotation`.
+grants `credential_rotation`. The grant is read on every `--submit` pass, not at onboarding: a
+due credential whose repository lacks it is reported `ungranted` (a finding) before any
+observation, revision or generation, so nothing is written for it. A dry run reads no record and
+says so. An empty record or one that can't be read stops the pass with exit 2, because a pass that
+can't tell grants from withdrawals acts on neither. `membership_check` reports a `rotated_by_sds`
+row in a repository without the grant, and the reverse.
 
 ## Authoring a standing rotation package by hand
 
