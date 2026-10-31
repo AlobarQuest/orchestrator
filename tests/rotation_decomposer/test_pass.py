@@ -40,11 +40,11 @@ class FakeOrchestrator:
         self.members_rows: list[Any] | None = [_member("AlobarQuest/example-registry")]
         self.member_reads = 0
 
-    def members(self) -> list[Any]:
+    def members(self) -> dict[str, Any]:
         self.member_reads += 1
         if self.members_rows is None:
             raise CallError("the orchestrator refused GET /api/v1/members: 503", 503)
-        return self.members_rows
+        return {"members": self.members_rows}
 
     def work(self, change_record_id: int) -> dict[str, Any]:
         if change_record_id in self.unreadable:

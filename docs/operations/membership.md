@@ -144,12 +144,12 @@ landing path reaches it". It skips the reverse row when the landing policy is un
 deploying population.
 
 `membership_check` compares `credential_rotation` three ways. Each repository in the executor's
-`REGISTRY_REPOSITORIES` needs the grant. Each repository with a `rotated_by_sds` registry row needs
+`REGISTRY_REPOSITORIES` needs the grant. Each repository with a `rotated_by_sds` registry row of a type the SDS rotates needs
 it, and each non-retired member granted it needs such a row; the reverse is skipped when a registry
 mirror was not read, because an unread registry is not an empty population. A repository holding a
 `.cred-consumers.toml` outside `REGISTRY_REPOSITORIES` is reported whether or not it holds the
 grant, since the executor never reads it. The lanes read the grant themselves: the executor before
-the claim and each step, the proposer before it writes for a credential, and the decomposer before it
+the claim and each step, the proposer before it starts anything for a credential (never to record a finished rotation), and the decomposer before it
 proposes (see `docs/operations/rotation-executor.md`, "The member grant").
 
 ## Where to confirm

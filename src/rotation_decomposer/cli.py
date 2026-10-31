@@ -120,7 +120,7 @@ def _revision(
     credential: str,
     orchestrator: Orchestrator,
     registry: Callable[[], dict[str, RegistryEntry]],
-    members: Callable[[], list[Any]],
+    members: Callable[[], Any],
     dry_run: bool,
 ) -> Outcome | None:
     """What becomes of one registered revision with no units; `None` for one the record doesn't
@@ -138,7 +138,7 @@ def _revision(
         return Outcome(subject, "refused", f"no registry row names {credential}")
     # Asked only here, once a decomposition would be proposed; `GrantUnread` and `CallError` are
     # the caller's `unread`.
-    if not rotation_granted({"members": members()}, entry.repository):
+    if not rotation_granted(members(), entry.repository):
         return Outcome(
             subject,
             "refused",

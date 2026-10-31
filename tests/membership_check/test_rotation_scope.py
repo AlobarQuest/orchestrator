@@ -64,7 +64,10 @@ def test_a_stored_copy_is_never_compared(monkeypatch) -> None:
             "c0": RegistryEntry(
                 "A/one",
                 "c" * 40,
-                {"consumer": [{"kind": "actions-secret", "repository": "A/ungranted"}]},
+                {
+                    "class": "openrouter-key",
+                    "consumer": [{"kind": "actions-secret", "repository": "A/ungranted"}],
+                },
             )
         },
     )
@@ -159,3 +162,13 @@ def test_a_retired_member_is_not_scanned(monkeypatch) -> None:
         registry_files={"A/gone": None},
     )
     assert _run().exit_code == 0
+
+
+def test_a_typeless_flagged_row_does_not_count(monkeypatch) -> None:
+    """The canary's row sets the flag, but it is no type the SDS rotates, so it reaches no grant."""
+    _wire(monkeypatch, members=_members_one())
+    canary = RegistryEntry("A/one", "c" * 40, {"class": "rotation-canary"})
+    monkeypatch.setattr(cli, "rotated_by_sds", lambda _mirror: {"canary": canary})
+    result = _run()
+    assert result.exit_code == 2
+    assert "A/one: granted credential_rotation, but no rotated_by_sds registry row" in result.output

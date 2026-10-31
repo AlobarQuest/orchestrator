@@ -96,9 +96,9 @@ def check(
     rollbacks: Iterable[str],
     standing_update_repositories: Iterable[str],
     auto_merge: Mapping[str, AutoMergeState],
+    flagged_repositories: Iterable[str],
+    registry_files: Iterable[str],
     landing_decided: bool = True,
-    flagged_repositories: Iterable[str] = (),
-    registry_files: Iterable[str] = (),
     registries_read: bool = True,
 ) -> Report:
     members = list(members)

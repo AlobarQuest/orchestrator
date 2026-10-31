@@ -390,12 +390,14 @@ Placement rule: global CLAUDE.md §7.
   `CLASS_TYPES`), validated and written by intent-packages' `create-rotation`. The work
   carrier carries a standing rotation package only when its credential's registry row sets
   `rotated_by_sds` and the member record grants `credential_rotation` on that registry's
-  repository. The proposer and the decomposer read the same grant before they write for a
-  credential and refuse one it does not name. Detail:
+  repository. The proposer reads the same grant before it observes, revises, generates or
+  proposes, never to record a finished rotation or report, and an unread record is that
+  credential's `error`; the decomposer reads it before proposing. Detail:
   `docs/operations/rotation-proposer.md`.
 - The rotation executor reads the member record's `credential_rotation` grant (`GET
   /api/v1/members`, `rotation_worker/grants.py`) before it claims a unit, which stays unclaimed
-  while the grant is absent, and before each step, where a withdrawn grant fails the unit as a
+  while the grant is absent, even one the checks refuse whose registry row resolves, and before
+  each step, where a withdrawn grant fails the unit as a
   handed-back `rotated_by_sds` flag does and can leave an overlap open. An empty or unreadable
   record is unread, never a withdrawal: before the claim the unit waits, and mid-rotation the step
   proceeds. That protects the grant read only; a failed `renew` still fails the unit. Detail:

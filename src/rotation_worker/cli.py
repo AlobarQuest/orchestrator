@@ -450,7 +450,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         mirror = RepoMirror(arguments.mirror_root or default_mirror_root())
         return compare_destinations(arguments.credential_id, mirror)
     configure()
-    config = load(arguments.config)
+    try:
+        config = load(arguments.config)
+    except ConfigError as error:
+        print(f"{arguments.command}: {error}", file=sys.stderr)
+        return EXIT_UNREADABLE
+    return _command(arguments, config)
+
+
+def _command(arguments: argparse.Namespace, config: Config) -> int:
     if arguments.command == "run":
         return run(config)
     if arguments.command == "mint-bearer":

@@ -215,6 +215,7 @@ def _approved(store: MemoryStore, unit: str = "confirm") -> Approved:
             plan=bws.PLAN,
             unit=bws.PLAN.unit(unit),
             rotation=rotation,
+            registry=SimpleNamespace(repository="AlobarQuest/orchestrator"),
             reads={},
         ),
     )

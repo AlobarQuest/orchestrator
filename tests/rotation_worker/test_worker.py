@@ -461,9 +461,9 @@ def test_the_wait_names_when_the_overlap_s_backstop_ends(h: Harness) -> None:
     until = "2026-10-23T06:00:00+00:00"
     h.client.loaded = {"orchestrator-observer": {"previous": {"until": until}}}
     approved = h._check(_unit_named("retire"), None, None, WORK, h.store)
-    assert worker._overlap_until(h.setup(), approved) == until
+    assert worker._overlap_until(h.setup(), approved.rotation.destinations) == until
     h.client.loaded = {"orchestrator-observer": {}}
-    assert worker._overlap_until(h.setup(), approved) is None
+    assert worker._overlap_until(h.setup(), approved.rotation.destinations) is None
 
 
 def _unit_named(name: str) -> dict[str, Any]:

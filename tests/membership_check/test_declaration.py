@@ -93,7 +93,7 @@ def test_an_absent_declaration_is_an_answer_once_the_repository_itself_answers()
     transport, seen = _routed(httpx.Response(404, json={}), httpx.Response(200, json={}))
     answer = _reader(transport).declaration("AlobarQuest/brain")
     assert answer.target is False
-    assert "has not opted in" in answer.detail
+    assert "no factory-target.toml on" in answer.detail
     assert seen == [
         "/repos/AlobarQuest/brain/contents/factory-target.toml",
         "/repos/AlobarQuest/brain",
@@ -412,6 +412,13 @@ def test_a_registry_file_is_present_absent_or_could_not_tell() -> None:
     ):
         answer = _reader(_routed(contents, repository)[0]).holds_registry("AlobarQuest/brain")
         assert answer.target is None, (contents.status_code, repository.status_code)
+
+
+def test_an_absent_registry_file_says_nothing_about_opting_in() -> None:
+    transport, _ = _routed(httpx.Response(404), httpx.Response(200, json={}))
+    answer = _reader(transport).holds_registry("AlobarQuest/brain")
+    assert ".cred-consumers.toml" in answer.detail
+    assert "opted in" not in answer.detail
 
 
 def test_a_registry_file_read_refuses_a_name_that_composes_another_route() -> None:

@@ -43,8 +43,11 @@ member that isn't retired, and repositories compare case-folded.
 - **Before the claim.** A repository without the grant leaves the unit unclaimed. The pass reports
   `<repository> has no credential_rotation grant` as the unit's wait and keeps the unit's revoke,
   mint and inbox alerts as they were. The unit runs on the first pass after the grant is `granted`.
-  A record that can't be read, or that has no rows, is an unread answer: the unit is left for the
-  next pass, and nothing is claimed or failed.
+  When the rotation has an open overlap, the wait names the date it ends. A record that can't be
+  read, or that has no rows, is an unread answer: the unit is left for the next pass, and nothing
+  is claimed or failed. A unit the checks refuse waits the same way when its registry row resolves
+  and its repository has no grant, because failing it would take a claim; a row that doesn't
+  resolve is refused as usual.
 - **Before each step.** `before_step` renews the lease first, then re-reads the registry entry and
   the grant. A repository whose grant was withdrawn fails the unit with
   `the credential_rotation grant was withdrawn mid-rotation`, as a handed-back `rotated_by_sds`
@@ -612,10 +615,25 @@ Past `until`, every reader of the keeper gets 401 until one of those is done.
 
 If the grant is withdrawn mid-rotation, the unit fails at its next step like any contract refusal,
 and a failure after `host` has the same consequences as the stall above: an overlap stays open until
-`until`. Before withdrawing a `credential_rotation` grant, check that no unit on the repository is
-claimed (`rotation-worker grants` shows the instance's view). If one failed on the withdrawal,
-restore the grant through a member proposal, requeue the unit while it has attempts left, and
-finish or undo it as above; if the repository should stay withdrawn, undo it.
+`until`. Before withdrawing a `credential_rotation` grant, read the ledger or `/review` for any
+rotation in flight on the repository, including one between units: a unit that has finished `host`
+leaves an overlap open while its next unit waits. `rotation-worker grants` shows only the grants as
+an instance reads them, not what is in flight. It reads the same config as `run`, so on the Mac name
+it with `--config`, and on the VM use the `runuser` form:
+
+```sh
+rotation-worker grants --config "$HOME/Library/Application Support/rotation-worker/config.toml"
+
+orb -m rotation-executor -u root runuser -u rotation -- env -i PATH=/usr/bin:/bin \
+  HOME=/var/lib/rotation-worker /opt/rotation-worker/venv/bin/rotation-worker grants \
+  --config /etc/rotation-worker/config.toml
+```
+
+A missing config prints an error and exits 2, as an unread record does.
+
+If a unit failed on the withdrawal, restore the grant through a member proposal, requeue the unit
+while it has attempts left, and finish or undo it as above; if the repository should stay withdrawn,
+undo it.
 
 The store retries a 429 or 5xx from BWS for about three minutes, so a stall at `store` means BWS
 kept refusing, not a passing burst. If a restart for an undo doesn't take effect (the container's

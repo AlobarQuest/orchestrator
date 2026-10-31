@@ -131,6 +131,8 @@ def _check(members: list[Member], **sources: Unpack[_Sources]) -> Report:
         "rollbacks": [],
         "standing_update_repositories": [],
         "auto_merge": {m.repository: QUIET for m in members},
+        "flagged_repositories": [],
+        "registry_files": [],
     }
     return check(members, **{**empty, **sources})
 
@@ -366,7 +368,10 @@ def _wire(
     def read_registries(_mirror):
         if mirror_error:
             raise mirror_error
-        return {f"c{i}": RegistryEntry(r, "c" * 40, {}) for i, r in enumerate(flagged)}
+        return {
+            f"c{i}": RegistryEntry(r, "c" * 40, {"class": "openrouter-key"})
+            for i, r in enumerate(flagged)
+        }
 
     monkeypatch.setattr(cli, "rotated_by_sds", read_registries)
     monkeypatch.setattr(cli, "RepoMirror", lambda root: None)

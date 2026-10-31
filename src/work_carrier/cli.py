@@ -81,7 +81,7 @@ from pathlib import Path
 
 from rotation_worker.git_mirror import MirrorError, RepoMirror, default_mirror_root
 from rotation_worker.registry import RegistryError, rotated_by_sds
-from rotation_worker.types import CLASS_TYPES
+from rotation_worker.types import of_a_type
 from sds_members.client import Hold, Member, MembersUnreadable, read_members_from_environment
 from work_carrier.change_manager import (
     DEFAULT_BASE_URL,
@@ -399,12 +399,7 @@ def _handed_over(prepared: list[Prepared], out) -> Mapping[str, str] | None:
     except (RegistryError, MirrorError) as error:
         print(f"[WARNING] the credential registry could not be read: {error}", file=out)
         return None
-    # A class with no type (the canary) is never carried, whatever its row says.
-    return {
-        credential_id: entry.repository
-        for credential_id, entry in rows.items()
-        if entry.credential.get("class") in CLASS_TYPES
-    }
+    return {credential_id: entry.repository for credential_id, entry in of_a_type(rows).items()}
 
 
 def run(

@@ -21,10 +21,16 @@ from fork_sync.gh import CommandFailed, subprocess_runner
 from fork_sync.watch import Unreadable, forks
 from membership_check.auto_merge import AutoMergeState, GitHubAutoMergeSource
 from membership_check.consistency import Scope, canonical, check, factory_targets
-from membership_check.declaration import REGISTRY_FILENAME, GitHubDeclarationSource
+from membership_check.declaration import GitHubDeclarationSource
 from pin_watcher.github import GitHubReader, PinWatcherError, repositories
 from rotation_worker.git_mirror import MirrorError, RepoMirror, default_mirror_root
-from rotation_worker.registry import REGISTRY_REPOSITORIES, RegistryError, rotated_by_sds
+from rotation_worker.registry import (
+    REGISTRY_PATH,
+    REGISTRY_REPOSITORIES,
+    RegistryError,
+    rotated_by_sds,
+)
+from rotation_worker.types import of_a_type
 from sds_members.client import Member, MembersUnreadable, read_members
 from tool_installer.tools import TOOLS
 
@@ -102,13 +108,14 @@ def _standing_update_repositories() -> tuple[list[str], list[str]]:
 
 
 def _flagged_repositories() -> tuple[list[str], list[str]]:
-    """Repositories whose registry has a `rotated_by_sds` row at its `main`, and the gaps.
+    """Repositories whose registry hands the SDS a credential of a type it rotates, read at their
+    `main`, and the gaps.
 
     Read from the lane's own mirror. An unread mirror is a gap and never an empty population, so
     the caller skips the direction that would read it as one.
     """
     try:
-        rows = rotated_by_sds(RepoMirror(default_mirror_root("membership-check")))
+        rows = of_a_type(rotated_by_sds(RepoMirror(default_mirror_root("membership-check"))))
     except (MirrorError, RegistryError, OSError) as error:
         return [], [f"the credential registries couldn't be read: {error}"]
     return sorted({entry.repository for entry in rows.values()}), []
@@ -130,7 +137,7 @@ def _registry_files(token: str, members: Iterable[Member]) -> tuple[list[str], l
             if answer.target is True:
                 holding.append(member.repository)
             elif answer.target is None:
-                gaps.append(f"{REGISTRY_FILENAME} unread: {member.repository} ({answer.detail})")
+                gaps.append(f"{REGISTRY_PATH} unread: {member.repository} ({answer.detail})")
     return holding, gaps
 
 

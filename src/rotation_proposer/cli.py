@@ -272,12 +272,14 @@ def _record(due: Due, row: dict[str, Any]) -> Outcome:
 def _act(
     package: RotationPackage,
     due: Due,
-    destinations: list[str],
+    entry: RegistryEntry,
     client: ChangeManagerClient | None,
     observer: OrchestratorClient | None,
     records: list[dict[str, Any]],
     root: Path,
+    granted: Callable[[], set[str]] | None,
 ) -> list[Outcome]:
+    destinations = entry.destinations
     action, detail = _decide(package, due, destinations)
     subject = due.credential_id
     drifted = action == _ADVANCE and package.carries(due.occurrence) and package.state == APPROVED
@@ -295,6 +297,9 @@ def _act(
         return [_record(due, resolved), *_superseded(records, package)]
     if client is None or observer is None:
         return [Outcome(subject, f"would-{action}", f"{detail} -> {due.occurrence}")]
+    refusal = _ungranted(due, entry.repository, granted)
+    if refusal is not None:
+        return [refusal, *_superseded(records, package)]
 
     # OBSERVE FIRST, before the revision as well as before the proposal: a revision cannot be
     # unminted and a published commit cannot be unpublished, so a pass that cannot state the fact
@@ -381,20 +386,20 @@ def _entry(registry: Callable[[], dict[str, RegistryEntry]], credential_id: str)
 
 
 def _ungranted(
-    item: Due, entry: RegistryEntry, granted: Callable[[], set[str]] | None
+    item: Due, repository: str, granted: Callable[[], set[str]] | None
 ) -> Outcome | None:
     """A finding when the member record does not grant rotation on the credential's repository.
 
-    Asked before any observation, revision or generation, so an ungranted credential writes
-    nothing. `granted` is `None` on a dry run, which reads no record.
+    Asked only where the next act is an observation, a revision, a generation or a proposal, so an
+    ungranted credential starts nothing, while recording a finished rotation and reporting never
+    ask. `granted` is `None` on a dry run, which reads no record.
     """
-    if granted is None or entry.repository.casefold() in granted():
+    if granted is None or repository.lower() in granted():
         return None
     return Outcome(
         item.credential_id,
         "ungranted",
-        f"the member record does not grant credential_rotation on {entry.repository}; "
-        "nothing is written",
+        f"the member record does not grant credential_rotation on {repository}; nothing is written",
     )
 
 
@@ -405,7 +410,8 @@ def _pass(
     observer: OrchestratorClient | None,
     root: Path,
     registry: Callable[[], dict[str, RegistryEntry]],
-    granted: Callable[[], set[str]] | None = None,
+    *,
+    granted: Callable[[], set[str]] | None,
 ) -> list[Outcome]:
     records = client.work_records() if client is not None else []
     outcomes: list[Outcome] = []
@@ -416,16 +422,15 @@ def _pass(
             continue
         try:
             entry = _entry(registry, item.credential_id)
-            refusal = _ungranted(item, entry, granted)
-            if refusal is not None:
-                outcomes.append(refusal)
-                continue
             if package is None:
-                outcomes.append(_generate(entry, item, observer, root))
+                refusal = _ungranted(item, entry.repository, granted)
+                outcomes.append(refusal or _generate(entry, item, observer, root))
                 continue
-            outcomes.extend(
-                _act(package, item, entry.destinations, client, observer, records, root)
-            )
+            outcomes.extend(_act(package, item, entry, client, observer, records, root, granted))
+        except MembersUnreadable as error:
+            # Only a credential whose next act needs the grant gets here, and each one reports
+            # it. `error` holds that credential's other alerts (`alerts.py`).
+            outcomes.append(Outcome(item.credential_id, "error", f"the grant: {error}"))
         except (RegistryError, MirrorError, DestinationError, ContractError) as error:
             # One malformed row is that credential's finding; the pass goes on to the rest.
             outcomes.append(Outcome(item.credential_id, "error", f"the registry: {error}"))
@@ -454,9 +459,9 @@ def _once[T](read: Callable[[], T]) -> Callable[[], T]:
 
 
 def _granted_repositories(credentials: _Credentials) -> set[str]:
-    """Case-folded repositories the member record grants `credential_rotation` on.
+    """Lower-cased repositories the member record grants `credential_rotation` on.
 
-    An empty record is unread, not a withdrawal of every grant: a pass that cannot tell stops.
+    An empty record is unread, not a withdrawal of every grant.
     """
     members = read_members(
         token=credentials.orchestrator_token,
@@ -465,7 +470,7 @@ def _granted_repositories(credentials: _Credentials) -> set[str]:
     )
     if not members:
         raise MembersUnreadable("the member record has no rows")
-    return {name.casefold() for name in populations.granted(members, "credential_rotation")}
+    return {name.lower() for name in populations.granted(members, "credential_rotation")}
 
 
 def _report(outcomes: list[Outcome]) -> int:
@@ -595,15 +600,10 @@ def run(argv: list[str] | None = None) -> int:
                 observer,
                 root,
                 _once(lambda: registry_entries(mirror)),
-                granted,
+                granted=granted,  # None is the dry run, which reads no record.
             )
         )
-    except (
-        UnusableEndpointError,
-        ObservationCredentialError,
-        ChangeManagerError,
-        MembersUnreadable,
-    ) as error:
+    except (UnusableEndpointError, ObservationCredentialError, ChangeManagerError) as error:
         # "This pass could not use its inputs", not "this pass found something": a refused
         # identity or an unreachable service is every credential at once.
         print(str(error), file=sys.stderr)

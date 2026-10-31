@@ -142,14 +142,10 @@ class Orchestrator(_Client):
             transport=transport,
         )
 
-    def members(self) -> list[Any]:
-        """The member record's rows, unfiltered and unparsed: `rotation_granted` reads them and
-        refuses a shape it doesn't know, so a wrong answer is never taken for a shorter record."""
-        body = self._json("GET", _MEMBERS)
-        rows = body.get("members") if isinstance(body, dict) else None
-        if not isinstance(rows, list):
-            raise CallError("the orchestrator's member answer isn't the member record")
-        return rows
+    def members(self) -> Any:
+        """The member record's body, unparsed: `rotation_granted` reads it and refuses a shape it
+        doesn't know, so a wrong answer is never taken for a shorter record."""
+        return self._json("GET", _MEMBERS)
 
     def work(self, change_record_id: int) -> dict[str, Any]:
         body = self._json("GET", f"/api/v1/change-records/{change_record_id}/work")

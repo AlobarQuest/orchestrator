@@ -37,7 +37,7 @@ and its clocks as they were, and no failure of the sync touches a unit or the pa
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Mapping, Set
+from collections.abc import Callable, Iterable, Mapping, Set
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -431,25 +431,26 @@ def _take(setup: Setup, unit_id: str, found: PassActs) -> int:
     reads: ConsumerReads | None = None
     try:
         approved = check_unit(unit, intake, setup.mirror, setup.work_project_id, setup.store)
-        if _grant_waits(setup, approved, unit_id, found):
+        repository = approved.registry.repository
+        if _grant_waits(setup, repository, approved.rotation.destinations, unit_id, found):
             return 0
         held = _held(setup, approved)
         if approved.reads and _verifies(approved):
             reads = _consumer_reads(setup, approved)
             waiting = reads.pending(setup.store.revised(approved.rotation.keeper_id))
             if waiting and _gates_retire(approved):
-                until = _overlap_until(setup, approved)
+                until = _overlap_until(setup, approved.rotation.destinations)
                 LOG.info(
                     "unit_waiting",
                     extra={"unit": str(unit["id"]), "readers": waiting, "overlap_until": until},
                 )
-                backstop = f"; the overlap ends {until}" if until else ""
                 found.waits[unit_id] = Wait(
-                    f"Readers still to run: {', '.join(waiting)}{backstop}", reader=True
+                    f"Readers still to run: {', '.join(waiting)}{_backstop(until)}", reader=True
                 )
                 return 0
     except REFUSALS as error:
-        _refuse(setup, unit, scrub(str(error)), found)
+        if not _refused_grant_waits(setup, intake, unit_id, found):
+            _refuse(setup, unit, scrub(str(error)), found)
         return 0
     # Built before the claim: a provider that can't be built (an admin secret missing from the
     # configuration) is the executor's fault, not the unit's, so no attempt is spent on it.
@@ -474,16 +475,43 @@ def _granted(setup: Setup, repository: str) -> bool:
         raise OrchestratorError(str(error)) from None
 
 
-def _grant_waits(setup: Setup, approved: Approved, unit_id: str, found: PassActs) -> bool:
+def _grant_waits(
+    setup: Setup, repository: str, destinations: Iterable[str], unit_id: str, found: PassActs
+) -> bool:
     """Whether the member record withholds the unit's repository. Nothing is learned of the
     unit's acts while it does, so their alerts stay as they were."""
-    repository = approved.registry.repository
     if _granted(setup, repository):
         return False
     LOG.info("unit_waiting", extra={"unit": unit_id, "ungranted": repository})
-    found.waits[unit_id] = Wait(f"{repository} has no credential_rotation grant")
+    until = _overlap_until(setup, destinations)
+    found.waits[unit_id] = Wait(f"{repository} has no credential_rotation grant{_backstop(until)}")
     found.keep |= {_revoke_key(unit_id), _mint_key(unit_id), _inbox_key(unit_id)}
     return True
+
+
+def _refused_grant_waits(
+    setup: Setup, intake: Mapping[str, Any], unit_id: str, found: PassActs
+) -> bool:
+    """Whether a unit the checks refused waits on the grant instead: failing it takes a claim, and
+    nothing is claimed in a repository with no grant. A row that doesn't resolve names no
+    repository to ask about, so that unit is refused. An unread grant raises, skipping the unit."""
+    credential = standing_credential(str(intake.get("package_id")))
+    if credential is None:
+        return False
+    try:
+        entry = find_credential(setup.mirror, credential)
+    except REFUSALS:
+        return False
+    try:
+        destinations = entry.destinations
+    except DestinationError:
+        # Perhaps why it was refused. The repository still answers; only the overlap goes unnamed.
+        destinations = []
+    return _grant_waits(setup, entry.repository, destinations, unit_id, found)
+
+
+def _backstop(until: str | None) -> str:
+    return f"; the overlap ends {until}" if until else ""
 
 
 def _ours(setup: Setup, unit: Mapping[str, Any]) -> bool:
@@ -842,9 +870,9 @@ def consumer_reads(setup: Setup, reads: Mapping[str, Read], keeper: str) -> Cons
     )
 
 
-def _overlap_until(setup: Setup, approved: Approved) -> str | None:
+def _overlap_until(setup: Setup, destinations: Iterable[str]) -> str | None:
     """When the orchestrator stops accepting the old value unasked, if this rotation hosts one."""
-    consumers = [parse(d) for d in approved.rotation.destinations]
+    consumers = [parse(d) for d in destinations]
     hosted = [c for c in consumers if c["kind"] == "coolify-env-hash"]
     if len(hosted) != 1:
         return None

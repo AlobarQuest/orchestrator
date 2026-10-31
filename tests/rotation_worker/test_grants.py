@@ -26,7 +26,7 @@ from rotation_worker.config import Config, ConfigError
 from rotation_worker.grants import GrantUnread, rotation_granted
 from rotation_worker.notify import Act, Notifier, unit_waiting_key
 from rotation_worker.orchestrator_client import Lease, OrchestratorError
-from rotation_worker.registry import REGISTRY_REPOSITORIES
+from rotation_worker.registry import REGISTRY_REPOSITORIES, RegistryEntry, RegistryError
 from rotation_worker.secret_store import StoreError
 from rotation_worker.values import Value
 from rotation_worker.worker import run_pass
@@ -339,11 +339,128 @@ def test_another_kind_of_unit_reads_no_members(h: Harness) -> None:
     assert h.client.member_reads == 0
 
 
-def test_a_unit_the_checks_refuse_reads_no_members(h: Harness) -> None:
+def _refused(h: Harness, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A unit the checks refuse, whose package names a credential the registry holds."""
     h.add("u1", "mint")
     h.refusal = worker.ContractError("the registry's destinations differ")
+    monkeypatch.setattr(
+        h.client, "package_intake", lambda _id: {"id": "revision", "package_id": "rotation-canary"}
+    )
+
+
+def test_a_refused_unit_with_no_grant_waits_and_is_never_claimed(
+    h: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Kills: claiming a unit in a repository the record withdrew, only to fail it."""
+    _refused(h, monkeypatch)
+    h.client.record = UNGRANTED
+    found = worker.PassActs()
+    assert worker._take(h.setup(), "u1", found) == 0
+    assert h.client.calls == []
+    assert h.client.failures == {}
+    assert found.waits["u1"].reason == f"{REPOSITORY} has no credential_rotation grant"
+    assert worker._mint_key("u1") in found.keep
+
+
+def test_a_refused_unit_with_a_malformed_row_still_waits_on_the_grant(
+    h: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The row's consumers may be why it was refused; its repository is still known."""
+    _refused(h, monkeypatch)
+    h.client.record = UNGRANTED
+    bad = RegistryEntry(REPOSITORY, "c" * 40, {"consumer": "not a list"})
+    monkeypatch.setattr(worker, "find_credential", lambda *_a: bad)
+    found = worker.PassActs()
+    assert worker._take(h.setup(), "u1", found) == 0
+    assert h.client.calls == []
+    assert found.waits["u1"].reason == f"{REPOSITORY} has no credential_rotation grant"
+
+
+def test_a_refused_unit_with_a_grant_is_failed_as_before(
+    h: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _refused(h, monkeypatch)
     run_pass(h.setup())
+    assert h.client.failures["u1"] == "the registry's destinations differ"
+
+
+def test_a_refused_unit_whose_grant_is_unread_is_skipped(
+    h: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _refused(h, monkeypatch)
+    h.client.unreachable.add("members")
+    assert run_pass(h.setup()) == 0
+    assert h.client.calls == []
+    assert h.client.failures == {}
+
+
+def test_a_refused_unit_whose_row_does_not_resolve_is_failed(
+    h: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _refused(h, monkeypatch)
+    h.client.record = UNGRANTED
+
+    def no_row(*_arguments: Any) -> RegistryEntry:
+        raise RegistryError("canary: 0 registry entries, expected exactly 1")
+
+    monkeypatch.setattr(worker, "find_credential", no_row)
+    run_pass(h.setup())
+    assert h.client.failures["u1"] == "the registry's destinations differ"
     assert h.client.member_reads == 0
+
+
+def test_a_refused_unit_naming_no_standing_package_is_failed(h: Harness) -> None:
+    h.add("u1", "mint")
+    h.refusal = worker.ContractError("the registry's destinations differ")
+    h.client.record = UNGRANTED
+    run_pass(h.setup())
+    assert h.client.failures["u1"] == "the registry's destinations differ"
+    assert h.client.member_reads == 0
+
+
+_HOSTED = (
+    'coolify-env-hash instance="prod" resource_type="application" uuid="a" '
+    'key="ORCHESTRATOR_M2M_CREDENTIALS" entry="orchestrator-observer"'
+)
+
+
+def test_the_grant_wait_names_when_the_overlap_ends(h: Harness) -> None:
+    h.add("u1", "mint")
+    h.rotation = replace(h.rotation, destinations=(*h.rotation.destinations, _HOSTED))
+    h.client.record = UNGRANTED
+    h.client.loaded = {"orchestrator-observer": {"previous": {"until": "2026-11-05"}}}
+    found = worker.PassActs()
+    worker._take(h.setup(), "u1", found)
+    assert found.waits["u1"].reason == (
+        f"{REPOSITORY} has no credential_rotation grant; the overlap ends 2026-11-05"
+    )
+
+
+def test_a_refused_unit_s_grant_wait_names_when_the_overlap_ends(
+    h: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _refused(h, monkeypatch)
+    h.client.record = UNGRANTED
+    h.client.loaded = {"orchestrator-observer": {"previous": {"until": "2026-11-05"}}}
+    row = {
+        "provider": "fake",
+        "consumer": [
+            {
+                "kind": "coolify-env-hash",
+                "instance": "prod",
+                "resource_type": "application",
+                "uuid": "a",
+                "key": "ORCHESTRATOR_M2M_CREDENTIALS",
+                "entry": "orchestrator-observer",
+            }
+        ],
+    }
+    monkeypatch.setattr(
+        worker, "find_credential", lambda *_a: RegistryEntry(REPOSITORY, "c" * 40, row)
+    )
+    found = worker.PassActs()
+    worker._take(h.setup(), "u1", found)
+    assert found.waits["u1"].reason.endswith("; the overlap ends 2026-11-05")
 
 
 def test_grants_command_prints_each_registry_repository(
@@ -423,3 +540,11 @@ def test_the_command_uses_the_instance_s_bearer_and_prints_no_value(
     assert bearer not in captured.out + captured.err
     assert [(r.method, r.url.path) for r in seen] == [("GET", "/api/v1/members")]
     assert seen[0].headers["Authorization"] == f"Bearer {bearer}"
+
+
+def test_a_missing_config_prints_an_error_and_exits_2(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    missing = tmp_path / "absent.toml"
+    assert cli.main(["grants", "--config", str(missing)]) == cli.EXIT_UNREADABLE
+    assert str(missing) in capsys.readouterr().err
