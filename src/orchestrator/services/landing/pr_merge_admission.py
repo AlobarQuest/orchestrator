@@ -247,12 +247,13 @@ MERGE_REPOSITORY_REVERTING: Final = "merge_repository_reverting"
 # `landing_repository_not_granted`; this path names its own, as every refusal here does.
 MERGE_REPOSITORY_NOT_GRANTED: Final = "merge_repository_not_granted"
 
-# The unit is a dependency update, its repository has holds, and what it bumps can't be read: the
-# revision's profile names no package or version, or its package id names no tooling this side
-# maps to an ecosystem. That last includes every non-standing dependency-update package, whose id
-# carries no tooling (`orchestrator-tzdata-bump`), so in a held repository each of those is refused
-# here. Never "not held" -- and distinct from the code above, because the fix is the package's or
-# the hold's, not a version's.
+# The unit is a dependency update, and what it bumps can't be read when something must be compared
+# with it: the revision's profile names no package or version, or its package id names no tooling
+# this side maps to an ecosystem. That last includes every non-standing dependency-update package,
+# whose id carries no tooling (`orchestrator-tzdata-bump`), so in a held repository each of those is
+# refused here. Never "not held" -- and distinct from the code above, because the fix is the
+# package's or the hold's, not a version's. Asked because of a reverted version alone, it refuses
+# only a unit no person approved: that list never empties, and a hold can be lifted.
 MERGE_DEPENDENCY_BUMP_UNREADABLE: Final = "merge_dependency_bump_unreadable"
 
 
@@ -371,7 +372,13 @@ def admission_for(
         clock,
         change_window_override,
     )
-    held = _hold_term(session, revision, envelope.change_class, target_repository)
+    held = _hold_term(
+        session,
+        revision,
+        envelope.change_class,
+        target_repository,
+        human_approved=PackageRepository(session).exact_authority_approval(unit) is not None,
+    )
     granted = grant_term(
         MemberRecordGrants(session),
         target_repository,
@@ -515,6 +522,8 @@ def _hold_term(
     revision: WorkPackageRevision,
     change_class: str | None,
     target_repository: str,
+    *,
+    human_approved: bool,
 ) -> _Term:
     """Does this dependency update move a dependency the member record holds past its ceiling?
 
@@ -544,7 +553,9 @@ def _hold_term(
     repository never lands by this path, even after its hold is lifted (`factory_brings_reverted`;
     the landers' `landing_version_reverted`). And while a landing there is on its way to a revert,
     no bump lands on top of it, which would make the revert an overlap (the landers'
-    `landing_repository_reverting`; this one clears when the revert lands).
+    `landing_repository_reverting`; this one clears when the revert lands). A reverted version
+    alone never bars a bump that can't be read from a bound human approval, or one revert would
+    refuse every non-standing package in the repository for good.
     """
     if DEPENDENCY_UPDATE not in (change_class, revision.profile) or not target_repository:
         return _Term(True, ())
@@ -556,7 +567,8 @@ def _hold_term(
     if holds or reverted:
         bump = _bump_of(session, revision, target_repository)
         if bump is None:
-            refusals.append(MERGE_DEPENDENCY_BUMP_UNREADABLE)
+            if holds or not human_approved:
+                refusals.append(MERGE_DEPENDENCY_BUMP_UNREADABLE)
         else:
             if factory_breaches(holds, target_repository, bump):
                 refusals.append(MERGE_VERSION_CEILING_EXCEEDED)

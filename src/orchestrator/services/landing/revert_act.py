@@ -18,10 +18,11 @@ and a `dependabot/<ecosystem>/` branch, read from the pull request), so a fork's
 never watched either.
 
 **The factory's own merges are watched beside them (Landing Part 4).** A `unit_pr_merge` row is
-watched when its status is `merged`, its unit is a dependency update (by its envelope's change
-class or its revision's profile, as the merge's hold term reads it) and its event records that
-the estate answered `inert` at the merge (`landing_inert`). So `already_merged`, somebody else's
-landing, is not; a unit of another class is not; and a landing that redeployed is not, since the
+watched when its status is `merged`, its unit is a dependency update by both its envelope's change
+class and its revision's profile, and its event records that the estate answered `inert` at the
+merge (`landing_inert`). So `already_merged`, somebody else's landing, is not; any other unit is
+not, so an app change is never reverted by this watch; a pull request a record names as its revert
+is not, whatever bound it to a unit; and a landing that redeployed is not, since the
 estate lane's pointing back rests on a change record and images a factory merge doesn't carry.
 Such a landing is its record: no pull request is read to decide it is a bump, its bumps come from
 its revision (`terms.revision_bump`), and it goes through the inert lane, whose revert subject
@@ -1054,6 +1055,10 @@ def _factory_landings(
     recent, candidate = _in_the_watch(folded, UnitPrMerge.pr_number, UnitPrMerge.created_at)
     conditions: list[ColumnElement[bool]] = [
         UnitPrMerge.status == _MERGED,
+        ~exists().where(
+            LandingRevert.repository == folded,
+            LandingRevert.revert_pr_number == UnitPrMerge.pr_number,
+        ),
         Event.payload["landing_inert"].as_boolean().is_(True),
         candidate,
     ]
@@ -1072,7 +1077,7 @@ def _factory_landings(
     landings: list[tuple[Landing, bool]] = []
     for merge, unit, revision, package, is_recent in rows:
         change_class = normalize_authority(unit.authority).change_class
-        if DEPENDENCY_UPDATE not in (change_class, revision.profile):
+        if change_class != DEPENDENCY_UPDATE or revision.profile != DEPENDENCY_UPDATE:
             continue
         folded_name = merge.repository.lower()
         landings.append(

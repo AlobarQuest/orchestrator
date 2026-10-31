@@ -659,7 +659,8 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
 - **The factory side asks the same matcher through `factory_breaches`.** The factory merge
   (`pr_merge_admission.py::_hold_term`) refuses a dependency-update unit whose revision's
   `profile_fields` bump breaches a hold (`merge_version_ceiling_exceeded`) or can't be read in a
-  repository with holds (`merge_dependency_bump_unreadable`). The bump proposer skips a held bump
+  repository with holds (`merge_dependency_bump_unreadable`), or, with no bound human approval, in
+  one with a reverted version. The bump proposer skips a held bump
   (`ceiling-exceeded`, no package, no proposal, no alert), and the work carrier refuses a held
   record (`version_ceiling_exceeded`, `dependency_bump_unreadable`), which is a finding in that
   lane. All three read a uv version as a `>=` floor, so a hold on a uv dependency stops every
@@ -800,11 +801,12 @@ on landing follow "Automatic reverts (deploying repositories)" below.
   hours (`WATCH_HOURS`). A revert landing is never watched, and a landing with no record must be the
   update bot's, so a fork's upstream sync is never watched.
 - **The factory's merges.** Also watched, for the same 48 hours: a `unit_pr_merge` row with status
-  `merged`, of a unit that is a dependency update by its envelope's class or its revision's profile,
-  whose event says the estate answered `inert` at the merge (`landing_inert`). `already_merged` is
-  someone else's landing and isn't watched. Nor is another class of unit, a merge that redeployed,
-  or a merge made before `landing_inert` was recorded. Nothing is read to select them, and no pull
-  request is read to judge one.
+  `merged`, of a unit that is a dependency update by both its envelope's class and its revision's
+  profile, whose event says the estate answered `inert` at the merge (`landing_inert`).
+  `already_merged` is someone else's landing and isn't watched. Nor is any other unit, so an
+  `app-change` is never reverted automatically, nor a pull request a record names as its revert, a
+  merge that redeployed, or a merge made before `landing_inert` was recorded. Nothing is read to
+  select them, and no pull request is read to judge one.
 - **Which jobs.** A job is a (workflow, job) pair. It counts when it passed at the pull request's
   head and its workflow has a `push` run at the merge commit. A `pull_request`-only workflow, or a
   job absent from the push run, is never watched.
@@ -841,8 +843,8 @@ The revert is the exact inverse of the squash merge, built through the git data 
 recorded, is the exact inverse, has clean checks and a current head. Landing it marks the record
 `revert_landed`. For a factory merge the inverse is the whole merge, its source fixes included, and
 the original's author doesn't matter. It lands only where the inert policy declares the repository.
-Elsewhere it stays open with nothing to land it, and `membership_check` reports a granted repository
-no landing path reaches.
+Elsewhere nothing lands it: the lander reports it `revert-stranded` and raises
+`landing-revert-stranded` while it is still open.
 
 **Overlap refusal.** When anything landed on top of the bump touched a path the bump touched, the
 orchestrator records `refused_overlap` and opens nothing. Reverting would remove that work too.
@@ -880,15 +882,15 @@ A later package for the same dependency is stopped by the hold.
 The inert lander raises these through alert-hub (`lander/held_alerts.py`, memory in
 `revert-alerts.json`). Each fires once. `landing-reverted` stays open while the hold is in force and
 resolves when it is lifted. The refused, failed and stranded alerts stay open until a person closes
-them, and their lander findings print on every pass while the record stands. A pass that cannot
-read the watch holds every remembered key.
+them, and their lander findings print on every pass while the record stands. A record that names no dependency says no hold was placed and no
+version is barred. A pass that cannot read the watch holds every remembered key.
 
 | Key | Meaning | What you do |
 |---|---|---|
 | `landing-reverted:<repo>:<pr>` | The revert landed. The alert names the failed jobs, the revert pull request and the hold, and says the version stays refused after the hold is lifted. | Read it. Lift the hold when the dependency is safe to take again; land the reverted version itself only by hand. |
 | `landing-revert-refused:<repo>:<pr>` | Overlap: something landed on top of the bump. The default branch may still be broken. | Revert by hand. |
 | `landing-revert-failed:<repo>:<pr>` | The revert could not be opened. | Read the detail; revert by hand or fix the cause. |
-| `landing-revert-stranded:<repo>:<pr>` | The revert pull request closed without landing. This repository's Dependabot bumps wait (`landing_repository_reverting`) until it is reopened and lands. | Reopen it. Reverting by hand does not release the bumps yet. |
+| `landing-revert-stranded:<repo>:<pr>` | The revert pull request closed without landing, or it is open in a repository outside the lane's population, so nothing lands it. This repository's bumps wait (`landing_repository_reverting`, `merge_repository_reverting`). | Reopen it, or land it by hand if it is outside the population. Reverting by hand does not release the bumps yet. |
 
 ### Known gaps
 

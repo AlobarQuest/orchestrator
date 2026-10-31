@@ -549,6 +549,57 @@ def test_the_stranded_alert_says_the_repositorys_bumps_wait_until_the_revert_lan
     assert "Reverting by hand does not release them" in message
 
 
+def test_the_stranded_alert_outside_the_population_says_the_revert_is_open(tmp_path) -> None:
+    hub = Hub()
+    subject = ("alobarquest/veritok", 41)
+    sync_revert_alerts(
+        LANE,
+        [_record("revert_opened")],
+        stranded={subject},
+        outside={subject},
+        environ=_env(tmp_path),
+        transport=hub.transport(),
+    )
+
+    [sent] = hub.sent
+    message = str(sent["message"])
+    assert sent["key"] == "landing-revert-stranded:alobarquest/veritok:41"
+    assert "is open, but" in message
+    assert "no longer open" not in message
+
+
+@pytest.mark.parametrize(
+    "detail",
+    [
+        "the unit's revision names no bump this can read: nothing will be held, and the version "
+        "is not barred from landing again",
+        "the update bot's dependency list could not be read: nothing will be held, and the "
+        "version is not barred from landing again",
+    ],
+)
+def test_a_record_naming_no_dependency_says_nothing_is_held_or_barred(tmp_path, detail) -> None:
+    hub = Hub()
+    row = {**_record("revert_landed"), "hold_outcome": "", "detail": detail}
+    sync_revert_alerts(LANE, [row], environ=_env(tmp_path), transport=hub.transport())
+
+    [sent] = hub.sent
+    message = str(sent["message"])
+    assert "No hold was placed and no version is barred" in message
+    assert detail in message
+    assert "refused for good" not in message
+    assert "To lift a hold" not in message
+
+
+def test_a_landed_record_with_no_hold_answer_keeps_the_never_again_sentence(tmp_path) -> None:
+    """Only an empty answer means no dependency was named; a missing one says nothing."""
+    hub = Hub()
+    row = {**_record("revert_landed"), "hold_outcome": None}
+    sync_revert_alerts(LANE, [row], environ=_env(tmp_path), transport=hub.transport())
+
+    [sent] = hub.sent
+    assert "refused for good" in str(sent["message"])
+
+
 def test_a_stranded_revert_raises_its_own_alert_and_is_held_when_its_listing_failed(
     tmp_path,
 ) -> None:

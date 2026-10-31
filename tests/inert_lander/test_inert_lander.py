@@ -1065,6 +1065,7 @@ class RevertAlertCalls:
         self.calls: list[tuple[str, list[dict[str, Any]] | None]] = []
         self.stranded: list[set[tuple[str, int]]] = []
         self.unknown: list[set[tuple[str, int]]] = []
+        self.outside: list[set[tuple[str, int]]] = []
 
     def __call__(
         self,
@@ -1073,8 +1074,10 @@ class RevertAlertCalls:
         *,
         stranded: Any = frozenset(),
         unknown: Any = frozenset(),
+        outside: Any = frozenset(),
         **_: Any,
     ) -> str | None:
+        self.outside.append(set(outside))
         self.calls.append((lane, None if watch is None else list(watch)))
         self.stranded.append(set(stranded))
         self.unknown.append(set(unknown))
@@ -1332,6 +1335,21 @@ def test_an_open_revert_is_not_stranded_and_an_unlisted_one_is_unknown(
 
     assert revert_alerts.stranded == [set()]
     assert revert_alerts.unknown == [{(OTHER, LANDED)}]
+
+
+def test_a_revert_outside_the_population_is_stranded_not_unknown(
+    monkeypatch, revert_alerts, capsys
+) -> None:
+    """Nothing lists that repository, so nothing lands the revert: no later pass will know more."""
+    watch = [_watched(None, "revert_opened", repository=OTHER, revert_pr_number=REVERT_PR)]
+    _wire(monkeypatch, FakeGitHub({REPOSITORY: []}), FakeOrchestrator(watch=watch), _rule())
+
+    assert run(["--submit"]) == EXIT_FINDINGS
+
+    assert "outside this lane's population" in capsys.readouterr().out
+    assert revert_alerts.stranded == [{(OTHER, LANDED)}]
+    assert revert_alerts.outside == [{(OTHER, LANDED)}]
+    assert revert_alerts.unknown == [set()]
 
 
 # --------------------------------------------------------------------------------------------

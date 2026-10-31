@@ -17,6 +17,7 @@ from orchestrator.errors import DomainError
 from orchestrator.persistence.models import (
     Event,
     LandingRevert,
+    SdsMember,
     SdsMemberHold,
     WorkPackage,
     WorkUnit,
@@ -234,25 +235,64 @@ def test_a_factory_merge_of_another_change_class_is_not_watched(
     assert raised.value.code == LANDING_REVERT_NOT_WATCHED
 
 
-def test_a_factory_merge_declared_a_bump_by_its_profile_alone_is_watched(
+def test_a_factory_merge_with_only_a_bump_profile_is_not_watched(
     migrated_session: Session,
 ) -> None:
-    """A unit can't leave the watch by declaring only one of the two, as with the hold term."""
+    """An app change is never reverted by the watch, whatever its revision's profile says."""
     unit = _bump(migrated_session, "profile-only", change_class="app-change")
     grant_services(migrated_session, REPOSITORY, "dependency_updates", "app_changes")
     approve_authority(migrated_session, unit)
     _landed(migrated_session, unit, inert_source())
 
-    [watched] = landing_watch(migrated_session, **lanes(gateway_for()))
-    assert watched.pr_number == FACTORY_PR
+    assert landing_watch(migrated_session, **lanes(gateway_for())) == ()
 
 
-def test_a_factory_merge_declared_a_bump_by_its_envelope_alone_is_watched(
+def test_a_factory_merge_with_only_a_bump_class_is_not_watched(
     migrated_session: Session,
 ) -> None:
     unit = _bump(migrated_session, "envelope-only", profile=None)
     approve_authority(migrated_session, unit)
     _landed(migrated_session, unit, inert_source())
+
+    assert landing_watch(migrated_session, **lanes(gateway_for())) == ()
+
+
+def test_a_revert_bound_to_a_unit_is_neither_watched_nor_reverted(
+    migrated_session: Session,
+) -> None:
+    """A worker supplies a unit's pull request number, so a unit can name a recorded revert. That
+    landing is never a bump to revert: the loop the lanes' selection refuses."""
+    merged(migrated_session)
+    migrated_session.add(_record_naming_revert(FACTORY_PR))
+    migrated_session.commit()
+    gateway = gateway_for()
+
+    assert landing_watch(migrated_session, **lanes(gateway)) == ()
+    with pytest.raises(DomainError) as raised:
+        act(migrated_session, gateway, key="k")
+    assert raised.value.code == LANDING_REVERT_NOT_WATCHED
+
+
+def _record_naming_revert(number: int, repository: str = INERT_REPOSITORY) -> LandingRevert:
+    return LandingRevert(
+        repository=repository,
+        pr_number=99,
+        merge_commit_sha="9" * 40,
+        parent_sha="8" * 40,
+        failed_job_names=["test"],
+        failed_run_id=1,
+        status="refused_overlap",
+        revert_pr_number=number,
+        bumps=[],
+    )
+
+
+def test_a_revert_of_that_number_in_another_repository_excludes_nothing(
+    migrated_session: Session,
+) -> None:
+    merged(migrated_session)
+    migrated_session.add(_record_naming_revert(FACTORY_PR, "alobarquest/elsewhere"))
+    migrated_session.commit()
 
     [watched] = landing_watch(migrated_session, **lanes(gateway_for()))
     assert watched.pr_number == FACTORY_PR
@@ -612,6 +652,52 @@ def test_a_bump_the_revision_cannot_name_refuses_beside_a_reverted_version(
     reverted_record(migrated_session, to_version="2.16.0")
     fields = {key: value for key, value in STANDING_FIELDS.items() if key != "package"}
     unit = _bump(migrated_session, "nameless", fields=fields)
+
+    assert MERGE_DEPENDENCY_BUMP_UNREADABLE in _answer(migrated_session, unit).refusals
+
+
+def test_a_reverted_version_alone_never_bars_a_person_approved_bump_it_cant_read(
+    migrated_session: Session,
+) -> None:
+    """The reverted list never empties, so one revert would refuse every non-standing package in
+    the repository for good."""
+    reverted_record(migrated_session, to_version="2.16.0")
+    unit = _bump(migrated_session, "tzdata", fields={"to_version": "2024.1"})
+    approve_authority(migrated_session, unit)
+
+    assert _answer(migrated_session, unit).satisfied is True
+
+
+def test_a_person_approved_bump_of_a_reverted_version_is_refused(
+    migrated_session: Session,
+) -> None:
+    reverted_record(migrated_session, to_version="2.16.0")
+    unit = _bump(migrated_session, "uv")
+    approve_authority(migrated_session, unit)
+
+    assert MERGE_VERSION_REVERTED in _answer(migrated_session, unit).refusals
+
+
+def test_a_hold_still_refuses_a_person_approved_bump_it_cant_read(
+    migrated_session: Session,
+) -> None:
+    """A hold is lifted by a person, so it keeps the "never not held" rule of ADR-0028."""
+    unit = _bump(migrated_session, "tzdata", fields={"to_version": "2024.1"})
+    approve_authority(migrated_session, unit)
+    grant = migrated_session.scalar(select(SdsMember).where(SdsMember.repository == REPOSITORY))
+    assert grant is not None
+    migrated_session.add(
+        SdsMemberHold(
+            member_id=grant.id,
+            ecosystem="uv",
+            directory="/",
+            dependency="other",
+            ceiling="1.0",
+            reason="held",
+            set_by="devon",
+        )
+    )
+    migrated_session.commit()
 
     assert MERGE_DEPENDENCY_BUMP_UNREADABLE in _answer(migrated_session, unit).refusals
 

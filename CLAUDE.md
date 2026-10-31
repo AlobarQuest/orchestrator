@@ -413,8 +413,9 @@ Placement rule: global CLAUDE.md §7.
   `tests/contract/test_landing_fact_contract.py`. History:
   `docs/history/claude-md-invariants-archive.md` #228.
 - The post-landing watch selects a factory merge from rows alone: status `merged`, a
-  dependency-update unit, and `landing_inert` on its `pr_merge.merged` event, the estate's answer at
-  the act; a merge event without it is never watched. `UnitPrMerge.repository` is the envelope's
+  unit that is a dependency update by both class and profile, `landing_inert` on its
+  `pr_merge.merged` event (the estate's answer at the act; an event without it is never watched),
+  and no record naming it as a revert. `UnitPrMerge.repository` is the envelope's
   spelling and `landing_reverts` is folded, so every join folds it. Detail:
   `docs/operations/landing-lanes.md`, "Automatic reverts (inert repositories)".
 - Making a UNIQUE constraint's column nullable disables it for NULL rows; use
