@@ -104,6 +104,8 @@ from rotation_worker.destinations import DestinationError
 from rotation_worker.git_mirror import MirrorError, RepoMirror, default_mirror_root
 from rotation_worker.registry import RegistryEntry, RegistryError
 from rotation_worker.registry import credentials as registry_entries
+from sds_members import populations
+from sds_members.client import MembersUnreadable, read_members
 
 EXIT_OK: Final = 0
 EXIT_UNUSABLE: Final = 2
@@ -371,6 +373,31 @@ def _not_handed_over(item: Due, package: RotationPackage | None) -> Outcome:
     )
 
 
+def _entry(registry: Callable[[], dict[str, RegistryEntry]], credential_id: str) -> RegistryEntry:
+    entry = registry().get(credential_id)
+    if entry is None:
+        raise RegistryError(f"{credential_id}: no registry entry")
+    return entry
+
+
+def _ungranted(
+    item: Due, entry: RegistryEntry, granted: Callable[[], set[str]] | None
+) -> Outcome | None:
+    """A finding when the member record does not grant rotation on the credential's repository.
+
+    Asked before any observation, revision or generation, so an ungranted credential writes
+    nothing. `granted` is `None` on a dry run, which reads no record.
+    """
+    if granted is None or entry.repository.casefold() in granted():
+        return None
+    return Outcome(
+        item.credential_id,
+        "ungranted",
+        f"the member record does not grant credential_rotation on {entry.repository}; "
+        "nothing is written",
+    )
+
+
 def _pass(
     due: list[Due],
     packages: dict[str, RotationPackage],
@@ -378,6 +405,7 @@ def _pass(
     observer: OrchestratorClient | None,
     root: Path,
     registry: Callable[[], dict[str, RegistryEntry]],
+    granted: Callable[[], set[str]] | None = None,
 ) -> list[Outcome]:
     records = client.work_records() if client is not None else []
     outcomes: list[Outcome] = []
@@ -387,9 +415,11 @@ def _pass(
             outcomes.append(_not_handed_over(item, package))
             continue
         try:
-            entry = registry().get(item.credential_id)
-            if entry is None:
-                raise RegistryError(f"{item.credential_id}: no registry entry")
+            entry = _entry(registry, item.credential_id)
+            refusal = _ungranted(item, entry, granted)
+            if refusal is not None:
+                outcomes.append(refusal)
+                continue
             if package is None:
                 outcomes.append(_generate(entry, item, observer, root))
                 continue
@@ -410,17 +440,32 @@ def _pass(
     return outcomes
 
 
-def _once(read: Callable[[], dict[str, RegistryEntry]]) -> Callable[[], dict[str, RegistryEntry]]:
+def _once[T](read: Callable[[], T]) -> Callable[[], T]:
     """`read`, asked at most once per pass, and only when a handed-over credential is due. A
     failure is asked again by the next credential, so each reports it."""
-    found: list[dict[str, RegistryEntry]] = []
+    found: list[T] = []
 
-    def cached() -> dict[str, RegistryEntry]:
+    def cached() -> T:
         if not found:
             found.append(read())
         return found[0]
 
     return cached
+
+
+def _granted_repositories(credentials: _Credentials) -> set[str]:
+    """Case-folded repositories the member record grants `credential_rotation` on.
+
+    An empty record is unread, not a withdrawal of every grant: a pass that cannot tell stops.
+    """
+    members = read_members(
+        token=credentials.orchestrator_token,
+        credential_key_id=OBSERVER_KEY_ID,
+        base_url=credentials.orchestrator_url,
+    )
+    if not members:
+        raise MembersUnreadable("the member record has no rows")
+    return {name.casefold() for name in populations.granted(members, "credential_rotation")}
 
 
 def _report(outcomes: list[Outcome]) -> int:
@@ -539,10 +584,26 @@ def run(argv: list[str] | None = None) -> int:
                 user_agent=USER_AGENT,
             )
         mirror = RepoMirror(default_mirror_root("rotation-proposer"))
+        granted = _once(lambda: _granted_repositories(credentials)) if args.submit else None
+        if granted is None:
+            print("a dry run does not read the member record: grants were not checked")
         outcomes.extend(
-            _pass(due, packages, client, observer, root, _once(lambda: registry_entries(mirror)))
+            _pass(
+                due,
+                packages,
+                client,
+                observer,
+                root,
+                _once(lambda: registry_entries(mirror)),
+                granted,
+            )
         )
-    except (UnusableEndpointError, ObservationCredentialError, ChangeManagerError) as error:
+    except (
+        UnusableEndpointError,
+        ObservationCredentialError,
+        ChangeManagerError,
+        MembersUnreadable,
+    ) as error:
         # "This pass could not use its inputs", not "this pass found something": a refused
         # identity or an unreachable service is every credential at once.
         print(str(error), file=sys.stderr)

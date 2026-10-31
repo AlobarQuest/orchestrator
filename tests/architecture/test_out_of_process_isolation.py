@@ -518,6 +518,8 @@ TABLE: dict[str, Row] = {
         # The registry, the derived plan and each type's declaration, never a provider: the
         # generator imports `rotation_worker.types`, which names no network client.
         "rotation_worker",
+        # Rotation Part 2: the credential_rotation grant, through its confined reader.
+        "sds_members",
     ),
     # The fork onboarding tool. Operator-run, never scheduled. It reuses two sibling readers rather
     # than writing third copies (`revision_watcher`'s App Brain landing reader, and
