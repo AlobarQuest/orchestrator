@@ -138,3 +138,13 @@ This task writes to production. It runs only after Devon approves this plan.
 - [ ] **Step 6: Record the proof, update the SDS Layer Map and year plan, and list every ruling with its cost if wrong.**
 
 **No live proof in this part, stated plainly:** a refusal on a real withdrawal (`ungranted`, the unit waiting, and the stop before a step). Proving those means withdrawing a real grant during a canary rotation, which needs Devon's say-so.
+
+## Live proof, recorded 2026-10-31
+
+Merged as `013507cf` (#572). Both instances run that commit. No orchestrator image changed.
+
+- **Grant read:** `rotation-worker grants` on the VM and the Mac each printed all four registry repositories as `granted`.
+- **Membership check:** one pass through its launcher exited 0 on the new code, with no new disagreement.
+- **Proposer and decomposer:** one pass of each exited as before. With nothing due, neither read the record.
+
+Not proven live: `ungranted`, a decomposer refusal, a unit waiting on a grant, and a stop before a step. Proving those means withdrawing a real grant.
