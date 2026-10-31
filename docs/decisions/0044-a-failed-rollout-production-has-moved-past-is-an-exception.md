@@ -207,7 +207,8 @@ were re-pointed rather than left to match nothing.
 
 ## Amendment 1, 2026-10-31 — the exception twin is gone, and Option D is built
 
-ADR-0022 amendment 1 retires a record once `superseded_by` holds, which replaces two things above.
+Devon decided on 2026-10-31 that a machine retires a landed record once a later green rollout is
+ahead of its failed one. ADR-0022 amendment 1 builds that, and it replaces two things above.
 
 - **The exception twin is gone.** `closed_record_production_has_moved_past` is deleted. For a terminal
   record with a superseded rollout the watcher now reports nothing, neither the twin nor the rollout's
@@ -221,9 +222,15 @@ ADR-0022 amendment 1 retires a record once `superseded_by` holds, which replaces
 
 The four clauses are unchanged, and they now also decide a retirement, which `resolved` makes
 irreversible. Both known residuals err the safe way: an excuse withheld is a retirement withheld and
-never one wrongly granted. A record retired on clause 1's `run_started_at` ordering can flap the
-other way, though: if a re-run later withholds the excuse, the terminal record reads
-`a_closed_record_whose_latest_rollout_did_not_succeed` until a newer push-run success lands.
+never one wrongly granted.
+
+**A record this watcher retired is finished.** Its fact is permanent and held in its `superseded`
+event, so the pass skips it before any GitHub read: a terminal record whose `decided_by` is
+`deploy-watcher` prints one `[finished]` line and nothing else. Without this, `superseded_by`
+re-derives each pass and returns None on a read error, a sibling run in flight at the newest head or
+an untranscribed workflow edit, and a resolved record would report two findings and exit 2 with
+nothing a reader can do. A record a person closed is still read every pass, so it can flap to
+`a_closed_record_whose_latest_rollout_did_not_succeed` when the excuse is withheld.
 
 `Outcome.supersession` carries the superseding run and commit as data, so the retirement never parses
 them from the exception's text.

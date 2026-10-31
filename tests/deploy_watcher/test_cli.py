@@ -26,6 +26,7 @@ from deploy_watcher import cli as watcher_cli
 from deploy_watcher import observe as observe_module
 from deploy_watcher import units as units_module
 from deploy_watcher.change_manager import SUPERSEDING_ACTOR, ChangeManagerClient
+from deploy_watcher.github import GitHubReader
 from deploy_watcher.model import ChangeRecord, Finding
 from deploy_watcher.orchestrator import OrchestratorClient
 from deploy_watcher.units import UNIT_CLAIM_UNBOUND, UNIT_CLAIM_UNKNOWN
@@ -36,6 +37,7 @@ from tests.deploy_watcher.test_observe import (
     MERGE,
     NOW,
     REPO,
+    WORKFLOW,
     failed_rollout,
     reader_for,
     routes,
@@ -558,6 +560,107 @@ def test_a_terminal_superseded_record_reports_nothing(
     assert "[exception]" not in out
     assert "[found]" not in out
     assert "[retired]" not in out
+
+
+def test_a_green_run_of_a_different_workflow_retires_nothing() -> None:
+    """Every clause holds for `ci.yml`, whose green run says nothing about this rollout. The
+    rollout workflow itself has no later success, so nothing is superseded."""
+    other = {
+        key.replace(WORKFLOW, ".github/workflows/ci.yml"): value
+        for key, value in supersession().items()
+    }
+    answer, sent = _watch_retirement(
+        "approved",
+        github_routes=failed_rollout(
+            **other, **{_SUCCESS_QUERY: {"total_count": 0, "workflow_runs": []}}
+        ),
+    )
+
+    assert answer == (True, False)
+    assert sent == []
+
+
+def _pass_over(
+    monkeypatch: pytest.MonkeyPatch, decided_by: str, status: str = "resolved"
+) -> tuple[int, str, list[str]]:
+    """A whole `watch` pass over one record, with every GitHub read failing."""
+    reads: list[str] = []
+
+    def github(request: httpx.Request) -> httpx.Response:
+        reads.append(request.url.path)
+        return httpx.Response(500, json={})
+
+    def listing(request: httpx.Request) -> httpx.Response:
+        item = {
+            "id": RECORD.item_id,
+            "identity": RECORD.identity,
+            "target_repository": REPO,
+            "pull_request_number": 46,
+            "status": status,
+            "decided_by": decided_by,
+        }
+        return httpx.Response(200, json=[item])
+
+    def untouched(request: httpx.Request) -> httpx.Response:
+        raise AssertionError(f"the pass reached {request.url.path}")
+
+    for variable in (
+        watcher_cli.GITHUB_TOKEN_VAR,
+        watcher_cli.CHANGE_MANAGER_TOKEN_VAR,
+        watcher_cli.ORCHESTRATOR_TOKEN_VAR,
+    ):
+        monkeypatch.setenv(variable, "t")
+    monkeypatch.setattr(
+        watcher_cli,
+        "GitHubReader",
+        lambda token: GitHubReader(token, transport=httpx.MockTransport(github)),
+    )
+    monkeypatch.setattr(
+        watcher_cli,
+        "ChangeManagerClient",
+        lambda token, base_url: ChangeManagerClient(
+            token, base_url=base_url, transport=httpx.MockTransport(listing)
+        ),
+    )
+    monkeypatch.setattr(
+        watcher_cli,
+        "OrchestratorClient",
+        lambda token, base_url: OrchestratorClient(
+            token, base_url=base_url, transport=httpx.MockTransport(untouched)
+        ),
+    )
+    result = CliRunner().invoke(watcher_cli.app, ["watch"])
+    return result.exit_code, result.output, reads
+
+
+def test_a_record_this_watcher_retired_is_not_read_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A retired record is finished: a read that withheld the excuse must not turn it red."""
+    exit_code, output, reads = _pass_over(monkeypatch, SUPERSEDING_ACTOR)
+
+    assert exit_code == watcher_cli.EXIT_OK, output
+    assert reads == []
+    assert "[finished]" in output
+    assert "[found]" not in output
+
+
+def test_a_record_a_person_closed_is_still_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The control: the skip is keyed on who closed the record, not on its being closed."""
+    exit_code, output, reads = _pass_over(monkeypatch, "devon")
+
+    assert exit_code == watcher_cli.EXIT_INCOMPLETE, output
+    assert reads != []
+    assert "[finished]" not in output
+
+
+def test_an_open_record_is_read_whoever_last_decided_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`decided_by` is a latest-writer column, so only a terminal record is finished."""
+    exit_code, output, reads = _pass_over(monkeypatch, SUPERSEDING_ACTOR, status="approved")
+
+    assert exit_code == watcher_cli.EXIT_INCOMPLETE, output
+    assert reads != []
+    assert "[finished]" not in output
 
 
 def test_a_refused_retirement_is_a_finding(capsys: pytest.CaptureFixture[str]) -> None:

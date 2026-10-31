@@ -370,7 +370,7 @@ Placement rule: global CLAUDE.md §7.
   population, or a standing rotation package's record (`rotation-<credential>`, intent-packages
   source, risk `caution`, change class `credential-rotation`, no target repository; ADR-0055
   amendment 16, and the carrier refuses that class on a package of any other profile); a person
-  moves every other one. No producer credential moves a status:
+  moves every other one. No producer credential moves a `work` record's status:
   `bump_proposer` is propose-and-read and the `propose` scope refuses status routes.
   `bump_proposer` creates a missing package for a declared repository's failed npm, pip or uv bump
   (reach `live_estate` if it deploys, else `source_repository`), judges each bump by its own

@@ -221,13 +221,18 @@ def test_the_listing_always_names_the_source() -> None:
 
 
 def test_the_listing_carries_each_records_status() -> None:
-    """A terminal superseded record is quiet only because the listing says it is terminal."""
+    """A terminal record is quiet, or finished, only because the listing says what it is."""
 
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json=[{"id": 78, "status": "resolved"}])
+        return httpx.Response(
+            200, json=[{"id": 78, "status": "resolved", "decided_by": SUPERSEDING_ACTOR}]
+        )
 
     with ChangeManagerClient("t", transport=httpx.MockTransport(handler)) as client:
-        assert [record.status for record in client.deploy_changes()] == ["resolved"]
+        [record] = client.deploy_changes()
+
+    assert record.status == "resolved"
+    assert record.decided_by == SUPERSEDING_ACTOR
 
 
 @pytest.mark.parametrize("base_url", ["https://sds..alobar.net", "https://" + "a" * 64 + ".net"])

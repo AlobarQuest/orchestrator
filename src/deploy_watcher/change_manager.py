@@ -230,6 +230,7 @@ def _record(item: dict[str, Any]) -> ChangeRecord:
         pull_request_number=int(item.get("pull_request_number") or 0),
         acceptance_criteria=tuple(str(c) for c in criteria) if isinstance(criteria, list) else (),
         status=str(item.get("status") or ""),
+        decided_by=str(item.get("decided_by") or ""),
     )
 
 

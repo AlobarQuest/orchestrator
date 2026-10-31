@@ -363,7 +363,10 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   matches — and change-manager's `propose` scope refuses every status-moving route server-side
   whatever the client sends; the work watcher's one write is `work-retirement`, which can only
   remove permission. The `deploy` source has a `deploy-retirement` route whose closed vocabulary
-  has exactly one member (`pull_request_closed_unmerged`). The propose credential lives in a BWS
+  has exactly one member (`pull_request_closed_unmerged`), and `deploy-supersession`, in the
+  `observe` scope, retires a record whose failed rollout a later green rollout passed (ADR-0022
+  amendment 1). The deploy watcher then skips that record before any GitHub read. The propose
+  credential lives in a BWS
   project the narrow `sds-operator` identity cannot read — `bws` answers `404 Resource not found`,
   which reads like a missing secret rather than a denied one. Use the broad identity for it.
 - **The bump proposer creates a missing standing package, and alerts on a bump it cannot route.**

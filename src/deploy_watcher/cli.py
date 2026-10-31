@@ -29,6 +29,7 @@ from typing import Any
 import typer
 
 from deploy_watcher.change_manager import (
+    SUPERSEDING_ACTOR,
     ChangeManagerClient,
     ChangeManagerError,
     RefusedError,
@@ -186,7 +187,10 @@ def watch(
     settle_seconds: int = typer.Option(SETTLE_SECONDS),
     dry_run: bool = typer.Option(False, "--dry-run"),
 ) -> None:
-    """Observe every deploying-merge change change-manager holds, and record what settled."""
+    """Observe every deploying-merge change change-manager holds, and record what settled.
+
+    A record this watcher retired is skipped before any GitHub read.
+    """
     github_token = _require(GITHUB_TOKEN_VAR)
     # Required even for a dry run: without the listing there is no subject, so a dry run that
     # skipped it would exercise nothing and report a confident "0 to watch". Reading is safe --
@@ -223,6 +227,9 @@ def watch(
 
         _say(f"{len(records)} deploying-merge change(s) to watch")
         for record in records:
+            if _retired_here(record):
+                _say(f"  [finished] item {record.item_id}: retired by this watcher")
+                continue
             item_found, item_incomplete = _watch_one(
                 reader,
                 changes,
@@ -237,6 +244,16 @@ def watch(
             incomplete = incomplete or item_incomplete
 
     raise typer.Exit(code=_exit_code(findings=found, incomplete=incomplete))
+
+
+def _retired_here(record: ChangeRecord) -> bool:
+    """Whether this watcher retired the record, which finishes it (ADR-0044 amendment 1).
+
+    Its fact is permanent and held in the record's `superseded` event. Re-deriving it would read
+    GitHub for nothing, and any read that withheld the excuse would turn a finished record red.
+    A record a person closed is not this, and keeps the ordinary path.
+    """
+    return record.status in TERMINAL_STATUSES and record.decided_by == SUPERSEDING_ACTOR
 
 
 def _watch_one(
