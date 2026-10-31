@@ -700,9 +700,10 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   pull request the update bot opened. Asking it last means a row that already has metadata can't
   move. Measured on 2026-10-29: re-deriving all 541 stored landings in the 30-day window across the
   13 ledger repositories reproduced every row except the four `KNOWN_UNDERCOUNTED_CHECK_LANDINGS`.
-- **The hold term asks a different question.** `services/landing/terms.py::_update_bot_message`
-  takes the one bot-authored commit anywhere on the branch. The two agree on every ordinary pull
-  request.
+- **The hold term applies the same rule.** `services/landing/terms.py::_update_bot_message` takes
+  `commits[0]` only when the update bot authored it and it is verified, so the hold term and the
+  gate never read different commits. `tests/contract/test_update_bot_commit_agreement.py` feeds
+  both the same commit lists.
 
 ### The bump driver (Landing Part 4)
 

@@ -698,8 +698,8 @@ def _gate_message(reader: GitHubReader, repository: str, number: int) -> str:
     and refuses it unless its author is the update bot and its signature is verified. That is its
     default; every gate revision in `rules.py` leaves both `skip-*` inputs unset. Not the head: a
     branch update puts a merge commit with no trailer on top, and reading the head lost metadata
-    the gate still had. The hold term (`terms.py::_update_bot_message`) asks a different question
-    -- the one bot-authored commit anywhere -- and the two agree on every ordinary pull request.
+    the gate still had. The hold term (`terms.py::_update_bot_message`) applies this same rule, held
+    equal by `tests/contract/test_update_bot_commit_agreement.py`.
     """
     commits = reader.get(f"/repos/{repository}/pulls/{number}/commits", per_page=1) or []
     if not commits:

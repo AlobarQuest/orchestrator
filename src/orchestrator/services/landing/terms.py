@@ -423,8 +423,9 @@ def version_ceiling_term(
     hold to compare against, so a repository nobody has held costs no call and cannot refuse here.
 
     The list is the update bot's own commit message, never the head's: the lane's branch update
-    puts a merge commit at the head that names nothing. Exactly one update-bot commit must carry
-    it; none, two, a commit with no message, a block `bumps_of` can't read, a branch whose
+    puts a merge commit at the head that names nothing. The pull request's first commit must carry
+    it, authored by the update bot and verified, as the gate reads it; any other first commit, a
+    commit with no message, a block `bumps_of` can't read, a branch whose
     ecosystem can't be read, or a failed read is `LANDING_DEPENDENCY_LIST_UNREADABLE` -- never "not
     held". A grouped update is refused when any member exceeds a hold. The comparison is the
     matcher's (`membership.holds.exceeded`) and nobody else's.
@@ -538,10 +539,19 @@ def revision_bump(package_id: str, snapshot: object, repository: str) -> Revisio
 def _update_bot_message(
     repository: str, pull: EstatePullRequest, gateway: EstateReadGateway
 ) -> str | None:
-    """The message of the one commit the update bot authored on this branch, or None."""
+    """The message the gate's `fetch-metadata` reads, or None where it would read none.
+
+    Its rule, held equal to `landing_ledger/github.py::_gate_message` by
+    `tests/contract/test_update_bot_commit_agreement.py`: the pull request's FIRST commit, and only
+    when the update bot authored it and its signature is verified.
+    """
     try:
         commits = gateway.pull_request_commits(repository=repository, number=pull.number)
     except EstateGatewayError:
         return None
-    own = [commit for commit in commits if commit.author_login == UPDATE_BOT_LOGIN]
-    return own[0].message if len(own) == 1 else None
+    if not commits:
+        return None
+    first = commits[0]
+    if first.author_login != UPDATE_BOT_LOGIN or not first.verified:
+        return None
+    return first.message or None

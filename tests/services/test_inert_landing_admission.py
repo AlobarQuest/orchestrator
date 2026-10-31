@@ -1119,13 +1119,13 @@ def test_the_list_is_read_from_the_update_bots_commit_after_a_branch_update(
         _typer_gateway(commits=(foreign_commit(HEAD),)),
         _typer_gateway(
             commits=(
-                dependabot_commit("one", trailer(("typer", "0.21.0"))),
+                foreign_commit("one"),
                 dependabot_commit(HEAD, trailer(("typer", "0.21.0"))),
             )
         ),
         _typer_gateway(commits_error=EstateGatewayError("commits_list_truncated")),
     ],
-    ids=["no-block", "no-message", "no-bot-commit", "two-bot-commits", "read-failed"],
+    ids=["no-block", "no-message", "no-bot-commit", "person-first", "read-failed"],
 )
 def test_a_list_that_cannot_be_read_in_a_held_repository_is_refused_by_its_own_name(
     migrated_session: Session, gateway: FakeEstateGateway
