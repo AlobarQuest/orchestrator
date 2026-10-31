@@ -71,7 +71,14 @@ from tests.services.inert_landing_doubles import (
     FakeInertPolicySource,
     rules,
 )
-from tests.services.test_inert_pr_merge import SYSTEM, WORKER
+from tests.services.test_inert_pr_merge import (
+    PR,
+    SYSTEM,
+    UV_BRANCH,
+    WORKER,
+    _unknown_row,
+)
+from tests.services.test_inert_pr_merge import _land as _land_inert
 from tests.services.test_member_proposals import grant_services
 
 BUMP = 41
@@ -1428,3 +1435,22 @@ def test_readings_taken_before_a_late_push_never_count(migrated_session: Session
     [watched] = landing_watch(migrated_session, **lanes(gateway))
 
     assert watched.verdict == "pending" and "no reading since the landing" in watched.detail
+
+
+def test_a_lane_row_settled_at_another_head_is_not_watched(migrated_session: Session) -> None:
+    """The author and branch `_watched_subject` reads survive a person's push, and `_revert`
+    reverts the whole merge, so the row's event is what keeps it out."""
+    _unknown_row(migrated_session)
+    landed = ActingInertGateway(
+        pull=pull_request(
+            number=PR,
+            head_ref=UV_BRANCH,
+            head_sha="e" * 40,
+            landed=True,
+            is_open=False,
+            merge_commit=LANDED_COMMIT,
+        )
+    )
+    _land_inert(migrated_session, gateway=landed)
+
+    assert landing_watch(migrated_session, **lanes(WatchGateway())) == ()

@@ -43,11 +43,11 @@ the landing:
 5. It changes the package's manifest (`MANIFESTS_BY_ECOSYSTEM`), the generator's pin sites, so the
    bump is observed and not only attested.
 
-Each failure is its own refusal with no record, like every term above the landing call: the row is
-permanent and replayed, so a stored refusal would bar the person who reads the pull request and
-lands it. The merge is left undone, the pull request open, and the bump driver alerts
-`bump-act-refused`. Tests can still be weakened: only workflow and gate files are refused (ADR-0025
-amendment 4).
+Each failure is its own refusal with no record, like every term above the landing call: a row
+bars another call and only an unknown outcome is ever settled, so a stored refusal would bar the
+person who reads the pull request and lands it. The merge is left undone, the pull request open,
+and the bump driver alerts `bump-act-refused`. Tests can still be weakened: only workflow and gate
+files are refused (ADR-0025 amendment 4).
 
 ## Idempotency, and why the order is settle, check, act, reconcile, record
 
@@ -92,10 +92,13 @@ by the admission answer, which is also served to readers and writes nothing.
 
 ## Which `already_merged` is ours
 
-`already_merged` has two meanings the status can't tell apart. Found landed after our call, it is
-our act with a lost answer; found landed before any call, it is somebody else's, or a crash nobody
-can attribute. Only the first carries the event's `landing_inert` and `policy_path`, written when
-the call was made and copied when the row settles. The post-landing watch selects on that stamp.
+`already_merged` has two meanings the status can't tell apart. Found landed after our call at the
+head we named, it is our act with a lost answer. Found landed before any call, it is somebody
+else's, or a crash nobody can attribute. Found landed after our call at any other head, or with no
+head to compare, it is somebody else's too: the remote refuses a call naming a moved head, so that
+tree is one the terms never read, and reverting it would take a person's work out with the bump.
+Only the first carries the event's `landing_inert` and `policy_path`, written when the call was
+made and copied when the row settles. The post-landing watch selects on that stamp.
 """
 
 from __future__ import annotations
@@ -136,8 +139,8 @@ GITHUB_API_URL: Final = "https://api.github.com"
 # Refusals that leave NO RECORD, because nothing happened and each can be tried again. The pull
 # request does not target the branch the estate's answer is about; the pull request is not open;
 # the remote could not be read; the remote refused and a confirming read established that nothing
-# landed. A record is permanent, so recording any of these would bar a unit for a condition that
-# clears on its own or with one edit.
+# landed. A record bars another call, so recording any of these would bar a unit for a condition
+# that clears on its own or with one edit.
 PR_MERGE_BASE_NOT_DEFAULT_BRANCH: Final = "pr_merge_base_not_default_branch"
 PR_MERGE_NOT_OPEN: Final = "pr_merge_not_open"
 PR_MERGE_REMOTE_UNREADABLE: Final = "pr_merge_remote_unreadable"
@@ -349,8 +352,9 @@ def _resettle(
 
     Still unknown: the row is returned as it stands. Landed: the row becomes the `already_merged`
     it should have been and its event moves to one naming that action, because the post-landing
-    watch reads the row's event. Not landed: nothing happened, so the row is removed; its event
-    stays, and the removal has its own.
+    watch reads the row's event; landed at any head but the one the call named, the event carries
+    neither stamp and no gate trace is written (the module docstring). Not landed: nothing
+    happened, so the row is removed; its event stays, and the removal has its own.
 
     **Every new event is the row's stored event with its outcome changed.** That event was written
     when the call was made, so `landing_inert` and `policy_path` are the answers the call was made
@@ -373,6 +377,8 @@ def _resettle(
         session.delete(record)
         session.flush()
         return None
+    ours = state.head_sha == record.head_sha
+    policy_path = payload.get("policy_path") if ours else None
     record.status = "already_merged"
     record.reason_code = None
     record.merge_commit_sha = state.merge_commit_sha
@@ -386,11 +392,12 @@ def _resettle(
             "status": record.status,
             "reason_code": None,
             "merge_commit_sha": record.merge_commit_sha,
+            "landing_inert": ours and payload.get("landing_inert") is True,
+            "policy_path": policy_path,
         },
         key=f"{record.idempotency_key}:{record.status}:{record.id}",
     )
     record.event_id = event.id
-    policy_path = payload.get("policy_path")
     if isinstance(policy_path, Mapping):
         _record_gate_not_required(session, command, unit, policy_path)
     session.flush()
@@ -524,7 +531,7 @@ def _act(
             head_sha,
             status="already_merged",
             reason_code=None,
-            called=False,
+            ours=False,
         )
     if not state.open:
         raise DomainError(
@@ -559,6 +566,7 @@ def _act(
                 reason_code=None,
                 merge_commit_sha=reread.merge_commit_sha if reread is not None else None,
                 github_status=error.status_code,
+                ours=reread is not None and reread.head_sha == head_sha,
             )
         if landed is False:
             # CONFIRMED not landed, so nothing happened and this is retryable — a required check
@@ -711,11 +719,11 @@ def _record(
     reason_code: str | None,
     merge_commit_sha: str | None = None,
     github_status: int | None = None,
-    called: bool = True,
+    ours: bool = True,
 ) -> UnitPrMerge:
-    """`called` is false only when the pull request was found landed before any call was made, so
-    the row is no act of ours and its event carries neither of the stamps that say so."""
-    policy_path = _policy_path(admission) if called else None
+    """`ours` is false when the row records a landing this act can't claim (`Which already_merged
+    is ours`, in the module docstring), so its event carries neither of the stamps that say so."""
+    policy_path = _policy_path(admission) if ours else None
     record = UnitPrMerge(
         work_unit_id=unit.id,
         repository=admission.target_repository,
@@ -745,7 +753,7 @@ def _record(
             "authority_fingerprint": unit.authority_fingerprint,
             # The estate's answer at this act: the post-landing watch reads it, and App Brain is
             # not asked again for what this landing was. Only an act of ours carries it.
-            "landing_inert": called and admission.landing_inert,
+            "landing_inert": ours and admission.landing_inert,
             # What lifted the human requirement, kept so a row settled later can say so.
             "policy_path": policy_path,
             # Beside the fingerprint on purpose: the override's attribution is inherited from the

@@ -7,6 +7,7 @@ landing's facts come from, and which of its merges are watched.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -412,6 +413,7 @@ def _landed_state() -> PullRequestState:
         default_branch="main",
         open=False,
         landed=True,
+        head_sha=HEAD,
         merge_commit_sha=LANDED_COMMIT,
     )
 
@@ -483,6 +485,52 @@ def test_an_already_merged_found_before_the_call_is_never_watched(
     assert event.payload["landing_inert"] is False
     assert event.payload["policy_path"] is None
     assert landing_watch(migrated_session, **lanes(gateway_for()), only_lane="inert") == ()
+
+
+def _another_head() -> PullRequestState:
+    return replace(_landed_state(), head_sha="e" * 40)
+
+
+def test_a_landing_at_another_head_is_never_watched(migrated_session: Session) -> None:
+    unit = _bump(migrated_session, "another-head")
+    assert _lost_response(migrated_session, unit, _another_head).status == "already_merged"
+    assert landing_watch(migrated_session, **lanes(gateway_for()), only_lane="inert") == ()
+
+
+def test_a_settled_landing_at_another_head_is_never_watched(migrated_session: Session) -> None:
+    unit = _bump(migrated_session, "settled-another-head")
+    _lost_response(migrated_session, unit, _read_fails)
+
+    land_unit_pull_request(
+        migrated_session,
+        MergeCommand(
+            unit_id=unit.id, actor=SYSTEM, idempotency_key="lost", expected_version=unit.version
+        ),
+        FakeGateway(state=_another_head()),
+        inert_source(),
+        no_record_source(),
+        clock=FixedClock(IN_WINDOW),
+        bump_merge_enabled=True,
+    )
+
+    assert landing_watch(migrated_session, **lanes(gateway_for()), only_lane="inert") == ()
+
+
+def test_a_stored_stamped_row_with_no_commit_is_read_and_never_acted_on(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    """A row the previous code wrote: `already_merged` found before the call, stamped anyway."""
+    row = merged(migrated_session, key="stored-before")
+    row.status, row.merge_commit_sha = "already_merged", None
+    migrated_session.commit()
+    gateway = gateway_for()
+
+    [watched] = landing_watch(migrated_session, **lanes(gateway), only_lane="inert")
+    assert watched.verdict == "unreadable"
+
+    assert act(migrated_session, gateway, key="act").acted is False
+    assert record_of(migrated_engine) is None
+    assert gateway.reruns == []
 
 
 def test_a_factory_merge_leaves_the_watch_with_its_window(migrated_session: Session) -> None:

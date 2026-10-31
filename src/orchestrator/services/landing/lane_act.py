@@ -69,6 +69,10 @@ _LANDING_VERB: Final = "land a pull request"
 # The recorded statuses that say the pull request landed: this lane's own landing, and a refusal
 # the confirming read showed had landed after all.
 _LANDED: Final = frozenset({"merged", "already_merged"})  # not-a-vocabulary: `_record`'s statuses
+# The event of a pull request that landed at a head other than the one this lane's call named. The
+# revert watch selects a lane's landings by event action and doesn't read this one, because a
+# revert of that merge would take out work no term read. The row's status stays `already_merged`.
+_LANDED_AT_ANOTHER_HEAD: Final = "already_merged_other_head"
 _BRANCH_UPDATE_VERB: Final = "bring a pull request's branch up to date"
 
 # The unknown-outcomes read names a lane neither lander is.
@@ -375,8 +379,9 @@ def _resettle(
 
     Still unknown: the row is returned as it stands. Landed: the row becomes the `already_merged`
     it should have been, with the permission it was written with, and its event moves to one
-    naming that action, because the revert watch finds landings through the row's event. Not
-    landed: nothing happened, so the row is removed; its event stays, and the removal has its own.
+    naming that action, because the revert watch finds landings through the row's event (at any
+    head but the row's, `_landed_event` names one the watch doesn't read). Not landed: nothing
+    happened, so the row is removed; its event stays, and the removal has its own.
 
     Nothing here writes to the remote, so a lane that is switched off still settles.
     """
@@ -405,7 +410,7 @@ def _resettle(
         command,
         lane,
         record,
-        status=record.status,
+        status=_landed_event(reread, record.head_sha),
         names_change_record=names_change_record,
         idempotency_key=f"{record.idempotency_key}:already_merged:{record.id}",
     )
@@ -472,6 +477,7 @@ def _act[Admission: LaneAdmission](
                 reason_code=None,
                 merge_commit_sha=reread.merge_commit_sha if reread is not None else None,
                 github_status=error.status_code,
+                event_status=None if reread is None else _landed_event(reread, head_sha),
             )
         if landed is False:
             # CONFIRMED not landed, so nothing happened and this is retryable -- a required check
@@ -514,6 +520,11 @@ def _act[Admission: LaneAdmission](
     )
 
 
+def _landed_event(reread: EstatePullRequest, head_sha: str) -> str:
+    """The event status of a landing a re-read found: ours only at the head our call named."""
+    return "already_merged" if reread.head_sha == head_sha else _LANDED_AT_ANOTHER_HEAD
+
+
 def _reread(gateway: EstateReadGateway, repository: str, number: int) -> EstatePullRequest | None:
     """Did the pull request land despite the refusal? `None` means WE DO NOT KNOW; otherwise the
     re-read pull request, whose `landed` answers and whose merge commit names the landing.
@@ -542,6 +553,7 @@ def _record(
     reason_code: str | None,
     merge_commit_sha: str | None = None,
     github_status: int | None = None,
+    event_status: str | None = None,
 ) -> EstatePrMerge:
     """Write the outcome into the table both lanes share.
 
@@ -569,7 +581,7 @@ def _record(
         command,
         lane,
         record,
-        status=status,
+        status=event_status or status,
         names_change_record=names_change_record,
         idempotency_key=event_key,
     )

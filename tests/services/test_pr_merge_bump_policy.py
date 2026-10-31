@@ -334,6 +334,7 @@ def test_landing_after_a_lost_response_is_recorded_as_policy_lifted(
             default_branch="main",
             open=False,
             landed=True,
+            head_sha=HEAD,
             merge_commit_sha="d" * 40,
         ),
     )

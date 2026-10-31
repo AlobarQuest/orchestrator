@@ -415,8 +415,8 @@ Placement rule: global CLAUDE.md §7.
 - The post-landing watch selects a factory merge from rows alone: status `merged` or
   `already_merged`, a unit that is a dependency update by both class and profile, `landing_inert`
   on the row's event (the estate's answer when our call was made; an `already_merged` found before
-  any call never carries it, and an event without it is never watched), and no record naming it as
-  a revert. `UnitPrMerge.repository` is the envelope's spelling and `landing_reverts` is folded, so
+  any call, or at a head other than the row's, never carries it, and an event without it is never
+  watched), and no record naming it as a revert. `UnitPrMerge.repository` is the envelope's spelling and `landing_reverts` is folded, so
   every join folds it. Detail:
   `docs/operations/landing-lanes.md`, "Automatic reverts (inert repositories)".
 - Making a UNIQUE constraint's column nullable disables it for NULL rows; use
@@ -449,7 +449,9 @@ Placement rule: global CLAUDE.md §7.
   /api/v1/landing-unknown-outcomes`, because no enumeration reaches a landed pull request.
   `lane_act._resettle`, in its own committed step, is the only code that may change or remove a
   landing row (`test_only_lane_act_may_write_a_landing_row_and_only_resettle_changes_one`): landed
-  makes it `already_merged`, repoints `event_id` to an event with that action and runs `on_landed`;
+  makes it `already_merged`, repoints `event_id` to an event with that action and runs `on_landed`
+  (at a head other than the row's, on this or the reconciling read, the event's action is
+  `<lane>.already_merged_other_head`, which the revert watch never selects);
   confirmed unlanded removes it, and that stands whatever admission then says. Events are unique
   and append-only, so a removed row's key is spent (`_event_key`). Detail:
   `docs/operations/landing-lanes.md`, "An unknown landing outcome".
@@ -613,7 +615,8 @@ Placement rule: global CLAUDE.md §7.
   `merge_policy_path_off` in place of `authority_approval_not_bound`; other terms report beside it,
   so it means waiting only as the sole refusal. The admission answer writes nothing; the act records
   `authority.human_gate_not_required` beside a landing its own call made, including one reconciled
-  after that call, never beside an `already_merged` found before it. A row whose reason is
+  after that call at the head it named, never beside an `already_merged` found before it or at
+  another head. A row whose reason is
   `merge_refused_by_remote:<code>` is an unknown outcome: `pr-merge-admission` answers
   `landing_outcome_unknown`, the bump driver replays it whatever the pull request's state or the
   other refusals, and `pr_merge._resettle`, in its own committed step and asking no term, is the

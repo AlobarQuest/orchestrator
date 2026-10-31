@@ -241,7 +241,7 @@ def test_a_repeat_replays_the_record_and_never_calls_the_remote_again(
     assert len(gateway.merges) == 1
 
 
-def test_a_refusal_we_could_not_confirm_is_terminal_and_does_not_call_again(
+def test_a_refusal_we_could_not_confirm_is_recorded_and_does_not_call_again(
     migrated_session: Session,
 ) -> None:
     """The ONE ambiguous outcome: the remote refused and the confirming read also failed, so a

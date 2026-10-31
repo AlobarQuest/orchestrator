@@ -559,7 +559,9 @@ def _merge(
 ) -> Outcome | None:
     """A closed pull request is nothing to do. A merged one is still asked, while its unit's terms
     hold, so `pr-merge` records `already_merged` for a landing it lost track of; its refusal or
-    its replay says nothing a person needs, or every old unit would report on every pass."""
+    its replay says nothing a person needs, or every old unit would report on every pass. A row
+    whose outcome is unknown is the exception: it is asked about whatever the pull request's state
+    and whatever else the answer refuses, and it reports (`_replay`)."""
     unit_id = str(row["unit_id"])
     unit = orchestrator.unit(unit_id)
     number = unit.get("pr_number")

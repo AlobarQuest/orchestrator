@@ -856,6 +856,11 @@ revert's hold, and the next pass would read `landing_pull_request_not_open` and 
 - A closed revert whose row is unknown is never reported `revert-stranded`: the landing joins the
   landers' `unknown` set, its alert held, and the same is true of every closed revert while the
   list is unreadable.
+- A landing a re-read finds at a head other than the row's, on the reconciling read or a settling,
+  is `already_merged` with the event action `<lane>.already_merged_other_head`, which the revert
+  watch doesn't select: `_watched_subject` reads only the author and branch, which a person's push
+  keeps, and `_revert` reverts the whole merge. `on_landed` still runs, so a revert landed that way
+  is recorded and holds its dependency.
 - A removed row's event keeps its key, and events are append-only and unique on it, while the
   lander's key names the pull request and head. `_event_key` gives a landing a key of its own when
   that one is spent, on this pass or a later one.
@@ -881,7 +886,9 @@ settles the same way, on the unit table.
   what the call was made on, and `authority.human_gate_not_required` comes from that `policy_path`.
 - A row the call left unknown carries `landing_inert` and `policy_path` from the start, for that
   reason. `already_merged` found before any call carries neither: it is somebody else's act, or a
-  crash nobody can attribute.
+  crash nobody can attribute. Nor does one found landed after the call at a head other than the
+  row's, or with no head to read, on either the reconciling read or a settling: that tree is one
+  no term read, and a revert would take a person's work out with the bump.
 - `pr-merge-admission` answers `landing_outcome_unknown` for such a row, and that is the bump
   driver's cue. Its merge step reads the answer before testing the pull request's state, because a
   landed row's pull request is merged or closed, and it asks to land whatever else the answer
@@ -915,8 +922,8 @@ on landing follow "Automatic reverts (deploying repositories)" below.
   `unit_pr_merge` row with status `merged` or `already_merged`, of a unit that is a dependency
   update by both its envelope's class and its revision's profile, whose event says the estate
   answered `inert` at the merge (`landing_inert`). That stamp alone separates our act from a
-  person's: a landing reconciled after our own call carries it, and an `already_merged` found before
-  any call never does. No other unit is watched, so an `app-change` is never reverted automatically,
+  person's: a landing reconciled after our own call at the head it named carries it, and an
+  `already_merged` found before any call, or at another head, never does. No other unit is watched, so an `app-change` is never reverted automatically,
   nor is a pull request a record names as its revert, a merge that redeployed, or a merge made
   before `landing_inert` was recorded. Nothing is read to select them, and no pull request is read
   to judge one. A landing settled late has that much less of the watch left.

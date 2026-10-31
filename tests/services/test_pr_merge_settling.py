@@ -60,9 +60,14 @@ RECORD: dict[str, Any] = {
 KEY = "bump-driver:merge:settling"
 
 
-def landed() -> PullRequestState:
+def landed(head: str = HEAD) -> PullRequestState:
     return PullRequestState(
-        base_ref="main", default_branch="main", open=False, landed=True, merge_commit_sha=COMMIT
+        base_ref="main",
+        default_branch="main",
+        open=False,
+        landed=True,
+        head_sha=head,
+        merge_commit_sha=COMMIT,
     )
 
 
@@ -130,6 +135,45 @@ def test_a_replay_that_finds_it_landed_records_already_merged(
     assert gate.payload["authority_fingerprint"] == unit.authority_fingerprint
     migrated_session.refresh(unit)
     assert (unit.state, unit.version) == ("completed", version)
+
+
+@pytest.mark.parametrize("head", ["e" * 40, ""], ids=["another-head", "no-head"])
+def test_a_row_settled_at_any_other_head_carries_no_stamp(
+    migrated_session: Session, migrated_engine: Engine, head: str
+) -> None:
+    """Somebody pushed and landed after our call failed: a tree no term read."""
+    unit, _ = unknown_row(migrated_session, f"settles-other-{head[:1]}")
+
+    record = _land(migrated_session, unit, FakeGateway(state=landed(head)), key=KEY, as_served=True)
+
+    fresh = stored(migrated_engine, unit)
+    assert fresh is not None
+    assert (fresh.status, fresh.merge_commit_sha) == ("already_merged", COMMIT)
+    event = migrated_session.get(Event, record.event_id)
+    assert event is not None
+    assert event.action == "pr_merge.already_merged"
+    assert event.payload["landing_inert"] is False
+    assert event.payload["policy_path"] is None
+    assert _gate_events(migrated_session, unit) == []
+
+
+@pytest.mark.parametrize("head", ["e" * 40, ""], ids=["another-head", "no-head"])
+def test_a_reconciling_read_at_any_other_head_carries_no_stamp(
+    migrated_session: Session, head: str
+) -> None:
+    unit = _bump(migrated_session, f"reconciled-other-{head[:1]}")
+    gateway = FakeGateway(
+        merge_error=GitHubGatewayError("merge_status", 405), state_after_refusal=landed(head)
+    )
+
+    record = _land(migrated_session, unit, gateway)
+
+    assert (record.status, record.merge_commit_sha) == ("already_merged", COMMIT)
+    event = migrated_session.get(Event, record.event_id)
+    assert event is not None
+    assert event.payload["landing_inert"] is False
+    assert event.payload["policy_path"] is None
+    assert _gate_events(migrated_session, unit) == []
 
 
 def test_a_settled_row_is_replayed_and_settles_once(migrated_session: Session) -> None:
