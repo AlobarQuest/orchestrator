@@ -44,8 +44,13 @@ class _Client:
         update_error: Exception | None = None,
         close_error: Exception | None = None,
         replayed: bool = False,
+        land_answer: dict[str, Any] | None = None,
+        land_error: Exception | None = None,
     ) -> None:
         self.replayed = replayed
+        self.land_answer = land_answer or {"status": "merged"}
+        self.land_error = land_error
+        self.landed: list[tuple[str, str]] = []
         self.answer = answer
         self.update_error = update_error
         self.close_error = close_error
@@ -60,7 +65,10 @@ class _Client:
         self, repository: str, pr_number: int, *, head_sha: str, idempotency_key: str
     ) -> dict[str, Any]:
         self.keys.append(idempotency_key)
-        return {"status": "merged"}
+        self.landed.append((head_sha, idempotency_key))
+        if self.land_error is not None:
+            raise self.land_error
+        return self.land_answer
 
     def update_branch(
         self, repository: str, pr_number: int, *, head_sha: str, idempotency_key: str
@@ -410,3 +418,82 @@ def test_the_wait_on_a_revert_is_not_a_deliberate_refusal_in_either_lane() -> No
     assert REVERTING not in estate.LANE.deliberate | inert.LANE.deliberate
     assert REVERTING not in estate.LANE.exception | inert.LANE.exception
     assert core.REVERTING == REVERTING
+
+
+# An unknown landing outcome (Landing Part 5): the answer says so, and the land call settles it.
+UNKNOWN = "landing_outcome_unknown"
+NOT_OPEN = "landing_pull_request_not_open"
+
+
+def _unknown(*refusals: str, head: str | None = HEAD) -> dict[str, Any]:
+    return {"satisfied": False, "refusals": [UNKNOWN, *refusals], "head_sha": head}
+
+
+@pytest.mark.parametrize("module", LANDERS)
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [("already_merged", "settled"), ("merged", "landed"), ("refused", "unreadable")],
+)
+def test_outcome_unknown_replays_the_landing(module: Any, status: str, expected: str) -> None:
+    """Beside `not open` too: a landed pull request answers both, and that one is SETTLED."""
+    client = _Client(_unknown(NOT_OPEN), land_answer={"status": status})
+
+    outcome = core.consider(module.LANE, client, *SUBJECT[0], True)
+
+    assert outcome.status == expected
+    assert client.landed == [(HEAD, core.landing_key(module.LANE, *SUBJECT[0], HEAD))]
+
+
+@pytest.mark.parametrize("module", LANDERS)
+def test_outcome_unknown_with_no_submit_acts_on_nothing(module: Any) -> None:
+    client = _Client(_unknown(NOT_OPEN))
+
+    outcome = core.consider(module.LANE, client, *SUBJECT[0], False)
+
+    assert outcome.status == "unreadable"
+    assert UNKNOWN in outcome.detail
+    assert client.landed == []
+
+
+@pytest.mark.parametrize("module", LANDERS)
+def test_outcome_unknown_naming_no_head_is_unreadable(module: Any) -> None:
+    client = _Client(_unknown(head=None))
+
+    outcome = core.consider(module.LANE, client, *SUBJECT[0], True)
+
+    assert outcome.status == "unreadable"
+    assert client.landed == []
+
+
+@pytest.mark.parametrize("module", LANDERS)
+def test_a_still_unknown_replay_reports_unreadable(module: Any) -> None:
+    client = _Client(
+        _unknown(), land_answer={"status": "refused", "reason_code": "merge_refused_by_remote:x"}
+    )
+
+    outcome = core.consider(module.LANE, client, *SUBJECT[0], True)
+
+    assert outcome.status == "unreadable"
+    assert "merge_refused_by_remote:x" in outcome.detail
+
+
+def test_a_refused_replay_reads_as_its_other_refusals() -> None:
+    """Outside the window the row stays and a replay is refused, every pass: that is the window's
+    deliberate refusal, not a finding, and a closed pull request stays settled."""
+    refused = core.LandingRefused("may not be landed", "estate_merge_not_admissible")
+
+    client = _Client(_unknown(WINDOW), land_error=refused)
+    assert core.consider(estate.LANE, client, *SUBJECT[0], True).status == "deliberate"
+
+    client = _Client(_unknown(NOT_OPEN), land_error=refused)
+    assert core.consider(estate.LANE, client, *SUBJECT[0], True).status == "settled"
+
+    client = _Client(_unknown(), land_error=refused)
+    held = core.consider(estate.LANE, client, *SUBJECT[0], True)
+    assert (held.status, held.detail) == ("held", str(refused))
+
+
+def test_a_replay_the_orchestrator_could_not_answer_is_an_error() -> None:
+    client = _Client(_unknown(), land_error=core.OrchestratorError("no answer"))
+
+    assert core.consider(estate.LANE, client, *SUBJECT[0], True).status == "error"

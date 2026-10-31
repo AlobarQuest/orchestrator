@@ -817,6 +817,38 @@ nothing to do.
   hours or more turns every in-scope open pull request `unreadable`, so each fires its one keyed
   alert: noise in proportion to the open pull requests, never a repeat.
 
+### An unknown landing outcome (Landing Part 5)
+
+When the remote refuses a landing and the confirming read fails too, nobody knows whether it
+landed. The row records `refused` with reason `merge_refused_by_remote:<code>`
+(`interfaces.outcome_is_unknown`); the bare code is the remote declining, which is settled and
+terminal. The row stays because a lost success with no row would lose `on_landed`, which places a
+revert's hold, and the next pass would read `landing_pull_request_not_open` and never ask again.
+
+- The admissions answer `landing_outcome_unknown` instead of `landing_already_recorded`. The lander
+  checks for it before `SETTLED`, since a pull request that landed also answers `not open`, and asks
+  to land with the answer's head. A sibling carrying it releases (ADR-0045): it isn't queued.
+- `lane_act._resettle` reads the pull request first. Read failed: the row stands, and the lander
+  reports `unreadable`. Landed: the row becomes `already_merged` with the re-read's commit, keeps its
+  permission columns, moves its `event_id` to a new `<lane>.already_merged` event (the revert watch
+  finds landings through it) and runs `on_landed`, once; the line reads `settled`. Not landed: a
+  `<lane>.unlanded` event is written, the row is removed, which frees the window's pace, and the
+  ordinary path runs.
+- The ordinary path's refusal rolls the removal back with its transaction, so the row and the
+  re-read recur on each pass until the pull request is admissible. The line reads as the answer's
+  other refusals: a closed-window line stays `deliberate`, a closed pull request `settled`.
+- A replay usually carries the row's own idempotency key, and events are append-only and unique on
+  theirs, so an event written after a removal names the removed row's id in its key.
+- A dry run reports `unreadable` and sends nothing.
+
+The watch's 48 hours run from the row's `created_at`, so a landing settled late has less of its
+watch left.
+
+**Known gap: a settled answer needs the pull request to be asked about.** The inert lander enumerates
+open pull requests and the estate lander `approved` change records, so a row whose pull request did
+land reaches `_resettle` only while the estate lander's record stays `approved`. In the inert lane,
+it never does.
+
 ## Automatic reverts (inert repositories)
 
 The inert lander reverts a bump the SDS landed when the default branch's own checks fail because of

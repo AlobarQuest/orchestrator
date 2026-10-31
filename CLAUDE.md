@@ -442,6 +442,12 @@ Placement rule: global CLAUDE.md §7.
   `terms._update_bot_message`, held equal by `test_update_bot_commit_agreement.py`), never the
   head, which a branch update makes a merge commit. A landing asks it last, after the landing
   commit and the head. Detail: `docs/operations/landing-lanes.md`, "Dependabot's update block".
+- A landing row whose reason is `merge_refused_by_remote:<code>` is an unknown outcome
+  (`interfaces.outcome_is_unknown`), answered `landing_outcome_unknown`; the bare reason is
+  terminal. `lane_act._resettle` is the only code that may change or remove a landing row: landed
+  makes it `already_merged`, repoints `event_id` to an event with that action and runs `on_landed`;
+  confirmed unlanded removes it. Events are unique and append-only, so a write after a removal
+  needs a key of its own. Detail: `docs/operations/landing-lanes.md`, "An unknown landing outcome".
 - No reported finding kind may be a substring of another;
   `test_no_reported_kind_is_a_substring_of_another` guards it. Detail:
   `docs/operations/landing-lanes.md`.

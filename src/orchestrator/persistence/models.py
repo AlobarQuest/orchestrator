@@ -1540,10 +1540,11 @@ class EstatePrMerge(UUIDPrimaryKey, Base):
     unit id is not nullable, and making it so would turn "which landing is this?" into a question
     every reader has to ask.
 
-    **One row per (repository, pull request), ever.** The uniqueness carries the same weight it
-    does for a unit's landing: a landing is not idempotent and its failure is asymmetric, so
-    "did we already do this?" is answered here before the call rather than by asking GitHub after
-    it, where a lost success and a refusal answer alike.
+    **One row per (repository, pull request).** The uniqueness carries the same weight it does for
+    a unit's landing: a landing is not idempotent and its failure is asymmetric, so "did we already
+    do this?" is answered here before the call rather than by asking GitHub after it, where a lost
+    success and a refusal answer alike. A row leaves only one way: a row whose outcome was unknown
+    is removed when a later read confirms the pull request did not land (`lane_act._resettle`).
 
     **A row is written only when the orchestrator ACTED.** A refusal writes nothing -- the reasons
     are already served by the read surface, and consuming the pull request's one row would bar

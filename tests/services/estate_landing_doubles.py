@@ -148,6 +148,7 @@ def pull_request(
     author_login: str = "dependabot[bot]",
     author_is_bot: bool = True,
     mergeable_state: str = "clean",
+    merge_commit: str | None = None,
 ) -> EstatePullRequest:
     return EstatePullRequest(
         number=number,
@@ -161,6 +162,7 @@ def pull_request(
         author_login=author_login,
         author_is_bot=author_is_bot,
         mergeable_state=mergeable_state,
+        merge_commit_sha=merge_commit,
     )
 
 

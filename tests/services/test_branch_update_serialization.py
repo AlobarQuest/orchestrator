@@ -312,6 +312,8 @@ RELEASING = {
     "landing_checks_not_clean",
     "landing_ecosystem_excluded",
     "landing_not_enabled",
+    # A landing that may have happened is not queued, whichever way its re-read comes out.
+    "landing_outcome_unknown",
     "landing_policy_version_superseded",
     "landing_pull_request_conflicted",
     "landing_pull_request_not_open",
@@ -386,7 +388,7 @@ def test_every_refusal_code_is_classified_exactly_once() -> None:
     assert not HOLDING & READ_FAILURE_REFUSALS
     assert not HOLDING & RELEASING
     assert not READ_FAILURE_REFUSALS & RELEASING
-    assert (len(HOLDING), len(READ_FAILURE_REFUSALS), len(RELEASING)) == (7, 20, 31)
+    assert (len(HOLDING), len(READ_FAILURE_REFUSALS), len(RELEASING)) == (7, 20, 32)
 
 
 def _class(*refusals: str, base_matches: bool = False) -> str:

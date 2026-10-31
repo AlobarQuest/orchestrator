@@ -41,6 +41,7 @@ from orchestrator.services.landing.estate_landing_admission import (
     update_type_of,
 )
 from orchestrator.services.landing.interfaces import (
+    LANDING_ALREADY_RECORDED,
     LANDING_APP_CREDENTIALS_MISSING,
     LANDING_BASE_NOT_DEFAULT_BRANCH,
     LANDING_CHECKS_AWAITING_VERDICT,
@@ -57,6 +58,7 @@ from orchestrator.services.landing.interfaces import (
     LANDING_MERGEABILITY_UNKNOWN,
     LANDING_MERGEABILITY_UNRECOGNISED,
     LANDING_NOT_ENABLED,
+    LANDING_OUTCOME_UNKNOWN,
     LANDING_OUTSIDE_CHANGE_WINDOW,
     LANDING_PACE_EXHAUSTED,
     LANDING_PULL_REQUEST_CONFLICTED,
@@ -309,6 +311,41 @@ def _landed_row(session: Session, *, moment: datetime, repository: str = REPOSIT
     )
     session.add(row)
     session.commit()
+
+
+def _row_on_this_pull_request(session: Session, *, reason_code: str) -> None:
+    session.add(
+        EstatePrMerge(
+            repository=REPOSITORY,
+            pr_number=PR,
+            head_sha=HEAD,
+            status="refused",
+            reason_code=reason_code,
+            idempotency_key="already-here",
+        )
+    )
+    session.commit()
+
+
+def test_an_unknown_row_answers_outcome_unknown_not_recorded(migrated_session: Session) -> None:
+    _row_on_this_pull_request(migrated_session, reason_code="merge_refused_by_remote:merge_status")
+
+    answer = _ask(migrated_session)
+
+    assert not answer.satisfied
+    assert LANDING_OUTCOME_UNKNOWN in answer.refusals
+    assert LANDING_ALREADY_RECORDED not in answer.refusals
+    assert answer.head_sha == HEAD
+
+
+def test_a_confirmed_refusal_row_answers_recorded(migrated_session: Session) -> None:
+    _row_on_this_pull_request(migrated_session, reason_code="merge_refused_by_remote")
+
+    answer = _ask(migrated_session)
+
+    assert not answer.satisfied
+    assert LANDING_ALREADY_RECORDED in answer.refusals
+    assert LANDING_OUTCOME_UNKNOWN not in answer.refusals
 
 
 def test_a_second_landing_in_the_same_window_is_refused(migrated_session: Session) -> None:

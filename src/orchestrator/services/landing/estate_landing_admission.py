@@ -86,6 +86,7 @@ from orchestrator.services.landing.interfaces import (
     LANDING_ESTATE_UNKNOWN,
     LANDING_MERGEABILITY_UNKNOWN,
     LANDING_NOT_ENABLED,
+    LANDING_OUTCOME_UNKNOWN,
     LANDING_OUTSIDE_CHANGE_WINDOW,
     LANDING_PACE_EXHAUSTED,
     LANDING_PULL_REQUEST_NOT_OPEN,
@@ -97,6 +98,7 @@ from orchestrator.services.landing.interfaces import (
     EstatePullRequest,
     EstateReadGateway,
     Term,
+    outcome_is_unknown,
 )
 from orchestrator.services.landing.revert_build import REVERT_BRANCH_PREFIX
 from orchestrator.services.landing.revert_record import (
@@ -329,7 +331,11 @@ def estate_landing_admission(
     if not credentials_configured:
         refusals.append(LANDING_APP_CREDENTIALS_MISSING)
     if prior is not None:
-        refusals.append(LANDING_ALREADY_RECORDED)
+        refusals.append(
+            LANDING_OUTCOME_UNKNOWN
+            if outcome_is_unknown(prior.status, prior.reason_code)
+            else LANDING_ALREADY_RECORDED
+        )
 
     estate = _estate_term(repository, landing_source)
     record = _record_term(repository, pr_number, record_source)

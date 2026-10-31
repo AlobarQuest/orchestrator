@@ -97,7 +97,7 @@ class Lane:
 
 
 # Refusals that mean the SUBJECT IS SETTLED rather than that a condition is unmet -- the pull
-# request is gone, or this lane has already acted on it and the row it wrote has no delete path.
+# request is gone, or this lane has already acted on it and the row it wrote says what happened.
 # Neither is something a person can act on, and reporting them as findings would make one landing
 # -- or one pull request a person merged themselves -- a nightly page forever.
 #
@@ -105,6 +105,12 @@ class Lane:
 # settled subject's other refusals are meaningless because there is nothing left to land. The
 # same for both lanes.
 SETTLED = frozenset({"landing_already_recorded", "landing_pull_request_not_open"})
+
+# Landing Part 5. The row records a landing nobody could confirm or rule out. It is asked about
+# before `SETTLED`, because a pull request that did land also answers `not open`, and only a land
+# request re-reads the pull request and settles the row. The orchestrator's code, not imported;
+# held equal by a test that may import both.
+OUTCOME_UNKNOWN = "landing_outcome_unknown"
 
 # The refusal that says only THIS BRANCH IS BEHIND ITS BASE. It belongs to NO set: alone it is a
 # FINDING -- transient, and the branch-update pass clears it on a later run -- while beside an
@@ -373,22 +379,10 @@ def consider(
         return Outcome(repository, number, "unreadable", str(error))
 
     refusals = [str(r) for r in (answer.get("refusals") or [])]
-    if SETTLED & set(refusals):
-        return Outcome(repository, number, "settled", ", ".join(refusals))
-    if not answer.get("satisfied") and CEILING in refusals and NOT_GRANTED not in refusals:
-        return _close_held(client, repository, number, answer, submit)
-    if not answer.get("satisfied"):
-        # A MISSING key reads as False, which withholds the criterion's one conditional member and
-        # leaves the line a finding. That is the direction to fail in, and it is not hypothetical:
-        # the answer comes from a deployed orchestrator, and a release that has not reached
-        # production yet serves an answer with no such key.
-        status = held_status(
-            lane,
-            refusals,
-            rollout_base_matches_pin=answer.get(BASE_MATCHES_PIN) is True,
-            withheld_for_sibling=answer.get(WITHHELD_FOR_SIBLING) is True,
-        )
-        return Outcome(repository, number, status, ", ".join(refusals))
+    if OUTCOME_UNKNOWN in refusals:
+        return _settle_unknown(lane, client, repository, number, answer, refusals, submit)
+    if SETTLED & set(refusals) or not answer.get("satisfied"):
+        return _not_landable(lane, client, repository, number, answer, refusals, submit)
 
     head = answer.get("head_sha")
     if not isinstance(head, str) or not head:
@@ -411,6 +405,77 @@ def consider(
     except OrchestratorError as error:
         return Outcome(repository, number, "error", str(error))
     return Outcome(repository, number, "landed", f"status={landed.get('status')}")
+
+
+def _not_landable(
+    lane: Lane,
+    client: LandingClient,
+    repository: str,
+    number: int,
+    answer: dict[str, Any],
+    refusals: list[str],
+    submit: bool,
+) -> Outcome:
+    """What a line says when the answer is no, for these refusals."""
+    if SETTLED & set(refusals):
+        return Outcome(repository, number, "settled", ", ".join(refusals))
+    if CEILING in refusals and NOT_GRANTED not in refusals:
+        return _close_held(client, repository, number, answer, submit)
+    # A MISSING key reads as False, which withholds the criterion's one conditional member and
+    # leaves the line a finding. That is the direction to fail in, and it is not hypothetical: the
+    # answer comes from a deployed orchestrator, and a release that has not reached production yet
+    # serves an answer with no such key.
+    status = held_status(
+        lane,
+        refusals,
+        rollout_base_matches_pin=answer.get(BASE_MATCHES_PIN) is True,
+        withheld_for_sibling=answer.get(WITHHELD_FOR_SIBLING) is True,
+    )
+    return Outcome(repository, number, status, ", ".join(refusals))
+
+
+def _settle_unknown(
+    lane: Lane,
+    client: LandingClient,
+    repository: str,
+    number: int,
+    answer: dict[str, Any],
+    refusals: list[str],
+    submit: bool,
+) -> Outcome:
+    """Ask to land a pull request whose row can't say whether it landed.
+
+    The request is what settles it: the orchestrator re-reads before anything else, and calls the
+    remote only once that read confirms nothing landed and the terms admit it. A refusal leaves the
+    row in place, and reads as the answer's other refusals so that a window or a closed pull request
+    stays as quiet as it is without one. A dry run can't ask, so it reports that nobody knows.
+    """
+    detail = ", ".join(refusals)
+    head = answer.get("head_sha")
+    if not isinstance(head, str) or not head:
+        return Outcome(repository, number, "unreadable", f"names no head: {detail}")
+    if not submit:
+        return Outcome(repository, number, "unreadable", detail)
+    try:
+        landed = client.land(
+            repository,
+            number,
+            head_sha=head,
+            idempotency_key=landing_key(lane, repository, number, head),
+        )
+    except LandingRefused as error:
+        others = [refusal for refusal in refusals if refusal != OUTCOME_UNKNOWN]
+        if not others:
+            return Outcome(repository, number, "held", str(error))
+        return _not_landable(lane, client, repository, number, answer, others, submit)
+    except OrchestratorError as error:
+        return Outcome(repository, number, "error", str(error))
+    status = landed.get("status")
+    if status == "already_merged":
+        return Outcome(repository, number, "settled", "the re-read found it landed")
+    if status == "merged":
+        return Outcome(repository, number, "landed", f"status={status}")
+    return Outcome(repository, number, "unreadable", f"status={status} {landed.get('reason_code')}")
 
 
 def _close_held(

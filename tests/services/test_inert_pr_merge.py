@@ -341,6 +341,54 @@ def test_a_refusal_whose_reconciling_read_also_fails_is_recorded_conservatively(
     assert len(_rows(migrated_engine)) == 1
 
 
+def _unknown_row(session: Session) -> None:
+    _land(
+        session,
+        gateway=ActingInertGateway(
+            pull=pull_request(number=PR, head_ref=UV_BRANCH),
+            merge_error=EstateGatewayError("merge_status", 502),
+            reconcile_error=EstateGatewayError("read_status", 502),
+        ),
+    )
+
+
+def test_a_replay_with_the_rows_own_key_that_finds_it_landed_settles_it(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    _unknown_row(migrated_session)
+    gateway = ActingInertGateway(
+        pull=pull_request(
+            number=PR, head_ref=UV_BRANCH, landed=True, is_open=False, merge_commit=LANDED_COMMIT
+        )
+    )
+
+    record = _land(migrated_session, gateway=gateway)
+
+    assert record.status == "already_merged"
+    assert gateway.merges == []
+    with Session(migrated_engine) as reader:
+        stored = reader.scalar(select(EstatePrMerge))
+        assert stored is not None
+        assert stored.merge_commit_sha == LANDED_COMMIT
+        event = reader.get(Event, stored.event_id)
+        assert event is not None
+        assert event.action == "inert_pr_merge.already_merged"
+        assert "change_record_id" not in event.payload
+
+
+def test_a_replay_with_the_rows_own_key_that_finds_it_unlanded_lands_it(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    _unknown_row(migrated_session)
+    gateway = ActingInertGateway(pull=pull_request(number=PR, head_ref=UV_BRANCH))
+
+    record = _land(migrated_session, gateway=gateway)
+
+    assert record.status == "merged"
+    assert len(gateway.merges) == 1
+    assert [row.status for row in _rows(migrated_engine)] == ["merged"]
+
+
 def test_the_remote_is_asked_to_land_the_head_the_terms_were_evaluated_against(
     migrated_session: Session,
 ) -> None:

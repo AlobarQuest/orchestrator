@@ -62,6 +62,7 @@ from orchestrator.services.landing.interfaces import (
     LANDING_MERGEABILITY_UNKNOWN,
     LANDING_MERGEABILITY_UNRECOGNISED,
     LANDING_NOT_ENABLED,
+    LANDING_OUTCOME_UNKNOWN,
     LANDING_PULL_REQUEST_CONFLICTED,
     LANDING_PULL_REQUEST_NOT_OPEN,
     LANDING_PULL_REQUEST_UNREADABLE,
@@ -633,6 +634,27 @@ def test_a_pull_request_this_lane_has_already_acted_on_is_refused(
 
     assert answer.satisfied is False
     assert LANDING_ALREADY_RECORDED in answer.refusals
+
+
+def test_an_unknown_row_answers_outcome_unknown_not_recorded(migrated_session: Session) -> None:
+    migrated_session.add(
+        EstatePrMerge(
+            repository=INERT_REPOSITORY,
+            pr_number=PR,
+            head_sha=HEAD,
+            status="refused",
+            reason_code="merge_refused_by_remote:merge_status",
+            policy_version=INERT_POLICY_VERSION,
+            idempotency_key="already-here",
+        )
+    )
+    migrated_session.flush()
+
+    answer = _answer(migrated_session)
+
+    assert answer.satisfied is False
+    assert LANDING_OUTCOME_UNKNOWN in answer.refusals
+    assert LANDING_ALREADY_RECORDED not in answer.refusals
 
 
 # ---------------------------------------------------------------------------------------------
