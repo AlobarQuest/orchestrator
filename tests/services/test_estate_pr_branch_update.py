@@ -448,6 +448,25 @@ def test_the_deliberate_refusals_are_exactly_the_landers_own() -> None:
     assert DELIBERATE_REFUSALS == LANE.deliberate
 
 
+def test_the_unknown_outcome_vocabulary_the_landers_ask_on_is_the_one_composed_here() -> None:
+    """Lone strings again, which the vocabulary scan can't see: the landers act on a row only when
+    these match what the orchestrator writes and answers, and a drift reads as 'nothing unknown'."""
+    from estate_lander.cli import LANE as ESTATE
+    from inert_lander.cli import LANE as INERT
+    from lander.core import OUTCOME_UNKNOWN, STILL_UNKNOWN_REASON
+    from orchestrator.services.landing.estate_pr_merge import ESTATE_MERGE_NOT_ADMISSIBLE
+    from orchestrator.services.landing.inert_pr_merge import INERT_MERGE_NOT_ADMISSIBLE
+    from orchestrator.services.landing.interfaces import (
+        LANDING_OUTCOME_UNKNOWN,
+        MERGE_REFUSED_BY_REMOTE,
+    )
+
+    assert OUTCOME_UNKNOWN == LANDING_OUTCOME_UNKNOWN
+    assert STILL_UNKNOWN_REASON == f"{MERGE_REFUSED_BY_REMOTE}:"
+    assert ESTATE.not_admissible == ESTATE_MERGE_NOT_ADMISSIBLE
+    assert INERT.not_admissible == INERT_MERGE_NOT_ADMISSIBLE
+
+
 def test_the_freshness_refusal_the_lander_classifies_on_is_exactly_the_one_composed_here() -> None:
     """The same two-package problem one string over, and this one is INVISIBLE to the scanner.
 

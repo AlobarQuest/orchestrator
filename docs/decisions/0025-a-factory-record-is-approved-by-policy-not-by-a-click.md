@@ -261,7 +261,8 @@ no new merge, so it runs with the switch off and under a narrowed policy.
 call, or at any other head, it is not, and the status can't say which. So the event carries
 `landing_inert` and a new `policy_path` only for the first: a landing at another head is a tree
 `_require_only_the_bump` never read, and a revert would take a person's work out with the bump. The
-two landing lanes do the same with an event action the watch doesn't select. The watch selects `merged` and `already_merged` and requires `landing_inert`, and
+two landing lanes do the same with an event action the watch doesn't select. The watch selects
+`merged` and `already_merged` and requires `landing_inert`, and
 `authority.human_gate_not_required` is written for a landing reconciled by either route.
 
 **The re-ask.** `pr-merge-admission` answers `landing_outcome_unknown`, and the bump driver's merge
@@ -275,8 +276,8 @@ every reader, in the word the two lanes use).
 
 **Residuals.** A person landing the same head after our refused call still reads as ours: the
 content was vetted, and only the actor is wrong. A unit outside the bump driver settles only when
-something asks `pr-merge` again. A confirmed removal trusts one read. The landing ledger still reports a reconciled landing as
-`factory_landing_not_claimed_by_the_orchestrator`, and `deploy_watcher` binds only `merged`, because on a deploying
-repository no stamp tells our act from a person's. `already_merged` rows written before this change
+something asks `pr-merge` again. A confirmed removal trusts one read. The landing ledger still
+reports a reconciled landing as `factory_landing_not_claimed_by_the_orchestrator`, and
+`deploy_watcher` binds only `merged`, because on a deploying repository no stamp tells our act from a person's. `already_merged` rows written before this change
 carry `landing_inert` and no merge commit, so one still inside its 48 hours reads `unreadable` and
 is never acted on.

@@ -395,9 +395,9 @@ NOT_HELD: Final = CeilingTerm(Term(True, ()), ())
 
 class UpdateBumps:
     """What one update moves, read at most once from the pull request's first commit, when the
-    update bot authored it, and only when a term has something to compare it against: a repository
-    with no holds and no reverted version costs no call. `bumps` is `None` when the list can't be
-    read (see `version_ceiling_term`)."""
+    update bot authored it and it is verified, and only when a term has something to compare it
+    against: a repository with no holds and no reverted version costs no call. `bumps` is `None`
+    when the list can't be read (see `version_ceiling_term`)."""
 
     def __init__(
         self, repository: str, pull: EstatePullRequest, gateway: EstateReadGateway

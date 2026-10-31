@@ -313,7 +313,8 @@ def test_the_shared_act_steps_name_no_lane_and_no_landing_call() -> None:
 def _landing_row_writes(tree: ast.Module, model: str) -> set[str]:
     """Each function here that builds, updates or deletes a landing row, by name.
 
-    A row reaches a function as a parameter annotated `model`, or is built by calling it.
+    A row reaches a function as a parameter annotated `model`, as a local assigned from
+    `select(model)` or `session.get(model, ...)`, or is built by calling it.
     """
     writers: set[str] = set()
     for function in ast.walk(tree):
@@ -324,6 +325,12 @@ def _landing_row_writes(tree: ast.Module, model: str) -> set[str]:
             for parameter in [*function.args.args, *function.args.kwonlyargs]
             if parameter.annotation is not None and model in ast.unparse(parameter.annotation)
         }
+        for node in ast.walk(function):
+            # A row held in a local read from `select(Model)` or `session.get(Model, ...)`.
+            if isinstance(node, ast.Assign) and any(
+                marker in ast.unparse(node.value) for marker in (f"select({model}", f"get({model},")
+            ):
+                rows |= {target.id for target in node.targets if isinstance(target, ast.Name)}
         for node in ast.walk(function):
             written = False
             if isinstance(node, ast.Call):

@@ -401,6 +401,30 @@ def test_a_refusal_over_a_landing_that_actually_happened_is_recorded_as_already_
         assert stored is not None and stored.status == "already_merged"
 
 
+def test_a_reconciling_read_at_another_head_is_not_a_landing_the_watch_reads(
+    migrated_session: Session, migrated_engine: Engine
+) -> None:
+    class MovedThenLanded(ActingGateway):
+        def read_pull_request(self, *, repository: str, number: int):
+            if self.merges:
+                return pull_request(
+                    head_sha="e" * 40, landed=True, is_open=False, merge_commit=LANDED_COMMIT
+                )
+            return super().read_pull_request(repository=repository, number=number)
+
+    record = _land(
+        migrated_session, MovedThenLanded(merge_error=EstateGatewayError("merge_status", 502))
+    )
+
+    assert record.status == "already_merged"
+    with Session(migrated_engine) as reader:
+        stored = reader.scalar(select(EstatePrMerge))
+        assert stored is not None
+        event = reader.get(Event, stored.event_id)
+        assert event is not None
+        assert event.action == "estate_pr_merge.already_merged_other_head"
+
+
 def test_an_unreconcilable_refusal_is_recorded_as_ambiguous(
     migrated_session: Session, migrated_engine: Engine
 ) -> None:

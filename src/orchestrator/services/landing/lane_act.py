@@ -117,8 +117,9 @@ class LaneAdmission(Protocol):
 class LandingLane:
     """What a lane's landing names that the other lane's does not."""
 
-    # The event action is `<event_prefix>.<status>`, and it is what tells the two lanes' rows
-    # apart: both write the one table, under one subject type.
+    # The event action is `<event_prefix>.<event status>`, and it is what tells the two lanes' rows
+    # apart: both write the one table, under one subject type. The event status is the row's
+    # status, except `already_merged_other_head`, which only the event carries.
     event_prefix: str
     not_admissible: str
     head_moved: str

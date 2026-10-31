@@ -440,10 +440,10 @@ def run(argv: list[str] | None = None) -> int:
             )
             stepped = revert_pass(rows or [], client, production, args.submit)
             watched.extend(stepped.outcomes)
+            asked, settled = core.settle_unknown_outcomes(LANE, client, args.submit)
             # READ ONCE, used by both passes. Reading again between them would put a second
             # network call inside the `try`, where its failure discards `outcomes` entirely and
             # returns a bare tool error -- losing the report of a landing that already happened.
-            asked, settled = core.settle_unknown_outcomes(LANE, client, args.submit)
             selection = _subjects(records)
             subjects = (
                 selection.subjects
