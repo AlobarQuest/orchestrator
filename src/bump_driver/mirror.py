@@ -5,16 +5,14 @@ of git's clone, fetch, reset and clean. Hooks are off through the environment, s
 own `git fetch` inside a mirror is covered by the same setting, and the user's and the system's git
 config are not read at all.
 
-**The token is never an argument and never in `.git/config`.** It rides `GIT_CONFIG_*` environment
-variables as an `http.extraheader` scoped to GitHub, for this module's own commands only. The
-generator gets no token (`generator_environment`), because its conformance claim runs
-`code-standards` in the mirror. Its currency check runs `git fetch origin main`, so a mirror's
-`origin` is the mirror itself: that fetch answers locally for a private repository too, and `fresh`
-fetches from GitHub by URL.
+**The token is never an argument and never in `.git/config`.** The remote is the bare HTTPS URL,
+and the token rides `GIT_CONFIG_*` environment variables as an `http.extraheader` scoped to GitHub,
+for this module's own commands only. The generator gets no token (`generator_environment`), because
+its conformance claim runs `code-standards` in the mirror.
 
-**`fresh` proves what it hands over.** The generator's chain spawns no linter only because the tree
-is clean, so `fresh` refuses unless `git status --porcelain` is empty, untracked files included, and
-HEAD is `origin/main`.
+**`fresh` is the proof of the checkout.** The generator's chain spawns no linter only because the
+tree is clean, and it runs with `--assume-checkout-current`, so `fresh` refuses unless `git status
+--porcelain` is empty, untracked files included, and HEAD is `origin/main`.
 
 A repository outside the member record is refused before any command runs. `granted` maps the
 case-folded name to the record's spelling, which is the spelling a mirror's path is built from.
@@ -35,7 +33,7 @@ GITHUB: Final = "https://github.com/"
 BRANCH: Final = "main"
 TIMEOUT_SECONDS: Final = 300
 VERBS: Final = frozenset(  # not-a-vocabulary: git's own words, everything this module runs
-    {"clone", "fetch", "reset", "clean", "remote", "status", "rev-parse"}
+    {"clone", "fetch", "reset", "clean", "status", "rev-parse"}
 )
 STATE_DIRECTORY: Final = ("Library", "Application Support", "sds", "bump-driver")
 
@@ -93,7 +91,7 @@ class Mirrors:
         )
 
     def generator_environment(self) -> dict[str, str]:
-        """The git environment of the generator's own fetch: hooks off, and no token."""
+        """The git environment of the generator's chain: hooks off, and no token."""
         return _git_environment(("core.hooksPath", "/dev/null"))
 
     def fresh(self, repository: str) -> Path:
@@ -102,18 +100,20 @@ class Mirrors:
         if spelled is None or _REPOSITORY.fullmatch(spelled) is None:
             raise MirrorRefused(f"{repository} is not a granted member")
         path = self._root / spelled
-        remote = f"{self._base_url}{spelled}.git"
         if (path / ".git").is_dir():
-            refspec = f"+refs/heads/{BRANCH}:refs/remotes/origin/{BRANCH}"
-            self._git("-C", str(path), "fetch", "--depth=1", remote, refspec)
+            self._git("-C", str(path), "fetch", "--depth=1", "origin", BRANCH)
             self._git("-C", str(path), "reset", "--hard", f"origin/{BRANCH}")
             self._git("-C", str(path), "clean", "-ffdx")
         else:
             path.parent.mkdir(parents=True, exist_ok=True)
             self._git(
-                "clone", "--depth=1", "--single-branch", f"--branch={BRANCH}", remote, str(path)
+                "clone",
+                "--depth=1",
+                "--single-branch",
+                f"--branch={BRANCH}",
+                f"{self._base_url}{spelled}.git",
+                str(path),
             )
-        self._git("-C", str(path), "remote", "set-url", "origin", str(path))
         self._prove(path, repository)
         return path
 

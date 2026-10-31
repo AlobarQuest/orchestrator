@@ -721,10 +721,8 @@ standing dependency-update work as SYSTEM with no person acting. Verification st
 - **`factory` holds no credential but the Brain keys.** Its conformance claim runs `code-standards`
   inside the mirror with its whole environment, which spawns no linter only because the tree is
   clean. So its environment is an allowlist (`cli.py::_generator_environment`, keys pinned by
-  `test_decompose.py`). It gets no SYSTEM bearer: the lane answers with the intake it already read on
-  a loopback port while `factory` runs, and sets `ORCHESTRATOR_API_URL` there with a placeholder token. It
-  gets no GitHub token: a mirror's `origin` is the mirror itself, so its `git fetch origin main`
-  answers locally, for a private repository too.
+  `test_decompose.py`). The lane hands it what those credentials would fetch: `--intake-file`, the
+  intake it read through its own client, and `--assume-checkout-current`, resting on `fresh`'s proof.
 - **Dispatch.** One run per repository: a `claimed` or `executing` unit holds it, and so does a run
   dispatched but not yet claimed (the unit is still `ready`, and history says so), found across
   every ready unit before anything starts. Such a run still unclaimed after `UNCLAIMED_HOURS` (2)

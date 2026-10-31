@@ -649,7 +649,7 @@ def _generator_environment(environ: Mapping[str, str], mirrors: Mirrors) -> dict
     """All `factory decompose` is given, named one by one. Its conformance claim runs
     `code-standards` inside the mirror, so nothing here may be a credential that reaches beyond a
     Brain's contributor key: no GitHub token, no SYSTEM bearer, no BWS identity, no Coolify token.
-    `Generator` adds the intake's loopback address."""
+    """
     return {
         "PATH": environ.get("PATH", ""),
         "HOME": environ.get("HOME", ""),

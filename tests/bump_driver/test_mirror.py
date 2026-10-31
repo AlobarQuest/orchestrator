@@ -80,14 +80,6 @@ def test_a_dirty_mirror_is_reset_to_origin_main(origin: Path, tmp_path: Path) ->
     assert _git(path, "status", "--porcelain") == ""
 
 
-def test_a_mirror_satisfies_the_generators_currency_check(origin: Path, tmp_path: Path) -> None:
-    """`assert_checkout_current`: `git fetch origin main`, HEAD equal to origin/main, clean."""
-    path = _mirrors(tmp_path).fresh(REPOSITORY)
-    _git(path, "fetch", "--quiet", "origin", "main")
-    assert _git(path, "rev-parse", "HEAD") == _git(path, "rev-parse", "origin/main")
-    assert _git(path, "status", "--porcelain") == ""
-
-
 def test_a_planted_hook_does_not_run(origin: Path, tmp_path: Path) -> None:
     mirrors = _mirrors(tmp_path)
     path = mirrors.fresh(REPOSITORY)
@@ -130,9 +122,9 @@ def test_every_command_is_git_and_only_clone_fetch_reset_clean(
     mirrors.fresh(REPOSITORY)
     mirrors.fresh(REPOSITORY)
     assert {argv[0] for argv in calls} == {"git"}
-    allowed = {"clone", "fetch", "reset", "clean", "remote", "status", "rev-parse"}
+    allowed = {"clone", "fetch", "reset", "clean", "status", "rev-parse"}
     verbs = [next(a for a in argv[1:] if a in allowed) for argv in calls]
-    proof = ["remote", "status", "rev-parse"]
+    proof = ["status", "rev-parse"]
     assert verbs == ["clone", *proof, "fetch", "reset", "clean", *proof]
     assert not any(TOKEN in " ".join(argv) for argv in calls)
 
@@ -167,20 +159,12 @@ def test_the_generators_git_environment_has_hooks_off_and_no_token(tmp_path: Pat
     assert not any("extraheader" in v or "basic" in v for v in environment.values())
 
 
-def test_the_generators_fetch_answers_with_no_network_and_no_token(
-    origin: Path, tmp_path: Path
-) -> None:
+def test_the_mirror_keeps_its_real_origin(origin: Path, tmp_path: Path) -> None:
     mirrors = _mirrors(tmp_path)
     path = mirrors.fresh(REPOSITORY)
-    assert _git(path, "remote", "get-url", "origin") == str(path)
-    (tmp_path / "served").rename(tmp_path / "gone")
-    subprocess.run(
-        ["git", "fetch", "--quiet", "origin", "main"],
-        cwd=path,
-        env={**ENV, **mirrors.generator_environment()},
-        check=True,
-    )
-    assert _git(path, "rev-parse", "HEAD") == _git(path, "rev-parse", "origin/main")
+    mirrors.fresh(REPOSITORY)
+    url = f"file://{tmp_path}/served/{REPOSITORY}.git"
+    assert _git(path, "remote", "get-url", "origin") == url
 
 
 def _answering(**stdout: str) -> Any:

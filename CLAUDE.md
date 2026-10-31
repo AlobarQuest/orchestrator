@@ -603,8 +603,8 @@ Placement rule: global CLAUDE.md §7.
   the lane's key gains a suffix per such record, or it would replay the skip for ever. Its mirrors
   run only git and `fresh` proves them clean at `origin/main`, because `factory`'s conformance claim
   runs `code-standards` in the mirror; `factory`'s environment is an allowlist holding no credential
-  but the Brain keys, so it reads the intake from a loopback port and fetches from the mirror
-  itself. It never requeues a unit and never re-dispatches a run nobody claimed. Detail: `docs/operations/landing-lanes.md`, "The bump
+  but the Brain keys, so the lane passes `--intake-file` and `--assume-checkout-current`. It never
+  requeues a unit and never re-dispatches a run nobody claimed. Detail: `docs/operations/landing-lanes.md`, "The bump
   driver".
 - A person's mint reaches a rotation only through its instance's `rotation-inbox` BWS secret or a
   staging secret written by hand: the unit after the mint waits, unclaimed, until one is staged
