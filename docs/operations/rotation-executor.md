@@ -84,8 +84,8 @@ raises it and resolved by the first pass that no longer finds its cause.
 | `rotation-act:<dependency id>` | a human act is pending (see "When a rotation waits on you") | the act is recorded or no longer pending | do the act |
 | `rotation-unit-failed:<unit>` | the unit is `failed`, `blocked` or `revision_required`; the message names the credential and its staging key, and only `failed` quotes a failure reason, since the ledger's `last_failure` is the newest move to `failed` | the unit leaves those states | `failed` or `blocked`: read its review page, then requeue it (`POST /work-units/{id}/requeue`, as SYSTEM) while attempts remain, retry on `/review` once they are spent, else cancel; supersede is refused once any unit was claimed (see "If a rotation stalls after host"). `revision_required`: requeue refuses it, a person decides on `/review` |
 | `rotation-unit-review:<unit>` | the unit has been `awaiting_review` over 48 hours | the review is decided | decide it on `/review` |
-| `rotation-unit-waiting:<unit>` | the unit has stayed unmoved past its threshold: 48 hours, or 192 hours for a reader wait | the unit is no longer waiting | read the reason in the message, which is the wait's own |
-| `rotation-unit-stuck:<unit>` | a refusal couldn't be claimed to fail the unit, and 48 hours have passed | the unit is no longer waiting, or it comes due as `rotation-unit-waiting` | fix what the refusal names |
+| `rotation-unit-waiting:<unit>` | the unit has stayed unmoved past its threshold: 48 hours, or 192 hours for a reader wait | the unit is no longer waiting, whatever kind of pass finds it meanwhile | read the reason in the message, which is the wait's own |
+| `rotation-unit-stuck:<unit>` | a refusal couldn't be claimed to fail the unit, and 48 hours have passed | the unit is no longer waiting, as for `rotation-unit-waiting`; both can be open together | fix what the refusal names |
 | `rotation-heartbeat:<store kind>` | never raised: each finished pass sends it as `resolved`, so an alert-hub schedule hears when passes stop | n/a | if the schedule fires, the timer or the instance is down |
 | `rotation-instance-behind:<store kind>` | `main` holds a commit older than 7 days that touches `src/rotation_worker`, `src/estate_clients` or `src/alert_hub_client` after the revision the instance runs | the instance runs a revision with those commits | reinstall it (see below) |
 
@@ -99,9 +99,9 @@ can't be looked for, and an inbox that can't be read with nothing staged, becaus
 act.
 
 A pass sights only its own wait's clock, judges overdue by that clock alone, and keeps the other,
-so a wait that alternates between the kinds still comes due on either. A unit still waiting and
-not overdue this pass keeps its open `rotation-unit-waiting` or `rotation-unit-stuck` alert, so
-neither flips on a pass of the other kind. A clock neither sighted nor held is forgotten, and an
+so a wait that alternates between the kinds still comes due on either. A unit still waiting keeps
+its open `rotation-unit-waiting` and `rotation-unit-stuck` alerts on every pass, so neither flips
+on a pass of another kind. A clock neither sighted nor held is forgotten, and an
 alert with it, once the unit is no longer waiting. A clock file that can't be saved holds the alerts
 of every unit still waiting for that pass; the proposer and decomposer hold their waiting keys the
 same way.

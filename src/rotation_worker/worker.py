@@ -344,9 +344,9 @@ def _overdue(setup: Setup, found: PassActs, hold: Set[str]) -> tuple[dict[str, A
     alternating between the two kinds still comes due on either. A clock neither sighted nor held
     is forgotten, so a unit no longer waiting starts afresh.
 
-    The second value is the alert keys to hold: a unit still waiting that isn't overdue on this
-    pass's clock keeps an alert the other kind of pass raised, and a clock that can't be saved
-    says nothing this pass, so it holds every waiting unit's.
+    The second value is the alert keys to hold, every waiting unit's: an open waiting or stuck
+    alert stays until the unit is no longer waiting, whichever kind this pass is, and a key that
+    fires this pass fires all the same. A clock that can't be saved fires nothing this pass.
     """
     now = _now()
     current = {_clock_key(unit_id, wait) for unit_id, wait in found.waits.items()}
@@ -355,11 +355,9 @@ def _overdue(setup: Setup, found: PassActs, hold: Set[str]) -> tuple[dict[str, A
     if since is None:
         return {}, waiting
     overdue = {}
-    not_due: set[str] = set()
     for unit_id, wait in found.waits.items():
         first = since[_clock_key(unit_id, wait)]
         if now - first < timedelta(hours=wait.hours):
-            not_due |= _clock_keys(unit_id)
             continue
         key = unit_stuck_key(unit_id) if wait.stuck else unit_waiting_key(unit_id)
         what = "can't be worked" if wait.stuck else "is waiting"
@@ -369,7 +367,7 @@ def _overdue(setup: Setup, found: PassActs, hold: Set[str]) -> tuple[dict[str, A
             f"Since {first.date().isoformat()}: {scrub(wait.reason)[:MAX_REASON]}",
             f"{_REVIEW}/{unit_id}",
         )
-    return overdue, not_due
+    return overdue, waiting
 
 
 def _clock_key(unit_id: str, wait: Wait) -> str:

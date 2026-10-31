@@ -753,8 +753,8 @@ Placement rule: global CLAUDE.md §7.
 - A unit's wait alert runs on two clocks: reader waits (weekly readers, another rotation's overlap)
   on `unit_reader_clock_key` with the 192-hour threshold, every other wait, including a reader
   mid-run and `Revoke.UNKNOWN`, on `unit_waiting_key` with 48. A pass judges overdue by its own
-  clock alone; while the unit stays waiting both clocks are kept and a unit not overdue this pass
-  holds its waiting and stuck alerts. Never fold them into one key. Detail:
+  clock alone; while the unit stays waiting both clocks are kept and its waiting and stuck alerts
+  are held. Never fold them into one key. Detail:
   `docs/operations/rotation-executor.md`, "Alerts".
 - `rotation-heartbeat` is sent as `resolved` after every finished pass and is never raised; its
   meaning is the absence of the ping, heard by an alert-hub schedule. A pass that raises sends none.

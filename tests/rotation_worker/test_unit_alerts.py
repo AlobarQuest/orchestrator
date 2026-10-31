@@ -640,23 +640,37 @@ def test_a_unit_alternating_between_stuck_and_waiting_still_comes_due(
     assert run.run(48) == [(unit_waiting_key(UNIT), "firing")]
 
 
-def test_a_stuck_unit_that_moves_to_waiting_changes_its_alert(
+def test_a_stuck_unit_that_moves_to_waiting_keeps_its_stuck_alert(
     run: Pass, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def take(_setup: object, unit_id: str, found: worker.PassActs) -> int:
-        found.seen.add(unit_id)
-        if run.now <= START + timedelta(hours=48):
-            raise KeyError("nobody foresaw this")
-        raise OrchestratorError("the window is shut")
-
-    monkeypatch.setattr(worker, "_take", take)
-    run.estate.ready = [UNIT]
+    _waits_by_hour(run, monkeypatch, {0: STUCK, 48: STUCK, 49: ORDINARY})
     run.run(0)
     assert run.run(48) == [(unit_stuck_key(UNIT), "firing")]
-    assert run.run(49) == [
-        (unit_waiting_key(UNIT), "firing"),
+    assert run.run(49) == [(unit_waiting_key(UNIT), "firing")]
+
+
+def test_a_unit_alternating_when_overdue_resolves_neither_alert(
+    run: Pass, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _waits_by_hour(run, monkeypatch, {0: ORDINARY, 48: ORDINARY, 49: STUCK, 50: ORDINARY})
+    run.run(0)
+    assert run.run(48) == [(unit_waiting_key(UNIT), "firing")]
+    assert run.run(49) == [(unit_stuck_key(UNIT), "firing")]
+    assert run.run(50) == [(unit_waiting_key(UNIT), "firing")]
+
+
+def test_a_unit_no_longer_sighted_resolves_both_alerts(
+    run: Pass, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _waits_by_hour(run, monkeypatch, {0: STUCK, 48: STUCK, 49: ORDINARY})
+    run.run(0)
+    run.run(48)
+    run.run(49)
+    run.estate.ready = []
+    assert set(run.run(50)) == {
         (unit_stuck_key(UNIT), "resolved"),
-    ]
+        (unit_waiting_key(UNIT), "resolved"),
+    }
 
 
 def test_the_clock_holds_one_entry_per_unit(run: Pass, monkeypatch: pytest.MonkeyPatch) -> None:
