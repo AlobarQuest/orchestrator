@@ -320,6 +320,7 @@ def test_a_pass_announces_its_waits_findings_and_keeps_what_it_couldn_t_tell(
     notifier = SimpleNamespace(announce=lambda acts, unread: announced.append((acts, unread)))
     client = SimpleNamespace(ready_units=lambda: ["u1", "u3"], active_units=lambda: [])
     monkeypatch.setattr(worker, "_take", take)
+    monkeypatch.setattr(worker, "behind", lambda *_a: ({}, set()))
     setup = SimpleNamespace(client=client, notifier=notifier, state_dir=tmp_path)
     worker.run_pass(cast(worker.Setup, setup))
     kept = {

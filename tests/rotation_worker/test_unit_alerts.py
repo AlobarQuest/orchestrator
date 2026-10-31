@@ -95,6 +95,8 @@ class Pass:
         self.fetch_fails = False
         self.store = store if store is not None else MemoryStore()
         monkeypatch.setattr(worker, "_now", lambda: self.now)
+        # The behind-main alert has its own tests (`test_behind_main.py`).
+        monkeypatch.setattr(worker, "behind", lambda *_a: ({}, set()))
         monkeypatch.setattr(
             worker, "approved_package", lambda *_a: {"profile_fields": {"occurrence": "o-7"}}
         )

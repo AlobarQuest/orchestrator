@@ -72,6 +72,7 @@ from rotation_worker.live_runs import stranded_by_a_restart
 from rotation_worker.notify import (
     Act,
     Notifier,
+    behind_key,
     first_sightings,
     unit_failed_key,
     unit_reader_clock_key,
@@ -115,6 +116,11 @@ ROTATION_WAIT_ALERT_HOURS: Final = 48
 # Retire waits for weekly readers, so a healthy rotation can wait 7 days.
 ROTATION_READER_WAIT_ALERT_HOURS: Final = 192
 ROTATION_REVIEW_ALERT_HOURS: Final = 48
+# How long this build may trail `main` on the code it runs before a person is told.
+ROTATION_BEHIND_ALERT_DAYS: Final = 7
+BEHIND_REPOSITORY: Final = "AlobarQuest/orchestrator"
+BEHIND_PATHS: Final = ("src/rotation_worker", "src/estate_clients", "src/alert_hub_client")
+SOURCE_PREFIX: Final = "rotation-worker@"
 
 
 @dataclass(frozen=True)
@@ -178,6 +184,8 @@ def run_pass(setup: Setup) -> int:
     if setup.notifier is not None:
         try:
             acts, unread = unit_alerts(setup)
+            late, unchecked = behind(setup, _now())
+            acts, unread = {**acts, **late}, unread | unchecked
             hold = unread | found.keep
             overdue, unsaved = _overdue(setup, found, hold)
             setup.notifier.announce({**acts, **found.due, **overdue}, hold | unsaved)
@@ -247,6 +255,30 @@ def unit_alerts(setup: Setup) -> tuple[dict[str, Act], set[str]]:
                 link,
             )
     return acts, unread
+
+
+def behind(setup: Setup, now: datetime) -> tuple[dict[str, Act], set[str]]:
+    """An alert when `main` holds a change to the code this build runs that is over
+    `ROTATION_BEHIND_ALERT_DAYS` old. A fetch or a revision git can't answer holds the key."""
+    key = behind_key(setup.store.read_back_kind)
+    try:
+        setup.mirror.sync(BEHIND_REPOSITORY)
+        since = setup.mirror.oldest_change_since(
+            BEHIND_REPOSITORY, setup.source_revision.removeprefix(SOURCE_PREFIX), BEHIND_PATHS
+        )
+    except MirrorError as error:
+        LOG.warning("behind_unread", extra={"reason": scrub(str(error))})
+        return {}, {key}
+    if since is None or now - since < timedelta(days=ROTATION_BEHIND_ALERT_DAYS):
+        return {}, set()
+    return {
+        key: Act(
+            key,
+            f"A rotation worker is behind main: {setup.store.read_back_kind}"[:TITLE_LIMIT],
+            f"main has held a change to its code since {since.date().isoformat()}; "
+            f"it runs {setup.source_revision}. Update and restart it.",
+        )
+    }, set()
 
 
 def _review_overdue(row: Mapping[str, Any]) -> bool:

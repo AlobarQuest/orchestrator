@@ -223,6 +223,8 @@ def run(config: Config) -> int:
     LOG.info("started", extra={"revision": config.source_revision})
     submitted = run_pass(setup)
     LOG.info("pass_finished", extra={"submitted": submitted})
+    if setup.notifier is not None:
+        setup.notifier.heartbeat(setup.store.read_back_kind)
     return 0
 
 

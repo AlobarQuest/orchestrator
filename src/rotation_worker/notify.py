@@ -52,13 +52,23 @@ __all__ = [
     "USER_AGENT",
     "Act",
     "Notifier",
+    "behind_key",
     "first_sightings",
+    "heartbeat_key",
     "unit_failed_key",
     "unit_reader_clock_key",
     "unit_review_key",
     "unit_stuck_key",
     "unit_waiting_key",
 ]
+
+
+def heartbeat_key(store_kind: str) -> str:
+    return alert_key("rotation-heartbeat", store_kind)
+
+
+def behind_key(store_kind: str) -> str:
+    return alert_key("rotation-instance-behind", store_kind)
 
 
 def unit_failed_key(unit_id: str) -> str:
@@ -132,6 +142,18 @@ class Notifier:
             pass  # `_reveal` logged the store's reason
         except StateUnwritable as error:
             LOG.warning("notify_state_unsaved", extra={"reason": scrub(error.reason)})
+        except AlertHubError as error:
+            LOG.warning("notify_failed", extra={"reason": scrub(str(error))})
+
+    def heartbeat(self, store_kind: str) -> None:
+        """Tell alert-hub a pass finished, so a schedule there hears when passes stop. Never
+        fails the pass."""
+        try:
+            self._alerts.heartbeat(
+                heartbeat_key(store_kind), f"Rotation worker pass ({store_kind})"
+            )
+        except TokenUnreadable:
+            pass  # `_reveal` logged the store's reason
         except AlertHubError as error:
             LOG.warning("notify_failed", extra={"reason": scrub(str(error))})
 
