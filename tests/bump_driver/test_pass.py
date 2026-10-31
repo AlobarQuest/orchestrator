@@ -834,6 +834,27 @@ def test_a_pass_that_lost_the_race_reports_the_refusal(orch, github, generator) 
     assert outcome.key == act_refused_key(REPOSITORY, UNIT)
 
 
+@pytest.mark.parametrize(
+    "code",
+    [
+        "pr_merge_head_not_runner_branch",
+        "pr_merge_head_not_adjudicated",
+        "pr_merge_unit_trailer_missing",
+        "pr_merge_file_list_unreadable",
+        "pr_merge_file_list_truncated",
+        "pr_merge_gate_file_changed",
+        "pr_merge_manifest_unchanged",
+    ],
+)
+def test_a_pull_request_the_policy_path_holds_alerts(orch, github, generator, code) -> None:
+    orch.units[UNIT] = _unit(UNIT, "completed")
+    orch.refuse["merge"] = CallError(f"refused: 409 ({code})", 409, code)
+    [outcome] = _run(orch, github, generator)
+    assert (outcome.result, outcome.key) == ("refused", act_refused_key(REPOSITORY, UNIT))
+    assert code in outcome.detail
+    assert orch.merged == []
+
+
 def test_a_version_that_moved_before_the_merge_waits(orch, github, generator) -> None:
     orch.units[UNIT] = _unit(UNIT, "completed")
     orch.refuse["merge"] = CallError("moved", 409, "version_conflict")

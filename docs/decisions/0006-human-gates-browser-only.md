@@ -196,7 +196,24 @@ What stays unbound, and why. The proposal's `rationale` never reaches the agent:
 no such field. `context_enrichment` does ride the unit, and is not bound, because the Brains supply it
 rather than the proposer.
 
-**Residual accepted.** `approved_by` and `standing` on a SYSTEM-registered intake are
-caller-attested: `POST /api/v1/package-intakes` takes them from the body. A stolen SYSTEM bearer
-could therefore forge an intake and get a `READY` bump unit of any dependency in a granted inert
-repository, with no person seeing it. That is the cost, and it is accepted: no check here closes it.
+**Residuals, stated in full.** No check here closes the first three. Whether the fourth stays is
+Devon's decision and is open.
+
+1. **A forged SYSTEM intake yields a landed bump, not only a `READY` unit.** `approved_by` and
+   `standing` on a SYSTEM-registered intake are caller-attested: `POST /api/v1/package-intakes` takes
+   them from the body. The merge reads the same two fields (`standing_bump_refusal`, ADR-0025
+   amendment 4), so a stolen SYSTEM bearer can forge an intake for any dependency in a granted inert
+   repository, drive it through the real run, and have it land, with no person seeing it.
+2. **SYSTEM writes a pull request binding with no claim** (`pr_bindings.py::_authorize_write`
+   returns before any claim check). The binding names which pull request a unit's evidence and
+   merge are about. On the policy path the merge now reads that pull request's branch, trailer and
+   files (ADR-0025 amendment 4), which bounds what a binding can point at without making the writer
+   any less trusted.
+3. **`bump_binding_violations` does not narrow a forged intake.** It binds the envelope's commands
+   to `profile_fields`, and a forged intake supplies its own `profile_fields`, so the commands are
+   checked against the forgery. The binding protects an honest intake from a wrong envelope.
+4. **Self-hosting: open decision.** `orchestrator`, `intent-packages`, `project-standards` and
+   `security-standards` are granted inert members, and `~/.claude/bin/activate-checkout.sh` runs
+   `uv sync --frozen` when `pyproject.toml` or `uv.lock` moves. So a factory-landed bump into one of
+   them is installed on the operator machine at the next launcher pass, with no person. Whether
+   those repositories stay on the policy path is Devon's to decide, and nothing here decides it.

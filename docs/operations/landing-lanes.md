@@ -743,6 +743,11 @@ standing dependency-update work as SYSTEM with no person acting. Verification st
   already merged is still asked, so a landing the orchestrator lost track of records
   `already_merged`, but only while the unit's terms hold: admission runs before that branch, so a
   unit that doesn't qualify writes no row, and the lane says nothing about it.
+  The act then reads the pull request itself (ADR-0025 amendment 4): the unit's runner branch and
+  head, the `SDS-Unit:` trailer, a complete file list that touches no workflow or gate file and
+  changes the package's manifest. A failure is a named `pr_merge_*` refusal with no record, alerted
+  as `bump-act-refused`. The pull request stays open for a person, who reads it and lands it (the
+  next pass records `already_merged`) or closes it.
 - **Alerts** (sender `sds-bridge`, memory in the state directory's `alerts.json`):
   `bump-unit-failed:<repo>:<unit>` for a unit in `revision_required` (a `failed` unit already holds
   `work_watcher`'s `dependency-unit-failed`), `bump-decompose-refused:<repo>:<revision>` for a
@@ -764,6 +769,26 @@ standing dependency-update work as SYSTEM with no person acting. Verification st
   checkout must be current.
 - **Deploying the orchestrator.** `deploy_orchestrator.py` refuses while a unit is live or a dispatch
   is unclaimed, and this lane can start one at :50, so deploy away from :50.
+
+#### Stop it
+
+One move stops decompose, dispatch and merge together, with no restart:
+
+```
+launchctl bootout "gui/$(id -u)/com.devon.bump-driver"
+rm ~/Library/LaunchAgents/com.devon.bump-driver.plist
+```
+
+Remove the plist too: `bootout` alone comes back at the next login or reboot. Runs already in flight
+finish and park at `completed`, and nothing lands them while the lane is gone.
+
+The environment switches (`ORCHESTRATOR_BUMP_MERGE_ENABLED=false`,
+`ORCHESTRATOR_DISPATCH_ENABLED=false`) hold across restarts, but they need a restart to apply, and
+a restart must not strand a live run, so a person sets them at a quiet window. `bump_merge_enabled`
+defaults true, so a deploy that drops the variable turns merging back on.
+
+To retire a parked unit, close its pull request: the lane treats a closed, unmerged pull request as
+nothing to do.
 
 ### The landers' outbound surface (Landing Part 1)
 

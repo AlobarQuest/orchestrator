@@ -24,6 +24,31 @@ somebody REPORTED, so an unreported push is invisible to a local comparison. The
 NAMES the adjudicated head, and the remote refuses anything else — a guarantee no comparison of
 our own rows can offer.
 
+## What the policy path also asks the remote, because nobody looked at this pull request
+
+A green head says the checks passed, and the agent that wrote the bump can reach the checks: the
+workspace root is writable and its token may push workflow files, so one pull request can move the
+pin and rewrite `Quality` to `exit 0`. The post-landing watch keys on failures on `main`, which a
+neutered workflow never produces. A bound human approval has a person behind the diff; the policy
+path has nobody, so it asks of the pull request itself, after it is known to be open and before
+the landing:
+
+1. It is the unit's own branch, in the repository itself: `sds/<unit8>-attempt-<attempt>`, where
+   the attempt is the claim's, the one `_head_terms` already holds the armed head to.
+2. Its head is the adjudicated head, so the file list below describes the tree being landed.
+3. Its body carries the `SDS-Unit:` trailer whole, on its own line.
+4. Its file list reads completely, and touches nothing the checks stand on: `.github/`, a
+   `CODEOWNERS` anywhere, a root makefile. A rename names both ends, or moving a workflow away
+   would hide it.
+5. It changes the package's manifest (`MANIFESTS_BY_ECOSYSTEM`), the generator's pin sites, so the
+   bump is observed and not only attested.
+
+Each failure is its own refusal with no record, like every term above the landing call: the row is
+permanent and replayed, so a stored refusal would bar the person who reads the pull request and
+lands it. The merge is left undone, the pull request open, and the bump driver alerts
+`bump-act-refused`. Tests can still be weakened: only workflow and gate files are refused (ADR-0025
+amendment 4).
+
 ## Idempotency, and why the order is check, act, reconcile, record
 
 A landing is not idempotent and its failure is asymmetric: if it succeeds and the response is
@@ -77,11 +102,21 @@ from orchestrator.change_window_override import ChangeWindowOverride, override_r
 from orchestrator.clock import Clock
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole
-from orchestrator.persistence.models import Event, UnitPrMerge, WorkPackageRevision, WorkUnit
+from orchestrator.persistence.models import (
+    Event,
+    UnitPrMerge,
+    WorkPackage,
+    WorkPackageRevision,
+    WorkUnit,
+)
 from orchestrator.services.github_app import GitHubAppTokenError
 from orchestrator.services.landing.change_record import ChangeRecordSource
 from orchestrator.services.landing.estate_landing import EstateLandingSource
 from orchestrator.services.landing.pr_merge_admission import MergeAdmission, admission_for
+from orchestrator.services.membership.holds import (
+    TOOLING_TO_DEPENDABOT,
+    ecosystem_of_package_id,
+)
 
 GITHUB_API_URL: Final = "https://api.github.com"
 
@@ -102,6 +137,39 @@ PR_MERGE_REFUSED_BY_REMOTE: Final = "pr_merge_refused_by_remote"
 # variables would meet the remote-unreadable path on every unit.
 PR_MERGE_APP_CREDENTIALS_MISSING: Final = "pr_merge_app_credentials_missing"
 
+# The policy path's own terms, asked of the pull request (module docstring). Each leaves no record:
+# the row is permanent, and a person may read the pull request and land it.
+#
+# Not the unit's own branch in the repository itself, so nothing ties it to the unit's run.
+PR_MERGE_HEAD_NOT_RUNNER_BRANCH: Final = "pr_merge_head_not_runner_branch"
+# The pull request's head is not the adjudicated head, so its file list would describe another tree.
+PR_MERGE_HEAD_NOT_ADJUDICATED: Final = "pr_merge_head_not_adjudicated"
+PR_MERGE_UNIT_TRAILER_MISSING: Final = "pr_merge_unit_trailer_missing"
+# The file list could not be read, or read fewer files than the pull request says it changes.
+PR_MERGE_FILE_LIST_UNREADABLE: Final = "pr_merge_file_list_unreadable"
+PR_MERGE_FILE_LIST_TRUNCATED: Final = "pr_merge_file_list_truncated"
+# A file the checks stand on changed, which a person has to read.
+PR_MERGE_GATE_FILE_CHANGED: Final = "pr_merge_gate_file_changed"
+# No changed file is the package's manifest, or the package names no tooling to find one by.
+PR_MERGE_MANIFEST_UNCHANGED: Final = "pr_merge_manifest_unchanged"
+
+# The generator's pin sites per tooling (intent-packages' `dependency_update.py`), by Dependabot's
+# name for it, all at the repository root.
+MANIFESTS_BY_ECOSYSTEM: Final = {
+    TOOLING_TO_DEPENDABOT["npm"]: frozenset({"package.json"}),
+    TOOLING_TO_DEPENDABOT["pip"]: frozenset({"requirements.txt", "requirements-dev.txt"}),
+    TOOLING_TO_DEPENDABOT["uv"]: frozenset({"pyproject.toml"}),
+}
+# Compared case-folded. `make` reads GNUmakefile and makefile before Makefile, so adding either
+# replaces the root gate.
+# not-a-vocabulary: root file names make reads, compared with a repository path
+ROOT_GATE_FILES: Final = frozenset({"makefile", "gnumakefile"})
+
+FILES_PER_PAGE: Final = 100
+# GitHub lists at most 3000 files, so a thirty-first page is empty; the count against
+# `changed_files` is what refuses a longer pull request.
+MAX_FILE_PAGES: Final = 31
+
 # Recorded on the one ambiguous outcome: the remote refused and the confirming read also failed,
 # so a landing cannot be ruled out. Branch protection is the expected reason for a refusal and is
 # the floor under this whole increment -- the App cannot read protection settings, so a refusal is
@@ -117,6 +185,22 @@ class PullRequestState:
     default_branch: str
     open: bool
     landed: bool
+    # Read only on the policy path. An absent value fails that path's comparison, so a shape the
+    # remote stopped serving refuses there and changes nothing for a bound approval.
+    head_ref: str = ""
+    head_repository: str = ""
+    head_sha: str = ""
+    body: str = ""
+    changed_files: int = -1
+
+
+@dataclass(frozen=True)
+class ChangedFile:
+    """One entry of a pull request's file list. A rename names both ends."""
+
+    path: str
+    previous_path: str | None = None
+    removed: bool = False
 
 
 @dataclass(frozen=True)
@@ -131,6 +215,8 @@ class PullRequestGateway(Protocol):
     cascade is exercisable with no network."""
 
     def read_pull_request(self, *, repository: str, number: int) -> PullRequestState: ...
+
+    def pull_request_files(self, *, repository: str, number: int) -> tuple[ChangedFile, ...]: ...
 
     def submit_merge(self, *, repository: str, number: int, head_sha: str) -> MergeOutcome: ...
 
@@ -344,6 +430,8 @@ def _act(
             "the pull request is not open",
             "reopen the pull request, or land it by hand",
         )
+    if admission.authority_recognised_by:
+        _require_only_the_bump(session, unit, revision, gateway, admission, state, number, head_sha)
 
     try:
         outcome = gateway.submit_merge(
@@ -407,6 +495,74 @@ def _act(
         merge_commit_sha=outcome.commit_sha,
         github_status=outcome.status_code,
     )
+
+
+def _require_only_the_bump(
+    session: Session,
+    unit: WorkUnit,
+    revision: WorkPackageRevision,
+    gateway: PullRequestGateway,
+    admission: MergeAdmission,
+    state: PullRequestState,
+    number: int,
+    head_sha: str,
+) -> None:
+    """The policy path's terms, in the module docstring's order. Each refuses with no record."""
+    repository = admission.target_repository
+    branch = f"sds/{str(unit.id)[:8]}-attempt-{unit.attempt_count}"
+    if state.head_ref != branch or state.head_repository.casefold() != repository.casefold():
+        raise _held(PR_MERGE_HEAD_NOT_RUNNER_BRANCH, f"the head is not {branch} in {repository}")
+    if state.head_sha != head_sha:
+        raise _held(PR_MERGE_HEAD_NOT_ADJUDICATED, "the head is not the adjudicated head")
+    if f"SDS-Unit: {unit.id}" not in state.body.splitlines():
+        raise _held(PR_MERGE_UNIT_TRAILER_MISSING, "the body names no SDS-Unit trailer for it")
+    try:
+        files = gateway.pull_request_files(repository=repository, number=number)
+    except GitHubGatewayError as error:
+        raise DomainError(
+            PR_MERGE_FILE_LIST_UNREADABLE,
+            f"the pull request's files could not be read: {error.code}",
+            "retry once the remote answers",
+        ) from error
+    if len(files) != state.changed_files:
+        raise _held(
+            PR_MERGE_FILE_LIST_TRUNCATED,
+            f"the list holds {len(files)} of {state.changed_files} changed files",
+        )
+    gates = sorted({path for file in files for path in _ends(file) if _is_gate_file(path)})
+    if gates:
+        raise _held(PR_MERGE_GATE_FILE_CHANGED, f"it changes {', '.join(gates[:5])}")
+    manifests = _manifests(session, revision, repository)
+    if not any(file.path in manifests and not file.removed for file in files):
+        raise _held(PR_MERGE_MANIFEST_UNCHANGED, "it changes no manifest of the package's tooling")
+
+
+def _held(code: str, detail: str) -> DomainError:
+    return DomainError(
+        code,
+        f"the policy path will not land this pull request: {detail}",
+        "a person reads the pull request and lands it, or closes it",
+    )
+
+
+def _ends(file: ChangedFile) -> tuple[str, ...]:
+    return (file.path,) if file.previous_path is None else (file.path, file.previous_path)
+
+
+def _is_gate_file(path: str) -> bool:
+    folded = path.casefold()
+    return (
+        folded.startswith(".github/")
+        or folded.rsplit("/", 1)[-1] == "codeowners"
+        or folded in ROOT_GATE_FILES
+    )
+
+
+def _manifests(session: Session, revision: WorkPackageRevision, repository: str) -> frozenset[str]:
+    """The revision's tooling's manifests, or none when its package names no tooling."""
+    package = session.get(WorkPackage, revision.work_package_id)
+    ecosystem = None if package is None else ecosystem_of_package_id(package.package_id, repository)
+    return MANIFESTS_BY_ECOSYSTEM.get(ecosystem or "", frozenset())
 
 
 def _landed_after_all(
@@ -579,6 +735,33 @@ class GitHubPullRequests:
             raise GitHubGatewayError("read_response_invalid") from error
         return _state_from_body(body)
 
+    def pull_request_files(self, *, repository: str, number: int) -> tuple[ChangedFile, ...]:
+        """Every page of the file list; a failed or unrecognised page raises, never a short list."""
+        url = f"{GITHUB_API_URL}/repos/{repository}/pulls/{number}/files"
+        files: list[ChangedFile] = []
+        for page in range(1, MAX_FILE_PAGES + 1):
+            try:
+                response = httpx.get(
+                    url,
+                    headers=self._headers(),
+                    params={"per_page": FILES_PER_PAGE, "page": page},
+                    timeout=self._timeout,
+                )
+            except (httpx.RequestError, httpx.InvalidURL) as error:
+                raise GitHubGatewayError(f"request_error:{error.__class__.__name__}") from error
+            if response.status_code != 200:
+                raise GitHubGatewayError("files_status", response.status_code)
+            try:
+                body = response.json()
+            except ValueError as error:
+                raise GitHubGatewayError("files_response_invalid") from error
+            if not isinstance(body, list):
+                raise GitHubGatewayError("files_response_invalid")
+            files.extend(_file_from_entry(entry) for entry in body)
+            if len(body) < FILES_PER_PAGE:
+                break
+        return tuple(files)
+
     def submit_merge(self, *, repository: str, number: int, head_sha: str) -> MergeOutcome:
         """PUT the landing, NAMING the head the criteria were adjudicated at.
 
@@ -631,9 +814,36 @@ def _state_from_body(body: Any) -> PullRequestState:
     default_branch = repo.get("default_branch")
     if not isinstance(base_ref, str) or not isinstance(default_branch, str):
         raise GitHubGatewayError("read_response_invalid")
+    head = body.get("head")
+    head = head if isinstance(head, dict) else {}
+    head_repo = head.get("repo")
+    head_repo = head_repo if isinstance(head_repo, dict) else {}
     return PullRequestState(
         base_ref=base_ref,
         default_branch=default_branch,
         open=body.get("state") == "open",
         landed=bool(body.get("merged")),
+        head_ref=_text(head.get("ref")),
+        head_repository=_text(head_repo.get("full_name")),
+        head_sha=_text(head.get("sha")),
+        body=_text(body.get("body")),
+        changed_files=_count(body.get("changed_files")),
     )
+
+
+def _text(value: object) -> str:
+    return value if isinstance(value, str) else ""
+
+
+def _count(value: object) -> int:
+    return value if isinstance(value, int) and not isinstance(value, bool) else -1
+
+
+def _file_from_entry(entry: object) -> ChangedFile:
+    path = entry.get("filename") if isinstance(entry, dict) else None
+    if not isinstance(entry, dict) or not isinstance(path, str) or not path:
+        raise GitHubGatewayError("files_response_invalid")
+    previous = entry.get("previous_filename")
+    if previous is not None and not isinstance(previous, str):
+        raise GitHubGatewayError("files_response_invalid")
+    return ChangedFile(path, previous, entry.get("status") == "removed")

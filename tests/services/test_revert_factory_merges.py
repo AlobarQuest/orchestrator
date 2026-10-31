@@ -93,6 +93,8 @@ def merged(session: Session, *, key: str = "factory-bump", source: Any = None, *
 
 
 def _landed(session: Session, unit: WorkUnit, source: Any):
+    gateway = FakeGateway(outcome=UnitMergeOutcome(True, LANDED_COMMIT, 200))
+    gateway.serve_the_runners_pull_request(unit, REPOSITORY, HEAD)
     return land_unit_pull_request(
         session,
         MergeCommand(
@@ -101,7 +103,7 @@ def _landed(session: Session, unit: WorkUnit, source: Any):
             idempotency_key=f"merge-{unit.id}",
             expected_version=unit.version,
         ),
-        FakeGateway(outcome=UnitMergeOutcome(True, LANDED_COMMIT, 200)),
+        gateway,
         source,
         approved_record_source(REPOSITORY, FACTORY_PR),
         clock=FixedClock(IN_WINDOW),

@@ -59,6 +59,7 @@ from tests.services.test_bump_decomposition_policy import _revision as _bump_rev
 from tests.services.test_member_proposals import grant_services
 from tests.services.test_pr_merge import FakeGateway
 from tests.services.test_pr_merge_admission import (
+    HEAD,
     IN_WINDOW,
     SYSTEM,
     FixedClock,
@@ -169,7 +170,10 @@ def _land(
     *,
     enabled: bool = True,
     key: str = "bump-merge",
+    as_served: bool = False,
 ) -> UnitPrMerge:
+    if not as_served:
+        gateway.serve_the_runners_pull_request(unit, REPOSITORY, HEAD)
     return land_unit_pull_request(
         session,
         MergeCommand(

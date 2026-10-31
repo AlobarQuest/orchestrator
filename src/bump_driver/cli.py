@@ -563,7 +563,7 @@ def _merge(
             if pull == MERGED_PULL
             else Outcome(subject, "would-merge", repository=bump.repository)
         )
-    # Evidence writes move the version, so it is read at the last moment.
+    # Only a state transition moves the version, and one can land between the read above and here.
     version = orchestrator.unit(unit_id)["version"]
     try:
         answer = orchestrator.land(

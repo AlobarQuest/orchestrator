@@ -600,8 +600,13 @@ Placement rule: global CLAUDE.md §7.
   `ORCHESTRATOR_BUMP_MERGE_ENABLED` is on. Off, a unit the path covers refuses
   `merge_policy_path_off` in place of `authority_approval_not_bound`; other terms report beside it,
   so it means waiting only as the sole refusal. The admission answer writes nothing; the act records
-  `authority.human_gate_not_required` beside a `merged` record only. Detail:
-  `docs/operations/landing-lanes.md`.
+  `authority.human_gate_not_required` beside a `merged` record only. The policy path alone also
+  reads the pull request in `pr_merge._act`, after it is known open and before landing: the head is
+  `sds/<unit8>-attempt-<attempt_count>` in the repository itself and is the adjudicated head, the
+  body has the whole-line `SDS-Unit:` trailer, and `pulls/{n}/files` reads fully (its length equals
+  `changed_files`), neither end of any entry is a workflow or gate file, and a tooling manifest
+  changed. Each failure is a `pr_merge_*` refusal with no `UnitPrMerge` row, so a person can still
+  land it. Detail: `docs/operations/landing-lanes.md`, ADR-0025 amendment 4.
 - The `bump-driver` lane acts as SYSTEM only on a standing `dependency-update` revision in a
   repository granted `dependency_updates`, and on a unit whose own envelope says so; it reads
   `resolved` records as well as `approved`, since `work_watcher` retires a record before its unit

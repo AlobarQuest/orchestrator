@@ -208,5 +208,38 @@ writes `authority.human_gate_not_required` with `at: merge`, the patterns, the p
 source and the fingerprint, in the transaction that records the merge, only when this call landed
 the pull request (status `merged`), and `authority_approval_id` stays null. The admission answer serves the same names and writes nothing.
 
-The residual ADR-0006 amendment 2 accepts applies here too: `approved_by` and `standing` on a SYSTEM
-intake are attested by the caller.
+**The policy path reads the pull request; a bound approval doesn't.** A green head was all this path
+had, and the agent reaches the checks: its workspace root is writable and `FACTORY_PR_TOKEN` carries
+Workflows write, so one pull request could move the pin and rewrite `Quality` to `exit 0`. The
+post-landing watch keys on failures on `main`, which a neutered workflow never produces. So after
+the pull request is known to be open and before the landing, the act requires, in this order:
+
+- its head branch is `sds/<unit8>-attempt-<attempt>` in the repository itself
+  (`pr_merge_head_not_runner_branch`);
+- its head is the adjudicated head, so the file list describes the tree being landed
+  (`pr_merge_head_not_adjudicated`);
+- its body carries `SDS-Unit: <unit id>` as a whole line (`pr_merge_unit_trailer_missing`). The body
+  rather than the head commit: factory-runner writes both, and the body comes with the read;
+- `GET /pulls/{n}/files` reads completely, every page, and its length equals the pull request's
+  `changed_files` (`pr_merge_file_list_unreadable`, `pr_merge_file_list_truncated`);
+- neither end of any entry is under `.github/`, a `CODEOWNERS` in any directory, or a root makefile
+  of any spelling `make` reads (`pr_merge_gate_file_changed`);
+- a package manifest is changed and not removed, per tooling: `pyproject.toml`, `requirements.txt` or
+  `requirements-dev.txt`, or `package.json`, the generator's pin sites
+  (`pr_merge_manifest_unchanged`).
+
+Each refuses with no record, because a record is permanent and replayed, and would bar the person who
+reads the pull request and lands it. The pull request stays open and the bump driver alerts
+`bump-act-refused`. The App reads the list with `pull_requests`, which its installation holds
+(`docs/operations/credentials.md`, measured 2026-09-02).
+
+**Residuals.** ADR-0006 amendment 2 states them in full, and they apply here: a forged SYSTEM intake
+yields a landed bump, because the merge reads the same caller-attested `approved_by` and `standing`;
+SYSTEM writes a binding with no claim; `bump_binding_violations` binds commands to the forgery's own
+`profile_fields`; and whether the repositories that install themselves stay on this path is an open
+decision. A WORKER bearer can no longer bind an arbitrary green pull request and have it land, but
+the branch and the trailer are text its holder could write.
+
+The manifest move is now observed rather than attested. The agent can still weaken tests: only
+workflow and gate files are refused, so a test file, a script a workflow runs, or the `scripts` and
+tool configuration inside a manifest all land unread.
