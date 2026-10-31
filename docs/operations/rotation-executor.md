@@ -52,7 +52,9 @@ member that isn't retired, and repositories compare case-folded.
   (`grant_unread`) and the step proceeds: the claim happened on a yes, and an unreadable record
   can't fail a unit that may be mid-overlap. This protects the grant read only. A failed `renew`
   fails the unit as it always has, so an orchestrator that is down when a step starts still fails
-  the unit there.
+  the unit there. A unit failed on a withdrawn grant spends an attempt like any other failure, so
+  while attempts remain it is requeued as SYSTEM (`requeue_refusal` checks only state and
+  eligibility); once requeued it waits unclaimed, per the first bullet, until the grant returns.
 
 An empty record is unread, never an explicit withdrawal of every grant. `rotation-worker grants`
 prints `granted` or `not granted` for each repository in `REGISTRY_REPOSITORIES`, read as this

@@ -37,10 +37,10 @@ class FakeOrchestrator:
         # The registered revision number, by revision id, where it isn't the record's.
         self.revisions: dict[str, int] = {}
         # The member record's rows; `None` makes the read fail. `member_reads` counts the asks.
-        self.members_rows: list[dict[str, Any]] | None = [_member("AlobarQuest/example-registry")]
+        self.members_rows: list[Any] | None = [_member("AlobarQuest/example-registry")]
         self.member_reads = 0
 
-    def members(self) -> list[dict[str, Any]]:
+    def members(self) -> list[Any]:
         self.member_reads += 1
         if self.members_rows is None:
             raise CallError("the orchestrator refused GET /api/v1/members: 503", 503)

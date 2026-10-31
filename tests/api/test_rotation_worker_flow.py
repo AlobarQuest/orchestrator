@@ -38,6 +38,7 @@ from tests.api.test_lifecycle_api import HUMAN, SYSTEM, VERIFIER, WORKER
 from tests.api.test_observations_api import uptime_body
 from tests.rotation_worker.conftest import Origins
 from tests.rotation_worker.stores import MemoryStore
+from tests.services.test_member_proposals import grant_services
 
 NOW = datetime(2026, 10, 11, tzinfo=UTC)
 WORK = "00000000-0000-4000-8000-00000000a0a0"
@@ -109,6 +110,11 @@ class Estate:
             [f'bws-secret uuid="{self.keeper_id}"', 'provider name="fake"', RUNTIME]
         )
         self._registries(origins)
+        # The executor acts only where the member record grants credential_rotation; the canary
+        # lives in the orchestrator's registry.
+        with Session(engine) as session:
+            grant_services(session, "AlobarQuest/orchestrator", "credential_rotation")
+            session.commit()
         self.package: dict[str, Any] = {
             "profile": "non-software-operational",
             "profile_fields": {

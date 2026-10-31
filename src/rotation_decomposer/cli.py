@@ -120,7 +120,7 @@ def _revision(
     credential: str,
     orchestrator: Orchestrator,
     registry: Callable[[], dict[str, RegistryEntry]],
-    members: Callable[[], list[dict[str, Any]]],
+    members: Callable[[], list[Any]],
     dry_run: bool,
 ) -> Outcome | None:
     """What becomes of one registered revision with no units; `None` for one the record doesn't

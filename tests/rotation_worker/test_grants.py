@@ -159,6 +159,14 @@ def test_the_worker_turns_an_unread_record_into_its_own_transient_error(h: Harne
         worker._granted(h.setup(), REPOSITORY)
 
 
+@pytest.fixture
+def executor_log(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The executor's logger enabled: a test that ran alembic's `fileConfig` on this xdist worker
+    disabled every logger that existed then, and `caplog` would see nothing."""
+    monkeypatch.setattr(logging.getLogger("rotation_worker"), "disabled", False)
+
+
+@pytest.mark.usefixtures("executor_log")
 def test_no_grant_waits_unclaimed_and_starts_the_clock(
     h: Harness, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -238,6 +246,7 @@ def test_a_withdrawn_grant_stops_before_the_next_step(
     assert ("evidence", "u1") not in h.client.calls
 
 
+@pytest.mark.usefixtures("executor_log")
 def test_an_unread_grant_mid_rotation_carries_on(
     h: Harness, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:

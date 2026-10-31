@@ -64,3 +64,9 @@ def test_the_record_is_read_once_per_pass(orch: FakeOrchestrator) -> None:
     orch.works[140] = orch.works[139]
     _run(orch, [RECORD, second])
     assert orch.member_reads == 1
+
+
+def test_a_junk_row_is_unread_not_refused(orch: FakeOrchestrator) -> None:
+    orch.members_rows = [_member(REGISTRY), "junk"]
+    assert [o.result for o in _run(orch, [RECORD])] == ["unread"]
+    assert orch.proposed == []

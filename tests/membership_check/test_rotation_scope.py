@@ -11,7 +11,7 @@ from typer.testing import CliRunner
 from membership_check import cli
 from membership_check.consistency import Report
 from rotation_worker.git_mirror import MirrorError
-from rotation_worker.registry import REGISTRY_REPOSITORIES, RegistryError
+from rotation_worker.registry import REGISTRY_REPOSITORIES, RegistryEntry, RegistryError
 from sds_members.client import Member
 from tests.membership_check.test_consistency import _check, _member, _wire
 
@@ -53,17 +53,24 @@ def test_a_registry_file_outside_the_tuple_disagrees() -> None:
     ]
 
 
-def test_a_stored_copy_is_never_compared() -> None:
-    """A copy in a member with no grant, inside the tuple, is the tuple row's concern only."""
-    report = _check([_member("A/one")], registry_repositories=[], registry_files=[])
-    assert report == Report([], [])
-    report = _check(
-        [_member("A/one", "credential_rotation")],
-        flagged_repositories=["A/one"],
-        registry_repositories=["A/one"],
-        registry_files=["A/one"],
+def test_a_stored_copy_is_never_compared(monkeypatch) -> None:
+    """A flagged entry's destination naming an ungranted repository is not a disagreement: the
+    row's own repository is what is compared, never what it stores a copy in."""
+    _wire(monkeypatch, members=_members_one(), flagged=("A/one",))
+    monkeypatch.setattr(
+        cli,
+        "rotated_by_sds",
+        lambda _mirror: {
+            "c0": RegistryEntry(
+                "A/one",
+                "c" * 40,
+                {"consumer": [{"kind": "actions-secret", "repository": "A/ungranted"}]},
+            )
+        },
     )
-    assert report == Report([], [])
+    result = _run()
+    assert result.exit_code == 0, result.output
+    assert "A/ungranted" not in result.output
 
 
 def test_a_retired_member_s_flagged_row_counts_as_not_granted() -> None:
@@ -83,7 +90,7 @@ def test_todays_estate_agrees() -> None:
         registry_files=list(REGISTRY_REPOSITORIES),
     )
     assert report == Report([], [])
-    assert len(REGISTRY_REPOSITORIES) == 4
+    assert {m.repository for m in members} == set(REGISTRY_REPOSITORIES)
 
 
 # --- the Typer entry point -------------------------------------------------------------------
@@ -110,7 +117,7 @@ def test_the_cli_agrees_when_a_flagged_row_matches(monkeypatch) -> None:
 
 
 def test_an_unread_mirror_is_a_gap_and_never_an_empty_population(monkeypatch) -> None:
-    for error in (MirrorError("git down"), RegistryError("doesn't parse")):
+    for error in (MirrorError("git down"), RegistryError("doesn't parse"), OSError("no git")):
         _wire(monkeypatch, members=_members_one(), mirror_error=error)
         result = _run()
         assert result.exit_code == 3

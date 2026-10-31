@@ -109,7 +109,7 @@ def _flagged_repositories() -> tuple[list[str], list[str]]:
     """
     try:
         rows = rotated_by_sds(RepoMirror(default_mirror_root("membership-check")))
-    except (MirrorError, RegistryError) as error:
+    except (MirrorError, RegistryError, OSError) as error:
         return [], [f"the credential registries couldn't be read: {error}"]
     return sorted({entry.repository for entry in rows.values()}), []
 
