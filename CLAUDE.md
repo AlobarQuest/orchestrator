@@ -412,6 +412,11 @@ Placement rule: global CLAUDE.md §7.
   the landing ledger's `landing` observation, confirmed against `UnitPrBinding.head_sha`, pinned by
   `tests/contract/test_landing_fact_contract.py`. History:
   `docs/history/claude-md-invariants-archive.md` #228.
+- The post-landing watch selects a factory merge from rows alone: status `merged`, a
+  dependency-update unit, and `landing_inert` on its `pr_merge.merged` event, the estate's answer at
+  the act; a merge event without it is never watched. `UnitPrMerge.repository` is the envelope's
+  spelling and `landing_reverts` is folded, so every join folds it. Detail:
+  `docs/operations/landing-lanes.md`, "Automatic reverts (inert repositories)".
 - Making a UNIQUE constraint's column nullable disables it for NULL rows; use
   `postgresql_nulls_not_distinct=True` and test by writing around the service. History:
   `docs/history/claude-md-invariants-archive.md` #229.
@@ -698,6 +703,9 @@ Placement rule: global CLAUDE.md §7.
   shared matcher (`factory_breaches`, `exceeded` or `terms.version_ceiling_term`), or is covered by
   a gate that does, or is not a bump: `tests/architecture/test_hold_paths.py` classifies each and
   fails on an unclassified `MERGE_EXEMPT_PATHS` entry; a new propose path is classified by hand.
+  The factory merge is also the one factory path that reads reverted versions and a revert in
+  progress (`_hold_term`: `merge_version_reverted`, `merge_repository_reverting`); the proposer,
+  carrier and driver are covered by it.
   The matcher's two copies (`services/membership/holds.py`, `sds_members/holds.py`) are held equal
   by `test_hold_agreement.py`. Detail: `docs/operations/landing-lanes.md`, "Holds"; ADR-0028
   amendment 2.

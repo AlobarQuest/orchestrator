@@ -776,6 +776,29 @@ def test_the_off_switch_alone_waits(orch, github, generator) -> None:
     assert exit_code(outcomes) == 0
 
 
+def test_a_revert_in_progress_waits_with_no_alert(orch, github, generator) -> None:
+    orch.units[UNIT] = _unit(UNIT, "completed")
+    orch.admissions[UNIT] = {
+        "satisfied": False,
+        "refusals": ["merge_policy_path_off", "merge_repository_reverting"],
+    }
+    outcomes = _run(orch, github, generator)
+    assert _results(outcomes) == ["waiting"]
+    assert outcomes[0].key is None
+    assert orch.merged == []
+    assert exit_code(outcomes) == 0
+
+
+def test_a_version_the_sds_reverted_is_refused_by_name(orch, github, generator) -> None:
+    orch.units[UNIT] = _unit(UNIT, "completed")
+    orch.admissions[UNIT] = {"satisfied": False, "refusals": ["merge_version_reverted"]}
+    outcomes = _run(orch, github, generator)
+    assert _results(outcomes) == ["refused"]
+    assert outcomes[0].key == act_refused_key(REPOSITORY, UNIT)
+    assert "merge_version_reverted" in outcomes[0].detail
+    assert orch.merged == []
+
+
 def test_a_refusal_beside_the_off_switch_is_reported(orch, github, generator) -> None:
     orch.units[UNIT] = _unit(UNIT, "completed")
     orch.admissions[UNIT] = {

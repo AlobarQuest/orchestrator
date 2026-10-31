@@ -81,6 +81,13 @@ HOLD_PATHS: dict[Path, Honours | CoveredBy | NotABump] = {
     FACTORY_MERGE: Honours(LANDING / "pr_merge_admission.py", "_hold_term"),
     ESTATE_MERGE: Honours(LANDING / "estate_landing_admission.py", "_remote_terms"),
     INERT_MERGE: Honours(LANDING / "inert_landing_admission.py", "_remote_terms"),
+    # Not on the merge guard's list: it opens a pull request and merges nothing, and is here because
+    # it is how a factory merge comes back out (Landing Part 4).
+    LANDING / "revert_act.py": NotABump(
+        "opens the exact inverse of a landed bump, Dependabot's or the factory's, which restores "
+        "the version before it; the revert lands only as `_revert_term`'s subject, and the hold "
+        "follows it"
+    ),
     SRC / "bump_proposer/standing.py": NotABump(
         "publishes a commit of a standing package revision to intent-packages: the revision "
         "describes a bump, and the bump itself lands only through the factory merge"
@@ -270,6 +277,16 @@ def test_the_landing_term_asks_the_matcher() -> None:
     assert function is not None, f"{TERM_MODULE} no longer defines version_ceiling_term"
     assert _called(function, "exceeded"), "version_ceiling_term no longer calls exceeded"
     assert "orchestrator.services.membership.holds.exceeded" in _imported_modules(tree)
+
+
+def test_the_factory_merge_asks_the_never_again_rule() -> None:
+    """The proposer, the carrier and the driver are covered by this gate for a reverted version
+    too: only here does a factory path read what was reverted."""
+    tree = _tree(LANDING / "pr_merge_admission.py")
+    function = _function(tree, "_hold_term")
+    assert function is not None
+    assert _called(function, "reverted_versions")
+    assert _called(function, "factory_brings_reverted")
 
 
 def test_the_honours_check_fires_on_a_path_that_stopped_asking(tmp_path: Path) -> None:

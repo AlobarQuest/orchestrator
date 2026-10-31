@@ -484,6 +484,9 @@ def _record(
             "reason_code": reason_code,
             "merge_commit_sha": merge_commit_sha,
             "authority_fingerprint": unit.authority_fingerprint,
+            # The estate's answer at this act: the post-landing watch reads it, and App Brain is
+            # not asked again for what this landing was.
+            "landing_inert": admission.landing_inert,
             # Beside the fingerprint on purpose: the override's attribution is inherited from the
             # human approval bound to it, so the reason and the approval it rests on belong in one
             # row. `unit_pr_merge` carries no free-form column and this act writes a row only when

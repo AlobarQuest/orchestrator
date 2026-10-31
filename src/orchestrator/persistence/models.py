@@ -1608,7 +1608,7 @@ LANDING_REVERT_STATUSES = (
 
 
 class LandingRevert(UUIDPrimaryKey, Base):
-    """One landed Dependabot bump that went bad, and what was done about it.
+    """One landed bump, Dependabot's or the factory's, that went bad, and what was done about it.
 
     **One row per (repository, pull request), ever**: the uniqueness answers "did we already
     handle this landing?" here rather than by asking GitHub. `repository` is lower-cased at every

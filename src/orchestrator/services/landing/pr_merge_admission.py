@@ -94,13 +94,14 @@ from orchestrator.services.landing.estate_landing import (
     SOURCE_UNCONFIGURED,
     EstateLandingSource,
 )
-from orchestrator.services.landing.terms import grant_term
-from orchestrator.services.lifecycle.lifecycle import verifier_decided_completion
-from orchestrator.services.membership.holds import (
-    Bump,
-    ecosystem_of_package_id,
-    factory_breaches,
+from orchestrator.services.landing.revert_record import revert_in_progress, reverted_versions
+from orchestrator.services.landing.terms import (
+    factory_brings_reverted,
+    grant_term,
+    revision_bump,
 )
+from orchestrator.services.lifecycle.lifecycle import verifier_decided_completion
+from orchestrator.services.membership.holds import Bump, factory_breaches
 from orchestrator.services.membership.members import holds_for
 from orchestrator.services.reconciliation.reconciliation import open_conditions
 
@@ -232,6 +233,15 @@ MERGE_TARGET_ESTATE_SOURCE_UNREADABLE: Final = "merge_target_estate_source_unrea
 # own, as every refusal here does. A `to_version` the matcher can't read is beyond any ceiling.
 MERGE_VERSION_CEILING_EXCEEDED: Final = "merge_version_ceiling_exceeded"
 
+# The unit's bump can bring a version the SDS reverted from this repository (Landing Part 4). It
+# never clears: a person lands that version by hand. The landers' code is
+# `landing_version_reverted`.
+MERGE_VERSION_REVERTED: Final = "merge_version_reverted"
+
+# A landing in this repository is on its way to a revert (Landing Part 4), so no bump lands on top
+# of it. It clears when the revert lands. The landers' code is `landing_repository_reverting`.
+MERGE_REPOSITORY_REVERTING: Final = "merge_repository_reverting"
+
 # The member record does not grant the unit's change class on its target repository (landing
 # layer Part 2: the grant is the authority). The landers' code for the same fact is
 # `landing_repository_not_granted`; this path names its own, as every refusal here does.
@@ -258,6 +268,9 @@ class MergeAdmission:
 
     The `authority_*` fields are set only when the policy path met the authority term: what lifted
     the human requirement, for the act to record. Empty on a bound approval and on any refusal.
+
+    `landing_inert` is the estate's explicit `inert` answer, which the act records on its event: the
+    post-landing watch selects on it, as it reads which lane landed an estate row from its action.
     """
 
     satisfied: bool
@@ -269,6 +282,7 @@ class MergeAdmission:
     authority_recognised_by: tuple[str, ...] = ()
     authority_policy_version: int | None = None
     authority_policy_source: str | None = None
+    landing_inert: bool = False
 
 
 def pr_merge_admission(
@@ -413,6 +427,7 @@ def admission_for(
         authority_recognised_by=gate.recognised_by if gate is not None else (),
         authority_policy_version=gate.policy_version if gate is not None else None,
         authority_policy_source=gate.policy_source if gate is not None else None,
+        landing_inert=estate.inert,
     )
 
 
@@ -523,45 +538,42 @@ def _hold_term(
     envelope's `mutation_commands` against `profile_fields.to_version`. They agree because the
     profile's `build_envelope` derives both from the same arguments; a hand-authored approved
     envelope could install a different version than the one compared here.
+
+    **THE NEVER-AGAIN RULE AND THE REVERT IN PROGRESS (Landing Part 4) ARE ASKED HERE TOO**, since
+    this is the gate every factory bump lands through. A version the SDS reverted from the
+    repository never lands by this path, even after its hold is lifted (`factory_brings_reverted`;
+    the landers' `landing_version_reverted`). And while a landing there is on its way to a revert,
+    no bump lands on top of it, which would make the revert an overlap (the landers'
+    `landing_repository_reverting`; this one clears when the revert lands).
     """
     if DEPENDENCY_UPDATE not in (change_class, revision.profile) or not target_repository:
         return _Term(True, ())
+    refusals: list[str] = []
+    if revert_in_progress(session, target_repository):
+        refusals.append(MERGE_REPOSITORY_REVERTING)
     holds = holds_for(session, target_repository)
-    if not holds:
-        return _Term(True, ())
-    bump = _bump_of(session, revision, target_repository)
-    if bump is None:
-        return _Term(False, (MERGE_DEPENDENCY_BUMP_UNREADABLE,))
-    if factory_breaches(holds, target_repository, bump):
-        return _Term(False, (MERGE_VERSION_CEILING_EXCEEDED,))
-    return _Term(True, ())
+    reverted = reverted_versions(session, target_repository)
+    if holds or reverted:
+        bump = _bump_of(session, revision, target_repository)
+        if bump is None:
+            refusals.append(MERGE_DEPENDENCY_BUMP_UNREADABLE)
+        else:
+            if factory_breaches(holds, target_repository, bump):
+                refusals.append(MERGE_VERSION_CEILING_EXCEEDED)
+            if factory_brings_reverted(bump, reverted):
+                refusals.append(MERGE_VERSION_REVERTED)
+    return _Term(not refusals, tuple(refusals))
 
 
 def _bump_of(
     session: Session, revision: WorkPackageRevision, target_repository: str
 ) -> Bump | None:
-    """What a dependency-update revision bumps, or `None` when any part of it can't be read. The
-    snapshot is data from another repository and nothing here validates its shape."""
+    """What a dependency-update revision bumps, or `None` when any part of it can't be read."""
     package = session.get(WorkPackage, revision.work_package_id)
-    ecosystem = (
-        ecosystem_of_package_id(package.package_id, target_repository)
-        if package is not None
-        else None
-    )
-    snapshot = revision.enforcement_snapshot
-    fields = snapshot.get("profile_fields") if isinstance(snapshot, dict) else None
-    fields = fields if isinstance(fields, dict) else {}
-    dependency, to_version = fields.get("package"), fields.get("to_version")
-    # A padded name would compare unequal to the hold and read as "not held", so it is unreadable.
-    if (
-        ecosystem is None
-        or not isinstance(dependency, str)
-        or not dependency
-        or dependency != dependency.strip()
-        or not isinstance(to_version, str)
-    ):
+    if package is None:
         return None
-    return Bump(ecosystem=ecosystem, directory=None, dependency=dependency, to_version=to_version)
+    named = revision_bump(package.package_id, revision.enforcement_snapshot, target_repository)
+    return None if named is None else named.bump
 
 
 def _head_terms(binding: UnitPrBinding | None, unit: WorkUnit) -> _Term:

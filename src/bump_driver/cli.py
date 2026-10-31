@@ -12,8 +12,8 @@ The acts, in order, each on a fresh read of the unit:
 2. **Dispatch** one ready bump unit per repository, and none where a run is live. A run the
    orchestrator started and the runner hasn't claimed is live too.
 3. **Merge** a completed bump unit whose bound pull request is open. The admission answer is read
-   first, so the off switch can be told apart: `merge_policy_path_off` is waiting only as the sole
-   refusal.
+   first, so a refusal that clears by itself can be told apart: `merge_policy_path_off` and
+   `merge_repository_reverting` are waiting only with no other refusal beside them.
 
 A unit in `revision_required` raises `bump-unit-failed` and is left there, and a `failed` one is
 left to `work_watcher`'s alert. Requeueing is a SYSTEM act this lane doesn't hold, so a person
@@ -117,6 +117,11 @@ DISPATCHED: Final = "dispatched"
 DISPATCHED_ACTION: Final = "dispatch.dispatched"
 DISPATCH_ACTION_PREFIX: Final = "dispatch."
 OFF_SWITCH: Final = "merge_policy_path_off"
+# Refusals that clear with nobody deciding anything: the switch coming on, and a revert in the
+# repository landing (Landing Part 4). A pull request refused only by these waits, with no alert.
+WAITING_REFUSALS: Final = frozenset(  # not-a-vocabulary: the merge admission's codes, relayed
+    {OFF_SWITCH, "merge_repository_reverting"}
+)
 LANDED: Final = frozenset({"merged", "already_merged"})  # not-a-vocabulary: as above
 VERSION_CONFLICT: Final = "version_conflict"
 FINDINGS: Final = frozenset(  # not-a-vocabulary: this lane's own report words
@@ -548,8 +553,8 @@ def _merge(
         if pull == MERGED_PULL:
             return None
         refusals = [str(code) for code in admission.get("refusals") or []]
-        if refusals == [OFF_SWITCH]:
-            return Outcome(subject, "waiting", OFF_SWITCH, bump.repository)
+        if refusals and set(refusals) <= WAITING_REFUSALS:
+            return Outcome(subject, "waiting", ", ".join(refusals), bump.repository)
         reasons = ", ".join(refusals) or "no reason given"
         return Outcome(subject, "refused", reasons, bump.repository, refused_key)
     if dry_run:

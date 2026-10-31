@@ -737,7 +737,8 @@ standing dependency-update work as SYSTEM with no person acting. Verification st
   is off writes one skipped record per ready unit.
 - **Merge.** A completed unit whose bound pull request isn't closed unmerged. The lane reads
   `pr-merge-admission` first, because the act puts its refusals in a message:
-  `merge_policy_path_off` alone is `waiting`, and any other refusal is reported. A pull request
+  `merge_policy_path_off` or `merge_repository_reverting`, alone or together, is `waiting`, and any
+  other refusal is reported. A pull request
   already merged is still asked, so a landing the orchestrator lost track of records
   `already_merged`, but only while the unit's terms hold: admission runs before that branch, so a
   unit that doesn't qualify writes no row, and the lane says nothing about it.
@@ -788,15 +789,22 @@ standing dependency-update work as SYSTEM with no person acting. Verification st
 
 ## Automatic reverts (inert repositories)
 
-The inert lander reverts a Dependabot bump it landed when the default branch's own checks fail
-because of that bump, and holds the dependency at the version before it (ADR-0019 amendment 2).
-Repositories that deploy on landing follow "Automatic reverts (deploying repositories)" below.
+The inert lander reverts a bump the SDS landed when the default branch's own checks fail because of
+that bump, and holds the dependency at the version before it (ADR-0019 amendment 2). That covers a
+Dependabot bump it landed and a dependency-update unit the factory merged. Repositories that deploy
+on landing follow "Automatic reverts (deploying repositories)" below.
 
 ### The watch
 
 - **What is watched.** A landing of this lane (`inert_pr_merge.merged` or `.already_merged`) for 48
   hours (`WATCH_HOURS`). A revert landing is never watched, and a landing with no record must be the
   update bot's, so a fork's upstream sync is never watched.
+- **The factory's merges.** Also watched, for the same 48 hours: a `unit_pr_merge` row with status
+  `merged`, of a unit that is a dependency update by its envelope's class or its revision's profile,
+  whose event says the estate answered `inert` at the merge (`landing_inert`). `already_merged` is
+  someone else's landing and isn't watched. Nor is another class of unit, a merge that redeployed,
+  or a merge made before `landing_inert` was recorded. Nothing is read to select them, and no pull
+  request is read to judge one.
 - **Which jobs.** A job is a (workflow, job) pair. It counts when it passed at the pull request's
   head and its workflow has a `push` run at the merge commit. A `pull_request`-only workflow, or a
   job absent from the push run, is never watched.
@@ -831,7 +839,10 @@ on the parent, and a job still cancelled after the rerun are not the bump's: the
 The revert is the exact inverse of the squash merge, built through the git data API on branch
 `sds-revert/pr-<N>` (title capped at 256 characters). Inert admission lands it only when it is
 recorded, is the exact inverse, has clean checks and a current head. Landing it marks the record
-`revert_landed`.
+`revert_landed`. For a factory merge the inverse is the whole merge, its source fixes included, and
+the original's author doesn't matter. It lands only where the inert policy declares the repository.
+Elsewhere it stays open with nothing to land it, and `membership_check` reports a granted repository
+no landing path reaches.
 
 **Overlap refusal.** When anything landed on top of the bump touched a path the bump touched, the
 orchestrator records `refused_overlap` and opens nothing. Reverting would remove that work too.
@@ -840,16 +851,29 @@ orchestrator records `refused_overlap` and opens nothing. Reverting would remove
 
 When the revert lands, `services/membership/revert_hold.py::place` inserts a ceiling hold at the
 from-version in the same transaction, with `set_by` `sds-revert` and a `member.changed` event. The
-directory comes from the pull request title, else `/`. A grouped bump gets no hold, because it has
-no single from-version; the record's `hold_outcome` says why a hold was skipped. To lift a hold,
+directory comes from the pull request title, else `/`. A factory merge's dependency, from-version
+and to-version come from its revision's `profile_fields`, its ecosystem from the package id, and its
+directory is `/`, where every form of the generator's commands runs. A grouped bump gets no hold,
+because it has no single from-version; the record's `hold_outcome` says why a hold was skipped. To lift a hold,
 stage a `lift` with `sds-members stage` and confirm it on `/review`
 (`docs/operations/membership.md`, "Automatic holds"). Nothing else removes it.
 
 ### The never-again rule
 
 Both landers refuse the exact reverted version for good (`landing_version_reverted`), whether or not
-a hold was placed, and even after the hold is lifted. To take that version anyway, land it by hand;
-the SDS does not watch a landing it did not make.
+a hold was placed, and even after the hold is lifted. So does the factory merge
+(`merge_version_reverted`), for a revert of either origin: exactly for npm and pip, and for uv on any
+floor at or below a reverted version, since `uv add '<pkg>>=<version>'` can resolve to it. To take
+that version anyway, land it by hand; the SDS does not watch a landing it did not make.
+
+The bump proposer, the carrier and the bump driver don't read reverted versions. They are covered
+by the factory merge, so a reverted version that gets as far as a package spends one run, is refused
+at the merge, and raises `bump-act-refused`. While a revert is in progress the factory merge also
+waits (`merge_repository_reverting`), and the driver reports it `waiting` with no alert.
+
+A unit whose merge was reverted stays `completed` with its one `unit_pr_merge` row. Its record stays
+as `work_watcher` left it, the driver's merge step replays and says nothing, and nothing re-runs it.
+A later package for the same dependency is stopped by the hold.
 
 ### Alerts
 
@@ -869,6 +893,11 @@ read the watch holds every remembered key.
 ### Known gaps
 
 - A grouped bump gets no hold, so only the never-again rule stops it returning.
+- A uv factory merge records its floor, not the version the resolver landed. While the hold stands,
+  every version above the from-version is refused. After it is lifted, the never-again rule knows
+  only the floor, so a newer version that was what actually broke can land again.
+- A dependency-update unit whose revision names no readable bump is still reverted, with no hold
+  and no never-again entry; the record's detail says so.
 - A `refused_overlap` or `revert_failed` record stays in the watch, and its alert stays open, until a
   person closes the alert; no act clears the record yet.
 - A stranded revert has no clearing act either. Its record keeps the repository's Dependabot bumps

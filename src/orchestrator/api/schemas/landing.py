@@ -41,6 +41,7 @@ class PrMergeAdmissionResponse(BaseModel):
     authority_recognised_by: list[str]
     authority_policy_version: int | None
     authority_policy_source: str | None
+    landing_inert: bool
 
 
 class PrMergeCommandModel(CommandBase):
