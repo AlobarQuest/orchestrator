@@ -22,7 +22,7 @@ from rotation_worker.readers import ObservationRead, Read, ReadError, ReadUnavai
 from rotation_worker.registry import RegistryEntry
 from rotation_worker.values import Fingerprint, Value
 from rotation_worker.worker import Setup, run_pass
-from tests.rotation_worker.stores import MemoryStore
+from tests.rotation_worker.stores import MemoryStore, member_record
 
 WORK = "work"
 RUNTIME = 'runtime-fetch repo="orchestrator" ref="a person attests"'
@@ -44,6 +44,14 @@ class FakeClient:
         self.active: list[dict[str, Any]] = []
         # Units another lane runs: readable, but never this executor's to work.
         self.others: dict[str, dict[str, Any]] = {}
+        self.record: dict[str, Any] = member_record("AlobarQuest/orchestrator")
+        self.member_reads = 0
+
+    def members(self) -> dict[str, Any]:
+        self.member_reads += 1
+        if "members" in self.unreachable:
+            raise OrchestratorError("no answer")
+        return self.record
 
     def observations(
         self, source_system: str, subject_reference: str, observed_from: datetime

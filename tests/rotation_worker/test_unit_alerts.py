@@ -262,6 +262,7 @@ def _at_retire(monkeypatch: pytest.MonkeyPatch) -> None:
     approved = SimpleNamespace(reads={"r": object()}, rotation=SimpleNamespace(keeper_id="k"))
     reads = SimpleNamespace(pending=lambda _at: ["weekly-reader"])
     monkeypatch.setattr(worker, "check_unit", lambda *_a: approved)
+    monkeypatch.setattr(worker, "_grant_waits", lambda *_a: False)
     monkeypatch.setattr(worker, "_held", lambda *_a: None)
     monkeypatch.setattr(worker, "_verifies", lambda _a: True)
     monkeypatch.setattr(worker, "_gates_retire", lambda _a: True)
@@ -297,6 +298,7 @@ def test_a_reader_mid_run_waits_on_the_ordinary_clock(
 
     approved = SimpleNamespace(reads={})
     monkeypatch.setattr(worker, "check_unit", lambda *_a: approved)
+    monkeypatch.setattr(worker, "_grant_waits", lambda *_a: False)
     monkeypatch.setattr(worker, "_held", lambda *_a: None)
     monkeypatch.setattr(worker, "_provider", lambda *_a: Busy())
     monkeypatch.setattr(worker, "_writes", lambda _a: True)

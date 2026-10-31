@@ -15,6 +15,8 @@ Exit codes: 0 equal, 1 different (the package needs a revision before approval),
 `adopt-keeper <credential>` reads a Postgres role's password on stdin, once, and creates its keeper
 in `Rotation / Keepers`; `pg-restore <credential>` puts the keeper's value back everywhere a host
 step writes it. Neither prints a value, and neither takes one as an argument.
+`grants` is read-only: it reads the member record with the instance's own bearer and prints whether
+each registry repository holds the `credential_rotation` grant. Exit 0, or 2 when it can't be read.
 """
 
 from __future__ import annotations
@@ -39,11 +41,12 @@ from rotation_worker.contract import ContractError, Rotation
 from rotation_worker.destinations import DestinationError, parse, render
 from rotation_worker.git_mirror import MirrorError, RepoMirror, default_mirror_root
 from rotation_worker.github_actions import RotationApp
+from rotation_worker.grants import rotation_granted
 from rotation_worker.helper_client import HelperClient
 from rotation_worker.inbox import Inbox
 from rotation_worker.logs import configure
 from rotation_worker.notify import Notifier
-from rotation_worker.orchestrator_client import OrchestratorClient
+from rotation_worker.orchestrator_client import OrchestratorClient, OrchestratorError
 from rotation_worker.readers import (
     Healthchecks,
     ReadError,
@@ -53,6 +56,7 @@ from rotation_worker.readers import (
 )
 from rotation_worker.registry import (
     PACKAGES_REPOSITORY,
+    REGISTRY_REPOSITORIES,
     RegistryError,
     find_credential,
     latest_package_destinations,
@@ -189,14 +193,32 @@ def read_consumers(setup: Setup, credential_id: str, stored_at: datetime) -> int
     return EXIT_UNREADABLE if unreadable else EXIT_EQUAL
 
 
-def build_setup(config: Config) -> Setup:
-    """Log in to BWS with the root token, then read the executor's own bearer from it."""
+def open_client(config: Config, store: SecretStore) -> OrchestratorClient:
+    """The executor's own client, with the bearer read from its store."""
     if config.bearer_secret_id is None:
         raise ConfigError("bearer_secret_id is needed to run; mint the bearer first")
-    store = open_store(config)
     bearer = store.read(secret_id(config, config.bearer_secret_id))
+    return OrchestratorClient(config.orchestrator_url, config.credential_key_id, bearer)
+
+
+def grants(config: Config) -> int:
+    """Each registry repository's `credential_rotation` answer, as this instance reads it."""
+    try:
+        record = open_client(config, open_store(config)).members()
+        answers = [(r, rotation_granted(record, r)) for r in REGISTRY_REPOSITORIES]
+    except (ConfigError, StoreError, OrchestratorError) as error:
+        print(f"grants: {error}", file=sys.stderr)
+        return EXIT_UNREADABLE
+    for repository, granted in answers:
+        print(f"{repository}  {'granted' if granted else 'not granted'}")
+    return EXIT_EQUAL
+
+
+def build_setup(config: Config) -> Setup:
+    """Log in to BWS with the root token, then read the executor's own bearer from it."""
+    store = open_store(config)
     return Setup(
-        client=OrchestratorClient(config.orchestrator_url, config.credential_key_id, bearer),
+        client=open_client(config, store),
         mirror=RepoMirror(config.mirror_root),
         store=store,
         work_project_id=config.work_project_id,
@@ -409,7 +431,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         "pg-restore", help="put a Postgres role's keeper value back where host writes it"
     )
     restoring.add_argument("credential_id")
-    for command in (running, seeding, minting, reading, staging, adopting, restoring):
+    reading_grants = commands.add_parser(
+        "grants", help="print whether each registry repository holds the credential_rotation grant"
+    )
+    for command in (
+        running,
+        seeding,
+        minting,
+        reading,
+        staging,
+        adopting,
+        restoring,
+        reading_grants,
+    ):
         command.add_argument("--config", type=Path, default=DEFAULT_PATH)
     arguments = parser.parse_args(argv)
     if arguments.command == "compare-destinations":
@@ -427,6 +461,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return adopt_keeper(
             config, arguments.credential_id, RepoMirror(config.mirror_root), sys.stdin
         )
+    if arguments.command == "grants":
+        return grants(config)
     if arguments.command == "pg-restore":
         return pg_restore(build_setup(config), arguments.credential_id)
     if arguments.command == "stage":
