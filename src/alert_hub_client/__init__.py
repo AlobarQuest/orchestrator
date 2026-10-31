@@ -31,6 +31,7 @@ import re
 import time
 from collections.abc import Callable, Mapping, Set
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Final
 
@@ -252,12 +253,63 @@ class KeyedAlerts:
         return {key for key in keys if isinstance(key, str)} if isinstance(keys, list) else set()
 
     def _save(self, keys: set[str]) -> None:
-        staged = self._state.with_name(self._state.name + ".tmp")
+        _write_state(self._state, json.dumps(sorted(keys)))
+
+    def heartbeat(self, key: str, title: str) -> None:
+        """Send one `resolved` for `key`, touching no state: a liveness ping that an alert-hub
+        schedule hears. Raises `AlertHubError` if it is not accepted."""
+        client = self.open_client()
         try:
-            staged.write_text(json.dumps(sorted(keys)))
-            staged.replace(self._state)
-        except OSError as error:
-            raise StateUnwritable(error) from None
+            sent = self._send(client, key, "resolved", Alert(title))
+        finally:
+            client.close()
+        if not sent:
+            raise AlertHubError("heartbeat not sent")
+
+
+class FirstSightings:
+    """When each key was first seen, kept in a state file so a clock survives between passes.
+
+    A key absent from a pass is forgotten, so its clock restarts if it comes back; a pass that
+    could not read some keys names them in `keep` to hold their clocks.
+    """
+
+    def __init__(self, path: Path) -> None:
+        self._path = path
+
+    def update(
+        self, current: Set[str], now: datetime, keep: Set[str] = frozenset()
+    ) -> dict[str, datetime]:
+        known = self._read()
+        seen = {key: known.get(key, now) for key in current}
+        held = {key: known[key] for key in keep & known.keys()}
+        stamps = {key: stamp.isoformat() for key, stamp in (held | seen).items()}
+        _write_state(self._path, json.dumps(stamps))
+        return seen
+
+    def _read(self) -> dict[str, datetime]:
+        try:
+            raw = json.loads(self._path.read_text())
+        except OSError, ValueError:
+            return {}
+        if not isinstance(raw, dict):
+            return {}
+        out: dict[str, datetime] = {}
+        for key, stamp in raw.items():
+            try:
+                out[key] = datetime.fromisoformat(stamp)
+            except TypeError, ValueError:
+                continue
+        return out
+
+
+def _write_state(path: Path, text: str) -> None:
+    staged = path.with_name(path.name + ".tmp")
+    try:
+        staged.write_text(text)
+        staged.replace(path)
+    except OSError as error:
+        raise StateUnwritable(error) from None
 
 
 def _retry_wait(response: httpx.Response) -> float:
