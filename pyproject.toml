@@ -111,7 +111,7 @@ dev = [
   "pytest-xdist>=3.6",
   "ruff==0.17.0",
   "pyright==1.1.414",
-  "httpx2>=2.10.0",
+  "httpx2>=2.16.0",
 ]
 
 [tool.setuptools.package-data]
