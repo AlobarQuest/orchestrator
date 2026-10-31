@@ -8,6 +8,7 @@ leave two values live. An explicit withdrawal stops it, as a handed-back flag do
 
 from __future__ import annotations
 
+import ast
 import logging
 from collections.abc import Callable
 from dataclasses import replace
@@ -19,9 +20,10 @@ import httpx
 import pytest
 
 import rotation_worker.worker as worker
+from orchestrator.persistence.models import GRANT_STATES
 from rotation_worker import cli
 from rotation_worker.config import Config, ConfigError
-from rotation_worker.grants import rotation_granted
+from rotation_worker.grants import GrantUnread, rotation_granted
 from rotation_worker.notify import Act, Notifier, unit_waiting_key
 from rotation_worker.orchestrator_client import Lease, OrchestratorError
 from rotation_worker.registry import REGISTRY_REPOSITORIES
@@ -32,7 +34,8 @@ from tests.rotation_worker.stores import MemoryStore, member_record
 from tests.rotation_worker.test_worker import Harness
 
 REPOSITORY = "AlobarQuest/orchestrator"
-UNGRANTED: dict[str, Any] = {"members": []}
+# A record that reads and doesn't name the repository: a record with no rows is unread.
+UNGRANTED = member_record("AlobarQuest/other")
 
 
 @pytest.fixture
@@ -68,11 +71,26 @@ def test_an_absent_repository_is_not_granted() -> None:
     assert rotation_granted(member_record("AlobarQuest/other"), REPOSITORY) is False
 
 
-@pytest.mark.parametrize("state", ["not_granted", "paused", "proposed"])
-def test_any_other_grant_state_is_not_granted(state: str) -> None:
+def _in_state(state: str) -> dict[str, Any]:
     record = member_record(REPOSITORY)
     record["members"][0]["grants"]["credential_rotation"]["state"] = state
-    assert rotation_granted(record, REPOSITORY) is False
+    return record
+
+
+# The orchestrator's `GRANT_STATES`, less `granted`.
+@pytest.mark.parametrize("state", ["not_assessed", "remediating", "not_applicable", "withdrawn"])
+def test_any_other_grant_state_is_not_granted(state: str) -> None:
+    assert rotation_granted(_in_state(state), REPOSITORY) is False
+
+
+def test_the_states_tested_are_the_orchestrators() -> None:
+    assert GRANT_STATES == (
+        "not_assessed",
+        "remediating",
+        "granted",
+        "not_applicable",
+        "withdrawn",
+    )
 
 
 def _without(field: str) -> dict[str, Any]:
@@ -96,6 +114,7 @@ def _with_grants(grants: Any) -> dict[str, Any]:
         {},
         {"members": None},
         {"members": {}},
+        {"members": []},
         {"members": [REPOSITORY]},
         {"members": [{"repository": 7, "state": "member", "grants": {}}]},
         _without("repository"),
@@ -108,15 +127,36 @@ def _with_grants(grants: Any) -> dict[str, Any]:
     ],
 )
 def test_a_malformed_record_is_unread_not_ungranted(body: Any) -> None:
-    with pytest.raises(OrchestratorError, match="member record"):
+    with pytest.raises(GrantUnread, match="member record"):
         rotation_granted(body, REPOSITORY)
 
 
 def test_a_malformed_row_for_another_repository_still_leaves_the_record_unread() -> None:
     record = member_record(REPOSITORY)
     record["members"].append({"repository": "AlobarQuest/other"})
-    with pytest.raises(OrchestratorError, match="member record"):
+    with pytest.raises(GrantUnread, match="member record"):
         rotation_granted(record, REPOSITORY)
+
+
+def test_the_reader_imports_no_client() -> None:
+    tree = ast.parse(Path("src/rotation_worker/grants.py").read_text())
+    imported = {
+        name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Import | ast.ImportFrom)
+        for name in (
+            [node.module or ""]
+            if isinstance(node, ast.ImportFrom)
+            else [a.name for a in node.names]
+        )
+    }
+    assert imported == {"__future__", "collections.abc", "typing"}
+
+
+def test_the_worker_turns_an_unread_record_into_its_own_transient_error(h: Harness) -> None:
+    h.client.record = {"members": []}
+    with pytest.raises(OrchestratorError, match="no rows"):
+        worker._granted(h.setup(), REPOSITORY)
 
 
 def test_no_grant_waits_unclaimed_and_starts_the_clock(
@@ -174,13 +214,21 @@ def test_a_malformed_record_before_the_claim_is_a_skip_not_a_grant_wait(h: Harne
     assert found.waits == {}
 
 
+def test_an_empty_record_before_the_claim_skips_the_unit(h: Harness) -> None:
+    h.add("u1", "mint")
+    h.client.record = {"members": []}
+    assert run_pass(h.setup()) == 0
+    assert h.client.calls == []
+    assert h.client.failures == {}
+
+
 def test_a_withdrawn_grant_stops_before_the_next_step(
     h: Harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     h.add("u1", "mint")
 
     def withdraw() -> None:
-        h.client.record = UNGRANTED
+        h.client.record = _in_state("withdrawn")
 
     _after_claim(h, monkeypatch, withdraw)
     assert run_pass(h.setup()) == 0
@@ -199,7 +247,9 @@ def test_an_unread_grant_mid_rotation_carries_on(
         assert run_pass(h.setup()) == 1
     assert ("submit", "u1") in h.client.calls
     assert h.client.failures == {}
-    assert any(r.message == "grant_unread" for r in caplog.records)
+    unread = next(r for r in caplog.records if r.message == "grant_unread")
+    assert unread.__dict__["credential"] == "canary"
+    assert "unit" not in unread.__dict__
 
 
 def test_a_malformed_record_mid_rotation_carries_on(
@@ -211,6 +261,19 @@ def test_a_malformed_record_mid_rotation_carries_on(
         h.client.record = {"members": "soon"}
 
     _after_claim(h, monkeypatch, garble)
+    assert run_pass(h.setup()) == 1
+    assert h.client.failures == {}
+
+
+def test_an_empty_record_mid_rotation_carries_on(
+    h: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    h.add("u1", "mint")
+
+    def empty() -> None:
+        h.client.record = {"members": []}
+
+    _after_claim(h, monkeypatch, empty)
     assert run_pass(h.setup()) == 1
     assert h.client.failures == {}
 
@@ -316,6 +379,16 @@ def test_grants_command_says_unreadable_of_a_malformed_record(
     _answers_with(monkeypatch, SimpleNamespace(members=lambda: {"x": 1}))
     assert cli.grants(_config(tmp_path)) == cli.EXIT_UNREADABLE
     assert capsys.readouterr().out == ""
+
+
+def test_grants_command_says_unreadable_of_an_empty_record(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _answers_with(monkeypatch, SimpleNamespace(members=lambda: {"members": []}))
+    assert cli.grants(_config(tmp_path)) == cli.EXIT_UNREADABLE
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "no rows" in captured.err
 
 
 def test_the_command_uses_the_instance_s_bearer_and_prints_no_value(

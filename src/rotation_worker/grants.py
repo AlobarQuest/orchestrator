@@ -6,8 +6,12 @@ already fetched, so any program holding the record can ask, and it only ever nar
 for a repository the registry names and can't add one.
 
 **UNREADABLE IS NOT "NOT GRANTED".** Every row is read before any answer, and a body or a row of
-any other shape raises `OrchestratorError`, so a partial record is never taken for a shorter one.
-A repository absent from a record that reads is `False`.
+any other shape raises `GrantUnread`, so a partial record is never taken for a shorter one. A
+record with no rows is unread too: it can't be an explicit withdrawal. A repository absent from a
+record that reads is `False`.
+
+This imports no client, so a program with its own client can use it. Every caller must handle
+`GrantUnread`.
 """
 
 from __future__ import annotations
@@ -15,9 +19,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, Final
 
-from rotation_worker.orchestrator_client import OrchestratorError
-
 SERVICE: Final = "credential_rotation"
+
+
+class GrantUnread(RuntimeError):
+    """The body isn't a member record with rows in it, so it says nothing about any grant."""
 
 
 def rotation_granted(body: Mapping[str, Any], repository: str) -> bool:
@@ -25,10 +31,12 @@ def rotation_granted(body: Mapping[str, Any], repository: str) -> bool:
         rows = body["members"]
         if not isinstance(rows, list):
             raise TypeError("members")
+        if not rows:
+            raise GrantUnread("the member record has no rows")
         wanted = repository.lower()
         return any([_live_grant_on(row) == wanted for row in rows])
     except (KeyError, TypeError) as error:
-        raise OrchestratorError(f"the answer wasn't the member record: {error!r}") from None
+        raise GrantUnread(f"the answer wasn't the member record: {error!r}") from None
 
 
 def _live_grant_on(row: Any) -> str | None:

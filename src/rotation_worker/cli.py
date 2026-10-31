@@ -41,7 +41,7 @@ from rotation_worker.contract import ContractError, Rotation
 from rotation_worker.destinations import DestinationError, parse, render
 from rotation_worker.git_mirror import MirrorError, RepoMirror, default_mirror_root
 from rotation_worker.github_actions import RotationApp
-from rotation_worker.grants import rotation_granted
+from rotation_worker.grants import GrantUnread, rotation_granted
 from rotation_worker.helper_client import HelperClient
 from rotation_worker.inbox import Inbox
 from rotation_worker.logs import configure
@@ -206,7 +206,7 @@ def grants(config: Config) -> int:
     try:
         record = open_client(config, open_store(config)).members()
         answers = [(r, rotation_granted(record, r)) for r in REGISTRY_REPOSITORIES]
-    except (ConfigError, StoreError, OrchestratorError) as error:
+    except (ConfigError, StoreError, OrchestratorError, GrantUnread) as error:
         print(f"grants: {error}", file=sys.stderr)
         return EXIT_UNREADABLE
     for repository, granted in answers:

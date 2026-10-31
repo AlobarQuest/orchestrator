@@ -63,7 +63,7 @@ from rotation_worker.envelope import constraints as envelope_constraints
 from rotation_worker.evidence import StepEvidence
 from rotation_worker.git_mirror import MirrorError, RepoMirror
 from rotation_worker.github_actions import ActionsSecrets, FingerprintReports, RotationApp
-from rotation_worker.grants import rotation_granted
+from rotation_worker.grants import GrantUnread, rotation_granted
 from rotation_worker.held import HeldSettings
 from rotation_worker.helper_client import HelperClient
 from rotation_worker.inbox import (
@@ -467,7 +467,11 @@ def _take(setup: Setup, unit_id: str, found: PassActs) -> int:
 
 
 def _granted(setup: Setup, repository: str) -> bool:
-    return rotation_granted(setup.client.members(), repository)
+    record = setup.client.members()
+    try:
+        return rotation_granted(record, repository)
+    except GrantUnread as error:
+        raise OrchestratorError(str(error)) from None
 
 
 def _grant_waits(setup: Setup, approved: Approved, unit_id: str, found: PassActs) -> bool:
@@ -921,9 +925,12 @@ def _before_step(setup: Setup, recorder: _Recorder, approved: Approved) -> None:
     try:
         granted = _granted(setup, entry.repository)
     except OrchestratorError as error:
-        # The claim happened only on a yes, so that answer stands: this read often lands while the
-        # rotation itself restarts the orchestrator, and any exception here spends the attempt.
-        LOG.warning("grant_unread", extra={"unit": credential_id, "reason": scrub(str(error))})
+        # The claim happened only on a yes, so that answer stands, and an unread record can't fail
+        # the unit mid-overlap. This protects this read alone: `renew` runs first with no retry, so
+        # an orchestrator that is down at a step's start still fails the unit there.
+        LOG.warning(
+            "grant_unread", extra={"credential": credential_id, "reason": scrub(str(error))}
+        )
         return
     if not granted:
         raise ContractError(
