@@ -95,6 +95,25 @@ Compared with `bump_proposer`, the order is observe, revise, publish, propose, w
 moved out of the pass and given to a person. `bump_proposer` approves by policy and proposes in the
 same pass.
 
+## Alerts
+
+After a `--submit` pass the proposer syncs alert-hub alerts as sender `sds-bridge`
+(`rotation_proposer/alerts.py`). The state directory is `ROTATION_PROPOSER_STATE_DIR`, default
+`~/Library/Application Support/sds/rotation-proposer`; it holds `alerts.json`, what the pass fired,
+and `approval-since.json`, when each approval wait was first seen.
+
+- `rotation-finding:<credential>:<status>` fires on the pass that reports a finding status, and
+  resolves on the first pass that doesn't.
+- `rotation-approval:<credential>` fires once a credential has stayed `awaiting-approval` or
+  `declined` for 48 hours. Waiting on a named person is the lane working, but not for days.
+
+A pass that couldn't use its inputs (exit 2) syncs nothing, so every remembered key holds. A
+credential reporting `error` holds its remembered keys and its approval clock: that status may only
+say a fetch failed, which says nothing about its other findings, and the code can't tell it from a
+genuine error on one credential. The sightings are written before alert-hub is asked and kept when
+it refuses, so an outage never restarts a clock. A failed sync is printed to stderr and never
+changes the exit code.
+
 ## States it reports and does not touch
 
 - **`stacked`** (a finding): the tip awaits review for one occurrence while infraops reports

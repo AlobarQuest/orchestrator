@@ -747,3 +747,13 @@ Placement rule: global CLAUDE.md §7.
   database is the forced-command helper (`deploy/vps/sds-pg-rotate`), and a password must never be
   sent in plain text to `ALTER ROLE`: the helper sends only a SCRAM-SHA-256 verifier. Detail:
   `docs/operations/rotation-executor.md`, "Postgres role passwords"; ADR-0055 amendment 17.
+- A rotation instance alerts only for the units it owns: `rotation_worker.envelope.KEYCHAIN_ADAPTERS`
+  is a copy of `rotation_claims.KEYCHAIN_ADAPTERS` (the worker may not import the orchestrator), and
+  `test_bws_machine_token.py` holds them equal. Change both together.
+- A unit's wait alert runs on two clocks: reader waits (weekly readers, another rotation's overlap)
+  on `unit_reader_clock_key` with the 192-hour threshold, every other wait, including
+  `Revoke.UNKNOWN`, on `unit_waiting_key` with 48. A pass on the ordinary clock holds the reader
+  clock. Never fold them into one key. Detail: `docs/operations/rotation-executor.md`, "Alerts".
+- `rotation-heartbeat` is sent as `resolved` after every finished pass and is never raised; its
+  meaning is the absence of the ping, heard by an alert-hub schedule. A pass that raises sends none.
+  `rotation-instance-behind` is held when the mirror lacks the running revision.
