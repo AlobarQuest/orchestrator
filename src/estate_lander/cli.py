@@ -152,6 +152,7 @@ _DEFERRAL_UNREADABLE = "unreadable-class"
 # reddens if it is collapsed into the inert lane's.
 LANE = Lane(
     name="estate",
+    not_admissible="estate_merge_not_admissible",
     # Refusals that are the system REFUSING ON PURPOSE: the daily pace for this repository is
     # spent, or the clock is outside the hours policy declares for changing something already
     # serving. Neither names a condition anybody can act on, and each clears itself when the
@@ -442,15 +443,18 @@ def run(argv: list[str] | None = None) -> int:
             # READ ONCE, used by both passes. Reading again between them would put a second
             # network call inside the `try`, where its failure discards `outcomes` entirely and
             # returns a bare tool error -- losing the report of a landing that already happened.
+            asked, settled = core.settle_unknown_outcomes(LANE, client, args.submit)
             selection = _subjects(records)
             subjects = (
                 selection.subjects
                 if in_hours
                 else [subject for subject in selection.subjects if subject in selection.reverts]
             )
-            outcomes = _pass(subjects, client, args.submit)
+            outcomes = [*settled, *_pass(core.not_yet_asked(subjects, asked), client, args.submit)]
             outcomes.extend(_branch_updates(subjects, client, args.submit))
             stranded, unknown = _stranded(rows, reader)
+            in_doubt = core.stranded_in_doubt(rows, stranded, asked)
+            stranded, unknown = stranded - in_doubt, unknown | in_doubt
             watched.extend(
                 Outcome(repository, number, "revert-stranded", "its revert closed without landing")
                 for repository, number in sorted(stranded)

@@ -71,6 +71,9 @@ _LANDING_VERB: Final = "land a pull request"
 _LANDED: Final = frozenset({"merged", "already_merged"})  # not-a-vocabulary: `_record`'s statuses
 _BRANCH_UPDATE_VERB: Final = "bring a pull request's branch up to date"
 
+# The unknown-outcomes read names a lane neither lander is.
+LANDING_UNKNOWN_OUTCOMES_LANE_UNKNOWN: Final = "unknown_outcomes_lane_unknown"
+
 
 class LaneCommand(Protocol):
     """The request either lane's act is given."""
@@ -179,8 +182,26 @@ def land_pull_request[Admission: LaneAdmission](
     `on_landed` runs in the same transaction, after a row newly records the pull request as landed:
     `merged`, `already_merged` on a refusal the confirming read contradicted, or a row whose unknown
     outcome a later read settled as landed. A replayed row never runs it.
+
+    **A row whose outcome is unknown is settled in a step of its own, committed before the ordinary
+    path starts.** What the read found stays true whatever the terms say next: under one
+    transaction a refusal would restore a removed row, and a row behind its base could then never
+    be brought up to date, because the row is what disqualifies it. The commit releases the
+    repository lock, so `_land` takes it again and reads the row again. Settling records the truth
+    and writes nothing to the remote, so it runs with the lane's switch off.
     """
     try:
+        settled = _settle(
+            session,
+            command,
+            lane,
+            gateway,
+            names_change_record=change_record_id is not None,
+            on_landed=on_landed,
+        )
+        session.commit()
+        if settled is not None:
+            return settled
         record = _land(
             session,
             command,
@@ -198,6 +219,62 @@ def land_pull_request[Admission: LaneAdmission](
         raise
 
 
+def _settle(
+    session: Session,
+    command: LaneCommand,
+    lane: LandingLane,
+    gateway: EstateReadGateway,
+    *,
+    names_change_record: bool,
+    on_landed: Callable[[EstatePrMerge], None] | None,
+) -> EstatePrMerge | None:
+    """The row this request is answered from, settling it first if its outcome is unknown; `None`
+    when there is none, or it was just removed, and the ordinary path runs."""
+    authorize_actor(command.actor, _LANDING_VERB)
+    repository = command.repository.lower()
+    lock_repository(session, _LANDING_LOCK, repository)
+    existing = _recorded(session, repository, command.pr_number)
+    if existing is None or not outcome_is_unknown(existing.status, existing.reason_code):
+        return existing
+    return _resettle(
+        session,
+        command,
+        lane,
+        gateway,
+        existing,
+        names_change_record=names_change_record,
+        on_landed=on_landed,
+    )
+
+
+def _recorded(session: Session, repository: str, pr_number: int) -> EstatePrMerge | None:
+    return session.scalar(
+        select(EstatePrMerge).where(
+            EstatePrMerge.repository == repository,
+            EstatePrMerge.pr_number == pr_number,
+        )
+    )
+
+
+def unknown_outcomes(session: Session, event_prefix: str) -> list[tuple[str, int]]:
+    """Every pull request a lane holds a row for whose outcome is unknown.
+
+    The lanes share one table, and a row's lane is named by its event's action. It is this list
+    that gets a landed pull request asked about at all: neither lane's enumeration reaches one.
+    """
+    rows = session.execute(
+        select(EstatePrMerge.repository, EstatePrMerge.pr_number, EstatePrMerge.reason_code)
+        .join(Event, Event.id == EstatePrMerge.event_id)
+        .where(EstatePrMerge.status == "refused", Event.action == f"{event_prefix}.refused")
+        .order_by(EstatePrMerge.repository, EstatePrMerge.pr_number)
+    ).all()
+    return [
+        (row.repository, row.pr_number)
+        for row in rows
+        if outcome_is_unknown("refused", row.reason_code)
+    ]
+
+
 def _land[Admission: LaneAdmission](
     session: Session,
     command: LaneCommand,
@@ -209,7 +286,6 @@ def _land[Admission: LaneAdmission](
     change_record_id: Callable[[Admission], int | None] | None,
     on_landed: Callable[[EstatePrMerge], None] | None,
 ) -> EstatePrMerge:
-    authorize_actor(command.actor, _LANDING_VERB)
     repository = command.repository.lower()
 
     # SERIALISE ON THE REPOSITORY before anything is read. There is no unit row to lock here, and
@@ -218,31 +294,9 @@ def _land[Admission: LaneAdmission](
     # lock. Two requests would otherwise each read an absence and each act on it.
     lock_repository(session, _LANDING_LOCK, repository)
 
-    existing = session.scalar(
-        select(EstatePrMerge).where(
-            EstatePrMerge.repository == repository,
-            EstatePrMerge.pr_number == command.pr_number,
-        )
-    )
-    event_key = f"{command.idempotency_key}:event"
+    existing = _recorded(session, repository, command.pr_number)
     if existing is not None:
-        if not outcome_is_unknown(existing.status, existing.reason_code):
-            return existing
-        settled = _resettle(
-            session,
-            command,
-            lane,
-            gateway,
-            existing,
-            names_change_record=change_record_id is not None,
-            on_landed=on_landed,
-        )
-        if settled is not None:
-            return settled
-        # The removed row's event keeps its key, and the event table is append-only and unique on
-        # it. The lander's key names the pull request and head, so a replay usually carries that
-        # same key, and a second `:event` write would be an unhandled 500 after a real landing.
-        event_key = f"{event_key}:{existing.id}"
+        return existing
 
     # A key already spent on a DIFFERENT subject, refused here rather than at the flush. Both
     # unique keys are global, so an operator who copies one request and changes only the number
@@ -289,11 +343,21 @@ def _land[Admission: LaneAdmission](
         remote_call=remote_call,
         change_record_id=None if change_record_id is None else change_record_id(admission),
         names_change_record=change_record_id is not None,
-        event_key=event_key,
+        event_key=_event_key(session, command),
     )
     if on_landed is not None and record.status in _LANDED:
         on_landed(record)
     return record
+
+
+def _event_key(session: Session, command: LaneCommand) -> str:
+    """The key this landing's event carries. A removed row's event keeps the row's key, in a table
+    that is unique on it and append-only, and the lander's key names the pull request and head, so
+    any later request for that head carries it. Without a key of its own that request's event
+    would be an unhandled 500 after a real landing."""
+    key = f"{command.idempotency_key}:event"
+    spent = session.scalar(select(Event.id).where(Event.idempotency_key == key))
+    return key if spent is None else f"{key}:{uuid.uuid4()}"
 
 
 def _resettle(
@@ -314,8 +378,7 @@ def _resettle(
     naming that action, because the revert watch finds landings through the row's event. Not
     landed: nothing happened, so the row is removed; its event stays, and the removal has its own.
 
-    A removal lasts only if the ordinary path's request commits. When that path refuses, the
-    rollback restores the row and the next request reads again.
+    Nothing here writes to the remote, so a lane that is switched off still settles.
     """
     reread = _reread(gateway, record.repository, record.pr_number)
     if reread is None:
@@ -419,8 +482,8 @@ def _act[Admission: LaneAdmission](
                 "resolve what the remote objected to, then ask again",
             ) from error
         # The reconciling read ITSELF failed, so a landing cannot be ruled out, and retrying the
-        # call would meet the same refusal no better informed. The row bars the call; the lander's
-        # next request reads again and `_resettle` settles it.
+        # call would meet the same refusal no better informed. The row bars the call, and each
+        # lander asks about every such row first (`unknown_outcomes`), which settles it.
         return _record(
             session,
             command,

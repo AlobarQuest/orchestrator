@@ -443,10 +443,14 @@ def test_the_callers_SETTLED_set_is_exactly_the_refusals_that_mean_there_is_noth
 
 def test_the_callers_OUTCOME_UNKNOWN_code_is_the_one_the_admission_raises() -> None:
     """Renamed on this side alone, the row would never be replayed and never be settled."""
-    from lander.core import OUTCOME_UNKNOWN
-    from orchestrator.services.landing.interfaces import LANDING_OUTCOME_UNKNOWN
+    from lander.core import OUTCOME_UNKNOWN, STILL_UNKNOWN_REASON
+    from orchestrator.services.landing.interfaces import (
+        LANDING_OUTCOME_UNKNOWN,
+        MERGE_REFUSED_BY_REMOTE,
+    )
 
     assert OUTCOME_UNKNOWN == LANDING_OUTCOME_UNKNOWN
+    assert STILL_UNKNOWN_REASON == f"{MERGE_REFUSED_BY_REMOTE}:"
 
 
 def test_the_callers_WAITING_ON_A_REVERT_code_is_the_one_the_admission_raises() -> None:

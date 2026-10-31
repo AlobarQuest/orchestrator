@@ -444,10 +444,14 @@ Placement rule: global CLAUDE.md §7.
   commit and the head. Detail: `docs/operations/landing-lanes.md`, "Dependabot's update block".
 - A landing row whose reason is `merge_refused_by_remote:<code>` is an unknown outcome
   (`interfaces.outcome_is_unknown`), answered `landing_outcome_unknown`; the bare reason is
-  terminal. `lane_act._resettle` is the only code that may change or remove a landing row: landed
+  terminal. Each lander asks about every such row first, from `GET
+  /api/v1/landing-unknown-outcomes`, because no enumeration reaches a landed pull request.
+  `lane_act._resettle`, in its own committed step, is the only code that may change or remove a
+  landing row (`test_only_lane_act_may_write_a_landing_row_and_only_resettle_changes_one`): landed
   makes it `already_merged`, repoints `event_id` to an event with that action and runs `on_landed`;
-  confirmed unlanded removes it. Events are unique and append-only, so a write after a removal
-  needs a key of its own. Detail: `docs/operations/landing-lanes.md`, "An unknown landing outcome".
+  confirmed unlanded removes it, and that stands whatever admission then says. Events are unique
+  and append-only, so a removed row's key is spent (`_event_key`). Detail:
+  `docs/operations/landing-lanes.md`, "An unknown landing outcome".
 - No reported finding kind may be a substring of another;
   `test_no_reported_kind_is_a_substring_of_another` guards it. Detail:
   `docs/operations/landing-lanes.md`.

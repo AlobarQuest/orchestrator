@@ -825,32 +825,41 @@ landed. The row records `refused` with reason `merge_refused_by_remote:<code>`
 terminal. The row stays because a lost success with no row would lose `on_landed`, which places a
 revert's hold, and the next pass would read `landing_pull_request_not_open` and never ask again.
 
-- The admissions answer `landing_outcome_unknown` instead of `landing_already_recorded`. The lander
-  checks for it before `SETTLED`, since a pull request that landed also answers `not open`, and asks
-  to land with the answer's head. A sibling carrying it releases (ADR-0045). An open, unlanded
-  sibling does wait to land, but the landing pass replays it before the branch-update pass reads
-  it, so it still carries the code only when its read failed or its landing was refused.
-- `lane_act._resettle` reads the pull request first. Read failed: the row stands, and the lander
-  reports `unreadable`. Landed: the row becomes `already_merged` with the re-read's commit, keeps its
-  permission columns, moves its `event_id` to a new `<lane>.already_merged` event (the revert watch
-  finds landings through it) and runs `on_landed`, once; the line reads `settled`. Not landed: a
-  `<lane>.unlanded` event is written, the row is removed, which frees the window's pace, and the
-  ordinary path runs.
-- The ordinary path's refusal rolls the removal back with its transaction, so the row and the
-  re-read recur on each pass until the pull request is admissible. The line reads as the answer's
-  other refusals: a closed-window line stays `deliberate`, a closed pull request `settled`.
-- A replay usually carries the row's own idempotency key, and events are append-only and unique on
-  theirs, so an event written after a removal names the removed row's id in its key.
-- A dry run reports `unreadable` and sends nothing.
+- The admissions answer `landing_outcome_unknown` instead of `landing_already_recorded`.
+- Each lander reads `GET /api/v1/landing-unknown-outcomes?lane=<name>` (SYSTEM only) after the watch
+  and ahead of its own enumeration, on every pass, in or out of the landing hours, and asks about
+  each row through `consider`, once. The route names a row's lane from its stored event's action.
+  It exists because neither enumeration reaches a landed pull request: the inert lander lists open
+  pull requests and the estate lander `approved` records. An unreadable list is a finding, and the
+  pass still runs.
+- `consider` checks for the code before `SETTLED`, since a pull request that landed also answers
+  `not open`, and asks to land with the answer's head. A dry run reports `unreadable` and sends
+  nothing. A sibling carrying the code releases (ADR-0045): the pass asks about it first, so it
+  still carries the code only when its read failed.
+- `lane_act.land_pull_request` settles in a step of its own, committed before the ordinary path,
+  which then takes the repository lock again. `_resettle` reads the pull request first. Read
+  failed: the row stands, and the lander reports `unreadable`. Landed: the row becomes
+  `already_merged` with the re-read's commit, keeps its permission columns, moves its `event_id` to
+  a new `<lane>.already_merged` event (the revert watch finds landings through it) and runs
+  `on_landed`, once; the line reads `settled`. A revert's hold is placed there, which also ends
+  `revert_in_progress`. Not landed: a `<lane>.unlanded` event is written and the row is removed,
+  which frees the window's pace.
+- A removal stands whatever the ordinary path answers, so a row behind its base can be freshened
+  and a closed, unlanded pull request loses its row. The line reads as the answer's other refusals
+  when the terms refuse: `deliberate` outside a window, `settled` for a closed pull request. A
+  refusal of any other kind is `held`, so a remote refusal is never masked. If the ordinary path
+  then has the remote decline outright, the row is terminal and that pass reads `held`.
+- Settling records the truth and calls no remote write, so it runs with `estate_landing_enabled` or
+  the inert lane's switch off.
+- A closed revert whose row is unknown is never reported `revert-stranded`: the landing joins the
+  landers' `unknown` set, its alert held, and the same is true of every closed revert while the
+  list is unreadable.
+- A removed row's event keeps its key, and events are append-only and unique on it, while the
+  lander's key names the pull request and head. `_event_key` gives a landing a key of its own when
+  that one is spent, on this pass or a later one.
 
 The watch's 48 hours run from the row's `created_at`, so a landing settled late has less of its
 watch left.
-
-**Known gap: a settled answer needs the pull request to be asked about.** The inert lander enumerates
-open pull requests and the estate lander `approved` change records, so a row whose pull request did
-land reaches `_resettle` only while the estate lander's record stays `approved`. In the inert lane,
-it never does. A revert in that state is reported `revert-stranded` by each lander's `_stranded`,
-and never asked about, so its row stays unknown and its hold unplaced.
 
 ## Automatic reverts (inert repositories)
 

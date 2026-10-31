@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import EstatePrMerge, Event
-from orchestrator.services.landing import estate_pr_merge
+from orchestrator.services.landing import estate_pr_merge, lane_act
 from orchestrator.services.landing.estate_pr_merge import (
     CHANGE_RECORD_TRAILER,
     ESTATE_MERGE_NOT_ADMISSIBLE,
@@ -37,6 +37,7 @@ from orchestrator.services.landing.interfaces import (
     MergeOutcome,
     outcome_is_unknown,
 )
+from orchestrator.services.landing.lane_act import unknown_outcomes
 from tests.services.change_record_doubles import FakeChangeRecordSource
 from tests.services.estate_doubles import inert_source, redeploying_source
 from tests.services.estate_landing_doubles import (
@@ -593,13 +594,13 @@ def test_a_confirmed_refusal_row_stays_terminal(
     assert gateway.merges == []
 
 
-def test_a_replay_the_admission_refuses_keeps_the_row_for_the_next_pass(
+def test_a_removed_row_stays_removed_when_admission_refuses(
     migrated_session: Session, migrated_engine: Engine
 ) -> None:
-    """The refusal rolls the removal back with the rest of the transaction, so the next pass reads
-    again and removes it once the pull request is admissible."""
+    """What the read found stands whatever the terms say. Then the head's next request, carrying
+    the same key with no row to name, still lands: the removed row's event keeps that key."""
     _unknown_row(migrated_session)
-    gateway = ActingGateway(pull=pull_request(landed=False, is_open=False))
+    gateway = ActingGateway(behind=2)
 
     with pytest.raises(DomainError) as refused:
         _land(migrated_session, gateway)
@@ -607,10 +608,64 @@ def test_a_replay_the_admission_refuses_keeps_the_row_for_the_next_pass(
     assert refused.value.code == ESTATE_MERGE_NOT_ADMISSIBLE
     assert gateway.merges == []
     with Session(migrated_engine) as reader:
-        stored = reader.scalar(select(EstatePrMerge))
-        assert stored is not None
-        assert stored.reason_code == "merge_refused_by_remote:merge_status"
-        assert reader.scalar(select(Event).where(Event.action.endswith(".unlanded"))) is None
+        assert reader.scalar(select(EstatePrMerge)) is None
+        assert reader.scalar(select(Event).where(Event.action.endswith(".unlanded"))) is not None
+
+    assert _land(migrated_session, ActingGateway()).status == "merged"
+
+
+def test_a_row_is_settled_with_the_lanes_switch_off(
+    migrated_session: Session, migrated_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Settling records the truth and writes nothing to the remote."""
+    _unknown_row(migrated_session)
+    ran = _on_landed(monkeypatch)
+    gateway = _landed_replay()
+
+    record = _land(migrated_session, gateway, enabled=False)
+
+    assert record.status == "already_merged"
+    assert len(ran) == 1
+    assert gateway.merges == []
+
+
+def test_a_terminal_refusal_is_not_listed_as_unknown(migrated_session: Session) -> None:
+    _land(
+        migrated_session,
+        ActingGateway(outcome=MergeOutcome(landed=False, commit_sha=None, status_code=200)),
+    )
+
+    assert unknown_outcomes(migrated_session, "estate_pr_merge") == []
+
+
+def test_the_ordinary_path_takes_the_lock_again_after_the_settling_commit(
+    migrated_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The commit releases the repository lock, and the act must still happen under it."""
+    held: list[str] = []
+    real = lane_act.lock_repository
+
+    def recording(session: Session, namespace: str, repository: str) -> None:
+        held.append(repository)
+        real(session, namespace, repository)
+
+    monkeypatch.setattr(lane_act, "lock_repository", recording)
+
+    _land(migrated_session, ActingGateway())
+
+    assert held == [REPOSITORY, REPOSITORY]
+
+
+def test_each_lanes_list_names_its_own_unknown_rows_and_no_settled_one(
+    migrated_session: Session,
+) -> None:
+    _unknown_row(migrated_session)
+
+    assert unknown_outcomes(migrated_session, "estate_pr_merge") == [(REPOSITORY, PR)]
+    assert unknown_outcomes(migrated_session, "inert_pr_merge") == []
+
+    _land(migrated_session, _landed_replay())
+    assert unknown_outcomes(migrated_session, "estate_pr_merge") == []
 
 
 def test_a_pull_request_found_already_landed_is_refused_and_leaves_no_row(

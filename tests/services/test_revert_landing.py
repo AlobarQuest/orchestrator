@@ -6,18 +6,25 @@ Everything runs with no network. Persistence is asserted through a second sessio
 
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from sqlalchemy import Engine, select, text
 from sqlalchemy.orm import Session
 
-from orchestrator.persistence.models import EstatePrMerge, LandingRevert, SdsMemberHold
+import inert_lander.cli as inert_cli
+from orchestrator.persistence.models import EstatePrMerge, Event, LandingRevert, SdsMemberHold
 from orchestrator.services.landing.estate_landing import LANDING_INERT, EstateAnswer
 from orchestrator.services.landing.inert_landing_admission import inert_landing_admission
 from orchestrator.services.landing.inert_landing_policy import InertLandingAnswer
-from orchestrator.services.landing.inert_pr_merge import InertMergeCommand, land_inert_pull_request
+from orchestrator.services.landing.inert_pr_merge import (
+    INERT_LANDING_EVENT_PREFIX,
+    InertMergeCommand,
+    land_inert_pull_request,
+)
 from orchestrator.services.landing.interfaces import (
     LANDING_HEAD_NOT_CURRENT_WITH_BASE,
     BranchHead,
@@ -27,7 +34,9 @@ from orchestrator.services.landing.interfaces import (
     Tree,
     TreeEntry,
 )
+from orchestrator.services.landing.lane_act import unknown_outcomes
 from orchestrator.services.landing.revert_build import REVERT_BRANCH_PREFIX
+from orchestrator.services.landing.revert_record import revert_in_progress
 from orchestrator.services.landing.revert_subject import (
     LANDING_REPOSITORY_REVERTING,
     LANDING_REVERT_NOT_EXACT_INVERSE,
@@ -58,7 +67,7 @@ from tests.services.test_inert_landing_admission import _answer as inert_answer
 from tests.services.test_inert_pr_merge import SYSTEM
 from tests.services.test_member_holds import place_hold
 from tests.services.test_member_proposals import grant_services
-from tests.services.test_revert_hold import revert_record
+from tests.services.test_revert_hold import member_of, revert_record
 
 ORIGINAL = 41
 REVERT = 42
@@ -554,3 +563,151 @@ def test_a_fork_sync_is_not_refused_as_reverting(migrated_session: Session) -> N
     )
 
     assert LANDING_REPOSITORY_REVERTING not in answer.refusals
+
+
+# ---- A merged revert whose row is unknown, through the lander's own pass (Landing Part 5) -----
+
+
+def unknown_row(session: Session, repository: str, number: int, prefix: str) -> None:
+    """The row a landing leaves when the remote refused and the confirming read failed."""
+    row = EstatePrMerge(
+        repository=repository,
+        pr_number=number,
+        head_sha=HEAD,
+        status="refused",
+        reason_code="merge_refused_by_remote:merge_status",
+        idempotency_key="lost-landing",
+    )
+    session.add(row)
+    session.flush()
+    event = Event(
+        actor_id=SYSTEM.actor_id,
+        action=f"{prefix}.refused",
+        subject_type="estate_pr_merge",
+        subject_id=row.id,
+        payload={},
+        correlation_id=uuid.uuid4(),
+        idempotency_key="lost-landing:event",
+    )
+    session.add(event)
+    session.flush()
+    row.event_id = event.id
+    session.commit()
+
+
+class _ServedOrchestrator:
+    """The lander's client, answered by the real services over this test's database."""
+
+    def __init__(self, session: Session, gateway: ActingInertGateway) -> None:
+        self._session = session
+        self._gateway = gateway
+
+    def __enter__(self) -> _ServedOrchestrator:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        return None
+
+    def landing_watch(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "repository": INERT_REPOSITORY,
+                "pr_number": ORIGINAL,
+                "verdict": None,
+                "status": "revert_opened",
+                "revert_pr_number": REVERT,
+                "lane": "inert",
+            }
+        ]
+
+    def unknown_outcomes(self) -> list[dict[str, Any]]:
+        return [
+            {"repository": repository, "pr_number": number}
+            for repository, number in unknown_outcomes(self._session, INERT_LANDING_EVENT_PREFIX)
+        ]
+
+    def admission(self, repository: str, pr_number: int) -> dict[str, Any]:
+        answer = inert_landing_admission(
+            self._session,
+            repository,
+            pr_number,
+            FakeEstateLandingSource(default=EstateAnswer(LANDING_INERT)),
+            FakeInertPolicySource(),
+            self._gateway,
+            enabled=True,
+            credentials_configured=True,
+        )
+        return {
+            "satisfied": answer.satisfied,
+            "refusals": list(answer.refusals),
+            "head_sha": answer.head_sha,
+        }
+
+    def land(
+        self, repository: str, pr_number: int, *, head_sha: str, idempotency_key: str
+    ) -> dict[str, Any]:
+        record = land_inert_pull_request(
+            self._session,
+            InertMergeCommand(repository, pr_number, SYSTEM, idempotency_key, head_sha),
+            self._gateway,
+            FakeEstateLandingSource(default=EstateAnswer(LANDING_INERT)),
+            FakeInertPolicySource(),
+            enabled=True,
+            credentials_configured=True,
+        )
+        return {"status": record.status, "reason_code": record.reason_code}
+
+
+class _NoOpenPulls:
+    def __enter__(self) -> _NoOpenPulls:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        return None
+
+    def open_pull_requests(self, repository: str) -> list[dict[str, Any]]:
+        return []
+
+
+def test_a_merged_revert_with_an_unknown_row_settles_through_the_landers_pass(
+    migrated_session: Session,
+    migrated_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """GitHub lists no open pull request, and the pass settles it anyway: the row, the revert's
+    record, the hold, and the repository's wait on the revert."""
+    member_of(migrated_session, INERT_REPOSITORY)
+    _opened(migrated_session)
+    grant_services(migrated_session, INERT_REPOSITORY, "dependency_updates")
+    unknown_row(migrated_session, INERT_REPOSITORY, REVERT, INERT_LANDING_EVENT_PREFIX)
+    assert revert_in_progress(migrated_session, INERT_REPOSITORY)
+    gateway = _acting_revert_gateway()
+    gateway._pull = pull_request(
+        number=REVERT, head_ref=BRANCH, landed=True, is_open=False, merge_commit=LANDED_COMMIT
+    )
+    served = _ServedOrchestrator(migrated_session, gateway)
+    for name in ("CHANGE_MANAGER", "ORCHESTRATOR", "GITHUB"):
+        monkeypatch.setenv(f"INERT_LANDING_{name}_TOKEN", "t")
+    rule = SimpleNamespace(
+        inert=frozenset({INERT_REPOSITORY}), version=1, covers_author=lambda _author: True
+    )
+    monkeypatch.setattr("inert_lander.cli.read_landing_policy", lambda *a, **k: rule)
+    monkeypatch.setattr("inert_lander.cli.GitHubReader", lambda *a, **k: _NoOpenPulls())
+    monkeypatch.setattr("inert_lander.cli.OrchestratorClient", lambda *a, **k: served)
+    monkeypatch.setattr("inert_lander.cli.sync_held_alerts", lambda *a, **k: None)
+    monkeypatch.setattr("inert_lander.cli.sync_revert_alerts", lambda *a, **k: None)
+
+    assert inert_cli.run(["--submit"]) == 0
+
+    out = capsys.readouterr().out
+    assert f"{INERT_REPOSITORY}#{REVERT}  settled" in out
+    assert "closed without landing" not in out
+    assert gateway.merges == []
+    assert not revert_in_progress(migrated_session, INERT_REPOSITORY)
+    with Session(migrated_engine) as reader:
+        row = reader.scalars(select(EstatePrMerge)).one()
+        assert (row.status, row.merge_commit_sha) == ("already_merged", LANDED_COMMIT)
+        stored = reader.scalars(select(LandingRevert)).one()
+        assert (stored.status, stored.revert_merge_sha) == ("revert_landed", LANDED_COMMIT)
+        assert reader.scalars(select(SdsMemberHold)).one().set_by == "sds-revert"

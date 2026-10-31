@@ -20,7 +20,9 @@ import pytest
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
-from orchestrator.persistence.models import LandingRevert, SdsMemberHold
+import estate_lander.cli as estate_cli
+from estate_lander.revert_pass import RevertPass
+from orchestrator.persistence.models import EstatePrMerge, LandingRevert, SdsMemberHold
 from orchestrator.services.landing.change_record import (
     ChangeRecordAnswer,
     LandingConditions,
@@ -39,12 +41,15 @@ from orchestrator.services.landing.estate_pr_merge import (
     land_estate_pull_request,
 )
 from orchestrator.services.landing.interfaces import (
+    ESTATE_LANDING_EVENT_PREFIX,
     LANDING_HEAD_NOT_CURRENT_WITH_BASE,
     LANDING_OUTSIDE_CHANGE_WINDOW,
     LANDING_PACE_EXHAUSTED,
     BranchHead,
 )
+from orchestrator.services.landing.lane_act import unknown_outcomes
 from orchestrator.services.landing.revert_build import REVERT_BRANCH_PREFIX
+from orchestrator.services.landing.revert_record import revert_in_progress
 from orchestrator.services.landing.revert_subject import (
     LANDING_REPOSITORY_REVERTING,
     LANDING_REVERT_NOT_EXACT_INVERSE,
@@ -70,7 +75,7 @@ from tests.services.test_estate_pr_merge import LANDED_COMMIT, SYSTEM, ActingGat
 from tests.services.test_member_holds import place_hold
 from tests.services.test_member_proposals import grant_services
 from tests.services.test_revert_hold import member_of, revert_record
-from tests.services.test_revert_landing import BASE, MERGE, PARENT, _entry, _trees
+from tests.services.test_revert_landing import BASE, MERGE, PARENT, _entry, _trees, unknown_row
 
 ORIGINAL = 41
 REVERT = 42
@@ -438,3 +443,145 @@ def test_an_unpinned_refused_or_failed_revert_holds_no_bump(
     )
 
     assert LANDING_REPOSITORY_REVERTING not in answer.refusals
+
+
+# ---- A merged revert whose row is unknown, through the lander's own pass (Landing Part 5) -----
+
+
+class _ServedOrchestrator:
+    """The lander's client, answered by the real services over this test's database."""
+
+    def __init__(self, session: Session, gateway: ActingGateway) -> None:
+        self._session = session
+        self._gateway = gateway
+
+    def __enter__(self) -> _ServedOrchestrator:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        return None
+
+    def _records(self) -> FakeChangeRecordSource:
+        return FakeChangeRecordSource({(REPOSITORY, REVERT): revert_record_answer()})
+
+    def landing_watch(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "repository": REPOSITORY,
+                "pr_number": ORIGINAL,
+                "verdict": None,
+                "status": "revert_opened",
+                "revert_pr_number": REVERT,
+                "lane": "estate",
+                "pinned_images": None,
+            }
+        ]
+
+    def unknown_outcomes(self) -> list[dict[str, Any]]:
+        return [
+            {"repository": repository, "pr_number": number}
+            for repository, number in unknown_outcomes(self._session, ESTATE_LANDING_EVENT_PREFIX)
+        ]
+
+    def admission(self, repository: str, pr_number: int) -> dict[str, Any]:
+        answer = estate_landing_admission(
+            self._session,
+            repository,
+            pr_number,
+            redeploying_source(),
+            self._records(),
+            self._gateway,
+            enabled=True,
+            credentials_configured=True,
+            clock=FixedClock(OUT_OF_WINDOW),
+        )
+        return {
+            "satisfied": answer.satisfied,
+            "refusals": list(answer.refusals),
+            "head_sha": answer.head_sha,
+        }
+
+    def land(
+        self, repository: str, pr_number: int, *, head_sha: str, idempotency_key: str
+    ) -> dict[str, Any]:
+        record = land_estate_pull_request(
+            self._session,
+            EstateMergeCommand(repository, pr_number, SYSTEM, idempotency_key, head_sha),
+            self._gateway,
+            redeploying_source(),
+            self._records(),
+            enabled=True,
+            credentials_configured=True,
+            clock=FixedClock(OUT_OF_WINDOW),
+        )
+        return {"status": record.status, "reason_code": record.reason_code}
+
+
+class _Records:
+    def __init__(self, *_: object, **__: object) -> None:
+        pass
+
+    def __enter__(self) -> _Records:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        return None
+
+    def records(self) -> list[dict[str, Any]]:
+        return []
+
+    def open_pull_requests(self, repository: str) -> list[dict[str, Any]]:
+        return []
+
+
+def test_a_merged_revert_with_an_unknown_row_settles_through_the_landers_pass(
+    migrated_session: Session,
+    migrated_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """No record names it and GitHub lists it nowhere, and the pass settles it anyway, in or out
+    of the landing hours: the row, the revert's record, the hold, and the wait on the revert."""
+    member_of(migrated_session, REPOSITORY)
+    _opened(migrated_session)
+    migrated_session.commit()
+    grant_services(migrated_session, REPOSITORY, "dependency_updates")
+    unknown_row(migrated_session, REPOSITORY, REVERT, ESTATE_LANDING_EVENT_PREFIX)
+    assert revert_in_progress(migrated_session, REPOSITORY)
+    gateway = ActingGateway(
+        pull=pull_request(
+            number=REVERT,
+            head_ref=BRANCH,
+            author_login=APP,
+            landed=True,
+            is_open=False,
+            merge_commit=LANDED_COMMIT,
+        )
+    )
+    served = _ServedOrchestrator(migrated_session, gateway)
+    for name in ("CHANGE_MANAGER", "ORCHESTRATOR", "GITHUB"):
+        monkeypatch.setenv(f"ESTATE_LANDING_{name}_TOKEN", "t")
+    monkeypatch.delenv("ESTATE_LANDING_COOLIFY_TOKEN", raising=False)
+    monkeypatch.setattr("estate_lander.cli._now", lambda: OUT_OF_WINDOW)
+    monkeypatch.setattr("estate_lander.cli.ChangeManagerClient", _Records)
+    monkeypatch.setattr("estate_lander.cli.OrchestratorClient", lambda *a, **k: served)
+    monkeypatch.setattr("estate_lander.cli.GitHubReader", _Records)
+    monkeypatch.setattr("estate_lander.cli.Registry", _Records)
+    monkeypatch.setattr("estate_lander.cli._production", lambda *a, **k: None)
+    monkeypatch.setattr("estate_lander.cli.revert_pass", lambda *a, **k: RevertPass())
+    monkeypatch.setattr("estate_lander.cli.sync_held_alerts", lambda *a, **k: None)
+    monkeypatch.setattr("estate_lander.cli.sync_revert_alerts", lambda *a, **k: None)
+
+    assert estate_cli.run(["--submit"]) == 0
+
+    out = capsys.readouterr().out
+    assert f"{REPOSITORY}#{REVERT}  settled" in out
+    assert "closed without landing" not in out
+    assert gateway.merges == []
+    assert not revert_in_progress(migrated_session, REPOSITORY)
+    with Session(migrated_engine) as reader:
+        row = reader.scalars(select(EstatePrMerge)).one()
+        assert (row.status, row.merge_commit_sha) == ("already_merged", LANDED_COMMIT)
+        stored = reader.scalars(select(LandingRevert)).one()
+        assert (stored.status, stored.revert_merge_sha) == ("revert_landed", LANDED_COMMIT)
+        assert reader.scalars(select(SdsMemberHold)).one().set_by == "sds-revert"

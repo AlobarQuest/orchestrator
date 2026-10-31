@@ -29,6 +29,7 @@ from orchestrator.api.schemas.landing import (
     LandingRestoreCommandModel,
     LandingRevertCommandModel,
     LandingRevertResponse,
+    LandingUnknownOutcomesResponse,
     LandingWatchResponse,
     OpenedRevertsResponse,
     PrMergeAdmissionResponse,
@@ -71,11 +72,17 @@ from orchestrator.services.landing.inert_pr_branch_update import (
     update_inert_pull_request_branch,
 )
 from orchestrator.services.landing.inert_pr_merge import (
+    INERT_LANDING_EVENT_PREFIX,
     GitHubInertPullRequests,
     InertMergeCommand,
     land_inert_pull_request,
 )
-from orchestrator.services.landing.lane_act import authorize_actor
+from orchestrator.services.landing.interfaces import ESTATE_LANDING_EVENT_PREFIX
+from orchestrator.services.landing.lane_act import (
+    LANDING_UNKNOWN_OUTCOMES_LANE_UNKNOWN,
+    authorize_actor,
+    unknown_outcomes,
+)
 from orchestrator.services.landing.pr_merge import (
     GitHubPullRequests,
     MergeCommand,
@@ -109,6 +116,11 @@ router = APIRouter(prefix="/api/v1", responses=ERROR_RESPONSES)
 # cross-boundary configuration is read. It is a constant rather than a setting: an operator who
 # could change it could only ever make the question unanswerable.
 CHANGE_RECORD_PIPELINE: Final = "deploy"
+
+_LANE_EVENT_PREFIXES: Final = {
+    ESTATE_LANE: ESTATE_LANDING_EVENT_PREFIX,
+    INERT_LANE: INERT_LANDING_EVENT_PREFIX,
+}
 
 
 def get_change_record_source(settings: SettingsDep) -> ChangeRecordSource:
@@ -551,6 +563,27 @@ def landing_watch_route(
             credentials_configured=credentials is not None,
             only_lane=lane,
         )
+    }
+
+
+@router.get("/landing-unknown-outcomes", response_model=LandingUnknownOutcomesResponse)
+def landing_unknown_outcomes_route(actor: ActorDep, session: SessionDep, lane: str) -> object:
+    """Landing Part 5: the pull requests this lane holds a row for whose outcome is unknown, each
+    named for the lander to ask about first. Every row's lane is named by its stored event. The
+    system actor alone may ask, the same actor that settles them."""
+    authorize_actor(actor, "read the unknown landing outcomes")
+    prefix = _LANE_EVENT_PREFIXES.get(lane)
+    if prefix is None:
+        raise DomainError(
+            LANDING_UNKNOWN_OUTCOMES_LANE_UNKNOWN,
+            f"the unknown landing outcomes have no lane {lane!r}",
+            f"name {INERT_LANE!r} or {ESTATE_LANE!r}",
+        )
+    return {
+        "outcomes": [
+            {"repository": repository, "pr_number": pr_number}
+            for repository, pr_number in unknown_outcomes(session, prefix)
+        ]
     }
 
 

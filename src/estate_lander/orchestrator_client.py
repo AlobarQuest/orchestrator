@@ -1,4 +1,4 @@
-"""The confined orchestrator surface for the lander. NINE paths, checked before the transport.
+"""The confined orchestrator surface for the lander. TEN paths, checked before the transport.
 
 It asks whether a pull request may be landed and, when told to, asks for the landing, for the
 much smaller act of bringing a stale branch up to date with its base, or for a held bump to be
@@ -57,6 +57,9 @@ _CLOSE_HELD = "/api/v1/held-pr-close"
 # set, that the pin is confirmed: `_PINNED`), and record that it
 # was pointed forward again. The orchestrator judges each inside its own transaction.
 _WATCH = "/api/v1/landing-watch"
+# Landing Part 5. Read first on every pass: the rows whose outcome nobody knows, which no
+# enumeration of pull requests can reach once one has landed.
+_UNKNOWN_OUTCOMES = "/api/v1/landing-unknown-outcomes"
 _REVERT = "/api/v1/landing-revert"
 _REPOINT = "/api/v1/landing-repoint"
 _RESTORED = "/api/v1/landing-restored"
@@ -68,7 +71,7 @@ class ForbiddenEndpointError(OrchestratorError):
 
 
 def is_allowed_read(path: str) -> bool:
-    return path in (_ADMISSION, _WATCH)
+    return path in (_ADMISSION, _WATCH, _UNKNOWN_OUTCOMES)
 
 
 def is_allowed_write(path: str) -> bool:
@@ -243,6 +246,14 @@ class OrchestratorClient:
         if not isinstance(body, dict):
             raise OrchestratorError(f"the {what} was not an object")
         return body
+
+    def unknown_outcomes(self) -> list[dict[str, Any]]:
+        """This lane's landings whose outcome is unknown, each naming a pull request."""
+        response = self._send("GET", _UNKNOWN_OUTCOMES, params={"lane": "estate"})
+        outcomes = self._object(response, "unknown outcomes").get("outcomes")
+        if not isinstance(outcomes, list) or not all(isinstance(row, dict) for row in outcomes):
+            raise OrchestratorError("the unknown outcomes carried no list of outcomes")
+        return outcomes
 
     def landing_watch(self) -> list[dict[str, Any]]:
         """This lane's watched landings, each with its verdict or its record's status. Asks for

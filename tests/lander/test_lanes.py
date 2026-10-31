@@ -61,6 +61,9 @@ class _Client:
     def admission(self, repository: str, pr_number: int) -> dict[str, Any]:
         return self.answer
 
+    def unknown_outcomes(self) -> list[dict[str, Any]]:
+        return []
+
     def land(
         self, repository: str, pr_number: int, *, head_sha: str, idempotency_key: str
     ) -> dict[str, Any]:
@@ -100,6 +103,7 @@ def _status(module: Any, refusals: list[str], **extra: Any) -> str:
 def test_the_estate_lane_is_exactly_this() -> None:
     assert estate.LANE == Lane(
         name="estate",
+        not_admissible="estate_merge_not_admissible",
         deliberate=frozenset({PACE, WINDOW}),
         exception=frozenset({UNPARSEABLE, CEILING, NOT_GRANTED, REVERTED}),
         update_self_clearing=frozenset(
@@ -119,6 +123,7 @@ def test_the_inert_lane_is_exactly_this() -> None:
     sibling's values."""
     assert inert.LANE == Lane(
         name="inert",
+        not_admissible="inert_merge_not_admissible",
         deliberate=frozenset(),
         exception=frozenset({ECOSYSTEM, CEILING, NOT_GRANTED, REVERTED}),
         update_self_clearing=frozenset(
@@ -432,7 +437,7 @@ def _unknown(*refusals: str, head: str | None = HEAD) -> dict[str, Any]:
 @pytest.mark.parametrize("module", LANDERS)
 @pytest.mark.parametrize(
     ("status", "expected"),
-    [("already_merged", "settled"), ("merged", "landed"), ("refused", "unreadable")],
+    [("already_merged", "settled"), ("merged", "landed")],
 )
 def test_outcome_unknown_replays_the_landing(module: Any, status: str, expected: str) -> None:
     """Beside `not open` too: a landed pull request answers both, and that one is SETTLED."""
@@ -478,8 +483,8 @@ def test_a_still_unknown_replay_reports_unreadable(module: Any) -> None:
 
 
 def test_a_refused_replay_reads_as_its_other_refusals() -> None:
-    """Outside the window the row stays and a replay is refused, every pass: that is the window's
-    deliberate refusal, not a finding, and a closed pull request stays settled."""
+    """The removal stands and the terms say no: outside the window that is the window's deliberate
+    refusal, not a finding, and a closed pull request stays settled."""
     refused = core.LandingRefused("may not be landed", "estate_merge_not_admissible")
 
     client = _Client(_unknown(WINDOW), land_error=refused)
@@ -493,7 +498,35 @@ def test_a_refused_replay_reads_as_its_other_refusals() -> None:
     assert (held.status, held.detail) == ("held", str(refused))
 
 
+def test_a_remote_refusal_on_a_replay_is_never_masked_as_deliberate() -> None:
+    client = _Client(
+        _unknown(WINDOW),
+        land_error=core.LandingRefused("the remote said no", "estate_merge_refused_by_remote"),
+    )
+
+    outcome = core.consider(estate.LANE, client, *SUBJECT[0], True)
+
+    assert (outcome.status, outcome.detail) == ("held", "the remote said no")
+
+
+def test_a_remote_declining_after_the_removal_is_the_terminal_refusal() -> None:
+    client = _Client(
+        _unknown(), land_answer={"status": "refused", "reason_code": "merge_refused_by_remote"}
+    )
+
+    outcome = core.consider(estate.LANE, client, *SUBJECT[0], True)
+
+    assert outcome.status == "held"
+    assert "merge_refused_by_remote" in outcome.detail
+
+
 def test_a_replay_the_orchestrator_could_not_answer_is_an_error() -> None:
     client = _Client(_unknown(), land_error=core.OrchestratorError("no answer"))
 
     assert core.consider(estate.LANE, client, *SUBJECT[0], True).status == "error"
+
+
+def test_an_asked_row_is_matched_to_a_subject_however_its_repository_is_spelled() -> None:
+    assert core.not_yet_asked(
+        [("AlobarQuest/x", 7), ("AlobarQuest/x", 8)], {("alobarquest/x", 7)}
+    ) == [("AlobarQuest/x", 8)]

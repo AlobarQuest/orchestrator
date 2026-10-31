@@ -58,6 +58,7 @@ EDGES: dict[str, Edge] = {
                 ("POST", "/api/v1/estate-pr-branch-update"),
                 _HELD_CLOSE,
                 # Landing Part 3b: the watch, and the three acts on one of this lane's landings.
+                ("GET", "/api/v1/landing-unknown-outcomes"),
                 ("GET", "/api/v1/landing-watch"),
                 ("POST", "/api/v1/landing-revert"),
                 ("POST", "/api/v1/landing-repoint"),
@@ -80,6 +81,7 @@ EDGES: dict[str, Edge] = {
                 ("POST", "/api/v1/inert-pr-branch-update"),
                 _HELD_CLOSE,
                 # Landing Part 3a: the watch, and the act on a landing that went bad.
+                ("GET", "/api/v1/landing-unknown-outcomes"),
                 ("GET", "/api/v1/landing-watch"),
                 ("POST", "/api/v1/landing-revert"),
             }
