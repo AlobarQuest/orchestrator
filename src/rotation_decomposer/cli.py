@@ -20,9 +20,11 @@ import argparse
 import os
 import sys
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, Final
 
+from rotation_decomposer.alerts import STATE_DIR_ENV, TOKEN_ENV, sync_alerts
 from rotation_decomposer.client import (
     CallError,
     ChangeManagerReader,
@@ -30,6 +32,7 @@ from rotation_decomposer.client import (
     UnusableEndpointError,
 )
 from rotation_decomposer.decompose import DecomposeError, credential_of, decomposition
+from rotation_decomposer.outcome import Outcome
 from rotation_worker.contract import ContractError
 from rotation_worker.destinations import DestinationError
 from rotation_worker.git_mirror import MirrorError, RepoMirror, default_mirror_root
@@ -40,15 +43,6 @@ CHANGE_MANAGER_URL: Final = "https://change-mgr.alobar.net"
 ORCHESTRATOR_URL: Final = "https://sds.alobar.net"
 # A proposal in either state is a person's to decide or already decided: never proposed over.
 DECIDING: Final = frozenset({"proposed", "approved"})
-
-
-@dataclass(frozen=True)
-class Outcome:
-    subject: str
-    # approved, proposed, would-propose, awaiting-approval, superseded, declined, refused or
-    # unread
-    result: str
-    detail: str = ""
 
 
 def run_pass(
@@ -190,11 +184,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     token = os.environ.get("ORCHESTRATOR_API_TOKEN", "")
     key_id = os.environ.get("ORCHESTRATOR_API_CREDENTIAL_KEY_ID", "")
     change_manager_token = os.environ.get("CHANGE_MANAGER_TOKEN", "")
+    alert_token = os.environ.get(TOKEN_ENV, "")
     if not token or not key_id or not change_manager_token:
         print(
             "FATAL: ORCHESTRATOR_API_TOKEN, its key id and CHANGE_MANAGER_TOKEN are required",
             file=sys.stderr,
         )
+        return 1
+    if not args.dry_run and not alert_token:
+        print(f"FATAL: {TOKEN_ENV} is required unless --dry-run", file=sys.stderr)
         return 1
     try:
         reader = ChangeManagerReader(
@@ -224,7 +222,24 @@ def main(argv: Sequence[str] | None = None) -> int:
     for outcome in outcomes:
         print(f"{outcome.subject:<60}  {outcome.result:<17}  {outcome.detail}".rstrip())
     print(f"\n{len(outcomes)} carried rotation revision(s) without units")
+    if not args.dry_run:
+        _tell_a_person(outcomes, alert_token)
     return exit_code(outcomes)
+
+
+def _state_dir() -> Path:
+    configured = os.environ.get(STATE_DIR_ENV)
+    if configured:
+        return Path(configured)
+    return Path.home() / "Library" / "Application Support" / "sds" / "rotation-decomposer"
+
+
+def _tell_a_person(outcomes: Sequence[Outcome], token: str) -> None:
+    """Sync the pass's alerts. A failure is reported and never changes the exit code, which
+    describes the rotations and not alert-hub."""
+    reason = sync_alerts(outcomes, token=token, state_dir=_state_dir(), now=datetime.now(UTC))
+    if reason is not None:
+        print(f"alert-hub was not brought up to date: {reason}", file=sys.stderr)
 
 
 if __name__ == "__main__":

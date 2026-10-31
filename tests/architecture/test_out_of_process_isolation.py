@@ -259,12 +259,19 @@ TABLE: dict[str, Row] = {
     # executor's light modules, never a provider.
     "rotation_decomposer": _row(
         "__future__",
+        # Rotation Part 1: tells a person through the shared alert-hub client, which owns the only
+        # request it can send (`POST /v1/alerts`). `httpx` already serves `client.py`; `alerts.py`
+        # uses it only to annotate the test transport, and `datetime` and `pathlib` carry the wait
+        # clock and the state directory.
+        "alert_hub_client",
         "argparse",
         "collections",
         "dataclasses",
+        "datetime",
         "estate_clients",
         "httpx",
         "os",
+        "pathlib",
         "re",
         "rotation_worker",
         "sys",
