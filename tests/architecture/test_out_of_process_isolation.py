@@ -479,6 +479,10 @@ TABLE: dict[str, Row] = {
     ),
     "rotation_proposer": _row(
         "__future__",
+        # Rotation Part 1: tells a person through the shared alert-hub client, which owns the only
+        # request it can send (`POST /v1/alerts`). `httpx` is only the annotation of the test
+        # transport `alerts.py` hands that client.
+        "alert_hub_client",
         "argparse",
         "bump_proposer",
         # `collections.abc.Callable`, for the injectable runner that asks infraops.
@@ -486,6 +490,7 @@ TABLE: dict[str, Row] = {
         "dataclasses",
         # The observation's facts are content-addressed, so an unchanged re-run replays.
         "hashlib",
+        "httpx",
         "json",
         "os",
         "pathlib",

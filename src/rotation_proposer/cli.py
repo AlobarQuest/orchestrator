@@ -51,7 +51,6 @@ import argparse
 import os
 import sys
 from collections.abc import Callable
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final, NamedTuple
@@ -77,6 +76,7 @@ from bump_proposer.standing import (
     require_publishable,
     snapshot_hash,
 )
+from rotation_proposer.alerts import STATE_DIR_ENV, TOKEN_ENV, sync_alerts
 from rotation_proposer.findings import (
     Due,
     FindingsError,
@@ -86,6 +86,7 @@ from rotation_proposer.findings import (
 )
 from rotation_proposer.generate import GenerateError, render
 from rotation_proposer.observation import ObservationUncomposable, rotation_observation
+from rotation_proposer.outcome import FINDING_STATUSES, Outcome
 from rotation_proposer.standing import (
     APPROVED,
     DRAFT,
@@ -119,37 +120,9 @@ OBSERVER_KEY_ID: Final = "orchestrator-observer"
 # because this program imports only its own row; a test holds the two equal.
 RETIREMENT_ACTOR: Final = "work-watcher"
 
-# What makes a pass a FINDING rather than a clean run. `legacy` is absent: a credential the
-# registry has not handed to the SDS is infraops' to rotate. `unlaned` and `not-handed-over` are
-# findings, because each is a credential the two lanes disagree about -- handed over with no package
-# (nothing rotates it) or a package with no handover (both could). `awaiting-approval` and `revised`
-# are absent because waiting on Devon is the lane working, not failing.
-FINDING_STATUSES: Final = frozenset(
-    {
-        "error",
-        "refused",
-        "unobserved",
-        "superseded",
-        "stacked",
-        "unexpected-state",
-        "unrecognised",
-        "unlaned",
-        "not-handed-over",
-        "exposure-open",
-        "resolved-by-person",
-    }
-)
-
 # What a pass does with one credential, decided from the package alone before anything is written.
 _PROPOSE: Final = "propose"
 _ADVANCE: Final = "advance"
-
-
-@dataclass(frozen=True)
-class Outcome:
-    credential_id: str
-    status: str
-    detail: str
 
 
 def _decide(package: RotationPackage, due: Due, destinations: list[str]) -> tuple[str, str]:
@@ -463,6 +436,7 @@ class _Credentials(NamedTuple):
     change_manager_url: str
     orchestrator_url: str
     orchestrator_token: str
+    alert_token: str
 
 
 def _credentials(*, submit: bool) -> _Credentials | None:
@@ -477,6 +451,7 @@ def _credentials(*, submit: bool) -> _Credentials | None:
     observer_url = os.environ.get("ORCHESTRATOR_API_URL", "")
     observer_key_id = os.environ.get("ORCHESTRATOR_API_CREDENTIAL_KEY_ID", "")
     observer_token = os.environ.get("ORCHESTRATOR_API_TOKEN", "")
+    alert_token = os.environ.get(TOKEN_ENV, "")
     missing = ""
     if submit and not change_manager:
         missing = "ROTATION_PROPOSER_CHANGE_MANAGER_TOKEN is unset; --submit needs it"
@@ -485,6 +460,8 @@ def _credentials(*, submit: bool) -> _Credentials | None:
             "the orchestrator observer credential is unset; --submit needs it "
             "(ORCHESTRATOR_API_URL, ORCHESTRATOR_API_CREDENTIAL_KEY_ID, ORCHESTRATOR_API_TOKEN)"
         )
+    elif submit and not alert_token:
+        missing = f"{TOKEN_ENV} is unset; --submit needs it"
     elif submit and observer_key_id != OBSERVER_KEY_ID:
         missing = (
             f"ORCHESTRATOR_API_CREDENTIAL_KEY_ID is {observer_key_id!r}, not "
@@ -494,7 +471,7 @@ def _credentials(*, submit: bool) -> _Credentials | None:
     if missing:
         print(missing, file=sys.stderr)
         return None
-    return _Credentials(change_manager, url, observer_url, observer_token)
+    return _Credentials(change_manager, url, observer_url, observer_token, alert_token)
 
 
 class _Inputs(NamedTuple):
@@ -575,7 +552,25 @@ def run(argv: list[str] | None = None) -> int:
             client.close()
         if observer is not None:
             observer.close()
-    return _report(outcomes)
+    code = _report(outcomes)
+    if args.submit:
+        _tell_a_person(outcomes, credentials.alert_token)
+    return code
+
+
+def _state_dir() -> Path:
+    configured = os.environ.get(STATE_DIR_ENV)
+    if configured:
+        return Path(configured)
+    return Path.home() / "Library" / "Application Support" / "sds" / "rotation-proposer"
+
+
+def _tell_a_person(outcomes: list[Outcome], token: str) -> None:
+    """Sync the pass's alerts. A failure is reported and never changes the exit code, which
+    describes the rotations and not alert-hub."""
+    reason = sync_alerts(outcomes, token=token, state_dir=_state_dir(), now=datetime.now(UTC))
+    if reason is not None:
+        print(f"alert-hub was not brought up to date: {reason}", file=sys.stderr)
 
 
 def main() -> None:

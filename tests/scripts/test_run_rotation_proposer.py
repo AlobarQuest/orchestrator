@@ -81,3 +81,31 @@ def test_control_from_a_main_tree_it_gets_past_the_refusal(trees, tmp_path) -> N
     assert "linked worktree" not in result.stderr
     assert result.returncode == 1
     assert "no rotation-proposer" in result.stderr
+
+
+def test_the_launcher_reads_the_bridge_token_only_on_submit() -> None:
+    lines = LAUNCHER.read_text().splitlines()
+    block = lines.index('if [ "$NEEDS_CREDENTIAL" -eq 1 ]; then')
+    end = lines.index("fi", block)
+    fetch = [i for i, line in enumerate(lines) if 'sds_bws_value "$SDS_BRIDGE_ALERT_UUID"' in line]
+    assert len(fetch) == 1
+    assert block < fetch[0] < end
+    assert 'sds_bws_value "$SDS_BRIDGE_ALERT_UUID" "$SDS_IDENTITY"' in lines[fetch[0]]
+    assert "export SDS_BRIDGE_ALERT_TOKEN" in lines[fetch[0] + 1]
+    assert "unset BROAD_IDENTITY SDS_IDENTITY" in lines[end - 1]
+
+
+def test_the_launcher_keeps_the_finding_exit_code_and_the_manifest_uuid() -> None:
+    import tomllib
+
+    text = LAUNCHER.read_text()
+    assert "sds_deadman_arm sds-rotation-proposer --finding 3" in text
+    listed = {
+        entry["uuid"]
+        for entry in tomllib.loads(Path(".bws-secrets.toml").read_text())["secret"]
+        if entry["name"] == "ALERT_HUB_SENDER_TOKEN_SDS_BRIDGE"
+    }
+    assert (
+        f'SDS_BRIDGE_ALERT_UUID="${{ROTATION_PROPOSER_ALERT_BWS_UUID:-{next(iter(listed))}}}"'
+        in text
+    )
