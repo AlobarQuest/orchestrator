@@ -196,8 +196,9 @@ What stays unbound, and why. The proposal's `rationale` never reaches the agent:
 no such field. `context_enrichment` does ride the unit, and is not bound, because the Brains supply it
 rather than the proposer.
 
-**Residuals, stated in full.** No check here closes the first three. Whether the fourth stays is
-Devon's decision and is open.
+**Residuals, stated in full.** No check here closes them. Devon accepted all four on 2026-10-30:
+the first three for now, with the SYSTEM bearer's route confinement as the larger fix, and the
+fourth because the grant is the authority and his decision 1 covers the factory's fixes.
 
 1. **A forged SYSTEM intake yields a landed bump, not only a `READY` unit.** `approved_by` and
    `standing` on a SYSTEM-registered intake are caller-attested: `POST /api/v1/package-intakes` takes
@@ -212,8 +213,11 @@ Devon's decision and is open.
 3. **`bump_binding_violations` does not narrow a forged intake.** It binds the envelope's commands
    to `profile_fields`, and a forged intake supplies its own `profile_fields`, so the commands are
    checked against the forgery. The binding protects an honest intake from a wrong envelope.
-4. **Self-hosting: open decision.** `orchestrator`, `intent-packages`, `project-standards` and
+4. **Self-hosting.** `orchestrator`, `intent-packages`, `project-standards` and
    `security-standards` are granted inert members, and `~/.claude/bin/activate-checkout.sh` runs
    `uv sync --frozen` when `pyproject.toml` or `uv.lock` moves. So a factory-landed bump into one of
-   them is installed on the operator machine at the next launcher pass, with no person. Whether
-   those repositories stay on the policy path is Devon's to decide, and nothing here decides it.
+   them is installed on the operator machine at the next launcher pass, with no person, and the
+   agent's source fix runs there unread. Those repositories stay on the policy path: Dependabot's
+   bumps already land and install there unattended, and every failed bump measured was in the
+   orchestrator. What's new is the agent's source; required checks and the refused gate files bound
+   it, and a malicious change could still pass them.
