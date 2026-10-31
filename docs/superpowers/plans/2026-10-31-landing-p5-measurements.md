@@ -15,3 +15,20 @@ rule (`commits[0]`, bot-authored and verified).
 
 The population is small, so this shows no case of the change moving a live answer; the
 disagreement cases are pinned by `tests/contract/test_update_bot_commit_agreement.py`.
+
+## Ship and live proof (2026-10-31 EDT)
+
+| Time | Step | Actor |
+|---|---|---|
+| 11:07 | change-manager#148 merged, after a read showed no rotation unit ready or claimed | build session |
+| 11:09 | change-manager served 9570036d; the new route answered 401 and a control route 404 | deploy workflow |
+| 11:10 | orchestrator#566 merged (1da6b682) | build session |
+| 11:13 | `1da6b68-p5-amd64` deployed, digest `sha256:15ef6ed1…`, no migration; no lander pass fell in the gap | build session |
+| 11:38 | Pass retired items 78, 79, 89, 94, 104, 115, 117, 118 and 125, each to `resolved`, each citing run 41175882784 | `deploy-watcher` |
+| 12:40 | Pass reported all 9 `[finished]`, with no exception, finding or incomplete line | `deploy-watcher` |
+
+The estate lander's first pass inside the landing hours is 02:15 on 2026-11-01, after this record. It asks only
+about `approved` records, and the 9 are `resolved`.
+
+`_resettle` and the factory's resettle have no live proof: the state was never observed and can't be produced
+without a fault in GitHub. Their evidence is the tests and the mutation passes.
