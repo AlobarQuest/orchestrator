@@ -424,6 +424,21 @@ def test_an_inbox_that_can_t_be_read_keeps_its_alerts_as_they_were(
     run.inbox = Inbox(unreadable, run.inbox_id)
     assert run.waits(monkeypatch, [])
     assert run.found.keep == {"rotation-mint:u1", "rotation-inbox:u1"}
+    assert run.found.waits == {"u1": worker.Wait("the inbox can't be read: BWS refused: 429")}
+
+
+def test_an_unreadable_inbox_starts_no_clock_when_a_value_is_staged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run = Pass(tmp_path)
+
+    def unreadable() -> MemoryStore:
+        raise StoreError("BWS refused: 429")
+
+    run.inbox = Inbox(unreadable, run.inbox_id)
+    run.store.put(WORK, run.rotation.staging_key, NEW)
+    assert not run.waits(monkeypatch, [])
+    assert run.found.waits == {}
 
 
 def test_a_unit_not_after_a_person_s_mint_never_reads_the_inbox(

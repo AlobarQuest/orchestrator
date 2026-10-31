@@ -7,6 +7,10 @@ from typing import Any, Final
 
 ADAPTER_KEY: Final = "rotation_adapter"
 
+# The adapters whose credentials live in the Keychain: a copy of the orchestrator's
+# `rotation_claims.KEYCHAIN_ADAPTERS`, which this program may not import. A test holds them equal.
+KEYCHAIN_ADAPTERS: Final = frozenset({"bws-machine-token"})
+
 
 def constraints(unit_view: Mapping[str, Any]) -> Mapping[str, Any]:
     authority = unit_view.get("authority") or {}

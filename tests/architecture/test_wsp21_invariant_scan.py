@@ -792,6 +792,10 @@ OUTBOUND_ALLOWLIST = {
     Path("src/bump_driver/client.py"),
     # Only the type annotation of the test transport and of `KeyedAlerts`' transport argument.
     Path("src/bump_driver/alerts.py"),
+    # Rotation Part 1. The same: only the type annotation of the test transport handed to
+    # `KeyedAlerts`, whose one request is `POST /v1/alerts`.
+    Path("src/rotation_proposer/alerts.py"),
+    Path("src/rotation_decomposer/alerts.py"),
     # ADR-0055 decision 1. The credential-rotation executor PULLS its work: it is a separate
     # program in its own VM, and it reaches the orchestrator only as its WORKER identity. Its
     # reads are the ready queue, a unit, its package revision, history and evidence; its writes

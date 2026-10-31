@@ -53,6 +53,8 @@ class _Rig:
         self.unrecognised: list[Unrecognised] = []
         self.published: list[str] = []
         self.user_agents: set[str] = set()
+        # Every `sync_alerts` call this pass made, as (outcomes, token, state_dir).
+        self.synced: list[tuple[list, str, object]] = []
         # The registry's destinations for the credential; a list differing from the package's
         # is drift. `None` makes the registry unreadable.
         self.registry: list[str] | None = list(DESTINATIONS)
@@ -99,6 +101,8 @@ def rig(tmp_path, monkeypatch):
     monkeypatch.setenv("ORCHESTRATOR_API_URL", "https://sds.example.net")
     monkeypatch.setenv("ORCHESTRATOR_API_CREDENTIAL_KEY_ID", "orchestrator-observer")
     monkeypatch.setenv("ORCHESTRATOR_API_TOKEN", "observer")
+    monkeypatch.setenv("SDS_BRIDGE_ALERT_TOKEN", "sender")
+    monkeypatch.setenv("ROTATION_PROPOSER_STATE_DIR", str(tmp_path / "state"))
 
     lifecycle = FakeLifecycle(tmp_path)
     monkeypatch.setattr(shared, "lifecycle", lifecycle)
@@ -111,6 +115,10 @@ def rig(tmp_path, monkeypatch):
 
         return wrapped
 
+    def synced(outcomes, *, token, state_dir, now):
+        rig.synced.append((list(outcomes), token, state_dir))
+
+    monkeypatch.setattr(cli, "sync_alerts", synced)
     monkeypatch.setattr(cli, "read_due", lambda: (list(rig.due), list(rig.unrecognised)))
     monkeypatch.setattr(cli, "default_mirror_root", lambda program: tmp_path / program)
 
@@ -365,6 +373,7 @@ def test_a_dry_run_needs_no_credential_and_writes_nothing(rig, capsys, monkeypat
         "ORCHESTRATOR_API_URL",
         "ORCHESTRATOR_API_CREDENTIAL_KEY_ID",
         "ORCHESTRATOR_API_TOKEN",
+        "SDS_BRIDGE_ALERT_TOKEN",
     ):
         monkeypatch.delenv(name)
     before = rig.package_yaml.read_text()
@@ -380,6 +389,7 @@ def test_a_dry_run_needs_no_credential_and_writes_nothing(rig, capsys, monkeypat
     [
         ("ROTATION_PROPOSER_CHANGE_MANAGER_TOKEN", ""),
         ("ORCHESTRATOR_API_TOKEN", ""),
+        ("SDS_BRIDGE_ALERT_TOKEN", ""),
         # The route admits SYSTEM too, and `recorded_by` is permanent.
         ("ORCHESTRATOR_API_CREDENTIAL_KEY_ID", "orchestrator-system"),
     ],
@@ -722,3 +732,40 @@ def test_a_malformed_row_is_that_credential_s_finding_and_the_pass_goes_on(rig, 
     out = capsys.readouterr().out
     assert f"{GENERATED}  error" in out and "the registry:" in out
     assert f"{CREDENTIAL}  would-advance" in out
+
+
+def test_a_writing_pass_syncs_its_outcomes_with_the_sender_token(rig, tmp_path) -> None:
+    assert run(["--submit"]) == EXIT_OK
+    [(outcomes, token, state_dir)] = rig.synced
+    assert [o.status for o in outcomes] == ["revised"]
+    assert token == "sender"
+    assert state_dir == tmp_path / "state"
+
+
+def test_a_dry_run_sends_nothing(rig) -> None:
+    assert run([]) == EXIT_OK
+    assert rig.synced == []
+
+
+def test_an_unusable_pass_syncs_nothing(rig, monkeypatch) -> None:
+    def refuse():
+        raise FindingsError("infraops could not say")
+
+    monkeypatch.setattr(cli, "read_due", refuse)
+    assert run(["--submit"]) == EXIT_UNUSABLE
+    assert rig.synced == []
+
+
+def test_a_change_manager_that_cannot_list_records_syncs_nothing(rig, monkeypatch) -> None:
+    monkeypatch.setattr(rig.estate, "handler", lambda request: httpx.Response(503))
+    assert run(["--submit"]) == EXIT_UNUSABLE
+    assert rig.synced == []
+
+
+@pytest.mark.parametrize("unrecognised", [False, True], ids=["clean", "findings"])
+def test_a_sync_failure_keeps_the_exit_code(rig, monkeypatch, capsys, unrecognised) -> None:
+    if unrecognised:
+        rig.unrecognised = [Unrecognised(CREDENTIAL, "weird-check")]
+    monkeypatch.setattr(cli, "sync_alerts", lambda *args, **kwargs: "alert-hub said no")
+    assert run(["--submit"]) == (EXIT_FINDINGS if unrecognised else EXIT_OK)
+    assert "alert-hub said no" in capsys.readouterr().err

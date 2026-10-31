@@ -38,8 +38,12 @@
 #      cannot read, a cause that could not be filed (nothing revised), a refused proposal, a
 #      record stranded by a newer revision, or a revision committed and not published.
 #
+# A WRITING PASS TELLS A PERSON through alert-hub (`rotation_proposer/alerts.py`): each finding, and
+# an approval wait older than 48 hours. A failed send prints to stderr and never changes the exit
+# code; a pass that exits 2 sends nothing, so every alert stays as it was.
+#
 # BARE INVOCATION IS A DRY RUN, and it needs no credential at all: it reads infraops and the
-# checkout and writes nothing. `--submit` is never supplied by this wrapper.
+# checkout and writes nothing and sends nothing. `--submit` is never supplied by this wrapper.
 #
 # Usage:
 #   scripts/run-rotation-proposer.sh              # dry run: reports, writes nothing
@@ -52,6 +56,11 @@ CHANGE_MANAGER_PROPOSE_UUID="${ROTATION_PROPOSER_BWS_UUID:-acccb346-4baa-43ec-a1
 
 # The orchestrator's OBSERVER bearer, whose entire write surface is `POST /api/v1/observations`.
 OBSERVER_BEARER_UUID="${ROTATION_PROPOSER_OBSERVER_BWS_UUID:-f793576f-e9aa-4f9d-8089-b4a000b9e2d5}"
+
+# The `sds-bridge` sender's alert-hub token (rotation Part 1), BWS `ALERT_HUB_SENDER_TOKEN_SDS_BRIDGE`
+# in `SDS Operator`, listed in `.bws-secrets.toml`. Read only by a writing pass, with the narrow
+# identity: a dry run sends nothing, so it needs no token.
+SDS_BRIDGE_ALERT_UUID="${ROTATION_PROPOSER_ALERT_BWS_UUID:-b415d03b-f92d-46b1-8a9d-b4f10103df49}"
 
 # NO READ-SCOPED BEARER, unlike run-bump-proposer.sh. That lane's dry run reads change-manager's
 # landing policy; this one reads no service at all, so fetching a credential for it would be a
@@ -117,6 +126,14 @@ if [ "$NEEDS_CREDENTIAL" -eq 1 ]; then
     echo "FATAL: could not read the orchestrator observer bearer from BWS (narrow)" >&2
     exit 1
   fi
+
+  SDS_BRIDGE_ALERT_TOKEN="$(sds_bws_value "$SDS_BRIDGE_ALERT_UUID" "$SDS_IDENTITY")"
+  export SDS_BRIDGE_ALERT_TOKEN
+  if [ -z "${SDS_BRIDGE_ALERT_TOKEN:-}" ]; then
+    echo "FATAL: could not read the sds-bridge alert sender token from BWS (narrow)" >&2
+    exit 1
+  fi
+  unset BROAD_IDENTITY SDS_IDENTITY
 fi
 
 if [ ! -x "$REPO_ROOT/.venv/bin/rotation-proposer" ]; then

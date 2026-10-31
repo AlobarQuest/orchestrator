@@ -74,6 +74,8 @@ TABLE: dict[str, Row] = {
         "__future__",
         "collections",
         "dataclasses",
+        # `FirstSightings` stores when a key was first seen.
+        "datetime",
         "estate_clients",
         "hashlib",
         "httpx",
@@ -257,12 +259,19 @@ TABLE: dict[str, Row] = {
     # executor's light modules, never a provider.
     "rotation_decomposer": _row(
         "__future__",
+        # Rotation Part 1: tells a person through the shared alert-hub client, which owns the only
+        # request it can send (`POST /v1/alerts`). `httpx` already serves `client.py`; `alerts.py`
+        # uses it only to annotate the test transport, and `datetime` and `pathlib` carry the wait
+        # clock and the state directory.
+        "alert_hub_client",
         "argparse",
         "collections",
         "dataclasses",
+        "datetime",
         "estate_clients",
         "httpx",
         "os",
+        "pathlib",
         "re",
         "rotation_worker",
         "sys",
@@ -477,6 +486,10 @@ TABLE: dict[str, Row] = {
     ),
     "rotation_proposer": _row(
         "__future__",
+        # Rotation Part 1: tells a person through the shared alert-hub client, which owns the only
+        # request it can send (`POST /v1/alerts`). `httpx` is only the annotation of the test
+        # transport `alerts.py` hands that client.
+        "alert_hub_client",
         "argparse",
         "bump_proposer",
         # `collections.abc.Callable`, for the injectable runner that asks infraops.
@@ -484,6 +497,7 @@ TABLE: dict[str, Row] = {
         "dataclasses",
         # The observation's facts are content-addressed, so an unchanged re-run replays.
         "hashlib",
+        "httpx",
         "json",
         "os",
         "pathlib",

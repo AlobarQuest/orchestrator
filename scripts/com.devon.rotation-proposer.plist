@@ -3,7 +3,7 @@
      scripts/install-rotation-proposer-launchd.sh, which substitutes __REPO_ROOT__ and __HOME__ and
      writes ~/Library/LaunchAgents/com.devon.rotation-proposer.plist.
 
-     No secrets live here. A writing pass fetches its two bearers from BWS at runtime, each under
+     No secrets live here. A writing pass fetches its bearers from BWS at runtime, each under
      its own Keychain identity: the propose-scoped change-manager bearer under the broad one, the
      orchestrator's OBSERVER bearer under the narrow one. Every pass also reads the Healthchecks
      API key under the broad identity, through scripts/sds-deadman.sh; without that identity the

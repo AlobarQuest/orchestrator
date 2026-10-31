@@ -18,8 +18,8 @@ Each pass, started by a systemd timer every five minutes, works every ready unit
    `rotated_by_sds = true` and name the adapter's provider. The registry's destinations, the
    package's `profile_fields.destinations` and the envelope's `destinations` must be equal. The
    plan is the one the approved package's criteria describe, step for step (see "The plan a
-   credential runs"). A refusal claims the unit and fails it with the reason, so it reaches the dead-letter report. A
-   git or network failure leaves the unit for the next pass.
+   credential runs"). A refusal claims the unit and fails it with the reason, so it reaches the dead-letter report and
+   the owning instance raises `rotation-unit-failed` (see "Alerts"). A git or network failure leaves the unit for the next pass.
 2. **It claims and starts the unit, then runs its steps** (`contract.py`). Before each step it
    renews the lease and reads the registry again.
 3. **It files each step's evidence and submits the unit.** A contract refusal fails the unit with
@@ -70,6 +70,52 @@ the Mac, in its Keychain). A send that fails is logged `notify_failed` and tried
 it never fails a unit. A pass that can't read the ledger logs `acts_unread` and sends nothing,
 rather than resolve every open alert. The alerts it has sent are kept in
 `<state_dir>/announced-acts.json`; losing that file leaves an alert open until a person closes it.
+
+## Alerts
+
+Each instance sends alert-hub alerts about its own units only: the VM's units are those whose
+adapter isn't in `KEYCHAIN_ADAPTERS`, the Keychain instance's those that are. `envelope.py` holds a
+copy of the orchestrator's `rotation_claims.KEYCHAIN_ADAPTERS`, which this program may not import,
+and `test_bws_machine_token.py` holds the two equal. Every key below is kept by the pass that
+raises it and resolved by the first pass that no longer finds its cause.
+
+| Key | Raised when | Clears when | Next step |
+| --- | --- | --- | --- |
+| `rotation-act:<dependency id>` | a human act is pending (see "When a rotation waits on you") | the act is recorded or no longer pending | do the act |
+| `rotation-unit-failed:<unit>` | the unit is `failed`, `blocked` or `revision_required`; the message names the credential and its staging key, and only `failed` quotes a failure reason, since the ledger's `last_failure` is the newest move to `failed` | the unit leaves those states | `failed` or `blocked`: read its review page, then requeue it (`POST /work-units/{id}/requeue`, as SYSTEM) while attempts remain, retry on `/review` once they are spent, else cancel; supersede is refused once any unit was claimed (see "If a rotation stalls after host"). `revision_required`: requeue refuses it, a person decides on `/review` |
+| `rotation-unit-review:<unit>` | the unit has been `awaiting_review` over 48 hours | the review is decided | decide it on `/review` |
+| `rotation-unit-waiting:<unit>` | the unit has stayed unmoved past its threshold: 48 hours, or 192 hours for a reader wait | the unit is no longer waiting, whatever kind of pass finds it meanwhile | read the reason in the message, which is the wait's own |
+| `rotation-unit-stuck:<unit>` | a refusal couldn't be claimed to fail the unit, and 48 hours have passed | the unit is no longer waiting, as for `rotation-unit-waiting`; both can be open together | fix what the refusal names |
+| `rotation-heartbeat:<store kind>` | never raised: each finished pass sends it as `resolved`, so an alert-hub schedule hears when passes stop | n/a | if the schedule fires, the timer or the instance is down |
+| `rotation-instance-behind:<store kind>` | `main` holds a commit older than 7 days that touches `src/rotation_worker`, `src/estate_clients` or `src/alert_hub_client` after the revision the instance runs | the instance runs a revision with those commits | reinstall it (see below) |
+
+A unit has two wait clocks, kept in `<state_dir>/wait-since.json`. The ordinary clock runs
+whether the unit is waiting or stuck, so a unit that alternates between the two still comes due.
+Reader waits (a weekly schedule: a scheduled reader still to run, or another rotation mid-overlap)
+run their own clock, `rotation-unit-reader-wait:<unit>`, with the 192-hour threshold, so a healthy
+week on weekly readers can't lend its hours to a later skip. A reader mid-run ends with its run, so
+it takes the ordinary clock, its `unreadable:` form too. So does `Revoke.UNKNOWN`, a revoke that
+can't be looked for, and an inbox that can't be read with nothing staged, because neither raises an
+act.
+
+A pass sights only its own wait's clock, judges overdue by that clock alone, and keeps the other,
+so a wait that alternates between the kinds still comes due on either. A unit still waiting keeps
+its open `rotation-unit-waiting` and `rotation-unit-stuck` alerts on every pass, so neither flips
+on a pass of another kind. A clock neither sighted nor held is forgotten, and an
+alert with it, once the unit is no longer waiting. A clock file that can't be saved holds the alerts
+of every unit still waiting for that pass; the proposer and decomposer hold their waiting keys the
+same way.
+
+A unit this pass couldn't read keeps its alerts and its clock as they were. A failed unit's alert
+omits the staging key's name, and says why, when intent-packages can't be fetched or its package
+can't be read: the alert still goes out. `rotation-instance-behind` is held, never resolved, when
+the mirror lacks the revision the instance runs or can't be read. A failure of the alert sync is
+logged `acts_unread` and never touches a unit or the pass.
+
+**Reinstall rule.** A change to any of the three paths above takes effect on an instance only when
+it is reinstalled at a commit that has it: the VM through `provision.sh`, the Keychain instance
+through `install-rotation-worker-launchd.sh` (see "Install or update it"). An instance that runs an
+older revision raises `rotation-instance-behind` once the change is 7 days old.
 
 ## A person's revoke is seen
 

@@ -13,8 +13,11 @@ import os
 import re
 import subprocess
 from collections.abc import Callable, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final
+
+from rotation_worker.config import REVISION_PATTERN
 
 REPOSITORY_PATTERN: Final = re.compile(r"^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$")
 COMMIT_PATTERN: Final = re.compile(r"^[0-9a-f]{40}$")
@@ -89,6 +92,25 @@ class RepoMirror:
         if status not in (0, 1):
             raise MirrorError(f"{repository}: git merge-base exited {status}")
         return status == 0
+
+    def oldest_change_since(
+        self, repository: str, revision: str, paths: Sequence[str]
+    ) -> datetime | None:
+        """When the oldest commit on `main` after `revision` that touches `paths` was made, or
+        `None` if none did. A revision the mirror lacks raises `MirrorError`."""
+        if not REVISION_PATTERN.fullmatch(revision):
+            raise MirrorError(f"not a revision: {revision!r}")
+        listing = self._git(
+            repository,
+            self._path(repository),
+            "log",
+            "--format=%ct",
+            f"{revision}..{MAIN}",
+            "--",
+            *paths,
+        )
+        times = listing.decode(errors="replace").split()
+        return datetime.fromtimestamp(int(times[-1]), UTC) if times else None
 
     def _clone(self, repository: str, url: str, path: Path) -> None:
         # Clone beside the mirror and rename it into place, so a clone that is interrupted leaves

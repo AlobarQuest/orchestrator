@@ -1,4 +1,4 @@
-"""This program reaches two services through two confined clients it does not own, and nothing else.
+"""This program reaches two services through two confined clients it does not own, and alert-hub.
 
 It reuses `bump_proposer`'s change-manager client (two paths: propose, and list the work source)
 and its orchestrator client (one path: the observation ingest). Reuse is only safe if the reuse is
@@ -37,16 +37,30 @@ def test_the_program_spells_no_service_path_of_its_own() -> None:
 
 
 def test_the_program_imports_no_http_client() -> None:
-    """So nothing can leave this process except through the two confined clients."""
+    """So nothing can leave this process except through the two confined clients and the shared
+    alert-hub client. `alerts.py` alone may `import httpx`, to annotate the test transport it hands
+    that client, and may use no `httpx` attribute but `BaseTransport`."""
     for path in sorted(PROGRAM.rglob("*.py")):
-        for node in ast.walk(ast.parse(path.read_text())):
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
             names = []
             if isinstance(node, ast.Import):
                 names = [alias.name for alias in node.names]
             elif isinstance(node, ast.ImportFrom) and node.module:
                 names = [node.module]
             for name in names:
+                if path.name == "alerts.py" and name == "httpx" and isinstance(node, ast.Import):
+                    continue
                 assert name.split(".")[0] not in {"httpx", "requests", "urllib", "http"}, path
+        if path.name == "alerts.py":
+            used = {
+                node.attr
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Attribute)
+                and isinstance(node.value, ast.Name)
+                and node.value.id == "httpx"
+            }
+            assert used == {"BaseTransport"}
 
 
 @pytest.mark.parametrize(

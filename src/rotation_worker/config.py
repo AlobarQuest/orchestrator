@@ -7,9 +7,9 @@ Everything else it needs (its WORKER bearer) it reads from BWS with that token.
 On the operator machine (`store = "keychain"`, amendment 12) there is no root token: the
 executor's state is in the login Keychain. `work_project_id` is then the Keychain service its
 staging, quarantine and bearer items live under, and `bearer_secret_id` and
-`healthchecks_key_id` are account names under it. It reaches no hosted service, and the one BWS
-secret it reads is its inbox, through an identity of its own whose token is the Keychain item
-`inbox_token_id` names (ADR-0055 amendment 15, increment 3c).
+`healthchecks_key_id` are account names under it. Its one BWS secret is its inbox, through an
+identity of its own whose token is the Keychain item `inbox_token_id` names
+(ADR-0055 amendment 15, increment 3c).
 """
 
 from __future__ import annotations

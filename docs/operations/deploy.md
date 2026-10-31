@@ -124,6 +124,15 @@ condition. Exit 3 means a state it cannot read or will not deploy from. Exit 1 m
 The numbered entries below remain the procedure's record, and the manual fallback when the command
 cannot run. The command adds no step they do not describe.
 
+## Rotation instances
+
+A change under `src/rotation_worker`, `src/estate_clients` or `src/alert_hub_client` does not reach
+the rotation executor by deploying the orchestrator. Reinstall both instances at the merged commit:
+the VM with `scripts/rotation-worker-vm/provision.sh` and the Keychain instance with
+`scripts/install-rotation-worker-launchd.sh`
+(`docs/operations/rotation-executor.md`, "Install or update it"). An instance left behind raises
+`rotation-instance-behind` once the change is 7 days old.
+
 ## Rolling back past the bearer overlap parser
 
 **Rolling back past the image that parses `previous` requires removing `previous` first.** From
