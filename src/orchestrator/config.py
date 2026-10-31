@@ -7,7 +7,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="ORCHESTRATOR_")
     database_url: str
-    # ADR-0046. The three lane switches below default ON and each environment variable is kept
+    # ADR-0046. The lane switches below default ON and each environment variable is kept
     # as an OFF switch. They defaulted off until 2026-09-28, and every one of them was already
     # set true in production by standing decision (dispatch since 2026-08-04). A default that
     # disagrees with the standing decision fails in the wrong direction: a deployment that loses
@@ -66,6 +66,13 @@ class Settings(BaseSettings):
     # Default true since ADR-0046; `ORCHESTRATOR_INERT_LANDING_ENABLED=false` is the off switch.
     # It reads the policy and the credentials the estate landing already needs.
     inert_landing_enabled: bool = True
+    # ADR-0025 amendment 4. Whether the factory may land a standing dependency update on its
+    # known-good recognition and its grant, with no human approval bound to the unit. It governs
+    # that path alone: a landing on a bound approval never reads it.
+    #
+    # Default true, as ADR-0046 sets for every lane; `ORCHESTRATOR_BUMP_MERGE_ENABLED=false` is the
+    # off switch, and such a unit then refuses `merge_policy_path_off`.
+    bump_merge_enabled: bool = True
     dispatch_failure_signature_threshold: int = 3
     dispatch_orchestrator_url: str = "https://sds.alobar.net"
     # How long a human approval gate may go unanswered before the dead-letter view reports it as

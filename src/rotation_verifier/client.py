@@ -1,6 +1,6 @@
-"""The lane's one confined surface: read submitted units and verify them, as VERIFIER.
+"""The lane's one confined surface: read units, file named checks and verify, as VERIFIER.
 
-Three paths and no others, each matched against an anchored pattern with the id's shape spelled
+Four paths and no others, each matched against an anchored pattern with the id's shape spelled
 out, so a prefix, a trailing slash or `.../{id}/anything-else` does not match.
 """
 
@@ -17,6 +17,8 @@ LEDGER = "/api/v1/status-ledger"
 UUID_SHAPE = r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}"
 _UNIT = re.compile(rf"^/api/v1/work-units/{UUID_SHAPE}$")
 _VERIFY = re.compile(rf"^/api/v1/work-units/{UUID_SHAPE}/verify$")
+_NAMED_CHECK = re.compile(rf"^/api/v1/work-units/{UUID_SHAPE}/verifier-evidence/named-check$")
+NOT_CONCLUDED = "named_check_not_concluded"
 USER_AGENT = "rotation-verifier/1 (+AlobarQuest/orchestrator)"
 PENDING_STATES = ("submitted", "verifying")
 TIMEOUT_SECONDS = 30.0
@@ -24,6 +26,10 @@ TIMEOUT_SECONDS = 30.0
 
 class VerifierCallError(RuntimeError):
     """The orchestrator could not be asked, or refused, or answered something unreadable."""
+
+
+class CheckNotConcluded(VerifierCallError):
+    """The check has not finished on the armed head: wait, and file it again next pass."""
 
 
 class ForbiddenEndpointError(VerifierCallError):
@@ -37,7 +43,9 @@ class UnusableEndpointError(RuntimeError):
 def permits(method: str, path: str) -> bool:
     if method == "GET":
         return path == LEDGER or _UNIT.fullmatch(path) is not None
-    return method == "POST" and _VERIFY.fullmatch(path) is not None
+    return method == "POST" and (
+        _VERIFY.fullmatch(path) is not None or _NAMED_CHECK.fullmatch(path) is not None
+    )
 
 
 class VerifierClient:
@@ -102,6 +110,16 @@ class VerifierClient:
             raise VerifierCallError("the orchestrator did not answer with a verification")
         return body
 
+    def named_check(self, unit_id: str, command: dict[str, Any]) -> dict[str, Any]:
+        """File one named check; the orchestrator observes how it concluded. Raises
+        `CheckNotConcluded` while the check is still running."""
+        body = self._json(
+            "POST", f"/api/v1/work-units/{unit_id}/verifier-evidence/named-check", json=command
+        )
+        if not isinstance(body, dict):
+            raise VerifierCallError("the orchestrator did not answer with evidence")
+        return body
+
     def _json(self, method: str, path: str, **kwargs: Any) -> Any:
         try:
             response = self._client.request(method, path, **kwargs)
@@ -113,6 +131,8 @@ class VerifierClient:
             # The status and the refusal's own code only: a rejection body echoes the command.
             code = error_code(response)
             suffix = f" ({code})" if code else ""
+            if code == NOT_CONCLUDED:
+                raise CheckNotConcluded(f"{method} {path}: {code}")
             raise VerifierCallError(f"rejected {method} {path}: {response.status_code}{suffix}")
         try:
             return response.json()

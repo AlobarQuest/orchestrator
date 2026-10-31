@@ -265,6 +265,13 @@ class DecompositionProposalRetainedAcResponse(BaseModel):
     package_acceptance_criterion: PackageAcceptanceCriterionResponse
 
 
+class PolicyNotAppliedResponse(BaseModel):
+    """Why policy left a dependency-update proposal for a person (ADR-0006 amendment 2)."""
+
+    reason: str
+    detail: list[str]
+
+
 class DecompositionProposalResponse(BaseModel):
     id: UUID
     work_package_revision_id: UUID
@@ -278,6 +285,7 @@ class DecompositionProposalResponse(BaseModel):
     decided_at: datetime | None
     decision_reason: str | None
     created_work_unit_ids: dict[str, str] | None
+    policy_not_applied: PolicyNotAppliedResponse | None = None
     proposed_units: list[DecompositionProposalUnitResponse]
     dependencies: list[DecompositionProposalDependencyResponse]
     ac_mappings: list[DecompositionProposalAcMappingResponse]

@@ -659,11 +659,22 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
 - **The factory side asks the same matcher through `factory_breaches`.** The factory merge
   (`pr_merge_admission.py::_hold_term`) refuses a dependency-update unit whose revision's
   `profile_fields` bump breaches a hold (`merge_version_ceiling_exceeded`) or can't be read in a
-  repository with holds (`merge_dependency_bump_unreadable`). The bump proposer skips a held bump
+  repository with holds (`merge_dependency_bump_unreadable`), or, with no bound human approval, in
+  one with a reverted version. The bump proposer skips a held bump
   (`ceiling-exceeded`, no package, no proposal, no alert), and the work carrier refuses a held
   record (`version_ceiling_exceeded`, `dependency_bump_unreadable`), which is a finding in that
   lane. All three read a uv version as a `>=` floor, so a hold on a uv dependency stops every
   factory update of it.
+- **A standing bump lands on the policy path (ADR-0025 amendment 4).** `POST
+  /work-units/{id}/pr-merge` accepts a unit with no bound human approval only when it is a
+  `dependency-update` unit on a standing bump's revision, reach exactly `source_repository`, where
+  the estate answers `inert`, recognised at merge time by dependency-update patterns alone, with
+  the `dependency_updates` grant. `ORCHESTRATOR_BUMP_MERGE_ENABLED=false` stops that path, and a
+  unit it covers then refuses `merge_policy_path_off`. Other terms report beside that code, so a
+  lane reads it as `waiting` only when it is the sole refusal. A landing on a bound approval
+  doesn't read the switch. A policy-path landing writes `authority.human_gate_not_required`
+  (`at: merge`) beside a `merged` record only, and `authority_recognised_by` on
+  `pr-merge-admission` shows what would lift it.
 - **Every merge and propose path is classified** in `tests/architecture/test_hold_paths.py`:
   honours (names the function that calls the matcher), covered by an honouring gate, or not a bump.
   A new `MERGE_EXEMPT_PATHS` entry fails until it is classified. The residuals are in ADR-0028
@@ -690,6 +701,95 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   takes the one bot-authored commit anywhere on the branch. The two agree on every ordinary pull
   request.
 
+### The bump driver (Landing Part 4)
+
+`bump-driver` (`src/bump_driver/`, `scripts/run-bump-driver.sh`, hourly at :50, log
+`~/Library/Logs/bump-driver.log`, Healthchecks check `sds-bump-driver`, an outcome alarm) moves
+standing dependency-update work as SYSTEM with no person acting. Verification stays with the
+`rotation-verifier` lane, as VERIFIER. Check it with `/bin/bash scripts/run-bump-driver.sh --dry-run`.
+
+- **What it reads.** `work` records whose `change_class` is `dependency-update`, in a repository the
+  member record grants `dependency_updates`, whose revision is a standing package's. It reads
+  `approved` records and `resolved` ones, because `work_watcher` retires a record as soon as its
+  units complete, which is before the lane lands them. A unit is touched only if its own envelope is
+  `dependency-update`, names no `rotation_unit` and targets that repository.
+- **Decompose.** A revision with no units and no proposal: `factory decompose --no-execute` against
+  a shallow mirror under `~/Library/Application Support/sds/bump-driver/mirrors/`, posted with key
+  `bump-driver:<revision>`. The mirrors run only git, with hooks off and the token in the
+  environment, and `fresh` refuses unless the tree is clean and HEAD is `origin/main`. The bump's
+  terms come from `enforcement_snapshot.profile_fields`. A proposal a person rejected, sent back or
+  superseded is never proposed over; it is reported and isn't a finding, because a person decided.
+- **`factory` holds no credential but the Brain keys.** Its conformance claim runs `code-standards`
+  inside the mirror with its whole environment, which spawns no linter only because the tree is
+  clean. So its environment is an allowlist (`cli.py::_generator_environment`, keys pinned by
+  `test_decompose.py`). The lane hands it what those credentials would fetch: `--intake-file`, the
+  intake it read through its own client, and `--assume-checkout-current`, resting on `fresh`'s proof.
+- **Dispatch.** One run per repository: a `claimed` or `executing` unit holds it, and so does a run
+  dispatched but not yet claimed (the unit is still `ready`, and history says so), found across
+  every ready unit before anything starts. A record or ready unit that can't be read holds its
+  repository for that pass, since it may be the one with the run. Such a run still unclaimed after `UNCLAIMED_HOURS` (2)
+  raises `bump-run-unclaimed` and keeps holding: the lane never dispatches it again, and
+  `deploy_orchestrator.py` refuses on the same signal. Look for the run in the repository's Actions,
+  then dispatch the unit again or retire it (fail it, then cancel it). The key is
+  `bump-driver:dispatch:<unit>:<version>`, with `:<n>` added once `n` earlier dispatch records didn't
+  start a run: such a record holds its key and moves no version, so reusing the key would replay it
+  for ever. So a `dispatch.failed` is asked again every pass until its failure-signature breaker
+  opens. `dispatch_disabled` and `outside_change_window` are `waiting`. Each pass while the switch
+  is off writes one skipped record per ready unit.
+- **Merge.** A completed unit whose bound pull request isn't closed unmerged. The lane reads
+  `pr-merge-admission` first, because the act puts its refusals in a message:
+  `merge_policy_path_off` or `merge_repository_reverting`, alone or together, is `waiting`, and any
+  other refusal is reported. A pull request
+  already merged is still asked, so a landing the orchestrator lost track of records
+  `already_merged`, but only while the unit's terms hold: admission runs before that branch, so a
+  unit that doesn't qualify writes no row, and the lane says nothing about it.
+  The act then reads the pull request itself (ADR-0025 amendment 4): the unit's runner branch and
+  head, the `SDS-Unit:` trailer, a complete file list that touches no workflow or gate file and
+  changes the package's manifest. A failure is a named `pr_merge_*` refusal with no record, alerted
+  as `bump-act-refused`. The pull request stays open for a person, who reads it and lands it (the
+  next pass records `already_merged`) or closes it.
+- **Alerts** (sender `sds-bridge`, memory in the state directory's `alerts.json`):
+  `bump-unit-failed:<repo>:<unit>` for a unit in `revision_required` (a `failed` unit already holds
+  `work_watcher`'s `dependency-unit-failed`), `bump-decompose-refused:<repo>:<revision>` for a
+  generator refusal or a proposal of this lane's policy didn't approve (`policy_not_applied`),
+  `bump-act-refused:<repo>:<unit>` for a refused dispatch or merge, and
+  `bump-run-unclaimed:<repo>:<unit>` above. Each resolves when its subject clears, and is held while
+  its repository's records can't be read. A person's own proposal never alerts.
+- **One acting pass at a time.** It holds an `fcntl` lock on `pass.lock` in the state directory, so a
+  hand-run pass can't reset a mirror under a running `factory`. A second acting pass prints that and
+  exits 0, a finding in neither. `--dry-run` takes no lock.
+- **Nothing requeues a unit.** `revision_required` has a SYSTEM edge back to `ready`, but `requeue`
+  takes only failed or blocked work and no lane drives it, so the alert is the end state and a
+  person decides.
+- **What `factory` needs from the launcher:** intent-packages' venv and this repository's on `PATH`
+  (`factory` shells out to `orchestrator conformance-claim`), project-standards and
+  security-standards on `FACTORY_PYTHONPATH`, and the Brain keys as `CODE_BRAIN_KEY` and
+  `INFRA_BRAIN_KEY`. A
+  `--no-execute` the intent-packages checkout doesn't know is a refusal like any other, so that
+  checkout must be current.
+- **Deploying the orchestrator.** `deploy_orchestrator.py` refuses while a unit is live or a dispatch
+  is unclaimed, and this lane can start one at :50, so deploy away from :50.
+
+#### Stop it
+
+One move stops decompose, dispatch and merge together, with no restart:
+
+```
+launchctl bootout "gui/$(id -u)/com.devon.bump-driver"
+rm ~/Library/LaunchAgents/com.devon.bump-driver.plist
+```
+
+Remove the plist too: `bootout` alone comes back at the next login or reboot. Runs already in flight
+finish and park at `completed`, and nothing lands them while the lane is gone.
+
+The environment switches (`ORCHESTRATOR_BUMP_MERGE_ENABLED=false`,
+`ORCHESTRATOR_DISPATCH_ENABLED=false`) hold across restarts, but they need a restart to apply, and
+a restart must not strand a live run, so a person sets them at a quiet window. `bump_merge_enabled`
+defaults true, so a deploy that drops the variable turns merging back on.
+
+To retire a parked unit, close its pull request: the lane treats a closed, unmerged pull request as
+nothing to do.
+
 ### The landers' outbound surface (Landing Part 1)
 
 - **Each lander's whole outbound surface is one row of `tests/architecture/test_landing_edges.py`**:
@@ -715,15 +815,23 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
 
 ## Automatic reverts (inert repositories)
 
-The inert lander reverts a Dependabot bump it landed when the default branch's own checks fail
-because of that bump, and holds the dependency at the version before it (ADR-0019 amendment 2).
-Repositories that deploy on landing follow "Automatic reverts (deploying repositories)" below.
+The inert lander reverts a bump the SDS landed when the default branch's own checks fail because of
+that bump, and holds the dependency at the version before it (ADR-0019 amendment 2). That covers a
+Dependabot bump it landed and a dependency-update unit the factory merged. Repositories that deploy
+on landing follow "Automatic reverts (deploying repositories)" below.
 
 ### The watch
 
 - **What is watched.** A landing of this lane (`inert_pr_merge.merged` or `.already_merged`) for 48
   hours (`WATCH_HOURS`). A revert landing is never watched, and a landing with no record must be the
   update bot's, so a fork's upstream sync is never watched.
+- **The factory's merges.** Also watched, for the same 48 hours: a `unit_pr_merge` row with status
+  `merged`, of a unit that is a dependency update by both its envelope's class and its revision's
+  profile, whose event says the estate answered `inert` at the merge (`landing_inert`).
+  `already_merged` is someone else's landing and isn't watched. Nor is any other unit, so an
+  `app-change` is never reverted automatically, nor a pull request a record names as its revert, a
+  merge that redeployed, or a merge made before `landing_inert` was recorded. Nothing is read to
+  select them, and no pull request is read to judge one.
 - **Which jobs.** A job is a (workflow, job) pair. It counts when it passed at the pull request's
   head and its workflow has a `push` run at the merge commit. A `pull_request`-only workflow, or a
   job absent from the push run, is never watched.
@@ -758,7 +866,10 @@ on the parent, and a job still cancelled after the rerun are not the bump's: the
 The revert is the exact inverse of the squash merge, built through the git data API on branch
 `sds-revert/pr-<N>` (title capped at 256 characters). Inert admission lands it only when it is
 recorded, is the exact inverse, has clean checks and a current head. Landing it marks the record
-`revert_landed`.
+`revert_landed`. For a factory merge the inverse is the whole merge, its source fixes included, and
+the original's author doesn't matter. It lands only where the inert policy declares the repository.
+Elsewhere nothing lands it: the lander reports it `revert-stranded` and raises
+`landing-revert-stranded` while it is still open.
 
 **Overlap refusal.** When anything landed on top of the bump touched a path the bump touched, the
 orchestrator records `refused_overlap` and opens nothing. Reverting would remove that work too.
@@ -767,35 +878,53 @@ orchestrator records `refused_overlap` and opens nothing. Reverting would remove
 
 When the revert lands, `services/membership/revert_hold.py::place` inserts a ceiling hold at the
 from-version in the same transaction, with `set_by` `sds-revert` and a `member.changed` event. The
-directory comes from the pull request title, else `/`. A grouped bump gets no hold, because it has
-no single from-version; the record's `hold_outcome` says why a hold was skipped. To lift a hold,
+directory comes from the pull request title, else `/`. A factory merge's dependency, from-version
+and to-version come from its revision's `profile_fields`, its ecosystem from the package id, and its
+directory is `/`, where every form of the generator's commands runs. A grouped bump gets no hold,
+because it has no single from-version; the record's `hold_outcome` says why a hold was skipped. To lift a hold,
 stage a `lift` with `sds-members stage` and confirm it on `/review`
 (`docs/operations/membership.md`, "Automatic holds"). Nothing else removes it.
 
 ### The never-again rule
 
 Both landers refuse the exact reverted version for good (`landing_version_reverted`), whether or not
-a hold was placed, and even after the hold is lifted. To take that version anyway, land it by hand;
-the SDS does not watch a landing it did not make.
+a hold was placed, and even after the hold is lifted. So does the factory merge
+(`merge_version_reverted`), for a revert of either origin: exactly for npm and pip, and for uv on any
+floor at or below a reverted version, since `uv add '<pkg>>=<version>'` can resolve to it. To take
+that version anyway, land it by hand; the SDS does not watch a landing it did not make.
+
+The bump proposer, the carrier and the bump driver don't read reverted versions. They are covered
+by the factory merge, so a reverted version that gets as far as a package spends one run, is refused
+at the merge, and raises `bump-act-refused`. While a revert is in progress the factory merge also
+waits (`merge_repository_reverting`), and the driver reports it `waiting` with no alert.
+
+A unit whose merge was reverted stays `completed` with its one `unit_pr_merge` row. Its record stays
+as `work_watcher` left it, the driver's merge step replays and says nothing, and nothing re-runs it.
+A later package for the same dependency is stopped by the hold.
 
 ### Alerts
 
 The inert lander raises these through alert-hub (`lander/held_alerts.py`, memory in
 `revert-alerts.json`). Each fires once. `landing-reverted` stays open while the hold is in force and
 resolves when it is lifted. The refused, failed and stranded alerts stay open until a person closes
-them, and their lander findings print on every pass while the record stands. A pass that cannot
-read the watch holds every remembered key.
+them, and their lander findings print on every pass while the record stands. A record that names no dependency says no hold was placed and no
+version is barred. A pass that cannot read the watch holds every remembered key.
 
 | Key | Meaning | What you do |
 |---|---|---|
 | `landing-reverted:<repo>:<pr>` | The revert landed. The alert names the failed jobs, the revert pull request and the hold, and says the version stays refused after the hold is lifted. | Read it. Lift the hold when the dependency is safe to take again; land the reverted version itself only by hand. |
 | `landing-revert-refused:<repo>:<pr>` | Overlap: something landed on top of the bump. The default branch may still be broken. | Revert by hand. |
 | `landing-revert-failed:<repo>:<pr>` | The revert could not be opened. | Read the detail; revert by hand or fix the cause. |
-| `landing-revert-stranded:<repo>:<pr>` | The revert pull request closed without landing. This repository's Dependabot bumps wait (`landing_repository_reverting`) until it is reopened and lands. | Reopen it. Reverting by hand does not release the bumps yet. |
+| `landing-revert-stranded:<repo>:<pr>` | The revert pull request closed without landing, or it is open in a repository outside the lane's population, so nothing lands it. This repository's bumps wait (`landing_repository_reverting`, `merge_repository_reverting`). | Reopen it, or land it by hand if it is outside the population. Reverting by hand does not release the bumps yet. |
 
 ### Known gaps
 
 - A grouped bump gets no hold, so only the never-again rule stops it returning.
+- A uv factory merge records its floor, not the version the resolver landed. While the hold stands,
+  every version above the from-version is refused. After it is lifted, the never-again rule knows
+  only the floor, so a newer version that was what actually broke can land again.
+- A dependency-update unit whose revision names no readable bump is still reverted, with no hold
+  and no never-again entry; the record's detail says so.
 - A `refused_overlap` or `revert_failed` record stays in the watch, and its alert stays open, until a
   person closes the alert; no act clears the record yet.
 - A stranded revert has no clearing act either. Its record keeps the repository's Dependabot bumps

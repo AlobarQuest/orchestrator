@@ -13,6 +13,7 @@ reconciled against reality before it is written down as a refusal.
 from __future__ import annotations
 
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
@@ -23,6 +24,7 @@ from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import Event, UnitPrMerge, WorkUnit
 from orchestrator.services.landing.pr_merge import (
+    ChangedFile,
     GitHubGatewayError,
     MergeCommand,
     MergeOutcome,
@@ -50,6 +52,19 @@ HUMAN = ActorContext("devon", ActorRole.HUMAN)
 LANDED_COMMIT = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 
+def _the_runners(
+    state: PullRequestState, unit: WorkUnit, repository: str, head: str
+) -> PullRequestState:
+    return replace(
+        state,
+        head_ref=f"sds/{str(unit.id)[:8]}-attempt-{unit.attempt_count}",
+        head_repository=repository,
+        head_sha=head,
+        body=f"## Factory Runner Evidence\n\nSDS-Unit: {unit.id}\nSDS-Package-Rev: 1\n",
+        changed_files=2,
+    )
+
+
 class FakeGateway:
     """Records every question asked of it, so a test can assert what was NOT asked."""
 
@@ -61,6 +76,8 @@ class FakeGateway:
         merge_error: GitHubGatewayError | None = None,
         read_error: GitHubGatewayError | None = None,
         state_after_refusal: PullRequestState | None = None,
+        files: tuple[ChangedFile, ...] = (),
+        files_error: GitHubGatewayError | None = None,
     ) -> None:
         self._state = state or PullRequestState(
             base_ref="main", default_branch="main", open=True, landed=False
@@ -71,7 +88,10 @@ class FakeGateway:
         self._merge_error = merge_error
         self._read_error = read_error
         self._state_after_refusal = state_after_refusal
+        self._files = files
+        self._files_error = files_error
         self.reads: list[tuple[str, int]] = []
+        self.file_reads: list[tuple[str, int]] = []
         self.merges: list[tuple[str, int, str]] = []
 
     def read_pull_request(self, *, repository: str, number: int) -> PullRequestState:
@@ -81,6 +101,17 @@ class FakeGateway:
         if self.merges and self._state_after_refusal is not None:
             return self._state_after_refusal
         return self._state
+
+    def serve_the_runners_pull_request(self, unit: WorkUnit, repository: str, head: str) -> None:
+        """What a clean bump's pull request reads as, for a test about something else."""
+        self._state = _the_runners(self._state, unit, repository, head)
+        self._files = (ChangedFile("pyproject.toml"), ChangedFile("uv.lock"))
+
+    def pull_request_files(self, *, repository: str, number: int) -> tuple[ChangedFile, ...]:
+        self.file_reads.append((repository, number))
+        if self._files_error is not None:
+            raise self._files_error
+        return self._files
 
     def submit_merge(self, *, repository: str, number: int, head_sha: str) -> MergeOutcome:
         self.merges.append((repository, number, head_sha))

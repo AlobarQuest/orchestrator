@@ -28,6 +28,7 @@ from orchestrator.api.schemas.lifecycle import (
     UnitResponse,
     WorkUnitDetailResponse,
 )
+from orchestrator.api.schemas.verifier import VerifiableUnitResponse
 from orchestrator.config import Settings
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
@@ -49,6 +50,7 @@ from orchestrator.services.lifecycle.lifecycle import (
 )
 from orchestrator.services.lifecycle.pr_bindings import arm_verification_head, upsert_pr_binding
 from orchestrator.services.lifecycle.rotation_claims import RotationExecutors
+from orchestrator.services.verifier.verifier_evidence import named_check_inputs
 
 router = APIRouter(prefix="/api/v1", responses=ERROR_RESPONSES)
 
@@ -330,12 +332,15 @@ def cost_actuals(
     )
 
 
-@router.get("/work-units/{unit_id}", response_model=WorkUnitDetailResponse)
+@router.get("/work-units/{unit_id}", response_model=VerifiableUnitResponse)
 def work_unit(unit_id: UUID, _actor: ActorDep, session: SessionDep) -> object:
     unit = session.get(WorkUnit, unit_id)
     if unit is None:
         raise DomainError("work_unit_not_found", "work unit does not exist", None)
-    return unit
+    return {
+        **WorkUnitDetailResponse.model_validate(unit).model_dump(),
+        **named_check_inputs(session, unit.id),
+    }
 
 
 @router.get("/work-units/{unit_id}/history", response_model=list[EventResponse])

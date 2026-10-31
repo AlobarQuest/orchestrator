@@ -12,6 +12,9 @@
 #   2  something was found: a unit went to a person.
 #   3  a unit could not be read or verified, so the answer is missing rather than clean.
 #
+# A dependency-bump unit is verified too: the lane files the repository's required checks as
+# named-check evidence, and reads those from branch protection with the operator's own `gh` login.
+#
 # Usage:
 #   scripts/run-rotation-verifier.sh [--dry-run]
 # Install as a scheduled job with:
@@ -63,6 +66,14 @@ export ORCHESTRATOR_API_URL ORCHESTRATOR_API_CREDENTIAL_KEY_ID ORCHESTRATOR_API_
 if [ -z "$ORCHESTRATOR_API_TOKEN" ]; then
   echo "FATAL: could not read the verifier bearer from BWS" >&2
   exit 1
+fi
+
+# THE GITHUB CREDENTIAL HAS NO BWS RECORD, exactly as the landing lanes' does not: it is the
+# operator's `gh` login, read here and never printed. It only reads branch protection, so a
+# missing one fails closed on bump units alone (they are refused) and leaves rotation units be.
+if [ -z "${ROTATION_VERIFIER_GITHUB_TOKEN:-}" ]; then
+  ROTATION_VERIFIER_GITHUB_TOKEN="$(gh auth token 2>/dev/null || true)"
+  export ROTATION_VERIFIER_GITHUB_TOKEN
 fi
 
 "$REPO_ROOT/.venv/bin/rotation-verifier" "$@"

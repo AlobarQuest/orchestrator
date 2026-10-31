@@ -1,4 +1,4 @@
-"""Did a Dependabot bump a lane landed break the default branch, or production? Landing Part 3.
+"""Did a bump the SDS landed break the default branch, or production? Landing Part 3.
 
 A pure judgment over what the gateway reads and, for a repository whose landing redeploys, what the
 store says production served. It decides; the caller acts. Five answers:
@@ -106,9 +106,9 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
-from typing import Final
+from typing import Any, Final
 
-from orchestrator.persistence.models import EstatePrMerge, LandingRevert
+from orchestrator.persistence.models import LandingRevert
 from orchestrator.services.landing.interfaces import (
     EstateGatewayError,
     Job,
@@ -156,6 +156,25 @@ _NOT_RUN: Final = frozenset({"skipped", "neutral"})  # not-a-vocabulary: GitHub'
 _FAILED: Final = frozenset({"failure", "timed_out", _CANCELLED})  # not-a-vocabulary: GitHub's
 
 _Key = tuple[str, str]  # (workflow name, job name)
+
+
+@dataclass(frozen=True)
+class Landing:
+    """One watched landing, from either table, with the repository folded.
+
+    `redeploys` is whether the estate lane landed it. `factory` says the factory merged it, and
+    then `factory_bumps` is its `LandingRevert.bumps` rows, None when its revision names none this
+    can read: what a revert records instead of the update bot's list.
+    """
+
+    repository: str
+    pr_number: int
+    head_sha: str
+    merge_commit_sha: str | None
+    created_at: datetime
+    redeploys: bool
+    factory: bool = False
+    factory_bumps: list[dict[str, Any]] | None = None
 
 
 @dataclass(frozen=True)
@@ -242,7 +261,7 @@ def _green_at_head(head_jobs: Iterable[Job]) -> set[_Key]:
 
 def judge(
     gateway: RevertWatchGateway,
-    landing: EstatePrMerge,
+    landing: Landing,
     record: LandingRevert | None,
     production: Production | None = None,
 ) -> Verdict:
@@ -396,7 +415,7 @@ def _silent(production: Production) -> list[str]:
 
 
 def _judge_checks(
-    gateway: RevertWatchGateway, landing: EstatePrMerge, record: LandingRevert | None
+    gateway: RevertWatchGateway, landing: Landing, record: LandingRevert | None
 ) -> Verdict:
     """The check rule alone, on a landing with no record or a `rerun_requested` one."""
     merge_sha = landing.merge_commit_sha

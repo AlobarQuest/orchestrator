@@ -11,13 +11,14 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from orchestrator.persistence.models import EstatePrMerge, LandingRevert
+from orchestrator.persistence.models import LandingRevert
 from orchestrator.services.landing.interfaces import EstateGatewayError, Job
 from orchestrator.services.landing.revert_watch import (
     ROLLOUT_SETTLE_MINUTES,
     ROLLOUT_STUCK_HOURS,
     WATCH_HOURS,
     WATCHER_SILENT_HOURS,
+    Landing,
     Production,
     ServedReading,
     Verdict,
@@ -84,13 +85,14 @@ def _pr(name: str, conclusion: str | None = "success", *, workflow: str = "CI") 
     return _job(name, conclusion, run_id=7, workflow=workflow, event="pull_request")
 
 
-def _landing(*, merge_commit_sha: str | None = MERGE) -> EstatePrMerge:
-    return EstatePrMerge(
+def _landing(*, merge_commit_sha: str | None = MERGE) -> Landing:
+    return Landing(
         repository=REPOSITORY,
         pr_number=42,
         head_sha=HEAD,
-        status="merged",
         merge_commit_sha=merge_commit_sha,
+        created_at=datetime(2026, 10, 1, tzinfo=UTC),
+        redeploys=False,
     )
 
 
@@ -652,14 +654,14 @@ class _BrainGateway:
         return self._compares[base][head]
 
 
-def _brain_landing(merge: str = MERGE_79) -> EstatePrMerge:
-    return EstatePrMerge(
+def _brain_landing(merge: str = MERGE_79) -> Landing:
+    return Landing(
         repository=BRAIN,
         pr_number=79,
         head_sha=HEAD,
-        status="merged",
         merge_commit_sha=merge,
         created_at=LANDED_79,
+        redeploys=True,
     )
 
 

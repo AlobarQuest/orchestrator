@@ -100,8 +100,11 @@ Placement rule: global CLAUDE.md §7.
   security-standards' git tree; attribution is permanent, so adding an actor needs a merged commit
   plus rebuild. Never borrow another identity. Detail: `docs/operations/credentials.md`.
 - Envelopes are write-once, and an approved decomposition can be superseded only while none of its
-  units has been claimed or dispatched (ADR-0052): dry-run every unit's commands against the real
-  target repo (twice, clean clone) before work starts. Detail: `docs/operations/driving-a-unit.md`.
+  units has been claimed or dispatched (ADR-0052): dry-run every session-authored unit's commands
+  against the real target repo (twice, clean clone) before work starts. A standing bump's
+  decomposition is built without a local run, by Devon's decision of 2026-10-30 (installing the
+  bumped dependency runs its lifecycle scripts where infrastructure credentials live): a bad
+  envelope fails its attempts and the bump stays held. Detail: `docs/operations/driving-a-unit.md`.
 - `make check` here needs Postgres, `SECURITY_STANDARDS_DIR` and a migrated DB, so it must never
   appear in this repo's authority envelope; the dependency-update profile's verifier is
   `uv lock --check`, and CI's `Quality` job runs the tests.
@@ -409,6 +412,12 @@ Placement rule: global CLAUDE.md §7.
   the landing ledger's `landing` observation, confirmed against `UnitPrBinding.head_sha`, pinned by
   `tests/contract/test_landing_fact_contract.py`. History:
   `docs/history/claude-md-invariants-archive.md` #228.
+- The post-landing watch selects a factory merge from rows alone: status `merged`, a
+  unit that is a dependency update by both class and profile, `landing_inert` on its
+  `pr_merge.merged` event (the estate's answer at the act; an event without it is never watched),
+  and no record naming it as a revert. `UnitPrMerge.repository` is the envelope's
+  spelling and `landing_reverts` is folded, so every join folds it. Detail:
+  `docs/operations/landing-lanes.md`, "Automatic reverts (inert repositories)".
 - Making a UNIQUE constraint's column nullable disables it for NULL rows; use
   `postgresql_nulls_not_distinct=True` and test by writing around the service. History:
   `docs/history/claude-md-invariants-archive.md` #229.
@@ -446,7 +455,7 @@ Placement rule: global CLAUDE.md §7.
   `docs/operations/local-development.md`.
 - The outcome-alarm launchers (`run-fork-sync-watch.sh`, `run-fork-harden.sh`,
   `run-membership-check.sh`, `run-bump-proposer.sh`, `run-change-proposer.sh`,
-  `run-work-carrier.sh`) run through `sds_outcome_begin`/`sds_outcome_end` in
+  `run-work-carrier.sh`, `run-bump-driver.sh`) run through `sds_outcome_begin`/`sds_outcome_end` in
   `scripts/sds-deadman.sh`: `/fail` with the report on every non-zero exit, findings included,
   pinging only on the bridge lanes' acting run. They never arm the dead-man switch, and a launcher
   that doesn't arm it must not contain the arming function's name, which `test_sds_deadman.py`
@@ -564,13 +573,50 @@ Placement rule: global CLAUDE.md §7.
   person-act dependency. It never proposes over a proposal a person rejected, sent back or
   superseded; a package on a pre-derivation plan is refused. Detail:
   `docs/operations/rotation-executor.md`, "The rotation decomposer".
-- A rotation's one click is its package revision approval (ADR-0055 amendment 16). change-manager
-  approves its `work` record by policy, and the orchestrator approves a decomposition SYSTEM
-  proposes, in the proposal's own transaction (`decomposition._policy_approval`), only when the
-  revision is a standing rotation package with a recorded approval, every dependency is
-  unit-on-unit `completed`, and every unit is a rotation unit `human_authority_gate` finds
-  recognised. `register_approved_unit` admits SYSTEM only with `approved_by_policy`. A human's or
-  WORKER's proposal, and every other decomposition, waits for a person on `/review`.
+- `decomposition._policy_approval` approves a decomposition SYSTEM proposes, in the proposal's own
+  transaction, on one of two branches. A rotation's one click is its package revision approval
+  (ADR-0055 amendment 16): change-manager approves its `work` record by policy, and the rotation
+  branch approves only when the revision is a standing rotation package with a recorded approval,
+  every dependency is unit-on-unit `completed`, and every unit is a rotation unit
+  `human_authority_gate` finds recognised. A standing bump needs no click (ADR-0006 amendment 2):
+  the bump branch takes any revision with the `dependency-update` profile or a
+  `policy:dependency-update@` approver, and approves only when that approver and profile both hold,
+  `standing` is true, reach is exactly `source_repository`, there is one unit with no dependencies,
+  every criterion mapped to it and none retained, and attempts within its budget, only
+  dependency-update patterns recognise it, `bump_binding_violations` is empty, its `title` and
+  `outcome` are the generator's (`bump_text_differs`) and the member record grants
+  `dependency_updates`. The binding is a whole-command allowlist of the generator's forms, and
+  covers `allowed_commands` and `verify_commands` too; a generator change means regenerating
+  `dependency_update_proposals.json`. Each bump refusal, and an approval that
+  fails after policy said yes, records `decomposition.policy_not_applied`, served as
+  `policy_not_applied` on the proposal routes. `register_approved_unit` admits SYSTEM only with
+  `approved_by_policy`. A human's or WORKER's proposal, and every other decomposition, waits for a
+  person on `/review`.
+- `pr-merge`'s authority term is a bound human approval, sufficient for every change class and
+  blind to any switch, or the policy path (ADR-0025 amendment 4): a `dependency-update` envelope on
+  a `standing_bump_refusal`-clean revision (the decomposition gate's own conditions, reach exactly
+  `source_repository`), where the estate answers `inert`, recognised at merge time only by
+  dependency-update patterns, with the `dependency_updates` grant, while
+  `ORCHESTRATOR_BUMP_MERGE_ENABLED` is on. Off, a unit the path covers refuses
+  `merge_policy_path_off` in place of `authority_approval_not_bound`; other terms report beside it,
+  so it means waiting only as the sole refusal. The admission answer writes nothing; the act records
+  `authority.human_gate_not_required` beside a `merged` record only. The policy path alone also
+  reads the pull request in `pr_merge._act`, after it is known open and before landing: the head is
+  `sds/<unit8>-attempt-<attempt_count>` in the repository itself and is the adjudicated head, the
+  body has the whole-line `SDS-Unit:` trailer, and `pulls/{n}/files` reads fully (its length equals
+  `changed_files`), neither end of any entry is a workflow or gate file, and a tooling manifest
+  changed. Each failure is a `pr_merge_*` refusal with no `UnitPrMerge` row, so a person can still
+  land it. Detail: `docs/operations/landing-lanes.md`, ADR-0025 amendment 4.
+- The `bump-driver` lane acts as SYSTEM only on a standing `dependency-update` revision in a
+  repository granted `dependency_updates`, and on a unit whose own envelope says so; it reads
+  `resolved` records as well as `approved`, since `work_watcher` retires a record before its unit
+  lands. A dispatch record that started no run holds its idempotency key and moves no version, so
+  the lane's key gains a suffix per such record, or it would replay the skip for ever. Its mirrors
+  run only git and `fresh` proves them clean at `origin/main`, because `factory`'s conformance claim
+  runs `code-standards` in the mirror; `factory`'s environment is an allowlist holding no credential
+  but the Brain keys, so the lane passes `--intake-file` and `--assume-checkout-current`. It never
+  requeues a unit and never re-dispatches a run nobody claimed. Detail: `docs/operations/landing-lanes.md`, "The bump
+  driver".
 - A person's mint reaches a rotation only through its instance's `rotation-inbox` BWS secret or a
   staging secret written by hand: the unit after the mint waits, unclaimed, until one is staged
   (`worker._mint_waits`). The inbox binds a value only while no other rotation on either
@@ -663,6 +709,9 @@ Placement rule: global CLAUDE.md §7.
   shared matcher (`factory_breaches`, `exceeded` or `terms.version_ceiling_term`), or is covered by
   a gate that does, or is not a bump: `tests/architecture/test_hold_paths.py` classifies each and
   fails on an unclassified `MERGE_EXEMPT_PATHS` entry; a new propose path is classified by hand.
+  The factory merge is also the one factory path that reads reverted versions and a revert in
+  progress (`_hold_term`: `merge_version_reverted`, `merge_repository_reverting`); the proposer,
+  carrier and driver are covered by it.
   The matcher's two copies (`services/membership/holds.py`, `sds_members/holds.py`) are held equal
   by `test_hold_agreement.py`. Detail: `docs/operations/landing-lanes.md`, "Holds"; ADR-0028
   amendment 2.

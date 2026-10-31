@@ -39,6 +39,7 @@ from orchestrator.errors import DomainError
 # collection of string LITERALS, and a dict keyed by names is invisible to it. Naming the member
 # here must not cost the registry its view of the vocabulary the member belongs to, so the two are
 # pinned to each other by test instead.
+SOURCE_REPOSITORY: Final = "source_repository"
 LIVE_ESTATE: Final = "live_estate"
 
 # The four places work lands, each with the sentence a human reads at the gate. The description

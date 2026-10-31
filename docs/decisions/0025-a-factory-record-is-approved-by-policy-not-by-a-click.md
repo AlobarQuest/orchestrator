@@ -164,3 +164,82 @@ criteria or the authority fingerprint. The lander selects subjects by `_LANE_CLA
 `src/estate_lander/cli.py`, which holds only `dependency-update`. Factory records, and any class
 the lander doesn't know, are set aside and counted as deferrals by class. The factory lane
 (`pr_merge_admission`) lands them.
+
+## Amendment 4 — 2026-10-30 (Landing Part 4: a standing bump lands without a click)
+
+**Decided by Devon, 2026-10-29 and 2026-10-30** (dependency bumps need no human approval; Landing
+Part 4, decision 1). This graduates amendment 2's two human gates for standing dependency-update
+units whose package stays inside the repository, and leaves them standing for a `live_estate`
+package. ADR-0006 amendment 2 graduates the decomposition decision. This amendment graduates the
+other gate, `pr_merge_admission`'s authority term.
+
+The term now reads "a bound approval, or the policy path". A human approval bound to the unit's
+exact fingerprint stays sufficient for every change class. Without one, the policy path meets the
+term only when all of these hold:
+
+- the envelope's `change_class` is `dependency-update`;
+- the revision's approver starts `policy:dependency-update@`, its profile is `dependency-update`,
+  `profile_fields.standing` is true, and its declared reach is exactly `source_repository`. These
+  are the decomposition gate's own conditions (`bump_policy.standing_bump_refusal`);
+- `human_authority_gate` reports no refusals and only dependency-update known-good patterns
+  recognise the envelope, judged against the policy as loaded at the merge, so a policy narrowed
+  since dispatch refuses;
+- the member record grants `dependency_updates` on the repository;
+- the estate answers `inert` for the repository;
+- `ORCHESTRATOR_BUMP_MERGE_ENABLED` is on.
+
+Every other term is unchanged: a completed unit, verifier-decided criteria from observed evidence,
+no open reconciliation condition, the merge capability, the adjudicated head, the estate's answer
+and the holds. Declared reach and the estate's answer are both asked because they can disagree: a
+`source_repository` package in a repository that redeploys is outside the path, and an approved
+change record doesn't bring it in, so a person's bound approval is needed there too. An inert
+landing's term is as it was.
+
+**The switch governs the policy path alone.** The no-off-switch ruling in `pr_merge.py` said it was
+void if a scheduled caller was proposed, and the bump driver is one. With the switch off, a unit
+the path covers refuses `merge_policy_path_off` in place of `authority_approval_not_bound`, and a
+unit outside the path refuses `authority_approval_not_bound`, since the switch isn't what holds it.
+Other terms still report their own refusals beside it, so the lane reads a unit as waiting only
+when `merge_policy_path_off` is the sole refusal. A landing on a bound approval never asks the
+switch.
+
+**The record.** "Policy lifted the gate" and "a person approved" stay different records: the act
+writes `authority.human_gate_not_required` with `at: merge`, the patterns, the policy version and
+source and the fingerprint, in the transaction that records the merge, only when this call landed
+the pull request (status `merged`), and `authority_approval_id` stays null. The admission answer serves the same names and writes nothing.
+
+**The policy path reads the pull request; a bound approval doesn't.** A green head was all this path
+had, and the agent reaches the checks: its workspace root is writable and `FACTORY_PR_TOKEN` carries
+Workflows write, so one pull request could move the pin and rewrite `Quality` to `exit 0`. The
+post-landing watch keys on failures on `main`, which a neutered workflow never produces. So after
+the pull request is known to be open and before the landing, the act requires, in this order:
+
+- its head branch is `sds/<unit8>-attempt-<attempt>` in the repository itself
+  (`pr_merge_head_not_runner_branch`);
+- its head is the adjudicated head, so the file list describes the tree being landed
+  (`pr_merge_head_not_adjudicated`);
+- its body carries `SDS-Unit: <unit id>` as a whole line (`pr_merge_unit_trailer_missing`). The body
+  rather than the head commit: factory-runner writes both, and the body comes with the read;
+- `GET /pulls/{n}/files` reads completely, every page, and its length equals the pull request's
+  `changed_files` (`pr_merge_file_list_unreadable`, `pr_merge_file_list_truncated`);
+- neither end of any entry is under `.github/`, a `CODEOWNERS` in any directory, or a root makefile
+  of any spelling `make` reads (`pr_merge_gate_file_changed`);
+- a package manifest is changed and not removed, per tooling: `pyproject.toml`, `requirements.txt` or
+  `requirements-dev.txt`, or `package.json`, the generator's pin sites
+  (`pr_merge_manifest_unchanged`).
+
+Each refuses with no record, because a record is permanent and replayed, and would bar the person who
+reads the pull request and lands it. The pull request stays open and the bump driver alerts
+`bump-act-refused`. The App reads the list with `pull_requests`, which its installation holds
+(`docs/operations/credentials.md`, measured 2026-09-02).
+
+**Residuals.** ADR-0006 amendment 2 states them in full, and they apply here: a forged SYSTEM intake
+yields a landed bump, because the merge reads the same caller-attested `approved_by` and `standing`;
+SYSTEM writes a binding with no claim; `bump_binding_violations` binds commands to the forgery's own
+`profile_fields`; and whether the repositories that install themselves stay on this path is an open
+decision. A WORKER bearer can no longer bind an arbitrary green pull request and have it land, but
+the branch and the trailer are text its holder could write.
+
+The manifest move is now observed rather than attested. The agent can still weaken tests: only
+workflow and gate files are refused, so a test file, a script a workflow runs, or the `scripts` and
+tool configuration inside a manifest all land unread.

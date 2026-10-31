@@ -17,6 +17,18 @@ is never judged and never reverted. A landing without a record must be the updat
 and a `dependabot/<ecosystem>/` branch, read from the pull request), so a fork's upstream sync is
 never watched either.
 
+**The factory's own merges are watched beside them (Landing Part 4).** A `unit_pr_merge` row is
+watched when its status is `merged`, its unit is a dependency update by both its envelope's change
+class and its revision's profile, and its event records that the estate answered `inert` at the
+merge (`landing_inert`). So `already_merged`, somebody else's landing, is not; any other unit is
+not, so an app change is never reverted by this watch; a pull request a record names as its revert
+is not, whatever bound it to a unit; and a landing that redeployed is not, since the
+estate lane's pointing back rests on a change record and images a factory merge doesn't carry.
+Such a landing is its record: no pull request is read to decide it is a bump, its bumps come from
+its revision (`terms.revision_bump`), and it goes through the inert lane, whose revert subject
+asks nothing of the original's author. Its directory is the repository root, because every form
+of the generator's commands (`bump_binding`) runs there.
+
 A landing stays in the watch for `WATCH_HOURS` after it landed, and for as long after that as its
 record keeps it there: `revert_opened`, `refused_overlap` and `revert_failed` until they move;
 `revert_landed` while any of its bumps' dependencies is held in the member record (a hold it placed
@@ -87,10 +99,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Final
 
-from sqlalchemy import ColumnElement, and_, exists, func, or_, select
+from sqlalchemy import ColumnElement, SQLColumnExpression, and_, exists, func, or_, select
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
+from orchestrator.kernel.authority import normalize_authority
 from orchestrator.kernel.states import ActorContext
 from orchestrator.persistence.models import (
     EstatePrMerge,
@@ -98,8 +111,13 @@ from orchestrator.persistence.models import (
     LandingRevert,
     Observation,
     ObservationSource,
+    UnitPrMerge,
+    WorkPackage,
+    WorkPackageRevision,
+    WorkUnit,
 )
 from orchestrator.services.execution.target_grant import (
+    DEPENDENCY_UPDATE,
     DEPENDENCY_UPDATES_SERVICE,
     MemberRecordGrants,
 )
@@ -108,7 +126,6 @@ from orchestrator.services.landing.interfaces import (
     ESTATE_LANDING_EVENT_PREFIX,
     UPDATE_BOT_LOGIN,
     EstateGatewayError,
-    EstatePullRequest,
     RevertActGateway,
     gateway_failure_detail,
 )
@@ -132,6 +149,7 @@ from orchestrator.services.landing.revert_watch import (
     FLAKY_RETRY,
     UNREADABLE,
     WATCH_HOURS,
+    Landing,
     Production,
     ServedReading,
     Verdict,
@@ -142,6 +160,7 @@ from orchestrator.services.landing.terms import (
     UpdateBumps,
     ecosystem_of,
     grant_term,
+    revision_bump,
 )
 from orchestrator.services.membership.holds import Bump, directory_of, from_version_of, holding
 from orchestrator.services.membership.members import apps_for, holds_for
@@ -225,6 +244,15 @@ _DEPENDABOT_BRANCH: Final = "dependabot/"
 # act asking again for two days: the merge changed nothing, or a tree too large to read whole.
 _PLAN_FAILS_FOR_GOOD: Final = frozenset({REVERT_TOUCHED_NOTHING, "tree_response_invalid"})
 
+# The status of a merge the factory itself made, and the directory of a bump it installs: every
+# form of the generator's commands runs at the repository root.
+_MERGED: Final = "merged"
+_REPOSITORY_ROOT: Final = "/"
+
+_REVISION_UNREADABLE: Final = (
+    "the unit's revision names no bump this can read: nothing will be held, and the version is "
+    "not barred from landing again"
+)
 _LIST_UNREADABLE: Final = (
     "the update bot's dependency list could not be read: nothing will be held, and the version "
     "is not barred from landing again"
@@ -350,7 +378,7 @@ def landing_watch(
     grants = MemberRecordGrants(session)
     watched: list[WatchedLanding] = []
     for landing in _watched_landings(session):
-        redeploys = _redeploys(session, landing)
+        redeploys = landing.redeploys
         if only_lane is not None and only_lane != (ESTATE_LANE if redeploys else INERT_LANE):
             continue
         record = _record(session, landing.repository, landing.pr_number, lock=False)
@@ -367,12 +395,12 @@ def landing_watch(
         elif not lane.enabled:
             verdict = Verdict(UNREADABLE, (), None, LANDING_REVERT_LANE_OFF)
         elif record is None:
-            pull = _bump_pull(lane.gateway, landing)
-            if pull is None:
+            subject = _watched_subject(lane.gateway, landing)
+            if subject is False:
                 continue
             verdict = (
-                pull
-                if isinstance(pull, Verdict)
+                subject
+                if isinstance(subject, Verdict)
                 else _judgment(session, lane.gateway, landing, None, redeploys)
             )
         else:
@@ -422,7 +450,7 @@ def _act(
     )
     if isinstance(landing, RevertActOutcome):
         return landing
-    redeploys = _redeploys(session, landing)
+    redeploys = landing.redeploys
     lane = estate if redeploys else inert
     _refuse_unless_lane_on(lane.enabled)
     gateway = lane.gateway
@@ -438,11 +466,11 @@ def _act(
         _refuse_unless_pin_confirmed(record, repository, command.pr_number)
         return _revert(session, command, gateway, landing, record, _stored_verdict(record))
     if record is None:
-        pull = _bump_pull(gateway, landing)
-        if pull is None:
+        subject = _watched_subject(gateway, landing)
+        if subject is False:
             raise _not_watched(repository, command.pr_number)
-        if isinstance(pull, Verdict):
-            return _outcome(landing, pull, None, acted=False)
+        if isinstance(subject, Verdict):
+            return _outcome(landing, subject, None, acted=False)
     verdict = _judgment(session, gateway, landing, record, redeploys)
     if verdict.kind == FLAKY_RETRY:
         return _rerun(session, command, gateway, landing, record, verdict)
@@ -494,7 +522,7 @@ def _repoint(
     )
     if isinstance(landing, RevertActOutcome):
         return landing
-    if not _redeploys(session, landing):
+    if not landing.redeploys:
         raise DomainError(
             LANDING_REPOINT_NOT_SERVING,
             f"{repository}#{command.pr_number} landed where landing redeploys nothing",
@@ -690,7 +718,7 @@ def _locked_landing(
     session: Session,
     command: RevertCommand | RepointCommand | RestoreCommand | PinnedCommand,
     lane_on: bool,
-) -> tuple[EstatePrMerge | RevertActOutcome, LandingRevert | None, str]:
+) -> tuple[Landing | RevertActOutcome, LandingRevert | None, str]:
     """The act's common start: the actor, the switch and grant, the repository's lock, a replay of
     a spent key, and the watched landing with its record read under `FOR UPDATE`."""
     authorize_actor(command.actor, _VERB)
@@ -771,7 +799,7 @@ def _rerun(
     session: Session,
     command: RevertCommand,
     gateway: RevertActGateway,
-    landing: EstatePrMerge,
+    landing: Landing,
     record: LandingRevert | None,
     verdict: Verdict,
 ) -> RevertActOutcome:
@@ -843,7 +871,7 @@ def _revert(
     session: Session,
     command: RevertCommand,
     gateway: RevertActGateway,
-    landing: EstatePrMerge,
+    landing: Landing,
     record: LandingRevert,
     verdict: Verdict,
 ) -> RevertActOutcome:
@@ -859,8 +887,12 @@ def _revert(
         pull = gateway.read_pull_request(repository=repository, number=landing.pr_number)
     except EstateGatewayError as error:
         return _outcome(landing, _unreadable(error), record, acted=False)
-    bumps = _bump_rows(UpdateBumps(repository, pull, gateway).bumps, pull.title)
-    notes = [] if bumps is not None else [_LIST_UNREADABLE]
+    if landing.factory:
+        bumps = landing.factory_bumps
+        notes = [] if bumps is not None else [_REVISION_UNREADABLE]
+    else:
+        bumps = _bump_rows(UpdateBumps(repository, pull, gateway).bumps, pull.title)
+        notes = [] if bumps is not None else [_LIST_UNREADABLE]
     try:
         plan = plan_revert(gateway, repository, record.merge_commit_sha, record.parent_sha)
     except EstateGatewayError as error:
@@ -935,22 +967,27 @@ def _bump_rows(bumps: tuple[Bump, ...] | None, title: str) -> list[dict[str, Any
 
 def _watched_landings(
     session: Session, repository: str | None = None, pr_number: int | None = None
-) -> list[EstatePrMerge]:
-    """This lane's landings in the watch, oldest first; see the module docstring."""
-    window = func.now() - timedelta(hours=WATCH_HOURS)
-    is_record = and_(
-        LandingRevert.repository == EstatePrMerge.repository,
-        LandingRevert.pr_number == EstatePrMerge.pr_number,
-    )
-    conditions: list[ColumnElement[bool]] = [
-        Event.action.in_(_LANDED_ACTIONS),
-        ~exists().where(
-            LandingRevert.repository == EstatePrMerge.repository,
-            LandingRevert.revert_pr_number == EstatePrMerge.pr_number,
-        ),
+) -> list[Landing]:
+    """Every landing in the watch, oldest first; see the module docstring."""
+    candidates = [
+        *_lane_landings(session, repository, pr_number),
+        *_factory_landings(session, repository, pr_number),
     ]
+    kept = [landing for landing, recent in candidates if recent or _still_held(session, landing)]
+    return sorted(kept, key=lambda row: (row.created_at, row.repository, row.pr_number))
+
+
+def _in_the_watch(
+    repository: SQLColumnExpression[str],
+    pr_number: SQLColumnExpression[int],
+    landed_at: SQLColumnExpression[datetime],
+) -> tuple[ColumnElement[bool], ColumnElement[bool]]:
+    """Whether a landing is recent, and whether it is a candidate: recent, or a landed revert past
+    its window, which is kept only while its dependency is held."""
+    window = func.now() - timedelta(hours=WATCH_HOURS)
+    is_record = and_(LandingRevert.repository == repository, LandingRevert.pr_number == pr_number)
     recent = or_(
-        EstatePrMerge.created_at >= window,
+        landed_at >= window,
         exists().where(
             is_record,
             or_(
@@ -961,31 +998,131 @@ def _watched_landings(
             ),
         ),
     )
-    # A landed revert past its window is a candidate, kept only while its dependency is held.
-    landed = landed_revert()
+    return recent, or_(recent, exists().where(is_record, landed_revert()))
+
+
+def _lane_landings(
+    session: Session, repository: str | None, pr_number: int | None
+) -> list[tuple[Landing, bool]]:
+    """The landing lanes' candidates, each with whether it is recent."""
+    recent, candidate = _in_the_watch(
+        EstatePrMerge.repository, EstatePrMerge.pr_number, EstatePrMerge.created_at
+    )
+    conditions: list[ColumnElement[bool]] = [
+        Event.action.in_(_LANDED_ACTIONS),
+        ~exists().where(
+            LandingRevert.repository == EstatePrMerge.repository,
+            LandingRevert.revert_pr_number == EstatePrMerge.pr_number,
+        ),
+        candidate,
+    ]
     if repository is not None:
         conditions.append(EstatePrMerge.repository == repository)
     if pr_number is not None:
         conditions.append(EstatePrMerge.pr_number == pr_number)
     rows = session.execute(
-        select(EstatePrMerge, recent.label("recent"))
+        select(EstatePrMerge, Event.action, recent.label("recent"))
         .join(Event, Event.id == EstatePrMerge.event_id)
-        .where(*conditions, or_(recent, exists().where(is_record, landed)))
-        .order_by(EstatePrMerge.created_at, EstatePrMerge.repository, EstatePrMerge.pr_number)
+        .where(*conditions)
     ).all()
-    return [landing for landing, is_recent in rows if is_recent or _still_held(session, landing)]
+    return [
+        (
+            Landing(
+                repository=row.repository,
+                pr_number=row.pr_number,
+                head_sha=row.head_sha,
+                merge_commit_sha=row.merge_commit_sha,
+                created_at=row.created_at,
+                redeploys=action in _SERVED_ACTIONS,
+            ),
+            is_recent,
+        )
+        for row, action, is_recent in rows
+    ]
 
 
-def _redeploys(session: Session, landing: EstatePrMerge) -> bool:
-    """Is this the estate lane's landing, whose landing redeploys? Read from its event's action."""
-    action = session.scalar(select(Event.action).where(Event.id == landing.event_id))
-    return action in _SERVED_ACTIONS
+def _factory_landings(
+    session: Session, repository: str | None, pr_number: int | None
+) -> list[tuple[Landing, bool]]:
+    """The factory's own merges of dependency updates where landing was inert, each with whether
+    it is recent. Rows only: nothing here reads through the App, so the lane filter that follows
+    still comes before every read.
+
+    `unit_pr_merge.repository` is the envelope's spelling, so it is folded here, and every record
+    it joins is folded at its write.
+    """
+    folded = func.lower(UnitPrMerge.repository)
+    recent, candidate = _in_the_watch(folded, UnitPrMerge.pr_number, UnitPrMerge.created_at)
+    conditions: list[ColumnElement[bool]] = [
+        UnitPrMerge.status == _MERGED,
+        ~exists().where(
+            LandingRevert.repository == folded,
+            LandingRevert.revert_pr_number == UnitPrMerge.pr_number,
+        ),
+        Event.payload["landing_inert"].as_boolean().is_(True),
+        candidate,
+    ]
+    if repository is not None:
+        conditions.append(folded == repository)
+    if pr_number is not None:
+        conditions.append(UnitPrMerge.pr_number == pr_number)
+    rows = session.execute(
+        select(UnitPrMerge, WorkUnit, WorkPackageRevision, WorkPackage, recent.label("recent"))
+        .join(Event, Event.id == UnitPrMerge.event_id)
+        .join(WorkUnit, WorkUnit.id == UnitPrMerge.work_unit_id)
+        .join(WorkPackageRevision, WorkPackageRevision.id == WorkUnit.work_package_revision_id)
+        .join(WorkPackage, WorkPackage.id == WorkPackageRevision.work_package_id)
+        .where(*conditions)
+    ).all()
+    landings: list[tuple[Landing, bool]] = []
+    for merge, unit, revision, package, is_recent in rows:
+        change_class = normalize_authority(unit.authority).change_class
+        if change_class != DEPENDENCY_UPDATE or revision.profile != DEPENDENCY_UPDATE:
+            continue
+        folded_name = merge.repository.lower()
+        landings.append(
+            (
+                Landing(
+                    repository=folded_name,
+                    pr_number=merge.pr_number,
+                    head_sha=merge.head_sha,
+                    merge_commit_sha=merge.merge_commit_sha,
+                    created_at=merge.created_at,
+                    redeploys=False,
+                    factory=True,
+                    factory_bumps=_factory_bump_rows(
+                        package.package_id, revision.enforcement_snapshot, folded_name
+                    ),
+                ),
+                is_recent,
+            )
+        )
+    return landings
+
+
+def _factory_bump_rows(
+    package_id: str, snapshot: object, repository: str
+) -> list[dict[str, Any]] | None:
+    """The record's `bumps` for a factory merge: the one dependency its revision names, in the
+    shape `_bump_rows` writes, or None when the revision names none this can read."""
+    named = revision_bump(package_id, snapshot, repository)
+    if named is None:
+        return None
+    return [
+        {
+            "ecosystem": named.bump.ecosystem,
+            "directory": _REPOSITORY_ROOT,
+            "dependency": named.bump.dependency,
+            "from_version": named.from_version,
+            "to_version": named.bump.to_version,
+        }
+    ]
 
 
 def _judgment(
     session: Session,
     gateway: RevertActGateway,
-    landing: EstatePrMerge,
+    landing: Landing,
     record: LandingRevert | None,
     redeploys: bool,
 ) -> Verdict:
@@ -999,7 +1136,7 @@ def _judgment(
     return judge(gateway, landing, record, production)
 
 
-def _production(session: Session, gateway: RevertActGateway, landing: EstatePrMerge) -> Production:
+def _production(session: Session, gateway: RevertActGateway, landing: Landing) -> Production:
     """What the store says production served since the landing redeployed it.
 
     The applications are the member record's apps for the repository on its default branch. The
@@ -1054,7 +1191,7 @@ def _fact(facts: object, key: str) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-def _still_held(session: Session, landing: EstatePrMerge) -> bool:
+def _still_held(session: Session, landing: Landing) -> bool:
     """Is any dependency its landed revert took back out still held in the member record?"""
     record = _record(session, landing.repository, landing.pr_number, lock=False)
     if record is None or not is_landed_revert(record):
@@ -1086,20 +1223,19 @@ def _record(
     return session.scalar(query)
 
 
-def _bump_pull(
-    gateway: RevertActGateway, landing: EstatePrMerge
-) -> EstatePullRequest | Verdict | None:
-    """The landed pull request when the update bot opened it as a bump; None when it is some other
+def _watched_subject(gateway: RevertActGateway, landing: Landing) -> bool | Verdict:
+    """Is this landing, with no record yet, a bump the watch judges? A factory merge is, by its own
+    row, with nothing read. A lane's is when the update bot opened it, so False for any other
     subject (a fork's sync), and an `unreadable` verdict when it could not be read."""
+    if landing.factory:
+        return True
     try:
         pull = gateway.read_pull_request(repository=landing.repository, number=landing.pr_number)
     except EstateGatewayError as error:
         return _unreadable(error)
     if pull.author_login != UPDATE_BOT_LOGIN or not pull.head_ref.startswith(_DEPENDABOT_BRANCH):
-        return None
-    if ecosystem_of(pull.head_ref) is None:
-        return None
-    return pull
+        return False
+    return ecosystem_of(pull.head_ref) is not None
 
 
 def _unreadable(error: EstateGatewayError) -> Verdict:
@@ -1115,7 +1251,7 @@ def _not_watched(repository: str, pr_number: int) -> DomainError:
 
 
 def _entry(
-    landing: EstatePrMerge, record: LandingRevert | None, verdict: Verdict | None, redeploys: bool
+    landing: Landing, record: LandingRevert | None, verdict: Verdict | None, redeploys: bool
 ) -> WatchedLanding:
     """A judged landing reports its verdict; a record past the rerun reports itself."""
     names = verdict.failed_job_names if verdict is not None else ()
@@ -1150,7 +1286,7 @@ def _entry(
 
 
 def _outcome(
-    landing: EstatePrMerge, verdict: Verdict, record: LandingRevert | None, *, acted: bool
+    landing: Landing, verdict: Verdict, record: LandingRevert | None, *, acted: bool
 ) -> RevertActOutcome:
     return RevertActOutcome(
         repository=landing.repository,
@@ -1167,7 +1303,7 @@ def _outcome(
 def _recorded(
     session: Session,
     command: RevertCommand,
-    landing: EstatePrMerge,
+    landing: Landing,
     record: LandingRevert,
     verdict: Verdict,
 ) -> RevertActOutcome:

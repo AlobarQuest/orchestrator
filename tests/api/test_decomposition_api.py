@@ -220,6 +220,27 @@ def test_decomposition_proposal_post_returns_proposed_state_without_creating_uni
         assert session.scalar(select(func.count()).select_from(WorkUnit)) == 0
 
 
+def test_a_bump_s_refusal_is_served_on_the_proposal(db_client: TestClient) -> None:
+    """The bump lane reads why policy left a proposal for a person here: no route serves `events`
+    rows for a proposal, so its own response carries the reason (ADR-0006 amendment 2)."""
+    revision_id = register_intake(db_client, profile="dependency-update")
+    proposal = create_proposal(db_client, revision_id)
+    expected = {"reason": "proposer_not_system", "detail": []}
+    assert proposal["policy_not_applied"] == expected
+
+    detail = db_client.get(f"/api/v1/decomposition-proposals/{proposal['id']}", headers=HUMAN)
+    listed = db_client.get(
+        f"/api/v1/package-intakes/{revision_id}/decomposition-proposals", headers=HUMAN
+    )
+    assert detail.json()["policy_not_applied"] == expected
+    assert listed.json()[0]["policy_not_applied"] == expected
+
+
+def test_other_proposals_carry_no_policy_refusal(db_client: TestClient) -> None:
+    proposal = create_proposal(db_client, register_intake(db_client))
+    assert proposal["policy_not_applied"] is None
+
+
 def test_decomposition_proposal_list_and_get_expose_review_projection(
     db_client: TestClient,
 ) -> None:

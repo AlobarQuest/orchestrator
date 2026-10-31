@@ -69,7 +69,8 @@ checks these, in order:
   see it. `draft` units are reported in the output and do not block, because a draft is inert
   across a restart. A run dispatched and never claimed keeps its unit refusing until it is claimed
   or retired. The run's `factory-runner-pilot.yml` lives in the target repository, so a
-  `gh run list` against `AlobarQuest/factory-runner` does not see it.
+  `gh run list` against `AlobarQuest/factory-runner` does not see it. The `bump-driver` lane starts
+  runs hourly at :50, so deploy away from :50.
 - **The pre-swap revision.** It reads `/health/live` once and records the result as
   `previous_commit`. It refuses if the outgoing image states no revision, and stops (exit 2) if
   production already serves the commit. It refuses a `previous_commit` the checkout does not hold

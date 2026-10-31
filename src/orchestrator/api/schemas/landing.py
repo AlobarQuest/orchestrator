@@ -36,6 +36,12 @@ class PrMergeAdmissionResponse(BaseModel):
     # know. A field a response model does not declare is dropped in silence, and the repo-wide
     # guard that this model answers with every field the service does is what caught the omission.
     change_window_override_applied: bool
+    # What lifted the human requirement, when the policy path met the authority term (ADR-0025
+    # amendment 4). Empty on a bound approval and on any refusal.
+    authority_recognised_by: list[str]
+    authority_policy_version: int | None
+    authority_policy_source: str | None
+    landing_inert: bool
 
 
 class PrMergeCommandModel(CommandBase):

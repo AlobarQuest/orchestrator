@@ -53,6 +53,7 @@ from orchestrator.services.intake.follow_ups import mint_due_follow_ups
 from orchestrator.services.intake.intake_reads import (
     acceptance_criteria_by_id,
     intake_authority,
+    policy_refusals,
     proposal_children,
     revision_acceptance_criteria,
 )
@@ -493,7 +494,9 @@ def _proposal_payloads(
 ) -> dict[UUID, dict[str, object]]:
     if not proposals:
         return {}
-    children = proposal_children(session, tuple(proposal.id for proposal in proposals))
+    proposal_ids = tuple(proposal.id for proposal in proposals)
+    children = proposal_children(session, proposal_ids)
+    refusals = policy_refusals(session, proposal_ids)
     units_by_proposal = {
         proposal_id: [_proposal_unit_payload(unit) for unit in units]
         for proposal_id, units in children.units.items()
@@ -534,6 +537,7 @@ def _proposal_payloads(
             "decided_at": proposal.decided_at,
             "decision_reason": proposal.decision_reason,
             "created_work_unit_ids": proposal.created_work_unit_ids,
+            "policy_not_applied": refusals.get(proposal.id),
             "proposed_units": units_by_proposal.get(proposal.id, []),
             "dependencies": dependencies_by_proposal.get(proposal.id, []),
             "ac_mappings": [

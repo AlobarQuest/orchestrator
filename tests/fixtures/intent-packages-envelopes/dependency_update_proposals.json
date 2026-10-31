@@ -1,0 +1,310 @@
+[
+  {
+    "authority": {
+      "budgets": {
+        "max_attempts": 3,
+        "max_llm_calls": 360
+      },
+      "capabilities": {
+        "command.run": "allowed",
+        "github.pr.create": "allowed",
+        "github.pr.merge": "allowed",
+        "orchestrator.claim": "allowed",
+        "orchestrator.evidence.write": "allowed",
+        "repo.edit": "allowed",
+        "repo.read": "allowed"
+      },
+      "change_class": "dependency-update",
+      "conformance": {
+        "accepted_standards": [],
+        "standards_touched": [
+          "project"
+        ],
+        "status": "green"
+      },
+      "constraints": {
+        "allowed_commands": [
+          "uv add 'sqlalchemy>=2.1.6'",
+          "uv lock --check"
+        ],
+        "mutation_commands": [
+          "uv add 'sqlalchemy>=2.1.6'"
+        ],
+        "target_repository": "AlobarQuest/orchestrator",
+        "verify_commands": [
+          "uv lock --check"
+        ]
+      }
+    },
+    "outcome": "AlobarQuest/orchestrator receives a PR that moves sqlalchemy 2.0.54 -> 2.1.6; its named check passes on the PR head.",
+    "package_id": "orchestrator-uv-sqlalchemy",
+    "profile_fields": {
+      "from_version": "2.0.54",
+      "package": "sqlalchemy",
+      "standing": true,
+      "target_repo": "AlobarQuest/orchestrator",
+      "to_version": "2.1.6"
+    },
+    "retained_acs": [],
+    "title": "Update sqlalchemy to 2.1.6 in AlobarQuest/orchestrator"
+  },
+  {
+    "authority": {
+      "budgets": {
+        "max_attempts": 3,
+        "max_llm_calls": 360
+      },
+      "capabilities": {
+        "command.run": "allowed",
+        "github.pr.create": "allowed",
+        "github.pr.merge": "allowed",
+        "orchestrator.claim": "allowed",
+        "orchestrator.evidence.write": "allowed",
+        "repo.edit": "allowed",
+        "repo.read": "allowed"
+      },
+      "change_class": "dependency-update",
+      "conformance": {
+        "accepted_standards": [],
+        "standards_touched": [
+          "project"
+        ],
+        "status": "green"
+      },
+      "constraints": {
+        "allowed_commands": [
+          "uv add --dev 'httpx2>=2.16.0'",
+          "uv lock --check"
+        ],
+        "mutation_commands": [
+          "uv add --dev 'httpx2>=2.16.0'"
+        ],
+        "target_repository": "AlobarQuest/orchestrator",
+        "verify_commands": [
+          "uv lock --check"
+        ]
+      }
+    },
+    "outcome": "AlobarQuest/orchestrator receives a PR that moves httpx2 2.13.1 -> 2.16.0; its named check passes on the PR head.",
+    "package_id": "orchestrator-uv-httpx2",
+    "profile_fields": {
+      "from_version": "2.13.1",
+      "package": "httpx2",
+      "standing": true,
+      "target_repo": "AlobarQuest/orchestrator",
+      "to_version": "2.16.0"
+    },
+    "retained_acs": [],
+    "title": "Update httpx2 to 2.16.0 in AlobarQuest/orchestrator"
+  },
+  {
+    "authority": {
+      "budgets": {
+        "max_attempts": 3,
+        "max_llm_calls": 360
+      },
+      "capabilities": {
+        "command.run": "allowed",
+        "github.pr.create": "allowed",
+        "github.pr.merge": "allowed",
+        "orchestrator.claim": "allowed",
+        "orchestrator.evidence.write": "allowed",
+        "repo.edit": "allowed",
+        "repo.read": "allowed"
+      },
+      "change_class": "dependency-update",
+      "conformance": {
+        "accepted_standards": [],
+        "standards_touched": [
+          "project"
+        ],
+        "status": "green"
+      },
+      "constraints": {
+        "allowed_commands": [
+          "uv add --frozen --dev 'ruff>=0.15.21'",
+          "uv add --frozen --optional dev 'ruff>=0.15.21'",
+          "uv lock",
+          "uv lock --check"
+        ],
+        "mutation_commands": [
+          "uv add --frozen --dev 'ruff>=0.15.21'",
+          "uv add --frozen --optional dev 'ruff>=0.15.21'",
+          "uv lock"
+        ],
+        "target_repository": "AlobarQuest/orchestrator",
+        "verify_commands": [
+          "uv lock --check"
+        ]
+      }
+    },
+    "outcome": "AlobarQuest/orchestrator receives a PR that moves ruff 0.15.20 -> 0.15.21; its named check passes on the PR head.",
+    "package_id": "orchestrator-uv-ruff",
+    "profile_fields": {
+      "from_version": "0.15.20",
+      "package": "ruff",
+      "standing": true,
+      "target_repo": "AlobarQuest/orchestrator",
+      "to_version": "0.15.21"
+    },
+    "retained_acs": [],
+    "title": "Update ruff to 0.15.21 in AlobarQuest/orchestrator"
+  },
+  {
+    "authority": {
+      "budgets": {
+        "max_attempts": 3,
+        "max_llm_calls": 360
+      },
+      "capabilities": {
+        "command.run": "allowed",
+        "github.pr.create": "allowed",
+        "github.pr.merge": "allowed",
+        "orchestrator.claim": "allowed",
+        "orchestrator.evidence.write": "allowed",
+        "repo.edit": "allowed",
+        "repo.read": "allowed"
+      },
+      "change_class": "dependency-update",
+      "conformance": {
+        "accepted_standards": [],
+        "standards_touched": [
+          "project"
+        ],
+        "status": "green"
+      },
+      "constraints": {
+        "allowed_commands": [
+          "sed -i 's/^flask==3.0.0$/flask==3.0.1/' requirements.txt",
+          "grep -qx 'flask==3.0.1' requirements.txt"
+        ],
+        "mutation_commands": [
+          "sed -i 's/^flask==3.0.0$/flask==3.0.1/' requirements.txt"
+        ],
+        "target_repository": "AlobarQuest/orchestrator",
+        "verify_commands": [
+          "grep -qx 'flask==3.0.1' requirements.txt"
+        ]
+      }
+    },
+    "outcome": "AlobarQuest/orchestrator receives a PR that moves flask 3.0.0 -> 3.0.1; its named check passes on the PR head.",
+    "package_id": "orchestrator-pip-flask",
+    "profile_fields": {
+      "from_version": "3.0.0",
+      "package": "flask",
+      "standing": true,
+      "target_repo": "AlobarQuest/orchestrator",
+      "to_version": "3.0.1"
+    },
+    "retained_acs": [],
+    "title": "Update flask to 3.0.1 in AlobarQuest/orchestrator"
+  },
+  {
+    "authority": {
+      "budgets": {
+        "max_attempts": 3,
+        "max_llm_calls": 360
+      },
+      "capabilities": {
+        "command.run": "allowed",
+        "github.pr.create": "allowed",
+        "github.pr.merge": "allowed",
+        "orchestrator.claim": "allowed",
+        "orchestrator.evidence.write": "allowed",
+        "repo.edit": "allowed",
+        "repo.read": "allowed"
+      },
+      "change_class": "dependency-update",
+      "conformance": {
+        "accepted_standards": [],
+        "standards_touched": [
+          "project"
+        ],
+        "status": "green"
+      },
+      "constraints": {
+        "allowed_commands": [
+          "npm install @types/node@22.2.0 --save-exact",
+          "npm run build",
+          "npm ci",
+          "npx eslint .",
+          "npx prettier --check .",
+          "npm test",
+          "grep -q '\"@types/node\": \"22.2.0\"' package.json"
+        ],
+        "mutation_commands": [
+          "npm install @types/node@22.2.0 --save-exact",
+          "npm run build"
+        ],
+        "target_repository": "AlobarQuest/orchestrator",
+        "verify_commands": [
+          "npm ci",
+          "npx eslint .",
+          "npx prettier --check .",
+          "npm test",
+          "grep -q '\"@types/node\": \"22.2.0\"' package.json"
+        ]
+      }
+    },
+    "outcome": "AlobarQuest/orchestrator receives a PR that moves @types/node 22.1.0 -> 22.2.0; its named check passes on the PR head. Run the repository's own build; it is in your authorized commands, and what it reports is the work. A repository that tracks compiled output also fails its named check when that output is stale.",
+    "package_id": "orchestrator-npm-types-node",
+    "profile_fields": {
+      "from_version": "22.1.0",
+      "package": "@types/node",
+      "standing": true,
+      "target_repo": "AlobarQuest/orchestrator",
+      "to_version": "22.2.0"
+    },
+    "retained_acs": [],
+    "title": "Update @types/node to 22.2.0 in AlobarQuest/orchestrator"
+  },
+  {
+    "authority": {
+      "budgets": {
+        "max_attempts": 3,
+        "max_llm_calls": 360
+      },
+      "capabilities": {
+        "command.run": "allowed",
+        "github.pr.create": "allowed",
+        "github.pr.merge": "allowed",
+        "orchestrator.claim": "allowed",
+        "orchestrator.evidence.write": "allowed",
+        "repo.edit": "allowed",
+        "repo.read": "allowed"
+      },
+      "change_class": "dependency-update",
+      "conformance": {
+        "accepted_standards": [],
+        "standards_touched": [
+          "project"
+        ],
+        "status": "green"
+      },
+      "constraints": {
+        "allowed_commands": [
+          "npm install left-pad@1.3.0 --save-exact",
+          "grep -q '\"left-pad\": \"1.3.0\"' package.json"
+        ],
+        "mutation_commands": [
+          "npm install left-pad@1.3.0 --save-exact"
+        ],
+        "target_repository": "AlobarQuest/orchestrator",
+        "verify_commands": [
+          "grep -q '\"left-pad\": \"1.3.0\"' package.json"
+        ]
+      }
+    },
+    "outcome": "AlobarQuest/orchestrator receives a PR that moves left-pad 1.2.0 -> 1.3.0; its named check passes on the PR head.",
+    "package_id": "orchestrator-npm-left-pad",
+    "profile_fields": {
+      "from_version": "1.2.0",
+      "package": "left-pad",
+      "standing": true,
+      "target_repo": "AlobarQuest/orchestrator",
+      "to_version": "1.3.0"
+    },
+    "retained_acs": [],
+    "title": "Update left-pad to 1.3.0 in AlobarQuest/orchestrator"
+  }
+]

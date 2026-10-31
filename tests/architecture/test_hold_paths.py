@@ -81,6 +81,13 @@ HOLD_PATHS: dict[Path, Honours | CoveredBy | NotABump] = {
     FACTORY_MERGE: Honours(LANDING / "pr_merge_admission.py", "_hold_term"),
     ESTATE_MERGE: Honours(LANDING / "estate_landing_admission.py", "_remote_terms"),
     INERT_MERGE: Honours(LANDING / "inert_landing_admission.py", "_remote_terms"),
+    # Not on the merge guard's list: it opens a pull request and merges nothing, and is here because
+    # it is how a factory merge comes back out (Landing Part 4).
+    LANDING / "revert_act.py": NotABump(
+        "opens the exact inverse of a landed bump, Dependabot's or the factory's, which restores "
+        "the version before it; the revert lands only as `_revert_term`'s subject, and the hold "
+        "follows it"
+    ),
     SRC / "bump_proposer/standing.py": NotABump(
         "publishes a commit of a standing package revision to intent-packages: the revision "
         "describes a bump, and the bump itself lands only through the factory merge"
@@ -100,6 +107,12 @@ HOLD_PATHS: dict[Path, Honours | CoveredBy | NotABump] = {
     # Propose paths: no list names them, so each is named here.
     SRC / "bump_proposer/cli.py": Honours(SRC / "bump_proposer/cli.py", "_held"),
     CARRIER: Honours(SRC / "work_carrier/prepare.py", "held_refusal"),
+    SRC / "bump_driver/cli.py": CoveredBy(
+        (CARRIER, FACTORY_MERGE),
+        "proposes the decomposition of an intake the carrier registered, which it refused had the "
+        "record been held, and starts its unit; what the unit produces lands only through the "
+        "factory merge, whose hold term refuses a held bump",
+    ),
     SRC / "change_proposer/cli.py": CoveredBy(
         (ESTATE_MERGE,),
         "proposes deploy change records for Dependabot pull requests in deploying repositories; "
@@ -264,6 +277,16 @@ def test_the_landing_term_asks_the_matcher() -> None:
     assert function is not None, f"{TERM_MODULE} no longer defines version_ceiling_term"
     assert _called(function, "exceeded"), "version_ceiling_term no longer calls exceeded"
     assert "orchestrator.services.membership.holds.exceeded" in _imported_modules(tree)
+
+
+def test_the_factory_merge_asks_the_never_again_rule() -> None:
+    """The proposer, the carrier and the driver are covered by this gate for a reverted version
+    too: only here does a factory path read what was reverted."""
+    tree = _tree(LANDING / "pr_merge_admission.py")
+    function = _function(tree, "_hold_term")
+    assert function is not None
+    assert _called(function, "reverted_versions")
+    assert _called(function, "factory_brings_reverted")
 
 
 def test_the_honours_check_fires_on_a_path_that_stopped_asking(tmp_path: Path) -> None:

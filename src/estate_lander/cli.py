@@ -110,7 +110,8 @@ _ASK_ABOUT = frozenset({"approved"})
 # lane selects subjects on status alone -- so without this, a factory pull request would become a
 # subject of a lane that asks NOTHING about the things a factory landing rests on: whether the work
 # unit completed, whether its acceptance criteria were decided by the verifier from observed
-# evidence, and whether a human's authority approval is bound to the envelope's exact fingerprint.
+# evidence, and what met the authority term: a human's approval bound to the envelope's exact
+# fingerprint, or the standing-bump policy path.
 # Those are asked by the factory lane (`estate-pr-merge` is not it; `pr_merge_admission` is), and
 # they are the whole basis of ADR-0020.
 #

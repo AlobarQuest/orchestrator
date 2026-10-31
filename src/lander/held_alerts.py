@@ -284,12 +284,21 @@ def stranded_key(repository: str, number: int) -> str:
     return alert_key(_STRANDED, repository.lower(), str(number))
 
 
-def _stranded_alert(row: Mapping[str, object]) -> Alert:
+def _stranded_alert(row: Mapping[str, object], *, outside: bool = False) -> Alert:
     repository, number, revert = (
         row.get("repository"),
         row.get("pr_number"),
         row.get("revert_pr_number"),
     )
+    if outside:
+        return Alert(
+            f"Revert not landed: {repository}#{number}",
+            f"The revert #{revert} of {repository}#{number} is open, but {repository} is outside "
+            "this lane's population, so nothing will land it and the default branch may still "
+            "carry the bad bump. Land it by hand. This repository's bumps wait until the record "
+            "moves, and landing it by hand does not move it yet (no act clears the record).",
+            f"https://github.com/{repository}/pull/{revert}",
+        )
     return Alert(
         f"Revert not landed: {repository}#{number}",
         f"The revert #{revert} of {repository}#{number} is no longer open and did not land, so the "
@@ -313,6 +322,17 @@ def _revert_alert(row: Mapping[str, object]) -> Alert:
         revert = row.get("revert_pr_number")
         hold = row.get("hold_outcome") or "nothing held"
         detail = row.get("detail")
+        if row.get("hold_outcome") == "":
+            # A record that names no dependency: the hold has nothing to hold, and the never-again
+            # rule has nothing to bar, so neither sentence below would be true.
+            return Alert(
+                f"Landing reverted: {subject}",
+                f"{failed} failed on the default branch after {subject} landed; the revert "
+                f"#{revert} has landed. No hold was placed and no version is barred from landing "
+                f"again, because the record names no dependency"
+                + (f": {detail}." if detail else "."),
+                f"https://github.com/{repository}/pull/{revert}",
+            )
         return Alert(
             f"Landing reverted: {subject}",
             f"{failed} failed on the default branch after {subject} landed; the revert "
@@ -360,6 +380,7 @@ def sync_revert_alerts(
     *,
     stranded: Set[tuple[str, int]] = frozenset(),
     unknown: Set[tuple[str, int]] = frozenset(),
+    outside: Set[tuple[str, int]] = frozenset(),
     unpinned: Mapping[tuple[str, int], str] | None = None,
     environ: Mapping[str, str] = os.environ,
     transport: httpx.BaseTransport | None = None,
@@ -367,7 +388,9 @@ def sync_revert_alerts(
     """Bring alert-hub in line with the watch's revert records; `None` for a watch that could not
     be read, which holds every remembered key. `stranded` names the landings whose revert pull
     request the lander found closed without landing, and `unknown` those whose repository it could
-    not list (their stranded alert is held). Answers why it could not, or None."""
+    not list (their stranded alert is held). `outside` says which of `stranded` are so because
+    their repository is outside the lane's population, whose revert is still open. Answers why it
+    could not, or None."""
     token = environ.get(TOKEN_ENV, "")
     if not token:
         return f"{TOKEN_ENV} is unset"
@@ -392,7 +415,9 @@ def sync_revert_alerts(
                 repository, number = row.get("repository"), row.get("pr_number")
                 if isinstance(repository, str) and isinstance(number, int):
                     if (repository, number) in stranded:
-                        alerts[stranded_key(repository, number)] = _stranded_alert(row)
+                        alerts[stranded_key(repository, number)] = _stranded_alert(
+                            row, outside=(repository, number) in outside
+                        )
             for (repository, number), reason in (unpinned or {}).items():
                 alerts[not_pointed_back_key(repository, number)] = _not_pointed_back_alert(
                     repository, number, reason

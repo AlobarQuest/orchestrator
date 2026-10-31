@@ -54,6 +54,13 @@ rotated_by_sds = true
   [[credential.consumer]]
   kind = "runtime-fetch"
   repo = "orchestrator"
+  ref = "scripts/run-bump-driver.sh"
+  healthchecks_check = "sds-bump-driver"
+  note = "reads Keychain Claude/BWS_ACCESS_TOKEN_SDS each run, directly; pings sds-bump-driver through sds-deadman.sh"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
   ref = "scripts/run-bump-proposer.sh"
   healthchecks_check = "sds-bump-proposer"
   note = "reads Keychain Claude/BWS_ACCESS_TOKEN_SDS each run, through sds-token.sh or directly; pings sds-bump-proposer through sds-deadman.sh"
@@ -159,7 +166,7 @@ disposition = "reissue"
   [[credential.consumer]]
   kind = "runtime-fetch"
   repo = "orchestrator"
-  ref = "scripts/run-activation-sweep.sh, run-estate-landing.sh, run-inert-landing.sh, run-tool-installer.sh, run-work-carrier.sh, exit_probe.py"
+  ref = "scripts/run-activation-sweep.sh, run-bump-driver.sh, run-estate-landing.sh, run-inert-landing.sh, run-tool-installer.sh, run-work-carrier.sh, exit_probe.py"
 
   [[credential.consumer]]
   kind = "runtime-fetch"

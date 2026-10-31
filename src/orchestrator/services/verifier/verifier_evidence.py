@@ -159,6 +159,24 @@ def record_named_check_evidence(
         return error
 
 
+def named_check_inputs(session: Session, unit_id: uuid.UUID) -> dict[str, object]:
+    """What a caller needs to name a unit's checks: the newest dispatch that ran, the bound pull
+    request and its armed head. Absent parts are None. Only a `dispatched` row is offered, because
+    ingestion refuses any other."""
+    newest = session.scalar(
+        select(DispatchRecord.id)
+        .where(DispatchRecord.work_unit_id == unit_id, DispatchRecord.status == "dispatched")
+        .order_by(DispatchRecord.runner_attempt.desc())
+        .limit(1)
+    )
+    binding = session.get(UnitPrBinding, unit_id)
+    return {
+        "latest_dispatch_id": newest,
+        "pr_number": binding.pr_number if binding is not None else None,
+        "armed_head_sha": binding.verification_read_head_sha if binding is not None else None,
+    }
+
+
 def _observe(
     observer: CheckObserver,
     repository: str,

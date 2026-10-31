@@ -147,3 +147,77 @@ paste and becomes a decision surface.
   that action, and stamps who withdrew it, when and why. A withdrawn row leaves the queue, refuses
   the confirm, and stays withdrawn; withdrawing it again changes nothing. A registered row cannot
   be withdrawn. To bring a withdrawn intake back, stage it again under a new key.
+
+## Amendment 2, 2026-10-30: a standing bump's decomposition decision graduates
+
+**Decided by Devon, 2026-10-29 and 2026-10-30** (dependency bumps need no human approval; Landing
+Part 4, decision 1). The decomposition decision of a standing dependency update stops being a human
+gate when the conditions below all hold. No credential changes: there is still no HUMAN
+credential, and this removes a gate rather than crossing one by machine. A person keeps every
+decomposition these conditions don't cover.
+
+`decomposition._bump_policy_approval` approves, in the proposal's own transaction, only when:
+
+- SYSTEM proposed it;
+- the revision's approver starts `policy:dependency-update@`, its profile is `dependency-update`,
+  `profile_fields.standing` is true, and its declared reach is exactly `source_repository`, so a
+  `live_estate` package waits for a person;
+- there is exactly one proposed unit, with no dependencies, every criterion is mapped to it and
+  none retained (a unit with no criteria completes without the named check), and `max_attempts` is
+  at or below the envelope's budget;
+- `human_authority_gate` reports no refusals, and only dependency-update known-good patterns
+  recognise the stamped envelope;
+- `bump_binding_violations` is empty: every command is the one intent-packages' generator emits
+  for the package's own dependency, versions and tooling (ADR-0028 amendment 1 asks for this
+  binding), and the target repository is the package's;
+- the unit's `title` and `outcome` are the text the generator derives from `profile_fields`, since
+  both reach the agent's prompt beside `repo.edit`;
+- the member record grants `dependency_updates` on that repository.
+
+The recorded approver is the proposing SYSTEM identity, as on the rotation path (ADR-0055
+amendment 16). The decision reason names the patterns, the policy version and the revision's
+approver, so "policy approved" and "a person approved" stay different records.
+
+Each refusal leaves the proposal on `/review` and records `decomposition.policy_not_applied` with a
+fixed reason code and what was read. So does an approval that fails after policy said yes. No route
+serves `events` rows for a proposal, so `DecompositionProposalResponse.policy_not_applied` carries
+the reason on `GET /api/v1/decomposition-proposals/{id}` and on the revision's proposal list.
+
+**Cost accepted, Devon, 2026-10-30:** the decomposition is built without a local dry run, because
+that run installs the bumped dependency, lifecycle scripts included, on the operator machine where
+infrastructure credentials live. There is no local proof. A bad envelope fails its attempts, the
+bump stays held, and an alert fires. A session-authored decomposition still dry-runs.
+
+The binding also covers `allowed_commands` and `verify_commands`, which goes past mutation commands
+alone: `allowed_commands` is the coding agent's whole vocabulary and a known-good pattern bounds
+only each command's shape, so a second `uv add` listed there would be a bump nothing named.
+
+What stays unbound, and why. The proposal's `rationale` never reaches the agent: factory-runner reads
+no such field. `context_enrichment` does ride the unit, and is not bound, because the Brains supply it
+rather than the proposer.
+
+**Residuals, stated in full.** No check here closes them. Devon accepted all four on 2026-10-30:
+the first three for now, with the SYSTEM bearer's route confinement as the larger fix, and the
+fourth because the grant is the authority and his decision 1 covers the factory's fixes.
+
+1. **A forged SYSTEM intake yields a landed bump, not only a `READY` unit.** `approved_by` and
+   `standing` on a SYSTEM-registered intake are caller-attested: `POST /api/v1/package-intakes` takes
+   them from the body. The merge reads the same two fields (`standing_bump_refusal`, ADR-0025
+   amendment 4), so a stolen SYSTEM bearer can forge an intake for any dependency in a granted inert
+   repository, drive it through the real run, and have it land, with no person seeing it.
+2. **SYSTEM writes a pull request binding with no claim** (`pr_bindings.py::_authorize_write`
+   returns before any claim check). The binding names which pull request a unit's evidence and
+   merge are about. On the policy path the merge now reads that pull request's branch, trailer and
+   files (ADR-0025 amendment 4), which bounds what a binding can point at without making the writer
+   any less trusted.
+3. **`bump_binding_violations` does not narrow a forged intake.** It binds the envelope's commands
+   to `profile_fields`, and a forged intake supplies its own `profile_fields`, so the commands are
+   checked against the forgery. The binding protects an honest intake from a wrong envelope.
+4. **Self-hosting.** `orchestrator`, `intent-packages`, `project-standards` and
+   `security-standards` are granted inert members, and `~/.claude/bin/activate-checkout.sh` runs
+   `uv sync --frozen` when `pyproject.toml` or `uv.lock` moves. So a factory-landed bump into one of
+   them is installed on the operator machine at the next launcher pass, with no person, and the
+   agent's source fix runs there unread. Those repositories stay on the policy path: Dependabot's
+   bumps already land and install there unattended, and every failed bump measured was in the
+   orchestrator. What's new is the agent's source; required checks and the refused gate files bound
+   it, and a malicious change could still pass them.

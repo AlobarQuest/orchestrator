@@ -9,6 +9,7 @@ from pydantic import (
 )
 
 from orchestrator.api.schemas.common import CommandBase
+from orchestrator.api.schemas.lifecycle import WorkUnitDetailResponse
 
 
 class AdjudicationCommand(CommandBase):
@@ -71,6 +72,18 @@ class VerifierNamedCheckEvidenceCommandModel(CommandBase):
         "neutral",
         "skipped",
     ]
+
+
+class VerifiableUnitResponse(WorkUnitDetailResponse):
+    """A work unit plus what filing its named checks needs, read from the unit's own rows.
+
+    The newest dispatch that ran, the bound pull request and its armed head; each is null until it
+    exists. Declared here, beside the evidence it feeds, and served by `GET /work-units/{id}`.
+    """
+
+    latest_dispatch_id: UUID | None = None
+    pr_number: int | None = None
+    armed_head_sha: str | None = None
 
 
 class EvidenceResponse(BaseModel):

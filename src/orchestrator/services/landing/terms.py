@@ -42,10 +42,12 @@ from orchestrator.services.landing.interfaces import (
     Term,
 )
 from orchestrator.services.membership.holds import (
+    TOOLING_TO_DEPENDABOT,
     Bump,
     HeldDependency,
     HoldBreach,
     bumps_of,
+    ecosystem_of_package_id,
     exceeded,
     release,
     same_dependency,
@@ -463,11 +465,74 @@ def _same_bump(bump: Bump, gone: Bump) -> bool:
 
 
 def _same_release(left: str, right: str) -> bool:
+    releases = _padded_releases(left, right)
+    return releases is None or releases[0] == releases[1]
+
+
+def _padded_releases(left: str, right: str) -> tuple[tuple[int, ...], tuple[int, ...]] | None:
+    """Both releases at one width, or None when either can't be read."""
     ours, theirs = release(left), release(right)
     if ours is None or theirs is None:
-        return True
+        return None
     width = max(len(ours), len(theirs))
-    return ours + (0,) * (width - len(ours)) == theirs + (0,) * (width - len(theirs))
+    return ours + (0,) * (width - len(ours)), theirs + (0,) * (width - len(theirs))
+
+
+def factory_brings_reverted(bump: Bump, reverted: Sequence[Bump]) -> bool:
+    """May a bump the factory installs bring a version the SDS reverted from this repository?
+
+    The factory merge's copy of `version_reverted_term`, whose update bot pins what it names. An
+    npm or pip bump pins too, so it matches as that term matches. **A UV `to_version` IS A FLOOR**
+    (`holds.factory_breaches`): the resolver can land anything at or above it, so a floor at or
+    below a reverted version can bring that version back, and only a floor above it can't. A
+    version either side can't read matches.
+    """
+    return any(
+        same_dependency(bump, gone) and _may_bring(bump, gone.to_version) for gone in reverted
+    )
+
+
+def _may_bring(bump: Bump, version: str) -> bool:
+    if bump.ecosystem.lower() != TOOLING_TO_DEPENDABOT["uv"]:
+        return _same_release(bump.to_version, version)
+    releases = _padded_releases(bump.to_version, version)
+    return releases is None or releases[0] <= releases[1]
+
+
+@dataclass(frozen=True)
+class RevisionBump:
+    """What a dependency-update revision says it bumps: the bump, with no directory (the merge's
+    hold and never-again terms match any), and the version it moved from (None when not named)."""
+
+    bump: Bump
+    from_version: str | None
+
+
+def revision_bump(package_id: str, snapshot: object, repository: str) -> RevisionBump | None:
+    """The bump a revision's snapshot names, or None when any part of it can't be read.
+
+    `package` and `to_version` come from `profile_fields` and the ecosystem from the standing
+    package id's tooling. The snapshot is data from another repository, so nothing about its shape
+    is trusted.
+    """
+    ecosystem = ecosystem_of_package_id(package_id, repository)
+    fields = snapshot.get("profile_fields") if isinstance(snapshot, dict) else None
+    fields = fields if isinstance(fields, dict) else {}
+    dependency, to_version = fields.get("package"), fields.get("to_version")
+    from_version = fields.get("from_version")
+    # A padded name would compare unequal to the hold and read as "not held", so it is unreadable.
+    if (
+        ecosystem is None
+        or not isinstance(dependency, str)
+        or not dependency
+        or dependency != dependency.strip()
+        or not isinstance(to_version, str)
+    ):
+        return None
+    return RevisionBump(
+        Bump(ecosystem=ecosystem, directory=None, dependency=dependency, to_version=to_version),
+        from_version if isinstance(from_version, str) else None,
+    )
 
 
 def _update_bot_message(

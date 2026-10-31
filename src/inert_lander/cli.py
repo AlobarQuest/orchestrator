@@ -382,12 +382,19 @@ def _open_reverts(watch: list[dict[str, Any]] | None) -> frozenset[tuple[str, in
 
 
 def _stranded(
-    watch: list[dict[str, Any]] | None, selection: Selection
-) -> tuple[frozenset[tuple[str, int]], frozenset[tuple[str, int]]]:
-    """The landings whose recorded revert pull request GitHub no longer lists open (closed without
-    landing: its record still says `revert_opened`), and those whose repository went unlisted."""
+    watch: list[dict[str, Any]] | None, selection: Selection, population: frozenset[str]
+) -> tuple[frozenset[tuple[str, int]], frozenset[tuple[str, int]], frozenset[tuple[str, int]]]:
+    """The landings whose recorded revert will not land, those whose repository went unlisted, and
+    which of the first are stranded because their repository is outside this lane's population.
+
+    Stranded means GitHub no longer lists the revert open (closed without landing: its record
+    still says `revert_opened`), or the repository is one this lane never lists, so nothing lands
+    it however open it is: a factory merge with a person's approval can land where the estate says
+    `inert` and the policy doesn't declare. That is not an unknown: no later pass will read it.
+    """
     stranded: set[tuple[str, int]] = set()
     unknown: set[tuple[str, int]] = set()
+    outside: set[tuple[str, int]] = set()
     for row in watch or []:
         repository, number, revert = (
             row.get("repository"),
@@ -398,11 +405,14 @@ def _stranded(
             continue
         if not isinstance(number, int) or not isinstance(revert, int):
             continue
-        if repository not in selection.listed:
+        if repository not in population:
+            stranded.add((repository, number))
+            outside.add((repository, number))
+        elif repository not in selection.listed:
             unknown.add((repository, number))
         elif (repository, revert) not in selection.open_pulls:
             stranded.add((repository, number))
-    return frozenset(stranded), frozenset(unknown)
+    return frozenset(stranded), frozenset(unknown), frozenset(outside)
 
 
 def _revert_pass(watch: list[dict[str, Any]], client: Watch, submit: bool) -> list[Outcome]:
@@ -507,9 +517,16 @@ def run(argv: list[str] | None = None) -> int:
             outcomes = list(selection.unreadable)
             outcomes.extend(_pass(selection.subjects, client, args.submit))
             outcomes.extend(_branch_updates(selection.subjects, client, args.submit))
-            stranded, unknown = _stranded(watch, selection)
+            stranded, unknown, outside = _stranded(watch, selection, rule.inert)
             watched.extend(
-                Outcome(repository, number, "revert-stranded", "its revert closed without landing")
+                Outcome(
+                    repository,
+                    number,
+                    "revert-stranded",
+                    "its repository is outside this lane's population, so nothing lands its revert"
+                    if (repository, number) in outside
+                    else "its revert closed without landing",
+                )
                 for repository, number in sorted(stranded)
             )
     except (ReadError, OrchestratorError) as error:
@@ -527,7 +544,9 @@ def run(argv: list[str] | None = None) -> int:
             reason
             for reason in (
                 sync_held_alerts("inert-landing", outcomes, now=now),
-                sync_revert_alerts("inert-landing", watch, stranded=stranded, unknown=unknown),
+                sync_revert_alerts(
+                    "inert-landing", watch, stranded=stranded, unknown=unknown, outside=outside
+                ),
             )
             if reason is not None
         ]
