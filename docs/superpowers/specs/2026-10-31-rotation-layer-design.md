@@ -6,7 +6,7 @@
   `rotation_verifier`, and the rotation routes
 - **Decisions it builds on:** ADR-0021 (amendments 1 and 2), ADR-0054, ADR-0055 and its amendments,
   ADR-0058
-- **Status:** Draft for Devon's approval
+- **Status:** Approved by Devon, 2026-10-31
 
 ## Intent
 
