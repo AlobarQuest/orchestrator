@@ -137,8 +137,28 @@ def _due(entry: dict[str, Any], trigger: str) -> Due:
     return Due(credential_id, credential_class, trigger, basis, dated, handed_over)
 
 
-def parse(text: str) -> tuple[list[Due], list[Unrecognised]]:
-    """infraops' answer, as one `Due` per credential and every check this program cannot read."""
+def _last_rotated(document: dict[str, Any]) -> dict[str, str] | None:
+    """When each handed-over credential last rotated, or None from an infraops predating the field.
+
+    A malformed answer stops the pass: this map is all that holds a repeat from moving an age
+    clock, because infraops accepts an earlier date.
+    """
+    if "last_rotated" not in document:
+        return None
+    served = document["last_rotated"]
+    if not isinstance(served, dict):
+        raise FindingsError("infraops' 'last_rotated' is not an object")
+    for credential_id, value in served.items():
+        if _TOKEN.fullmatch(credential_id) is None:
+            raise FindingsError("infraops' 'last_rotated' names a malformed credential")
+        if not isinstance(value, str) or _DATE.match(value) is None:
+            raise FindingsError(f"infraops' 'last_rotated' for {credential_id} is not an ISO date")
+    return served
+
+
+def parse(text: str) -> tuple[list[Due], list[Unrecognised], dict[str, str] | None]:
+    """infraops' answer: one `Due` per credential, every check this program cannot read, and when
+    each handed-over credential last rotated."""
     try:
         document = json.loads(text)
     except ValueError as error:
@@ -170,7 +190,7 @@ def parse(text: str) -> tuple[list[Due], list[Unrecognised]]:
         min(dues, key=lambda due: PRECEDENCE.index(due.trigger))
         for _, dues in sorted(candidates.items())
     ]
-    return chosen, unrecognised
+    return chosen, unrecognised, _last_rotated(document)
 
 
 def infraops_checkout() -> Path:
@@ -218,14 +238,15 @@ def _invoke(checkout: Path | None, run: Runner, subcommand: str, *arguments: str
 
 def read_due(
     checkout: Path | None = None, *, run: Runner = _run
-) -> tuple[list[Due], list[Unrecognised]]:
+) -> tuple[list[Due], list[Unrecognised], dict[str, str] | None]:
     """Ask infraops what is due. Every failure is a `FindingsError`, which stops the pass."""
     return parse(_invoke(checkout, run, SUBCOMMAND))
 
 
 def record_rotation(
-    credential_id: str, checkout: Path | None = None, *, run: Runner = _run
+    credential_id: str, date: str, checkout: Path | None = None, *, run: Runner = _run
 ) -> None:
-    """Tell infraops the credential rotated today. Its `lastRotated` moves, which clears the
-    request and age findings on infraops' next run. Every failure is a `FindingsError`."""
-    _invoke(checkout, run, RECORD_SUBCOMMAND, "--cred", credential_id, "--date", "now")
+    """Tell infraops the credential rotated on `date`, a `YYYY-MM-DD`. Its `lastRotated` moves,
+    which clears the request and age findings on infraops' next run. Every failure is a
+    `FindingsError`."""
+    _invoke(checkout, run, RECORD_SUBCOMMAND, "--cred", credential_id, "--date", date)

@@ -30,16 +30,22 @@ is reported as `stacked`, a finding, and left for a person.
 
 **IT CANNOT APPROVE ANYTHING.** Not the revision -- no lifecycle call here names `approve` -- and
 not the record: its change-manager bearer is propose-scoped and its client asserts a two-path
-surface. Its orchestrator client names one route, the observation ingest, under the OBSERVER
-bearer, which can neither transition a unit nor create work.
+surface. Its orchestrator clients name one write, the observation ingest, and two reads, under the
+OBSERVER bearer, which can neither transition a unit nor create work.
 
-**IT RECORDS A FINISHED ROTATION IN INFRAOPS.** Once the work watcher retires the record for the
-approved revision (`resolved`, decided by `work-watcher`, which it does only when every unit
-completed), the pass runs `security-drift-cli record-rotation` instead of replaying the proposal,
-so infraops stops reporting the credential due. The date is the day of that pass, normally the day
-after the work completed. A record anyone else resolved is a finding and records nothing. An
-exposure records nothing either and is a finding: record-rotation doesn't close it, and closing it
-is a person's statement that the old value is dead.
+**IT WALKS ROTATION RECORDS, DUE OR NOT.** After the due walk, a writing pass reads the records
+themselves, because a credential stops being due the moment the state says so, whether or not that
+is true. An approved record of the tip with a `failed` or `cancelled` unit reports `stalled`.
+
+**IT RECORDS A FINISHED ROTATION IN INFRAOPS.** Once the work watcher retires a record (`resolved`,
+decided by `work-watcher`, which it does only when every unit completed), the pass runs
+`security-drift-cli record-rotation` when that rotation is newer than infraops' `last_rotated`, so
+infraops stops reporting the credential due. The date is the UTC day the record's last unit
+completed: change-manager serves no date on a record, and the units' history can only run earlier
+than the retirement, never later. The comparison is the whole of the idempotence, since infraops
+accepts an earlier date. A record anyone else resolved records nothing, and is a finding while the
+credential is due. An exposure records nothing either and is a finding: record-rotation doesn't
+close it, and closing it is a person's statement that the old value is dead.
 
 **A REPEAT PASS IS A REPLAY.** A package whose tip already carries the occurrence is not revised
 again; the observation is content-addressed; change-manager answers 200 for an identical proposal.
@@ -77,6 +83,7 @@ from bump_proposer.standing import (
     snapshot_hash,
 )
 from rotation_proposer.alerts import STATE_DIR_ENV, TOKEN_ENV, sync_alerts
+from rotation_proposer.client import CallError, Orchestrator
 from rotation_proposer.findings import (
     Due,
     FindingsError,
@@ -102,7 +109,7 @@ from rotation_proposer.standing import (
 from rotation_worker.contract import ContractError
 from rotation_worker.destinations import DestinationError
 from rotation_worker.git_mirror import MirrorError, RepoMirror, default_mirror_root
-from rotation_worker.registry import RegistryEntry, RegistryError
+from rotation_worker.registry import RegistryEntry, RegistryError, standing_credential
 from rotation_worker.registry import credentials as registry_entries
 from sds_members import populations
 from sds_members.client import MembersUnreadable, read_members
@@ -121,6 +128,21 @@ OBSERVER_KEY_ID: Final = "orchestrator-observer"
 # The actor the work watcher retires a record as (`work_watcher.change_manager`), duplicated
 # because this program imports only its own row; a test holds the two equal.
 RETIREMENT_ACTOR: Final = "work-watcher"
+
+# A unit state a rotation cannot finish from without a person (`WorkUnitState`, which this program
+# may not import).
+STALLED_STATES: Final = frozenset({"failed", "cancelled"})
+COMPLETED_STATE: Final = "completed"
+EXPOSURE_SUFFIX: Final = "-exposure"
+# What the record walk turns into one credential's `error`.
+_UNREAD: Final = (
+    CallError,
+    FindingsError,
+    RegistryError,
+    MirrorError,
+    DestinationError,
+    ContractError,
+)
 
 # What a pass does with one credential, decided from the package alone before anything is written.
 _PROPOSE: Final = "propose"
@@ -235,7 +257,9 @@ def _resolved(records: list[dict[str, Any]], package: RotationPackage) -> dict[s
     return None
 
 
-def _record(due: Due, row: dict[str, Any]) -> Outcome:
+def _finished(due: Due, row: dict[str, Any]) -> Outcome:
+    """What the due walk says of a due credential whose carrying revision has been resolved. The
+    record walk does any recording, so nothing here writes."""
     subject = due.credential_id
     record = f"record {row.get('id')}"
     if row.get("decided_by") != RETIREMENT_ACTOR:
@@ -257,16 +281,7 @@ def _record(due: Due, row: dict[str, Any]) -> Outcome:
             f"{due.basis} stays open: once the old value is confirmed dead, run "
             f"security-drift-cli resolve-exposure and record-rotation for {subject}",
         )
-    try:
-        record_rotation(subject)
-    except FindingsError as error:
-        return Outcome(subject, "error", str(error))
-    return Outcome(
-        subject,
-        "recorded",
-        f"{record} was retired by {RETIREMENT_ACTOR}: the rotation completed; infraops records "
-        "it rotated today",
-    )
+    return Outcome(subject, "retired", f"{record} was retired by {RETIREMENT_ACTOR}")
 
 
 def _act(
@@ -294,7 +309,7 @@ def _act(
     resolved = _resolved(records, package) if action == _PROPOSE else None
     if resolved is not None:
         # Reached only by a writing pass: a dry run reads no records.
-        return [_record(due, resolved), *_superseded(records, package)]
+        return [_finished(due, resolved), *_superseded(records, package)]
     if client is None or observer is None:
         return [Outcome(subject, f"would-{action}", f"{detail} -> {due.occurrence}")]
     refusal = _ungranted(due, entry.repository, granted)
@@ -403,9 +418,129 @@ def _ungranted(
     )
 
 
+def _stalled(credential_id: str, row: dict[str, Any], reader: Orchestrator) -> Outcome | None:
+    """A finding when an approved record's rotation can't finish without a person."""
+    units = reader.work(int(row["id"])).get("units") or []
+    stalled = sorted(
+        str(unit.get("unit_key")) for unit in units if unit.get("state") in STALLED_STATES
+    )
+    if not stalled:
+        return None
+    return Outcome(
+        credential_id,
+        "stalled",
+        f"record {row['id']} ({row['package_id']} rev {row['package_revision']}): "
+        f"{', '.join(stalled)} failed or was cancelled; it stays stalled until a person acts",
+    )
+
+
+def _completed_date(row: dict[str, Any], reader: Orchestrator) -> str:
+    """The UTC day the record's last unit completed, as `record-rotation` takes it."""
+    completions: list[datetime] = []
+    for unit in reader.work(int(row["id"])).get("units") or []:
+        for event in reader.history(str(unit.get("unit_id"))):
+            if event.get("to_state") == COMPLETED_STATE:
+                try:
+                    occurred = datetime.fromisoformat(str(event.get("occurred_at")))
+                except ValueError as error:
+                    raise CallError(f"record {row['id']}: an unreadable completion") from error
+                completions.append(occurred.astimezone(UTC))
+    if not completions:
+        raise CallError(f"record {row['id']}: no unit's history shows a completion")
+    return max(completions).strftime("%Y-%m-%d")
+
+
+def _closes_an_exposure(
+    credential_id: str, row: dict[str, Any], due: list[Due], packages: dict[str, RotationPackage]
+) -> bool:
+    """An exposure open now, or the trigger the record's own revision carries."""
+    if any(i.credential_id == credential_id and i.trigger == "exposure" for i in due):
+        return True
+    package = packages.get(credential_id)
+    return (
+        package is not None
+        and package.revision == row.get("package_revision")
+        and package.occurrence.endswith(EXPOSURE_SUFFIX)
+    )
+
+
+def _record_retired(
+    credential_id: str, row: dict[str, Any], last_rotated: dict[str, str], reader: Orchestrator
+) -> Outcome | None:
+    """Move `lastRotated` to a retired rotation newer than it, or leave it alone."""
+    date = _completed_date(row, reader)
+    known = last_rotated.get(credential_id)
+    if known is not None and date <= known[:10]:
+        return None
+    record_rotation(credential_id, date)
+    return Outcome(
+        credential_id,
+        "recorded",
+        f"record {row['id']} was retired by {RETIREMENT_ACTOR}: infraops records it rotated {date}",
+    )
+
+
+def _newest_retired(records: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Each credential's retired record of its highest revision."""
+    newest: dict[str, dict[str, Any]] = {}
+    for row in records:
+        credential_id = standing_credential(str(row.get("package_id")))
+        if (
+            credential_id is None
+            or row.get("status") != "resolved"
+            or row.get("decided_by") != RETIREMENT_ACTOR
+        ):
+            continue
+        held = newest.get(credential_id)
+        if held is None or int(row["package_revision"]) > int(held["package_revision"]):
+            newest[credential_id] = row
+    return newest
+
+
+def _walk_records(
+    records: list[dict[str, Any]],
+    due: list[Due],
+    packages: dict[str, RotationPackage],
+    registry: Callable[[], dict[str, RegistryEntry]],
+    last_rotated: dict[str, str] | None,
+    reader: Orchestrator,
+) -> list[Outcome]:
+    """Every credential's rotation records, whether or not it is due. A record this can't read is
+    that credential's `error`, which holds its alerts."""
+    outcomes: list[Outcome] = []
+    for row in records:
+        credential_id = standing_credential(str(row.get("package_id")))
+        if credential_id is None or row.get("status") != "approved":
+            continue
+        package = packages.get(credential_id)
+        if package is not None and int(row["package_revision"]) < package.revision:
+            continue  # Only the tip's record can stall; an earlier one is `_superseded`'s.
+        try:
+            stalled = _stalled(credential_id, row, reader)
+        except _UNREAD as error:
+            stalled = Outcome(credential_id, "error", f"the record walk: {error}")
+        outcomes.extend([stalled] if stalled else [])
+
+    if last_rotated is None:
+        return outcomes  # An infraops predating the field: nothing to compare, so nothing moves.
+    for credential_id, row in _newest_retired(records).items():
+        if _closes_an_exposure(credential_id, row, due, packages):
+            continue
+        try:
+            entry = registry().get(credential_id)
+            if entry is None or not entry.rotated_by_sds:
+                continue
+            recorded = _record_retired(credential_id, row, last_rotated, reader)
+        except _UNREAD as error:
+            recorded = Outcome(credential_id, "error", f"the record walk: {error}")
+        outcomes.extend([recorded] if recorded else [])
+    return outcomes
+
+
 def _pass(
     due: list[Due],
     packages: dict[str, RotationPackage],
+    records: list[dict[str, Any]],
     client: ChangeManagerClient | None,
     observer: OrchestratorClient | None,
     root: Path,
@@ -413,7 +548,6 @@ def _pass(
     *,
     granted: Callable[[], set[str]] | None,
 ) -> list[Outcome]:
-    records = client.work_records() if client is not None else []
     outcomes: list[Outcome] = []
     for item in due:
         package = packages.get(item.credential_id)
@@ -529,13 +663,14 @@ class _Inputs(NamedTuple):
     due: list[Due]
     unrecognised: list[Unrecognised]
     packages: dict[str, RotationPackage]
+    last_rotated: dict[str, str] | None
 
 
 def _inputs(*, submit: bool) -> _Inputs | None:
     """What is due and the packages that stand for it, or None -- which stops the pass."""
     root = checkout_root()
     try:
-        due, unrecognised = read_due()
+        due, unrecognised, last_rotated = read_due()
         packages = discover(root)
         if submit:
             # Both refusals answer "may this program write to this checkout?" -- an uncommitted
@@ -546,7 +681,40 @@ def _inputs(*, submit: bool) -> _Inputs | None:
     except (FindingsError, StandingError) as error:
         print(str(error), file=sys.stderr)
         return None
-    return _Inputs(root, due, unrecognised, packages)
+    return _Inputs(root, due, unrecognised, packages, last_rotated)
+
+
+def _walks(
+    inputs: _Inputs,
+    credentials: _Credentials,
+    client: ChangeManagerClient | None,
+    observer: OrchestratorClient | None,
+    reader: Orchestrator | None,
+) -> list[Outcome]:
+    """The due walk, then a writing pass's record walk. `reader` is None on a dry run."""
+    mirror = RepoMirror(default_mirror_root("rotation-proposer"))
+    granted = _once(lambda: _granted_repositories(credentials)) if reader is not None else None
+    if granted is None:
+        print("a dry run does not read the member record: grants were not checked")
+    registry = _once(lambda: registry_entries(mirror))
+    records = client.work_records() if client is not None else []
+    outcomes = _pass(
+        inputs.due,
+        inputs.packages,
+        records,
+        client,
+        observer,
+        inputs.root,
+        registry,
+        granted=granted,
+    )
+    if reader is not None:
+        outcomes.extend(
+            _walk_records(
+                records, inputs.due, inputs.packages, registry, inputs.last_rotated, reader
+            )
+        )
+    return outcomes
 
 
 def run(argv: list[str] | None = None) -> int:
@@ -567,14 +735,13 @@ def run(argv: list[str] | None = None) -> int:
     inputs = _inputs(submit=args.submit)
     if inputs is None:
         return EXIT_UNUSABLE
-    root, due, unrecognised, packages = inputs
-
     outcomes = [
         Outcome(item.credential_id, "unrecognised", f"infraops reported {item.check}")
-        for item in unrecognised
+        for item in inputs.unrecognised
     ]
     client = None
     observer = None
+    reader = None
     try:
         if args.submit:
             client = ChangeManagerClient(
@@ -588,21 +755,12 @@ def run(argv: list[str] | None = None) -> int:
                 token=credentials.orchestrator_token,
                 user_agent=USER_AGENT,
             )
-        mirror = RepoMirror(default_mirror_root("rotation-proposer"))
-        granted = _once(lambda: _granted_repositories(credentials)) if args.submit else None
-        if granted is None:
-            print("a dry run does not read the member record: grants were not checked")
-        outcomes.extend(
-            _pass(
-                due,
-                packages,
-                client,
-                observer,
-                root,
-                _once(lambda: registry_entries(mirror)),
-                granted=granted,  # None is the dry run, which reads no record.
+            reader = Orchestrator(
+                base_url=credentials.orchestrator_url,
+                credential_key_id=OBSERVER_KEY_ID,
+                token=credentials.orchestrator_token,
             )
-        )
+        outcomes.extend(_walks(inputs, credentials, client, observer, reader))
     except (UnusableEndpointError, ObservationCredentialError, ChangeManagerError) as error:
         # "This pass could not use its inputs", not "this pass found something": a refused
         # identity or an unreachable service is every credential at once.
@@ -613,6 +771,8 @@ def run(argv: list[str] | None = None) -> int:
             client.close()
         if observer is not None:
             observer.close()
+        if reader is not None:
+            reader.close()
     code = _report(outcomes)
     if args.submit:
         _tell_a_person(outcomes, credentials.alert_token)

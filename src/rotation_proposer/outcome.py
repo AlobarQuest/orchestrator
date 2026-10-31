@@ -9,7 +9,8 @@ from typing import Final
 # registry has not handed to the SDS is infraops' to rotate. `unlaned` and `not-handed-over` are
 # findings, because each is a credential the two lanes disagree about -- handed over with no package
 # (nothing rotates it) or a package with no handover (both could). `ungranted` is a handed-over
-# credential whose repository the member record does not grant `credential_rotation` on.
+# credential whose repository the member record does not grant `credential_rotation` on. `stalled`
+# is an approved record with a failed or cancelled unit, which stays until a person acts.
 # `awaiting-approval`, `declined` and `revised` are absent because waiting on Devon is the lane
 # working, not failing; the first two raise an alert only once they have waited long enough
 # (`alerts.APPROVAL_ALERT_HOURS`).
@@ -27,6 +28,7 @@ FINDING_STATUSES: Final = frozenset(
         "ungranted",
         "exposure-open",
         "resolved-by-person",
+        "stalled",
     }
 )
 

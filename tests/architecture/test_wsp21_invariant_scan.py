@@ -796,6 +796,10 @@ OUTBOUND_ALLOWLIST = {
     # `KeyedAlerts`, whose one request is `POST /v1/alerts`.
     Path("src/rotation_proposer/alerts.py"),
     Path("src/rotation_decomposer/alerts.py"),
+    # Rotation Part 3. The proposer's own surface, two orchestrator reads on the observer bearer: a
+    # record's work and a unit's history. Enforced by `permits` and pinned by
+    # tests/rotation_proposer/test_client_surface.py. Its egress is the orchestrator's own API.
+    Path("src/rotation_proposer/client.py"),
     # ADR-0055 decision 1. The credential-rotation executor PULLS its work: it is a separate
     # program in its own VM, and it reaches the orchestrator only as its WORKER identity. Its
     # reads are the ready queue, a unit, its package revision, history and evidence; its writes
