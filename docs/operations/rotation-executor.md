@@ -689,6 +689,39 @@ it names the state it left.
 A BWS token rotation waits on a failed Postgres unit as on any unfinished overlap, until it is
 requeued or cancelled.
 
+### After a cancelled rotation
+
+The proposer reports `stalled` for an approved record with a `failed` or `cancelled` unit, and the
+alert stays until you finish these steps:
+
+1. Delete the staging and quarantine secrets for the occurrence, named
+   `rotation/<credential>/<occurrence>/…` in `Rotation / Work`, or the Keychain items of that
+   account on the Keychain instance. `rotation-unit-failed` names both keys. Keep a quarantine
+   secret while it holds the only copy of a value in use.
+2. Decide whether a value changed:
+   - **The keeper holds a new value and consumers use it:** run `security-drift-cli record-rotation
+     --cred <credential_id> --date <YYYY-MM-DD>` with the day it changed. The proposer records only
+     a rotation retired by `work-watcher`, so it can't record this one.
+   - **The old value stayed:** record nothing. The next occurrence comes from a new
+     `rotate_requested`.
+3. Mark the record `wontfix` in change-manager, which ends the `stalled` finding.
+
+### A minted key nobody holds
+
+If staging the value or filing the mint's evidence fails, the executor deletes the OpenRouter key it
+just minted, by the id `POST /keys` returned, then reports the original failure. That id stays in
+the process, because evidence may not hold a key's full hash. A value staging already holds is
+never deleted.
+
+If the delete fails, or the store can't say what it holds, the unit fails with a message that says
+a key may be left. If that happens, or the process stopped between the mint and the stage, find the
+key in the OpenRouter console by its `rotation-executor <date>` name and delete it. Its $5 limit and
+400-day expiry bound it until then.
+
+The delete assumes `data.hash` in the `POST /keys` answer equals the key's sha256, which hasn't been
+proved against the live API. If it doesn't, every such delete refuses and the message says a key
+may be left, so a person deletes the key as above.
+
 ### If the orchestrator doesn't come back after a rotation's restart
 
 The executor refuses every setting the orchestrator's boot would refuse, so this needs a cause it

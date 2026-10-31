@@ -197,6 +197,24 @@ def test_the_same_day_is_not_newer(idle) -> None:
     assert idle.recorded == []
 
 
+def test_a_registry_date_newer_than_its_record_records_nothing(idle) -> None:
+    """infraops serves the registry's `last_rotated` when state has none, so a date a person wrote
+    down holds the clock exactly as a recorded one does."""
+    idle.estate.records.append(_record("resolved"))
+    idle.last_rotated = {CREDENTIAL: "2026-10-31"}
+    assert run(["--submit"]) == EXIT_OK
+    assert idle.recorded == []
+
+
+def test_an_id_infraops_does_not_serve_is_an_error(idle) -> None:
+    """Every handed-over row has an anchor, so a missing one is a malformed answer."""
+    idle.estate.records.append(_record("resolved"))
+    idle.last_rotated = {}
+    assert run(["--submit"]) == EXIT_FINDINGS
+    assert idle.recorded == []
+    assert _statuses(idle) == ["error"]
+
+
 def test_only_the_newest_retired_revision_counts(idle) -> None:
     idle.estate.records.extend(
         [_record("resolved", record_id=500, revision=3), _record("resolved", record_id=400)]

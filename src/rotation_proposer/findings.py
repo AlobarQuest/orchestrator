@@ -138,7 +138,7 @@ def _due(entry: dict[str, Any], trigger: str) -> Due:
 
 
 def _last_rotated(document: dict[str, Any]) -> dict[str, str] | None:
-    """When each handed-over credential last rotated, or None from an infraops predating the field.
+    """Each handed-over credential's age anchor, or None from an infraops predating the field.
 
     A malformed answer stops the pass: this map is all that holds a repeat from moving an age
     clock, because infraops accepts an earlier date.
@@ -157,8 +157,8 @@ def _last_rotated(document: dict[str, Any]) -> dict[str, str] | None:
 
 
 def parse(text: str) -> tuple[list[Due], list[Unrecognised], dict[str, str] | None]:
-    """infraops' answer: one `Due` per credential, every check this program cannot read, and when
-    each handed-over credential last rotated."""
+    """infraops' answer: one `Due` per credential, every check this program cannot read, and each
+    handed-over credential's age anchor."""
     try:
         document = json.loads(text)
     except ValueError as error:

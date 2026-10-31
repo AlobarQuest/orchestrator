@@ -13,8 +13,14 @@ installed is read from `launchctl list` and the Healthchecks listing, not from t
   `node <infraops checkout>/dist/cli/security-drift-cli.js cred-findings` and reads JSON. That
   subcommand applies infraops' own due rule (`credFindings`) to the registries listed in
   `~/.config/infra-drift/cred-consumers.list` and to `cred-rotation-state.json`. This program
-  opens neither file. The JSON shape is pinned by `tests/fixtures/rotation_findings.json`. A change
-  to either side starts there.
+  opens neither file. The JSON shape is pinned by `tests/fixtures/rotation_findings.json`, a
+  byte-identical copy of infraops' file. A change to either side starts there.
+- **Each handed-over credential's anchor: the same answer.** `last_rotated` serves the date
+  infraops measures that credential's age from (its recorded rotation, else the registry's
+  `last_rotated`, else `created`), due or not.
+- **Rotation records and their units: on a `--submit` pass.** It reads every `work` record through
+  `bump_proposer`'s client, and each record's work and each unit's history through its own GET-only
+  client (`rotation_proposer/client.py`), on the observer bearer.
 - **The packages: the intent-packages checkout** that `bump-proposer` uses, from the same variable
   (`BUMP_PROPOSER_PACKAGES_CHECKOUT`).
 
@@ -80,16 +86,49 @@ For a due credential whose package is `rotation-<credential_id>`:
    rotation decomposer proposes its decomposition for a person to approve on `/review` (see
    "The rotation decomposer" in `rotation-executor.md`).
 5. **The pass after the rotation completes.** The work watcher retires the record once every unit
-   it caused has completed: `resolved`, decided by `work-watcher`. Seeing that, the pass runs
-   `security-drift-cli record-rotation --cred <credential_id> --date now` instead of replaying the
-   proposal, and reports `recorded`. infraops' `lastRotated` then moves to that day, normally the
-   day after the work completed, and the next `cred-findings` stops reporting a requested or aged
-   credential due. Two cases record nothing and are findings:
+   it caused has completed: `resolved`, decided by `work-watcher`. A due credential whose carrying
+   revision has such a record reports `retired`, which isn't a finding, and nothing is proposed
+   again. The record walk below does the recording. Two cases record nothing and are findings
+   while the credential is due:
    - **`resolved-by-person`:** the record was resolved by anyone but `work-watcher`, which says
      nothing about whether the work completed. A person decides what happened.
    - **`exposure-open`:** the rotation completed, but `record-rotation` doesn't close an exposure.
      Once the old value is confirmed dead, a person runs `security-drift-cli resolve-exposure` and
      `record-rotation` for the credential.
+
+## The record walk
+
+After the due walk, a `--submit` pass reads the rotation records themselves, whether or not their
+credentials are due. A dry run reads no records.
+
+- **`stalled`:** an approved record of the package's current revision has a `failed` or `cancelled`
+  unit. The detail names the units. A unit replaced by superseding its approval isn't counted. The
+  finding and its alert stay until a person acts: requeue or retry the unit, or follow "After a
+  cancelled rotation" in `rotation-executor.md`. A record of an earlier revision never stalls.
+- **`recorded`:** for each credential, the pass takes the highest-revision record retired by
+  `work-watcher`. It runs `security-drift-cli record-rotation --cred <credential_id> --date
+  <YYYY-MM-DD>` when the rotation's date is later than `last_rotated`, compared by day. The next
+  `cred-findings` then stops reporting a requested or aged credential due.
+
+The date is the UTC day the record's last unit completed, read from the units' history.
+change-manager serves no date on a record. The work watcher retires a record only after its units
+complete, so this date can be earlier than the retirement and never later.
+
+The comparison is all that makes a repeat pass safe, because infraops accepts an earlier date. So
+the walk records nothing in these cases:
+
+- The record was resolved by a person, or the rotation answers an exposure, whether it's open now
+  or the record's revision carries it.
+- The registry doesn't hand the credential to the SDS.
+- The rotation isn't later than `last_rotated`, which includes a date written in the registry.
+- infraops predates the field, so `last_rotated` is absent from its answer. The walk skips
+  recording.
+
+These are that credential's `error`, which holds its alerts, and the next pass tries again:
+
+- A record or unit history that can't be read, or shows no completion.
+- A handed-over credential missing from `last_rotated`, which is a malformed answer.
+- A `record-rotation` that fails.
 
 Compared with `bump_proposer`, the order is observe, revise, publish, propose, with the approval
 moved out of the pass and given to a person. `bump_proposer` approves by policy and proposes in the
@@ -116,6 +155,7 @@ changes the exit code.
 
 ## States it reports and does not touch
 
+- **`stalled`** (a finding): see "The record walk".
 - **`stacked`** (a finding): the tip awaits review for one occurrence while infraops reports
   another. The pass does not replace a revision Devon is reviewing.
 - **`declined`**: Devon rejected the revision that carries this occurrence.

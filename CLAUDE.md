@@ -382,9 +382,16 @@ Placement rule: global CLAUDE.md §7.
   re-implemented here. The occurrence comes from that answer's structured fields and never
   contains today's date. It acts only on a credential its registry entry marks `rotated_by_sds`,
   which infraops' 04:00 window then refuses; a package without that flag is a finding and is never
-  acted on. Its one write to infraops is `security-drift-cli record-rotation`, made only when the
-  record for the approved revision is `resolved` by `work-watcher` and the trigger isn't an
-  exposure. A revision it writes carries the registry's destinations; an approved revision that
+  acted on. Each `--submit` pass also walks rotation records, due or not, through its own GET-only
+  client on the observer bearer (`rotation_proposer/client.py`): an approved record of the current
+  revision with a `failed` or `cancelled` unit reports `stalled`. Its one write to infraops is
+  `security-drift-cli record-rotation --date <day>`, made only for a credential's newest record
+  `resolved` by `work-watcher` when the trigger isn't an exposure and the UTC day its last unit
+  completed (from unit history, since change-manager serves no record date) is later than
+  infraops' `last_rotated`. That field is the age anchor, served for every handed-over row, and
+  the comparison alone stops a repeat moving an age clock, because infraops accepts an earlier
+  date: a handed-over id missing from it is an `error`, and an absent field skips recording.
+  A revision it writes carries the registry's destinations; an approved revision that
   differs from the registry is revised, never proposed; and a due, handed-over credential with no
   package gets revision 1 generated from its row and its `class`'s type (`generate.py`,
   `CLASS_TYPES`), validated and written by intent-packages' `create-rotation`. The work

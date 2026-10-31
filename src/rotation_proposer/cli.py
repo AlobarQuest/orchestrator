@@ -39,13 +39,14 @@ is true. An approved record of the tip with a `failed` or `cancelled` unit repor
 
 **IT RECORDS A FINISHED ROTATION IN INFRAOPS.** Once the work watcher retires a record (`resolved`,
 decided by `work-watcher`, which it does only when every unit completed), the pass runs
-`security-drift-cli record-rotation` when that rotation is newer than infraops' `last_rotated`, so
-infraops stops reporting the credential due. The date is the UTC day the record's last unit
-completed: change-manager serves no date on a record, and the units' history can only run earlier
-than the retirement, never later. The comparison is the whole of the idempotence, since infraops
-accepts an earlier date. A record anyone else resolved records nothing, and is a finding while the
-credential is due. An exposure records nothing either and is a finding: record-rotation doesn't
-close it, and closing it is a person's statement that the old value is dead.
+`security-drift-cli record-rotation` when that rotation is later than infraops' `last_rotated`, the
+anchor its age finding uses, so infraops stops reporting the credential due. The date is the UTC
+day the record's last unit completed: change-manager serves no date on a record, and the units'
+history can only run earlier than the retirement, never later. The comparison is the whole of the
+idempotence, since infraops accepts an earlier date. A record anyone else resolved records nothing,
+and is a finding while the credential is due. An exposure records nothing either and is a finding:
+record-rotation doesn't close it, and closing it is a person's statement that the old value is
+dead.
 
 **A REPEAT PASS IS A REPLAY.** A package whose tip already carries the occurrence is not revised
 again; the observation is content-addressed; change-manager answers 200 for an identical proposal.
@@ -468,9 +469,12 @@ def _record_retired(
     credential_id: str, row: dict[str, Any], last_rotated: dict[str, str], reader: Orchestrator
 ) -> Outcome | None:
     """Move `lastRotated` to a retired rotation newer than it, or leave it alone."""
-    date = _completed_date(row, reader)
     known = last_rotated.get(credential_id)
-    if known is not None and date <= known[:10]:
+    if known is None:
+        # infraops serves every handed-over row's anchor, so a missing one is a malformed answer.
+        raise FindingsError(f"infraops served no 'last_rotated' for {credential_id}")
+    date = _completed_date(row, reader)
+    if date <= known[:10]:
         return None
     record_rotation(credential_id, date)
     return Outcome(

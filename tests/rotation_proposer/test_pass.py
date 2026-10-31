@@ -70,7 +70,7 @@ class _Rig:
         self.granted: list[str] | None = ["AlobarQuest/infraops-mcp-server"]
         self.member_reads = 0
         # infraops' `last_rotated`; `None` is an infraops that predates the field.
-        self.last_rotated: dict[str, str] | None = {}
+        self.last_rotated: dict[str, str] | None = {CREDENTIAL: "2025-01-02"}
         # Credentials the registry lists beyond those due, and any it does not mark handed over.
         self.rows: list[str] = []
         self.legacy: set[str] = set()
