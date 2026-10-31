@@ -1,8 +1,10 @@
 """One pass, then exit. No scheduler and no loop (ADR-0002/0003).
 
 FAILING OPEN IS THE DESIGN. This program observes and reports; it cannot revert an image,
-re-point a tag, redeploy anything or move a change's state, and change-manager will not let it.
-A wrong verdict here costs a wrong record, never a wrong action.
+re-point a tag or redeploy anything, and it moves a change's state only by stating facts: the
+observation that settles a record (ADR-0022), and the later green rollout that retires one
+(ADR-0022 amendment 1), whose only outcome change-manager chooses. A wrong verdict here costs a
+wrong record, never a wrong action.
 
 FAILING OPEN IS NOT THE SAME AS EXITING ZERO. The exit code is the whole interface a scheduled
 run has, and it distinguishes four things:
@@ -39,6 +41,7 @@ from deploy_watcher.observe import (
     RECHECK_DIVERGENCE,
     SETTLE_SECONDS,
     Outcome,
+    Supersession,
     Unmeasurable,
     observe,
     superseded_exception,
@@ -82,17 +85,14 @@ DEFAULT_ACTOR = "deploy-watcher"
 # settlement, and when a human closed a record whose rollout then went wrong.
 SETTLED_ROLLOUT_NOT_SUCCESS = "a_closed_record_whose_latest_rollout_did_not_succeed"
 
-# ADR-0044's half of the above. Same condition, plus a later rollout that production is serving
-# and that is ahead of this merge -- so the contradiction the finding reports has already been
-# resolved by the estate and there is nothing for a reader to do. The supersession is decided
-# ONCE, in `observe`, and PASSED here: a second copy of that rule is drift this estate has paid
-# for repeatedly.
-SETTLED_SUPERSEDED_ROLLOUT = "closed_record_production_has_moved_past"
-
 # Promoted from an inline literal in `_watch_one` so the kind vocabulary is enumerable. It was
 # the one kind this module reports that no constant named, which made it invisible to the
 # substring guard over that vocabulary -- a guard that cannot see a member is not a guard.
 CHANGE_MANAGER_REFUSED = "change_manager_refused_the_observation"
+
+# A superseded rollout whose record the server would not retire. The two sides disagree about the
+# record, which nothing but a person reading both can settle.
+CHANGE_MANAGER_REFUSED_RETIREMENT = "change_manager_refused_the_retirement"
 
 # A work unit claims a landing whose change record refused the observation, so the unit-scoped
 # observation was WITHHELD. Withheld rather than written, deliberately: that observation carries
@@ -107,7 +107,7 @@ UNIT_OBSERVATION_WITHHELD = "a_claimed_work_unit_went_unobserved_because_the_rec
 TERMINAL_STATUSES = frozenset({"resolved", "wontfix"})
 
 app = typer.Typer(
-    add_completion=False, help="Observe the rollout a deploying merge caused. Reports; never acts."
+    add_completion=False, help="Observe the rollout a deploying merge caused, and record it."
 )
 
 
@@ -268,7 +268,8 @@ def _watch_one(
         _say(f"[incomplete] {where}: {error}")
         return False, True
 
-    found = _report_outcome(outcome)
+    closed = record.status in TERMINAL_STATUSES
+    found = _report_outcome(outcome, closed=closed)
     if outcome.pending is not None:
         _say(f"  [pending] {where}: {outcome.pending}")
         return found, False
@@ -276,6 +277,8 @@ def _watch_one(
         return found, False
     if dry_run:
         _say(f"  [dry-run] {where}: would record {outcome.subject}")
+        if outcome.supersession is not None and not closed:
+            _say(f"  [dry-run] {where}: would retire it: {outcome.supersession.reason}")
         return found, False
 
     try:
@@ -298,23 +301,60 @@ def _watch_one(
     )
 
     unit_found, unit_incomplete = _observe_unit(reader, units, record, outcome.rollout, recorded)
-    found = found or unit_found
-    incomplete = unit_incomplete
+    ledger_found, ledger_incomplete = _read_the_ledger(
+        changes, record, item_status, outcome.supersession, closed=closed
+    )
+    return found or unit_found or ledger_found, unit_incomplete or ledger_incomplete
 
+
+def _read_the_ledger(
+    changes: ChangeManagerClient,
+    record: ChangeRecord,
+    item_status: str,
+    supersession: Supersession | None,
+    *,
+    closed: bool,
+) -> tuple[bool, bool]:
+    """Report what the recorded history says, then retire an open record it leaves superseded.
+
+    Returns `(found, incomplete)`. A failed read or a finding retires nothing: the server reduces
+    the same history, and a divergence means it describes more than one landing.
+    """
+    where = f"item {record.item_id}"
     try:
         page = changes.observations(record.item_id)
     except ChangeManagerError as error:
         _say(f"[incomplete] {where}: {error}")
-        return found, True
-    finding, excused = _ledger_finding(
-        where, item_status, page, superseded=superseded_exception(outcome)
-    )
-    if excused is not None:
-        _report_exception(excused)
+        return False, True
+    finding = _ledger_finding(where, item_status, page, superseded=supersession is not None)
     if finding is not None:
         _report(finding)
-        return True, incomplete
-    return found, incomplete
+        return True, False
+    if supersession is None or closed:
+        return False, False
+    return _retire(changes, record, supersession)
+
+
+def _retire(
+    changes: ChangeManagerClient, record: ChangeRecord, supersession: Supersession
+) -> tuple[bool, bool]:
+    """Retire a record a later green rollout passed. Returns `(found, incomplete)`."""
+    where = f"item {record.item_id}"
+    try:
+        item = changes.supersede(
+            record.item_id,
+            pull_request_number=record.pull_request_number,
+            superseding_run_id=supersession.run_id,
+            superseding_commit=supersession.commit,
+        )
+    except RefusedError as error:
+        _report(Finding(CHANGE_MANAGER_REFUSED_RETIREMENT, where, str(error)))
+        return True, False
+    except ChangeManagerError as error:
+        _say(f"[incomplete] {where}: {error}")
+        return False, True
+    _say(f"  [retired] {where}: record={item.get('status')}: {supersession.reason}")
+    return False, False
 
 
 def _withheld_unit(reader: GitHubReader, record: ChangeRecord, rollout: Rollout) -> bool:
@@ -346,18 +386,23 @@ def _withheld_unit(reader: GitHubReader, record: ChangeRecord, rollout: Rollout)
     return False
 
 
-def _report_outcome(outcome: Outcome) -> bool:
-    """Print everything one observation learned, and say whether any of it drives exit 2.
+def _report_outcome(outcome: Outcome, *, closed: bool) -> bool:
+    """Print what one observation learned, and say whether any of it drives exit 2.
 
     ADR-0044. The return value reads ONLY `findings`: an exception is printed and deliberately does
     not set `found`, which is the entire point of the category. Extracted from `_watch_one` because
     it is the honest unit -- and because the two loops pushed that function past the complexity
     ceiling, which is the linter noticing the same thing.
+
+    The superseded rollout of a `closed` record is not printed: that run will have failed for ever,
+    so it would repeat every pass, and the record's own event already holds the fact.
     """
     for finding in outcome.findings:
         _report(finding)
+    quiet = superseded_exception(outcome) if closed else None
     for excused in outcome.exceptions:
-        _report_exception(excused)
+        if excused is not quiet:
+            _report_exception(excused)
     return bool(outcome.findings)
 
 
@@ -366,13 +411,9 @@ def _ledger_finding(
     item_status: str,
     page: dict[str, Any],
     *,
-    superseded: Finding | None,
-) -> tuple[Finding | None, Finding | None]:
+    superseded: bool,
+) -> Finding | None:
     """What the change's observation history says that only a reader can act on.
-
-    Returns `(finding, exception)`, at most one of which is populated -- the same shape `Outcome`
-    already uses, and chosen over a `(finding, is_exception)` pair because that one has a state
-    (`None, True`) that means nothing.
 
     Two of them, and the second is ADR-0022's. The FIRST: the server records a second merge commit
     rather than refusing it, deliberately -- refusing would freeze whichever arrived first and make
@@ -386,44 +427,33 @@ def _ledger_finding(
     reduction rather than on re-deriving what a settlement would have decided: a second copy of
     that rule is drift this estate has paid for.
 
-    ADR-0044 gives the second one an EXCEPTION twin, and `superseded` is PASSED rather than
-    recomputed for exactly the reason the paragraph above gives about the settlement rule: this
-    function would otherwise hold a second copy of the four-clause supersession predicate, and two
-    copies of a rule is how they come to disagree. It is the excuse `observe` already found for
-    this pass's rollout -- so the report cites the same superseding run in both places, and a
-    reader who disputes one disputes both.
-
-    The condition is LATENT on today's population: records 78 and 79 are `approved`, so neither is
-    terminal. It becomes live the moment a person does the natural thing and resolves one, which is
-    precisely when a permanently-red finding about a rollout nobody can act on would appear.
+    `superseded` silences the second. A later green rollout has passed this one, so a record this
+    program retired for that reason, or a person closed, has nothing left for a reader to do. It
+    is the answer `observe` already found for this pass, passed rather than recomputed so this
+    function holds no second copy of the four-clause predicate.
     """
     commits = page.get("merge_commits_observed") or []
     if len(commits) > 1:
-        return (
-            Finding(
-                MERGE_DIVERGENCE,
-                where,
-                f"observations exist at {len(commits)} merge commits: {', '.join(commits)}",
-            ),
-            None,
+        return Finding(
+            MERGE_DIVERGENCE,
+            where,
+            f"observations exist at {len(commits)} merge commits: {', '.join(commits)}",
         )
     current = page.get("current")
     if (
-        item_status in TERMINAL_STATUSES
+        not superseded
+        and item_status in TERMINAL_STATUSES
         and isinstance(current, dict)
         and current.get("verdict") != "success"
     ):
-        detail = (
+        return Finding(
+            SETTLED_ROLLOUT_NOT_SUCCESS,
+            where,
             f"the record is {item_status} and its latest observed rollout "
             f"(run {current.get('run_id')} attempt {current.get('run_attempt')}) concluded "
-            f"{current.get('verdict')}"
+            f"{current.get('verdict')}",
         )
-        if superseded is not None:
-            return None, Finding(
-                SETTLED_SUPERSEDED_ROLLOUT, where, f"{detail}; {superseded.detail}"
-            )
-        return Finding(SETTLED_ROLLOUT_NOT_SUCCESS, where, detail), None
-    return None, None
+    return None
 
 
 def _observe_unit(

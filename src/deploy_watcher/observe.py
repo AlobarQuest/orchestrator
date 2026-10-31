@@ -65,6 +65,20 @@ class Unmeasurable(Exception):
 
 
 @dataclass(frozen=True)
+class Supersession:
+    """The later rollout `superseded_by` established, as data.
+
+    `reason` is for a reader who wants to dispute the excuse. `run_id` and `commit` are what
+    change-manager's event records when the watcher retires the record, and change-manager checks
+    neither, so they are carried from the predicate and never parsed out of the prose.
+    """
+
+    run_id: int
+    commit: str
+    reason: str
+
+
+@dataclass(frozen=True)
 class Outcome:
     """What one pass learned about one change.
 
@@ -72,7 +86,7 @@ class Outcome:
     rollout carries both an observation and whatever it found. `exceptions` is ADR-0044's, and it
     holds findings that were MEASURED and then EXCUSED -- same `Finding` type, deliberately,
     because an exception is not a lesser fact. It is the same fact with a reason a reader can
-    dispute.
+    dispute. `supersession` is set with the `SUPERSEDED_ROLLOUT` exception and never without it.
     """
 
     subject: str
@@ -80,6 +94,7 @@ class Outcome:
     pending: str | None = None
     findings: tuple[Finding, ...] = ()
     exceptions: tuple[Finding, ...] = ()
+    supersession: Supersession | None = None
 
 
 def _unanimous(runs: list[Run]) -> Run:
@@ -112,7 +127,7 @@ def superseded_by(
     repository: str,
     workflow: RolloutWorkflow,
     merge_commit_sha: str,
-) -> str | None:
+) -> Supersession | None:
     """Why production has moved past this failed rollout, or None if it has not.
 
     ADR-0044. Devon ruled on 2026-09-09 that a rollout which failed, and which production has
@@ -145,8 +160,9 @@ def superseded_by(
     on a GitHub hiccup, which is a strictly worse answer than the finding it replaced. A reader
     told "this rollout failed" can act; a reader told "something could not be read" cannot.
 
-    Returns the reason as prose, so the caller can put the superseding run, its head and its
-    workflow revision in front of a reader who wants to dispute the excuse.
+    Returns the superseding run and commit as data, with a reason that puts the run, its head and
+    its workflow revision in front of a reader who wants to dispute the excuse. The answer also
+    retires the record (ADR-0022 amendment 1), so a withheld excuse is a withheld retirement.
     """
     try:
         newest = reader.newest_successful_push_run(
@@ -174,9 +190,14 @@ def superseded_by(
     if not later.concluded or later.conclusion != "success":
         return None
     assert revision is not None  # level_of only returns ATTESTS_REVISION for a transcribed sha
-    return (
-        f"run {later.run_id} of {workflow.path} succeeded at {head[:8]}, which is ahead of this "
-        f"merge, at workflow revision {revision[:8]} — production has moved past this rollout"
+    return Supersession(
+        run_id=later.run_id,
+        commit=head,
+        reason=(
+            f"run {later.run_id} of {workflow.path} succeeded at {head[:8]}, which is ahead of "
+            f"this merge, at workflow revision {revision[:8]} — production has moved past this "
+            f"rollout"
+        ),
     )
 
 
@@ -367,6 +388,7 @@ def _settled(
 
     findings: tuple[Finding, ...] = drifted
     exceptions: tuple[Finding, ...] = ()
+    moved_on: Supersession | None = None
     if run.conclusion != "success":
         failed = Finding(
             ROLLOUT_NOT_SUCCESS,
@@ -387,8 +409,16 @@ def _settled(
             # ADR-0044. The SAME fact, carried under a kind that says a reader has nothing to do
             # about it, with the excuse spelled out so it can be disputed. Only THIS finding
             # moves: `drifted` is a live transcription defect whatever production is serving.
-            exceptions += (Finding(SUPERSEDED_ROLLOUT, subject, f"{failed.detail}; {moved_on}"),)
-    return Outcome(subject, rollout=observed, findings=findings, exceptions=exceptions)
+            exceptions += (
+                Finding(SUPERSEDED_ROLLOUT, subject, f"{failed.detail}; {moved_on.reason}"),
+            )
+    return Outcome(
+        subject,
+        rollout=observed,
+        findings=findings,
+        exceptions=exceptions,
+        supersession=moved_on,
+    )
 
 
 def superseded_exception(outcome: Outcome) -> Finding | None:
@@ -426,6 +456,7 @@ __all__ = [
     "NotSettled",
     "Outcome",
     "ReadError",
+    "Supersession",
     "Unmeasurable",
     "observe",
     "superseded_by",

@@ -133,3 +133,30 @@ already there, already authenticated, and already knows the unit.
   "I could not read it" is not, and must settle nothing.
 - **A unit-scoped observation is emitted only where a unit genuinely exists.** An estate landing
   has none, and inventing one to fill the hop would make the chain carry a fiction.
+
+## Amendment 1, 2026-10-31 — a superseded failed rollout retires its record
+
+**Decision (Devon, 2026-10-31):** a machine may close a landed record whose failed rollout a later
+green rollout has passed. This narrows the rule above that a failed rollout settles nothing: the
+failed run still never settles a record, and a later green run ahead of it now retires one.
+
+Nine records had stayed `approved` for this reason alone (items 78, 79, 89, 94, 104, 115, 117, 118
+and 125; `brain#59` to `#89`). Each landed with `verdict=failed` and later rollouts passed.
+
+How it works:
+
+- `deploy_watcher` calls `POST /api/items/{id}/deploy-supersession`, in change-manager's `observe`
+  scope. The route is separate from `deploy-retirement`, which belongs to `propose`: adding that one
+  to `observe` would let the watcher assert `pull_request_closed_unmerged`.
+- The watcher states coordinates: the pull request, the superseding run and its commit. It sends no
+  status, and the server's only outcome is `resolved`.
+- The server refuses unless its own reduced observation exists, isn't a success and names a
+  different commit. It does not check that the run was green or that the commit is later. The
+  watcher carries that condition, so it calls only with what `superseded_by` established (ADR-0044's
+  four clauses), for a merged pull request, in a non-dry pass, after the observation is recorded.
+- A merge divergence retires nothing: the rows disagree about which landing they describe.
+- A 409 is a finding, `change_manager_refused_the_retirement`.
+
+The boundary above still holds in its substance: the watcher records an outcome and remediates
+nothing. A rollback remains a mutation and remains out. `resolved` is terminal, so a wrong retirement
+can't be undone by a machine, which is why every doubt in the predicate withholds the excuse.

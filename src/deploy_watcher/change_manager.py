@@ -1,10 +1,11 @@
-"""The confined change-manager surface. Three paths, checked before the transport.
+"""The confined change-manager surface. Four paths, checked before the transport.
 
-The watcher lists the deploying-merge changes, appends an observation to one, and reads a
-change's observations back so a later pass can re-derive them. It can reach nothing else --
-notably not `claim`, `outcome` or `handoff`, which increment 1 closed to proposed sources and
-which this program has no business calling even if they were open, and not the decision routes,
-which are how a change is finished and are a human's to press.
+The watcher lists the deploying-merge changes, appends an observation to one, reads a change's
+observations back so a later pass can re-derive them, and states that a later green rollout passed
+a record's failed one (ADR-0022 amendment 1). That last route takes coordinates and no status: the
+server's only outcome is `resolved`. It can reach nothing else -- notably not `claim`, `outcome` or
+`handoff`, which increment 1 closed to proposed sources and which this program has no business
+calling even if they were open, and not the decision routes, which are a human's to press.
 
 Bounding it here rather than trusting the caller is the point: `is_allowed_*` runs before any
 request is built, so a path this program was never meant to reach never leaves the process.
@@ -25,10 +26,15 @@ DEFAULT_BASE_URL = "https://change-mgr.alobar.net"
 USER_AGENT = "deploy-watcher/1 (+AlobarQuest/orchestrator)"
 TIMEOUT_SECONDS = 30.0
 
-# The whole write surface: append an observation to one change. Anchored, with the id shape
-# spelled out, so the bound stays a bound -- `…/{id}/outcome` does not match, and neither does a
-# prefix, a trailing slash, or a traversal.
+# Who a supersession's event names. The route's own constant rather than the pass's `--actor`: the
+# fact it states comes from this program, whatever a pass calls itself.
+SUPERSEDING_ACTOR = "deploy-watcher"
+
+# The whole write surface: append an observation to one change, or state that a later rollout
+# passed it. Anchored, with the id shape spelled out, so the bound stays a bound -- `…/{id}/outcome`
+# does not match, and neither does a prefix, a trailing slash, or a traversal.
 _OBSERVE = re.compile(r"^/api/items/[0-9]{1,9}/deploy-observation$")
+_SUPERSEDE = re.compile(r"^/api/items/[0-9]{1,9}/deploy-supersession$")
 # The two reads. The listing is scoped to the proposed source by its query string, but the path
 # allowlist cannot see a query string, so the scoping is asserted in `deploy_changes` below.
 _ITEMS = "/api/items"
@@ -40,7 +46,7 @@ class ChangeManagerError(Exception):
 
 
 class RefusedError(ChangeManagerError):
-    """change-manager refused the observation. A finding, not a broken tool."""
+    """change-manager refused a write. A finding, not a broken tool."""
 
 
 class ForbiddenEndpointError(ChangeManagerError):
@@ -48,7 +54,7 @@ class ForbiddenEndpointError(ChangeManagerError):
 
 
 def is_allowed_write(path: str) -> bool:
-    return _OBSERVE.match(path) is not None
+    return _OBSERVE.match(path) is not None or _SUPERSEDE.match(path) is not None
 
 
 def is_allowed_read(path: str) -> bool:
@@ -151,11 +157,36 @@ class ChangeManagerClient:
             raise ChangeManagerError(f"the observations of item {item_id} are unreadable")
         return body
 
-    # -- the one write ---------------------------------------------------------------------
+    # -- the two writes --------------------------------------------------------------------
 
     def observe(self, item_id: int, body: dict[str, Any]) -> dict[str, Any]:
         """Append one observation. A 409 is change-manager REFUSING, which is a finding."""
-        path = f"/api/items/{item_id}/deploy-observation"
+        return self._post(f"/api/items/{item_id}/deploy-observation", body)
+
+    def supersede(
+        self,
+        item_id: int,
+        *,
+        pull_request_number: int,
+        superseding_run_id: int,
+        superseding_commit: str,
+    ) -> dict[str, Any]:
+        """Retire a record whose failed rollout a later green one passed. Answers the item.
+
+        The server checks neither that the run was green nor that the commit is later, so a caller
+        may pass only what `observe.superseded_by` established.
+        """
+        return self._post(
+            f"/api/items/{item_id}/deploy-supersession",
+            {
+                "pull_request_number": pull_request_number,
+                "superseding_run_id": superseding_run_id,
+                "superseding_commit": superseding_commit,
+                "actor": SUPERSEDING_ACTOR,
+            },
+        )
+
+    def _post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
         try:
             response = self._client.request("POST", path, json=body)
         except TransportFailure as failure:
@@ -171,14 +202,14 @@ class ChangeManagerClient:
                 f"change-manager rejected POST {path}: {response.status_code}: {_detail(response)}"
             )
         try:
-            recorded = response.json()
+            answer = response.json()
         except ValueError as error:
             raise ChangeManagerError(
                 f"POST {path} answered with something that is not JSON"
             ) from error
-        if not isinstance(recorded, dict):
+        if not isinstance(answer, dict):
             raise ChangeManagerError(f"POST {path} answered with something that is not an object")
-        return recorded
+        return answer
 
 
 def _detail(response: httpx.Response) -> str:
@@ -198,6 +229,7 @@ def _record(item: dict[str, Any]) -> ChangeRecord:
         target_repository=str(item.get("target_repository") or ""),
         pull_request_number=int(item.get("pull_request_number") or 0),
         acceptance_criteria=tuple(str(c) for c in criteria) if isinstance(criteria, list) else (),
+        status=str(item.get("status") or ""),
     )
 
 

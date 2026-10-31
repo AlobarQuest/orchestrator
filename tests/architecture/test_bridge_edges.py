@@ -151,6 +151,7 @@ CHANGE_MANAGER_PROBES = frozenset(
         "/api/items/44/outcome",
         "/api/items/44/handoff",
         "/api/items/44/deploy-observation",
+        "/api/items/44/deploy-supersession",
         "/api/sync",
         "/api/deploy-policy",
         "/api/items/",
