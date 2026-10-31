@@ -1,9 +1,9 @@
 """The executor's one surface on the orchestrator: its WORKER bearer's reads and writes only.
 
 The executor pulls (ADR-0055 decision 1). It reads the ready queue, a unit, its package
-revision, history and evidence, the machine identities the orchestrator loaded, and the
-observations a scheduled reader posted (`readers.py`); it claims, renews, starts, files evidence,
-submits and fails.
+revision, history and evidence, the machine identities the orchestrator loaded, the member record
+(`grants.py`), and the observations a scheduled reader posted (`readers.py`); it claims, renews,
+starts, files evidence, submits and fails.
 Every path is matched against an anchored pattern before a request leaves
 (`estate_clients.confined`), and any other is refused without a byte sent. The bearer comes from
 BWS at start-up and is never logged; failures carry the orchestrator's error code and message,
@@ -34,6 +34,7 @@ UUID_SHAPE: Final = r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}"
 LEDGER: Final = "/api/v1/status-ledger"
 IDENTITIES: Final = "/api/v1/m2m-identities"
 HELD: Final = "/api/v1/held-credentials"
+MEMBERS: Final = "/api/v1/members"
 OBSERVATIONS: Final = "/api/v1/observations"
 _UNIT: Final = re.compile(rf"^/api/v1/work-units/{UUID_SHAPE}$")
 _UNIT_RECORDS: Final = re.compile(rf"^/api/v1/work-units/{UUID_SHAPE}/(history|evidence)$")
@@ -53,7 +54,7 @@ class OrchestratorError(RuntimeError):
 def permits(method: str, path: str) -> bool:
     bare = path.split("?", 1)[0]
     if method == "GET":
-        return bare in (LEDGER, IDENTITIES, HELD, OBSERVATIONS) or any(
+        return bare in (LEDGER, IDENTITIES, HELD, MEMBERS, OBSERVATIONS) or any(
             p.match(bare) for p in (_UNIT, _UNIT_RECORDS, _INTAKE)
         )
     return method == "POST" and any(p.match(bare) for p in (_LEASE, _COMMAND))
@@ -110,6 +111,10 @@ class OrchestratorClient:
         """The fingerprint of each credential the orchestrator loaded to call another service
         (ADR-0055 amendment 13), by the variable that holds it."""
         return self._send("GET", HELD)
+
+    def members(self) -> dict[str, Any]:
+        """The SDS member record, retired members included (`grants.py` reads it)."""
+        return self._send("GET", MEMBERS)
 
     def observations(
         self, source_system: str, subject_reference: str, observed_from: datetime

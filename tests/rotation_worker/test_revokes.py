@@ -215,6 +215,7 @@ def _approved(store: MemoryStore, unit: str = "confirm") -> Approved:
             plan=bws.PLAN,
             unit=bws.PLAN.unit(unit),
             rotation=rotation,
+            registry=SimpleNamespace(repository="AlobarQuest/orchestrator"),
             reads={},
         ),
     )
@@ -296,6 +297,7 @@ def test_a_confirm_unit_whose_revoke_isn_t_seen_is_left_unclaimed_and_announced(
     store = KeychainMemory()
     approved = _approved(store)
     monkeypatch.setattr(worker, "check_unit", lambda *_arguments: approved)
+    monkeypatch.setattr(worker, "_grant_waits", lambda *_arguments: False)
     monkeypatch.setattr(worker, "_held", lambda _setup, _approved: None)
     monkeypatch.setattr(worker, "_provider", lambda _setup, _approved: Probe(old=200))
     setup = _setup(store, tmp_path, Client(), mirror=None, work_project_id="work")

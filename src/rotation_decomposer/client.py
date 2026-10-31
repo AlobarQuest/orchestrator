@@ -20,6 +20,7 @@ UUID_SHAPE: Final = r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}"
 ITEMS: Final = "/api/items"
 WORK_SOURCE: Final = "work"
 _WORK = re.compile(r"^/api/v1/change-records/[1-9][0-9]*/work$")
+_MEMBERS: Final = "/api/v1/members"
 _INTAKE = re.compile(rf"^/api/v1/package-intakes/{UUID_SHAPE}$")
 _PROPOSALS = re.compile(rf"^/api/v1/package-intakes/{UUID_SHAPE}/decomposition-proposals$")
 
@@ -43,7 +44,7 @@ def change_manager_permits(method: str, path: str) -> bool:
 
 def orchestrator_permits(method: str, path: str) -> bool:
     if method == "GET":
-        return any(p.fullmatch(path) for p in (_WORK, _INTAKE, _PROPOSALS))
+        return path == _MEMBERS or any(p.fullmatch(path) for p in (_WORK, _INTAKE, _PROPOSALS))
     return method == "POST" and _PROPOSALS.fullmatch(path) is not None
 
 
@@ -140,6 +141,11 @@ class Orchestrator(_Client):
             permits=orchestrator_permits,
             transport=transport,
         )
+
+    def members(self) -> Any:
+        """The member record's body, unparsed: `rotation_granted` reads it and refuses a shape it
+        doesn't know, so a wrong answer is never taken for a shorter record."""
+        return self._json("GET", _MEMBERS)
 
     def work(self, change_record_id: int) -> dict[str, Any]:
         body = self._json("GET", f"/api/v1/change-records/{change_record_id}/work")

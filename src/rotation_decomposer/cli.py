@@ -36,6 +36,7 @@ from rotation_decomposer.outcome import Outcome
 from rotation_worker.contract import ContractError
 from rotation_worker.destinations import DestinationError
 from rotation_worker.git_mirror import MirrorError, RepoMirror, default_mirror_root
+from rotation_worker.grants import GrantUnread, rotation_granted
 from rotation_worker.registry import RegistryEntry, RegistryError, credentials
 
 FOUND, INCOMPLETE = 2, 3
@@ -53,6 +54,7 @@ def run_pass(
     dry_run: bool = False,
 ) -> list[Outcome]:
     outcomes: list[Outcome] = []
+    members = _once(orchestrator.members)
     for record in records:
         package_id = str(record.get("package_id"))
         credential = credential_of(package_id)
@@ -72,11 +74,20 @@ def run_pass(
                     credential,
                     orchestrator,
                     registry,
+                    members,
                     dry_run,
                 )
                 if outcome is not None:
                     outcomes.append(outcome)
-        except (CallError, RegistryError, MirrorError, KeyError, TypeError, ValueError) as error:
+        except (
+            CallError,
+            GrantUnread,
+            RegistryError,
+            MirrorError,
+            KeyError,
+            TypeError,
+            ValueError,
+        ) as error:
             # One record's read failing never stops the pass.
             outcomes.append(Outcome(subject, "unread", str(error)))
     return outcomes
@@ -109,6 +120,7 @@ def _revision(
     credential: str,
     orchestrator: Orchestrator,
     registry: Callable[[], dict[str, RegistryEntry]],
+    members: Callable[[], Any],
     dry_run: bool,
 ) -> Outcome | None:
     """What becomes of one registered revision with no units; `None` for one the record doesn't
@@ -124,6 +136,14 @@ def _revision(
     entry = registry().get(credential)
     if entry is None:
         return Outcome(subject, "refused", f"no registry row names {credential}")
+    # Asked only here, once a decomposition would be proposed; `GrantUnread` and `CallError` are
+    # the caller's `unread`.
+    if not rotation_granted(members(), entry.repository):
+        return Outcome(
+            subject,
+            "refused",
+            f"the member record does not grant credential_rotation on {entry.repository}",
+        )
     try:
         body = decomposition(intake, entry)
     except (DecomposeError, ContractError, DestinationError, RegistryError) as error:
@@ -162,11 +182,11 @@ def exit_code(outcomes: Sequence[Outcome]) -> int:
     return 0
 
 
-def _once(read: Callable[[], dict[str, RegistryEntry]]) -> Callable[[], dict[str, RegistryEntry]]:
+def _once[T](read: Callable[[], T]) -> Callable[[], T]:
     """`read`, asked at most once per pass, and only when a revision needs a decomposition."""
-    found: list[dict[str, RegistryEntry]] = []
+    found: list[T] = []
 
-    def cached() -> dict[str, RegistryEntry]:
+    def cached() -> T:
         if not found:
             found.append(read())
         return found[0]

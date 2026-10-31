@@ -259,9 +259,14 @@ def test_a_wait_alerts_at_48_hours_and_not_at_31(
 
 def _at_retire(monkeypatch: pytest.MonkeyPatch) -> None:
     """The real `_take` as far as the readers a retire waits for."""
-    approved = SimpleNamespace(reads={"r": object()}, rotation=SimpleNamespace(keeper_id="k"))
+    approved = SimpleNamespace(
+        reads={"r": object()},
+        rotation=SimpleNamespace(keeper_id="k", destinations=()),
+        registry=SimpleNamespace(repository="AlobarQuest/orchestrator"),
+    )
     reads = SimpleNamespace(pending=lambda _at: ["weekly-reader"])
     monkeypatch.setattr(worker, "check_unit", lambda *_a: approved)
+    monkeypatch.setattr(worker, "_grant_waits", lambda *_a: False)
     monkeypatch.setattr(worker, "_held", lambda *_a: None)
     monkeypatch.setattr(worker, "_verifies", lambda _a: True)
     monkeypatch.setattr(worker, "_gates_retire", lambda _a: True)
@@ -295,8 +300,13 @@ def test_a_reader_mid_run_waits_on_the_ordinary_clock(
                 raise worker.ReadUnavailable("the listing didn't answer")
             return busy
 
-    approved = SimpleNamespace(reads={})
+    approved = SimpleNamespace(
+        reads={},
+        rotation=SimpleNamespace(destinations=()),
+        registry=SimpleNamespace(repository="AlobarQuest/orchestrator"),
+    )
     monkeypatch.setattr(worker, "check_unit", lambda *_a: approved)
+    monkeypatch.setattr(worker, "_grant_waits", lambda *_a: False)
     monkeypatch.setattr(worker, "_held", lambda *_a: None)
     monkeypatch.setattr(worker, "_provider", lambda *_a: Busy())
     monkeypatch.setattr(worker, "_writes", lambda _a: True)
@@ -615,7 +625,11 @@ def test_a_refusal_whose_claim_raised_is_stuck(run: Pass, monkeypatch: pytest.Mo
     def refuse(*_arguments: Any) -> None:
         raise worker.ContractError("the registry disagrees")
 
+    def no_row(*_arguments: Any) -> None:
+        raise worker.RegistryError("no row")
+
     monkeypatch.setattr(worker, "check_unit", refuse)
+    monkeypatch.setattr(worker, "find_credential", no_row)
     run.estate.add("ready")
     run.estate.rows = []
     run.estate.ready = [UNIT]

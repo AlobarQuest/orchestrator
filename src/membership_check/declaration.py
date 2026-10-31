@@ -66,6 +66,8 @@ from typing import Final, Protocol
 
 import httpx
 
+from rotation_worker.registry import REGISTRY_PATH
+
 API: Final = "https://api.github.com"
 FILENAME: Final = "factory-target.toml"
 USER_AGENT: Final = "work-carrier/1 (+AlobarQuest/orchestrator)"
@@ -110,6 +112,14 @@ _ALLOWED = re.compile(rf"^/repos/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/contents/{re.es
 
 def is_allowed(path: str) -> bool:
     return bool(_ALLOWED.fullmatch(path))
+
+
+# The credential registry's file, whose PRESENCE `holds_registry` reads (Rotation Part 2). The same
+# route shape as the declaration's with another filename, judged on the path that will be sent.
+_REGISTRY_ALLOWED = re.compile(
+    rf"^/repos/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/contents/{re.escape(REGISTRY_PATH)}$"
+)
+_ROUTES: Final = {FILENAME: _ALLOWED, REGISTRY_PATH: _REGISTRY_ALLOWED}
 
 
 @dataclass(frozen=True)
@@ -236,60 +246,10 @@ class GitHubDeclarationSource:
         self.close()
 
     def declaration(self, slug: str) -> Declaration:
-        """Total: it returns a `Declaration`, including for every failure.
-
-        A repository name this program may not compose a route from is a refusal
-        it RETURNS rather than raises -- unlike its sibling clients, whose paths
-        are composed from ids the program itself minted. This one's name is
-        authored text in somebody's `package.yaml`, so a bad one is an ordinary
-        finding about one record and must not take the pass down with it.
-        """
-        path = f"/repos/{slug}/contents/{FILENAME}"
-        try:
-            # BUILD IT, THEN JUDGE WHAT WAS BUILT. The request is what reaches
-            # the network, and its path is not always the string composed above
-            # -- see the note on `_ALLOWED`. Nothing has left this process here:
-            # `build_request` composes and raises, and a name that cannot even be
-            # composed into a URL is a name this program may not ask about, which
-            # is why the refusal below is worded as that and not as a fault of
-            # GitHub's. Measured: a control character in the slug raises
-            # `InvalidURL`, which is not an `HTTPError`.
-            request = self._client.build_request("GET", path)
-        except (httpx.HTTPError, httpx.InvalidURL, ValueError) as error:
-            return Declaration(
-                None,
-                f"{slug!r} is not a repository name this program may ask about; the one "
-                f"route it composes from a name is /repos/<owner>/<repo>/contents/{FILENAME} "
-                f"({type(error).__name__})",
-            )
-        if not is_allowed(request.url.path):
-            return Declaration(
-                None,
-                f"{slug!r} is not a repository name this program may ask about; the one "
-                f"route it composes from a name is /repos/<owner>/<repo>/contents/{FILENAME}",
-            )
-        try:
-            response = self._client.send(request)
-        except (httpx.HTTPError, httpx.InvalidURL, ValueError) as error:
-            # Three families, because `httpx` raises three: an `InvalidURL` and
-            # an `HTTPError` are the documented two, and IDNA encoding of a
-            # malformed host raises `UnicodeError`, which is a `ValueError` and
-            # neither of the others. The type name only -- an exception from a
-            # client carries the request, and a diagnostic that prints what it
-            # was given is how a credential reaches a transcript.
-            return Declaration(None, f"github is unreachable for {slug}: {type(error).__name__}")
-        if response.status_code == 404:
-            # ABSENCE IS AN ANSWER (ADR-0015): a repository that has said nothing
-            # has not opted in. TWO OTHER STATES ANSWER IDENTICALLY -- a
-            # repository that does not exist, and a private one this credential
-            # may not read, which GitHub answers 404 rather than 403 -- so the
-            # absence is confirmed against the repository itself before it is
-            # believed. **THE ORDER IS THE RULE.** This branch is reached only
-            # after a contents request that SUCCEEDED and said 404: a transport
-            # fault returned above and every other status returns below, so no
-            # transient failure can be turned into an absence by a probe that
-            # happens to answer a moment later.
-            return self._confirm_absence(slug, request.url.path)
+        """Total: it returns a `Declaration`, including for every failure."""
+        response = self._contents(slug, FILENAME)
+        if isinstance(response, Declaration):
+            return response
         if 300 <= response.status_code < 400:
             # A RENAMED REPOSITORY, and it used to fall past both branches into
             # `parse`. Redirects are not followed, so what arrives is GitHub's
@@ -313,15 +273,88 @@ class GitHubDeclarationSource:
             return Declaration(None, f"{slug}'s {FILENAME} is not readable text: {error}")
         return parse(text)
 
-    def _confirm_absence(self, slug: str, contents_path: str) -> Declaration:
+    def holds_registry(self, slug: str) -> Declaration:
+        """Whether the repository's default branch holds `.cred-consumers.toml`.
+
+        `target` is `True` for a file that is there, `False` for one confirmed absent, `None` when
+        this program could not tell. The file's content is never read: presence is the whole
+        question.
+        """
+        response = self._contents(slug, REGISTRY_PATH)
+        if isinstance(response, Declaration):
+            return response
+        if 200 <= response.status_code < 300:
+            return Declaration(True, f"{slug} holds {REGISTRY_PATH}")
+        return Declaration(
+            None, f"github answered {response.status_code} for {slug}'s {REGISTRY_PATH}"
+        )
+
+    def _contents(self, slug: str, filename: str) -> httpx.Response | Declaration:
+        """GitHub's answer for one file, or the `Declaration` that ends the question: a name this
+        program may not ask about, an unreachable GitHub, or a 404 confirmed or not.
+
+        A repository name this program may not compose a route from is a refusal
+        it RETURNS rather than raises -- unlike its sibling clients, whose paths
+        are composed from ids the program itself minted. This one's name is
+        authored text in somebody's `package.yaml`, so a bad one is an ordinary
+        finding about one record and must not take the pass down with it.
+        """
+        path = f"/repos/{slug}/contents/{filename}"
+        try:
+            # BUILD IT, THEN JUDGE WHAT WAS BUILT. The request is what reaches
+            # the network, and its path is not always the string composed above
+            # -- see the note on `_ALLOWED`. Nothing has left this process here:
+            # `build_request` composes and raises, and a name that cannot even be
+            # composed into a URL is a name this program may not ask about, which
+            # is why the refusal below is worded as that and not as a fault of
+            # GitHub's. Measured: a control character in the slug raises
+            # `InvalidURL`, which is not an `HTTPError`.
+            request = self._client.build_request("GET", path)
+        except (httpx.HTTPError, httpx.InvalidURL, ValueError) as error:
+            return Declaration(
+                None,
+                f"{slug!r} is not a repository name this program may ask about; the one "
+                f"route it composes from a name is /repos/<owner>/<repo>/contents/{filename} "
+                f"({type(error).__name__})",
+            )
+        if not _ROUTES[filename].fullmatch(request.url.path):
+            return Declaration(
+                None,
+                f"{slug!r} is not a repository name this program may ask about; the one "
+                f"route it composes from a name is /repos/<owner>/<repo>/contents/{filename}",
+            )
+        try:
+            response = self._client.send(request)
+        except (httpx.HTTPError, httpx.InvalidURL, ValueError) as error:
+            # Three families, because `httpx` raises three: an `InvalidURL` and
+            # an `HTTPError` are the documented two, and IDNA encoding of a
+            # malformed host raises `UnicodeError`, which is a `ValueError` and
+            # neither of the others. The type name only -- an exception from a
+            # client carries the request, and a diagnostic that prints what it
+            # was given is how a credential reaches a transcript.
+            return Declaration(None, f"github is unreachable for {slug}: {type(error).__name__}")
+        if response.status_code == 404:
+            # ABSENCE IS AN ANSWER (ADR-0015): a repository that has said nothing
+            # has not opted in. TWO OTHER STATES ANSWER IDENTICALLY -- a
+            # repository that does not exist, and a private one this credential
+            # may not read, which GitHub answers 404 rather than 403 -- so the
+            # absence is confirmed against the repository itself before it is
+            # believed. **THE ORDER IS THE RULE.** This branch is reached only
+            # after a contents request that SUCCEEDED and said 404: a transport
+            # fault returned above and every other status returns from the
+            # caller, so no transient failure can be turned into an absence by a
+            # probe that happens to answer a moment later.
+            return self._confirm_absence(slug, request.url.path, filename)
+        return response
+
+    def _confirm_absence(self, slug: str, contents_path: str, filename: str) -> Declaration:
         """A contents 404, read again against the repository itself.
 
         `False` when the repository answers -- the file is genuinely not on its
-        default branch, so it has said nothing and has not opted in. `None` when
-        the repository does not answer, because then the 404 was about the NAME
-        and not about the file: a slug nobody should have asked about, or one
-        this credential cannot see, neither of which is a repository declining to
-        be a target.
+        default branch. `None` when the repository does not answer, because then
+        the 404 was about the NAME and not about the file: a slug nobody should
+        have asked about, or one this credential cannot see, neither of which
+        says anything about the file.
 
         **THE PROBE'S PATH IS DERIVED FROM THE PATH THAT WAS JUDGED, never
         composed from the slug a second time, and that is the guard rather than a
@@ -340,7 +373,7 @@ class GitHubDeclarationSource:
             probe = self._client.send(
                 self._client.build_request(
                     "GET",
-                    contents_path.removesuffix(f"/contents/{FILENAME}"),
+                    contents_path.removesuffix(f"/contents/{filename}"),
                     headers={"Accept": REPOSITORY_ACCEPT},
                 )
             )
@@ -348,7 +381,7 @@ class GitHubDeclarationSource:
             # The type name only, for the reason given one branch up.
             return Declaration(
                 None,
-                f"no {FILENAME} on {slug}'s default branch, and {slug} itself could not "
+                f"no {filename} on {slug}'s default branch, and {slug} itself could not "
                 f"be read either ({type(error).__name__}), so this is not an absence",
             )
         if not 200 <= probe.status_code < 300:
@@ -358,7 +391,7 @@ class GitHubDeclarationSource:
             # returns a definite `False` costs a held record, where the
             # alternative costs a manufactured refusal.
             why = _unanswered(slug, probe.status_code)
-            return Declaration(None, f"no {FILENAME} on {slug}'s default branch, and {why}")
+            return Declaration(None, f"no {filename} on {slug}'s default branch, and {why}")
         # WHAT THIS DOES NOT PROVE IS NAMED IN THE LINE, because the line is what
         # a person acts on. Metadata and contents are separate permissions, so a
         # credential holding the first and not the second answers 200 here and
@@ -369,8 +402,8 @@ class GitHubDeclarationSource:
         # hole closing. Whoever wants it closed should close it in both.
         return Declaration(
             False,
-            f"no {FILENAME} on {slug}'s default branch, so it has not opted in -- {slug} "
-            "itself answers, so this is not a name nothing knows; what it does NOT prove is "
+            f"no {filename} on {slug}'s default branch -- {slug} itself answers, so this "
+            "is not a name nothing knows; what it does NOT prove is "
             "that this credential may read the repository's CONTENTS, which is a separate "
             "permission from its metadata and answers exactly this way when it is missing",
         )

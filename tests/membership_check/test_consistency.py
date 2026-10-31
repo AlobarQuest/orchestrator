@@ -18,14 +18,21 @@ from membership_check.auto_merge import AutoMergeState
 from membership_check.consistency import Report, Scope, canonical, check, factory_targets
 from membership_check.declaration import Declaration
 from pin_watcher.github import PinWatcherError
+from rotation_worker.registry import RegistryEntry
 from sds_members.client import SERVICES, Member
 
 OWNED = ["AlobarQuest/orchestrator", "AlobarQuest/brain", "AlobarQuest/rtk", "AlobarQuest/notes"]
 
 
 class Declarations:
-    def __init__(self, answers: dict[str, bool | None]) -> None:
+    def __init__(
+        self, answers: dict[str, bool | None], registry_files: dict[str, bool | None] | None = None
+    ) -> None:
         self._answers = answers
+        self._registry_files = registry_files or {}
+
+    def holds_registry(self, slug: str) -> Declaration:
+        return Declaration(self._registry_files.get(slug, False), "test double")
 
     def declaration(self, slug: str) -> Declaration:
         return Declaration(self._answers.get(slug, False), "test double")
@@ -103,6 +110,9 @@ class _Sources(TypedDict, total=False):
     standing_update_repositories: list[str]
     landing_decided: bool
     auto_merge: dict[str, AutoMergeState]
+    flagged_repositories: list[str]
+    registry_files: list[str]
+    registries_read: bool
 
 
 QUIET = AutoMergeState(allowed=False, arming_workflows=())
@@ -121,6 +131,8 @@ def _check(members: list[Member], **sources: Unpack[_Sources]) -> Report:
         "rollbacks": [],
         "standing_update_repositories": [],
         "auto_merge": {m.repository: QUIET for m in members},
+        "flagged_repositories": [],
+        "registry_files": [],
     }
     return check(members, **{**empty, **sources})
 
@@ -148,6 +160,7 @@ def test_an_agreeing_estate_is_clean():
         registry_repositories=["A/one"],
         rollbacks=["a/one"],
         standing_update_repositories=["A/ONE"],
+        flagged_repositories=["a/ONE"],
     )
     assert report == Report([], [])
 
@@ -191,6 +204,9 @@ def test_a_source_naming_a_repository_with_the_grant_agrees(argument, service):
     reached: _Sources = (
         {"inert": frozenset({"a/one"})} if "dependency_updates" in (service, other) else {}
     )
+    # A credential_rotation grant also needs a flagged registry row, for the same reason.
+    if service == "credential_rotation":
+        reached = {**reached, "flagged_repositories": ["A/one"]}
     assert _check(members, **{**reached, **_source(argument, "A/one")}).disagreements == []
 
 
@@ -314,6 +330,9 @@ def _wire(
     listing_error=None,
     rollbacks=None,
     auto_merge=None,
+    flagged=(),
+    mirror_error=None,
+    registry_files=None,
 ):
     for name in (
         "SDS_MEMBERS_OBSERVER_TOKEN",
@@ -341,8 +360,22 @@ def _wire(
     monkeypatch.setattr(cli, "GitHubReader", Reader)
     monkeypatch.setattr(cli, "repositories", listing)
     monkeypatch.setattr(
-        cli, "GitHubDeclarationSource", lambda token: Declarations(answers or {"A/one": True})
+        cli,
+        "GitHubDeclarationSource",
+        lambda token: Declarations(answers or {"A/one": True}, registry_files),
     )
+
+    def read_registries(_mirror):
+        if mirror_error:
+            raise mirror_error
+        return {
+            f"c{i}": RegistryEntry(r, "c" * 40, {"class": "openrouter-key"})
+            for i, r in enumerate(flagged)
+        }
+
+    monkeypatch.setattr(cli, "rotated_by_sds", read_registries)
+    monkeypatch.setattr(cli, "RepoMirror", lambda root: None)
+    monkeypatch.setattr(cli, "default_mirror_root", lambda program: None)
 
     def read_policy(_token):
         if policy_error:
@@ -373,15 +406,6 @@ def _wire(
 
 
 CLEAN = [_member("A/one", "app_changes", "dependency_updates")]
-
-
-@pytest.fixture(autouse=True)
-def packages_checkout(tmp_path, monkeypatch):
-    """An empty, readable packages checkout; never the real one."""
-    root = tmp_path / "intent-packages"
-    (root / "packages").mkdir(parents=True)
-    monkeypatch.setenv("BUMP_PROPOSER_PACKAGES_CHECKOUT", str(root))
-    return root
 
 
 def _standing_tree(root, *targets):

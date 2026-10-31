@@ -24,6 +24,7 @@ from rotation_proposer import cli
 from rotation_proposer.cli import EXIT_FINDINGS, EXIT_OK, EXIT_UNUSABLE, run
 from rotation_proposer.findings import Due, FindingsError, Unrecognised
 from rotation_worker.registry import RegistryEntry, RegistryError
+from sds_members.client import SERVICES, Member, MembersUnreadable
 from tests.bump_proposer.test_pass import _Estate, _Spine
 from tests.rotation_proposer.test_standing import DESTINATIONS, FakeLifecycle, write_package
 
@@ -61,6 +62,10 @@ class _Rig:
         # Each credential's registry class, where it isn't OpenRouter's.
         self.classes: dict[str, str] = {}
         self.registry_reads = 0
+        # The repositories the member record grants `credential_rotation` on, or `None` for an
+        # unreadable record; `member_reads` counts how often it was asked.
+        self.granted: list[str] | None = ["AlobarQuest/infraops-mcp-server"]
+        self.member_reads = 0
 
     def entry(self, credential_id: str) -> RegistryEntry:
         credential = {
@@ -131,6 +136,17 @@ def rig(tmp_path, monkeypatch):
         return {item.credential_id: rig.entry(item.credential_id) for item in rig.due}
 
     monkeypatch.setattr(cli, "registry_entries", registry_entries)
+
+    def read_members(**_kwargs):
+        rig.member_reads += 1
+        if rig.granted is None:
+            raise MembersUnreadable("the member record is unreachable")
+        return [
+            Member(name, "devon", "member", None, False, (), dict.fromkeys(SERVICES, "granted"))
+            for name in rig.granted
+        ]
+
+    monkeypatch.setattr(cli, "read_members", read_members)
     monkeypatch.setattr(cli, "require_clean", lambda root: None)
     monkeypatch.setattr(cli, "require_publishable", lambda root: None)
 

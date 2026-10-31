@@ -23,8 +23,15 @@ from membership_check.auto_merge import AutoMergeState, GitHubAutoMergeSource
 from membership_check.consistency import Scope, canonical, check, factory_targets
 from membership_check.declaration import GitHubDeclarationSource
 from pin_watcher.github import GitHubReader, PinWatcherError, repositories
-from rotation_worker.registry import REGISTRY_REPOSITORIES
-from sds_members.client import MembersUnreadable, read_members
+from rotation_worker.git_mirror import MirrorError, RepoMirror, default_mirror_root
+from rotation_worker.registry import (
+    REGISTRY_PATH,
+    REGISTRY_REPOSITORIES,
+    RegistryError,
+    rotated_by_sds,
+)
+from rotation_worker.types import of_a_type
+from sds_members.client import Member, MembersUnreadable, read_members
 from tool_installer.tools import TOOLS
 
 OBSERVER_TOKEN_VARIABLE: Final = "SDS_MEMBERS_OBSERVER_TOKEN"
@@ -100,6 +107,40 @@ def _standing_update_repositories() -> tuple[list[str], list[str]]:
     return [package.target_repository for package in packages.values()], []
 
 
+def _flagged_repositories() -> tuple[list[str], list[str]]:
+    """Repositories whose registry hands the SDS a credential of a type it rotates, read at their
+    `main`, and the gaps.
+
+    Read from the lane's own mirror. An unread mirror is a gap and never an empty population, so
+    the caller skips the direction that would read it as one.
+    """
+    try:
+        rows = of_a_type(rotated_by_sds(RepoMirror(default_mirror_root("membership-check"))))
+    except (MirrorError, RegistryError, OSError) as error:
+        return [], [f"the credential registries couldn't be read: {error}"]
+    return sorted({entry.repository for entry in rows.values()}), []
+
+
+def _registry_files(token: str, members: Iterable[Member]) -> tuple[list[str], list[str]]:
+    """Non-retired members holding `.cred-consumers.toml`, and a gap for each that wasn't read.
+
+    An absent file (a confirmed 404) is no finding; any other failure is a gap, never a
+    disagreement.
+    """
+    holding: list[str] = []
+    gaps: list[str] = []
+    with GitHubDeclarationSource(token=token) as source:
+        for member in members:
+            if member.state == "retired":
+                continue
+            answer = source.holds_registry(member.repository)
+            if answer.target is True:
+                holding.append(member.repository)
+            elif answer.target is None:
+                gaps.append(f"{REGISTRY_PATH} unread: {member.repository} ({answer.detail})")
+    return holding, gaps
+
+
 @app.command()
 def main() -> None:
     """Compare the member record with the declarations and the configuration lists."""
@@ -128,6 +169,10 @@ def main() -> None:
         gaps.append(f"the fork-sync fork list couldn't be read: {error}")
     standing, standing_gaps = _standing_update_repositories()
     gaps += standing_gaps
+    flagged, flagged_gaps = _flagged_repositories()
+    gaps += flagged_gaps
+    registry_files, registry_gaps = _registry_files(tokens[GITHUB_TOKEN_VARIABLE], members)
+    gaps += registry_gaps
     report = check(
         members,
         declarations=declarations,
@@ -142,6 +187,9 @@ def main() -> None:
         rollbacks=_spelled(ROLLBACKS, owned),
         standing_update_repositories=_spelled(standing, owned),
         auto_merge=_auto_merge(tokens[GITHUB_TOKEN_VARIABLE], [m.repository for m in members]),
+        flagged_repositories=_spelled(flagged, owned),
+        registry_files=_spelled(registry_files, owned),
+        registries_read=not flagged_gaps,
     )
     for line in report.disagreements:
         typer.echo(line)

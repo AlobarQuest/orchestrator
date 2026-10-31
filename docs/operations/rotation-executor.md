@@ -20,15 +20,49 @@ Each pass, started by a systemd timer every five minutes, works every ready unit
    plan is the one the approved package's criteria describe, step for step (see "The plan a
    credential runs"). A refusal claims the unit and fails it with the reason, so it reaches the dead-letter report and
    the owning instance raises `rotation-unit-failed` (see "Alerts"). A git or network failure leaves the unit for the next pass.
-2. **It claims and starts the unit, then runs its steps** (`contract.py`). Before each step it
-   renews the lease and reads the registry again.
-3. **It files each step's evidence and submits the unit.** A contract refusal fails the unit with
+2. **It reads the member record's grant before claiming** (`grants.py`). A unit whose registry
+   repository lacks a `granted` `credential_rotation` grant stays unclaimed and reports a wait (see
+   "The member grant").
+3. **It claims and starts the unit, then runs its steps** (`contract.py`). Before each step it
+   renews the lease, reads the registry again and reads the grant again.
+4. **It files each step's evidence and submits the unit.** A contract refusal fails the unit with
    its reason, which never holds a value.
 
 The contract's invariants, the step kinds and why each exists are in `contract.py`'s docstring.
 The executor never trusts evidence: it re-derives where a rotation stands from BWS (the keeper,
 and the staging and quarantine secrets named `rotation/<credential>/<occurrence>/…` in
 `Rotation / Work`) and from probes.
+
+### The member grant
+
+The executor acts on a registry repository only while the SDS member record grants it
+`credential_rotation`. It reads `GET /api/v1/members` with its own bearer at two points and decides
+with `rotation_granted` (`rotation_worker/grants.py`). A grant counts only in state `granted` on a
+member that isn't retired, and repositories compare case-folded.
+
+- **Before the claim.** A repository without the grant leaves the unit unclaimed. The pass reports
+  `<repository> has no credential_rotation grant` as the unit's wait and keeps the unit's revoke,
+  mint and inbox alerts as they were. The unit runs on the first pass after the grant is `granted`.
+  When the rotation has an open overlap, the wait names the date it ends. A record that can't be
+  read, or that has no rows, is an unread answer: the unit is left for the next pass, and nothing
+  is claimed or failed. A unit the checks refuse waits the same way when its registry row resolves
+  and its repository has no grant, because failing it would take a claim; a row that doesn't
+  resolve is refused as usual.
+- **Before each step.** `before_step` renews the lease first, then re-reads the registry entry and
+  the grant. A repository whose grant was withdrawn fails the unit with
+  `the credential_rotation grant was withdrawn mid-rotation`, as a handed-back `rotated_by_sds`
+  flag fails it. The unit has been claimed by then, so an unread record at this point is logged
+  (`grant_unread`) and the step proceeds: the claim happened on a yes, and an unreadable record
+  can't fail a unit that may be mid-overlap. This protects the grant read only. A failed `renew`
+  fails the unit as it always has, so an orchestrator that is down when a step starts still fails
+  the unit there. A unit failed on a withdrawn grant spends an attempt like any other failure, so
+  while attempts remain it is requeued as SYSTEM (`requeue_refusal` checks only state and
+  eligibility); once requeued it waits unclaimed, per the first bullet, until the grant returns.
+
+An empty record is unread, never an explicit withdrawal of every grant. `rotation-worker grants`
+prints `granted` or `not granted` for each repository in `REGISTRY_REPOSITORIES`, read as this
+instance reads it with its bearer; it exits 2 when the record can't be read.
+
 
 ## The plan a credential runs
 
@@ -194,8 +228,8 @@ alone:
 | `awaiting-approval` | A proposal already waits | 0 |
 | `superseded` | A person superseded its approved decomposition (approval creates units at once, so approved with none means superseded); a person replaces it | 2 |
 | `declined` | A person rejected the proposal or sent it back; the lane never proposes again, so decompose it by hand | 2 |
-| `refused` | The package can't be decomposed by machine (its criteria describe its type's pre-derivation plan, its registry row names no type or isn't `rotated_by_sds`, or its destinations differ from the registry's), or the orchestrator refused the proposal | 2 |
-| `unread` | A record, the orchestrator or the registry couldn't be read | 3 |
+| `refused` | The package can't be decomposed by machine (its criteria describe its type's pre-derivation plan, its registry row names no type or isn't `rotated_by_sds`, its destinations differ from the registry's, or the member record does not grant `credential_rotation` on its repository), or the orchestrator refused the proposal | 2 |
+| `unread` | A record, the orchestrator, the registry or the member record (or one with no rows) couldn't be read | 3 |
 
 To see what a pass would do without proposing anything, run
 `/bin/bash scripts/run-rotation-decomposer.sh --dry-run`.
@@ -578,6 +612,28 @@ no attempts left, finish or undo it within the seven days:
   both rows, restart, then delete the staging secret from `Rotation / Work`.
 
 Past `until`, every reader of the keeper gets 401 until one of those is done.
+
+If the grant is withdrawn mid-rotation, the unit fails at its next step like any contract refusal,
+and a failure after `host` has the same consequences as the stall above: an overlap stays open until
+`until`. Before withdrawing a `credential_rotation` grant, read the ledger or `/review` for any
+rotation in flight on the repository, including one between units: a unit that has finished `host`
+leaves an overlap open while its next unit waits. `rotation-worker grants` shows only the grants as
+an instance reads them, not what is in flight. It reads the same config as `run`, so on the Mac name
+it with `--config`, and on the VM use the `runuser` form:
+
+```sh
+rotation-worker grants --config "$HOME/Library/Application Support/rotation-worker/config.toml"
+
+orb -m rotation-executor -u root runuser -u rotation -- env -i PATH=/usr/bin:/bin \
+  HOME=/var/lib/rotation-worker /opt/rotation-worker/venv/bin/rotation-worker grants \
+  --config /etc/rotation-worker/config.toml
+```
+
+A missing config prints an error and exits 2, as an unread record does.
+
+If a unit failed on the withdrawal, restore the grant through a member proposal, requeue the unit
+while it has attempts left, and finish or undo it as above; if the repository should stay withdrawn,
+undo it.
 
 The store retries a 429 or 5xx from BWS for about three minutes, so a stall at `store` means BWS
 kept refusing, not a passing burst. If a restart for an undo doesn't take effect (the container's

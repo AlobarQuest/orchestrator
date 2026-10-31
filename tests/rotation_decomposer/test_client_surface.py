@@ -1,11 +1,12 @@
-"""The lane's surfaces: change-manager's record listing, read; the orchestrator, three reads and the
+"""The lane's surfaces: change-manager's record listing, read; the orchestrator, four reads and the
 one proposal write, each anchored."""
 
 from __future__ import annotations
 
+import httpx
 import pytest
 
-from rotation_decomposer.client import change_manager_permits, orchestrator_permits
+from rotation_decomposer.client import Orchestrator, change_manager_permits, orchestrator_permits
 
 REVISION = "0c7a484c-1111-4111-8111-111111111111"
 
@@ -17,9 +18,10 @@ REVISION = "0c7a484c-1111-4111-8111-111111111111"
         ("GET", f"/api/v1/package-intakes/{REVISION}"),
         ("GET", f"/api/v1/package-intakes/{REVISION}/decomposition-proposals"),
         ("POST", f"/api/v1/package-intakes/{REVISION}/decomposition-proposals"),
+        ("GET", "/api/v1/members"),
     ],
 )
-def test_the_orchestrator_surface_is_three_reads_and_one_proposal(method: str, path: str) -> None:
+def test_the_orchestrator_surface_is_four_reads_and_one_proposal(method: str, path: str) -> None:
     assert orchestrator_permits(method, path)
 
 
@@ -37,6 +39,9 @@ def test_the_orchestrator_surface_is_three_reads_and_one_proposal(method: str, p
         ("GET", "/api/v1/package-intakes/not-a-uuid"),
         ("DELETE", f"/api/v1/package-intakes/{REVISION}/decomposition-proposals"),
         ("GET", "/api/v1/status-ledger"),
+        ("POST", "/api/v1/members"),
+        ("GET", "/api/v1/members/"),
+        ("GET", "/api/v1/member-proposals"),
     ],
 )
 def test_anything_else_on_the_orchestrator_is_refused(method: str, path: str) -> None:
@@ -48,3 +53,14 @@ def test_change_manager_is_read_only_and_only_its_listing() -> None:
     assert not change_manager_permits("POST", "/api/items")
     assert not change_manager_permits("GET", "/api/items/12")
     assert not change_manager_permits("POST", "/api/items/12/status")
+
+
+def test_members_returns_the_body_as_the_executor_s_client_does() -> None:
+    body = {"members": [], "served_at": "now"}
+    client = Orchestrator(
+        base_url="https://sds.example",
+        credential_key_id="key",
+        token="token",
+        transport=httpx.MockTransport(lambda _request: httpx.Response(200, json=body)),
+    )
+    assert client.members() == body

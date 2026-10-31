@@ -9,10 +9,12 @@ names no network client.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Final
 
 from rotation_worker.plans import Capabilities
+from rotation_worker.registry import RegistryEntry
 
 
 @dataclass(frozen=True)
@@ -53,3 +55,13 @@ CLASS_TYPES: Final[dict[str, str]] = {
     "orchestrator-m2m-bearer": "orchestrator",
     "postgres-role-password": "postgres-role",
 }
+
+
+def of_a_type(rows: Mapping[str, RegistryEntry]) -> dict[str, RegistryEntry]:
+    """The `rotated_by_sds` rows of a class the SDS rotates. A class with no type (the canary) is
+    never carried, whatever its row says."""
+    return {
+        credential_id: entry
+        for credential_id, entry in rows.items()
+        if entry.credential.get("class") in CLASS_TYPES
+    }

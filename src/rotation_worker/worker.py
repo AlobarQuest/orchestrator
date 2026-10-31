@@ -7,7 +7,9 @@ For each ready unit whose envelope names a rotation adapter, in order:
    the unit itself, so the executor claims it and fails it with the reason, where the dead-letter
    report shows it and the owning instance raises `rotation-unit-failed`. A refusal it can't claim
    leaves nothing in the ledger, so it raises `rotation-unit-stuck` once the unit is overdue.
-2. **Wait, unclaimed, for a person's mint**, taking the value from the inbox once it binds
+2. **Wait, unclaimed, for the member record's `credential_rotation` grant** on the repository the
+   registry names (`grants.py`). A record that can't be read leaves the unit for the next pass.
+3. **Wait, unclaimed, for a person's mint**, taking the value from the inbox once it binds
    (`inbox.py`), and **for the scheduled readers** (`readers.py`). Each one is read before any
    unit that verifies consumers is claimed, so a reader the registry names wrongly is refused
    here. A unit that retires the old value stays ready, spending nothing, until every reader has
@@ -16,9 +18,11 @@ For each ready unit whose envelope names a rotation adapter, in order:
    overlap ends there and retire finds the old value already refused.
    A unit that restarts a service whose own clients are scheduled readers (change-manager) also
    waits, unclaimed, while any of them is mid-run, so a busy reader costs a pass, not an attempt.
-3. **Claim and start**, then run the unit's steps through the contract. Before each step the lease
-   is renewed and the registry is read again, so a credential handed back mid-rotation stops it.
-4. **File each step's evidence**, superseding this unit's current row for that criterion when an
+4. **Claim and start**, then run the unit's steps through the contract. Before each step the lease
+   is renewed and the registry and the grant are read again, so a credential handed back or a
+   grant withdrawn mid-rotation stops it. A grant that can't be read there stops nothing: failing a
+   unit on a read outage could leave two values live.
+5. **File each step's evidence**, superseding this unit's current row for that criterion when an
    earlier attempt left one, then **submit**. A contract refusal fails the unit with its reason.
 
 Nothing here decides what a step does; the contract does. Nothing here holds a value; the
@@ -33,7 +37,7 @@ and its clocks as they were, and no failure of the sync touches a unit or the pa
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Mapping, Set
+from collections.abc import Callable, Iterable, Mapping, Set
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -59,6 +63,7 @@ from rotation_worker.envelope import constraints as envelope_constraints
 from rotation_worker.evidence import StepEvidence
 from rotation_worker.git_mirror import MirrorError, RepoMirror
 from rotation_worker.github_actions import ActionsSecrets, FingerprintReports, RotationApp
+from rotation_worker.grants import GrantUnread, rotation_granted
 from rotation_worker.held import HeldSettings
 from rotation_worker.helper_client import HelperClient
 from rotation_worker.inbox import (
@@ -426,23 +431,26 @@ def _take(setup: Setup, unit_id: str, found: PassActs) -> int:
     reads: ConsumerReads | None = None
     try:
         approved = check_unit(unit, intake, setup.mirror, setup.work_project_id, setup.store)
+        repository = approved.registry.repository
+        if _grant_waits(setup, repository, approved.rotation.destinations, unit_id, found):
+            return 0
         held = _held(setup, approved)
         if approved.reads and _verifies(approved):
             reads = _consumer_reads(setup, approved)
             waiting = reads.pending(setup.store.revised(approved.rotation.keeper_id))
             if waiting and _gates_retire(approved):
-                until = _overlap_until(setup, approved)
+                until = _overlap_until(setup, approved.rotation.destinations)
                 LOG.info(
                     "unit_waiting",
                     extra={"unit": str(unit["id"]), "readers": waiting, "overlap_until": until},
                 )
-                backstop = f"; the overlap ends {until}" if until else ""
                 found.waits[unit_id] = Wait(
-                    f"Readers still to run: {', '.join(waiting)}{backstop}", reader=True
+                    f"Readers still to run: {', '.join(waiting)}{_backstop(until)}", reader=True
                 )
                 return 0
     except REFUSALS as error:
-        _refuse(setup, unit, scrub(str(error)), found)
+        if not _refused_grant_waits(setup, intake, unit_id, found):
+            _refuse(setup, unit, scrub(str(error)), found)
         return 0
     # Built before the claim: a provider that can't be built (an admin secret missing from the
     # configuration) is the executor's fault, not the unit's, so no attempt is spent on it.
@@ -453,21 +461,57 @@ def _take(setup: Setup, unit_id: str, found: PassActs) -> int:
         or _revoke_waits(setup, approved, provider, unit_id, found)
         or _overlap_waits(setup, approved, unit, found)
         or _restart_waits(setup, approved, held, unit_id, found)
+        or _mid_run_waits(setup, approved, provider, unit, found)
     ):
         return 0
-    if isinstance(provider, GatedRestarts) and _writes(approved):
-        try:
-            busy = provider.readers_mid_run()
-        except ReadError as error:
-            _refuse(setup, unit, scrub(str(error)), found)
-            return 0
-        except ReadUnavailable as error:
-            busy = [f"unreadable: {scrub(str(error))}"]
-        if busy:
-            LOG.info("unit_waiting", extra={"unit": str(unit["id"]), "readers_mid_run": busy})
-            found.waits[unit_id] = Wait(f"Readers mid-run: {', '.join(busy)}")
-            return 0
     return 1 if _work(setup, unit, approved, provider, reads, held) else 0
+
+
+def _granted(setup: Setup, repository: str) -> bool:
+    record = setup.client.members()
+    try:
+        return rotation_granted(record, repository)
+    except GrantUnread as error:
+        raise OrchestratorError(str(error)) from None
+
+
+def _grant_waits(
+    setup: Setup, repository: str, destinations: Iterable[str], unit_id: str, found: PassActs
+) -> bool:
+    """Whether the member record withholds the unit's repository. Nothing is learned of the
+    unit's acts while it does, so their alerts stay as they were."""
+    if _granted(setup, repository):
+        return False
+    LOG.info("unit_waiting", extra={"unit": unit_id, "ungranted": repository})
+    until = _overlap_until(setup, destinations)
+    found.waits[unit_id] = Wait(f"{repository} has no credential_rotation grant{_backstop(until)}")
+    found.keep |= {_revoke_key(unit_id), _mint_key(unit_id), _inbox_key(unit_id)}
+    return True
+
+
+def _refused_grant_waits(
+    setup: Setup, intake: Mapping[str, Any], unit_id: str, found: PassActs
+) -> bool:
+    """Whether a unit the checks refused waits on the grant instead: failing it takes a claim, and
+    nothing is claimed in a repository with no grant. A row that doesn't resolve names no
+    repository to ask about, so that unit is refused. An unread grant raises, skipping the unit."""
+    credential = standing_credential(str(intake.get("package_id")))
+    if credential is None:
+        return False
+    try:
+        entry = find_credential(setup.mirror, credential)
+    except REFUSALS:
+        return False
+    try:
+        destinations = entry.destinations
+    except DestinationError:
+        # Perhaps why it was refused. The repository still answers; only the overlap goes unnamed.
+        destinations = []
+    return _grant_waits(setup, entry.repository, destinations, unit_id, found)
+
+
+def _backstop(until: str | None) -> str:
+    return f"; the overlap ends {until}" if until else ""
 
 
 def _ours(setup: Setup, unit: Mapping[str, Any]) -> bool:
@@ -492,6 +536,26 @@ class GatedRestarts(Protocol):
     its restart, or a factory run holding a PAT the GitHub PAT adapter is about to revoke."""
 
     def readers_mid_run(self) -> list[str]: ...
+
+
+def _mid_run_waits(
+    setup: Setup, approved: Approved, provider: Provider, unit: Mapping[str, Any], found: PassActs
+) -> bool:
+    """Whether the unit's writes would cut short a reader mid-run, so it stays unclaimed. A reader
+    the registry names wrongly is a refusal, and the unit goes no further either."""
+    if not isinstance(provider, GatedRestarts) or not _writes(approved):
+        return False
+    try:
+        busy = provider.readers_mid_run()
+    except ReadError as error:
+        _refuse(setup, unit, scrub(str(error)), found)
+        return True
+    except ReadUnavailable as error:
+        busy = [f"unreadable: {scrub(str(error))}"]
+    if busy:
+        LOG.info("unit_waiting", extra={"unit": str(unit["id"]), "readers_mid_run": busy})
+        found.waits[str(unit["id"])] = Wait(f"Readers mid-run: {', '.join(busy)}")
+    return bool(busy)
 
 
 def _writes(approved: Approved) -> bool:
@@ -806,9 +870,9 @@ def consumer_reads(setup: Setup, reads: Mapping[str, Read], keeper: str) -> Cons
     )
 
 
-def _overlap_until(setup: Setup, approved: Approved) -> str | None:
+def _overlap_until(setup: Setup, destinations: Iterable[str]) -> str | None:
     """When the orchestrator stops accepting the old value unasked, if this rotation hosts one."""
-    consumers = [parse(d) for d in approved.rotation.destinations]
+    consumers = [parse(d) for d in destinations]
     hosted = [c for c in consumers if c["kind"] == "coolify-env-hash"]
     if len(hosted) != 1:
         return None
@@ -883,8 +947,23 @@ def _work(
 def _before_step(setup: Setup, recorder: _Recorder, approved: Approved) -> None:
     recorder.renew()
     entry = find_credential(setup.mirror, approved.rotation.credential_id)
+    credential_id = approved.rotation.credential_id
     if not entry.rotated_by_sds:
-        raise ContractError(f"{approved.rotation.credential_id} was handed back mid-rotation")
+        raise ContractError(f"{credential_id} was handed back mid-rotation")
+    try:
+        granted = _granted(setup, entry.repository)
+    except OrchestratorError as error:
+        # The claim happened only on a yes, so that answer stands, and an unread record can't fail
+        # the unit mid-overlap. This protects this read alone: `renew` runs first with no retry, so
+        # an orchestrator that is down at a step's start still fails the unit there.
+        LOG.warning(
+            "grant_unread", extra={"credential": credential_id, "reason": scrub(str(error))}
+        )
+        return
+    if not granted:
+        raise ContractError(
+            f"{credential_id}: the credential_rotation grant was withdrawn mid-rotation"
+        )
 
 
 class _Recorder:

@@ -32,6 +32,7 @@ ALLOWED = [
     ("GET", "/api/v1/status-ledger"),
     ("GET", "/api/v1/status-ledger?state=ready"),
     ("GET", "/api/v1/held-credentials"),
+    ("GET", "/api/v1/members"),
     ("GET", f"/api/v1/work-units/{UNIT}"),
     ("GET", f"/api/v1/work-units/{UNIT}/history"),
     ("GET", f"/api/v1/work-units/{UNIT}/evidence"),
@@ -46,6 +47,9 @@ ALLOWED = [
 ]
 REFUSED = [
     ("POST", "/api/v1/status-ledger"),
+    ("POST", "/api/v1/members"),
+    ("GET", "/api/v1/members/x"),
+    ("POST", "/api/v1/member-proposals"),
     ("GET", f"/api/v1/work-units/{UNIT}/claim"),
     ("POST", f"/api/v1/work-units/{UNIT}/commands/complete"),
     ("POST", f"/api/v1/work-units/{UNIT}/commands/cancel"),

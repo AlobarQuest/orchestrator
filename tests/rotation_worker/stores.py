@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
 from typing import Any
 
@@ -62,3 +62,18 @@ class MemoryStore:
     def delete(self, secret_id: str) -> None:
         del self.secrets[secret_id]
         self.deleted.append(secret_id)
+
+
+def member_record(*granted: str, retired: Iterable[str] = ()) -> dict[str, Any]:
+    """The member record as `GET /api/v1/members` serves it: each repository granted
+    `credential_rotation`, on a live member unless it is also named in `retired`."""
+    return {
+        "members": [
+            {
+                "repository": repository,
+                "state": "retired" if repository in retired else "member",
+                "grants": {"credential_rotation": {"state": "granted"}},
+            }
+            for repository in granted
+        ]
+    }
