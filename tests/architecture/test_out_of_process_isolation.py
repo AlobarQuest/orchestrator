@@ -74,6 +74,8 @@ TABLE: dict[str, Row] = {
         "__future__",
         "collections",
         "dataclasses",
+        # `FirstSightings` stores when a key was first seen.
+        "datetime",
         "estate_clients",
         "hashlib",
         "httpx",

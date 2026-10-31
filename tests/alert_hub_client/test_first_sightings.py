@@ -10,8 +10,7 @@ import httpx
 import pytest
 
 from alert_hub_client import AlertHubError, FirstSightings, StateUnwritable
-
-from .test_client import Hub
+from tests.alert_hub_client.test_client import Hub
 
 T0 = datetime(2026, 10, 1, tzinfo=UTC)
 
