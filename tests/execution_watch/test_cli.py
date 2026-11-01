@@ -287,40 +287,6 @@ WAITING_KEY = f"admission-waiting:proposal:{OTHER}"
 NOT_APPLIED_KEY = f"admission-policy-not-applied:{OTHER}"
 
 
-def test_while_absorbing_a_pass_learns_every_admission_key_and_sends_none(
-    world: World, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    (tmp_path / "known.json").write_text("[]")
-    world.rows = [proposal_row(overdue=True, policy_not_applied="attempts_over_budget")]
-    assert world.submit(tmp_path) == 0
-    assert world.sent == []
-    assert _known(tmp_path) == {WAITING_KEY, NOT_APPLIED_KEY}
-    assert "2 raised, 0 firing" in capsys.readouterr().out
-
-
-def test_absorbing_touches_no_execution_key(world: World, tmp_path: Path) -> None:
-    (tmp_path / "known.json").write_text("[]")
-    world.rows = [status_row(), proposal_row()]
-    assert world.submit(tmp_path) == 0
-    assert world.sent == [(FAILED_KEY, "firing")]
-    assert _known(tmp_path) == {WAITING_KEY}
-
-
-def test_an_absorbed_key_is_dropped_when_its_subject_goes(world: World, tmp_path: Path) -> None:
-    (tmp_path / "known.json").write_text("[]")
-    world.rows = [proposal_row()]
-    world.submit(tmp_path)
-    world.rows = []
-    world.submit(tmp_path, NOW + timedelta(minutes=15))
-    assert _known(tmp_path) == set()
-
-
-@pytest.fixture
-def not_absorbing(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(cli, "ABSORB_ADMISSION", False)
-
-
-@pytest.mark.usefixtures("not_absorbing")
 def test_a_seeded_young_subject_stays_silent_once_overdue(world: World, tmp_path: Path) -> None:
     world.rows = [proposal_row()]
     cli.seed(rows_of(world), tmp_path, NOW)
@@ -331,7 +297,6 @@ def test_a_seeded_young_subject_stays_silent_once_overdue(world: World, tmp_path
     assert world.sent == []
 
 
-@pytest.mark.usefixtures("not_absorbing")
 def test_a_new_subject_alerts_when_overdue(world: World, tmp_path: Path) -> None:
     (tmp_path / "known.json").write_text("[]")
     world.rows = [proposal_row()]
@@ -342,7 +307,6 @@ def test_a_new_subject_alerts_when_overdue(world: World, tmp_path: Path) -> None
     assert world.sent == [(WAITING_KEY, "firing")]
 
 
-@pytest.mark.usefixtures("not_absorbing")
 def test_a_decided_proposal_resolves_on_the_next_pass(world: World, tmp_path: Path) -> None:
     (tmp_path / "known.json").write_text("[]")
     world.rows = [proposal_row(overdue=True, policy_not_applied="attempts_over_budget")]
@@ -354,7 +318,6 @@ def test_a_decided_proposal_resolves_on_the_next_pass(world: World, tmp_path: Pa
     assert sorted(world.sent) == sorted([(WAITING_KEY, "resolved"), (NOT_APPLIED_KEY, "resolved")])
 
 
-@pytest.mark.usefixtures("not_absorbing")
 def test_a_policy_alert_fires_once_across_passes(world: World, tmp_path: Path) -> None:
     (tmp_path / "known.json").write_text("[]")
     world.rows = [proposal_row(policy_not_applied="attempts_over_budget")]

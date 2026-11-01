@@ -50,11 +50,6 @@ FIRST_SEEN_FILE: Final = "first-seen.json"
 KNOWN_FILE: Final = "known.json"
 UNREAD_KEY: Final = Condition.WATCH_UNREAD.value
 UNREAD_EXIT: Final = 2
-# While the admission rows reach production: a pass baselines every present admission key and
-# sends none, so history can't fire before anything could seed it. The second pull request of
-# Admission Part 1 deletes this and its branch in `_readable`.
-ABSORB_ADMISSION: Final = True
-_ADMISSION_CONDITIONS: Final = (Condition.ADMISSION_WAITING, Condition.ADMISSION_POLICY_NOT_APPLIED)
 
 
 def state_directory(environ: Mapping[str, str], home: Path) -> Path:
@@ -159,8 +154,6 @@ def _readable(
 ) -> dict[str, Alert]:
     """Save the known set and the sightings, then decide what fires."""
     raised = raised_keys(rows, now, thresholds)
-    if ABSORB_ADMISSION:
-        known = known | {key for key in raised if key.startswith(_ADMISSION_CONDITIONS)}
     try:
         _write_known(state / KNOWN_FILE, known & raised)
     except OSError as error:
