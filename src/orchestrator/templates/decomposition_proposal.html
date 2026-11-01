@@ -147,8 +147,13 @@
 {% endif %}
 
 <h2>Human decision</h2>
+{% if refusal %}<p class="error"><code>{{ refusal.code }}</code>: {{ refusal.message }} Nothing was approved.</p>{% endif %}
+{% if proposal.state == "proposed" and ungranted_repositories %}
+<p class="error">The member record does not grant this work on {{ ungranted_repositories|join(", ") }}, so this proposal cannot be approved. Restore the grant to approve it, or reject it or require a revision.</p>
+{% endif %}
 {% if proposal.state == "proposed" %}
 {% macro hidden(action) %}<input type="hidden" name="csrf_token" value="{{ csrf_tokens[action] }}"><input type="hidden" name="idempotency_key" value="{{ idempotency_keys[action] }}">{% endmacro %}
+{% if csrf_tokens.approve %}
 <h3>Approve</h3>
 <form method="post" action="/review/decomposition-proposals/{{ proposal.id }}/approve">
   {{ hidden("approve") }}
@@ -157,6 +162,7 @@
   <label class="confirm"><input type="checkbox" name="confirm" value="yes" required> I confirm this approval decision.</label>
   <button type="submit">Approve</button>
 </form>
+{% endif %}
 <h3>Require revision</h3>
 <form method="post" action="/review/decomposition-proposals/{{ proposal.id }}/require-revision">
   {{ hidden("require_revision") }}

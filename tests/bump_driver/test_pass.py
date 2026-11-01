@@ -347,6 +347,19 @@ def test_a_proposal_the_orchestrator_refused_is_alerted(
     assert outcome.key == decompose_refused_key(REPOSITORY, REVISION)
 
 
+def test_a_grant_withdrawn_mid_pass_waits_without_an_alert_and_the_next_pass_drops_it(
+    orch, github, generator
+) -> None:
+    orch.refuse["propose"] = CallError("refused", 409, "target_repository_not_granted")
+    outcomes = _run(orch, github, generator)
+    assert [(o.result, o.key) for o in outcomes] == [("waiting", None)]
+    assert exit_code(outcomes) == 0
+    assert orch.posted == []
+
+    orch.refuse["work"] = CallError("must not be asked")
+    assert _run(orch, github, generator, granted={}) == []
+
+
 @pytest.mark.parametrize("status", [500, 503, None])
 def test_a_proposal_nothing_answered_is_unread(orch, github, generator, status) -> None:
     orch.refuse["propose"] = CallError("down", status)

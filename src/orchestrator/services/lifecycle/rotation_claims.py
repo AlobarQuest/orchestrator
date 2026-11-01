@@ -76,16 +76,26 @@ class RotationExecutors:
 NO_ROTATION_EXECUTORS = RotationExecutors()
 
 
-@dataclass(frozen=True)
-class ProposedUnitTerms:
-    """A unit as approving its decomposition proposal would create it, for asking policy first."""
+@dataclass(frozen=True, kw_only=True)
+class UnitTerms:
+    """What deciding about a unit reads, for a unit that doesn't exist yet.
 
-    id: UUID
+    A dataclass and not a protocol: `WorkUnit`'s `Mapped` columns don't satisfy a protocol's
+    `str` members, so the predicates take `WorkUnit | UnitTerms`.
+    """
+
     authority: Mapping[str, Any]
     required_capability: str
 
 
-def is_rotation_unit(unit: WorkUnit | ProposedUnitTerms, revision: WorkPackageRevision) -> bool:
+@dataclass(frozen=True, kw_only=True)
+class ProposedUnitTerms(UnitTerms):
+    """A unit as approving its decomposition proposal would create it, for asking policy first."""
+
+    id: UUID
+
+
+def is_rotation_unit(unit: WorkUnit | UnitTerms, revision: WorkPackageRevision) -> bool:
     """Decision 1's predicate, read from the unit and its package revision's snapshot."""
     return unit.required_capability == "operational_action" and is_rotation_revision(revision)
 

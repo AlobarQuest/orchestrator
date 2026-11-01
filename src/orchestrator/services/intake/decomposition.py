@@ -1,5 +1,5 @@
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -35,10 +35,7 @@ from orchestrator.persistence.models import (
     WorkUnit,
 )
 from orchestrator.services.execution.run_activity import a_run_may_have_started
-from orchestrator.services.execution.target_grant import (
-    DEPENDENCY_UPDATES_SERVICE,
-    MemberRecordGrants,
-)
+from orchestrator.services.execution.target_grant import unit_grant_refusal
 from orchestrator.services.intake.authority_gate import human_authority_gate
 from orchestrator.services.intake.bump_binding import bump_binding_violations, bump_text_differs
 from orchestrator.services.intake.bump_policy import (
@@ -59,7 +56,7 @@ from orchestrator.services.lifecycle.lifecycle import (
     ready_if_satisfied,
     transition_in_transaction,
 )
-from orchestrator.services.lifecycle.rotation_claims import ProposedUnitTerms
+from orchestrator.services.lifecycle.rotation_claims import ProposedUnitTerms, UnitTerms
 
 _PROPOSAL_ACTION = "decomposition.proposed"
 _PACKAGE_CLI_SOURCE = "package_cli"
@@ -171,6 +168,17 @@ def submit_decomposition_proposal(
     retained_acs = _validated_retained_acs(command.retained_acs, criteria_by_id)
     _validate_ac_coverage(criteria_by_id, ac_mappings, retained_acs)
     dependencies = _validated_dependencies(command.dependencies, unit_keys)
+    _require_granted(
+        session,
+        (
+            UnitTerms(
+                authority=validated.authority_payload,
+                required_capability=validated.unit.required_capability,
+            )
+            for validated in proposed_units
+        ),
+        revision,
+    )
 
     occurred_at = TransactionClock().now(session)
     proposal = DecompositionProposal(
@@ -260,6 +268,17 @@ def submit_decomposition_proposal(
     if reason is None:
         return proposal
     return _approve_by_policy(session, proposal, actor, reason)
+
+
+def _require_granted(
+    session: Session, units: Iterable[UnitTerms], revision: WorkPackageRevision
+) -> None:
+    """Refuse the whole decomposition if any unit's repository lacks the grant it needs: nobody
+    should be asked to approve work that can't run."""
+    for unit in units:
+        refusal = unit_grant_refusal(session, unit, revision)
+        if refusal is not None:
+            raise refusal
 
 
 def _approve_by_policy(
@@ -388,11 +407,10 @@ def _bump_policy_outcome(
 ) -> str | PolicyRefusal:
     """Every condition of the graduation, in order: the first that fails is the refusal.
 
-    The binding runs before the grant because it establishes that the target is a readable
-    string naming the package's own repository. ``recognised_by`` can't be empty beside no
-    refusals, because the reach has exactly one member by then. ``context_enrichment`` is not
-    bound: the Brains supply it, not the proposer. The proposal's ``rationale`` never reaches the
-    agent.
+    The grant isn't one of them: `submit_decomposition_proposal` has already refused a repository
+    the member record doesn't grant. ``recognised_by`` can't be empty beside no refusals, because
+    the reach has exactly one member by then. ``context_enrichment`` is not bound: the Brains
+    supply it, not the proposer. The proposal's ``rationale`` never reaches the agent.
     """
     if actor.role is not ActorRole.SYSTEM:
         return PolicyRefusal("proposer_not_system")
@@ -433,9 +451,6 @@ def _bump_policy_outcome(
         return PolicyRefusal("binding_violated", violations)
     if bump_text_differs(proposed.title, proposed.outcome, proposed.authority, fields):
         return PolicyRefusal("unit_text_differs")
-    target = str(normalize_authority(proposed.authority).constraints["target_repository"])
-    if not MemberRecordGrants(session).is_granted(target, DEPENDENCY_UPDATES_SERVICE):
-        return PolicyRefusal("repository_not_granted", (target,))
     return (
         "approved by policy (ADR-0006 amendment 2): a standing dependency update, recognised by "
         f"{', '.join(sorted(gate.recognised_by))} (policy version {policy.version}), bound to "
@@ -592,6 +607,14 @@ def _approve(
             "an active approved decomposition already exists for this revision",
             None,
         )
+    _require_granted(
+        session,
+        (
+            UnitTerms(authority=unit.authority, required_capability=unit.required_capability)
+            for unit in proposal_units
+        ),
+        revision,
+    )
 
     decided_at = TransactionClock().now(session)
     approved = ApprovedDecomposition(

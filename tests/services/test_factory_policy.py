@@ -204,6 +204,13 @@ def test_an_unknown_schema_version_fails_closed(tmp_path: Path) -> None:
     assert raised.value.code == "factory_policy_version_unsupported"
 
 
+def test_the_supported_version_is_exact_so_the_one_before_it_fails_closed(tmp_path: Path) -> None:
+    with pytest.raises(DomainError) as raised:
+        load_factory_policy(write(tmp_path, VALID.replace("version = 9", "version = 8")))
+
+    assert raised.value.code == "factory_policy_version_unsupported"
+
+
 def test_a_version_below_the_supported_one_fails_closed_too(tmp_path: Path) -> None:
     # Compatibility is an exact set, not a floor: an artifact at an OLDER schema is as unreadable
     # as a newer one, because this loader was not written against its shape either.

@@ -501,26 +501,27 @@ def test_a_mutation_of_something_else_waits_for_a_person(granted: Session) -> No
     assert payload["detail"]
 
 
-def test_a_repository_without_a_member_record_waits_for_a_person(
+def test_a_repository_without_a_member_record_is_refused_at_the_proposal(
     migrated_session: Session,
 ) -> None:
-    proposal = _propose(migrated_session, _revision(migrated_session))
-    assert _refused(migrated_session, proposal) == {
-        "reason": "repository_not_granted",
-        "detail": [REPOSITORY],
-    }
+    _assert_refused_at_the_proposal(migrated_session)
 
 
-def test_a_grant_of_another_service_waits_for_a_person(migrated_session: Session) -> None:
+def test_a_grant_of_another_service_is_refused_at_the_proposal(migrated_session: Session) -> None:
     _grant(migrated_session, service="app_changes")
-    proposal = _propose(migrated_session, _revision(migrated_session))
-    assert _refused(migrated_session, proposal)["reason"] == "repository_not_granted"
+    _assert_refused_at_the_proposal(migrated_session)
 
 
-def test_a_grant_not_in_force_waits_for_a_person(migrated_session: Session) -> None:
+def test_a_grant_not_in_force_is_refused_at_the_proposal(migrated_session: Session) -> None:
     _grant(migrated_session, grant="not_assessed")
-    proposal = _propose(migrated_session, _revision(migrated_session))
-    assert _refused(migrated_session, proposal)["reason"] == "repository_not_granted"
+    _assert_refused_at_the_proposal(migrated_session)
+
+
+def _assert_refused_at_the_proposal(session: Session) -> None:
+    with pytest.raises(DomainError) as refused:
+        _propose(session, _revision(session))
+    assert refused.value.code == "target_repository_not_granted"
+    assert session.scalars(select(DecompositionProposal)).first() is None
 
 
 def test_an_approval_that_cannot_complete_says_so(

@@ -6,7 +6,11 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
-from orchestrator.kernel.authority import authority_fingerprint, normalize_authority
+from orchestrator.kernel.authority import (
+    AuthorityEnvelope,
+    authority_fingerprint,
+    normalize_authority,
+)
 from orchestrator.kernel.runner_authority import runner_command_authority_violation
 from orchestrator.kernel.states import ActorContext, ActorRole
 from orchestrator.persistence.models import (
@@ -353,6 +357,7 @@ def test_proposal_idempotency_conflict_rejected(migrated_session: Session) -> No
     assert error.value.code == "idempotency_conflict"
 
 
+@pytest.mark.usefixtures("granted_targets")
 def test_proposal_idempotency_conflicts_when_raw_unit_authority_differs(
     migrated_session: Session,
 ) -> None:
@@ -726,6 +731,68 @@ def test_package_cli_revision_rejects_extra_unit_for_active_approved_decompositi
     assert error.value.code == "decomposition_approval_required"
 
 
+def test_an_observer_may_not_propose_work(migrated_session: Session) -> None:
+    """Authorship isn't observation: a producer that only sees may not author units."""
+    revision = register_intaken_revision(migrated_session)
+    ac_ids = package_ac_ids(migrated_session, revision.id)
+
+    with pytest.raises(DomainError) as error:
+        submit_decomposition_proposal(
+            migrated_session,
+            proposal_command(revision.id, ac_ids),
+            ActorContext("orchestrator-observer", ActorRole.OBSERVER),
+        )
+
+    assert error.value.code == "role_forbidden"
+
+
+def test_a_unit_registered_under_an_approval_must_carry_the_approved_authority(
+    migrated_session: Session,
+) -> None:
+    """The fingerprint is compared on its own: every other field here is the approved one."""
+    revision = register_intaken_revision(migrated_session)
+    ac_ids = package_ac_ids(migrated_session, revision.id)
+    proposal = submit_decomposition_proposal(
+        migrated_session,
+        proposal_command(revision.id, ac_ids),
+        worker_actor(),
+    )
+    approve_decomposition_proposal(
+        migrated_session,
+        proposal.id,
+        actor=human_actor(),
+        reason="Approve the proposed units.",
+        idempotency_key="proposal-approve-authority-guard",
+    )
+    approved = migrated_session.scalar(
+        select(ApprovedDecomposition).where(ApprovedDecomposition.proposal_id == proposal.id)
+    )
+    assert approved is not None
+
+    with pytest.raises(DomainError) as error:
+        register_approved_unit(
+            migrated_session,
+            revision_id=revision.id,
+            unit_key="unit-1",
+            title="Implement service",
+            outcome="Service persists proposals.",
+            required_capability="repo.edit",
+            authority=AuthorityEnvelope(
+                capabilities={"repo.edit": "allowed", "repo.read": "allowed"},
+                budgets=AUTHORITY.budgets,
+            ),
+            approved_by=approved.approved_by,
+            approved_at=approved.approved_at,
+            actor_id="human-1",
+            actor_role=ActorRole.HUMAN,
+            activation_source="approved_decomposition",
+            approved_decomposition_id=approved.id,
+        )
+
+    assert error.value.code == "decomposition_approval_required"
+
+
+@pytest.mark.usefixtures("granted_targets")
 def test_approved_decomposition_preserves_raw_unit_authority_payload(
     migrated_session: Session,
 ) -> None:
@@ -1324,6 +1391,7 @@ def _fanout_units() -> tuple[ProposedUnit, ...]:
     return (unit("unit-1", "AlobarQuest/brain"), unit("unit-2", "AlobarQuest/security-standards"))
 
 
+@pytest.mark.usefixtures("granted_targets")
 def test_proposal_stamps_each_unit_authority_with_its_future_work_unit_id(
     migrated_session: Session,
 ) -> None:
@@ -1350,6 +1418,7 @@ def test_proposal_stamps_each_unit_authority_with_its_future_work_unit_id(
     assert units["unit-1"].authority_fingerprint != units["unit-2"].authority_fingerprint
 
 
+@pytest.mark.usefixtures("granted_targets")
 def test_approved_unit_authority_names_its_own_id(migrated_session: Session) -> None:
     revision = register_intaken_revision(migrated_session)
     ac_ids = package_ac_ids(migrated_session, revision.id)

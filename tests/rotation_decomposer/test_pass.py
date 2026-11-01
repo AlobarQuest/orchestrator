@@ -221,3 +221,13 @@ def test_a_proposal_policy_approves_is_reported_approved(orch) -> None:
     outcomes = _run(orch, [RECORD])
     assert [o.result for o in outcomes] == ["approved"]
     assert exit_code(outcomes) == 0
+
+
+def test_a_proposal_refused_for_want_of_a_grant_is_a_finding_and_nothing_is_written(orch) -> None:
+    """Only a unit that isn't a rotation unit can draw it, which no plan generates. The answer is
+    still the ordinary refusal: reported each pass, and never retried inside one."""
+    orch.refuse_with = 409
+    outcomes = _run(orch, [RECORD])
+    assert [o.result for o in outcomes] == ["refused"]
+    assert exit_code(outcomes) == FOUND
+    assert orch.proposed == []

@@ -140,6 +140,19 @@ def test_added_capability_requires_approval() -> None:
     assert "capabilities_expanded" in decision.reasons
 
 
+def test_a_capability_the_unit_allows_still_expands_on_the_previous_context() -> None:
+    """Allowed isn't approved: growing past the last snapshot asks, even inside the allowed set."""
+    decision = classify_context_update(
+        previous=valid_context(capabilities=["repository_read"]),
+        current=valid_context(capabilities=["repository_read", "repository_write"]),
+        required=required_context(capabilities=["repository_read"]),
+        allowed_capabilities={"repository_read", "repository_write"},
+    )
+
+    assert decision.classification == "authority_expanding"
+    assert decision.reasons == ("capabilities_expanded",)
+
+
 def test_absent_required_context_accepts_complete_context_with_allowed_capability() -> None:
     current = valid_context(capabilities=["change_filing"])
 

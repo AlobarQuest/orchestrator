@@ -24,6 +24,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
 from sqlalchemy.orm import Session
 
 from orchestrator.api.schemas.intake import RunnerBriefResponse
@@ -45,6 +46,7 @@ def test_golden_brief_is_unchanged() -> None:
     assert hashlib.sha256(canonical.encode()).hexdigest() == CONTRACT_SHA256
 
 
+@pytest.mark.usefixtures("granted_targets")
 def test_the_served_brief_has_exactly_the_contracted_keys(migrated_session: Session) -> None:
     """The derivation assertion: what the service builds, not what a file contains.
 
@@ -84,6 +86,7 @@ def test_the_http_response_model_declares_every_contracted_key(migrated_session:
     )
 
 
+@pytest.mark.usefixtures("granted_targets")
 def test_a_unit_without_enrichment_serves_null_not_an_empty_document(
     migrated_session: Session,
 ) -> None:

@@ -141,6 +141,7 @@ def test_a_decomposition_approval_leaves_an_unapproved_envelope_in_draft(
     assert {unit.state for unit in units} == {WorkUnitState.DRAFT}
 
 
+@pytest.mark.usefixtures("granted_targets")
 def test_a_decomposition_approval_readies_a_unit_policy_already_recognises(
     migrated_session: Session,
 ) -> None:
@@ -238,6 +239,7 @@ def test_a_dependency_resolved_as_failed_does_not_ready_the_unit(migrated_sessio
     assert unit.state == WorkUnitState.DRAFT
 
 
+@pytest.mark.usefixtures("granted_targets")
 def test_a_decomposition_approval_readies_only_the_units_without_a_pending_dependency(
     migrated_session: Session,
 ) -> None:

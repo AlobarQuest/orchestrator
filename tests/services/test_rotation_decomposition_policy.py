@@ -262,6 +262,7 @@ def test_system_may_register_a_unit_only_for_a_decomposition_policy_approved(
         )
 
 
+@pytest.mark.usefixtures("granted_targets")
 def test_a_dependency_bump_a_known_good_pattern_recognises_waits_for_a_person(
     migrated_session: Session,
 ) -> None:

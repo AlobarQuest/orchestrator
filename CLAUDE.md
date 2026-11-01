@@ -56,9 +56,10 @@ Placement rule: global CLAUDE.md §7.
 - Everything in this section must stay below `<!-- code-standards:end -->`: `inject_stanza` replaces
   the whole managed block. Re-rendering the block over this file must be a no-op. History:
   `docs/history/claude-md-invariants-archive.md` #2.
-- Generic authority approvals satisfy work-unit readiness only. An authority-expanding
+- Generic authority approvals satisfy work-unit readiness only: an authority-expanding
   standing-context update needs a named human approval bound to the exact standing-context
-  fingerprint (`kernel/context.py::classify_context_update`, via `services/lifecycle/context.py`).
+  fingerprint (`kernel/context.py::classify_context_update`, via `services/lifecycle/context.py`;
+  `test_a_generic_authority_approval_does_not_satisfy_an_expanding_context`).
 - A path that mutates a unit's envelope must ship a fail-closed expansion check; there is no detector
   (`test_authority_write_once.py`; never "fix" it). Archive #4.
 - Protocol smoke tests may manipulate time or lease expiry as fixture setup; runtime recovery
@@ -242,16 +243,30 @@ Placement rule: global CLAUDE.md §7.
 - Landers separate deliberate refusals (subset semantics, clear next window), exceptions (never land
   under policy) and `waiting`; none is a finding. Freshness is suppressed only beside an exception,
   keyed on durability. Detail: `docs/operations/landing-lanes.md`.
-- `runner_command_authority_violation` mirrors the runner and may be stricter, never looser
-  (`test_runner_envelope_contract.py`). Archive #126.
+- `runner_command_authority_violation` mirrors the runner and may be stricter, never looser. Archive
+  #126. Each term below is tested in `test_runner_envelope_contract.py`.
+- `allowed_commands` is required when `command.run` is allowed
+  (`test_allowed_commands_is_required_for_every_change_class`).
+- `mutation_commands` is required iff `change_class == "dependency-update"`
+  (`test_mutation_commands_guard_fires_on_dependency_update_without_the_field`).
+- `mutation_commands`, whenever present, is non-empty and a subset of `allowed_commands`
+  (`test_present_mutation_commands_is_validated_for_every_change_class`).
+- `verify_commands` is optional, and whenever present is non-empty, a subset of `allowed_commands`
+  and disjoint from `mutation_commands` (`test_a_malformed_verify_script_is_refused`).
 - `allowed_commands` is the coding agent's entire enforced Bash vocabulary (exact match), so an
-  envelope must list every command the work needs. Without `verify_commands`, finalize re-executes
-  it as written, so authors must order it mutators first, verifier last (finalize never reorders).
-  With `verify_commands`, finalize runs only the mutators (in `allowed_commands` order) and then
-  that script; every other allowed command is agent-only. For edit-shaped work (no mutators) that
-  includes a build: a build the verifier depends on must be in `verify_commands` or a mutator, or
-  finalize never runs it. Absent keeps every existing fingerprint. Detail:
-  `docs/operations/driving-a-unit.md`.
+  envelope must list every command the work needs. Detail: `docs/operations/driving-a-unit.md`.
+- Without `verify_commands`, finalize re-executes `allowed_commands` as written and never reorders,
+  so authors must order it mutators first, verifier last (factory-runner
+  `test_finalize_without_a_verify_script_replays_the_whole_vocabulary`).
+- With `verify_commands`, finalize runs only the mutators, in `allowed_commands` order, and then
+  that script; every other allowed command is agent-only (factory-runner
+  `test_finalize_runs_mutators_then_the_verify_script_and_skips_the_rest`,
+  `test_finalize_runs_mutators_in_allowed_order_not_mutation_order`).
+- For edit-shaped work (no mutators), a build the verifier depends on must be in `verify_commands`
+  or a mutator, or finalize never runs it (factory-runner
+  `test_an_edit_shaped_verify_script_runs_only_the_script`).
+- An absent `verify_commands` keeps every existing fingerprint (factory-runner
+  `test_a_policy_without_verify_commands_keeps_its_pre_3c1_bytes`).
 - Only superseding retires a draft or ready unit (`test_decomposition_supersession.py`); a stranded one is
   failed, then cancelled. Archive #134.
 - Never set `required_approving_review_count`; a branch-protection required check is a JOB name
@@ -279,12 +294,14 @@ Placement rule: global CLAUDE.md §7.
 - Key runner-shape gates on `RUNNER_ENVELOPE_FIELDS` (pinned by `runner_envelope_contract.json`),
   never `KNOWN_FIELDS`, which adds `unknown_fields`. Store `runner_payload(envelope)`, not
   `normalized()`. History: `docs/history/claude-md-invariants-archive.md` #148.
-- `runner_authority_violation` is the one composed predicate, asked at breakdown ingress, unit
-  registration, authority approval and admission; capability-name refusal lives only at admission.
+- `runner_authority_violation` is the one composed predicate, asked at breakdown ingress, authority
+  approval (service and form) and admission; `test_authority_asking_points.py` pins the surfaces.
   History: `docs/history/claude-md-invariants-archive.md` #149.
-- Unknown capability names fail closed but mistyped levels (e.g. `requires_approval`) read as
-  prohibited and pass orchestrator gates while the runner refuses the envelope. History:
-  `docs/history/claude-md-invariants-archive.md` #150.
+- Unit registration asks only the field and level terms of that predicate, not the command term
+  (`test_registration_asks_the_field_and_level_terms`).
+- A capability name outside the runner's vocabulary is refused only at admission
+  (`test_dispatch_blocks_a_legacy_capability_outside_the_runner_vocabulary`); both ingress paths
+  refuse names outside the orchestrator's wider set (`test_capability_ingress.py`).
 - `FACTORY_PR_TOKEN` (BWS `a3240c2e-…`) lives as Actions secrets in the repositories listed per
   copy in factory-runner's `.cred-consumers.toml`; the rotation executor re-sets every copy and
   verifies each by its repository's `secret-fingerprint.yml` report. Detail:
@@ -478,11 +495,14 @@ Placement rule: global CLAUDE.md §7.
   them. History: `docs/history/claude-md-invariants-archive.md` #287.
 - `scripts/check_profile_budget_agreement.py` holds every `dependency-update` pattern to intent-packages'
   `BUDGETS` and `CAPABILITIES`. Raising the ceiling is a standing-authority decision. Archive #291.
-- Dispatch admission, the claim and every landing admission read the member record's grant. Dispatch
-  and the claim map the unit's change class (`services/execution/target_grant.py`):
-  `dependency_updates` for `dependency-update`, `app_changes` for every other class, only in state
-  `granted` on a non-retired member, case-folded; otherwise `target_repository_not_granted`.
-  `claim_unit` refuses before anything writes, skipping rotation units and units with no
+- Dispatch admission, the claim, the decomposition proposal and its approval, and every landing
+  admission read the member record's grant. The first four map the unit's change class
+  (`services/execution/target_grant.py`): `dependency_updates` for `dependency-update`,
+  `app_changes` for every other class, only in state `granted` on a non-retired member, case-folded;
+  otherwise `target_repository_not_granted`. A proposal asks past replay and writes nothing,
+  approval asks again, and rotation units and units naming no repository skip both, so a person is
+  never asked to approve work that can't run while intake stays open
+  (`tests/services/test_decomposition_grant.py`). `claim_unit` refuses before anything writes, skipping rotation units and units with no
   `target_repository`; `_readiness_eligibility_error` holds the same term, so reclaim and release
   park a withdrawn unit `failed` and requeue refuses it. `renew_claim` is ungated. A dispatched unit
   refused at the claim stays `ready`, which refuses every orchestrator deploy and holds rotation
@@ -576,47 +596,86 @@ Placement rule: global CLAUDE.md §7.
   superseded; a package on a pre-derivation plan is refused. Detail:
   `docs/operations/rotation-executor.md`, "The rotation decomposer".
 - `decomposition._policy_approval` approves a decomposition SYSTEM proposes, in the proposal's own
-  transaction, on one of two branches. A rotation's one click is its package revision approval
-  (ADR-0055 amendment 16): change-manager approves its `work` record by policy, and the rotation
-  branch approves only when the revision is a standing rotation package with a recorded approval,
-  every dependency is unit-on-unit `completed`, and every unit is a rotation unit
-  `human_authority_gate` finds recognised. A standing bump needs no click (ADR-0006 amendment 2):
-  the bump branch takes any revision with the `dependency-update` profile or a
-  `policy:dependency-update@` approver, and approves only when that approver and profile both hold,
-  `standing` is true, reach is exactly `source_repository`, there is one unit with no dependencies,
-  every criterion mapped to it and none retained, and attempts within its budget, only
-  dependency-update patterns recognise it, `bump_binding_violations` is empty, its `title` and
-  `outcome` are the generator's (`bump_text_differs`) and the member record grants
-  `dependency_updates`. The binding is a whole-command allowlist of the generator's forms, and
-  covers `allowed_commands` and `verify_commands` too; a generator change means regenerating
-  `dependency_update_proposals.json`. Each refusal of a SYSTEM proposal on either branch, every bump
-  refusal, and an approval that fails after policy said yes, records one
-  `decomposition.policy_not_applied` per proposal, served as `policy_not_applied` on the proposal
-  routes. `register_approved_unit` admits SYSTEM only with
-  `approved_by_policy`. A human's or WORKER's proposal, and every other decomposition, waits for a
-  person on `/review`.
-- `pr-merge`'s authority term is a bound human approval, sufficient for every change class and
-  blind to any switch, or the policy path (ADR-0025 amendment 4): a `dependency-update` envelope on
-  a `standing_bump_refusal`-clean revision (the decomposition gate's own conditions, reach exactly
-  `source_repository`), where the estate answers `inert`, recognised at merge time only by
-  dependency-update patterns, with the `dependency_updates` grant, while
-  `ORCHESTRATOR_BUMP_MERGE_ENABLED` is on. Off, a unit the path covers refuses
-  `merge_policy_path_off` in place of `authority_approval_not_bound`; other terms report beside it,
-  so it means waiting only as the sole refusal. The admission answer writes nothing; the act records
-  `authority.human_gate_not_required` beside a landing its own call made, including one reconciled
-  after that call at the head it named, never beside an `already_merged` found before it or at
-  another head. A row whose reason is
-  `merge_refused_by_remote:<code>` is an unknown outcome: `pr-merge-admission` answers
-  `landing_outcome_unknown`, the bump driver replays it whatever the pull request's state or the
-  other refusals, and `pr_merge._resettle`, in its own committed step and asking no term, is the
-  only code that may change or remove a `UnitPrMerge` row (ADR-0025 amendment 5). The policy path
-  alone also reads the pull request in `pr_merge._act`, after it is known open and before landing:
-  the head is `sds/<unit8>-attempt-<attempt_count>` in the repository itself and is the
-  adjudicated head, the
-  body has the whole-line `SDS-Unit:` trailer, and `pulls/{n}/files` reads fully (its length equals
-  `changed_files`), neither end of any entry is a workflow or gate file, and a tooling manifest
-  changed. Each failure is a `pr_merge_*` refusal with no `UnitPrMerge` row, so a person can still
-  land it. Detail: `docs/operations/landing-lanes.md`, ADR-0025 amendment 4.
+  transaction, on one of two branches, rotation or bump. A human's or WORKER's proposal, and every
+  other decomposition, waits for a person on `/review`
+  (`test_a_person_s_proposal_waits_for_a_person`, `test_a_worker_s_proposal_waits_for_a_person`).
+- A rotation's one click is its package revision approval (ADR-0055 amendment 16): change-manager
+  approves its `work` record by policy.
+- The rotation branch approves only when the revision is a standing rotation package with a
+  recorded approval (`test_a_revision_an_approval_policy_approved_waits_for_a_person`).
+- The rotation branch needs every dependency unit-on-unit `completed`
+  (`test_a_dependency_on_anything_but_a_unit_completing_waits_for_a_person`).
+- The rotation branch needs every unit a rotation unit `human_authority_gate` finds recognised
+  (`test_a_unit_no_rotation_pattern_recognises_waits_for_a_person`).
+- A standing bump needs no click (ADR-0006 amendment 2): the bump branch takes any revision with the
+  `dependency-update` profile or a `policy:dependency-update@` approver.
+- The bump branch needs that approver and that profile both to hold
+  (`test_a_revision_the_bump_policy_did_not_approve_waits_for_a_person`,
+  `test_a_revision_of_another_profile_waits_for_a_person`).
+- The bump branch needs `standing` true (`test_a_revision_that_isn_t_standing_waits_for_a_person`).
+- The bump branch needs reach exactly `source_repository`
+  (`test_a_reach_past_the_repository_waits_for_a_person`).
+- The bump branch needs one unit (`test_two_units_wait_for_a_person`) with no dependencies
+  (`test_a_dependency_waits_for_a_person`).
+- The bump branch needs every criterion mapped to the unit and none retained
+  (`test_a_retained_criterion_waits_for_a_person`).
+- The bump branch needs attempts within the unit's budget
+  (`test_more_attempts_than_the_envelope_budgets_waits_for_a_person`).
+- The bump branch needs only dependency-update patterns to recognise the unit
+  (`test_recognition_by_anything_but_a_bump_pattern_waits_for_a_person`).
+- The bump branch needs `bump_binding_violations` empty
+  (`test_a_mutation_of_something_else_waits_for_a_person`).
+- The binding is a whole-command allowlist of the generator's forms, and covers `allowed_commands`
+  and `verify_commands` too; a generator change means regenerating
+  `dependency_update_proposals.json`.
+- The bump branch needs the unit's `title` and `outcome` to be the generator's (`bump_text_differs`,
+  `test_text_the_generator_didn_t_write_waits_for_a_person`).
+- A bump's `dependency_updates` grant is asked before either branch: the proposal itself is refused
+  without it (`test_a_grant_of_another_service_is_refused_at_the_proposal`).
+- Each refusal of a SYSTEM proposal on either branch, every bump refusal, and an approval that fails
+  after policy said yes, records one `decomposition.policy_not_applied` per proposal, served as
+  `policy_not_applied` on the proposal routes (`test_a_replayed_refusal_records_one_event`,
+  `test_an_approval_that_cannot_complete_says_so`).
+- `register_approved_unit` admits SYSTEM only with `approved_by_policy`
+  (`test_system_may_register_a_unit_only_for_a_decomposition_policy_approved`).
+- `pr-merge`'s authority term is a bound human approval or the policy path (ADR-0025 amendment 4).
+  The bound approval suffices for every change class and is blind to any switch
+  (`test_a_bound_approval_never_consults_the_policy`,
+  `test_a_human_approved_merge_ignores_the_switch`).
+- The policy path needs a `dependency-update` envelope (`test_the_change_class_is_asked_for_itself`).
+- The policy path needs a `standing_bump_refusal`-clean revision, the decomposition gate's own
+  conditions, reach exactly `source_repository`
+  (`test_a_unit_outside_the_policy_path_needs_its_approval`).
+- The policy path needs the estate to answer `inert`
+  (`test_a_redeploying_repository_stays_with_a_person_even_with_its_record`).
+- The policy path needs recognition at merge time, only by dependency-update patterns
+  (`test_recognition_is_asked_again_at_merge`).
+- The policy path needs the `dependency_updates` grant
+  (`test_an_ungranted_repository_is_refused_on_both_terms`).
+- The policy path needs `ORCHESTRATOR_BUMP_MERGE_ENABLED` on. Off, a unit the path covers refuses
+  `merge_policy_path_off` in place of `authority_approval_not_bound`
+  (`test_the_switch_off_refuses_a_unit_the_policy_path_would_admit`); other terms report beside it,
+  so it means waiting only as the sole refusal
+  (`test_the_switch_off_reports_beside_another_terms_refusal`).
+- The admission answer writes nothing (`test_reading_the_answer_records_nothing`).
+- The act records `authority.human_gate_not_required` beside a landing its own call made, including
+  one reconciled after that call at the head it named
+  (`test_landing_after_a_lost_response_is_recorded_as_policy_lifted`), never beside an
+  `already_merged` found before it or at another head
+  (`test_a_pull_request_somebody_else_landed_records_no_lifted_gate`).
+- A row whose reason is `merge_refused_by_remote:<code>` is an unknown outcome: `pr-merge-admission`
+  answers `landing_outcome_unknown` (`test_the_answer_names_an_unknown_row_until_it_settles`), and
+  the bump driver replays it whatever the pull request's state or the other refusals
+  (`test_an_unknown_outcome_row_is_waiting_not_refused`).
+- `pr_merge._resettle`, in its own committed step and asking no term, is the only code that may
+  change or remove a `UnitPrMerge` row (ADR-0025 amendment 5;
+  `test_only_pr_merge_may_write_a_factory_row_and_only_resettle_changes_one`).
+- The policy path alone also reads the pull request in `pr_merge._act`, after it is known open and
+  before landing: the head is `sds/<unit8>-attempt-<attempt_count>` in the repository itself and is
+  the adjudicated head, the body has the whole-line `SDS-Unit:` trailer, and `pulls/{n}/files` reads
+  fully (its length equals `changed_files`), neither end of any entry is a workflow or gate file,
+  and a tooling manifest changed. Each failure is a `pr_merge_*` refusal with no `UnitPrMerge` row,
+  so a person can still land it. Detail: `docs/operations/landing-lanes.md`, ADR-0025 amendment 4.
 - The `bump-driver` lane acts as SYSTEM only on a standing `dependency-update` revision in a
   repository granted `dependency_updates`, and on a unit whose own envelope says so; it reads
   `resolved` records as well as `approved`, since `work_watcher` retires a record before its unit

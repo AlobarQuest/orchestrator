@@ -13,6 +13,7 @@ from tests._support.database import (
     reset_data,
 )
 from tests._support.posture import harness_posture
+from tests._support.seeding import grant_repository
 
 __all__ = ["TEST_DATABASE_URL", "harness_posture"]
 
@@ -27,6 +28,19 @@ class _Schema:
 
     tables: tuple[str, ...]
     dirty: bool = False
+
+
+GRANTED_TARGETS = (
+    "AlobarQuest/brain",
+    "AlobarQuest/change-manager",
+    "AlobarQuest/fallback",
+    "AlobarQuest/intent-packages",
+    "AlobarQuest/orchestrator",
+    "AlobarQuest/rejected-repo",
+    "AlobarQuest/security-standards",
+    "owner/repo-a",
+    "owner/repo-b",
+)
 
 
 @pytest.fixture(scope="session")
@@ -96,6 +110,14 @@ def migrated_session(migrated_engine: Engine) -> Iterator[Session]:
     with Session(migrated_engine) as session:
         yield session
         session.rollback()
+
+
+@pytest.fixture
+def granted_targets(migrated_engine: Engine) -> None:
+    """The member record grants every repository the suite's decomposition proposals name."""
+    with Session(migrated_engine) as session:
+        for repository in GRANTED_TARGETS:
+            grant_repository(session, repository)
 
 
 @pytest.fixture

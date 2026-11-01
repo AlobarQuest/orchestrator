@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import AuthorityEnvelope, normalize_authority
 from orchestrator.persistence.models import WorkPackageRevision, WorkUnit
-from orchestrator.services.lifecycle.rotation_claims import is_rotation_unit
+from orchestrator.services.lifecycle.rotation_claims import UnitTerms, is_rotation_unit
 from orchestrator.services.membership.members import MemberView, list_members
 
 # Why a target repository was refused: the member record does not grant the service that matches
@@ -79,11 +79,11 @@ def target_not_granted_error() -> DomainError:
 
 def unit_grant_refusal(
     session: Session,
-    unit: WorkUnit,
+    unit: WorkUnit | UnitTerms,
     revision: WorkPackageRevision,
     grants: TargetGrantSource | None = None,
 ) -> DomainError | None:
-    """Why the member record stops this unit running again; ``None`` means nothing here does.
+    """Why the member record stops this unit running; ``None`` means nothing here does.
 
     A caller asking about many units passes ``grants`` built over members it read once.
 
