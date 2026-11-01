@@ -299,7 +299,9 @@ Placement rule: global CLAUDE.md §7.
   History: `docs/history/claude-md-invariants-archive.md` #149.
 - Unit registration asks only the field and level terms of that predicate, not the command term
   (`test_registration_asks_the_field_and_level_terms`).
-- Capability-name refusal lives only at admission.
+- A capability name outside the runner's vocabulary is refused only at admission
+  (`test_dispatch_blocks_a_legacy_capability_outside_the_runner_vocabulary`); both ingress paths
+  refuse names outside the orchestrator's wider set (`test_capability_ingress.py`).
 - `FACTORY_PR_TOKEN` (BWS `a3240c2e-…`) lives as Actions secrets in the repositories listed per
   copy in factory-runner's `.cred-consumers.toml`; the rotation executor re-sets every copy and
   verifies each by its repository's `secret-fingerprint.yml` report. Detail:

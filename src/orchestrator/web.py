@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
 from sqlalchemy import select
@@ -29,10 +29,15 @@ from orchestrator.kernel.transitions import TransitionGuards, authorize_transiti
 from orchestrator.persistence.models import (
     MEMBER_SERVICES,
     DecompositionProposal,
+    DecompositionProposalUnit,
     Dependency,
     ReconciliationCondition,
     WorkPackageRevision,
     WorkUnit,
+)
+from orchestrator.services.execution.target_grant import (
+    TARGET_REPOSITORY_NOT_GRANTED,
+    unit_grant_refusal,
 )
 from orchestrator.services.intake.decomposition import (
     approval_of,
@@ -64,6 +69,7 @@ from orchestrator.services.lifecycle.lifecycle import (
     transition_in_transaction,
     transition_unit,
 )
+from orchestrator.services.lifecycle.rotation_claims import UnitTerms
 from orchestrator.services.membership.proposals import (
     confirm_member_proposal,
     member_proposal,
@@ -903,11 +909,45 @@ def decomposition_proposal_detail(
     request: Request, proposal_id: uuid.UUID, actor: ActorDep, session: SessionDep
 ) -> HTMLResponse:
     _human(actor)
+    return _render_decomposition_proposal(request, actor, session, proposal_id)
+
+
+def _ungranted_repositories(session: Session, proposal_id: uuid.UUID) -> tuple[str, ...]:
+    """The repositories this proposal's units name that the member record no longer grants."""
+    proposal = session.get(DecompositionProposal, proposal_id)
+    assert proposal is not None
+    revision = session.get(WorkPackageRevision, proposal.work_package_revision_id)
+    assert revision is not None
+    refused: set[str] = set()
+    for unit in session.scalars(
+        select(DecompositionProposalUnit).where(
+            DecompositionProposalUnit.proposal_id == proposal_id
+        )
+    ):
+        terms = UnitTerms(authority=unit.authority, required_capability=unit.required_capability)
+        if unit_grant_refusal(session, terms, revision) is not None:
+            refused.add(str(normalize_authority(unit.authority).target_repository))
+    return tuple(sorted(refused))
+
+
+def _render_decomposition_proposal(
+    request: Request,
+    actor: ActorContext,
+    session: Session,
+    proposal_id: uuid.UUID,
+    *,
+    refusal: DomainError | None = None,
+) -> HTMLResponse:
+    """The proposal page; ``refusal`` is a decision the service just refused, shown in place."""
     context = _decomposition_proposal_projection(session, proposal_id)
     proposal = context["proposal"]
+    ungranted = _ungranted_repositories(session, proposal_id)
     actions: tuple[str, ...] = ()
     if proposal.state == "proposed":
-        actions = ("approve", "reject", "require_revision")
+        # Approving would be refused for the same reason, so the page does not offer it.
+        actions = ("reject", "require_revision")
+        if not ungranted:
+            actions = ("approve", *actions)
     elif can_supersede(session, proposal):
         actions = ("supersede",)
     keys = {action: str(uuid.uuid4()) for action in actions}
@@ -917,7 +957,12 @@ def decomposition_proposal_detail(
         for action, key in keys.items()
     }
     context["approval"] = approval_of(session, proposal_id)
-    return _render(request, "decomposition_proposal.html", context)
+    context["ungranted_repositories"] = ungranted
+    context["refusal"] = refusal
+    response = _render(request, "decomposition_proposal.html", context)
+    if refusal is not None:
+        response.status_code = 409
+    return response
 
 
 @router.get("/units/{unit_id}/evidence-pack", response_class=HTMLResponse)
@@ -1399,16 +1444,24 @@ def approve_decomposition_route(
     idempotency_key: Annotated[str, Form()] = "",
     csrf_token: Annotated[str, Form()] = "",
     confirm: Annotated[str | None, Form()] = None,
-) -> RedirectResponse:
+) -> Response:
     _human(actor)
     _require_form(request, actor, proposal_id, "approve", csrf_token, idempotency_key, confirm)
-    approve_decomposition_proposal(
-        session,
-        proposal_id,
-        actor=actor,
-        reason=reason,
-        idempotency_key=idempotency_key,
-    )
+    try:
+        approve_decomposition_proposal(
+            session,
+            proposal_id,
+            actor=actor,
+            reason=reason,
+            idempotency_key=idempotency_key,
+        )
+    except DomainError as error:
+        # A withdrawn grant is the one refusal a person can read and act on from this page: say
+        # which repository, in place, instead of the API's JSON. Every other refusal stays JSON.
+        if error.code != TARGET_REPOSITORY_NOT_GRANTED:
+            raise
+        session.rollback()
+        return _render_decomposition_proposal(request, actor, session, proposal_id, refusal=error)
     session.commit()
     return _proposal_redirect(proposal_id)
 

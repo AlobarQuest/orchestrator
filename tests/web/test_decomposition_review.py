@@ -353,3 +353,60 @@ def test_proposal_page_renders_projected_llm_call_budget(
     assert "Projected LLM-call budget" in page.text
     assert "<strong>4</strong>" in page.text
     assert "1 with no declared ceiling" in page.text
+
+
+def _name_target_repository(
+    migrated_engine: Engine, proposal_id: uuid.UUID, repository: str
+) -> None:
+    """Point the stored units at a repository, as a proposal whose repository lost its grant."""
+    with Session(migrated_engine) as session:
+        for unit in session.scalars(
+            select(DecompositionProposalUnit).where(
+                DecompositionProposalUnit.proposal_id == proposal_id
+            )
+        ):
+            authority = dict(unit.authority)
+            authority["constraints"] = {
+                **authority.get("constraints", {}),
+                "target_repository": repository,
+            }
+            unit.authority = authority
+        session.commit()
+
+
+def test_a_proposal_whose_repository_lost_its_grant_says_so_and_offers_no_approve(
+    db_client: TestClient,
+    migrated_engine: Engine,
+) -> None:
+    _, proposal = _seed_intake_and_proposal(migrated_engine)
+    page = db_client.get(f"/review/decomposition-proposals/{proposal.id}", headers=HUMAN)
+    token, key = _form(page.text, proposal.id, "approve")
+    _name_target_repository(migrated_engine, proposal.id, "AlobarQuest/lost-its-grant")
+
+    detail = db_client.get(f"/review/decomposition-proposals/{proposal.id}", headers=HUMAN)
+
+    assert "AlobarQuest/lost-its-grant" in detail.text
+    assert "does not grant" in detail.text
+    assert f'action="/review/decomposition-proposals/{proposal.id}/approve"' not in detail.text
+    assert f'action="/review/decomposition-proposals/{proposal.id}/reject"' in detail.text
+
+    refused = db_client.post(
+        f"/review/decomposition-proposals/{proposal.id}/approve",
+        headers=HUMAN,
+        data={
+            "csrf_token": token,
+            "idempotency_key": key,
+            "reason": "Approved for draft activation.",
+            "confirm": "yes",
+        },
+        follow_redirects=False,
+    )
+
+    assert refused.status_code == 409
+    assert refused.headers["content-type"].startswith("text/html")
+    assert "target_repository_not_granted" in refused.text
+    assert "AlobarQuest/lost-its-grant" in refused.text
+    with Session(migrated_engine) as session:
+        current = session.get(DecompositionProposal, proposal.id)
+        assert current is not None
+        assert current.state == "proposed"

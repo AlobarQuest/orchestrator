@@ -8,8 +8,9 @@
 
 The scan is of each module's own code, so a call into another layer's module isn't seen; that
 module's own edge test states it. The population comes from `layers.toml`, so a new admission
-module is scanned without being listed. A copy in a sibling repository is compared when a checkout
-is on disk (`~/Projects/<repository>`), and CI, which has none, skips only that half.
+module is scanned without being listed. A copy in a sibling repository is checked to still exist
+where the table says when a checkout is on disk (`~/Projects/<repository>`), and CI, which has
+none, skips only that half. Agreement of the values is held by each vocabulary's holder, not here.
 """
 
 from __future__ import annotations
@@ -274,7 +275,10 @@ VOCABULARIES: dict[str, Vocabulary] = {
             Copy("tests/services/test_authority_known_good.py", "PROFILE_BUDGETS"),
             Copy(_DEPENDENCY_PROFILE, "BUDGETS", "intent-packages"),
         ),
-        ((_BUDGET_TEST, "test_the_three_sites_agree_today"),),
+        (
+            ("scripts/check_profile_budget_agreement.py", "main"),
+            (_BUDGET_TEST, "test_the_three_sites_agree_today"),
+        ),
     ),
 }
 REQUIRED = {"capabilities", "reach", "change classes", "dependency-update budget"}
@@ -354,7 +358,7 @@ def test_each_copy_is_where_the_table_says_and_something_holds_it(name: str) -> 
 def test_each_sibling_copy_is_where_the_table_says(name: str, copy: Copy) -> None:
     checkout = Path.home() / "Projects" / copy.repository
     if not checkout.is_dir():
-        pytest.skip(f"no {copy.repository} checkout on disk: {name}'s far side was not compared")
+        pytest.skip(f"no {copy.repository} checkout on disk: {name}'s far side was not checked")
     assert copy.name in defined_names(checkout / copy.path)
 
 

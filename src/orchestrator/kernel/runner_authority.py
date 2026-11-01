@@ -220,11 +220,12 @@ def runner_authority_violation(
 ) -> AuthorityViolation | None:
     """Every reason the runner would refuse this envelope, in one place.
 
-    THE composition. Four surfaces ask this question -- breakdown ingress, unit registration,
-    the human authority approval (both the service and the form the `/review` page renders) and
-    admission -- and before WS-P2.34 each asked a different subset of it by hand. That is the
+    THE composition. Three surfaces ask this question -- breakdown ingress, the human authority
+    approval (both the service and the form the `/review` page renders) and admission -- and
+    before WS-P2.34 each asked a different subset of it by hand. Unit registration asks only the
+    field and level terms, not the command term. That is the
     same second-copy failure at a smaller scale than the cross-repo one this module exists to
-    close, and it is how the level and field rules ended up enforced at one surface out of four.
+    close, and it is how the level and field rules ended up enforced at one surface out of three.
 
     Ordered most fundamental first: an envelope the runner's model cannot PARSE never reaches
     its validation, so reporting a command-list defect on it would send somebody to fix the
