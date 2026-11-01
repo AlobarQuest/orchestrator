@@ -1,6 +1,6 @@
 """Architecture guard: one table states every rotation lane's whole outbound surface.
 
-Four programs make up the rotation layer, and each pins its own routes in its own tests. These
+Three programs make up the rotation layer, and each pins its own routes in its own tests. These
 tables state them in one place, in the bridge table's shape (`edge_table.Edge`): the change-manager,
 orchestrator, GitHub and alert-hub routes each lane may send and the bearers its launcher fetches.
 `PLATFORM_EDGES` adds the executor's hosting and log reach, `PROVIDER_EDGES` each adapter's reach
@@ -43,9 +43,6 @@ from rotation_decomposer import cli as decomposer_cli
 from rotation_decomposer import client as decomposer_client
 from rotation_proposer import client as proposer_client
 from rotation_proposer import findings
-from rotation_verifier import cli as verifier_cli
-from rotation_verifier import client as verifier_client
-from rotation_verifier import required_checks
 from rotation_worker import coolify, github_actions, helper_client, readers, secret_store
 from rotation_worker import orchestrator_client as worker_orchestrator
 from rotation_worker.adapters import (
@@ -67,7 +64,6 @@ from sds_members import client as members_client
 from tests.architecture.code_terms import docstring_nodes
 from tests.architecture.edge_table import (
     DEADMAN,
-    GH_AUTH_TOKEN,
     OBSERVER_BEARER,
     PROPOSE_BEARER,
     READ_BEARER,
@@ -213,26 +209,6 @@ EDGES: dict[str, RotationEdge] = {
             "alert_hub": ALERT_HUB_URL,
         },
     ),
-    "rotation_verifier": RotationEdge(
-        change_manager=frozenset(),
-        orchestrator=frozenset(
-            {
-                ("GET", "/api/v1/status-ledger"),
-                MEMBERS,
-                ("GET", UNIT_PATH),
-                ("POST", f"{UNIT_PATH}/verify"),
-                ("POST", f"{UNIT_PATH}/verifier-evidence/named-check"),
-            }
-        ),
-        github=frozenset({("GET", "/repos/o/r/branches/main/protection/required_status_checks")}),
-        alert_hub=ALERTS,  # through alerts.py
-        bearers=DEADMAN | {VERIFIER_BEARER, GH_AUTH_TOKEN, SDS_BRIDGE_ALERT_BEARER},
-        base_urls={
-            "orchestrator": ORCHESTRATOR_LIVE_URL,
-            "github": GITHUB_URL,
-            "alert_hub": ALERT_HUB_URL,
-        },
-    ),
 }
 
 # Every `Value` joins the scrub list of its process, so a sample must be a string no test's output
@@ -259,11 +235,6 @@ BASE_URL_READS: dict[str, dict[str, Callable[[], str]]] = {
     "rotation_decomposer": {
         "change_manager": lambda: decomposer_cli.CHANGE_MANAGER_URL,
         "orchestrator": lambda: decomposer_cli.ORCHESTRATOR_URL,
-        "alert_hub": _alert_hub_url,
-    },
-    "rotation_verifier": {
-        "orchestrator": lambda: verifier_cli.ORCHESTRATOR_URL,
-        "github": lambda: required_checks.GITHUB_API,
         "alert_hub": _alert_hub_url,
     },
 }
@@ -308,12 +279,6 @@ PERMITS: dict[str, dict[str, Permits | None]] = {
         "change_manager": lambda m, p: decomposer_client.change_manager_permits(m, p),
         "orchestrator": lambda m, p: decomposer_client.orchestrator_permits(m, p),
         "github": None,
-        "alert_hub": _alert_hub_permits,
-    },
-    "rotation_verifier": {
-        "change_manager": None,
-        "orchestrator": lambda m, p: verifier_client.permits(m, p),
-        "github": lambda m, p: required_checks._permits(m, p),
         "alert_hub": _alert_hub_permits,
     },
 }
@@ -521,7 +486,6 @@ PROCESSES: dict[str, dict[str, frozenset[str]]] = {
         "src/bump_proposer/standing.py": frozenset({"git", "str(python)", "PUBLISH_COMMAND"}),
     },
     "rotation_decomposer": {**_MIRROR, **_STORE_MODULE_ONLY},
-    "rotation_verifier": {},
 }
 
 # Each module a lane can reach that holds a network client, with how many `ConfinedClient`s it
@@ -551,13 +515,6 @@ NETWORK: dict[str, dict[str, int]] = {
     "rotation_decomposer": {
         "src/rotation_decomposer/client.py": 1,
         "src/rotation_decomposer/alerts.py": 0,
-    },
-    "rotation_verifier": {
-        "src/rotation_verifier/alerts.py": 0,
-        "src/rotation_verifier/cli.py": 0,
-        "src/rotation_verifier/client.py": 1,
-        "src/rotation_verifier/required_checks.py": 1,
-        "src/sds_members/client.py": 1,
     },
 }
 
@@ -646,14 +603,6 @@ BORROWED: dict[str, dict[str, frozenset[str]]] = {
         "sds_members.client": frozenset({"MembersUnreadable", "read_members"}),
         "sds_members.populations": frozenset({"granted"}),
     },
-    "rotation_verifier": {
-        "alert_hub_client": frozenset({"Alert", "AlertHubError", "KeyedAlerts", "alert_key"}),
-        "estate_clients.confined": frozenset(
-            {"ConfinedClient", "TransportFailure", "base_url_problem", "error_code"}
-        ),
-        "sds_members.client": frozenset({"Member", "MembersUnreadable", "parse_members"}),
-        "sds_members.populations": frozenset({"granted", "service_for_change_class"}),
-    },
     "rotation_worker": {
         "alert_hub_client": frozenset(
             {
@@ -683,7 +632,6 @@ BORROWED: dict[str, dict[str, frozenset[str]]] = {
 LAUNCHERS: dict[str, str] = {
     "rotation_proposer": "scripts/run-rotation-proposer.sh",
     "rotation_decomposer": "scripts/run-rotation-decomposer.sh",
-    "rotation_verifier": "scripts/run-rotation-verifier.sh",
 }
 
 # Every `Config` field is an identity (`EDGES["rotation_worker"].bearers`) or one of these.
@@ -736,8 +684,6 @@ ROUTES = frozenset(
         f"{UNIT_PATH}/evidence",
         f"{UNIT_PATH}/history",
         f"{UNIT_PATH}/renew",
-        f"{UNIT_PATH}/verifier-evidence/named-check",
-        f"{UNIT_PATH}/verify",
         "/v1/alerts",
         "/app/installations/44/access_tokens",
         "/credentials/revoke",
@@ -746,7 +692,6 @@ ROUTES = frozenset(
         "/repos/o/r/actions/secrets/S",
         "/repos/o/r/actions/secrets/public-key",
         "/repos/o/r/actions/workflows/secret-fingerprint.yml/runs",
-        "/repos/o/r/branches/main/protection/required_status_checks",
         "/repos/o/r/installation",
         "/user",
         "/2.0/repositories/w",

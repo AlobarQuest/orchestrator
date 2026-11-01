@@ -15,7 +15,11 @@ from rotation_verifier import cli
 from rotation_verifier.alerts import KINDS, REFUSED, UNREAD, Outcome, sync_alerts
 from rotation_verifier.cli import exit_code, run_pass
 from rotation_verifier.client import VerifierClient
-from rotation_verifier.required_checks import NoRequiredChecks, RequiredChecksUnreadable
+from rotation_verifier.required_checks import (
+    NoRequiredChecks,
+    RequiredChecksUnreadable,
+    required_checks,
+)
 
 UNIT = "11111111-1111-4111-8111-111111111111"
 BUMP = "22222222-2222-4222-8222-222222222222"
@@ -244,6 +248,31 @@ def test_an_unprotected_branch_goes_to_verify_unfiled() -> None:
 
     assert [o.result for o in outcomes] == ["awaiting_review"]
     assert orchestrator.verified == [UNIT]
+
+
+def test_an_unprotected_branch_still_holds_a_bump() -> None:
+    def unprotected(repository: str) -> tuple[str, ...]:
+        raise NoRequiredChecks("GitHub answered 404")
+
+    bump = _app_change(
+        authority={
+            "change_class": "dependency-update",
+            "constraints": {"target_repository": REPOSITORY},
+        },
+    )
+    orchestrator = Orchestrator({BUMP: bump})
+
+    outcomes = run_pass(_client(orchestrator), read_required_checks=unprotected)
+
+    assert [o.result for o in outcomes] == ["required_checks_unreadable"]
+    assert orchestrator.verified == []
+
+
+def test_a_404_from_github_is_no_required_checks() -> None:
+    transport = httpx.MockTransport(lambda request: httpx.Response(404, json={}))
+
+    with pytest.raises(NoRequiredChecks):
+        required_checks(REPOSITORY, token="t", transport=transport)
 
 
 def test_unreadable_required_checks_hold_the_unit() -> None:

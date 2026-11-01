@@ -5,6 +5,32 @@ against acceptance criteria mapped to a work unit. The orchestrator remains
 canonical lifecycle truth; verifier responses are command results backed by
 ordinary lifecycle events, evidence rows, and adjudications.
 
+## The lane
+
+Nothing needs a person to start it. The verifier lane (`scripts/run-unit-verifier.sh`, replacing
+`scripts/run-rotation-verifier.sh` once the LaunchAgents are swapped; every ten minutes, as the
+VERIFIER identity `orchestrator-verifier`) calls `/verify` on every submitted factory unit:
+
+| Unit | Taken when | Checks filed |
+|---|---|---|
+| Rotation | its envelope names `rotation_unit` | none; no member-record read |
+| Bump | `change_class` is `dependency-update` | every required check under `AC-001`; a repository requiring none, or unreadable, holds the unit and alerts |
+| App change | it has a dispatch and an armed head, and isn't `post_deploy_verification` | every required check under each of `automated_check_ac_ids`; a repository requiring none goes to `/verify` unfiled, and so to a person |
+
+A session unit has no dispatch and is left alone. Post-deploy units belong to `image_release`.
+`execution-watch` raises `verification-stalled:<unit>` for a unit of any class stuck in `submitted`
+or `verifying`.
+
+An app-change unit reads `GET /api/v1/members` first. A repository the record doesn't grant
+`app_changes` is a refusal (`verify-refused:<unit>`, the reason in its text), which resolves on the
+same key when the grant returns. An empty or unread record holds the unit and raises nothing,
+because it says nothing about a grant.
+
+The server trusts the VERIFIER identity on which check is named. Binding the name on the server is
+deferred (Verification decision 2); what that rests on is that the lane files in sorted order, stops
+each criterion at the first check that didn't succeed, and never reaches `/verify` while a check is
+unanswered. `tests/architecture/test_verification_edges.py` pins all three.
+
 ## Route
 
 ```text

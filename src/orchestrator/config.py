@@ -95,8 +95,9 @@ class Settings(BaseSettings):
     # How long a unit may sit awaiting a VERIFIER decision before the dead-letter view reports
     # it. Its sibling above covers the states a HUMAN owes; this covers the states the verifier
     # owes, and neither covered them before 2026-09-03, when a unit was found parked in
-    # `submitted` for fifteen days with nothing reporting it. Nothing runs the verifier on a
-    # schedule -- an operator drives it -- so time passing cannot resolve these states either.
+    # `submitted` for fifteen days with nothing reporting it. The verifier lane takes dispatched
+    # factory units; a session unit's operator drives it, and a unit the lane can't move stays put.
+    # `execution-watch` raises past this threshold too, from `execution-status`.
     # A day, because a submit is normally verified within minutes, so anything longer is already
     # anomalous; capped at 30 days for the same reason as its sibling, since a large value
     # silences a report as effectively as a `None` ever did. The floor is not the risk: 0 reports

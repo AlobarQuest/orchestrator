@@ -64,7 +64,8 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   Consumers resolve by UUID, and the UUIDs survived the project move unchanged.
   **SYSTEM** (`orchestrator-system`, decomposition-submit / `commands/ready` / dispatch):
   `221a48d5-3f29-4898-b300-b4820140c880`. **VERIFIER** (`orchestrator-verifier`,
-  `verifier-evidence/named-check` + `/verify`): `660d5846-abcb-4751-be86-b483012899eb`.
+  `verifier-evidence/named-check` + `/verify`, used by the verifier lane and `image_release`):
+  `660d5846-abcb-4751-be86-b483012899eb`.
   **WORKER** (`orchestrator-operator`, agent_id `claude-code-interactive` — claim / `start` /
   evidence / `submit`): `bd71bed1-4aac-4af8-9094-b4970180bc59`, added WS-P2.13 2026-07-30. Its
   keeper moved to `Rotation / Keepers` on 2026-10-15 for the rotation executor (ADR-0055
@@ -320,7 +321,8 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
 ### #274
 
 - **THE DISPATCH APP'S REACH IS DELIBERATELY WIDER THAN ITS WORK, AND THAT IS A RULING, NOT AN
-  OVERSIGHT — the bound is the orchestrator's own allowlists, checked in code before every call.**
+  OVERSIGHT — the bound is the orchestrator's own grant and allowlist checks, in code before every
+  call.**
   Measured 2026-09-02 from a mint response inside the running container (never `/app`, which reports
   the App's *requested* permissions rather than the installation's granted ones). App `4259746`,
   installation `145535298`: `actions:write, contents:write, metadata:read, pull_requests:write,
@@ -339,7 +341,7 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   deferred** — it stays in `~/.portfolio/inbox.jsonl` only because that file is an append log with
   no close or remove verb. **A future audit will re-derive these numbers and reach the same alarm;
   that is a repeat, not a new fact, and is not a reason to re-raise it.**
-  **Two things WOULD re-open it.** (1) **An App call site not bounded by an allowlist** — the ruling
+  **Two things WOULD re-open it.** (1) **An App call site not bounded by a grant or an allowlist** — the ruling
   rests entirely on that property, so a new lane that mints the token and addresses a repository from
   anything else removes the ground it stands on. (2) **ADR-0015's declaration mechanism arriving**
   (programme plan §7 decision 9): the strongest argument against narrowing is that an installation

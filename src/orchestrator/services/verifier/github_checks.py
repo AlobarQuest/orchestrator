@@ -18,12 +18,14 @@ Every failure is a refusal. Nothing here may fall back to what the caller said, 
 caller's word is the thing this module exists to stop trusting.
 """
 
+import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Final, Protocol
 
 import httpx
 
+from estate_clients.confined import ConfinedClient, TransportFailure
 from orchestrator.kernel.evidence_types import NAMED_CHECK_MAX_OBSERVED_JOBS
 from orchestrator.services.github_app import GITHUB_API_URL, GitHubAppTokenError
 
@@ -32,6 +34,13 @@ OBSERVE_TIMEOUT_SECONDS = 10.0
 # GitHub pages these collections. A page that does not hold the whole answer is refused rather
 # than silently truncated, so the cap can never quietly narrow what was looked at.
 PAGE_SIZE = 100
+
+_USER_AGENT: Final = "orchestrator-verifier/1 (+AlobarQuest/orchestrator)"
+# One owner and one repository, then a head's runs or one run's jobs. A lone `.` or `..` is not a
+# segment: a server that normalises the path would answer for a different route.
+_OBSERVE_ROUTE: Final = re.compile(
+    r"/repos/[A-Za-z0-9-]+/(?!\.{1,2}/)[A-Za-z0-9._-]+/actions/runs(?:/[0-9]+/jobs)?"
+)
 
 
 class CheckObservationError(Exception):
@@ -65,6 +74,11 @@ class CheckObservation:
     jobs: tuple[ObservedJob, ...]
 
 
+def _permits(method: str, path: str) -> bool:
+    """The two GitHub routes this module may send, both reads."""
+    return method == "GET" and _OBSERVE_ROUTE.fullmatch(path) is not None
+
+
 class CheckObserver(Protocol):
     def observe(
         self,
@@ -81,9 +95,11 @@ class GitHubActionsCheckObserver:
         token_provider: Callable[[], str],
         *,
         timeout: float = OBSERVE_TIMEOUT_SECONDS,
+        transport: httpx.BaseTransport | None = None,
     ) -> None:
         self._token_provider = token_provider
         self._timeout = timeout
+        self._transport = transport
 
     def observe(
         self,
@@ -93,27 +109,33 @@ class GitHubActionsCheckObserver:
         check_name: str,
     ) -> CheckObservation:
         token = self._token()
-        base = f"{GITHUB_API_URL}/repos/{repository}/actions/runs"
-        runs = self._collection(
-            token,
-            base,
-            {"head_sha": head_sha, "per_page": PAGE_SIZE},
-            "workflow_runs",
-        )
-        jobs: list[ObservedJob] = []
-        for run in runs:
-            run_id, run_url = _run_identity(run)
-            # `filter=latest` is GitHub's default and the right one: a re-run supersedes its
-            # earlier attempt, and the superseded attempt is not what the head reports now.
-            for job in self._collection(
+        base = f"/repos/{repository}/actions/runs"
+        client = self._client()
+        try:
+            runs = _collection(
+                client,
                 token,
-                f"{base}/{run_id}/jobs",
-                {"per_page": PAGE_SIZE, "filter": "latest"},
-                "jobs",
-            ):
-                observed = _observed_job(job, run_id, run_url, check_name)
-                if observed is not None:
-                    jobs.append(observed)
+                base,
+                {"head_sha": head_sha, "per_page": PAGE_SIZE},
+                "workflow_runs",
+            )
+            jobs: list[ObservedJob] = []
+            for run in runs:
+                run_id, run_url = _run_identity(run)
+                # `filter=latest` is GitHub's default and the right one: a re-run supersedes its
+                # earlier attempt, and the superseded attempt is not what the head reports now.
+                for job in _collection(
+                    client,
+                    token,
+                    f"{base}/{run_id}/jobs",
+                    {"per_page": PAGE_SIZE, "filter": "latest"},
+                    "jobs",
+                ):
+                    observed = _observed_job(job, run_id, run_url, check_name)
+                    if observed is not None:
+                        jobs.append(observed)
+        finally:
+            client.close()
         return _resolve(check_name, jobs)
 
     def _token(self) -> str:
@@ -122,45 +144,59 @@ class GitHubActionsCheckObserver:
         except GitHubAppTokenError as error:
             raise CheckObservationError("unavailable", f"app_token_mint:{error.code}") from error
 
-    def _collection(
-        self,
-        token: str,
-        url: str,
-        params: Mapping[str, str | int],
-        key: str,
-    ) -> Sequence[Any]:
+    def _client(self) -> ConfinedClient:
         try:
-            response = httpx.get(
-                url,
+            return ConfinedClient(
+                base_url=GITHUB_API_URL,
+                user_agent=_USER_AGENT,
                 headers={
                     "Accept": "application/vnd.github+json",
-                    "Authorization": f"Bearer {token}",
                     "X-GitHub-Api-Version": "2022-11-28",
                 },
-                params=dict(params),
                 timeout=self._timeout,
+                transport=self._transport,
+                permits=_permits,
+                refuse=lambda _method, _path: CheckObservationError("unavailable", "route_refused"),
             )
-        except httpx.RequestError as error:
+        except TransportFailure as failure:
             raise CheckObservationError(
-                "unavailable", f"request_error:{error.__class__.__name__}"
-            ) from error
-        if response.status_code != 200:
-            # The status code only. An error body from GitHub is unaudited text that would end
-            # up in an evidence-adjacent error message.
-            raise CheckObservationError("unavailable", f"status:{response.status_code}")
-        try:
-            payload = response.json()
-        except ValueError as error:
-            raise CheckObservationError("unavailable", f"{key}_unreadable") from error
-        if not isinstance(payload, dict):
-            raise CheckObservationError("unavailable", f"{key}_unreadable")
-        items = payload.get(key)
-        if not isinstance(items, list):
-            raise CheckObservationError("unavailable", f"{key}_missing")
-        total = payload.get("total_count")
-        if isinstance(total, int) and not isinstance(total, bool) and total > len(items):
-            raise CheckObservationError("unavailable", f"{key}_truncated")
-        return items
+                "unavailable", f"request_error:{failure.error_type}"
+            ) from None
+
+
+def _collection(
+    client: ConfinedClient,
+    token: str,
+    path: str,
+    params: Mapping[str, str | int],
+    key: str,
+) -> Sequence[Any]:
+    try:
+        response = client.request(
+            "GET",
+            path,
+            headers={"Authorization": f"Bearer {token}"},
+            params=dict(params),
+        )
+    except TransportFailure as failure:
+        raise CheckObservationError("unavailable", f"request_error:{failure.error_type}") from None
+    if response.status_code != 200:
+        # The status code only. An error body from GitHub is unaudited text that would end up in
+        # an evidence-adjacent error message. A redirect lands here: the client follows none.
+        raise CheckObservationError("unavailable", f"status:{response.status_code}")
+    try:
+        payload = response.json()
+    except ValueError as error:
+        raise CheckObservationError("unavailable", f"{key}_unreadable") from error
+    if not isinstance(payload, dict):
+        raise CheckObservationError("unavailable", f"{key}_unreadable")
+    items = payload.get(key)
+    if not isinstance(items, list):
+        raise CheckObservationError("unavailable", f"{key}_missing")
+    total = payload.get("total_count")
+    if isinstance(total, int) and not isinstance(total, bool) and total > len(items):
+        raise CheckObservationError("unavailable", f"{key}_truncated")
+    return items
 
 
 def _run_identity(run: object) -> tuple[str, str]:

@@ -162,6 +162,16 @@ def test_deterministic_criterion_with_unreadable_evidence_asks_rather_than_fails
     assert (status, outcome) == ("judgment_required", None)
 
 
+def test_an_automated_check_asks_a_person_about_evidence_the_verifier_did_not_file() -> None:
+    """Only verifier-owned named-check evidence resolves it, passing or failing."""
+    criterion = PackageAcceptanceCriterion(ac_id="AC-001", evidence_type="automated_check")
+    worker_filed = Evidence(evidence_type="github.checks", payload={"conclusion": "success"})
+
+    status, outcome, _ = evaluate_criterion(criterion, worker_filed)
+
+    assert (status, outcome) == ("judgment_required", None)
+
+
 def test_deterministic_criterion_with_no_evidence_asks_rather_than_fails() -> None:
     criterion = PackageAcceptanceCriterion(ac_id="AC-001", evidence_type="test")
 
