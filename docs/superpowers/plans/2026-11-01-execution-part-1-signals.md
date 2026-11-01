@@ -101,3 +101,5 @@ Also write `test_a_rotation_unit_raises_nothing`, `test_a_bump_that_lost_its_gra
 ## Live proof
 
 This pass proves the read, the seed, the Healthchecks ping, and silence on history. Each alert has tests only until a real event. A staged failure on `sds-canary` proves more, and needs Devon's say-so first.
+
+Recorded 2026-11-01: #583 deployed as `5d2af5f-exec1-amd64`, and Parts 2 to 5 as `750625c-exec2-amd64`, each with the digest matched and no migration. The observer read returned; the seed recorded 2 known subjects, both old failed `caller-pin` units; check `sds-execution-watch` was created; and scheduled passes read 2 raised, 0 firing. A pass after the second deploy read the same. Each alert has tests only until a real event, and a live claim refusal needs a real withdrawal.
