@@ -209,6 +209,7 @@ paths = [
   "tests/cli/test_decomposition_cli.py",
   "tests/cli/test_emit_intake_payload_cli.py",
   "tests/cli/test_package_intake_cli.py",
+  "tests/architecture/test_admission_edges.py",
 ]
 
 [execution]
