@@ -30,18 +30,19 @@ from estate_lander import orchestrator_client as estate_orchestrator
 from inert_lander import orchestrator_client as inert_orchestrator
 from inert_lander.cli import PullRequestSource
 from scripts.layers import load
-from tests.architecture.test_bridge_edges import (
+from tests.architecture.edge_table import (
+    GH_AUTH_TOKEN,
     READ_BEARER,
     SDS_BRIDGE_ALERT_BEARER,
     SYSTEM_BEARER,
     Edge,
     Permits,
-    _alert_hub_permits,
-    _landing_policy_permits,
+    launcher_bearers,
+    near_misses,
+    route_disagreements,
 )
+from tests.architecture.test_bridge_edges import _alert_hub_permits, _landing_policy_permits
 
-# The landers' GitHub token is not a BWS secret: each launcher takes it from the gh CLI.
-GH_AUTH_TOKEN = "gh auth token"
 # Landing Part 3b. The estate lander's Coolify token (BWS `COOLIFY_TOKEN_SDS_ESTATE_LANDER`).
 COOLIFY_TOKEN = "f9f59233-0794-4ea8-9806-b4f3011e6147"
 
@@ -194,28 +195,11 @@ def _listed_paths() -> frozenset[str]:
 
 
 def _corpus() -> frozenset[str]:
-    listed = _listed_paths()
-    return listed | PROBES | {f"{path}/" for path in listed} | {f"{path}x" for path in listed}
+    return near_misses(_listed_paths()) | PROBES
 
 
 def disagreements(lane: str) -> frozenset[tuple[str, str, str, bool]]:
-    """(service, method, path, accepted) for each corpus route where the code and the row differ."""
-    edge = EDGES[lane]
-    rows = {
-        "change_manager": edge.change_manager,
-        "orchestrator": edge.orchestrator,
-        "github": edge.github,
-        "alert_hub": edge.alert_hub,
-    }
-    found: set[tuple[str, str, str, bool]] = set()
-    for service, listed in rows.items():
-        permits = PERMITS[lane][service]
-        for method in METHODS:
-            for path in _corpus():
-                accepted = permits is not None and permits(method, path)
-                if accepted != ((method, path) in listed):
-                    found.add((service, method, path, accepted))
-    return frozenset(found)
+    return route_disagreements(EDGES[lane], PERMITS[lane], _corpus(), METHODS)
 
 
 @pytest.mark.parametrize("lane", sorted(EDGES))
@@ -258,8 +242,7 @@ def test_a_lander_without_its_own_github_reader_reads_through_the_named_one(lane
 
 def platform_disagreements(service: str) -> frozenset[tuple[str, str, bool]]:
     permits, listed = PLATFORM_EDGES[service]
-    paths = {path for _, path in listed} | PLATFORM_PROBES
-    corpus = paths | {f"{path}/" for path in paths} | {f"{path}x" for path in paths}
+    corpus = near_misses({path for _, path in listed} | PLATFORM_PROBES)
     return frozenset(
         (method, path, permits(method, path))
         for method in METHODS
@@ -320,16 +303,10 @@ def test_each_lander_alerts_through_the_shared_held_alerts(lane: str) -> None:
     assert "alert_hub_client" in _imports("src/lander/held_alerts.py")
 
 
-_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE)
-
-
 @pytest.mark.parametrize("lane", sorted(LAUNCHERS))
 def test_each_launcher_fetches_exactly_its_bearers(lane: str) -> None:
     text = Path(LAUNCHERS[lane]).read_text(encoding="utf-8")
-    named = {uuid.lower() for uuid in _UUID.findall(text)}
-    if GH_AUTH_TOKEN in text:
-        named.add(GH_AUTH_TOKEN)
-    assert named == EDGES[lane].bearers
+    assert launcher_bearers(text) == EDGES[lane].bearers
 
 
 def _lander_programs() -> Iterator[str]:

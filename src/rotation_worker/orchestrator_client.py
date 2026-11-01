@@ -55,9 +55,9 @@ def permits(method: str, path: str) -> bool:
     bare = path.split("?", 1)[0]
     if method == "GET":
         return bare in (LEDGER, IDENTITIES, HELD, MEMBERS, OBSERVATIONS) or any(
-            p.match(bare) for p in (_UNIT, _UNIT_RECORDS, _INTAKE)
+            p.fullmatch(bare) for p in (_UNIT, _UNIT_RECORDS, _INTAKE)
         )
-    return method == "POST" and any(p.match(bare) for p in (_LEASE, _COMMAND))
+    return method == "POST" and any(p.fullmatch(bare) for p in (_LEASE, _COMMAND))
 
 
 @dataclass(frozen=True)

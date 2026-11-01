@@ -59,7 +59,7 @@ class ProposalRefused(ChangeManagerError):
 
 
 def is_allowed_write(path: str) -> bool:
-    return _ALLOWED_WRITE.match(path) is not None
+    return _ALLOWED_WRITE.fullmatch(path) is not None
 
 
 def is_allowed_read(path: str) -> bool:

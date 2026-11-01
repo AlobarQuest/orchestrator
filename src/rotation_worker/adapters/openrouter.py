@@ -112,10 +112,10 @@ validate_plan(PLAN)
 
 def permits(method: str, path: str) -> bool:
     if method == "GET":
-        return path in (KEY_INFO, MODELS) or bool(_KEY_BY_HASH.match(path))
+        return path in (KEY_INFO, MODELS) or bool(_KEY_BY_HASH.fullmatch(path))
     if method == "POST":
         return path in (COMPLETIONS, KEYS)
-    return method == "DELETE" and bool(_KEY_BY_HASH.match(path))
+    return method == "DELETE" and bool(_KEY_BY_HASH.fullmatch(path))
 
 
 def _refuse(method: str, path: str) -> ContractError:

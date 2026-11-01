@@ -78,10 +78,13 @@ PLAN: Final = Plan(
 )
 validate_plan(PLAN)
 
+# The one package a child process imports beyond the standard library. It is spelled here and in
+# no script, because a script is a string and no import scan reads it.
+CHILD_SDK: Final = "bitwarden_sdk"
 # Run in the child: logs in once and says how it went, never echoing the token.
-_LOGIN: Final = """
+_LOGIN: Final = f"""
 import sys
-from bitwarden_sdk import BitwardenClient
+from {CHILD_SDK} import BitwardenClient
 token = sys.stdin.read()
 try:
     BitwardenClient().auth().login_access_token(token)
@@ -94,10 +97,10 @@ else:
 _ANSWERS: Final = {"live": 200, "refused": 400}
 DIGEST: Final = re.compile(r"^[0-9a-f]{64}$")
 # Run in the child: logs in and prints a digest of every project and secret the token can see.
-_REACH: Final = """
+_REACH: Final = f"""
 import hashlib
 import sys
-from bitwarden_sdk import BitwardenClient
+from {CHILD_SDK} import BitwardenClient
 organization, token = sys.stdin.read().split("\\n", 1)
 client = BitwardenClient()
 try:
