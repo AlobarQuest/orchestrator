@@ -19,6 +19,7 @@ from typing import Any, Final
 
 from rotation_worker.contract import ContractError, Plan, UnitPlan
 from rotation_worker.destinations import same
+from rotation_worker.envelope import NON_HOSTED_KEY
 from rotation_worker.plans import derive, select_plan, writes_hosted_service
 from rotation_worker.registry import RegistryEntry
 from rotation_worker.types import CLASS_TYPES, TYPES
@@ -26,8 +27,6 @@ from rotation_worker.types import CLASS_TYPES, TYPES
 PACKAGE_PREFIX: Final = "rotation-"
 CAPABILITY: Final = "operational_action"
 MAX_ATTEMPTS: Final = 3
-# Spelled here because this lane reads no provider; a test holds the four spellings equal.
-NON_HOSTED_KEY: Final = "touches_no_hosted_service"
 
 
 class DecomposeError(RuntimeError):

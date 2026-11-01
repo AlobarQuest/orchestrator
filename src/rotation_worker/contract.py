@@ -346,9 +346,13 @@ class UnitRun:
             steps = tuple(step for step in steps if step.kind is StepKind.CONFIRM_DEAD)
             if not steps:
                 raise ContractError("staging is gone with the quarantine kept: never guess")
-        for step in steps:
-            self.before_step()
-            HANDLERS[step.kind](self, step)
+        try:
+            for step in steps:
+                self.before_step()
+                HANDLERS[step.kind](self, step)
+        except Exception as failure:
+            self.discard_minted(failure)
+            raise
 
     def finished(self) -> bool:
         """Whether an earlier attempt of this unit already confirmed, cleaned up and filed it.
@@ -365,7 +369,8 @@ class UnitRun:
     # ---- where the values are ---------------------------------------------------------------
 
     def discard_minted(self, failure: Exception) -> None:
-        """A step failed after this process minted: delete the key, unless staging holds it.
+        """A step failed after this process minted and before it staged: delete the key, unless
+        staging holds it.
 
         Evidence may not hold a key's id, so nothing can find this key later. A value staging
         holds is never deleted, including one a write landed before raising, because the rotation
@@ -531,24 +536,18 @@ def _mint(run: UnitRun, step: Step) -> None:
             raise ContractError("the minted value's fingerprint equals the old one's")
         run._minted = new
         note = None
-    try:
-        run.record(step, StepEvidence(step.kind, fingerprints=_fingerprints(new, old), note=note))
-    except Exception as failure:
-        run.discard_minted(failure)
-        raise
+    run.record(step, StepEvidence(step.kind, fingerprints=_fingerprints(new, old), note=note))
 
 
 def _stage(run: UnitRun, step: Step) -> None:
-    try:
-        if run.staged() is None:
-            if run._minted is None:
-                raise ContractError("nothing minted in this attempt to stage")
-            run.store.create(run.rotation.work_project_id, run.rotation.staging_key, run._minted)
-        elif run._minted is not None and not run.new().same_as(run._minted):
-            raise ContractError("a different value is already staged")
-    except Exception as failure:
-        run.discard_minted(failure)
-        raise
+    if run.staged() is None:
+        if run._minted is None:
+            raise ContractError("nothing minted in this attempt to stage")
+        run.store.create(run.rotation.work_project_id, run.rotation.staging_key, run._minted)
+    elif run._minted is not None and not run.new().same_as(run._minted):
+        raise ContractError("a different value is already staged")
+    # Staging holds it, so from here no failure may discard it.
+    run._minted = None
     new, old = run.new_and_old()
     run.record(step, StepEvidence(step.kind, fingerprints=_fingerprints(new, old)))
 

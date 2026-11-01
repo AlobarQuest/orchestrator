@@ -9,7 +9,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import httpx
 import pytest
 
 from rotation_worker.adapters import openrouter as adapter
@@ -99,6 +98,34 @@ def test_a_failed_evidence_write_deletes_it(h: Any) -> None:
     assert len(h.provider.discarded) == 1
 
 
+def test_a_failed_check_between_mint_and_stage_deletes_it(h: Any) -> None:
+    """The check that runs before every step, which is outside both steps' handlers."""
+    calls: list[int] = []
+
+    def check() -> None:
+        calls.append(1)
+        if len(calls) == 2:
+            raise ContractError("the registry took the credential back")
+
+    with pytest.raises(ContractError, match="took the credential back"):
+        h.run("mint", before_step=check)
+    assert len(h.provider.discarded) == 1
+
+
+def test_a_failure_after_the_stage_reads_nothing_and_says_nothing_of_a_key(h: Any) -> None:
+    """A store outage later in the unit must not report an orphan that doesn't exist."""
+
+    def record(step: Any, evidence: StepEvidence) -> None:
+        if evidence.step == "stage":
+            h.store.dark = True
+            raise StoreError("the evidence write failed")
+        h.filed.append((step, evidence))
+
+    with pytest.raises(StoreError, match="evidence write"):
+        h.run("mint", record=record)
+    assert h.provider.discarded == []
+
+
 def test_a_failed_delete_reports_both(h: Any) -> None:
     h.store.fail = True
     h.provider.refuse = True
@@ -174,7 +201,7 @@ def _deletes(rig: Rig) -> list[str]:
     return [path for method, path, _ in rig.server.requests if method == "DELETE"]
 
 
-def test_only_the_returned_id_is_deleted() -> None:
+def test_only_the_minted_keys_derived_id_is_deleted() -> None:
     rig = Rig()
     other = rig.server.add()
     value = rig.provider.mint()
@@ -203,25 +230,6 @@ def test_a_key_is_discarded_once() -> None:
     with pytest.raises(ContractError, match="did not mint"):
         rig.provider.discard_minted(value)
     assert len(_deletes(rig)) == 1
-
-
-@pytest.mark.parametrize("returned", ["0" * 64, 7, None])
-def test_a_returned_id_that_is_not_the_keys_is_refused(monkeypatch, returned) -> None:
-    """The id comes from the create response, and a wrong one is another key's."""
-    rig = Rig()
-    original = rig.server._create
-
-    def wrong(body: dict[str, Any]) -> httpx.Response:
-        response = original(body)
-        payload = response.json()
-        payload["data"]["hash"] = returned
-        return httpx.Response(response.status_code, json=payload)
-
-    monkeypatch.setattr(rig.server, "_create", wrong)
-    value = rig.provider.mint()
-    with pytest.raises(ContractError, match="did not mint"):
-        rig.provider.discard_minted(value)
-    assert _deletes(rig) == [] and rig.server.live(value)
 
 
 def test_a_delete_the_provider_refuses_is_a_refusal() -> None:

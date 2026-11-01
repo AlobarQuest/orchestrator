@@ -231,7 +231,10 @@ def test_a_refused_record_names_infraops_last_line(checkout) -> None:
 
 
 def test_last_rotated_is_served_beside_the_findings() -> None:
-    assert parse(FIXTURE.read_text())[2] == {"openrouter-generic": "2025-07-02T00:00:00.000Z"}
+    assert parse(FIXTURE.read_text())[2] == {
+        "openrouter-generic": "2025-07-02T00:00:00.000Z",
+        "never-dated": None,
+    }
 
 
 def test_an_absent_last_rotated_is_none() -> None:

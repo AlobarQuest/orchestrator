@@ -550,7 +550,11 @@ def _proposed_and_built(rig, monkeypatch, *, decided_by: str = "work-watcher") -
     run(["--submit"])
     rig.approve_by_name()
     run(["--submit"])
-    rig.estate.records[0].update(status="resolved", decided_by=decided_by)
+    rig.estate.records[0].update(
+        status="resolved",
+        decided_by=decided_by,
+        reasoning=f"due (occurrence {rig.due[0].occurrence}).",
+    )
     return recorded
 
 
@@ -577,6 +581,58 @@ def test_a_record_a_person_resolved_records_nothing_and_is_a_finding(
     assert run(["--submit"]) == EXIT_FINDINGS
     assert recorded == []
     assert "resolved-by-person" in capsys.readouterr().out
+
+
+def test_a_wontfix_record_of_the_carrying_revision_is_a_finding(rig, capsys, monkeypatch) -> None:
+    """Kills: replaying the proposal for ever, which change-manager answers 200, so the credential
+    stays due with nothing said."""
+    _proposed_and_built(rig, monkeypatch)
+    rig.estate.records[0].update(status="wontfix", decided_by="devon")
+    capsys.readouterr()
+
+    assert run(["--submit"]) == EXIT_FINDINGS
+    assert "record-wontfix" in capsys.readouterr().out
+    assert len(rig.estate.proposals) == 1
+
+
+def test_a_wontfix_record_of_an_earlier_revision_changes_nothing(rig, capsys, monkeypatch) -> None:
+    _proposed_and_built(rig, monkeypatch)
+    rig.estate.records[0].update(status="wontfix", decided_by="devon", package_revision=1)
+    capsys.readouterr()
+
+    run(["--submit"])
+    assert "record-wontfix" not in capsys.readouterr().out
+
+
+def test_a_new_occurrence_revises_past_a_wontfix_record(rig, capsys, monkeypatch) -> None:
+    _proposed_and_built(rig, monkeypatch)
+    rig.estate.records[0].update(status="wontfix", decided_by="devon")
+    rig.due = [AGE]
+    capsys.readouterr()
+
+    run(["--submit"])
+    out = capsys.readouterr().out
+    assert "revised" in out and "record-wontfix" not in out
+
+
+def test_a_finished_rotation_infraops_cant_compare_is_an_error(rig, capsys, monkeypatch) -> None:
+    """Kills: a due credential exiting 0 because an old infraops left nothing to compare."""
+    _proposed_and_built(rig, monkeypatch)
+    rig.last_rotated = None
+    capsys.readouterr()
+
+    assert run(["--submit"]) == EXIT_FINDINGS
+    assert "error" in capsys.readouterr().out
+
+
+def test_a_due_credential_with_nothing_to_record_is_a_finding(rig, capsys, monkeypatch) -> None:
+    recorded = _proposed_and_built(rig, monkeypatch)
+    rig.last_rotated = {CREDENTIAL: "2026-10-31"}
+    capsys.readouterr()
+
+    assert run(["--submit"]) == EXIT_FINDINGS
+    assert recorded == []
+    assert "due-after-rotation" in capsys.readouterr().out
 
 
 def test_infraops_refusing_the_record_is_that_credentials_error(rig, capsys, monkeypatch) -> None:

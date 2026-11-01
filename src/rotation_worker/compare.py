@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from rotation_worker.destinations import same
+
 
 @dataclass(frozen=True)
 class Comparison:
@@ -18,7 +20,7 @@ class Comparison:
 
     @property
     def equal(self) -> bool:
-        return self.registry == self.package
+        return same(self.registry, self.package)
 
     @property
     def only_in_registry(self) -> tuple[str, ...]:

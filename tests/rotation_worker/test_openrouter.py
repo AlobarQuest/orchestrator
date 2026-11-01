@@ -141,9 +141,7 @@ class FakeOpenRouter:
             "name": body.get("name"),
         }
         self.keys[_hash(key)] = row
-        return httpx.Response(
-            self.create_status, json={"data": {**row, "hash": _hash(key)}, "key": key}
-        )
+        return httpx.Response(self.create_status, json={"data": row, "key": key})
 
 
 def _not_found() -> httpx.Response:

@@ -6,17 +6,21 @@ NOT do: a repeat never moves an age clock, whatever infraops' state says.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from rotation_proposer import cli
-from rotation_proposer.cli import EXIT_FINDINGS, EXIT_OK, RETIREMENT_ACTOR, run
+from rotation_proposer.cli import EXIT_FINDINGS, EXIT_OK, RETIREMENT_ACTOR, record_occurrence, run
 from rotation_proposer.findings import Due, FindingsError
 from rotation_proposer.outcome import FINDING_STATUSES
+from rotation_proposer.standing import RotationPackage
 from tests.rotation_proposer.test_pass import COMPLETED, CREDENTIAL, UNIT_ID
 
 PACKAGE = f"rotation-{CREDENTIAL}"
 OTHER_UNIT = "0c7a484c-2222-4222-8222-222222222222"
 RETIRED_DATE = COMPLETED[:10]
+AGE_OCCURRENCE = "2025-01-02-age"
 EXPOSED = Due(CREDENTIAL, "openrouter-key", "exposure", "exp-7", "2026-10-07", True)
 
 
@@ -27,6 +31,7 @@ def _record(status: str, *, record_id: int = 500, revision: int = 1, **fields) -
         "package_revision": revision,
         "status": status,
         "decided_by": RETIREMENT_ACTOR if status == "resolved" else "work-policy",
+        "reasoning": f"infraops reports it due (occurrence {AGE_OCCURRENCE}). Revision {revision}.",
         **fields,
     }
 
@@ -66,6 +71,11 @@ def _statuses(rig) -> list[str]:
 
 def test_stalled_is_a_finding() -> None:
     assert "stalled" in FINDING_STATUSES
+
+
+@pytest.mark.parametrize("status", ["record-wontfix", "due-after-rotation"])
+def test_a_due_credential_nobody_is_moving_is_a_finding(status) -> None:
+    assert status in FINDING_STATUSES
 
 
 @pytest.mark.parametrize("state", ["failed", "cancelled"])
@@ -249,21 +259,65 @@ def test_an_exposure_records_nothing(idle) -> None:
     assert idle.recorded == []
 
 
-def test_a_closed_exposures_rotation_records_nothing(idle, rig) -> None:
-    """Its record is the tip's and the tip names the trigger: closing it stays a person's."""
-    text = rig.package_yaml.read_text()
-    rig.package_yaml.write_text(text.replace("2025-01-02-age", "exp-7-exposure"))
+def test_another_credentials_exposure_records_as_usual(idle) -> None:
+    idle.due = [Due("other", "openrouter-key", "exposure", "exp-7", "2026-10-07", False)]
     idle.estate.records.append(_record("resolved"))
     run(["--submit"])
+    assert idle.recorded == [(CREDENTIAL, RETIRED_DATE)]
+
+
+def test_a_closed_exposures_rotation_records_nothing(idle) -> None:
+    """The record names the trigger, whatever the tip now carries: closing it stays a person's."""
+    idle.estate.records.append(_record("resolved", reasoning="due (occurrence exp-7-exposure)."))
+    run(["--submit"])
     assert idle.recorded == []
+    assert _statuses(idle) == []
 
 
-def test_an_earlier_revisions_retired_rotation_records_beside_an_exposure_tip(idle, rig) -> None:
-    """The tip names only its own revision's trigger; the rotation before it did happen."""
+def test_an_age_rotation_records_beside_an_exposure_tip(idle, rig) -> None:
+    """The tip's occurrence is another revision's: this record's own rotation did happen."""
     text = rig.package_yaml.read_text()
-    rig.package_yaml.write_text(text.replace("2025-01-02-age", "exp-7-exposure"))
+    rig.package_yaml.write_text(text.replace(AGE_OCCURRENCE, "exp-7-exposure"))
     idle.estate.records.append(_record("resolved", revision=0))
     run(["--submit"])
+    assert idle.recorded == [(CREDENTIAL, RETIRED_DATE)]
+
+
+def test_a_record_naming_no_occurrence_is_an_error_and_records_nothing(idle) -> None:
+    idle.estate.records.append(_record("resolved", reasoning="written by something else"))
+    assert run(["--submit"]) == EXIT_FINDINGS
+    assert idle.recorded == []
+    assert _statuses(idle) == ["error"]
+
+
+def test_the_reasoning_the_proposer_writes_names_its_occurrence() -> None:
+    package = RotationPackage(PACKAGE, Path("."), CREDENTIAL, 1, "approved", "exp-7-exposure")
+    assert record_occurrence({"reasoning": cli._reasoning(package)}) == "exp-7-exposure"
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [{"package_revision": None}, {"package_revision": "1"}, {"id": None}, {"id": "500"}],
+)
+@pytest.mark.parametrize("status", ["approved", "resolved"])
+def test_a_malformed_record_is_that_credentials_error(idle, status, fields) -> None:
+    """Kills: a crash that loses every other credential's outcome."""
+    idle.rows = [CREDENTIAL, "orchestrator-observer-bearer"]
+    idle.last_rotated = {CREDENTIAL: "2026-07-14", "orchestrator-observer-bearer": "2026-07-14"}
+    idle.estate.records.extend(
+        [
+            _record(status, **fields),
+            _record("resolved", record_id=501, package_id="rotation-orchestrator-observer-bearer"),
+        ]
+    )
+    assert run(["--submit"]) == EXIT_FINDINGS
+    assert _statuses(idle) == ["error", "recorded"]
+
+
+def test_an_anchor_of_null_is_no_rotation_yet_so_it_records(idle) -> None:
+    idle.estate.records.append(_record("resolved"))
+    idle.last_rotated = {CREDENTIAL: None}
+    assert run(["--submit"]) == EXIT_OK
     assert idle.recorded == [(CREDENTIAL, RETIRED_DATE)]
 
 

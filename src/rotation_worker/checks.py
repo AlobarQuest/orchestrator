@@ -12,7 +12,7 @@ from intent-packages' and the registries' public git:
 * the plan is the one the approved package's criteria describe, step for step: for a credential
   type, the plan derived from its registry row (`plans.derive`), or the plan its packages were
   approved with before derivation; for any other name, its one fixed plan;
-* the registry's destinations, the package's and the unit envelope's are exactly equal;
+* the registry's destinations, the package's and the unit envelope's are the same list;
 * the keeper (the registry's `bws_uuid`, or a machine token's Keychain item) is one of them and
   is kept where this instance's store reads, every one fits a `rotation-step/1` row, and a unit
   marked as touching no hosted service writes none;
@@ -46,7 +46,7 @@ from rotation_worker.contract import (
     UnitPlan,
 )
 from rotation_worker.destinations import HOSTED_KINDS, parse, same
-from rotation_worker.envelope import ADAPTER_KEY
+from rotation_worker.envelope import ADAPTER_KEY, NON_HOSTED_KEY
 from rotation_worker.evidence import MAX_DESTINATION
 from rotation_worker.git_mirror import COMMIT_PATTERN as COMMIT
 from rotation_worker.git_mirror import MirrorError, RepoMirror
@@ -68,7 +68,6 @@ from rotation_worker.secret_store import SecretStore
 PROFILE: Final = "non-software-operational"
 UNIT_KEY: Final = "rotation_unit"
 DESTINATIONS_KEY: Final = "destinations"
-NON_HOSTED_KEY: Final = "touches_no_hosted_service"
 # Declares a host with no overlap, for one rotation whose old value another identity still holds
 # (ADR-0055 amendment 9). `True` declares it, only on a unit that hosts; `False` is the default.
 WITHOUT_OVERLAP_KEY: Final = "host_without_overlap"

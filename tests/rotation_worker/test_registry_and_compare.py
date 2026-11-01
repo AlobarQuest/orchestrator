@@ -150,8 +150,12 @@ def test_the_report_marks_each_destination_by_where_it_appears() -> None:
     ]
 
 
-def test_the_same_set_in_another_order_is_not_equal() -> None:
-    comparison = Comparison(("a", "b"), ("b", "a"))
+def test_the_same_list_in_another_order_is_equal() -> None:
+    assert Comparison(("a", "b"), ("b", "a")).equal
+
+
+def test_a_repeated_destination_is_not_equal() -> None:
+    comparison = Comparison(("a", "b"), ("a", "a", "b"))
     assert not comparison.equal
     assert report(comparison)[-1].startswith("differ: the same destinations")
 

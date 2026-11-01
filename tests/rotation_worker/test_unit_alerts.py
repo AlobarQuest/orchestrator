@@ -725,7 +725,7 @@ def test_a_fetch_that_fails_still_raises_the_failed_alert(run: Pass) -> None:
     message = run.message(unit_failed_key(UNIT))["message"]
     assert "github-pat" in message
     assert "the host refused" in message
-    assert "staging key's name is omitted" in message
+    assert "secrets' names are omitted" in message
     assert "rotation/github-pat" not in message
 
 
@@ -738,7 +738,7 @@ def test_a_failed_package_refusal_omits_the_staging_name(
     monkeypatch.setattr(worker, "approved_package", refused)
     run.estate.add("failed")
     run.run()
-    assert "staging key's name is omitted" in run.message(unit_failed_key(UNIT))["message"]
+    assert "secrets' names are omitted" in run.message(unit_failed_key(UNIT))["message"]
 
 
 @pytest.mark.parametrize("fetch_fails", [False, True])

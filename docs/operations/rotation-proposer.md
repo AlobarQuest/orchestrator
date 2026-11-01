@@ -17,7 +17,7 @@ installed is read from `launchctl list` and the Healthchecks listing, not from t
   byte-identical copy of infraops' file. A change to either side starts there.
 - **Each handed-over credential's anchor: the same answer.** `last_rotated` serves the date
   infraops measures that credential's age from (its recorded rotation, else the registry's
-  `last_rotated`, else `created`), due or not.
+  `last_rotated`, else `created`), due or not. It's `null` for a row with none of these.
 - **Rotation records and their units: on a `--submit` pass.** It reads every `work` record through
   `bump_proposer`'s client, and each record's work and each unit's history through its own GET-only
   client (`rotation_proposer/client.py`), on the observer bearer.
@@ -87,14 +87,18 @@ For a due credential whose package is `rotation-<credential_id>`:
    "The rotation decomposer" in `rotation-executor.md`).
 5. **The pass after the rotation completes.** The work watcher retires the record once every unit
    it caused has completed: `resolved`, decided by `work-watcher`. A due credential whose carrying
-   revision has such a record reports `retired`, which isn't a finding, and nothing is proposed
-   again. The record walk below does the recording. Two cases record nothing and are findings
-   while the credential is due:
+   revision has such a record reports `retired` and nothing is proposed again. The record walk
+   below does the recording. These cases record nothing and are findings while the credential is
+   due:
    - **`resolved-by-person`:** the record was resolved by anyone but `work-watcher`, which says
      nothing about whether the work completed. A person decides what happened.
    - **`exposure-open`:** the rotation completed, but `record-rotation` doesn't close an exposure.
      Once the old value is confirmed dead, a person runs `security-drift-cli resolve-exposure` and
      `record-rotation` for the credential.
+   - **`due-after-rotation`:** the rotation is no later than `last_rotated`, and infraops still
+     reports the credential due. A person reads why.
+   - **`record-wontfix`:** the carrying revision's record is `wontfix`, so proposing it again would
+     only replay. See "After a cancelled rotation" in `rotation-executor.md`.
 
 ## The record walk
 
@@ -117,15 +121,17 @@ complete, so this date can be earlier than the retirement and never later.
 The comparison is all that makes a repeat pass safe, because infraops accepts an earlier date. So
 the walk records nothing in these cases:
 
-- The record was resolved by a person, or the rotation answers an exposure, whether it's open now
-  or the record's revision carries it.
+- The record was resolved by a person, or the rotation answers an exposure: one open now, or the
+  occurrence in the record's own `reasoning`.
 - The registry doesn't hand the credential to the SDS.
-- The rotation isn't later than `last_rotated`, which includes a date written in the registry.
+- The rotation isn't later than `last_rotated`, which includes a date written in the registry. A
+  `null` anchor has no date, so any rotation is later than it.
 - infraops predates the field, so `last_rotated` is absent from its answer. The walk skips
-  recording.
+  recording, and a due credential whose rotation finished reports `error`.
 
 These are that credential's `error`, which holds its alerts, and the next pass tries again:
 
+- A record with no usable id or revision, or whose `reasoning` names no occurrence.
 - A record or unit history that can't be read, or shows no completion.
 - A handed-over credential missing from `last_rotated`, which is a malformed answer.
 - A `record-rotation` that fails.

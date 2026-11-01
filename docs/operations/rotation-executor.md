@@ -116,7 +116,7 @@ raises it and resolved by the first pass that no longer finds its cause.
 | Key | Raised when | Clears when | Next step |
 | --- | --- | --- | --- |
 | `rotation-act:<dependency id>` | a human act is pending (see "When a rotation waits on you") | the act is recorded or no longer pending | do the act |
-| `rotation-unit-failed:<unit>` | the unit is `failed`, `blocked` or `revision_required`; the message names the credential and its staging key, and only `failed` quotes a failure reason, since the ledger's `last_failure` is the newest move to `failed` | the unit leaves those states | `failed` or `blocked`: read its review page, then requeue it (`POST /work-units/{id}/requeue`, as SYSTEM) while attempts remain, retry on `/review` once they are spent, else cancel; supersede is refused once any unit was claimed (see "If a rotation stalls after host"). `revision_required`: requeue refuses it, a person decides on `/review` |
+| `rotation-unit-failed:<unit>` | the unit is `failed`, `blocked` or `revision_required`; the message names the credential, its staging key and its quarantine key, and only `failed` quotes a failure reason, since the ledger's `last_failure` is the newest move to `failed` | the unit leaves those states | `failed` or `blocked`: read its review page, then requeue it (`POST /work-units/{id}/requeue`, as SYSTEM) while attempts remain, retry on `/review` once they are spent, else cancel; supersede is refused once any unit was claimed (see "If a rotation stalls after host"). `revision_required`: requeue refuses it, a person decides on `/review` |
 | `rotation-unit-review:<unit>` | the unit has been `awaiting_review` over 48 hours | the review is decided | decide it on `/review` |
 | `rotation-unit-waiting:<unit>` | the unit has stayed unmoved past its threshold: 48 hours, or 192 hours for a reader wait | the unit is no longer waiting, whatever kind of pass finds it meanwhile | read the reason in the message, which is the wait's own |
 | `rotation-unit-stuck:<unit>` | a refusal couldn't be claimed to fail the unit, and 48 hours have passed | the unit is no longer waiting, as for `rotation-unit-waiting`; both can be open together | fix what the refusal names |
@@ -141,7 +141,7 @@ of every unit still waiting for that pass; the proposer and decomposer hold thei
 same way.
 
 A unit this pass couldn't read keeps its alerts and its clock as they were. A failed unit's alert
-omits the staging key's name, and says why, when intent-packages can't be fetched or its package
+omits those keys' names, and says why, when intent-packages can't be fetched or its package
 can't be read: the alert still goes out. `rotation-instance-behind` is held, never resolved, when
 the mirror lacks the revision the instance runs or can't be read. A failure of the alert sync is
 logged `acts_unread` and never touches a unit or the pass.
@@ -702,25 +702,26 @@ alert stays until you finish these steps:
    - **The keeper holds a new value and consumers use it:** run `security-drift-cli record-rotation
      --cred <credential_id> --date <YYYY-MM-DD>` with the day it changed. The proposer records only
      a rotation retired by `work-watcher`, so it can't record this one.
-   - **The old value stayed:** record nothing. The next occurrence comes from a new
-     `rotate_requested`.
-3. Mark the record `wontfix` in change-manager, which ends the `stalled` finding.
+   - **The old value stayed:** record nothing. A new `rotate_requested` starts the next
+     occurrence.
+3. Mark the record `wontfix` in change-manager, which ends the `stalled` finding. If infraops still
+   reports the same occurrence due, as an open exposure or an unmoved age does, the proposer then
+   reports `record-wontfix` until one of these clears it:
+   - **To rotate again:** revise the standing package to a new revision that carries the same
+     occurrence, and approve it. The proposer proposes a record for that revision.
+   - **For an exposure whose old value is confirmed dead:** run `security-drift-cli
+     resolve-exposure`, then `record-rotation` if the value changed.
 
 ### A minted key nobody holds
 
-If staging the value or filing the mint's evidence fails, the executor deletes the OpenRouter key it
-just minted, by the id `POST /keys` returned, then reports the original failure. That id stays in
-the process, because evidence may not hold a key's full hash. A value staging already holds is
-never deleted.
+If a step fails after an OpenRouter mint and before the value is staged, the executor deletes the
+key it just minted, by the id derived from the value, then reports the original failure. A value
+staging already holds is never deleted.
 
 If the delete fails, or the store can't say what it holds, the unit fails with a message that says
 a key may be left. If that happens, or the process stopped between the mint and the stage, find the
 key in the OpenRouter console by its `rotation-executor <date>` name and delete it. Its $5 limit and
 400-day expiry bound it until then.
-
-The delete assumes `data.hash` in the `POST /keys` answer equals the key's sha256, which hasn't been
-proved against the live API. If it doesn't, every such delete refuses and the message says a key
-may be left, so a person deletes the key as above.
 
 ### If the orchestrator doesn't come back after a rotation's restart
 

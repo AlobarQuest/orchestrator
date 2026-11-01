@@ -1,7 +1,8 @@
 """Copies that must agree across the rotation lanes and with infraops.
 
-`touches_no_hosted_service` is spelled four times, because the executor may not import the
-orchestrator and the decomposer may not import a provider. `CLASS_TYPES` names infraops' classes:
+`touches_no_hosted_service` is spelled three times, because the executor and the decomposer may not
+import the orchestrator, which spells it twice. The proposer's unit states are `WorkUnitState`'s,
+for the same reason. `CLASS_TYPES` names infraops' classes:
 `tests/fixtures/rotation_class_policy.json` is a byte-identical copy of the file of the same name
 in infraops-mcp-server, which that repository's test generates from `CLASS_POLICY`.
 """
@@ -13,9 +14,10 @@ from pathlib import Path
 from typing import Final
 
 from orchestrator import factory_policy
+from orchestrator.kernel.states import WorkUnitState
 from orchestrator.services.lifecycle import rotation_claims
-from rotation_decomposer import decompose
-from rotation_worker import checks
+from rotation_proposer import cli
+from rotation_worker import envelope
 from rotation_worker.types import CLASS_TYPES
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "rotation_class_policy.json"
@@ -38,11 +40,15 @@ UNTYPED: Final = frozenset(
 
 def test_every_spelling_of_the_non_hosted_marker_is_equal() -> None:
     assert (
-        checks.NON_HOSTED_KEY
-        == decompose.NON_HOSTED_KEY
+        envelope.NON_HOSTED_KEY
         == rotation_claims.NON_HOSTED_CONSTRAINT
         == factory_policy._ROTATION_NON_HOSTED_FIELD
     )
+
+
+def test_the_proposers_unit_states_are_the_orchestrators() -> None:
+    assert cli.STALLED_STATES == {WorkUnitState.FAILED.value, WorkUnitState.CANCELLED.value}
+    assert cli.COMPLETED_STATE == WorkUnitState.COMPLETED.value
 
 
 def test_every_type_names_a_class_infraops_knows() -> None:

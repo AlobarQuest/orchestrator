@@ -311,11 +311,11 @@ def _review_overdue(row: Mapping[str, Any]) -> bool:
 
 
 def _where(setup: Setup, unit: Mapping[str, Any], main: list[str | None]) -> str:
-    """The credential a failed unit rotates and its staging key's name, as far as can be told: a
+    """The credential a failed unit rotates and its two secrets' names, as far as can be told: a
     package that can't be read may be why the unit failed, and doesn't silence its alert."""
     intake = setup.client.package_intake(str(unit["work_package_revision_id"]))
     credential = standing_credential(str(intake.get("package_id"))) or "unknown"
-    omitted = f"Credential {credential}; its package can't be read, so the staging key's name is"
+    omitted = f"Credential {credential}; its package can't be read, so its secrets' names are"
     commit = _packages_main(setup, main)
     if commit is None:
         return f"{omitted} omitted: intent-packages couldn't be fetched."
@@ -324,8 +324,11 @@ def _where(setup: Setup, unit: Mapping[str, Any], main: list[str | None]) -> str
     except REFUSALS as error:
         return f"{omitted} omitted: {scrub(str(error))[:MAX_REASON]}."
     occurrence = str(document["profile_fields"].get("occurrence"))
-    staging = Rotation(credential, occurrence, "", setup.work_project_id, ()).staging_key
-    return f"Credential {credential}, staging key {staging}."
+    rotation = Rotation(credential, occurrence, "", setup.work_project_id, ())
+    return (
+        f"Credential {credential}, staging key {rotation.staging_key}, "
+        f"quarantine key {rotation.quarantine_key}."
+    )
 
 
 def _packages_main(setup: Setup, main: list[str | None]) -> str | None:

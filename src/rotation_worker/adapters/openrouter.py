@@ -23,10 +23,10 @@ ADR-0055 increment 5. The provider facts are amendment 1's, measured in incremen
   the value, then `GET /keys/{that hash}` with the management key must answer 200 with the
   same `label` key-info gives for the value. Only then `DELETE`. The id is never taken from
   evidence or from the create response, and a label alone never picks a key (T8).
-* **Discard** a mint the contract couldn't keep, by the id `POST /keys` returned. The key's id is
-  its full hash, which evidence may not hold, so the id lives in this instance and dies with the
-  process: a crash between the mint and the stage leaves the key, bounded by its credit limit and
-  expiry. Listing keys to find it would break "deletes only the pinned hash".
+* **Discard** a mint the contract couldn't keep, by the id derived from its value. Only a key this
+  instance minted qualifies, so a crash between the mint and the stage leaves the key, bounded by
+  its credit limit and expiry: evidence may not hold the full hash, and listing keys to find it
+  would break "deletes only the pinned hash".
 
 The management key is account-wide (a provider limit). It lives in `Rotation / Admin`, which only
 the executor's root reads, and is read from BWS by UUID only when a step mints or revokes.
@@ -175,8 +175,8 @@ class OpenRouterProvider:
         self._free_models: list[str] | None = None
         # Ids of the keys this provider deleted, so a probe can wait out inference's lag.
         self._deleted: set[str] = set()
-        # The id `POST /keys` returned for each key this instance minted. Never leaves it.
-        self._minted_ids: dict[Fingerprint, str] = {}
+        # What this instance minted, the only keys `discard_minted` may delete.
+        self._minted: set[Fingerprint] = set()
 
     # ---- the contract's provider ------------------------------------------------------------
 
@@ -204,20 +204,16 @@ class OpenRouterProvider:
                 "the minted key lacked its credit limit or expiry; deleting it answered "
                 f"{deleted.status_code}"
             )
-        returned = data.get("hash")
-        if isinstance(returned, str):
-            self._minted_ids[value.fingerprint] = returned
+        self._minted.add(value.fingerprint)
         return value
 
     def discard_minted(self, value: Value) -> None:
-        """Delete a key this instance minted, by the id its mint returned and nothing else. That
-        id must also be the one derived from the value, or it names some other key."""
-        returned = self._minted_ids.pop(value.fingerprint, None)
-        if returned is None or not hmac.compare_digest(
-            returned.encode(), _key_hash(value).encode()
-        ):
-            raise ContractError("this instance did not mint that key under the id it was given")
-        deleted = self._send("DELETE", f"{KEYS}/{returned}", self._management(), "deleting")
+        """Delete a key this instance minted, by the id derived from it, as `mint` does."""
+        if value.fingerprint not in self._minted:
+            raise ContractError("this instance did not mint that key")
+        self._minted.discard(value.fingerprint)
+        path = f"{KEYS}/{_key_hash(value)}"
+        deleted = self._send("DELETE", path, self._management(), "deleting the minted key")
         if deleted.status_code != 200:
             raise ContractError(f"deleting the minted key answered {deleted.status_code}")
 

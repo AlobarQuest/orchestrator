@@ -56,6 +56,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -135,6 +136,8 @@ RETIREMENT_ACTOR: Final = "work-watcher"
 STALLED_STATES: Final = frozenset({"failed", "cancelled"})
 COMPLETED_STATE: Final = "completed"
 EXPOSURE_SUFFIX: Final = "-exposure"
+# How `_reasoning` names a revision's occurrence, the record's one statement of its trigger.
+_OCCURRENCE: Final = re.compile(r"\(occurrence ([A-Za-z0-9][A-Za-z0-9._-]{0,63}?)\)")
 # What the record walk turns into one credential's `error`.
 _UNREAD: Final = (
     CallError,
@@ -258,6 +261,18 @@ def _resolved(records: list[dict[str, Any]], package: RotationPackage) -> dict[s
     return None
 
 
+def _declined(records: list[dict[str, Any]], package: RotationPackage) -> dict[str, Any] | None:
+    """A `wontfix` record of this revision: proposing it again would only replay."""
+    for row in records:
+        if (
+            row.get("package_id") == package.package_id
+            and row.get("package_revision") == package.revision
+            and row.get("status") == "wontfix"
+        ):
+            return row
+    return None
+
+
 def _finished(due: Due, row: dict[str, Any]) -> Outcome:
     """What the due walk says of a due credential whose carrying revision has been resolved. The
     record walk does any recording, so nothing here writes."""
@@ -311,6 +326,17 @@ def _act(
     if resolved is not None:
         # Reached only by a writing pass: a dry run reads no records.
         return [_finished(due, resolved), *_superseded(records, package)]
+    declined = _declined(records, package) if action == _PROPOSE else None
+    if declined is not None:
+        return [
+            Outcome(
+                subject,
+                "record-wontfix",
+                f"record {declined.get('id')} for {package.package_id} rev {package.revision} is "
+                f"wontfix and {due.occurrence} is still due: a new revision carries it again",
+            ),
+            *_superseded(records, package),
+        ]
     if client is None or observer is None:
         return [Outcome(subject, f"would-{action}", f"{detail} -> {due.occurrence}")]
     refusal = _ungranted(due, entry.repository, granted)
@@ -451,30 +477,36 @@ def _completed_date(row: dict[str, Any], reader: Orchestrator) -> str:
     return max(completions).strftime("%Y-%m-%d")
 
 
-def _closes_an_exposure(
-    credential_id: str, row: dict[str, Any], due: list[Due], packages: dict[str, RotationPackage]
-) -> bool:
+def record_occurrence(row: dict[str, Any]) -> str | None:
+    """The occurrence the record's own revision carries, as `_reasoning` froze it."""
+    found = _OCCURRENCE.search(str(row.get("reasoning")))
+    return found.group(1) if found else None
+
+
+def _closes_an_exposure(credential_id: str, row: dict[str, Any], due: list[Due]) -> bool:
     """An exposure open now, or the trigger the record's own revision carries."""
     if any(i.credential_id == credential_id and i.trigger == "exposure" for i in due):
         return True
-    package = packages.get(credential_id)
-    return (
-        package is not None
-        and package.revision == row.get("package_revision")
-        and package.occurrence.endswith(EXPOSURE_SUFFIX)
-    )
+    occurrence = record_occurrence(row)
+    if occurrence is None:
+        raise CallError(f"record {row['id']} names no occurrence")
+    return occurrence.endswith(EXPOSURE_SUFFIX)
 
 
 def _record_retired(
-    credential_id: str, row: dict[str, Any], last_rotated: dict[str, str], reader: Orchestrator
+    credential_id: str,
+    row: dict[str, Any],
+    last_rotated: dict[str, str | None],
+    reader: Orchestrator,
 ) -> Outcome | None:
-    """Move `lastRotated` to a retired rotation newer than it, or leave it alone."""
-    known = last_rotated.get(credential_id)
-    if known is None:
-        # infraops serves every handed-over row's anchor, so a missing one is a malformed answer.
+    """Move `lastRotated` to a retired rotation later than it, or leave it alone."""
+    if credential_id not in last_rotated:
+        # infraops serves every handed-over row, so a missing one is a malformed answer. A null is
+        # a row with no date at all, which any rotation is later than.
         raise FindingsError(f"infraops served no 'last_rotated' for {credential_id}")
+    known = last_rotated[credential_id]
     date = _completed_date(row, reader)
-    if date <= known[:10]:
+    if known is not None and date <= known[:10]:
         return None
     record_rotation(credential_id, date)
     return Outcome(
@@ -484,21 +516,66 @@ def _record_retired(
     )
 
 
-def _newest_retired(records: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+def _malformed(row: dict[str, Any]) -> bool:
+    return not isinstance(row.get("id"), int) or not isinstance(row.get("package_revision"), int)
+
+
+def _newest_retired(rows: list[tuple[str, dict[str, Any]]]) -> dict[str, dict[str, Any]]:
     """Each credential's retired record of its highest revision."""
     newest: dict[str, dict[str, Any]] = {}
-    for row in records:
-        credential_id = standing_credential(str(row.get("package_id")))
-        if (
-            credential_id is None
-            or row.get("status") != "resolved"
-            or row.get("decided_by") != RETIREMENT_ACTOR
-        ):
+    for credential_id, row in rows:
+        if row.get("status") != "resolved" or row.get("decided_by") != RETIREMENT_ACTOR:
             continue
         held = newest.get(credential_id)
-        if held is None or int(row["package_revision"]) > int(held["package_revision"]):
+        if held is None or row["package_revision"] > held["package_revision"]:
             newest[credential_id] = row
     return newest
+
+
+def _unread(credential_id: str, error: Exception) -> Outcome:
+    return Outcome(credential_id, "error", f"the record walk: {error}")
+
+
+def _stalled_records(
+    rows: list[tuple[str, dict[str, Any]]],
+    packages: dict[str, RotationPackage],
+    reader: Orchestrator,
+) -> list[Outcome]:
+    outcomes: list[Outcome] = []
+    for credential_id, row in rows:
+        package = packages.get(credential_id)
+        if row.get("status") != "approved":
+            continue
+        if package is not None and row["package_revision"] < package.revision:
+            continue  # Only the tip's record can stall; an earlier one is `_superseded`'s.
+        try:
+            stalled = _stalled(credential_id, row, reader)
+        except _UNREAD as error:
+            stalled = _unread(credential_id, error)
+        outcomes.extend([stalled] if stalled else [])
+    return outcomes
+
+
+def _retired_records(
+    rows: list[tuple[str, dict[str, Any]]],
+    due: list[Due],
+    registry: Callable[[], dict[str, RegistryEntry]],
+    last_rotated: dict[str, str | None],
+    reader: Orchestrator,
+) -> list[Outcome]:
+    outcomes: list[Outcome] = []
+    for credential_id, row in _newest_retired(rows).items():
+        try:
+            entry = registry().get(credential_id)
+            if entry is None or not entry.rotated_by_sds:
+                continue
+            if _closes_an_exposure(credential_id, row, due):
+                continue
+            recorded = _record_retired(credential_id, row, last_rotated, reader)
+        except _UNREAD as error:
+            recorded = _unread(credential_id, error)
+        outcomes.extend([recorded] if recorded else [])
+    return outcomes
 
 
 def _walk_records(
@@ -506,39 +583,47 @@ def _walk_records(
     due: list[Due],
     packages: dict[str, RotationPackage],
     registry: Callable[[], dict[str, RegistryEntry]],
-    last_rotated: dict[str, str] | None,
+    last_rotated: dict[str, str | None] | None,
     reader: Orchestrator,
 ) -> list[Outcome]:
     """Every credential's rotation records, whether or not it is due. A record this can't read is
     that credential's `error`, which holds its alerts."""
     outcomes: list[Outcome] = []
+    rows: list[tuple[str, dict[str, Any]]] = []
     for row in records:
         credential_id = standing_credential(str(row.get("package_id")))
-        if credential_id is None or row.get("status") != "approved":
+        if credential_id is None:
             continue
-        package = packages.get(credential_id)
-        if package is not None and int(row["package_revision"]) < package.revision:
-            continue  # Only the tip's record can stall; an earlier one is `_superseded`'s.
-        try:
-            stalled = _stalled(credential_id, row, reader)
-        except _UNREAD as error:
-            stalled = Outcome(credential_id, "error", f"the record walk: {error}")
-        outcomes.extend([stalled] if stalled else [])
-
-    if last_rotated is None:
-        return outcomes  # An infraops predating the field: nothing to compare, so nothing moves.
-    for credential_id, row in _newest_retired(records).items():
-        if _closes_an_exposure(credential_id, row, due, packages):
+        if _malformed(row):
+            detail = f"a {row.get('package_id')} record lacks its id or revision"
+            outcomes.append(Outcome(credential_id, "error", f"the record walk: {detail}"))
             continue
-        try:
-            entry = registry().get(credential_id)
-            if entry is None or not entry.rotated_by_sds:
-                continue
-            recorded = _record_retired(credential_id, row, last_rotated, reader)
-        except _UNREAD as error:
-            recorded = Outcome(credential_id, "error", f"the record walk: {error}")
-        outcomes.extend([recorded] if recorded else [])
+        rows.append((credential_id, row))
+    outcomes.extend(_stalled_records(rows, packages, reader))
+    if last_rotated is not None:  # An infraops predating the field has nothing to compare with.
+        outcomes.extend(_retired_records(rows, due, registry, last_rotated, reader))
     return outcomes
+
+
+def _settle(
+    outcomes: list[Outcome], walked: list[Outcome], last_rotated: dict[str, str | None] | None
+) -> list[Outcome]:
+    """Keep `retired` only beside what the walk did about it: a due credential with nothing to
+    record is a finding, never a quiet pass."""
+    answered = {outcome.credential_id for outcome in walked}
+    settled: list[Outcome] = []
+    for outcome in outcomes:
+        if outcome.status != "retired" or outcome.credential_id in answered:
+            settled.append(outcome)
+        elif last_rotated is None:
+            detail = f"{outcome.detail}, and infraops serves no last_rotated to compare it with"
+            settled.append(Outcome(outcome.credential_id, "error", detail))
+        else:
+            detail = (
+                f"{outcome.detail}, it is no later than last_rotated, and infraops reports it due"
+            )
+            settled.append(Outcome(outcome.credential_id, "due-after-rotation", detail))
+    return [*settled, *walked]
 
 
 def _pass(
@@ -667,7 +752,7 @@ class _Inputs(NamedTuple):
     due: list[Due]
     unrecognised: list[Unrecognised]
     packages: dict[str, RotationPackage]
-    last_rotated: dict[str, str] | None
+    last_rotated: dict[str, str | None] | None
 
 
 def _inputs(*, submit: bool) -> _Inputs | None:
@@ -712,13 +797,12 @@ def _walks(
         registry,
         granted=granted,
     )
-    if reader is not None:
-        outcomes.extend(
-            _walk_records(
-                records, inputs.due, inputs.packages, registry, inputs.last_rotated, reader
-            )
-        )
-    return outcomes
+    if reader is None:
+        return outcomes
+    walked = _walk_records(
+        records, inputs.due, inputs.packages, registry, inputs.last_rotated, reader
+    )
+    return _settle(outcomes, walked, inputs.last_rotated)
 
 
 def run(argv: list[str] | None = None) -> int:

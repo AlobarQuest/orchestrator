@@ -11,7 +11,8 @@ the dependency-update budget, BWS UUIDs) to know that only the copies that run g
 
 **SO IT RUNS infraops' OWN CLI**, `security-drift-cli.js cred-findings`, which loads the listed
 registries and the rotation state exactly as the 03:00 scan does and prints the findings as JSON.
-That subcommand reads two files and writes nothing; this program opens neither file itself.
+That subcommand reads two files and writes nothing; this program opens neither file itself. Its
+one write, a finished rotation, is the same CLI's `record-rotation`.
 
 **THE WIRE IS STRUCTURED, NEVER PROSE.** A scan finding's `detail` is English with the values
 embedded in it. Each value this program keys anything on -- the exposure id, the requested date,
@@ -67,9 +68,10 @@ _DATE: Final = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
 class FindingsError(Exception):
-    """infraops could not be asked, or answered something this program cannot read.
+    """infraops could not be asked, refused, or answered something this program cannot read.
 
-    Always a whole-pass refusal: a pass that cannot read what is due cannot say what is not due.
+    From reading what is due it stops the whole pass, because a pass that cannot read what is due
+    cannot say what is not due. From a record, it is that credential's `error`.
     """
 
 
@@ -137,7 +139,7 @@ def _due(entry: dict[str, Any], trigger: str) -> Due:
     return Due(credential_id, credential_class, trigger, basis, dated, handed_over)
 
 
-def _last_rotated(document: dict[str, Any]) -> dict[str, str] | None:
+def _last_rotated(document: dict[str, Any]) -> dict[str, str | None] | None:
     """Each handed-over credential's age anchor, or None from an infraops predating the field.
 
     A malformed answer stops the pass: this map is all that holds a repeat from moving an age
@@ -151,12 +153,14 @@ def _last_rotated(document: dict[str, Any]) -> dict[str, str] | None:
     for credential_id, value in served.items():
         if _TOKEN.fullmatch(credential_id) is None:
             raise FindingsError("infraops' 'last_rotated' names a malformed credential")
+        if value is None:
+            continue  # A row with no date at all: no rotation is recorded and none is dated.
         if not isinstance(value, str) or _DATE.match(value) is None:
             raise FindingsError(f"infraops' 'last_rotated' for {credential_id} is not an ISO date")
     return served
 
 
-def parse(text: str) -> tuple[list[Due], list[Unrecognised], dict[str, str] | None]:
+def parse(text: str) -> tuple[list[Due], list[Unrecognised], dict[str, str | None] | None]:
     """infraops' answer: one `Due` per credential, every check this program cannot read, and each
     handed-over credential's age anchor."""
     try:
@@ -238,7 +242,7 @@ def _invoke(checkout: Path | None, run: Runner, subcommand: str, *arguments: str
 
 def read_due(
     checkout: Path | None = None, *, run: Runner = _run
-) -> tuple[list[Due], list[Unrecognised], dict[str, str] | None]:
+) -> tuple[list[Due], list[Unrecognised], dict[str, str | None] | None]:
     """Ask infraops what is due. Every failure is a `FindingsError`, which stops the pass."""
     return parse(_invoke(checkout, run, SUBCOMMAND))
 
