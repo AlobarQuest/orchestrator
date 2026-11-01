@@ -302,6 +302,18 @@ TABLE: dict[str, Row] = {
         "tempfile",
         "typing",
     ),
+    # Execution Part 1: the pure decision module of the execution alert lane. It imports the shared
+    # alert client's `Alert` and `alert_key` and no program.
+    "execution_watch": _row(
+        "__future__",
+        "alert_hub_client",
+        "collections",
+        "dataclasses",
+        "datetime",
+        "enum",
+        "typing",
+        no_sibling_lanes=True,
+    ),
     "image_release": _row(
         "__future__",
         "collections",

@@ -284,6 +284,8 @@ paths = [
   "tests/web/test_human_actions.py",
   "tests/cli/test_context_cli.py",
   ".github/workflows/factory-runner-pilot.yml",
+  "src/execution_watch/**",
+  "tests/execution_watch/**",
 ]
 
 [verification]

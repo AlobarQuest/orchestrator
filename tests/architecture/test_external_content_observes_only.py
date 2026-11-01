@@ -418,6 +418,12 @@ CLASSIFICATION: dict[str, Row] = {
         "ADR-0058: compares the member record with the lists the lanes carry and reports; it only "
         "reads the record, through sds_members' confined reader, and writes nothing anywhere",
     ),
+    "execution_watch": Row(
+        Role.NOT_AN_ORCHESTRATOR_WRITER,
+        "ADR-0050 (shared alert client), Execution Part 1: decides which work-unit execution "
+        "conditions need a person, from the execution-status rows it is handed. This module is "
+        "pure and writes nothing anywhere",
+    ),
     "estate_clients": Row(
         Role.NOT_AN_ORCHESTRATOR_WRITER,
         "ADR-0050: the confined transport the programs share. It names no service path; each "
