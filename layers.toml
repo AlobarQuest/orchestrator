@@ -292,6 +292,8 @@ paths = [
   "scripts/install-execution-watch-launchd.sh",
   "scripts/com.devon.execution-watch.plist",
   "tests/scripts/test_run_execution_watch.py",
+  "tests/architecture/test_execution_edges.py",
+  "tests/architecture/test_execution_writers.py",
 ]
 
 [verification]

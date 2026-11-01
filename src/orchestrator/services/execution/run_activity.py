@@ -3,9 +3,10 @@
 A run may have started for any record whose trigger call was made: a `dispatched` record, and any
 record carrying a `failure_signature`, which only a raised trigger call writes (status `failed`, or
 `blocked` once the circuit breaker opens), since a failed call can still have reached GitHub. A
-record refused at admission carries no signature and ran nothing. Superseding a decomposition
-(ADR-0052) refuses a unit for which a run may have started, since that run may be about to
-claim it. This module reads records; it never starts a run.
+token mint failure or a `route_refused` call sent nothing but carries one too, which errs toward
+refusing. A record refused at admission carries no signature and ran nothing. Superseding a
+decomposition (ADR-0052) refuses a unit for which a run may have started, since that run may be
+about to claim it. This module reads records; it never starts a run.
 """
 
 import uuid

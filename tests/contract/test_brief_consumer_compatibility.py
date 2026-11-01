@@ -142,6 +142,28 @@ def test_the_comparison_names_every_field_the_recommended_consumer_cannot_use() 
     )
 
 
+def _gate_with(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, served: str, consumer: str) -> int:
+    source = tmp_path / "served.py"
+    source.write_text(served)
+    monkeypatch.setattr(check, "SERVED_MODEL_SOURCE", source)
+    monkeypatch.setattr(check, "recommended_revision", lambda _repo: "0" * 40)
+    monkeypatch.setattr(check, "assert_the_workflow_installs_its_own_commit", lambda *_: None)
+    monkeypatch.setattr(check, "fetch", lambda *_: consumer)
+    return check.main()
+
+
+def test_the_gate_refuses_a_field_the_consumer_does_not_declare(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`main`, not the set difference: this is the verdict the required job reports."""
+    served = "class RunnerBriefResponse(BaseModel):\n    work_unit: X\n    enrichment: Y\n"
+    behind = "class RunnerBrief(BaseModel):\n    work_unit: X\n"
+
+    assert _gate_with(monkeypatch, tmp_path, served, behind) == 1
+    assert "enrichment" in capsys.readouterr().err
+    assert _gate_with(monkeypatch, tmp_path, served, behind + "    enrichment: Y\n") == 0
+
+
 def test_the_gate_runs_the_script_this_module_tests() -> None:
     """A check nothing invokes is the defect it guards against, wearing a different hat."""
     invocations = [

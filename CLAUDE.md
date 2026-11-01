@@ -47,23 +47,20 @@ elsewhere, the rule names it. Pages: `docs/operations/` (deploy, credentials, dr
 architecture-guards, local-development, landing-lanes, rotation-executor, onboarding-a-target,
 onboarding-a-fork),
 `docs/method-lessons.md`, and `docs/history/claude-md-invariants-archive.md` (the full original
-text of every bullet, by number).
+text of every bullet, by number; `Archive #N` means that entry, and each rule shortened by Execution
+Part 5 keeps its earlier text under that heading there).
 Placement rule: global CLAUDE.md §7.
 
-- Dependency-update `repo.edit` authority is executable only if the envelope declares a non-empty
-  `mutation_commands` that is an ordered subset of `allowed_commands`; proposal admission and
-  dispatch both enforce it, and approved envelopes are never rewritten. History:
-  `docs/history/claude-md-invariants-archive.md` #1.
+- A dependency update's `mutation_commands` must be non-empty and within `allowed_commands`, at
+  ingress, approval and dispatch; order is not checked (`test_runner_envelope_contract.py`). Archive #1.
 - Everything in this section must stay below `<!-- code-standards:end -->`: `inject_stanza` replaces
   the whole managed block. Re-rendering the block over this file must be a no-op. History:
   `docs/history/claude-md-invariants-archive.md` #2.
 - Generic authority approvals satisfy work-unit readiness only. An authority-expanding
   standing-context update needs a named human approval bound to the exact standing-context
   fingerprint (`kernel/context.py::classify_context_update`, via `services/lifecycle/context.py`).
-- Work-unit envelope expansion (capabilities, levels, budgets) has no detector; it is safe only
-  because the envelope is write-once, enforced by `tests/architecture/test_authority_write_once.py`.
-  A path that mutates the envelope must ship a fail-closed expansion check; never "fix" that test.
-  History: `docs/history/claude-md-invariants-archive.md` #4.
+- A path that mutates a unit's envelope must ship a fail-closed expansion check; there is no detector
+  (`test_authority_write_once.py`; never "fix" it). Archive #4.
 - Protocol smoke tests may manipulate time or lease expiry as fixture setup; runtime recovery
   behaviour must go through public API/CLI surfaces, never private service shortcuts. History:
   `docs/history/claude-md-invariants-archive.md` #5.
@@ -77,22 +74,11 @@ Placement rule: global CLAUDE.md §7.
   `read:sensitive`: parse in-process, print whitelisted fields only. Each variable is two rows
   (`is_preview` false and true) and a PATCH changes one; PATCH may 500, fall back to delete +
   recreate. Detail: `docs/operations/credentials.md`.
-- The authority envelope is a cross-repo contract with factory-runner, pinned by byte-identical
-  `tests/fixtures/runner_authority_envelope.json` and the same `CONTRACT_SHA256` in both repos;
-  change both repos together. History: `docs/history/claude-md-invariants-archive.md` #13.
-- `DispatchRecord.runner_attempt` (dispatch decisions, skipped included) and
-  `WorkUnit.attempt_count` (worker claims) are independent; never require them equal. See
-  `docs/operations/verifier.md`. History: `docs/history/claude-md-invariants-archive.md` #14.
+- Change the authority envelope in both repositories together (`test_runner_envelope_contract.py`). Archive #13.
 - `AuthorityEnvelope.normalized()` is what an authority approval attests: fields outside
   `KNOWN_FIELDS` contribute only their names. Authority-bearing fields must be known; adding one
   rewrites every authority fingerprint. History: `docs/history/claude-md-invariants-archive.md` #15.
-- factory-runner acts only when `target_repo == current_repo`, so dispatch resolves the target per
-  work unit from `authority.constraints.target_repository`, never from a process-global setting.
-  History: `docs/history/claude-md-invariants-archive.md` #16.
-- The envelope contract does not test the reusable workflow: a reusable workflow may invoke only
-  what is reachable from the caller's checkout (the installed console script), and factory-runner
-  must stay public with Actions access enabled. History:
-  `docs/history/claude-md-invariants-archive.md` #18.
+- Dispatch takes the target from each unit's envelope (`test_dispatch_routes_to_the_units_own_target_repository`). Archive #16.
 - Write `ORCHESTRATOR_M2M_CREDENTIALS` before `ORCHESTRATOR_M2M_ROLES` and verify each in the
   container before the next restart: roles without credentials fail boot closed. Detail:
   `docs/operations/credentials.md`.
@@ -100,7 +86,7 @@ Placement rule: global CLAUDE.md §7.
   security-standards' git tree; attribution is permanent, so adding an actor needs a merged commit
   plus rebuild. Never borrow another identity. Detail: `docs/operations/credentials.md`.
 - Envelopes are write-once, and an approved decomposition can be superseded only while none of its
-  units has been claimed or dispatched (ADR-0052): dry-run every session-authored unit's commands
+  units has been claimed or dispatched (ADR-0052, `test_decomposition_supersession.py`): dry-run every session-authored unit's commands
   against the real target repo (twice, clean clone) before work starts. A standing bump's
   decomposition is built without a local run, by Devon's decision of 2026-10-30 (installing the
   bumped dependency runs its lifecycle scripts where infrastructure credentials live): a bad
@@ -115,17 +101,14 @@ Placement rule: global CLAUDE.md §7.
 - `test_unreachable_guards.py` requires every public kernel/services function to be import-reachable
   from a production entry point; an allowlist entry that would read "in fact it is called" means the
   predicate is wrong. Detail: `docs/operations/architecture-guards.md`.
-- `work_units.version` has exactly three writers, all state transitions (`_perform_transition`,
-  `claims._transition`, `_system_fail_without_new_attempt`); recording an adjudication does not bump
-  it. History: `docs/history/claude-md-invariants-archive.md` #30.
+- `work_units.version` moves only on a state transition, in three places (`test_execution_writers.py`). Archive #30.
 - A DB trigger rewrites `work_units.updated_at` on every update, so tests exercise staleness by
   shrinking the env-overridable threshold, never by back-dating the row. History:
   `docs/history/claude-md-invariants-archive.md` #31.
 - Never run two pytest suites against one test database: fixtures drop and recreate it. Use a
   per-worktree database. Detail: `docs/operations/local-development.md`.
-- Worker FAILED and human CANCELLED transitions release the latest claim in the same transaction via
-  the sole `claim_release.release_claim`; keep replay-before-release and unit-then-claim lock order.
-  History: `docs/history/claude-md-invariants-archive.md` #34.
+- `release_claim` alone ends a claim, from its listed callers (`test_execution_writers.py`); keep
+  replay-before-release and unit-then-claim lock order. Archive #34.
 - `automated_test` floors to deterministic-permitted: it resolves from arriving evidence that has an
   evaluator and otherwise asks a human, who may decide it only while the unit is `awaiting_review`.
   Never add it to `DETERMINISTIC_TYPES` (that halts the factory). `automated_check` resolves only
@@ -140,22 +123,18 @@ Placement rule: global CLAUDE.md §7.
 - Only `DomainError` and `APIAuthenticationError` have handlers; anything else is a bare 500. Route
   parsing must raise `DomainError`, and a service must reject every value a DB CHECK would before
   the write. History: `docs/history/claude-md-invariants-archive.md` #44.
-- `reclaim_expired_claim` grants attempts without `claim_unit`; any "may this unit run again" rule
-  belongs in `claims._readiness_eligibility_error`, shared by reclaim, release and requeue. History:
-  `docs/history/claude-md-invariants-archive.md` #45.
+- Any "may this unit run again" rule belongs in `claims._readiness_eligibility_error`, shared by reclaim,
+  release and requeue (`test_reclaim.py`, `test_requeue.py`). Archive #45.
 - The evidence-pack markdown is redacted for public PR comments (no approver ids, rationale, actor
   ids); new sections must redact by hand. A `text/markdown` route needs a `NON_JSON_SUCCESS_PATHS`
   entry. History: `docs/history/claude-md-invariants-archive.md` #46.
 - A FastAPI `response_model` silently drops undeclared keys: extend the model in the same change as
   the service, and pin a contract route's model fields in its contract test. History:
   `docs/history/claude-md-invariants-archive.md` #48.
-- The runner brief is a cross-repo contract pinned by byte-identical
-  `tests/fixtures/runner_brief.json` and `CONTRACT_SHA256` plus a derivation test in each repo;
-  `RunnerBrief` is `extra="allow"`, keep it so. History:
-  `docs/history/claude-md-invariants-archive.md` #49.
-- Serve a new brief field only after factory-runner declares it and the pin advances; the `Runner
-  consumer compatibility` job enforces fields and capabilities. Renaming that required check must
-  move the protected context too. Detail: `docs/operations/architecture-guards.md`.
+- Change the runner brief in both repositories together (`test_runner_brief_contract.py`); `RunnerBrief`
+  stays `extra="allow"`. Archive #49.
+- Serve a new brief field only after factory-runner declares it and the pin advances
+  (`test_brief_consumer_compatibility.py`); renaming the required check moves the protected context too.
 - Under `src/orchestrator/` the word guards (ADR-0051) refuse forbidden terms in CODE only:
   identifiers, imports and non-docstring strings with no whitespace. ws32 forbids `dispatch`,
   `deploy`, `coolify`, `workflow_dispatch`, `factory-runner`, `auto_merge`, `merge_pull_request` and
@@ -195,16 +174,11 @@ Placement rule: global CLAUDE.md §7.
   a part in `kernel/secret_metadata.py::SECRET_KEY_PARTS` (`token`, `credential`, `log`, `body`,
   `response` among them). Detail: `docs/operations/post-deploy-verification.md`. History:
   `docs/history/claude-md-invariants-archive.md` #63.
-- The orchestrator assigns the dispatch ordinal (`max(attempt_count, highest recorded) + 1`); a
-  supplied `runner_attempt` other than that is refused `dispatch_attempt_not_next`, and a retry
-  reuses the `idempotency_key`. Detail: `docs/operations/driving-a-unit.md`.
-- `ORCHESTRATOR_DISPATCH_ENABLED` defaults true and is only an off switch; dispatch has one caller,
-  `POST /work-units/{id}/dispatch`. Never restart the orchestrator while a dispatched run is live.
-  Detail: `docs/operations/driving-a-unit.md`.
-- `budgets.max_llm_calls` gates the next claim, not a running attempt, and `budget_exceeded` is
-  unrecoverable: authorise at least `max_attempts x max_turns x 2` (the profile's `BUDGETS`, its
-  approval-policy grant and the known-good pattern are held equal by the budget-agreement rule below). Detail:
-  `docs/operations/driving-a-unit.md`.
+- The orchestrator assigns the dispatch ordinal; a retry reuses the `idempotency_key` (`test_dispatch.py`).
+- Dispatch has one caller, its route (`test_execution_writers.py`). `ORCHESTRATOR_DISPATCH_ENABLED` is only
+  an off switch. Never restart the orchestrator while a dispatched run is live.
+- `budgets.max_llm_calls` gates the next claim, not a running attempt (`test_claims_budget.py`), and
+  `budget_exceeded` is unrecoverable: authorise at least `max_attempts x max_turns x 2`.
 - `record_approval` enforces no lifecycle state for either subject type; an approval's reach is
   bounded by its consumers (the `AWAITING_APPROVAL -> READY` guard and admission), not by refusal.
   History: `docs/history/claude-md-invariants-archive.md` #74.
@@ -220,15 +194,10 @@ Placement rule: global CLAUDE.md §7.
   #81.
 - Minted follow-up units are created in `AWAITING_REVIEW`, and minting refuses rather than inherit
   an unknown reach. History: `docs/history/claude-md-invariants-archive.md` #88.
-- A lease may only LENGTHEN (`kernel/leases.py`: above `DEFAULT_LEASE`, at most `LEASE_CEILING`);
-  reach sets compose by maximum. A lapsed lease ends its attempt: `renew_claim` refuses
-  (`lease_expired`) and `validate_active_claim` refuses evidence and PR-binding writes
-  (`claim_not_active`). History: `docs/history/claude-md-invariants-archive.md` #89.
-- The lease has three writers, all via `lease_policy.py::claim_lease`: `claim_unit`, `renew_claim`
-  and `reclaim_expired_claim` (which never calls `claim_unit`). Any per-claim rule must cover all
-  three, with one deliberate exception: the rotation-unit change window gates starts only, so
-  renewal is never windowed and reclaim refuses a rotation unit outright (ADR-0055 amendment 2).
-  History: `docs/history/claude-md-invariants-archive.md` #90.
+- A lease may only lengthen, and a lapsed lease ends its attempt (`test_lease_policy.py`,
+  `test_drill_lapse_before_submit.py`). Archive #89.
+- A lease has three writers, each sized by `claim_lease` (`test_execution_writers.py`). A per-claim rule covers
+  all three, except that the rotation change window gates starts only (ADR-0055 amendment 2). Archive #90.
 - `test_factory_policy.py` requires exactly one module in `src/orchestrator/` to name the policy
   artifact's filename, docstrings included, and forbids its row rationales in source. Reword; never
   allowlist. Detail: `docs/operations/architecture-guards.md`.
@@ -254,9 +223,7 @@ Placement rule: global CLAUDE.md §7.
 - `REACH_VOCABULARY` must stay a dict of string literals or `test_cross_boundary_vocabulary` loses
   the whole vocabulary; fix with a pinned duplicate, never an allowlist entry. Detail:
   `docs/operations/architecture-guards.md`.
-- `_blocked_reason` (`services/execution/dispatch.py`) normalizes the envelope exactly once,
-  test-enforced; an admission term needing envelope data is evaluated inside it. History:
-  `docs/history/claude-md-invariants-archive.md` #108.
+- `_blocked_reason` normalizes the envelope once (`test_dispatch_uses_one_normalized_authority_snapshot`). Archive #108.
 - A verifier adjudication may arise only from `verify_work_unit`; a direct POST is
   `verifier_evaluation_required`. Reconciliation detects reality changing, never reality
   misreported, so worker-attested evidence has no downstream net. History:
@@ -275,12 +242,8 @@ Placement rule: global CLAUDE.md §7.
 - Landers separate deliberate refusals (subset semantics, clear next window), exceptions (never land
   under policy) and `waiting`; none is a finding. Freshness is suppressed only beside an exception,
   keyed on durability. Detail: `docs/operations/landing-lanes.md`.
-- `runner_command_authority_violation` mirrors the runner: `allowed_commands` required when
-  `command.run` is allowed; `mutation_commands` required iff `change_class == "dependency-update"`,
-  validated whenever present; optional `verify_commands` validated whenever present (non-empty,
-  subset of `allowed_commands`, disjoint from `mutation_commands`). The orchestrator may be
-  stricter, never looser. History:
-  `docs/history/claude-md-invariants-archive.md` #126.
+- `runner_command_authority_violation` mirrors the runner and may be stricter, never looser
+  (`test_runner_envelope_contract.py`). Archive #126.
 - `allowed_commands` is the coding agent's entire enforced Bash vocabulary (exact match), so an
   envelope must list every command the work needs. Without `verify_commands`, finalize re-executes
   it as written, so authors must order it mutators first, verifier last (finalize never reorders).
@@ -289,9 +252,8 @@ Placement rule: global CLAUDE.md §7.
   includes a build: a build the verifier depends on must be in `verify_commands` or a mutator, or
   finalize never runs it. Absent keeps every existing fingerprint. Detail:
   `docs/operations/driving-a-unit.md`.
-- `DRAFT/READY -> CANCELLED` need the `decomposition_superseded` guard, which only superseding the
-  unit's own approval sets (ADR-0052); otherwise a stranded READY unit is inert and is retired by
-  letting it fail then cancelling. History: `docs/history/claude-md-invariants-archive.md` #134.
+- Only superseding retires a draft or ready unit (`test_decomposition_supersession.py`); a stranded one is
+  failed, then cancelled. Archive #134.
 - Never set `required_approving_review_count`; a branch-protection required check is a JOB name
   verified against a real open pull request, and members keep `allow_auto_merge` off (ADR-0038),
   which `membership_check` reports. Detail: `docs/operations/landing-lanes.md`.
@@ -514,12 +476,8 @@ Placement rule: global CLAUDE.md §7.
 - Before deleting anything, grep the exit manifests (`docs/operations/wave-exit-manifest.toml`) and
   evidence, not only `src/`; the tracker adapter and routes stay because Wave 2's met bar attests
   them. History: `docs/history/claude-md-invariants-archive.md` #287.
-- The dependency-update budget lives in five places; `scripts/check_profile_budget_agreement.py`
-  holds every `dependency-update` known-good pattern in `factory-policy.toml` (uv, npm, pip) to
-  intent-packages' `BUDGETS` and `CAPABILITIES`. A pattern's `target_repositories` is optional
-  (schema 9): absent, the member record's grant decides which repositories. Raising the pattern
-  ceiling withholds a human gate: a standing-authority decision. History:
-  `docs/history/claude-md-invariants-archive.md` #291.
+- `scripts/check_profile_budget_agreement.py` holds every `dependency-update` pattern to intent-packages'
+  `BUDGETS` and `CAPABILITIES`. Raising the ceiling is a standing-authority decision. Archive #291.
 - Dispatch admission, the claim and every landing admission read the member record's grant. Dispatch
   and the claim map the unit's change class (`services/execution/target_grant.py`):
   `dependency_updates` for `dependency-update`, `app_changes` for every other class, only in state

@@ -21,15 +21,17 @@ given target repository hosts a caller at that path is `runner.caller`'s questio
 repository, which is where it belongs.
 """
 
+import json
 import uuid
 from pathlib import Path
 from typing import Any
 
+import httpx
 import yaml
 
 from orchestrator.config import Settings
 from orchestrator.persistence.models import WorkUnit
-from orchestrator.services.execution.dispatch import _payload
+from orchestrator.services.execution.dispatch import GitHubActionsDispatcher, _payload
 from pin_watcher.github import CALLER_PATH
 
 CALLER_WORKFLOW = Path("tests/fixtures/factory_runner_caller.yml")
@@ -89,3 +91,39 @@ def test_the_default_workflow_id_is_a_file_name_not_a_path() -> None:
 
     assert "/" not in default
     assert default == Path(CALLER_PATH).name
+
+
+def test_the_dispatch_request_is_unchanged() -> None:
+    """What GitHub receives, whole: moving the transport moved none of it but the User-Agent."""
+    sent: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        return httpx.Response(204)
+
+    GitHubActionsDispatcher(
+        lambda: "ghs_minted", transport=httpx.MockTransport(handler)
+    ).dispatch_workflow(
+        repository="AlobarQuest/brain",
+        workflow_id="dir/caller.yml",
+        ref="main",
+        inputs={"work_unit_id": "u1"},
+    )
+
+    [request] = sent
+    assert request.method == "POST"
+    assert str(request.url) == (
+        "https://api.github.com/repos/AlobarQuest/brain/actions/workflows/"
+        "dir%2Fcaller.yml/dispatches"
+    )
+    assert request.headers["Accept"] == "application/vnd.github+json"
+    assert request.headers["Authorization"] == "Bearer ghs_minted"
+    assert request.headers["X-GitHub-Api-Version"] == "2022-11-28"
+    assert request.headers["User-Agent"] == "orchestrator-dispatch/1 (+AlobarQuest/orchestrator)"
+    assert json.loads(request.content) == {"ref": "main", "inputs": {"work_unit_id": "u1"}}
+    assert request.extensions["timeout"] == {
+        "connect": 10.0,
+        "read": 10.0,
+        "write": 10.0,
+        "pool": 10.0,
+    }

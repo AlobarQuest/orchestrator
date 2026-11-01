@@ -341,6 +341,17 @@ def test_one_pattern_with_other_budgets_fails_the_check(monkeypatch, capsys) -> 
     assert "pattern 2" in capsys.readouterr().err
 
 
+def test_one_name_under_two_reach_rows_is_compared_twice(monkeypatch, capsys) -> None:
+    """The artifact repeats each pattern's name under `source_repository` and `live_estate`, so
+    keying on the name let the later row hide a divergence in the earlier one."""
+    monkeypatch.setattr(check, "fetch", _fetch(PROFILE_SOURCE))
+    rows = _rows({"name": "uv", "max_llm_calls": 361}, {"name": "uv"})
+    monkeypatch.setattr(check, "_pattern_rows", rows)
+
+    assert check.main() == 1
+    assert "patterns disagree" in capsys.readouterr().err
+
+
 def test_no_dependency_update_pattern_is_unresolvable(monkeypatch, tmp_path) -> None:
     """Reaches the real guard: a policy file with no dependency-update row at all."""
     policy = tmp_path / "factory-policy.toml"

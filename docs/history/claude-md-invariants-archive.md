@@ -2146,3 +2146,82 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   cannot see any of the four forms above except the second.
   Reword; never allowlist — the standing rule for this family is unchanged, and an exemption here
   would excuse a file rather than a sentence.
+
+### Execution Part 5, 2026-11-01
+
+The text these rules held in CLAUDE.md until Execution Part 5 replaced each with a line naming its test, or, for the `runner_attempt` and reusable-workflow rules, moved it here. `mutation_commands` was called an ordered subset; neither repository checks the order.
+
+- Dependency-update `repo.edit` authority is executable only if the envelope declares a non-empty
+  `mutation_commands` that is an ordered subset of `allowed_commands`; proposal admission and
+  dispatch both enforce it, and approved envelopes are never rewritten. History:
+  `docs/history/claude-md-invariants-archive.md` #1.
+- Work-unit envelope expansion (capabilities, levels, budgets) has no detector; it is safe only
+  because the envelope is write-once, enforced by `tests/architecture/test_authority_write_once.py`.
+  A path that mutates the envelope must ship a fail-closed expansion check; never "fix" that test.
+  History: `docs/history/claude-md-invariants-archive.md` #4.
+- The authority envelope is a cross-repo contract with factory-runner, pinned by byte-identical
+  `tests/fixtures/runner_authority_envelope.json` and the same `CONTRACT_SHA256` in both repos;
+  change both repos together. History: `docs/history/claude-md-invariants-archive.md` #13.
+- `DispatchRecord.runner_attempt` (dispatch decisions, skipped included) and
+  `WorkUnit.attempt_count` (worker claims) are independent; never require them equal. See
+  `docs/operations/verifier.md`. History: `docs/history/claude-md-invariants-archive.md` #14.
+- factory-runner acts only when `target_repo == current_repo`, so dispatch resolves the target per
+  work unit from `authority.constraints.target_repository`, never from a process-global setting.
+  History: `docs/history/claude-md-invariants-archive.md` #16.
+- The envelope contract does not test the reusable workflow: a reusable workflow may invoke only
+  what is reachable from the caller's checkout (the installed console script), and factory-runner
+  must stay public with Actions access enabled. History:
+  `docs/history/claude-md-invariants-archive.md` #18.
+- `work_units.version` has exactly three writers, all state transitions (`_perform_transition`,
+  `claims._transition`, `_system_fail_without_new_attempt`); recording an adjudication does not bump
+  it. History: `docs/history/claude-md-invariants-archive.md` #30.
+- Worker FAILED and human CANCELLED transitions release the latest claim in the same transaction via
+  the sole `claim_release.release_claim`; keep replay-before-release and unit-then-claim lock order.
+  History: `docs/history/claude-md-invariants-archive.md` #34.
+- `reclaim_expired_claim` grants attempts without `claim_unit`; any "may this unit run again" rule
+  belongs in `claims._readiness_eligibility_error`, shared by reclaim, release and requeue. History:
+  `docs/history/claude-md-invariants-archive.md` #45.
+- The runner brief is a cross-repo contract pinned by byte-identical
+  `tests/fixtures/runner_brief.json` and `CONTRACT_SHA256` plus a derivation test in each repo;
+  `RunnerBrief` is `extra="allow"`, keep it so. History:
+  `docs/history/claude-md-invariants-archive.md` #49.
+- Serve a new brief field only after factory-runner declares it and the pin advances; the `Runner
+  consumer compatibility` job enforces fields and capabilities. Renaming that required check must
+  move the protected context too. Detail: `docs/operations/architecture-guards.md`.
+- The orchestrator assigns the dispatch ordinal (`max(attempt_count, highest recorded) + 1`); a
+  supplied `runner_attempt` other than that is refused `dispatch_attempt_not_next`, and a retry
+  reuses the `idempotency_key`. Detail: `docs/operations/driving-a-unit.md`.
+- `ORCHESTRATOR_DISPATCH_ENABLED` defaults true and is only an off switch; dispatch has one caller,
+  `POST /work-units/{id}/dispatch`. Never restart the orchestrator while a dispatched run is live.
+  Detail: `docs/operations/driving-a-unit.md`.
+- `budgets.max_llm_calls` gates the next claim, not a running attempt, and `budget_exceeded` is
+  unrecoverable: authorise at least `max_attempts x max_turns x 2` (the profile's `BUDGETS`, its
+  approval-policy grant and the known-good pattern are held equal by the budget-agreement rule below). Detail:
+  `docs/operations/driving-a-unit.md`.
+- A lease may only LENGTHEN (`kernel/leases.py`: above `DEFAULT_LEASE`, at most `LEASE_CEILING`);
+  reach sets compose by maximum. A lapsed lease ends its attempt: `renew_claim` refuses
+  (`lease_expired`) and `validate_active_claim` refuses evidence and PR-binding writes
+  (`claim_not_active`). History: `docs/history/claude-md-invariants-archive.md` #89.
+- The lease has three writers, all via `lease_policy.py::claim_lease`: `claim_unit`, `renew_claim`
+  and `reclaim_expired_claim` (which never calls `claim_unit`). Any per-claim rule must cover all
+  three, with one deliberate exception: the rotation-unit change window gates starts only, so
+  renewal is never windowed and reclaim refuses a rotation unit outright (ADR-0055 amendment 2).
+  History: `docs/history/claude-md-invariants-archive.md` #90.
+- `_blocked_reason` (`services/execution/dispatch.py`) normalizes the envelope exactly once,
+  test-enforced; an admission term needing envelope data is evaluated inside it. History:
+  `docs/history/claude-md-invariants-archive.md` #108.
+- `DRAFT/READY -> CANCELLED` need the `decomposition_superseded` guard, which only superseding the
+  unit's own approval sets (ADR-0052); otherwise a stranded READY unit is inert and is retired by
+  letting it fail then cancelling. History: `docs/history/claude-md-invariants-archive.md` #134.
+- `runner_command_authority_violation` mirrors the runner: `allowed_commands` required when
+  `command.run` is allowed; `mutation_commands` required iff `change_class == "dependency-update"`,
+  validated whenever present; optional `verify_commands` validated whenever present (non-empty,
+  subset of `allowed_commands`, disjoint from `mutation_commands`). The orchestrator may be
+  stricter, never looser. History:
+  `docs/history/claude-md-invariants-archive.md` #126.
+- The dependency-update budget lives in five places; `scripts/check_profile_budget_agreement.py`
+  holds every `dependency-update` known-good pattern in `factory-policy.toml` (uv, npm, pip) to
+  intent-packages' `BUDGETS` and `CAPABILITIES`. A pattern's `target_repositories` is optional
+  (schema 9): absent, the member record's grant decides which repositories. Raising the pattern
+  ceiling withholds a human gate: a standing-authority decision. History:
+  `docs/history/claude-md-invariants-archive.md` #291.
