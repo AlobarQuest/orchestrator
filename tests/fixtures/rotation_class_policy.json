@@ -1,50 +1,18 @@
-{
-  "anthropic-api-key": {
-    "executor": false
-  },
-  "atlassian-api-token": {
-    "executor": true
-  },
-  "brain-mcp-key": {
-    "executor": false
-  },
-  "bws-machine-token": {
-    "executor": false
-  },
-  "change-manager-m2m-bearer": {
-    "executor": false
-  },
-  "coolify-api-token": {
-    "executor": false
-  },
-  "coolify-pg-password": {
-    "executor": false
-  },
-  "github-app-private-key": {
-    "executor": false
-  },
-  "github-pat-classic": {
-    "executor": true
-  },
-  "github-pat-fine-grained": {
-    "executor": true
-  },
-  "openai-key": {
-    "executor": true
-  },
-  "openrouter-key": {
-    "executor": true
-  },
-  "orchestrator-m2m-bearer": {
-    "executor": false
-  },
-  "porkbun-api-key": {
-    "executor": false
-  },
-  "postgres-role-password": {
-    "executor": false
-  },
-  "rotation-canary": {
-    "executor": false
-  }
-}
+[
+  "anthropic-api-key",
+  "atlassian-api-token",
+  "brain-mcp-key",
+  "bws-machine-token",
+  "change-manager-m2m-bearer",
+  "coolify-api-token",
+  "coolify-pg-password",
+  "github-app-private-key",
+  "github-pat-classic",
+  "github-pat-fine-grained",
+  "openai-key",
+  "openrouter-key",
+  "orchestrator-m2m-bearer",
+  "porkbun-api-key",
+  "postgres-role-password",
+  "rotation-canary"
+]

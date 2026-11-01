@@ -143,7 +143,7 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   `git worktree add .worktrees/<ws> -b <branch> main` · `uv sync --frozen` in it ·
   `createdb -h 127.0.0.1 -U postgres orchestrator_test_<ws>` · export `TEST_DATABASE_URL` and
   `ORCHESTRATOR_DATABASE_URL` at that database and `SECURITY_STANDARDS_DIR` at
-  `$PWD/tests/fixtures/security-standards` · `uv run alembic upgrade head`. Teardown is
+  `$PWD/tests/fixtures/security-standards` · `uv run alembic upgrade head`. Export `PGTZ=UTC` too: CI's Postgres runs on UTC, and on a server in a daylight-saving zone interval tests fail by an hour across a clock change (four tests, measured 2026-11-01). Teardown is
   `git worktree remove … --force` + `dropdb`.
   **`.worktrees/` is ALREADY in `.gitignore` and already in the Makefile's `PRUNE_DIRS`** — the
   convention was anticipated and simply never used. **The per-worktree DATABASE is the half that is

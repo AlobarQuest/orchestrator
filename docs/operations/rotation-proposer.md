@@ -167,17 +167,17 @@ changes the exit code.
 - **`declined`**: Devon rejected the revision that carries this occurrence.
 - **`unexpected-state`** (a finding): any lifecycle state this lane never writes.
 - **`legacy`**: the registry has not marked the credential `rotated_by_sds`, and no package
-  exists. infraops' 04:00 window rotates it; this lane does nothing.
+  exists. A person rotates it, and infraops' 03:00 scan reports it to change-manager as a manual
+  item; this lane does nothing.
 - **`not-handed-over`** (a finding): a standing package exists, but the registry has not marked the
-  credential `rotated_by_sds`. The pass never acts on it, because infraops' window still could.
-  Set the flag in the credential's `.cred-consumers.toml`, and only when no legacy rotation of it is
-  in flight.
+  credential `rotated_by_sds`. The pass never acts on it, because a person may be rotating it.
+  Set the flag in the credential's `.cred-consumers.toml`, and only when no such rotation is in
+  flight.
 - **`ungranted`** (a finding): the registry hands the credential to the SDS, but the member record
   does not grant `credential_rotation` on its repository. The pass observes, revises, generates
   and proposes nothing for it; a finished rotation still records, and stranded records are still
   reported. Grant it with a member proposal (`docs/operations/membership.md`), or clear the flag.
-- **`unlaned`** (a finding): the registry hands the credential to the SDS, so infraops' window
-  refuses it, but no standing package exists and none can be generated: its registry `class`
+- **`unlaned`** (a finding): the registry hands the credential to the SDS, but no standing package exists and none can be generated: its registry `class`
   names no type the SDS rotates (`rotation_worker.types.CLASS_TYPES`).
 
 Every finding carries `rotated_by_sds` from infraops' `cred-findings`. A finding without it (an

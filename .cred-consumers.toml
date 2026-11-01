@@ -447,11 +447,11 @@ rotate_requested = "2026-10-21"
   observation_subject = "snapshot:hetzner-vps"
   note = "through observe-run.sh; launchd com.devon.hetzner-snapshot Sunday 03:00; Keychain Claude/BWS_ACCESS_TOKEN_VPS_BACKUP (broad account); no Healthchecks check"
 
-# The factory-runner WORKER bearer. Six repositories hold it as the write-only Actions
+# The factory-runner WORKER bearer. Seven repositories hold it as the write-only Actions
 # secret FACTORY_RUNNER_TOKEN, each beside FACTORY_RUNNER_CREDENTIAL_KEY_ID, the entry's key
-# id, which a rotation doesn't change (census 2026-10-19 by gh secret list). project-standards'
-# copy was dropped on 2026-10-19: it isn't a factory target and no workflow reads it. So was the
-# factory-validation-kit reader, which exists only on an unmerged branch with no schedule.
+# id, which a rotation doesn't change. project-standards holds it again since it became a
+# factory target on 2026-10-27 (ADR-0015). The factory-validation-kit reader was dropped on
+# 2026-10-19: it exists only on an unmerged branch with no schedule.
 # The rotation executor writes every copy and reads each repository's secret-fingerprint
 # report (ADR-0055 increment 7).
 [[credential]]
@@ -462,6 +462,7 @@ provider_identity = "factory-runner worker key id (FACTORY_RUNNER_CREDENTIAL_KEY
 bws_uuid = "d2a4c0fc-128b-4bf5-8e25-b481010e1be0"
 created = "2026-07-08"
 disposition = "reissue"
+rotated_by_sds = true
 
   [[credential.consumer]]
   kind = "bws-secret"

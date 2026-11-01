@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-10-06
 - **Decided by:** Devon, accepted 2026-10-06 ("I intend on having SDS handle credential
-  rotations"). Increments 2 to 5 are deferred: tracked, not scheduled.
+  rotations"). ADR-0055 replaced increments 2 to 4, and increment 5 shipped on 2026-11-01.
 - **Relates to:** ADR-0011 (known-good patterns), ADR-0019 increment 5a and ADR-0026 decision 5 (a
   producer may propose but never move a change record's status), ADR-0027 (machine intakes name the
   change record that caused them), ADR-0028 (a standing package per target, revised per change),
@@ -40,7 +40,7 @@ only the classes that matter least, and the SDS records neither in its own chain
 The SDS becomes the one place credential rotation happens. A rotation is ordinary SDS work: it has a
 change record, an intake, units, evidence, adjudication and completion, and it is traceable like any
 other change. The infraops executor stops being a separate lane and becomes the SDS's execution
-engine. Its 04:00 window retires once the SDS path covers its classes.
+engine. Its 04:00 window retired on 2026-11-01 (ADR-0055 amendment 18).
 
 ### The flow
 
@@ -103,15 +103,14 @@ engine. Its 04:00 window retires once the SDS path covers its classes.
    before any machine acts.
 3. **The rotation worker, for the classes the executor already supports.** These are GitHub PATs,
    the Bitbucket token, and the OpenRouter and OpenAI keys. The worker reuses the executor's steps.
-   The infraops 04:00 window stays as a fallback for these classes until the worker has completed
-   one rotation of each.
+   The infraops 04:00 window stayed as a fallback for these classes until its retirement.
 4. **The refused classes.** Rotate BWS machine tokens, Coolify Postgres passwords and brain MCP keys
    through the worker, using the human console step where a class needs one. Two infraops changes
    come first: a value-from-file option for `coolify_update_app_env` (today the value is a literal
    tool argument, which puts it in a transcript), and a `postgres_password` parameter for
    `coolify_update_database`.
-5. **Retire the infraops window.** Remove `run-security-window` from `scripts/change-window.sh`.
-   Delete change-manager's unused `rotation` source.
+5. **Retire the infraops window.** Done 2026-11-01 (ADR-0055 amendment 18), along with
+   change-manager's unused `rotation` source.
 
 ## Consequences
 
@@ -120,9 +119,9 @@ engine. Its 04:00 window retires once the SDS path covers its classes.
 - An SDS program can now change live credentials. The boundaries above are the only things holding
   that authority in, so each one ships with a guard test, and the worker's classification row is
   reviewed like the image binder's under ADR-0039.
-- During increments 3 and 4, two executors exist. The worker and the infraops window must never
-  both act on one credential. Increment 3's design must name the interlock. The simplest is for
-  infraops to skip any credential with an open SDS rotation unit.
+- During increments 3 and 4, two executors existed, so the worker and the infraops window had to
+  never both act on one credential. The interlock is amendment 2's `rotated_by_sds`. The window
+  retired on 2026-11-01 (ADR-0055 amendment 18), so the interlock has no second executor.
 - A rotation that fails partway leaves both values live. That is safe: the old value is revoked
   last, and only after the new one verifies everywhere. The worker reports and stops. It never
   revokes on a partial deploy.
