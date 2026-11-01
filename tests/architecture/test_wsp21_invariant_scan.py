@@ -796,6 +796,12 @@ OUTBOUND_ALLOWLIST = {
     # Execution Part 1. It imports `Alert` and `alert_key` from the shared alert client and makes
     # no request.
     Path("src/execution_watch/decide.py"),
+    # Execution Part 1. The lane's one surface, a single orchestrator read on the observer bearer.
+    # Enforced by `permits` and pinned by tests/execution_watch/test_cli.py.
+    Path("src/execution_watch/client.py"),
+    # The pass: tells alert-hub through the shared client; `httpx` is only the annotation of the
+    # test transport handed to `KeyedAlerts`.
+    Path("src/execution_watch/cli.py"),
     # Rotation Part 1. The same: only the type annotation of the test transport handed to
     # `KeyedAlerts`, whose one request is `POST /v1/alerts`.
     Path("src/rotation_proposer/alerts.py"),

@@ -302,17 +302,28 @@ TABLE: dict[str, Row] = {
         "tempfile",
         "typing",
     ),
-    # Execution Part 1: the pure decision module of the execution alert lane. It imports the shared
-    # alert client's `Alert` and `alert_key` and no program.
+    # Execution Part 1: the execution alert lane. `decide.py` is pure and imports the shared alert
+    # client's `Alert` and `alert_key`; `client.py` is its one orchestrator read through
+    # `estate_clients`; `cli.py` tells alert-hub through the shared client. `bump_proposer` supplies
+    # only `UnusableEndpointError`, as `rotation_proposer` borrows it.
     "execution_watch": _row(
         "__future__",
         "alert_hub_client",
+        "argparse",
+        "bump_proposer",
         "collections",
         "dataclasses",
         "datetime",
         "enum",
+        "estate_clients",
+        # Only the annotation of the test transport handed to `KeyedAlerts`.
+        "httpx",
+        "json",
+        "os",
+        "pathlib",
+        "re",
+        "sys",
         "typing",
-        no_sibling_lanes=True,
     ),
     "image_release": _row(
         "__future__",

@@ -62,6 +62,7 @@ inert-landing = "inert_lander.cli:main"
 # ADR-0054 amendment 1. A credential infraops reports due for rotation becomes a revision of its
 # standing package (to review, never approved) and, once a named human approves that, a work record.
 rotation-proposer = "rotation_proposer.cli:main"
+execution-watch = "execution_watch.cli:main"
 # ADR-0055 amendment 14. Runs `/verify` on each submitted rotation unit as VERIFIER, so a unit
 # whose step evidence is clean completes without a person.
 rotation-verifier = "rotation_verifier.cli:main"

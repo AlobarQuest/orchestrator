@@ -350,6 +350,7 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   it found everything there was to find").
   `run-estate-landing.sh`, `run-change-proposer.sh`, `run-work-carrier.sh`, `run-bump-proposer.sh`
   and `run-rotation-proposer.sh`: **2 = could not use its INPUTS**, 3 = something was found.
+  `run-execution-watch.sh` (Execution Part 1, every 15 minutes) arms the dead-man switch only on `--submit` and declares **2 = the orchestrator could not be read, every key held** as its finding code; 1 = the lane could not do its job. State is in `~/Library/Application Support/sds/execution-watch`; run `--seed` once before the first scheduled pass.
   `run-fork-sync-watch.sh` (2026-10-24) uses the second group's codes (2 GitHub unreadable, 3 a
   fork stuck), and arms no dead-man switch: its check is an outcome alarm, so 1, 2 and 3 all ping
   `/fail`. The bridge launchers `run-bump-proposer.sh`, `run-change-proposer.sh` and

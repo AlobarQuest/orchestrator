@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The execution-watch pass: a work unit that is failed, held, stalled, blocked at dispatch or
+     dispatched and never claimed raises one alert-hub alert, and resolves when it clears.
+
+     EVERY FIFTEEN MINUTES. The shortest wait the lane judges is the one-hour dispatch-blocked
+     clock, so a quarter hour adds at most a fifth to it. A pass is one orchestrator read.
+
+     The job passes the submit flag, which sends alerts. It needs a known-subjects file first: run
+     `scripts/run-execution-watch.sh` with the seed flag once, or the pass refuses and raises
+     execution-watch-unread.
+
+     The exit code is the report. launchd discards it, so read the log: 0 the pass ran, 1 the lane
+     could not do its job, 2 the orchestrator could not be read and every key was held. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.devon.execution-watch</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__REPO_ROOT__/scripts/run-execution-watch.sh</string>
+        <string>--submit</string>
+    </array>
+
+    <key>StartInterval</key>
+    <integer>900</integer>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <!-- `bws` lives under `/opt/homebrew/bin`, and the launcher shells out to it for each
+             credential. A tool installed by a user-level installer is not on a launchd job's
+             default PATH. Prove a change here with `env -i PATH=... HOME=...`. -->
+        <key>PATH</key>
+        <string>__HOME__/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>__HOME__</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/execution-watch.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/execution-watch.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>

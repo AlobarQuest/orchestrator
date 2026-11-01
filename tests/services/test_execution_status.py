@@ -19,7 +19,9 @@ from tests.services.test_claims import worker
 from tests.services.test_dispatch import PILOT_REPOSITORY, ready_unit
 from tests.services.test_reclaim import expire
 
-ROTATION_SNAPSHOT = {"profile_fields": {"standing": True, "credential_id": "cred-1"}}
+ROTATION_SNAPSHOT: dict[str, object] = {
+    "profile_fields": {"standing": True, "credential_id": "cred-1"}
+}
 
 
 def _record(session: Session, unit: WorkUnit, attempt: int, status: str) -> None:

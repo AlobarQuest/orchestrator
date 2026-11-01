@@ -286,6 +286,10 @@ paths = [
   ".github/workflows/factory-runner-pilot.yml",
   "src/execution_watch/**",
   "tests/execution_watch/**",
+  "scripts/run-execution-watch.sh",
+  "scripts/install-execution-watch-launchd.sh",
+  "scripts/com.devon.execution-watch.plist",
+  "tests/scripts/test_run_execution_watch.py",
 ]
 
 [verification]
