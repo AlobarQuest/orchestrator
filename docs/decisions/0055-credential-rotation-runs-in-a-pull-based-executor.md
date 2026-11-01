@@ -1493,8 +1493,8 @@ identity, which decision 7 below accounts for.
 - **The Mac instance's bearer.** The VM's is minted by `rotation-worker mint-bearer` into BWS;
   the Mac's needs a Keychain path, and its orchestrator entry follows the rule that
   `ORCHESTRATOR_M2M_CREDENTIALS` is written before `ORCHESTRATOR_M2M_ROLES`.
-- **`bws-cred-rotation-token`:** not rotated. Increment 9 retired its only reader, which leaves it
-  for revocation (amendment 18).
+- **`bws-cred-rotation-token`:** not rotated. Increment 9 retired its only reader, and it holds no
+  project access (amendment 18).
 - **Holders no machine can restart.** The infraops MCP server reads its token once, when a Claude
   Code session starts it, so sessions open across a switch keep the old token until they end.
 - **The two unidentified tokens.** The github-to-bitbucket mirror and the `facelesstt-admin`
@@ -2163,11 +2163,15 @@ system against four outcomes and shipped in five parts. Devon made these decisio
   auto-fix isn't part of the window and stays.
 - **`orchestrator-factory-runner-bearer` is handed over by flag** and first rotates when due,
   2027-07-08 by age. A dry run rendered its package and intent-packages' `create-rotation` validated it. That
-  proves generation only. Nothing has proved its first rotation. Its keeper must move from
-  `Ops / Platform` to `Rotation / Keepers` before then, because the root can't read it there, and
-  `BwsStore.locate` can't see that before a claim. The move is a console step for Devon.
-- **`bws-cred-rotation-token` retires,** since the window was its only reader. Revoking it is Devon's
-  step.
+  proves generation only. Nothing has proved its first rotation. Its keeper moved from
+  `Ops / Platform` to `Rotation / Keepers`, because the root couldn't read it there and
+  `BwsStore.locate` can't see that before a claim. With an empty `HOME`, the broad account
+  (Developer Machines, by a direct grant) and the root read the same hash.
+- **`bws-cred-rotation-token` loses its access and stays unrevoked.** The window was its only reader.
+  Devon chose to remove its one project, `Ops / Platform` (read and write), over revoking it, so the
+  change can be undone by granting the project again. A fresh login succeeds and lists no project.
+  The token, its Keychain item, and its registry row stay, and its age finding of 2027-07-02 is the
+  point to decide whether to revoke it.
 - **Manual checklists replace the plans.** They carry each row's preconditions, and an exposure's
   closes it with `resolve-exposure`. change-manager shows them on the item page.
 
