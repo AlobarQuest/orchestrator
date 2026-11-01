@@ -2225,3 +2225,12 @@ The text these rules held in CLAUDE.md until Execution Part 5 replaced each with
   (schema 9): absent, the member record's grant decides which repositories. Raising the pattern
   ceiling withholds a human gate: a standing-authority decision. History:
   `docs/history/claude-md-invariants-archive.md` #291.
+
+### Admission Part 3, 2026-11-01
+
+- Stale since `runner_capability_level_violation` joined
+  `runner_authority_violation` at ingress, where
+  `test_a_package_authority_level_is_refused_at_breakdown_ingress` shows a mistyped level refused:
+  Unknown capability names fail closed but mistyped levels (e.g. `requires_approval`) read as
+  prohibited and pass orchestrator gates while the runner refuses the envelope. History:
+  `docs/history/claude-md-invariants-archive.md` #150.

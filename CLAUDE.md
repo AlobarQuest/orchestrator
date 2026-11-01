@@ -282,9 +282,6 @@ Placement rule: global CLAUDE.md §7.
 - `runner_authority_violation` is the one composed predicate, asked at breakdown ingress, unit
   registration, authority approval and admission; capability-name refusal lives only at admission.
   History: `docs/history/claude-md-invariants-archive.md` #149.
-- Unknown capability names fail closed but mistyped levels (e.g. `requires_approval`) read as
-  prohibited and pass orchestrator gates while the runner refuses the envelope. History:
-  `docs/history/claude-md-invariants-archive.md` #150.
 - `FACTORY_PR_TOKEN` (BWS `a3240c2e-…`) lives as Actions secrets in the repositories listed per
   copy in factory-runner's `.cred-consumers.toml`; the rotation executor re-sets every copy and
   verifies each by its repository's `secret-fingerprint.yml` report. Detail:
