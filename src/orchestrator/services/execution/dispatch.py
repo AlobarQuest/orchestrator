@@ -28,15 +28,17 @@ from orchestrator.services.execution.reach_admission import (
     posture_refusal,
     reach_admission_refusal,
 )
-from orchestrator.services.execution.target_grant import TargetGrantSource, service_for_change_class
+from orchestrator.services.execution.target_grant import (
+    TARGET_REPOSITORY_NOT_GRANTED,
+    TargetGrantSource,
+    change_class_of,
+    service_for_change_class,
+)
 from orchestrator.services.github_app import GitHubAppTokenError
 from orchestrator.services.intake.authority_gate import AuthorityGate, human_authority_gate
 from orchestrator.services.landing.estate_landing import EstateLandingSource
 
 ORCHESTRATOR_URL = "https://sds.alobar.net"
-# Why admission refused a target repository (ADR-0058): the member record does not grant the
-# service that matches the unit's change class on it.
-TARGET_REPOSITORY_NOT_GRANTED = "target_repository_not_granted"
 
 
 @dataclass(frozen=True)
@@ -466,7 +468,7 @@ def _envelope_reason(
     apply to a unit whose capability and change class it names.
     """
     posture = posture_refusal(
-        unit.required_capability, _change_class(envelope, unit.required_capability)
+        unit.required_capability, change_class_of(envelope, unit.required_capability)
     )
     if posture is not None:
         return posture
@@ -476,7 +478,7 @@ def _envelope_reason(
         return "capability_outside_runner_vocabulary"
     if not target_repository:
         return "target_repository_missing"
-    service = service_for_change_class(_change_class(envelope, unit.required_capability))
+    service = service_for_change_class(change_class_of(envelope, unit.required_capability))
     if not grant_source.is_granted(target_repository, service):
         return TARGET_REPOSITORY_NOT_GRANTED
     return _authority_violation_reason(unit, envelope) or _conformance_blocked_reason(envelope)
@@ -515,10 +517,6 @@ def _authority_violation_reason(unit: WorkUnit, envelope: AuthorityEnvelope) -> 
     """
     violation = runner_authority_violation(envelope, unit.authority)
     return violation.code if violation is not None else None
-
-
-def _change_class(envelope: AuthorityEnvelope, required_capability: str) -> str:
-    return envelope.change_class or required_capability
 
 
 def _target_repository(envelope: AuthorityEnvelope) -> str:

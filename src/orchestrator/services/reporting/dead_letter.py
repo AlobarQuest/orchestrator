@@ -40,8 +40,9 @@ from sqlalchemy.orm import Session
 from orchestrator.clock import TransactionClock
 from orchestrator.kernel.readiness import ReadinessStatus
 from orchestrator.kernel.states import WorkUnitState
-from orchestrator.persistence.models import Claim, DispatchRecord, WorkUnit
+from orchestrator.persistence.models import Claim, DispatchRecord, WorkPackageRevision, WorkUnit
 from orchestrator.services.execution.dispatch import circuit_open
+from orchestrator.services.execution.target_grant import unit_grant_refusal
 from orchestrator.services.lifecycle.budget import is_over_budget
 from orchestrator.services.lifecycle.claims import requeue_refusal
 from orchestrator.services.lifecycle.readiness import evaluate_readiness
@@ -315,13 +316,14 @@ _READINESS_OWNERS = "(an approval on its review page, or the system resolving a 
 
 
 def _requeue_target_action(session: Session, unit: WorkUnit, state: WorkUnitState) -> str:
-    """Built from the three facts that decide whether the unit can run again, each read on its
+    """Built from the four facts that decide whether the unit can run again, each read on its
     own: requeue reports only the first it fails, which would name the wrong blocker.
 
     A spent LLM-call budget is final, since nothing raises it. A spent attempt budget is raised
     only by `authorize_retry`, which takes failed and blocked units. Readiness that no longer
-    holds is recoverable, so it never reads as a dead end. Only a failed unit can be cancelled: no
-    edge leads from `blocked` to `cancelled`.
+    holds is recoverable, so it never reads as a dead end, and neither does a withdrawn grant,
+    which a person restores on the member record. Only a failed unit can be cancelled: no edge
+    leads from `blocked` to `cancelled`.
     """
     blocked = state is WorkUnitState.BLOCKED
     if is_over_budget(session, unit):
@@ -336,6 +338,9 @@ def _requeue_target_action(session: Session, unit: WorkUnit, state: WorkUnitStat
     )
     if evaluate_readiness(session, unit.id, for_update=False).status is not ReadinessStatus.READY:
         route = f"restore its readiness {_READINESS_OWNERS}, then {route}"
+    revision = session.get_one(WorkPackageRevision, unit.work_package_revision_id)
+    if unit_grant_refusal(session, unit, revision) is not None:
+        route = f"have a person restore its repository's member grant, then {route}"
     if blocked:
         return route[0].upper() + route[1:]
     return f"Cancel this unit, or {route}"

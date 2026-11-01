@@ -22,6 +22,11 @@ from orchestrator.persistence.models import (
     WorkPackageRevision,
     WorkUnit,
 )
+from orchestrator.services.execution.target_grant import (
+    TARGET_REPOSITORY_NOT_GRANTED,
+    target_not_granted_error,
+    unit_grant_refusal,
+)
 from orchestrator.services.intake.authority_gate import (
     authority_refusal,
     policy_authority_gate,
@@ -91,9 +96,12 @@ def claim_unit(
         revision = _revision(session, unit)
         # Before the budget halt, which commits a write: a claimant that may not touch this unit
         # must not cause one.
-        confinement = confinement_refusal(unit, revision, actor.actor_id, rotation_executors)
-        if confinement is not None:
-            raise confinement
+        # The grant likewise: a withdrawn one writes nothing and spends no attempt.
+        refusal = confinement_refusal(
+            unit, revision, actor.actor_id, rotation_executors
+        ) or unit_grant_refusal(session, unit, revision)
+        if refusal is not None:
+            raise refusal
         # Before the window, which clears itself: a standing refusal is reported first.
         authority_gate = policy_authority_gate(unit, revision)
         authority = authority_refusal(authority_gate)
@@ -483,7 +491,14 @@ def _release_replay(
 
 # Every code `_readiness_eligibility_error` returns; both recovery replays rebuild the error.
 # not-a-vocabulary: codes this module itself writes into its own events and reads back.
-_ELIGIBILITY_CODES = frozenset({"attempts_exhausted", "budget_exceeded", "readiness_not_satisfied"})
+_ELIGIBILITY_CODES = frozenset(
+    {
+        "attempts_exhausted",
+        "budget_exceeded",
+        "readiness_not_satisfied",
+        TARGET_REPOSITORY_NOT_GRANTED,
+    }
+)
 
 
 def _eligibility_error(code: str) -> DomainError:
@@ -492,6 +507,8 @@ def _eligibility_error(code: str) -> DomainError:
         return DomainError(code, "attempt budget is exhausted", "approve_retry")
     if code == "budget_exceeded":
         return DomainError(code, "llm-call budget is exhausted", "approve_retry")
+    if code == TARGET_REPOSITORY_NOT_GRANTED:
+        return target_not_granted_error()
     return DomainError(code, "work unit's readiness no longer holds", "resolve_readiness")
 
 
@@ -693,7 +710,7 @@ def _readiness_eligibility_error(session: Session, unit: WorkUnit) -> DomainErro
             "work unit's readiness no longer holds",
             "resolve_readiness",
         )
-    return None
+    return unit_grant_refusal(session, unit, _revision(session, unit))
 
 
 def _claim_replay(

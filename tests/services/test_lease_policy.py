@@ -43,6 +43,7 @@ from tests.services.target_doubles import granted_source
 from tests.services.test_claims import worker
 from tests.services.test_dispatch import (
     FakeGitHubDispatcher,
+    claimable_unit,
     dispatch_command,
     ready_unit,
     settings,
@@ -285,8 +286,10 @@ def test_a_lease_table_missing_or_gaining_a_field_stops_the_document_loading(
 
 def test_a_claim_gets_the_lease_its_reach_was_decided_to_need(migrated_session: Session) -> None:
     """The first grant site, with the control that a different reach gets a different answer."""
-    external = ready_unit(migrated_session, key="lease-external", reach=["external_system"])
-    repository = ready_unit(migrated_session, key="lease-repository", reach=["source_repository"])
+    external = claimable_unit(migrated_session, key="lease-external", reach=["external_system"])
+    repository = claimable_unit(
+        migrated_session, key="lease-repository", reach=["source_repository"]
+    )
 
     long_hold = claim_unit(migrated_session, external.id, worker(), "claim-external")
     short_hold = claim_unit(migrated_session, repository.id, worker(), "claim-repository")
@@ -322,7 +325,7 @@ def test_a_RECLAIMED_claim_gets_the_policy_lease_and_not_the_default(
     duration AND asserted not to be the default, so a regression that reverted this line would fail
     on the second clause even if the first were somehow satisfied.
     """
-    unit = ready_unit(migrated_session, key="lease-reclaim", reach=["external_system"])
+    unit = claimable_unit(migrated_session, key="lease-reclaim", reach=["external_system"])
     first = claim_unit(migrated_session, unit.id, worker(), "reclaim-lease-1")
     assert isinstance(first, LeaseGrant)
     expire(migrated_session, first.claim_id)
@@ -346,7 +349,7 @@ def test_a_RENEWED_claim_is_extended_by_the_policy_lease_and_not_the_default(
     every extension -- and it would do so on the path a long-running attempt takes by definition,
     since renewing is what a run reaching past its first hold does.
     """
-    unit = ready_unit(migrated_session, key="lease-renew", reach=["live_estate"])
+    unit = claimable_unit(migrated_session, key="lease-renew", reach=["live_estate"])
     grant = claim_unit(migrated_session, unit.id, worker(), "renew-lease-1")
     assert isinstance(grant, LeaseGrant)
 
@@ -370,7 +373,7 @@ def test_an_unreadable_artifact_grants_the_default_rather_than_refusing_a_hold(
     and ``reach_admission`` answers it by refusing outright -- so an artifact this process cannot
     read stops work arriving, and does not strand work that already arrived.
     """
-    unit = ready_unit(migrated_session, key="lease-unreadable", reach=["external_system"])
+    unit = claimable_unit(migrated_session, key="lease-unreadable", reach=["external_system"])
 
     readable = claim_unit(migrated_session, unit.id, worker(), "unreadable-control")
     assert isinstance(readable, LeaseGrant)
@@ -405,7 +408,9 @@ def test_a_lapsed_lease_transitions_nothing_and_nobody_reclaims_on_its_own(
     unreleased, until a SYSTEM actor asks for it. Bounding a worker that has hung is a real hole
     and it is WS-P2.19's; a longer or shorter number here does not touch it.
     """
-    unit = ready_unit(migrated_session, key="lease-not-stall-control", reach=["source_repository"])
+    unit = claimable_unit(
+        migrated_session, key="lease-not-stall-control", reach=["source_repository"]
+    )
     grant = claim_unit(migrated_session, unit.id, worker(), "lapse-1")
     assert isinstance(grant, LeaseGrant)
     expire(migrated_session, grant.claim_id)

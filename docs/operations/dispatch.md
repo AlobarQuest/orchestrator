@@ -22,6 +22,10 @@ record through the request's session; a repository with no member, a retired mem
 any state but `granted` is refused as `target_repository_not_granted`. Repositories compare
 case-folded.
 
+The claim asks the same question, so a grant withdrawn between dispatch and claim stops the run: the
+refusal writes nothing and spends no attempt, and the unit stays `ready` with its dispatch record
+uncleared, which refuses every orchestrator deploy until a person fails and cancels the unit.
+
 Every target repository must host the caller workflow at `.github/workflows/` under the file
 name `ORCHESTRATOR_DISPATCH_WORKFLOW_ID`, and carry the `FACTORY_RUNNER_TOKEN`,
 `FACTORY_RUNNER_CREDENTIAL_KEY_ID`, `ANTHROPIC_API_KEY` and `FACTORY_PR_TOKEN` secrets. The caller

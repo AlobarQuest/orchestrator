@@ -224,6 +224,7 @@ paths = [
   "tests/services/test_budget.py",
   "tests/services/test_change_window.py",
   "tests/services/test_claim_concurrency.py",
+  "tests/services/test_claim_grant.py",
   "tests/services/test_claims.py",
   "tests/services/test_claims_budget.py",
   "tests/services/test_completion_resolves_dependencies.py",
