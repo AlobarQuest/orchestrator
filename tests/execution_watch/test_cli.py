@@ -358,7 +358,7 @@ def test_bare_prints_and_writes_nothing(
     assert sorted(p.name for p in tmp_path.iterdir()) == before
 
 
-# `verification-stalled`, while `ABSORB_VERIFICATION` is on and after it goes.
+# `verification-stalled`.
 
 VERIFYING_KEY = f"verification-stalled:{UNIT}"
 
@@ -382,27 +382,9 @@ def test_a_damaged_overdue_flag_refuses() -> None:
         parse_row(status_row(state="submitted", verification_overdue="yes"))
 
 
-def test_an_absorbing_pass_baselines_an_overdue_unit_and_sends_nothing(
+def test_a_stuck_unit_fires_and_a_known_one_survives_being_young(
     world: World, tmp_path: Path
 ) -> None:
-    (tmp_path / "known.json").write_text("[]")
-    world.rows = [status_row(state="verifying", verification_overdue=True)]
-    assert world.submit(tmp_path) == 0
-    assert world.sent == []
-    assert _known(tmp_path) == {VERIFYING_KEY}
-
-
-def test_absorbing_covers_only_the_verification_key(world: World, tmp_path: Path) -> None:
-    (tmp_path / "known.json").write_text("[]")
-    world.rows = [status_row(state="failed")]
-    assert world.submit(tmp_path) == 0
-    assert world.sent == [(FAILED_KEY, "firing")]
-
-
-def test_with_absorbing_off_a_stuck_unit_fires_and_a_known_one_survives_being_young(
-    world: World, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(cli, "ABSORB_VERIFICATION", False)
     (tmp_path / "known.json").write_text("[]")
     world.rows = [status_row(state="verifying", verification_overdue=True)]
     assert world.submit(tmp_path) == 0
