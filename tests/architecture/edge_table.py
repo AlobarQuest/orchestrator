@@ -1,8 +1,9 @@
 """What the edge tables share: a row's shape, the bearers, and how a row is held to the code.
 
-`test_bridge_edges.py`, `test_landing_edges.py` and `test_rotation_edges.py` each state one layer's
-outbound surface. Each row is compared with the predicates the lane's `ConfinedClient` really asks,
-so the comparison and the capture of an inline predicate live here, once.
+`test_bridge_edges.py`, `test_landing_edges.py`, `test_rotation_edges.py` and
+`test_execution_edges.py` each state one layer's outbound surface. Each row is compared with the
+predicates the lane's `ConfinedClient` really asks, so the comparison and the capture of an inline
+predicate live here, once.
 """
 
 from __future__ import annotations
@@ -53,6 +54,26 @@ class Edge:
             "github": self.github,
             "alert_hub": self.alert_hub,
         }
+
+
+@dataclass(frozen=True)
+class ServiceEdge:
+    """One client of the orchestrator itself, which isn't a lane: no launcher, no BWS bearer."""
+
+    base_url: str
+    routes: frozenset[Route]
+    credential: str
+
+
+class Pin(NamedTuple):
+    """One fixture held byte-identical with another repository, and what pins it on each side."""
+
+    fixture: str
+    test: str
+    constant: str
+    digest: Callable[[bytes], str]
+    counterpart_test: str
+    counterpart_constant: str
 
 
 class BuiltClient(NamedTuple):
