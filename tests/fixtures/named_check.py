@@ -30,6 +30,7 @@ from orchestrator.services.verifier.verifier_evidence import (
     NamedCheckEvidenceCommand,
     record_named_check_evidence,
 )
+from tests._support.seeding import grant_repository
 
 NOW = datetime(2026, 7, 8, tzinfo=UTC)
 HUMAN = ActorContext("human-1", ActorRole.HUMAN)
@@ -145,6 +146,7 @@ def record_worker_evidence(
 ) -> Evidence:
     unit.state = WorkUnitState.READY
     session.commit()
+    grant_repository(session, TARGET_REPOSITORY)
     grant = claim_unit(session, unit.id, WORKER, f"{idempotency_key}-claim")
     assert isinstance(grant, LeaseGrant)
     transition_unit(

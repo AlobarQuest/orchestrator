@@ -261,8 +261,10 @@ Placement rule: global CLAUDE.md §7.
   `verifier_evaluation_required`. Reconciliation detects reality changing, never reality
   misreported, so worker-attested evidence has no downstream net. History:
   `docs/history/claude-md-invariants-archive.md` #109.
-- `authority.budgets.max_attempts` has no enforcement reader; the enforced cap is the
-  `work_units.max_attempts` column, raised by `authorize_retry`. Nothing compares the two. History:
+- The enforced attempt cap is the `work_units.max_attempts` column, taken from the proposal and
+  raised by `authorize_retry`. `authority.budgets.max_attempts` is a ceiling on it only on
+  `decomposition`'s two policy branches: above it policy doesn't approve and a person decides. A
+  person's approval or retry may exceed it (`tests/services/test_max_attempts_ceiling.py`). History:
   `docs/history/claude-md-invariants-archive.md` #110.
 - The conformance gate's anti-tautology rule is docstring only. Do not delete the `status ==
   "green"` short-circuit: the pinned envelope fixture would then be refused and all dispatch stops.
@@ -518,10 +520,17 @@ Placement rule: global CLAUDE.md §7.
   (schema 9): absent, the member record's grant decides which repositories. Raising the pattern
   ceiling withholds a human gate: a standing-authority decision. History:
   `docs/history/claude-md-invariants-archive.md` #291.
-- Dispatch admission and every landing admission read the member record's grant. Dispatch maps the
-  unit's change class (`services/execution/target_grant.py`): `dependency_updates` for
-  `dependency-update`, `app_changes` for every other class, only in state `granted` on a non-retired
-  member, case-folded; otherwise `target_repository_not_granted`. The landers and the pr-merge gate
+- Dispatch admission, the claim and every landing admission read the member record's grant. Dispatch
+  and the claim map the unit's change class (`services/execution/target_grant.py`):
+  `dependency_updates` for `dependency-update`, `app_changes` for every other class, only in state
+  `granted` on a non-retired member, case-folded; otherwise `target_repository_not_granted`.
+  `claim_unit` refuses before anything writes, skipping rotation units and units with no
+  `target_repository`; `_readiness_eligibility_error` holds the same term, so reclaim and release
+  park a withdrawn unit `failed` and requeue refuses it. `renew_claim` is ungated. A dispatched unit
+  refused at the claim stays `ready`, which refuses every orchestrator deploy and holds rotation
+  restarts (`rotation_worker/live_runs.py`). Exits: restore the grant and dispatch again, or fail
+  it through the SYSTEM `commands/fail` route (`/review` has no fail control) and cancel it.
+  `authorize_retry` refuses a withdrawn unit too. The landers and the pr-merge gate
   refuse with `landing_repository_not_granted` and `merge_repository_not_granted`. The lanes' copy of
   the mapping is held equal by `test_target_grant.py`, and `membership_check` reports a granted
   repository no landing path reaches. Detail: `docs/operations/driving-a-unit.md`; full procedure:

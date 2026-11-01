@@ -344,7 +344,7 @@ def test_a_dependency_on_anything_but_a_unit_completing_waits_for_a_person(
 def test_more_attempts_than_the_envelope_budgets_waits_for_a_person(
     migrated_session: Session,
 ) -> None:
-    """The enforced cap is the unit's column, which nothing compares to the envelope."""
+    """The enforced cap is the unit's column, held to the envelope only on the policy branches."""
     revision = _rotation_revision(migrated_session)
     proposal = submit_decomposition_proposal(
         migrated_session,

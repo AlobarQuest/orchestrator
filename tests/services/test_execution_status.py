@@ -17,7 +17,7 @@ from orchestrator.persistence.models import (
 from orchestrator.services.lifecycle.claims import LeaseGrant, claim_unit
 from orchestrator.services.reporting.execution_status import _is_standing, execution_status
 from tests.services.test_claims import worker
-from tests.services.test_dispatch import PILOT_REPOSITORY, ready_unit
+from tests.services.test_dispatch import PILOT_REPOSITORY, claimable_unit, ready_unit
 from tests.services.test_reclaim import expire
 from tests.services.test_rotation_claims import seed_unit
 
@@ -99,7 +99,7 @@ def test_a_live_unit_has_a_row_with_its_class_and_repository(migrated_session: S
 
 
 def test_lease_lapsed_is_true_only_past_grace(migrated_session: Session) -> None:
-    unit = ready_unit(migrated_session, key="es-lapse")
+    unit = claimable_unit(migrated_session, key="es-lapse")
     grant = claim_unit(migrated_session, unit.id, worker(), "es-lapse-claim")
     assert isinstance(grant, LeaseGrant)
     unit.state = WorkUnitState.EXECUTING
@@ -129,7 +129,7 @@ def test_the_latest_dispatch_record_decides(migrated_session: Session) -> None:
 def test_a_claim_after_the_dispatch_still_counts_once_the_work_moves_on(
     migrated_session: Session,
 ) -> None:
-    unit = ready_unit(migrated_session, key="es-gate")
+    unit = claimable_unit(migrated_session, key="es-gate")
     _record(migrated_session, unit, 1, "dispatched")
     migrated_session.commit()
     assert isinstance(claim_unit(migrated_session, unit.id, worker(), "es-gate"), LeaseGrant)
@@ -144,7 +144,7 @@ def test_a_claim_after_the_dispatch_still_counts_once_the_work_moves_on(
 def test_a_claim_older_than_the_latest_dispatch_does_not_answer_it(
     migrated_session: Session,
 ) -> None:
-    unit = ready_unit(migrated_session, key="es-redispatch")
+    unit = claimable_unit(migrated_session, key="es-redispatch")
     assert isinstance(claim_unit(migrated_session, unit.id, worker(), "es-rd"), LeaseGrant)
     unit.state = WorkUnitState.READY
     migrated_session.commit()
@@ -244,7 +244,7 @@ def test_a_later_skipped_record_does_not_hide_a_dispatched_one(migrated_session:
 
 
 def test_a_retried_units_second_claim_is_the_one_compared(migrated_session: Session) -> None:
-    unit = ready_unit(migrated_session, key="es-retry")
+    unit = claimable_unit(migrated_session, key="es-retry")
     assert isinstance(claim_unit(migrated_session, unit.id, worker(), "es-r1"), LeaseGrant)
     unit.state = WorkUnitState.READY
     migrated_session.commit()

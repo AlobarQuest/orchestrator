@@ -43,6 +43,7 @@ from tests.services.estate_doubles import inert_source
 from tests.services.target_doubles import granted_source
 from tests.services.test_dispatch import (
     FakeGitHubDispatcher,
+    claimable_unit,
     dispatch_command,
     ready_unit,
     settings,
@@ -680,7 +681,9 @@ def test_a_unit_already_running_survives_the_window_closing_over_it(
     of the same reach IS refused. So the window really has shut, and the running unit really did
     finish through it.
     """
-    unit = ready_unit(migrated_session, key="running-through-closing", reach=["operator_machine"])
+    unit = claimable_unit(
+        migrated_session, key="running-through-closing", reach=["operator_machine"]
+    )
     github = FakeGitHubDispatcher([])
     sent = dispatch_work_unit(
         migrated_session,
@@ -723,7 +726,7 @@ def test_a_unit_already_running_survives_the_window_closing_over_it(
     )
     migrated_session.refresh(unit)
 
-    fresh = ready_unit(migrated_session, key="fresh-while-shut", reach=["operator_machine"])
+    fresh = claimable_unit(migrated_session, key="fresh-while-shut", reach=["operator_machine"])
     refused = dispatch_work_unit(
         migrated_session,
         dispatch_command(fresh.id),

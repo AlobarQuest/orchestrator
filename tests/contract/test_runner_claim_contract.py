@@ -17,7 +17,7 @@ from orchestrator.services.intake.packages import record_approval
 from orchestrator.services.intake.runner_brief import runner_brief
 from orchestrator.services.lifecycle.claims import claim_unit
 from orchestrator.services.lifecycle.lifecycle import TransitionCommand, transition_unit
-from tests.services.test_dispatch import ready_unit
+from tests.services.test_dispatch import claimable_unit, ready_unit
 
 WORKER = ActorContext("factory-runner", ActorRole.WORKER)
 
@@ -25,7 +25,7 @@ WORKER = ActorContext("factory-runner", ActorRole.WORKER)
 def test_the_standing_context_the_brief_serves_is_accepted_by_claim(
     migrated_session: Session,
 ) -> None:
-    unit = ready_unit(migrated_session, key="claim-contract")
+    unit = claimable_unit(migrated_session, key="claim-contract")
     served = cast(dict[str, Any], runner_brief(migrated_session, unit.id)["standing_context"])
 
     result = claim_unit(
@@ -44,7 +44,7 @@ def test_an_empty_standing_context_still_fails_closed_when_the_revision_requires
     migrated_session: Session,
 ) -> None:
     """Emptiness must not become a way to skip a genuinely required standing context."""
-    unit = ready_unit(
+    unit = claimable_unit(
         migrated_session,
         key="claim-contract-required",
         enforcement_snapshot={"required_context": {"capabilities": ["repo.edit"]}},
@@ -71,7 +71,7 @@ def test_the_whole_prepare_sequence_the_runner_performs_succeeds(
     The claim path and the execution path each had their own copy of the same check, and
     fixing only the first left the runner failing one line later, at `start`.
     """
-    unit = ready_unit(migrated_session, key="prepare-sequence")
+    unit = claimable_unit(migrated_session, key="prepare-sequence")
     served = cast(dict[str, Any], runner_brief(migrated_session, unit.id)["standing_context"])
     # The runner reads the version from the brief, before claiming, and starts at version+1.
     brief_version = unit.version
@@ -108,7 +108,7 @@ def test_replaying_a_claim_made_with_an_empty_context_is_idempotent(
     migrated_session: Session,
 ) -> None:
     """A claim with `{}` stores no snapshot; its replay must not raise idempotency_conflict."""
-    unit = ready_unit(migrated_session, key="claim-replay")
+    unit = claimable_unit(migrated_session, key="claim-replay")
 
     first = claim_unit(
         migrated_session, unit.id, WORKER, idempotency_key="replay-1", standing_context={}

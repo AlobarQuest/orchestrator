@@ -186,9 +186,11 @@ def _alert(row: UnitRow, condition: Condition, now: datetime) -> Alert:
         )
         return Alert(
             f"Run unclaimed: {unit}",
-            f"Unit {unit}{where} was dispatched {waited} hours ago and no runner claimed it. "
-            "Look for the run in the repository's Actions. If it is not there, fail the unit, "
-            "then cancel it.",
+            f"Unit {unit}{where} was dispatched {waited} hours ago and no runner claimed it: "
+            "its run failed to start or never appeared. Look for the run in the repository's "
+            "Actions. If the repository's member grant was withdrawn, restore it and dispatch "
+            "the unit again. Otherwise retire the unit: /review has no fail control, so fail "
+            "the unit through the SYSTEM commands/fail route, then cancel it.",
             link,
         )
     raise ValueError(f"{condition} is not a unit condition")

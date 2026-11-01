@@ -43,7 +43,7 @@ from orchestrator.services.lifecycle.claims import (
 )
 from orchestrator.services.lifecycle.execution_stall import stalled_executions
 from tests.services.test_claims import worker
-from tests.services.test_dispatch import ready_unit
+from tests.services.test_dispatch import claimable_unit
 from tests.services.test_reclaim import expire
 
 # 0 reports at the lapse itself: maximally on, and it needs no sleep.
@@ -65,7 +65,7 @@ def _held_unit(
     own transition, not a shortcut around runtime behaviour -- what is under test here is a
     predicate over (state, claim), and the route into the state is `test_lifecycle_events`'.
     """
-    unit = ready_unit(session, key=key, reach=reach)
+    unit = claimable_unit(session, key=key, reach=reach)
     grant = claim_unit(session, unit.id, worker(), f"{key}-claim")
     assert isinstance(grant, LeaseGrant)
     unit.state = state

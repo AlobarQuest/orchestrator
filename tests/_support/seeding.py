@@ -25,14 +25,21 @@ from typing import Annotated, Any, Required, TypedDict, Unpack
 from fastapi import APIRouter, Depends, FastAPI
 from fastapi.testclient import TestClient
 from pydantic import BaseModel, Field
-from sqlalchemy import Engine
+from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
 
 from orchestrator.api.dependencies import get_actor, get_session
 from orchestrator.api.schemas.common import CommandBase
 from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope, normalize_authority
 from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
-from orchestrator.persistence.models import Adjudication, Evidence, WorkPackageRevision, WorkUnit
+from orchestrator.persistence.models import (
+    Adjudication,
+    Evidence,
+    SdsMember,
+    SdsMemberGrant,
+    WorkPackageRevision,
+    WorkUnit,
+)
 from orchestrator.services.intake.packages import (
     DependencySpec,
     register_approved_unit,
@@ -40,6 +47,39 @@ from orchestrator.services.intake.packages import (
 )
 
 SEED_REVISIONS = "/test-support/revisions"
+
+
+def grant_repository(session: Session, repository: str) -> None:
+    """The member record grants factory work on ``repository``, so its units may be claimed.
+
+    An existing member is left as it stands: its grants are neither added to nor restored.
+    """
+    exists = session.scalar(
+        select(SdsMember.id).where(func.lower(SdsMember.repository) == repository.lower())
+    )
+    if exists is not None:
+        return
+    member = SdsMember(
+        repository=repository,
+        owner="devon",
+        state="member",
+        state_changed_by="human:devon",
+        state_reason="seed",
+    )
+    session.add(member)
+    session.flush()
+    session.add_all(
+        SdsMemberGrant(
+            member_id=member.id,
+            service=service,
+            state="granted",
+            seeded=False,
+            set_by="human:devon",
+            reason="seed",
+        )
+        for service in ("app_changes", "dependency_updates")
+    )
+    session.commit()
 
 
 def seed_units_path(revision_id: object) -> str:

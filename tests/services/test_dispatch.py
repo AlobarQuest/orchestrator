@@ -39,6 +39,7 @@ from orchestrator.services.intake.packages import (
     register_approved_unit,
     register_revision,
 )
+from tests._support.seeding import grant_repository
 from tests.services.estate_doubles import inert_source
 from tests.services.target_doubles import FakeGrantSource, granted_source, ungranted_source
 from tests.services.test_authority_known_good import uv_bump
@@ -171,6 +172,12 @@ def ready_unit(
     session.commit()
     assert unit.state == WorkUnitState.READY
     return unit
+
+
+def claimable_unit(session: Session, **kwargs: Any):
+    """`ready_unit` in a repository the member record grants, for the tests that claim it."""
+    grant_repository(session, PILOT_REPOSITORY)
+    return ready_unit(session, **kwargs)
 
 
 def dispatch_command(unit_id: uuid.UUID, *, attempt: int = 1) -> DispatchCommand:

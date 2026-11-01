@@ -16,9 +16,9 @@ from sqlalchemy.orm import Session
 
 from orchestrator.kernel.authority import normalize_authority
 from orchestrator.persistence.models import Claim, DispatchRecord, WorkPackageRevision, WorkUnit
-from orchestrator.services.execution.dispatch import _change_class
 from orchestrator.services.execution.target_grant import (
     MemberRecordGrants,
+    change_class_of,
     service_for_change_class,
 )
 from orchestrator.services.lifecycle.execution_stall import stalled_executions
@@ -108,13 +108,14 @@ def execution_status(
         for stalled in stalled_executions(session, grace_seconds=stall_grace_seconds)
     }
     breakers = {
-        entry.work_unit_id for entry in _open_circuit_breakers(session, failure_signature_threshold)
+        entry.work_unit_id
+        for entry in _open_circuit_breakers(session, failure_signature_threshold, grants)
     }
     rows: list[ExecutionStatusRow] = []
     for unit in units:
         revision = revisions[unit.work_package_revision_id]
         envelope = normalize_authority(unit.authority)
-        change_class = _change_class(envelope, unit.required_capability) or None
+        change_class = change_class_of(envelope, unit.required_capability) or None
         repository = envelope.target_repository or None
         record = latest.get(unit.id)
         rows.append(
