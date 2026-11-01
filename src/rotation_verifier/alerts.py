@@ -42,7 +42,7 @@ KINDS: Final = {
 _NEXT_STEPS: Final = {
     REFUSED: (
         "The lane tries again every ten minutes, so a moved version clears by itself. Otherwise "
-        "open the unit on /review and read ~/Library/Logs/rotation-verifier.log for the cause"
+        "open the unit on /review and read the verifier log in ~/Library/Logs for the cause"
     ),
     CHECKS_UNREADABLE: (
         "Check that the operator's gh login still reads the repository's branch protection. The "
