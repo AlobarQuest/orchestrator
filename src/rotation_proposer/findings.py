@@ -88,9 +88,8 @@ class Due:
     basis: str
     # The date the trigger is dated by, for the observation's `observed_at`.
     dated: str
-    # infraops' `rotated_by_sds`: the registry handed this credential's rotation to the SDS, and
-    # infraops' own 04:00 window refuses it. Only then may this program act: a standing package
-    # for a credential infraops still rotates would put two executors on one credential.
+    # infraops' `rotated_by_sds`: the registry handed this credential's rotation to the SDS. Only
+    # then may this program act: a credential without the flag is a person's to rotate.
     handed_over: bool
 
     @property

@@ -61,13 +61,13 @@
 
 ### Task 2: Retire the executor's identity in security-standards
 
-- [ ] Delete `registry/agents/security-executor.yaml` and `registry/profiles/security-window-v1.yaml`, and edit `tests/test_agent_registry.py` and `test_agent_registry_cli.py`. Read `registry/agents/change-window-agent.yaml`'s mention and correct it.
+- [ ] Set `security-executor` to `status: retired` and keep the entry and its profile: recorded events resolve through it, and any status validates (`registry/README.md`). Deleting it would attribute those events to nobody.
 - [ ] Run `make check`, and commit.
 
 ### Task 3: Remove the `rotation` source in change-manager
 
-- [ ] Edit `app/sources.py`'s docstring, drop the dashboard tab, delete `scripts/seed_rotation_deploykey.py` and `tests/test_seed_rotation.py`. Remove the `security-executor` actor in `app/guards.py` and `tests/test_api_actor.py`.
-- [ ] Rewrite the tests that use `rotation` as a sample source (`test_reconcile_source.py`, `test_web.py`, `test_deploy_sweep_immunity.py`) on a remaining source.
+- [ ] Edit `app/sources.py`'s docstring, drop the dashboard tab, delete `scripts/seed_rotation_deploykey.py` and `tests/test_seed_rotation.py`. Correct the `app/guards.py` docstring. `source` is a free string, so nothing validates it, and `tests/test_api_actor.py`'s sample actor stays.
+- [ ] Move the tests that use `rotation` as a sample source (`test_reconcile_source.py`, `test_web.py`, `test_deploy_sweep_immunity.py`) to the sample source `audit`.
 - [ ] Run `make check`, and commit.
 
 ### Task 4: Hand over the bearer and close the records in the orchestrator

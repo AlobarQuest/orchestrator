@@ -411,12 +411,12 @@ def _not_handed_over(item: Due, package: RotationPackage | None) -> Outcome:
     """infraops still rotates it. A package for it is a misconfiguration: acting would put two
     executors on one credential (ADR-0054), so it is reported and never acted on."""
     if package is None:
-        return Outcome(item.credential_id, "legacy", f"{item.occurrence}: infraops rotates it")
+        return Outcome(item.credential_id, "legacy", f"{item.occurrence}: a person rotates it")
     return Outcome(
         item.credential_id,
         "not-handed-over",
         f"{package.package_id} exists but the registry does not mark "
-        f"{item.credential_id} rotated_by_sds; infraops' window still owns it",
+        f"{item.credential_id} rotated_by_sds; a person still owns it",
     )
 
 

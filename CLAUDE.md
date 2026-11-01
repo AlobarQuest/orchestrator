@@ -380,9 +380,8 @@ Placement rule: global CLAUDE.md §7.
   package to `ready_for_review` proposes nothing, and the first pass after a named human approves
   it proposes. "Due" is infraops' rule, read from `security-drift-cli cred-findings` and never
   re-implemented here. The occurrence comes from that answer's structured fields and never
-  contains today's date. It acts only on a credential its registry entry marks `rotated_by_sds`,
-  which infraops' 04:00 window then refuses; a package without that flag is a finding and is never
-  acted on. Each `--submit` pass also walks rotation records, due or not, through its own GET-only
+  contains today's date. It acts only on a credential its registry entry marks `rotated_by_sds`; a
+  package without that flag is a finding and is never acted on. Each `--submit` pass also walks rotation records, due or not, through its own GET-only
   client on the observer bearer (`rotation_proposer/client.py`): an approved record of the current
   revision with a `failed` or `cancelled` unit reports `stalled`. Its one write to infraops is
   `security-drift-cli record-rotation --date <day>`, made only for a credential's newest record

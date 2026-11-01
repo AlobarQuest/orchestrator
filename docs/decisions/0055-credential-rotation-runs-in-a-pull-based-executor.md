@@ -4,9 +4,26 @@
 - **Date:** 2026-10-08
 - **Decided by:** Devon, decisions recorded 2026-10-08 in
   `docs/superpowers/specs/2026-10-08-credential-rotation-requirements.md`. Accepted 2026-10-08 ("Yes, I accept ADR-0055").
-- **Amended:** 2026-10-27, amendment 15 (one mechanism; a credential type is its provider). 2026-10-09, amendment 1 (increment 2's measurements; the Coolify token decision);
-  2026-10-09, amendment 2 (increment 3's code read; where destinations are reviewed, which window
-  applies at claim, and per-unit completion).
+- **Amended:**
+  - 2026-10-09, amendment 1 (increment 2's measurements; the Coolify token decision).
+  - 2026-10-09, amendment 2 (increment 3's code read; where destinations are reviewed, which window
+    applies at claim, and per-unit completion).
+  - Amendments 3 and 4 were proposed in the increment 3 and increment 4 reports (amendment 5 says
+    how).
+  - 2026-10-12, amendment 5 (increment 5 decisions).
+  - 2026-10-13, amendment 6 (shared rotation projects with direct secret grants).
+  - 2026-10-13, amendment 7 (the exposure-response factors).
+  - 2026-10-13, amendment 8 (confirm-dead waits out OpenRouter's inference lag).
+  - 2026-10-14, amendment 9 (increment 6 decisions).
+  - 2026-10-19, amendment 10 (increment 7 decisions).
+  - Amendment 11 (a rotation unit's authority approval graduates to a declared pattern).
+  - Amendment 12 (BWS machine tokens rotate through a second executor on the Mac).
+  - Amendment 13 (a credential the orchestrator holds for another service is a destination).
+  - 2026-10-26, amendment 14 (a rotation unit's step evidence completes it).
+  - 2026-10-27, amendment 15 (one mechanism; a credential type is only its provider).
+  - 2026-10-29, amendment 16 (one click per rotation: the revision approval).
+  - 2026-10-30, amendment 17 (a type with no overlap; the VPS helper as the executor's reach).
+  - 2026-11-01, amendment 18 (the rotation layer's outcomes; the 04:00 window retires).
 - **Supersedes:** the parts of ADR-0054 named in "What this changes in ADR-0054".
 - **Relates to:** ADR-0054 (the SDS owns credential rotation), ADR-0052 (superseding an unworked
   decomposition), ADR-0039 (out-of-process producers), ADR-0011 (known-good patterns)
@@ -1476,8 +1493,8 @@ identity, which decision 7 below accounts for.
 - **The Mac instance's bearer.** The VM's is minted by `rotation-worker mint-bearer` into BWS;
   the Mac's needs a Keychain path, and its orchestrator entry follows the rule that
   `ORCHESTRATOR_M2M_CREDENTIALS` is written before `ORCHESTRATOR_M2M_ROLES`.
-- **`bws-cred-rotation-token`:** proposed not to rotate; revoke it once increment 9 retires its
-  only reader.
+- **`bws-cred-rotation-token`:** not rotated; revoked after increment 9 retired its only reader
+  (amendment 18).
 - **Holders no machine can restart.** The infraops MCP server reads its token once, when a Claude
   Code session starts it, so sessions open across a switch keep the old token until they end.
 - **The two unidentified tokens.** The github-to-bitbucket mirror and the `facelesstt-admin`
@@ -2125,3 +2142,32 @@ seconds, of which `host` took about 23, and the containers restarted together at
 `retire_old` found the old value already refused and `confirm_dead` proved it. Authentik logged no
 password failure. Nothing failed, so the undo, a second restart during a first, and ssh teardown on
 client exit stay unmeasured on the live system.
+
+## Amendment 18 — The rotation layer's outcomes, and the 04:00 window retires (2026-11-01)
+
+The rotation layer pass (`docs/superpowers/specs/2026-10-31-rotation-layer-design.md`) judged this
+system against four outcomes and shipped in five parts. Devon made these decisions:
+
+- **The grant is per registry repository.** `rotated_by_sds` stays the per-credential switch, and
+  `REGISTRY_REPOSITORIES` stays in the executor as a ceiling the orchestrator can't widen. The
+  member record's `credential_rotation` grant only narrows it. An Actions-secret copy in a member
+  with no rotation grant is allowed: the rotation App's installation there is the deliberate act.
+- **The infraops window retires.** Its 134 nightly reports held no applied `exec:` plan: 132 were
+  empty, and the other two were a failed rotation and a blocked manual item, the last on
+  2026-07-02. The rows it could execute, `github-classic-aihelper`, `github-classic-lifeops`, and
+  `openai-project`, were revoked in July and leave the registry. This closes increment 9 and
+  ADR-0054's increment 5.
+- **A credential not handed over is a person's.** The 03:00 scan keeps reporting it to change-manager
+  as a manual item, and no security record promises execution, so `exec:` plans became manual
+  steps. The `plan_hash` state had the window as its only reader and went with it. The file-permission
+  auto-fix isn't part of the window and stays.
+- **`orchestrator-factory-runner-bearer` is handed over by flag** and first rotates when due,
+  2027-07-08 by age. A dry run rendered its package and intent-packages' `create-rotation` validated it. That
+  proves generation only. Nothing has proved its first rotation.
+- **`bws-cred-rotation-token` is revoked,** since the window was its only reader. Its revocation is
+  Devon's step.
+
+The change-manager `rotation` source was a free string that no producer posted after its June seed,
+so retiring it removed the tab, the seeder, and the mentions. Its two resolved rows stay. The
+`security-executor` identity stays in the agent registry as `retired`, so recorded events still
+resolve.
