@@ -282,12 +282,16 @@ The rotation table states more than routes, because the rotation lanes reach mor
   bearers. The worker has no launcher, so its bearers are the `Config` fields naming its secrets.
 - `PLATFORM_EDGES` holds Coolify, Healthchecks and the Azure host of GitHub's job logs.
 - `PROVIDER_EDGES` holds one row per credential type: what its adapter sends to that provider.
-- `PROCESSES` holds every program a lane can start, read by AST over the lane's import closure.
+- `PROCESSES` holds every program a lane can start, read by `process_scan.py` over the lane's
+  import closure. What the scanner can't resolve it reports by its source text, so a row must name
+  it.
 - `NETWORK` holds every module in that closure with an HTTP client, and how many clients it builds.
-- `BORROWED` holds every name `rotation_proposer` takes from `bump_proposer`.
+- `BORROWED` holds every name each lane takes from another program.
 
-To fix a failure, add a row for a real need, and add its path to `ROUTES`, which is stated apart
-from the rows so that dropping a row keeps its path in the corpus. If nothing calls the route,
+Each table's `ROUTES` states its paths apart from the rows, so a dropped row stays in the corpus.
+A launcher's row covers everything it sources, so every row carries the dead-man key and ping.
+
+To fix a failure, add a row for a real need, and add its path to `ROUTES`. If nothing calls the route,
 narrow the predicate instead. A predicate built per instance or inline is captured from the
 `ConfinedClient` constructor (`edge_table.built_clients`), so read it there, never restate it.
 

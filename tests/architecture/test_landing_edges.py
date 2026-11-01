@@ -31,6 +31,7 @@ from inert_lander import orchestrator_client as inert_orchestrator
 from inert_lander.cli import PullRequestSource
 from scripts.layers import load
 from tests.architecture.edge_table import (
+    DEADMAN,
     GH_AUTH_TOKEN,
     READ_BEARER,
     SDS_BRIDGE_ALERT_BEARER,
@@ -40,6 +41,7 @@ from tests.architecture.edge_table import (
     launcher_bearers,
     near_misses,
     route_disagreements,
+    sendable,
 )
 from tests.architecture.test_bridge_edges import _alert_hub_permits, _landing_policy_permits
 
@@ -69,9 +71,8 @@ EDGES: dict[str, Edge] = {
         ),
         github=frozenset(),  # through deploy_watcher.github: GITHUB_THROUGH
         alert_hub=_ALERTS,  # through lander.held_alerts
-        bearers=frozenset(
-            {SYSTEM_BEARER, READ_BEARER, SDS_BRIDGE_ALERT_BEARER, GH_AUTH_TOKEN, COOLIFY_TOKEN}
-        ),
+        bearers=DEADMAN
+        | {SYSTEM_BEARER, READ_BEARER, SDS_BRIDGE_ALERT_BEARER, GH_AUTH_TOKEN, COOLIFY_TOKEN},
     ),
     "inert_lander": Edge(
         change_manager=frozenset({("GET", "/api/landing-policy")}),
@@ -89,7 +90,7 @@ EDGES: dict[str, Edge] = {
         ),
         github=frozenset(),  # through deploy_watcher.github: GITHUB_THROUGH
         alert_hub=_ALERTS,  # through lander.held_alerts
-        bearers=frozenset({SYSTEM_BEARER, READ_BEARER, SDS_BRIDGE_ALERT_BEARER, GH_AUTH_TOKEN}),
+        bearers=DEADMAN | {SYSTEM_BEARER, READ_BEARER, SDS_BRIDGE_ALERT_BEARER, GH_AUTH_TOKEN},
     ),
 }
 
@@ -157,6 +158,37 @@ LAUNCHERS: dict[str, str] = {
 
 METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD")
 
+# Every listed path, stated apart from the rows, so a dropped row keeps its path in the corpus.
+ROUTES = frozenset(
+    {
+        "/api/items",
+        "/api/landing-policy",
+        "/api/v1/estate-pr-branch-update",
+        "/api/v1/estate-pr-merge",
+        "/api/v1/estate-pr-merge-admission",
+        "/api/v1/held-pr-close",
+        "/api/v1/inert-pr-branch-update",
+        "/api/v1/inert-pr-merge",
+        "/api/v1/inert-pr-merge-admission",
+        "/api/v1/landing-pinned",
+        "/api/v1/landing-repoint",
+        "/api/v1/landing-restored",
+        "/api/v1/landing-revert",
+        "/api/v1/landing-unknown-outcomes",
+        "/api/v1/landing-watch",
+        "/v1/alerts",
+    }
+)
+PLATFORM_ROUTES = frozenset(
+    {
+        "/api/v1/applications",
+        "/api/v1/applications/u1",
+        "/api/v1/applications/u1/start",
+        "/token",
+        "/v2/alobarquest/brain/manifests/latest",
+    }
+)
+
 PROBES = frozenset(
     {
         "/api/v1/work-units/44/pr-merge",
@@ -195,11 +227,17 @@ def _listed_paths() -> frozenset[str]:
 
 
 def _corpus() -> frozenset[str]:
-    return near_misses(_listed_paths()) | PROBES
+    return near_misses(ROUTES) | PROBES
 
 
 def disagreements(lane: str) -> frozenset[tuple[str, str, str, bool]]:
     return route_disagreements(EDGES[lane], PERMITS[lane], _corpus(), METHODS)
+
+
+def test_every_listed_route_is_in_the_corpus() -> None:
+    assert _listed_paths() == ROUTES
+    rows = {path for _, listed in PLATFORM_EDGES.values() for _, path in listed}
+    assert rows == PLATFORM_ROUTES
 
 
 @pytest.mark.parametrize("lane", sorted(EDGES))
@@ -242,12 +280,12 @@ def test_a_lander_without_its_own_github_reader_reads_through_the_named_one(lane
 
 def platform_disagreements(service: str) -> frozenset[tuple[str, str, bool]]:
     permits, listed = PLATFORM_EDGES[service]
-    corpus = near_misses({path for _, path in listed} | PLATFORM_PROBES)
+    corpus = near_misses(PLATFORM_ROUTES | PLATFORM_PROBES)
     return frozenset(
-        (method, path, permits(method, path))
+        (method, path, sendable(permits, method, path))
         for method in METHODS
         for path in corpus
-        if permits(method, path) != _listed(service, listed, method, path)
+        if sendable(permits, method, path) != _listed(service, listed, method, path)
     )
 
 
@@ -305,8 +343,7 @@ def test_each_lander_alerts_through_the_shared_held_alerts(lane: str) -> None:
 
 @pytest.mark.parametrize("lane", sorted(LAUNCHERS))
 def test_each_launcher_fetches_exactly_its_bearers(lane: str) -> None:
-    text = Path(LAUNCHERS[lane]).read_text(encoding="utf-8")
-    assert launcher_bearers(text) == EDGES[lane].bearers
+    assert launcher_bearers(Path(LAUNCHERS[lane])) == EDGES[lane].bearers
 
 
 def _lander_programs() -> Iterator[str]:

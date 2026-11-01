@@ -40,8 +40,11 @@ def _dotted_package(root: Path, path: Path) -> list[str]:
     return parts[:-1]  # `pkg/__init__` and `pkg/mod` both belong to `pkg`
 
 
-def file_imports(path: Path, root: Path | None = None) -> list[Import]:
+def file_imports(path: Path, root: Path | None = None, names: bool = False) -> list[Import]:
     """Every module one file imports. Relative imports resolve against `root` when it is given.
+
+    With `names`, a `from` import also reports `module.name` for each name, because that name may
+    be a submodule: `from pkg import mod` loads `pkg.mod`, and this can't tell without the tree.
 
     Without `root` a relative import cannot be resolved, so it is reported under the name it was
     written with -- never dropped, because a dropped import is one no allowlist can refuse.
@@ -53,6 +56,11 @@ def file_imports(path: Path, root: Path | None = None) -> list[Import]:
         elif isinstance(node, ast.ImportFrom):
             if node.level == 0 and node.module:
                 found.append(Import(path, node.lineno, node.module))
+                if names:
+                    found += [
+                        Import(path, node.lineno, f"{node.module}.{alias.name}")
+                        for alias in node.names
+                    ]
                 continue
             base: list[str] = []
             if root is not None and node.level:
@@ -67,7 +75,12 @@ def file_imports(path: Path, root: Path | None = None) -> list[Import]:
                     continue
                 base = package[: len(package) - climb]
             if node.module:
-                found.append(Import(path, node.lineno, ".".join([*base, node.module])))
+                module = ".".join([*base, node.module])
+                found.append(Import(path, node.lineno, module))
+                if names:
+                    found += [
+                        Import(path, node.lineno, f"{module}.{alias.name}") for alias in node.names
+                    ]
             else:
                 found += [
                     Import(path, node.lineno, ".".join([*base, alias.name])) for alias in node.names

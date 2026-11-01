@@ -51,6 +51,7 @@ paths = [
   "tests/architecture/__init__.py",
   "tests/architecture/code_terms.py",
   "tests/architecture/edge_table.py",
+  "tests/architecture/process_scan.py",
   "tests/architecture/import_scan.py",
   "tests/architecture/test_container.py",
   "tests/architecture/test_cross_boundary_vocabulary.py",

@@ -34,6 +34,7 @@ from change_proposer import reverts as change_reverts
 from scripts.layers import load
 from sds_members import client as members_client
 from tests.architecture.edge_table import (
+    DEADMAN,
     OBSERVER_BEARER,
     PROPOSE_BEARER,
     READ_BEARER,
@@ -43,7 +44,7 @@ from tests.architecture.edge_table import (
     Permits,
     captured_permits,
     either,
-    launcher_uuids,
+    launcher_secrets,
     near_misses,
     route_disagreements,
 )
@@ -67,7 +68,7 @@ EDGES: dict[str, Edge] = {
         github=frozenset(),  # through landing_ledger.github: GITHUB_THROUGH
         # through alert_hub_client: ALERT_HUB_THROUGH
         alert_hub=frozenset({("POST", "/v1/alerts")}),
-        bearers=frozenset({PROPOSE_BEARER, READ_BEARER, OBSERVER_BEARER, SDS_BRIDGE_ALERT_BEARER}),
+        bearers=DEADMAN | {PROPOSE_BEARER, READ_BEARER, OBSERVER_BEARER, SDS_BRIDGE_ALERT_BEARER},
     ),
     "change_proposer": Edge(
         change_manager=frozenset(
@@ -81,7 +82,7 @@ EDGES: dict[str, Edge] = {
         orchestrator=frozenset({("GET", "/api/v1/members"), ("GET", "/api/v1/opened-reverts")}),
         github=frozenset(),  # through deploy_watcher.github: GITHUB_THROUGH
         alert_hub=frozenset(),
-        bearers=frozenset({PROPOSE_BEARER, OBSERVER_BEARER}),
+        bearers=DEADMAN | {PROPOSE_BEARER, OBSERVER_BEARER},
     ),
     "work_carrier": Edge(
         change_manager=frozenset({("GET", "/api/items")}),
@@ -94,7 +95,7 @@ EDGES: dict[str, Edge] = {
         ),
         github=frozenset(),
         alert_hub=frozenset(),
-        bearers=frozenset({READ_BEARER, SYSTEM_BEARER, OBSERVER_BEARER}),
+        bearers=DEADMAN | {READ_BEARER, SYSTEM_BEARER, OBSERVER_BEARER},
     ),
     "work_watcher": Edge(
         # The listing is work_carrier's reader, which work_watcher/pipeline.py imports.
@@ -105,7 +106,7 @@ EDGES: dict[str, Edge] = {
         github=frozenset({("GET", "/repos/o/r/pulls/44")}),
         # through alert_hub_client: ALERT_HUB_THROUGH
         alert_hub=frozenset({("POST", "/v1/alerts")}),
-        bearers=frozenset({PROPOSE_BEARER, READ_BEARER, SYSTEM_BEARER, SDS_BRIDGE_ALERT_BEARER}),
+        bearers=DEADMAN | {PROPOSE_BEARER, READ_BEARER, SYSTEM_BEARER, SDS_BRIDGE_ALERT_BEARER},
     ),
 }
 
@@ -178,6 +179,24 @@ ALERT_HUB_PROBES = frozenset(
         "/v1/channels",
     }
 )
+# Every listed path, stated apart from the rows, so a dropped row keeps its path in the corpus.
+ROUTES = frozenset(
+    {
+        "/api/deploy-changes",
+        "/api/items",
+        "/api/items/44/deploy-retirement",
+        "/api/items/44/work-retirement",
+        "/api/landing-policy",
+        "/api/work-changes",
+        "/api/v1/change-records/44/work",
+        "/api/v1/members",
+        "/api/v1/observations",
+        "/api/v1/opened-reverts",
+        "/api/v1/package-intakes",
+        "/repos/o/r/pulls/44",
+        "/v1/alerts",
+    }
+)
 PROBES = CHANGE_MANAGER_PROBES | ORCHESTRATOR_PROBES | GITHUB_PROBES | ALERT_HUB_PROBES
 
 
@@ -191,7 +210,7 @@ def _listed_paths() -> frozenset[str]:
 
 
 def _corpus() -> frozenset[str]:
-    return near_misses(_listed_paths()) | PROBES
+    return near_misses(ROUTES) | PROBES
 
 
 _landing_policy_permits = captured_permits(
@@ -264,6 +283,10 @@ def disagreements(lane: str) -> frozenset[tuple[str, str, str, bool]]:
     return route_disagreements(EDGES[lane], PERMITS[lane], _corpus(), METHODS)
 
 
+def test_every_listed_route_is_in_the_corpus() -> None:
+    assert _listed_paths() == ROUTES
+
+
 @pytest.mark.parametrize("lane", sorted(EDGES))
 def test_each_lane_accepts_exactly_its_routes_among_the_corpus(lane: str) -> None:
     assert sorted(disagreements(lane)) == []
@@ -311,7 +334,7 @@ def test_each_launcher_fetches_exactly_its_bearers(launcher: str) -> None:
     # Launcher-level: the union of its lanes' bearers, so a bearer handed to the wrong lane of a
     # shared launcher (work_carrier and work_watcher in run-work-carrier.sh) still passes.
     bearers = frozenset().union(*(EDGES[lane].bearers for lane in LAUNCHERS[launcher]))
-    assert launcher_uuids(Path(launcher).read_text(encoding="utf-8")) == bearers
+    assert launcher_secrets(Path(launcher)) == bearers
 
 
 def test_every_lane_has_a_launcher() -> None:

@@ -40,6 +40,7 @@ from rotation_verifier.client import (
 )
 from rotation_verifier.required_checks import RequiredChecksUnreadable, required_checks
 
+ORCHESTRATOR_URL = "https://sds.alobar.net"
 ROTATION_UNIT = "rotation_unit"
 BUMP_CHANGE_CLASS = "dependency-update"
 # The criterion a bump package's generator writes: its one `automated_check`.
@@ -201,7 +202,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     try:
         client = VerifierClient(
-            base_url=os.environ.get("ORCHESTRATOR_API_URL", "https://sds.alobar.net"),
+            base_url=os.environ.get("ORCHESTRATOR_API_URL", ORCHESTRATOR_URL),
             credential_key_id=key_id,
             token=token,
         )

@@ -11,8 +11,11 @@ import contextlib
 import re
 from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import NamedTuple
 from unittest import mock
+
+from estate_clients.confined import has_control_character
 
 Route = tuple[str, str]
 Permits = Callable[[str, str], bool]
@@ -26,6 +29,11 @@ SDS_BRIDGE_ALERT_BEARER = "b415d03b-f92d-46b1-8a9d-b4f10103df49"
 # The landers' and the rotation verifier's GitHub token is not a BWS secret: each launcher takes
 # it from the gh CLI.
 GH_AUTH_TOKEN = "gh auth token"
+# Every launcher arms a Healthchecks check through `sds-deadman.sh`: the Management API key that
+# finds the check, and the ping to it.
+DEADMAN_API_KEY = "51509d5e-64f5-4781-ae82-b4ed00b644e1"
+DEADMAN_PING = "healthchecks ping"
+DEADMAN = frozenset({DEADMAN_API_KEY, DEADMAN_PING})
 
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE)
 
@@ -89,10 +97,15 @@ def either(*predicates: Permits) -> Permits:
     return lambda method, path: any(predicate(method, path) for predicate in predicates)
 
 
+def sendable(permits: Permits, method: str, path: str) -> bool:
+    """Whether a `ConfinedClient` holding this predicate would send the route."""
+    return not has_control_character(path) and permits(method, path)
+
+
 def near_misses(paths: Iterable[str]) -> frozenset[str]:
-    """Each path, and its trailing-slash and suffixed near misses."""
+    """Each path, and its trailing-slash, suffixed and trailing-newline near misses."""
     listed = frozenset(paths)
-    return listed | {f"{path}/" for path in listed} | {f"{path}x" for path in listed}
+    return frozenset(path + end for path in listed for end in ("", "/", "x", "\n"))
 
 
 def route_disagreements(
@@ -110,17 +123,44 @@ def route_disagreements(
         predicate = permits[service]
         for method in methods:
             for path in corpus:
-                accepted = predicate is not None and predicate(method, path)
+                accepted = predicate is not None and sendable(predicate, method, path)
                 if accepted != ((method, path) in listed):
                     found.add((service, method, path, accepted))
     return frozenset(found)
 
 
-def launcher_uuids(text: str) -> frozenset[str]:
-    """The BWS secrets a launcher names."""
-    return frozenset(uuid.lower() for uuid in _UUID.findall(text))
+_SOURCED = re.compile(r"^\s*(?:source|\.)\s+(.+)$", re.MULTILINE)
+_SCRIPT = re.compile(r"([\w.-]+\.sh)\"?\s*$")
+# Sourced from outside this repository, by a variable: `activate_checkout`, which fetches nothing.
+_EXTERNAL_SOURCES = frozenset({'"$_SDS_ACTIVATE"'})
 
 
-def launcher_bearers(text: str) -> frozenset[str]:
-    """The BWS secrets a launcher names, and its `gh` login if it reads one."""
-    return launcher_uuids(text) | ({GH_AUTH_TOKEN} if GH_AUTH_TOKEN in text else set())
+def launcher_text(path: Path) -> str:
+    """A launcher and everything it sources, transitively. A `source` this can't place fails."""
+    texts: dict[Path, str] = {}
+    waiting = [path]
+    while waiting:
+        current = waiting.pop()
+        if current in texts:
+            continue
+        texts[current] = current.read_text(encoding="utf-8")
+        for sourced in _SOURCED.findall(texts[current]):
+            script = _SCRIPT.search(sourced)
+            if script:
+                waiting.append(current.parent / script.group(1))
+            else:
+                assert sourced.strip() in _EXTERNAL_SOURCES, f"{current}: source {sourced}"
+    return "\n".join(texts.values())
+
+
+def launcher_secrets(path: Path) -> frozenset[str]:
+    """The BWS secrets a launcher reaches, and its dead-man ping if it arms one."""
+    text = launcher_text(path)
+    named = {uuid.lower() for uuid in _UUID.findall(text)}
+    return frozenset(named | ({DEADMAN_PING} if "SDS_DEADMAN_PING_URL" in text else set()))
+
+
+def launcher_bearers(path: Path) -> frozenset[str]:
+    """`launcher_secrets`, and its `gh` login if it reads one."""
+    gh = GH_AUTH_TOKEN in launcher_text(path)
+    return launcher_secrets(path) | ({GH_AUTH_TOKEN} if gh else set())
