@@ -142,9 +142,8 @@ def _release_calls() -> set[tuple[str, str, str]]:
         if isinstance(node, ast.Call) and _callee(node) == "release_claim":
             reasons = [k.value for k in node.keywords if k.arg == "terminal_reason"]
             reason = reasons[0] if reasons else None
-            found.add(
-                (module, scope, reason.value if isinstance(reason, ast.Constant) else "<computed>")
-            )
+            value = reason.value if isinstance(reason, ast.Constant) else None
+            found.add((module, scope, value if isinstance(value, str) else "<computed>"))
     return found
 
 
@@ -202,6 +201,6 @@ def test_the_dispatch_route_is_the_one_the_rule_names() -> None:
         for router in API_ROUTERS
         for route in router.routes
         if isinstance(route, APIRoute) and route.endpoint.__name__ == "dispatch_route"
-        for method in route.methods
+        for method in route.methods or ()
     }
     assert served == {DISPATCH_ROUTE}
