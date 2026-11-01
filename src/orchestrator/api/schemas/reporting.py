@@ -115,3 +115,20 @@ class DeadLetterEntryResponse(BaseModel):
     requeue_eligible: bool
     occurred_at: datetime | None
     recovery_action: str
+
+
+class ExecutionStatusRow(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    unit_id: UUID
+    state: str
+    change_class: str | None
+    is_rotation: bool
+    standing: bool
+    target_repository: str | None
+    granted: bool
+    latest_dispatch_status: str | None
+    latest_dispatch_at: datetime | None
+    has_claim: bool
+    lease_lapsed: bool
+    breaker_open: bool

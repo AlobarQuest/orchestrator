@@ -284,6 +284,12 @@ paths = [
   "tests/web/test_human_actions.py",
   "tests/cli/test_context_cli.py",
   ".github/workflows/factory-runner-pilot.yml",
+  "src/execution_watch/**",
+  "tests/execution_watch/**",
+  "scripts/run-execution-watch.sh",
+  "scripts/install-execution-watch-launchd.sh",
+  "scripts/com.devon.execution-watch.plist",
+  "tests/scripts/test_run_execution_watch.py",
 ]
 
 [verification]
@@ -340,6 +346,8 @@ paths = [
   "tests/services/test_decision_facts.py",
   "tests/services/test_deployment_observations.py",
   "tests/services/test_evidence_pack.py",
+  "tests/services/test_execution_status.py",
+  "tests/api/test_execution_status_route.py",
   "tests/services/test_in_flight.py",
   "tests/services/test_machine_activation.py",
   "tests/services/test_observations.py",

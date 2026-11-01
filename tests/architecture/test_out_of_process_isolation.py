@@ -302,6 +302,27 @@ TABLE: dict[str, Row] = {
         "tempfile",
         "typing",
     ),
+    # Execution Part 1: the execution alert lane. `decide.py` is pure and imports the shared alert
+    # client's `Alert` and `alert_key`; `client.py` is its one orchestrator read through
+    # `estate_clients`; `cli.py` tells alert-hub through the shared client.
+    "execution_watch": _row(
+        "__future__",
+        "alert_hub_client",
+        "argparse",
+        "collections",
+        "dataclasses",
+        "datetime",
+        "enum",
+        "estate_clients",
+        # Only the annotation of the test transport handed to `KeyedAlerts`.
+        "httpx",
+        "json",
+        "os",
+        "pathlib",
+        "re",
+        "sys",
+        "typing",
+    ),
     "image_release": _row(
         "__future__",
         "collections",
