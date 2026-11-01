@@ -76,7 +76,8 @@ endpoint and an installation access token expires hourly, so the orchestrator mi
 installation token on demand and caches it until shortly before expiry. Missing or
 partially-set App variables block admission (`github_app_credentials_missing`); a key that
 is present but unusable fails at mint time and is recorded as a dispatch failure with
-reason code `app_token_mint`.
+reason code `app_token_mint`. A target repository that doesn't form the one dispatch route is
+refused before anything is sent and recorded as `route_refused`.
 
 ## Admission
 

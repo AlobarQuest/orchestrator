@@ -1,14 +1,16 @@
 import hashlib
+import re
 import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
-from typing import Any, Protocol
+from typing import Any, Final, Protocol
 from urllib.parse import quote
 
 import httpx
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from estate_clients.confined import ConfinedClient, TransportFailure
 from orchestrator.capability_vocabulary import RUNNER_CAPABILITIES
 from orchestrator.change_window_override import (
     ChangeWindowOverride,
@@ -39,6 +41,15 @@ from orchestrator.services.intake.authority_gate import AuthorityGate, human_aut
 from orchestrator.services.landing.estate_landing import EstateLandingSource
 
 ORCHESTRATOR_URL = "https://sds.alobar.net"
+
+_GITHUB_API: Final = "https://api.github.com"
+_USER_AGENT: Final = "orchestrator-dispatch/1 (+AlobarQuest/orchestrator)"
+# One owner, one repository and one workflow segment, the last as `quote` leaves it. A lone `.` or
+# `..` is not a segment: a server that normalises the path would answer for a different route.
+_DISPATCH_ROUTE: Final = re.compile(
+    r"/repos/[A-Za-z0-9-]+/(?!\.{1,2}/)[A-Za-z0-9._-]+"
+    r"/actions/workflows/(?!\.{1,2}/)[A-Za-z0-9._~%-]+/dispatches"
+)
 
 
 @dataclass(frozen=True)
@@ -106,10 +117,22 @@ class GitHubDispatchError(Exception):
         self.message = message
 
 
+def _permits(method: str, path: str) -> bool:
+    """The one GitHub route this module may send."""
+    return method == "POST" and _DISPATCH_ROUTE.fullmatch(path) is not None
+
+
 class GitHubActionsDispatcher:
-    def __init__(self, token_provider: Callable[[], str], *, timeout: float = 10.0) -> None:
+    def __init__(
+        self,
+        token_provider: Callable[[], str],
+        *,
+        timeout: float = 10.0,
+        transport: httpx.BaseTransport | None = None,
+    ) -> None:
         self._token_provider = token_provider
         self._timeout = timeout
+        self._transport = transport
 
     def dispatch_workflow(
         self,
@@ -122,26 +145,37 @@ class GitHubActionsDispatcher:
         # A bare file name is unchanged by quoting; a path becomes one segment rather than
         # three, so a misconfigured workflow_id fails loudly rather than as a bare 404.
         quoted = quote(workflow_id, safe="")
-        url = f"https://api.github.com/repos/{repository}/actions/workflows/{quoted}/dispatches"
+        path = f"/repos/{repository}/actions/workflows/{quoted}/dispatches"
         # Minting happens inside the error envelope: a credential failure must land in a
         # DispatchRecord like any other, not escape as a 500 that records nothing.
         try:
             token = self._token_provider()
         except GitHubAppTokenError as error:
             raise GitHubDispatchError("app_token_mint", error.code) from error
+        # Everything below ends as a GitHubDispatchError, so it lands in a DispatchRecord too: a
+        # refused path raises one from `refuse`, and building the client can fail like sending.
         try:
-            response = httpx.post(
-                url,
+            client = ConfinedClient(
+                base_url=_GITHUB_API,
+                user_agent=_USER_AGENT,
                 headers={
                     "Accept": "application/vnd.github+json",
                     "Authorization": f"Bearer {token}",
                     "X-GitHub-Api-Version": "2022-11-28",
                 },
-                json={"ref": ref, "inputs": dict(inputs)},
                 timeout=self._timeout,
+                transport=self._transport,
+                permits=_permits,
+                refuse=lambda _method, _path: GitHubDispatchError(
+                    "route_refused", "not_the_dispatch_route"
+                ),
             )
-        except httpx.RequestError as error:
-            raise GitHubDispatchError("request_error", error.__class__.__name__) from error
+            try:
+                response = client.request("POST", path, json={"ref": ref, "inputs": dict(inputs)})
+            finally:
+                client.close()
+        except TransportFailure as failure:
+            raise GitHubDispatchError("request_error", failure.error_type) from None
         if response.status_code not in {200, 201, 202, 204}:
             raise GitHubDispatchError("github_api", f"status:{response.status_code}")
         return {"workflow_run_id": None, "workflow_run_url": None}

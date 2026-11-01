@@ -3,9 +3,9 @@ import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from types import SimpleNamespace
 from typing import Any
 
+import httpx
 import pytest
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
@@ -843,15 +843,16 @@ def test_dispatch_disabled_short_circuits_before_the_credentials_check(
     assert github.calls == []
 
 
-def test_dispatcher_sends_the_minted_installation_token(monkeypatch: pytest.MonkeyPatch) -> None:
-    captured: dict[str, object] = {}
+def test_dispatcher_sends_the_minted_installation_token() -> None:
+    sent: list[httpx.Request] = []
 
-    def fake_post(url: str, **kwargs: object) -> object:
-        captured.update(kwargs)
-        return SimpleNamespace(status_code=204)
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        return httpx.Response(204)
 
-    monkeypatch.setattr(dispatch_module.httpx, "post", fake_post)
-    dispatcher = GitHubActionsDispatcher(lambda: "ghs_minted")
+    dispatcher = GitHubActionsDispatcher(
+        lambda: "ghs_minted", transport=httpx.MockTransport(handler)
+    )
 
     dispatcher.dispatch_workflow(
         repository=PILOT_REPOSITORY,
@@ -860,29 +861,25 @@ def test_dispatcher_sends_the_minted_installation_token(monkeypatch: pytest.Monk
         inputs={"work_unit_id": "u1"},
     )
 
-    headers = captured["headers"]
-    assert isinstance(headers, dict)
-    assert headers["Authorization"] == "Bearer ghs_minted"
+    assert sent[0].headers["Authorization"] == "Bearer ghs_minted"
 
 
 def test_a_mint_failure_is_recorded_as_a_dispatch_failure_and_never_calls_github(
-    migrated_session: Session, monkeypatch: pytest.MonkeyPatch
+    migrated_session: Session,
 ) -> None:
     unit = ready_unit(migrated_session)
 
-    def unreachable(url: str, **kwargs: object) -> object:
+    def unreachable(request: httpx.Request) -> httpx.Response:
         raise AssertionError("GitHub must not be called when the token cannot be minted")
 
     def explode() -> str:
         raise GitHubAppTokenError("private_key_invalid")
 
-    monkeypatch.setattr(dispatch_module.httpx, "post", unreachable)
-
     record = dispatch_work_unit(
         migrated_session,
         dispatch_command(unit.id),
         settings(),
-        GitHubActionsDispatcher(explode),
+        GitHubActionsDispatcher(explode, transport=httpx.MockTransport(unreachable)),
         inert_source(),
         grant_source=granted_source(),
     )
@@ -891,6 +888,106 @@ def test_a_mint_failure_is_recorded_as_a_dispatch_failure_and_never_calls_github
     assert record.reason_code == "app_token_mint"
     assert record.failure_signature is not None
     assert record.failure_signature.startswith("workflow_dispatch:app_token_mint:")
+
+
+@pytest.mark.parametrize(
+    "repository",
+    [
+        "AlobarQuest",
+        "AlobarQuest/brain/extra",
+        "AlobarQuest/..",
+        "../brain",
+        "AlobarQuest/br ain",
+        "AlobarQuest/brain?x=1",
+        "AlobarQuest/brain\n",
+        "AlobarQuest/br\u00e4in",
+    ],
+)
+def test_a_refused_path_records_a_failed_dispatch(
+    migrated_session: Session, monkeypatch: pytest.MonkeyPatch, repository: str
+) -> None:
+    """A malformed repository never reaches GitHub, and never escapes as a bare 500."""
+    unit = ready_unit(migrated_session)
+    monkeypatch.setattr(dispatch_module, "_target_repository", lambda _envelope: repository)
+
+    def unreachable(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("a refused path must not be sent")
+
+    record = dispatch_work_unit(
+        migrated_session,
+        dispatch_command(unit.id),
+        settings(),
+        GitHubActionsDispatcher(lambda: "ghs_minted", transport=httpx.MockTransport(unreachable)),
+        inert_source(),
+        grant_source=granted_source(),
+    )
+
+    assert record.status == "failed"
+    assert record.reason_code == "route_refused"
+    assert record.failure_signature is not None
+    assert record.failure_signature.startswith("workflow_dispatch:route_refused:")
+
+
+@pytest.mark.parametrize(
+    ("failure", "error_type"),
+    [
+        (httpx.ConnectTimeout("slow"), "ConnectTimeout"),
+        (httpx.InvalidURL("bad"), "InvalidURL"),
+        (UnicodeError("label too long"), "UnicodeError"),
+    ],
+)
+def test_a_transport_failure_is_request_error(
+    migrated_session: Session, failure: Exception, error_type: str
+) -> None:
+    unit = ready_unit(migrated_session)
+
+    def fails(request: httpx.Request) -> httpx.Response:
+        raise failure
+
+    record = dispatch_work_unit(
+        migrated_session,
+        dispatch_command(unit.id),
+        settings(),
+        GitHubActionsDispatcher(lambda: "ghs_minted", transport=httpx.MockTransport(fails)),
+        inert_source(),
+        grant_source=granted_source(),
+    )
+
+    assert record.status == "failed"
+    assert record.reason_code == "request_error"
+    assert record.failure_signature == failure_signature(
+        "workflow_dispatch", "request_error", error_type
+    )
+
+
+def test_a_client_that_cannot_be_built_is_request_error() -> None:
+    """A token holding a non-ASCII character is refused while the headers are built."""
+    dispatcher = GitHubActionsDispatcher(lambda: "ghs_\u00e4")
+
+    with pytest.raises(GitHubDispatchError) as raised:
+        dispatcher.dispatch_workflow(
+            repository=PILOT_REPOSITORY, workflow_id="w.yml", ref="main", inputs={}
+        )
+
+    assert raised.value.code == "request_error"
+
+
+def test_the_client_is_closed_after_a_failed_send() -> None:
+    closed: list[bool] = []
+
+    def fails(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectTimeout("slow")
+
+    class Recording(httpx.MockTransport):
+        def close(self) -> None:
+            closed.append(True)
+
+    with pytest.raises(GitHubDispatchError):
+        GitHubActionsDispatcher(lambda: "ghs_minted", transport=Recording(fails)).dispatch_workflow(
+            repository=PILOT_REPOSITORY, workflow_id="w.yml", ref="main", inputs={}
+        )
+
+    assert closed == [True]
 
 
 def test_circuit_open_is_a_pure_at_rest_predicate() -> None:
