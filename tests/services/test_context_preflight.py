@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole
-from orchestrator.persistence.models import Claim, ContextSnapshot, Event
+from orchestrator.persistence.models import Approval, Claim, ContextSnapshot, Event, WorkUnit
 from orchestrator.services.intake.packages import (
     record_approval,
     register_approved_unit,
@@ -270,6 +270,81 @@ def test_authority_expansion_rejects_approval_for_different_context_fingerprint(
         ),
         ActorContext("worker-1", ActorRole.WORKER),
     )
+
+    assert isinstance(result, DomainError)
+    assert result.code == "context_approval_mismatch"
+
+
+def _expansion_preflight(session: Session, unit: WorkUnit, approval_id: uuid.UUID | None) -> Any:
+    return record_preflight(
+        session,
+        PreflightCommand(
+            work_unit_id=unit.id,
+            standing_context=valid_context(capabilities=["python", "deploy"]),
+            previous_context_snapshot_id=None,
+            approval_id=approval_id,
+            purpose="claim",
+            idempotency_key=f"preflight-{unit.id}-{approval_id}",
+        ),
+        ActorContext("worker-1", ActorRole.WORKER),
+    )
+
+
+def _context_approval(session: Session, unit: WorkUnit, key: str) -> Approval:
+    return record_approval(
+        session,
+        unit_id=unit.id,
+        subject_type="authority",
+        actor_id="human-1",
+        actor_role=ActorRole.HUMAN,
+        reason="allow this exact context",
+        idempotency_key=key,
+        expected_version=unit.version,
+        standing_context=valid_context(capabilities=["python", "deploy"]),
+    )
+
+
+def test_a_generic_authority_approval_does_not_satisfy_an_expanding_context(
+    migrated_session: Session,
+) -> None:
+    unit = register_context_unit(migrated_session, valid_context(), "generic-approval")
+    record_approval(
+        migrated_session,
+        unit_id=unit.id,
+        subject_type="authority",
+        actor_id="human-1",
+        actor_role=ActorRole.HUMAN,
+        reason="allow the envelope",
+        idempotency_key="generic-approval",
+        expected_version=unit.version,
+    )
+
+    result = _expansion_preflight(migrated_session, unit, None)
+
+    assert isinstance(result, DomainError)
+    assert result.code == "context_authority_expanding"
+
+
+def test_another_unit_s_approval_of_the_same_context_does_not_apply(
+    migrated_session: Session,
+) -> None:
+    unit = register_context_unit(migrated_session, valid_context(), "this-unit")
+    other = register_context_unit(migrated_session, valid_context(), "other-unit")
+    approval = _context_approval(migrated_session, other, "other-unit-approval")
+
+    result = _expansion_preflight(migrated_session, unit, approval.id)
+
+    assert isinstance(result, DomainError)
+    assert result.code == "context_approval_mismatch"
+
+
+def test_a_rejected_approval_of_the_context_does_not_apply(migrated_session: Session) -> None:
+    unit = register_context_unit(migrated_session, valid_context(), "rejected-approval")
+    approval = _context_approval(migrated_session, unit, "rejected-approval")
+    approval.decision = "rejected"
+    migrated_session.flush()
+
+    result = _expansion_preflight(migrated_session, unit, approval.id)
 
     assert isinstance(result, DomainError)
     assert result.code == "context_approval_mismatch"

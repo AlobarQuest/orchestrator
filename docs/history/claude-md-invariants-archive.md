@@ -2234,3 +2234,65 @@ The text these rules held in CLAUDE.md until Execution Part 5 replaced each with
   Unknown capability names fail closed but mistyped levels (e.g. `requires_approval`) read as
   prohibited and pass orchestrator gates while the runner refuses the envelope. History:
   `docs/history/claude-md-invariants-archive.md` #150.
+
+### Admission Part 5, 2026-11-01
+
+Each rule below was split into one rule per condition, with its meaning unchanged and each naming a
+test, except that the composed-predicate rule said registration asks the whole predicate, when it
+asks only the field and level terms. The text as it stood:
+
+- `runner_command_authority_violation` mirrors the runner and may be stricter, never looser
+  (`test_runner_envelope_contract.py`). Archive #126.
+- `allowed_commands` is the coding agent's entire enforced Bash vocabulary (exact match), so an
+  envelope must list every command the work needs. Without `verify_commands`, finalize re-executes
+  it as written, so authors must order it mutators first, verifier last (finalize never reorders).
+  With `verify_commands`, finalize runs only the mutators (in `allowed_commands` order) and then
+  that script; every other allowed command is agent-only. For edit-shaped work (no mutators) that
+  includes a build: a build the verifier depends on must be in `verify_commands` or a mutator, or
+  finalize never runs it. Absent keeps every existing fingerprint. Detail:
+  `docs/operations/driving-a-unit.md`.
+- `runner_authority_violation` is the one composed predicate, asked at breakdown ingress, unit
+  registration, authority approval and admission; capability-name refusal lives only at admission.
+  History: `docs/history/claude-md-invariants-archive.md` #149.
+- `decomposition._policy_approval` approves a decomposition SYSTEM proposes, in the proposal's own
+  transaction, on one of two branches. A rotation's one click is its package revision approval
+  (ADR-0055 amendment 16): change-manager approves its `work` record by policy, and the rotation
+  branch approves only when the revision is a standing rotation package with a recorded approval,
+  every dependency is unit-on-unit `completed`, and every unit is a rotation unit
+  `human_authority_gate` finds recognised. A standing bump needs no click (ADR-0006 amendment 2):
+  the bump branch takes any revision with the `dependency-update` profile or a
+  `policy:dependency-update@` approver, and approves only when that approver and profile both hold,
+  `standing` is true, reach is exactly `source_repository`, there is one unit with no dependencies,
+  every criterion mapped to it and none retained, and attempts within its budget, only
+  dependency-update patterns recognise it, `bump_binding_violations` is empty, its `title` and
+  `outcome` are the generator's (`bump_text_differs`). The proposal itself has already been refused
+  unless the member record grants `dependency_updates`. The binding is a whole-command allowlist of the generator's forms, and
+  covers `allowed_commands` and `verify_commands` too; a generator change means regenerating
+  `dependency_update_proposals.json`. Each refusal of a SYSTEM proposal on either branch, every bump
+  refusal, and an approval that fails after policy said yes, records one
+  `decomposition.policy_not_applied` per proposal, served as `policy_not_applied` on the proposal
+  routes. `register_approved_unit` admits SYSTEM only with
+  `approved_by_policy`. A human's or WORKER's proposal, and every other decomposition, waits for a
+  person on `/review`.
+- `pr-merge`'s authority term is a bound human approval, sufficient for every change class and
+  blind to any switch, or the policy path (ADR-0025 amendment 4): a `dependency-update` envelope on
+  a `standing_bump_refusal`-clean revision (the decomposition gate's own conditions, reach exactly
+  `source_repository`), where the estate answers `inert`, recognised at merge time only by
+  dependency-update patterns, with the `dependency_updates` grant, while
+  `ORCHESTRATOR_BUMP_MERGE_ENABLED` is on. Off, a unit the path covers refuses
+  `merge_policy_path_off` in place of `authority_approval_not_bound`; other terms report beside it,
+  so it means waiting only as the sole refusal. The admission answer writes nothing; the act records
+  `authority.human_gate_not_required` beside a landing its own call made, including one reconciled
+  after that call at the head it named, never beside an `already_merged` found before it or at
+  another head. A row whose reason is
+  `merge_refused_by_remote:<code>` is an unknown outcome: `pr-merge-admission` answers
+  `landing_outcome_unknown`, the bump driver replays it whatever the pull request's state or the
+  other refusals, and `pr_merge._resettle`, in its own committed step and asking no term, is the
+  only code that may change or remove a `UnitPrMerge` row (ADR-0025 amendment 5). The policy path
+  alone also reads the pull request in `pr_merge._act`, after it is known open and before landing:
+  the head is `sds/<unit8>-attempt-<attempt_count>` in the repository itself and is the
+  adjudicated head, the
+  body has the whole-line `SDS-Unit:` trailer, and `pulls/{n}/files` reads fully (its length equals
+  `changed_files`), neither end of any entry is a workflow or gate file, and a tooling manifest
+  changed. Each failure is a `pr_merge_*` refusal with no `UnitPrMerge` row, so a person can still
+  land it. Detail: `docs/operations/landing-lanes.md`, ADR-0025 amendment 4.
