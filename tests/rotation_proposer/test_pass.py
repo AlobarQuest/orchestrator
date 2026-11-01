@@ -22,6 +22,7 @@ from bump_proposer.cli import WORK_RECORD_FIELDS
 from bump_proposer.orchestrator_client import OrchestratorClient
 from rotation_proposer import cli
 from rotation_proposer.cli import EXIT_FINDINGS, EXIT_OK, EXIT_UNUSABLE, run
+from rotation_proposer.client import Orchestrator
 from rotation_proposer.findings import Due, FindingsError, Unrecognised
 from rotation_worker.registry import RegistryEntry, RegistryError
 from sds_members.client import SERVICES, Member, MembersUnreadable
@@ -31,6 +32,8 @@ from tests.rotation_proposer.test_standing import DESTINATIONS, FakeLifecycle, w
 CREDENTIAL = "openrouter-generic"
 REQUESTED = Due(CREDENTIAL, "openrouter-key", "requested", "2026-10-07", "2026-10-07", True)
 AGE = Due(CREDENTIAL, "openrouter-key", "age", "2026-10-08", "2026-10-08", True)
+UNIT_ID = "0c7a484c-1111-4111-8111-111111111111"
+COMPLETED = "2026-10-30T09:00:00+00:00"
 
 
 @dataclass(frozen=True)
@@ -66,12 +69,36 @@ class _Rig:
         # unreadable record; `member_reads` counts how often it was asked.
         self.granted: list[str] | None = ["AlobarQuest/infraops-mcp-server"]
         self.member_reads = 0
+        # infraops' `last_rotated`; `None` is an infraops that predates the field.
+        self.last_rotated: dict[str, str] | None = {CREDENTIAL: "2025-01-02"}
+        # Credentials the registry lists beyond those due, and any it does not mark handed over.
+        self.rows: list[str] = []
+        self.legacy: set[str] = set()
+        # What `/change-records/{id}/work` serves, by record; a record not named here has one
+        # completed unit. `None` answers 500.
+        self.work: dict[int, dict | None] = {}
+        # What `/work-units/{id}/history` serves, by unit; `None` answers 500.
+        self.histories: dict[str, list[dict] | None] = {
+            UNIT_ID: [{"to_state": "completed", "occurred_at": COMPLETED}]
+        }
+
+    def orchestrator(self, request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path.endswith("/work"):
+            record = int(path.split("/")[-2])
+            answer = self.work.get(
+                record, {"units": [{"unit_id": UNIT_ID, "unit_key": "k", "state": "completed"}]}
+            )
+        else:
+            answer = self.histories[path.split("/")[-2]]
+        return httpx.Response(500) if answer is None else httpx.Response(200, json=answer)
 
     def entry(self, credential_id: str) -> RegistryEntry:
         credential = {
             "id": credential_id,
             "class": self.classes.get(credential_id, "openrouter-key"),
             "bws_uuid": "11111111-1111-4111-8111-111111111111",
+            "rotated_by_sds": credential_id not in self.legacy,
         }
         return _Entry(
             "AlobarQuest/infraops-mcp-server", "c" * 40, credential, list(self.registry or [])
@@ -124,7 +151,9 @@ def rig(tmp_path, monkeypatch):
         rig.synced.append((list(outcomes), token, state_dir))
 
     monkeypatch.setattr(cli, "sync_alerts", synced)
-    monkeypatch.setattr(cli, "read_due", lambda: (list(rig.due), list(rig.unrecognised)))
+    monkeypatch.setattr(
+        cli, "read_due", lambda: (list(rig.due), list(rig.unrecognised), rig.last_rotated)
+    )
     monkeypatch.setattr(cli, "default_mirror_root", lambda program: tmp_path / program)
 
     def registry_entries(_mirror):
@@ -133,7 +162,8 @@ def rig(tmp_path, monkeypatch):
             raise RegistryError(
                 "AlobarQuest/infraops-mcp-server: .cred-consumers.toml doesn't parse"
             )
-        return {item.credential_id: rig.entry(item.credential_id) for item in rig.due}
+        listed = [*(item.credential_id for item in rig.due), *rig.rows]
+        return {credential_id: rig.entry(credential_id) for credential_id in listed}
 
     monkeypatch.setattr(cli, "registry_entries", registry_entries)
 
@@ -174,6 +204,16 @@ def rig(tmp_path, monkeypatch):
             token=token,
             user_agent=user_agent,
             transport=httpx.MockTransport(recorded(rig.spine.handler)),
+        ),
+    )
+    monkeypatch.setattr(
+        cli,
+        "Orchestrator",
+        lambda *, base_url, credential_key_id, token: Orchestrator(
+            base_url=base_url,
+            credential_key_id=credential_key_id,
+            token=token,
+            transport=httpx.MockTransport(recorded(rig.orchestrator)),
         ),
     )
     return rig
@@ -500,11 +540,21 @@ EXPOSED = Due(CREDENTIAL, "openrouter-key", "exposure", "exp-7", "2026-10-07", T
 def _proposed_and_built(rig, monkeypatch, *, decided_by: str = "work-watcher") -> list[str]:
     """Through Devon's approval and the proposal, then the work watcher retiring the record."""
     recorded: list[str] = []
-    monkeypatch.setattr(cli, "record_rotation", recorded.append)
+
+    def record(credential_id: str, date: str) -> None:
+        recorded.append(credential_id)
+        assert rig.last_rotated is not None
+        rig.last_rotated[credential_id] = f"{date}T00:00:00.000Z"
+
+    monkeypatch.setattr(cli, "record_rotation", record)
     run(["--submit"])
     rig.approve_by_name()
     run(["--submit"])
-    rig.estate.records[0].update(status="resolved", decided_by=decided_by)
+    rig.estate.records[0].update(
+        status="resolved",
+        decided_by=decided_by,
+        reasoning=f"due (occurrence {rig.due[0].occurrence}).",
+    )
     return recorded
 
 
@@ -533,19 +583,62 @@ def test_a_record_a_person_resolved_records_nothing_and_is_a_finding(
     assert "resolved-by-person" in capsys.readouterr().out
 
 
-def test_a_retired_record_for_another_revision_records_nothing(rig, capsys, monkeypatch) -> None:
-    recorded = _proposed_and_built(rig, monkeypatch)
-    rig.estate.records[0]["package_revision"] = 1
+def test_a_wontfix_record_of_the_carrying_revision_is_a_finding(rig, capsys, monkeypatch) -> None:
+    """Kills: replaying the proposal for ever, which change-manager answers 200, so the credential
+    stays due with nothing said."""
+    _proposed_and_built(rig, monkeypatch)
+    rig.estate.records[0].update(status="wontfix", decided_by="devon")
+    capsys.readouterr()
+
+    assert run(["--submit"]) == EXIT_FINDINGS
+    assert "record-wontfix" in capsys.readouterr().out
+    assert len(rig.estate.proposals) == 1
+
+
+def test_a_wontfix_record_of_an_earlier_revision_changes_nothing(rig, capsys, monkeypatch) -> None:
+    _proposed_and_built(rig, monkeypatch)
+    rig.estate.records[0].update(status="wontfix", decided_by="devon", package_revision=1)
     capsys.readouterr()
 
     run(["--submit"])
+    assert "record-wontfix" not in capsys.readouterr().out
+
+
+def test_a_new_occurrence_revises_past_a_wontfix_record(rig, capsys, monkeypatch) -> None:
+    _proposed_and_built(rig, monkeypatch)
+    rig.estate.records[0].update(status="wontfix", decided_by="devon")
+    rig.due = [AGE]
+    capsys.readouterr()
+
+    run(["--submit"])
+    out = capsys.readouterr().out
+    assert "revised" in out and "record-wontfix" not in out
+
+
+def test_a_finished_rotation_infraops_cant_compare_is_an_error(rig, capsys, monkeypatch) -> None:
+    """Kills: a due credential exiting 0 because an old infraops left nothing to compare."""
+    _proposed_and_built(rig, monkeypatch)
+    rig.last_rotated = None
+    capsys.readouterr()
+
+    assert run(["--submit"]) == EXIT_FINDINGS
+    assert "error" in capsys.readouterr().out
+
+
+def test_a_due_credential_with_nothing_to_record_is_a_finding(rig, capsys, monkeypatch) -> None:
+    recorded = _proposed_and_built(rig, monkeypatch)
+    rig.last_rotated = {CREDENTIAL: "2026-10-31"}
+    capsys.readouterr()
+
+    assert run(["--submit"]) == EXIT_FINDINGS
     assert recorded == []
+    assert "due-after-rotation" in capsys.readouterr().out
 
 
 def test_infraops_refusing_the_record_is_that_credentials_error(rig, capsys, monkeypatch) -> None:
     _proposed_and_built(rig, monkeypatch)
 
-    def refuse(credential_id: str) -> None:
+    def refuse(credential_id: str, date: str) -> None:
         raise FindingsError("infraops refused record-rotation: unknown credential id")
 
     monkeypatch.setattr(cli, "record_rotation", refuse)

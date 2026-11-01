@@ -29,5 +29,9 @@
       "class": "mystery",
       "rotated_by_sds": false
     }
-  ]
+  ],
+  "last_rotated": {
+    "never-dated": null,
+    "openrouter-generic": "2025-07-02T00:00:00.000Z"
+  }
 }

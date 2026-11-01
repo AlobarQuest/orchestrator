@@ -218,7 +218,9 @@ CLASSIFICATION: dict[str, Row] = {
         Role.OBSERVE_ONLY,
         "ADR-0054 amendment 1: reads infraops' structured rotation findings (registry names and "
         "dates, never prose) to choose a standing package's occurrence; its work record goes to "
-        "change-manager, and to the orchestrator it only observes, through bump_proposer's client",
+        "change-manager, and to the orchestrator it only observes, through bump_proposer's client. "
+        "Rotation Part 3: its own client reads a record's work and a unit's history, both GET, "
+        "to report a stalled rotation and date a finished one",
         OBSERVE,
     ),
     "deploy_watcher": Row(

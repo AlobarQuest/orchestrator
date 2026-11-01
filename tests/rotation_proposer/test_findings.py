@@ -55,7 +55,7 @@ EXPOSURE = {
 
 
 def test_the_contract_fixture_reads_as_one_due_per_credential() -> None:
-    due, unrecognised = parse(FIXTURE.read_text())
+    due, unrecognised, _ = parse(FIXTURE.read_text())
     assert due == [
         Due(
             "github-classic-aihelper",
@@ -86,14 +86,14 @@ def test_one_rotation_answers_every_trigger_and_the_precedence_names_it(
 ) -> None:
     """Kills: dropping the precedence (two occurrences for one credential would revise each other
     on alternate passes forever), and reading the order of the list instead of the trigger."""
-    due, _ = parse(_document(*entries))
+    due, _, _ = parse(_document(*entries))
     assert [item.occurrence for item in due] == [occurrence]
 
 
 def test_an_age_occurrence_is_dated_by_the_last_rotation_never_by_the_pass() -> None:
     """Kills: a time-of-day or a clock in the occurrence. A value that moved between passes would
     make every daily pass see a new rotation and revise the package again."""
-    due, _ = parse(_document(dict(AGE, anchor="2025-01-02T13:14:15.000Z")))
+    due, _, _ = parse(_document(dict(AGE, anchor="2025-01-02T13:14:15.000Z")))
     assert due[0].occurrence == "2025-01-02-age"
     assert due[0].dated == "2025-01-02"
 
@@ -101,14 +101,16 @@ def test_an_age_occurrence_is_dated_by_the_last_rotation_never_by_the_pass() -> 
 @pytest.mark.parametrize("check", ["cred.unknown-class", "cred.invalid-rotate-requested"])
 def test_a_check_that_is_not_a_rotation_is_skipped_without_a_finding(check) -> None:
     """Both are registry errors infraops' own scan reports; neither names a rotation."""
-    due, unrecognised = parse(_document({"check": check, "id": "k", "class": "x"}))
+    due, unrecognised, _ = parse(_document({"check": check, "id": "k", "class": "x"}))
     assert (due, unrecognised) == ([], [])
 
 
 def test_a_check_this_program_has_never_heard_of_is_reported_not_skipped() -> None:
     """Kills: ignoring unknown checks. The day infraops adds a new trigger, skipping it silently
     would leave that rotation unproposed with nothing saying so."""
-    due, unrecognised = parse(_document({"check": "cred.rotation-expiry", "id": "k", "class": "x"}))
+    due, unrecognised, _ = parse(
+        _document({"check": "cred.rotation-expiry", "id": "k", "class": "x"})
+    )
     assert due == []
     assert [(u.credential_id, u.check) for u in unrecognised] == [("k", "cred.rotation-expiry")]
 
@@ -164,7 +166,7 @@ def _answer(code: int, stdout: str = "", stderr: str = ""):
 
 def test_infraops_is_asked_through_its_own_cli_and_subcommand(checkout) -> None:
     run, seen = _answer(0, FIXTURE.read_text())
-    due, _ = read_due(checkout, run=run)
+    due, _, _ = read_due(checkout, run=run)
     assert seen == [["/bin/node", str(checkout / CLI_SCRIPT), "cred-findings"]]
     assert len(due) == 2
 
@@ -206,9 +208,9 @@ def test_a_finding_that_cannot_say_who_owns_the_credential_refuses_the_pass(valu
         parse(_document(entry))
 
 
-def test_a_rotation_is_recorded_through_infraops_cli_as_of_today(checkout) -> None:
+def test_a_rotation_is_recorded_through_infraops_cli_on_its_date(checkout) -> None:
     run, seen = _answer(0)
-    record_rotation("openrouter-generic", checkout, run=run)
+    record_rotation("openrouter-generic", "2026-10-30", checkout, run=run)
     assert seen == [
         [
             "/bin/node",
@@ -217,7 +219,7 @@ def test_a_rotation_is_recorded_through_infraops_cli_as_of_today(checkout) -> No
             "--cred",
             "openrouter-generic",
             "--date",
-            "now",
+            "2026-10-30",
         ]
     ]
 
@@ -225,4 +227,22 @@ def test_a_rotation_is_recorded_through_infraops_cli_as_of_today(checkout) -> No
 def test_a_refused_record_names_infraops_last_line(checkout) -> None:
     run, _ = _answer(1, stderr="trace\nError: unknown credential id 'x'\n")
     with pytest.raises(FindingsError, match="unknown credential id"):
-        record_rotation("x", checkout, run=run)
+        record_rotation("x", "2026-10-30", checkout, run=run)
+
+
+def test_last_rotated_is_served_beside_the_findings() -> None:
+    assert parse(FIXTURE.read_text())[2] == {
+        "openrouter-generic": "2025-07-02T00:00:00.000Z",
+        "never-dated": None,
+    }
+
+
+def test_an_absent_last_rotated_is_none() -> None:
+    assert parse(_document(AGE))[2] is None
+
+
+@pytest.mark.parametrize("served", [[], "x", {"k": 7}, {"k": "soon"}, {"": "2026-10-30"}])
+def test_an_unreadable_last_rotated_stops_the_pass(served) -> None:
+    document = {"schema_version": 1, "findings": [], "last_rotated": served}
+    with pytest.raises(FindingsError, match="last_rotated"):
+        parse(json.dumps(document))

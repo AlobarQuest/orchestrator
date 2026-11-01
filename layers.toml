@@ -598,6 +598,7 @@ paths = [
   "src/orchestrator/api/routes/rotation.py",
   "src/orchestrator/api/schemas/rotation.py",
   "tests/contract/test_change_manager_bearer_setting_contract.py",
+  "tests/architecture/test_rotation_agreement.py",
   "tests/contract/test_rotation_step_contract.py",
   "tests/fixtures/m2m_bearer_setting.json",
   "tests/fixtures/rotation_*",

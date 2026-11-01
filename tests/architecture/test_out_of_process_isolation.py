@@ -495,6 +495,8 @@ TABLE: dict[str, Row] = {
         # `collections.abc.Callable`, for the injectable runner that asks infraops.
         "collections",
         "dataclasses",
+        # Rotation Part 3: `client.py`, its own two orchestrator reads.
+        "estate_clients",
         # The observation's facts are content-addressed, so an unchanged re-run replays.
         "hashlib",
         "httpx",

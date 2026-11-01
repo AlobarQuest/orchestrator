@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from typing import Any, Final
 
 ADAPTER_KEY: Final = "rotation_adapter"
+NON_HOSTED_KEY: Final = "touches_no_hosted_service"
 
 # The adapters whose credentials live in the Keychain: a copy of the orchestrator's
 # `rotation_claims.KEYCHAIN_ADAPTERS`, which this program may not import. A test holds them equal.

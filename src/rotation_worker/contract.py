@@ -129,6 +129,10 @@ class Provider(Protocol):
     that the old value was live comes from the same place the revoke reads (ADR-0055 amendment 1:
     OpenRouter's key-info answers 200 for a live key and lags a revoke, so it can prove live-before
     but not dead-after). A provider whose two probes are one endpoint gives both the same target.
+
+    A provider that mints remotely may also have `discard_minted(value)`, which deletes what its
+    own mint returned. It is optional because a provider that generates its value locally has
+    nothing left behind (`UnitRun.discard_minted`).
     """
 
     name: str
@@ -342,9 +346,13 @@ class UnitRun:
             steps = tuple(step for step in steps if step.kind is StepKind.CONFIRM_DEAD)
             if not steps:
                 raise ContractError("staging is gone with the quarantine kept: never guess")
-        for step in steps:
-            self.before_step()
-            HANDLERS[step.kind](self, step)
+        try:
+            for step in steps:
+                self.before_step()
+                HANDLERS[step.kind](self, step)
+        except Exception as failure:
+            self.discard_minted(failure)
+            raise
 
     def finished(self) -> bool:
         """Whether an earlier attempt of this unit already confirmed, cleaned up and filed it.
@@ -359,6 +367,27 @@ class UnitRun:
         )
 
     # ---- where the values are ---------------------------------------------------------------
+
+    def discard_minted(self, failure: Exception) -> None:
+        """A step failed after this process minted and before it staged: delete the key, unless
+        staging holds it.
+
+        Evidence may not hold a key's id, so nothing can find this key later. A value staging
+        holds is never deleted, including one a write landed before raising, because the rotation
+        would then stand on a dead key; a store that can't say what it holds is left alone for the
+        same reason. The caller re-raises `failure`; a failure here replaces it, naming both.
+        """
+        minted = self._minted
+        discard = getattr(self.provider, "discard_minted", None)
+        if minted is None or discard is None:
+            return
+        try:
+            if self.staged() is None or not self.new().same_as(minted):
+                discard(minted)
+        except Exception as error:
+            raise ContractError(
+                f"{failure}; discarding the minted key failed too ({error}), so a key may be left"
+            ) from failure
 
     def staged(self) -> StoredSecret | None:
         return self.store.find(self.rotation.work_project_id, self.rotation.staging_key)
@@ -517,6 +546,8 @@ def _stage(run: UnitRun, step: Step) -> None:
         run.store.create(run.rotation.work_project_id, run.rotation.staging_key, run._minted)
     elif run._minted is not None and not run.new().same_as(run._minted):
         raise ContractError("a different value is already staged")
+    # Staging holds it, so from here no failure may discard it.
+    run._minted = None
     new, old = run.new_and_old()
     run.record(step, StepEvidence(step.kind, fingerprints=_fingerprints(new, old)))
 
