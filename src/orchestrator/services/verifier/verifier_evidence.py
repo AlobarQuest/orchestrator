@@ -159,22 +159,39 @@ def record_named_check_evidence(
         return error
 
 
-def named_check_inputs(session: Session, unit_id: uuid.UUID) -> dict[str, object]:
+def named_check_inputs(session: Session, unit: WorkUnit) -> dict[str, object]:
     """What a caller needs to name a unit's checks: the newest dispatch that ran, the bound pull
-    request and its armed head. Absent parts are None. Only a `dispatched` row is offered, because
-    ingestion refuses any other."""
+    request, its armed head and the criteria that take a check. Absent parts are None. Only a
+    `dispatched` row is offered, because ingestion refuses any other."""
     newest = session.scalar(
         select(DispatchRecord.id)
-        .where(DispatchRecord.work_unit_id == unit_id, DispatchRecord.status == "dispatched")
+        .where(DispatchRecord.work_unit_id == unit.id, DispatchRecord.status == "dispatched")
         .order_by(DispatchRecord.runner_attempt.desc())
         .limit(1)
     )
-    binding = session.get(UnitPrBinding, unit_id)
+    binding = session.get(UnitPrBinding, unit.id)
     return {
         "latest_dispatch_id": newest,
         "pr_number": binding.pr_number if binding is not None else None,
         "armed_head_sha": binding.verification_read_head_sha if binding is not None else None,
+        "automated_check_ac_ids": _automated_check_ac_ids(session, unit),
     }
+
+
+def _automated_check_ac_ids(session: Session, unit: WorkUnit) -> tuple[str, ...]:
+    """The unit's required `automated_check` criteria, as `_load_criterion` judges them.
+
+    This serves every read of every unit, so a revision whose criteria can't be loaded answers
+    none rather than failing the read; `/verify` refuses that revision on its own.
+    """
+    revision = session.get(WorkPackageRevision, unit.work_package_revision_id)
+    if revision is None:
+        return ()
+    try:
+        criteria = load_required_criteria(session, unit, revision)
+    except DomainError:
+        return ()
+    return tuple(item.ac_id for item in criteria if _takes_a_named_check(item))
 
 
 def _observe(
@@ -285,13 +302,17 @@ def _load_criterion(
         ),
         None,
     )
-    if criterion is None or criterion.evidence_type.strip().lower() != "automated_check":
+    if criterion is None or not _takes_a_named_check(criterion):
         raise DomainError(
             "evidence_subject_invalid",
             "acceptance criterion is not a mapped automated check",
             None,
         )
     return criterion
+
+
+def _takes_a_named_check(criterion: PackageAcceptanceCriterion) -> bool:
+    return criterion.evidence_type.strip().lower() == "automated_check"
 
 
 def _target_repository(unit: WorkUnit) -> str:

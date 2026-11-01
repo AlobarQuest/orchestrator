@@ -339,7 +339,7 @@ def work_unit(unit_id: UUID, _actor: ActorDep, session: SessionDep) -> object:
         raise DomainError("work_unit_not_found", "work unit does not exist", None)
     return {
         **WorkUnitDetailResponse.model_validate(unit).model_dump(),
-        **named_check_inputs(session, unit.id),
+        **named_check_inputs(session, unit),
     }
 
 

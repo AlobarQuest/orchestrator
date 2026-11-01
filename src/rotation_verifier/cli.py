@@ -1,15 +1,23 @@
-"""One rotation-verifier pass: verify every submitted rotation unit and dependency-bump unit.
+"""One verifier pass: verify every submitted factory unit, rotation and dependency-bump units too.
 
 A unit is a rotation unit when its envelope names a `rotation_unit`, and a bump unit when its
-`change_class` is `dependency-update`; any other submitted unit is left alone, because its
-verification is driven by whoever runs its own lane. The verifier, not this lane, decides each
-criterion: a clean unit completes, and anything it can't prove goes to `awaiting_review` for a
-person.
+`change_class` is `dependency-update`. Any other is an app-change unit, taken once it has a dispatch
+and an armed head. A session unit has neither, and `post_deploy_verification` units are
+`image_release`'s, so both are left alone. The verifier, not this lane, decides each criterion: a
+clean unit completes, and anything it can't prove goes to `awaiting_review` for a person.
 
-A bump unit has one criterion, and only the newest named-check row for it counts, so the lane files
-the repository's required checks in sorted order and stops at the first that did not succeed: the
-newest row is then a failure exactly when one failed. A check still running is `waiting`; the next
-pass files from the start again, under keys of its own, so it observes every check afresh.
+Only the newest named-check row for a criterion counts, so for each criterion the lane files the
+repository's required checks in sorted order and stops at the first that did not succeed: the newest
+row is then a failure exactly when one failed. A bump has one criterion. An app-change unit has its
+`automated_check_ac_ids`, and each gets every required check, because nothing maps a criterion to a
+check. A check still running is `waiting`; the next pass files from the start again, under keys of
+its own, so it observes every check afresh.
+
+An app-change unit is held while the member record doesn't grant its repository, which alerts, and
+while the record can't be read, which is no withdrawal and alerts nothing. Nothing filed means a
+person decides: a unit with no `automated_check` criterion goes straight to `/verify`, and so does
+one whose repository requires no check, where the criterion falls to a person. Rotation units have
+no repository, and landing refuses a bump with no grant, so neither reads the record.
 
 A unit the lane could not take to an answer is a keyed alert (`alerts.py`), sent after every unit
 has had its turn, so a refused unit or an alert-hub failure never stops a rotation.
@@ -19,9 +27,9 @@ EXIT CODES:
      submitted.
   1  the tool itself failed (a missing credential, an unusable URL).
   2  something was found: a verified unit went to a person, or a unit raised an alert (it could
-     not be read or verified, its repository requires no check, or its required checks could not
-     be read). The launcher declares 2 as this lane's finding code, so one cause never raises both
-     an alert and `/fail`.
+     not be read or verified, a bump's repository requires no check, its required checks could not
+     be read, or its grant is gone), or the member record could not be read. The launcher
+     declares 2 as this lane's finding code, so one cause never raises both an alert and `/fail`.
   3  the queue could not be read and every key was held, or alert-hub could not be told, so a
      finding may have reached nobody.
 3 outranks 2: an incomplete pass cannot claim it told a person everything it found.
@@ -56,13 +64,23 @@ from rotation_verifier.client import (
     VerifierCallError,
     VerifierClient,
 )
-from rotation_verifier.required_checks import RequiredChecksUnreadable, required_checks
+from rotation_verifier.required_checks import (
+    NoRequiredChecks,
+    RequiredChecksUnreadable,
+    required_checks,
+)
+from sds_members.client import MembersUnreadable
+from sds_members.populations import granted, service_for_change_class
 
 ORCHESTRATOR_URL = "https://sds.alobar.net"
 ROTATION_UNIT = "rotation_unit"
 BUMP_CHANGE_CLASS = "dependency-update"
 # The criterion a bump package's generator writes: its one `automated_check`.
 BUMP_AC_ID = "AC-001"
+# `image_release` owns these units, and `/verify` would refuse them from this lane.
+POST_DEPLOY_CAPABILITY = "post_deploy_verification"
+# Served by `GET /work-units/{id}`; a server without it serves no criterion to file under.
+AUTOMATED_CHECK_IDS = "automated_check_ac_ids"
 WAITING = "waiting"
 FOUND, INCOMPLETE = 2, 3
 
@@ -78,14 +96,25 @@ def _is_bump(unit: dict[str, Any]) -> bool:
     return isinstance(authority, dict) and authority.get("change_class") == BUMP_CHANGE_CLASS
 
 
-def _check_key(pass_id: str, unit_id: str, head_sha: str, check_name: str) -> str:
-    """Distinct per pass, check, head and unit.
+def _is_app_change(unit: dict[str, Any]) -> bool:
+    """A factory unit that ran: a session unit has no dispatch, and may have no head."""
+    return (
+        unit.get("required_capability") != POST_DEPLOY_CAPABILITY
+        and bool(unit.get("latest_dispatch_id"))
+        and bool(unit.get("armed_head_sha"))
+    )
+
+
+def _check_key(pass_id: str, unit_id: str, ac_id: str, head_sha: str, check_name: str) -> str:
+    """Distinct per pass, criterion, check, head and unit.
 
     The orchestrator replays a key BEFORE it observes GitHub, so a key shared across passes would
     serve a check's old success after the check was re-run red. A fresh `pass_id` makes every pass
-    observe afresh; a retry inside one pass still replays.
+    observe afresh; a retry inside one pass still replays. A key shared across criteria would be
+    refused as another operation's.
     """
-    digest = hashlib.sha256(f"{pass_id}\0{head_sha}\0{check_name}".encode()).hexdigest()[:32]
+    claim = f"{pass_id}\0{ac_id}\0{head_sha}\0{check_name}"
+    digest = hashlib.sha256(claim.encode()).hexdigest()[:32]
     return f"rotation-verifier-check-{unit_id}-{digest}"
 
 
@@ -94,9 +123,11 @@ def _file_checks(
     pass_id: str,
     unit_id: str,
     unit: dict[str, Any],
+    criteria: Sequence[str],
     names: Sequence[str],
 ) -> None:
-    """File each required check in sorted order, stopping at the first that did not succeed.
+    """File each required check under each criterion in sorted order; each criterion stops at the
+    first that did not succeed, so every criterion's newest row states the unit's answer.
 
     Raises `CheckNotConcluded` for a check still running and `KeyError` for a unit that lacks what
     filing needs; both are the caller's to classify.
@@ -106,26 +137,27 @@ def _file_checks(
     dispatch_id = unit["latest_dispatch_id"]
     if not (isinstance(pr_number, int) and head_sha and dispatch_id):
         raise KeyError("the unit has no dispatch, pull request or armed head yet")
-    for name in sorted(names):
-        filed = client.named_check(
-            unit_id,
-            {
-                "work_package_revision_id": unit["work_package_revision_id"],
-                "ac_id": BUMP_AC_ID,
-                "dispatch_id": dispatch_id,
-                "repository": repository,
-                "pr_number": pr_number,
-                "pr_url": f"https://github.com/{repository}/pull/{pr_number}",
-                "head_sha": head_sha,
-                "check_name": name,
-                "expected_conclusion": "success",
-                "expected_version": int(unit["version"]),
-                "idempotency_key": _check_key(pass_id, unit_id, head_sha, name),
-            },
-        )
-        payload = filed.get("payload")
-        if not isinstance(payload, dict) or payload.get("conclusion") != "success":
-            return
+    for ac_id in criteria:
+        for name in sorted(names):
+            filed = client.named_check(
+                unit_id,
+                {
+                    "work_package_revision_id": unit["work_package_revision_id"],
+                    "ac_id": ac_id,
+                    "dispatch_id": dispatch_id,
+                    "repository": repository,
+                    "pr_number": pr_number,
+                    "pr_url": f"https://github.com/{repository}/pull/{pr_number}",
+                    "head_sha": head_sha,
+                    "check_name": name,
+                    "expected_conclusion": "success",
+                    "expected_version": int(unit["version"]),
+                    "idempotency_key": _check_key(pass_id, unit_id, ac_id, head_sha, name),
+                },
+            )
+            payload = filed.get("payload")
+            if not isinstance(payload, dict) or payload.get("conclusion") != "success":
+                break
 
 
 def run_pass(
@@ -147,17 +179,22 @@ def run_pass(
             outcomes.append(Outcome(key, UNREAD, str(error), unit_id))
             continue
         try:
-            bump = _is_bump(unit)
-            if not (bump or _is_rotation(unit)):
+            bump, rotation = _is_bump(unit), _is_rotation(unit)
+            if not (bump or rotation or _is_app_change(unit)):
                 continue
             if dry_run:
                 outcomes.append(Outcome(key, "would-verify"))
                 continue
+            early = None
             if bump:
                 early = _file_bump_checks(client, pass_id, unit_id, unit, read_required_checks)
-                if early is not None:
-                    outcomes.append(Outcome(key, *early, unit_id=unit_id))
-                    continue
+            elif not rotation:
+                early = _file_app_change_checks(
+                    client, pass_id, unit_id, unit, read_required_checks
+                )
+            if early is not None:
+                outcomes.append(Outcome(key, *early, unit_id=unit_id))
+                continue
             version = int(unit["version"])
             answer = client.verify(unit_id, version, f"rotation-verifier-{unit_id}-v{version}")
         except (VerifierCallError, KeyError, TypeError, ValueError) as error:
@@ -177,20 +214,79 @@ def _file_bump_checks(
     read_required_checks: Callable[[str], tuple[str, ...]] | None,
 ) -> tuple[str, str] | None:
     """File a bump unit's checks. None means go on to `/verify`; otherwise the unit's outcome."""
-    if read_required_checks is None:
-        raise VerifierCallError("no GitHub token to read the required checks with")
     repository = str(unit["authority"]["constraints"]["target_repository"]).strip()
     try:
-        names = read_required_checks(repository)
+        names = _required_names(read_required_checks, repository)
     except RequiredChecksUnreadable as error:
         return (CHECKS_UNREADABLE, str(error))
     if not names:
         return (NO_REQUIRED_CHECK, repository)
+    return _file_all(client, pass_id, unit_id, unit, (BUMP_AC_ID,), names)
+
+
+def _file_app_change_checks(
+    client: VerifierClient,
+    pass_id: str,
+    unit_id: str,
+    unit: dict[str, Any],
+    read_required_checks: Callable[[str], tuple[str, ...]] | None,
+) -> tuple[str, str] | None:
+    """As `_file_bump_checks`, past the grant. With no check to file, `/verify` sends the unit to a
+    person: a repository requiring nothing never passes by default."""
+    repository = str(unit["authority"]["constraints"]["target_repository"]).strip()
+    held = _grant_hold(client, unit, repository)
+    if held is not None:
+        return held
+    criteria = tuple(unit.get(AUTOMATED_CHECK_IDS) or ())
+    if not criteria:
+        return None
     try:
-        _file_checks(client, pass_id, unit_id, unit, names)
+        names = _required_names(read_required_checks, repository)
+    except NoRequiredChecks:
+        return None
+    except RequiredChecksUnreadable as error:
+        return (CHECKS_UNREADABLE, str(error))
+    return _file_all(client, pass_id, unit_id, unit, criteria, names) if names else None
+
+
+def _required_names(
+    read_required_checks: Callable[[str], tuple[str, ...]] | None, repository: str
+) -> tuple[str, ...]:
+    if read_required_checks is None:
+        raise VerifierCallError("no GitHub token to read the required checks with")
+    return read_required_checks(repository)
+
+
+def _file_all(
+    client: VerifierClient,
+    pass_id: str,
+    unit_id: str,
+    unit: dict[str, Any],
+    criteria: Sequence[str],
+    names: Sequence[str],
+) -> tuple[str, str] | None:
+    try:
+        _file_checks(client, pass_id, unit_id, unit, criteria, names)
     except CheckNotConcluded:
         return (WAITING, "a required check has not concluded")
     return None
+
+
+def _grant_hold(
+    client: VerifierClient, unit: dict[str, Any], repository: str
+) -> tuple[str, str] | None:
+    """Why the member record holds this unit, or None. An unread record says nothing of a grant, so
+    it holds the unit without alerting, and an empty one is unread, never a withdrawal."""
+    try:
+        members = client.members()
+    except (VerifierCallError, MembersUnreadable) as error:
+        return (UNREAD, str(error))
+    if not members:
+        return (UNREAD, "the member record has no rows")
+    service = service_for_change_class(str(unit["authority"].get("change_class")))
+    if repository.lower() in {name.lower() for name in granted(members, service)}:
+        return None
+    return (REFUSED, f"the member record does not grant {service} on {repository}")
 
 
 def exit_code(outcomes: Sequence[Outcome]) -> int:

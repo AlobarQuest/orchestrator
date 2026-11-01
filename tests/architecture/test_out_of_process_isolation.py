@@ -236,8 +236,9 @@ TABLE: dict[str, Row] = {
     # SDS 1.1 item 5a: the deploy-time image binder, the one program ADR-0039's amendment lets
     # mint a post-deploy unit. It borrows from no other lane -- its git reads and its three
     # confined clients are its own -- so the exception cannot travel through an import.
-    # ADR-0055 amendment 14: runs `/verify` on submitted rotation units as VERIFIER, through the
-    # shared confined transport. It decides nothing, so it borrows no sibling's knowledge.
+    # ADR-0055 amendment 14: runs `/verify` on submitted factory units as VERIFIER, through the
+    # shared confined transport. It decides nothing. Verification Part 2: it reads the grant by
+    # `sds_members`' parser and populations, so it doesn't carry `no_sibling_lanes`.
     "rotation_verifier": _row(
         "__future__",
         # Verification Part 1: tells a person through the shared alert-hub client, which owns the
@@ -252,10 +253,10 @@ TABLE: dict[str, Row] = {
         "os",
         "pathlib",
         "re",
+        "sds_members",
         "sys",
         "typing",
         "uuid",
-        no_sibling_lanes=True,
     ),
     # ADR-0055 amendment 15, increment 5: proposes each carried rotation's decomposition as SYSTEM,
     # from change-manager's work records and the orchestrator's intake, through its own confined

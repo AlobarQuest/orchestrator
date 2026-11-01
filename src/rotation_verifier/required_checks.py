@@ -1,8 +1,8 @@
 """A repository's required status checks on `main`, read from branch protection.
 
-The bump units' acceptance is "every check the repository requires passed", and the repository
-names those itself. This is the one GitHub read the lane makes; the checks themselves are observed
-by the orchestrator, not here.
+A factory unit's `automated_check` acceptance is "every check the repository requires passed", and
+the repository names those itself. This is the one GitHub read the lane makes; the checks themselves
+are observed by the orchestrator, not here.
 """
 
 from __future__ import annotations
@@ -25,6 +25,14 @@ class RequiredChecksUnreadable(RuntimeError):
     """GitHub did not say what the repository requires, so a bump cannot be judged."""
 
 
+class NoRequiredChecks(RequiredChecksUnreadable):
+    """A 404: `main` has no required checks, or the token can't see the repository.
+
+    Still unreadable to a bump, which waits for an answer. An app-change unit goes to a person
+    either way, and neither reading can pass it.
+    """
+
+
 def _permits(method: str, path: str) -> bool:
     return method == "GET" and _PATH.fullmatch(path) is not None
 
@@ -37,8 +45,9 @@ def required_checks(
 ) -> tuple[str, ...]:
     """The `contexts` of `main`'s required status checks, sorted.
 
-    Raises `RequiredChecksUnreadable` on anything but a 200 with a readable body. An empty tuple
-    means a 200 that lists no contexts, which is a repository requiring nothing.
+    Raises `RequiredChecksUnreadable` on anything but a 200 with a readable body, as
+    `NoRequiredChecks` for a 404. An empty tuple means a 200 that lists no contexts, which is a
+    repository requiring nothing.
     """
     if base_url_problem(GITHUB_API) is not None:  # pragma: no cover - constant
         raise RequiredChecksUnreadable("the GitHub base URL is unusable")
@@ -64,6 +73,8 @@ def required_checks(
             client.close()
     except TransportFailure as failure:
         raise RequiredChecksUnreadable(f"unreachable: {failure.error_type}") from None
+    if response.status_code == 404:
+        raise NoRequiredChecks(f"GitHub answered 404 for {repository}")
     if response.status_code != 200:
         raise RequiredChecksUnreadable(f"GitHub answered {response.status_code} for {repository}")
     try:

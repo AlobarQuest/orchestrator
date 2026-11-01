@@ -774,9 +774,9 @@ OUTBOUND_ALLOWLIST = {
     # Enforced by `system_permits` / `verifier_permits` / `anonymous_permits` and pinned by
     # tests/image_release/test_client_surface.py. Its egress is not the orchestrator's.
     Path("src/image_release/client.py"),
-    # ADR-0055 amendment 14. Four paths through the confined transport, as VERIFIER: the status
-    # ledger and one unit read, `/verify`, and a named check's evidence. Its egress is the
-    # orchestrator's own API.
+    # ADR-0055 amendment 14. Five paths through the confined transport, as VERIFIER: the status
+    # ledger, the member record and one unit read, `/verify`, and a named check's evidence. Its
+    # egress is the orchestrator's own API.
     Path("src/rotation_verifier/client.py"),
     # Landing Part 4. The one GitHub read the lane makes: a repository's required status checks on
     # `main`, through the confined transport and a single permitted path. Read-only.

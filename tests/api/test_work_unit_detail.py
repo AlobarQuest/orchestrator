@@ -70,6 +70,7 @@ def test_a_unit_never_dispatched_or_bound_serves_nulls(
     assert body["latest_dispatch_id"] is None
     assert body["pr_number"] is None
     assert body["armed_head_sha"] is None
+    assert body["automated_check_ac_ids"] == []
 
 
 def test_the_newest_dispatch_that_ran_wins(db_client: TestClient, migrated_engine: Engine) -> None:

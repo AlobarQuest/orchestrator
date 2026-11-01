@@ -326,6 +326,7 @@ paths = [
   "tests/api/test_evidence_supersede_route.py",
   "tests/api/test_recover_evidence_api.py",
   "tests/api/test_verifier_api.py",
+  "tests/api/test_app_change_unit_verification.py",
   "tests/api/test_bump_unit_verification.py",
   "tests/web/test_adjudication_route.py",
 ]
@@ -608,6 +609,7 @@ paths = [
   "tests/rotation_verifier/__init__.py",
   "tests/rotation_verifier/test_alerts.py",
   "tests/rotation_verifier/test_client_surface.py",
+  "tests/rotation_verifier/test_factory_units.py",
   "tests/rotation_verifier/test_launcher.py",
   "tests/rotation_verifier/test_pass.py",
   "src/rotation_decomposer/**",

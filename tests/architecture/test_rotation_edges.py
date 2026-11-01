@@ -218,6 +218,7 @@ EDGES: dict[str, RotationEdge] = {
         orchestrator=frozenset(
             {
                 ("GET", "/api/v1/status-ledger"),
+                MEMBERS,
                 ("GET", UNIT_PATH),
                 ("POST", f"{UNIT_PATH}/verify"),
                 ("POST", f"{UNIT_PATH}/verifier-evidence/named-check"),
@@ -556,6 +557,7 @@ NETWORK: dict[str, dict[str, int]] = {
         "src/rotation_verifier/cli.py": 0,
         "src/rotation_verifier/client.py": 1,
         "src/rotation_verifier/required_checks.py": 1,
+        "src/sds_members/client.py": 1,
     },
 }
 
@@ -649,6 +651,8 @@ BORROWED: dict[str, dict[str, frozenset[str]]] = {
         "estate_clients.confined": frozenset(
             {"ConfinedClient", "TransportFailure", "base_url_problem", "error_code"}
         ),
+        "sds_members.client": frozenset({"Member", "MembersUnreadable", "parse_members"}),
+        "sds_members.populations": frozenset({"granted", "service_for_change_class"}),
     },
     "rotation_worker": {
         "alert_hub_client": frozenset(

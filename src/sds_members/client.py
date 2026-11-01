@@ -144,6 +144,17 @@ def _parse(wire: Any) -> Member:
     )
 
 
+def parse_members(body: Any) -> list[Member]:
+    """The record in a `GET /api/v1/members` body, for a lane that reads it with its own client."""
+    try:
+        members = body["members"]
+        if not isinstance(members, list):
+            raise TypeError("members")
+        return [_parse(wire) for wire in members]
+    except ValueError, KeyError, TypeError, AttributeError:
+        raise MembersUnreadable(f"the answer to GET {_MEMBERS} was not the member record") from None
+
+
 def _parse_hold(wire: Any) -> Hold:
     fields = [wire[name] for name in ("ecosystem", "directory", "dependency", "ceiling")]
     if not all(isinstance(value, str) for value in fields):
@@ -173,14 +184,11 @@ def read_members(
             )
         try:
             body = response.json()
-            members = body["members"]
-            if not isinstance(members, list):
-                raise TypeError("members")
-            return [_parse(wire) for wire in members]
-        except ValueError, KeyError, TypeError, AttributeError:
+        except ValueError:
             raise MembersUnreadable(
                 f"the answer to GET {_MEMBERS} was not the member record"
             ) from None
+        return parse_members(body)
     finally:
         client.close()
 

@@ -1,8 +1,8 @@
-"""The lane's confined surface on the orchestrator: read units, file named checks and verify, as
-VERIFIER. Its other requests are `required_checks.py`'s GitHub read and alert-hub, through
-`alerts.py`.
+"""The lane's confined surface on the orchestrator: read units and the member record, file named
+checks and verify, as VERIFIER. Its other requests are `required_checks.py`'s GitHub read and
+alert-hub, through `alerts.py`.
 
-Four paths and no others, each matched against an anchored pattern with the id's shape spelled
+Five paths and no others, each matched against an anchored pattern with the id's shape spelled
 out, so a prefix, a trailing slash or `.../{id}/anything-else` does not match.
 """
 
@@ -14,8 +14,10 @@ from typing import Any
 import httpx
 
 from estate_clients.confined import ConfinedClient, TransportFailure, base_url_problem, error_code
+from sds_members.client import Member, parse_members
 
 LEDGER = "/api/v1/status-ledger"
+MEMBERS = "/api/v1/members"
 UUID_SHAPE = r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}"
 _UNIT = re.compile(rf"^/api/v1/work-units/{UUID_SHAPE}$")
 _VERIFY = re.compile(rf"^/api/v1/work-units/{UUID_SHAPE}/verify$")
@@ -44,7 +46,7 @@ class UnusableEndpointError(RuntimeError):
 
 def permits(method: str, path: str) -> bool:
     if method == "GET":
-        return path == LEDGER or _UNIT.fullmatch(path) is not None
+        return path in (LEDGER, MEMBERS) or _UNIT.fullmatch(path) is not None
     return method == "POST" and (
         _VERIFY.fullmatch(path) is not None or _NAMED_CHECK.fullmatch(path) is not None
     )
@@ -101,6 +103,10 @@ class VerifierClient:
         if not isinstance(body, dict):
             raise VerifierCallError("the orchestrator did not answer with a work unit")
         return body
+
+    def members(self) -> list[Member]:
+        """The member record, retired members included. `MembersUnreadable` if it isn't one."""
+        return parse_members(self._json("GET", MEMBERS))
 
     def verify(self, unit_id: str, version: int, idempotency_key: str) -> dict[str, Any]:
         body = self._json(
