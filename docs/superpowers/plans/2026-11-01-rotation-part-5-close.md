@@ -92,3 +92,13 @@
 ## Live proof
 
 No proof exists for the bearer's first rotation until 2027. The dry run proves generation only.
+
+Recorded 2026-11-01:
+
+- **Window:** a kickstarted `com.devon.change-window` run activated infraops at `ad70255`, applied 0 of 0, ran no security step, and sent its digest. The Healthchecks ping is inferred from exit 0.
+- **Findings:** `cred-findings` reports 0 findings and serves the bearer with the anchor 2026-07-08.
+- **Keeper:** in `Rotation / Keepers`. Developer Machines and the root read the same hash from fresh logins, beside a known-good control read.
+- **Token:** Devon removed its project instead of revoking it, so Task 6's Keychain and row deletions didn't run. A fresh login lists no project.
+- **State file:** `security-emit-state.json` removed after a search found no reader.
+
+The first 03:00 scan on this code ran after this record, so the manual checklists have no live proof here.
