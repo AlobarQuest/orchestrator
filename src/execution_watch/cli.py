@@ -1,4 +1,4 @@
-"""One execution-watch pass: every open work unit's stuck condition becomes a keyed alert.
+"""One execution-watch pass: every stuck unit and overdue admission wait becomes a keyed alert.
 
 Three invocations:
 
@@ -36,8 +36,8 @@ from execution_watch.client import USER_AGENT, CallError, Orchestrator
 from execution_watch.decide import (
     DEFAULT_THRESHOLDS,
     Condition,
+    StatusRow,
     Thresholds,
-    UnitRow,
     firing,
     raised_keys,
 )
@@ -50,6 +50,11 @@ FIRST_SEEN_FILE: Final = "first-seen.json"
 KNOWN_FILE: Final = "known.json"
 UNREAD_KEY: Final = Condition.WATCH_UNREAD.value
 UNREAD_EXIT: Final = 2
+# While the admission rows reach production: a pass baselines every present admission key and
+# sends none, so history can't fire before anything could seed it. The second pull request of
+# Admission Part 1 deletes this and its branch in `_readable`.
+ABSORB_ADMISSION: Final = True
+_ADMISSION_CONDITIONS: Final = (Condition.ADMISSION_WAITING, Condition.ADMISSION_POLICY_NOT_APPLIED)
 
 
 def state_directory(environ: Mapping[str, str], home: Path) -> Path:
@@ -88,7 +93,7 @@ def _unread_alert(detail: str) -> Alert:
     )
 
 
-def seed(rows: Sequence[UnitRow], state: Path, now: datetime) -> int:
+def seed(rows: Sequence[StatusRow], state: Path, now: datetime) -> int:
     """Write the known subjects from one read. Sends nothing, and never overwrites."""
     path = state / KNOWN_FILE
     if path.exists():
@@ -111,7 +116,7 @@ def seed(rows: Sequence[UnitRow], state: Path, now: datetime) -> int:
     return 0
 
 
-def dry_run(rows: Sequence[UnitRow], state: Path, now: datetime) -> int:
+def dry_run(rows: Sequence[StatusRow], state: Path, now: datetime) -> int:
     known = _read_keys(state / KNOWN_FILE)
     raised = raised_keys(rows, now, DEFAULT_THRESHOLDS)
     if known is None:
@@ -144,7 +149,7 @@ def _unreadable(
 
 
 def _readable(
-    rows: Sequence[UnitRow],
+    rows: Sequence[StatusRow],
     known: set[str],
     sightings: FirstSightings,
     state: Path,
@@ -154,6 +159,8 @@ def _readable(
 ) -> dict[str, Alert]:
     """Save the known set and the sightings, then decide what fires."""
     raised = raised_keys(rows, now, thresholds)
+    if ABSORB_ADMISSION:
+        known = known | {key for key in raised if key.startswith(_ADMISSION_CONDITIONS)}
     try:
         _write_known(state / KNOWN_FILE, known & raised)
     except OSError as error:
@@ -194,7 +201,7 @@ def submit(
     reasons: list[str] = []
     code = 0
     try:
-        rows: list[UnitRow] | None = orchestrator.execution_status()
+        rows: list[StatusRow] | None = orchestrator.execution_status()
         read_failure = ""
     except CallError as error:
         rows, read_failure = None, str(error)
@@ -224,7 +231,7 @@ def submit(
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="execution-watch",
-        description="Alert on work units that are stalled, held, failed or never started.",
+        description="Alert on work stalled, held, failed, never started or waiting on a person.",
     )
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--submit", action="store_true", help="send alerts (the scheduled pass)")

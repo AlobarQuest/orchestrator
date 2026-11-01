@@ -22,7 +22,7 @@ from orchestrator.persistence.models import (
     PackageAcceptanceCriterion,
 )
 
-# The event that says why policy left a dependency-update proposal for a person, one per proposal.
+# The event that says why policy left a SYSTEM proposal for a person, one per proposal.
 POLICY_NOT_APPLIED = "decomposition.policy_not_applied"
 
 

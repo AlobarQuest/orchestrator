@@ -330,3 +330,25 @@ def test_a_terminal_unit_contributes_nothing(migrated_session: Session) -> None:
     migrated_session.commit()
 
     assert _kinds(migrated_session) == set()
+
+
+def test_a_rejected_revision_stays_on_the_queue_though_the_watch_drops_it(
+    migrated_session: Session,
+) -> None:
+    """The alert lane's exclusions live in its own read: this queue's text promises otherwise."""
+    revision = _seed_registered_package(migrated_session, "rejected-stays")
+    proposal = submit_decomposition_proposal(
+        migrated_session,
+        proposal_command(revision.id, package_ac_ids(migrated_session, revision.id)),
+        worker_actor(),
+    )
+    reject_decomposition_proposal(
+        migrated_session,
+        proposal.id,
+        actor=human_actor(),
+        reason="declined",
+        idempotency_key="rejected-stays",
+    )
+    migrated_session.commit()
+
+    assert "package_breakdown" in _kinds(migrated_session)

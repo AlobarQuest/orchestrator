@@ -9,17 +9,21 @@ from typing import Any, cast
 
 import pytest
 
+from bump_driver.cli import SYSTEM_ACTOR as BUMP_SYSTEM_ACTOR
 from bump_driver.cli import run_pass
 from bump_driver.client import CallError, GitHub, Orchestrator
 from execution_watch.decide import (
+    SYSTEM_ACTOR,
     Condition,
+    StatusRow,
     Thresholds,
-    UnitRow,
     conditions,
     firing,
     owned_elsewhere,
     raised_keys,
 )
+from rotation_decomposer.alerts import AWAITING
+from rotation_decomposer.cli import _existing as rotation_existing
 
 NOW = datetime(2026, 11, 1, 12, 0, tzinfo=UTC)
 REPOSITORY = "AlobarQuest/orchestrator"
@@ -27,8 +31,8 @@ BUMP = "dependency-update"
 THRESHOLDS = Thresholds()
 
 
-def row(**changes: Any) -> UnitRow:
-    base = UnitRow(
+def row(**changes: Any) -> StatusRow:
+    base = StatusRow(
         unit_id=str(uuid.UUID(int=1)),
         state="ready",
         change_class=BUMP,
@@ -49,7 +53,7 @@ def hours_ago(hours: float) -> datetime:
     return NOW - timedelta(hours=hours)
 
 
-def unowned(**changes: Any) -> UnitRow:
+def unowned(**changes: Any) -> StatusRow:
     """A row of a class no sibling lane covers, so every condition it has is this lane's."""
     return row(change_class="app-change", standing=False, **changes)
 
@@ -284,7 +288,7 @@ REVISION = "f962475a-1964-46df-81ac-2b3029dec2a7"
 
 
 class _Orchestrator:
-    def __init__(self, shape: UnitRow, history: list[dict[str, Any]]) -> None:
+    def __init__(self, shape: StatusRow, history: list[dict[str, Any]]) -> None:
         self._shape = shape
         self._history = history
 
@@ -325,7 +329,7 @@ class _Orchestrator:
         raise CallError("dispatch refused", status=409, code="refused")
 
 
-def _bump_raises(shape: UnitRow) -> bool:
+def _bump_raises(shape: StatusRow) -> bool:
     """Whether the bump lane's own pass raises a keyed alert for this unit."""
     record = {
         "id": 170,
@@ -386,6 +390,229 @@ def test_the_ownership_table_matches_the_bump_lane(
     shape = row(change_class=change_class, standing=standing, granted=granted, **_SHAPES[condition])
     assert condition in conditions(shape, NOW)
     assert owned_elsewhere(shape, condition) == _bump_raises(shape)
+
+
+# Admission: what waits on a person before a unit runs.
+
+SUBJECT = "0c7a484c-3333-4333-8333-333333333333"
+WAITING_KEY = f"admission-waiting:proposal:{SUBJECT}"
+NOT_APPLIED_KEY = f"admission-policy-not-applied:{SUBJECT}"
+
+
+def waiting(kind: str = "proposal", **changes: Any) -> StatusRow:
+    """A row that isn't a unit, as the server serves it: the unit flags are empty."""
+    base = dict(
+        unit_id=None,
+        state="proposed",
+        change_class=None,
+        standing=False,
+        target_repository=None,
+        granted=False,
+        subject_kind=kind,
+        subject_id=SUBJECT,
+        waiting=True,
+    )
+    return row(**(base | changes))
+
+
+def gate(**changes: Any) -> StatusRow:
+    """A unit at an admission gate, which the server marks `waiting`."""
+    return unowned(
+        state="awaiting_review", waiting=True, subject_id=str(uuid.UUID(int=1)), **changes
+    )
+
+
+def covered_bump_proposal(**changes: Any) -> StatusRow:
+    return replace(
+        waiting(
+            change_class=BUMP,
+            standing=True,
+            granted=True,
+            target_repository=REPOSITORY,
+            proposed_by=SYSTEM_ACTOR,
+        ),
+        **changes,
+    )
+
+
+@pytest.mark.parametrize(
+    ("kind", "state"),
+    [
+        ("proposal", "proposed"),
+        ("proposal", "revision_required"),
+        ("package", "registered"),
+        ("staged-intake", "staged"),
+    ],
+)
+def test_a_row_that_is_not_a_unit_raises_only_its_wait(kind: str, state: str) -> None:
+    """A sent-back proposal's state is a unit's held state too, and it isn't a held unit."""
+    subject = waiting(kind, state=state, overdue=True, lease_lapsed=True)
+    assert conditions(subject, NOW) == {Condition.ADMISSION_WAITING}
+    assert raised_keys([subject], NOW, THRESHOLDS) == {f"admission-waiting:{kind}:{SUBJECT}"}
+
+
+def test_a_wait_is_raised_from_the_first_pass_and_fires_only_overdue() -> None:
+    """Raised on presence: `known & raised` would otherwise prune a seeded key before overdue."""
+    young = waiting()
+    assert raised_keys([young], NOW, THRESHOLDS) == {WAITING_KEY}
+    assert firing([young], {}, set(), NOW, THRESHOLDS) == {}
+    assert list(firing([replace(young, overdue=True)], {}, set(), NOW, THRESHOLDS)) == [WAITING_KEY]
+
+
+def test_a_known_wait_stays_silent_past_overdue() -> None:
+    assert firing([waiting(overdue=True)], {}, {WAITING_KEY}, NOW, THRESHOLDS) == {}
+
+
+def test_a_unit_at_a_gate_is_keyed_by_its_kind_and_stays_silent_until_overdue() -> None:
+    key = f"admission-waiting:unit:{uuid.UUID(int=1)}"
+    assert raised_keys([gate()], NOW, THRESHOLDS) == {key}
+    assert firing([gate()], {}, set(), NOW, THRESHOLDS) == {}
+    assert list(firing([gate(overdue=True)], {}, set(), NOW, THRESHOLDS)) == [key]
+
+
+def test_a_unit_the_server_says_is_not_waiting_raises_no_wait() -> None:
+    assert conditions(unowned(state="draft", overdue=True), NOW) == set()
+
+
+def test_a_rotation_unit_at_a_gate_raises_nothing() -> None:
+    assert conditions(row(is_rotation=True, state="awaiting_review", waiting=True), NOW) == set()
+
+
+def test_policy_not_applied_needs_no_wait() -> None:
+    refused = waiting(policy_not_applied="envelope_not_recognised")
+    assert conditions(refused, NOW) == {
+        Condition.ADMISSION_WAITING,
+        Condition.ADMISSION_POLICY_NOT_APPLIED,
+    }
+    assert list(firing([refused], {}, set(), NOW, THRESHOLDS)) == [NOT_APPLIED_KEY]
+
+
+def test_a_person_s_own_proposal_raises_no_policy_alert() -> None:
+    """A bump records this for every proposal a person makes; policy was never going to act."""
+    theirs = waiting(policy_not_applied="proposer_not_system")
+    assert conditions(theirs, NOW) == {Condition.ADMISSION_WAITING}
+
+
+def test_a_rotation_proposal_refused_by_policy_passes_the_rotation_early_return() -> None:
+    refused = waiting(rotation_package=True, policy_not_applied="attempts_over_budget")
+    assert refused.is_rotation is False
+    assert NOT_APPLIED_KEY in raised_keys([refused], NOW, THRESHOLDS)
+
+
+def test_the_policy_alert_says_why_and_what_next() -> None:
+    refused = waiting(policy_not_applied="attempts_over_budget")
+    [alert] = firing([refused], {}, set(), NOW, THRESHOLDS).values()
+    assert "attempts_over_budget" in alert.message
+    assert f"/review/decomposition-proposals/{SUBJECT}" in alert.message
+
+
+@pytest.mark.parametrize(
+    ("subject", "href"),
+    [
+        (waiting(overdue=True), f"/review/decomposition-proposals/{SUBJECT}"),
+        (waiting("package", overdue=True), f"/review/intakes/{SUBJECT}"),
+        (waiting("staged-intake", overdue=True), f"/review/staged-intakes/{SUBJECT}"),
+        (gate(overdue=True), f"/review/units/{uuid.UUID(int=1)}"),
+    ],
+    ids=["proposal", "package", "staged-intake", "unit"],
+)
+def test_each_wait_says_what_waits_and_the_next_step(subject: StatusRow, href: str) -> None:
+    [alert] = firing([subject], {}, set(), NOW, THRESHOLDS).values()
+    assert href in alert.message
+    assert len(alert.message.split(". ")) >= 2
+    for hedge in ("may ", "might", "possibly", "probably", "perhaps"):
+        assert hedge not in alert.message.lower()
+
+
+def test_a_superseded_or_sent_back_wait_says_what_a_person_does_next() -> None:
+    [alert] = firing(
+        [waiting(state="revision_required", overdue=True)], {}, set(), NOW, THRESHOLDS
+    ).values()
+    assert "sent back" in alert.message
+
+
+# Who else tells a person about a proposal, held to what each lane really does.
+
+
+class _ProposalOrchestrator(_Orchestrator):
+    def __init__(self, shape: StatusRow) -> None:
+        super().__init__(shape, [])
+
+    def work(self, change_record_id: int) -> dict[str, Any]:
+        return {"revision_ids": [REVISION], "units": []}
+
+    def proposals(self, revision_id: str) -> list[dict[str, Any]]:
+        return [{"id": SUBJECT, "state": self._shape.state, "proposed_by": self._shape.proposed_by}]
+
+
+def _bump_raises_on_proposal(shape: StatusRow) -> bool:
+    record = {
+        "id": 170,
+        "status": "approved",
+        "change_class": BUMP,
+        "target_repository": shape.target_repository,
+        "package_id": "orchestrator-uv-httpx2",
+        "package_revision": 1,
+    }
+
+    def refuse(*_: object) -> Any:
+        raise AssertionError("a revision with a proposal is never proposed again")
+
+    outcomes = run_pass(
+        [record],
+        cast(Orchestrator, _ProposalOrchestrator(shape)),
+        cast(GitHub, object()),
+        {REPOSITORY.lower(): REPOSITORY} if shape.granted else {},
+        refuse,
+        refuse,
+        now=NOW,
+    )
+    return any(outcome.key is not None for outcome in outcomes)
+
+
+def test_this_lane_names_the_bump_lane_s_identity() -> None:
+    assert SYSTEM_ACTOR == BUMP_SYSTEM_ACTOR
+
+
+@pytest.mark.parametrize("state", ["proposed", "revision_required"])
+@pytest.mark.parametrize("proposer", [SYSTEM_ACTOR, "devon"])
+@pytest.mark.parametrize("standing", [True, False])
+@pytest.mark.parametrize("granted", [True, False])
+@pytest.mark.parametrize(
+    "condition", [Condition.ADMISSION_WAITING, Condition.ADMISSION_POLICY_NOT_APPLIED]
+)
+def test_the_proposal_ownership_table_matches_the_bump_lane(
+    state: str, proposer: str, standing: bool, granted: bool, condition: Condition
+) -> None:
+    shape = covered_bump_proposal(
+        state=state, proposed_by=proposer, standing=standing, granted=granted
+    )
+    assert owned_elsewhere(shape, condition) == _bump_raises_on_proposal(shape)
+
+
+@pytest.mark.parametrize("state", ["proposed", "revision_required"])
+def test_a_rotation_proposal_s_wait_ownership_matches_its_lane(state: str) -> None:
+    shape = waiting(state=state, rotation_package=True)
+    outcome = rotation_existing("subject", [state])
+    assert outcome is not None
+    assert owned_elsewhere(shape, Condition.ADMISSION_WAITING) == (outcome.result == AWAITING)
+
+
+def test_a_rotation_s_policy_refusal_is_this_lanes() -> None:
+    refused = waiting(rotation_package=True, policy_not_applied="attempts_over_budget")
+    assert not owned_elsewhere(refused, Condition.ADMISSION_POLICY_NOT_APPLIED)
+
+
+def test_a_covered_bump_proposal_raises_nothing_here() -> None:
+    covered = covered_bump_proposal(overdue=True, policy_not_applied="binding_violated")
+    assert raised_keys([covered], NOW, THRESHOLDS) == set()
+
+
+def test_a_units_wait_and_other_kinds_are_never_owned_elsewhere() -> None:
+    assert not owned_elsewhere(
+        replace(gate(), change_class=BUMP, standing=True), Condition.ADMISSION_WAITING
+    )
+    assert not owned_elsewhere(waiting("package"), Condition.ADMISSION_WAITING)
 
 
 def test_a_failed_bump_unit_is_the_work_watchers_and_never_the_bump_lanes() -> None:

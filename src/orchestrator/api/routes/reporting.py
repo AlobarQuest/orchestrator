@@ -95,7 +95,8 @@ def execution_status_route(
     session: SessionDep,
     settings: SettingsDep,
 ) -> object:
-    """Read-only: one row per unit not yet completed or cancelled, for the execution alert lane.
+    """Read-only: one row per unit not yet completed or cancelled, and one per staged intake,
+    undecomposed package and undecided proposal, for the execution alert lane.
 
     Gated inline on OPERATOR or OBSERVER: the observer gains this one read and no write.
     """
@@ -105,6 +106,7 @@ def execution_status_route(
         session,
         stall_grace_seconds=settings.execution_stall_grace_seconds,
         failure_signature_threshold=settings.dispatch_failure_signature_threshold,
+        stalled_approval_seconds=settings.dead_letter_stalled_approval_seconds,
     )
 
 

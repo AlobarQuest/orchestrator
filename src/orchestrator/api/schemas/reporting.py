@@ -120,15 +120,23 @@ class DeadLetterEntryResponse(BaseModel):
 class ExecutionStatusRow(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    unit_id: UUID
+    subject_kind: str
+    subject_id: UUID
+    unit_id: UUID | None
     state: str
     change_class: str | None
     is_rotation: bool
-    standing: bool
+    standing: bool | None
     target_repository: str | None
-    granted: bool
+    granted: bool | None
     latest_dispatch_status: str | None
     latest_dispatch_at: datetime | None
-    has_claim: bool
-    lease_lapsed: bool
-    breaker_open: bool
+    has_claim: bool | None
+    lease_lapsed: bool | None
+    breaker_open: bool | None
+    entered_at: datetime
+    waiting: bool
+    overdue: bool
+    policy_not_applied: str | None
+    proposed_by: str | None
+    rotation_package: bool

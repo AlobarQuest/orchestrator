@@ -1,6 +1,6 @@
-"""Which work-unit execution conditions this lane tells a person about. Pure: no I/O, no clock.
+"""Which conditions this lane tells a person about. Pure: no I/O, no clock.
 
-A row (the orchestrator's `execution-status` read) can show five conditions, each keyed
+A unit's row (the orchestrator's `execution-status` read) can show five conditions, each keyed
 `execution-<kind>:<unit>`. Two sibling lanes already alert on part of that ground, and this lane
 stays silent on exactly what they cover (`owned_elsewhere`), so a person is told once:
 
@@ -11,6 +11,17 @@ stays silent on exactly what they cover (`owned_elsewhere`), so a person is told
   lane's selection, so this lane takes it over.
 
 A rotation unit raises nothing here: the rotation executor owns its own alerts.
+
+Any row may also be waiting at an admission gate. A unit at a gate, a staged intake, an undecomposed
+package and an undecided proposal each raise `admission-waiting:<kind>:<id>` while the server says
+`waiting`, and fire only once it says `overdue`, so a key `known` holds survives being young. A
+proposal policy left for a person raises `admission-policy-not-applied:<proposal>` at once. Two
+sibling lanes own part of that too:
+
+* `bump_driver` alerts on a pending SYSTEM proposal in a repository it covers, and on why policy
+  refused it. A proposal a person made, or sent back, is not in that lane's selection.
+* `rotation_decomposer` alerts on a pending rotation proposal's wait, and not on a sent-back one, or
+  on why policy refused one.
 
 `known` holds the keys that were already raised when the lane first ran. They stay silent for as
 long as they stay raised; a key that clears leaves `known`, so a return is new and alerts.
@@ -32,6 +43,31 @@ _READY: Final = "ready"
 _HELD_STATES: Final = frozenset({"blocked", _REVISION_REQUIRED})
 _BLOCKED_DISPATCH: Final = frozenset({"blocked", "failed"})
 _DISPATCHED: Final = "dispatched"
+_PROPOSED: Final = "proposed"
+# `bump_driver.cli.SYSTEM_ACTOR`, held equal by a test: this lane can't import a sibling lane.
+SYSTEM_ACTOR: Final = "orchestrator-system"
+# A bump records this for every proposal a person or a worker makes; policy never considered them.
+_PROPOSER_NOT_SYSTEM: Final = "proposer_not_system"
+SUBJECT_UNIT: Final = "unit"
+SUBJECT_STAGED_INTAKE: Final = "staged-intake"
+SUBJECT_PACKAGE: Final = "package"
+SUBJECT_PROPOSAL: Final = "proposal"
+# The server's `execution_status.SUBJECT_*`, held equal by the route's test.
+SUBJECT_KINDS: Final = frozenset(
+    {SUBJECT_UNIT, SUBJECT_STAGED_INTAKE, SUBJECT_PACKAGE, SUBJECT_PROPOSAL}
+)
+_REVIEW_PATHS: Final = {
+    SUBJECT_UNIT: "/review/units/",
+    SUBJECT_STAGED_INTAKE: "/review/staged-intakes/",
+    SUBJECT_PACKAGE: "/review/intakes/",
+    SUBJECT_PROPOSAL: "/review/decomposition-proposals/",
+}
+_WAIT_STEPS: Final = {
+    SUBJECT_UNIT: "Decide it there: approve its envelope, or adjudicate and complete it",
+    SUBJECT_STAGED_INTAKE: "Confirm it there to register it, or withdraw it",
+    SUBJECT_PACKAGE: "Have it broken into work units, or close this alert to leave it",
+    SUBJECT_PROPOSAL: "Approve, reject, or send it back there",
+}
 
 
 class Condition(StrEnum):
@@ -41,13 +77,16 @@ class Condition(StrEnum):
     DISPATCH_BLOCKED = "execution-dispatch-blocked"
     RUN_UNCLAIMED = "execution-run-unclaimed"
     WATCH_UNREAD = "execution-watch-unread"
+    ADMISSION_WAITING = "admission-waiting"
+    ADMISSION_POLICY_NOT_APPLIED = "admission-policy-not-applied"
 
 
 @dataclass(frozen=True)
-class UnitRow:
-    """One row of the orchestrator's execution-status read."""
+class StatusRow:
+    """One row of the orchestrator's execution-status read. A row that isn't a unit has no
+    `unit_id`, and the client reads its empty unit flags as false."""
 
-    unit_id: str
+    unit_id: str | None
     state: str
     change_class: str | None
     is_rotation: bool
@@ -59,6 +98,14 @@ class UnitRow:
     has_claim: bool
     lease_lapsed: bool
     breaker_open: bool
+    subject_kind: str = SUBJECT_UNIT
+    subject_id: str = ""
+    entered_at: datetime | None = None
+    waiting: bool = False
+    overdue: bool = False
+    policy_not_applied: str | None = None
+    proposed_by: str | None = None
+    rotation_package: bool = False
 
 
 @dataclass(frozen=True)
@@ -75,8 +122,25 @@ def key_for(condition: Condition, unit_id: str) -> str:
     return alert_key(condition, unit_id)
 
 
+def _row_key(row: StatusRow, condition: Condition) -> str:
+    if condition is Condition.ADMISSION_WAITING:
+        return alert_key(condition, row.subject_kind, row.subject_id)
+    if condition is Condition.ADMISSION_POLICY_NOT_APPLIED:
+        return alert_key(condition, row.subject_id)
+    return alert_key(condition, str(row.unit_id))
+
+
+def _admission_conditions(row: StatusRow) -> set[Condition]:
+    found: set[Condition] = set()
+    if row.waiting:
+        found.add(Condition.ADMISSION_WAITING)
+    if row.policy_not_applied not in (None, _PROPOSER_NOT_SYSTEM):
+        found.add(Condition.ADMISSION_POLICY_NOT_APPLIED)
+    return found
+
+
 def conditions(
-    row: UnitRow, now: datetime, thresholds: Thresholds = DEFAULT_THRESHOLDS
+    row: StatusRow, now: datetime, thresholds: Thresholds = DEFAULT_THRESHOLDS
 ) -> set[Condition]:
     """What is true of the unit right now, whoever alerts on it. Dispatch conditions need a `ready`
     unit: once a run is claimed, an older refusal or a GitHub error no longer stops it. The
@@ -84,7 +148,9 @@ def conditions(
     open breaker only skips that wait."""
     if row.is_rotation:
         return set()
-    found: set[Condition] = set()
+    found = _admission_conditions(row)
+    if row.subject_kind != SUBJECT_UNIT:
+        return found
     if row.state == "failed":
         found.add(Condition.UNIT_FAILED)
     if row.state in _HELD_STATES:
@@ -104,7 +170,7 @@ def conditions(
     return found
 
 
-def _is_covered_bump(row: UnitRow) -> bool:
+def _is_covered_bump(row: StatusRow) -> bool:
     return (
         row.change_class == BUMP_CHANGE_CLASS
         and row.standing
@@ -113,8 +179,23 @@ def _is_covered_bump(row: UnitRow) -> bool:
     )
 
 
-def owned_elsewhere(row: UnitRow, condition: Condition) -> bool:
-    """Whether a sibling lane already alerts on this condition for this unit."""
+def _is_bump_lanes_proposal(row: StatusRow) -> bool:
+    return (
+        row.subject_kind == SUBJECT_PROPOSAL
+        and row.state == _PROPOSED
+        and row.proposed_by == SYSTEM_ACTOR
+        and _is_covered_bump(row)
+    )
+
+
+def owned_elsewhere(row: StatusRow, condition: Condition) -> bool:
+    """Whether a sibling lane already alerts on this condition for this subject."""
+    if condition is Condition.ADMISSION_WAITING:
+        return _is_bump_lanes_proposal(row) or (
+            row.subject_kind == SUBJECT_PROPOSAL and row.state == _PROPOSED and row.rotation_package
+        )
+    if condition is Condition.ADMISSION_POLICY_NOT_APPLIED:
+        return _is_bump_lanes_proposal(row)
     if condition is Condition.UNIT_FAILED:
         return row.change_class == BUMP_CHANGE_CLASS and row.standing
     if condition is Condition.UNIT_HELD:
@@ -124,7 +205,7 @@ def owned_elsewhere(row: UnitRow, condition: Condition) -> bool:
     return False
 
 
-def _raised(row: UnitRow, now: datetime, thresholds: Thresholds) -> list[Condition]:
+def _raised(row: StatusRow, now: datetime, thresholds: Thresholds) -> list[Condition]:
     return sorted(
         condition
         for condition in conditions(row, now, thresholds)
@@ -132,16 +213,37 @@ def _raised(row: UnitRow, now: datetime, thresholds: Thresholds) -> list[Conditi
     )
 
 
-def raised_keys(rows: Iterable[UnitRow], now: datetime, thresholds: Thresholds) -> set[str]:
+def raised_keys(rows: Iterable[StatusRow], now: datetime, thresholds: Thresholds) -> set[str]:
     """Every key raised now, before any wait: what the first-sighting clock tracks."""
-    return {
-        key_for(condition, row.unit_id)
-        for row in rows
-        for condition in _raised(row, now, thresholds)
-    }
+    return {_row_key(row, condition) for row in rows for condition in _raised(row, now, thresholds)}
 
 
-def _alert(row: UnitRow, condition: Condition, now: datetime) -> Alert:
+def _admission_alert(row: StatusRow, condition: Condition) -> Alert:
+    href = f"{_REVIEW_PATHS[row.subject_kind]}{row.subject_id}"
+    what = f"{row.subject_kind.replace('-', ' ')} {row.subject_id}"
+    if condition is Condition.ADMISSION_POLICY_NOT_APPLIED:
+        return Alert(
+            f"Policy did not approve a proposal: {row.subject_id}",
+            f"Policy left proposal {row.subject_id} for a person: {row.policy_not_applied}. "
+            f"Read it on {href}, then approve, reject, or send it back.",
+            None,
+        )
+    since = row.entered_at.date().isoformat() if row.entered_at else "an unread time"
+    step = (
+        "It was sent back and no new proposal has followed. Propose a new breakdown, or reject it"
+        if row.state == "revision_required"
+        else _WAIT_STEPS[row.subject_kind]
+    )
+    return Alert(
+        f"Waiting on a person: {what}",
+        f"The {what} has waited since {since}. {step}, on {href}.",
+        None,
+    )
+
+
+def _alert(row: StatusRow, condition: Condition, now: datetime) -> Alert:
+    if condition in (Condition.ADMISSION_WAITING, Condition.ADMISSION_POLICY_NOT_APPLIED):
+        return _admission_alert(row, condition)
     unit = row.unit_id
     where = f" in {row.target_repository}" if row.target_repository else ""
     link = f"https://github.com/{row.target_repository}" if row.target_repository else None
@@ -197,7 +299,7 @@ def _alert(row: UnitRow, condition: Condition, now: datetime) -> Alert:
 
 
 def firing(
-    rows: Iterable[UnitRow],
+    rows: Iterable[StatusRow],
     first_seen: Mapping[str, datetime],
     known: Set[str],
     now: datetime,
@@ -208,8 +310,10 @@ def firing(
     alerts: dict[str, Alert] = {}
     for row in rows:
         for condition in _raised(row, now, thresholds):
-            key = key_for(condition, row.unit_id)
+            key = _row_key(row, condition)
             if key in known:
+                continue
+            if condition is Condition.ADMISSION_WAITING and not row.overdue:
                 continue
             if (
                 condition is Condition.DISPATCH_BLOCKED

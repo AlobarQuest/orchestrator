@@ -589,9 +589,10 @@ Placement rule: global CLAUDE.md §7.
   `outcome` are the generator's (`bump_text_differs`) and the member record grants
   `dependency_updates`. The binding is a whole-command allowlist of the generator's forms, and
   covers `allowed_commands` and `verify_commands` too; a generator change means regenerating
-  `dependency_update_proposals.json`. Each bump refusal, and an approval that
-  fails after policy said yes, records `decomposition.policy_not_applied`, served as
-  `policy_not_applied` on the proposal routes. `register_approved_unit` admits SYSTEM only with
+  `dependency_update_proposals.json`. Each refusal of a SYSTEM proposal on either branch, every bump
+  refusal, and an approval that fails after policy said yes, records one
+  `decomposition.policy_not_applied` per proposal, served as `policy_not_applied` on the proposal
+  routes. `register_approved_unit` admits SYSTEM only with
   `approved_by_policy`. A human's or WORKER's proposal, and every other decomposition, waits for a
   person on `/review`.
 - `pr-merge`'s authority term is a bound human approval, sufficient for every change class and
@@ -747,8 +748,12 @@ Placement rule: global CLAUDE.md §7.
   `owned_elsewhere` says a bump lane or `work_watcher` holds, a table
   `test_the_ownership_table_matches_the_bump_lane` holds to the bump lane's selection. A dispatch
   condition applies only to a `ready` unit, because a circuit breaker never closes. Its
-  `known.json` silences history; a missing file refuses, and `--seed` writes it. Detail:
-  `docs/operations/local-development.md`.
+  `known.json` silences history; a missing file refuses, and `--seed` writes it. The same read serves
+  rows that aren't units (staged intakes, undecomposed packages, undecided proposals), so `unit_id`
+  and the unit flags are nullable and a unit condition must gate on `subject_kind`: a sent-back
+  proposal's state is a held unit's. `admission-waiting` is raised while the server says `waiting`
+  and fires only on `overdue`, because `known & raised` would prune a seeded key raised only when
+  overdue. Detail: `docs/operations/local-development.md`.
 - `rotation-heartbeat` is sent as `resolved` after every finished pass and is never raised; its
   meaning is the absence of the ping, heard by an alert-hub schedule. A pass that raises sends none.
   `rotation-instance-behind` is held when the mirror lacks the running revision.

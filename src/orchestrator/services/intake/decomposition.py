@@ -259,13 +259,12 @@ def submit_decomposition_proposal(
     reason = _policy_approval(session, proposal, revision, actor)
     if reason is None:
         return proposal
-    return _approve_by_policy(session, proposal, revision, actor, reason)
+    return _approve_by_policy(session, proposal, actor, reason)
 
 
 def _approve_by_policy(
     session: Session,
     proposal: DecompositionProposal,
-    revision: WorkPackageRevision,
     actor: ActorContext,
     reason: str,
 ) -> DecompositionProposal:
@@ -283,10 +282,9 @@ def _approve_by_policy(
                 ),
             )
     except DomainError as error:
-        if is_bump_revision(revision):
-            _record_policy_not_applied(
-                session, proposal, actor, PolicyRefusal("approval_failed", (error.code,))
-            )
+        _record_policy_not_applied(
+            session, proposal, actor, PolicyRefusal("approval_failed", (error.code,))
+        )
         return proposal
 
 
@@ -304,23 +302,45 @@ def _policy_approval(
     """The reason policy approves this decomposition, or ``None``: a person decides it.
 
     Two branches, each for a SYSTEM proposal only. A revision that has the dependency-update
-    profile, or the bump approval policy's approver, is a bump's (``_bump_policy_approval``),
-    whose every refusal is recorded. Any other revision is a rotation's (ADR-0055 amendment 16):
-    one a person (not an approval policy) approved, whose dependencies are all unit-on-unit and
-    whose every unit is a rotation unit that only a rotation pattern recognises, through the
-    claim's own gate (``human_authority_gate``), with no more attempts than its envelope budgets.
-    ``tests/architecture/test_external_content_observes_only.py`` holds which SYSTEM lanes may post
-    a proposal. A decomposition a person or a WORKER proposed is a person's to decide, whatever
-    it holds.
+    profile, or the bump approval policy's approver, is a bump's (``_bump_policy_outcome``). Any
+    other revision is a rotation's (``_rotation_policy_outcome``). Every refusal of either is
+    recorded, except that a person's or a WORKER's proposal on a rotation's branch records nothing:
+    policy was never going to approve it. A bump's records ``proposer_not_system``, which
+    nothing alerts on. ``tests/architecture/test_external_content_observes_only.py`` holds which
+    SYSTEM lanes may post a proposal. A decomposition a person or a WORKER proposed is a person's
+    to decide, whatever it holds.
     """
     if is_bump_revision(revision):
-        return _bump_policy_approval(session, proposal, revision, actor)
-    if actor.role is not ActorRole.SYSTEM or revision.approved_by.startswith(_POLICY_APPROVER):
+        outcome = _bump_policy_outcome(session, proposal, revision, actor)
+    elif actor.role is ActorRole.SYSTEM:
+        outcome = _rotation_policy_outcome(session, proposal, revision)
+    else:
         return None
+    if isinstance(outcome, PolicyRefusal):
+        # The event is what tells a lane to raise an alert, since a person otherwise learns of
+        # the proposal only from the review queue.
+        _record_policy_not_applied(session, proposal, actor, outcome)
+        return None
+    return outcome
+
+
+def _rotation_policy_outcome(
+    session: Session,
+    proposal: DecompositionProposal,
+    revision: WorkPackageRevision,
+) -> str | PolicyRefusal:
+    """Why policy approves a rotation's decomposition (ADR-0055 amendment 16), or the refusal.
+
+    One a person (not an approval policy) approved, whose dependencies are all unit-on-unit and
+    whose every unit is a rotation unit that only a rotation pattern recognises, through the
+    claim's own gate (``human_authority_gate``), with no more attempts than its envelope budgets.
+    """
+    if revision.approved_by.startswith(_POLICY_APPROVER):
+        return PolicyRefusal("revision_approved_by_policy", (revision.approved_by,))
     try:
         policy = load_factory_policy()
     except DomainError:
-        return None
+        return PolicyRefusal("policy_unreadable")
     rotation_patterns = {
         pattern.name for row in policy.rows.values() for pattern in row.rotation_known_good
     }
@@ -332,7 +352,7 @@ def _policy_approval(
     if any(
         d.kind != "work_unit" or d.required_state_or_condition != "completed" for d in dependencies
     ):
-        return None
+        return PolicyRefusal("dependency_not_a_unit_completing")
     units = session.scalars(
         select(DecompositionProposalUnit).where(
             DecompositionProposalUnit.proposal_id == proposal.id
@@ -348,34 +368,16 @@ def _policy_approval(
         )
         budget = normalize_authority(proposed.authority).budgets.max_attempts
         if budget is None or proposed.max_attempts > budget:
-            return None
+            return PolicyRefusal("attempts_over_budget")
         gate = human_authority_gate(unit, revision)
         if gate.refusals or not set(gate.recognised_by) <= rotation_patterns:
-            return None
+            return PolicyRefusal("envelope_not_recognised", (*gate.refusals, *gate.recognised_by))
         patterns.update(gate.recognised_by)
     return (
         "approved by policy (ADR-0055 amendment 16): every unit is a rotation unit the rotation "
         f"pattern recognises ({', '.join(sorted(patterns))}, policy version {policy.version}), "
         f"and the package revision was approved by {revision.approved_by}"
     )
-
-
-def _bump_policy_approval(
-    session: Session,
-    proposal: DecompositionProposal,
-    revision: WorkPackageRevision,
-    actor: ActorContext,
-) -> str | None:
-    """Policy's approval of a standing bump's decomposition, or ``None`` and the recorded reason.
-
-    ADR-0006 amendment 2. The event is what tells the lane that proposed it to raise an alert,
-    since a person otherwise learns of the proposal only from the review queue.
-    """
-    outcome = _bump_policy_outcome(session, proposal, revision, actor)
-    if isinstance(outcome, PolicyRefusal):
-        _record_policy_not_applied(session, proposal, actor, outcome)
-        return None
-    return outcome
 
 
 def _bump_policy_outcome(
@@ -482,6 +484,10 @@ def _record_policy_not_applied(
     actor: ActorContext,
     refusal: PolicyRefusal,
 ) -> None:
+    """One event per proposal, the first refusal: events are immutable and their keys unique."""
+    key = _derived_idempotency_key(proposal.idempotency_key, "policy-not-applied")
+    if session.scalar(select(Event.id).where(Event.idempotency_key == key)) is not None:
+        return
     session.add(
         Event(
             occurred_at=TransactionClock().now(session),
@@ -493,9 +499,7 @@ def _record_policy_not_applied(
             to_state=proposal.state,
             payload={"reason": refusal.reason, "detail": list(refusal.detail)},
             correlation_id=uuid.uuid4(),
-            idempotency_key=_derived_idempotency_key(
-                proposal.idempotency_key, "policy-not-applied"
-            ),
+            idempotency_key=key,
         )
     )
     session.flush()
