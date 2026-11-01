@@ -176,14 +176,24 @@ def _unit_rows(
         for entry in _open_circuit_breakers(session, failure_signature_threshold, grants)
     }
     entered = _entered_at(session, units)
+    unit_ids = [unit.id for unit in units]
     blocked_by_dependency = set(
         session.scalars(
             select(Dependency.work_unit_id).where(
-                Dependency.work_unit_id.in_([unit.id for unit in units]),
+                Dependency.work_unit_id.in_(unit_ids),
                 Dependency.status == "pending",
+                Dependency.kind == "work_unit",
             )
         )
     )
+    freed_at = {
+        work_unit_id: resolved_at
+        for work_unit_id, resolved_at in session.execute(
+            select(Dependency.work_unit_id, func.max(Dependency.resolved_at))
+            .where(Dependency.work_unit_id.in_(unit_ids), Dependency.resolved_at.is_not(None))
+            .group_by(Dependency.work_unit_id)
+        )
+    }
     rows: list[ExecutionStatusRow] = []
     for unit in units:
         revision = revisions[unit.work_package_revision_id]
@@ -192,6 +202,8 @@ def _unit_rows(
         repository = envelope.target_repository or None
         record = latest.get(unit.id)
         entered_at = entered.get(unit.id, unit.created_at)
+        if unit.state == WorkUnitState.DRAFT and unit.id in freed_at:
+            entered_at = max(entered_at, freed_at[unit.id])
         waiting = unit.state in _GATE_STATES and not (
             unit.state == WorkUnitState.DRAFT and unit.id in blocked_by_dependency
         )
@@ -333,7 +345,9 @@ def _package_rows(
             select(
                 ApprovedDecomposition.work_package_revision_id,
                 func.max(ApprovedDecomposition.superseded_at),
-            ).group_by(ApprovedDecomposition.work_package_revision_id)
+            )
+            .where(ApprovedDecomposition.superseded_at.is_not(None))
+            .group_by(ApprovedDecomposition.work_package_revision_id)
         )
     }
     rows: list[ExecutionStatusRow] = []

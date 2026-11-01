@@ -2,6 +2,7 @@
 
 import uuid
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -476,6 +477,26 @@ def test_a_superseded_revision_waits_from_the_supersession(migrated_session: Ses
     assert row.entered_at > revision.registered_at
 
 
+def test_a_replaced_revision_does_not_ask_for_a_breakdown(migrated_session: Session) -> None:
+    first = _revision(migrated_session, "replaced")
+    second = register_package_intake(
+        migrated_session,
+        intake_command(
+            package_id="pkg-replaced",
+            revision=2,
+            content_hash="sha256:replaced-2",
+            idempotency_key="intake-replaced-2",
+            acceptance_criteria=(acceptance_criterion("AC-001"), acceptance_criterion("AC-002")),
+        ),
+        human_actor(),
+    )
+
+    subjects = _subjects(migrated_session, "package")
+
+    assert first.work_package_id == second.work_package_id
+    assert [row.subject_id for row in subjects] == [second.id]
+
+
 def _not_applied(
     session: Session, proposal: DecompositionProposal, reason: str, key: str = "pna"
 ) -> None:
@@ -657,6 +678,50 @@ def test_a_pending_dependency_does_not_excuse_a_unit_past_draft(
     row = _row(migrated_session, unit)
 
     assert row is not None and row.waiting is True
+
+
+@pytest.mark.parametrize("kind", ["decision", "external_system"])
+def test_a_pending_dependency_on_a_person_is_a_wait(migrated_session: Session, kind: str) -> None:
+    unit = _parked(migrated_session, WorkUnitState.DRAFT, f"person-{kind}")
+    migrated_session.add(
+        Dependency(
+            work_unit_id=unit.id,
+            kind=kind,
+            required_state_or_condition="resolved",
+            external_ref=f"ref-{kind}",
+            status="pending",
+        )
+    )
+    migrated_session.commit()
+
+    row = _row(migrated_session, unit, stalled_approval_seconds=0)
+
+    assert row is not None
+    assert (row.waiting, row.overdue) == (True, True)
+
+
+def test_a_freed_draft_unit_starts_a_new_clock(migrated_session: Session) -> None:
+    unit = _parked(migrated_session, WorkUnitState.DRAFT, "freed")
+    other = _parked(migrated_session, WorkUnitState.READY, "freed-target")
+    unit.created_at = datetime.now(UTC) - timedelta(days=30)
+    freed = datetime.now(UTC)
+    migrated_session.add(
+        Dependency(
+            work_unit_id=unit.id,
+            kind="work_unit",
+            required_state_or_condition="completed",
+            depends_on_work_unit_id=other.id,
+            status="satisfied",
+            resolved_at=freed,
+        )
+    )
+    migrated_session.commit()
+
+    row = _row(migrated_session, unit)
+
+    assert row is not None
+    assert row.entered_at == freed
+    assert (row.waiting, row.overdue) == (True, False)
 
 
 def _state_event(

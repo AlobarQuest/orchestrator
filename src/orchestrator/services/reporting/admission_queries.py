@@ -8,7 +8,7 @@ readers want it.
 from collections.abc import Sequence
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from orchestrator.persistence.models import (
     ApprovedDecomposition,
@@ -29,17 +29,25 @@ def staged_intakes(session: Session) -> Sequence[StagedPackageIntake]:
 
 def undecomposed_revisions(session: Session) -> Sequence[WorkPackageRevision]:
     """Revisions registered through the CLI intake with no active approval and no undecided
-    proposal. `manual_ws31` and `protocol_fixture` revisions can never be a person's to decide."""
+    proposal, and no later revision of the same package: a replaced revision is nobody's to decide.
+    `manual_ws31` and `protocol_fixture` revisions can never be a person's to decide."""
     active_approved = select(ApprovedDecomposition.work_package_revision_id).where(
         ApprovedDecomposition.superseded_at.is_(None)
     )
     undecided_proposals = select(DecompositionProposal.work_package_revision_id).where(
         DecompositionProposal.state == "proposed"
     )
+    later = aliased(WorkPackageRevision)
     return session.scalars(
         select(WorkPackageRevision)
         .where(
             WorkPackageRevision.intake_source == "package_cli",
+            ~select(later.id)
+            .where(
+                later.work_package_id == WorkPackageRevision.work_package_id,
+                later.revision > WorkPackageRevision.revision,
+            )
+            .exists(),
             WorkPackageRevision.id.not_in(active_approved),
             WorkPackageRevision.id.not_in(undecided_proposals),
         )
