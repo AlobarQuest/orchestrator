@@ -96,7 +96,7 @@ def _callee(call: ast.Call) -> str | None:
 
 
 def _writes(attribute: str, model: str) -> set[tuple[str, str]]:
-    """Where `attribute` is written: assignment, `setattr`, a bulk `.values(...)`, or `model(...)`."""
+    """Where `attribute` is written: assignment, `setattr`, bulk `.values(...)` or `model(...)`."""
     found: set[tuple[str, str]] = set()
     for module, node, scope in _nodes():
         targets: list[ast.expr] = []
@@ -118,6 +118,24 @@ def _writes(attribute: str, model: str) -> set[tuple[str, str]]:
     return found
 
 
+def _unsized_lease_writes() -> set[tuple[str, str]]:
+    """A write of `lease_expires_at` whose value isn't computed through `claim_lease`."""
+    found: set[tuple[str, str]] = set()
+    for module, node, scope in _nodes():
+        values: list[ast.expr] = []
+        if isinstance(node, ast.Assign) and any(
+            isinstance(t, ast.Attribute) and t.attr == "lease_expires_at" for t in node.targets
+        ):
+            values = [node.value]
+        elif isinstance(node, ast.Call) and _callee(node) in {"values", "Claim"}:
+            values = [k.value for k in node.keywords if k.arg == "lease_expires_at"]
+        for value in values:
+            names = {n.id for n in ast.walk(value) if isinstance(n, ast.Name)}
+            if "claim_lease" not in names:
+                found.add((module, scope))
+    return found
+
+
 def _release_calls() -> set[tuple[str, str, str]]:
     found: set[tuple[str, str, str]] = set()
     for module, node, scope in _nodes():
@@ -133,6 +151,7 @@ def _release_calls() -> set[tuple[str, str, str]]:
 def test_a_lease_is_granted_only_in_its_three_places() -> None:
     assert _references("claim_lease") == LEASE_GRANTS | {(CLAIMS, IMPORT)}
     assert _writes("lease_expires_at", "Claim") == LEASE_GRANTS
+    assert _unsized_lease_writes() == set()
 
 
 def test_a_reclaim_is_the_only_way_to_the_third_grant() -> None:

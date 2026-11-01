@@ -198,12 +198,13 @@ def _agreed(read, what: str):
     rows = _pattern_rows()
     if not rows:
         raise Unresolvable(f"no {CHANGE_CLASS} pattern to compare")
-    by_pattern = {row.get("name", "<unnamed>"): read(row) for row in rows}
-    distinct = {repr(value) for value in by_pattern.values()}
+    # A list, not a dict by name: the same pattern name appears under several reach rows.
+    by_pattern = [(row.get("name", "<unnamed>"), read(row)) for row in rows]
+    distinct = {repr(value) for _, value in by_pattern}
     if len(distinct) != 1:
-        listing = "; ".join(f"{name}: {value}" for name, value in by_pattern.items())
+        listing = "; ".join(f"{name}: {value}" for name, value in by_pattern)
         raise Unresolvable(f"the {CHANGE_CLASS} patterns disagree on {what}: {listing}")
-    return next(iter(by_pattern.values()))
+    return by_pattern[0][1]
 
 
 def _row_budgets(row: dict) -> dict[str, int]:

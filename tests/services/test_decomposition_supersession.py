@@ -3,7 +3,7 @@
 import uuid
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
@@ -11,6 +11,7 @@ from orchestrator.kernel.authority import authority_fingerprint
 from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import (
     ApprovedDecomposition,
+    Claim,
     DecompositionProposal,
     Dependency,
     DispatchRecord,
@@ -172,7 +173,15 @@ def test_a_re_approval_may_reuse_the_superseded_units_keys(migrated_session: Ses
 
 @pytest.mark.parametrize(
     "work",
-    ["claimed", "attempted", "completed_sibling", "dispatched", "trigger_failed", "circuit_open"],
+    [
+        "claimed",
+        "attempted",
+        "claim_row",
+        "completed_sibling",
+        "dispatched",
+        "trigger_failed",
+        "circuit_open",
+    ],
 )
 def test_an_approval_with_worked_units_is_not_superseded(
     migrated_session: Session, work: str
@@ -184,6 +193,18 @@ def test_an_approval_with_worked_units_is_not_superseded(
     elif work == "attempted":
         unit.state = WorkUnitState.READY
         unit.attempt_count = 1
+    elif work == "claim_row":
+        # A claim exists though the counter says none did: the claim alone must refuse.
+        migrated_session.add(
+            Claim(
+                work_unit_id=unit.id,
+                attempt=1,
+                claimed_by="worker",
+                lease_token_hash="hash",
+                idempotency_key="claim-row",
+                lease_expires_at=func.now(),
+            )
+        )
     elif work == "completed_sibling":
         unit.state = WorkUnitState.COMPLETED
     else:

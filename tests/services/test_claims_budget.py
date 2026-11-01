@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import WorkUnitState
 from orchestrator.persistence.models import Event, WorkUnit
-from orchestrator.services.lifecycle.claims import LeaseGrant, claim_unit
+from orchestrator.services.lifecycle.claims import LeaseGrant, claim_unit, renew_claim
 from tests.services.test_budget import (
     READY_UNIT_MAX_LLM_CALLS,
     _build_unit_no_ceiling,
@@ -42,6 +42,27 @@ def test_over_budget_claim_halts_and_records_breach(
     assert event is not None
     assert event.to_state == "failed"
     assert event.payload["reason"] == "budget_exceeded"
+
+
+def test_a_running_attempt_outlives_its_budget_and_only_the_next_claim_halts(
+    migrated_session: Session, ready_unit: WorkUnit
+) -> None:
+    """The ceiling gates the next claim. A run that crosses it keeps its lease until it ends."""
+    grant = claim_unit(migrated_session, ready_unit.id, worker(), "claim-budget-running")
+    assert isinstance(grant, LeaseGrant)
+    ceiling = READY_UNIT_MAX_LLM_CALLS
+    assert ceiling is not None
+    _cost_event(migrated_session, ready_unit.id, llm_calls=ceiling)
+
+    renewed = renew_claim(
+        migrated_session, ready_unit.id, worker(), grant.attempt, grant.lease_token
+    )
+
+    assert isinstance(renewed, LeaseGrant)
+    migrated_session.expire_all()
+    refreshed = migrated_session.get(WorkUnit, ready_unit.id)
+    assert refreshed is not None
+    assert refreshed.state == "claimed"
 
 
 def test_under_budget_claim_succeeds(migrated_session: Session, ready_unit: WorkUnit) -> None:
