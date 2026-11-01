@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from fastapi.testclient import TestClient
 
 from tests._support.seeding import register_ready_unit
-from tests.api.test_lifecycle_api import AUTHORITY, WORKER
+from tests.api.test_lifecycle_api import AUTHORITY, SYSTEM, WORKER
 from tests.contract.test_cost_actuals_contract import golden_cost_actuals
 
 
@@ -87,3 +87,32 @@ def test_post_cost_actuals_unknown_unit_is_clean_4xx(db_client: TestClient) -> N
     # DomainError (work_unit_not_found) -> handled, never a bare 500.
     assert resp.status_code in (400, 404, 409)
     assert resp.status_code != 500
+
+
+def test_the_system_fail_route_takes_a_ready_unit_nobody_claimed(db_client: TestClient) -> None:
+    """The recovery text for an unclaimed run relies on this: `/review` has no fail control, so a
+    ready unit is failed through the SYSTEM route and then cancelled."""
+    key = "fail-unclaimed-ready"
+    unit_id = register_ready_unit(
+        db_client,
+        key,
+        authority=AUTHORITY,
+        unit_key=key,
+        title="Unclaimed ready unit",
+        outcome="A ready unit no runner claimed",
+        source_repository="AlobarQuest/orchestrator",
+        approved_at=datetime(2026, 7, 8, tzinfo=UTC),
+    )
+
+    failed = db_client.post(
+        f"/api/v1/work-units/{unit_id}/commands/fail",
+        headers=SYSTEM,
+        json={
+            "idempotency_key": f"{key}-fail",
+            "expected_version": 2,
+            "reason": "run_never_claimed",
+        },
+    )
+
+    assert failed.status_code == 200, failed.text
+    assert failed.json()["state"] == "failed"

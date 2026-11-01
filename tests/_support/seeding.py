@@ -50,7 +50,10 @@ SEED_REVISIONS = "/test-support/revisions"
 
 
 def grant_repository(session: Session, repository: str) -> None:
-    """The member record grants factory work on ``repository``, so its units may be claimed."""
+    """The member record grants factory work on ``repository``, so its units may be claimed.
+
+    An existing member is left as it stands: its grants are neither added to nor restored.
+    """
     exists = session.scalar(
         select(SdsMember.id).where(func.lower(SdsMember.repository) == repository.lower())
     )

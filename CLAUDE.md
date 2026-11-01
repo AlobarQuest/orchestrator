@@ -527,8 +527,10 @@ Placement rule: global CLAUDE.md §7.
   `claim_unit` refuses before anything writes, skipping rotation units and units with no
   `target_repository`; `_readiness_eligibility_error` holds the same term, so reclaim and release
   park a withdrawn unit `failed` and requeue refuses it. `renew_claim` is ungated. A dispatched unit
-  refused at the claim stays `ready`, which refuses every orchestrator deploy until a person fails
-  and cancels it. The landers and the pr-merge gate
+  refused at the claim stays `ready`, which refuses every orchestrator deploy and holds rotation
+  restarts (`rotation_worker/live_runs.py`). Exits: restore the grant and dispatch again, or fail
+  it through the SYSTEM `commands/fail` route (`/review` has no fail control) and cancel it.
+  `authorize_retry` refuses a withdrawn unit too. The landers and the pr-merge gate
   refuse with `landing_repository_not_granted` and `merge_repository_not_granted`. The lanes' copy of
   the mapping is held equal by `test_target_grant.py`, and `membership_check` reports a granted
   repository no landing path reaches. Detail: `docs/operations/driving-a-unit.md`; full procedure:

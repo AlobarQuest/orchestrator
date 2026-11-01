@@ -78,9 +78,14 @@ def target_not_granted_error() -> DomainError:
 
 
 def unit_grant_refusal(
-    session: Session, unit: WorkUnit, revision: WorkPackageRevision
+    session: Session,
+    unit: WorkUnit,
+    revision: WorkPackageRevision,
+    grants: TargetGrantSource | None = None,
 ) -> DomainError | None:
     """Why the member record stops this unit running again; ``None`` means nothing here does.
+
+    A caller asking about many units passes ``grants`` built over members it read once.
 
     A rotation unit answers to its own `credential_rotation` check, and a unit naming no target
     repository has no grant to read.
@@ -91,6 +96,6 @@ def unit_grant_refusal(
     if not envelope.target_repository:
         return None
     service = service_for_change_class(change_class_of(envelope, unit.required_capability))
-    if MemberRecordGrants(session).is_granted(envelope.target_repository, service):
+    if (grants or MemberRecordGrants(session)).is_granted(envelope.target_repository, service):
         return None
     return target_not_granted_error()

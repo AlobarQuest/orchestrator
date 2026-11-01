@@ -24,7 +24,11 @@ case-folded.
 
 The claim asks the same question, so a grant withdrawn between dispatch and claim stops the run: the
 refusal writes nothing and spends no attempt, and the unit stays `ready` with its dispatch record
-uncleared, which refuses every orchestrator deploy until a person fails and cancels the unit.
+uncleared, which refuses every orchestrator deploy and holds every rotation restart
+(`rotation_worker/live_runs.py` reads the same signal) until the unit is claimed or retired. There
+are two exits: restore the grant and dispatch again, or retire the unit. `/review` has no fail
+control and `READY -> FAILED` is SYSTEM-only, so retiring is a SYSTEM call to `commands/fail`
+followed by a cancel. The `execution-run-unclaimed` alert says both.
 
 Every target repository must host the caller workflow at `.github/workflows/` under the file
 name `ORCHESTRATOR_DISPATCH_WORKFLOW_ID`, and carry the `FACTORY_RUNNER_TOKEN`,

@@ -42,10 +42,15 @@ from orchestrator.kernel.readiness import ReadinessStatus
 from orchestrator.kernel.states import WorkUnitState
 from orchestrator.persistence.models import Claim, DispatchRecord, WorkPackageRevision, WorkUnit
 from orchestrator.services.execution.dispatch import circuit_open
-from orchestrator.services.execution.target_grant import unit_grant_refusal
+from orchestrator.services.execution.target_grant import (
+    MemberRecordGrants,
+    TargetGrantSource,
+    unit_grant_refusal,
+)
 from orchestrator.services.lifecycle.budget import is_over_budget
 from orchestrator.services.lifecycle.claims import requeue_refusal
 from orchestrator.services.lifecycle.readiness import evaluate_readiness
+from orchestrator.services.membership.members import list_members
 
 # `blocked` units are listed because requeue TARGETS them. An action whose subject is invisible in
 # the surface it is offered from is not an operator affordance.
@@ -94,17 +99,18 @@ def dead_letter(
     configured sat unwired and invisible for an entire workstream. A reporting obligation that
     can be switched off is a reporting obligation that will be.
     """
+    grants = MemberRecordGrants(session, list_members(session))
     return (
-        *_terminal_units(session),
-        *_failed_dispatch_records(session),
-        *_open_circuit_breakers(session, failure_signature_threshold),
-        *_stalled_approvals(session, stalled_approval_seconds),
-        *_stalled_verifications(session, stalled_verification_seconds),
+        *_terminal_units(session, grants),
+        *_failed_dispatch_records(session, grants),
+        *_open_circuit_breakers(session, failure_signature_threshold, grants),
+        *_stalled_approvals(session, stalled_approval_seconds, grants),
+        *_stalled_verifications(session, stalled_verification_seconds, grants),
     )
 
 
 def _stalled_verifications(
-    session: Session, stalled_verification_seconds: int
+    session: Session, stalled_verification_seconds: int, grants: TargetGrantSource
 ) -> tuple[DeadLetterEntry, ...]:
     """A unit that submitted and was never verified. Reported, never resolved.
 
@@ -137,8 +143,8 @@ def _stalled_verifications(
             max_attempts=unit.max_attempts,
             # False, from requeue's own predicate: it takes only failed and blocked units. A
             # stalled verification needs the verifier run, not another attempt.
-            requeue_eligible=requeue_refusal(session, unit) is None,
-            recovery_action=recovery_action(session, unit),
+            requeue_eligible=requeue_refusal(session, unit, grants) is None,
+            recovery_action=recovery_action(session, unit, grants),
             occurred_at=unit.updated_at,
         )
         for unit in units
@@ -146,7 +152,7 @@ def _stalled_verifications(
 
 
 def _stalled_approvals(
-    session: Session, stalled_approval_seconds: int
+    session: Session, stalled_approval_seconds: int, grants: TargetGrantSource
 ) -> tuple[DeadLetterEntry, ...]:
     """A human gate nobody answered. Reported, never resolved -- silence is not approval."""
     cutoff = TransactionClock().now(session) - timedelta(seconds=stalled_approval_seconds)
@@ -167,24 +173,24 @@ def _stalled_approvals(
             max_attempts=unit.max_attempts,
             # False, from requeue's own predicate: it takes only failed and blocked units.
             # A stalled gate needs a human decision, not a retry.
-            requeue_eligible=requeue_refusal(session, unit) is None,
-            recovery_action=recovery_action(session, unit),
+            requeue_eligible=requeue_refusal(session, unit, grants) is None,
+            recovery_action=recovery_action(session, unit, grants),
             occurred_at=unit.updated_at,
         )
         for unit in units
     )
 
 
-def _terminal_units(session: Session) -> tuple[DeadLetterEntry, ...]:
+def _terminal_units(session: Session, grants: TargetGrantSource) -> tuple[DeadLetterEntry, ...]:
     units = session.scalars(
         select(WorkUnit)
         .where(WorkUnit.state.in_(DEAD_LETTER_UNIT_STATES))
         .order_by(WorkUnit.unit_key, WorkUnit.id)
     ).all()
-    return tuple(_unit_entry(session, unit) for unit in units)
+    return tuple(_unit_entry(session, unit, grants) for unit in units)
 
 
-def _unit_entry(session: Session, unit: WorkUnit) -> DeadLetterEntry:
+def _unit_entry(session: Session, unit: WorkUnit, grants: TargetGrantSource) -> DeadLetterEntry:
     claim = session.scalar(
         select(Claim)
         .where(Claim.work_unit_id == unit.id)
@@ -200,13 +206,15 @@ def _unit_entry(session: Session, unit: WorkUnit) -> DeadLetterEntry:
         detail=str(claim.id) if claim is not None else None,
         attempt_count=unit.attempt_count,
         max_attempts=unit.max_attempts,
-        requeue_eligible=requeue_refusal(session, unit) is None,
-        recovery_action=recovery_action(session, unit),
+        requeue_eligible=requeue_refusal(session, unit, grants) is None,
+        recovery_action=recovery_action(session, unit, grants),
         occurred_at=claim.released_at if claim is not None else None,
     )
 
 
-def _failed_dispatch_records(session: Session) -> tuple[DeadLetterEntry, ...]:
+def _failed_dispatch_records(
+    session: Session, grants: TargetGrantSource
+) -> tuple[DeadLetterEntry, ...]:
     rows = session.execute(
         select(DispatchRecord, WorkUnit)
         .join(WorkUnit, WorkUnit.id == DispatchRecord.work_unit_id)
@@ -226,8 +234,8 @@ def _failed_dispatch_records(session: Session) -> tuple[DeadLetterEntry, ...]:
             detail=record.failure_signature,
             attempt_count=unit.attempt_count,
             max_attempts=unit.max_attempts,
-            requeue_eligible=requeue_refusal(session, unit) is None,
-            recovery_action=recovery_action(session, unit),
+            requeue_eligible=requeue_refusal(session, unit, grants) is None,
+            recovery_action=recovery_action(session, unit, grants),
             occurred_at=None,
         )
         for record, unit in rows
@@ -237,6 +245,7 @@ def _failed_dispatch_records(session: Session) -> tuple[DeadLetterEntry, ...]:
 def _open_circuit_breakers(
     session: Session,
     failure_signature_threshold: int,
+    grants: TargetGrantSource,
 ) -> tuple[DeadLetterEntry, ...]:
     """Derived -- there is no persisted breaker entity; "open" is a predicate over the records.
 
@@ -275,8 +284,8 @@ def _open_circuit_breakers(
                 detail=signature,
                 attempt_count=unit.attempt_count,
                 max_attempts=unit.max_attempts,
-                requeue_eligible=requeue_refusal(session, unit) is None,
-                recovery_action=recovery_action(session, unit),
+                requeue_eligible=requeue_refusal(session, unit, grants) is None,
+                recovery_action=recovery_action(session, unit, grants),
                 occurred_at=None,
             )
         )
@@ -296,7 +305,9 @@ _OWNER_ACTIONS = {
 }
 
 
-def recovery_action(session: Session, unit: WorkUnit) -> str:
+def recovery_action(
+    session: Session, unit: WorkUnit, grants: TargetGrantSource | None = None
+) -> str:
     """The action that moves this unit on, and who may take it (review 7b).
 
     It follows the unit, not the entry: a dispatch failure or a breaker on a unit is recovered the
@@ -304,7 +315,7 @@ def recovery_action(session: Session, unit: WorkUnit) -> str:
     """
     state = WorkUnitState(unit.state)
     if state in (WorkUnitState.FAILED, WorkUnitState.BLOCKED):
-        return _requeue_target_action(session, unit, state)
+        return _requeue_target_action(session, unit, state, grants)
     return _OWNER_ACTIONS.get(
         state, f"None: the unit is {unit.state} and has moved past this failure"
     )
@@ -315,7 +326,12 @@ def recovery_action(session: Session, unit: WorkUnit) -> str:
 _READINESS_OWNERS = "(an approval on its review page, or the system resolving a dependency)"
 
 
-def _requeue_target_action(session: Session, unit: WorkUnit, state: WorkUnitState) -> str:
+def _requeue_target_action(
+    session: Session,
+    unit: WorkUnit,
+    state: WorkUnitState,
+    grants: TargetGrantSource | None,
+) -> str:
     """Built from the four facts that decide whether the unit can run again, each read on its
     own: requeue reports only the first it fails, which would name the wrong blocker.
 
@@ -339,7 +355,7 @@ def _requeue_target_action(session: Session, unit: WorkUnit, state: WorkUnitStat
     if evaluate_readiness(session, unit.id, for_update=False).status is not ReadinessStatus.READY:
         route = f"restore its readiness {_READINESS_OWNERS}, then {route}"
     revision = session.get_one(WorkPackageRevision, unit.work_package_revision_id)
-    if unit_grant_refusal(session, unit, revision) is not None:
+    if unit_grant_refusal(session, unit, revision, grants) is not None:
         route = f"have a person restore its repository's member grant, then {route}"
     if blocked:
         return route[0].upper() + route[1:]

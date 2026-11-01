@@ -9,7 +9,7 @@ check, and a run already in flight keeps its lease.
 from __future__ import annotations
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import event, func, select
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
@@ -17,6 +17,7 @@ from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import Event, SdsMember, SdsMemberGrant, WorkUnit
 from orchestrator.services.lifecycle.claims import (
     LeaseGrant,
+    authorize_retry,
     claim_unit,
     reclaim_expired_claim,
     release_expired_claim,
@@ -24,7 +25,7 @@ from orchestrator.services.lifecycle.claims import (
     requeue_unit,
 )
 from orchestrator.services.lifecycle.rotation_claims import NON_HOSTED_CONSTRAINT
-from orchestrator.services.reporting.dead_letter import recovery_action
+from orchestrator.services.reporting.dead_letter import dead_letter, recovery_action
 from tests.services.test_budget import _cost_event
 from tests.services.test_reclaim import expire
 from tests.services.test_rotation_claims import EXECUTOR_ACTOR, _claim, _untouched, seed_unit
@@ -165,6 +166,73 @@ def test_a_replayed_claim_after_a_refusal_answers_the_refusal(migrated_session: 
     assert isinstance(first, DomainError)
     assert isinstance(second, DomainError)
     assert (first.code, second.code) == (NOT_GRANTED, NOT_GRANTED)
+
+
+def test_a_held_claim_replayed_after_withdrawal_returns_its_grant(
+    migrated_session: Session,
+) -> None:
+    member = _member(migrated_session, grants={"app_changes": "granted"})
+    unit = _factory_unit(migrated_session, "held-replay")
+    first = _claimed(migrated_session, unit, "held-replay-1")
+    _withdraw(migrated_session, member)
+
+    replayed = claim_unit(migrated_session, unit.id, WORKER, "held-replay-1")
+
+    assert isinstance(replayed, LeaseGrant), replayed
+    assert (replayed.claim_id, replayed.attempt) == (first.claim_id, first.attempt)
+
+
+def test_authorize_retry_refuses_a_withdrawn_repository(migrated_session: Session) -> None:
+    member = _member(migrated_session, grants={"app_changes": "granted"})
+    unit = _factory_unit(migrated_session, "retry-withdrawn", max_attempts=1)
+    _lapse(migrated_session, unit, "retry-withdrawn-1")
+    release_expired_claim(migrated_session, unit.id, SYSTEM, "retry-withdrawn-2")
+    assert _reread(migrated_session, unit).state == WorkUnitState.FAILED
+    _withdraw(migrated_session, member)
+    human = ActorContext("human-1", ActorRole.HUMAN)
+
+    refused = authorize_retry(
+        migrated_session,
+        unit.id,
+        human,
+        new_max_attempts=3,
+        reason="retry",
+        idempotency_key="retry-withdrawn-3",
+    )
+
+    assert isinstance(refused, DomainError)
+    assert refused.code == NOT_GRANTED
+    assert _reread(migrated_session, unit).max_attempts == 1
+
+
+def test_the_dead_letter_view_reads_the_member_record_once(
+    migrated_session: Session,
+) -> None:
+    _member(migrated_session, grants={"app_changes": "granted"})
+    for number in range(3):
+        unit = _factory_unit(migrated_session, f"report-{number}")
+        unit.state = WorkUnitState.FAILED
+        migrated_session.commit()
+    reads: list[str] = []
+
+    def count(_conn, _cursor, statement, *_rest) -> None:
+        if "FROM sds_members" in statement:
+            reads.append(statement)
+
+    engine = migrated_session.get_bind()
+    event.listen(engine, "before_cursor_execute", count)
+    try:
+        entries = dead_letter(
+            migrated_session,
+            failure_signature_threshold=3,
+            stalled_approval_seconds=3600,
+            stalled_verification_seconds=3600,
+        )
+    finally:
+        event.remove(engine, "before_cursor_execute", count)
+
+    assert len([e for e in entries if e.source == "work_unit"]) == 3
+    assert len(reads) == 1
 
 
 def test_a_unit_with_no_target_repository_claims(migrated_session: Session) -> None:

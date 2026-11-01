@@ -180,6 +180,14 @@ def test_run_unclaimed_is_a_dispatch_nobody_claimed_for_two_hours() -> None:
     assert conditions(replace(overdue, has_claim=True), NOW) == set()
 
 
+def test_run_unclaimed_names_both_exits_and_that_failing_is_a_system_call() -> None:
+    overdue = unowned(latest_dispatch_status="dispatched", latest_dispatch_at=hours_ago(3))
+    (alert,) = firing([overdue], {}, set(), NOW, THRESHOLDS).values()
+
+    assert "restore it and dispatch the unit again" in alert.message
+    assert "SYSTEM commands/fail route, then cancel it" in alert.message
+
+
 def test_a_rotation_unit_raises_nothing() -> None:
     rotation = row(
         is_rotation=True,

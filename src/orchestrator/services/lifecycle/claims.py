@@ -24,6 +24,7 @@ from orchestrator.persistence.models import (
 )
 from orchestrator.services.execution.target_grant import (
     TARGET_REPOSITORY_NOT_GRANTED,
+    TargetGrantSource,
     target_not_granted_error,
     unit_grant_refusal,
 )
@@ -544,7 +545,7 @@ def authorize_retry(
             return existing
         if session.scalar(select(Event.id).where(Event.idempotency_key == idempotency_key)):
             raise _idempotency_conflict()
-        _require_retry_allowed(unit, actor, new_max_attempts, expected_version)
+        _require_retry_allowed(session, unit, actor, new_max_attempts, expected_version)
 
         bound_version = unit.version
         now = TransactionClock().now(session)
@@ -647,6 +648,7 @@ def _has_required_context(revision: WorkPackageRevision) -> bool:
 
 
 def _require_retry_allowed(
+    session: Session,
     unit: WorkUnit,
     actor: ActorContext,
     new_max_attempts: int,
@@ -668,6 +670,10 @@ def _require_retry_allowed(
             "retry approval must increase the approved attempt limit",
             None,
         )
+    # A retry readies the unit for a claim the grant would then refuse.
+    refusal = unit_grant_refusal(session, unit, _revision(session, unit))
+    if refusal is not None:
+        raise refusal
 
 
 def _current_claim(session: Session, unit_id: uuid.UUID) -> Claim | None:
@@ -694,7 +700,9 @@ def _validate_expired_active_claim(unit: WorkUnit, claim: Claim, now: datetime) 
         raise DomainError("claim_not_active", "work unit has no active claim", None)
 
 
-def _readiness_eligibility_error(session: Session, unit: WorkUnit) -> DomainError | None:
+def _readiness_eligibility_error(
+    session: Session, unit: WorkUnit, grants: TargetGrantSource | None = None
+) -> DomainError | None:
     """Shared by reclaim AND requeue. Both must refuse to land a unit in READY that cannot
     actually be claimed -- a READY unit that claim_unit rejects is invisible in the failed-units
     view and unrunnable at the same time."""
@@ -710,7 +718,7 @@ def _readiness_eligibility_error(session: Session, unit: WorkUnit) -> DomainErro
             "work unit's readiness no longer holds",
             "resolve_readiness",
         )
-    return unit_grant_refusal(session, unit, _revision(session, unit))
+    return unit_grant_refusal(session, unit, _revision(session, unit), grants)
 
 
 def _claim_replay(
@@ -957,7 +965,9 @@ def _idempotency_conflict() -> DomainError:
 REQUEUE_SOURCE_STATES = {WorkUnitState.FAILED, WorkUnitState.BLOCKED}
 
 
-def requeue_refusal(session: Session, unit: WorkUnit) -> DomainError | None:
+def requeue_refusal(
+    session: Session, unit: WorkUnit, grants: TargetGrantSource | None = None
+) -> DomainError | None:
     """Why `requeue_unit` refuses this unit whoever asks; None means a SYSTEM requeue is accepted.
 
     The dead-letter view reads this rather than restating it, so what it calls requeue-eligible is
@@ -971,7 +981,7 @@ def requeue_refusal(session: Session, unit: WorkUnit) -> DomainError | None:
             current_state=unit.state,
             current_version=unit.version,
         )
-    return _readiness_eligibility_error(session, unit)
+    return _readiness_eligibility_error(session, unit, grants)
 
 
 def requeue_unit(

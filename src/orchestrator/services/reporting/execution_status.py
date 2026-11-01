@@ -108,7 +108,8 @@ def execution_status(
         for stalled in stalled_executions(session, grace_seconds=stall_grace_seconds)
     }
     breakers = {
-        entry.work_unit_id for entry in _open_circuit_breakers(session, failure_signature_threshold)
+        entry.work_unit_id
+        for entry in _open_circuit_breakers(session, failure_signature_threshold, grants)
     }
     rows: list[ExecutionStatusRow] = []
     for unit in units:
