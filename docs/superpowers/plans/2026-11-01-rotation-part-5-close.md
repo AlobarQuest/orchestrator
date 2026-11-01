@@ -32,7 +32,7 @@
 - Never touch a main tree. Each repository works in `.worktrees/rotation-p5`.
 - Check that no rotation unit is ready or claimed before merging change-manager.
 - Keep `.cred-consumers.toml`'s other rows, the 03:00 scan, `cred-findings`, `record-rotation`, `rotationAnchor`, and `run-window`.
-- Keep `CLASS_POLICY`'s class names, so `tests/fixtures/rotation_class_policy.json` doesn't change.
+- Keep `CLASS_POLICY`'s class names. `tests/fixtures/rotation_class_policy.json` becomes a list of them, in both repositories.
 - Secrets stay out of the transcript.
 
 ## Review Focus
@@ -86,7 +86,7 @@
 
 ### Task 6: Revoke the token
 
-- [ ] Create a Todoist task for Devon, with steps, to revoke `bws-cred-rotation-token`. This waits for activation in Task 5.
+- [ ] Create a Todoist task for Devon, with steps, to revoke `bws-cred-rotation-token` and to move `orchestrator-factory-runner-bearer`'s keeper to `Rotation / Keepers` with a direct grant for the broad account. After the move, prove both reads and correct the row's note. This waits for activation in Task 5.
 - [ ] After the revoke, prove it dead with a fresh login under an empty `HOME`, delete the Keychain item, and delete the registry row, the `cred-registry-integration.test.ts` entry, and the `BWS_CRED_ROTATION_TOKEN` override if any remains.
 
 ## Live proof
