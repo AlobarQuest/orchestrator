@@ -20,10 +20,8 @@ from __future__ import annotations
 
 import ast
 import re
-from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from collections.abc import Iterator
 from pathlib import Path
-from unittest import mock
 
 import pytest
 
@@ -33,35 +31,29 @@ from bump_proposer import landing_policy as bump_landing_policy
 from bump_proposer import orchestrator_client as bump_orchestrator
 from change_proposer import change_manager as change_change_manager
 from change_proposer import reverts as change_reverts
-from estate_clients.confined import TransportFailure
 from scripts.layers import load
 from sds_members import client as members_client
+from tests.architecture.edge_table import (
+    DEADMAN,
+    OBSERVER_BEARER,
+    PROPOSE_BEARER,
+    READ_BEARER,
+    SDS_BRIDGE_ALERT_BEARER,
+    SYSTEM_BEARER,
+    Edge,
+    Permits,
+    captured_permits,
+    either,
+    launcher_secrets,
+    near_misses,
+    route_disagreements,
+)
 from tests.architecture.test_external_content_observes_only import CLASSIFICATION
 from work_carrier import change_manager as carrier_change_manager
 from work_carrier import orchestrator_client as carrier_orchestrator
 from work_watcher import change_manager as watcher_change_manager
 from work_watcher import github as watcher_github
 from work_watcher import orchestrator_client as watcher_orchestrator
-
-Route = tuple[str, str]
-Permits = Callable[[str, str], bool]
-
-PROPOSE_BEARER = "acccb346-4baa-43ec-a1d4-b4a400c048ee"
-READ_BEARER = "314f276d-55ca-4ddc-a24d-b4a3013508cd"
-OBSERVER_BEARER = "f793576f-e9aa-4f9d-8089-b4a000b9e2d5"
-SYSTEM_BEARER = "221a48d5-3f29-4898-b300-b4820140c880"
-# The `sds-bridge` alert sender token (bridge Part 3).
-SDS_BRIDGE_ALERT_BEARER = "b415d03b-f92d-46b1-8a9d-b4f10103df49"
-
-
-@dataclass(frozen=True)
-class Edge:
-    change_manager: frozenset[Route]
-    orchestrator: frozenset[Route]
-    github: frozenset[Route]
-    alert_hub: frozenset[Route]
-    bearers: frozenset[str]
-
 
 EDGES: dict[str, Edge] = {
     "bump_proposer": Edge(
@@ -76,7 +68,7 @@ EDGES: dict[str, Edge] = {
         github=frozenset(),  # through landing_ledger.github: GITHUB_THROUGH
         # through alert_hub_client: ALERT_HUB_THROUGH
         alert_hub=frozenset({("POST", "/v1/alerts")}),
-        bearers=frozenset({PROPOSE_BEARER, READ_BEARER, OBSERVER_BEARER, SDS_BRIDGE_ALERT_BEARER}),
+        bearers=DEADMAN | {PROPOSE_BEARER, READ_BEARER, OBSERVER_BEARER, SDS_BRIDGE_ALERT_BEARER},
     ),
     "change_proposer": Edge(
         change_manager=frozenset(
@@ -90,7 +82,7 @@ EDGES: dict[str, Edge] = {
         orchestrator=frozenset({("GET", "/api/v1/members"), ("GET", "/api/v1/opened-reverts")}),
         github=frozenset(),  # through deploy_watcher.github: GITHUB_THROUGH
         alert_hub=frozenset(),
-        bearers=frozenset({PROPOSE_BEARER, OBSERVER_BEARER}),
+        bearers=DEADMAN | {PROPOSE_BEARER, OBSERVER_BEARER},
     ),
     "work_carrier": Edge(
         change_manager=frozenset({("GET", "/api/items")}),
@@ -103,7 +95,7 @@ EDGES: dict[str, Edge] = {
         ),
         github=frozenset(),
         alert_hub=frozenset(),
-        bearers=frozenset({READ_BEARER, SYSTEM_BEARER, OBSERVER_BEARER}),
+        bearers=DEADMAN | {READ_BEARER, SYSTEM_BEARER, OBSERVER_BEARER},
     ),
     "work_watcher": Edge(
         # The listing is work_carrier's reader, which work_watcher/pipeline.py imports.
@@ -114,7 +106,7 @@ EDGES: dict[str, Edge] = {
         github=frozenset({("GET", "/repos/o/r/pulls/44")}),
         # through alert_hub_client: ALERT_HUB_THROUGH
         alert_hub=frozenset({("POST", "/v1/alerts")}),
-        bearers=frozenset({PROPOSE_BEARER, READ_BEARER, SYSTEM_BEARER, SDS_BRIDGE_ALERT_BEARER}),
+        bearers=DEADMAN | {PROPOSE_BEARER, READ_BEARER, SYSTEM_BEARER, SDS_BRIDGE_ALERT_BEARER},
     ),
 }
 
@@ -187,6 +179,24 @@ ALERT_HUB_PROBES = frozenset(
         "/v1/channels",
     }
 )
+# Every listed path, stated apart from the rows, so a dropped row keeps its path in the corpus.
+ROUTES = frozenset(
+    {
+        "/api/deploy-changes",
+        "/api/items",
+        "/api/items/44/deploy-retirement",
+        "/api/items/44/work-retirement",
+        "/api/landing-policy",
+        "/api/work-changes",
+        "/api/v1/change-records/44/work",
+        "/api/v1/members",
+        "/api/v1/observations",
+        "/api/v1/opened-reverts",
+        "/api/v1/package-intakes",
+        "/repos/o/r/pulls/44",
+        "/v1/alerts",
+    }
+)
 PROBES = CHANGE_MANAGER_PROBES | ORCHESTRATOR_PROBES | GITHUB_PROBES | ALERT_HUB_PROBES
 
 
@@ -200,68 +210,37 @@ def _listed_paths() -> frozenset[str]:
 
 
 def _corpus() -> frozenset[str]:
-    listed = _listed_paths()
-    return listed | PROBES | {f"{path}/" for path in listed} | {f"{path}x" for path in listed}
+    return near_misses(ROUTES) | PROBES
 
 
-def _captured_permits(
-    module: object, call: Callable[[], object], refusal: type[Exception]
-) -> Permits:
-    """The `permits` a module passes its `ConfinedClient` inline, taken from the constructor call.
-
-    Two readers build their predicate as a lambda at the call site rather than naming it. The
-    recorder stands in for `ConfinedClient` on that module only, keeps the lambda, and refuses
-    construction, so nothing is sent. The lambda reads the module's globals when it runs, so a
-    later monkeypatch of the module still reaches it.
-    """
-    captured: list[Permits] = []
-
-    def recorder(*, permits: Permits, **_: object) -> object:
-        captured.append(permits)
-        raise TransportFailure("captured")
-
-    with mock.patch.object(module, "ConfinedClient", recorder):
-        with pytest.raises(refusal):
-            call()
-    assert len(captured) == 1, f"{module!r} built no ConfinedClient"
-    return captured[0]
-
-
-_landing_policy_permits = _captured_permits(
+_landing_policy_permits = captured_permits(
     bump_landing_policy,
     lambda: bump_landing_policy.read_landing_policy("token"),
-    bump_landing_policy.LandingPolicyError,
 )
-_alert_hub_permits = _captured_permits(
+_alert_hub_permits = captured_permits(
     alert_hub_client,
     lambda: alert_hub_client.KeyedAlerts(
         lambda: "token", Path("unused.json"), user_agent="edges/1"
     ).open_client(),
-    alert_hub_client.AlertHubError,
 )
-_listing_permits = _captured_permits(
+_listing_permits = captured_permits(
     carrier_change_manager,
     lambda: carrier_change_manager.HttpWorkRecordSource(
         base_url="https://change-mgr.example", token="token"
     ).approved_work(),
-    carrier_change_manager.ChangeManagerError,
 )
-
-
-def _either(*predicates: Permits) -> Permits:
-    return lambda method, path: any(predicate(method, path) for predicate in predicates)
 
 
 # Each adapter looks its predicate up through the module at call time, so a monkeypatch of the
 # module's function reaches it. `None` is a service the lane has no client for: it permits nothing.
 PERMITS: dict[str, dict[str, Permits | None]] = {
     "bump_proposer": {
-        "change_manager": _either(
+        "change_manager": either(
             lambda m, p: bump_change_manager._permits(m, p),
             _landing_policy_permits,
         ),
         # The lane's own observation client and the member-record reader it imports.
-        "orchestrator": _either(
+        "orchestrator": either(
             lambda m, p: bump_orchestrator._permits(m, p),
             lambda m, p: members_client._permits(members_client._READ)(m, p),
         ),
@@ -271,7 +250,7 @@ PERMITS: dict[str, dict[str, Permits | None]] = {
     "change_proposer": {
         "change_manager": lambda m, p: change_change_manager._permits(m, p),
         # The member-record reader it imports, and its own recorded-revert reader.
-        "orchestrator": _either(
+        "orchestrator": either(
             lambda m, p: members_client._permits(members_client._READ)(m, p),
             lambda m, p: change_reverts._permits(m, p),
         ),
@@ -281,7 +260,7 @@ PERMITS: dict[str, dict[str, Permits | None]] = {
     "work_carrier": {
         "change_manager": _listing_permits,
         # The carrier's own client and the member-record reader it imports: two clients, one lane.
-        "orchestrator": _either(
+        "orchestrator": either(
             lambda m, p: carrier_orchestrator._permits(m, p),
             lambda m, p: members_client._permits(members_client._READ)(m, p),
         ),
@@ -289,7 +268,7 @@ PERMITS: dict[str, dict[str, Permits | None]] = {
         "alert_hub": None,
     },
     "work_watcher": {
-        "change_manager": _either(
+        "change_manager": either(
             lambda m, p: watcher_change_manager._permits(m, p),
             _listing_permits,
         ),
@@ -301,23 +280,11 @@ PERMITS: dict[str, dict[str, Permits | None]] = {
 
 
 def disagreements(lane: str) -> frozenset[tuple[str, str, str, bool]]:
-    """(service, method, path, accepted) for each corpus route where the code and the row differ."""
-    edge = EDGES[lane]
-    rows = {
-        "change_manager": edge.change_manager,
-        "orchestrator": edge.orchestrator,
-        "github": edge.github,
-        "alert_hub": edge.alert_hub,
-    }
-    found: set[tuple[str, str, str, bool]] = set()
-    for service, listed in rows.items():
-        permits = PERMITS[lane][service]
-        for method in METHODS:
-            for path in _corpus():
-                accepted = permits is not None and permits(method, path)
-                if accepted != ((method, path) in listed):
-                    found.add((service, method, path, accepted))
-    return frozenset(found)
+    return route_disagreements(EDGES[lane], PERMITS[lane], _corpus(), METHODS)
+
+
+def test_every_listed_route_is_in_the_corpus() -> None:
+    assert _listed_paths() == ROUTES
 
 
 @pytest.mark.parametrize("lane", sorted(EDGES))
@@ -362,16 +329,12 @@ def test_work_watcher_lists_records_through_the_carriers_reader() -> None:
     assert "work_carrier.change_manager" in _imports("src/work_watcher/pipeline.py")
 
 
-_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE)
-
-
 @pytest.mark.parametrize("launcher", sorted(LAUNCHERS))
 def test_each_launcher_fetches_exactly_its_bearers(launcher: str) -> None:
     # Launcher-level: the union of its lanes' bearers, so a bearer handed to the wrong lane of a
     # shared launcher (work_carrier and work_watcher in run-work-carrier.sh) still passes.
-    named = {uuid.lower() for uuid in _UUID.findall(Path(launcher).read_text(encoding="utf-8"))}
-    bearers = set().union(*(EDGES[lane].bearers for lane in LAUNCHERS[launcher]))
-    assert named == bearers
+    bearers = frozenset().union(*(EDGES[lane].bearers for lane in LAUNCHERS[launcher]))
+    assert launcher_secrets(Path(launcher)) == bearers
 
 
 def test_every_lane_has_a_launcher() -> None:

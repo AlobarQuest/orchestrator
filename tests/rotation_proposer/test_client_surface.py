@@ -1,13 +1,13 @@
-"""This program reaches two services through two confined clients it does not own, one small
+"""This program reaches two services through three confined clients it does not own, one small
 client of its own, and alert-hub.
 
 It reuses `bump_proposer`'s change-manager client (two paths: propose, and list the work source)
-and its orchestrator client (one path: the observation ingest). Reuse is only safe if the reuse is
-the WHOLE surface -- so this asserts that `client.py` alone names a path, that only it and the
-alert annotation import an HTTP client, and that every client it constructs, under its own user
-agent, still refuses every other route before the transport is reached. `client.py` is two reads
-on the observer bearer: it exists so that widening `bump_proposer`'s POST-only client never widens
-that program.
+and its orchestrator client (one path: the observation ingest), and `sds_members`' read of the
+member record. Reuse is only safe if the reuse is the WHOLE surface -- so this asserts that
+`client.py` alone names a path, that only it and the alert annotation import an HTTP client, and
+that every client it constructs, under its own user agent, still refuses every other route before
+the transport is reached. `client.py` is two reads on the observer bearer: it exists so that
+widening `bump_proposer`'s POST-only client never widens that program.
 """
 
 from __future__ import annotations

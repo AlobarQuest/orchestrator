@@ -268,6 +268,33 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   the useful half: there the tool's output genuinely moved, here it did not and a per-repo config
   made it look as though it had. An observed behaviour is not yet a cause.
 
+## The edge tables
+
+Each lane layer has one test that states its whole outbound surface:
+`tests/architecture/test_bridge_edges.py`, `test_landing_edges.py` and `test_rotation_edges.py`.
+They share `edge_table.py`. A row is compared with the predicates the lane's `ConfinedClient` really
+asks, under every verb, over a corpus of listed routes, near misses and named probes. The test
+fails when a predicate widens to a route in the corpus, or when a row drifts from the code.
+
+The rotation table states more than routes, because the rotation lanes reach more than HTTP:
+
+- `EDGES` holds each lane's change-manager, orchestrator, GitHub and alert-hub routes and its
+  bearers. The worker has no launcher, so its bearers are the `Config` fields naming its secrets.
+- `PLATFORM_EDGES` holds Coolify, Healthchecks and the Azure host of GitHub's job logs.
+- `PROVIDER_EDGES` holds one row per credential type: what its adapter sends to that provider.
+- `PROCESSES` holds every program a lane can start, read by `process_scan.py` over the lane's
+  import closure. What the scanner can't resolve it reports by its source text, so a row must name
+  it.
+- `NETWORK` holds every module in that closure with an HTTP client, and how many clients it builds.
+- `BORROWED` holds every name each lane takes from another program.
+
+Each table's `ROUTES` states its paths apart from the rows, so a dropped row stays in the corpus.
+A launcher's row covers everything it sources, so every row carries the dead-man key and ping.
+
+To fix a failure, add a row for a real need, and add its path to `ROUTES`. If nothing calls the route,
+narrow the predicate instead. A predicate built per instance or inline is captured from the
+`ConfinedClient` constructor (`edge_table.built_clients`), so read it there, never restate it.
+
 ## The layer manifest
 
 `layers.toml` assigns every file in the repository to one of fourteen layers: the twelve units of

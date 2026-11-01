@@ -107,3 +107,15 @@ The agreement tests hold the four `touches_no_hosted_service` spellings equal, a
 - [ ] **Step 6: Record the proof, update both artifacts, and list every ruling.**
 
 **No live proof in this part:** `stalled` and the orphan delete, until a real failure. Forcing either needs Devon's say-so.
+
+## Live proof, recorded 2026-10-31
+
+Merged as `319702a5` (#573) and infraops `#159`. Both instances run that commit. No orchestrator image changed.
+
+- **`lastRotated`:** one proposer pass, against the merged infraops code in a worktree, recorded six rows, each moving forward: `github-finegrained-mirror` (October 20), and `bitbucket-mirror-token`, `factory-pr-token`, `orchestrator-observer-bearer`, `change-manager-propose-bearer`, and `change-manager-read-bearer` (October 21). The two false rows repaired themselves. The final review had predicted this list.
+- **Idempotence:** a second pass recorded nothing.
+- **Destinations:** `compare-destinations` found 16 of 17 packages equal. `bws-sds-operator-token`'s registry row gained a reader in #562 after its package was approved; the proposer revises that package when the credential comes due, as designed.
+
+The infraops working copy activates through its own schedule, so the scheduled proposer first reads the new field after that lane runs.
+
+Not proven live: `stalled`, `record-wontfix`, `due-after-rotation`, and the discard of a minted key.

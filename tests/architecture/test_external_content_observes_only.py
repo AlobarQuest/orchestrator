@@ -313,8 +313,9 @@ CLASSIFICATION: dict[str, Row] = {
         "ADR-0055 amendment 14: runs the orchestrator's verifier on each submitted rotation unit "
         "as VERIFIER; the verifier decides every criterion from the executor's step evidence. "
         "Landing Part 4: on a dependency-bump unit it first files the repository's required checks "
-        "as named-check evidence, which the orchestrator observes from GitHub itself. Reads only "
-        "the status ledger and the unit",
+        "as named-check evidence, which the orchestrator observes from GitHub itself. From the "
+        "orchestrator it reads only the status ledger and the unit, and from GitHub only a "
+        "repository's required checks on main",
         frozenset({VERIFY, NAMED_CHECK}),
     ),
     "rotation_decomposer": Row(

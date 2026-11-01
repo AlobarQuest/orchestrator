@@ -36,6 +36,15 @@ def _client(
     )
 
 
+@pytest.mark.parametrize("path", ["/a\n", "/a\rb", "/a\tb", "/a\x00", "/a\x7f"])
+def test_a_control_character_is_refused_even_by_a_predicate_that_permits_it(path: str) -> None:
+    def never(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("a refused path reached the transport")
+
+    with pytest.raises(Refused):
+        _client(httpx.MockTransport(never), permits=True).request("GET", path)
+
+
 def test_a_refused_request_never_reaches_the_transport() -> None:
     seen: list[str] = []
 

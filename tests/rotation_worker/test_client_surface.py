@@ -31,6 +31,7 @@ BEARER = "throwaway-bearer-value-for-tests"
 ALLOWED = [
     ("GET", "/api/v1/status-ledger"),
     ("GET", "/api/v1/status-ledger?state=ready"),
+    ("GET", "/api/v1/m2m-identities"),
     ("GET", "/api/v1/held-credentials"),
     ("GET", "/api/v1/members"),
     ("GET", f"/api/v1/work-units/{UNIT}"),
@@ -66,6 +67,7 @@ REFUSED = [
     ("GET", f"/api/v1/work-units/{UNIT.upper()}"),
     ("GET", "/api/v1/work-units/not-a-uuid"),
     ("GET", f"/api/v1/work-units/{UNIT}/"),
+    ("GET", f"/api/v1/work-units/{UNIT}\n"),
     ("PUT", f"/api/v1/work-units/{UNIT}/evidence"),
     ("DELETE", f"/api/v1/work-units/{UNIT}"),
     ("GET", "/review"),

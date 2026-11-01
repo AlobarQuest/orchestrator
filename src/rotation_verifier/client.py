@@ -1,4 +1,5 @@
-"""The lane's one confined surface: read units, file named checks and verify, as VERIFIER.
+"""The lane's confined surface on the orchestrator: read units, file named checks and verify, as
+VERIFIER. Its one other request is `required_checks.py`'s GitHub read.
 
 Four paths and no others, each matched against an anchored pattern with the id's shape spelled
 out, so a prefix, a trailing slash or `.../{id}/anything-else` does not match.

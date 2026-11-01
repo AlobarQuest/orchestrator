@@ -368,6 +368,8 @@ TABLE: dict[str, Row] = {
         "httpx",
         # Whether a plain-HTTP base URL is a tailnet address (the Coolify write token's rule).
         "ipaddress",
+        # The control-character refusal.
+        "re",
         "typing",
         # `urllib.parse` only, for the base-URL shape check.
         "urllib",

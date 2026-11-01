@@ -10,6 +10,9 @@ What lives here and nowhere else:
 * **The permit check runs before the transport.** A `ConfinedClient` cannot send a request its
   program does not permit: `permits(method, path)` is asked first, and a refusal raises the
   program's own exception without a byte leaving the process.
+* **A control character in a path is refused the same way, before any predicate is asked.** A
+  `^...$` pattern accepts a trailing newline, so this holds for every program whatever its
+  predicate.
 * **`TRANSPORT_ERRORS` is all three exception families `httpx` raises for a request that never
   got an answer.** `HTTPError` and `InvalidURL` are the obvious two. The third is `ValueError`:
   IDNA encoding of a malformed host -- a doubled dot, or a DNS label over 63 characters --
@@ -30,6 +33,7 @@ This package imports nothing from any program, and no program's wording appears 
 from __future__ import annotations
 
 import ipaddress
+import re
 from collections.abc import Callable, Mapping
 from typing import Any
 from urllib.parse import urlsplit
@@ -37,6 +41,8 @@ from urllib.parse import urlsplit
 import httpx
 
 TRANSPORT_ERRORS = (httpx.HTTPError, httpx.InvalidURL, ValueError)
+
+_CONTROL_CHARACTER = re.compile(r"[\x00-\x1f\x7f]")
 
 MAX_DNS_LABEL = 63
 
@@ -55,6 +61,10 @@ class TransportFailure(Exception):
     def __init__(self, error_type: str) -> None:
         super().__init__(error_type)
         self.error_type = error_type
+
+
+def has_control_character(path: str) -> bool:
+    return _CONTROL_CHARACTER.search(path) is not None
 
 
 def base_url_problem(base_url: str) -> str | None:
@@ -155,7 +165,7 @@ class ConfinedClient:
 
     def request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
         """Send one request, permit first. Raises the program's refusal or `TransportFailure`."""
-        if not self._permits(method, path):
+        if has_control_character(path) or not self._permits(method, path):
             raise self._refuse(method, path)
         try:
             return self._client.request(method, path, **kwargs)

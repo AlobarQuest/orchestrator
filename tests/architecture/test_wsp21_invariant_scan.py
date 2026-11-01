@@ -774,8 +774,9 @@ OUTBOUND_ALLOWLIST = {
     # Enforced by `system_permits` / `verifier_permits` / `anonymous_permits` and pinned by
     # tests/image_release/test_client_surface.py. Its egress is not the orchestrator's.
     Path("src/image_release/client.py"),
-    # ADR-0055 amendment 14. Three paths through the confined transport, as VERIFIER: the
-    # status ledger and one unit read, and `/verify`. Its egress is the orchestrator's own API.
+    # ADR-0055 amendment 14. Four paths through the confined transport, as VERIFIER: the status
+    # ledger and one unit read, `/verify`, and a named check's evidence. Its egress is the
+    # orchestrator's own API.
     Path("src/rotation_verifier/client.py"),
     # Landing Part 4. The one GitHub read the lane makes: a repository's required status checks on
     # `main`, through the confined transport and a single permitted path. Read-only.
@@ -802,9 +803,10 @@ OUTBOUND_ALLOWLIST = {
     Path("src/rotation_proposer/client.py"),
     # ADR-0055 decision 1. The credential-rotation executor PULLS its work: it is a separate
     # program in its own VM, and it reaches the orchestrator only as its WORKER identity. Its
-    # reads are the ready queue, a unit, its package revision, history and evidence; its writes
-    # are claim, renew, evidence and three commands. Enforced by `permits` and pinned by
-    # tests/rotation_worker/test_client_surface.py. Its egress is not the orchestrator's.
+    # reads are the status ledger, a unit, its package revision, history and evidence, the machine
+    # identities and held credentials the orchestrator loaded, the member record and the
+    # observations; its writes are claim, renew, evidence and three commands. Enforced by `permits`
+    # and pinned by tests/architecture/test_rotation_edges.py. Its egress is not the orchestrator's.
     Path("src/rotation_worker/orchestrator_client.py"),
     # ADR-0055 increment 5. The rotation executor's OpenRouter adapter mints, probes and revokes
     # OpenRouter API keys, from the executor's VM. Its client may send only key-info, the model
