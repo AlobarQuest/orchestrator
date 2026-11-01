@@ -45,6 +45,7 @@ from rotation_verifier.alerts import (
     NO_REQUIRED_CHECK,
     REFUSED,
     TOKEN_ENV,
+    UNREAD,
     Outcome,
     state_directory,
     sync_alerts,
@@ -141,6 +142,11 @@ def run_pass(
         unit_id = str(row.get("unit_id"))
         try:
             unit = client.unit(unit_id)
+        except (VerifierCallError, KeyError, TypeError, ValueError) as error:
+            # Unread, so not known to be ours: a failed read holds the key and fires nothing.
+            outcomes.append(Outcome(key, UNREAD, str(error), unit_id))
+            continue
+        try:
             bump = _is_bump(unit)
             if not (bump or _is_rotation(unit)):
                 continue

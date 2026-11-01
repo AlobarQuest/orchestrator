@@ -53,6 +53,8 @@ SYSTEM_ACTOR: Final = "orchestrator-system"
 _PROPOSER_NOT_SYSTEM: Final = "proposer_not_system"
 # The server's `dead_letter.VERIFICATION_STATES`, held equal by the route's test.
 VERIFICATION_STATES: Final = frozenset({"submitted", "verifying"})
+# The capability a post-deploy unit is minted with; `image_release` verifies it.
+POST_DEPLOY_CAPABILITY: Final = "post_deploy_verification"
 SUBJECT_UNIT: Final = "unit"
 SUBJECT_STAGED_INTAKE: Final = "staged-intake"
 SUBJECT_PACKAGE: Final = "package"
@@ -309,12 +311,24 @@ def _alert(row: StatusRow, condition: Condition, now: datetime) -> Alert:
         return Alert(
             f"Verification stalled: {unit}",
             f"Unit {unit}{where} has been in state {row.state} since {since} and no verifier "
-            "finished it. Open it on /review, then read ~/Library/Logs/rotation-verifier.log for "
-            "why. If that lane skips the unit, run its verification through the VERIFIER verify "
-            "route.",
+            f"finished it. {_verification_steps(row)}",
             link,
         )
     raise ValueError(f"{condition} is not a unit condition")
+
+
+def _verification_steps(row: StatusRow) -> str:
+    """Who finishes a stuck unit. `/verify` refuses nothing for a post-deploy unit, so its
+    alert names the lane that mints and verifies it rather than the VERIFIER route."""
+    if row.change_class == POST_DEPLOY_CAPABILITY:
+        return (
+            "Open it on /review, then read the image-release lane's log for why "
+            "`image_release` did not verify it."
+        )
+    return (
+        "Open it on /review, then read ~/Library/Logs/rotation-verifier.log for why. If that "
+        "lane skips the unit, run its verification through the VERIFIER verify route."
+    )
 
 
 def firing(

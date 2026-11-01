@@ -46,10 +46,16 @@ class Orchestrator:
     """A queue of one bump unit and one rotation unit, or an unreadable queue."""
 
     def __init__(
-        self, *, readable: bool = True, bump_answer: int = 200, bump_queued: bool = True
+        self,
+        *,
+        readable: bool = True,
+        bump_answer: int = 200,
+        bump_verify: int = 200,
+        bump_queued: bool = True,
     ) -> None:
         self.readable = readable
         self.bump_answer = bump_answer
+        self.bump_verify = bump_verify
         self.bump_queued = bump_queued
         self.verified: list[str] = []
 
@@ -67,6 +73,8 @@ class Orchestrator:
         unit_id = path.split("/")[4]
         if path.endswith("/verify"):
             self.verified.append(unit_id)
+            if unit_id == UNIT and self.bump_verify != 200:
+                return httpx.Response(self.bump_verify, json={})
             return httpx.Response(200, json={"state": "completed"})
         if unit_id == ROTATION:
             return httpx.Response(
@@ -182,7 +190,7 @@ def test_a_refused_unit_is_a_finding_with_one_alert_and_no_failure(tmp_path: Pat
     """2 is the launcher's `--finding` code, so this cause pings success and raises the alert."""
     hub = Hub()
 
-    code = _run(Orchestrator(bump_answer=500), hub, tmp_path)
+    code = _run(Orchestrator(bump_verify=500), hub, tmp_path)
 
     assert code == 2
     assert hub.sent == [(f"verify-refused:{UNIT}", "firing")]
@@ -225,7 +233,7 @@ def test_no_alert_token_verifies_everything_it_can(
 
 def test_no_alert_token_keeps_what_was_fired(tmp_path: Path) -> None:
     hub = Hub()
-    _run(Orchestrator(bump_answer=500), hub, tmp_path)
+    _run(Orchestrator(bump_verify=500), hub, tmp_path)
     remembered = (tmp_path / alerts.ALERTS_FILE).read_text()
 
     _run(Orchestrator(), hub, tmp_path, token="", read=lambda repository: ())
@@ -246,7 +254,7 @@ def test_an_unusable_state_directory_verifies_everything_it_can(tmp_path: Path) 
 
 def test_an_unread_queue_holds_every_key(tmp_path: Path) -> None:
     hub = Hub()
-    _run(Orchestrator(bump_answer=500), hub, tmp_path)
+    _run(Orchestrator(bump_verify=500), hub, tmp_path)
     hub.sent.clear()
 
     code = _run(Orchestrator(readable=False), hub, tmp_path)
@@ -256,9 +264,24 @@ def test_an_unread_queue_holds_every_key(tmp_path: Path) -> None:
     assert json.loads((tmp_path / alerts.ALERTS_FILE).read_text()) == [f"verify-refused:{UNIT}"]
 
 
+def test_one_failed_unit_read_fires_nothing_and_holds_the_key(tmp_path: Path) -> None:
+    """A unit that could not be read is not known to be the lane's, so it raises nothing and a
+    key already raised for it is held, not resolved."""
+    hub = Hub()
+    assert _run(Orchestrator(bump_answer=500), hub, tmp_path) == 2
+    assert hub.sent == []
+
+    _run(Orchestrator(bump_verify=500), hub, tmp_path)
+    hub.sent.clear()
+    _run(Orchestrator(bump_answer=500), hub, tmp_path)
+
+    assert hub.sent == []
+    assert json.loads((tmp_path / alerts.ALERTS_FILE).read_text()) == [f"verify-refused:{UNIT}"]
+
+
 def test_a_clean_pass_after_an_unread_one_resolves(tmp_path: Path) -> None:
     hub = Hub()
-    _run(Orchestrator(bump_answer=500), hub, tmp_path)
+    _run(Orchestrator(bump_verify=500), hub, tmp_path)
     _run(Orchestrator(readable=False), hub, tmp_path)
     hub.sent.clear()
 
@@ -270,7 +293,7 @@ def test_a_clean_pass_after_an_unread_one_resolves(tmp_path: Path) -> None:
 
 def test_a_dry_run_tells_nobody_and_keeps_what_was_fired(tmp_path: Path) -> None:
     hub = Hub()
-    _run(Orchestrator(bump_answer=500), hub, tmp_path)
+    _run(Orchestrator(bump_verify=500), hub, tmp_path)
     hub.sent.clear()
 
     code = _run(Orchestrator(), hub, tmp_path, token="", dry_run=True)

@@ -1,12 +1,13 @@
 """What this lane tells a person, through alert-hub (sender `sds-bridge`).
 
-`verify-refused:<unit>` for a unit the orchestrator refused or the lane could not read,
+`verify-refused:<unit>` for a unit the lane owns and the orchestrator refused,
 `verify-checks-unreadable:<unit>` for a repository whose required checks could not be read, and
 `verify-no-required-check:<unit>` for a bump whose repository requires none. A unit that goes to
 `awaiting_review` raises nothing here: `execution-watch` holds that wait.
 
 Each fires once, stays while its unit is refused, and resolves on the first pass that no longer
-reports it. A pass that couldn't read its queue never reaches here, so every key holds. This runs
+reports it. A pass that couldn't read its queue never reaches here, so every key holds; so does
+the key of a unit it listed but couldn't read (`UNREAD`). This runs
 after every verify, and answers a failure rather than raising one: telling a person never stops a
 rotation.
 """
@@ -27,6 +28,8 @@ TOKEN_ENV: Final = "SDS_BRIDGE_ALERT_TOKEN"
 STATE_DIR_ENV: Final = "VERIFIER_STATE_DIR"
 ALERTS_FILE: Final = "alerts.json"
 REFUSED: Final = "refused"
+# A unit the lane could not read: not known to be the lane's, so it keeps its alert state.
+UNREAD: Final = "unread"
 NO_REQUIRED_CHECK: Final = "bump_unit_no_required_check"
 CHECKS_UNREADABLE: Final = "required_checks_unreadable"
 KINDS: Final = {
@@ -99,7 +102,13 @@ def sync_alerts(
         transport=transport,
     )
     try:
-        hub.sync(_firing(outcomes))
+        unread = {
+            alert_key(kind, outcome.unit_id)
+            for outcome in outcomes
+            if outcome.result == UNREAD
+            for kind in KINDS.values()
+        }
+        hub.sync(_firing(outcomes), unread)
     except AlertHubError as error:
         return str(error)
     return None

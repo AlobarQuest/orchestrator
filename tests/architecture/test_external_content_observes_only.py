@@ -315,7 +315,8 @@ CLASSIFICATION: dict[str, Row] = {
         "Landing Part 4: on a dependency-bump unit it first files the repository's required checks "
         "as named-check evidence, which the orchestrator observes from GitHub itself. From the "
         "orchestrator it reads only the status ledger and the unit, and from GitHub only a "
-        "repository's required checks on main",
+        "repository's required checks on main, and it tells alert-hub (sender sds-bridge) what it "
+        "could not verify",
         frozenset({VERIFY, NAMED_CHECK}),
     ),
     "rotation_decomposer": Row(

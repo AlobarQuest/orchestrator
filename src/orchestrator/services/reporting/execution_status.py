@@ -115,7 +115,7 @@ def _entered_at(session: Session, units: Sequence[WorkUnit]) -> dict[uuid.UUID, 
     """When each unit last moved into its current state. A same-state event isn't a move: a claim
     renewal, a dependency and an approval all write `to_state` as the state the unit is in."""
     entered: dict[uuid.UUID, datetime] = {}
-    states = {unit.id: unit.state for unit in units}
+    states = {unit.id: _clock_state(unit.state) for unit in units}
     for subject_id, to_state, occurred_at in session.execute(
         select(Event.subject_id, Event.to_state, func.max(Event.occurred_at))
         .where(
@@ -128,6 +128,12 @@ def _entered_at(session: Session, units: Sequence[WorkUnit]) -> dict[uuid.UUID, 
         if to_state == states[subject_id]:
             entered[subject_id] = occurred_at
     return entered
+
+
+def _clock_state(state: str) -> str:
+    """The state a unit's clock runs from. `verifying` is measured from entry to `submitted`, so a
+    verify that fails part-way and is retried does not restart the clock."""
+    return WorkUnitState.SUBMITTED if state == WorkUnitState.VERIFYING else state
 
 
 def _unit_rows(

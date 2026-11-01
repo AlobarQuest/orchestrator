@@ -645,6 +645,18 @@ def test_a_stuck_unit_raises_its_verification_key(state: str) -> None:
     ]
 
 
+def test_a_stuck_post_deploy_unit_names_image_release_not_the_verify_route() -> None:
+    stuck = row(
+        change_class="post_deploy_verification",
+        standing=False,
+        state="submitted",
+        verification_overdue=True,
+    )
+    alert = firing([stuck], {}, set(), NOW, THRESHOLDS)[f"verification-stalled:{stuck.unit_id}"]
+    assert "image_release" in alert.message
+    assert "VERIFIER verify" not in alert.message
+
+
 def test_a_healthy_unit_is_raised_so_it_can_be_known_and_fires_nothing() -> None:
     young = unowned(state="submitted")
     assert raised_keys([young], NOW, THRESHOLDS) == {f"verification-stalled:{young.unit_id}"}

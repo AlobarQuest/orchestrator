@@ -770,6 +770,20 @@ def test_a_same_state_event_does_not_move_the_clock(migrated_session: Session) -
     assert row.entered_at == entered.occurred_at
 
 
+def test_a_verifying_unit_is_measured_from_its_entry_to_submitted(
+    migrated_session: Session,
+) -> None:
+    """A verify that fails part-way and is retried must not restart the stalled clock."""
+    unit = _parked(migrated_session, WorkUnitState.VERIFYING, "verifying-clock")
+    submitted = _state_event(migrated_session, unit, "vc-1", "executing", "submitted")
+    _state_event(migrated_session, unit, "vc-2", "submitted", "verifying")
+
+    row = _row(migrated_session, unit)
+
+    assert row is not None
+    assert row.entered_at == submitted.occurred_at
+
+
 def _in_state(session: Session, key: str, state: WorkUnitState) -> WorkUnit:
     unit = ready_unit(session, key=key)
     unit.state = state
