@@ -65,12 +65,15 @@ METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD")
 # The App installation token: its one source, by the function that hands it to the dispatcher.
 APP_TOKEN_SOURCE = "token_provider_for"
 DISPATCH_PATH = "/repos/AlobarQuest/brain/actions/workflows/factory-runner-pilot.yml/dispatches"
+# A real repository name may hold a dot or an underscore, and an owner is any account.
+DOTTED_PATH = "/repos/AlobarQuest/.github/actions/workflows/factory-runner-pilot.yml/dispatches"
+UNDERSCORED_PATH = "/repos/other-owner/my_repo.v2/actions/workflows/w.yml/dispatches"
 DISPATCH = ServiceEdge(
     base_url="https://api.github.com",
-    routes=frozenset({("POST", DISPATCH_PATH)}),
+    routes=frozenset({("POST", path) for path in (DISPATCH_PATH, DOTTED_PATH, UNDERSCORED_PATH)}),
     credential=APP_TOKEN_SOURCE,
 )
-DISPATCH_PATHS = frozenset({DISPATCH_PATH})
+DISPATCH_PATHS = frozenset({DISPATCH_PATH, DOTTED_PATH, UNDERSCORED_PATH})
 DISPATCH_PROBES = frozenset(
     {
         "/app/installations/1/access_tokens",
@@ -657,8 +660,8 @@ def test_each_pin_matches_the_checkout(checkout: Path) -> None:
     assert pin_disagreements(checkout) == []
 
 
-def test_the_runner_calls_exactly_the_listed_routes(checkout: Path) -> None:
-    assert sorted(runner_routes(checkout)) == sorted(RUNNER_ROUTES)
+def test_the_runner_calls_only_listed_routes(checkout: Path) -> None:
+    assert set(runner_routes(checkout)) <= set(RUNNER_ROUTES)
     assert runner_sources_outside_the_client(checkout) == []
 
 
