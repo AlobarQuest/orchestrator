@@ -8,7 +8,6 @@ from typing import Any, Final
 
 import httpx
 
-from bump_proposer.orchestrator_client import UnusableEndpointError
 from estate_clients.confined import ConfinedClient, TransportFailure, base_url_problem, error_code
 from execution_watch.decide import UnitRow
 
@@ -83,7 +82,7 @@ class Orchestrator:
     ) -> None:
         problem = base_url_problem(base_url)
         if problem is not None:
-            raise UnusableEndpointError(f"the orchestrator base URL {problem}")
+            raise CallError(f"the orchestrator base URL {problem}")
         try:
             self._client = ConfinedClient(
                 base_url=base_url,
@@ -98,7 +97,7 @@ class Orchestrator:
                 refuse=lambda method, path: CallError(f"this client may not {method} {path}"),
             )
         except TransportFailure as failure:
-            raise UnusableEndpointError(
+            raise CallError(
                 f"the orchestrator base URL is not usable: {failure.error_type}"
             ) from None
 

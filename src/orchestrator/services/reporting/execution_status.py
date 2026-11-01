@@ -83,7 +83,10 @@ def execution_status(
         record.work_unit_id: record
         for record in session.scalars(
             select(DispatchRecord)
-            .where(DispatchRecord.work_unit_id.in_([unit.id for unit in units]))
+            .where(
+                DispatchRecord.work_unit_id.in_([unit.id for unit in units]),
+                DispatchRecord.status != "skipped",
+            )
             .distinct(DispatchRecord.work_unit_id)
             .order_by(
                 DispatchRecord.work_unit_id,

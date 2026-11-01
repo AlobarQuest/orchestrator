@@ -105,6 +105,17 @@ def test_submit_without_known_refuses_and_raises_unread(world: World, tmp_path: 
     assert not (tmp_path / "known.json").exists()
 
 
+def test_submit_with_no_known_file_holds_every_remembered_key(world: World, tmp_path: Path) -> None:
+    (tmp_path / "known.json").write_text("[]")
+    world.rows = [status_row()]
+    world.submit(tmp_path)
+    (tmp_path / "known.json").unlink()
+    world.rows = []
+    world.sent.clear()
+    assert world.submit(tmp_path, NOW + timedelta(minutes=15)) == 1
+    assert world.sent == [(UNREAD, "firing")]
+
+
 def test_the_first_seeded_pass_alerts_on_nothing(world: World, tmp_path: Path) -> None:
     world.rows = [status_row()]
     cli.seed(rows_of(world), tmp_path, NOW)

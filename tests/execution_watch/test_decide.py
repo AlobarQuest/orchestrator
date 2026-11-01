@@ -69,8 +69,73 @@ def test_stalled_is_a_lapsed_lease_and_nothing_owns_it() -> None:
     assert not owned_elsewhere(stalled, Condition.STALLED)
 
 
-def test_dispatch_blocked_is_an_open_breaker() -> None:
-    assert conditions(unowned(breaker_open=True), NOW) == {Condition.DISPATCH_BLOCKED}
+def test_an_open_breaker_alone_raises_nothing() -> None:
+    assert conditions(unowned(breaker_open=True), NOW) == set()
+
+
+def test_a_breaker_alone_raises_nothing_after_a_later_success() -> None:
+    # Three failures then a success: the breaker counts all time, the latest dispatch is fine.
+    succeeded = unowned(
+        breaker_open=True, latest_dispatch_status="dispatched", latest_dispatch_at=hours_ago(0.5)
+    )
+    assert conditions(succeeded, NOW) == set()
+    for state in ("claimed", "executing"):
+        assert conditions(replace(succeeded, state=state, has_claim=True), NOW) == set()
+
+
+@pytest.mark.parametrize("state", ["claimed", "executing"])
+def test_an_executing_unit_with_a_failed_dispatch_raises_nothing(state: str) -> None:
+    started = unowned(
+        state=state,
+        has_claim=True,
+        breaker_open=True,
+        latest_dispatch_status="failed",
+        latest_dispatch_at=hours_ago(9),
+    )
+    assert conditions(started, NOW) == set()
+
+
+@pytest.mark.parametrize(
+    "change_class,standing", [("app-change", False), (BUMP, False), (BUMP, True)]
+)
+def test_a_failed_unit_raises_only_unit_failed(change_class: str, standing: bool) -> None:
+    failed = row(
+        change_class=change_class,
+        standing=standing,
+        state="failed",
+        latest_dispatch_status="dispatched",
+        latest_dispatch_at=hours_ago(9),
+        breaker_open=True,
+    )
+    assert conditions(failed, NOW) == {Condition.UNIT_FAILED}
+
+
+def test_a_unit_walking_its_whole_life_fires_nothing() -> None:
+    steps = [
+        ("ready", None, None, False),
+        ("ready", "dispatched", 0.1, False),
+        ("claimed", "dispatched", 3, True),
+        ("executing", "dispatched", 3, True),
+        ("submitted", "dispatched", 3, True),
+        ("verifying", "dispatched", 3, True),
+        ("awaiting_review", "dispatched", 3, True),
+        ("completed", "dispatched", 3, True),
+    ]
+    for state, status, age, claimed in steps:
+        walking = unowned(
+            state=state,
+            latest_dispatch_status=status,
+            latest_dispatch_at=hours_ago(age) if age is not None else None,
+            has_claim=claimed,
+            breaker_open=True,
+        )
+        assert firing([walking], {}, set(), NOW, THRESHOLDS) == {}, state
+
+
+def test_a_bump_that_is_not_standing_failed_alerts() -> None:
+    failed = row(state="failed", standing=False)
+    assert not owned_elsewhere(failed, Condition.UNIT_FAILED)
+    assert owned_elsewhere(row(state="failed"), Condition.UNIT_FAILED)
 
 
 @pytest.mark.parametrize("status", ["blocked", "failed"])
@@ -84,6 +149,12 @@ def test_a_later_success_clears_dispatch_blocked() -> None:
     assert conditions(unowned(latest_dispatch_status="skipped"), NOW) == set()
 
 
+def test_a_unit_held_alone_is_owned_only_in_revision_required() -> None:
+    covered = row(state="blocked")
+    assert not owned_elsewhere(covered, Condition.UNIT_HELD)
+    assert owned_elsewhere(row(state="revision_required"), Condition.UNIT_HELD)
+
+
 def test_dispatch_blocked_by_status_waits_an_hour_from_first_sighting() -> None:
     blocked = unowned(latest_dispatch_status="failed", latest_dispatch_at=hours_ago(9))
     key = f"execution-dispatch-blocked:{blocked.unit_id}"
@@ -93,7 +164,9 @@ def test_dispatch_blocked_by_status_waits_an_hour_from_first_sighting() -> None:
 
 
 def test_an_open_breaker_fires_without_waiting() -> None:
-    broken = unowned(breaker_open=True)
+    broken = unowned(
+        breaker_open=True, latest_dispatch_status="failed", latest_dispatch_at=hours_ago(0.1)
+    )
     assert list(firing([broken], {}, set(), NOW, THRESHOLDS)) == [
         f"execution-dispatch-blocked:{broken.unit_id}"
     ]
@@ -135,7 +208,7 @@ def test_a_bump_the_sibling_lanes_cover_stays_silent() -> None:
     covered = [
         row(state="failed"),
         row(state="revision_required"),
-        row(breaker_open=True),
+        row(latest_dispatch_status="failed", latest_dispatch_at=hours_ago(3)),
         row(latest_dispatch_status="dispatched", latest_dispatch_at=hours_ago(3)),
     ]
     assert firing(covered, {}, set(), NOW, THRESHOLDS) == {}
@@ -172,7 +245,7 @@ def test_the_unclaimed_message_names_failing_then_cancelling() -> None:
         {"state": "failed"},
         {"state": "blocked"},
         {"state": "claimed", "lease_lapsed": True},
-        {"breaker_open": True},
+        {"state": "ready", "breaker_open": True, "latest_dispatch_status": "failed"},
         {"latest_dispatch_status": "dispatched", "latest_dispatch_at": hours_ago(3)},
     ],
 )
@@ -282,7 +355,11 @@ def _bump_raises(shape: UnitRow) -> bool:
 # Each bump-covered condition, as the unit shape that raises it.
 _SHAPES: dict[Condition, dict[str, Any]] = {
     Condition.UNIT_HELD: {"state": "revision_required"},
-    Condition.DISPATCH_BLOCKED: {"state": "ready", "breaker_open": True},
+    Condition.DISPATCH_BLOCKED: {
+        "state": "ready",
+        "latest_dispatch_status": "failed",
+        "latest_dispatch_at": hours_ago(3),
+    },
     Condition.RUN_UNCLAIMED: {
         "state": "ready",
         "latest_dispatch_status": "dispatched",
@@ -317,4 +394,4 @@ def test_the_bump_lane_alert_for_a_dispatch_refusal_comes_from_a_ready_unit_only
     ready = row(state="ready")
     assert _bump_raises(ready)
     assert not _bump_raises(row(state="claimed"))
-    assert not owned_elsewhere(row(state="claimed", breaker_open=True), Condition.DISPATCH_BLOCKED)
+    assert not conditions(row(state="claimed", breaker_open=True), NOW)

@@ -32,7 +32,6 @@ from typing import Final
 import httpx
 
 from alert_hub_client import Alert, AlertHubError, FirstSightings, KeyedAlerts, StateUnwritable
-from bump_proposer.orchestrator_client import UnusableEndpointError
 from execution_watch.client import USER_AGENT, CallError, Orchestrator
 from execution_watch.decide import (
     DEFAULT_THRESHOLDS,
@@ -248,7 +247,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             credential_key_id=environ["ORCHESTRATOR_API_CREDENTIAL_KEY_ID"],
             token=environ["ORCHESTRATOR_API_TOKEN"],
         )
-    except UnusableEndpointError as error:
+    except CallError as error:
         print(f"FATAL: {error}", file=sys.stderr)
         return 1
     now = datetime.now(UTC)

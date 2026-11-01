@@ -11,17 +11,15 @@ from orchestrator.persistence.models import (
     Event,
     SdsMember,
     SdsMemberGrant,
+    WorkPackageRevision,
     WorkUnit,
 )
 from orchestrator.services.lifecycle.claims import LeaseGrant, claim_unit
-from orchestrator.services.reporting.execution_status import execution_status
+from orchestrator.services.reporting.execution_status import _is_standing, execution_status
 from tests.services.test_claims import worker
 from tests.services.test_dispatch import PILOT_REPOSITORY, ready_unit
 from tests.services.test_reclaim import expire
-
-ROTATION_SNAPSHOT: dict[str, object] = {
-    "profile_fields": {"standing": True, "credential_id": "cred-1"}
-}
+from tests.services.test_rotation_claims import seed_unit
 
 
 def _record(session: Session, unit: WorkUnit, attempt: int, status: str) -> None:
@@ -220,8 +218,7 @@ def test_granted_is_false_with_no_member(migrated_session: Session) -> None:
 
 
 def test_a_rotation_unit_says_so(migrated_session: Session) -> None:
-    unit = ready_unit(migrated_session, key="es-rot", enforcement_snapshot=ROTATION_SNAPSHOT)
-    unit.required_capability = "operational_action"
+    unit = seed_unit(migrated_session, "es-rot")
     migrated_session.commit()
     plain = ready_unit(migrated_session, key="es-plain")
 
@@ -229,5 +226,39 @@ def test_a_rotation_unit_says_so(migrated_session: Session) -> None:
     plain_row = _row(migrated_session, plain)
 
     assert rotation_row is not None and plain_row is not None
+    assert rotation_row.is_rotation is True
+    assert plain_row.is_rotation is False
     assert rotation_row.standing is True
     assert plain_row.standing is False
+
+
+def test_a_later_skipped_record_does_not_hide_a_dispatched_one(migrated_session: Session) -> None:
+    unit = ready_unit(migrated_session, key="es-skipped")
+    _record(migrated_session, unit, 1, "dispatched")
+    _record(migrated_session, unit, 2, "skipped")
+
+    row = _row(migrated_session, unit)
+
+    assert row is not None
+    assert row.latest_dispatch_status == "dispatched"
+
+
+def test_a_retried_units_second_claim_is_the_one_compared(migrated_session: Session) -> None:
+    unit = ready_unit(migrated_session, key="es-retry")
+    assert isinstance(claim_unit(migrated_session, unit.id, worker(), "es-r1"), LeaseGrant)
+    unit.state = WorkUnitState.READY
+    migrated_session.commit()
+    _record(migrated_session, unit, 2, "dispatched")
+    assert isinstance(claim_unit(migrated_session, unit.id, worker(), "es-r2"), LeaseGrant)
+    migrated_session.commit()
+
+    row = _row(migrated_session, unit)
+
+    assert row is not None and row.has_claim
+
+
+@pytest.mark.parametrize("value", ["true", 1, "yes", None])
+def test_standing_is_the_boolean_true_only(value: object) -> None:
+    revision = WorkPackageRevision()
+    revision.enforcement_snapshot = {"profile_fields": {"standing": value}}
+    assert _is_standing(revision) is False

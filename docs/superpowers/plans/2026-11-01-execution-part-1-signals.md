@@ -95,7 +95,7 @@ Also write `test_a_rotation_unit_raises_nothing`, `test_a_bump_that_lost_its_gra
 - [ ] Run a whole-branch review and a mutation pass over `decide.py`, and report the count and every survivor.
 - [ ] Open the pull request, and merge on green. Check nothing is active, deploy with `scripts/deploy_orchestrator.py`, and read `openapi.json` for the route and its response fields.
 - [ ] From the main tree after it updates, run `execution-watch --seed`, create the Healthchecks check, and install the agent. The `sds-bridge` sender is shared, so Healthchecks, not `silent:`, hears this lane stop.
-- [ ] Prove one kickstarted pass: exit 0, no alert fired, the Healthchecks check is up, and the 6 known subjects are recorded.
+- [ ] Prove one kickstarted pass: exit 0, no alert fired, the Healthchecks check is up, and known.json records every subject the seed read.
 - [ ] Update `CLAUDE.md`, the Layer Map, the year plan, and memory, and record the proof here.
 
 ## Live proof

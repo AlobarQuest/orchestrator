@@ -4,7 +4,7 @@ A row (the orchestrator's `execution-status` read) can show five conditions, eac
 `execution-<kind>:<unit>`. Two sibling lanes already alert on part of that ground, and this lane
 stays silent on exactly what they cover (`owned_elsewhere`), so a person is told once:
 
-* `work_watcher` alerts on a failed `dependency-update` unit.
+* `work_watcher` alerts on a failed unit of a `standing` `dependency-update` package.
 * `bump_driver` alerts on a `ready` or `revision_required` unit of a standing `dependency-update`
   package in a repository the member record grants: a unit in `revision_required`, a refused
   dispatch, and a run nobody claimed. A bump whose repository lost its grant falls out of that
@@ -78,8 +78,10 @@ def key_for(condition: Condition, unit_id: str) -> str:
 def conditions(
     row: UnitRow, now: datetime, thresholds: Thresholds = DEFAULT_THRESHOLDS
 ) -> set[Condition]:
-    """What is true of the unit right now, whoever alerts on it. The one-hour wait on a blocked
-    dispatch is a first-sighting clock and belongs to `firing`."""
+    """What is true of the unit right now, whoever alerts on it. Dispatch conditions need a `ready`
+    unit: once a run is claimed, an older refusal or a GitHub error no longer stops it. The
+    one-hour wait on a blocked dispatch is a first-sighting clock and belongs to `firing`; an
+    open breaker only skips that wait."""
     if row.is_rotation:
         return set()
     found: set[Condition] = set()
@@ -89,10 +91,11 @@ def conditions(
         found.add(Condition.UNIT_HELD)
     if row.lease_lapsed:
         found.add(Condition.STALLED)
-    if row.breaker_open or row.latest_dispatch_status in _BLOCKED_DISPATCH:
+    if row.state == _READY and row.latest_dispatch_status in _BLOCKED_DISPATCH:
         found.add(Condition.DISPATCH_BLOCKED)
     if (
-        row.latest_dispatch_status == _DISPATCHED
+        row.state == _READY
+        and row.latest_dispatch_status == _DISPATCHED
         and not row.has_claim
         and row.latest_dispatch_at is not None
         and now - row.latest_dispatch_at >= timedelta(hours=thresholds.run_unclaimed_hours)
@@ -113,7 +116,7 @@ def _is_covered_bump(row: UnitRow) -> bool:
 def owned_elsewhere(row: UnitRow, condition: Condition) -> bool:
     """Whether a sibling lane already alerts on this condition for this unit."""
     if condition is Condition.UNIT_FAILED:
-        return row.change_class == BUMP_CHANGE_CLASS
+        return row.change_class == BUMP_CHANGE_CLASS and row.standing
     if condition is Condition.UNIT_HELD:
         return _is_covered_bump(row) and row.state == _REVISION_REQUIRED
     if condition in (Condition.DISPATCH_BLOCKED, Condition.RUN_UNCLAIMED):
