@@ -126,6 +126,36 @@ def test_the_latest_dispatch_record_decides(migrated_session: Session) -> None:
     assert row.latest_dispatch_at is not None
 
 
+def test_a_claim_after_the_dispatch_still_counts_once_the_work_moves_on(
+    migrated_session: Session,
+) -> None:
+    unit = ready_unit(migrated_session, key="es-gate")
+    _record(migrated_session, unit, 1, "dispatched")
+    migrated_session.commit()
+    assert isinstance(claim_unit(migrated_session, unit.id, worker(), "es-gate"), LeaseGrant)
+    unit.state = WorkUnitState.AWAITING_REVIEW
+    migrated_session.commit()
+
+    row = _row(migrated_session, unit)
+
+    assert row is not None and row.has_claim
+
+
+def test_a_claim_older_than_the_latest_dispatch_does_not_answer_it(
+    migrated_session: Session,
+) -> None:
+    unit = ready_unit(migrated_session, key="es-redispatch")
+    assert isinstance(claim_unit(migrated_session, unit.id, worker(), "es-rd"), LeaseGrant)
+    unit.state = WorkUnitState.READY
+    migrated_session.commit()
+    _record(migrated_session, unit, 2, "dispatched")
+    migrated_session.commit()
+
+    row = _row(migrated_session, unit)
+
+    assert row is not None and not row.has_claim
+
+
 def test_a_unit_never_dispatched_has_no_latest_record(migrated_session: Session) -> None:
     row = _row(migrated_session, ready_unit(migrated_session, key="es-none"))
 

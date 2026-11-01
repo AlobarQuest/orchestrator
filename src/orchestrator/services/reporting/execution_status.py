@@ -11,7 +11,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from orchestrator.kernel.authority import normalize_authority
@@ -21,7 +21,6 @@ from orchestrator.services.execution.target_grant import (
     MemberRecordGrants,
     service_for_change_class,
 )
-from orchestrator.services.lifecycle.claims import CLAIM_HOLDING_STATES
 from orchestrator.services.lifecycle.execution_stall import stalled_executions
 from orchestrator.services.lifecycle.rotation_claims import is_rotation_unit
 from orchestrator.services.membership.members import list_members
@@ -51,6 +50,16 @@ def _is_standing(revision: WorkPackageRevision) -> bool:
     snapshot = revision.enforcement_snapshot
     fields = snapshot.get("profile_fields") if isinstance(snapshot, dict) else None
     return isinstance(fields, dict) and fields.get("standing") is True
+
+
+def _claimed_since(newest_claim: datetime | None, record: DispatchRecord | None) -> bool:
+    """A claim answers the latest dispatch only if it came after it; an older one is another run's.
+
+    Compared by time: `runner_attempt` and a claim's attempt are independent counters.
+    """
+    if newest_claim is None:
+        return False
+    return record is None or newest_claim >= record.created_at
 
 
 def execution_status(
@@ -83,11 +92,14 @@ def execution_status(
             )
         )
     }
-    claimed = set(
-        session.scalars(
-            select(Claim.work_unit_id).where(Claim.work_unit_id.in_([unit.id for unit in units]))
+    newest_claim = {
+        work_unit_id: acquired_at
+        for work_unit_id, acquired_at in session.execute(
+            select(Claim.work_unit_id, func.max(Claim.acquired_at))
+            .where(Claim.work_unit_id.in_([unit.id for unit in units]))
+            .group_by(Claim.work_unit_id)
         )
-    )
+    }
     lapsed = {
         stalled.work_unit_id
         for stalled in stalled_executions(session, grace_seconds=stall_grace_seconds)
@@ -95,7 +107,6 @@ def execution_status(
     breakers = {
         entry.work_unit_id for entry in _open_circuit_breakers(session, failure_signature_threshold)
     }
-    holding = {str(state) for state in CLAIM_HOLDING_STATES}
     rows: list[ExecutionStatusRow] = []
     for unit in units:
         revision = revisions[unit.work_package_revision_id]
@@ -118,7 +129,7 @@ def execution_status(
                 ),
                 latest_dispatch_status=record.status if record else None,
                 latest_dispatch_at=record.created_at if record else None,
-                has_claim=unit.id in claimed and unit.state in holding,
+                has_claim=_claimed_since(newest_claim.get(unit.id), record),
                 lease_lapsed=unit.id in lapsed,
                 breaker_open=unit.id in breakers,
             )
