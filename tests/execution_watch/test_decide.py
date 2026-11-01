@@ -259,6 +259,7 @@ def test_the_unclaimed_message_names_failing_then_cancelling() -> None:
         {"state": "claimed", "lease_lapsed": True},
         {"state": "ready", "breaker_open": True, "latest_dispatch_status": "failed"},
         {"latest_dispatch_status": "dispatched", "latest_dispatch_at": hours_ago(3)},
+        {"state": "submitted", "verification_overdue": True},
     ],
 )
 def test_every_alert_says_what_happened_and_the_next_step(shape: dict[str, Any]) -> None:
@@ -630,3 +631,80 @@ def test_the_bump_lane_alert_for_a_dispatch_refusal_comes_from_a_ready_unit_only
     assert _bump_raises(ready)
     assert not _bump_raises(row(state="claimed"))
     assert not conditions(row(state="claimed", breaker_open=True), NOW)
+
+
+# A unit stuck in verification, of any class.
+
+
+@pytest.mark.parametrize("state", ["submitted", "verifying"])
+def test_a_stuck_unit_raises_its_verification_key(state: str) -> None:
+    stuck = unowned(state=state, verification_overdue=True)
+    assert raised_keys([stuck], NOW, THRESHOLDS) == {f"verification-stalled:{stuck.unit_id}"}
+    assert list(firing([stuck], {}, set(), NOW, THRESHOLDS)) == [
+        f"verification-stalled:{stuck.unit_id}"
+    ]
+
+
+def test_a_stuck_post_deploy_unit_names_image_release_not_the_verify_route() -> None:
+    stuck = row(
+        change_class="post_deploy_verification",
+        standing=False,
+        state="submitted",
+        verification_overdue=True,
+    )
+    alert = firing([stuck], {}, set(), NOW, THRESHOLDS)[f"verification-stalled:{stuck.unit_id}"]
+    assert "image_release" in alert.message
+    assert "VERIFIER verify" not in alert.message
+
+
+def test_a_healthy_unit_is_raised_so_it_can_be_known_and_fires_nothing() -> None:
+    young = unowned(state="submitted")
+    assert raised_keys([young], NOW, THRESHOLDS) == {f"verification-stalled:{young.unit_id}"}
+    assert firing([young], {}, set(), NOW, THRESHOLDS) == {}
+
+
+@pytest.mark.parametrize("state", ["submitted", "verifying"])
+def test_a_rotation_unit_stuck_in_verification_alerts(state: str) -> None:
+    stuck = row(is_rotation=True, state=state, verification_overdue=True)
+    assert conditions(stuck, NOW) == {Condition.VERIFICATION_STALLED}
+    assert list(firing([stuck], {}, set(), NOW, THRESHOLDS)) == [
+        f"verification-stalled:{stuck.unit_id}"
+    ]
+
+
+def test_a_rotation_unit_s_other_conditions_stay_skipped_while_it_verifies() -> None:
+    stuck = row(
+        is_rotation=True,
+        state="verifying",
+        lease_lapsed=True,
+        breaker_open=True,
+        waiting=True,
+        verification_overdue=True,
+    )
+    assert conditions(stuck, NOW) == {Condition.VERIFICATION_STALLED}
+
+
+@pytest.mark.parametrize(
+    "shape",
+    [
+        {"change_class": BUMP, "standing": True, "granted": True},
+        {"change_class": BUMP, "standing": False},
+        {"change_class": "post-deploy", "standing": False},
+    ],
+)
+def test_no_sibling_lane_owns_a_stuck_unit(shape: dict[str, Any]) -> None:
+    stuck = row(**{**shape, "state": "submitted", "verification_overdue": True})
+    assert not owned_elsewhere(stuck, Condition.VERIFICATION_STALLED)
+    assert Condition.VERIFICATION_STALLED.value in " ".join(raised_keys([stuck], NOW, THRESHOLDS))
+
+
+def test_only_a_unit_row_can_be_stuck_in_verification() -> None:
+    """A staged intake's state is free text: it must not read as a unit's."""
+    staged = row(subject_kind="staged-intake", unit_id=None, state="submitted")
+    assert Condition.VERIFICATION_STALLED not in conditions(staged, NOW)
+
+
+def test_a_known_stuck_unit_stays_silent() -> None:
+    stuck = unowned(state="verifying", verification_overdue=True)
+    key = f"verification-stalled:{stuck.unit_id}"
+    assert firing([stuck], {}, {key}, NOW, THRESHOLDS) == {}

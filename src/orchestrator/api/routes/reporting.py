@@ -107,6 +107,7 @@ def execution_status_route(
         stall_grace_seconds=settings.execution_stall_grace_seconds,
         failure_signature_threshold=settings.dispatch_failure_signature_threshold,
         stalled_approval_seconds=settings.dead_letter_stalled_approval_seconds,
+        stalled_verification_seconds=settings.dead_letter_stalled_verification_seconds,
     )
 
 

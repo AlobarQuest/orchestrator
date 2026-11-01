@@ -140,3 +140,4 @@ class ExecutionStatusRow(BaseModel):
     policy_not_applied: str | None
     proposed_by: str | None
     rotation_package: bool
+    verification_overdue: bool

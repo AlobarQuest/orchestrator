@@ -356,3 +356,63 @@ def test_bare_prints_and_writes_nothing(
     assert f"known  {FAILED_KEY}" in out
     assert "new" in out
     assert sorted(p.name for p in tmp_path.iterdir()) == before
+
+
+# `verification-stalled`, while `ABSORB_VERIFICATION` is on and after it goes.
+
+VERIFYING_KEY = f"verification-stalled:{UNIT}"
+
+
+def test_a_row_from_a_server_without_the_field_reads_as_not_overdue() -> None:
+    row = status_row(state="submitted")
+    assert "verification_overdue" not in row
+    parsed = parse_row(row)
+    assert parsed is not None
+    assert parsed.verification_overdue is False
+
+
+def test_a_server_s_overdue_flag_is_read() -> None:
+    parsed = parse_row(status_row(state="submitted", verification_overdue=True))
+    assert parsed is not None
+    assert parsed.verification_overdue is True
+
+
+def test_a_damaged_overdue_flag_refuses() -> None:
+    with pytest.raises(CallError):
+        parse_row(status_row(state="submitted", verification_overdue="yes"))
+
+
+def test_an_absorbing_pass_baselines_an_overdue_unit_and_sends_nothing(
+    world: World, tmp_path: Path
+) -> None:
+    (tmp_path / "known.json").write_text("[]")
+    world.rows = [status_row(state="verifying", verification_overdue=True)]
+    assert world.submit(tmp_path) == 0
+    assert world.sent == []
+    assert _known(tmp_path) == {VERIFYING_KEY}
+
+
+def test_absorbing_covers_only_the_verification_key(world: World, tmp_path: Path) -> None:
+    (tmp_path / "known.json").write_text("[]")
+    world.rows = [status_row(state="failed")]
+    assert world.submit(tmp_path) == 0
+    assert world.sent == [(FAILED_KEY, "firing")]
+
+
+def test_with_absorbing_off_a_stuck_unit_fires_and_a_known_one_survives_being_young(
+    world: World, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(cli, "ABSORB_VERIFICATION", False)
+    (tmp_path / "known.json").write_text("[]")
+    world.rows = [status_row(state="verifying", verification_overdue=True)]
+    assert world.submit(tmp_path) == 0
+    assert world.sent == [(VERIFYING_KEY, "firing")]
+
+    world.sent.clear()
+    (tmp_path / "known.json").write_text(json.dumps([f"verification-stalled:{OTHER}"]))
+    world.rows = [status_row(OTHER, state="submitted")]
+    assert world.submit(tmp_path) == 0
+    assert _known(tmp_path) == {f"verification-stalled:{OTHER}"}
+    world.rows = [status_row(OTHER, state="submitted", verification_overdue=True)]
+    assert world.submit(tmp_path) == 0
+    assert (f"verification-stalled:{OTHER}", "firing") not in world.sent

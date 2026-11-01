@@ -11,14 +11,20 @@ the repository's required checks in sorted order and stops at the first that did
 newest row is then a failure exactly when one failed. A check still running is `waiting`; the next
 pass files from the start again, under keys of its own, so it observes every check afresh.
 
+A unit the lane could not take to an answer is a keyed alert (`alerts.py`), sent after every unit
+has had its turn, so a refused unit or an alert-hub failure never stops a rotation.
+
 EXIT CODES:
   0  every submitted unit was verified and completed or is waiting on a check, or none was
      submitted.
   1  the tool itself failed (a missing credential, an unusable URL).
-  2  something was found: a verified unit went to a person, a bump unit's repository requires no
-     check, or a repository's required checks could not be read.
-  3  a unit could not be read or verified, so the answer is missing rather than clean.
-3 outranks 2: an incomplete pass cannot claim it found everything there was to find.
+  2  something was found: a verified unit went to a person, or a unit raised an alert (it could
+     not be read or verified, its repository requires no check, or its required checks could not
+     be read). The launcher declares 2 as this lane's finding code, so one cause never raises both
+     an alert and `/fail`.
+  3  the queue could not be read and every key was held, or alert-hub could not be told, so a
+     finding may have reached nobody.
+3 outranks 2: an incomplete pass cannot claim it told a person everything it found.
 """
 
 from __future__ import annotations
@@ -29,9 +35,21 @@ import os
 import sys
 import uuid
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
+import httpx
+
+from rotation_verifier.alerts import (
+    CHECKS_UNREADABLE,
+    NO_REQUIRED_CHECK,
+    REFUSED,
+    TOKEN_ENV,
+    UNREAD,
+    Outcome,
+    state_directory,
+    sync_alerts,
+)
 from rotation_verifier.client import (
     CheckNotConcluded,
     UnusableEndpointError,
@@ -46,16 +64,7 @@ BUMP_CHANGE_CLASS = "dependency-update"
 # The criterion a bump package's generator writes: its one `automated_check`.
 BUMP_AC_ID = "AC-001"
 WAITING = "waiting"
-NO_REQUIRED_CHECK = "bump_unit_no_required_check"
-CHECKS_UNREADABLE = "required_checks_unreadable"
 FOUND, INCOMPLETE = 2, 3
-
-
-@dataclass(frozen=True)
-class Outcome:
-    unit_key: str
-    result: str  # completed, awaiting_review, would-verify or refused
-    detail: str = ""
 
 
 def _is_rotation(unit: dict[str, Any]) -> bool:
@@ -133,6 +142,11 @@ def run_pass(
         unit_id = str(row.get("unit_id"))
         try:
             unit = client.unit(unit_id)
+        except (VerifierCallError, KeyError, TypeError, ValueError) as error:
+            # Unread, so not known to be ours: a failed read holds the key and fires nothing.
+            outcomes.append(Outcome(key, UNREAD, str(error), unit_id))
+            continue
+        try:
             bump = _is_bump(unit)
             if not (bump or _is_rotation(unit)):
                 continue
@@ -142,13 +156,13 @@ def run_pass(
             if bump:
                 early = _file_bump_checks(client, pass_id, unit_id, unit, read_required_checks)
                 if early is not None:
-                    outcomes.append(Outcome(key, *early))
+                    outcomes.append(Outcome(key, *early, unit_id=unit_id))
                     continue
             version = int(unit["version"])
             answer = client.verify(unit_id, version, f"rotation-verifier-{unit_id}-v{version}")
         except (VerifierCallError, KeyError, TypeError, ValueError) as error:
             # One unit's refusal (its version moved, say) never stops the pass.
-            outcomes.append(Outcome(key, "refused", str(error)))
+            outcomes.append(Outcome(key, REFUSED, str(error), unit_id))
             continue
         state = str(answer.get("state"))
         outcomes.append(Outcome(key, "completed" if state == "completed" else state))
@@ -181,11 +195,35 @@ def _file_bump_checks(
 
 def exit_code(outcomes: Sequence[Outcome]) -> int:
     results = {outcome.result for outcome in outcomes}
-    if "refused" in results:
+    return FOUND if results - {"completed", "would-verify", WAITING} else 0
+
+
+def run(
+    client: VerifierClient,
+    *,
+    dry_run: bool,
+    read_required_checks: Callable[[str], tuple[str, ...]] | None,
+    alert_token: str,
+    state_dir: Path,
+    hub_transport: httpx.BaseTransport | None = None,
+) -> int:
+    """One pass, then what it found to alert-hub. A dry run tells nobody."""
+    try:
+        outcomes = run_pass(client, dry_run=dry_run, read_required_checks=read_required_checks)
+    except VerifierCallError as error:
+        print(f"could not list submitted units: {error}", file=sys.stderr)
         return INCOMPLETE
-    if results - {"completed", "would-verify", WAITING}:
-        return FOUND
-    return 0
+    for outcome in outcomes:
+        print(f"{outcome.unit_key:<40}  {outcome.result:<16}  {outcome.detail}".rstrip())
+    print(f"\n{len(outcomes)} unit(s) awaiting the verifier")
+    if not dry_run:
+        problem = sync_alerts(
+            outcomes, token=alert_token, state_dir=state_dir, transport=hub_transport
+        )
+        if problem is not None:
+            print(f"alert-hub could not be told: {problem}", file=sys.stderr)
+            return INCOMPLETE
+    return exit_code(outcomes)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -210,7 +248,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"FATAL: {error}", file=sys.stderr)
         return 1
     try:
-        outcomes = run_pass(
+        return run(
             client,
             dry_run=args.dry_run,
             read_required_checks=(
@@ -218,16 +256,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 if github_token
                 else None
             ),
+            alert_token=os.environ.get(TOKEN_ENV, ""),
+            state_dir=state_directory(os.environ, Path(os.environ.get("HOME", str(Path.home())))),
         )
-    except VerifierCallError as error:
-        print(f"could not list submitted units: {error}", file=sys.stderr)
-        return INCOMPLETE
     finally:
         client.close()
-    for outcome in outcomes:
-        print(f"{outcome.unit_key:<40}  {outcome.result:<16}  {outcome.detail}".rstrip())
-    print(f"\n{len(outcomes)} unit(s) awaiting the verifier")
-    return exit_code(outcomes)
 
 
 if __name__ == "__main__":

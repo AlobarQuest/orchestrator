@@ -240,6 +240,9 @@ TABLE: dict[str, Row] = {
     # shared confined transport. It decides nothing, so it borrows no sibling's knowledge.
     "rotation_verifier": _row(
         "__future__",
+        # Verification Part 1: tells a person through the shared alert-hub client, which owns the
+        # only request it can send. `pathlib` carries the state directory.
+        "alert_hub_client",
         "argparse",
         "collections",
         "dataclasses",
@@ -247,6 +250,7 @@ TABLE: dict[str, Row] = {
         "hashlib",
         "httpx",
         "os",
+        "pathlib",
         "re",
         "sys",
         "typing",

@@ -347,7 +347,7 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   inverted the signal for three of them.
   `run-landing-ledger.sh`, `run-deploy-watcher.sh`, `run-activation-sweep.sh` and
   `run-rotation-verifier.sh` (2026-10-26): **2 = something was FOUND**, 3 = it could not be read or measured ("3 outranks 2: an incomplete pass cannot claim
-  it found everything there was to find").
+  it found everything there was to find"). `run-rotation-verifier.sh`'s 2 includes a unit that raised a keyed alert, and its 3 is an unread queue or alert-hub not told, so one cause raises an alert or `/fail`, never both.
   `run-estate-landing.sh`, `run-change-proposer.sh`, `run-work-carrier.sh`, `run-bump-proposer.sh`
   and `run-rotation-proposer.sh`: **2 = could not use its INPUTS**, 3 = something was found.
   `run-execution-watch.sh` (Execution Part 1, every 15 minutes) arms the dead-man switch only on `--submit` and declares **2 = the orchestrator could not be read, every key held** as its finding code; 1 = the lane could not do its job. State is in `~/Library/Application Support/sds/execution-watch`; run `--seed` once before the first scheduled pass.

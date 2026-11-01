@@ -297,7 +297,9 @@ unit a failed verification left in `verifying`.
 A clean unit completes and hands the next unit its turn in the same transaction. Anything else
 goes to `awaiting_review`, where a person adjudicates and completes it as before; the verifier
 never fails a rotation criterion. The lane's log is `~/Library/Logs/rotation-verifier.log`: exit 2
-means a unit went to a person, exit 3 that one couldn't be verified (its version moved, say).
+means a unit went to a person or raised a keyed alert (it couldn't be verified, say its version
+moved), and exit 3 that the queue couldn't be read or alert-hub couldn't be told. Exit 3 comes after
+every unit has had its turn, and a failed read of the alert token doesn't stop the pass.
 
 The runner brief can't serve a rotation unit, because a rotation unit has no
 `target_repository`. The executor reads its unit from `GET /api/v1/work-units/{id}` and its
