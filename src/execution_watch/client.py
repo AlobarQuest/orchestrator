@@ -9,7 +9,7 @@ from typing import Any, Final
 import httpx
 
 from estate_clients.confined import ConfinedClient, TransportFailure, base_url_problem, error_code
-from execution_watch.decide import UnitRow
+from execution_watch.decide import SUBJECT_KINDS, SUBJECT_UNIT, StatusRow
 
 USER_AGENT: Final = "execution-watch/1 (+AlobarQuest/orchestrator)"
 TIMEOUT_SECONDS: Final = 30.0
@@ -45,29 +45,49 @@ def _text(row: dict[str, Any], field: str, *, required: bool) -> str | None:
     raise CallError(f"the execution-status answer's {field} is not usable")
 
 
-def _flag(row: dict[str, Any], field: str) -> bool:
+def _flag(row: dict[str, Any], field: str, *, required: bool = True) -> bool:
     value = row.get(field)
+    if value is None and not required:
+        return False
     if not isinstance(value, bool):
         raise CallError(f"the execution-status answer's {field} is not a boolean")
     return value
 
 
-def parse_row(row: object) -> UnitRow:
+def parse_row(row: object) -> StatusRow | None:
+    """One row, or `None` for a kind this lane doesn't know yet. A row with no `subject_kind` is a
+    unit from a server older than these fields, and a row of a kind it knows is held to its fields:
+    tolerance is for a deploy, never for a damaged answer."""
     if not isinstance(row, dict):
         raise CallError("the execution-status answer holds a row that isn't an object")
-    return UnitRow(
-        unit_id=str(_text(row, "unit_id", required=True)),
+    kind = row.get("subject_kind", SUBJECT_UNIT)
+    if kind not in SUBJECT_KINDS:
+        return None
+    unit = kind == SUBJECT_UNIT
+    unit_id = _text(row, "unit_id", required=unit)
+    older_server = unit and "subject_id" not in row
+    subject_id = unit_id if older_server else _text(row, "subject_id", required=True)
+    return StatusRow(
+        unit_id=unit_id,
         state=str(_text(row, "state", required=True)),
         change_class=_text(row, "change_class", required=False),
         is_rotation=_flag(row, "is_rotation"),
-        standing=_flag(row, "standing"),
+        standing=_flag(row, "standing", required=unit),
         target_repository=_text(row, "target_repository", required=False),
-        granted=_flag(row, "granted"),
+        granted=_flag(row, "granted", required=unit),
         latest_dispatch_status=_text(row, "latest_dispatch_status", required=False),
         latest_dispatch_at=_moment(row.get("latest_dispatch_at")),
-        has_claim=_flag(row, "has_claim"),
-        lease_lapsed=_flag(row, "lease_lapsed"),
-        breaker_open=_flag(row, "breaker_open"),
+        has_claim=_flag(row, "has_claim", required=unit),
+        lease_lapsed=_flag(row, "lease_lapsed", required=unit),
+        breaker_open=_flag(row, "breaker_open", required=unit),
+        subject_kind=str(kind),
+        subject_id=str(subject_id),
+        entered_at=_moment(row.get("entered_at")),
+        waiting=_flag(row, "waiting", required=False),
+        overdue=_flag(row, "overdue", required=False),
+        policy_not_applied=_text(row, "policy_not_applied", required=False),
+        proposed_by=_text(row, "proposed_by", required=False),
+        rotation_package=_flag(row, "rotation_package", required=False),
     )
 
 
@@ -104,7 +124,7 @@ class Orchestrator:
     def close(self) -> None:
         self._client.close()
 
-    def execution_status(self) -> list[UnitRow]:
+    def execution_status(self) -> list[StatusRow]:
         path = "/api/v1/execution-status"
         try:
             response = self._client.request("GET", path)
@@ -120,4 +140,4 @@ class Orchestrator:
             raise CallError(f"the orchestrator answered {path} without JSON") from None
         if not isinstance(body, list):
             raise CallError("the execution-status answer isn't a list")
-        return [parse_row(row) for row in body]
+        return [parsed for row in body if (parsed := parse_row(row)) is not None]

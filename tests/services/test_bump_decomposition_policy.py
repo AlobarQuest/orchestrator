@@ -565,11 +565,3 @@ def test_the_rotation_branch_is_unchanged(migrated_session: Session) -> None:
     assert (
         migrated_session.scalars(select(Event).where(Event.action == NOT_APPLIED)).first() is None
     )
-
-
-def test_a_refused_rotation_records_nothing(migrated_session: Session) -> None:
-    """Only a bump's refusal has a lane waiting to read it."""
-    rotation.test_a_revision_an_approval_policy_approved_waits_for_a_person(migrated_session)
-    assert (
-        migrated_session.scalars(select(Event).where(Event.action == NOT_APPLIED)).first() is None
-    )

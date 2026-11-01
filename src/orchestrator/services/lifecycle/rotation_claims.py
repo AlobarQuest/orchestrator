@@ -87,8 +87,11 @@ class ProposedUnitTerms:
 
 def is_rotation_unit(unit: WorkUnit | ProposedUnitTerms, revision: WorkPackageRevision) -> bool:
     """Decision 1's predicate, read from the unit and its package revision's snapshot."""
-    if unit.required_capability != "operational_action":
-        return False
+    return unit.required_capability == "operational_action" and is_rotation_revision(revision)
+
+
+def is_rotation_revision(revision: WorkPackageRevision) -> bool:
+    """The revision half of decision 1's predicate."""
     if revision.profile != "non-software-operational":
         return False
     snapshot = revision.enforcement_snapshot

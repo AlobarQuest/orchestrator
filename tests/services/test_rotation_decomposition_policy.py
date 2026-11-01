@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import normalize_authority
 from orchestrator.kernel.states import ActorContext, ActorRole
-from orchestrator.persistence.models import DecompositionProposal, WorkUnit
+from orchestrator.persistence.models import DecompositionProposal, Event, WorkUnit
 from orchestrator.services.intake.decomposition import (
     AcMapping,
     DecompositionProposalCommand,
@@ -496,7 +496,7 @@ def test_an_approval_failing_midway_leaves_no_trace_of_itself(
 ) -> None:
     """The second unit's registration fails after the approval, the first unit and its events
     are written: the savepoint must take all of them back, and the proposal must survive."""
-    from orchestrator.persistence.models import ApprovedDecomposition, Event
+    from orchestrator.persistence.models import ApprovedDecomposition
     from orchestrator.services.intake import decomposition
 
     real = decomposition.register_approved_unit
@@ -529,5 +529,141 @@ def test_an_approval_failing_midway_leaves_no_trace_of_itself(
         )
         assert reader.scalar(select(func.count()).select_from(WorkUnit)) == 0
         assert reader.scalar(select(func.count()).select_from(ApprovedDecomposition)) == 0
-        # Only the proposal's own event, written before the savepoint, remains.
-        assert reader.scalar(select(func.count()).select_from(Event)) == (events_before or 0) + 1
+        # The proposal's own event, written before the savepoint, and the record of why policy
+        # didn't approve it, written after: nothing of the approval remains.
+        assert reader.scalar(select(func.count()).select_from(Event)) == (events_before or 0) + 2
+        recorded = reader.scalars(select(Event).where(Event.action == NOT_APPLIED)).one()
+        assert recorded.payload == {"reason": "approval_failed", "detail": ["unit_conflict"]}
+
+
+NOT_APPLIED = "decomposition.policy_not_applied"
+
+
+def _refusals(session: Session, proposal: DecompositionProposal) -> list[dict[str, Any]]:
+    return [
+        event.payload
+        for event in session.scalars(
+            select(Event).where(Event.action == NOT_APPLIED, Event.subject_id == proposal.id)
+        )
+    ]
+
+
+def _propose(session: Session, revision_id: uuid.UUID, **changes: Any) -> DecompositionProposal:
+    actor = changes.pop("actor", SYSTEM)
+    return submit_decomposition_proposal(
+        session, _command(revision_id, package_ac_ids(session, revision_id), **changes), actor
+    )
+
+
+def test_an_envelope_policy_refuses_records_why(migrated_session: Session) -> None:
+    revision = _rotation_revision(migrated_session)
+    retire = _envelope("retire", host_without_overlap=True)
+    proposal = _propose(migrated_session, revision.id, retire=retire)
+    [refusal] = _refusals(migrated_session, proposal)
+    assert refusal["reason"] == "envelope_not_recognised"
+    assert refusal["detail"]
+
+
+def test_an_approval_policy_s_revision_records_why(migrated_session: Session) -> None:
+    revision = _rotation_revision(migrated_session, approved_by="policy:rotation@v1")
+    proposal = _propose(migrated_session, revision.id)
+    assert _refusals(migrated_session, proposal) == [
+        {"reason": "revision_approved_by_policy", "detail": ["policy:rotation@v1"]}
+    ]
+
+
+def test_an_unreadable_policy_records_why(
+    migrated_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from orchestrator.services.intake import decomposition
+
+    def unreadable() -> None:
+        raise DomainError("policy_unreadable", "no", None)
+
+    monkeypatch.setattr(decomposition, "load_factory_policy", unreadable)
+    revision = _rotation_revision(migrated_session)
+    proposal = _propose(migrated_session, revision.id)
+    assert [r["reason"] for r in _refusals(migrated_session, proposal)] == ["policy_unreadable"]
+
+
+def test_a_dependency_policy_refuses_records_why(migrated_session: Session) -> None:
+    revision = _rotation_revision(migrated_session)
+    proposal = _propose(
+        migrated_session,
+        revision.id,
+        dependency=ProposedDependency(
+            source_unit_key="openrouter-generic-retire",
+            kind="human_act",
+            required_state_or_condition="completed",
+            external_ref="mint",
+        ),
+    )
+    assert [r["reason"] for r in _refusals(migrated_session, proposal)] == [
+        "dependency_not_a_unit_completing"
+    ]
+
+
+def test_attempts_over_budget_record_why(migrated_session: Session) -> None:
+    revision = _rotation_revision(migrated_session)
+    proposal = _propose(migrated_session, revision.id, retire_attempts=4)
+    assert [r["reason"] for r in _refusals(migrated_session, proposal)] == ["attempts_over_budget"]
+
+
+def test_a_failed_approval_records_why(
+    migrated_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from orchestrator.services.intake import decomposition
+
+    def refuse(*_args: object, **_kwargs: object) -> None:
+        raise DomainError("unit_conflict", "a unit already holds that key", None)
+
+    monkeypatch.setattr(decomposition, "_approve", refuse)
+    revision = _rotation_revision(migrated_session)
+    proposal = _propose(migrated_session, revision.id)
+    assert _refusals(migrated_session, proposal) == [
+        {"reason": "approval_failed", "detail": ["unit_conflict"]}
+    ]
+
+
+@pytest.mark.parametrize(
+    "actor", [human_actor(), ActorContext("worker-1", ActorRole.WORKER)], ids=["human", "worker"]
+)
+def test_a_proposal_nobody_expected_policy_to_approve_records_nothing(
+    migrated_session: Session, actor: ActorContext
+) -> None:
+    revision = _rotation_revision(migrated_session)
+    retire = _envelope("retire", host_without_overlap=True)
+    proposal = _propose(migrated_session, revision.id, retire=retire, actor=actor)
+    assert proposal.state == "proposed"
+    assert _refusals(migrated_session, proposal) == []
+
+
+def test_an_approved_proposal_records_nothing(migrated_session: Session) -> None:
+    revision = _rotation_revision(migrated_session)
+    proposal = _propose(migrated_session, revision.id)
+    assert proposal.state == "approved"
+    assert _refusals(migrated_session, proposal) == []
+
+
+def test_a_replay_does_not_record_a_second_refusal(migrated_session: Session) -> None:
+    revision = _rotation_revision(migrated_session)
+    retire = _envelope("retire", host_without_overlap=True)
+    first = _propose(migrated_session, revision.id, retire=retire)
+    replay = _propose(migrated_session, revision.id, retire=retire)
+    assert replay.id == first.id
+    assert len(_refusals(migrated_session, first)) == 1
+
+
+def test_recording_a_refusal_twice_keeps_the_first(migrated_session: Session) -> None:
+    from orchestrator.services.intake import decomposition
+    from orchestrator.services.intake.bump_policy import PolicyRefusal
+
+    revision = _rotation_revision(migrated_session)
+    retire = _envelope("retire", host_without_overlap=True)
+    proposal = _propose(migrated_session, revision.id, retire=retire)
+    decomposition._record_policy_not_applied(
+        migrated_session, proposal, SYSTEM, PolicyRefusal("approval_failed")
+    )
+    assert [r["reason"] for r in _refusals(migrated_session, proposal)] == [
+        "envelope_not_recognised"
+    ]

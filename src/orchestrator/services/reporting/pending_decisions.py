@@ -27,21 +27,22 @@ from orchestrator.errors import DomainError
 from orchestrator.kernel.states import WorkUnitState
 from orchestrator.kernel.transitions import DESIGNED_HUMAN_GATES
 from orchestrator.persistence.models import (
-    ApprovedDecomposition,
-    DecompositionProposal,
     Evidence,
     PackageAcceptanceCriterion,
-    StagedPackageIntake,
     WorkPackageRevision,
     WorkUnit,
 )
 from orchestrator.services.intake.authority_gate import human_authority_gate
-from orchestrator.services.intake.staged_intake import STAGED
 from orchestrator.services.lifecycle.execution_stall import stalled_executions
 from orchestrator.services.lifecycle.lifecycle import POST_DEPLOY_AC_IDS
 from orchestrator.services.lifecycle.rotation_claims import is_rotation_unit
 from orchestrator.services.membership.members import staged_member_proposals
 from orchestrator.services.reconciliation.reconciliation import open_conditions
+from orchestrator.services.reporting.admission_queries import (
+    proposed_breakdowns,
+    staged_intakes,
+    undecomposed_revisions,
+)
 from orchestrator.services.reporting.dead_letter import recovery_action
 from orchestrator.services.verifier.evidence import current_adjudication, current_evidence
 from orchestrator.services.verifier.verifier_criteria import load_required_criteria
@@ -181,11 +182,6 @@ def _staged_intakes(session: Session) -> list[dict[str, Any]]:
     First, because nothing downstream of intake can begin until a person registers it, and the
     staged row does nothing on its own.
     """
-    rows = session.scalars(
-        select(StagedPackageIntake)
-        .where(StagedPackageIntake.state == STAGED)
-        .order_by(StagedPackageIntake.staged_at, StagedPackageIntake.id)
-    )
     return [
         _entry(
             "staged_intake",
@@ -194,7 +190,7 @@ def _staged_intakes(session: Session) -> list[dict[str, Any]]:
             f"Staged by {row.staged_by}. Nothing is registered until you confirm it.",
             f"/review/staged-intakes/{row.id}",
         )
-        for row in rows
+        for row in staged_intakes(session)
     ]
 
 
@@ -218,21 +214,6 @@ def _package_breakdowns(session: Session) -> list[dict[str, Any]]:
     `manual_ws31` (the superseded bootstrap path) and `protocol_fixture` revisions are excluded:
     a fixture can never produce work units at all, so nothing about it is a person's to decide.
     """
-    active_approved = select(ApprovedDecomposition.work_package_revision_id).where(
-        ApprovedDecomposition.superseded_at.is_(None)
-    )
-    undecided_proposals = select(DecompositionProposal.work_package_revision_id).where(
-        DecompositionProposal.state == "proposed"
-    )
-    revisions = session.scalars(
-        select(WorkPackageRevision)
-        .where(
-            WorkPackageRevision.intake_source == "package_cli",
-            WorkPackageRevision.id.not_in(active_approved),
-            WorkPackageRevision.id.not_in(undecided_proposals),
-        )
-        .order_by(WorkPackageRevision.registered_at, WorkPackageRevision.id)
-    )
     return [
         _entry(
             "package_breakdown",
@@ -243,16 +224,11 @@ def _package_breakdowns(session: Session) -> list[dict[str, Any]]:
             "breakdown proposed for it is declined with the reject control on that proposal.",
             f"/review/intakes/{revision.id}",
         )
-        for revision in revisions
+        for revision in undecomposed_revisions(session)
     ]
 
 
 def _proposed_breakdowns(session: Session) -> list[dict[str, Any]]:
-    proposals = session.scalars(
-        select(DecompositionProposal)
-        .where(DecompositionProposal.state == "proposed")
-        .order_by(DecompositionProposal.proposed_at, DecompositionProposal.id)
-    )
     return [
         _entry(
             "decomposition_proposal",
@@ -261,7 +237,7 @@ def _proposed_breakdowns(session: Session) -> list[dict[str, Any]]:
             proposal.rationale,
             f"/review/decomposition-proposals/{proposal.id}",
         )
-        for proposal in proposals
+        for proposal in proposed_breakdowns(session)
     ]
 
 
