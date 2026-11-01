@@ -742,6 +742,13 @@ Placement rule: global CLAUDE.md §7.
   clock alone; while the unit stays waiting both clocks are kept and its waiting and stuck alerts
   are held. Never fold them into one key. Detail:
   `docs/operations/rotation-executor.md`, "Alerts".
+- `execution-watch` alerts on a stalled, held or failed unit, from `GET /api/v1/execution-status`,
+  which is that route's one reason to exist. It skips a rotation unit, and each condition
+  `owned_elsewhere` says a bump lane or `work_watcher` holds, a table
+  `test_the_ownership_table_matches_the_bump_lane` holds to the bump lane's selection. A dispatch
+  condition applies only to a `ready` unit, because a circuit breaker never closes. Its
+  `known.json` silences history; a missing file refuses, and `--seed` writes it. Detail:
+  `docs/operations/local-development.md`.
 - `rotation-heartbeat` is sent as `resolved` after every finished pass and is never raised; its
   meaning is the absence of the ping, heard by an alert-hub schedule. A pass that raises sends none.
   `rotation-instance-behind` is held when the mirror lacks the running revision.
