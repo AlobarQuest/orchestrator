@@ -117,8 +117,8 @@ class ChangeManagerReader(_Client):
         """Every record on the work pipeline, by source alone, its status filtered here: a status
         filter hides pending records and an unnamed source hides proposed ones.
 
-        The work carrier lists the same records, but this lane borrows no sibling lane's client
-        (`test_out_of_process_isolation.py`), so the query is its own."""
+        The work carrier lists the same records, but this lane's only clients are the ones here
+        (`test_rotation_edges.py`), so the query is its own."""
         body = self._json("GET", ITEMS, params={"source": WORK_SOURCE})
         if not isinstance(body, list):
             raise CallError("change-manager's record listing isn't a list")
