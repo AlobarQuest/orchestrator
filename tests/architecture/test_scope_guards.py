@@ -175,6 +175,7 @@ def test_production_get_route_inventory_is_explicit() -> None:
         "/api/v1/change-records/{change_record_id}/work",
         "/api/v1/consistency-check",
         "/api/v1/dead-letter",
+        "/api/v1/execution-status",
         "/api/v1/in-flight-units",
         "/api/v1/decomposition-proposals/{proposal_id}",
         "/api/v1/factory-policy",

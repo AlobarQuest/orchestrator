@@ -12,11 +12,12 @@ The lanes' population module holds a copy of the mapping. The lanes run out of p
 cannot import this module, so `tests/services/test_target_grant.py` holds the two equal.
 """
 
+from collections.abc import Sequence
 from typing import Protocol
 
 from sqlalchemy.orm import Session
 
-from orchestrator.services.membership.members import list_members
+from orchestrator.services.membership.members import MemberView, list_members
 
 DEPENDENCY_UPDATE = "dependency-update"
 DEPENDENCY_UPDATES_SERVICE = "dependency_updates"
@@ -33,10 +34,15 @@ class TargetGrantSource(Protocol):
 
 
 class MemberRecordGrants:
-    """Reads the grant from the member record through the caller's own session."""
+    """Reads the grant from the member record through the caller's own session.
 
-    def __init__(self, session: Session) -> None:
+    A caller asking about many repositories passes ``members`` read once, so the record is
+    not re-read per question.
+    """
+
+    def __init__(self, session: Session, members: Sequence[MemberView] | None = None) -> None:
         self._session = session
+        self._members = members
 
     def is_granted(self, repository: str, service: str) -> bool:
         wanted = repository.lower()
@@ -45,5 +51,7 @@ class MemberRecordGrants:
             and member.state != "retired"
             and (grant := member.grants.get(service)) is not None
             and grant.state == "granted"
-            for member in list_members(self._session)
+            for member in (
+                self._members if self._members is not None else list_members(self._session)
+            )
         )

@@ -10,10 +10,12 @@ from orchestrator.api.dependencies import ActorDep, SessionDep, SettingsDep
 from orchestrator.api.routes.common import ERROR_RESPONSES
 from orchestrator.api.schemas.reporting import (
     DeadLetterEntryResponse,
+    ExecutionStatusRow,
     SloReportResponse,
     StatusLedgerRowResponse,
 )
 from orchestrator.errors import DomainError
+from orchestrator.kernel.states import ActorRole
 from orchestrator.services.lifecycle.lifecycle import require_operator_actor
 from orchestrator.services.reporting.dead_letter import dead_letter
 from orchestrator.services.reporting.evidence_pack import (
@@ -22,6 +24,7 @@ from orchestrator.services.reporting.evidence_pack import (
     evidence_pack_response,
     render_evidence_pack_markdown,
 )
+from orchestrator.services.reporting.execution_status import execution_status
 from orchestrator.services.reporting.slo_report import SloReportFilters, slo_report
 from orchestrator.services.reporting.status_ledger import StatusLedgerFilters, status_ledger
 from orchestrator.services.reporting.traceability import (
@@ -83,6 +86,25 @@ def dead_letter_route(
         failure_signature_threshold=settings.dispatch_failure_signature_threshold,
         stalled_approval_seconds=settings.dead_letter_stalled_approval_seconds,
         stalled_verification_seconds=settings.dead_letter_stalled_verification_seconds,
+    )
+
+
+@router.get("/execution-status", response_model=list[ExecutionStatusRow])
+def execution_status_route(
+    actor: ActorDep,
+    session: SessionDep,
+    settings: SettingsDep,
+) -> object:
+    """Read-only: one row per unit not yet completed or cancelled, for the execution alert lane.
+
+    Gated inline on OPERATOR or OBSERVER: the observer gains this one read and no write.
+    """
+    if actor.role not in {ActorRole.SYSTEM, ActorRole.HUMAN, ActorRole.OBSERVER}:
+        raise DomainError("role_forbidden", "only an operator or observer may read this", None)
+    return execution_status(
+        session,
+        stall_grace_seconds=settings.execution_stall_grace_seconds,
+        failure_signature_threshold=settings.dispatch_failure_signature_threshold,
     )
 
 
