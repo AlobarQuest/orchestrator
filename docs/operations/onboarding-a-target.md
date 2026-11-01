@@ -90,7 +90,7 @@ by hand before you make it a target.
 
    | Secret | Source |
    |---|---|
-   | `FACTORY_RUNNER_TOKEN` | BWS `d2a4c0fc-128b-4bf5-8e25-b481010e1be0` (`Ops / Platform`) |
+   | `FACTORY_RUNNER_TOKEN` | BWS `d2a4c0fc-128b-4bf5-8e25-b481010e1be0` (`Rotation / Keepers`) |
    | `FACTORY_RUNNER_CREDENTIAL_KEY_ID` | Not a secret value: the runner's key id, recorded in factory-runner's `docs/rollout.md` |
    | `ANTHROPIC_API_KEY` | BWS `b56cf0df-27bc-46a8-8e94-b48201478aff`, the spend-capped runner key (`Ops / Platform`) |
    | `FACTORY_PR_TOKEN` | BWS `a3240c2e-92d7-4b32-a726-b49b0135565a` (`SDS Operator`) |
