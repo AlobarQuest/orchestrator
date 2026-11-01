@@ -153,6 +153,26 @@ def test_a_capability_the_consumer_knows_and_this_repo_does_not_is_not_a_failure
     assert not check.declared_capabilities(served) - check.declared_capabilities(ahead)
 
 
+def test_the_gate_refuses_a_capability_the_consumer_cannot_parse(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`main`, not the set difference: this is the verdict the required job reports."""
+    served = 'CAPABILITY_VOCABULARY = {"runner": ("repo.read", "github.pr.merge")}\n'
+    behind = 'CAPABILITY_VOCABULARY = {"runner": ("repo.read",)}\n'
+    source = tmp_path / "served.py"
+    source.write_text(served)
+    consumer = {"text": behind}
+    monkeypatch.setattr(check, "SERVED_VOCABULARY_SOURCE", source)
+    monkeypatch.setattr(check, "recommended_revision", lambda _repo: "0" * 40)
+    monkeypatch.setattr(check, "assert_the_workflow_installs_its_own_commit", lambda *_: None)
+    monkeypatch.setattr(check, "fetch", lambda *_: consumer["text"])
+
+    assert check.main() == 1
+    assert "github.pr.merge" in capsys.readouterr().err
+    consumer["text"] = served
+    assert check.main() == 0
+
+
 def test_the_gate_runs_the_script_this_module_tests() -> None:
     """A check nothing invokes is the defect it guards against, wearing a different hat."""
     invocations = [

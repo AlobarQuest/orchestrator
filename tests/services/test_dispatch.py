@@ -273,6 +273,37 @@ def test_dispatch_skips_legacy_invalid_dependency_update_authority(
     assert github.calls == []
 
 
+def test_an_authority_approval_refuses_an_envelope_the_runner_cannot_run(
+    migrated_session: Session,
+) -> None:
+    """The service's own refusal, beneath the `/review` page's."""
+    unit = ready_unit(migrated_session, key="legacy-approval")
+    unit.authority = {
+        **unit.authority,
+        "capabilities": {"repo.edit": "allowed", "command.run": "allowed"},
+        "change_class": "dependency-update",
+        "constraints": {
+            "target_repository": "AlobarQuest/example",
+            "allowed_commands": ["uv sync --locked"],
+        },
+    }
+    migrated_session.flush()
+
+    with pytest.raises(DomainError) as refused:
+        record_approval(
+            migrated_session,
+            unit_id=unit.id,
+            subject_type="authority",
+            actor_id=HUMAN.actor_id,
+            actor_role=HUMAN.role,
+            reason="approved",
+            idempotency_key="legacy-approval-authority",
+            expected_version=unit.version,
+        )
+
+    assert refused.value.code == "authority_mutation_commands_invalid"
+
+
 @pytest.mark.parametrize(
     ("verify_commands", "code"),
     [
