@@ -42,3 +42,8 @@
 
 - [ ] Review, mutate, merge, deploy, and confirm a pass absorbs and fires nothing.
 - [ ] Delete `ABSORB_ADMISSION` and its branch. Run `make check`. Merge. Confirm a pass reads `0 firing`.
+
+## Live proof
+
+Recorded 2026-11-01: deployed as `d953942-adm1-amd64` and `40801f1-adm2-amd64`, each with the digest matched and no migration. Production absorbed 3 existing waits: package `f921c842` (July 30), and proposals `8f7132f8` (August 3) and `28b39732` (August 4). After the absorb switch was deleted, scheduled passes read 5 raised, 0 firing. No admission alert has fired on a new subject, and alert-hub's D1 quota was exhausted during this deploy. A refused proposal for an ungranted repository has tests only until a real event.
+
