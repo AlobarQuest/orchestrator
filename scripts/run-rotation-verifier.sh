@@ -9,8 +9,12 @@
 # EXIT CODES:
 #   0  every submitted rotation unit completed, or none was submitted.
 #   1  the tool itself failed (a missing credential, an unusable URL).
-#   2  something was found: a unit went to a person.
-#   3  a unit could not be read or verified, so the answer is missing rather than clean.
+#   2  something was found: a unit went to a person or an alert names it.
+#   3  the queue could not be read, or alert-hub could not be told.
+#
+# A unit the lane couldn't verify is a keyed alert (`src/rotation_verifier/alerts.py`). 2 is the
+# finding code, so that cause pings success and raises the alert, never both. 3 pings `/fail`: it is
+# what's left when an alert can't carry the news.
 #
 # A dependency-bump unit is verified too: the lane files the repository's required checks as
 # named-check evidence, and reads those from branch protection with the operator's own `gh` login.
@@ -23,6 +27,7 @@ set -uo pipefail
 
 # BWS UUID (value fetched at runtime; never stored in this repo). See .bws-secrets.toml.
 VERIFIER_BEARER_UUID="660d5846-abcb-4751-be86-b483012899eb"   # orchestrator-verifier VERIFIER bearer
+SDS_BRIDGE_ALERT_UUID="b415d03b-f92d-46b1-8a9d-b4f10103df49"  # alert-hub sds-bridge sender
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -66,6 +71,14 @@ export ORCHESTRATOR_API_URL ORCHESTRATOR_API_CREDENTIAL_KEY_ID ORCHESTRATOR_API_
 if [ -z "$ORCHESTRATOR_API_TOKEN" ]; then
   echo "FATAL: could not read the verifier bearer from BWS" >&2
   exit 1
+fi
+
+# A FAILED FETCH NEVER STOPS A ROTATION: the pass runs without it and exits 3 once it has verified
+# everything, so the check says what the alert could not.
+SDS_BRIDGE_ALERT_TOKEN="$(sds_bws_value "$SDS_BRIDGE_ALERT_UUID" || true)"
+export SDS_BRIDGE_ALERT_TOKEN
+if [ -z "$SDS_BRIDGE_ALERT_TOKEN" ]; then
+  echo "WARNING: could not read the alert-hub sender credential from BWS" >&2
 fi
 
 # THE GITHUB CREDENTIAL HAS NO BWS RECORD, exactly as the landing lanes' does not: it is the

@@ -9,6 +9,8 @@ once per call), the stall from `execution_stall`, and the open breaker from the 
 
 `waiting` and `overdue` are served here because the threshold is this service's setting. A row is
 `waiting` from its first read, so the lane can baseline it before it is `overdue`.
+`verification_overdue` runs on the verification threshold, from when the unit last moved into its
+state, so evidence filed on a stuck unit doesn't restart the clock.
 """
 
 import uuid
@@ -49,6 +51,7 @@ from orchestrator.services.reporting.admission_queries import (
 )
 from orchestrator.services.reporting.dead_letter import (
     RESOLVED_UNIT_STATES,
+    VERIFICATION_STATES,
     _open_circuit_breakers,
 )
 
@@ -89,6 +92,7 @@ class ExecutionStatusRow:
     policy_not_applied: str | None = None
     proposed_by: str | None = None
     rotation_package: bool = False
+    verification_overdue: bool = False
 
 
 def _is_standing(revision: WorkPackageRevision) -> bool:
@@ -132,6 +136,7 @@ def _unit_rows(
     grants: MemberRecordGrants,
     *,
     cutoff: datetime,
+    verification_cutoff: datetime,
     stall_grace_seconds: int,
     failure_signature_threshold: int,
 ) -> list[ExecutionStatusRow]:
@@ -230,6 +235,9 @@ def _unit_rows(
                 has_claim=_claimed_since(newest_claim.get(unit.id), record),
                 lease_lapsed=unit.id in lapsed,
                 breaker_open=unit.id in breakers,
+                verification_overdue=(
+                    unit.state in VERIFICATION_STATES and entered_at <= verification_cutoff
+                ),
             )
         )
     return rows
@@ -375,8 +383,10 @@ def execution_status(
     stall_grace_seconds: int,
     failure_signature_threshold: int,
     stalled_approval_seconds: int,
+    stalled_verification_seconds: int,
 ) -> list[ExecutionStatusRow]:
-    cutoff = TransactionClock().now(session) - timedelta(seconds=stalled_approval_seconds)
+    now = TransactionClock().now(session)
+    cutoff = now - timedelta(seconds=stalled_approval_seconds)
     grants = MemberRecordGrants(session, list_members(session))
     units = session.scalars(
         select(WorkUnit).where(WorkUnit.state.not_in(RESOLVED_UNIT_STATES)).order_by(WorkUnit.id)
@@ -388,6 +398,7 @@ def execution_status(
             units,
             grants,
             cutoff=cutoff,
+            verification_cutoff=now - timedelta(seconds=stalled_verification_seconds),
             stall_grace_seconds=stall_grace_seconds,
             failure_signature_threshold=failure_signature_threshold,
         ),

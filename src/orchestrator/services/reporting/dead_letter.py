@@ -68,7 +68,7 @@ APPROVAL_STATES = ("awaiting_approval", "awaiting_review")
 # than folded into it because the two reports differ in WHO OWES THE DECISION and therefore in
 # the remedy -- an approval gate needs a human to decide, a stalled verification needs the
 # verifier run. Telling an operator the wrong one is worse than telling them nothing.
-VERIFICATION_STATES = ("submitted", "verifying")
+VERIFICATION_STATES = ("submitted", "verifying")  # not-a-vocabulary: WorkUnitState values
 
 
 @dataclass(frozen=True)

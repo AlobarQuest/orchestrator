@@ -88,6 +88,7 @@ def parse_row(row: object) -> StatusRow | None:
         policy_not_applied=_text(row, "policy_not_applied", required=False),
         proposed_by=_text(row, "proposed_by", required=False),
         rotation_package=_flag(row, "rotation_package", required=False),
+        verification_overdue=_flag(row, "verification_overdue", required=False),
     )
 
 

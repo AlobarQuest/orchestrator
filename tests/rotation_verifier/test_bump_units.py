@@ -227,7 +227,7 @@ def test_a_unit_with_no_dispatch_yet_is_refused_not_filed() -> None:
 
     assert [o.result for o in outcomes] == ["refused"]
     assert orchestrator.filed == []
-    assert exit_code(outcomes) == 3
+    assert exit_code(outcomes) == 2
 
 
 def test_no_github_token_refuses_a_bump_unit_and_leaves_a_rotation_unit_alone() -> None:

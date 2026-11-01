@@ -50,6 +50,7 @@ from tests.services.test_reclaim import expire
 from tests.services.test_rotation_claims import seed_unit
 
 WEEK = 604_800
+DAY = 86_400
 HUMAN = ActorContext("human-1", ActorRole.HUMAN)
 
 
@@ -93,6 +94,7 @@ def _row(
     execution_stall_grace_seconds: int = 900,
     dispatch_failure_signature_threshold: int = 3,
     stalled_approval_seconds: int = WEEK,
+    stalled_verification_seconds: int = DAY,
 ):
     rows = {
         row.unit_id: row
@@ -101,6 +103,7 @@ def _row(
             stall_grace_seconds=execution_stall_grace_seconds,
             failure_signature_threshold=dispatch_failure_signature_threshold,
             stalled_approval_seconds=stalled_approval_seconds,
+            stalled_verification_seconds=stalled_verification_seconds,
         )
     }
     return rows.get(unit.id)
@@ -114,6 +117,7 @@ def _subjects(session: Session, kind: str, *, threshold: int = WEEK) -> list[Exe
             stall_grace_seconds=900,
             failure_signature_threshold=3,
             stalled_approval_seconds=threshold,
+            stalled_verification_seconds=threshold,
         )
         if row.subject_kind == kind
     ]
@@ -764,3 +768,91 @@ def test_a_same_state_event_does_not_move_the_clock(migrated_session: Session) -
 
     assert row is not None
     assert row.entered_at == entered.occurred_at
+
+
+def _in_state(session: Session, key: str, state: WorkUnitState) -> WorkUnit:
+    unit = ready_unit(session, key=key)
+    unit.state = state
+    session.commit()
+    return unit
+
+
+def _moved(
+    session: Session, unit: WorkUnit, from_state: str, to_state: str, when: datetime, name: str
+) -> None:
+    session.add(
+        Event(
+            actor_id="system",
+            action="work_unit.verifying",
+            subject_type="work_unit",
+            subject_id=unit.id,
+            from_state=from_state,
+            to_state=to_state,
+            payload={},
+            correlation_id=uuid.uuid4(),
+            idempotency_key=f"es-moved-{unit.id}-{name}",
+            occurred_at=when,
+        )
+    )
+    session.commit()
+
+
+@pytest.mark.parametrize("state", [WorkUnitState.SUBMITTED, WorkUnitState.VERIFYING])
+def test_a_unit_past_the_threshold_is_verification_overdue(
+    migrated_session: Session, state: WorkUnitState
+) -> None:
+    unit = _in_state(migrated_session, f"es-over-{state}", state)
+
+    row = _row(migrated_session, unit, stalled_verification_seconds=0)
+
+    assert row is not None and row.verification_overdue
+
+
+def test_a_unit_just_submitted_is_not_overdue(migrated_session: Session) -> None:
+    unit = _in_state(migrated_session, "es-young", WorkUnitState.SUBMITTED)
+
+    row = _row(migrated_session, unit)
+
+    assert row is not None and not row.verification_overdue
+
+
+def test_only_the_verification_states_are_overdue(migrated_session: Session) -> None:
+    unit = ready_unit(migrated_session, key="es-not-verifying")
+
+    row = _row(migrated_session, unit, stalled_verification_seconds=0)
+
+    assert row is not None and not row.verification_overdue
+
+
+def test_the_verification_clock_is_its_own_threshold(migrated_session: Session) -> None:
+    unit = _in_state(migrated_session, "es-own", WorkUnitState.SUBMITTED)
+
+    row = _row(
+        migrated_session, unit, stalled_approval_seconds=0, stalled_verification_seconds=WEEK
+    )
+
+    assert row is not None and not row.verification_overdue
+
+
+def test_a_same_state_write_does_not_restart_the_verification_clock(
+    migrated_session: Session,
+) -> None:
+    """Evidence filed on a stuck unit is why this reads the move, not `updated_at`."""
+    unit = _in_state(migrated_session, "es-same", WorkUnitState.SUBMITTED)
+    now = datetime.now(UTC)
+    _moved(migrated_session, unit, "executing", "submitted", now - timedelta(days=2), "in")
+    _moved(migrated_session, unit, "submitted", "submitted", now, "same")
+
+    row = _row(migrated_session, unit)
+
+    assert row is not None and row.verification_overdue
+
+
+def test_a_row_that_is_not_a_unit_is_never_verification_overdue(
+    migrated_session: Session,
+) -> None:
+    _stage(migrated_session)
+
+    [row] = _subjects(migrated_session, "staged-intake", threshold=0)
+
+    assert not row.verification_overdue

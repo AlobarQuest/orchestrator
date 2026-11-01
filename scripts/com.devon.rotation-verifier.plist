@@ -3,14 +3,15 @@
      scripts/install-rotation-verifier-launchd.sh, which substitutes __REPO_ROOT__ and __HOME__ and
      writes ~/Library/LaunchAgents/com.devon.rotation-verifier.plist.
 
-     No secrets live here: the wrapper fetches the VERIFIER bearer from BWS at runtime.
+     No secrets live here: the wrapper fetches its bearer and alert token from BWS at runtime.
 
      EVERY TEN MINUTES, the rotation executors' own cadence: a unit that completes hands the next
      unit its turn, so the gap between a unit's submit and its verification is time the next
      unit can't start. A pass with nothing submitted is one ledger read.
 
-     The exit code is the report. launchd discards it, so read the log: 0 every submitted rotation
-     unit completed, 1 the tool failed, 2 a unit went to a person, 3 a unit could not be verified. -->
+     launchd discards the exit code, so read the log: 0 every submitted rotation unit completed,
+     1 the tool failed, 2 a unit went to a person or an alert names it, 3 the queue could not be
+     read or alert-hub could not be told. -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>

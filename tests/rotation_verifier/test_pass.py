@@ -105,7 +105,7 @@ def test_version_conflict_skips_unit() -> None:
         ("b-retire", "completed"),
     ]
     assert "409 (version_conflict)" in next(o.detail for o in outcomes if o.result == "refused")
-    assert exit_code(outcomes) == 3
+    assert exit_code(outcomes) == 2
 
 
 def test_a_unit_left_verifying_is_verified_again() -> None:

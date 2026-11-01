@@ -1,10 +1,16 @@
 """The execution-status route: operator and observer read, nothing else does."""
 
+from typing import cast
+
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
-from execution_watch.decide import SUBJECT_KINDS
+from execution_watch.decide import SUBJECT_KINDS, VERIFICATION_STATES
+from orchestrator.config import get_settings
+from orchestrator.kernel.states import WorkUnitState
+from orchestrator.services.reporting import dead_letter
 from orchestrator.services.reporting import execution_status as status
 from tests.api.test_decomposition_api import create_proposal, register_intake
 from tests.api.test_lifecycle_api import SYSTEM, VERIFIER, WORKER
@@ -47,6 +53,7 @@ def test_observer_may_read_and_a_worker_may_not(
             "policy_not_applied",
             "proposed_by",
             "rotation_package",
+            "verification_overdue",
         }
     assert db_client.get(PATH, headers=WORKER).status_code == 403
     assert db_client.get(PATH, headers=VERIFIER).status_code == 403
@@ -76,3 +83,31 @@ def test_the_lane_knows_every_kind_the_server_serves() -> None:
         status.SUBJECT_PACKAGE,
         status.SUBJECT_PROPOSAL,
     }
+
+
+def test_the_lane_knows_the_verification_states_the_server_reports() -> None:
+    assert VERIFICATION_STATES == set(dead_letter.VERIFICATION_STATES)
+
+
+def _submitted(engine: Engine, key: str) -> None:
+    with Session(engine) as session:
+        unit = ready_unit(session, key=key)
+        unit.state = WorkUnitState.SUBMITTED
+        session.commit()
+
+
+def test_the_route_passes_the_verification_setting(
+    db_client: TestClient, migrated_engine: Engine
+) -> None:
+    """Only this setting moves the field: the approval threshold stays a week."""
+    _submitted(migrated_engine, "es-route-overdue")
+    assert db_client.get(PATH, headers=OBSERVER).json()[0]["verification_overdue"] is False
+
+    overrides = cast(FastAPI, db_client.app).dependency_overrides
+    overdue_at_once = get_settings().model_copy(
+        update={"dead_letter_stalled_verification_seconds": 0}
+    )
+    overrides[get_settings] = lambda: overdue_at_once
+    [row] = db_client.get(PATH, headers=OBSERVER).json()
+
+    assert row["verification_overdue"] is True

@@ -10,7 +10,10 @@ stays silent on exactly what they cover (`owned_elsewhere`), so a person is told
   dispatch, and a run nobody claimed. A bump whose repository lost its grant falls out of that
   lane's selection, so this lane takes it over.
 
-A rotation unit raises nothing here: the rotation executor owns its own alerts.
+A rotation unit raises nothing here, the rotation executor owning its own alerts, with one
+exception. A unit of any class in `submitted` or `verifying` raises `verification-stalled:<unit>`,
+and fires only once the server says `verification_overdue`: nothing else watches that wait, for a
+rotation unit or any other.
 
 Any row may also be waiting at an admission gate. A unit at a gate, a staged intake, an undecomposed
 package and an undecided proposal each raise `admission-waiting:<kind>:<id>` while the server says
@@ -48,6 +51,8 @@ _PROPOSED: Final = "proposed"
 SYSTEM_ACTOR: Final = "orchestrator-system"
 # A bump records this for every proposal a person or a worker makes; policy never considered them.
 _PROPOSER_NOT_SYSTEM: Final = "proposer_not_system"
+# The server's `dead_letter.VERIFICATION_STATES`, held equal by the route's test.
+VERIFICATION_STATES: Final = frozenset({"submitted", "verifying"})
 SUBJECT_UNIT: Final = "unit"
 SUBJECT_STAGED_INTAKE: Final = "staged-intake"
 SUBJECT_PACKAGE: Final = "package"
@@ -79,6 +84,7 @@ class Condition(StrEnum):
     WATCH_UNREAD = "execution-watch-unread"
     ADMISSION_WAITING = "admission-waiting"
     ADMISSION_POLICY_NOT_APPLIED = "admission-policy-not-applied"
+    VERIFICATION_STALLED = "verification-stalled"
 
 
 @dataclass(frozen=True)
@@ -106,6 +112,7 @@ class StatusRow:
     policy_not_applied: str | None = None
     proposed_by: str | None = None
     rotation_package: bool = False
+    verification_overdue: bool = False
 
 
 @dataclass(frozen=True)
@@ -146,9 +153,11 @@ def conditions(
     unit: once a run is claimed, an older refusal or a GitHub error no longer stops it. The
     one-hour wait on a blocked dispatch is a first-sighting clock and belongs to `firing`; an
     open breaker only skips that wait."""
+    in_verification = row.subject_kind == SUBJECT_UNIT and row.state in VERIFICATION_STATES
+    stalled = {Condition.VERIFICATION_STALLED} if in_verification else set()
     if row.is_rotation:
-        return set()
-    found = _admission_conditions(row)
+        return stalled
+    found = _admission_conditions(row) | stalled
     if row.subject_kind != SUBJECT_UNIT:
         return found
     if row.state == "failed":
@@ -295,6 +304,16 @@ def _alert(row: StatusRow, condition: Condition, now: datetime) -> Alert:
             "the unit through the SYSTEM commands/fail route, then cancel it.",
             link,
         )
+    if condition is Condition.VERIFICATION_STALLED:
+        since = row.entered_at.date().isoformat() if row.entered_at else "an unread time"
+        return Alert(
+            f"Verification stalled: {unit}",
+            f"Unit {unit}{where} has been in state {row.state} since {since} and no verifier "
+            "finished it. Open it on /review, then read ~/Library/Logs/rotation-verifier.log for "
+            "why. If that lane skips the unit, run its verification through the VERIFIER verify "
+            "route.",
+            link,
+        )
     raise ValueError(f"{condition} is not a unit condition")
 
 
@@ -314,6 +333,8 @@ def firing(
             if key in known:
                 continue
             if condition is Condition.ADMISSION_WAITING and not row.overdue:
+                continue
+            if condition is Condition.VERIFICATION_STALLED and not row.verification_overdue:
                 continue
             if (
                 condition is Condition.DISPATCH_BLOCKED

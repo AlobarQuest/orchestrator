@@ -224,9 +224,13 @@ EDGES: dict[str, RotationEdge] = {
             }
         ),
         github=frozenset({("GET", "/repos/o/r/branches/main/protection/required_status_checks")}),
-        alert_hub=frozenset(),
-        bearers=DEADMAN | {VERIFIER_BEARER, GH_AUTH_TOKEN},
-        base_urls={"orchestrator": ORCHESTRATOR_LIVE_URL, "github": GITHUB_URL},
+        alert_hub=ALERTS,  # through alerts.py
+        bearers=DEADMAN | {VERIFIER_BEARER, GH_AUTH_TOKEN, SDS_BRIDGE_ALERT_BEARER},
+        base_urls={
+            "orchestrator": ORCHESTRATOR_LIVE_URL,
+            "github": GITHUB_URL,
+            "alert_hub": ALERT_HUB_URL,
+        },
     ),
 }
 
@@ -259,6 +263,7 @@ BASE_URL_READS: dict[str, dict[str, Callable[[], str]]] = {
     "rotation_verifier": {
         "orchestrator": lambda: verifier_cli.ORCHESTRATOR_URL,
         "github": lambda: required_checks.GITHUB_API,
+        "alert_hub": _alert_hub_url,
     },
 }
 
@@ -308,7 +313,7 @@ PERMITS: dict[str, dict[str, Permits | None]] = {
         "change_manager": None,
         "orchestrator": lambda m, p: verifier_client.permits(m, p),
         "github": lambda m, p: required_checks._permits(m, p),
-        "alert_hub": None,
+        "alert_hub": _alert_hub_permits,
     },
 }
 
@@ -547,6 +552,8 @@ NETWORK: dict[str, dict[str, int]] = {
         "src/rotation_decomposer/alerts.py": 0,
     },
     "rotation_verifier": {
+        "src/rotation_verifier/alerts.py": 0,
+        "src/rotation_verifier/cli.py": 0,
         "src/rotation_verifier/client.py": 1,
         "src/rotation_verifier/required_checks.py": 1,
     },
@@ -638,6 +645,7 @@ BORROWED: dict[str, dict[str, frozenset[str]]] = {
         "sds_members.populations": frozenset({"granted"}),
     },
     "rotation_verifier": {
+        "alert_hub_client": frozenset({"Alert", "AlertHubError", "KeyedAlerts", "alert_key"}),
         "estate_clients.confined": frozenset(
             {"ConfinedClient", "TransportFailure", "base_url_problem", "error_code"}
         ),
