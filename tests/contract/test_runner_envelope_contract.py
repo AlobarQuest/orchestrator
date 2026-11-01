@@ -530,6 +530,7 @@ def test_the_shipped_pattern_recognises_the_verify_envelope() -> None:
     assert recognition.recognised_by == ("uv dependency pin bump",)
 
 
+@pytest.mark.usefixtures("granted_targets")
 def test_orchestrator_serves_the_verify_envelope_and_admits_it(
     migrated_session: Session,
 ) -> None:
@@ -574,6 +575,7 @@ def test_orchestrator_serves_the_verify_envelope_and_admits_it(
     assert github.calls[0]["repository"] == TARGET_REPOSITORY
 
 
+@pytest.mark.usefixtures("granted_targets")
 def test_orchestrator_serves_the_golden_envelope_and_admits_it(migrated_session: Session) -> None:
     """The envelope the runner receives is the one the orchestrator admits.
 
@@ -614,6 +616,7 @@ def test_orchestrator_serves_the_golden_envelope_and_admits_it(migrated_session:
     assert cast(dict[str, str], github.calls[0]["inputs"])["work_unit_id"] == str(unit_id)
 
 
+@pytest.mark.usefixtures("granted_targets")
 def test_orchestrator_serves_the_edit_envelope_and_admits_it(migrated_session: Session) -> None:
     """The edit-shaped envelope traverses the same full path: intake, breakdown,
     approval, admission. This is the half of the WS-P2.33 pin the byte hash cannot
@@ -684,6 +687,7 @@ def test_an_extra_top_level_envelope_field_is_refused_at_breakdown_ingress() -> 
     assert "notes" in raised.value.message
 
 
+@pytest.mark.usefixtures("granted_targets")
 def test_an_orchestrator_only_capability_is_refused_at_admission(
     migrated_session: Session,
 ) -> None:

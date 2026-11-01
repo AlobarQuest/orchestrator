@@ -2,6 +2,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import cast
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
@@ -333,6 +334,7 @@ def test_decomposition_proposal_list_rejects_non_intaken_revision(
     assert listed.json()["error"]["code"] == "package_intake_not_found"
 
 
+@pytest.mark.usefixtures("granted_targets")
 def test_decomposition_proposal_idempotency_conflicts_on_raw_authority_change(
     db_client: TestClient,
 ) -> None:

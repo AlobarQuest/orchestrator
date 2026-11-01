@@ -58,9 +58,10 @@ by hand before you make it a target.
 ## Make the repository dispatchable
 
 1. **Grant the service.** On `/review`, confirm a member proposal that grants the repository
-   `app_changes` (or `dependency_updates` for dependency-update work only). Admission refuses as
+   `app_changes` (or `dependency_updates` for dependency-update work only). Proposing a
+   decomposition, approving one, dispatch and the claim all refuse as
    `target_repository_not_granted` until a person has confirmed it, and for a retired member or a
-   grant in any other state.
+   grant in any other state. An intake still registers.
 
    Also commit `factory-target.toml` at the repository root on its default branch. Admission no
    longer reads it, but project-standards and the membership consistency check still do, and the

@@ -8,7 +8,8 @@ The acts, in order, each on a fresh read of the unit:
 1. **Decompose.** An approved record's revision with no units and no proposal gets the generator's
    proposal against this lane's mirror, posted as SYSTEM. Policy approves it in the proposal's own
    transaction, or the proposal waits for a person and `bump-decompose-refused` fires. A proposal a
-   person rejected, sent back or superseded is never proposed over.
+   person rejected, sent back or superseded is never proposed over. A proposal refused because a
+   grant was withdrawn after this pass read it waits silently: the next pass drops the bump.
 2. **Dispatch** one ready bump unit per repository, and none where a run is live. A run the
    orchestrator started and the runner hasn't claimed is live too.
 3. **Merge** a completed bump unit whose bound pull request is open. The admission answer is read
@@ -136,6 +137,8 @@ SETTLED_THEN_REFUSED: Final = frozenset(  # not-a-vocabulary: `pr_merge` refusal
     {"pr_merge_not_admissible", "pr_merge_not_open"}
 )
 VERSION_CONFLICT: Final = "version_conflict"
+# The orchestrator's refusal of a proposal for a repository the member record doesn't grant.
+GRANT_WITHDRAWN: Final = "target_repository_not_granted"
 FINDINGS: Final = frozenset(  # not-a-vocabulary: this lane's own report words
     {"refused", "failed", "unclaimed"}
 )
@@ -312,6 +315,9 @@ def _decompose(
     except CallError as error:
         if error.status is None or error.status >= 500:
             raise
+        if error.code == GRANT_WITHDRAWN:
+            # A person withdrew the grant after this pass read it, so the next pass drops the bump.
+            return Outcome(bump.subject, "waiting", str(error), bump.repository)
         # The orchestrator read the proposal and refused it, for a reason a person resolves.
         return _refused(bump, str(error))
     if answer.get("state") == "approved":

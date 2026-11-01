@@ -478,11 +478,14 @@ Placement rule: global CLAUDE.md §7.
   them. History: `docs/history/claude-md-invariants-archive.md` #287.
 - `scripts/check_profile_budget_agreement.py` holds every `dependency-update` pattern to intent-packages'
   `BUDGETS` and `CAPABILITIES`. Raising the ceiling is a standing-authority decision. Archive #291.
-- Dispatch admission, the claim and every landing admission read the member record's grant. Dispatch
-  and the claim map the unit's change class (`services/execution/target_grant.py`):
-  `dependency_updates` for `dependency-update`, `app_changes` for every other class, only in state
-  `granted` on a non-retired member, case-folded; otherwise `target_repository_not_granted`.
-  `claim_unit` refuses before anything writes, skipping rotation units and units with no
+- Dispatch admission, the claim, the decomposition proposal and its approval, and every landing
+  admission read the member record's grant. The first four map the unit's change class
+  (`services/execution/target_grant.py`): `dependency_updates` for `dependency-update`,
+  `app_changes` for every other class, only in state `granted` on a non-retired member, case-folded;
+  otherwise `target_repository_not_granted`. A proposal asks past replay and writes nothing,
+  approval asks again, and rotation units and units naming no repository skip both, so a person is
+  never asked to approve work that can't run while intake stays open
+  (`tests/services/test_decomposition_grant.py`). `claim_unit` refuses before anything writes, skipping rotation units and units with no
   `target_repository`; `_readiness_eligibility_error` holds the same term, so reclaim and release
   park a withdrawn unit `failed` and requeue refuses it. `renew_claim` is ungated. A dispatched unit
   refused at the claim stays `ready`, which refuses every orchestrator deploy and holds rotation
@@ -586,8 +589,8 @@ Placement rule: global CLAUDE.md §7.
   `standing` is true, reach is exactly `source_repository`, there is one unit with no dependencies,
   every criterion mapped to it and none retained, and attempts within its budget, only
   dependency-update patterns recognise it, `bump_binding_violations` is empty, its `title` and
-  `outcome` are the generator's (`bump_text_differs`) and the member record grants
-  `dependency_updates`. The binding is a whole-command allowlist of the generator's forms, and
+  `outcome` are the generator's (`bump_text_differs`). The proposal itself has already been refused
+  unless the member record grants `dependency_updates`. The binding is a whole-command allowlist of the generator's forms, and
   covers `allowed_commands` and `verify_commands` too; a generator change means regenerating
   `dependency_update_proposals.json`. Each refusal of a SYSTEM proposal on either branch, every bump
   refusal, and an approval that fails after policy said yes, records one

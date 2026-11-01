@@ -353,6 +353,7 @@ def test_proposal_idempotency_conflict_rejected(migrated_session: Session) -> No
     assert error.value.code == "idempotency_conflict"
 
 
+@pytest.mark.usefixtures("granted_targets")
 def test_proposal_idempotency_conflicts_when_raw_unit_authority_differs(
     migrated_session: Session,
 ) -> None:
@@ -726,6 +727,7 @@ def test_package_cli_revision_rejects_extra_unit_for_active_approved_decompositi
     assert error.value.code == "decomposition_approval_required"
 
 
+@pytest.mark.usefixtures("granted_targets")
 def test_approved_decomposition_preserves_raw_unit_authority_payload(
     migrated_session: Session,
 ) -> None:
@@ -1324,6 +1326,7 @@ def _fanout_units() -> tuple[ProposedUnit, ...]:
     return (unit("unit-1", "AlobarQuest/brain"), unit("unit-2", "AlobarQuest/security-standards"))
 
 
+@pytest.mark.usefixtures("granted_targets")
 def test_proposal_stamps_each_unit_authority_with_its_future_work_unit_id(
     migrated_session: Session,
 ) -> None:
@@ -1350,6 +1353,7 @@ def test_proposal_stamps_each_unit_authority_with_its_future_work_unit_id(
     assert units["unit-1"].authority_fingerprint != units["unit-2"].authority_fingerprint
 
 
+@pytest.mark.usefixtures("granted_targets")
 def test_approved_unit_authority_names_its_own_id(migrated_session: Session) -> None:
     revision = register_intaken_revision(migrated_session)
     ac_ids = package_ac_ids(migrated_session, revision.id)

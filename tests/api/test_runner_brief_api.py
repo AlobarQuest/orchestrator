@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import cast
 
+import pytest
 from fastapi.testclient import TestClient
 
 import orchestrator.services.intake.runner_brief as runner_brief_service
@@ -98,6 +99,7 @@ def test_runner_brief_returns_canonical_unit_facts(db_client: TestClient) -> Non
     assert "token" not in str(body).lower()
 
 
+@pytest.mark.usefixtures("granted_targets")
 def test_runner_brief_scopes_ac_mapping_to_active_approved_proposal(
     db_client: TestClient,
 ) -> None:
@@ -236,6 +238,7 @@ def test_runner_brief_scopes_ac_mapping_to_active_approved_proposal(
     assert body["target"]["repository"] == "AlobarQuest/orchestrator"
 
 
+@pytest.mark.usefixtures("granted_targets")
 def test_runner_brief_returns_no_acceptance_criteria_for_unmapped_unit_in_approved_decomposition(
     db_client: TestClient,
 ) -> None:
@@ -428,6 +431,7 @@ def _approved_unit_with_enrichment(db_client: TestClient, document: object) -> s
     return approved["created_work_unit_ids"]["unit-1"]
 
 
+@pytest.mark.usefixtures("granted_targets")
 def test_the_brief_carries_the_enrichment_document_verbatim(db_client: TestClient) -> None:
     """Verbatim is what makes the projection deterministic: stored bytes out.
 
@@ -443,6 +447,7 @@ def test_the_brief_carries_the_enrichment_document_verbatim(db_client: TestClien
     assert json.dumps(served, sort_keys=True) == json.dumps(ENRICHMENT_DOCUMENT, sort_keys=True)
 
 
+@pytest.mark.usefixtures("granted_targets")
 def test_the_brief_is_byte_identical_across_repeated_reads(db_client: TestClient) -> None:
     """Determinism, at the surface a worker actually reads."""
     unit_id = _approved_unit_with_enrichment(db_client, ENRICHMENT_DOCUMENT)

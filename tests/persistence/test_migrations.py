@@ -580,6 +580,7 @@ def test_ws32_approved_decomposition_must_match_proposal_revision(migrated_sessi
     migrated_session.rollback()
 
 
+@pytest.mark.usefixtures("granted_targets")
 def test_work_unit_authority_upgrade_prefers_proposal_unit_authority_when_available(
     migrated_engine,
 ) -> None:

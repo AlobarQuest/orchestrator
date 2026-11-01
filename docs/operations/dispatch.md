@@ -22,6 +22,10 @@ record through the request's session; a repository with no member, a retired mem
 any state but `granted` is refused as `target_repository_not_granted`. Repositories compare
 case-folded.
 
+A decomposition proposal asks it first, and its approval asks again, each writing nothing on a
+refusal (recovery `restore_grant`), so a person isn't asked to approve work that can't run. The
+same proposal proceeds once the grant is restored.
+
 The claim asks the same question, so a grant withdrawn between dispatch and claim stops the run: the
 refusal writes nothing and spends no attempt, and the unit stays `ready` with its dispatch record
 uncleared, which refuses every orchestrator deploy and holds every rotation restart
