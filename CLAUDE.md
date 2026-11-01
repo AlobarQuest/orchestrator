@@ -261,8 +261,10 @@ Placement rule: global CLAUDE.md §7.
   `verifier_evaluation_required`. Reconciliation detects reality changing, never reality
   misreported, so worker-attested evidence has no downstream net. History:
   `docs/history/claude-md-invariants-archive.md` #109.
-- `authority.budgets.max_attempts` has no enforcement reader; the enforced cap is the
-  `work_units.max_attempts` column, raised by `authorize_retry`. Nothing compares the two. History:
+- The enforced attempt cap is the `work_units.max_attempts` column, taken from the proposal and
+  raised by `authorize_retry`. `authority.budgets.max_attempts` is a ceiling on it only on
+  `decomposition`'s two policy branches: above it policy doesn't approve and a person decides. A
+  person's approval or retry may exceed it (`tests/services/test_max_attempts_ceiling.py`). History:
   `docs/history/claude-md-invariants-archive.md` #110.
 - The conformance gate's anti-tautology rule is docstring only. Do not delete the `status ==
   "green"` short-circuit: the pinned envelope fixture would then be refused and all dispatch stops.

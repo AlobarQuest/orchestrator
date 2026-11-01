@@ -242,6 +242,7 @@ paths = [
   "tests/services/test_pr_bindings.py",
   "tests/services/test_reach_estate.py",
   "tests/services/test_reach_undeclared.py",
+  "tests/services/test_max_attempts_ceiling.py",
   "tests/services/test_reclaim.py",
   "tests/services/test_requeue.py",
   "tests/services/test_rotation_claims.py",
