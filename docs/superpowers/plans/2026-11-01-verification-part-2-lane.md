@@ -35,3 +35,8 @@
 - [ ] Create check `sds-unit-verifier`. Add `run-unit-verifier.sh` and its plist beside the old ones, with the launcher registered as a reader of `BWS_ACCESS_TOKEN_SDS`.
 - [ ] Merge, swap the LaunchAgents, and prove one pass pings the new check.
 - [ ] Delete the old launcher, plist, and check. Rename the package and docs. Merge, and prove the next pass.
+
+## Live proof
+
+Recorded 2026-11-02: deployed as `fea75e0-ver1-amd64` and `f2b037f-ver2-amd64`, each with the digest matched and no migration. `com.devon.unit-verifier` replaced the old agent, and after the rename activation re-ran it on the new code: a pass reported 0 units awaiting, and `sds-unit-verifier` is up. Execution-watch read 5 raised, 0 firing. No app-change unit has run through the lane, so its selection and criteria have tests only, and alert-hub's D1 quota was exhausted for part of the deploy. A real unit on a test repository proves more, and needs Devon's say-so.
+
