@@ -308,7 +308,7 @@ CLASSIFICATION: dict[str, Row] = {
         "person wrote. Staging changes no member; only a human confirmation on /review does",
         frozenset({"/api/v1/member-proposals"}),
     ),
-    "rotation_verifier": Row(
+    "unit_verifier": Row(
         Role.INTERNAL_LANE_ACTOR,
         "ADR-0055 amendment 14: runs the orchestrator's verifier on each submitted factory unit "
         "as VERIFIER; the verifier decides every criterion from the executor's step evidence. "

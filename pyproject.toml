@@ -63,9 +63,11 @@ inert-landing = "inert_lander.cli:main"
 # standing package (to review, never approved) and, once a named human approves that, a work record.
 rotation-proposer = "rotation_proposer.cli:main"
 execution-watch = "execution_watch.cli:main"
-# ADR-0055 amendment 14. Runs `/verify` on each submitted rotation unit as VERIFIER, so a unit
-# whose step evidence is clean completes without a person.
-rotation-verifier = "rotation_verifier.cli:main"
+# ADR-0055 amendment 14. Runs `/verify` on each submitted unit as VERIFIER, so a unit whose
+# evidence is clean completes without a person. `rotation-verifier` is the old name, kept so a
+# checkout whose entry points were not regenerated still has a program to run.
+unit-verifier = "unit_verifier.cli:main"
+rotation-verifier = "unit_verifier.cli:main"
 rotation-decomposer = "rotation_decomposer.cli:main"
 bump-driver = "bump_driver.cli:main"
 # Is every deployed application serving the commit its branch names? Three surfaces report a

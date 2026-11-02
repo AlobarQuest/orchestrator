@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-LAUNCHER = Path("scripts/run-rotation-verifier.sh")
+LAUNCHER = Path("scripts/run-unit-verifier.sh")
 _BWS = """#!/bin/sh
 case " $* " in
     *" ${BWS_FAIL_UUID:-none} "*) exit 1 ;;
@@ -45,7 +45,7 @@ def _run(tmp_path: Path, **env_overrides: str) -> tuple[int, str, set[str]]:
     venv = root / ".venv" / "bin"
     venv.mkdir(parents=True)
     (venv / "python").symlink_to((Path.cwd() / ".venv" / "bin" / "python").resolve())
-    _executable(venv / "rotation-verifier", _PROGRAM)
+    _executable(venv / "unit-verifier", _PROGRAM)
     stubs = tmp_path / "stubs"
     stubs.mkdir()
     _executable(stubs / "bws", _BWS)
@@ -100,7 +100,7 @@ def test_the_lane_s_codes_pass_through(tmp_path: Path, code: str) -> None:
 
 def test_finding_code_and_header_agree() -> None:
     text = LAUNCHER.read_text()
-    assert 'sds_deadman_arm sds-rotation-verifier --finding 2 "$@"' in text
+    assert 'sds_deadman_arm sds-unit-verifier --finding 2 "$@"' in text
     header = text[: text.index("set -uo pipefail")]
     assert "#   2  something was found: a unit went to a person or an alert names it." in header
     assert "#   3  the queue could not be read, or alert-hub could not be told." in header

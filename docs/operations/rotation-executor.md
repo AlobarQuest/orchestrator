@@ -276,7 +276,7 @@ pattern and the policy version.
 ## Completing a unit
 
 A submitted rotation unit completes without a person when its evidence is clean (ADR-0055
-amendment 14). The `rotation-verifier` lane (`scripts/run-rotation-verifier.sh`, every ten
+amendment 14). The `unit-verifier` lane (`scripts/run-unit-verifier.sh`, every ten
 minutes, as VERIFIER) runs `/verify` on each submitted unit whose envelope names a
 `rotation_unit`. For each criterion, the verifier reads the current `rotation.step` evidence filed
 by the executor that owns the unit, and passes it when:
@@ -296,7 +296,7 @@ unit a failed verification left in `verifying`.
 
 A clean unit completes and hands the next unit its turn in the same transaction. Anything else
 goes to `awaiting_review`, where a person adjudicates and completes it as before; the verifier
-never fails a rotation criterion. The lane's log is `~/Library/Logs/rotation-verifier.log`: exit 2
+never fails a rotation criterion. The lane's log is `~/Library/Logs/unit-verifier.log`: exit 2
 means a unit went to a person or raised a keyed alert (it couldn't be verified, say its version
 moved), and exit 3 that the queue couldn't be read or alert-hub couldn't be told. Exit 3 comes after
 every unit has had its turn, and a failed read of the alert token doesn't stop the pass.

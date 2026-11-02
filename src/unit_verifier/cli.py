@@ -52,7 +52,9 @@ from typing import Any
 
 import httpx
 
-from rotation_verifier.alerts import (
+from sds_members.client import MembersUnreadable
+from sds_members.populations import granted, service_for_change_class
+from unit_verifier.alerts import (
     CHECKS_UNREADABLE,
     NO_REQUIRED_CHECK,
     REFUSED,
@@ -62,19 +64,17 @@ from rotation_verifier.alerts import (
     state_directory,
     sync_alerts,
 )
-from rotation_verifier.client import (
+from unit_verifier.client import (
     CheckNotConcluded,
     UnusableEndpointError,
     VerifierCallError,
     VerifierClient,
 )
-from rotation_verifier.required_checks import (
+from unit_verifier.required_checks import (
     NoRequiredChecks,
     RequiredChecksUnreadable,
     required_checks,
 )
-from sds_members.client import MembersUnreadable
-from sds_members.populations import granted, service_for_change_class
 
 ORCHESTRATOR_URL = "https://sds.alobar.net"
 ROTATION_UNIT = "rotation_unit"
@@ -334,7 +334,7 @@ def run(
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="rotation-verifier", description="Verify every submitted rotation unit."
+        prog="unit-verifier", description="Verify every submitted rotation unit."
     )
     parser.add_argument("--dry-run", action="store_true", help="list what would be verified")
     args = parser.parse_args(argv)

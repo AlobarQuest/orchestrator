@@ -9,16 +9,16 @@ from typing import Any
 import httpx
 import pytest
 
-from rotation_verifier import alerts, cli
-from rotation_verifier.alerts import (
+from unit_verifier import alerts, cli
+from unit_verifier.alerts import (
     CHECKS_UNREADABLE,
     NO_REQUIRED_CHECK,
     REFUSED,
     Outcome,
     sync_alerts,
 )
-from rotation_verifier.client import VerifierClient
-from rotation_verifier.required_checks import RequiredChecksUnreadable
+from unit_verifier.client import VerifierClient
+from unit_verifier.required_checks import RequiredChecksUnreadable
 
 UNIT = "11111111-1111-4111-8111-111111111111"
 ROTATION = "22222222-2222-4222-8222-222222222222"

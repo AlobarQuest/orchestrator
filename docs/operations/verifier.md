@@ -7,8 +7,7 @@ ordinary lifecycle events, evidence rows, and adjudications.
 
 ## The lane
 
-Nothing needs a person to start it. The verifier lane (`scripts/run-unit-verifier.sh`, replacing
-`scripts/run-rotation-verifier.sh` once the LaunchAgents are swapped; every ten minutes, as the
+Nothing needs a person to start it. The verifier lane (`scripts/run-unit-verifier.sh`, every ten minutes, as the
 VERIFIER identity `orchestrator-verifier`) calls `/verify` on every submitted factory unit:
 
 | Unit | Taken when | Checks filed |

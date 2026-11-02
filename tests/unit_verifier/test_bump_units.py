@@ -8,9 +8,9 @@ from typing import Any
 import httpx
 import pytest
 
-from rotation_verifier.cli import exit_code, run_pass
-from rotation_verifier.client import VerifierClient
-from rotation_verifier.required_checks import RequiredChecksUnreadable
+from unit_verifier.cli import exit_code, run_pass
+from unit_verifier.client import VerifierClient
+from unit_verifier.required_checks import RequiredChecksUnreadable
 
 BUMP = "11111111-1111-4111-8111-111111111111"
 ROTATION = "22222222-2222-4222-8222-222222222222"

@@ -36,8 +36,8 @@ sds_refuse_linked_worktree "$REPO_ROOT"
 # A console script does NOT arrive with a `git pull`: `uv sync` installs it, and a fresh worktree
 # may additionally need `uv sync --reinstall-package orchestrator`. Refusing here turns that into
 # a message at install time rather than a 127 at 07:10.
-if [ ! -x "$REPO_ROOT/.venv/bin/rotation-verifier" ]; then
-  echo "FATAL: $REPO_ROOT/.venv/bin/rotation-verifier is missing. Run: uv sync --frozen" >&2
+if [ ! -x "$REPO_ROOT/.venv/bin/unit-verifier" ]; then
+  echo "FATAL: $REPO_ROOT/.venv/bin/unit-verifier is missing. Run: uv sync --frozen" >&2
   exit 1
 fi
 

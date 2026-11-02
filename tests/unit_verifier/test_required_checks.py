@@ -5,7 +5,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from rotation_verifier.required_checks import RequiredChecksUnreadable, required_checks
+from unit_verifier.required_checks import RequiredChecksUnreadable, required_checks
 
 PATH = "/repos/AlobarQuest/sds-canary/branches/main/protection/required_status_checks"
 

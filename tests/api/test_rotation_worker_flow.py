@@ -343,7 +343,7 @@ rotated_by_sds = true
         assert resolved.status_code == 200, resolved.text
 
     def verify(self, unit_id: str) -> str:
-        """Run the verifier over a submitted unit, as the rotation-verifier lane does."""
+        """Run the verifier over a submitted unit, as the unit-verifier lane does."""
         version = self.version(unit_id)
         verified = self.client.post(
             f"/api/v1/work-units/{unit_id}/verify",
