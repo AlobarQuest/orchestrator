@@ -63,10 +63,11 @@ DEAD_LETTER_DISPATCH_STATUSES = ("failed", "blocked")
 RESOLVED_UNIT_STATES = ("completed", "cancelled")
 # The gates a human must answer. Nothing here can be answered by time passing.
 APPROVAL_STATES = ("awaiting_approval", "awaiting_review")
-# The states a VERIFIER owes an answer on. Nothing here can be answered by time passing either:
-# no schedule runs the verifier, an operator drives it. Kept separate from APPROVAL_STATES rather
-# than folded into it because the two reports differ in WHO OWES THE DECISION and therefore in
-# the remedy -- an approval gate needs a human to decide, a stalled verification needs the
+# The states a VERIFIER owes an answer on. The verifier lane takes a dispatched factory unit every
+# ten minutes, so one still here is one that lane could not move, or a session unit whose operator
+# drives it; `execution-watch` raises the same units too. Kept separate from APPROVAL_STATES
+# rather than folded into it because the two reports differ in WHO OWES THE DECISION and therefore
+# in the remedy -- an approval gate needs a human to decide, a stalled verification needs the
 # verifier run. Telling an operator the wrong one is worse than telling them nothing.
 VERIFICATION_STATES = ("submitted", "verifying")  # not-a-vocabulary: WorkUnitState values
 

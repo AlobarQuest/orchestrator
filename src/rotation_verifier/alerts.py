@@ -2,8 +2,9 @@
 
 `verify-refused:<unit>` for a unit the lane owns and the orchestrator refused,
 `verify-checks-unreadable:<unit>` for a repository whose required checks could not be read, and
-`verify-no-required-check:<unit>` for a bump whose repository requires none. A unit that goes to
-`awaiting_review` raises nothing here: `execution-watch` holds that wait.
+`verify-no-required-check:<unit>` for a bump whose repository requires none. A withdrawn grant is a
+refusal, with the reason in its detail. A unit that goes to `awaiting_review` raises nothing here:
+`execution-watch` holds that wait.
 
 Each fires once, stays while its unit is refused, and resolves on the first pass that no longer
 reports it. A pass that couldn't read its queue never reaches here, so every key holds; so does
@@ -28,7 +29,8 @@ TOKEN_ENV: Final = "SDS_BRIDGE_ALERT_TOKEN"
 STATE_DIR_ENV: Final = "VERIFIER_STATE_DIR"
 ALERTS_FILE: Final = "alerts.json"
 REFUSED: Final = "refused"
-# A unit the lane could not read: not known to be the lane's, so it keeps its alert state.
+# A unit, or the member record it needs, the lane could not read: nothing is known, so the unit
+# keeps its alert state and isn't verified.
 UNREAD: Final = "unread"
 NO_REQUIRED_CHECK: Final = "bump_unit_no_required_check"
 CHECKS_UNREADABLE: Final = "required_checks_unreadable"
@@ -40,7 +42,7 @@ KINDS: Final = {
 _NEXT_STEPS: Final = {
     REFUSED: (
         "The lane tries again every ten minutes, so a moved version clears by itself. Otherwise "
-        "open the unit on /review and read ~/Library/Logs/rotation-verifier.log for the cause"
+        "open the unit on /review and read the verifier log in ~/Library/Logs for the cause"
     ),
     CHECKS_UNREADABLE: (
         "Check that the operator's gh login still reads the repository's branch protection. The "

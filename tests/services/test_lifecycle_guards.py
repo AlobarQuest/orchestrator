@@ -394,7 +394,9 @@ def test_completion_does_not_fall_back_to_package_acs_for_unmapped_decomposed_un
             ),
         ]
     )
-    support_unit.state = WorkUnitState.SUBMITTED
+    # From review, the one edge that completes a unit with no criteria; the point here is that the
+    # package's own criteria are not borrowed to refuse it.
+    support_unit.state = WorkUnitState.AWAITING_REVIEW
     migrated_session.commit()
 
     result = transition_unit(migrated_session, completion_command(support_unit), clock=FixedClock())

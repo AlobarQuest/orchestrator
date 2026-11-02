@@ -50,10 +50,6 @@ FIRST_SEEN_FILE: Final = "first-seen.json"
 KNOWN_FILE: Final = "known.json"
 UNREAD_KEY: Final = Condition.WATCH_UNREAD.value
 UNREAD_EXIT: Final = 2
-# While `verification_overdue` reaches production: a pass baselines every present
-# `verification-stalled` key and sends none, so history can't fire before anything could seed it.
-# The second pull request of Verification Part 1 deletes this and its branch in `_readable`.
-ABSORB_VERIFICATION: Final = True
 
 
 def state_directory(environ: Mapping[str, str], home: Path) -> Path:
@@ -158,8 +154,6 @@ def _readable(
 ) -> dict[str, Alert]:
     """Save the known set and the sightings, then decide what fires."""
     raised = raised_keys(rows, now, thresholds)
-    if ABSORB_VERIFICATION:
-        known = known | {key for key in raised if key.startswith(Condition.VERIFICATION_STALLED)}
     try:
         _write_known(state / KNOWN_FILE, known & raised)
     except OSError as error:

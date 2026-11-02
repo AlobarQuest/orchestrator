@@ -310,12 +310,13 @@ CLASSIFICATION: dict[str, Row] = {
     ),
     "rotation_verifier": Row(
         Role.INTERNAL_LANE_ACTOR,
-        "ADR-0055 amendment 14: runs the orchestrator's verifier on each submitted rotation unit "
+        "ADR-0055 amendment 14: runs the orchestrator's verifier on each submitted factory unit "
         "as VERIFIER; the verifier decides every criterion from the executor's step evidence. "
         "Landing Part 4: on a dependency-bump unit it first files the repository's required checks "
         "as named-check evidence, which the orchestrator observes from GitHub itself. From the "
-        "orchestrator it reads only the status ledger and the unit, and from GitHub only a "
-        "repository's required checks on main, and it tells alert-hub (sender sds-bridge) what it "
+        "orchestrator it reads only the status ledger, the unit and the member record, and from "
+        "GitHub only a repository's required checks on main, and it tells alert-hub (sender "
+        "sds-bridge) what it "
         "could not verify",
         frozenset({VERIFY, NAMED_CHECK}),
     ),

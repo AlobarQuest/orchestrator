@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
 from orchestrator.kernel.evidence_types import VERIFIER_NAMED_CHECK_EVIDENCE_TYPE
-from orchestrator.kernel.states import WorkUnitState
+from orchestrator.kernel.states import ActorContext, WorkUnitState
 from orchestrator.persistence.models import (
     Adjudication,
     DispatchRecord,
@@ -460,6 +460,99 @@ def test_verifier_passes_and_completes_when_all_mapped_criteria_pass(
     adjudication = migrated_session.get(Adjudication, result.evaluations[0].adjudication_id)
     assert adjudication is not None
     assert adjudication.evidence_id == evidence.id
+
+
+def _no_criteria_unit(session: Session, key: str, *, runner: bool) -> WorkUnit:
+    """An approved decomposition that maps nothing to this unit: `load_required_criteria` answers
+    `()`. A runner's unit has a dispatch and a bound pull request; a session worker's has none."""
+    unit = mapped_submitted_unit(
+        session,
+        key=key,
+        authority=AUTOMATED_CHECK_AUTHORITY if runner else AUTHORITY,
+        mapped=False,
+    )
+    if runner:
+        unit.attempt_count = 1
+        bind_dispatched_pull_request(session, unit)
+    return unit
+
+
+def _verify_no_criteria(session: Session, unit: WorkUnit) -> None:
+    verify_work_unit(
+        session,
+        VerifyCommand(
+            unit_id=unit.id,
+            actor=VERIFIER,
+            expected_version=unit.version,
+            idempotency_key=f"{unit.unit_key}-verify",
+        ),
+    )
+
+
+@pytest.mark.parametrize("runner", [True, False], ids=["runner", "session-worker"])
+def test_a_unit_with_no_criteria_goes_to_a_person(migrated_session: Session, runner: bool) -> None:
+    unit = _no_criteria_unit(migrated_session, f"no-criteria-{runner}", runner=runner)
+
+    result = verify_work_unit(
+        migrated_session,
+        VerifyCommand(
+            unit_id=unit.id,
+            actor=VERIFIER,
+            expected_version=unit.version,
+            idempotency_key=f"no-criteria-{runner}-verify",
+        ),
+    )
+
+    assert result.evaluations == ()
+    assert result.result == "awaiting_review"
+    assert result.state is WorkUnitState.AWAITING_REVIEW
+
+
+@pytest.mark.parametrize("actor", [VERIFIER, HUMAN], ids=["verifier", "human"])
+@pytest.mark.parametrize("source", [WorkUnitState.SUBMITTED, WorkUnitState.VERIFYING])
+def test_no_edge_but_the_review_gate_completes_a_unit_with_no_criteria(
+    migrated_session: Session, source: WorkUnitState, actor: ActorContext
+) -> None:
+    """The guard's own answer: `_target_state` is not what stops this."""
+    key = f"no-criteria-edge-{source}-{actor.role}"
+    unit = _no_criteria_unit(migrated_session, key, runner=False)
+    unit.state = source
+    migrated_session.commit()
+
+    with pytest.raises(DomainError) as error:
+        transition_unit(
+            migrated_session,
+            TransitionCommand(
+                unit_id=unit.id,
+                target=WorkUnitState.COMPLETED,
+                actor=actor,
+                expected_version=unit.version,
+                idempotency_key=f"{key}-complete",
+            ),
+        )
+
+    assert error.value.code == "completion_incomplete"
+
+
+def test_a_person_may_complete_a_unit_with_no_criteria_from_review(
+    migrated_session: Session,
+) -> None:
+    """Review has no cancel edge, so a person who can't complete it could only send it round."""
+    unit = _no_criteria_unit(migrated_session, "no-criteria-person", runner=False)
+    _verify_no_criteria(migrated_session, unit)
+
+    result = transition_unit(
+        migrated_session,
+        TransitionCommand(
+            unit_id=unit.id,
+            target=WorkUnitState.COMPLETED,
+            actor=HUMAN,
+            expected_version=unit.version,
+            idempotency_key="no-criteria-person-complete",
+        ),
+    )
+
+    assert result.state is WorkUnitState.COMPLETED
 
 
 def test_verifier_fails_closed_for_failed_evidence(migrated_session: Session) -> None:

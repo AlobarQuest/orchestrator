@@ -2296,3 +2296,10 @@ asks only the field and level terms. The text as it stood:
   `changed_files`), neither end of any entry is a workflow or gate file, and a tooling manifest
   changed. Each failure is a `pr_merge_*` refusal with no `UnitPrMerge` row, so a person can still
   land it. Detail: `docs/operations/landing-lanes.md`, ADR-0025 amendment 4.
+
+### Verification Part 5, 2026-11-01
+
+The text these rules held in CLAUDE.md until Verification Part 5 replaced each with a line naming its test.
+
+- Generated post-deploy acceptance criteria are verifier-owned: public adjudication rejects their AC IDs, so post-deploy completion always flows through the verifier evaluators.
+- A verifier adjudication may arise only from `verify_work_unit`; a direct POST is `verifier_evaluation_required`.

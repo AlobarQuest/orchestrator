@@ -124,6 +124,13 @@ rotated_by_sds = true
   [[credential.consumer]]
   kind = "runtime-fetch"
   repo = "orchestrator"
+  ref = "scripts/run-unit-verifier.sh"
+  healthchecks_check = "sds-unit-verifier"
+  note = "reads Keychain Claude/BWS_ACCESS_TOKEN_SDS each run, through sds-token.sh or directly; pings sds-unit-verifier through sds-deadman.sh"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
   ref = "scripts/run-work-carrier.sh"
   healthchecks_check = "sds-work-carrier"
   note = "reads Keychain Claude/BWS_ACCESS_TOKEN_SDS each run, through sds-token.sh or directly; pings sds-work-carrier through sds-deadman.sh"

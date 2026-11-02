@@ -65,9 +65,8 @@ Placement rule: global CLAUDE.md §7.
 - Protocol smoke tests may manipulate time or lease expiry as fixture setup; runtime recovery
   behaviour must go through public API/CLI surfaces, never private service shortcuts. History:
   `docs/history/claude-md-invariants-archive.md` #5.
-- Generated post-deploy acceptance criteria are verifier-owned: public adjudication rejects their AC
-  IDs, so post-deploy completion always flows through the verifier evaluators. History:
-  `docs/history/claude-md-invariants-archive.md` #8.
+- Generated post-deploy criteria are verifier-owned: public adjudication rejects their AC IDs
+  (`test_generated_post_deploy_unit_rejects_direct_public_adjudication`). Archive #8.
 - Production `/api` is M2M-only at the Traefik proxy (identity headers stripped); a human API route
   needs a dedicated forward-auth router. A browser 401 on `/api` means M2M-only, never a retry
   quirk. Detail: `docs/operations/driving-a-unit.md`.
@@ -215,9 +214,9 @@ Placement rule: global CLAUDE.md §7.
 - The dispatch App has no `checks` permission, so named-check evidence is read from Actions jobs and
   `check_name` must be the JOB name. Merging needs `contents: write`; read an App's permissions from
   the installation or mint response, never `/app`. Detail: `docs/operations/credentials.md`.
-- `evidence` rows are append-only by DB trigger; a test that corrupts a stored payload sets it on
-  the ORM instance and calls `evaluate_criterion` without committing. History:
-  `docs/history/claude-md-invariants-archive.md` #103.
+- `evidence` rows are append-only by DB trigger (`test_append_only_tables_reject_update_and_delete`);
+  a test that corrupts a stored payload sets it on the ORM instance and calls `evaluate_criterion`
+  without committing. Archive #103.
 - App Brain's landing route never 404s and returns a value plus a `reason`; consumers must tell
   `no_app_record` from `not_assessed`, and one repository may fold several apps. Detail:
   `docs/operations/landing-lanes.md`.
@@ -225,10 +224,10 @@ Placement rule: global CLAUDE.md §7.
   the whole vocabulary; fix with a pinned duplicate, never an allowlist entry. Detail:
   `docs/operations/architecture-guards.md`.
 - `_blocked_reason` normalizes the envelope once (`test_dispatch_uses_one_normalized_authority_snapshot`). Archive #108.
-- A verifier adjudication may arise only from `verify_work_unit`; a direct POST is
-  `verifier_evaluation_required`. Reconciliation detects reality changing, never reality
-  misreported, so worker-attested evidence has no downstream net. History:
-  `docs/history/claude-md-invariants-archive.md` #109.
+- A verifier adjudication may arise only from `verify_work_unit`
+  (`test_verifier_may_not_adjudicate_outside_its_own_evaluation`,
+  `test_only_the_verify_command_may_assert_its_own_evaluation`). Reconciliation detects reality
+  changing, never reality misreported, so worker-attested evidence has no downstream net. Archive #109.
 - The enforced attempt cap is the `work_units.max_attempts` column, taken from the proposal and
   raised by `authorize_retry`. `authority.budgets.max_attempts` is a ceiling on it only on
   `decomposition`'s two policy branches: above it policy doesn't approve and a person decides. A
@@ -306,9 +305,25 @@ Placement rule: global CLAUDE.md §7.
   copy in factory-runner's `.cred-consumers.toml`; the rotation executor re-sets every copy and
   verifies each by its repository's `secret-fingerprint.yml` report. Detail:
   `docs/operations/credentials.md`, `docs/operations/rotation-executor.md`.
-- Named-check evidence is ingested only for criteria declared `automated_check`, with `check_name`
-  the JOB name. A human adjudication does not complete a unit: `AWAITING_REVIEW -> COMPLETED` is a
-  separate human gate. History: `docs/history/claude-md-invariants-archive.md` #154.
+- Named-check evidence is ingested only for criteria declared `automated_check`
+  (`test_named_evidence_is_accepted_only_on_an_automated_check_criterion`), with `check_name` the JOB
+  name. A human adjudication does not complete a unit: `AWAITING_REVIEW -> COMPLETED` is a separate
+  human gate (`DESIGNED_HUMAN_GATES`). Archive #154.
+- The verifier lane (`src/rotation_verifier/`, `scripts/run-unit-verifier.sh`) takes a rotation unit,
+  a bump, or a unit with a dispatch and an armed head that isn't `post_deploy_verification`. Each
+  `automated_check_ac_ids` criterion gets every required check, sorted, stopping at the first that
+  didn't succeed; an unanswered check never reaches `/verify`, and the evidence key names the
+  criterion. The server trusts the VERIFIER identity on the check's name, so
+  `test_verification_edges.py` pins that shape (decision 2 of the Verification spec). A unit with
+  nothing to file goes to `/verify`, which decides what its evidence allows and gives the rest to a
+  person, including one whose repository requires no check (a 404 included), unless a check is
+  already filed (`named_check_filed`): that app-change unit is held as `verify-refused`, because the
+  filed row would pass the criterion alone (`test_a_filed_check_then_a_lost_required_list_holds_the_unit`).
+  A bump with no list always alerts instead. A unit with no criteria never completes from
+  `/verify`: it goes to `awaiting_review`, and only that human gate completes it
+  (`test_a_unit_with_no_criteria_goes_to_a_person`, `_completion_satisfied`). Only an app-change unit reads the member
+  record: no grant is `verify-refused`, and an empty or unread record holds the unit silently.
+  `image_release` shares the `orchestrator-verifier` identity. Detail: `docs/operations/verifier.md`.
 - Columns holding GitHub Actions run ids must be `BigInteger`: ids exceed 2^31, and `Integer` fails
   only on Postgres (`integer out of range`), never on SQLite. History:
   `docs/history/claude-md-invariants-archive.md` #157.

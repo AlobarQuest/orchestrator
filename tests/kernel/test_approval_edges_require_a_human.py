@@ -23,7 +23,7 @@ survives of its intent, and it is stronger: it constrains every future edge, not
 import pytest
 
 from orchestrator.kernel.states import ActorRole, WorkUnitState
-from orchestrator.kernel.transitions import EDGE_ROLES
+from orchestrator.kernel.transitions import DESIGNED_HUMAN_GATES, EDGE_ROLES
 
 APPROVAL_STATES = (WorkUnitState.AWAITING_APPROVAL, WorkUnitState.AWAITING_REVIEW)
 
@@ -67,3 +67,11 @@ def test_no_machine_actor_can_leave_an_approval_state(state: WorkUnitState) -> N
         f"machine actors can leave {state.value}: {offenders}. Silence must never become "
         "approval, and a machine acting on an unanswered gate is silence becoming approval."
     )
+
+
+@pytest.mark.parametrize("target", [WorkUnitState.COMPLETED, WorkUnitState.REVISION_REQUIRED])
+def test_leaving_review_is_a_human_gate_of_its_own(target: WorkUnitState) -> None:
+    """An adjudication doesn't complete a unit: leaving `awaiting_review` is a human act."""
+    edge = (WorkUnitState.AWAITING_REVIEW, target)
+    assert EDGE_ROLES[edge] == {ActorRole.HUMAN}
+    assert edge in DESIGNED_HUMAN_GATES

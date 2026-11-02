@@ -62,6 +62,8 @@ def mapped_submitted_unit(
     ac_id: str = "ac-1",
     authority: AuthorityEnvelope = AUTHORITY,
     evidence: str = "recorded evidence",
+    other_ac_ids: tuple[str, ...] = (),
+    mapped: bool = True,
 ) -> WorkUnit:
     revision = register_revision(
         session,
@@ -74,7 +76,7 @@ def mapped_submitted_unit(
         approved_by=HUMAN.actor_id,
         approved_at=NOW,
         approval_event_id=str(uuid.uuid4()),
-        enforcement_snapshot={"acceptance_criteria": [ac_id]},
+        enforcement_snapshot={"acceptance_criteria": [ac_id, *other_ac_ids]},
         authority=authority,
         registry_version=1,
         actor_id=HUMAN.actor_id,
@@ -123,13 +125,14 @@ def mapped_submitted_unit(
             approved_at=NOW,
         )
     )
-    session.add(
-        DecompositionProposalAcMapping(
-            proposal_id=proposal.id,
-            package_acceptance_criterion_id=criterion.id,
-            unit_key=unit.unit_key,
+    if mapped:
+        session.add(
+            DecompositionProposalAcMapping(
+                proposal_id=proposal.id,
+                package_acceptance_criterion_id=criterion.id,
+                unit_key=unit.unit_key,
+            )
         )
-    )
     unit.state = WorkUnitState.SUBMITTED
     session.commit()
     return unit

@@ -67,6 +67,46 @@ def automated_check_unit(session: Session, key: str):
     return unit, bind_dispatched_pull_request(session, unit)
 
 
+@pytest.mark.parametrize("declared", ["automated_test", "pytest", "human_review", "observation"])
+def test_named_evidence_is_accepted_only_on_an_automated_check_criterion(
+    migrated_session: Session, declared: str
+) -> None:
+    unit = mapped_submitted_unit(
+        migrated_session,
+        key=f"named-on-{declared}",
+        evidence_type=declared,
+        ac_id="AC-006",
+        authority=AUTOMATED_CHECK_AUTHORITY,
+    )
+    record_worker_evidence(
+        migrated_session,
+        unit,
+        ac_id="AC-006",
+        evidence_type="runner.pr.opened",
+        payload={"pr_number": PR_NUMBER, "head_sha": HEAD_SHA},
+        idempotency_key=f"named-on-{declared}-worker",
+    )
+    dispatch = bind_dispatched_pull_request(migrated_session, unit)
+    observer = StubCheckObserver()
+
+    result = record_named_check(migrated_session, named_check_command(unit, dispatch), observer)
+
+    assert isinstance(result, DomainError)
+    assert result.code == "evidence_subject_invalid"
+    assert observer.calls == []
+    assert (
+        migrated_session.scalar(
+            select(func.count())
+            .select_from(Evidence)
+            .where(
+                Evidence.work_unit_id == unit.id,
+                Evidence.evidence_type == VERIFIER_NAMED_CHECK_EVIDENCE_TYPE,
+            )
+        )
+        == 0
+    )
+
+
 def test_worker_cannot_submit_reserved_verifier_evidence_type(
     migrated_session: Session,
 ) -> None:
