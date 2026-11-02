@@ -326,7 +326,7 @@ def _verification_steps(row: StatusRow) -> str:
             "`image_release` did not verify it."
         )
     return (
-        "Open it on /review, then read ~/Library/Logs/rotation-verifier.log for why. If that "
+        "Open it on /review, then read ~/Library/Logs/unit-verifier.log for why. If that "
         "lane skips the unit, run its verification through the VERIFIER verify route."
     )
 

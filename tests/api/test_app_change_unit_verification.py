@@ -23,10 +23,6 @@ from orchestrator.persistence.models import (
     SdsMemberGrant,
     WorkUnit,
 )
-from rotation_verifier.alerts import REFUSED
-from rotation_verifier.cli import run_pass
-from rotation_verifier.client import VerifierClient
-from rotation_verifier.required_checks import NoRequiredChecks
 from tests.api.test_bump_unit_verification import GitHubByCheck, ThroughTestClient
 from tests.api.test_verifier_api import substitute_github
 from tests.fixtures.named_check import (
@@ -38,6 +34,10 @@ from tests.fixtures.named_check import (
     mapped_submitted_unit,
     record_worker_evidence,
 )
+from unit_verifier.alerts import REFUSED
+from unit_verifier.cli import run_pass
+from unit_verifier.client import VerifierClient
+from unit_verifier.required_checks import NoRequiredChecks
 
 OBSERVER = {"Authorization": "Bearer observer-token", "X-Credential-Key-Id": "observer-key"}
 

@@ -11,11 +11,11 @@ from typing import Any
 import httpx
 import pytest
 
-from rotation_verifier import cli
-from rotation_verifier.alerts import KINDS, REFUSED, UNREAD, Outcome, sync_alerts
-from rotation_verifier.cli import exit_code, run_pass
-from rotation_verifier.client import VerifierClient
-from rotation_verifier.required_checks import (
+from unit_verifier import cli
+from unit_verifier.alerts import KINDS, REFUSED, UNREAD, Outcome, sync_alerts
+from unit_verifier.cli import exit_code, run_pass
+from unit_verifier.client import VerifierClient
+from unit_verifier.required_checks import (
     NoRequiredChecks,
     RequiredChecksUnreadable,
     required_checks,

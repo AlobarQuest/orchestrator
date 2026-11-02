@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from rotation_verifier.client import permits
+from unit_verifier.client import permits
 
 UNIT = "11111111-1111-4111-8111-111111111111"
 

@@ -711,7 +711,7 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
 `bump-driver` (`src/bump_driver/`, `scripts/run-bump-driver.sh`, hourly at :50, log
 `~/Library/Logs/bump-driver.log`, Healthchecks check `sds-bump-driver`, an outcome alarm) moves
 standing dependency-update work as SYSTEM with no person acting. Verification stays with the
-`rotation-verifier` lane, as VERIFIER. Check it with `/bin/bash scripts/run-bump-driver.sh --dry-run`.
+`unit-verifier` lane, as VERIFIER. Check it with `/bin/bash scripts/run-bump-driver.sh --dry-run`.
 
 - **What it reads.** `work` records whose `change_class` is `dependency-update`, in a repository the
   member record grants `dependency_updates`, whose revision is a standing package's. It reads

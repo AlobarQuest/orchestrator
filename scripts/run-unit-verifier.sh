@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
 # One verifier pass: run `/verify` on every submitted factory unit (Verification Part 2).
 #
-# This replaces `run-rotation-verifier.sh`, which stays until the LaunchAgents are swapped, because
-# `activate-checkout.sh` re-executes a running launcher and deleting it would stop the lane with no
-# ping. The program keeps its name until then. The verifier decides every criterion, and a unit it
-# can't prove goes to `awaiting_review` for a person.
+# The verifier decides every criterion, and a unit it can't prove goes to `awaiting_review` for a
+# person.
 #
 # EXIT CODES:
 #   0  every submitted unit completed or is waiting on a check, or none was submitted.
@@ -12,7 +10,7 @@
 #   2  something was found: a unit went to a person or an alert names it.
 #   3  the queue could not be read, or alert-hub could not be told.
 #
-# A unit the lane couldn't verify is a keyed alert (`src/rotation_verifier/alerts.py`). 2 is the
+# A unit the lane couldn't verify is a keyed alert (`src/unit_verifier/alerts.py`). 2 is the
 # finding code, so that cause pings success and raises the alert, never both. 3 pings `/fail`: it is
 # what's left when an alert can't carry the news.
 #
@@ -91,12 +89,12 @@ if [ -z "${ROTATION_VERIFIER_GITHUB_TOKEN:-}" ]; then
   export ROTATION_VERIFIER_GITHUB_TOKEN
 fi
 
-"$REPO_ROOT/.venv/bin/rotation-verifier" "$@"
+"$REPO_ROOT/.venv/bin/unit-verifier" "$@"
 rc=$?
 
 # A code outside {0,1,2,3} is the program dying in a way it doesn't describe (127 is a missing
 # binary); report it as the tool failing rather than folding it to 0.
 case "$rc" in
   0|1|2|3) exit "$rc" ;;
-  *) echo "FATAL: rotation-verifier exited $rc" >&2; exit 1 ;;
+  *) echo "FATAL: unit-verifier exited $rc" >&2; exit 1 ;;
 esac

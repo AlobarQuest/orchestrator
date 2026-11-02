@@ -309,7 +309,7 @@ Placement rule: global CLAUDE.md §7.
   (`test_named_evidence_is_accepted_only_on_an_automated_check_criterion`), with `check_name` the JOB
   name. A human adjudication does not complete a unit: `AWAITING_REVIEW -> COMPLETED` is a separate
   human gate (`DESIGNED_HUMAN_GATES`). Archive #154.
-- The verifier lane (`src/rotation_verifier/`, `scripts/run-unit-verifier.sh`) takes a rotation unit,
+- The verifier lane (`src/unit_verifier/`, `scripts/run-unit-verifier.sh`) takes a rotation unit,
   a bump, or a unit with a dispatch and an armed head that isn't `post_deploy_verification`. Each
   `automated_check_ac_ids` criterion gets every required check, sorted, stopping at the first that
   didn't succeed; an unanswered check never reaches `/verify`, and the evidence key names the
@@ -566,7 +566,7 @@ Placement rule: global CLAUDE.md §7.
   owning executor (`RotationExecutors.owner`, passed in `VerifyCommand.rotation_executors`);
   `rotation_verification.rotation_step_verdict` never fails a criterion, and anything else stays
   with a person. The floor stays human: never add `external_attestation` to a deterministic set.
-  The `rotation-verifier` lane runs `/verify` as VERIFIER. Detail: ADR-0055 amendment 14,
+  The `unit-verifier` lane runs `/verify` as VERIFIER. Detail: ADR-0055 amendment 14,
   `docs/operations/rotation-executor.md`.
 - A unit's completion satisfies, in `_perform_transition`'s transaction, the pending `work_unit`
   dependencies that require it `completed` (exact match); no other condition or kind. A human-act

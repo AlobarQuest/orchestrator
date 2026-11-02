@@ -239,7 +239,7 @@ TABLE: dict[str, Row] = {
     # ADR-0055 amendment 14: runs `/verify` on submitted factory units as VERIFIER, through the
     # shared confined transport. It decides nothing. Verification Part 2: it reads the grant by
     # `sds_members`' parser and populations, so it doesn't carry `no_sibling_lanes`.
-    "rotation_verifier": _row(
+    "unit_verifier": _row(
         "__future__",
         # Verification Part 1: tells a person through the shared alert-hub client, which owns the
         # only request it can send. `pathlib` carries the state directory.

@@ -21,8 +21,6 @@ from orchestrator.services.verifier.github_checks import (
     CheckObservation,
     CheckObservationError,
 )
-from rotation_verifier.cli import run_pass
-from rotation_verifier.client import VerifierClient
 from tests.api.test_verifier_api import substitute_github
 from tests.fixtures.named_check import (
     HEAD_SHA,
@@ -33,6 +31,8 @@ from tests.fixtures.named_check import (
     observed_job,
     record_worker_evidence,
 )
+from unit_verifier.cli import run_pass
+from unit_verifier.client import VerifierClient
 
 BUMP_AUTHORITY = AuthorityEnvelope(
     capabilities={"repo.edit": "allowed"},

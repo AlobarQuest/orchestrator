@@ -23,10 +23,6 @@ import alert_hub_client
 from orchestrator.api.routes import verifier as verifier_route
 from orchestrator.services.verifier import github_checks
 from orchestrator.services.verifier.github_checks import GitHubActionsCheckObserver
-from rotation_verifier import cli as lane_cli
-from rotation_verifier import client as lane_client
-from rotation_verifier import required_checks
-from rotation_verifier.cli import run_pass
 from tests.architecture.edge_table import (
     DEADMAN,
     GH_AUTH_TOKEN,
@@ -41,7 +37,7 @@ from tests.architecture.edge_table import (
 )
 from tests.architecture.test_bridge_edges import _alert_hub_permits
 from tests.architecture.test_rotation_edges import borrowed, network, processes
-from tests.rotation_verifier.test_factory_units import (
+from tests.unit_verifier.test_factory_units import (
     NOT_CONCLUDED,
     UNIT,
     Orchestrator,
@@ -50,9 +46,13 @@ from tests.rotation_verifier.test_factory_units import (
     _filed,
     _required,
 )
+from unit_verifier import cli as lane_cli
+from unit_verifier import client as lane_client
+from unit_verifier import required_checks
+from unit_verifier.cli import run_pass
 
 METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD")
-LANE_NAME = "rotation_verifier"
+LANE_NAME = "unit_verifier"
 
 # ---- Orchestrator to GitHub ---------------------------------------------------------------------
 
@@ -216,7 +216,7 @@ LANE = Edge(
     alert_hub=frozenset({("POST", "/v1/alerts")}),
     bearers=DEADMAN | {VERIFIER_BEARER, GH_AUTH_TOKEN, SDS_BRIDGE_ALERT_BEARER},
 )
-LAUNCHERS = ("scripts/run-rotation-verifier.sh", "scripts/run-unit-verifier.sh")
+LAUNCHERS = ("scripts/run-unit-verifier.sh",)
 LANE_PROBES = frozenset(
     {
         f"{UNIT_PATH}/adjudications",
@@ -271,10 +271,10 @@ def test_the_lane_s_urls_are_the_ones_its_code_holds() -> None:
 
 def test_the_lane_builds_exactly_its_clients() -> None:
     assert network(LANE_NAME) == {
-        "src/rotation_verifier/alerts.py": 0,
-        "src/rotation_verifier/cli.py": 0,
-        "src/rotation_verifier/client.py": 1,
-        "src/rotation_verifier/required_checks.py": 1,
+        "src/unit_verifier/alerts.py": 0,
+        "src/unit_verifier/cli.py": 0,
+        "src/unit_verifier/client.py": 1,
+        "src/unit_verifier/required_checks.py": 1,
         "src/sds_members/client.py": 1,
     }
 
