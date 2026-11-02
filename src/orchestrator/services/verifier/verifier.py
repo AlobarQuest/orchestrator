@@ -405,6 +405,8 @@ def _load_revision(session: Session, unit: WorkUnit) -> WorkPackageRevision:
 
 
 def _target_state(evaluations: tuple[VerifierEvaluation, ...]) -> WorkUnitState:
+    if not evaluations:
+        return WorkUnitState.AWAITING_REVIEW
     if any(evaluation.outcome == "failed" for evaluation in evaluations):
         return WorkUnitState.REVISION_REQUIRED
     if any(evaluation.status == "judgment_required" for evaluation in evaluations):

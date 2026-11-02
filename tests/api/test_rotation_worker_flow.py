@@ -520,6 +520,7 @@ def test_the_unit_read_route_serves_what_the_executor_reads(estate: Estate) -> N
         "pr_number",
         "armed_head_sha",
         "automated_check_ac_ids",
+        "named_check_filed",
     }
     assert body["state"] == "ready"
     assert body["authority"]["constraints"]["rotation_unit"] == "mint"

@@ -14,10 +14,14 @@ check. A check still running is `waiting`; the next pass files from the start ag
 its own, so it observes every check afresh.
 
 An app-change unit is held while the member record doesn't grant its repository, which alerts, and
-while the record can't be read, which is no withdrawal and alerts nothing. Nothing filed means a
-person decides: a unit with no `automated_check` criterion goes straight to `/verify`, and so does
-one whose repository requires no check, where the criterion falls to a person. Rotation units have
-no repository, and landing refuses a bump with no grant, so neither reads the record.
+while the record can't be read, which is no withdrawal and alerts nothing. A unit with no
+`automated_check` criterion goes straight to `/verify`, which decides what its evidence allows and
+gives the rest to a person, a unit with no criterion at all included. So does one whose repository
+requires no check, where the criterion falls to a person, but only while nothing has been filed: a
+filed row would pass the criterion with the other checks unobserved, so a list that comes back
+empty or 404 after that holds the unit and alerts. Bumps already hold on both readings, each with
+its own alert, so this is an app-change rule. Rotation units have no repository, and landing
+refuses a bump with no grant, so neither reads the record.
 
 A unit the lane could not take to an answer is a keyed alert (`alerts.py`), sent after every unit
 has had its turn, so a refused unit or an alert-hub failure never stops a rotation.
@@ -81,6 +85,8 @@ BUMP_AC_ID = "AC-001"
 POST_DEPLOY_CAPABILITY = "post_deploy_verification"
 # Served by `GET /work-units/{id}`; a server without it serves no criterion to file under.
 AUTOMATED_CHECK_IDS = "automated_check_ac_ids"
+# Also served by `GET /work-units/{id}`; a server without it is taken to have filed something.
+NAMED_CHECK_FILED = "named_check_filed"
 WAITING = "waiting"
 FOUND, INCOMPLETE = 2, 3
 
@@ -231,8 +237,8 @@ def _file_app_change_checks(
     unit: dict[str, Any],
     read_required_checks: Callable[[str], tuple[str, ...]] | None,
 ) -> tuple[str, str] | None:
-    """As `_file_bump_checks`, past the grant. With no check to file, `/verify` sends the unit to a
-    person: a repository requiring nothing never passes by default."""
+    """As `_file_bump_checks`, past the grant. With no check to file and none filed, `/verify` sends
+    the unit to a person: a repository requiring nothing never passes by default."""
     repository = str(unit["authority"]["constraints"]["target_repository"]).strip()
     held = _grant_hold(client, unit, repository)
     if held is not None:
@@ -243,10 +249,14 @@ def _file_app_change_checks(
     try:
         names = _required_names(read_required_checks, repository)
     except NoRequiredChecks:
-        return None
+        names = ()
     except RequiredChecksUnreadable as error:
         return (CHECKS_UNREADABLE, str(error))
-    return _file_all(client, pass_id, unit_id, unit, criteria, names) if names else None
+    if names:
+        return _file_all(client, pass_id, unit_id, unit, criteria, names)
+    if unit.get(NAMED_CHECK_FILED, True):
+        return (REFUSED, f"{repository} names no required checks now, but one was already filed")
+    return None
 
 
 def _required_names(

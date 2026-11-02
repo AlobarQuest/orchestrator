@@ -79,14 +79,16 @@ class VerifiableUnitResponse(WorkUnitDetailResponse):
 
     The newest dispatch that ran, the bound pull request and its armed head; each is null until it
     exists. `automated_check_ac_ids` names the unit's required `automated_check` criteria, the only
-    ones that accept a named check. Declared here, beside the evidence it feeds, and served by
-    `GET /work-units/{id}`.
+    ones that accept a named check. `named_check_filed` says one has been filed: `/verify` then
+    judges on those rows, so a lane that can no longer name the required checks must hold the unit.
+    Declared here, beside the evidence it feeds, and served by `GET /work-units/{id}`.
     """
 
     latest_dispatch_id: UUID | None = None
     pr_number: int | None = None
     armed_head_sha: str | None = None
     automated_check_ac_ids: tuple[str, ...] = ()
+    named_check_filed: bool = False
 
 
 class EvidenceResponse(BaseModel):

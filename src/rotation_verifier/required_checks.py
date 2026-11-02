@@ -28,8 +28,9 @@ class RequiredChecksUnreadable(RuntimeError):
 class NoRequiredChecks(RequiredChecksUnreadable):
     """A 404: `main` has no required checks, or the token can't see the repository.
 
-    Still unreadable to a bump, which waits for an answer. An app-change unit goes to a person
-    either way, and neither reading can pass it.
+    Still unreadable to a bump, which waits for an answer. An app-change unit treats it as the empty
+    list: it goes to a person with nothing filed, and with a check filed the lane holds it, because
+    `/verify` would pass the criterion on that row.
     """
 
 

@@ -161,8 +161,8 @@ def record_named_check_evidence(
 
 def named_check_inputs(session: Session, unit: WorkUnit) -> dict[str, object]:
     """What a caller needs to name a unit's checks: the newest dispatch that ran, the bound pull
-    request, its armed head and the criteria that take a check. Absent parts are None. Only a
-    `dispatched` row is offered, because ingestion refuses any other."""
+    request, its armed head, the criteria that take a check and whether a check has been filed.
+    Absent parts are None. Only a `dispatched` row is offered: ingestion refuses any other."""
     newest = session.scalar(
         select(DispatchRecord.id)
         .where(DispatchRecord.work_unit_id == unit.id, DispatchRecord.status == "dispatched")
@@ -175,7 +175,21 @@ def named_check_inputs(session: Session, unit: WorkUnit) -> dict[str, object]:
         "pr_number": binding.pr_number if binding is not None else None,
         "armed_head_sha": binding.verification_read_head_sha if binding is not None else None,
         "automated_check_ac_ids": _automated_check_ac_ids(session, unit),
+        "named_check_filed": _named_check_filed(session, unit),
     }
+
+
+def _named_check_filed(session: Session, unit: WorkUnit) -> bool:
+    """Any attempt's row counts: `current_evidence` is per unit, so an old row can still decide."""
+    row = session.scalar(
+        select(Evidence.id)
+        .where(
+            Evidence.work_unit_id == unit.id,
+            Evidence.evidence_type == VERIFIER_NAMED_CHECK_EVIDENCE_TYPE,
+        )
+        .limit(1)
+    )
+    return row is not None
 
 
 def _automated_check_ac_ids(session: Session, unit: WorkUnit) -> tuple[str, ...]:

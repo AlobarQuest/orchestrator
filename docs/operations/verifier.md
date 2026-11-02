@@ -15,7 +15,10 @@ VERIFIER identity `orchestrator-verifier`) calls `/verify` on every submitted fa
 |---|---|---|
 | Rotation | its envelope names `rotation_unit` | none; no member-record read |
 | Bump | `change_class` is `dependency-update` | every required check under `AC-001`; a repository requiring none, or unreadable, holds the unit and alerts |
-| App change | it has a dispatch and an armed head, and isn't `post_deploy_verification` | every required check under each of `automated_check_ac_ids`; a repository requiring none goes to `/verify` unfiled, and so to a person |
+| App change | it has a dispatch and an armed head, and isn't `post_deploy_verification` | every required check under each of `automated_check_ac_ids`; a repository requiring none goes to `/verify` unfiled, and so to a person; a list that comes back empty or 404 once a check is filed holds the unit and raises `verify-refused:<unit>` |
+
+A unit with no criterion mapped to it goes to `awaiting_review`, never to `completed`: the only edge
+that completes it is a person's, from review.
 
 A session unit has no dispatch and is left alone. Post-deploy units belong to `image_release`.
 `execution-watch` raises `verification-stalled:<unit>` for a unit of any class stuck in `submitted`

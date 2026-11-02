@@ -576,6 +576,7 @@ def _transition_guards(
             required_ac_ids(session, revision, unit),
             adjudications,
             occurred_at,
+            unit.state == WorkUnitState.AWAITING_REVIEW,
         ),
         _submission_binding_recorded(session, unit),
         approval_superseded(session, unit),
@@ -628,9 +629,14 @@ def _completion_satisfied(
     required_ac_ids: tuple[str, ...] | None,
     adjudications: tuple[Adjudication, ...],
     occurred_at: datetime,
+    under_review: bool,
 ) -> bool:
+    """A unit with no criterion has nothing to satisfy, which is no evidence, so only the review
+    gate completes it: that edge is a person's alone, and review has no other way out but round."""
     if required_ac_ids is None:
         return False
+    if not required_ac_ids:
+        return under_review
     grouped = {ac_id: [] for ac_id in required_ac_ids}
     for adjudication in adjudications:
         if adjudication.ac_id not in grouped:

@@ -7,7 +7,9 @@ orchestrator does with the rows the lane files.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
@@ -21,8 +23,10 @@ from orchestrator.persistence.models import (
     SdsMemberGrant,
     WorkUnit,
 )
+from rotation_verifier.alerts import REFUSED
 from rotation_verifier.cli import run_pass
 from rotation_verifier.client import VerifierClient
+from rotation_verifier.required_checks import NoRequiredChecks
 from tests.api.test_bump_unit_verification import GitHubByCheck, ThroughTestClient
 from tests.api.test_verifier_api import substitute_github
 from tests.fixtures.named_check import (
@@ -89,7 +93,12 @@ def _submitted(engine: Engine, key: str, first: str, *others: tuple[str, str]) -
         return unit.id
 
 
-def _lane(db_client: TestClient, conclusions: dict[str, str], *required: str):
+def _lane(
+    db_client: TestClient,
+    conclusions: dict[str, str],
+    *required: str,
+    read: Callable[[str], tuple[str, ...]] | None = None,
+):
     github = GitHubByCheck(conclusions)
     substitute_github(db_client, github)  # type: ignore[arg-type]
     client = VerifierClient(
@@ -98,7 +107,7 @@ def _lane(db_client: TestClient, conclusions: dict[str, str], *required: str):
         token="verifier-token",
         transport=ThroughTestClient(db_client),
     )
-    return github, run_pass(client, read_required_checks=lambda repository: required)
+    return github, run_pass(client, read_required_checks=read or (lambda repository: required))
 
 
 def _filed(engine: Engine, unit_id: uuid.UUID) -> list[tuple[str, str]]:
@@ -166,6 +175,34 @@ def test_a_failed_check_fails_the_unit_on_every_criterion(
         ("AC-002", "Lint"),
         ("AC-002", "test"),
     ]
+
+
+def _unprotected(repository: str) -> tuple[str, ...]:
+    raise NoRequiredChecks("GitHub answered 404")
+
+
+@pytest.mark.parametrize(
+    "lost", [lambda repository: (), _unprotected], ids=["empty-contexts", "a-404"]
+)
+def test_a_filed_check_then_a_lost_required_list_holds_the_unit(
+    db_client: TestClient,
+    migrated_engine: Engine,
+    lost: Callable[[str], tuple[str, ...]],
+) -> None:
+    """Pass one files Lint's success and waits on test. If the list then comes back empty, Lint's
+    row would pass the criterion on `/verify` with test never observed."""
+    unit_id = _submitted(migrated_engine, "lost-list", "automated_check")
+    _, first = _lane(db_client, {"Lint": "success"}, "Lint", "test")
+    assert [o.result for o in first] == ["waiting"]
+
+    _, outcomes = _lane(db_client, {"Lint": "success"}, read=lost)
+
+    assert [o.result for o in outcomes] == [REFUSED]
+    assert "required checks" in outcomes[0].detail
+    assert _filed(migrated_engine, unit_id) == [("AC-001", "Lint")]
+    with Session(migrated_engine) as session:
+        unit = session.get(WorkUnit, unit_id)
+        assert unit is not None and unit.state == "submitted"
 
 
 def test_a_repository_with_no_required_check_reaches_a_person(

@@ -44,6 +44,11 @@ fi
 mkdir -p "$HOME/Library/LaunchAgents"
 sed -e "s|__REPO_ROOT__|$REPO_ROOT|g" -e "s|__HOME__|$HOME|g" "$TEMPLATE" > "$TARGET"
 
+# This lane replaces the rotation-verifier, and the two must not run together: an overlapping pass
+# trips "chain head changed" on /verify. The plist goes too, or launchd reloads it at the next login.
+launchctl bootout "gui/$(id -u)/com.devon.rotation-verifier" 2>/dev/null || true
+rm -f "$HOME/Library/LaunchAgents/com.devon.rotation-verifier.plist"
+
 # `bootout` first so a reinstall replaces rather than layering. It fails when nothing is loaded,
 # which is the ordinary first-install case, so its status is deliberately ignored.
 launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true

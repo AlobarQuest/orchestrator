@@ -63,6 +63,7 @@ def mapped_submitted_unit(
     authority: AuthorityEnvelope = AUTHORITY,
     evidence: str = "recorded evidence",
     other_ac_ids: tuple[str, ...] = (),
+    mapped: bool = True,
 ) -> WorkUnit:
     revision = register_revision(
         session,
@@ -124,13 +125,14 @@ def mapped_submitted_unit(
             approved_at=NOW,
         )
     )
-    session.add(
-        DecompositionProposalAcMapping(
-            proposal_id=proposal.id,
-            package_acceptance_criterion_id=criterion.id,
-            unit_key=unit.unit_key,
+    if mapped:
+        session.add(
+            DecompositionProposalAcMapping(
+                proposal_id=proposal.id,
+                package_acceptance_criterion_id=criterion.id,
+                unit_key=unit.unit_key,
+            )
         )
-    )
     unit.state = WorkUnitState.SUBMITTED
     session.commit()
     return unit

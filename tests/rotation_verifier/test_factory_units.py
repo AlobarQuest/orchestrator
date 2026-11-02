@@ -112,6 +112,7 @@ def _app_change(**overrides: Any) -> dict[str, Any]:
         "pr_number": 9,
         "armed_head_sha": HEAD,
         "automated_check_ac_ids": ["AC-001"],
+        "named_check_filed": False,
     }
     return {**unit, **overrides}
 
@@ -248,6 +249,40 @@ def test_an_unprotected_branch_goes_to_verify_unfiled() -> None:
 
     assert [o.result for o in outcomes] == ["awaiting_review"]
     assert orchestrator.verified == [UNIT]
+
+
+def test_a_lost_list_alerts_as_a_refusal() -> None:
+    orchestrator = Orchestrator({UNIT: _app_change(named_check_filed=True)})
+
+    outcomes = run_pass(_client(orchestrator), read_required_checks=_required())
+
+    assert [(o.result, o.unit_id) for o in outcomes] == [(REFUSED, UNIT)]
+    assert KINDS[REFUSED] == "verify-refused"
+    assert REPOSITORY in outcomes[0].detail
+    assert orchestrator.verified == []
+    assert exit_code(outcomes) == 2
+
+
+def test_a_server_that_doesn_t_say_what_was_filed_holds_a_lost_list() -> None:
+    unit = _app_change()
+    del unit["named_check_filed"]
+    orchestrator = Orchestrator({UNIT: unit})
+
+    outcomes = run_pass(_client(orchestrator), read_required_checks=_required())
+
+    assert [o.result for o in outcomes] == [REFUSED]
+    assert orchestrator.verified == []
+
+
+def test_a_named_list_never_reads_what_was_filed() -> None:
+    """A server without the field still files and verifies as long as the list is there."""
+    unit = _app_change()
+    del unit["named_check_filed"]
+    orchestrator = Orchestrator({UNIT: unit})
+
+    outcomes = run_pass(_client(orchestrator), read_required_checks=_required("Quality"))
+
+    assert [o.result for o in outcomes] == ["completed"]
 
 
 def test_an_unprotected_branch_still_holds_a_bump() -> None:
