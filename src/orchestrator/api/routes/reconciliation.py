@@ -114,8 +114,8 @@ def in_flight_units(
     actor: ActorDep,
     session: SessionDep,
 ) -> object:
-    """AC-009. The read surface of the detect passes run by hand (`orchestrator reconcile-detect`).
-    Read-only."""
+    """AC-009. Read-only. Kept by ADR-0048 (with release_bindings); no program in this repository
+    calls it."""
     require_operator_actor(actor)
     return in_flight_snapshot(session)
 

@@ -435,7 +435,7 @@ def _record_landing(
         ObservationCommand(
             actor=SYSTEM,
             source_system=source_system,
-            source_reference=f"{observation_type}:{source_system}:{repository}@{commit}",
+            source_reference=f"{observation_type}:{repository}@{commit}",
             source_url=None,
             trust_classification="delivery_system",
             subject_type=subject_type,
@@ -507,7 +507,7 @@ def test_the_hop_reads_only_this_units_own_observations(migrated_session: Sessio
     unit = _released_unit(migrated_session, "own-observations-unit")
     other = _released_unit(migrated_session, "other-observations-unit")
     _record_observation_for(migrated_session, other)
-    # Same reference as this unit's id, but not a work-unit subject.
+    # Its subject reference is this unit's id, but its subject type is `repo`.
     decoy = record_observation(
         migrated_session,
         ObservationCommand(

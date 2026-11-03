@@ -181,7 +181,7 @@ retry or replacement observation needs a design of its own.
 ## Secret Handling
 
 Recording an observation adds no secret, runtime env file or GitHub Actions secret. Two bearers
-reach the route, both listed in `.bws-secrets.toml` and fetched by stable UUID:
+carry out the recording, both listed in `.bws-secrets.toml` and fetched by stable UUID:
 
 - SYSTEM (`221a48d5-3f29-4898-b300-b4820140c880`) binds the image and files the observation.
 - VERIFIER (`660d5846-abcb-4751-be86-b483012899eb`) verifies the generated unit.
@@ -197,8 +197,8 @@ bodies, generated artifacts or deployment-observation records.
 ## Deploying And Recording
 
 A production deploy, its release binding, its observation and the verification of the generated
-unit are one procedure, `docs/operations/deploy.md`. Recording changes no lifecycle state outside
-this route: it does not merge pull requests, and it does not make Coolify, GitHub, CI, trackers,
+unit are one procedure, `docs/operations/deploy.md`. Recording sets no state on any existing unit; it creates the generated post-deploy unit and
+nothing else: it does not merge pull requests, and it does not make Coolify, GitHub, CI, trackers,
 workers, verifiers or production observation canonical lifecycle truth. Dispatch is a standing
 setting (`ORCHESTRATOR_DISPATCH_ENABLED`, an off switch only), not something a deploy or an
 observation changes. The WS-5.3 closeout checklist that this section replaced is in

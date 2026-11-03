@@ -485,8 +485,9 @@ def build_chain(session: Session, unit_id: uuid.UUID) -> TraceabilityChainRespon
 def _landing_of_commit(session: Session, repository: str, commit: str) -> Observation | None:
     """The landing ledger's record of `commit` landing in `repository`, if it recorded one.
 
-    Landing records are content-addressed per (repository, landed commit), so this is exact: at
-    most one row, and only a record of that very commit landing.
+    Landing records are content-addressed per (repository, landed commit), so the match is
+    exact on the commit and case-folded on the repository: at most one row, and only a record of
+    that very commit landing.
     """
     return session.scalars(
         select(Observation)
