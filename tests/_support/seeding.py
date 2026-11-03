@@ -82,6 +82,56 @@ def grant_repository(session: Session, repository: str) -> None:
     session.commit()
 
 
+def _member_for(session: Session, repository: str) -> SdsMember:
+    """The member for ``repository`` (case-folded), created in state ``member`` when missing."""
+    member = session.scalar(
+        select(SdsMember).where(func.lower(SdsMember.repository) == repository.lower())
+    )
+    if member is None:
+        member = SdsMember(
+            repository=repository,
+            owner="devon",
+            state="member",
+            state_changed_by="human:devon",
+            state_reason="seed",
+        )
+        session.add(member)
+        session.flush()
+    return member
+
+
+def set_grant_state(session: Session, repository: str, service: str, state: str) -> None:
+    """Set one service's grant on ``repository`` to ``state``, adding the row if it is missing.
+
+    The member is created when missing; its other grants are left alone.
+    """
+    member = _member_for(session, repository)
+    grant = session.scalar(
+        select(SdsMemberGrant).where(
+            SdsMemberGrant.member_id == member.id, SdsMemberGrant.service == service
+        )
+    )
+    if grant is None:
+        session.add(
+            SdsMemberGrant(
+                member_id=member.id,
+                service=service,
+                state=state,
+                seeded=False,
+                set_by="human:devon",
+                reason="seed",
+            )
+        )
+    else:
+        grant.state = state
+    session.commit()
+
+
+def grant_service(session: Session, repository: str, service: str) -> None:
+    """The member record grants ``service`` on ``repository``; its other grants are untouched."""
+    set_grant_state(session, repository, service, "granted")
+
+
 def seed_units_path(revision_id: object) -> str:
     return f"{SEED_REVISIONS}/{revision_id}/work-units"
 
