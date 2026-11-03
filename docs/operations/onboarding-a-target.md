@@ -63,14 +63,17 @@ by hand before you make it a target.
    `target_repository_not_granted` until a person has confirmed it, and for a retired member or a
    grant in any other state. An intake still registers.
 
-   A repository whose deploys the SDS records also needs the `rollouts` service. Binding an image
-   (`POST /work-units/{id}/release-artifacts`), recording a deployment observation and reading
-   machine-activation candidates for a non-blank repository check it (`services/release/release_grant.py`). The check is keyed on the unit's own `target_repository`, never on the
-   request's `source_repository`. `release_repository_not_granted` means the member record holds no
+   A repository whose deploys the SDS records also needs the `rollouts` service
+   (`services/release/release_grant.py`). Binding an image
+   (`POST /work-units/{id}/release-artifacts`) and recording a deployment observation check it
+   against the unit's own `target_repository`, never the request's `source_repository`. Reading
+   machine-activation candidates (`GET /api/v1/machine-activation-candidates`) takes a
+   `repository` query parameter and no unit: it checks the grant on that repository alone, for a
+   non-blank one. `release_repository_not_granted` (all three) means the member record holds no
    `granted` `rollouts` grant on that repository, or the member is retired: restore the grant on
-   `/review`. `release_repository_mismatch` means the request names a repository other than the
-   unit's target, or the unit names none: fix the request's `source_repository` to the unit's
-   target.
+   `/review`. `release_repository_mismatch` (binding and observation only) means the request names
+   a repository other than the unit's target, or the unit names none: fix the request's
+   `source_repository` to the unit's target.
 
    Also commit `factory-target.toml` at the repository root on its default branch. Admission no
    longer reads it, but project-standards and the membership consistency check still do, and the
