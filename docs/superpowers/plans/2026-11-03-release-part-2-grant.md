@@ -138,3 +138,7 @@ No production code changes: the sweep already reports an orchestrator refusal as
 2. Deploy with `scripts/deploy_orchestrator.py`. Its own `image-release bind` runs against the new check for `AlobarQuest/orchestrator`, which holds `rollouts`: that is the positive live proof.
 3. Read `openapi.json` for the unchanged routes, and confirm the next `com.devon.activation-sweep` pass exits 0 or 2, never 3, with no `release_repository_*` refusal in its log.
 4. Check whether `sds-canary` holds a machine-local or release binding. If it does, ask Devon before withdrawing its `rollouts` to see a live refusal. If not, report that the refusal has tests only.
+
+## Live proof
+
+Recorded 2026-11-03: deployed as `f99815a-rel2-amd64` (#600) and `80a4223-rel3-amd64` (#601), each with the digest matched and no migration. Each deploy's own `image-release bind` read the orchestrator's candidates under the new check and got all four units, though none needed a new binding. Production refuses the candidates read for `AlobarQuest/factory-runner`, which lacks `rollouts`, with `409 release_repository_not_granted`, and serves `AlobarQuest/orchestrator`'s. A refused bind write and a refused deployment observation have tests only: no deploy needed a new binding, and `sds-canary` holds no `rollouts` grant or binding to withdraw. `GET /api/v1/observations` has three filtered callers, not the two the spec measured: `landing_ledger`'s `read_landings` reads it too, and `test_release_edges.py` states all three.
