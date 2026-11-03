@@ -1000,7 +1000,8 @@ def test_the_orchestrator_imports_no_scheduler() -> None:
     }
     assert not offenders, (
         f"these files import a scheduler: {offenders}. The orchestrator answers requests and "
-        "returns; reconciliation runs as a separate program (ADR-0002)."
+        "returns; the reconciliation passes run by hand through `orchestrator reconcile-detect` "
+        "(ADR-0002, ADR-0048)."
     )
 
 

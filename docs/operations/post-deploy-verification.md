@@ -1,6 +1,6 @@
 # Post-Deploy Verification Operations
 
-WS-5.3 records bounded deployment observations against immutable WS-5.2 release
+The orchestrator records bounded deployment observations against immutable release
 artifact bindings and creates generated post-deploy verification work units. The
 orchestrator remains canonical lifecycle truth; deployment tools and production
 observations are fact sources only after their facts are normalized into the
@@ -156,10 +156,8 @@ Accepted observations record:
 - one `deployment.observed` local event;
 - one `post_deploy_verification.created` local event.
 
-The event-publication layer that could project these as bounded factory events was
-deleted by Tier 3 item 24a (2026-09-28). The projection includes local mapping facts only; it does not
-include raw production output, response bodies, logs, tracker text, PR text, or
-external instruction text.
+No event-publication layer projects these events outside the orchestrator; Tier 3 item 24a
+(2026-09-28) deleted it. Its description is in `docs/history/release-records-2026-11-03.md`.
 
 ## Idempotency And Conflicts
 
@@ -177,49 +175,34 @@ The service rejects:
 - secret-shaped keys or values;
 - changed facts for the same release binding and environment.
 
-WS-5.3 does not implement deployment-observation supersession. Design that as a
-separate workstream if retries or replacement observations need canonical
-history.
+An observation is final: one per binding per environment, and no supersession model exists. A
+retry or replacement observation needs a design of its own.
 
 ## Secret Handling
 
-WS-5.3 adds no new secret, BWS manifest entry, runtime env file, GitHub Actions
-secret, production observation credential, merge authority, or deploy authority.
+Recording an observation adds no secret, runtime env file or GitHub Actions secret. Two bearers
+reach the route, both listed in `.bws-secrets.toml` and fetched by stable UUID:
 
-If phase closeout uses production M2M calls, use the existing durable runner
-credential pattern:
+- SYSTEM (`221a48d5-3f29-4898-b300-b4820140c880`) binds the image and files the observation.
+- VERIFIER (`660d5846-abcb-4751-be86-b483012899eb`) verifies the generated unit.
 
-- source the BWS bootstrap token through the approved Keychain/helper path;
-- fetch the bearer credential by stable UUID at runtime;
-- send M2M headers without printing or storing the raw value;
-- keep production `ORCHESTRATOR_M2M_CREDENTIALS` hash-only;
-- do not write raw tokens to tracked files, prompts, logs, package YAML,
-  evidence, PR bodies, generated artifacts, or deployment-observation records.
+`image-release` reads them from `ACTIVATION_BIND_TOKEN` and `IMAGE_VERIFY_TOKEN`. The deploy
+command's `finish` phase (`scripts/deploy_orchestrator.py`) fetches both in-process from BWS and
+passes them in the binder's environment, so neither reaches argv or stdout. The manual fallback
+and `--dry-run` are in `docs/operations/deploy.md`, "The deploy command"; where each bearer comes
+from is in `docs/operations/credentials.md`. Production `ORCHESTRATOR_M2M_CREDENTIALS` holds
+hashes only. Raw tokens never go in tracked files, prompts, logs, package YAML, evidence, PR
+bodies, generated artifacts or deployment-observation records.
 
-## Production Closeout Boundary
+## Deploying And Recording
 
-WS-5.3 implementation does not deploy production. After Devon merges the WS-5.3
-PR, Phase 5 closeout should deploy `main` containing WS-5.1, WS-5.2, and WS-5.3.
-
-Closeout should:
-
-- build and push an immutable image tag from merged `main`;
-- use the existing Coolify app `eqj5l7k705fhi12x9i74fqf0`;
-- back up the production database before migrations;
-- run Alembic explicitly;
-- verify production health;
-- verify OpenAPI route presence for WS-5.1, WS-5.2, and WS-5.3;
-- verify missing M2M returns 401;
-- verify configured M2M returns 200 without printing secret values;
-- verify dispatch automation remains disabled;
-- record the release artifact binding for the deployed image;
-- record the deployment observation for the deployed image;
-- run the verifier on the generated post-deploy verification unit;
-- record closeout evidence in SDS docs.
-
-Closeout must not merge PRs, enable dispatch automation, or make Coolify, GitHub,
-CI, trackers, workers, verifiers, or production observation canonical lifecycle
-truth.
+A production deploy, its release binding, its observation and the verification of the generated
+unit are one procedure, `docs/operations/deploy.md`. Recording changes no lifecycle state outside
+this route: it does not merge pull requests, and it does not make Coolify, GitHub, CI, trackers,
+workers, verifiers or production observation canonical lifecycle truth. Dispatch is a standing
+setting (`ORCHESTRATOR_DISPATCH_ENABLED`, an off switch only), not something a deploy or an
+observation changes. The WS-5.3 closeout checklist that this section replaced is in
+`docs/history/release-records-2026-11-03.md`.
 
 ## Phase Exit
 

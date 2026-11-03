@@ -5,6 +5,10 @@
 # whose status rests on "this route is live in production" is listed here, and
 # scripts/attest_exit_criteria.py fails when production stops serving any of them.
 # When a scorecard cell gains or loses a route citation, update this file in the same change.
+#
+# A failed attestation run's home is GitHub's failure email to the repository owner (Devon's
+# decision of 2026-11-03), not an alert-hub alert: an alert would add an Actions-secret copy of an
+# alert-hub token that credential rotation would have to register.
 
 [[claim]]
 criterion = 5

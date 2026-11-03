@@ -68,7 +68,8 @@ def reconciliation_detect(
     session: SessionDep,
     settings: SettingsDep,
 ) -> object:
-    """AC-003. Operator/runner-invoked: creates no unit and sets no lifecycle state."""
+    """AC-003. Run by hand with `orchestrator reconcile-detect`; no scheduled runner exists
+    (ADR-0048). Creates no unit and sets no lifecycle state."""
     require_zero_expected_version(body.expected_version, "reconciliation detection")
     if actor.role is not ActorRole.SYSTEM:
         raise DomainError(
@@ -113,7 +114,8 @@ def in_flight_units(
     actor: ActorDep,
     session: SessionDep,
 ) -> object:
-    """AC-009. The reconciliation runner's read surface. Read-only."""
+    """AC-009. The read surface of the detect passes run by hand (`orchestrator reconcile-detect`).
+    Read-only."""
     require_operator_actor(actor)
     return in_flight_snapshot(session)
 

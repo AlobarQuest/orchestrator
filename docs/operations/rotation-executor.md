@@ -18,7 +18,7 @@ Each pass, started by a systemd timer every five minutes, works every ready unit
    `rotated_by_sds = true` and name the adapter's provider. The registry's destinations, the
    package's `profile_fields.destinations` and the envelope's `destinations` must be equal. The
    plan is the one the approved package's criteria describe, step for step (see "The plan a
-   credential runs"). A refusal claims the unit and fails it with the reason, so it reaches the dead-letter report and
+   credential runs"). A refusal claims the unit and fails it with the reason, and
    the owning instance raises `rotation-unit-failed` (see "Alerts"). A git or network failure leaves the unit for the next pass.
 2. **It reads the member record's grant before claiming** (`grants.py`). A unit whose registry
    repository lacks a `granted` `credential_rotation` grant stays unclaimed and reports a wait (see
