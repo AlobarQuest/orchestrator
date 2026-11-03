@@ -29,10 +29,12 @@ from orchestrator.persistence.models import (
 )
 from tests._support.protocol import (
     HUMAN,
+    RELEASE_REPOSITORY,
     SYSTEM,
     VERIFIER,
     WORKER,
     birth_unit,
+    grant_through_review,
     make_ready,
     ok,
     rows,
@@ -53,7 +55,8 @@ def test_a_stalled_post_deploy_verification_is_one_open_alarm(
     stand_in_approved_package(monkeypatch)
     stalled_at_once = Settings.model_validate({"reconcile_split_brain_stall_seconds": 0})
     cast(FastAPI, db_client.app).dependency_overrides[get_settings] = lambda: stalled_at_once
-    born = birth_unit(db_client, suffix="drill4")
+    grant_through_review(db_client, RELEASE_REPOSITORY, "app_changes", "rollouts")
+    born = birth_unit(db_client, suffix="drill4", target_repository=RELEASE_REPOSITORY)
     unit = born.unit_id
     make_ready(db_client, migrated_engine, unit, key="drill4")
 
@@ -143,7 +146,7 @@ def test_a_stalled_post_deploy_verification_is_one_open_alarm(
                 "expected_version": version(),
                 "package_revision_id": born.revision_id,
                 "package_revision_hash": born.content_hash,
-                "source_repository": "AlobarQuest/orchestrator",
+                "source_repository": RELEASE_REPOSITORY,
                 "implementation_pr_number": 20,
                 "source_commit": "1" * 40,
                 "merge_commit": "2" * 40,

@@ -23,6 +23,7 @@ from orchestrator.persistence.models import (
     WorkPackageRevision,
     WorkUnit,
 )
+from orchestrator.services.release.release_grant import unit_release_refusal
 
 
 class ReleaseArtifactResponse(BaseModel):
@@ -161,6 +162,8 @@ def _record_release_artifact(
         raise _idempotency_conflict()
 
     unit, revision = _validated_subject(session, command)
+    if (refusal := unit_release_refusal(session, unit, command.source_repository)) is not None:
+        raise refusal
 
     same_tuple = _existing_source_tuple(session, command)
     if same_tuple is not None:

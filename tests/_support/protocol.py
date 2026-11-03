@@ -10,6 +10,7 @@ fixture stands in for that one external check; everything the server does is rea
 """
 
 import hashlib
+import re
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -41,6 +42,55 @@ AUTHORITY = {
     "capabilities": {"repo.edit": "allowed"},
     "budgets": {"max_attempts": 3, "max_llm_calls": 4},
 }
+
+
+RELEASE_REPOSITORY = "AlobarQuest/orchestrator"
+
+
+def grant_through_review(db_client: TestClient, repository: str, *services: str) -> None:
+    """The member record grants ``services`` on ``repository``, the way production does: SYSTEM
+    stages a member proposal and a person confirms it on `/review`."""
+    staged = db_client.post(
+        "/api/v1/member-proposals",
+        headers=SYSTEM,
+        json={
+            "idempotency_key": f"grant-{repository}-{'-'.join(services)}",
+            "expected_version": 0,
+            "summary": f"grant {', '.join(services)} on {repository}",
+            "changes": [
+                {
+                    "repository": repository,
+                    "reason": "the drill aims a unit here",
+                    "state": "onboarding",
+                    "owner": "devon",
+                    "grants": {
+                        service: {"state": "granted", "reason": "the drill needs it"}
+                        for service in services
+                    },
+                }
+            ],
+        },
+    )
+    assert staged.status_code == 201, staged.text
+    proposal_id = staged.json()["id"]
+    page = db_client.get(f"/review/member-proposals/{proposal_id}", headers=HUMAN)
+    assert page.status_code == 200, page.text
+    form = re.search(
+        rf'action="/review/member-proposals/{proposal_id}/confirm">(.*?)</form>',
+        page.text,
+        re.DOTALL,
+    )
+    assert form is not None, "no confirm form on the member proposal page"
+    fields = dict(
+        re.findall(r'name="(csrf_token|idempotency_key|digest)" value="([^"]+)"', form.group(1))
+    )
+    decided = db_client.post(
+        f"/review/member-proposals/{proposal_id}/confirm",
+        data={**fields, "confirm": "yes"},
+        headers=HUMAN,
+        follow_redirects=False,
+    )
+    assert decided.status_code == 303, decided.text
 
 
 def protocol_auth_config() -> AuthConfig:
@@ -188,8 +238,23 @@ class BornUnit:
     content_hash: str
 
 
-def birth_unit(db_client: TestClient, *, suffix: str, max_attempts: int = 3) -> BornUnit:
-    """Intake, propose a breakdown, approve it in `/review`: the unit is born in DRAFT."""
+def birth_unit(
+    db_client: TestClient,
+    *,
+    suffix: str,
+    max_attempts: int = 3,
+    target_repository: str | None = None,
+) -> BornUnit:
+    """Intake, propose a breakdown, approve it in `/review`: the unit is born in DRAFT.
+
+    ``target_repository`` aims the unit's envelope at a repository; the member record must then
+    grant it (`grant_through_review`) before the proposal.
+    """
+    authority = (
+        AUTHORITY
+        if target_repository is None
+        else {**AUTHORITY, "constraints": {"target_repository": target_repository}}
+    )
     package_payload = load_package_intake_payload(
         PACKAGE_FIXTURE,
         source_repository="AlobarQuest/intent-packages",
@@ -221,7 +286,7 @@ def birth_unit(db_client: TestClient, *, suffix: str, max_attempts: int = 3) -> 
                     "title": f"WS-3.3 smoke {suffix}",
                     "outcome": "Auxiliary smoke path is exercised.",
                     "required_capability": "repo.edit",
-                    "authority": AUTHORITY,
+                    "authority": authority,
                     "max_attempts": max_attempts,
                 }
             ],

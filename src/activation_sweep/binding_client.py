@@ -32,7 +32,7 @@ from typing import Any
 
 import httpx
 
-from estate_clients.confined import ConfinedClient, TransportFailure, base_url_problem
+from estate_clients.confined import ConfinedClient, TransportFailure, base_url_problem, error_code
 
 CANDIDATES_ENDPOINT = "/api/v1/machine-activation-candidates"
 WORK_UNIT_ID = r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}"
@@ -169,10 +169,14 @@ class BindingClient:
                 f"orchestrator is unreachable for {method} {path}: {failure.error_type}"
             ) from None
         if response.status_code >= 400:
-            # The status only. A rejection body echoes the command back, and a diagnostic that
-            # prints what it was given is how a value that should not be in a transcript gets
-            # into one.
-            raise BindingCallError(f"orchestrator rejected {method} {path}: {response.status_code}")
+            # The status and the refusal's own CODE only, so an operator can read WHY a bind was
+            # refused. A rejection body echoes the command back, and a diagnostic that prints what
+            # it was given is how a value that should not be in a transcript gets into one.
+            code = error_code(response)
+            suffix = f" ({code})" if code else ""
+            raise BindingCallError(
+                f"orchestrator rejected {method} {path}: {response.status_code}{suffix}"
+            )
         try:
             return response.json()
         except ValueError as error:

@@ -382,6 +382,7 @@ paths = [
   "tests/services/test_reconciliation_detection_check.py",
   "tests/services/test_reconciliation_detection_pr.py",
   "tests/services/test_release_artifacts.py",
+  "tests/services/test_release_grant.py",
   "tests/services/test_slo_report.py",
   "tests/services/test_stalled_approvals.py",
   "tests/services/test_stalled_verifications.py",

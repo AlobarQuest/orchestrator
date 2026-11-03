@@ -14,7 +14,7 @@ from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
 from orchestrator.persistence.models import UnitPrBinding
-from tests._support.seeding import register_completed_unit
+from tests._support.seeding import grant_service, register_completed_unit, set_grant_state
 from tests.api.test_lifecycle_api import SYSTEM
 
 OBSERVER = {"Authorization": "Bearer observer-token", "X-Credential-Key-Id": "observer-key"}
@@ -48,6 +48,7 @@ def completed_unit(db_client: TestClient, migrated_engine: Engine, *, key: str =
         approved_at=datetime(2026, 8, 19, tzinfo=UTC),
     )
     with Session(migrated_engine) as session:
+        grant_service(session, REPOSITORY, "rollouts")
         session.add(
             UnitPrBinding(work_unit_id=uuid.UUID(unit_id), pr_number=PR_NUMBER, head_sha=HEAD_SHA)
         )
@@ -206,7 +207,12 @@ def test_the_route_passes_the_kind_through_to_the_already_bound_read(
     assert binding_ids("container_image") == [None]
 
 
-def test_the_route_serves_the_container_image_kind(db_client: TestClient) -> None:
+def test_the_route_serves_the_container_image_kind(
+    db_client: TestClient, migrated_engine: Engine
+) -> None:
+    with Session(migrated_engine) as session:
+        grant_service(session, REPOSITORY, "rollouts")
+        session.commit()
     response = db_client.get(
         CANDIDATES,
         params={"repository": REPOSITORY, "kind": "container_image"},
@@ -215,3 +221,34 @@ def test_the_route_serves_the_container_image_kind(db_client: TestClient) -> Non
 
     assert response.status_code == 200
     assert response.json() == []
+
+
+def test_candidates_for_an_ungranted_repository_are_refused(
+    db_client: TestClient, migrated_engine: Engine
+) -> None:
+    completed_unit(db_client, migrated_engine)
+    with Session(migrated_engine) as session:
+        set_grant_state(session, REPOSITORY, "rollouts", "withdrawn")
+        session.commit()
+
+    response = db_client.get(CANDIDATES, params={"repository": REPOSITORY}, headers=SYSTEM)
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "release_repository_not_granted"
+
+
+def test_candidates_for_a_blank_repository_are_still_empty(db_client: TestClient) -> None:
+    response = db_client.get(CANDIDATES, params={"repository": "  "}, headers=SYSTEM)
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_candidates_for_a_granted_repository_asked_with_padding_are_not_refused(
+    db_client: TestClient, migrated_engine: Engine
+) -> None:
+    completed_unit(db_client, migrated_engine)
+
+    response = db_client.get(CANDIDATES, params={"repository": f"  {REPOSITORY} "}, headers=SYSTEM)
+
+    assert response.status_code == 200

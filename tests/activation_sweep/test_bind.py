@@ -10,6 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 
 from activation_sweep.bind import (
@@ -30,7 +31,7 @@ from activation_sweep.bind import (
     has_findings,
 )
 from activation_sweep.binding import BindingError, content_digest, has_activated
-from activation_sweep.binding_client import BindingCallError, is_allowed_write
+from activation_sweep.binding_client import BindingCallError, BindingClient, is_allowed_write
 from tests.activation_sweep.conftest import Estate, git
 
 REPOSITORY = "AlobarQuest/example"
@@ -250,6 +251,32 @@ def test_a_refused_binding_is_a_finding(estate: Estate) -> None:
     summary = bind_checkout(str(estate.local), binder, fetch=False, dry_run=False)
 
     assert [unit["outcome"] for unit in summary["units"]] == [REFUSED]
+    assert has_findings([summary])
+
+
+def test_a_bind_refused_for_its_grant_makes_the_pass_incomplete(estate: Estate) -> None:
+    """The orchestrator's grant refusal (409, code nested under `error`) goes through the REAL
+    client, so the pin covers what a person reads: a `refused` unit that names the code."""
+    head = git(estate.local, "rev-parse", "HEAD").strip()
+    body = {"error": {"code": "release_repository_not_granted", "message": "no rollouts grant"}}
+    real = BindingClient(
+        base_url="https://sds.example.invalid",
+        credential_key_id="orchestrator-system",
+        token="t",
+        transport=httpx.MockTransport(lambda request: httpx.Response(409, json=body)),
+    )
+
+    class Granting(FakeBinder):
+        def bind(self, work_unit_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+            return real.bind(work_unit_id, payload)
+
+    binder = Granting([candidate_row(head)])
+
+    summary = bind_checkout(str(estate.local), binder, fetch=False, dry_run=False)
+
+    [unit] = summary["units"]
+    assert unit["outcome"] == REFUSED
+    assert "release_repository_not_granted" in unit["reason"]
     assert has_findings([summary])
 
 

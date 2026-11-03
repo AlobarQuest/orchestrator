@@ -22,6 +22,7 @@ from image_release.cli import (
     VERIFIER_TOKEN_VARIABLE,
     app,
 )
+from image_release.client import ReleaseCallError
 from tests.image_release.conftest import (
     DIGEST,
     OTHER_DIGEST,
@@ -251,3 +252,23 @@ def test_an_unusable_base_url_is_a_usage_error(
     result = _invoke(history, "--base-url", "http://insecure")
     assert result.exit_code == EXIT_USAGE
     assert "--base-url" in result.output
+
+
+def test_a_bind_refused_for_its_grant_exits_incomplete(
+    history: History, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class Granting(FakeSystem):
+        def bind(self, work_unit_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+            raise ReleaseCallError(
+                f"rejected POST /api/v1/work-units/{work_unit_id}/release-artifacts: 409 "
+                "(release_repository_not_granted)"
+            )
+
+    _install(monkeypatch, Granting([candidate_row(history.merge)]), FakeProduction(history.built))
+
+    result = _invoke(history)
+
+    assert result.exit_code == EXIT_INCOMPLETE, result.output
+    summary = json.loads(result.output)
+    assert summary["units"][0]["binding"]["outcome"] == "refused"
+    assert "release_repository_not_granted" in result.output

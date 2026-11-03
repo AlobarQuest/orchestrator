@@ -18,10 +18,12 @@ from orchestrator.services.release.deployment_observations import (
 from orchestrator.services.release.release_artifacts import record_release_artifact
 from orchestrator.services.verifier.evidence import record_adjudication
 from orchestrator.services.verifier.verifier import VerifyCommand, verify_work_unit
+from tests._support.seeding import set_grant_state
 from tests.services.test_release_artifacts import (
     DIGEST,
     MACHINE_DIGEST,
     OTHER_DIGEST,
+    REPOSITORY,
     completed_unit,
     machine_local_command,
 )
@@ -1076,3 +1078,34 @@ def test_the_summary_bounds_admit_their_edge_and_refuse_one_past_it(
         assert isinstance(result, DomainError)
         assert result.code == "deployment_observation_invalid"
         assert result.message.startswith(field.replace("_", " "))
+
+
+def test_an_observation_for_a_binding_whose_repository_lost_its_grant_is_refused(
+    migrated_session: Session,
+) -> None:
+    _, binding = release_binding(migrated_session, key="observe-withdrawn")
+    set_grant_state(migrated_session, REPOSITORY, "rollouts", "withdrawn")
+    migrated_session.commit()
+    units_before = migrated_session.scalar(select(func.count()).select_from(WorkUnit))
+
+    result = record_deployment_observation(migrated_session, observation_command(binding))
+
+    assert isinstance(result, DomainError)
+    assert result.code == "release_repository_not_granted"
+    assert migrated_session.scalar(select(func.count()).select_from(DeploymentObservation)) == 0
+    assert migrated_session.scalar(select(func.count()).select_from(WorkUnit)) == units_before
+
+
+def test_an_exact_observation_retry_after_withdrawal_answers_the_stored_row(
+    migrated_session: Session,
+) -> None:
+    _, binding = release_binding(migrated_session, key="retry-observe-withdrawn")
+    first = record_deployment_observation(migrated_session, observation_command(binding))
+    set_grant_state(migrated_session, REPOSITORY, "rollouts", "withdrawn")
+    migrated_session.commit()
+
+    replay = record_deployment_observation(migrated_session, observation_command(binding))
+
+    assert isinstance(first, DeploymentObservation)
+    assert isinstance(replay, DeploymentObservation)
+    assert replay.id == first.id

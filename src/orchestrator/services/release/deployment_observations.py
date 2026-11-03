@@ -36,6 +36,7 @@ from orchestrator.persistence.models import (
     WorkUnit,
 )
 from orchestrator.services.release.release_artifacts import SHA256_DIGEST
+from orchestrator.services.release.release_grant import unit_release_refusal
 
 
 class DeploymentObservationResponse(BaseModel):
@@ -285,6 +286,9 @@ def _record_deployment_observation(
         raise _idempotency_conflict()
 
     binding, implementation_unit, revision = _validated_subject(session, command)
+    refusal = unit_release_refusal(session, implementation_unit, binding.source_repository)
+    if refusal is not None:
+        raise refusal
     same_environment = session.scalar(
         select(DeploymentObservation)
         .where(
