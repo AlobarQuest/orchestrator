@@ -1014,6 +1014,76 @@ def test_the_service_holds_a_direct_caller_to_the_declared_shapes(
     assert result.message.startswith(field.replace("_", " "))
 
 
+@pytest.mark.parametrize(
+    ("field", "summary"),
+    [
+        ("probe_summary", {"probes": [_probe()], "extra": 1}),
+        ("route_summary", {"routes": [{"path": "/health/live", "present": True, "extra": 1}]}),
+        ("auth_summary", {"missing_m2m_status": 401, "extra": 1}),
+        ("status_summary", {"status": "ok", "summary": "bounded", "extra": 1}),
+    ],
+    ids=["probe-summary", "route", "auth", "status"],
+)
+def test_every_hosted_summary_model_refuses_an_undeclared_key(
+    migrated_session: Session, field: str, summary: dict[str, object]
+) -> None:
+    """`extra="forbid"` holds on each model, not only on the base they share: a model that
+    re-declared its config would store whatever a caller sent."""
+    _unit, binding = release_binding(migrated_session, key=f"extra-{field}")
+
+    result = record_deployment_observation(
+        migrated_session,
+        replace(observation_command(binding, key=f"extra-{field}"), **{field: summary}),
+    )
+
+    assert isinstance(result, DomainError)
+    assert result.code == "deployment_observation_invalid"
+    assert result.message.startswith(field.replace("_", " "))
+
+
+def test_the_activation_summary_refuses_an_undeclared_key(migrated_session: Session) -> None:
+    _, binding = machine_local_binding(migrated_session, key="activation-extra-key")
+
+    error = record_deployment_observation(
+        migrated_session,
+        replace(
+            activation_command(binding),
+            activation_summary={**ACTIVATED, "verdict": "clean"},
+        ),
+    )
+
+    assert isinstance(error, DomainError)
+    assert error.code == "deployment_observation_invalid"
+    assert error.message.startswith("activation summary")
+
+
+@pytest.mark.parametrize(
+    ("field", "summary"),
+    [
+        ("probe_summary", {"probes": [_probe()]}),
+        ("route_summary", {"routes": [_route()]}),
+        ("auth_summary", {"missing_m2m_status": 401}),
+        ("dispatch_summary", {"dispatch_enabled": False}),
+        ("status_summary", {"status": "ok", "summary": "bounded"}),
+    ],
+)
+def test_a_machine_local_activation_refuses_each_probe_shaped_summary(
+    migrated_session: Session, field: str, summary: dict[str, object]
+) -> None:
+    """`machine_local` carries only `activation_summary`: each of the other five is refused on
+    its own, so no second summary rides along beside the activation facts."""
+    _, binding = machine_local_binding(migrated_session, key=f"only-activation-{field}")
+
+    error = record_deployment_observation(
+        migrated_session,
+        replace(activation_command(binding), **{field: summary}),
+    )
+
+    assert isinstance(error, DomainError)
+    assert error.code == "deployment_observation_invalid"
+    assert field in error.message
+
+
 def test_a_refusal_names_where_the_summary_is_wrong_and_never_the_value(
     migrated_session: Session,
 ) -> None:
@@ -1094,6 +1164,25 @@ def test_an_observation_for_a_binding_whose_repository_lost_its_grant_is_refused
     assert result.code == "release_repository_not_granted"
     assert migrated_session.scalar(select(func.count()).select_from(DeploymentObservation)) == 0
     assert migrated_session.scalar(select(func.count()).select_from(WorkUnit)) == units_before
+
+
+def test_the_grant_is_asked_before_a_same_facts_observation_is_answered_from_the_stored_row(
+    migrated_session: Session,
+) -> None:
+    """A new idempotency key for facts already stored reaches the same-environment replay. The
+    grant is asked before that replay, so a withdrawn repository is refused rather than answered."""
+    _, binding = release_binding(migrated_session, key="observe-withdrawn-new-key")
+    first = record_deployment_observation(migrated_session, observation_command(binding))
+    set_grant_state(migrated_session, REPOSITORY, "rollouts", "withdrawn")
+    migrated_session.commit()
+
+    again = record_deployment_observation(
+        migrated_session, observation_command(binding, key="a-different-retry-key")
+    )
+
+    assert isinstance(first, DeploymentObservation)
+    assert isinstance(again, DomainError)
+    assert again.code == "release_repository_not_granted"
 
 
 def test_an_exact_observation_retry_after_withdrawal_answers_the_stored_row(

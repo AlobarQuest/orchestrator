@@ -1,6 +1,7 @@
 import uuid
 from dataclasses import replace
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 from sqlalchemy.orm import Session
@@ -423,6 +424,9 @@ def _record_landing(
     commit: str = MERGE_COMMIT,
     pull_request: int | None = 20,
     repository: str = "AlobarQuest/orchestrator",
+    source_system: str = "github",
+    subject_type: str = "repo",
+    observation_type: str = "landing",
 ) -> Observation:
     """A landing-ledger row as `landing_ledger/record.py` writes one (shape pinned by
     `tests/contract/test_landing_fact_contract.py`)."""
@@ -430,14 +434,14 @@ def _record_landing(
         session,
         ObservationCommand(
             actor=SYSTEM,
-            source_system="github",
-            source_reference=f"landing:{repository}@{commit}",
+            source_system=source_system,
+            source_reference=f"{observation_type}:{repository}@{commit}",
             source_url=None,
             trust_classification="delivery_system",
-            subject_type="repo",
+            subject_type=subject_type,
             subject_reference=repository,
             environment=None,
-            observation_type="landing",
+            observation_type=observation_type,
             status="observed",
             severity="info",
             observed_at=LATER,
@@ -451,7 +455,7 @@ def _record_landing(
                 }
             },
             payload_digest=None,
-            idempotency_key=f"landing-{repository}-{commit}",
+            idempotency_key=f"{observation_type}-{source_system}-{subject_type}-{repository}-{commit}",
             expected_version=0,
         ),
     )
@@ -464,6 +468,76 @@ def _released_unit(session: Session, key: str) -> WorkUnit:
     binding = record_release_artifact(session, command(unit, key=f"{key}-binding"))
     assert not isinstance(binding, DomainError)
     return unit
+
+
+@pytest.mark.parametrize(
+    "lookalike",
+    [
+        {"repository": "AlobarQuest/other"},
+        {"repository": "AlobarQuest/orchestrator-fork"},
+        {"commit": MERGE_COMMIT[:7] + "e" * 33},
+        {"source_system": "watchtower"},
+        {"subject_type": "service"},
+        {"observation_type": "landing_audit"},
+    ],
+    ids=[
+        "other-repository",
+        "repository-sharing-a-prefix",
+        "commit-sharing-a-prefix",
+        "other-source-system",
+        "other-subject-type",
+        "other-observation-type",
+    ],
+)
+def test_a_record_differing_in_one_join_term_is_not_joined(
+    migrated_session: Session, lookalike: dict[str, Any]
+):
+    """The join is every term at once: repository, commit, and the three that say it is the
+    landing ledger's record of a landing. Each lookalike matches the others and misses one."""
+    unit = _released_unit(migrated_session, "lookalike-unit")
+    _record_landing(migrated_session, **lookalike)
+
+    chain = build_chain(migrated_session, unit.id)
+
+    assert chain.observations == []
+    assert chain.pr is None
+
+
+def test_the_hop_reads_only_this_units_own_observations(migrated_session: Session):
+    unit = _released_unit(migrated_session, "own-observations-unit")
+    other = _released_unit(migrated_session, "other-observations-unit")
+    _record_observation_for(migrated_session, other)
+    # Its subject reference is this unit's id, but its subject type is `repo`.
+    decoy = record_observation(
+        migrated_session,
+        ObservationCommand(
+            actor=SYSTEM,
+            source_system="github",
+            source_reference="not-a-unit",
+            source_url=None,
+            trust_classification="delivery_system",
+            subject_type="repo",
+            subject_reference=str(unit.id),
+            environment=None,
+            observation_type="github_check",
+            status="passed",
+            severity="info",
+            observed_at=LATER,
+            summary="about a repository named like the unit",
+            facts={"workflow": "Quality"},
+            payload_digest=None,
+            idempotency_key="not-a-unit",
+            expected_version=0,
+        ),
+    )
+    assert not isinstance(decoy, DomainError)
+
+    chain = build_chain(migrated_session, unit.id)
+
+    assert chain.observations == []
+    assert [o.subject_reference for o in build_chain(migrated_session, other.id).observations] == [
+        str(other.id)
+    ]
 
 
 def test_a_release_chain_reaches_the_landing_of_its_commit(migrated_session: Session):
@@ -583,3 +657,74 @@ def test_a_binding_naming_no_pull_request_takes_none_from_the_landing(migrated_s
     chain = build_chain(migrated_session, unit.id)
 
     assert chain.pr is None
+
+
+def _binding_of(session: Session, key: str, *, pr_number: int, repository: str | None = None):
+    unit = completed_unit(session, key=key)
+    binding = record_release_artifact(
+        session,
+        replace(
+            command(unit, key=f"{key}-binding"),
+            implementation_pr_number=pr_number,
+            merge_commit=f"{pr_number:07d}" + "c" * 33,
+        ),
+    )
+    assert not isinstance(binding, DomainError)
+    if repository is not None:
+        binding.source_repository = repository
+        session.commit()
+    return unit, binding
+
+
+def test_a_repository_anchored_pr_matches_both_the_repository_and_the_number(
+    migrated_session: Session,
+):
+    wanted, _ = _binding_of(migrated_session, "anchor-wanted", pr_number=20)
+    _binding_of(migrated_session, "anchor-other-number", pr_number=21)
+    _binding_of(
+        migrated_session, "anchor-other-repository", pr_number=20, repository="AlobarQuest/other"
+    )
+
+    anchor = TraceabilityAnchor(
+        kind="pr", pr_number=20, source_repository="AlobarQuest/orchestrator"
+    )
+
+    assert resolve_anchors(migrated_session, anchor) == (wanted.id,)
+
+
+def test_a_bare_pr_anchor_matches_only_its_number(migrated_session: Session):
+    wanted = completed_unit(migrated_session, key="bare-wanted")
+    other = completed_unit(migrated_session, key="bare-other")
+    for unit, number in ((wanted, 987), (other, 988)):
+        upsert_pr_binding(
+            migrated_session,
+            actor=SYSTEM,
+            work_unit_id=unit.id,
+            pr_number=number,
+            head_sha=HEAD_SHA,
+            attempt=1,
+        )
+
+    assert resolve_anchors(migrated_session, TraceabilityAnchor(kind="pr", pr_number=987)) == (
+        wanted.id,
+    )
+
+
+def test_a_repository_anchored_pr_ignores_the_factory_pr_binding(migrated_session: Session):
+    """The two anchors read different tables: with a repository the release binding answers, and
+    a unit whose only record of the number is its factory PR binding is not found."""
+    unit = completed_unit(migrated_session, key="factory-only-unit")
+    upsert_pr_binding(
+        migrated_session,
+        actor=SYSTEM,
+        work_unit_id=unit.id,
+        pr_number=555,
+        head_sha=HEAD_SHA,
+        attempt=1,
+    )
+
+    anchor = TraceabilityAnchor(
+        kind="pr", pr_number=555, source_repository="AlobarQuest/orchestrator"
+    )
+
+    assert resolve_anchors(migrated_session, anchor) == ()

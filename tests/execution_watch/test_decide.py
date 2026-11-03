@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
@@ -655,6 +656,21 @@ def test_a_stuck_post_deploy_unit_names_image_release_not_the_verify_route() -> 
     alert = firing([stuck], {}, set(), NOW, THRESHOLDS)[f"verification-stalled:{stuck.unit_id}"]
     assert "image_release" in alert.message
     assert "VERIFIER verify" not in alert.message
+
+
+def test_a_stalled_post_deploy_unit_names_the_deploy_step_that_verifies_it() -> None:
+    stuck = row(
+        change_class="post_deploy_verification",
+        standing=False,
+        state="submitted",
+        verification_overdue=True,
+    )
+    alert = firing([stuck], {}, set(), NOW, THRESHOLDS)[f"verification-stalled:{stuck.unit_id}"]
+    deploy_doc = Path(__file__).resolve().parents[2] / "docs" / "operations" / "deploy.md"
+    assert "image-release bind" in deploy_doc.read_text()
+    assert "image-release bind" in alert.message
+    assert "docs/operations/deploy.md" in alert.message
+    assert "lane's log" not in alert.message
 
 
 def test_a_healthy_unit_is_raised_so_it_can_be_known_and_fires_nothing() -> None:

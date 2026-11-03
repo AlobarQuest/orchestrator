@@ -159,11 +159,14 @@ Placement rule: global CLAUDE.md §7.
   `docs/operations/architecture-guards.md`.
 - Alembic revision ids must be at most 32 characters (`alembic_version.version_num` is
   `varchar(32)`). History: `docs/history/claude-md-invariants-archive.md` #57.
-- The traceability observation hop reads unit-scoped observations plus the landing record of each
-  release binding's merge commit (exact repository + commit join); other repository-, service- or
-  environment-scoped observations appear in no chain. With no factory PR binding, the `pr` hop
-  comes from that landing only when the binding's `implementation_pr_number` agrees, marked
-  `source="landing_ledger"`. History: `docs/history/claude-md-invariants-archive.md` #60.
+- The traceability observation hop reads unit-scoped observations plus the landing ledger's record
+  of each release binding's merge commit, joined on `source_system`, `subject_type` and
+  `observation_type` (`github`, `repo`, `landing`), the repository case-folded and the commit
+  exact; other repository-, service- or environment-scoped observations appear in no chain. With
+  no factory PR binding, the `pr` hop comes from that landing only when the binding's
+  `implementation_pr_number` agrees, marked `source="landing_ledger"`. A `pr` anchor with
+  `source_repository` matches the binding's repository exactly, not case-folded (`_resolve_pr`).
+  History: `docs/history/claude-md-invariants-archive.md` #60.
 - Migrate-before-swap is safe only because neither Coolify's (disabled) health check nor the
   Dockerfile `HEALTHCHECK` consults `/health/ready`; never point either at it without re-deciding
   migration order. Detail: `docs/operations/deploy.md`.

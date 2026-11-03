@@ -10,6 +10,10 @@ name: Attest exit criteria
 # green depend on live production state would block unrelated work on an unrelated outage.
 #
 # Read-only. One unauthenticated GET of a public OpenAPI document; no secrets, no writes.
+#
+# A failed run's home is GitHub's failure email to the repository owner (Devon's decision of
+# 2026-11-03). It raises no alert-hub alert: that would add an Actions-secret copy of an alert-hub
+# token, which credential rotation would have to register.
 
 on:
   schedule:

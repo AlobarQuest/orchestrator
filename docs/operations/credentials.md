@@ -80,9 +80,11 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   Read endpoints (`status-ledger`, `runner-brief`, …) also require the SYSTEM bearer — a
   bare GET is `401`. (Verified 2026-07-22, AC-003; token migration 2026-07-30.)
   The third SDS secret in that project is the Todoist token
-  (`ff396349-aec1-4250-b2f0-b493015188da`, BWS key `TODIST-API-DEVON-PERSONAL`), used by the
-  tracker launchers. **The SDS consumer set is five, not the three the migration plan named:**
-  this repo's three launchers, intent-packages' `credentials.py` (env-driven, no code change),
+  (`ff396349-aec1-4250-b2f0-b493015188da`, BWS key `TODIST-API-DEVON-PERSONAL`), read by the
+  tracker projection adapter. ADR-0040 deleted that adapter's launchers; the
+  `tracker-projection-adapter` console script remains installed with no scheduled caller.
+  **The SDS consumer set at the 2026-07-30 migration was five, not the three the plan named:**
+  this repo's three launchers (ADR-0040 later deleted the two tracker ones), intent-packages' `credentials.py` (env-driven, no code change),
   **and `infraops-mcp-server/scripts/drift-audit.sh`** — which runs on a 03:00 LaunchAgent and
   fetches the SYSTEM bearer for its `mint-follow-ups` step with a *different* BWS identity from
   every other secret it reads, so it overrides `BWS_ACCESS_TOKEN` for that one call.

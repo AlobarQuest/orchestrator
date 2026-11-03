@@ -1,7 +1,7 @@
 # Release Immutability Operations
 
-WS-5.2 records immutable release artifact bindings after Devon merges an
-implementation PR and a build produces an immutable artifact digest. The
+The orchestrator records immutable release artifact bindings after an
+implementation PR merges and a build produces an immutable artifact digest. The
 orchestrator remains lifecycle truth; release binding is provenance evidence, not
 a second state machine.
 
@@ -49,6 +49,10 @@ The command fails closed unless:
 - the referenced package revision exists and belongs to the work unit;
 - the supplied package revision hash equals the approved revision content hash;
 - the work unit is already `completed`;
+- the request's `source_repository` is the unit's own target repository, or the request fails with
+  `release_repository_mismatch`;
+- the member record grants that repository `rollouts`, or the request fails with
+  `release_repository_not_granted` (`services/release/release_grant.py`);
 - source/merge commits and artifact digest are syntactically valid;
 - the payload contains no secret-shaped fields or values.
 
@@ -73,23 +77,17 @@ Every accepted binding records:
 - one `release.artifact_bound` evidence row with bounded release facts;
 - one local `release_artifact.bound` event.
 
-The event-publication layer that could project the local event was deleted by
-Tier 3 item 24a (2026-09-28); the rest of this paragraph describes what it did.
-The local `system` actor maps to the registered `unknown` external actor during
-publication while preserving the raw actor ID in the mapping evidence record.
+No event-publication layer projects the local event outside the orchestrator; Tier 3 item 24a
+(2026-09-28) deleted it. Its description is in `docs/history/release-records-2026-11-03.md`.
 
 ## Secret Handling
 
-WS-5.2 adds no new secret, BWS manifest entry, runtime env file, or GitHub Actions
-credential.
-
-If later automation calls this route, use the existing M2M pattern:
-
-- fetch raw bearer values by stable BWS UUID at runtime;
-- store only token hashes in `ORCHESTRATOR_M2M_CREDENTIALS`;
-- assign roles through `ORCHESTRATOR_M2M_ROLES`;
-- never write raw tokens to tracked files, prompts, logs, package YAML, evidence,
-  PR bodies, generated artifacts, or release records.
+Recording a binding adds no secret, runtime env file or GitHub Actions credential. The caller is
+`image-release`, run by the deploy command's `finish` phase with the SYSTEM bearer fetched by
+stable BWS UUID at runtime (`docs/operations/post-deploy-verification.md`, "Secret Handling").
+Only token hashes live in `ORCHESTRATOR_M2M_CREDENTIALS`, and roles come from
+`ORCHESTRATOR_M2M_ROLES`. Raw tokens never go in tracked files, prompts, logs, package YAML,
+evidence, PR bodies, generated artifacts or release records.
 
 ## Non-Goals
 
