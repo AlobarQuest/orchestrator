@@ -3,7 +3,7 @@
 * The routes `image_release` asks production to serve, held to the routes `create_app()` serves.
 * What each of `image_release`'s three identities (SYSTEM, VERIFIER, anonymous) may send.
 * What the activation sweep's two clients may send, and the bearers its launcher fetches.
-* The two programs that read `GET /api/v1/observations` with a filter, and no others.
+* The three programs that read `GET /api/v1/observations` with a filter, and no others.
 * The one public document `attest_exit_criteria.py` reads, with no credential.
 
 Each row is held to the code (the client's own predicate, the launcher's text, the module's own
@@ -15,6 +15,7 @@ from __future__ import annotations
 import ast
 from collections.abc import Mapping
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
@@ -206,9 +207,9 @@ def test_the_activation_sweep_binds_through_exactly_its_routes() -> None:
     ],
 )
 def test_control_a_widened_sweep_predicate_fails_the_table(
-    monkeypatch: pytest.MonkeyPatch, module: object, identity: str, extra: str
+    monkeypatch: pytest.MonkeyPatch, module: ModuleType, identity: str, extra: str
 ) -> None:
-    original = module._permits  # type: ignore[attr-defined]
+    original = getattr(module, "_permits")
     monkeypatch.setattr(module, "_permits", lambda m, p: p == extra or original(m, p))
 
     assert ("orchestrator", "POST", extra, True) in sweep_disagreements()[identity]
@@ -223,7 +224,7 @@ READERS = {
 }
 
 
-def _names_for(tree: ast.Module) -> set[str]:
+def _bound_names(tree: ast.Module) -> set[str]:
     """Module-level names bound to the observations path."""
     return {
         target.id
@@ -233,6 +234,17 @@ def _names_for(tree: ast.Module) -> set[str]:
         and node.value.value == OBSERVATIONS
         for target in (node.targets if isinstance(node, ast.Assign) else [node.target])
         if isinstance(target, ast.Name)
+    }
+
+
+def _imported_aliases(tree: ast.Module, bound: set[str]) -> set[str]:
+    """Names this module imports from another under the path's constant's name, with aliases."""
+    return {
+        alias.asname or alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+        for alias in node.names
+        if alias.name in bound
     }
 
 
@@ -273,7 +285,13 @@ def observation_reads(sources: Mapping[str, str]) -> dict[str, bool]:
     A GET is a call with a literal "GET" among its arguments, or a call to a function whose name
     ends in `get`, that names the path. A filter is a `params=` dict, or a query string after the
     path. A shell script that names the path outside a comment is reported as unfiltered.
+
+    The path may be a literal, an f-string, or a name bound to it in any scanned module (and
+    imported, with or without an alias), passed positionally or by keyword. A class attribute
+    (`self.PATH`) is out of scope.
     """
+    parsed = {name: ast.parse(text) for name, text in sources.items() if name.endswith(".py")}
+    bound = set().union(*(_bound_names(tree) for tree in parsed.values()))
     found: dict[str, bool] = {}
     for name, text in sources.items():
         if not name.endswith(".py"):
@@ -283,28 +301,28 @@ def observation_reads(sources: Mapping[str, str]) -> dict[str, bool]:
             ):
                 found[name] = False
             continue
-        tree = ast.parse(text)
-        names = _names_for(tree)
+        tree = parsed[name]
+        names = bound | _imported_aliases(tree, bound)
         for scope in ast.walk(tree):
             if not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             for call in (n for n in ast.walk(scope) if isinstance(n, ast.Call)):
-                literal_get = any(
-                    isinstance(a, ast.Constant) and a.value == "GET" for a in call.args
-                )
+                values = [*call.args, *(k.value for k in call.keywords)]
+                literal_get = any(isinstance(a, ast.Constant) and a.value == "GET" for a in values)
                 if not (literal_get or _call_name(call).lower().endswith("get")):
                     continue
-                if not any(_mentions(a, names) for a in call.args):
+                if not any(_mentions(a, names) for a in values):
                     continue
                 params = [k.value for k in call.keywords if k.arg == "params"]
                 named = any(
-                    k.arg not in {None, "params", "headers", "timeout"} for k in call.keywords
+                    k.arg not in {None, "params", "headers", "timeout", "method", "url", "path"}
+                    for k in call.keywords
                 )
                 query = any(
                     isinstance(part, ast.Constant)
                     and isinstance(part.value, str)
                     and f"{OBSERVATIONS}?" in part.value
-                    for a in call.args
+                    for a in values
                     for part in ast.walk(a)
                 )
                 found[name] = (
@@ -325,7 +343,7 @@ def _repository_sources() -> dict[str, str]:
     return {path.as_posix(): path.read_text(encoding="utf-8") for path in files}
 
 
-def test_the_observations_read_has_exactly_two_callers() -> None:
+def test_the_observations_read_has_exactly_three_callers() -> None:
     assert observation_reads(_repository_sources()) == READERS
 
 
@@ -440,3 +458,35 @@ def test_control_a_second_url_or_a_bearer_changes_what_attest_reaches() -> None:
     assert attest_reach(second)[0] == {PUBLIC_DOCUMENT, "https://sds.alobar.net/api/v1/members"}
     assert attest_reach(bearer)[1] == 1
     assert {"authorization", "bearer"} <= attest_reach(bearer)[2]
+
+
+def test_control_an_imported_constant_is_a_caller() -> None:
+    sources = {
+        "src/a/consts.py": 'OBSERVATIONS_ENDPOINT = "/api/v1/observations"\n',
+        "src/b/client.py": (
+            "from a.consts import OBSERVATIONS_ENDPOINT\n"
+            "def f(c):\n"
+            "    return c.get(OBSERVATIONS_ENDPOINT, source_system='x')\n"
+        ),
+        "src/c/client.py": (
+            "from a.consts import OBSERVATIONS_ENDPOINT as P\n"
+            "def f(c):\n"
+            "    return c._send('GET', P)\n"
+        ),
+    }
+
+    assert observation_reads(sources) == {"src/b/client.py": True, "src/c/client.py": False}
+
+
+def test_control_a_path_passed_by_keyword_is_a_caller() -> None:
+    sources = {
+        "src/d/client.py": (
+            'PATH = "/api/v1/observations"\n'
+            "def f(c):\n"
+            '    return c.request(method="GET", url=PATH, params={"a": 1})\n'
+            "def g(c):\n"
+            '    return c.request(method="POST", url=PATH)\n'
+        ),
+    }
+
+    assert observation_reads(sources) == {"src/d/client.py": True}
