@@ -28,6 +28,7 @@ from orchestrator.services.release.release_artifacts import (
     ReleaseArtifactCommand,
     record_release_artifact,
 )
+from tests._support.seeding import grant_service
 
 NOW = datetime(2026, 8, 19, 21, 34, 18, tzinfo=UTC)
 HUMAN = ActorContext("human-1", ActorRole.HUMAN)
@@ -93,6 +94,7 @@ def landed_unit(
     )
     unit.state = state
     session.add(UnitPrBinding(work_unit_id=unit.id, pr_number=pr_number, head_sha=head_sha))
+    grant_service(session, repository, "rollouts")
     session.commit()
     return unit
 

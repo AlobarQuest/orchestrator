@@ -43,6 +43,9 @@ AUTHORITY = {
 }
 
 
+RELEASE_REPOSITORY = "AlobarQuest/orchestrator"
+
+
 def protocol_auth_config() -> AuthConfig:
     """One human, one worker, one system and one verifier actor, as production configures them."""
     registry = RegistryAdapter(
@@ -188,8 +191,23 @@ class BornUnit:
     content_hash: str
 
 
-def birth_unit(db_client: TestClient, *, suffix: str, max_attempts: int = 3) -> BornUnit:
-    """Intake, propose a breakdown, approve it in `/review`: the unit is born in DRAFT."""
+def birth_unit(
+    db_client: TestClient,
+    *,
+    suffix: str,
+    max_attempts: int = 3,
+    target_repository: str | None = None,
+) -> BornUnit:
+    """Intake, propose a breakdown, approve it in `/review`: the unit is born in DRAFT.
+
+    ``target_repository`` aims the unit's envelope at a repository; the member record must then
+    grant it (`grant_release_target`) before the proposal.
+    """
+    authority = (
+        AUTHORITY
+        if target_repository is None
+        else {**AUTHORITY, "constraints": {"target_repository": target_repository}}
+    )
     package_payload = load_package_intake_payload(
         PACKAGE_FIXTURE,
         source_repository="AlobarQuest/intent-packages",
@@ -221,7 +239,7 @@ def birth_unit(db_client: TestClient, *, suffix: str, max_attempts: int = 3) -> 
                     "title": f"WS-3.3 smoke {suffix}",
                     "outcome": "Auxiliary smoke path is exercised.",
                     "required_capability": "repo.edit",
-                    "authority": AUTHORITY,
+                    "authority": authority,
                     "max_attempts": max_attempts,
                 }
             ],

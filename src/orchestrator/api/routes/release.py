@@ -41,6 +41,7 @@ from orchestrator.services.release.release_evidence_pack import (
     ReleaseEvidencePackResponse,
     release_evidence_pack_response,
 )
+from orchestrator.services.release.release_grant import repository_release_refusal
 
 router = APIRouter(prefix="/api/v1", responses=ERROR_RESPONSES)
 
@@ -146,10 +147,11 @@ def machine_activation_candidates_route(
 ) -> object:
     """ADR-0030: which completed units a machine-local working copy could bind an artifact for.
 
-    Authentication-only, matching the other read surfaces. Read-only: it writes nothing and
-    asserts nothing about the machine. A repository with no confirmed landings answers with an
-    empty list rather than a 404 -- the ordinary state of a repository the factory has not landed
-    into yet, which a 404 would make indistinguishable from a misspelled name.
+    Read-only, and a non-blank repository must hold the member record's `rollouts` grant (a
+    blank one answers empty). It writes nothing and asserts nothing about the machine. A granted
+    repository with no confirmed landings answers with an empty list rather than a 404 -- the
+    ordinary state of a repository the factory has not landed into yet, which a 404 would make
+    indistinguishable from a misspelled name.
 
     `kind` names which bindings count as already made: `machine_local` for a working copy (the
     default, and the activation sweep's), `container_image` for a hosted image's deploy.
@@ -158,6 +160,8 @@ def machine_activation_candidates_route(
         raise DomainError(
             "release_artifact_kind_invalid", "kind is not a release artifact kind", None
         )
+    if repository.strip() and (refusal := repository_release_refusal(session, repository)):
+        raise refusal
     return list(machine_activation_candidates(session, repository, kind))
 
 

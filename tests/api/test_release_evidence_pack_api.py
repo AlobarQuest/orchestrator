@@ -16,8 +16,8 @@ from sqlalchemy.orm import Session
 from orchestrator.persistence.models import Adjudication, Evidence, WorkUnit
 from tests._support.seeding import seed_units_path
 from tests.api.test_deployment_observations_api import observation_body
-from tests.api.test_lifecycle_api import AUTHORITY, HUMAN, SYSTEM, WORKER
-from tests.api.test_release_artifacts_api import completed_unit, release_body
+from tests.api.test_lifecycle_api import HUMAN, SYSTEM, WORKER
+from tests.api.test_release_artifacts_api import RELEASE_AUTHORITY, completed_unit, release_body
 
 DIGEST = "sha256:" + "a" * 64
 
@@ -41,7 +41,7 @@ def _release_with_units_artifact_and_deployment(
             "title": "Second unit",
             "outcome": "second",
             "required_capability": "repo.edit",
-            "authority": AUTHORITY,
+            "authority": RELEASE_AUTHORITY,
             "max_attempts": 3,
             "approved_by": "devon",
             "approved_at": datetime(2026, 7, 8, tzinfo=UTC).isoformat(),

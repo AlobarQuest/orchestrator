@@ -132,6 +132,18 @@ def grant_service(session: Session, repository: str, service: str) -> None:
     set_grant_state(session, repository, service, "granted")
 
 
+def grant_work_and_release(engine: Engine, repository: str) -> None:
+    """The member record grants ``repository`` its work and its release.
+
+    For a drill that must aim a unit at a repository: a drill file may not write, and the member
+    record is written in production only by a person on `/review`, which a drill does not drive.
+    """
+    with Session(engine) as session:
+        grant_service(session, repository, "app_changes")
+        grant_service(session, repository, "rollouts")
+        session.commit()
+
+
 def seed_units_path(revision_id: object) -> str:
     return f"{SEED_REVISIONS}/{revision_id}/work-units"
 

@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
+from orchestrator.kernel.authority import AuthorityEnvelope
 from orchestrator.kernel.states import ActorContext, ActorRole, WorkUnitState
 from orchestrator.persistence.models import Event, Evidence, ReleaseArtifactBinding, WorkUnit
 from orchestrator.services.intake.packages import register_approved_unit, register_revision
@@ -17,7 +18,7 @@ from orchestrator.services.release.release_artifacts import (
     list_release_artifacts,
     record_release_artifact,
 )
-from tests._support.seeding import AUTHORITY
+from tests._support.seeding import AUTHORITY, grant_service, set_grant_state
 
 NOW = datetime(2026, 7, 8, tzinfo=UTC)
 HUMAN = ActorContext("human-1", ActorRole.HUMAN)
@@ -27,6 +28,12 @@ OTHER_DIGEST = "sha256:" + "b" * 64
 MERGE_COMMIT = "4cd4132" + "c" * 33
 SOURCE_COMMIT = "4cd4132" + "d" * 33
 PACKAGE_HASH = "sha256:release-package"
+REPOSITORY = "AlobarQuest/orchestrator"
+RELEASE_AUTHORITY = AuthorityEnvelope(
+    capabilities=AUTHORITY.capabilities,
+    budgets=AUTHORITY.budgets,
+    constraints={"target_repository": REPOSITORY},
+)
 
 
 def completed_unit(session: Session, *, key: str = "release-unit") -> WorkUnit:
@@ -42,7 +49,7 @@ def completed_unit(session: Session, *, key: str = "release-unit") -> WorkUnit:
         approved_at=NOW,
         approval_event_id=str(uuid.uuid4()),
         enforcement_snapshot={"acceptance_criteria": ["ac-release"]},
-        authority=AUTHORITY,
+        authority=RELEASE_AUTHORITY,
         registry_version=1,
         actor_id=HUMAN.actor_id,
         actor_role=HUMAN.role,
@@ -54,7 +61,7 @@ def completed_unit(session: Session, *, key: str = "release-unit") -> WorkUnit:
         title="Release unit",
         outcome="Immutable release artifact is recorded",
         required_capability="repo.edit",
-        authority=AUTHORITY,
+        authority=RELEASE_AUTHORITY,
         max_attempts=3,
         approved_by=HUMAN.actor_id,
         approved_at=NOW,
@@ -62,6 +69,7 @@ def completed_unit(session: Session, *, key: str = "release-unit") -> WorkUnit:
         actor_role=HUMAN.role,
     )
     unit.state = WorkUnitState.COMPLETED
+    grant_service(session, REPOSITORY, "rollouts")
     session.commit()
     return unit
 
@@ -576,3 +584,71 @@ def test_release_artifact_refuses_every_key_the_other_ingresses_refuse(
 
     assert isinstance(result, DomainError)
     assert result.code == "release_artifact_secret_rejected"
+
+
+def _count_release_rows(session: Session) -> tuple[int, int]:
+    bindings = session.scalar(select(func.count()).select_from(ReleaseArtifactBinding))
+    events = session.scalar(select(func.count()).select_from(Event))
+    return bindings or 0, events or 0
+
+
+def test_an_ungranted_repository_is_refused_before_anything_is_written(
+    migrated_session: Session,
+) -> None:
+    unit = completed_unit(migrated_session, key="ungranted")
+    set_grant_state(migrated_session, REPOSITORY, "rollouts", "withdrawn")
+    migrated_session.commit()
+    before = _count_release_rows(migrated_session)
+
+    result = record_release_artifact(migrated_session, command(unit))
+
+    assert isinstance(result, DomainError)
+    assert result.code == "release_repository_not_granted"
+    assert _count_release_rows(migrated_session) == before
+
+
+def test_a_body_naming_another_repository_is_refused_as_a_mismatch(
+    migrated_session: Session,
+) -> None:
+    unit = completed_unit(migrated_session, key="mismatch")
+    grant_service(migrated_session, "AlobarQuest/other", "rollouts")
+    migrated_session.commit()
+    before = _count_release_rows(migrated_session)
+
+    result = record_release_artifact(
+        migrated_session, replace(command(unit), source_repository="AlobarQuest/other")
+    )
+
+    assert isinstance(result, DomainError)
+    assert result.code == "release_repository_mismatch"
+    assert _count_release_rows(migrated_session) == before
+
+
+def test_an_exact_retry_after_withdrawal_answers_the_stored_binding(
+    migrated_session: Session,
+) -> None:
+    unit = completed_unit(migrated_session, key="retry-withdrawn")
+    first = record_release_artifact(migrated_session, command(unit))
+    set_grant_state(migrated_session, REPOSITORY, "rollouts", "withdrawn")
+    migrated_session.commit()
+
+    replay = record_release_artifact(migrated_session, command(unit))
+
+    assert isinstance(first, ReleaseArtifactBinding)
+    assert isinstance(replay, ReleaseArtifactBinding)
+    assert replay.id == first.id
+
+
+def test_a_fresh_request_for_a_bound_tuple_after_withdrawal_is_refused(
+    migrated_session: Session,
+) -> None:
+    unit = completed_unit(migrated_session, key="fresh-withdrawn")
+    first = record_release_artifact(migrated_session, command(unit))
+    set_grant_state(migrated_session, REPOSITORY, "rollouts", "withdrawn")
+    migrated_session.commit()
+
+    result = record_release_artifact(migrated_session, command(unit, key="a-new-key"))
+
+    assert isinstance(first, ReleaseArtifactBinding)
+    assert isinstance(result, DomainError)
+    assert result.code == "release_repository_not_granted"

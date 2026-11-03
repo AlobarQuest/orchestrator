@@ -526,7 +526,10 @@ Placement rule: global CLAUDE.md §7.
   `authorize_retry` refuses a withdrawn unit too. The landers and the pr-merge gate
   refuse with `landing_repository_not_granted` and `merge_repository_not_granted`. The lanes' copy of
   the mapping is held equal by `test_target_grant.py`, and `membership_check` reports a granted
-  repository no landing path reaches. Detail: `docs/operations/driving-a-unit.md`; full procedure:
+  repository no landing path reaches. Release binding, deployment observations and the
+  machine-activation candidates read ask the `rollouts` grant on the unit's own target (never the
+  body's `source_repository`) and refuse `release_repository_not_granted` or
+  `release_repository_mismatch`; an exact idempotent retry replays first. Detail: `docs/operations/driving-a-unit.md`; full procedure:
   `docs/operations/onboarding-a-target.md`.
 - Moving a rollout workflow is a paired change: re-transcribe it in
   `src/deploy_watcher/workflows.py` AND ratify the derived criteria plus the landing blob pin in

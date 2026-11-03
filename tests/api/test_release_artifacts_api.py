@@ -2,8 +2,9 @@ from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine
+from sqlalchemy.orm import Session
 
-from tests._support.seeding import register_completed_unit
+from tests._support.seeding import grant_service, register_completed_unit
 from tests.api.test_lifecycle_api import AUTHORITY, SYSTEM, WORKER
 
 DIGEST = "sha256:" + "a" * 64
@@ -13,16 +14,23 @@ MERGE_COMMIT = "4cd4132" + "c" * 33
 PACKAGE_HASH = "sha256:release-api"
 
 
+RELEASE_REPOSITORY = "AlobarQuest/orchestrator"
+RELEASE_AUTHORITY = {**AUTHORITY, "constraints": {"target_repository": RELEASE_REPOSITORY}}
+
+
 def completed_unit(db_client: TestClient, migrated_engine: Engine, *, key: str = "release-api"):
+    with Session(migrated_engine) as session:
+        grant_service(session, RELEASE_REPOSITORY, "rollouts")
+        session.commit()
     return register_completed_unit(
         db_client,
         migrated_engine,
         key,
-        authority=AUTHORITY,
+        authority=RELEASE_AUTHORITY,
         unit_key=key,
         title="Release API",
         outcome="Release artifact is recorded",
-        source_repository="AlobarQuest/orchestrator",
+        source_repository=RELEASE_REPOSITORY,
         content_hash=PACKAGE_HASH,
         source_commit=SOURCE_COMMIT,
         enforcement_snapshot={"acceptance_criteria": ["ac-1"]},
