@@ -160,7 +160,7 @@ def machine_activation_candidates_route(
         raise DomainError(
             "release_artifact_kind_invalid", "kind is not a release artifact kind", None
         )
-    if repository.strip() and (refusal := repository_release_refusal(session, repository)):
+    if repository.strip() and (refusal := repository_release_refusal(session, repository.strip())):
         raise refusal
     return list(machine_activation_candidates(session, repository, kind))
 

@@ -242,3 +242,13 @@ def test_candidates_for_a_blank_repository_are_still_empty(db_client: TestClient
 
     assert response.status_code == 200
     assert response.json() == []
+
+
+def test_candidates_for_a_granted_repository_asked_with_padding_are_not_refused(
+    db_client: TestClient, migrated_engine: Engine
+) -> None:
+    completed_unit(db_client, migrated_engine)
+
+    response = db_client.get(CANDIDATES, params={"repository": f"  {REPOSITORY} "}, headers=SYSTEM)
+
+    assert response.status_code == 200

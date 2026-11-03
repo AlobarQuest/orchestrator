@@ -58,6 +58,13 @@ def _forbidden_imports(tree: ast.AST, *, drill: bool = False) -> list[str]:
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             found += [a.name for a in node.names if a.name.startswith(FORBIDDEN_MODULES)]
+            found += [
+                a.name
+                for a in node.names
+                if drill
+                and a.name.startswith("tests._support")
+                and a.name not in ALLOWED_SUPPORT_MODULES
+            ]
         elif isinstance(node, ast.ImportFrom) and node.module:
             names = {alias.name for alias in node.names}
             if node.module.startswith(FORBIDDEN_MODULES):
@@ -138,6 +145,10 @@ def test_a_drill_may_not_take_a_helper_from_an_unscanned_support_module() -> Non
     assert (
         _forbidden_imports(ast.parse("from tests._support.protocol import ok\n"), drill=True) == []
     )
+    assert _forbidden_imports(ast.parse("import tests._support.seeding\n"), drill=True) == [
+        "tests._support.seeding"
+    ]
+    assert _forbidden_imports(ast.parse("import tests._support.protocol\n"), drill=True) == []
 
 
 def test_the_scan_sees_a_write_in_a_nested_or_async_function() -> None:
