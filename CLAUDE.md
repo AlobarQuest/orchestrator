@@ -165,7 +165,7 @@ Placement rule: global CLAUDE.md §7.
   exact; other repository-, service- or environment-scoped observations appear in no chain. With
   no factory PR binding, the `pr` hop comes from that landing only when the binding's
   `implementation_pr_number` agrees, marked `source="landing_ledger"`. A `pr` anchor with
-  `source_repository` matches the binding's repository exactly, not case-folded (`_resolve_pr`).
+  `source_repository` matches the binding's repository case-folded too (`_resolve_pr`).
   History: `docs/history/claude-md-invariants-archive.md` #60.
 - Migrate-before-swap is safe only because neither Coolify's (disabled) health check nor the
   Dockerfile `HEALTHCHECK` consults `/health/ready`; never point either at it without re-deciding
