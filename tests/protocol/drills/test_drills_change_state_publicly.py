@@ -38,6 +38,9 @@ WRITES = frozenset(
 FORBIDDEN_MODULES = ("orchestrator.services", "orchestrator.api.routes")
 SQL_WRITE_CONSTRUCTS = frozenset({"update", "insert", "delete", "text"})
 SANCTIONED_WRITERS = ["expire_latest_claim"]
+# Drills may take their helpers only from the shared setup scanned above: a writer in an unscanned
+# `tests._support` module would be a write path this guard never sees.
+ALLOWED_SUPPORT_MODULES = frozenset({"tests._support.protocol"})
 
 
 def _writes(tree: ast.AST) -> list[str]:
@@ -50,7 +53,7 @@ def _writes(tree: ast.AST) -> list[str]:
     ]
 
 
-def _forbidden_imports(tree: ast.AST) -> list[str]:
+def _forbidden_imports(tree: ast.AST, *, drill: bool = False) -> list[str]:
     found: list[str] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -63,6 +66,12 @@ def _forbidden_imports(tree: ast.AST) -> list[str]:
                 found.append(f"orchestrator.{sorted(names & {'services', 'api'})[0]}")
             elif node.module == "orchestrator.api" and "routes" in names:
                 found.append("orchestrator.api.routes")
+            elif (
+                drill
+                and node.module.startswith("tests._support")
+                and node.module not in ALLOWED_SUPPORT_MODULES
+            ):
+                found.append(node.module)
             elif node.module.startswith("sqlalchemy") and names & SQL_WRITE_CONSTRUCTS:
                 found.append(f"{node.module}: {sorted(names & SQL_WRITE_CONSTRUCTS)}")
     return found
@@ -88,7 +97,7 @@ def test_a_drill_file_neither_writes_nor_reaches_past_the_routes(path: Path) -> 
     tree = _parse(path)
 
     assert _writes(tree) == []
-    assert _forbidden_imports(tree) == []
+    assert _forbidden_imports(tree, drill=True) == []
 
 
 def test_lease_expiry_is_the_only_write_the_shared_setup_makes() -> None:
@@ -120,6 +129,15 @@ def test_the_scan_sees_a_write_or_a_forbidden_import(source: str) -> None:
     tree = ast.parse(source)
 
     assert _writes(tree) or _forbidden_imports(tree)
+
+
+def test_a_drill_may_not_take_a_helper_from_an_unscanned_support_module() -> None:
+    tree = ast.parse("from tests._support.seeding import grant_service\n")
+
+    assert _forbidden_imports(tree, drill=True) == ["tests._support.seeding"]
+    assert (
+        _forbidden_imports(ast.parse("from tests._support.protocol import ok\n"), drill=True) == []
+    )
 
 
 def test_the_scan_sees_a_write_in_a_nested_or_async_function() -> None:

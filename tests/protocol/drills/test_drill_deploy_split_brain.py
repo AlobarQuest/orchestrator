@@ -34,6 +34,7 @@ from tests._support.protocol import (
     VERIFIER,
     WORKER,
     birth_unit,
+    grant_through_review,
     make_ready,
     ok,
     rows,
@@ -41,7 +42,6 @@ from tests._support.protocol import (
     standing_context,
     unit_row,
 )
-from tests._support.seeding import grant_work_and_release
 
 DIGEST = "sha256:" + "a" * 64
 OBSERVED_AT = "2026-07-11T20:00:00+00:00"
@@ -55,7 +55,7 @@ def test_a_stalled_post_deploy_verification_is_one_open_alarm(
     stand_in_approved_package(monkeypatch)
     stalled_at_once = Settings.model_validate({"reconcile_split_brain_stall_seconds": 0})
     cast(FastAPI, db_client.app).dependency_overrides[get_settings] = lambda: stalled_at_once
-    grant_work_and_release(migrated_engine, RELEASE_REPOSITORY)
+    grant_through_review(db_client, RELEASE_REPOSITORY, "app_changes", "rollouts")
     born = birth_unit(db_client, suffix="drill4", target_repository=RELEASE_REPOSITORY)
     unit = born.unit_id
     make_ready(db_client, migrated_engine, unit, key="drill4")
