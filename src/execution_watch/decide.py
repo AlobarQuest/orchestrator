@@ -319,11 +319,13 @@ def _alert(row: StatusRow, condition: Condition, now: datetime) -> Alert:
 
 def _verification_steps(row: StatusRow) -> str:
     """Who finishes a stuck unit. `/verify` refuses nothing for a post-deploy unit, so its
-    alert names the lane that mints and verifies it rather than the VERIFIER route."""
+    alert names the deploy step that mints and verifies it rather than the VERIFIER route."""
     if row.change_class == POST_DEPLOY_CAPABILITY:
         return (
-            "Open it on /review, then read the image-release lane's log for why "
-            "`image_release` did not verify it."
+            "The bind step of an orchestrator deploy verifies it (`scripts/deploy_orchestrator.py` "
+            "runs `image-release bind`, which `image_release` answers). Open it on /review, then "
+            'rerun `image-release bind` as docs/operations/deploy.md\'s "Binding the release" '
+            "section describes."
         )
     return (
         "Open it on /review, then read ~/Library/Logs/unit-verifier.log for why. If that "
