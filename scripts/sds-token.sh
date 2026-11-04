@@ -12,9 +12,9 @@
 #         -T /usr/bin/security -w
 #
 # The token belongs to the read-only `sds-operator` BWS machine account, scoped to the
-# `SDS Operator` project alone. That project holds exactly the three secrets the SDS
-# runtime fetches: the orchestrator SYSTEM bearer, the VERIFIER bearer, and the Todoist
-# token. It can read nothing else, and it can write nothing at all.
+# `SDS Operator` project alone, which holds the secrets the SDS runtime fetches
+# (`.bws-secrets.toml` lists them by UUID). It can read nothing else, and it can write
+# nothing at all.
 #
 # Before 2026-07-30 these scripts bootstrapped with the vps-backup machine account's
 # token, which could read the whole Ops / Platform project — over-scoped, never leaked.

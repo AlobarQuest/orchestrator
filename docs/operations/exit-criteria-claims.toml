@@ -58,15 +58,9 @@ routes = [
     "/api/v1/work-units/{unit_id}/pr-binding",
 ]
 
-[[claim]]
-criterion = 9
-status = "met"
-description = "Tracker projection surfaces live in production -- outbound (Inc 1) and inbound reconciliation (Inc 2)"
-routes = [
-    "/api/v1/work-units/{unit_id}/tracker-binding",
-    "/api/v1/tracker-bindings",
-    "/api/v1/reconciliation/tracker-detect",
-]
+# Criterion 9 (tracker projection surfaces) has no claim here. It stays met on its historical
+# evidence: ADR-0040 amendment 1 removed the routes, so no live route claim remains for it, and an
+# empty routes list would pass vacuously.
 
 [[claim]]
 criterion = 13

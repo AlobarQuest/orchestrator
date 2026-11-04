@@ -235,18 +235,13 @@ number = 3
 text = "the pilot queue is orchestrator-canonical with the tracker as pure projection"
 annotation_separator_count = 1
 annotation = " (Inc 1 established this model + closed the D8 interim documentarily; Inc 2's inbound path completes the two-way discipline)."
+note = """RE-MEASUREMENT RETIRED BY ADR-0040 AMENDMENT 1; THE BAR IS NOT REWRITTEN. This clause was met when the projection routes were served and the projection probe passed against production, and the retained run record below is the last run in which both of those checks passed, pinned by digest. ADR-0040 amendment 1 removed the adapter, its routes, and its table, so the live `routes_served` and `tracker-is-a-projection` checks have nothing to measure, and the clause is attested by its retained evidence alone. Do not read the missing live checks as an unmet criterion, and do not restore them without a tracker adapter to point them at."""
 [[bar.clause.check]]
-kind = "routes_served"
-basis = "live"
-routes = ["/api/v1/tracker-bindings", "/api/v1/work-units/{unit_id}/tracker-binding", "/api/v1/reconciliation/tracker-detect"]
-proves = "the canonical-side projection surfaces are served"
-[[bar.clause.check]]
-kind = "command"
-basis = "live"
-argv = ["python3", "scripts/exit_probe.py", "tracker-is-a-projection"]
-unavailable_exit_codes = [7]
-timeout_seconds = 900
-proves = "two necessary conditions: canonical-side bindings exist, and the adapter's isolation suite passes so it imports nothing from the orchestrator. Neither establishes write-direction, so 'orchestrator-canonical' is evidenced, not proven."
+kind = "retained_evidence"
+basis = "retained"
+path = "docs/evidence/exit-manifest/2026-10-08-wave2.json"
+sha256 = "2b700813208c3d6015ffa6946c04f6caf7e57f3d628e6bac628bd00a6c9fcb2b"
+proves = "the retained record of a run in which both of this clause's live checks passed (the projection routes were served, and the projection probe passed) is intact and unaltered. It does not re-measure either fact."
 
 [[bar.clause]]
 number = 4

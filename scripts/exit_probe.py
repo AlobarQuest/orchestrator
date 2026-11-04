@@ -770,36 +770,6 @@ def _post_deploy_verifications(pack: dict) -> int:
     return verified
 
 
-def tracker_is_a_projection() -> int:
-    """Wave 2 clause 3: canonical-side bindings exist and the import ban is enforced."""
-    bindings = api_get("/api/v1/tracker-bindings")
-    if isinstance(bindings, list):
-        rows = bindings
-    elif isinstance(bindings, dict) and "bindings" in bindings:
-        rows = bindings["bindings"] or []
-    else:
-        # A dict answer with no `bindings` key is a reshaped surface, not an empty estate.
-        raise Unavailable(
-            f"the tracker-bindings answer is a {type(bindings).__name__} carrying no `bindings` "
-            "key, so an empty projection cannot be told from a changed response"
-        )
-    target = "tests/tracker_projection_adapter"
-    pytest = REPO_ROOT / ".venv/bin/pytest"
-    if not pytest.exists():
-        raise Unavailable(f"{pytest} is absent; cannot execute the isolation tests")
-    completed = subprocess.run(  # noqa: S603
-        [str(pytest), target, "-q"], cwd=REPO_ROOT, capture_output=True, text=True, timeout=600
-    )
-    ok = bool(rows) and completed.returncode == 0
-    return report(
-        ok,
-        f"{'PASS' if ok else 'FAIL'} {len(rows)} canonical tracker binding(s); "
-        f"adapter isolation suite exit {completed.returncode}",
-        bindings=len(rows),
-        isolation_exit_code=completed.returncode,
-    )
-
-
 def every_pr_producing_unit_is_bound() -> int:
     """Wave 2 clause 4 (the precondition): the WS-P2.16 guard is deployed and has held.
 
@@ -1081,7 +1051,6 @@ PROBES: dict[str, Callable[..., int]] = {
     "evidence-pack-reached-a-merged-pr": evidence_pack_reached_a_merged_pr,
     "traceability-answers-for-a-real-release": traceability_answers_for_a_real_release,
     "release-chain-answers-every-hop": release_chain_answers_every_hop,
-    "tracker-is-a-projection": tracker_is_a_projection,
     "unmeasured": unmeasured,
     "every-pr-producing-unit-is-bound": every_pr_producing_unit_is_bound,
     "repositories-onboarded": repositories_onboarded,

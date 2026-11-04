@@ -188,7 +188,6 @@ WORK_UNIT_CONSTRUCTORS = frozenset(
 class Role(Enum):
     OBSERVE_ONLY = "observe-only producer"
     INTERNAL_LANE_ACTOR = "internal lane actor"
-    REPORT_ONLY_WRITER = "report-only writer"
     NOT_AN_ORCHESTRATOR_WRITER = "not an orchestrator writer"
 
 
@@ -360,19 +359,6 @@ CLASSIFICATION: dict[str, Row] = {
         "SYSTEM (neither mints a unit); its staleness sweep observes. Not named by the 2026-08-25 "
         "ruling",
         frozenset({OBSERVATIONS, RELEASE_BINDING, DEPLOYMENT_OBSERVATION}),
-    ),
-    # ---- REPORT-ONLY WRITERS: record divergence or a projection binding, never lifecycle. ----
-    "tracker_projection_adapter": Row(
-        Role.REPORT_ONLY_WRITER,
-        "ADR-0003/ADR-0004: outbound projection binding and inbound divergence report; retired "
-        "as an operating lane by ADR-0040",
-        frozenset(
-            {
-                "/api/v1/work-units/{unit_id}/tracker-binding",
-                "/api/v1/reconciliation/tracker-detect",
-            }
-        ),
-        foreign={"https://api.todoist.com/api/v1": "Todoist's REST base URL"},
     ),
     # ---- NOT ORCHESTRATOR WRITERS: read the orchestrator at most. ---------------------------
     "rotation_worker": Row(

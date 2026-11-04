@@ -2,6 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-09-05
+- **Amended:** 2026-11-04 (amendment 1, code removed)
 - **Decided by:** Devon
 - **Retires the OPERATION of:** ADR-0003 (tracker projection, outbound only), ADR-0004 (inbound
   tracker reconciliation). Neither is superseded on its reasoning; both are correct about what they
@@ -91,3 +92,59 @@ stopped using what it attested. The record is not a description of the present.
   residual, named here rather than implied: it is code with no operator, retained because an
   attestation depends on it. If Wave 2's manifest is ever retired, this is what becomes deletable
   with it.
+
+## Amendment 1: the code is removed (2026-11-04)
+
+Devon decided on 2026-11-04 to retire the adapter, because it adds no value. This amendment ends
+the sentence "the code stays because Wave 2's bar attests it".
+
+### What is removed
+
+- `src/tracker_projection_adapter/`, its tests, and its console script.
+- The three tracker routes, their services, and their schemas.
+- The `unit_tracker_bindings` table, and the `tracker` and `tracker_state_divergence`
+  reconciliation vocabulary (migration 0047).
+
+### How the bar stays met
+
+This amendment ends the re-measured attestation the way ADR-0049 did for the drills. Wave 2
+clause 3's `text`, `annotation`, `body`, and `body_sha256` are unchanged. Its two live checks are
+replaced by a retained-evidence check on `docs/evidence/exit-manifest/2026-10-08-wave2.json`, the
+last run in which both live checks passed. Criterion 9 leaves `exit-criteria-claims.toml`, because
+an empty route list would pass vacuously.
+
+The 2026-10-08 record names manifest `04bc12b0…`, and commit `e0e5df33` holds those bytes. Nothing
+compares that field. A fresh record is taken after the deploy.
+
+### Measurements, 2026-11-04
+
+| Measure | Value |
+|---|---|
+| Callers of the adapter or its routes | 0 launch agents, workflows, or scripts. Only `scripts/exit_probe.py tracker-is-a-projection` reads a route. |
+| Sibling repositories naming the adapter, its routes, or its table | 0 (`~/Projects`, excluding this repository) |
+| Consumers of the Todoist token `ff396349-…` outside this repository | 0 (`~/Projects`, `~/.claude`, `~/Developer`, `~/Library/LaunchAgents`) |
+| `unit_tracker_bindings` rows | 4, all `todoist`, all `cancelled`, written 2026-07-28 13:55:08 to 13:55:11 |
+| Reconciliation conditions of kind `tracker` | 0. Production holds 3 conditions: `deployment`/`deploy_split_brain`, `github_pr`/`external_merge_alarm`, `github_pr`/`pr_state_divergence`. |
+| Production alembic head | `0046_observation_source_seen` |
+| Served tracker routes | 3: `POST /api/v1/work-units/{unit_id}/tracker-binding`, `GET /api/v1/tracker-bindings`, `POST /api/v1/reconciliation/tracker-detect` |
+| Readers of a record's `manifest_sha256` | 0. `attest_wave_exit.py --record` writes it; nothing compares it. The checked pin is `body_sha256`. |
+| A clause whose only check is `retained_evidence` | Resolves `pass` (`resolve_clause`), as Wave 1 clause 1 has since ADR-0049. |
+| `attest-wave-exit.yml` trigger | `workflow_dispatch` only |
+| `attest-exit-criteria.yml` trigger | Mondays 08:00 UTC, and `workflow_dispatch` |
+
+The four bindings, recorded here so the history survives the table:
+
+| `work_unit_id` | Todoist item | State | Written (UTC) |
+|---|---|---|---|
+| `ddda84ac-42f2-53b8-ba78-ed93339d2961` | `6h8fW6Rx2x6HwH53` | `cancelled` | 2026-07-28 13:55:08 |
+| `69e63f39-348c-53ef-bdab-af2d81e1b7e3` | `6h8fW6VQFjJjHvH3` | `cancelled` | 2026-07-28 13:55:09 |
+| `4afb7207-10cf-5875-91a0-d4a602f49777` | `6h8fW6f38cjr2WR3` | `cancelled` | 2026-07-28 13:55:10 |
+| `3a650c23-1369-5fb1-8dc2-f794d46b3819` | `6h8fW6PwHRGxh5FV` | `cancelled` | 2026-07-28 13:55:11 |
+
+### What stays true
+
+The orchestrator is canonical, and a tracker can only project it. ADR-0003 and ADR-0004 remain the
+record of that reasoning.
+
+The Todoist token (`ff396349-aec1-4250-b2f0-b493015188da`) has no remaining consumer. Devon
+deletes the BWS secret.

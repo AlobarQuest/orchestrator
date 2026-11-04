@@ -1043,3 +1043,51 @@ def test_0046_observation_sources_is_reversible(migrated_engine) -> None:
         "constrained_columns"
     ] == ["source_system", "subject_reference"]
     assert columns["last_seen_at"]["nullable"] is False
+
+
+def _check_definition(engine, suffix: str) -> str:
+    with engine.connect() as connection:
+        return connection.scalar(
+            text("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = :name"),
+            {"name": f"ck_reconciliation_conditions_{suffix}"},
+        )
+
+
+def test_0047_drops_tracker_bindings_and_its_downgrade_restores_them(migrated_engine) -> None:
+    """ADR-0040 amendment 1 retired the tracker adapter; the downgrade restores structure only."""
+    config = alembic_config()
+    assert "unit_tracker_bindings" not in inspect(migrated_engine).get_table_names()
+
+    command.downgrade(config, "0046_observation_source_seen")
+    try:
+        restored = inspect(migrated_engine)
+        assert "unit_tracker_bindings" in restored.get_table_names()
+        columns = {c["name"]: c for c in restored.get_columns("unit_tracker_bindings")}
+        assert set(columns) == {
+            "work_unit_id",
+            "tracker_system",
+            "external_item_id",
+            "external_url",
+            "projected_state",
+            "updated_at",
+        }
+        assert [name for name, c in columns.items() if c["nullable"]] == ["external_url"]
+        assert restored.get_pk_constraint("unit_tracker_bindings")["constrained_columns"] == [
+            "work_unit_id"
+        ]
+        [foreign_key] = restored.get_foreign_keys("unit_tracker_bindings")
+        assert foreign_key["referred_table"] == "work_units"
+        assert foreign_key["constrained_columns"] == ["work_unit_id"]
+        assert {c["name"] for c in restored.get_check_constraints("unit_tracker_bindings")} == {
+            "ck_unit_tracker_bindings_tracker_system",
+            "ck_unit_tracker_bindings_external_item_id",
+        }
+        assert "'tracker'" in _check_definition(migrated_engine, "observation_kind")
+        assert "'tracker_state_divergence'" in _check_definition(migrated_engine, "type")
+    finally:
+        command.upgrade(config, "head")
+
+    assert "unit_tracker_bindings" not in inspect(migrated_engine).get_table_names()
+
+    assert "'tracker'" not in _check_definition(migrated_engine, "observation_kind")
+    assert "'tracker_state_divergence'" not in _check_definition(migrated_engine, "type")

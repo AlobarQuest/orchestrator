@@ -684,18 +684,6 @@ TABLE: dict[str, Row] = {
         "zoneinfo",
         no_sibling_lanes=True,
     ),
-    "tracker_projection_adapter": _row(
-        "__future__",
-        "dataclasses",
-        "datetime",
-        "estate_clients",
-        "httpx",
-        "json",
-        "os",
-        "re",
-        "typer",
-        "typing",
-    ),
     # The carry builds its intake payload by running `orchestrator emit-intake-payload`, not by
     # importing the function that backs it -- running the command is what makes its output
     # byte-identical to what a human produces by hand.
