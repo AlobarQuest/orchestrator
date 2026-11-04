@@ -329,6 +329,10 @@ def _approval_event_to_verified(
     )
 
 
+def _approval_refused(cause: str) -> PackageSourceError:
+    return PackageSourceError(f"approval verification failed: {cause}")
+
+
 def _verified_approval_from_events(
     *,
     package_id: str,
@@ -337,12 +341,10 @@ def _verified_approval_from_events(
     approver: str,
     commit: str,
     event_id: str,
-) -> VerifiedApproval | None:
-    if not isinstance(revision, int):
-        return None
+) -> VerifiedApproval:
     events = _iter_package_approval_events()
     if events is None:
-        return None
+        raise _approval_refused("factory event log is unreadable")
     for event in events:
         verified = _approval_event_to_verified(
             event,
@@ -355,7 +357,7 @@ def _verified_approval_from_events(
         )
         if verified is not None:
             return verified
-    return None
+    raise _approval_refused("no matching package.approved event")
 
 
 def _verify_current_approval(
@@ -364,23 +366,25 @@ def _verify_current_approval(
     approved_hash: str,
     revision: object,
     approval: Mapping[str, Any],
-) -> VerifiedApproval | None:
+) -> VerifiedApproval:
     approver = approval.get("approver")
     commit = approval.get("commit")
     event_id = approval.get("event_id")
     if not isinstance(revision, int):
-        return None
+        raise _approval_refused("revision is not an integer")
     if not isinstance(approver, str) or not _is_recognised_approver(approver):
-        return None
+        raise _approval_refused("approver is not recognised")
     if not isinstance(commit, str) or not commit:
-        return None
+        raise _approval_refused("approval commit is empty")
     if not isinstance(event_id, str) or not event_id:
-        return None
+        raise _approval_refused("approval event id is empty")
     sibling_verification = _verify_with_intent_packages_cli(path)
-    if sibling_verification is not True:
-        return None
+    if sibling_verification is None:
+        raise _approval_refused("intent-packages checkout is unavailable")
+    if not sibling_verification:
+        raise _approval_refused("intent-packages verify-approval failed")
     if not _verify_factory_chain():
-        return None
+        raise _approval_refused("factory event chain did not verify")
     return _verified_approval_from_events(
         package_id=package_id,
         approved_hash=approved_hash,

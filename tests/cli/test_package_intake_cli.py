@@ -690,3 +690,101 @@ def test_intake_protocol_fixture_reads_closed_fixture_and_posts_expected_payload
     assert payload["expected_version"] == 0
     assert payload["status_at_intake"] == "closed"
     assert payload["intake_purpose"] == "protocol_fixture"
+
+
+_GOOD_APPROVAL = {"approver": "devon", "commit": "abc123", "event_id": "evt-1"}
+
+
+def _stub_every_check_passing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(package_sources, "_is_recognised_approver", lambda approver: True)
+    monkeypatch.setattr(package_sources, "_verify_with_intent_packages_cli", lambda path: True)
+    monkeypatch.setattr(package_sources, "_verify_factory_chain", lambda: True)
+    monkeypatch.setattr(package_sources, "_iter_package_approval_events", lambda: [])
+
+
+def _verify_with(
+    approval: dict[str, object] | None = None, revision: object = 1
+) -> VerifiedApproval:
+    return package_sources._verify_current_approval(
+        Path("tests/fixtures/intent-packages/ws32-approved-software"),
+        "ws32-approved-software",
+        "hash",
+        revision,
+        _GOOD_APPROVAL if approval is None else approval,
+    )
+
+
+@pytest.mark.parametrize(
+    ("approval", "revision", "cause"),
+    [
+        (None, "1", "revision is not an integer"),
+        ({**_GOOD_APPROVAL, "approver": "nobody"}, 1, "approver is not recognised"),
+        ({**_GOOD_APPROVAL, "commit": ""}, 1, "approval commit is empty"),
+        ({**_GOOD_APPROVAL, "event_id": ""}, 1, "approval event id is empty"),
+    ],
+)
+def test_a_malformed_approval_names_the_field_that_is_wrong(
+    monkeypatch: pytest.MonkeyPatch,
+    approval: dict[str, object] | None,
+    revision: object,
+    cause: str,
+) -> None:
+    _stub_every_check_passing(monkeypatch)
+    monkeypatch.setattr(package_sources, "_is_recognised_approver", lambda a: a == "devon")
+
+    with pytest.raises(PackageSourceError, match=f"^approval verification failed: {cause}$"):
+        _verify_with(approval, revision)
+
+
+def test_a_missing_intent_packages_checkout_is_named(monkeypatch: pytest.MonkeyPatch) -> None:
+    _stub_every_check_passing(monkeypatch)
+    monkeypatch.setattr(package_sources, "_verify_with_intent_packages_cli", lambda path: None)
+
+    with pytest.raises(
+        PackageSourceError,
+        match="^approval verification failed: intent-packages checkout is unavailable$",
+    ):
+        _verify_with()
+
+
+def test_a_failing_verify_approval_is_named(monkeypatch: pytest.MonkeyPatch) -> None:
+    _stub_every_check_passing(monkeypatch)
+    monkeypatch.setattr(package_sources, "_verify_with_intent_packages_cli", lambda path: False)
+
+    with pytest.raises(
+        PackageSourceError,
+        match="^approval verification failed: intent-packages verify-approval failed$",
+    ):
+        _verify_with()
+
+
+def test_a_factory_chain_that_does_not_verify_is_named(monkeypatch: pytest.MonkeyPatch) -> None:
+    _stub_every_check_passing(monkeypatch)
+    monkeypatch.setattr(package_sources, "_verify_factory_chain", lambda: False)
+
+    with pytest.raises(
+        PackageSourceError,
+        match="^approval verification failed: factory event chain did not verify$",
+    ):
+        _verify_with()
+
+
+def test_an_unreadable_event_log_is_named(monkeypatch: pytest.MonkeyPatch) -> None:
+    _stub_every_check_passing(monkeypatch)
+    monkeypatch.setattr(package_sources, "_iter_package_approval_events", lambda: None)
+
+    with pytest.raises(
+        PackageSourceError,
+        match="^approval verification failed: factory event log is unreadable$",
+    ):
+        _verify_with()
+
+
+def test_no_matching_approval_event_is_named(monkeypatch: pytest.MonkeyPatch) -> None:
+    _stub_every_check_passing(monkeypatch)
+
+    with pytest.raises(
+        PackageSourceError,
+        match="^approval verification failed: no matching package.approved event$",
+    ):
+        _verify_with()
