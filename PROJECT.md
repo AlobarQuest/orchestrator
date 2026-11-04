@@ -231,6 +231,7 @@ for their date and are not current policy.
 - [ ] (P3) The SDS reads backlog items as signals that become proposed work (ADR-0021 amendment 1) — added 2026-10-30
 - [ ] (P3) The landing ledger's LANDING path (read_landing) still falls back to the pull request's head commit for Dependabot's update metadata, so a branch-updated update that lands as a true merge (or a squash with a custom body) records update=None though the gate read commits[0]. Move it to the gate's first-commit rule (github._gate_message); landing facts are frozen at first write, so handle stored rows in the same change. — added 2026-10-30
 - [ ] (P3) Add a retire action for a registered package with no decomposition. Only staged intakes can be withdrawn; a registered package that is never decomposed waits forever in execution-status (example: f921c842, WS-P2.11 conformance kit, delivered by hand). Rejecting a proposal is the only thing that ends a package's wait. — added 2026-11-03
+- [ ] (P3) The policy-approver pattern (_POLICY_APPROVER_RE in orchestrator package_sources.py, and its writer in intent-packages approval_policy) ends in $, which matches before a trailing newline, so an approver 'policy:x@v1' followed by a newline in lineage.yaml is accepted. Use re.fullmatch or \Z on both sides together. — added 2026-11-04
 ## Future plans
 
 ## Known Non-obvious Invariants
