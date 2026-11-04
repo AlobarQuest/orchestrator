@@ -830,3 +830,173 @@ def test_no_matching_approval_event_is_named(monkeypatch: pytest.MonkeyPatch) ->
         match="^approval verification failed: no matching package.approved event$",
     ):
         _verify_with()
+
+
+# ---- The event that proves an approval: each field it must carry ------------------------------
+
+_EVENT = {
+    "action": "package.approved",
+    "event_id": "evt-1",
+    "timestamp": "2026-07-05T00:02:00Z",
+    "source": {"ref": "pkg-1"},
+    "evidence": [{"approved_hash": "h1", "revision": 1, "approver": "devon", "commit": "c1"}],
+}
+
+
+def _verify_event_log() -> VerifiedApproval:
+    return package_sources._verified_approval_from_events(
+        package_id="pkg-1",
+        approved_hash="h1",
+        revision=1,
+        approver="devon",
+        commit="c1",
+        event_id="evt-1",
+    )
+
+
+def _event_with(**changes: object) -> dict[str, object]:
+    return {**_EVENT, **changes}
+
+
+def _evidence_with(**changes: object) -> list[dict[str, object]]:
+    return [{**_EVENT["evidence"][0], **changes}]
+
+
+def _log(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, events: list[object]) -> None:
+    monkeypatch.setenv("FACTORY_EVENTS_HOME", str(tmp_path))
+    (tmp_path / "events.jsonl").write_text(
+        "".join(json.dumps(event) + "\n" for event in events), encoding="utf-8"
+    )
+
+
+def test_an_event_carrying_every_claimed_field_verifies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _log(tmp_path, monkeypatch, [{"event": _EVENT}])
+
+    verified = _verify_event_log()
+
+    assert verified == VerifiedApproval("devon", "2026-07-05T00:02:00Z", "evt-1", "c1")
+
+
+@pytest.mark.parametrize(
+    "event",
+    [
+        _event_with(event_id="evt-other"),
+        _event_with(source={"ref": "pkg-other"}),
+        _event_with(source="pkg-1"),
+        _event_with(source=None),
+        _event_with(evidence=_evidence_with(approved_hash="h-other")),
+        _event_with(evidence=_evidence_with(revision=2)),
+        _event_with(evidence=_evidence_with(approver="someone")),
+        _event_with(evidence=_evidence_with(commit="c-other")),
+        _event_with(evidence=None),
+        _event_with(timestamp=""),
+        _event_with(timestamp=None),
+        _event_with(action="package.rejected"),
+    ],
+    ids=[
+        "event-id",
+        "source-ref",
+        "source-not-a-mapping",
+        "source-null",
+        "hash",
+        "revision",
+        "approver",
+        "commit",
+        "evidence-null",
+        "timestamp-empty",
+        "timestamp-null",
+        "other-action",
+    ],
+)
+def test_an_event_deviating_in_one_field_does_not_verify(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, event: dict[str, object]
+) -> None:
+    _log(tmp_path, monkeypatch, [{"event": event}])
+
+    with pytest.raises(PackageSourceError, match="no matching package.approved event"):
+        _verify_event_log()
+
+
+def test_evidence_that_is_not_a_list_matches_nothing() -> None:
+    assert not package_sources._matching_event_evidence(
+        tuple(_evidence_with()),
+        approved_hash="h1",
+        revision=1,
+        approver="devon",
+        commit="c1",
+    )
+
+
+def test_the_log_skips_other_actions_and_blank_or_broken_lines(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _log(tmp_path, monkeypatch, [{"event": _event_with(action="package.proposed")}, _EVENT])
+    with (tmp_path / "events.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write("\n not json\n")
+
+    events = package_sources._iter_package_approval_events()
+
+    assert events == [_EVENT]
+
+
+# ---- The sibling CLI's answer, and who counts as an approver ------------------------------------
+
+
+@pytest.mark.parametrize(("code", "answer"), [(0, True), (1, False), (2, False)])
+def test_the_sibling_cli_answer_is_its_exit_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code: int, answer: bool
+) -> None:
+    monkeypatch.setattr(package_sources, "_intent_packages_src", lambda: tmp_path)
+    monkeypatch.setattr(
+        package_sources.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, code)
+    )
+
+    assert package_sources._verify_with_intent_packages_cli(tmp_path) is answer
+
+
+def _registry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, **agents: str) -> None:
+    (tmp_path / "registry" / "agents").mkdir(parents=True)
+    for name, text in agents.items():
+        (tmp_path / "registry" / "agents" / f"{name}.yaml").write_text(text, encoding="utf-8")
+    monkeypatch.setenv("SECURITY_STANDARDS_DIR", str(tmp_path))
+
+
+def test_only_an_agent_with_the_human_operator_profile_is_a_human_operator(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _registry(
+        tmp_path,
+        monkeypatch,
+        devon="authority_profile: human-operator-v1\n",
+        robot="authority_profile: coding-agent-v1\n",
+        bare="agent_id: bare\n",
+    )
+
+    assert package_sources._is_human_operator("devon") is True
+    assert package_sources._is_human_operator("robot") is False
+    assert package_sources._is_human_operator("bare") is False
+    assert package_sources._is_human_operator("absent") is False
+
+
+@pytest.mark.parametrize(
+    ("approver", "recognised"),
+    [
+        ("policy:dependency-update@v1", True),
+        ("policy:dependency-update@v0", False),
+        ("policy:dependency-update", False),
+        ("nobody", False),
+    ],
+)
+def test_a_policy_shaped_approver_is_recognised_without_the_registry(
+    monkeypatch: pytest.MonkeyPatch, approver: str, recognised: bool
+) -> None:
+    monkeypatch.setattr(package_sources, "_is_human_operator", lambda agent_id: False)
+
+    assert package_sources._is_recognised_approver(approver) is recognised
+
+
+def test_a_float_is_refused_in_the_canonical_hash() -> None:
+    with pytest.raises(PackageSourceError, match="floats are not allowed"):
+        canonical_package_hash({"budget": 1.5})
