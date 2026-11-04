@@ -1060,7 +1060,28 @@ def test_0047_drops_tracker_bindings_and_its_downgrade_restores_them(migrated_en
 
     command.downgrade(config, "0046_observation_source_seen")
     try:
-        assert "unit_tracker_bindings" in inspect(migrated_engine).get_table_names()
+        restored = inspect(migrated_engine)
+        assert "unit_tracker_bindings" in restored.get_table_names()
+        columns = {c["name"]: c for c in restored.get_columns("unit_tracker_bindings")}
+        assert set(columns) == {
+            "work_unit_id",
+            "tracker_system",
+            "external_item_id",
+            "external_url",
+            "projected_state",
+            "updated_at",
+        }
+        assert [name for name, c in columns.items() if c["nullable"]] == ["external_url"]
+        assert restored.get_pk_constraint("unit_tracker_bindings")["constrained_columns"] == [
+            "work_unit_id"
+        ]
+        [foreign_key] = restored.get_foreign_keys("unit_tracker_bindings")
+        assert foreign_key["referred_table"] == "work_units"
+        assert foreign_key["constrained_columns"] == ["work_unit_id"]
+        assert {c["name"] for c in restored.get_check_constraints("unit_tracker_bindings")} == {
+            "ck_unit_tracker_bindings_tracker_system",
+            "ck_unit_tracker_bindings_external_item_id",
+        }
         assert "'tracker'" in _check_definition(migrated_engine, "observation_kind")
         assert "'tracker_state_divergence'" in _check_definition(migrated_engine, "type")
     finally:
