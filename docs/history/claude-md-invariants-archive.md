@@ -2026,6 +2026,13 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   The residual is named in ADR-0040 rather than implied: the adapter is now reachable only by its
   own tests and by that probe. If Wave 2's manifest is ever retired, this becomes deletable with it.
 
+  **Superseded 2026-11-04 (ADR-0040 amendment 1).** Devon retired the adapter. Clause 3's live
+  checks gave way to a retained-evidence check on `docs/evidence/exit-manifest/2026-10-08-wave2.json`,
+  the bar's text unchanged, and the adapter, routes, services and table were removed. The CLAUDE.md
+  bullet read, until then: "Before deleting anything, grep the exit manifests
+  (`docs/operations/wave-exit-manifest.toml`) and evidence, not only `src/`; the tracker adapter
+  and routes stay because Wave 2's met bar attests them."
+
 ### #290
 
 - **A CONSTANT WHOSE COMMENT NAMES ANOTHER REPOSITORY'S LITERAL WILL DRIFT, AND THE COMMENT IS NOT

@@ -73,7 +73,8 @@ script is declared apart from its command vocabulary (3c-1: factory-runner #89, 
 
 Four decisions aren't carried forward:
 
-- 6b, confirming Todoist as the place to see factory work: ADR-0040 retired the tracker lane.
+- 6b, confirming Todoist as the place to see factory work: ADR-0040 retired the tracker lane, and
+  its amendment 1 removed the adapter.
 - 6c, deriving candidate lessons automatically: Tier 3 item 24 deleted the promotion surface it
   would have fed.
 - 3d-2, recording real exit codes: factory-runner records a command only after it exits 0, since

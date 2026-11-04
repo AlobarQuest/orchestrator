@@ -508,9 +508,11 @@ Placement rule: global CLAUDE.md §7.
 - `dead_letter` reports `stalled_verification` over `VERIFICATION_STATES`, kept separate from
   `APPROVAL_STATES` (different owner, different remedy); `revision_required` is deliberately
   uncovered. History: `docs/history/claude-md-invariants-archive.md` #276.
-- Before deleting anything, grep the exit manifests (`docs/operations/wave-exit-manifest.toml`) and
-  evidence, not only `src/`; the tracker adapter and routes stay because Wave 2's met bar attests
-  them. History: `docs/history/claude-md-invariants-archive.md` #287.
+- Before deleting anything, grep the exit manifests (`docs/operations/wave-exit-manifest.toml`,
+  `docs/operations/exit-criteria-claims.toml`) and evidence, not only `src/`. Something a met bar
+  attests leaves only by an amendment that keeps the bar met: drop the live check, pin the retained
+  record of its last pass, and leave the bar's text and `body_sha256` unchanged (ADR-0049, ADR-0040
+  amendment 1). History: `docs/history/claude-md-invariants-archive.md` #287.
 - `scripts/check_profile_budget_agreement.py` holds every `dependency-update` pattern to intent-packages'
   `BUDGETS` and `CAPABILITIES`. Raising the ceiling is a standing-authority decision. Archive #291.
 - Dispatch admission, the claim, the decomposition proposal and its approval, and every landing

@@ -188,7 +188,6 @@ WORK_UNIT_CONSTRUCTORS = frozenset(
 class Role(Enum):
     OBSERVE_ONLY = "observe-only producer"
     INTERNAL_LANE_ACTOR = "internal lane actor"
-    REPORT_ONLY_WRITER = "report-only writer"
     NOT_AN_ORCHESTRATOR_WRITER = "not an orchestrator writer"
 
 
