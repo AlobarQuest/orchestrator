@@ -81,7 +81,8 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   bare GET is `401`. (Verified 2026-07-22, AC-003; token migration 2026-07-30.)
   The Todoist token (`ff396349-aec1-4250-b2f0-b493015188da`, BWS key
   `TODIST-API-DEVON-PERSONAL`) has no consumer: ADR-0040 amendment 1 removed the tracker adapter,
-  its last reader, and the token left `.bws-secrets.toml`. Devon deletes the BWS secret.
+  its last reader, and the token left `.bws-secrets.toml`. The BWS secret stays, because Devon uses
+  it outside the SDS.
   **The SDS consumer set at the 2026-07-30 migration was five, not the three the plan named:**
   this repo's three launchers (ADR-0040 later deleted the two tracker ones, and amendment 1 the adapter), intent-packages' `credentials.py` (env-driven, no code change),
   **and `infraops-mcp-server/scripts/drift-audit.sh`** — which runs on a 03:00 LaunchAgent and

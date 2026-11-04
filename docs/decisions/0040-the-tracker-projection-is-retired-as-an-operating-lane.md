@@ -146,5 +146,5 @@ The four bindings, recorded here so the history survives the table:
 The orchestrator is canonical, and a tracker can only project it. ADR-0003 and ADR-0004 remain the
 record of that reasoning.
 
-The Todoist token (`ff396349-aec1-4250-b2f0-b493015188da`) has no remaining consumer. Devon
-deletes the BWS secret.
+The Todoist token (`ff396349-aec1-4250-b2f0-b493015188da`) has no remaining consumer in this
+repository, so it leaves `.bws-secrets.toml`. The BWS secret stays: Devon uses it outside the SDS.
