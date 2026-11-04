@@ -23,6 +23,12 @@ The wire value is what the API, the database and the code use. The label is for 
 `rollouts` is the Deploys service. The word guards (ADR-0051) refuse the other spelling in code under
 `src/orchestrator/`, so "Deploys" appears only in the review template and in documents.
 
+`rollouts` also gates release work in the orchestrator: binding an image, recording a deployment
+observation and reading the machine-activation candidates for a unit refuse with
+`release_repository_not_granted` unless the record grants `rollouts` on the unit's own
+`target_repository`, and with `release_repository_mismatch` when the request names another
+repository (`services/release/release_grant.py`).
+
 `change-proposer` selects the repositories granted `rollouts`, narrowed to those whose rollout
 workflow and rollback plan are transcribed; it reads the record once per pass and exits 2 when it
 cannot (`scripts/run-change-proposer.sh` fetches the observer bearer on every run, dry or acting).
@@ -36,9 +42,8 @@ case-insensitively.
 1. Write a TOML file naming the repository, its owner, its state (`onboarding` for a new one), the
    reason, and any apps and grants.
 2. Stage it with `sds-members stage <file.toml>`. It posts `POST /api/v1/member-proposals` as SYSTEM
-   and prints the `/review/member-proposals/{id}` page. (The `sds-members` command ships with the
-   lane changes; until then post the same body, with `idempotency_key` and `expected_version: 0` added, to the API with the SYSTEM bearer, see
-   `docs/operations/credentials.md`.)
+   and prints the `/review/member-proposals/{id}` page (`sds_members/cli.py`; the entry point is
+   `sds-members` in `pyproject.toml`). The SYSTEM bearer comes from `docs/operations/credentials.md`.
 3. Open the printed page and read each change beside the record it would change. Confirm, or
    withdraw with a reason. Staging changes no member.
 
@@ -163,15 +168,27 @@ shows the new comparison.
 `GET /api/v1/members` returns every member, retired included, with a grant for each of the seven
 services. Any authenticated role may read it, OBSERVER included.
 
-Outside the orchestrator, project-standards' nightly scan reads it with the OBSERVER bearer. Its Q2
-factory-capability sweep measures the members whose app-changes grant is `granted` or
-`remediating`, and an unreadable record fails the run (`portfolio-scan`) instead of measuring
-nothing quietly.
+The record is the scope authority for every lane (ADR-0058 amendments 1 and 3). Outside the
+orchestrator, these read it through `sds_members.client`: the bump driver, bump proposer, change
+proposer, estate lander, membership check, revision watcher, rotation proposer, unit verifier and
+work carrier. Fork hardening, the landing ledger and the activation sweep read it through
+`scripts/sds_scope.py` (`run-fork-harden.sh`, `run-landing-ledger.sh`, `run-activation-sweep.sh`),
+which prints nothing and exits 3 on an unreadable record, an empty one included. The rotation
+executor reads the same route itself (`rotation_worker/grants.py`). Project-standards' nightly scan
+reads it with the OBSERVER bearer; its Q2 factory-capability sweep measures the members whose
+app-changes grant is `granted` or `remediating`.
+
+Inside the orchestrator, dispatch admission, the claim, decomposition, landing and release gates
+read the tables through the request's own session (`MemberRecordGrants`).
+
+An empty record is unread, the same as one that cannot be reached or parsed: the lanes'
+`MembersUnreadable` (`sds_members/client.py`), and, in the rotation executor and the rotation decomposer, which read the route with their own clients, `GrantUnread`. A lane
+that reads no members stops with its own unread handling rather than doing nothing quietly.
 
 ## The write split
 
 `tests/architecture/test_membership_writers.py` holds two rules: only `services/membership/proposals.py`
 constructs, adds or assigns the member models, and the routes that reach the stage, confirm or
-withdraw functions are exactly the three above. The one exception is the automatic hold
+withdraw functions are exactly the stage, confirm and withdraw routes. The one exception is the automatic hold
 (`revert_hold.place`): it may only construct and add a hold, and the inert lane's merge path is its
 only caller. Role refusal is pinned by the service and web tests.

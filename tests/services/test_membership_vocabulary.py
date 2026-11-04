@@ -17,3 +17,15 @@ def test_grant_states_match_the_model() -> None:
 
 def test_member_services_match_the_model() -> None:
     assert get_args(MemberService) == MEMBER_SERVICES
+
+
+def test_the_deploys_service_is_spelled_rollouts_everywhere() -> None:
+    """The word guards refuse the other spelling in code, so the wire value is `rollouts` in every
+    vocabulary and constant that names the service."""
+    from orchestrator.services.release.release_grant import RELEASE_GRANT_SERVICE
+    from sds_members.client import SERVICES
+
+    for vocabulary in (MEMBER_SERVICES, get_args(MemberService), SERVICES):
+        assert "rollouts" in vocabulary
+        assert not [name for name in vocabulary if "deploy" in name]
+    assert RELEASE_GRANT_SERVICE == "rollouts"

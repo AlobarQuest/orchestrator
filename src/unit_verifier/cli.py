@@ -291,8 +291,6 @@ def _grant_hold(
         members = client.members()
     except (VerifierCallError, MembersUnreadable) as error:
         return (UNREAD, str(error))
-    if not members:
-        return (UNREAD, "the member record has no rows")
     service = service_for_change_class(str(unit["authority"].get("change_class")))
     if repository.lower() in {name.lower() for name in granted(members, service)}:
         return None

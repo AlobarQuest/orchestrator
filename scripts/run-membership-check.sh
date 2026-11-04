@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # One consistency pass over the SDS member record: `membership-check` compares the record with
-# every repository's `factory-target.toml`, change-manager's inert landing population, and the
-# configuration lists the rollout, tool, hardening, fork-sync and rotation lanes carry (ADR-0058).
+# every repository's `factory-target.toml`, change-manager's inert and deploying landing
+# populations, the lists the rollout, tool, hardening, fork-sync and rotation lanes carry, the
+# rollback table, the standing dependency-update packages, the registry rows and files, and each
+# member's auto-merge state (ADR-0058; the full list is `membership_check/consistency.py`).
 #
 # DAILY AT 07:45, AFTER THE LANDING LEDGER (07:30). The lanes take their scope from the record;
 # this is what notices that a list somewhere still says something else.

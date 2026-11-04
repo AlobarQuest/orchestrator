@@ -1,11 +1,13 @@
 """Does the member record agree with the declarations and the per-repository configuration lists?
 
-The record says which repositories the SDS maintains and which services each is granted. Ten
-other places still say the same thing in their own words: each repository's `factory-target.toml`,
-change-manager's inert and deploying landing populations, and the lists the rollout, tool,
-hardening, fork-sync and rotation lanes carry. This module compares them, so a repository added
-to one and not the other is a line in a report rather than a lane that quietly does the wrong
-thing.
+The record says which repositories the SDS maintains and which services each is granted. Thirteen
+other sources still say the same thing in their own words, the inputs of `check`: each
+repository's `factory-target.toml`, change-manager's inert and deploying landing populations, the
+rollout workflows, the tool list, the hardened forks, fork-sync's fork list, the rotation registry
+repositories, the rollback table, the standing dependency-update packages, the `rotated_by_sds`
+registry rows, the repositories holding a `.cred-consumers.toml`, and each member's auto-merge
+state (ADR-0038). This module compares them, so a repository added to one and not the other is a
+line in a report rather than a lane that quietly does the wrong thing.
 
 `check` is pure: every input is a plain collection. Reading the sources is `cli.py`'s job.
 Repository names compare ignoring case (GitHub spells them one way, the lists another), and a

@@ -76,6 +76,43 @@ def test_reads_members():
     assert member.holds == (Hold("uv", "/", "sqlalchemy", "2.0.54"),)
 
 
+def test_an_empty_member_record_is_unreadable():
+    """An empty record is a wrong answer: a lane acting on it would act on a population of none."""
+    with pytest.raises(MembersUnreadable, match="empty"):
+        _read(transport=_transport(lambda request: httpx.Response(200, json={"members": []})))
+
+
+def test_every_member_in_the_record_is_read():
+    second = {**WIRE["members"][0], "repository": "A/two"}
+    members = _read(
+        transport=_transport(
+            lambda request: httpx.Response(200, json={"members": [*WIRE["members"], second]})
+        )
+    )
+    assert [m.repository for m in members] == ["A/one", "A/two"]
+
+
+def test_one_malformed_member_makes_the_whole_record_unreadable():
+    """A partial answer must never read as a shorter member list."""
+    [good] = WIRE["members"]
+    bad = {key: value for key, value in good.items() if key != "grants"}
+    with pytest.raises(MembersUnreadable, match="not the member record"):
+        _read(transport=_transport(lambda r: httpx.Response(200, json={"members": [good, bad]})))
+
+
+def test_a_null_members_list_is_not_the_member_record():
+    with pytest.raises(MembersUnreadable, match="not the member record"):
+        _read(transport=_transport(lambda r: httpx.Response(200, json={"members": None})))
+
+
+def test_a_record_of_retired_members_is_read():
+    retired = {**WIRE["members"][0], "state": "retired"}
+    [member] = _read(
+        transport=_transport(lambda request: httpx.Response(200, json={"members": [retired]}))
+    )
+    assert member.state == "retired"
+
+
 def test_a_member_without_holds_is_unreadable():
     """Fail closed: a server that dropped the key must not read as "nothing is held"."""
     [wire] = WIRE["members"]

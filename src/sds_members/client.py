@@ -9,9 +9,9 @@ orchestrator, so it keeps its own copy of the vocabularies; `tests/sds_members` 
 to the orchestrator's, so drift fails CI rather than a scheduled pass.
 
 **UNREADABLE IS ONE EXCEPTION.** Transport error, non-2xx (a redirect included: the route sits
-behind a proxy that gets reconfigured), a body that is not JSON, not an object, or not the
-record's shape: all `MembersUnreadable`. A caller must never read a partial answer as a shorter
-member list.
+behind a proxy that gets reconfigured), a body that is not JSON, not an object, not the
+record's shape, or a record with no members: all `MembersUnreadable`. A caller must never read a
+partial answer as a shorter member list.
 """
 
 from __future__ import annotations
@@ -150,9 +150,12 @@ def parse_members(body: Any) -> list[Member]:
         members = body["members"]
         if not isinstance(members, list):
             raise TypeError("members")
-        return [_parse(wire) for wire in members]
+        parsed = [_parse(wire) for wire in members]
     except ValueError, KeyError, TypeError, AttributeError:
         raise MembersUnreadable(f"the answer to GET {_MEMBERS} was not the member record") from None
+    if not parsed:
+        raise MembersUnreadable(f"the member record from GET {_MEMBERS} is empty")
+    return parsed
 
 
 def _parse_hold(wire: Any) -> Hold:
