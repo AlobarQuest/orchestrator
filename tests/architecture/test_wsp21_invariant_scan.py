@@ -922,6 +922,9 @@ OUTBOUND_ALLOWLIST = {
     # import only its names and make no request of their own.
     Path("src/tool_installer/alerts.py"),
     Path("src/tool_installer/cli.py"),
+    # Part 1a, the same: the sweep tells through the shared alert client and makes no request here.
+    Path("src/activation_sweep/alerts.py"),
+    Path("src/activation_sweep/cli.py"),
 }
 
 

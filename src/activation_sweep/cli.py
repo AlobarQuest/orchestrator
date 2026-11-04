@@ -7,6 +7,11 @@ died on the third of nine would discard the two it had already filed.
 FAILING OPEN IS NOT EXITING ZERO. The three codes below separate the three answers a caller
 actually needs, and a broken tool sharing a code with an honest finding is a collision this
 estate has already paid for.
+
+THE ACTING PASS (any pass without `--dry-run`) ALSO TELLS A PERSON, through keyed alert-hub alerts
+(`activation_sweep.alerts`), and needs `SDS_BRIDGE_ALERT_TOKEN` (exit 1 without it, before any
+work). A failed send or an unusable alert state file is the incomplete code, after the pass's own
+work, so it outranks a finding.
 """
 
 from __future__ import annotations
@@ -18,6 +23,7 @@ from typing import Annotated, Any, Protocol
 
 import typer
 
+from activation_sweep import alerts
 from activation_sweep.bind import (
     NullBinder,
     bind_checkout,
@@ -43,6 +49,7 @@ from activation_sweep.orchestrator_client import (
     open_client,
 )
 from activation_sweep.record import activation_observation
+from alert_hub_client import Alert, AlertHubError
 
 app = typer.Typer(no_args_is_help=True)
 
@@ -75,6 +82,31 @@ def _exit_code(*, findings: bool, incomplete: bool) -> int:
     if incomplete:
         return EXIT_INCOMPLETE
     return EXIT_FINDINGS if findings else EXIT_OK
+
+
+def _tell(classified: tuple[dict[str, Alert], set[str]], token: str, filename: str) -> bool:
+    """Sync one subcommand's alerts. False when alert-hub or the state file could not be used."""
+    directory = alerts.state_dir(Path.home(), os.environ.get(alerts.STATE_DIR_ENV))
+    firing, unread = classified
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        alerts.open_hub(token, directory, filename).sync(firing, unread)
+    except OSError as error:
+        typer.echo(f"UNUSABLE: the alert state directory: {type(error).__name__}", err=True)
+        return False
+    except AlertHubError as error:
+        typer.echo(f"UNUSABLE: alert-hub was not told: {error}", err=True)
+        return False
+    return True
+
+
+def _alert_token(*, acting: bool) -> str:
+    """The sender token an acting pass needs; its absence is the tool failing, before any work."""
+    token = os.environ.get(alerts.TOKEN_ENV, "").strip() if acting else ""
+    if acting and not token:
+        typer.echo(f"{alerts.TOKEN_ENV} is required for an acting pass", err=True)
+        raise typer.Exit(code=1)
+    return token
 
 
 @app.callback()
@@ -185,6 +217,7 @@ def sweep_command(
     if not dry_run and not token:
         typer.echo(f"{TOKEN_VARIABLE} is required", err=True)
         raise typer.Exit(code=1)
+    alert_token = _alert_token(acting=not dry_run)
     if dry_run:
         summaries = [
             sweep_checkout(path, _NullWriter(), fetch=fetch, dry_run=True) for path in checkout
@@ -205,12 +238,16 @@ def sweep_command(
                 sweep_checkout(path, client, fetch=fetch, dry_run=False) for path in checkout
             ]
     typer.echo(json.dumps(summaries, indent=2, sort_keys=True))
+    # TELL A PERSON after the pass's own work. A failed send is the could-not-report code, which
+    # outranks the finding code, so it cannot hide a finding.
+    unreported = not dry_run and not _tell(
+        alerts.classify_sweep(summaries), alert_token, alerts.SWEEP_FILE
+    )
     raise typer.Exit(
         code=_exit_code(
             findings=any(summary.get("conditions") for summary in summaries),
-            incomplete=any(
-                summary["unavailable"] or summary["recorded"] is False for summary in summaries
-            ),
+            incomplete=unreported
+            or any(summary["unavailable"] or summary["recorded"] is False for summary in summaries),
         )
     )
 
@@ -247,6 +284,7 @@ def bind_command(
     if not token:
         typer.echo(f"{BINDING_TOKEN_VARIABLE} is required", err=True)
         raise typer.Exit(code=1)
+    alert_token = _alert_token(acting=not dry_run)
     try:
         client = open_binding_client(
             base_url=orchestrator_url, credential_key_id=credential_key_id, token=token
@@ -264,9 +302,12 @@ def bind_command(
     # never installed, or the environment does not match its lockfile, and a person has to sync.
     # That is exit 2, the same meaning the staleness sweep gives it, while a missing answer stays
     # exit 3 and outranks it.
+    unreported = not dry_run and not _tell(
+        alerts.classify_bind(summaries), alert_token, alerts.BIND_FILE
+    )
     raise typer.Exit(
         code=_exit_code(
             findings=has_conditions(summaries),
-            incomplete=has_findings(summaries),
+            incomplete=unreported or has_findings(summaries),
         )
     )

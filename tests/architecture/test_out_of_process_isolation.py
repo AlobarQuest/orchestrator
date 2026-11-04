@@ -101,6 +101,8 @@ TABLE: dict[str, Row] = {
     ),
     "activation_sweep": _row(
         "__future__",
+        "alert_hub_client",
+        "collections",
         "dataclasses",
         "datetime",
         "estate_clients",
