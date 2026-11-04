@@ -82,6 +82,29 @@ def test_an_empty_member_record_is_unreadable():
         _read(transport=_transport(lambda request: httpx.Response(200, json={"members": []})))
 
 
+def test_every_member_in_the_record_is_read():
+    second = {**WIRE["members"][0], "repository": "A/two"}
+    members = _read(
+        transport=_transport(
+            lambda request: httpx.Response(200, json={"members": [*WIRE["members"], second]})
+        )
+    )
+    assert [m.repository for m in members] == ["A/one", "A/two"]
+
+
+def test_one_malformed_member_makes_the_whole_record_unreadable():
+    """A partial answer must never read as a shorter member list."""
+    [good] = WIRE["members"]
+    bad = {key: value for key, value in good.items() if key != "grants"}
+    with pytest.raises(MembersUnreadable, match="not the member record"):
+        _read(transport=_transport(lambda r: httpx.Response(200, json={"members": [good, bad]})))
+
+
+def test_a_null_members_list_is_not_the_member_record():
+    with pytest.raises(MembersUnreadable, match="not the member record"):
+        _read(transport=_transport(lambda r: httpx.Response(200, json={"members": None})))
+
+
 def test_a_record_of_retired_members_is_read():
     retired = {**WIRE["members"][0], "state": "retired"}
     [member] = _read(
