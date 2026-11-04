@@ -702,14 +702,6 @@ OUTBOUND_ALLOWLIST = {
     # the
     # estate lane's, whose population lands into something already serving.
     Path("src/inert_lander/orchestrator_client.py"),
-    # The WS-P2.7 tracker projection adapter is a SEPARATE program (ADR-0003), the same
-    # report-only-runner shape as ADR-0002. It reads canonical state and projects it onto Todoist;
-    # projecting is its entire job. It shares no import path with src/orchestrator/, and its write
-    # surface is the two-endpoint, both-report-only allowlist enforced in code by
-    # _is_allowed_write in orchestrator_client.py and in tests by
-    # tests/tracker_projection_adapter/test_client_surface.py. Its egress is not the orchestrator's.
-    Path("src/tracker_projection_adapter/orchestrator_client.py"),
-    Path("src/tracker_projection_adapter/tracker.py"),
     # WS-P3.6 Increment 2. The landing ledger is a SEPARATE program, the same report-only shape as
     # ADR-0002. It reads GitHub -- which commits reached a default branch, and what can be observed
     # about how each got there -- and records one observation per landing. Its GitHub half refuses

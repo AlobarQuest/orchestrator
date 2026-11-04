@@ -355,8 +355,6 @@ description = "Image binding, deployment observations, traceability, reconciliat
 paths = [
   "src/image_release/**",
   "tests/image_release/**",
-  "src/tracker_projection_adapter/**",
-  "tests/tracker_projection_adapter/**",
   "src/orchestrator/services/release/**",
   "src/orchestrator/services/reporting/**",
   "src/orchestrator/services/reconciliation/**",
