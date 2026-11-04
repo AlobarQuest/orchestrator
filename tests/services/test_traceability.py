@@ -692,6 +692,20 @@ def test_a_repository_anchored_pr_matches_both_the_repository_and_the_number(
     assert resolve_anchors(migrated_session, anchor) == (wanted.id,)
 
 
+def test_a_repository_anchored_pr_ignores_the_repository_s_case(migrated_session: Session):
+    """GitHub names a repository case-insensitively, and the estate stores both spellings, so the
+    anchor finds a binding whatever case either side spells the repository in."""
+    wanted, _ = _binding_of(
+        migrated_session, "anchor-case", pr_number=30, repository="AlobarQuest/Orchestrator"
+    )
+
+    anchor = TraceabilityAnchor(
+        kind="pr", pr_number=30, source_repository="alobarquest/orchestrator"
+    )
+
+    assert resolve_anchors(migrated_session, anchor) == (wanted.id,)
+
+
 def test_a_bare_pr_anchor_matches_only_its_number(migrated_session: Session):
     wanted = completed_unit(migrated_session, key="bare-wanted")
     other = completed_unit(migrated_session, key="bare-other")

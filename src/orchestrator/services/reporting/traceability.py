@@ -299,7 +299,10 @@ def _resolve_pr(session: Session, anchor: TraceabilityAnchor) -> tuple[uuid.UUID
             session,
             select(ReleaseArtifactBinding.work_unit_id)
             .where(
-                ReleaseArtifactBinding.source_repository == anchor.source_repository,
+                # Case-folded: GitHub names a repository case-insensitively, and the estate
+                # stores both spellings, as the landing join beside this one does.
+                func.lower(ReleaseArtifactBinding.source_repository)
+                == anchor.source_repository.lower(),
                 ReleaseArtifactBinding.implementation_pr_number == anchor.pr_number,
             )
             .order_by(ReleaseArtifactBinding.work_unit_id),
