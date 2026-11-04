@@ -296,7 +296,7 @@ CLI_IMPORTS = {
     "sds_members.client": {"Member", "MembersUnreadable", "read_members"},
     "tool_installer.tools": {"TOOLS"},
 }
-FIRST_PARTY_PREFIX = ("collections", "typing", "os", "__future__", "typer")
+LIBRARY_ROOTS = ("collections", "typing", "os", "__future__", "typer")
 
 
 def project_imports(source: str) -> dict[str, set[str]]:
@@ -304,7 +304,7 @@ def project_imports(source: str) -> dict[str, set[str]]:
     found: dict[str, set[str]] = {}
     for node in ast.walk(ast.parse(source)):
         if isinstance(node, ast.ImportFrom) and node.module:
-            if node.module.split(".")[0] in FIRST_PARTY_PREFIX:
+            if node.module.split(".")[0] in LIBRARY_ROOTS:
                 continue
             found.setdefault(node.module, set()).update(alias.name for alias in node.names)
     return found
@@ -364,6 +364,7 @@ def test_the_program_sends_no_alert() -> None:
     text = "\n".join(path.read_text("utf-8") for path in CHECK_SOURCES)
     assert "alert_hub" not in text
     assert CHECK_EDGE.alert_hub == frozenset()
+    # b415d03b-...: the alert-hub `sds-bridge` sender token
     assert launcher_bearers(LAUNCHER).isdisjoint({"b415d03b-f92d-46b1-8a9d-b4f10103df49"})
 
 
@@ -586,6 +587,7 @@ def test_the_observer_key_id_is_the_one_the_member_reader_names() -> None:
 
 def test_control_an_extra_bearer_changes_what_the_launcher_fetches(tmp_path: Path) -> None:
     changed = tmp_path / "run-membership-check.sh"
+    # 221a48d5-...: the orchestrator-system SYSTEM bearer
     changed.write_text(
         LAUNCHER.read_text("utf-8")
         + '\nsds_bws_value "221a48d5-3f29-4898-b300-b4820140c880" "$BROAD_IDENTITY"\n',

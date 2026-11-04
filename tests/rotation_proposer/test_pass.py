@@ -171,6 +171,8 @@ def rig(tmp_path, monkeypatch):
         rig.member_reads += 1
         if rig.granted is None:
             raise MembersUnreadable("the member record is unreachable")
+        if not rig.granted:  # the real client refuses an empty record
+            raise MembersUnreadable("the member record from GET /api/v1/members is empty")
         return [
             Member(name, "devon", "member", None, False, (), dict.fromkeys(SERVICES, "granted"))
             for name in rig.granted

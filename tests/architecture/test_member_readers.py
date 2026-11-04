@@ -4,11 +4,11 @@ The unit is the package: a client module reads the record and the package's `cli
 `scripts/` modules are not packages, so each one is held to the rule on its own.
 
 An empty record is `MembersUnreadable` in the shared client, so a reader that does not catch it
-crashes instead of stopping cleanly. A module that calls `read_members` or
-`read_members_from_environment`, or names the `/api/v1/members` path, must reference
-`MembersUnreadable`. `rotation_worker` and `rotation_decomposer` read the route with their own
-clients and refuse an empty record as `GrantUnread` (`rotation_worker/grants.py`), so that name
-also satisfies the check. The check reads names, not behaviour.
+crashes instead of stopping cleanly. A module that calls `read_members`,
+`read_members_from_environment` or `parse_members`, or names the `/api/v1/members` path, must
+reference `MembersUnreadable`. `rotation_worker` and `rotation_decomposer` read the route with
+their own clients and refuse an empty record as `GrantUnread` (`rotation_worker/grants.py`), so
+that name also satisfies the check. The check reads names, not behaviour.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
 SCRIPTS = ROOT / "scripts"
-READERS = {"read_members", "read_members_from_environment"}
+READERS = {"read_members", "read_members_from_environment", "parse_members"}
 MEMBERS_PATH = "/api/v1/members"
 HANDLERS = {"MembersUnreadable", "GrantUnread"}
 # The route's own definitions: the client and the server.
@@ -114,6 +114,7 @@ def test_a_reader_with_no_handler_is_reported():
         "lane/cli.py": "from sds_members.client import read_members\nread_members()\n",
         "lane/ok.py": "from sds_members.client import read_members, MembersUnreadable\n",
         "path/x.py": "URL = '/api/v1/members'\n",
+        "parse/cli.py": "from sds_members.client import parse_members\nparse_members({})\n",
     }
-    assert readers_without_a_handler(synthetic) == ["path"]
+    assert readers_without_a_handler(synthetic) == ["parse", "path"]
     assert readers_without_a_handler({"lane/cli.py": synthetic["lane/cli.py"]}) == ["lane"]

@@ -691,8 +691,6 @@ def _granted_repositories(credentials: _Credentials) -> set[str]:
         credential_key_id=OBSERVER_KEY_ID,
         base_url=credentials.orchestrator_url,
     )
-    if not members:
-        raise MembersUnreadable("the member record has no rows")
     return {name.lower() for name in populations.granted(members, "credential_rotation")}
 
 

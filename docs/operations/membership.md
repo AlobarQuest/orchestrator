@@ -182,7 +182,7 @@ Inside the orchestrator, dispatch admission, the claim, decomposition, landing a
 read the tables through the request's own session (`MemberRecordGrants`).
 
 An empty record is unread, the same as one that cannot be reached or parsed: the lanes'
-`MembersUnreadable` (`sds_members/client.py`), and the rotation executor's `GrantUnread`. A lane
+`MembersUnreadable` (`sds_members/client.py`), and, in the rotation executor and the rotation decomposer, which read the route with their own clients, `GrantUnread`. A lane
 that reads no members stops with its own unread handling rather than doing nothing quietly.
 
 ## The write split

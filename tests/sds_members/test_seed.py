@@ -1,7 +1,7 @@
 """The membership seed, applied history, still matches the code lists it was taken from.
 
 `docs/operations/membership-seed.toml` was staged once to fill the record from the lanes' hard-coded
-populations (ADR-0058, phase 1). The lanes now read the record, so the comparisons here pin what
+populations (ADR-0058, phase 1). The lanes read the record, so the comparisons here pin what
 the seed recorded; a list that changes on purpose is a reason to edit or delete its comparison.
 """
 

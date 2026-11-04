@@ -49,7 +49,7 @@ def test_an_empty_record_is_unread_not_a_withdrawal(rig, capsys) -> None:
     rig.granted = []
     assert run(["--submit"]) == EXIT_FINDINGS
     assert rig.acts() == ([], 0, 0, 0)
-    assert "no rows" in capsys.readouterr().out
+    assert "is empty" in capsys.readouterr().out
 
 
 def test_an_unreadable_record_keeps_every_other_outcome(rig) -> None:
