@@ -37,6 +37,7 @@ NETWORK_ROOTS = frozenset(
 )
 ENVIRONMENT = frozenset({"PYTHONPATH", "SECURITY_STANDARDS_DIR", "FACTORY_EVENTS_HOME"})
 YAML_READS = frozenset({"package.yaml", "lineage.yaml", "<registry agent>"})
+NEVER_IMPORTED = frozenset({"pty", "multiprocessing"})
 OS_SPAWNERS = frozenset({"os.system", "os.popen", "os.execv", "os.execvp", "os.spawnv"})
 READERS = frozenset({"_read_yaml", "_iter_package_approval_events"})
 EVENTS_FILE_PARTS = frozenset({".factory", "events.jsonl"})
@@ -64,7 +65,7 @@ def subprocess_commands(source: str) -> list[tuple[str, ...]]:
     commands: list[tuple[str, ...]] = []
     for call in _calls(ast.parse(source)):
         name = _dotted(call.func)
-        if name.startswith("subprocess.") or (name.startswith("os.") and name in OS_SPAWNERS):
+        if name.startswith(("subprocess.", "asyncio.create_subprocess_")) or name in OS_SPAWNERS:
             first = call.args[0] if call.args else None
             if name == "subprocess.run" and isinstance(first, ast.List):
                 commands.append(tuple(_render(item) for item in first.elts))
@@ -73,18 +74,25 @@ def subprocess_commands(source: str) -> list[tuple[str, ...]]:
     return commands
 
 
-def subprocess_imports(source: str) -> list[str]:
-    """Imports of subprocess that `subprocess.<name>` matching would miss: from-imports, aliases."""
+def spawn_imports(source: str) -> list[str]:
+    """Imports that dotted-name matching would miss or that reach a process another way.
+
+    `subprocess` and `os` may be imported only as themselves (no from-import, no alias);
+    `pty` and `multiprocessing` may not be imported at all.
+    """
     found: list[str] = []
     for node in ast.walk(ast.parse(source)):
-        if isinstance(node, ast.ImportFrom) and (node.module or "").split(".")[0] == "subprocess":
-            found.append(f"from {node.module}")
+        if isinstance(node, ast.ImportFrom):
+            root = (node.module or "").split(".")[0]
+            if root in {"subprocess", "os", *NEVER_IMPORTED}:
+                found.append(f"from {node.module}")
         elif isinstance(node, ast.Import):
-            found += [
-                f"{a.name} as {a.asname}"
-                for a in node.names
-                if a.name.split(".")[0] == "subprocess" and a.asname
-            ]
+            for alias in node.names:
+                root = alias.name.split(".")[0]
+                if root in NEVER_IMPORTED:
+                    found.append(alias.name)
+                elif root in {"subprocess", "os"} and alias.asname:
+                    found.append(f"{alias.name} as {alias.asname}")
     return found
 
 
@@ -113,15 +121,18 @@ def environment_names(source: str) -> frozenset[str]:
 
 
 def readers(source: str) -> frozenset[str]:
-    """The functions that read file contents, by name (`read_text`, `read_bytes`, `open`)."""
+    """The functions that read file contents, by name; a read outside any function is `<module>`."""
+    tree = ast.parse(source)
+    parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
     found: set[str] = set()
-    for function in ast.walk(ast.parse(source)):
-        if not isinstance(function, ast.FunctionDef):
+    for call in _calls(tree):
+        name = _dotted(call.func)
+        if not (name == "open" or name.endswith((".read_text", ".read_bytes", ".open"))):
             continue
-        for call in _calls(function):
-            name = _dotted(call.func)
-            if name == "open" or name.endswith((".read_text", ".read_bytes", ".open")):
-                found.add(function.name)
+        scope: ast.AST | None = call
+        while scope is not None and not isinstance(scope, ast.FunctionDef | ast.AsyncFunctionDef):
+            scope = parents.get(scope)
+        found.add(scope.name if scope is not None else "<module>")
     return frozenset(found)
 
 
@@ -159,8 +170,8 @@ def test_the_module_runs_exactly_three_subprocess_commands() -> None:
     assert set(commands) == SUBPROCESS_COMMANDS
 
 
-def test_subprocess_is_imported_only_as_itself() -> None:
-    assert subprocess_imports(SOURCE) == []
+def test_processes_are_reached_only_through_plain_imports() -> None:
+    assert spawn_imports(SOURCE) == []
 
 
 def test_the_module_imports_no_network_client() -> None:
@@ -238,9 +249,30 @@ def test_control_the_path_check_finds_its_function(function: str) -> None:
     assert path_parts(SOURCE, function)
 
 
-def test_control_an_aliased_or_from_import_of_subprocess_is_reported() -> None:
-    assert subprocess_imports("import subprocess as sp\n" + SOURCE) == ["subprocess as sp"]
-    assert subprocess_imports("from subprocess import run\n" + SOURCE) == ["from subprocess"]
+def test_control_an_aliased_or_from_import_of_subprocess_or_os_is_reported() -> None:
+    assert spawn_imports("import subprocess as sp\n" + SOURCE) == ["subprocess as sp"]
+    assert spawn_imports("from subprocess import run\n" + SOURCE) == ["from subprocess"]
+    assert spawn_imports("import os as o\n" + SOURCE) == ["os as o"]
+    assert spawn_imports("from os import system\n" + SOURCE) == ["from os"]
+
+
+def test_control_pty_and_multiprocessing_imports_are_reported() -> None:
+    assert spawn_imports("import pty\n" + SOURCE) == ["pty"]
+    assert spawn_imports("from multiprocessing import Process\n" + SOURCE) == [
+        "from multiprocessing"
+    ]
+
+
+def test_control_an_asyncio_subprocess_is_reported() -> None:
+    widened = (
+        SOURCE + "\n\nasync def _extra() -> None:\n    await asyncio.create_subprocess_exec('id')\n"
+    )
+    assert ("asyncio.create_subprocess_exec",) in subprocess_commands(widened)
+
+
+def test_control_a_read_outside_any_function_is_recorded_as_the_module() -> None:
+    widened = SOURCE + '\n_TEXT = Path("x").read_text()\n'
+    assert readers(widened) == READERS | {"<module>"}
 
 
 def test_control_check_output_and_a_held_argv_are_reported() -> None:

@@ -40,7 +40,7 @@ The four outcomes, as in every layer: signals have a home; scope from the member
 
 **Files:** create `tests/architecture/test_intent_edges.py` (place it in `layers.toml`'s `intent` layer).
 
-- [ ] **Step 1:** Assert, from the module's source (AST), that it runs exactly two subprocess commands (`intent_packages verify-approval`, `factory_events verify`), imports no HTTP client, and reads only the registry, the events file and the package checkout; each with a control that fails on a widening.
+- [ ] **Step 1:** Assert, from the module's source (AST), that it runs exactly three subprocess commands (`git rev-parse HEAD`, `intent_packages verify-approval`, `factory_events verify`), imports no HTTP client, and reads only the registry, the events file and the package checkout; each with a control that fails on a widening.
 - [ ] **Step 2:** Mutation pass from a scratchpad script (never in the repository), clearing `__pycache__` around each mutant: drop each of the nine checks in turn, and flip the CLI and chain results to pass. Kill each survivor with a test; a survivor exposing behavior with no documented reason is fixed.
 - [ ] **Step 3:** Run `make check`; commit with the mutant table: `Intent: one test states the layer's surface, and its checks each fail a test`.
 
