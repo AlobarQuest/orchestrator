@@ -140,7 +140,7 @@ def _run(
 def test_a_launchers_own_finding_code_reports_the_pass_as_healthy(
     tmp_path: Path, bin_stubs: Path, check_name: str
 ) -> None:
-    """The whole change, run for every armed launcher, so both schemes (2 and 3 as found) are here."""
+    """The whole change, for every armed launcher, so both schemes (2 or 3 as found) are here."""
     _, code = declared_codes()[check_name]
 
     rc, pings, _ = _run(tmp_path, bin_stubs, check_name=check_name, exit_code=code, finding=None)
