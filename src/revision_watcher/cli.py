@@ -15,19 +15,27 @@ found everything there was to find.
 
 WHAT AN EXIT CODE DOES AND DOES NOT DO. `sds-deadman.sh` pings its check SUCCESS for a declared
 finding code -- the check answers "is this lane alive", never "did it find something". So exit 2
-does not page anybody, and the finding's durable home is the observation this pass files, which is
-why the pass writes even when nothing has changed. Whether a standing finding here should reach a
-person by some other route is an open decision, deliberately not taken inside this lane.
+alone pages nobody, and the finding's durable home is the observation this pass files, which is
+why the pass writes even when nothing has changed.
+
+THE ACTING PASS (any pass without `--dry-run`) ALSO TELLS A PERSON, through one keyed alert-hub
+alert per application (`revision-stale:<application>`, `revision_watcher.alerts`): a finding fires
+it, a later clean reading resolves it, and an application the pass could not read keeps whatever
+key it had. That pass needs `SDS_BRIDGE_ALERT_TOKEN` (exit 1 without it, before any work). A failed
+send or an unusable alert state file is the incomplete code, after the pass's own work.
 """
 
 from __future__ import annotations
 
 import os
 from contextlib import ExitStack
+from pathlib import Path
 from typing import Annotated
 
 import typer
 
+from alert_hub_client import AlertHubError
+from revision_watcher import alerts
 from revision_watcher.census import Pass, as_lines, sweep
 from revision_watcher.estate import ApplicationReader, LandingReader, PlatformReader
 from revision_watcher.github import GitHubReader
@@ -62,6 +70,31 @@ def _file_rows(result: Pass, client: OrchestratorClient) -> list[str]:
         except RevisionWriteError, ValueError:
             unfiled.append(reading.subject.name)
     return unfiled
+
+
+def _alert_token(*, acting: bool) -> str:
+    """The sender token an acting pass needs; its absence is the tool failing, before any work."""
+    token = os.environ.get(alerts.TOKEN_ENV, "").strip() if acting else ""
+    if acting and not token:
+        typer.echo(f"FATAL: {alerts.TOKEN_ENV} is required for an acting pass.", err=True)
+        raise typer.Exit(EXIT_TOOL_FAILED)
+    return token
+
+
+def _tell(result: Pass, token: str) -> bool:
+    """Sync this pass's alerts. False when alert-hub or the state file could not be used."""
+    directory = alerts.state_dir(Path.home(), os.environ.get(alerts.STATE_DIR_ENV))
+    firing, unread = alerts.classify(result)
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        alerts.open_hub(token, directory).sync(firing, unread)
+    except OSError as error:
+        typer.echo(f"UNUSABLE: the alert state directory: {type(error).__name__}", err=True)
+        return False
+    except AlertHubError as error:
+        typer.echo(f"UNUSABLE: alert-hub was not told: {error}", err=True)
+        return False
+    return True
 
 
 def _measure(
@@ -129,6 +162,8 @@ def main(
         typer.echo("FATAL: set REVISION_WATCHER_GITHUB_TOKEN, or authenticate gh.", err=True)
         raise typer.Exit(EXIT_TOOL_FAILED)
 
+    alert_token = _alert_token(acting=not dry_run)
+
     platform_url = os.environ.get("REVISION_WATCHER_PLATFORM_URL", "").strip()
     platform_token = os.environ.get("REVISION_WATCHER_PLATFORM_TOKEN", "").strip()
     estate_url = os.environ.get("REVISION_WATCHER_ESTATE_URL", "").strip()
@@ -173,13 +208,15 @@ def main(
     for name in sorted(unfiled):
         typer.echo(f"!! {name} measured, row not filed", err=True)
 
+    unreported = not dry_run and not _tell(result, alert_token)
+
     typer.echo(
         f"{len(result.readings)} applications, {len(result.findings)} behind or diverged, "
         f"{len(result.awaiting)} awaiting a deploy, {len(result.unstamped)} unstamped, "
         f"{len(result.unreadable)} unreadable, {len(result.undeclared)} undeclared, "
         f"{len(unfiled)} unfiled"
     )
-    if result.unreadable or unfiled or result.coverage_unmeasured:
+    if result.unreadable or unfiled or result.coverage_unmeasured or unreported:
         raise typer.Exit(EXIT_INCOMPLETE)
     # An undeclared application is reported above and never a finding: it may not be the SDS's.
     if result.findings:

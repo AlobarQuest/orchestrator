@@ -12,12 +12,21 @@
 # EXIT CODES, and they are the whole interface a scheduled run has:
 #   0  everything was measured and every application serves what its branch names.
 #   1  the tool itself failed (a missing credential, an unusable URL).
-#   2  something was found -- an application is behind its branch, serving something not on it,
-#      or running and answering with a revision while absent from the declared table.
+#   2  something was found -- an application is behind its branch or serving something not on it.
+#      An acting pass has told a person: one keyed alert per application
+#      (`revision-stale:<application>`), resolved when a later pass reads it current. An
+#      application running and answering with a revision while absent from the declared table is
+#      reported and is NOT a finding: it may not be the SDS's, so it raises nothing.
 #   3  some application could not be read, a row could not be filed, or the declared table could
-#      not be policed, so the answer is missing rather than clean.
+#      not be policed, so the answer is missing rather than clean. ALSO the code for an acting pass
+#      whose alert-hub send failed or whose alert state file was unusable (after the pass's own
+#      work), so a failed send cannot hide a finding.
 # 3 outranks 2: an incomplete pass cannot claim it found everything there was to find. A broken
 # tool and an honest finding sharing one code is a collision this estate has already paid for.
+#
+# THE ACTING PASS TELLS A PERSON: any pass without `--dry-run` (the plist passes no arguments). It
+# fetches the `sds-bridge` alert token through the narrow identity, as SDS_BRIDGE_ALERT_TOKEN, and
+# exits 1 when it cannot read it. A `--dry-run` pass sends nothing and fetches no alert token.
 #
 # NOTHING HERE ACTS. It asks applications what they serve, asks GitHub what a branch names, and
 # files one observation per application. It deploys nothing, restarts nothing and merges nothing;
@@ -33,6 +42,7 @@ set -uo pipefail
 OBSERVER_BEARER_UUID="f793576f-e9aa-4f9d-8089-b4a000b9e2d5"   # orchestrator-observer OBSERVER bearer
 PLATFORM_TOKEN_UUID="bbd71f41-b7df-4ae9-8fdb-b41501447308"    # read-only hosting-platform API token
 ESTATE_READ_KEY_UUID="726a18ba-7a38-4ecc-aa03-b49a015fd302"   # App Brain READ-ONLY key
+SDS_BRIDGE_ALERT_UUID="${REVISION_WATCHER_ALERT_BWS_UUID:-b415d03b-f92d-46b1-8a9d-b4f10103df49}"  # sds-bridge alert sender
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -55,8 +65,8 @@ activate_checkout "$REPO_ROOT" "$0" "$@"
 # a pass that stops running is silent. Armed AFTER activation, because `activate_checkout` may
 # `exec` and an `exec` does not fire an EXIT handler. Note what it does NOT do: a declared finding
 # code pings the check SUCCESS, so exit 2 never pages. The check answers "is this lane alive"; the
-# finding's durable home is the observation the pass files. Whether a standing finding HERE should
-# reach a person by some other route is an open decision and is deliberately not taken in this file.
+# finding's durable home is the observation the pass files, and the acting pass also tells a person
+# through a keyed alert (see the header).
 # shellcheck disable=SC1091
 source "$REPO_ROOT/scripts/sds-deadman.sh"
 sds_deadman_arm sds-revision-watcher --finding 2 "$@"
@@ -127,6 +137,22 @@ if [ -z "$REVISION_WATCHER_ESTATE_KEY" ]; then
   exit 1
 fi
 
+# Acting means no `--dry-run`, the same term the program applies.
+_revision_is_dry_run() {
+  for argument in "$@"; do
+    [ "$argument" = "--dry-run" ] && return 0
+  done
+  return 1
+}
+if ! _revision_is_dry_run "$@"; then
+  SDS_BRIDGE_ALERT_TOKEN="$(sds_bws_value "$SDS_BRIDGE_ALERT_UUID" "$SDS_IDENTITY")"
+  export SDS_BRIDGE_ALERT_TOKEN
+  if [ -z "${SDS_BRIDGE_ALERT_TOKEN:-}" ]; then
+    echo "FATAL: could not read the sds-bridge alert sender token from BWS (narrow identity)." >&2
+    exit 1
+  fi
+fi
+
 # THE GITHUB CREDENTIAL HAS NO BWS RECORD, the same gap the landing ledger and the pin watcher
 # carry and for the same reason: this reads public repository metadata and has never needed a
 # dedicated identity. A scheduled job resting on an interactive login breaks the moment that login
@@ -145,7 +171,7 @@ rc=$?
 
 # THE CONDITION HAS NO CHECK OF ITS OWN. A finding's durable home is the `production_revision`
 # observation each pass files; `sds-revision-watcher` answers only whether this lane ran, and pings
-# success on a finding. Nothing pages on a stale application.
+# success on a finding. The keyed alert is what tells a person.
 
 # A code outside {0,1,2,3} is the program dying in a way it does not describe -- a missing binary
 # is 127. Reported as 1 (the tool failed) rather than folded to 0, which is what several sibling

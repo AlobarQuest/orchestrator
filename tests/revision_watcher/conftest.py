@@ -8,9 +8,16 @@ commit and a fixture that could not tell them apart would pass on a lane that co
 
 from __future__ import annotations
 
+import functools
+import json
+from pathlib import Path
 from typing import Any
 
 import httpx
+import pytest
+
+from alert_hub_client import KeyedAlerts
+from revision_watcher import alerts as alerts_module
 
 TIP = "a" * 40
 OLD = "b" * 40
@@ -74,3 +81,38 @@ def platform_transport(applications: list[dict[str, Any]]) -> httpx.MockTranspor
 
 
 _MISSING = object()
+
+
+class Hub:
+    """A recording alert-hub: what was sent, and where the state file lives."""
+
+    def __init__(self, state: Path) -> None:
+        self.state = state
+        self.sent: list[dict[str, str]] = []
+        self.status = 202
+
+    def keys(self, status: str) -> list[str]:
+        return sorted(body["key"] for body in self.sent if body["status"] == status)
+
+    def remembered(self) -> set[str]:
+        path = self.state / alerts_module.ALERTS_FILE
+        return set(json.loads(path.read_text())) if path.exists() else set()
+
+
+@pytest.fixture(autouse=True)
+def hub(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Hub:
+    """Every test runs against a recording hub and its own state directory, never the real ones."""
+    recorder = Hub(tmp_path / "alert-state")
+
+    def _hub(request: httpx.Request) -> httpx.Response:
+        recorder.sent.append(json.loads(request.content))
+        return httpx.Response(recorder.status)
+
+    monkeypatch.setattr(
+        alerts_module,
+        "KeyedAlerts",
+        functools.partial(KeyedAlerts, transport=httpx.MockTransport(_hub), sleep=lambda _: None),
+    )
+    monkeypatch.setenv(alerts_module.STATE_DIR_ENV, str(recorder.state))
+    monkeypatch.setenv(alerts_module.TOKEN_ENV, "alert-token")
+    return recorder

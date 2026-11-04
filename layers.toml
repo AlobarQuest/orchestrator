@@ -455,6 +455,7 @@ paths = [
   "scripts/install-pin-watcher-launchd.sh",
   "scripts/com.devon.pin-watcher.plist",
   "scripts/run-revision-watcher.sh",
+  "tests/scripts/test_run_revision_watcher.py",
   "scripts/install-revision-watcher-launchd.sh",
   "scripts/com.devon.revision-watcher.plist",
   "tests/contract/test_activation_summary_contract.py",

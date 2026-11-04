@@ -925,6 +925,9 @@ OUTBOUND_ALLOWLIST = {
     # Part 1a, the same: the sweep tells through the shared alert client and makes no request here.
     Path("src/activation_sweep/alerts.py"),
     Path("src/activation_sweep/cli.py"),
+    # Part 1a, the same for the two watchers.
+    Path("src/revision_watcher/alerts.py"),
+    Path("src/revision_watcher/cli.py"),
 }
 
 

@@ -441,6 +441,7 @@ TABLE: dict[str, Row] = {
     # not carry `no_sibling_lanes`.
     "revision_watcher": _row(
         "__future__",
+        "alert_hub_client",
         "contextlib",
         "dataclasses",
         "datetime",
@@ -449,6 +450,7 @@ TABLE: dict[str, Row] = {
         "httpx",
         "json",
         "os",
+        "pathlib",
         "sds_members",
         "typer",
         "typing",
