@@ -4,7 +4,6 @@ from uuid import UUID
 from pydantic import (
     BaseModel,
     ConfigDict,
-    Field,
 )
 
 from orchestrator.api.schemas.common import CommandBase
@@ -25,50 +24,6 @@ class ReconciliationDetectResponse(BaseModel):
     conditions_recorded: int
     skipped_correlations: int
     suppressed_duplicates: int
-
-
-class TrackerReconciliationDetectItem(BaseModel):
-    """One bound tracker item's observed completion state, reported by the adapter.
-
-    Normalized state only -- never card text. The orchestrator owns the divergence rule; this
-    carries no interpretation.
-    """
-
-    tracker_system: str = Field(min_length=1)
-    external_item_id: str = Field(min_length=1)
-    observed_completed: bool
-
-
-class TrackerReconciliationDetectCommand(CommandBase):
-    """Inbound tracker reconciliation: a batch of observed item states. Conditions dedup on the
-    divergence hash regardless of the idempotency key, so a duplicate delivery surfaces as
-    suppressed_duplicates rather than a second row."""
-
-    observed_states: list[TrackerReconciliationDetectItem]
-
-
-class TrackerBindingCommand(CommandBase):
-    """A tracker-projection adapter recording the external item a unit is mirrored onto.
-
-    Projection only, like pr-binding: it never derives from tracker content and never changes
-    the unit's lifecycle state, so it carries no claim proof -- only the SYSTEM actor may write.
-    """
-
-    tracker_system: str
-    external_item_id: str = Field(min_length=1)
-    external_url: str | None = None
-    projected_state: str = Field(min_length=1)
-
-
-class TrackerBindingResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    work_unit_id: UUID
-    tracker_system: str
-    external_item_id: str
-    external_url: str | None
-    projected_state: str
-    updated_at: datetime
 
 
 class ConsistencyFindingResponse(BaseModel):

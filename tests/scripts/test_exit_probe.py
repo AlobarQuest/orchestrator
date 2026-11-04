@@ -1021,61 +1021,6 @@ def test_a_renamed_hop_on_the_releases_own_chain_is_still_unavailable(monkeypatc
 
 
 # =============================================================================================
-# Wave 2 clause 3 -- tracker_is_a_projection
-# =============================================================================================
-
-
-def _tracker_world(root: Path, monkeypatch, bindings, *, pytest_exit: int | None = 0) -> None:
-    (root / "tests/tracker_projection_adapter").mkdir(parents=True, exist_ok=True)
-    if pytest_exit is not None:
-        _fake_pytest(root, pytest_exit)
-    monkeypatch.setattr(exit_probe, "REPO_ROOT", root)
-    monkeypatch.setattr(exit_probe, "api_get", _api({"/api/v1/tracker-bindings": bindings}))
-
-
-def test_tracker_probe_passes_with_bindings_and_a_green_isolation_suite(tmp_path, monkeypatch):
-    _tracker_world(tmp_path, monkeypatch, [{"id": "b1"}])
-
-    assert exit_probe.tracker_is_a_projection() == PASS
-
-
-def test_tracker_probe_fails_on_an_empty_binding_population(tmp_path, monkeypatch):
-    """Zero canonical bindings is a projection of nothing, however green the isolation suite."""
-    _tracker_world(tmp_path, monkeypatch, [])
-
-    assert exit_probe.tracker_is_a_projection() == FAIL
-
-
-def test_tracker_probe_fails_when_the_adapter_isolation_suite_is_red(tmp_path, monkeypatch):
-    _tracker_world(tmp_path, monkeypatch, [{"id": "b1"}], pytest_exit=1)
-
-    assert exit_probe.tracker_is_a_projection() == FAIL
-
-
-def test_tracker_probe_fails_when_the_isolation_suite_collects_nothing(tmp_path, monkeypatch):
-    _tracker_world(tmp_path, monkeypatch, [{"id": "b1"}], pytest_exit=5)
-
-    assert exit_probe.tracker_is_a_projection() == FAIL
-
-
-def test_tracker_probe_is_unavailable_without_an_interpreter(tmp_path, monkeypatch):
-    _tracker_world(tmp_path, monkeypatch, [{"id": "b1"}], pytest_exit=None)
-
-    with pytest.raises(Unavailable):
-        exit_probe.tracker_is_a_projection()
-
-
-def test_tracker_probe_is_unavailable_when_the_response_loses_its_binding_key(
-    tmp_path, monkeypatch
-):
-    """A dict answer with no `bindings` key is a reshaped surface, not an empty estate."""
-    _tracker_world(tmp_path, monkeypatch, {"items": []})
-
-    with pytest.raises(Unavailable):
-        exit_probe.tracker_is_a_projection()
-
-
-# =============================================================================================
 # Wave 2 clause 4 -- every_pr_producing_unit_is_bound
 # =============================================================================================
 

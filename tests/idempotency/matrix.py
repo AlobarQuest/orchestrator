@@ -349,21 +349,6 @@ COVERAGE_MATRIX: tuple[MatrixRow, ...] = (
         "tests/idempotency/test_cost_actuals_idempotency.py::"
         "test_a_concurrent_duplicate_cost_actuals_submission_writes_one_event",
     ),
-    # --- WS-P2.7 ingress --------------------------------------------------------------------
-    MatrixRow(
-        "tracker binding report",
-        "/api/v1/work-units/{unit_id}/tracker-binding",
-        ROW_LOCK,
-        "tests/idempotency/test_tracker_binding_idempotency.py::"
-        "test_a_duplicate_tracker_binding_report_replays",
-    ),
-    MatrixRow(
-        "tracker reconciliation detect-pass",
-        "/api/v1/reconciliation/tracker-detect",
-        ADVISORY_LOCK,
-        "tests/idempotency/test_tracker_detect_idempotency.py::"
-        "test_a_duplicate_tracker_detect_records_no_second_condition",
-    ),
     # --- WS-P2.8 ingress --------------------------------------------------------------------
     MatrixRow(
         "follow-up minting",
