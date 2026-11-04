@@ -19,9 +19,16 @@
 #   1  the tool itself failed (a missing credential, an unusable URL).
 #   2  could not use its inputs: the change window was unreadable, the fork's revision was
 #      unreadable, or an install was called for with no toolchain to do it with. Also the code for
-#      a pass whose row could not be FILED -- an unfiled pass cannot claim it reported anything.
+#      a pass whose row could not be FILED -- an unfiled pass cannot claim it reported anything --
+#      and for an acting pass whose alert-hub send failed or whose alert state file was unusable
+#      (after the pass's own work; it outranks 3, so a failed send cannot hide a finding).
 #   3  something was found: the install failed, or the artifact failed its probe and was rolled
-#      back to the previous one.
+#      back to the previous one. Each such tool has been told to a person as a keyed alert
+#      (`tool-install:<tool>`), resolved when a later acting pass installs it clean.
+#
+# THE ACTING PASS TELLS A PERSON: `--install` without `--dry-run` (the scheduled one). It fetches
+# the `sds-bridge` alert token through the narrow identity, as SDS_BRIDGE_ALERT_TOKEN, and exits 1
+# when it cannot read it. A bare or `--dry-run` pass sends nothing and fetches no alert token.
 #
 # THE ESTATE'S LAUNCHERS DO NOT SHARE ONE EXIT VOCABULARY, AND 2 AND 3 ARE INVERTED BETWEEN THE
 # TWO GROUPS. This one matches the ACTING group -- `run-estate-landing.sh`,
@@ -49,6 +56,7 @@
 set -uo pipefail
 
 # BWS UUIDs (values fetched at runtime; never stored in this repo). See .bws-secrets.toml.
+SDS_BRIDGE_ALERT_UUID="${TOOL_INSTALLER_ALERT_BWS_UUID:-b415d03b-f92d-46b1-8a9d-b4f10103df49}"  # sds-bridge alert sender
 SYSTEM_BEARER_UUID="221a48d5-3f29-4898-b300-b4820140c880"     # orchestrator-system SYSTEM bearer
 OBSERVER_BEARER_UUID="f793576f-e9aa-4f9d-8089-b4a000b9e2d5"   # orchestrator-observer OBSERVER
 
@@ -96,6 +104,15 @@ source "$REPO_ROOT/scripts/sds-bws.sh"
 
 ORCHESTRATOR_API_URL="${ORCHESTRATOR_API_URL:-https://sds.alobar.net}"
 
+# Acting means `--install` and no `--dry-run`, the same two terms the program applies.
+_acting=0
+case " $* " in
+  *" --install "*) _acting=1 ;;
+esac
+case " $* " in
+  *" --dry-run "*) _acting=0 ;;
+esac
+
 # TWO ORCHESTRATOR CREDENTIALS, AND THE SPLIT IS FORCED BY THE ENDPOINT RATHER THAN CHOSEN.
 # Measured against production 2026-09-06: `GET /api/v1/factory-policy` answers 403 to
 # `orchestrator-observer` and 200 to `orchestrator-system`. The two are handed to two clients that
@@ -108,6 +125,15 @@ ORCHESTRATOR_API_TOKEN="$(sds_bws_value "$OBSERVER_BEARER_UUID")"
 export ORCHESTRATOR_API_URL
 export ORCHESTRATOR_POLICY_CREDENTIAL_KEY_ID ORCHESTRATOR_POLICY_TOKEN
 export ORCHESTRATOR_API_CREDENTIAL_KEY_ID ORCHESTRATOR_API_TOKEN
+
+if [ "$_acting" -eq 1 ]; then
+  SDS_BRIDGE_ALERT_TOKEN="$(sds_bws_value "$SDS_BRIDGE_ALERT_UUID")"
+  export SDS_BRIDGE_ALERT_TOKEN
+  if [ -z "${SDS_BRIDGE_ALERT_TOKEN:-}" ]; then
+    echo "FATAL: could not read the sds-bridge alert sender token from BWS (narrow)" >&2
+    exit 1
+  fi
+fi
 
 # THE GITHUB CREDENTIAL HAS NO BWS RECORD, the same gap the landing ledger and the pin watcher
 # carry and for the same reason: this reads public repository metadata and has never needed a

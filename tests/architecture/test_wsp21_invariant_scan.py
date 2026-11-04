@@ -918,6 +918,10 @@ OUTBOUND_ALLOWLIST = {
     Path("src/tool_installer/github.py"),
     Path("src/tool_installer/policy_client.py"),
     Path("src/tool_installer/orchestrator_client.py"),
+    # Part 1a. Tell a person through the shared alert client, which owns the transport; these two
+    # import only its names and make no request of their own.
+    Path("src/tool_installer/alerts.py"),
+    Path("src/tool_installer/cli.py"),
 }
 
 

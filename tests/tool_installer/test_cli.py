@@ -7,21 +7,25 @@ comes in a pair whose answers must differ, so a term that was dropped entirely c
 
 from __future__ import annotations
 
+import functools
 import json
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 from typer.testing import CliRunner
 
+from alert_hub_client import KeyedAlerts
+from tool_installer import alerts as alerts_module
 from tool_installer import cli as cli_module
 from tool_installer.cli import app
 from tool_installer.install import InstallOutcome, RollbackFailed
 from tool_installer.orchestrator_client import ObservationWriteError
 from tool_installer.plugin import Sites
-from tool_installer.toolchain import CRATES_JSON, CRATES_TOML, Node, ToolchainError
+from tool_installer.toolchain import CRATES_JSON, CRATES_TOML, Cargo, Node, ToolchainError
 from tool_installer.tools import OCTO, TOOLS
 
 HEAD = "4be91ebe1fc4eaf73688e28cd62782eadb355379"
@@ -48,6 +52,8 @@ class _Recorder:
 
     def __init__(self) -> None:
         self.filed: list[dict[str, Any]] = []
+        self.sent: list[dict[str, Any]] = []
+        self.hub_status = 202
 
     def __enter__(self) -> _Recorder:
         return self
@@ -141,6 +147,20 @@ def machine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Recorder:
     monkeypatch.setattr(cli_module, "default_sites", lambda: sites)
 
     recorder = _Recorder()
+
+    def _hub(request: httpx.Request) -> httpx.Response:
+        recorder.sent.append(json.loads(request.content))
+        return httpx.Response(recorder.hub_status)
+
+    # alert-hub is a recording transport; the state file is real, in the test's own directory.
+    monkeypatch.setattr(
+        alerts_module,
+        "KeyedAlerts",
+        functools.partial(KeyedAlerts, transport=httpx.MockTransport(_hub), sleep=lambda _: None),
+    )
+    monkeypatch.setenv("TOOL_INSTALLER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("SDS_BRIDGE_ALERT_TOKEN", "alert-token")
+    recorder.state = tmp_path / "state"  # type: ignore[attr-defined]
     monkeypatch.setattr(cli_module, "open_policy_client", lambda **_: recorder)
     monkeypatch.setattr(cli_module, "open_client", lambda **_: recorder)
     monkeypatch.setattr(
@@ -632,3 +652,155 @@ def test_an_admitted_rea_row_is_handed_to_the_npm_act_with_the_head_it_measured(
     assert result.exit_code == 3
     assert seen["revision"] == HEAD
     assert seen["install_root"] == machine.npm_root  # type: ignore[attr-defined]
+
+
+# ---- alerts: one keyed alert per tool that fails to install --------------------------------------
+
+RTK_KEY = "tool-install:rtk"
+
+
+def _sent_keys(machine: _Recorder) -> list[tuple[str, str]]:
+    return [(body["key"], body["status"]) for body in machine.sent]
+
+
+def _fail_rtk(machine: _Recorder, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        cli_module,
+        "resolve_cargo",
+        lambda: Cargo(executable=Path("/x/cargo"), toolchain_bin=Path("/x")),
+    )
+
+    def failed(**_: object) -> InstallOutcome:
+        return InstallOutcome(action="install_failed", installed=None, probes=[], detail="boom")
+
+    monkeypatch.setattr(cli_module, "install_and_prove", failed)
+
+
+def _remembered(machine: _Recorder) -> set[str]:
+    path = machine.state / "alerts.json"  # type: ignore[attr-defined]
+    return set(json.loads(path.read_text())) if path.exists() else set()
+
+
+def test_a_failed_install_fires_one_alert_for_that_tool(
+    machine: _Recorder, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fail_rtk(machine, monkeypatch)
+    result = _invoke(machine, monkeypatch, IN_WINDOW, "--install")
+    assert result.exit_code == 3
+    assert _sent_keys(machine) == [(RTK_KEY, "firing")]
+    assert RTK_KEY in _remembered(machine)
+
+
+def test_a_clean_row_resolves_what_an_earlier_pass_fired(
+    machine: _Recorder, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fail_rtk(machine, monkeypatch)
+    _invoke(machine, monkeypatch, IN_WINDOW, "--install")
+    machine.sent.clear()
+    _rtk_current(machine)
+    result = _invoke(machine, monkeypatch, IN_WINDOW, "--install")
+    assert result.exit_code == 0
+    assert _sent_keys(machine) == [(RTK_KEY, "resolved")]
+    assert _remembered(machine) == set()
+
+
+def test_a_row_the_pass_did_not_act_on_is_left_unread(
+    machine: _Recorder, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A closed window says nothing about whether the last install worked: the remembered key
+    neither resolves nor fires again."""
+    _fail_rtk(machine, monkeypatch)
+    _invoke(machine, monkeypatch, IN_WINDOW, "--install")
+    machine.sent.clear()
+    result = _invoke(machine, monkeypatch, OUT_OF_WINDOW, "--install")
+    assert result.exit_code == 0
+    assert machine.sent == []
+    assert RTK_KEY in _remembered(machine)
+
+
+def test_a_missing_toolchain_leaves_the_remembered_key_alone(
+    machine: _Recorder, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fail_rtk(machine, monkeypatch)
+    _invoke(machine, monkeypatch, IN_WINDOW, "--install")
+    machine.sent.clear()
+    monkeypatch.setattr(cli_module, "resolve_cargo", _raise_toolchain)
+    result = _invoke(machine, monkeypatch, IN_WINDOW, "--install")
+    assert result.exit_code == 2
+    assert machine.sent == []
+    assert RTK_KEY in _remembered(machine)
+
+
+def test_an_unreadable_window_or_revision_calls_no_sync(
+    machine: _Recorder, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both early exits happen before any row exists. A `sync` with nothing firing would resolve
+    every remembered key."""
+    from tool_installer.github import GitHubReadError
+    from tool_installer.policy_client import PolicyReadError
+
+    _fail_rtk(machine, monkeypatch)
+    _invoke(machine, monkeypatch, IN_WINDOW, "--install")
+    machine.sent.clear()
+
+    def no_sync(*_: object, **__: object) -> None:
+        raise AssertionError("an early exit called sync")
+
+    monkeypatch.setattr(KeyedAlerts, "sync", no_sync)
+
+    def unreadable_policy(**_: object) -> None:
+        raise PolicyReadError("down")
+
+    monkeypatch.setattr(cli_module, "open_policy_client", unreadable_policy)
+    assert _invoke(machine, monkeypatch, IN_WINDOW, "--install").exit_code == 2
+
+    def unreadable_head(*_: object, **__: object) -> None:
+        raise GitHubReadError("down")
+
+    monkeypatch.setattr(cli_module, "open_policy_client", lambda **_: machine)
+    monkeypatch.setattr(cli_module, "commit", unreadable_head)
+    assert _invoke(machine, monkeypatch, IN_WINDOW, "--install").exit_code == 2
+    assert RTK_KEY in _remembered(machine)
+
+
+def test_a_failed_send_exits_2_after_the_pass_filed_and_outranks_the_finding(
+    machine: _Recorder, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fail_rtk(machine, monkeypatch)
+    machine.hub_status = 500
+    result = _invoke(machine, monkeypatch, IN_WINDOW, "--install")
+    assert result.exit_code == 2
+    assert len(machine.filed) == len(TOOLS)
+    assert RTK_KEY not in _remembered(machine)
+
+
+def test_an_unusable_state_directory_exits_2(
+    machine: _Recorder, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _fail_rtk(machine, monkeypatch)
+    blocker = tmp_path / "file"
+    blocker.write_text("x")
+    monkeypatch.setenv("TOOL_INSTALLER_STATE_DIR", str(blocker / "state"))
+    result = _invoke(machine, monkeypatch, IN_WINDOW, "--install")
+    assert result.exit_code == 2
+    assert len(machine.filed) == len(TOOLS)
+
+
+@pytest.mark.parametrize("args", [(), ("--install", "--dry-run"), ("--dry-run",)])
+def test_a_pass_that_does_not_act_sends_nothing_and_needs_no_token(
+    machine: _Recorder, monkeypatch: pytest.MonkeyPatch, args: tuple[str, ...]
+) -> None:
+    monkeypatch.delenv("SDS_BRIDGE_ALERT_TOKEN")
+    result = _invoke(machine, monkeypatch, IN_WINDOW, *args)
+    assert result.exit_code == 0
+    assert machine.sent == []
+    assert not (machine.state / "alerts.json").exists()  # type: ignore[attr-defined]
+
+
+def test_an_acting_pass_without_the_alert_token_is_refused_before_it_acts(
+    machine: _Recorder, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("SDS_BRIDGE_ALERT_TOKEN")
+    result = _invoke(machine, monkeypatch, IN_WINDOW, "--install")
+    assert result.exit_code == 1
+    assert machine.filed == []
