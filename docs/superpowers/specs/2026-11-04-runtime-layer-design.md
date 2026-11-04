@@ -1,6 +1,6 @@
 # Lane runtime and operations layer design
 
-**Status:** Draft for Devon's approval. Layer id: `runtime` (`make layer L=runtime`).
+**Status:** Approved by Devon 2026-11-04. Layer id: `runtime` (`make layer L=runtime`).
 
 ## Intent
 

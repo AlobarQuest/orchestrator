@@ -343,8 +343,8 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
 
 - **The scheduled launchers do NOT share an exit-code vocabulary: `2` and `3` mean OPPOSITE
   things in two groups, and anything wired to those codes must be keyed per launcher.** Measured
-  2026-08-29 by reading every header, after HQ nearly shipped a universal rule that would have
-  inverted the signal for one group. Re-read 2026-11-04 (runtime layer pass); the groups below are
+  2026-08-29 by reading all seven headers, after HQ nearly shipped a universal rule that would have
+  inverted the signal for three of them. Re-read 2026-11-04 (runtime layer pass); the groups below are
   for checking yourself against, and each launcher's `EXIT CODES` block is the source.
   Armed lanes that read **2 = something was FOUND**, 3 = it could not be read or measured ("3
   outranks 2: an incomplete pass cannot claim it found everything there was to find"):

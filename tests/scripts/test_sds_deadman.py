@@ -461,6 +461,15 @@ def test_a_malformed_told_code_is_ignored_and_fails_closed(tmp_path: Path, told:
     assert "is not a number" in output
 
 
+def test_an_unknown_end_flag_is_logged_and_still_fails_closed(tmp_path: Path) -> None:
+    """A misspelt `--told` must not be swallowed: the exit still pings `/fail`."""
+    rc, urls, _, output = _end(tmp_path, "--tol 2", 2)
+
+    assert rc == 2
+    assert urls == [f"{PING_URL}/fail"]
+    assert "unknown flag '--tol'" in output
+
+
 # ---------------------------------------------------------------------------------------------
 # The key is read through the shared parser, and no `python3` from PATH is involved.
 # ---------------------------------------------------------------------------------------------
@@ -510,7 +519,7 @@ def test_the_key_and_listing_are_read_with_no_python3_on_path(
 # The phrase an `EXIT CODES` line must carry to justify `--told`: every exit with that code was a
 # keyed alert that alert-hub accepted. The same phrase is what the helper logs.
 DELIVERED_MARKER = "delivered as a keyed alert"
-TOLD = re.compile(r"^sds_outcome_end\b.*--told (?P<code>\d+)", re.MULTILINE)
+TOLD = re.compile(r"^[ \t]*sds_outcome_end\b.*--told (?P<code>\d+)", re.MULTILINE)
 CODE_LINE = re.compile(r"^#\s{1,4}(?P<code>\d+)\s{2,}(?P<text>.*)$")
 
 
@@ -562,3 +571,9 @@ def test_the_told_header_check_fails_on_a_launcher_that_does_not_say_so() -> Non
     assert told_violations(declared) == []
     assert told_violations(silent) != []
     assert told_violations(wrong_code) != []
+
+
+def test_the_told_header_check_finds_an_indented_call() -> None:
+    indented = '# EXIT CODES:\n#   0  fine.\n\nif x; then\n    sds_outcome_end "$rc" --told 2\nfi\n'
+
+    assert told_violations(indented) != []

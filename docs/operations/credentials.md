@@ -118,8 +118,8 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
 ### #59
 
 - **An M2M credential's `agent_id` is resolved against a registry bundle BAKED INTO THE IMAGE, and
-  an unresolvable one is a boot failure, not a 401.** `main.py::_m2m_credentials`, called by `load_auth_config` at startup, calls
-  `registry.resolve(agent_id)` at startup against `/app/registry-bundle.json`, built at image-build
+  an unresolvable one is a boot failure, not a 401.** `main.py::_m2m_credentials`, called by
+  `load_auth_config` at startup, calls `registry.resolve(agent_id)` against `/app/registry-bundle.json`, built at image-build
   time from the security-standards tree at `security-standards.pin.toml`'s `revision`. So checking
   that an actor exists in git — even at exactly the pinned revision — does **not** establish that
   the running image carries it: the image may predate the pin. Ask production before writing the

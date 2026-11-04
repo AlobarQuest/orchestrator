@@ -209,6 +209,7 @@ sds_outcome_end() {
                     0|1) sds_deadman_log "'--told $told' is a reserved code — ignored"; told="" ;;
                 esac
                 ;;
+            *) sds_deadman_log "unknown flag '$1' — ignored" ;;
         esac
         shift
     done
