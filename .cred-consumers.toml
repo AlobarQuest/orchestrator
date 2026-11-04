@@ -9,9 +9,13 @@
 # Complements .bws-secrets.toml: that file says which secrets this repo consumes;
 # this one says, per credential, what must be updated and verified on rotation.
 #
-# NO entry here carries consumers_verified: none has been fingerprint-swept, so every
-# rotation falls to the manual checklist (deny-by-default). Both classes are
-# executor:false anyway. Values NEVER appear here.
+# NO entry here carries consumers_verified: none has been fingerprint-swept. An entry
+# marked rotated_by_sds is rotated by the rotation executor (ADR-0055), which verifies
+# each scheduled reader by the read its row names (`healthchecks_check`, beside `note`);
+# every other entry falls to the manual checklist (deny-by-default). Values NEVER appear here.
+#
+# Each orchestrator reader list comes from a grep of the credential's BWS UUID (or, for
+# the sds-operator token, its Keychain item name) across scripts/ and src/.
 #
 # Dates are BWS creationDate. The three secrets moved into the SDS Operator project on
 # 2026-07-30 show that day as revisionDate; the move did not change their values
@@ -20,8 +24,9 @@
 version = 1
 
 # ── sds-operator BWS machine token ───────────────────────────────────────────────
-# Read-only machine account sds-operator, scoped to the SDS Operator project
-# (b09acc9d-87af-4830-9361-b49700d2bc8a). Minted 2026-07-30 (Keychain item created
+# Read-only machine account sds-operator. It reads the SDS Operator project
+# (b09acc9d-87af-4830-9361-b49700d2bc8a), and the operator and observer keepers in
+# Rotation / Keepers by a direct grant on each of those two secrets. Minted 2026-07-30 (Keychain item created
 # that day). sha256[:8] computed in-process 2026-10-06.
 [[credential]]
 id = "bws-sds-operator-token"
@@ -42,7 +47,7 @@ rotated_by_sds = true
   kind = "keychain"
   service = "Claude"
   account = "BWS_ACCESS_TOKEN_SDS"
-  note = "the keeper. Every reader reads it fresh on each run, so it switches with the item. Scheduled readers with a Healthchecks check are the rows below. Verified by this item's read-back alone (Devon, 2026-10-23): infraops-mcp-server scripts/drift-audit.sh's mint-follow-ups step, whose check pings success when the read fails; and on demand, scripts/deploy_orchestrator.py, scripts/exit_probe.py, infraops-mcp-server scripts/cred-consumer-sweep.py, and factory-validation-kit-restart-recovery, which inherits an ambient BWS_ACCESS_TOKEN when run by hand"
+  note = "the keeper. Every reader reads it fresh on each run, so it switches with the item. Scheduled readers with a Healthchecks check are the rows below. Verified by this item's read-back alone (Devon, 2026-10-23): infraops-mcp-server scripts/drift-audit.sh's mint-follow-ups step, whose check pings success when the read fails; and on demand, scripts/deploy_orchestrator.py, scripts/exit_probe.py, scripts/replay_deploy_signal.py, infraops-mcp-server scripts/cred-consumer-sweep.py, and factory-validation-kit-restart-recovery, which inherits an ambient BWS_ACCESS_TOKEN when run by hand"
 
   [[credential.consumer]]
   kind = "runtime-fetch"
@@ -68,6 +73,13 @@ rotated_by_sds = true
   [[credential.consumer]]
   kind = "runtime-fetch"
   repo = "orchestrator"
+  ref = "scripts/run-change-proposer.sh"
+  healthchecks_check = "sds-change-proposer"
+  note = "reads Keychain Claude/BWS_ACCESS_TOKEN_SDS each run, directly; pings sds-change-proposer through sds-deadman.sh on --submit runs (an outcome alarm: a standing finding keeps the check down, which holds the retire step until a pass exits 0)"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
   ref = "scripts/run-deploy-watcher.sh"
   healthchecks_check = "sds-deploy-watcher"
   note = "reads Keychain Claude/BWS_ACCESS_TOKEN_SDS each run, through sds-token.sh or directly; pings sds-deploy-watcher through sds-deadman.sh"
@@ -78,6 +90,20 @@ rotated_by_sds = true
   ref = "scripts/run-estate-landing.sh"
   healthchecks_check = "sds-estate-landing"
   note = "reads Keychain Claude/BWS_ACCESS_TOKEN_SDS each run, through sds-token.sh or directly; pings sds-estate-landing through sds-deadman.sh"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
+  ref = "scripts/run-execution-watch.sh"
+  healthchecks_check = "sds-execution-watch"
+  note = "reads Keychain Claude/BWS_ACCESS_TOKEN_SDS each run, directly; pings sds-execution-watch through sds-deadman.sh on --submit runs, which the plist passes"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
+  ref = "scripts/run-fork-harden.sh"
+  healthchecks_check = "sds-fork-hardening"
+  note = "reads Keychain Claude/BWS_ACCESS_TOKEN_SDS each run, directly; pings sds-fork-hardening through sds-deadman.sh (an outcome alarm: a held or ungranted fork keeps the check down, which holds the retire step until a pass exits 0)"
 
   [[credential.consumer]]
   kind = "runtime-fetch"
@@ -96,6 +122,13 @@ rotated_by_sds = true
   [[credential.consumer]]
   kind = "runtime-fetch"
   repo = "orchestrator"
+  ref = "scripts/run-membership-check.sh"
+  healthchecks_check = "sds-membership-check"
+  note = "reads Keychain Claude/BWS_ACCESS_TOKEN_SDS each run, directly; pings sds-membership-check through sds-deadman.sh (an outcome alarm: any disagreement or unreadable source keeps the check down, which holds the retire step until a pass exits 0)"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
   ref = "scripts/run-pin-watcher.sh"
   healthchecks_check = "sds-pin-watcher"
   note = "reads Keychain Claude/BWS_ACCESS_TOKEN_SDS each run, through sds-token.sh or directly; pings sds-pin-watcher through sds-deadman.sh"
@@ -106,6 +139,13 @@ rotated_by_sds = true
   ref = "scripts/run-revision-watcher.sh"
   healthchecks_check = "sds-revision-watcher"
   note = "reads Keychain Claude/BWS_ACCESS_TOKEN_SDS each run, through sds-token.sh or directly; pings sds-revision-watcher through sds-deadman.sh"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
+  ref = "scripts/run-rotation-decomposer.sh"
+  healthchecks_check = "sds-rotation-decomposer"
+  note = "reads Keychain Claude/BWS_ACCESS_TOKEN_SDS each run, directly; pings sds-rotation-decomposer through sds-deadman.sh on runs without --dry-run (an outcome alarm: a package a person must decide keeps the check down, which holds the retire step until a pass exits 0)"
 
   [[credential.consumer]]
   kind = "runtime-fetch"
@@ -173,7 +213,7 @@ disposition = "reissue"
   [[credential.consumer]]
   kind = "runtime-fetch"
   repo = "orchestrator"
-  ref = "scripts/run-activation-sweep.sh, run-bump-driver.sh, run-estate-landing.sh, run-inert-landing.sh, run-tool-installer.sh, run-work-carrier.sh, exit_probe.py"
+  ref = "scripts/run-activation-sweep.sh, run-bump-driver.sh, run-estate-landing.sh, run-inert-landing.sh, run-rotation-decomposer.sh, run-tool-installer.sh, run-work-carrier.sh, exit_probe.py, deploy_orchestrator.py"
 
   [[credential.consumer]]
   kind = "runtime-fetch"
@@ -212,6 +252,18 @@ disposition = "reissue"
   key = "ORCHESTRATOR_M2M_CREDENTIALS"
   entry = "orchestrator-verifier"
   note = "orchestrator-verifier entry (sha256 only); role mapped in ORCHESTRATOR_M2M_ROLES"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
+  ref = "scripts/run-unit-verifier.sh"
+  healthchecks_check = "sds-unit-verifier"
+  note = "launchd com.devon.unit-verifier every 10 minutes; Keychain Claude/BWS_ACCESS_TOKEN_SDS (sds-operator); Healthchecks check sds-unit-verifier"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
+  ref = "scripts/deploy_orchestrator.py (operator-invoked)"
 
   [[credential.consumer]]
   kind = "runtime-fetch"
@@ -275,7 +327,7 @@ rotated_by_sds = true
   [[credential.consumer]]
   kind = "bws-secret"
   uuid = "f793576f-e9aa-4f9d-8089-b4a000b9e2d5"
-  note = "orchestrator-observer (Rotation / Keepers; sds-operator reads it by a direct grant) — keeper"
+  note = "orchestrator-observer (Rotation / Keepers; sds-operator reads it by a direct grant) — keeper; also read on demand by scripts/replay_deploy_signal.py"
 
   [[credential.consumer]]
   kind = "coolify-env-hash"
@@ -303,9 +355,23 @@ rotated_by_sds = true
   [[credential.consumer]]
   kind = "runtime-fetch"
   repo = "orchestrator"
+  ref = "scripts/run-change-proposer.sh"
+  healthchecks_check = "sds-change-proposer"
+  note = "launchd com.devon.change-proposer hourly (--submit); Keychain Claude/BWS_ACCESS_TOKEN_SDS (sds-operator); Healthchecks check sds-change-proposer (an outcome alarm: a standing finding keeps it down, which delays retiring an old observer value until the pass exits 0)"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
   ref = "scripts/run-deploy-watcher.sh"
   healthchecks_check = "sds-deploy-watcher"
   note = "launchd com.devon.deploy-watcher hourly; Keychain Claude/BWS_ACCESS_TOKEN_SDS (sds-operator); Healthchecks check sds-deploy-watcher"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
+  ref = "scripts/run-execution-watch.sh"
+  healthchecks_check = "sds-execution-watch"
+  note = "launchd com.devon.execution-watch every 15 minutes (--submit); Keychain Claude/BWS_ACCESS_TOKEN_SDS (sds-operator); Healthchecks check sds-execution-watch"
 
   [[credential.consumer]]
   kind = "runtime-fetch"
@@ -355,6 +421,13 @@ rotated_by_sds = true
   ref = "scripts/run-tool-installer.sh"
   healthchecks_check = "sds-tool-installer"
   note = "launchd com.devon.tool-installer 03:15; Keychain Claude/BWS_ACCESS_TOKEN_SDS (sds-operator); Healthchecks check sds-tool-installer"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
+  ref = "scripts/run-work-carrier.sh"
+  healthchecks_check = "sds-work-carrier"
+  note = "launchd com.devon.work-carrier 07:05 (--register); Keychain Claude/BWS_ACCESS_TOKEN_SDS (sds-operator); Healthchecks check sds-work-carrier (an outcome alarm: a standing finding keeps it down, which delays retiring an old observer value until the pass exits 0)"
 
   [[credential.consumer]]
   kind = "runtime-fetch"
