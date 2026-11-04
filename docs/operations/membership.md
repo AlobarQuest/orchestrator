@@ -171,16 +171,19 @@ services. Any authenticated role may read it, OBSERVER included.
 The record is the scope authority for every lane (ADR-0058 amendments 1 and 3). Outside the
 orchestrator, these read it through `sds_members.client`: the bump driver, bump proposer, change
 proposer, estate lander, membership check, revision watcher, rotation proposer, unit verifier and
-work carrier. The rotation executor reads the same route itself (`rotation_worker/grants.py`).
-Project-standards' nightly scan reads it with the OBSERVER bearer; its Q2 factory-capability sweep
-measures the members whose app-changes grant is `granted` or `remediating`.
+work carrier. Fork hardening, the landing ledger and the activation sweep read it through
+`scripts/sds_scope.py` (`run-fork-harden.sh`, `run-landing-ledger.sh`, `run-activation-sweep.sh`),
+which prints nothing and exits 3 on an unreadable record, an empty one included. The rotation
+executor reads the same route itself (`rotation_worker/grants.py`). Project-standards' nightly scan
+reads it with the OBSERVER bearer; its Q2 factory-capability sweep measures the members whose
+app-changes grant is `granted` or `remediating`.
 
 Inside the orchestrator, dispatch admission, the claim, decomposition, landing and release gates
 read the tables through the request's own session (`MemberRecordGrants`).
 
 An empty record is unread, the same as one that cannot be reached or parsed: the lanes'
-`MembersUnreadable` (`sds_members/client.py`), and the rotation executor's `GrantUnread`. A lane that reads no members stops with its own unread handling
-rather than doing nothing quietly.
+`MembersUnreadable` (`sds_members/client.py`), and the rotation executor's `GrantUnread`. A lane
+that reads no members stops with its own unread handling rather than doing nothing quietly.
 
 ## The write split
 

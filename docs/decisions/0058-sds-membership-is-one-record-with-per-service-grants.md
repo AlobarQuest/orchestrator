@@ -120,8 +120,9 @@ declarations stay authoritative in phase 1" describe a phase that has ended. Ame
 dispatch admission, the carrier and the proposers; the rotation, execution, admission and release
 layers moved the rest. Every lane now takes its scope from the record: the bump driver, bump
 proposer, change proposer, estate lander, membership check, revision watcher, rotation proposer,
-unit verifier and work carrier through `sds_members.client`, the rotation executor through the same
-route (`rotation_worker/grants.py`), and the orchestrator's admission, claim, decomposition,
+unit verifier and work carrier through `sds_members.client`, fork hardening, the landing ledger and
+the activation sweep through `scripts/sds_scope.py` (which exits 3 on an unreadable record, an empty
+one included), the rotation executor through the same route (`rotation_worker/grants.py`), and the orchestrator's admission, claim, decomposition,
 landing and release gates through the database. This supersedes decisions 5 and 6's phase wording;
 `factory-target.toml` and the landing policy are compared with the record by `membership_check`,
 not read for scope.
