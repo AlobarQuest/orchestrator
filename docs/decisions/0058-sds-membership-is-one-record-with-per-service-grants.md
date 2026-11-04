@@ -110,3 +110,28 @@ to `/`. A ceiling must parse to a numeric release. Reads go through
 `services/membership/members.py::holds_for` (in-process) and `GET /api/v1/members` (the lanes), and
 a retired member's holds still apply. How each path honours a hold is ADR-0028 amendment 2;
 operations: `docs/operations/membership.md`.
+
+## Amendment 3, 2026-11-04 — every lane reads its scope from the record; an empty record is unreadable
+
+**Status:** Accepted (membership layer, `docs/superpowers/specs/2026-11-04-membership-layer-design.md`).
+
+Decision 5's "lanes will move onto it one at a time ... in later parts" and decision 6's "existing
+declarations stay authoritative in phase 1" describe a phase that has ended. Amendment 1 moved
+dispatch admission, the carrier and the proposers; the rotation, execution, admission and release
+layers moved the rest. Every lane now takes its scope from the record: the bump driver, bump
+proposer, change proposer, estate lander, membership check, revision watcher, rotation proposer,
+unit verifier and work carrier through `sds_members.client`, the rotation executor through the same
+route (`rotation_worker/grants.py`), and the orchestrator's admission, claim, decomposition,
+landing and release gates through the database. This supersedes decisions 5 and 6's phase wording;
+`factory-target.toml` and the landing policy are compared with the record by `membership_check`,
+not read for scope.
+
+The `rollouts` grant also gates release binding, deployment observations and the machine-activation
+candidates read (`release_repository_not_granted`, `release_repository_mismatch`).
+
+**An empty member record is unreadable.** `sds_members.client.parse_members` raises
+`MembersUnreadable` for a record with no members, so every lane's existing unread handling
+applies, as the rotation executor's `GrantUnread` already did. An empty answer is an outage or a
+wrong deployment, never a decision that the SDS maintains nothing; treating it as "no members" made
+the lanes that read it do nothing quietly. Cost: a deliberately empty record stops every lane until
+a member is confirmed.
