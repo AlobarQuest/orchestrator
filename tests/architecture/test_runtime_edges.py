@@ -128,20 +128,26 @@ def test_the_shared_transport_builds_one_client_with_redirects_off() -> None:
 
 
 def test_the_built_client_follows_no_redirect_unless_asked() -> None:
-    def follows(extra: dict[str, bool]) -> bool:
-        client = confined.ConfinedClient(
-            base_url="https://example.invalid",
-            user_agent="edges/1",
-            headers={},
-            timeout=1.0,
-            permits=lambda method, path: False,
-            refuse=lambda method, path: RuntimeError(path),
-            **extra,
-        )
-        return client._client.follow_redirects
+    plain = confined.ConfinedClient(
+        base_url="https://example.invalid",
+        user_agent="edges/1",
+        headers={},
+        timeout=1.0,
+        permits=lambda method, path: False,
+        refuse=lambda method, path: RuntimeError(path),
+    )
+    asked = confined.ConfinedClient(
+        base_url="https://example.invalid",
+        user_agent="edges/1",
+        headers={},
+        timeout=1.0,
+        permits=lambda method, path: False,
+        refuse=lambda method, path: RuntimeError(path),
+        follow_redirects=True,
+    )
 
-    assert follows({}) is False
-    assert follows({"follow_redirects": True}) is True
+    assert plain._client.follow_redirects is False
+    assert asked._client.follow_redirects is True
 
 
 def test_no_caller_asks_for_redirects() -> None:
