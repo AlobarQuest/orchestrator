@@ -62,6 +62,11 @@
 SDS_DEADMAN_API_KEY_UUID="51509d5e-64f5-4781-ae82-b4ed00b644e1"
 SDS_DEADMAN_API="https://healthcheck.alobar.net/api/v3/checks/"
 
+# The key read and the listing parse use the venv interpreter `sds-bws.sh` names, never `python3`
+# from PATH (an Xcode shim under launchd). Sourced by this file's own directory, not `$REPO_ROOT`.
+# shellcheck disable=SC1091
+source "$(dirname "${BASH_SOURCE[0]}")/sds-bws.sh"
+
 # Resolved at arm time. Empty means alerting is disabled for this run, which every ping honours.
 SDS_DEADMAN_PING_URL=""
 SDS_DEADMAN_NAME=""
@@ -88,13 +93,8 @@ sds_deadman_resolve() {
         SDS_DEADMAN_REASON="no broad BWS identity"
         return 0
     fi
-    # `--color no` AND an environment with the forcing variables removed. FORCE_COLOR /
-    # CLICOLOR_FORCE make `bws secret get` wrap its JSON in ANSI escapes even when stdout is a
-    # pipe, which breaks the parse -- a portfolio-wide defect fixed locally in three repos and
-    # generalised in none. It costs nothing where the behaviour never fires.
-    key="$(env -u FORCE_COLOR -u CLICOLOR_FORCE BWS_ACCESS_TOKEN="$broad" \
-        bws secret get "$SDS_DEADMAN_API_KEY_UUID" --output json --color no 2>/dev/null \
-        | python3 -c 'import sys, json; print(json.load(sys.stdin)["value"])' 2>/dev/null || true)"
+    # The shared reader, so the colour guard and the venv interpreter live in one place.
+    key="$(sds_bws_value "$SDS_DEADMAN_API_KEY_UUID" "$broad" 2>/dev/null || true)"
     if [ -z "$key" ]; then
         SDS_DEADMAN_REASON="the Healthchecks API key could not be read"
         return 0
@@ -111,7 +111,7 @@ sds_deadman_resolve() {
     # read-only key disables every lane's alerting at once while the log blames a missing check.
     # The check is matched on its EXACT name -- pinging a near-miss would report a lane as alive
     # that has not run, which is worse than reporting nothing.
-    answer="$(printf '%s' "$listing" | SDS_DEADMAN_WANTED="$name" python3 -c 'import os, sys, json
+    answer="$(printf '%s' "$listing" | SDS_DEADMAN_WANTED="$name" "$_SDS_BWS_PYTHON" -c 'import os, sys, json
 wanted = os.environ["SDS_DEADMAN_WANTED"]
 for check in json.load(sys.stdin).get("checks", []):
     if check.get("name") == wanted:
@@ -186,18 +186,43 @@ sds_outcome_fail() {
     exit "${2:-1}"
 }
 
-# `sds_outcome_end <rc> [--body-on-success]`: copies the report to stdout (the lane log keeps it),
-# pings success on 0 (with the report as the body only when asked) or `/fail` with the report on
-# anything else, and exits `<rc>`.
+# `sds_outcome_end <rc> [--body-on-success] [--told <code>]`, flags in any order: copies the report
+# to stdout (the lane log keeps it), pings success on 0 (with the report as the body only when
+# asked) or `/fail` with the report on anything else, and exits `<rc>`.
+#
+# `--told <code>` declares the one non-zero exit whose every cause was a finding delivered as a keyed
+# alert (ADR-0021 amendment 3): that exit pings success WITH the report as the body, because the
+# alarm has done its job and a `/fail` would page a second time for the same fact. 0 and 1 are
+# refused as `sds_deadman_arm` refuses them for `--finding`, since 1 means the tool failed. A
+# launcher may pass it only for a code its `EXIT CODES` block calls a delivered keyed alert, which
+# `tests/scripts/test_sds_deadman.py` holds it to.
 sds_outcome_end() {
-    local rc="$1"
+    local rc="$1" body_on_success=0 told=""
+    shift
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --body-on-success) body_on_success=1 ;;
+            --told)
+                told="${2:-}"
+                shift
+                case "$told" in
+                    ''|*[!0-9]*) sds_deadman_log "'--told $told' is not a number — ignored"; told="" ;;
+                    0|1) sds_deadman_log "'--told $told' is a reserved code — ignored"; told="" ;;
+                esac
+                ;;
+        esac
+        shift
+    done
     cat "$SDS_OUTCOME_REPORT"
     if [ "$rc" -eq 0 ]; then
-        if [ "${2:-}" = "--body-on-success" ]; then
+        if [ "$body_on_success" -eq 1 ]; then
             sds_outcome_ping "" "$SDS_OUTCOME_REPORT"
         else
             sds_outcome_ping ""
         fi
+    elif [ -n "$told" ] && [ "$rc" -eq "$told" ]; then
+        sds_deadman_log "exit $rc is this lane's told code — the finding was delivered as a keyed alert"
+        sds_outcome_ping "" "$SDS_OUTCOME_REPORT"
     else
         if [ -n "$SDS_DEADMAN_PING_URL" ]; then
             echo "[$SDS_OUTCOME_TAG] exit $rc — reporting a failure"

@@ -224,14 +224,27 @@ def test_the_launcher_population_is_what_was_consolidated() -> None:
     assert len(_launchers()) >= 11
 
 
-@pytest.mark.parametrize("launcher", _launchers(), ids=lambda p: p.name)
-def test_no_launcher_parses_bws_output_itself(launcher: Path) -> None:
+# A pipe into bare python3, including one that sets variables first: `| VAR=value python3 -c ...`.
+PIPE_INTO_PYTHON = re.compile(r"\|\s*(?:[A-Za-z_]\w*=\S*\s+)*python3?\b")
+
+
+def test_the_pipe_pattern_catches_an_assignment_before_python() -> None:
+    """The control: the pattern the rule below uses must fail on the shape it once missed."""
+    assert PIPE_INTO_PYTHON.search("x | python3 -c 'pass'")
+    assert PIPE_INTO_PYTHON.search("printf x | WANTED=\"$name\" python3 -c 'pass'")
+    assert not PIPE_INTO_PYTHON.search('x | "$_SDS_BWS_PYTHON" -c "pass"')
+
+
+@pytest.mark.parametrize(
+    "script", [*_launchers(), SCRIPTS / "sds-deadman.sh"], ids=lambda p: p.name
+)
+def test_no_launcher_parses_bws_output_itself(script: Path) -> None:
     code = "\n".join(
-        line for line in launcher.read_text().splitlines() if not line.lstrip().startswith("#")
+        line for line in script.read_text().splitlines() if not line.lstrip().startswith("#")
     )
     assert "_bws_value()" not in code
     assert "bws secret get" not in code
-    assert not re.search(r"\|\s*python3\b", code), f"{launcher} pipes into bare python3"
+    assert not PIPE_INTO_PYTHON.search(code), f"{script} pipes into bare python3"
 
 
 @pytest.mark.parametrize("launcher", _launchers(), ids=lambda p: p.name)
