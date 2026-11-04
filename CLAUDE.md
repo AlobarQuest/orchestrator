@@ -117,9 +117,10 @@ Placement rule: global CLAUDE.md §7.
   is the criterion UUID; evidence wants `AC-001`. History: `docs/history/claude-md-invariants-archive.md` #35.
 - Merged is not deployed: read `https://sds.alobar.net/openapi.json` before reasoning about what
   production serves. Detail: `docs/operations/deploy.md`.
-- SDS M2M bearers live in BWS project `SDS Operator`: bootstrap with `scripts/sds-token.sh` (never
-  vps-backup's helper), UUIDs in `.bws-secrets.toml`; never echo values. Detail:
-  `docs/operations/credentials.md`.
+- The SYSTEM and VERIFIER bearers live in BWS project `SDS Operator`, and the operator (WORKER) and
+  observer bearers in `Rotation / Keepers`, which the narrow `sds-operator` account reads by a
+  direct grant on each. Bootstrap with `scripts/sds-token.sh` (never vps-backup's helper), UUIDs in
+  `.bws-secrets.toml`; never echo values. Detail: `docs/operations/credentials.md`.
 - Only `DomainError` and `APIAuthenticationError` have handlers; anything else is a bare 500. Route
   parsing must raise `DomainError`, and a service must reject every value a DB CHECK would before
   the write. History: `docs/history/claude-md-invariants-archive.md` #44.
@@ -484,16 +485,25 @@ Placement rule: global CLAUDE.md §7.
 - A producer that publishes with `git push origin main` must refuse unless on `main`, hold the
   command as one string (the merge guard scans text), derive the branch from it, and re-refuse
   unpublished commits each pass. History: `docs/history/claude-md-invariants-archive.md` #257.
-- `sds_deadman_finish` pings success for 0 and for the lane's declared `--finding` code; only other
-  codes ping `/fail`, so the check answers liveness, never whether something was found. Detail:
+- `sds_deadman_finish` pings success for 0 and for the lane's declared `--finding` code, and
+  `sds_outcome_end` for 0 and its `--told` code; only other codes ping `/fail`, so the check
+  answers liveness, never whether something was found. A Healthchecks key a lane can't read means
+  no ping, heard as the check going down after its grace (ADR-0021 amendment 3). Detail:
   `docs/operations/local-development.md`.
-- The outcome-alarm launchers (`run-fork-sync-watch.sh`, `run-fork-harden.sh`,
-  `run-membership-check.sh`, `run-bump-proposer.sh`, `run-change-proposer.sh`,
-  `run-work-carrier.sh`, `run-bump-driver.sh`) run through `sds_outcome_begin`/`sds_outcome_end` in
-  `scripts/sds-deadman.sh`: `/fail` with the report on every non-zero exit, findings included,
-  pinging only on the bridge lanes' acting run. They never arm the dead-man switch, and a launcher
-  that doesn't arm it must not contain the arming function's name, which `test_sds_deadman.py`
-  keys on. Detail: ADR-0021 amendment 2.
+- The outcome-alarm launchers (`run-bump-driver.sh`, `run-bump-proposer.sh`,
+  `run-change-proposer.sh`, `run-fork-harden.sh`, `run-fork-sync-watch.sh`,
+  `run-membership-check.sh`, `run-rotation-decomposer.sh`, `run-work-carrier.sh`) run through
+  `sds_outcome_begin`/`sds_outcome_end` in `scripts/sds-deadman.sh`: `/fail` with the report on
+  every non-zero exit, findings included, except a `--told` code. The bump driver, both bridge
+  proposers, the carrier and the rotation decomposer ping only on their acting run; the other
+  three on every run. A launcher passes `--told <code>` only when every exit with that code was
+  delivered as a keyed alert and a failed delivery exits with another code (`run-bump-driver.sh`,
+  2 alone); `test_sds_deadman.py` holds it to the launcher's `EXIT CODES` block. They never arm the
+  dead-man switch, and a launcher that doesn't arm it must not contain the arming function's name,
+  which `test_sds_deadman.py` keys on. Detail: ADR-0021 amendments 2 and 3.
+- A `KeyedAlerts` state file has one `sync` caller: `sync` resolves every remembered key that isn't
+  firing or unread, so two passes sharing a file resolve each other's alerts. The activation sweep
+  keeps one per subcommand (`test_one_subcommands_sync_never_resolves_the_others_keys`).
 - The scheduled lanes run the main tree's working copy and `.venv` by absolute path: never check out
   a branch, edit, or run uv there while a pass may fire; edit in a worktree. Detail:
   `docs/operations/local-development.md`.

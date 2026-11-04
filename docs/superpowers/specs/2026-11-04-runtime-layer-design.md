@@ -255,4 +255,14 @@ Nothing is staged or forced to get a proof. A proof that needs one is asked of D
 
 ## Status
 
-Not started.
+Built on branch `runtime-layer-pass`, not yet merged:
+
+- **Part 1a:** the tool installer, the activation sweep (sweep and bind, one state file each), the
+  revision watcher and the pin watcher raise keyed alerts with the `sds-bridge` sender.
+- **Part 1b:** `sds_outcome_end --told <code>`, used by `run-bump-driver.sh` alone (`--told 2`).
+- **Part 1c:** `sds-deadman.sh` reads the Healthchecks key through `sds-bws.sh` and parses the
+  listing with the venv Python.
+- **Part 2:** no change, as designed.
+- **Part 3:** the records in the table, the credential manifests and ADR-0021 amendment 3. The
+  plist reinstall waits for the merge.
+- **Part 4:** `tests/architecture/test_runtime_edges.py`.

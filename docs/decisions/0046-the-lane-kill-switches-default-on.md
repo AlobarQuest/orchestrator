@@ -39,8 +39,18 @@ switch says.
 - Tests that assert the switched-off behaviour now switch it off by name rather than relying on
   the default (`tests/api/test_dispatch_api.py`, and both landing admission API tests).
   `tests/test_config.py` pins both halves: absent → true, `=false` → false, for all three.
-- The local recovery drills (`scripts/drill_common.sh`) export all three as `false`, because a
+- The local recovery drills (`scripts/drill_common.sh`) exported all three as `false`, because a
   drill must never fire a workflow or land a pull request and must not depend on a default for it.
+  The drills were retired in #319 (amendment 1).
 - Once an image carrying this change is running, removing the variables from the production
   environment is harmless, and leaving them is too. Until then production runs the old False
   defaults, so the variables must stay set. Merging this deploys nothing.
+
+## Amendment 1 (2026-11-04): a fourth switch, and the drills are gone
+
+- `bump_merge_enabled` (`ORCHESTRATOR_BUMP_MERGE_ENABLED`, ADR-0025 amendment 4, #562) is a fourth
+  lane switch under this decision. It defaults to true, `false` is its off switch, and a unit on
+  the factory's policy merge path then refuses `merge_policy_path_off`. `tests/test_config.py`'s
+  `LANE_SWITCHES` pins both halves for all four.
+- The local recovery drills, and `scripts/drill_common.sh` with them, were retired in #319
+  (ADR-0049). Nothing in this repository exports the switches as `false` now.

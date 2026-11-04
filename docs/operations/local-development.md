@@ -279,8 +279,8 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   REBUILDS THE VENV ON THE PINNED INTERPRETER whenever the two disagree, unattended, on whichever
   scheduled lane fires first, printing `dependencies synced` as though nothing larger had
   happened. Benign while the tree runs on either interpreter; not benign the moment a change is
-  version-specific. Read it as: a pull that moves a manifest can move the interpreter under all
-  eleven lanes, and the trigger is a cron rather than a person.
+  version-specific. Read it as: a pull that moves a manifest can move the interpreter under every
+  scheduled lane, and the trigger is a cron rather than a person.
   **SHARPENED 2026-08-21: in a FRESH WORKTREE, `uv sync --frozen` is necessary and NOT SUFFICIENT.**
   Measured building item 150's fix: `work-carrier` and `work-watcher` were declared in
   `pyproject.toml` and absent from the new worktree's `.venv/bin` after a clean `uv sync --frozen`;
@@ -341,28 +341,40 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
 
 ### #246
 
-- **The seven scheduled launchers do NOT share an exit-code vocabulary: `2` and `3` mean OPPOSITE
+- **The scheduled launchers do NOT share an exit-code vocabulary: `2` and `3` mean OPPOSITE
   things in two groups, and anything wired to those codes must be keyed per launcher.** Measured
-  2026-08-29 by reading all seven headers, after HQ nearly shipped a universal rule that would have
-  inverted the signal for three of them.
-  `run-landing-ledger.sh`, `run-deploy-watcher.sh`, `run-activation-sweep.sh` and
-  `run-unit-verifier.sh` (2026-10-26): **2 = something was FOUND**, 3 = it could not be read or measured ("3 outranks 2: an incomplete pass cannot claim
-  it found everything there was to find"). `run-unit-verifier.sh`'s 2 includes a unit that raised a keyed alert, and its 3 is an unread queue or alert-hub not told, so one cause raises an alert or `/fail`, never both.
-  `run-estate-landing.sh`, `run-change-proposer.sh`, `run-work-carrier.sh`, `run-bump-proposer.sh`
-  and `run-rotation-proposer.sh`: **2 = could not use its INPUTS**, 3 = something was found.
-  `run-execution-watch.sh` (Execution Part 1, every 15 minutes) arms the dead-man switch only on `--submit` and declares **2 = the orchestrator could not be read, every key held** as its finding code; 1 = the lane could not do its job. State is in `~/Library/Application Support/sds/execution-watch`; run `--seed` once before the first scheduled pass.
-  `run-fork-sync-watch.sh` (2026-10-24) uses the second group's codes (2 GitHub unreadable, 3 a
-  fork stuck), and arms no dead-man switch: its check is an outcome alarm, so 1, 2 and 3 all ping
-  `/fail`. The bridge launchers `run-bump-proposer.sh`, `run-change-proposer.sh` and
-  `run-work-carrier.sh` are outcome alarms too since 2026-10-27 (ADR-0021 amendment 2): on their
-  acting run (`--submit`, `--submit`, `--register`) they ping `/start`, then success on 0 or
-  `/fail` with the report on 1, 2, 3 or anything else, and their checks deliver to alert-hub. A
-  bare run pings nothing.
+  2026-08-29 by reading every header, after HQ nearly shipped a universal rule that would have
+  inverted the signal for one group. Re-read 2026-11-04 (runtime layer pass); the groups below are
+  for checking yourself against, and each launcher's `EXIT CODES` block is the source.
+  Armed lanes that read **2 = something was FOUND**, 3 = it could not be read or measured ("3
+  outranks 2: an incomplete pass cannot claim it found everything there was to find"):
+  `run-activation-sweep.sh`, `run-deploy-watcher.sh`, `run-execution-watch.sh`,
+  `run-landing-ledger.sh`, `run-pin-watcher.sh`, `run-revision-watcher.sh` and
+  `run-unit-verifier.sh`. `run-unit-verifier.sh`'s 2 includes a unit that raised a keyed alert, and
+  its 3 is an unread queue or alert-hub not told, so one cause raises an alert or `/fail`, never
+  both. `run-execution-watch.sh` (every 15 minutes) arms the dead-man switch only on `--submit`;
+  its 2 means the orchestrator could not be read and every key was held, and 1 means the lane could
+  not do its job. Its state is in `~/Library/Application Support/sds/execution-watch`; run `--seed`
+  once before the first scheduled pass.
+  Armed lanes that read **2 = could not use its INPUTS**, 3 = something was found:
+  `run-estate-landing.sh`, `run-inert-landing.sh`, `run-rotation-proposer.sh` and
+  `run-tool-installer.sh`.
+  The outcome alarms arm no dead-man switch (ADR-0021 amendments 2 and 3): `run-bump-driver.sh`,
+  `run-bump-proposer.sh`, `run-change-proposer.sh`, `run-fork-harden.sh`,
+  `run-fork-sync-watch.sh`, `run-membership-check.sh`, `run-rotation-decomposer.sh` and
+  `run-work-carrier.sh`. Each pings `/start`, then success on 0 or `/fail` with the report on any
+  other code, except the one code a launcher passes as `--told` (only `run-bump-driver.sh`, 2),
+  which pings success with the report because a keyed alert already told a person. Their codes
+  still differ: the proposers, the carrier, `run-fork-harden.sh` and `run-fork-sync-watch.sh` read
+  2 as unusable inputs and 3 as found; `run-membership-check.sh` reads 2 as a disagreement and 3 as
+  an unread source; `run-bump-driver.sh` and `run-rotation-decomposer.sh` read 2 as a person
+  decides and 3 as unread. The bump driver, the two bridge proposers, the carrier and the rotation
+  decomposer ping only on their acting run; a run a person makes to look pings nothing.
   0 and 1 agree everywhere (nothing found; the tool itself failed). So a consumer that treats
   non-zero as failure collapses "the tool broke" with "the lane found something" — which is exactly
   the collision each header exists to prevent, and which the first dead-man switch shipped with.
   Read the header of the launcher you are wiring; a table like this one is for checking yourself
-  against, never for keying on. Note also the `for rc in 1 3 2` fold several of them end with lets
+  against, never for keying on. Note also the `for rc in 1 3 2` fold some launchers end with lets
   any code outside `{0,1,2,3}` — 127 for a missing binary — fall through to `exit 0`.
 
 ### #252
@@ -404,10 +416,13 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
 
 - **AN ARMED LANE'S DECLARED FINDING CODE PINGS ITS DEAD-MAN CHECK **SUCCESS**, NOT `/fail` — so
   "a standing finding drives a permanently-red control" is false of every lane that arms the
-  switch.** The outcome-alarm lanes are the exception and work the other way: `run-fork-sync-watch.sh`,
-  `run-fork-harden.sh`, `run-membership-check.sh`, `run-bump-proposer.sh`, `run-change-proposer.sh`
-  and `run-work-carrier.sh` ping `/fail` on every non-zero exit, so a standing finding keeps their
-  check down and pages once (ADR-0021 amendment 2).
+  switch.** The outcome-alarm lanes are the exception and work the other way: `run-bump-driver.sh`,
+  `run-bump-proposer.sh`, `run-change-proposer.sh`, `run-fork-harden.sh`, `run-fork-sync-watch.sh`,
+  `run-membership-check.sh`, `run-rotation-decomposer.sh` and `run-work-carrier.sh` ping `/fail` on
+  every non-zero exit, so a standing finding keeps their check down and pages once (ADR-0021
+  amendment 2). The one exception is a code a launcher passes as `--told`: `run-bump-driver.sh`'s
+  2 pings success with the report, because each such finding was already delivered as a keyed
+  alert (ADR-0021 amendment 3).
   `sds_deadman_finish` (in `scripts/sds-deadman.sh`) has three branches: `rc == 0` pings
   success; `rc == SDS_DEADMAN_FINDING_CODE` logs *"exit N is this lane's finding code — the pass
   ran and reported"* and pings **success**; everything else pings `/fail`. That is the whole point
@@ -434,7 +449,7 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
 ### #272
 
 - **HQ KEEPING THE MAIN TREE IS RIGHT FOR READING AND WRONG FOR EDITING: a checked-out branch there
-  puts branch code under all eight schedulers.** The launchers resolve `REPO_ROOT` from
+  puts branch code under every scheduler.** The launchers resolve `REPO_ROOT` from
   `BASH_SOURCE` and run the working copy, so a three-file fix made in the main tree is what every
   lane executes until the tree goes back. Observed 2026-09-01 — the 12:35 inert-landing pass opened
   `[activation] ~/Projects/orchestrator is on 'adr0038-remove-cascade-guards', not main — running
@@ -445,7 +460,7 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
 
 ### #273
 
-- **A BARE `uv venv --clear` IN THE MAIN TREE MOVES ALL EIGHT SCHEDULERS TO A NEW INTERPRETER, AND
+- **A BARE `uv venv --clear` IN THE MAIN TREE MOVES EVERY SCHEDULER TO A NEW INTERPRETER, AND
   `--clear` DOES NOT PRESERVE THE ONE THAT IS THERE.** The 2026-09-01 near-miss is recorded as
   *"had the flag been `--python 3.14`, all eight lanes would have moved interpreter silently"* — the
   trigger is the opposite: **omitting the flag**. Measured 2026-09-02 in a clean directory carrying

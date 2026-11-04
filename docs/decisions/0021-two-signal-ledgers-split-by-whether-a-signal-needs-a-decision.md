@@ -82,6 +82,9 @@ answer:
 A signal left for a person to carry by hand has no home, and that's a defect at any volume. A
 signal whose home is change-manager or alert-hub is not.
 
+A sensor's finding can have two homes: its observation records the fact, and a keyed alert tells
+the person (amendment 3).
+
 ### What changed since the census
 
 The census of 2026-08-12 argued for connecting every signal because nothing could answer "did the
@@ -167,3 +170,50 @@ change-proposer 2 in about 1,394 passes, bump-proposer 1 in 58, the carrier 1 in
 Healthchecks check has one state, and the bridge layer design
 (`docs/superpowers/specs/2026-10-27-bridge-layer-design.md`) names alert noise as an anti-goal, so a
 page per pass and a second liveness check per lane were both rejected.
+
+## Amendment 3 (2026-11-04): a delivered finding pings success
+
+Devon decided on 2026-11-04, in the Lane runtime layer pass
+(`docs/superpowers/specs/2026-11-04-runtime-layer-design.md`).
+
+### Decision
+
+An outcome-alarm lane may ping success on a finding code only when every exit with that code was
+delivered to a person as a keyed alert, and a failed delivery exits with a different code.
+`sds_outcome_end <rc> --told <code>` does it: an exit with the told code pings success with the
+pass's report as the body, and every other non-zero exit still pings `/fail`.
+`tests/scripts/test_sds_deadman.py` holds each launcher's told code to a sentence in its
+`EXIT CODES` block that says so.
+
+It applies to `run-bump-driver.sh` alone (`--told 2`). Every `bump_driver` outcome that exits 2
+carries the key of its alert (`test_every_outcome_that_exits_two_carries_the_key_of_its_alert`),
+and a failed delivery exits 3. The other two outcome lanes that send keyed alerts don't meet the
+condition: `bump-proposer`'s keyed alerts already exit 0, and none of `rotation-decomposer`'s
+exit-2 causes raises an alert.
+
+### Why
+
+Amendment 2 accepted that a standing finding blinds a check to a lane that stops. That cost was
+live. `sds-bump-driver` stood down from 2026-10-31 on a finding (a unit in `revision_required`)
+whose keyed alerts were already open in alert-hub, and six missed runs on 2026-11-03 caused no
+state change. Once the finding reaches a person as a keyed alert, the `/fail` adds nothing but that
+blindness.
+
+### The sensors and the tool installer tell a person
+
+The findings a person must act on from four lanes that arm the dead-man switch reach alert-hub as
+keyed alerts on their acting pass, through `alert_hub_client.KeyedAlerts` with the `sds-bridge`
+sender: the activation sweep (`checkout-behind`, `checkout-dirty`, `checkout-parked` and
+`activation-incomplete`), the revision watcher (`revision-stale`), the pin watcher (`pin-behind`)
+and the tool installer (`tool-install`). Their dead-man checks keep answering liveness alone. Their
+observations stay the findings' fact home (amendment 1); alert-hub is where a person is told. A
+failed send exits with the lane's could-not-report code, which outranks its finding code, so the
+check pings `/fail`.
+
+### No second hearer for an unreadable Healthchecks key
+
+When a lane can't read the Healthchecks key, it can't ping, and its check goes down after its
+grace. Measured on 2026-11-03: every missed run in Healthchecks' retained window flipped its check
+down, except the six `sds-bump-driver` runs this amendment unmasks. The key read fails when BWS or
+the network does, and anything else that could report it needs the same two, so no second hearer
+is built.
