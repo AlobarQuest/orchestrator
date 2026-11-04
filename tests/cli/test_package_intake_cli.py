@@ -985,6 +985,12 @@ def test_only_an_agent_with_the_human_operator_profile_is_a_human_operator(
     [
         ("policy:dependency-update@v1", True),
         ("policy:dependency-update@v0", False),
+        ("policy:x@v10", True),
+        ("policy:x@v01", False),
+        ("policy:Bad@v1", False),
+        ("policy:-x@v1", False),
+        ("policy:@v1", False),
+        ("other:x@v1", False),
         ("policy:dependency-update", False),
         ("nobody", False),
     ],

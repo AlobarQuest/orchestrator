@@ -64,13 +64,28 @@ def subprocess_commands(source: str) -> list[tuple[str, ...]]:
     commands: list[tuple[str, ...]] = []
     for call in _calls(ast.parse(source)):
         name = _dotted(call.func)
-        if name.startswith("subprocess.") or name.startswith("os.") and name in OS_SPAWNERS:
+        if name.startswith("subprocess.") or (name.startswith("os.") and name in OS_SPAWNERS):
             first = call.args[0] if call.args else None
             if name == "subprocess.run" and isinstance(first, ast.List):
                 commands.append(tuple(_render(item) for item in first.elts))
             else:
                 commands.append((name,))
     return commands
+
+
+def subprocess_imports(source: str) -> list[str]:
+    """Imports of subprocess that `subprocess.<name>` matching would miss: from-imports, aliases."""
+    found: list[str] = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.ImportFrom) and (node.module or "").split(".")[0] == "subprocess":
+            found.append(f"from {node.module}")
+        elif isinstance(node, ast.Import):
+            found += [
+                f"{a.name} as {a.asname}"
+                for a in node.names
+                if a.name.split(".")[0] == "subprocess" and a.asname
+            ]
+    return found
 
 
 def network_imports(source: str) -> list[str]:
@@ -142,6 +157,10 @@ def test_the_module_runs_exactly_three_subprocess_commands() -> None:
     commands = subprocess_commands(SOURCE)
     assert len(commands) == 3
     assert set(commands) == SUBPROCESS_COMMANDS
+
+
+def test_subprocess_is_imported_only_as_itself() -> None:
+    assert subprocess_imports(SOURCE) == []
 
 
 def test_the_module_imports_no_network_client() -> None:
@@ -217,3 +236,22 @@ def test_control_a_moved_events_file_is_reported() -> None:
 @pytest.mark.parametrize("function", ["_factory_events_file", "_security_registry_dir"])
 def test_control_the_path_check_finds_its_function(function: str) -> None:
     assert path_parts(SOURCE, function)
+
+
+def test_control_an_aliased_or_from_import_of_subprocess_is_reported() -> None:
+    assert subprocess_imports("import subprocess as sp\n" + SOURCE) == ["subprocess as sp"]
+    assert subprocess_imports("from subprocess import run\n" + SOURCE) == ["from subprocess"]
+
+
+def test_control_check_output_and_a_held_argv_are_reported() -> None:
+    widened = (
+        SOURCE
+        + "\n\ndef _extra() -> None:\n"
+        + '    subprocess.check_output(["id"])\n'
+        + '    argv = ["id"]\n    subprocess.run(argv)\n'
+    )
+    commands = subprocess_commands(widened)
+    assert len(commands) == 5
+    assert set(commands) != SUBPROCESS_COMMANDS
+    assert ("subprocess.check_output",) in commands
+    assert ("subprocess.run",) in commands
