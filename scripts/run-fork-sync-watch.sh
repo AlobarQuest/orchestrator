@@ -40,7 +40,8 @@ set -uo pipefail
 CHECK_NAME="sds-fork-sync-watch"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# ACTIVATION, as every lane does it: best-effort, one `[activation]` line, re-execs on a moved HEAD.
+# ACTIVATION, as the other scheduled lanes do it: best-effort, one `[activation]` line, re-execs on
+# a moved HEAD. (The bump and rotation proposers run none.)
 _SDS_ACTIVATE="$HOME/.claude/bin/activate-checkout.sh"
 if [ -r "$_SDS_ACTIVATE" ]; then
     # shellcheck source=/dev/null

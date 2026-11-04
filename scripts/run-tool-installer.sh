@@ -86,9 +86,10 @@ activate_checkout "$REPO_ROOT" "$0" "$@"
 source "$REPO_ROOT/scripts/sds-deadman.sh"
 sds_deadman_arm sds-tool-installer --finding 3 "$@"
 
-# Load BWS_ACCESS_TOKEN from the Keychain via the approved helper (never a plaintext file). Both
-# bearers below live in the `SDS Operator` project, which this one narrow identity reads -- so this
-# script needs ONE BWS identity for two secrets, and must not set a second. The dead-man switch
+# Load BWS_ACCESS_TOKEN from the Keychain via the approved helper (never a plaintext file). This one
+# narrow identity reads both bearers below (SYSTEM in `SDS Operator`, the observer in
+# `Rotation / Keepers` by a direct grant) -- so this script needs ONE BWS identity for two secrets,
+# and must not set a second. The dead-man switch
 # above uses the BROAD account and reads its Keychain item directly into a local of its own, which
 # is why sourcing this after it is safe: `sds-token.sh` respects an already-set value, and
 # exporting the broad token here would silently become the identity for both fetches below, each
@@ -96,9 +97,7 @@ sds_deadman_arm sds-tool-installer --finding 3 "$@"
 # shellcheck disable=SC1091
 source "$(dirname "${BASH_SOURCE[0]}")/sds-token.sh"
 
-# `--color no` AND an environment with the forcing variables removed. FORCE_COLOR / CLICOLOR_FORCE
-# make `bws secret get` wrap its JSON in ANSI escapes even when stdout is a pipe, which breaks the
-# parse below -- a portfolio-wide defect fixed locally in three repos and generalised in none.
+# The shared BWS reader (`sds-bws.sh`), which carries the colour guard and the venv interpreter.
 # shellcheck disable=SC1091
 source "$REPO_ROOT/scripts/sds-bws.sh"
 

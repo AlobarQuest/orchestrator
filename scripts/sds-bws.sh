@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
-# Read one secret's value out of Bitwarden Secrets Manager: the ONE copy every launcher uses.
+# Read one secret's value out of Bitwarden Secrets Manager: the ONE copy every script here uses.
+# Every launcher that fetches a secret sources it, and so do `sds-deadman.sh` (the Healthchecks key
+# read, which reaches every `scripts/run-*.sh`), `sds-install.sh` and the installers that read a
+# secret.
 #
-# Source this (don't execute it) from a `scripts/run-*.sh` launcher:
+# Source this (don't execute it):
 #     source "$REPO_ROOT/scripts/sds-bws.sh"
 #
 # Then:
@@ -15,11 +18,11 @@
 #
 # THE TWO-ARGUMENT FORM IS KEYED ON THE ARGUMENT COUNT, NOT ON WHETHER THE SECOND IS EMPTY.
 # `BWS_ACCESS_TOKEN=""` for one fetch is a different request from inheriting the ambient token, and
-# the six launchers that juggle two identities pass the second argument precisely so that one
-# ambient value can never serve both (docs/operations/credentials.md #175, "sds-token.sh RESPECTS an already-set
-# BWS_ACCESS_TOKEN"). So this helper is identity-agnostic on purpose, and it does NOT source
-# `sds-token.sh`: that helper reads the Keychain and exports as a side effect, which those six
-# deliberately avoid.
+# the launchers that read both identities (`grep -l BWS_ACCESS_TOKEN_VPS_BACKUP scripts/run-*.sh`)
+# pass the second argument precisely so that one ambient value can never serve both
+# (docs/operations/credentials.md #175, "sds-token.sh RESPECTS an already-set BWS_ACCESS_TOKEN").
+# So this helper is identity-agnostic on purpose, and it does NOT source `sds-token.sh`: that helper
+# reads the Keychain and exports as a side effect, which those launchers deliberately avoid.
 #
 # THE COLOUR GUARD. FORCE_COLOR / CLICOLOR_FORCE make `bws secret get` wrap its JSON in ANSI
 # escapes even when stdout is a pipe. Both are unset for the call AND `--color no` is passed, so
@@ -35,6 +38,9 @@
 # from THIS file's location rather than from the caller's REPO_ROOT, so the helper needs nothing
 # from its caller. NOTE WHAT THIS DOES NOT FIX: `/usr/bin/git` is the same kind of shim, so a
 # license reset still stops any lane that runs git; this makes the secret read say the true thing.
+#
+# SHARED: `sds-deadman.sh` parses the Healthchecks check listing with `$_SDS_BWS_PYTHON` too, so
+# renaming it or changing what it points at changes that parse as well.
 
 _SDS_BWS_PYTHON="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.venv/bin/python"
 

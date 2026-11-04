@@ -9,8 +9,8 @@
 # `main` sat red for 31 hours with its failure reported within minutes and nobody subscribed.
 # Detection has never been this estate's problem; SUBSCRIPTION has.
 #
-# Source this (don't execute it) and arm once, immediately after `activate_checkout`, declaring
-# the exit code THIS launcher uses for "something was found":
+# Source this (don't execute it) and arm once, at the top of the pass (after `activate_checkout`,
+# in a launcher that runs it), declaring the exit code THIS launcher uses for "something was found":
 #     source "$(dirname "${BASH_SOURCE[0]}")/sds-deadman.sh"
 #     sds_deadman_arm sds-landing-ledger --finding 2 "$@"
 #
@@ -20,20 +20,19 @@
 # added to prevent: while a check sits failed on a standing finding, a lane that STOPS causes no
 # state change at the alert channel, which is exactly the silence being watched for.
 #
-# The code that means "found" is DIFFERENT IN THE TWO GROUPS OF LAUNCHERS, and 2 and 3 mean
-# opposite things between them: among the armed lanes, the ledger, the deploy watcher and the
-# activation sweep read 2 as found and 3 as could-not-be-read, while the estate lander and the
-# rotation proposer read 2 as could-not-use-its-inputs and 3 as found. A universal rule here would
-# invert the signal for one group -- a finding paging, and a blind pass reading as healthy. So each
-# launcher DECLARES its own code, from its own header, and this file holds no table: a table here
-# would be one more copy of a vocabulary that already lives in the headers, and it would be the
-# copy nobody edits. An outcome-alarm lane declares no code: every non-zero exit pings `/fail`.
-# `tests/scripts/test_sds_deadman.py` reads each launcher's `EXIT CODES` block and asserts the
-# declared code is the one that block calls a finding, so the declaration cannot drift from the
-# prose it restates.
+# The code that means "found" is DIFFERENT ACROSS LAUNCHERS, and 2 and 3 mean opposite things
+# between them: some read 2 as found and 3 as could-not-be-read, others 2 as could-not-use-its-inputs
+# and 3 as found. A universal rule here would invert the signal for one group -- a finding paging,
+# and a blind pass reading as healthy. So each launcher DECLARES its own code, from the `EXIT CODES`
+# block in its own header, and this file holds no table or list: one here would be one more copy of
+# a vocabulary that already lives in the headers, and it would be the copy nobody edits. An
+# outcome-alarm lane declares no finding code: every non-zero exit pings `/fail`, except the one
+# code it passes as `--told`. `tests/scripts/test_sds_deadman.py` reads each launcher's `EXIT CODES`
+# block and asserts the declared code is the one that block calls a finding, so the declaration
+# cannot drift from the prose it restates.
 #
 # WHY IT LOOKS UP THE CHECK BY NAME RATHER THAN READING A PING URL FROM AN ENV FILE. Two patterns
-# exist in this estate and the difference matters at seven checks. `infraops-mcp-server`'s
+# exist in this estate and the difference grows with every check. `infraops-mcp-server`'s
 # `drift-audit.sh` reads a ping URL from an env file: one secret per check, and this estate has
 # already been bitten by a credential copied per repository and rotated in only some of the copies
 # (`FACTORY_PR_TOKEN`, two dead copies surviving a rotation for two weeks). `vps-backup`'s
@@ -260,10 +259,13 @@ sds_deadman_finish() {
 # thing that watches the lane: an operator inspecting a lane by hand would reset the timer of a
 # schedule that has in fact stopped, which is precisely the condition the switch exists to detect.
 #
-# THE RESIDUAL IS NAMED RATHER THAN PAPERED OVER. Two armed lanes spell their reporting mode as
-# the BARE invocation and their scheduled mode as `--submit` (`run-estate-landing.sh`,
-# `run-rotation-proposer.sh`), so a bare operator run of those still pings. Keying on `--submit` instead would need per-launcher knowledge, and getting that wrong disables a lane's switch
-# silently -- the quiet failure this whole file exists to end.
+# THE RESIDUAL IS NAMED RATHER THAN PAPERED OVER. Some armed lanes spell their reporting mode as
+# the BARE invocation and their scheduled mode as a flag (`--submit` for `run-estate-landing.sh`,
+# `run-inert-landing.sh` and `run-rotation-proposer.sh`; `--install` for `run-tool-installer.sh`),
+# so a bare operator run of those still pings. `run-execution-watch.sh` closes it for itself by
+# handing this helper `--dry-run` on any run without `--submit`. Keying on a flag here instead would
+# need per-launcher knowledge, and getting that wrong disables a lane's switch silently -- the
+# quiet failure this whole file exists to end.
 sds_deadman_is_dry_run() {
     for argument in "$@"; do
         [ "$argument" = "--dry-run" ] && return 0

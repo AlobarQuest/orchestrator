@@ -66,9 +66,7 @@ sds_deadman_arm sds-pin-watcher --finding 2 "$@"
 # shellcheck disable=SC1091
 source "$(dirname "${BASH_SOURCE[0]}")/sds-token.sh"
 
-# `--color no` AND an environment with the forcing variables removed. FORCE_COLOR / CLICOLOR_FORCE
-# make `bws secret get` wrap its JSON in ANSI escapes even when stdout is a pipe, which breaks the
-# parse below -- a portfolio-wide defect fixed locally in three repos and generalised in none.
+# The shared BWS reader (`sds-bws.sh`), which carries the colour guard and the venv interpreter.
 # shellcheck disable=SC1091
 source "$REPO_ROOT/scripts/sds-bws.sh"
 

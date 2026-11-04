@@ -140,7 +140,7 @@ def _run(
 def test_a_launchers_own_finding_code_reports_the_pass_as_healthy(
     tmp_path: Path, bin_stubs: Path, check_name: str
 ) -> None:
-    """The whole change. Both schemes are here: three launchers declare 2 and four declare 3."""
+    """The whole change, run for every armed launcher, so both schemes (2 and 3 as found) are here."""
     _, code = declared_codes()[check_name]
 
     rc, pings, _ = _run(tmp_path, bin_stubs, check_name=check_name, exit_code=code, finding=None)
@@ -278,7 +278,7 @@ def test_every_launcher_that_arms_the_switch_declares_a_finding_code() -> None:
 def test_the_declared_code_is_the_one_the_launchers_own_header_calls_a_finding(
     launcher: str,
 ) -> None:
-    """THE PIN. The declaration restates a vocabulary that already lives in seven headers, so
+    """THE PIN. The declaration restates a vocabulary that already lives in each header, so
     without this it is one more copy free to drift -- and a drifted copy inverts the signal
     silently rather than failing. Read from the header the launcher documents itself with, so
     editing one and not the other is a red build."""
@@ -292,8 +292,7 @@ def test_the_declared_code_is_the_one_the_launchers_own_header_calls_a_finding(
 
 
 def test_the_two_schemes_are_both_present_so_neither_test_above_is_vacuous() -> None:
-    """A universal rule inverts three of the eight, so a suite that happened to cover only one
-    scheme
+    """A universal rule inverts one scheme, so a suite that happened to cover only one scheme
     would prove the half that already worked."""
     codes = {code for _, code in declared_codes().values()}
 

@@ -57,9 +57,10 @@ SDS_BRIDGE_ALERT_UUID="${ACTIVATION_SWEEP_ALERT_BWS_UUID:-b415d03b-f92d-46b1-8a9
 #
 # TWO BEARERS, because ADR-0030 names two lanes with two different rights. The sweep records
 # observations and is OBSERVER; binding a release artifact is admitted only for the SYSTEM actor.
-# Both live in the `SDS Operator` project, so ONE BWS identity reads both and there is no second
+# The narrow `sds-operator` identity reads both (SYSTEM in `SDS Operator`, the observer in
+# `Rotation / Keepers` by a direct grant), so ONE BWS identity serves and there is no second
 # Keychain item to keep in step -- the two-identity trap this estate has hit in the launchers and
-# in `factory decompose` does not arise here, and would if either secret ever moved project.
+# in `factory decompose` does not arise here, and would if either secret left that identity's reach.
 OBSERVER_BEARER_UUID="f793576f-e9aa-4f9d-8089-b4a000b9e2d5"   # orchestrator-observer OBSERVER
 SYSTEM_BEARER_UUID="221a48d5-3f29-4898-b300-b4820140c880"     # orchestrator-system  SYSTEM
 
@@ -116,10 +117,7 @@ sds_deadman_arm sds-activation-sweep --finding 2 "$@"
 # shellcheck disable=SC1091
 source "$(dirname "${BASH_SOURCE[0]}")/sds-token.sh"
 
-# `--color no` AND an environment with the forcing variables removed. FORCE_COLOR / CLICOLOR_FORCE
-# make `bws secret get` wrap its JSON in ANSI escapes even when stdout is a pipe, which breaks the
-# parse below -- a portfolio-wide defect fixed locally in three repos and generalised in none. It
-# costs nothing where the behaviour never fires.
+# The shared BWS reader (`sds-bws.sh`), which carries the colour guard and the venv interpreter.
 # shellcheck disable=SC1091
 source "$REPO_ROOT/scripts/sds-bws.sh"
 

@@ -11,10 +11,11 @@
 #     security add-generic-password -U -s Claude -a BWS_ACCESS_TOKEN_SDS \
 #         -T /usr/bin/security -w
 #
-# The token belongs to the read-only `sds-operator` BWS machine account, scoped to the
-# `SDS Operator` project alone, which holds the secrets the SDS runtime fetches
-# (`.bws-secrets.toml` lists them by UUID). It can read nothing else, and it can write
-# nothing at all.
+# The token belongs to the read-only `sds-operator` BWS machine account. It reads the
+# `SDS Operator` project, which holds most of the secrets the SDS runtime fetches, and two
+# keepers in `Rotation / Keepers` by a direct grant on each: the operator (WORKER) and
+# observer bearers (`.bws-secrets.toml` lists every one by UUID). It can read nothing else,
+# and it can write nothing at all.
 #
 # Before 2026-07-30 these scripts bootstrapped with the vps-backup machine account's
 # token, which could read the whole Ops / Platform project — over-scoped, never leaked.
