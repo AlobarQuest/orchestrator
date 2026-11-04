@@ -1,5 +1,6 @@
 import json
 import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -147,13 +148,17 @@ def test_package_source_reader_builds_intake_payload(monkeypatch: pytest.MonkeyP
     ]
 
 
+def _refuse_approval(*args: object) -> VerifiedApproval:
+    raise PackageSourceError("approval verification failed: stubbed cause")
+
+
 def test_package_source_reader_requires_verified_approval(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
         package_sources,
         "_verify_current_approval",
-        lambda *args: None,
+        _refuse_approval,
     )
 
     with pytest.raises(PackageSourceError, match="approval verification failed"):
@@ -333,7 +338,7 @@ def test_package_source_reader_requires_cli_verifier_for_cli_verified_mode(
 ) -> None:
     monkeypatch.setenv("FACTORY_EVENTS_HOME", str(tmp_path))
     monkeypatch.setattr(package_sources, "_verify_with_intent_packages_cli", lambda path: None)
-    monkeypatch.setattr(package_sources, "_verify_factory_chain", lambda: True)
+    monkeypatch.setattr(package_sources, "_verify_factory_chain", lambda: None)
     monkeypatch.setattr(package_sources, "_is_human_operator", lambda agent_id: agent_id == "devon")
 
     events_file = tmp_path / "events.jsonl"
@@ -358,7 +363,7 @@ def test_package_source_reader_rejects_false_cli_verifier(
 ) -> None:
     monkeypatch.setenv("FACTORY_EVENTS_HOME", str(tmp_path))
     monkeypatch.setattr(package_sources, "_verify_with_intent_packages_cli", lambda path: False)
-    monkeypatch.setattr(package_sources, "_verify_factory_chain", lambda: True)
+    monkeypatch.setattr(package_sources, "_verify_factory_chain", lambda: None)
     monkeypatch.setattr(package_sources, "_is_human_operator", lambda agent_id: agent_id == "devon")
 
     events_file = tmp_path / "events.jsonl"
@@ -555,7 +560,7 @@ def test_package_source_reader_exact_event_verification_rejects_forged_metadata(
 ) -> None:
     monkeypatch.setenv("FACTORY_EVENTS_HOME", str(tmp_path))
     monkeypatch.setattr(package_sources, "_verify_with_intent_packages_cli", lambda path: True)
-    monkeypatch.setattr(package_sources, "_verify_factory_chain", lambda: True)
+    monkeypatch.setattr(package_sources, "_verify_factory_chain", lambda: None)
     monkeypatch.setattr(package_sources, "_is_human_operator", lambda agent_id: agent_id == "devon")
 
     events_file = tmp_path / "events.jsonl"
@@ -698,7 +703,7 @@ _GOOD_APPROVAL = {"approver": "devon", "commit": "abc123", "event_id": "evt-1"}
 def _stub_every_check_passing(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(package_sources, "_is_recognised_approver", lambda approver: True)
     monkeypatch.setattr(package_sources, "_verify_with_intent_packages_cli", lambda path: True)
-    monkeypatch.setattr(package_sources, "_verify_factory_chain", lambda: True)
+    monkeypatch.setattr(package_sources, "_verify_factory_chain", lambda: None)
     monkeypatch.setattr(package_sources, "_iter_package_approval_events", lambda: [])
 
 
@@ -758,13 +763,50 @@ def test_a_failing_verify_approval_is_named(monkeypatch: pytest.MonkeyPatch) -> 
         _verify_with()
 
 
-def test_a_factory_chain_that_does_not_verify_is_named(monkeypatch: pytest.MonkeyPatch) -> None:
-    _stub_every_check_passing(monkeypatch)
-    monkeypatch.setattr(package_sources, "_verify_factory_chain", lambda: False)
+def _chain_with(monkeypatch: pytest.MonkeyPatch, *, run: object) -> None:
+    monkeypatch.setattr(package_sources, "_is_recognised_approver", lambda approver: True)
+    monkeypatch.setattr(package_sources, "_verify_with_intent_packages_cli", lambda path: True)
+    monkeypatch.setattr(package_sources, "_security_standards_dir", lambda: Path("."))
+    monkeypatch.setattr(package_sources.subprocess, "run", run)
+
+
+def test_a_missing_security_standards_checkout_is_named(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _chain_with(monkeypatch, run=None)
+    monkeypatch.setattr(package_sources, "_security_standards_dir", lambda: None)
+
+    with pytest.raises(
+        PackageSourceError,
+        match="^approval verification failed: security-standards checkout is unavailable$",
+    ):
+        _verify_with()
+
+
+def test_a_chain_verify_that_exits_non_zero_is_named(monkeypatch: pytest.MonkeyPatch) -> None:
+    _chain_with(monkeypatch, run=lambda *a, **k: subprocess.CompletedProcess(a, 1))
 
     with pytest.raises(
         PackageSourceError,
         match="^approval verification failed: factory event chain did not verify$",
+    ):
+        _verify_with()
+
+
+@pytest.mark.parametrize(
+    "error", [OSError("no python"), subprocess.TimeoutExpired(cmd="x", timeout=1)]
+)
+def test_a_chain_verify_that_cannot_run_is_named(
+    monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> None:
+    def run(*a: object, **k: object) -> None:
+        raise error
+
+    _chain_with(monkeypatch, run=run)
+
+    with pytest.raises(
+        PackageSourceError,
+        match="^approval verification failed: factory event chain verification could not run$",
     ):
         _verify_with()
 

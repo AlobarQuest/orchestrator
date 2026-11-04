@@ -228,10 +228,10 @@ def _factory_events_file() -> Path:
     return home / "events.jsonl"
 
 
-def _verify_factory_chain() -> bool:
+def _verify_factory_chain() -> None:
     sec_std_dir = _security_standards_dir()
     if sec_std_dir is None:
-        return False
+        raise _approval_refused("security-standards checkout is unavailable")
     src_dir = sec_std_dir / "src"
     env = dict(os.environ)
     existing_pythonpath = env.get("PYTHONPATH")
@@ -248,8 +248,9 @@ def _verify_factory_chain() -> bool:
             check=False,
         )
     except OSError, subprocess.TimeoutExpired:
-        return False
-    return result.returncode == 0
+        raise _approval_refused("factory event chain verification could not run") from None
+    if result.returncode != 0:
+        raise _approval_refused("factory event chain did not verify")
 
 
 def _matching_event_evidence(
@@ -383,8 +384,7 @@ def _verify_current_approval(
         raise _approval_refused("intent-packages checkout is unavailable")
     if not sibling_verification:
         raise _approval_refused("intent-packages verify-approval failed")
-    if not _verify_factory_chain():
-        raise _approval_refused("factory event chain did not verify")
+    _verify_factory_chain()
     return _verified_approval_from_events(
         package_id=package_id,
         approved_hash=approved_hash,
@@ -562,8 +562,6 @@ def _load_intake_payload(
         revision,
         approval,
     )
-    if verified_approval is None:
-        raise PackageSourceError("approval verification failed")
     verification_limitations = {
         "api_recomputes_remote_git_object": False,
         "cli_verified_local_package_hash": True,
