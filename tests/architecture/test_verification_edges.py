@@ -24,6 +24,7 @@ from orchestrator.api.routes import verifier as verifier_route
 from orchestrator.services.verifier import github_checks
 from orchestrator.services.verifier.github_checks import GitHubActionsCheckObserver
 from tests.architecture.edge_table import (
+    ALERT_HUB_PERMITS,
     DEADMAN,
     GH_AUTH_TOKEN,
     SDS_BRIDGE_ALERT_BEARER,
@@ -35,7 +36,6 @@ from tests.architecture.edge_table import (
     near_misses,
     route_disagreements,
 )
-from tests.architecture.test_bridge_edges import _alert_hub_permits
 from tests.architecture.test_rotation_edges import borrowed, network, processes
 from tests.unit_verifier.test_factory_units import (
     NOT_CONCLUDED,
@@ -235,7 +235,7 @@ PERMITS: dict[str, Permits | None] = {
     "change_manager": None,
     "orchestrator": lambda m, p: lane_client.permits(m, p),
     "github": lambda m, p: required_checks._permits(m, p),
-    "alert_hub": _alert_hub_permits,
+    "alert_hub": ALERT_HUB_PERMITS,
 }
 
 

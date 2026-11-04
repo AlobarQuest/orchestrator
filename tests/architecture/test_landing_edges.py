@@ -31,6 +31,7 @@ from inert_lander import orchestrator_client as inert_orchestrator
 from inert_lander.cli import PullRequestSource
 from scripts.layers import load
 from tests.architecture.edge_table import (
+    ALERT_HUB_PERMITS,
     DEADMAN,
     GH_AUTH_TOKEN,
     READ_BEARER,
@@ -43,7 +44,7 @@ from tests.architecture.edge_table import (
     route_disagreements,
     sendable,
 )
-from tests.architecture.test_bridge_edges import _alert_hub_permits, _landing_policy_permits
+from tests.architecture.test_bridge_edges import _landing_policy_permits
 
 # Landing Part 3b. The estate lander's Coolify token (BWS `COOLIFY_TOKEN_SDS_ESTATE_LANDER`).
 COOLIFY_TOKEN = "f9f59233-0794-4ea8-9806-b4f3011e6147"
@@ -206,13 +207,13 @@ PERMITS: dict[str, dict[str, Permits | None]] = {
         "change_manager": lambda m, p: estate_change_manager._permits(m, p),
         "orchestrator": lambda m, p: estate_orchestrator._permits(m, p),
         "github": None,
-        "alert_hub": _alert_hub_permits,
+        "alert_hub": ALERT_HUB_PERMITS,
     },
     "inert_lander": {
         "change_manager": _landing_policy_permits,
         "orchestrator": lambda m, p: inert_orchestrator._permits(m, p),
         "github": None,
-        "alert_hub": _alert_hub_permits,
+        "alert_hub": ALERT_HUB_PERMITS,
     },
 }
 

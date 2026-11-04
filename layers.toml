@@ -102,6 +102,7 @@ paths = [
   "tests/standing_identity/**",
   "tests/estate_clients/**",
   "tests/architecture/test_release_workflow.py",
+  "tests/architecture/test_runtime_edges.py",
   "tests/fixtures/release_image_run_*.log",
   "scripts/sds-*.sh",
   "scripts/deploy_orchestrator.py",
