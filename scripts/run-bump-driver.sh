@@ -13,8 +13,11 @@
 #   0  every bump moved, or waits on something that clears by itself.
 #   1  the tool itself failed (a missing credential, an unusable URL).
 #   2  a person decides something: a refused decomposition, dispatch or merge, a unit in
-#      revision_required, or a run nobody claimed. A proposal a person declined isn't a finding.
-#   3  a record, a unit or a pull request could not be read, or alert-hub could not be told.
+#      revision_required, or a run nobody claimed. Every such finding is delivered as a keyed alert
+#      before the exit, so the check pings success with the report (`--told 2`). A proposal a
+#      person declined isn't a finding.
+#   3  a record, a unit or a pull request could not be read, or alert-hub could not be told: a
+#      failed delivery is 3, never 2, so it still pings /fail.
 #
 # CREDENTIALS, each read straight into its own variable, never an ambient `BWS_ACCESS_TOKEN` (the
 # two-identity rule, docs/operations/credentials.md):
@@ -114,4 +117,4 @@ case "$rc" in
   0|1|2|3) ;;
   *) echo "FATAL: bump-driver exited $rc" >> "$SDS_OUTCOME_REPORT"; rc=1 ;;
 esac
-sds_outcome_end "$rc"
+sds_outcome_end "$rc" --told 2

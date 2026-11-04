@@ -9,11 +9,16 @@ the estate does not contain fails rather than passing on a default.
 from __future__ import annotations
 
 import base64
+import functools
 import json
+from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
+
+from alert_hub_client import KeyedAlerts
+from pin_watcher import alerts as alerts_module
 
 RUNNER = "AlobarQuest/factory-runner"
 RECOMMENDED = "a" * 40
@@ -129,3 +134,38 @@ def orchestrator(written: list[dict[str, Any]]) -> httpx.MockTransport:
         return httpx.Response(201, json={"id": "00000000-0000-0000-0000-000000000000"})
 
     return httpx.MockTransport(handle)
+
+
+class Hub:
+    """A recording alert-hub: what was sent, and where the state file lives."""
+
+    def __init__(self, state: Path) -> None:
+        self.state = state
+        self.sent: list[dict[str, str]] = []
+        self.status = 202
+
+    def keys(self, status: str) -> list[str]:
+        return sorted(body["key"] for body in self.sent if body["status"] == status)
+
+    def remembered(self) -> set[str]:
+        path = self.state / alerts_module.ALERTS_FILE
+        return set(json.loads(path.read_text())) if path.exists() else set()
+
+
+@pytest.fixture(autouse=True)
+def hub(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Hub:
+    """Every test runs against a recording hub and its own state directory, never the real ones."""
+    recorder = Hub(tmp_path / "alert-state")
+
+    def _hub(request: httpx.Request) -> httpx.Response:
+        recorder.sent.append(json.loads(request.content))
+        return httpx.Response(recorder.status)
+
+    monkeypatch.setattr(
+        alerts_module,
+        "KeyedAlerts",
+        functools.partial(KeyedAlerts, transport=httpx.MockTransport(_hub), sleep=lambda _: None),
+    )
+    monkeypatch.setenv(alerts_module.STATE_DIR_ENV, str(recorder.state))
+    monkeypatch.setenv(alerts_module.TOKEN_ENV, "alert-token")
+    return recorder

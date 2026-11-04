@@ -63,7 +63,9 @@ from scripts.layers import load
 from sds_members import client as members_client
 from tests.architecture.code_terms import docstring_nodes
 from tests.architecture.edge_table import (
+    ALERT_HUB_PERMITS,
     DEADMAN,
+    NETWORK_IMPORTS,
     OBSERVER_BEARER,
     PROPOSE_BEARER,
     READ_BEARER,
@@ -84,7 +86,6 @@ from tests.architecture.edge_table import (
 from tests.architecture.import_scan import file_imports
 from tests.architecture.process_scan import process_heads
 from tests.architecture.test_bridge_edges import PROBES as BRIDGE_PROBES
-from tests.architecture.test_bridge_edges import _alert_hub_permits
 
 UNIT = "0b5bd8e1-6d0c-4e8a-9a0d-1f0b4d8f6a11"
 REVISION = "7f3a2c10-52de-4a11-8c55-90ab12cd34ef"
@@ -263,7 +264,7 @@ PERMITS: dict[str, dict[str, Permits | None]] = {
         "change_manager": None,
         "orchestrator": lambda m, p: worker_orchestrator.permits(m, p),
         "github": either(_app_permits, _secret_permits, _report_permits),
-        "alert_hub": _alert_hub_permits,
+        "alert_hub": ALERT_HUB_PERMITS,
     },
     "rotation_proposer": {
         "change_manager": lambda m, p: bump_change_manager._permits(m, p),
@@ -273,13 +274,13 @@ PERMITS: dict[str, dict[str, Permits | None]] = {
             lambda m, p: proposer_client.permits(m, p),
         ),
         "github": None,
-        "alert_hub": _alert_hub_permits,
+        "alert_hub": ALERT_HUB_PERMITS,
     },
     "rotation_decomposer": {
         "change_manager": lambda m, p: decomposer_client.change_manager_permits(m, p),
         "orchestrator": lambda m, p: decomposer_client.orchestrator_permits(m, p),
         "github": None,
-        "alert_hub": _alert_hub_permits,
+        "alert_hub": ALERT_HUB_PERMITS,
     },
 }
 
@@ -1043,9 +1044,6 @@ FORMS: Final = [
 SRC: Final = Path("src")
 SHARED_TRANSPORTS: Final = frozenset(
     {"src/estate_clients/confined.py", "src/alert_hub_client/__init__.py"}
-)
-NETWORK_IMPORTS: Final = frozenset(
-    {"aiohttp", "alert_hub_client", "estate_clients", "http", "httpx", "requests", "socket"}
 )
 
 

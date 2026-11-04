@@ -918,6 +918,18 @@ OUTBOUND_ALLOWLIST = {
     Path("src/tool_installer/github.py"),
     Path("src/tool_installer/policy_client.py"),
     Path("src/tool_installer/orchestrator_client.py"),
+    # Part 1a. Tell a person through the shared alert client, which owns the transport; these two
+    # import only its names and make no request of their own.
+    Path("src/tool_installer/alerts.py"),
+    Path("src/tool_installer/cli.py"),
+    # Part 1a, the same: the sweep tells through the shared alert client and makes no request here.
+    Path("src/activation_sweep/alerts.py"),
+    Path("src/activation_sweep/cli.py"),
+    # Part 1a, the same for the two watchers.
+    Path("src/revision_watcher/alerts.py"),
+    Path("src/revision_watcher/cli.py"),
+    Path("src/pin_watcher/alerts.py"),
+    Path("src/pin_watcher/cli.py"),
 }
 
 

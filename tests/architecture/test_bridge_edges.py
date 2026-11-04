@@ -34,6 +34,7 @@ from change_proposer import reverts as change_reverts
 from scripts.layers import load
 from sds_members import client as members_client
 from tests.architecture.edge_table import (
+    ALERT_HUB_PERMITS,
     DEADMAN,
     OBSERVER_BEARER,
     PROPOSE_BEARER,
@@ -217,12 +218,6 @@ _landing_policy_permits = captured_permits(
     bump_landing_policy,
     lambda: bump_landing_policy.read_landing_policy("token"),
 )
-_alert_hub_permits = captured_permits(
-    alert_hub_client,
-    lambda: alert_hub_client.KeyedAlerts(
-        lambda: "token", Path("unused.json"), user_agent="edges/1"
-    ).open_client(),
-)
 _listing_permits = captured_permits(
     carrier_change_manager,
     lambda: carrier_change_manager.HttpWorkRecordSource(
@@ -245,7 +240,7 @@ PERMITS: dict[str, dict[str, Permits | None]] = {
             lambda m, p: members_client._permits(members_client._READ)(m, p),
         ),
         "github": None,
-        "alert_hub": _alert_hub_permits,
+        "alert_hub": ALERT_HUB_PERMITS,
     },
     "change_proposer": {
         "change_manager": lambda m, p: change_change_manager._permits(m, p),
@@ -274,7 +269,7 @@ PERMITS: dict[str, dict[str, Permits | None]] = {
         ),
         "orchestrator": lambda m, p: watcher_orchestrator._permits(m, p),
         "github": lambda m, p: watcher_github._permits(m, p),
-        "alert_hub": _alert_hub_permits,
+        "alert_hub": ALERT_HUB_PERMITS,
     },
 }
 

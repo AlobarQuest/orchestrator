@@ -116,7 +116,7 @@ CHANGE_MANAGER_READ_UUID="${BUMP_PROPOSER_READ_BWS_UUID:-314f276d-55ca-4ddc-a24d
 OBSERVER_BEARER_UUID="${BUMP_PROPOSER_OBSERVER_BWS_UUID:-f793576f-e9aa-4f9d-8089-b4a000b9e2d5}"
 
 # The `sds-bridge` sender's alert-hub token (bridge Part 3), BWS `ALERT_HUB_SENDER_TOKEN_SDS_BRIDGE`
-# in `SDS Operator` beside the observer bearer, and listed in `.bws-secrets.toml`.
+# in `SDS Operator`, and listed in `.bws-secrets.toml`.
 SDS_BRIDGE_ALERT_UUID="${BUMP_PROPOSER_ALERT_BWS_UUID:-b415d03b-f92d-46b1-8a9d-b4f10103df49}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -149,7 +149,8 @@ source "$REPO_ROOT/scripts/sds-bws.sh"
 
 # TWO BWS IDENTITIES SINCE G1+G2, AND NEITHER CAN READ THE OTHER'S SECRET. The change-manager
 # bearers live in a project only the BROAD machine account can read; the orchestrator's observer
-# bearer lives in `SDS Operator`, readable only by the narrow read-only `sds-operator` account.
+# bearer lives in `Rotation / Keepers`, readable only by the narrow read-only `sds-operator` account
+# (by a direct grant on that one secret).
 # Each is read directly from its own Keychain item into its own variable and passed to the fetch
 # that needs it, so no identity is ever ambient and each fetch says which one it used.
 #

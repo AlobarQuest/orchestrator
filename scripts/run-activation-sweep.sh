@@ -28,12 +28,23 @@
 #   1  the tool itself failed (a missing credential, a missing binary, an unusable URL).
 #   2  something was found: a checkout is behind its upstream, carries modified tracked files, or
 #      holds a bound artifact that is not fully activated -- a console entry point that was never
-#      installed, or an environment that does not match its lockfile. Somebody has to act.
+#      installed, or an environment that does not match its lockfile. Somebody has to act, and an
+#      acting pass has told a person: one keyed alert per member and condition
+#      (`checkout-behind|dirty|parked:<member>` from `sweep`, `activation-incomplete:<member>` from
+#      `bind`), resolved when a later pass finds the condition gone.
 #      WAITING is still not this: a unit whose landing is not yet pulled is the ordinary state
 #      between a unit completing and the next pull, and so is a SUPERSEDED artifact, whose window
 #      for being observed closed when HEAD moved past it.
 #   3  some checkout could not be measured, the member record could not be read, or a row could
-#      not be filed, so the answer is missing rather than clean. 3 outranks 2.
+#      not be filed, so the answer is missing rather than clean. ALSO the code for an acting pass
+#      whose alert-hub send failed or whose alert state file was unusable (after the pass's own
+#      work). 3 outranks 2, so a failed send cannot hide a finding.
+#
+# THE ACTING PASS TELLS A PERSON: any pass without `--dry-run` (the plist passes no arguments). It
+# fetches the `sds-bridge` alert token through the narrow identity, as SDS_BRIDGE_ALERT_TOKEN, and
+# exits 1 when it cannot read it. A `--dry-run` pass sends nothing and fetches no alert token. The
+# two subcommands keep separate alert state files (`sweep-alerts.json`, `bind-alerts.json`),
+# because each resolves every remembered key it is not firing.
 #
 # Usage:
 #   scripts/run-activation-sweep.sh [--dry-run]
@@ -42,12 +53,14 @@
 set -uo pipefail
 
 # BWS UUIDs (values are fetched at runtime; never stored in this repo). See .bws-secrets.toml.
+SDS_BRIDGE_ALERT_UUID="${ACTIVATION_SWEEP_ALERT_BWS_UUID:-b415d03b-f92d-46b1-8a9d-b4f10103df49}"  # sds-bridge alert sender
 #
 # TWO BEARERS, because ADR-0030 names two lanes with two different rights. The sweep records
 # observations and is OBSERVER; binding a release artifact is admitted only for the SYSTEM actor.
-# Both live in the `SDS Operator` project, so ONE BWS identity reads both and there is no second
+# The narrow `sds-operator` identity reads both (SYSTEM in `SDS Operator`, the observer in
+# `Rotation / Keepers` by a direct grant), so ONE BWS identity serves and there is no second
 # Keychain item to keep in step -- the two-identity trap this estate has hit in the launchers and
-# in `factory decompose` does not arise here, and would if either secret ever moved project.
+# in `factory decompose` does not arise here, and would if either secret left that identity's reach.
 OBSERVER_BEARER_UUID="f793576f-e9aa-4f9d-8089-b4a000b9e2d5"   # orchestrator-observer OBSERVER
 SYSTEM_BEARER_UUID="221a48d5-3f29-4898-b300-b4820140c880"     # orchestrator-system  SYSTEM
 
@@ -104,10 +117,7 @@ sds_deadman_arm sds-activation-sweep --finding 2 "$@"
 # shellcheck disable=SC1091
 source "$(dirname "${BASH_SOURCE[0]}")/sds-token.sh"
 
-# `--color no` AND an environment with the forcing variables removed. FORCE_COLOR / CLICOLOR_FORCE
-# make `bws secret get` wrap its JSON in ANSI escapes even when stdout is a pipe, which breaks the
-# parse below -- a portfolio-wide defect fixed locally in three repos and generalised in none. It
-# costs nothing where the behaviour never fires.
+# The shared BWS reader (`sds-bws.sh`), which carries the colour guard and the venv interpreter.
 # shellcheck disable=SC1091
 source "$REPO_ROOT/scripts/sds-bws.sh"
 
@@ -123,6 +133,18 @@ export ACTIVATION_BIND_TOKEN
 if [ -z "${ACTIVATION_BIND_TOKEN:-}" ]; then
   echo "FATAL: could not read the SYSTEM bearer from BWS." >&2
   exit 1
+fi
+
+# Acting means no `--dry-run`, the same term the program applies.
+if _sweep_is_dry_run "$@"; then
+  :
+else
+  SDS_BRIDGE_ALERT_TOKEN="$(sds_bws_value "$SDS_BRIDGE_ALERT_UUID")"
+  export SDS_BRIDGE_ALERT_TOKEN
+  if [ -z "${SDS_BRIDGE_ALERT_TOKEN:-}" ]; then
+    echo "FATAL: could not read the sds-bridge alert sender token from BWS (narrow)." >&2
+    exit 1
+  fi
 fi
 
 # THE WORST OUTCOME WINS, and an UNRECOGNISED code is the worst of all.

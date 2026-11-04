@@ -39,6 +39,7 @@ from orchestrator.services.execution import target_grant
 from orchestrator.services.execution.dispatch import GitHubActionsDispatcher
 from scripts.layers import load
 from tests.architecture.edge_table import (
+    ALERT_HUB_PERMITS,
     DEADMAN,
     OBSERVER_BEARER,
     SDS_BRIDGE_ALERT_BEARER,
@@ -51,7 +52,6 @@ from tests.architecture.edge_table import (
     near_misses,
     route_disagreements,
 )
-from tests.architecture.test_bridge_edges import _alert_hub_permits
 
 SOURCE = Path("src/orchestrator")
 DISPATCH_SOURCE = SOURCE / "services/execution/dispatch.py"
@@ -257,7 +257,7 @@ PERMITS: dict[str, dict[str, Permits | None]] = {
         "change_manager": None,
         "orchestrator": lambda m, p: watch_client.permits(m, p),
         "github": None,
-        "alert_hub": _alert_hub_permits,
+        "alert_hub": ALERT_HUB_PERMITS,
     },
 }
 

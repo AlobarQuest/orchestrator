@@ -57,8 +57,9 @@ changes from a traceback to the program's own error.
 - A fix to the transport guards is made once. A defect in them reaches every program at once, which
   is the price of the first property; `tests/estate_clients/` carries the real-transport control
   for the IDNA case, which a mock transport cannot exercise.
-- Three clients stay outside it: `revision_watcher/estate.py`, `tracker_projection_adapter/tracker.py`
-  and `deploy_watcher/transcription_currency.py`.
+- Two clients stay outside it: `revision_watcher/estate.py` and
+  `deploy_watcher/transcription_currency.py`. A third, `tracker_projection_adapter/tracker.py`, left
+  with the adapter in #606 (amendment 1).
 - `membership_check/declaration.py` stays outside it. It composes a GitHub path from authored text,
   so it builds the request and checks the path httpx actually built, after dot-segment
   resolution; the shared client checks the path it was given. That check is stronger, and the
@@ -86,3 +87,9 @@ changes from a traceback to the program's own error.
   and now raises its own `ProjectionError`; `landing_ledger`'s caught only `httpx.HTTPError`, so a
   malformed host escaped as a bare `ValueError`, which its CLI already absorbed, and now arrives as
   its own `LedgerWriteError` with the exception type named.
+
+## Amendment 1 (2026-11-04): the tracker adapter is gone
+
+#606 retired the tracker projection adapter (ADR-0040 amendment 1), so `tracker_projection_adapter`
+no longer exists. The consequences above that name it describe it as it stood; two clients stay
+outside the shared transport.

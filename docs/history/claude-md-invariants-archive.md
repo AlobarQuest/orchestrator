@@ -2310,3 +2310,24 @@ The text these rules held in CLAUDE.md until Verification Part 5 replaced each w
 
 - Generated post-deploy acceptance criteria are verifier-owned: public adjudication rejects their AC IDs, so post-deploy completion always flows through the verifier evaluators.
 - A verifier adjudication may arise only from `verify_work_unit`; a direct POST is `verifier_evaluation_required`.
+
+### Runtime Part 3, 2026-11-04
+
+The text these rules held in CLAUDE.md until the Lane runtime layer pass rewrote each as it stands.
+The bearer rule placed the operator and observer bearers in `SDS Operator`; the outcome-alarm rule
+missed `run-rotation-decomposer.sh` and attributed acting-run pinging to the bridge lanes alone;
+neither alarm rule named `--told` (ADR-0021 amendment 3).
+
+- SDS M2M bearers live in BWS project `SDS Operator`: bootstrap with `scripts/sds-token.sh` (never
+  vps-backup's helper), UUIDs in `.bws-secrets.toml`; never echo values. Detail:
+  `docs/operations/credentials.md`.
+- `sds_deadman_finish` pings success for 0 and for the lane's declared `--finding` code; only other
+  codes ping `/fail`, so the check answers liveness, never whether something was found. Detail:
+  `docs/operations/local-development.md`.
+- The outcome-alarm launchers (`run-fork-sync-watch.sh`, `run-fork-harden.sh`,
+  `run-membership-check.sh`, `run-bump-proposer.sh`, `run-change-proposer.sh`,
+  `run-work-carrier.sh`, `run-bump-driver.sh`) run through `sds_outcome_begin`/`sds_outcome_end` in
+  `scripts/sds-deadman.sh`: `/fail` with the report on every non-zero exit, findings included,
+  pinging only on the bridge lanes' acting run. They never arm the dead-man switch, and a launcher
+  that doesn't arm it must not contain the arming function's name, which `test_sds_deadman.py`
+  keys on. Detail: ADR-0021 amendment 2.

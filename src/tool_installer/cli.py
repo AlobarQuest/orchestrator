@@ -25,6 +25,11 @@ EXIT CODES, and they are the whole interface a scheduled run has:
      code", with the numbers this group uses.
   3  something was found: the install failed, or the artifact failed its probe and was rolled back.
 
+`--install` WITHOUT `--dry-run` ALSO TELLS A PERSON, through one keyed alert-hub alert per tool
+(`tool_installer.alerts`), and needs `SDS_BRIDGE_ALERT_TOKEN` (exit 1 without it, before anything
+is replaced). A failed send or an unusable alert state file is also 2, after the pass's own work,
+and outranks 3. A bare or `--dry-run` pass sends nothing.
+
 **THE ESTATE'S LAUNCHERS DO NOT SHARE ONE EXIT VOCABULARY, AND 2 AND 3 ARE INVERTED BETWEEN THE
 TWO GROUPS.** This lane matches the ACTING group -- `estate-landing`, `change-proposer`,
 `work-carrier`, `bump-proposer` -- because those are its siblings. A reader arriving from
@@ -46,6 +51,8 @@ from typing import Annotated
 
 import typer
 
+from alert_hub_client import AlertHubError
+from tool_installer import alerts
 from tool_installer.github import GitHubReader, GitHubReadError, commit
 from tool_installer.install import (
     ACTION_NONE,
@@ -205,6 +212,22 @@ def _acted(
     )
 
 
+def _tell(rows: list[Installation], token: str) -> bool:
+    """Sync the per-tool alerts. False when alert-hub or the state file could not be used."""
+    directory = alerts.state_dir(Path.home(), os.environ.get(alerts.STATE_DIR_ENV))
+    firing, unread = alerts.classify(rows)
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        alerts.open_hub(token, directory).sync(firing, unread)
+    except OSError as error:
+        typer.echo(f"UNUSABLE: the alert state directory: {type(error).__name__}", err=True)
+        return False
+    except AlertHubError as error:
+        typer.echo(f"UNUSABLE: alert-hub was not told: {error}", err=True)
+        return False
+    return True
+
+
 @app.command()
 def main(  # noqa: PLR0911, PLR0912, C901
     install: Annotated[
@@ -261,6 +284,14 @@ def main(  # noqa: PLR0911, PLR0912, C901
     if not dry_run and not (observer_key and observer_token):
         # Not required for a dry run, which files nothing and so needs no write credential.
         typer.echo("FATAL: the observer credential is not configured.", err=True)
+        raise typer.Exit(EXIT_TOOL_FAILED)
+
+    # THE ACTING PASS TELLS A PERSON, so it needs the alert token before it can replace anything:
+    # a swap that fails and cannot be told is the silence this exists to end.
+    acting = install and not dry_run
+    alert_token = os.environ.get(alerts.TOKEN_ENV, "").strip()
+    if acting and not alert_token:
+        typer.echo(f"FATAL: {alerts.TOKEN_ENV} is required for an acting pass.", err=True)
         raise typer.Exit(EXIT_TOOL_FAILED)
 
     github_token = os.environ.get("TOOL_INSTALLER_GITHUB_TOKEN", "").strip()
@@ -434,7 +465,12 @@ def main(  # noqa: PLR0911, PLR0912, C901
     typer.echo(
         f"{len(rows)} tools, {len(behind)} not current, {len(failed)} failed, {unfiled} unfiled"
     )
-    if unfiled or unusable:
+    # 11. TELL A PERSON, after the pass's own work. The two early exits above (an unreadable window
+    #     or fork revision) never reach here, so they call no `sync` and leave every remembered key
+    #     as it was. A failed send or an unusable state file is the could-not-report code, which
+    #     outranks the finding code so a failed send cannot hide a finding.
+    unreported = acting and not _tell(rows, alert_token)
+    if unfiled or unusable or unreported:
         raise typer.Exit(EXIT_UNUSABLE)
     if failed:
         raise typer.Exit(EXIT_FOUND)

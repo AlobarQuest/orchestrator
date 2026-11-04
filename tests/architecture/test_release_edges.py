@@ -26,6 +26,7 @@ from orchestrator.main import create_app
 from tests.architecture.edge_table import (
     DEADMAN,
     OBSERVER_BEARER,
+    SDS_BRIDGE_ALERT_BEARER,
     SYSTEM_BEARER,
     Edge,
     Permits,
@@ -196,7 +197,11 @@ def test_the_activation_sweep_binds_through_exactly_its_routes() -> None:
         "system": [],
         "observer": [],
     }
-    assert launcher_bearers(SWEEP_LAUNCHER) == DEADMAN | {SYSTEM_BEARER, OBSERVER_BEARER}
+    assert launcher_bearers(SWEEP_LAUNCHER) == DEADMAN | {
+        SYSTEM_BEARER,
+        OBSERVER_BEARER,
+        SDS_BRIDGE_ALERT_BEARER,
+    }
 
 
 @pytest.mark.parametrize(

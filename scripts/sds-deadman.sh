@@ -9,8 +9,8 @@
 # `main` sat red for 31 hours with its failure reported within minutes and nobody subscribed.
 # Detection has never been this estate's problem; SUBSCRIPTION has.
 #
-# Source this (don't execute it) and arm once, immediately after `activate_checkout`, declaring
-# the exit code THIS launcher uses for "something was found":
+# Source this (don't execute it) and arm once, at the top of the pass (after `activate_checkout`,
+# in a launcher that runs it), declaring the exit code THIS launcher uses for "something was found":
 #     source "$(dirname "${BASH_SOURCE[0]}")/sds-deadman.sh"
 #     sds_deadman_arm sds-landing-ledger --finding 2 "$@"
 #
@@ -20,20 +20,19 @@
 # added to prevent: while a check sits failed on a standing finding, a lane that STOPS causes no
 # state change at the alert channel, which is exactly the silence being watched for.
 #
-# The code that means "found" is DIFFERENT IN THE TWO GROUPS OF LAUNCHERS, and 2 and 3 mean
-# opposite things between them: among the armed lanes, the ledger, the deploy watcher and the
-# activation sweep read 2 as found and 3 as could-not-be-read, while the estate lander and the
-# rotation proposer read 2 as could-not-use-its-inputs and 3 as found. A universal rule here would
-# invert the signal for one group -- a finding paging, and a blind pass reading as healthy. So each
-# launcher DECLARES its own code, from its own header, and this file holds no table: a table here
-# would be one more copy of a vocabulary that already lives in the headers, and it would be the
-# copy nobody edits. An outcome-alarm lane declares no code: every non-zero exit pings `/fail`.
-# `tests/scripts/test_sds_deadman.py` reads each launcher's `EXIT CODES` block and asserts the
-# declared code is the one that block calls a finding, so the declaration cannot drift from the
-# prose it restates.
+# The code that means "found" is DIFFERENT ACROSS LAUNCHERS, and 2 and 3 mean opposite things
+# between them: some read 2 as found and 3 as could-not-be-read, others 2 as could-not-use-its-inputs
+# and 3 as found. A universal rule here would invert the signal for one group -- a finding paging,
+# and a blind pass reading as healthy. So each launcher DECLARES its own code, from the `EXIT CODES`
+# block in its own header, and this file holds no table or list: one here would be one more copy of
+# a vocabulary that already lives in the headers, and it would be the copy nobody edits. An
+# outcome-alarm lane declares no finding code: every non-zero exit pings `/fail`, except the one
+# code it passes as `--told`. `tests/scripts/test_sds_deadman.py` reads each launcher's `EXIT CODES`
+# block and asserts the declared code is the one that block calls a finding, so the declaration
+# cannot drift from the prose it restates.
 #
 # WHY IT LOOKS UP THE CHECK BY NAME RATHER THAN READING A PING URL FROM AN ENV FILE. Two patterns
-# exist in this estate and the difference matters at seven checks. `infraops-mcp-server`'s
+# exist in this estate and the difference grows with every check. `infraops-mcp-server`'s
 # `drift-audit.sh` reads a ping URL from an env file: one secret per check, and this estate has
 # already been bitten by a credential copied per repository and rotated in only some of the copies
 # (`FACTORY_PR_TOKEN`, two dead copies surviving a rotation for two weeks). `vps-backup`'s
@@ -62,6 +61,11 @@
 SDS_DEADMAN_API_KEY_UUID="51509d5e-64f5-4781-ae82-b4ed00b644e1"
 SDS_DEADMAN_API="https://healthcheck.alobar.net/api/v3/checks/"
 
+# The key read and the listing parse use the venv interpreter `sds-bws.sh` names, never `python3`
+# from PATH (an Xcode shim under launchd). Sourced by this file's own directory, not `$REPO_ROOT`.
+# shellcheck disable=SC1091
+source "$(dirname "${BASH_SOURCE[0]}")/sds-bws.sh"
+
 # Resolved at arm time. Empty means alerting is disabled for this run, which every ping honours.
 SDS_DEADMAN_PING_URL=""
 SDS_DEADMAN_NAME=""
@@ -88,13 +92,8 @@ sds_deadman_resolve() {
         SDS_DEADMAN_REASON="no broad BWS identity"
         return 0
     fi
-    # `--color no` AND an environment with the forcing variables removed. FORCE_COLOR /
-    # CLICOLOR_FORCE make `bws secret get` wrap its JSON in ANSI escapes even when stdout is a
-    # pipe, which breaks the parse -- a portfolio-wide defect fixed locally in three repos and
-    # generalised in none. It costs nothing where the behaviour never fires.
-    key="$(env -u FORCE_COLOR -u CLICOLOR_FORCE BWS_ACCESS_TOKEN="$broad" \
-        bws secret get "$SDS_DEADMAN_API_KEY_UUID" --output json --color no 2>/dev/null \
-        | python3 -c 'import sys, json; print(json.load(sys.stdin)["value"])' 2>/dev/null || true)"
+    # The shared reader, so the colour guard and the venv interpreter live in one place.
+    key="$(sds_bws_value "$SDS_DEADMAN_API_KEY_UUID" "$broad" 2>/dev/null || true)"
     if [ -z "$key" ]; then
         SDS_DEADMAN_REASON="the Healthchecks API key could not be read"
         return 0
@@ -111,7 +110,7 @@ sds_deadman_resolve() {
     # read-only key disables every lane's alerting at once while the log blames a missing check.
     # The check is matched on its EXACT name -- pinging a near-miss would report a lane as alive
     # that has not run, which is worse than reporting nothing.
-    answer="$(printf '%s' "$listing" | SDS_DEADMAN_WANTED="$name" python3 -c 'import os, sys, json
+    answer="$(printf '%s' "$listing" | SDS_DEADMAN_WANTED="$name" "$_SDS_BWS_PYTHON" -c 'import os, sys, json
 wanted = os.environ["SDS_DEADMAN_WANTED"]
 for check in json.load(sys.stdin).get("checks", []):
     if check.get("name") == wanted:
@@ -186,18 +185,44 @@ sds_outcome_fail() {
     exit "${2:-1}"
 }
 
-# `sds_outcome_end <rc> [--body-on-success]`: copies the report to stdout (the lane log keeps it),
-# pings success on 0 (with the report as the body only when asked) or `/fail` with the report on
-# anything else, and exits `<rc>`.
+# `sds_outcome_end <rc> [--body-on-success] [--told <code>]`, flags in any order: copies the report
+# to stdout (the lane log keeps it), pings success on 0 (with the report as the body only when
+# asked) or `/fail` with the report on anything else, and exits `<rc>`.
+#
+# `--told <code>` declares the one non-zero exit whose every cause was a finding delivered as a keyed
+# alert (ADR-0021 amendment 3): that exit pings success WITH the report as the body, because the
+# alarm has done its job and a `/fail` would page a second time for the same fact. 0 and 1 are
+# refused as `sds_deadman_arm` refuses them for `--finding`, since 1 means the tool failed. A
+# launcher may pass it only for a code its `EXIT CODES` block calls a delivered keyed alert, which
+# `tests/scripts/test_sds_deadman.py` holds it to.
 sds_outcome_end() {
-    local rc="$1"
+    local rc="$1" body_on_success=0 told=""
+    shift
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --body-on-success) body_on_success=1 ;;
+            --told)
+                told="${2:-}"
+                shift
+                case "$told" in
+                    ''|*[!0-9]*) sds_deadman_log "'--told $told' is not a number — ignored"; told="" ;;
+                    0|1) sds_deadman_log "'--told $told' is a reserved code — ignored"; told="" ;;
+                esac
+                ;;
+            *) sds_deadman_log "unknown flag '$1' — ignored" ;;
+        esac
+        shift
+    done
     cat "$SDS_OUTCOME_REPORT"
     if [ "$rc" -eq 0 ]; then
-        if [ "${2:-}" = "--body-on-success" ]; then
+        if [ "$body_on_success" -eq 1 ]; then
             sds_outcome_ping "" "$SDS_OUTCOME_REPORT"
         else
             sds_outcome_ping ""
         fi
+    elif [ -n "$told" ] && [ "$rc" -eq "$told" ]; then
+        sds_deadman_log "exit $rc is this lane's told code — the finding was delivered as a keyed alert"
+        sds_outcome_ping "" "$SDS_OUTCOME_REPORT"
     else
         if [ -n "$SDS_DEADMAN_PING_URL" ]; then
             echo "[$SDS_OUTCOME_TAG] exit $rc — reporting a failure"
@@ -235,10 +260,13 @@ sds_deadman_finish() {
 # thing that watches the lane: an operator inspecting a lane by hand would reset the timer of a
 # schedule that has in fact stopped, which is precisely the condition the switch exists to detect.
 #
-# THE RESIDUAL IS NAMED RATHER THAN PAPERED OVER. Two armed lanes spell their reporting mode as
-# the BARE invocation and their scheduled mode as `--submit` (`run-estate-landing.sh`,
-# `run-rotation-proposer.sh`), so a bare operator run of those still pings. Keying on `--submit` instead would need per-launcher knowledge, and getting that wrong disables a lane's switch
-# silently -- the quiet failure this whole file exists to end.
+# THE RESIDUAL IS NAMED RATHER THAN PAPERED OVER. Some armed lanes spell their reporting mode as
+# the BARE invocation and their scheduled mode as a flag (`--submit` for `run-estate-landing.sh`,
+# `run-inert-landing.sh` and `run-rotation-proposer.sh`; `--install` for `run-tool-installer.sh`),
+# so a bare operator run of those still pings. `run-execution-watch.sh` closes it for itself by
+# handing this helper `--dry-run` on any run without `--submit`. Keying on a flag here instead would
+# need per-launcher knowledge, and getting that wrong disables a lane's switch silently -- the
+# quiet failure this whole file exists to end.
 sds_deadman_is_dry_run() {
     for argument in "$@"; do
         [ "$argument" = "--dry-run" ] && return 0

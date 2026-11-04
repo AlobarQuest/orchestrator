@@ -10,11 +10,18 @@
 #   0  everything was measured and nothing was found.
 #   1  the tool itself failed (a missing credential, an unusable URL).
 #   2  something was found -- a caller is not at the recommendation. The pass worked; the estate
-#      did not.
+#      did not. An acting pass has told a person: one keyed alert per repository
+#      (`pin-behind:<repository>`), resolved when a later pass finds the caller at the pin.
 #   3  some caller could not be read, or its row could not be filed, so the answer is missing
-#      rather than clean.
+#      rather than clean. ALSO the code for an acting pass whose alert-hub send failed or whose
+#      alert state file was unusable (after the pass's own work), so a failed send cannot hide a
+#      finding.
 # 3 outranks 2: an incomplete pass cannot claim it found everything there was to find. A broken
 # tool and an honest finding sharing one code is a collision this estate has already paid for.
+#
+# THE ACTING PASS TELLS A PERSON: any pass without `--dry-run` (the plist passes no arguments). It
+# fetches the `sds-bridge` alert token through the narrow identity, as SDS_BRIDGE_ALERT_TOKEN, and
+# exits 1 when it cannot read it. A `--dry-run` pass sends nothing and fetches no alert token.
 #
 # NOTHING HERE ACTS. It reads GitHub and files one observation per caller. It changes no workflow,
 # no pin and no repository; advancing a pin stays a person's one-line pull request.
@@ -27,6 +34,7 @@ set -uo pipefail
 
 # BWS UUIDs (values fetched at runtime; never stored in this repo). See .bws-secrets.toml.
 OBSERVER_BEARER_UUID="f793576f-e9aa-4f9d-8089-b4a000b9e2d5"   # orchestrator-observer OBSERVER bearer
+SDS_BRIDGE_ALERT_UUID="${PIN_WATCHER_ALERT_BWS_UUID:-b415d03b-f92d-46b1-8a9d-b4f10103df49}"  # sds-bridge alert sender
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -58,9 +66,7 @@ sds_deadman_arm sds-pin-watcher --finding 2 "$@"
 # shellcheck disable=SC1091
 source "$(dirname "${BASH_SOURCE[0]}")/sds-token.sh"
 
-# `--color no` AND an environment with the forcing variables removed. FORCE_COLOR / CLICOLOR_FORCE
-# make `bws secret get` wrap its JSON in ANSI escapes even when stdout is a pipe, which breaks the
-# parse below -- a portfolio-wide defect fixed locally in three repos and generalised in none.
+# The shared BWS reader (`sds-bws.sh`), which carries the colour guard and the venv interpreter.
 # shellcheck disable=SC1091
 source "$REPO_ROOT/scripts/sds-bws.sh"
 
@@ -68,6 +74,27 @@ ORCHESTRATOR_API_URL="${ORCHESTRATOR_API_URL:-https://sds.alobar.net}"
 ORCHESTRATOR_API_CREDENTIAL_KEY_ID="orchestrator-observer"
 ORCHESTRATOR_API_TOKEN="$(sds_bws_value "$OBSERVER_BEARER_UUID")"
 export ORCHESTRATOR_API_URL ORCHESTRATOR_API_CREDENTIAL_KEY_ID ORCHESTRATOR_API_TOKEN
+
+# Acting means no `--dry-run`, the same term the program applies.
+_pin_is_dry_run() {
+  for argument in "$@"; do
+    [ "$argument" = "--dry-run" ] && return 0
+  done
+  return 1
+}
+if ! _pin_is_dry_run "$@"; then
+  # The program files rows on an acting pass only, so only then is an unread bearer fatal.
+  if [ -z "$ORCHESTRATOR_API_TOKEN" ]; then
+    echo "FATAL: could not read the observer bearer from BWS." >&2
+    exit 1
+  fi
+  SDS_BRIDGE_ALERT_TOKEN="$(sds_bws_value "$SDS_BRIDGE_ALERT_UUID")"
+  export SDS_BRIDGE_ALERT_TOKEN
+  if [ -z "${SDS_BRIDGE_ALERT_TOKEN:-}" ]; then
+    echo "FATAL: could not read the sds-bridge alert sender token from BWS (narrow)." >&2
+    exit 1
+  fi
+fi
 
 # THE GITHUB CREDENTIAL HAS NO BWS RECORD, the same gap the landing ledger carries and for the same
 # reason: this reads public repository metadata and has never needed a dedicated identity. A

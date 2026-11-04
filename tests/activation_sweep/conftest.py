@@ -17,10 +17,16 @@ otherwise reach in and make these tests pass or fail for reasons unrelated to th
 
 from __future__ import annotations
 
+import functools
+import json
 import subprocess
 from pathlib import Path
 
+import httpx
 import pytest
+
+from activation_sweep import alerts as alerts_module
+from alert_hub_client import KeyedAlerts
 
 ORIGIN_URL = "https://github.com/AlobarQuest/example.git"
 
@@ -149,3 +155,38 @@ class Estate:
 @pytest.fixture
 def estate(tmp_path: Path) -> Estate:
     return Estate(tmp_path)
+
+
+class Hub:
+    """A recording alert-hub: what was sent, and where the state files live."""
+
+    def __init__(self, state: Path) -> None:
+        self.state = state
+        self.sent: list[dict[str, str]] = []
+        self.status = 202
+
+    def keys(self, status: str) -> list[str]:
+        return sorted(body["key"] for body in self.sent if body["status"] == status)
+
+    def remembered(self, filename: str) -> set[str]:
+        path = self.state / filename
+        return set(json.loads(path.read_text())) if path.exists() else set()
+
+
+@pytest.fixture(autouse=True)
+def hub(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Hub:
+    """Every test runs against a recording hub and its own state directory, never the real ones."""
+    recorder = Hub(tmp_path / "alert-state")
+
+    def _hub(request: httpx.Request) -> httpx.Response:
+        recorder.sent.append(json.loads(request.content))
+        return httpx.Response(recorder.status)
+
+    monkeypatch.setattr(
+        alerts_module,
+        "KeyedAlerts",
+        functools.partial(KeyedAlerts, transport=httpx.MockTransport(_hub), sleep=lambda _: None),
+    )
+    monkeypatch.setenv(alerts_module.STATE_DIR_ENV, str(recorder.state))
+    monkeypatch.setenv(alerts_module.TOKEN_ENV, "alert-token")
+    return recorder

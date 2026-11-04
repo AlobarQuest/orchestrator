@@ -140,7 +140,7 @@ def _run(
 def test_a_launchers_own_finding_code_reports_the_pass_as_healthy(
     tmp_path: Path, bin_stubs: Path, check_name: str
 ) -> None:
-    """The whole change. Both schemes are here: three launchers declare 2 and four declare 3."""
+    """The whole change, for every armed launcher, so both schemes (2 or 3 as found) are here."""
     _, code = declared_codes()[check_name]
 
     rc, pings, _ = _run(tmp_path, bin_stubs, check_name=check_name, exit_code=code, finding=None)
@@ -278,7 +278,7 @@ def test_every_launcher_that_arms_the_switch_declares_a_finding_code() -> None:
 def test_the_declared_code_is_the_one_the_launchers_own_header_calls_a_finding(
     launcher: str,
 ) -> None:
-    """THE PIN. The declaration restates a vocabulary that already lives in seven headers, so
+    """THE PIN. The declaration restates a vocabulary that already lives in each header, so
     without this it is one more copy free to drift -- and a drifted copy inverts the signal
     silently rather than failing. Read from the header the launcher documents itself with, so
     editing one and not the other is a red build."""
@@ -292,8 +292,7 @@ def test_the_declared_code_is_the_one_the_launchers_own_header_calls_a_finding(
 
 
 def test_the_two_schemes_are_both_present_so_neither_test_above_is_vacuous() -> None:
-    """A universal rule inverts three of the eight, so a suite that happened to cover only one
-    scheme
+    """A universal rule inverts one scheme, so a suite that happened to cover only one scheme
     would prove the half that already worked."""
     codes = {code for _, code in declared_codes().values()}
 
@@ -355,3 +354,226 @@ def test_the_outcome_ping_does_nothing_without_a_resolved_url(tmp_path: Path) ->
     args, stdin, output = _outcome(tmp_path, "", 'sds_outcome_ping "/fail" "{report}"')
     assert (args, stdin) == ("", "")
     assert "rc=0" in output
+
+
+# ---------------------------------------------------------------------------------------------
+# `sds_outcome_end --told <code>`: a delivered finding pings success (ADR-0021 amendment 3).
+# ---------------------------------------------------------------------------------------------
+
+
+def _end(tmp_path: Path, arguments: str, rc: int) -> tuple[int, list[str], list[str], str]:
+    """Run `sds_outcome_end <rc> <arguments>`; return (rc, ping urls, ping bodies, output)."""
+    stubs = tmp_path / "stubs"
+    stubs.mkdir()
+    curl = stubs / "curl"
+    # The URL arrives as curl config on stdin; a body, when there is one, as `--data-binary @file`.
+    curl.write_text(
+        "#!/usr/bin/env bash\n"
+        'url="$(cat)"; echo "$url" >> "$PING_LOG"\n'
+        'while [ $# -gt 0 ]; do case "$1" in --data-binary) cat "${2#@}" >> "$BODY_LOG";'
+        ' echo "--" >> "$BODY_LOG";; esac; shift; done\n'
+    )
+    curl.chmod(0o755)
+    report = tmp_path / "report.txt"
+    report.write_text("the report\n")
+    driver = tmp_path / "driver.sh"
+    driver.write_text(
+        "set -uo pipefail\n"
+        f"source {HELPER.resolve()}\n"
+        f"SDS_DEADMAN_PING_URL={PING_URL!r}\n"
+        "SDS_OUTCOME_TAG=lane\n"
+        f"SDS_OUTCOME_REPORT={report}\n"
+        f"sds_outcome_end {rc} {arguments}\n"
+    )
+    environment = dict(os.environ)
+    environment["PATH"] = f"{stubs}{os.pathsep}{environment['PATH']}"
+    environment["PING_LOG"] = str(tmp_path / "pings")
+    environment["BODY_LOG"] = str(tmp_path / "bodies")
+    completed = subprocess.run(
+        ["/bin/bash", str(driver)], capture_output=True, text=True, env=environment
+    )
+    pings, bodies = tmp_path / "pings", tmp_path / "bodies"
+    urls = [
+        line.removeprefix('url = "').removesuffix('"')
+        for line in (pings.read_text().splitlines() if pings.exists() else [])
+    ]
+    return (
+        completed.returncode,
+        urls,
+        (bodies.read_text().split("--\n")[:-1] if bodies.exists() else []),
+        completed.stdout + completed.stderr,
+    )
+
+
+def test_the_told_code_pings_success_with_the_report_as_the_body(tmp_path: Path) -> None:
+    rc, urls, bodies, output = _end(tmp_path, "--told 2", 2)
+
+    assert rc == 2, "the exit code is the pass's own"
+    assert urls == [PING_URL]
+    assert bodies == ["the report\n"]
+    assert "exit 2 is this lane's told code" in output
+    assert "delivered as a keyed alert" in output
+    assert "reporting a failure" not in output
+
+
+def test_any_other_code_still_pings_fail(tmp_path: Path) -> None:
+    rc, urls, bodies, output = _end(tmp_path, "--told 2", 3)
+
+    assert rc == 3
+    assert urls == [f"{PING_URL}/fail"]
+    assert bodies == ["the report\n"]
+    assert "reporting a failure" in output
+
+
+@pytest.mark.parametrize("arguments", ["--told 2 --body-on-success", "--body-on-success --told 2"])
+def test_the_flags_parse_in_either_order(tmp_path: Path, arguments: str) -> None:
+    _, urls, bodies, _ = _end(tmp_path, arguments, 2)
+    assert (urls, bodies) == ([PING_URL], ["the report\n"])
+
+    other = tmp_path / "zero"
+    other.mkdir()
+    _, urls, bodies, _ = _end(other, arguments, 0)
+    assert (urls, bodies) == ([PING_URL], ["the report\n"]), "--body-on-success keeps its meaning"
+
+
+def test_success_without_body_on_success_sends_no_body(tmp_path: Path) -> None:
+    _, urls, bodies, _ = _end(tmp_path, "--told 2", 0)
+    assert (urls, bodies) == ([PING_URL], [])
+
+
+@pytest.mark.parametrize("told", ["0", "1"])
+def test_a_reserved_told_code_is_ignored_with_a_log_line(tmp_path: Path, told: str) -> None:
+    """`--told 1` would ping a broken lane healthy, as `--finding 1` would; refused alike."""
+    rc, urls, _, output = _end(tmp_path, f"--told {told}", int(told))
+
+    assert rc == int(told)
+    assert f"'--told {told}' is a reserved code" in output
+    if told == "1":
+        assert urls == [f"{PING_URL}/fail"]
+
+
+@pytest.mark.parametrize("told", ["two", ""])
+def test_a_malformed_told_code_is_ignored_and_fails_closed(tmp_path: Path, told: str) -> None:
+    rc, urls, _, output = _end(tmp_path, f"--told {told}", 2)
+
+    assert rc == 2
+    assert urls == [f"{PING_URL}/fail"]
+    assert "is not a number" in output
+
+
+def test_an_unknown_end_flag_is_logged_and_still_fails_closed(tmp_path: Path) -> None:
+    """A misspelt `--told` must not be swallowed: the exit still pings `/fail`."""
+    rc, urls, _, output = _end(tmp_path, "--tol 2", 2)
+
+    assert rc == 2
+    assert urls == [f"{PING_URL}/fail"]
+    assert "unknown flag '--tol'" in output
+
+
+# ---------------------------------------------------------------------------------------------
+# The key is read through the shared parser, and no `python3` from PATH is involved.
+# ---------------------------------------------------------------------------------------------
+
+
+def test_the_key_and_listing_are_read_with_no_python3_on_path(
+    tmp_path: Path, bin_stubs: Path
+) -> None:
+    """Under launchd a bare `python3` is an Xcode shim that can refuse to run. The resolve path
+    must work on a PATH holding no `python3` at all: the venv interpreter does both parses."""
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    for name in ("bash", "env", "dirname", "cat", "rm", "mktemp", "tee"):
+        found = shutil.which(name)
+        if found:
+            (tools / name).symlink_to(found)
+    path = f"{bin_stubs}{os.pathsep}{tools}"
+    assert shutil.which("python3", path=path) is None, "the control: no python3 on this PATH"
+
+    ping_log = tmp_path / "pings.txt"
+    ping_log.write_text("")
+    driver = tmp_path / "driver.sh"
+    driver.write_text(
+        "set -uo pipefail\n"
+        f"source {HELPER.resolve()}\n"
+        "sds_deadman_resolve sds-landing-ledger\n"
+        'echo "URL=$SDS_DEADMAN_PING_URL REASON=$SDS_DEADMAN_REASON"\n'
+    )
+    environment = {
+        "PATH": path,
+        "HOME": str(tmp_path),
+        "BWS_ACCESS_TOKEN_BROAD": "not-a-real-identity",
+        "LISTING": json.dumps({"checks": [{"name": "sds-landing-ledger", "ping_url": PING_URL}]}),
+        "PING_LOG": str(ping_log),
+    }
+    completed = subprocess.run(
+        ["/bin/bash", str(driver)], capture_output=True, text=True, env=environment
+    )
+
+    assert f"URL={PING_URL} REASON=" in completed.stdout, completed.stdout + completed.stderr
+
+
+# ---------------------------------------------------------------------------------------------
+# A launcher's `--told` code is held to a sentence in its own EXIT CODES block.
+# ---------------------------------------------------------------------------------------------
+
+# The phrase an `EXIT CODES` line must carry to justify `--told`: every exit with that code was a
+# keyed alert that alert-hub accepted. The same phrase is what the helper logs.
+DELIVERED_MARKER = "delivered as a keyed alert"
+TOLD = re.compile(r"^[ \t]*sds_outcome_end\b.*--told (?P<code>\d+)", re.MULTILINE)
+CODE_LINE = re.compile(r"^#\s{1,4}(?P<code>\d+)\s{2,}(?P<text>.*)$")
+
+
+def told_violations(text: str) -> list[str]:
+    """Each `--told` code the launcher text passes without saying so in its EXIT CODES block."""
+    lines = text.splitlines()
+    block: dict[str, str] = {}
+    current: str | None = None
+    inside = False
+    for line in lines:
+        if line.startswith("# EXIT CODES"):
+            inside = True
+            continue
+        if not inside:
+            continue
+        if not line.startswith("#") or not line.lstrip("# ").strip():
+            break
+        match = CODE_LINE.match(line)
+        if match:
+            current = str(match.group("code"))
+            block[current] = str(match.group("text"))
+        elif current is not None:
+            block[current] += " " + line.lstrip("# ").strip()
+    return [
+        f"--told {code} is not described as {DELIVERED_MARKER!r}"
+        for code in TOLD.findall(text)
+        if DELIVERED_MARKER not in " ".join(block.get(code, "").split())
+    ]
+
+
+@pytest.mark.parametrize("launcher", sorted(p.name for p in SCRIPTS.glob("run-*.sh")))
+def test_a_told_code_is_one_the_launchers_header_calls_a_delivered_alert(launcher: str) -> None:
+    """Vacuous for a launcher that passes no `--told`; the control below proves it can fail."""
+    assert told_violations((SCRIPTS / launcher).read_text()) == []
+
+
+def test_the_told_header_check_fails_on_a_launcher_that_does_not_say_so() -> None:
+    declared = (
+        "# EXIT CODES:\n"
+        "#   0  fine.\n"
+        "#   2  a person decides; every such outcome is delivered as a keyed alert\n"
+        "#      to alert-hub.\n"
+        "#   3  unreadable.\n"
+        '\nsds_outcome_end "$rc" --told 2\n'
+    )
+    silent = declared.replace(DELIVERED_MARKER, "raised")
+    wrong_code = declared.replace("--told 2", "--told 3")
+
+    assert told_violations(declared) == []
+    assert told_violations(silent) != []
+    assert told_violations(wrong_code) != []
+
+
+def test_the_told_header_check_finds_an_indented_call() -> None:
+    indented = '# EXIT CODES:\n#   0  fine.\n\nif x; then\n    sds_outcome_end "$rc" --told 2\nfi\n'
+
+    assert told_violations(indented) != []

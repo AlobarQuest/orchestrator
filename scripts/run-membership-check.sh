@@ -40,7 +40,8 @@ OBSERVER_BEARER_UUID="f793576f-e9aa-4f9d-8089-b4a000b9e2d5"   # orchestrator-obs
 CHANGE_MANAGER_READ_UUID="314f276d-55ca-4ddc-a24d-b4a3013508cd"   # change-manager READ bearer
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# ACTIVATION, as every lane does it: best-effort, one `[activation]` line, re-execs on a moved HEAD.
+# ACTIVATION, as the other scheduled lanes do it: best-effort, one `[activation]` line, re-execs on
+# a moved HEAD. (The bump and rotation proposers run none.)
 _SDS_ACTIVATE="$HOME/.claude/bin/activate-checkout.sh"
 if [ -r "$_SDS_ACTIVATE" ]; then
     # shellcheck source=/dev/null

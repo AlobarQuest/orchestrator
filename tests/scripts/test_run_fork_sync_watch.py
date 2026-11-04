@@ -13,6 +13,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -56,8 +57,11 @@ def _run(tmp_path: Path, rc: int, check: str = "sds-fork-sync-watch") -> tuple[i
     (root / "scripts").mkdir(parents=True)
     shutil.copy(LAUNCHER, root / "scripts" / LAUNCHER.name)
     shutil.copy(Path("scripts/sds-deadman.sh"), root / "scripts" / "sds-deadman.sh")
+    shutil.copy(Path("scripts/sds-bws.sh"), root / "scripts" / "sds-bws.sh")
     venv = root / ".venv" / "bin"
     venv.mkdir(parents=True)
+    # `sds-bws.sh` parses with the tree's own venv interpreter, found beside the script.
+    _executable(venv / "python", f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
     _executable(venv / "fork-sync", _TOOL)
     stubs = tmp_path / "stubs"
     stubs.mkdir()
