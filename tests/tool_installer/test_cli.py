@@ -54,6 +54,7 @@ class _Recorder:
         self.filed: list[dict[str, Any]] = []
         self.sent: list[dict[str, Any]] = []
         self.hub_status = 202
+        self.state = Path()
 
     def __enter__(self) -> _Recorder:
         return self
@@ -160,7 +161,7 @@ def machine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Recorder:
     )
     monkeypatch.setenv("TOOL_INSTALLER_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("SDS_BRIDGE_ALERT_TOKEN", "alert-token")
-    recorder.state = tmp_path / "state"  # type: ignore[attr-defined]
+    recorder.state = tmp_path / "state"
     monkeypatch.setattr(cli_module, "open_policy_client", lambda **_: recorder)
     monkeypatch.setattr(cli_module, "open_client", lambda **_: recorder)
     monkeypatch.setattr(
@@ -677,7 +678,7 @@ def _fail_rtk(machine: _Recorder, monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _remembered(machine: _Recorder) -> set[str]:
-    path = machine.state / "alerts.json"  # type: ignore[attr-defined]
+    path = machine.state / "alerts.json"
     return set(json.loads(path.read_text())) if path.exists() else set()
 
 
@@ -794,7 +795,7 @@ def test_a_pass_that_does_not_act_sends_nothing_and_needs_no_token(
     result = _invoke(machine, monkeypatch, IN_WINDOW, *args)
     assert result.exit_code == 0
     assert machine.sent == []
-    assert not (machine.state / "alerts.json").exists()  # type: ignore[attr-defined]
+    assert not (machine.state / "alerts.json").exists()
 
 
 def test_an_acting_pass_without_the_alert_token_is_refused_before_it_acts(
