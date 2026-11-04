@@ -19,17 +19,26 @@ claim it found everything there was to find.
 
 WHAT AN EXIT CODE DOES AND DOES NOT DO. `sds-deadman.sh` pings its check SUCCESS for a declared
 finding code -- the check answers "is this lane alive", never "did it find something". So exit 2
-does not page anybody, and the finding's durable home is the observation this pass files, which is
+alone pages nobody, and the finding's durable home is the observation this pass files, which is
 why the pass writes even when nothing has changed.
+
+THE ACTING PASS (any pass without `--dry-run`) ALSO TELLS A PERSON, through one keyed alert-hub
+alert per repository (`pin-behind:<repository>`, `pin_watcher.alerts`): a finding fires it, a later
+clean reading resolves it, and a repository the pass could not read keeps whatever key it had. That
+pass needs `SDS_BRIDGE_ALERT_TOKEN` (exit 1 without it, before any work). A failed send or an
+unusable alert state file is the incomplete code, after the pass's own work.
 """
 
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Annotated
 
 import typer
 
+from alert_hub_client import AlertHubError
+from pin_watcher import alerts
 from pin_watcher.github import GitHubReader, PinWatcherError
 from pin_watcher.measure import Pass, as_lines, sweep
 from pin_watcher.orchestrator_client import (
@@ -66,6 +75,31 @@ def _file_rows(result: Pass, client: OrchestratorClient) -> list[str]:
     return unfiled
 
 
+def _alert_token(*, acting: bool) -> str:
+    """The sender token an acting pass needs; its absence is the tool failing, before any work."""
+    token = os.environ.get(alerts.TOKEN_ENV, "").strip() if acting else ""
+    if acting and not token:
+        typer.echo(f"FATAL: {alerts.TOKEN_ENV} is required for an acting pass.", err=True)
+        raise typer.Exit(EXIT_TOOL_FAILED)
+    return token
+
+
+def _tell(result: Pass, token: str) -> bool:
+    """Sync this pass's alerts. False when alert-hub or the state file could not be used."""
+    directory = alerts.state_dir(Path.home(), os.environ.get(alerts.STATE_DIR_ENV))
+    firing, unread = alerts.classify(result)
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        alerts.open_hub(token, directory).sync(firing, unread)
+    except OSError as error:
+        typer.echo(f"UNUSABLE: the alert state directory: {type(error).__name__}", err=True)
+        return False
+    except AlertHubError as error:
+        typer.echo(f"UNUSABLE: alert-hub was not told: {error}", err=True)
+        return False
+    return True
+
+
 @app.command()
 def main(
     dry_run: Annotated[
@@ -76,6 +110,8 @@ def main(
     if not token:
         typer.echo("FATAL: set PIN_WATCHER_GITHUB_TOKEN, or authenticate gh.", err=True)
         raise typer.Exit(EXIT_TOOL_FAILED)
+
+    alert_token = _alert_token(acting=not dry_run)
 
     try:
         with GitHubReader(token=token) as reader:
@@ -111,12 +147,14 @@ def main(
     for repository in sorted(unfiled):
         typer.echo(f"!! {repository} measured, row not filed", err=True)
 
+    unreported = not dry_run and not _tell(result, alert_token)
+
     findings = result.findings
     typer.echo(
         f"{len(result.callers)} callers, {len(findings)} findings, "
         f"{len(result.unreadable)} unreadable, {len(unfiled)} unfiled"
     )
-    if result.unreadable or unfiled:
+    if result.unreadable or unfiled or unreported:
         raise typer.Exit(EXIT_INCOMPLETE)
     if findings:
         raise typer.Exit(EXIT_FOUND)

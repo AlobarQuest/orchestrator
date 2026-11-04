@@ -928,6 +928,8 @@ OUTBOUND_ALLOWLIST = {
     # Part 1a, the same for the two watchers.
     Path("src/revision_watcher/alerts.py"),
     Path("src/revision_watcher/cli.py"),
+    Path("src/pin_watcher/alerts.py"),
+    Path("src/pin_watcher/cli.py"),
 }
 
 

@@ -421,6 +421,7 @@ TABLE: dict[str, Row] = {
     # confined client (ADR-0050), which is plumbing with no lane of its own.
     "pin_watcher": _row(
         "__future__",
+        "alert_hub_client",
         "base64",
         "dataclasses",
         "estate_clients",
@@ -428,6 +429,7 @@ TABLE: dict[str, Row] = {
         "httpx",
         "json",
         "os",
+        "pathlib",
         "re",
         "typer",
         "typing",
