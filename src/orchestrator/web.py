@@ -131,7 +131,7 @@ def _session_id(request: Request) -> str:
             expected = hmac.new(_csrf_secret(request), raw.encode(), hashlib.sha256).hexdigest()
             if hmac.compare_digest(expected, signature):
                 session_id = candidate
-        except ValueError:
+        except (ValueError, TypeError):
             pass
     if not session_id:
         raw = secrets.token_urlsafe(32)
@@ -194,10 +194,12 @@ def _require_form(
         encoded, signature = csrf_token.rsplit(".", 1)
         expected = hmac.new(_csrf_secret(request), encoded.encode(), hashlib.sha256).hexdigest()
         payload = json.loads(base64.urlsafe_b64decode(encoded).decode())
+        # Inside the try: compare_digest raises TypeError on a non-ASCII str.
+        signature_matches = hmac.compare_digest(expected, signature)
     except ValueError, TypeError, json.JSONDecodeError, binascii.Error:
-        payload, expected, signature = {}, "", ""
+        payload, signature_matches = {}, False
     valid = (
-        hmac.compare_digest(expected, signature)
+        signature_matches
         and payload.get("actor") == actor.actor_id
         and payload.get("subject") == str(subject_id)
         and payload.get("action") == action
