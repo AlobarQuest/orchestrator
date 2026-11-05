@@ -2,10 +2,10 @@
 
 - **Status:** Proposed
 - **Date:** 2026-11-05
-- **Decided by:** Devon decided Q2 and Q3 on 2026-11-05 (HQ decisions D-4 and D-5), recorded in
-  "Devon's decisions". Q1 (HQ D-3) is still his to decide and is marked **Open (Q1)**. "Open
-  questions" gives its options, costs and a recommendation. The rest of the ADR is proposed and
-  not yet accepted.
+- **Decided by:** Devon decided Q1, Q2 and Q3 on 2026-11-05 (HQ decisions D-3, D-4 and D-5),
+  recorded in "Devon's decisions". Two narrower questions, who rotates the "SDS lanes" App's key
+  and which key the deploy command reads lane checks with, are in "Open questions" for HQ. The
+  rest of the ADR is proposed and not yet accepted.
 - **Relates to:** ADR-0055 (the rotation executor's isolated runtime and decisions 2 and 4,
   amendments 6 and 12), ADR-0058 (lanes read their scope from the member record), ADR-0039
   (out-of-process producers carry only structured facts), ADR-0021 amendments 2 and 3 (the
@@ -70,28 +70,45 @@ system with only `PATH` and `HOME` set, and holding nothing that can't be rebuil
   quiet slot (following bullet), the tag the orchestrator served until that release, and no
   other. This replaces `activate-checkout.sh`'s fast-forward of the main tree. A moved lane never
   reads a working copy.
-- **A routine tag update redeploys `sds-lanes` only in a quiet slot.** Coolify's deploy
-  (`/deploy`) and restart (`/services/{uuid}/restart`) API endpoints take only a resource's
-  UUID and name no service within it, so every tag update recreates every lane's container at
-  once, and a running pass is stopped midway. The deploy command therefore applies the
-  cut-over's two checks to the whole resource before it redeploys: the time is outside estate
-  landing's 02:00 to 06:00 New York window, and no moved lane's check reports `started`, read
-  through the Healthchecks API just before the redeploy. Every scheduled pass pings `/start`
-  first, so `started` is the one signal every lane already sends. A check that is also `down`
-  doesn't hold the deploy, because its pass stopped without a final ping and the down alert
-  already reports it. Until both checks pass, the deploy command waits and reads again. The
+- **A routine tag update redeploys `sds-lanes` only in a quiet slot.** Coolify's deploy endpoint
+  (`POST /deploy`) takes resources by `uuid` or `tag`, and its restart endpoint
+  (`POST /services/{uuid}/restart`) takes the service resource's `uuid` and a `latest` flag. Neither names
+  a service within a compose resource (Coolify API reference, "Deploy" and "Restart Service", read
+  2026-11-05). So every tag update recreates every lane's container at once, and a running pass is
+  stopped midway. The deploy command therefore applies the cut-over's two checks to the whole
+  resource before it redeploys: the time is outside estate landing's 02:00 to 06:00 New York window,
+  and no moved lane's check has `started` set to `true`. `started` is the boolean field of each
+  check in the Healthchecks Management API's check listing (`GET /api/v3/checks/`, API docs "List
+  Existing Checks"), read just before the redeploy. Every scheduled pass pings `/start` first, so
+  `started` is the one signal every lane already sends. A check whose `status` is also `down`
+  doesn't hold the deploy, because its pass stopped without a final ping and the down alert already
+  reports it. The deploy command runs where it runs today, in the deploying session on the Mac,
+  inside `finish`; the key it reads the listing with is an open question ("Open questions"). Until
+  both checks pass, the deploy command waits and reads again, for at most 6 hours: long enough to
+  outlast the 4-hour landing window and a pass already running when it closes. At 6 hours the deploy
+  command raises an alert through alert-hub, exits with its "condition unmet" code (2) and leaves
+  `sds-lanes` on its previous tag, and HQ decides whether to re-run it or redeploy by hand. The
   residual: a pass that starts between the read and the redeploy is still stopped. The P2 backlog
   item in which `deploy_orchestrator.py` holds the bump-driver launch agent during a deploy is
   re-scoped by this rule once the bump driver moves.
+- **While the deploy command waits, the old lane code runs against the new orchestrator.** A
+  release's orchestrator is served from `finish`, but its lanes stay on the previous tag until
+  the quiet slot, up to the 6-hour maximum. So every release must keep the previous release's lane
+  code working against its orchestrator for that interval: a route or response field a lane reads
+  can't be removed or changed incompatibly in the release that stops the lane needing it.
 - **The lanes that need other repositories clone them at the start of each pass.** These lanes
   are the bump driver (intent-packages and its venv, project-standards, security-standards), both
   bridge proposers (intent-packages; the rotation proposer also needs infraops-mcp-server), the
   work carrier (package checkouts) and fork hardening (the forks). Each clone is shallow, at
   `main`, into a container-local directory that's discarded with the container, so a container
   holds nothing that can't be rebuilt.
-- **A lane's kill switch stays the variable it is today** (ADR-0046). Stopping one service stops
-  one lane, but redeploying the resource restarts every lane, so a routine tag update follows the
-  quiet-slot rule.
+- **A lane's kill switch stays the variable it is today** (ADR-0046). The four switches
+  (`ORCHESTRATOR_DISPATCH_ENABLED`, `ORCHESTRATOR_ESTATE_LANDING_ENABLED`,
+  `ORCHESTRATOR_INERT_LANDING_ENABLED` and `ORCHESTRATOR_BUMP_MERGE_ENABLED`) are the orchestrator's
+  variables, not the lanes', so setting one to `false` stops one lane's acting through the
+  orchestrator and leaves `sds-lanes` untouched. They are the only per-lane stop. No Coolify API
+  call stops one service of `sds-lanes`, so any stop through Coolify, like any redeploy, is
+  resource-wide and follows the quiet-slot rule.
 
 **Rejected: Coolify scheduled tasks.** A Coolify scheduled task runs a command inside a running
 container of an application or service. The lanes would share one container and its environment,
@@ -123,13 +140,23 @@ One container per lane already gives each lane its own process, filesystem and e
   its own `<LANE>_GITHUB_TOKEN` variable (`BUMP_DRIVER_GITHUB_TOKEN`, `DEPLOY_WATCHER_GITHUB_TOKEN`,
   `CHANGE_PROPOSER_GITHUB_TOKEN`, `BUMP_PROPOSER_GITHUB_TOKEN` and the rest), and its launcher
   feeds that variable from BWS instead of `gh auth token`. A read-only lane's variable is fed from
-  one read-only fine-grained token in BWS, with a direct grant per lane identity. A lane that needs
-  write scope (the bump driver and the proposers) is tied to "Who pushes" (**Open, Q1**), and this
-  ADR doesn't decide its token.
+  one read-only fine-grained token in BWS, with a direct grant per lane identity.
+- **The three pushing lanes push as the "SDS lanes" GitHub App (Q1, decided).** `bump-proposer`,
+  `rotation-proposer` and `fork-harden` feed their GitHub variable with an installation token of a
+  new GitHub App, installed only on intent-packages and the forks with `contents: write`. Each
+  pass mints the token from the App's private key, which lives in BWS and is read by UUID, with a
+  direct read grant to each of the three lanes' identities and to no other. The token is
+  short-lived and never stored. The key is created in the increment that moves the first pushing
+  lane, by Devon, because only the App's settings page generates a GitHub App private key
+  (GitHub Docs, "Managing private keys for GitHub Apps"). The bump driver needs no GitHub write
+  scope: its token only reads pull request state and makes shallow clones
+  (`src/bump_driver/client.py`, `src/bump_driver/mirror.py`), and it dispatches and merges through
+  the orchestrator as SYSTEM. Its variable is fed from the read-only token.
 - **`.bws-secrets.toml` and `.cred-consumers.toml` gain each lane identity and each secret it
   reads**, in the same change as the lane's move. The credential registry gains each lane token
-  as a credential. The VM rotation executor rotates it once ADR-0059 increment 7 moves the
-  executor to the VPS (Q3, decided).
+  as a credential, and the "SDS lanes" App's private key as one more. The VM rotation executor
+  rotates each lane token once ADR-0059 increment 7 moves the executor to the VPS (Q3, decided).
+  Who rotates the App key is an open question ("Open questions").
 - **This ADR creates no identity.** Each increment that moves a lane creates that lane's account
   and grants.
 
@@ -138,15 +165,20 @@ One container per lane already gives each lane its own process, filesystem and e
 - **Every lane keeps its check name.** `sds-deadman.sh` finds a check by exact name through the
   Management API, so a lane that runs elsewhere pings the same check. The check's history carries
   across the move.
-- **Each lane identity gets a direct read grant on the Healthchecks key** (`51509d5e-…`), which
-  today only the broad account reads. Without it, the lane pings nothing and the check goes down
-  after its grace (ADR-0021 amendment 3).
+- **Each lane identity gets a direct read grant on the Healthchecks Management API key**
+  (`51509d5e-…`, `healthchecks_selfhosted_api_key` in `.bws-secrets.toml`), which today only the
+  broad account reads. Without it, the lane pings nothing and the check goes down after its grace
+  (ADR-0021 amendment 3).
 - **Each check's schedule and grace are re-checked against the container's crontab** at cut-over.
-  Every moved lane already has a check: the runtime pass measured 19 lane checks on 2026-11-04,
-  one per `run-*.sh` lane, each matching its plist's schedule. Only 5 of the 20 installers
-  create theirs (`sds_upsert_check`), so each lane's increment provisions its check from the
-  lane's own setup through `sds_upsert_check`, which closes the "5 of 20 installers" gap the
-  runtime pass left.
+  Every moved lane already has a check. The runtime pass measured 19 lane checks on 2026-11-04, one
+  per `run-*.sh` launcher, each matching its plist's schedule
+  (`docs/superpowers/specs/2026-11-04-runtime-layer-design.md`, "Measurements, 2026-11-04"). The
+  20th launch agent, `rotation-worker`, has no `run-*.sh` launcher, and it stays. The 17 lanes that
+  move are the 19 launchers less `activation-sweep` and `tool-installer`, so each has one of the 19
+  checks. The gap is only in which installers create their check: 5 of the 20 call
+  `sds_upsert_check` (bump proposer, change proposer, fork-sync watch, membership check and work
+  carrier). Each lane's increment provisions its check from the lane's own setup through
+  `sds_upsert_check`, which closes that gap.
 - **The outcome alarm and the dead-man switch keep their semantics.** The lane code doesn't
   change, so `--finding` and `--told` keep their meanings and `test_sds_deadman.py` still holds
   them.
@@ -176,19 +208,19 @@ amendment to ADR-0055, not here.
 |---|---|---|
 | `activation-sweep` | Stays | Measures this machine's working copies, and both passes read local checkouts (Q2). |
 | `bump-driver` | Moves | Dispatches and merges bump units as SYSTEM, acting on members. |
-| `bump-proposer` | Moves | Pushes standing-package revisions to intent-packages `main` (Q1). |
+| `bump-proposer` | Moves | Pushes standing-package revisions to intent-packages `main`, as the "SDS lanes" App (Q1). |
 | `change-proposer` | Moves | Reads pull requests and writes change records, with no local state. |
 | `deploy-watcher` | Moves | Observes rollouts through APIs only. |
 | `estate-landing` | Moves | Lands pull requests and re-points production, acting on members. |
 | `execution-watch` | Moves | Reads execution status and raises alerts, with no local state. |
-| `fork-harden` | Moves | Pushes forks' `hardened` branches (Q1). Its clone cache is rebuildable. |
+| `fork-harden` | Moves | Pushes forks' `hardened` branches, as the "SDS lanes" App (Q1). Its clone cache is rebuildable. |
 | `fork-sync-watch` | Moves | Reads fork sync state through APIs only. |
 | `inert-landing` | Moves | Lands update-bot pull requests, acting on members. |
 | `landing-ledger` | Moves | Files observations from GitHub reads, with no local checkouts. |
 | `pin-watcher` | Moves | Reads callers' runner pins through APIs only. |
 | `revision-watcher` | Moves | Reads Coolify and App Brain through APIs only. |
 | `rotation-decomposer` | Moves | Proposes decompositions as SYSTEM, with no local state. |
-| `rotation-proposer` | Moves | Writes package revisions (Q1). Runs infraops's `cred-findings` from a clone. |
+| `rotation-proposer` | Moves | Pushes package revisions to intent-packages `main`, as the "SDS lanes" App (Q1). Runs infraops's `cred-findings` from a clone. |
 | `rotation-worker` | Stays | The Keychain rotation instance: its store is this machine's Keychain. |
 | `sds-membership-check` | Moves | Compares the member record with declarations through APIs only. |
 | `tool-installer` | Stays | Installs tools on this machine, so its subject is the Mac. |
@@ -214,11 +246,12 @@ exists only on the Mac would keep the lane tied to it.
 3. **The other observe-only lanes:** landing ledger, pin watcher, deploy watcher, revision
    watcher, fork-sync watch, membership check, unit verifier and rotation decomposer, one at a time.
 4. **The proposers and carrier, which need clones:** change proposer, work carrier, then bump and
-   rotation proposers once Q1 is answered.
+   rotation proposers. Before the bump proposer moves, Devon creates the "SDS lanes" App, installs
+   it on intent-packages and the forks, and stores its private key in BWS (Q1).
 5. **The member-acting lanes:** inert landing, then estate landing, then the bump driver, then
-   fork hardening (Q1). Each moves outside its landing window. Estate landing sends its Coolify
-   token only over the tailnet today, so its increment decides how the container reaches Coolify
-   without widening that.
+   fork hardening, which pushes as the "SDS lanes" App (Q1). Each moves outside its landing
+   window. Estate landing sends its Coolify token only over the tailnet today, so its increment
+   decides how the container reaches Coolify without widening that.
 6. **Retire the Mac's lane plumbing:** the moved plists and their installers,
    `activate-checkout.sh`'s use by lanes, and the two Keychain items' lane role. The Keychain items
    themselves are retired only once no remaining reader names them. This increment starts only
@@ -231,12 +264,26 @@ Each increment's plan records which repositories it changes and which identities
 #### Cut-over for one lane
 
 1. Create the lane's BWS identity and grants, and prove them under `env -i` in the lane's container
-   with `--dry-run`. The container's scheduler is disabled.
+   with `--dry-run`. The container's scheduler is disabled. Then capture the lane's week-bar
+   baseline (its flips and ping log, "The week bar"), before any run in step 2, because some of
+   those runs ping the lane's real check.
 2. Pick a cut-over time between two scheduled passes. In that gap, run the lane's reporting mode
-   (the invocation that changes no record: `--dry-run` where the launcher takes it, or the
-   invocation without its acting flag, such as `--submit`, `--register` or `--push`) on the Mac
-   and in the container within the same minute.
-   Keep both outputs for step 4. Then confirm no pass is running:
+   (the invocation that changes no record) on the Mac and in the container within the same
+   minute. Keep both outputs for step 4. A reporting run touches the real check or not by lane
+   (`scripts/sds-deadman.sh`, "A dry run must not count as a pass"):
+   - **It pings nothing** for a launcher run with `--dry-run` (deploy watcher, execution watch,
+     landing ledger, pin watcher, revision watcher and unit verifier), and for an outcome-alarm
+     launcher run without its acting flag, which resolves no ping URL (bump driver, bump
+     proposer, change proposer, rotation decomposer and work carrier).
+   - **It pings the real check** for estate landing, inert landing and the rotation proposer,
+     whose reporting mode is the bare invocation, a residual `sds-deadman.sh` names.
+   - **There is no reporting mode** for the fork-sync watch and the membership check: every pass
+     changes no record and pings. Their comparison is the ordinary pass, run on both hosts, and
+     it pings the real check. Fork hardening's launcher always passes `--push`, so its comparison
+     runs `fork-harden run` without `--push` directly, outside the launcher, and pings nothing.
+
+   A ping from step 2 lands after the baseline and before the week, so it counts in neither.
+   Then confirm no pass is running:
    `launchctl print gui/<uid>/com.devon.<lane>` shows no running PID, and for the bump driver no
    process holds its `pass.lock` (the only lane with a pass lock). `bootout` stops a running pass
    midway. Then boot out the Mac agent with `launchctl bootout gui/<uid>/com.devon.<lane>`, and keep
@@ -277,13 +324,17 @@ The baseline is captured at the lane's cut-over and kept as evidence, because He
 removes the history it's drawn from before the week runs:
 
 - **Down events** come from the check's flips (`/api/v3/checks/<id>/flips/`), which Healthchecks
-  keeps for the current month and the two full months before it. Every moved lane has a check
-  (decision 3), so at cut-over every lane has 4 weeks of flips, its down baseline.
-- **`/fail` pings** come from the check's ping log (`/api/v3/checks/<uuid>/pings/`), which keeps
-  only a check's most recent pings, up to the account's ping-log limit (100 by Healthchecks'
-  default). Every pass sends two pings, `/start` and its result, so at that default a daily lane
-  keeps about 7 weeks and an hourly lane about 2 days. A lane has a `/fail` baseline only if its
-  ping log, read at cut-over, reaches back 4 weeks. At the default limit that's the seven daily
+  keeps for the current month and the two full months before it (Healthchecks API docs, "List
+  check's status changes"; verify on the self-hosted instance before the increment). A
+  lane's down baseline is the flips its check has from the 4 weeks before cut-over, or from the
+  check's creation if that's more recent. A check with no flips in that span has a baseline of
+  zero down events.
+- **`/fail` pings** come from the check's ping log (`/api/v3/checks/<uuid>/pings/`), which returns
+  only a check's most recent pings, up to the account's ping-log limit (100 for a free account in
+  the Healthchecks API docs, "List check's logged pings"; verify the self-hosted instance's limit
+  before the increment). Every pass sends two pings, `/start` and its result, so at a limit of 100 a
+  daily lane keeps about 7 weeks and an hourly lane about 2 days. A lane has a `/fail` baseline only
+  if its ping log, read at cut-over, reaches back 4 weeks. At a limit of 100 that's the seven daily
   lanes (bump proposer, fork hardening, landing ledger, membership check, pin watcher, rotation
   proposer and work carrier), and not the ten that run more often.
 - **A lane whose ping log doesn't reach back 4 weeks is held to zero `/fail` for the week.**
@@ -299,8 +350,9 @@ input may still live on the Mac by then (decision 5).
 
 The evidence is each moved check's flips and ping log for the week, its baseline as captured at
 cut-over, and the Mac's power log (`pmset -g log`) covering the 7 days. The read-only Healthchecks
-key reads flips. The ping log needs the read-write key (`51509d5e-…`), because Healthchecks
-refuses `/pings/` to a read-only key.
+key reads flips. The ping log needs the Management API key (`51509d5e-…`), because `/pings/` isn't
+among the endpoints the Healthchecks API docs list for a read-only key (verify on the self-hosted
+instance before the increment).
 
 ## Consequences
 
@@ -310,8 +362,10 @@ refuses `/pings/` to a read-only key.
   boundary the orchestrator's own secrets have today.
 - Each lane's reach narrows from one of two shared identities to its own secrets. A leaked lane
   token exposes one lane's secrets, not every SDS bearer.
-- A lane runs only code the served orchestrator runs. A lane fix that reaches production needs an
-  orchestrator release, as any other orchestrator change does.
+- A lane runs only code the served orchestrator runs, except while the deploy command waits for a
+  quiet slot: for up to 6 hours after `finish`, lanes run the previous release's code against the
+  new orchestrator, so each release keeps that code compatible (decision 1). A lane fix that
+  reaches production needs an orchestrator release, as any other orchestrator change does.
 - Today's lane invariants that name the main tree or launchd move to their container
   equivalents. The relevant ones are "the scheduled lanes run the main tree's working copy", the
   launcher-credential rules, and the PATH rule for `uv`. Each increment rewrites the invariant it
@@ -323,20 +377,49 @@ refuses `/pings/` to a read-only key.
   ADR-0059 increment 7. That window is bounded: it must not outlast the credential registry's
   rotation interval for a lane token. If the increments would run past that interval, HQ decides
   how to proceed before the interval passes; the increments don't extend it.
+- By Q1's decision, the "SDS lanes" App's private key reaches only what the App's installation
+  reaches: intent-packages and the forks, with `contents: write`. A leaked key lets its holder push
+  to intent-packages `main` and to each fork's branches until the key is deleted on the App's
+  settings page. It reaches no other repository, unlike the dispatch App, whose installation is
+  deliberately wider than its work.
+- intent-packages `main` requires three status checks under classic branch protection with
+  `enforce_admins` off (read 2026-11-05), which is what lets Devon's admin push land directly
+  today. The App isn't an admin, so its direct push would be refused until intent-packages admits
+  it, for example as a bypass actor of a ruleset that replaces the classic rule (verify before
+  increment 4). That change is Devon's, in increment 4, and it doesn't add a required review:
+  intent-packages requires none. Each fork's `hardened` branch forbids only force-push and deletion
+  (ADR-0057 decision 7), so fork hardening's fast-forward push needs no change.
+- Package revision commits on intent-packages `main` become the App's (`<app>[bot]`), not
+  `AlobarQuest`'s. Increment 4 checks every reader that keys on a package revision commit's author
+  before the bump proposer moves; `landing_ledger` reads a `[bot]` suffix as a machine basis.
 
 ## Dependencies
 
 - **ADR-0039.** Moving a lane changes where it runs, not what it carries. ADR-0039's measurement
-  names producers by module, not by host, so this ADR doesn't change it. If Q1's answer gives a
-  machine identity write access to an authoring repository (intent-packages), the ADR-0039
-  amendment that follows this ADR must restate who authors a package revision. That amendment is
-  written separately.
+  names producers by module, not by host, so this ADR doesn't change it. Q1's answer gives a
+  machine identity, the "SDS lanes" App, write access to an authoring repository
+  (intent-packages), so ADR-0039 needs an amendment that restates who authors a package revision.
+  That amendment is written separately, before the bump proposer moves.
 - **ADR-0055.** ADR-0059 increment 7's ADR-0055 amendment moves the VM executor to the VPS and,
   by Q3's decision, lifts decision 4 for lane tokens so that the executor rotates them.
 
 ## Devon's decisions
 
-Devon decided two of the three questions on 2026-11-05.
+Devon decided all three questions on 2026-11-05.
+
+### Q1: the pushing lanes push as a new "SDS lanes" GitHub App (HQ D-3)
+
+Option (c), decided by Devon on 2026-11-05 (HQ D-3): a new "SDS lanes" GitHub App, installed only
+on intent-packages and the forks with `contents: write`, pushes for `bump-proposer`,
+`rotation-proposer` and `fork-harden` once they leave his `gh` login. Its commits are the App's
+(`<app>[bot]`), so the authorship they record is true, and the App reaches only the repositories
+it pushes to. The rejected options were a pull request instead of a push, which changes two
+proposers, delays each revision by one landing and retires the direct-push rule
+(`PUBLISH_COMMAND`) for these lanes, and one write-scoped fine-grained PAT per pushing lane, which
+keeps a scheduled machine pushing as Devon. The App's cost is accepted: a new App, its key in BWS,
+the intent-packages branch-protection change, and a check of every reader that keys on a package
+revision commit's author (Consequences). Creating the App is a later increment's work and Devon's
+act; this ADR plans it.
 
 ### Q2: the machine-activation sweep stays on the Mac (HQ D-4)
 
@@ -360,28 +443,25 @@ identity.
 
 ## Open questions
 
-This question changes who can write what, so Devon decides it (HQ D-3). The recommendation is
-the author's and isn't a decision.
+These two questions came up in recording Q1 and fixing the third review. HQ answers them; the
+proposals are the author's and aren't decisions.
 
-### Open (Q1): who pushes when a lane leaves Devon's `gh` login
+### Open: who rotates the "SDS lanes" App's private key
 
-Three moved lanes push as Devon's interactive login today. `bump-proposer` and
-`rotation-proposer` run `git push origin main` on intent-packages, and `fork-harden` pushes each
-fork's `hardened` branch. A container has no Devon login. The identity that pushes instead becomes
-the author on intent-packages `main` and must be admitted by its branch protection.
-`landing_ledger` derives a landing's basis from the GitHub identity: a `[bot]` suffix means a
-machine.
+Q3's answer, rotation by the VM executor, doesn't fit this key. A GitHub App private key is
+generated only on the App's settings page (Credentials, Key pairs, **New key**), and GitHub
+documents no API that creates one (GitHub Docs, "Managing private keys for GitHub Apps"), so no
+executor can mint it. The rotation App's own key (`alobar-sds-rotation`) is in ADR-0055's
+hand-rotated set for the same reason (`docs/operations/rotation-executor.md`, "Its
+credentials"). The options are the hand-rotated set, as for that key, or Devon mints in the
+settings page and the executor takes the value from its inbox, stores it and verifies it
+(`docs/operations/rotation-executor.md`, "A person's mint is taken from the inbox").
 
-- **(a) A pull request instead of a push.** Each lane opens a pull request with a machine identity,
-  and the existing landing path merges it. Cost: lane changes in two proposers, a revision reaches
-  `main` one landing later, and the direct-push rule (`PUBLISH_COMMAND`) retires for these lanes.
-- **(b) One write-scoped fine-grained PAT per pushing lane, in BWS.** Authorship stays
-  `AlobarQuest`. Cost: the least code, but a scheduled machine pushes as Devon. That's true today
-  too, and the token would sit in a VPS environment variable instead of the Mac's login.
-- **(c) A dedicated "SDS lanes" GitHub App**, installed only on intent-packages and the forks, with
-  `contents: write`. Commits are authored by `<app>[bot]`. Cost: a new App, a key in BWS,
-  branch-protection changes on intent-packages, and a check of every reader that keys on a package
-  revision commit's author.
+### Open: which key the deploy command reads lane checks with
 
-**Recommendation: (c).** The authorship it records is true, and the App reaches only the
-repositories it pushes to, unlike the dispatch App. (b) is the fallback if no new App is wanted.
+The quiet-slot read (decision 1) runs in the deploy command on the Mac, which reads BWS as the
+narrow `sds-operator` identity. That identity reads neither Healthchecks key today: the
+Management API key (`51509d5e-…`) is in `Ops / Platform`, read by the broad account, and the
+read-only key (`f07b1368-…`) is in `Rotation / Healthchecks`, read by the rotation executor. The
+narrowest proposal is a direct read grant for `sds-operator` on the read-only key, added in
+increment 1; a read-only key may list checks, which is all the read needs.
