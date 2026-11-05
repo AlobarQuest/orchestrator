@@ -513,7 +513,7 @@ def test_a_proposed_unit_max_attempts_is_bounded_at_the_integer_column(
     from orchestrator.api.schemas.intake import ProposedUnitCommand
 
     if valid:
-        assert ProposedUnitCommand(**_proposed_unit(value)).max_attempts == value
+        assert ProposedUnitCommand.model_validate(_proposed_unit(value)).max_attempts == value
     else:
         with pytest.raises(ValidationError):
-            ProposedUnitCommand(**_proposed_unit(value))
+            ProposedUnitCommand.model_validate(_proposed_unit(value))
