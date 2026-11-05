@@ -46,3 +46,10 @@ def error_body(code: str, message: str, **detail: object) -> dict[str, object]:
             **{name: value for name, value in detail.items() if value is not None},
         }
     }
+
+
+def authentication_message(code: str) -> str:
+    """The text a 401 carries for an authentication refusal code."""
+    if code == "authentication_required":
+        return "valid authentication credentials are required"
+    return "authentication credentials were rejected"

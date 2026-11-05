@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from pydantic import SecretStr
 
 from orchestrator.api.dependencies import APIAuthenticationError, AuthConfig
-from orchestrator.api.error_shape import error_body, status_for
+from orchestrator.api.error_shape import authentication_message, error_body, status_for
 from orchestrator.api.health import router as health_router
 from orchestrator.api.routes import (
     execution,
@@ -74,14 +74,9 @@ def create_app(
     async def authentication_error_handler(
         _request: Request, error: APIAuthenticationError
     ) -> JSONResponse:
-        message = (
-            "valid authentication credentials are required"
-            if error.code == "authentication_required"
-            else "authentication credentials were rejected"
-        )
         return JSONResponse(
             status_code=401,
-            content=error_body(error.code, message),
+            content=error_body(error.code, authentication_message(error.code)),
             headers={"WWW-Authenticate": "Bearer"},
         )
 

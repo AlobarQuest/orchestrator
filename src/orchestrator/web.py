@@ -131,7 +131,7 @@ def _session_id(request: Request) -> str:
             expected = hmac.new(_csrf_secret(request), raw.encode(), hashlib.sha256).hexdigest()
             if hmac.compare_digest(expected, signature):
                 session_id = candidate
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             pass
     if not session_id:
         raw = secrets.token_urlsafe(32)
