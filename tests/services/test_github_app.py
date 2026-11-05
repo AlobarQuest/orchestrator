@@ -393,3 +393,21 @@ def test_resetting_providers_drops_the_cache() -> None:
     reset_token_providers()
 
     assert token_provider_for(None) is not before
+
+
+@pytest.mark.parametrize(
+    "error",
+    [github_app.httpx.InvalidURL("bad url"), UnicodeError("label empty or too long")],
+)
+def test_a_malformed_mint_request_fails_closed(
+    credentials: GitHubAppCredentials, monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> None:
+    def explode(url: str, **kwargs: Any) -> FakeResponse:
+        raise error
+
+    monkeypatch.setattr(github_app.httpx, "post", explode)
+
+    with pytest.raises(GitHubAppTokenError) as excinfo:
+        GitHubAppTokenProvider(credentials)()
+
+    assert excinfo.value.code == f"mint_request_error:{type(error).__name__}"

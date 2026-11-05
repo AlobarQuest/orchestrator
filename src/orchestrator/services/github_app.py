@@ -115,17 +115,18 @@ class GitHubAppTokenProvider:
         if credentials is None:
             raise GitHubAppTokenError("app_credentials_missing")
         url = f"{GITHUB_API_URL}/app/installations/{credentials.installation_id}/access_tokens"
+        assertion = _assertion(credentials)
         try:
             response = httpx.post(
                 url,
                 headers={
                     "Accept": "application/vnd.github+json",
-                    "Authorization": f"Bearer {_assertion(credentials)}",
+                    "Authorization": f"Bearer {assertion}",
                     "X-GitHub-Api-Version": "2022-11-28",
                 },
                 timeout=self._timeout,
             )
-        except httpx.RequestError as error:
+        except (httpx.HTTPError, httpx.InvalidURL, ValueError) as error:
             raise GitHubAppTokenError(f"mint_request_error:{error.__class__.__name__}") from error
         if response.status_code != 201:
             # The status code only: a success-shaped body carries the token itself, and an

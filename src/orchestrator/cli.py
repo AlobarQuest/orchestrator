@@ -85,6 +85,12 @@ def request(method: str, path: str, payload: JsonObject | None = None) -> Any:
         raise CliError(
             {"code": "api_unavailable", "message": "API request could not be completed"}
         ) from None
+    except httpx.InvalidURL, ValueError:
+        # A malformed host raises UnicodeError (a ValueError) and a control character in the
+        # path raises InvalidURL; neither is a RequestError.
+        raise CliError(
+            {"code": "api_url_invalid", "message": "API URL or path is not a valid URL"}
+        ) from None
     if response.is_error:
         raise CliError.from_response(response)
     try:
@@ -147,9 +153,11 @@ def _emit(value: Any, json_output: bool) -> None:
     typer.echo(json.dumps(value, sort_keys=True))
 
 
-def _run(operation: Callable[[], Any], json_output: bool) -> None:
+def _run(operation: Callable[[], Any], json_output: bool) -> Any:
     try:
-        _emit(operation(), json_output)
+        value = operation()
+        _emit(value, json_output)
+        return value
     except CliError as error:
         payload = {"error": error.detail}
         if json_output:
@@ -808,8 +816,7 @@ def requeue(
 @app.command("check-consistency")
 def check_consistency(json_output: JsonOption = False) -> None:
     """Report projection-vs-source divergence. Exits 1 when divergent -- never repairs."""
-    report = request("GET", "/api/v1/consistency-check")
-    _emit(report, json_output)
+    report = _run(lambda: request("GET", "/api/v1/consistency-check"), json_output)
     if isinstance(report, dict) and report.get("divergent"):
         raise typer.Exit(code=1)
 
