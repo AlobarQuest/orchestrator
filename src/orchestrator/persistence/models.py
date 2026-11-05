@@ -27,6 +27,14 @@ class Base(DeclarativeBase):
     pass
 
 
+def _in_members(vocabulary: tuple[str, ...]) -> str:
+    """A SQL `IN` list of the members, each quoted: `('a', 'b')`.
+
+    Never `repr(tuple)`: a one-element tuple renders `('a',)`, which is not the migration's text.
+    """
+    return "({})".format(", ".join(f"'{member}'" for member in vocabulary))
+
+
 class UUIDPrimaryKey:
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
@@ -246,11 +254,11 @@ class WorkPackageRevision(UUIDPrimaryKey, Base):
         UniqueConstraint("work_package_id", "content_hash"),
         CheckConstraint("revision > 0", name="ck_work_package_revisions_positive_revision"),
         CheckConstraint(
-            f"intake_source IN {INTAKE_SOURCES!r}",
+            f"intake_source IN {_in_members(INTAKE_SOURCES)}",
             name="ck_work_package_revisions_intake_source",
         ),
         CheckConstraint(
-            f"verification_mode IS NULL OR verification_mode IN {VERIFICATION_MODES!r}",
+            f"verification_mode IS NULL OR verification_mode IN {_in_members(VERIFICATION_MODES)}",
             name="ck_work_package_revisions_verification_mode",
         ),
         CheckConstraint(
@@ -359,7 +367,7 @@ class WorkUnit(UUIDPrimaryKey, Base):
             unique=True,
             postgresql_where=text("state <> 'cancelled'"),
         ),
-        CheckConstraint(f"state IN {WORK_UNIT_STATES!r}", name="ck_work_units_state"),
+        CheckConstraint(f"state IN {_in_members(WORK_UNIT_STATES)}", name="ck_work_units_state"),
         CheckConstraint(
             "attempt_count >= 0 AND max_attempts >= 0 AND attempt_count <= max_attempts",
             name="ck_work_units_attempts",
@@ -488,11 +496,11 @@ class ContextSnapshot(UUIDPrimaryKey, Base):
             name="fk_context_snapshots_claim_attempt",
         ),
         CheckConstraint(
-            f"classification IN {CONTEXT_CLASSIFICATIONS!r}",
+            f"classification IN {_in_members(CONTEXT_CLASSIFICATIONS)}",
             name="ck_context_snapshots_classification",
         ),
         CheckConstraint(
-            f"decision IN {CONTEXT_DECISIONS!r}",
+            f"decision IN {_in_members(CONTEXT_DECISIONS)}",
             name="ck_context_snapshots_decision",
         ),
         CheckConstraint("attempt > 0", name="ck_context_snapshots_positive_attempt"),
@@ -681,7 +689,7 @@ class DispatchRecord(UUIDPrimaryKey, Base):
         UniqueConstraint("work_unit_id", "runner_attempt"),
         CheckConstraint("runner_attempt > 0", name="ck_dispatch_records_positive_attempt"),
         CheckConstraint(
-            f"status IN {DISPATCH_RECORD_STATUSES!r}",
+            f"status IN {_in_members(DISPATCH_RECORD_STATUSES)}",
             name="ck_dispatch_records_status",
         ),
     )
@@ -967,27 +975,27 @@ class Observation(UUIDPrimaryKey, Base):
             name="uq_observations_source_fact",
         ),
         CheckConstraint(
-            f"source_system IN {OBSERVATION_SOURCE_SYSTEMS!r}",
+            f"source_system IN {_in_members(OBSERVATION_SOURCE_SYSTEMS)}",
             name="ck_observations_source_system",
         ),
         CheckConstraint(
-            f"trust_classification IN {OBSERVATION_TRUST_CLASSIFICATIONS!r}",
+            f"trust_classification IN {_in_members(OBSERVATION_TRUST_CLASSIFICATIONS)}",
             name="ck_observations_trust_classification",
         ),
         CheckConstraint(
-            f"subject_type IN {OBSERVATION_SUBJECT_TYPES!r}",
+            f"subject_type IN {_in_members(OBSERVATION_SUBJECT_TYPES)}",
             name="ck_observations_subject_type",
         ),
         CheckConstraint(
-            f"observation_type IN {OBSERVATION_TYPES!r}",
+            f"observation_type IN {_in_members(OBSERVATION_TYPES)}",
             name="ck_observations_type",
         ),
         CheckConstraint(
-            f"status IN {OBSERVATION_STATUSES!r}",
+            f"status IN {_in_members(OBSERVATION_STATUSES)}",
             name="ck_observations_status",
         ),
         CheckConstraint(
-            f"severity IN {OBSERVATION_SEVERITIES!r}",
+            f"severity IN {_in_members(OBSERVATION_SEVERITIES)}",
             name="ck_observations_severity",
         ),
         CheckConstraint(
@@ -1055,11 +1063,11 @@ class EventPublication(UUIDPrimaryKey, Base):
             name="ck_event_publications_source_system",
         ),
         CheckConstraint(
-            f"source_kind IN {EVENT_PUBLICATION_KINDS!r}",
+            f"source_kind IN {_in_members(EVENT_PUBLICATION_KINDS)}",
             name="ck_event_publications_source_kind",
         ),
         CheckConstraint(
-            f"status IN {EVENT_PUBLICATION_STATUSES!r}",
+            f"status IN {_in_members(EVENT_PUBLICATION_STATUSES)}",
             name="ck_event_publications_status",
         ),
         CheckConstraint("attempt_count >= 0", name="ck_event_publications_attempt_count"),
@@ -1097,15 +1105,15 @@ class KnowledgePromotionProposal(UUIDPrimaryKey, Base):
         UniqueConstraint("proposal_hash"),
         UniqueConstraint("correlation_identity"),
         CheckConstraint(
-            f"target_brain IN {KNOWLEDGE_PROMOTION_TARGET_BRAINS!r}",
+            f"target_brain IN {_in_members(KNOWLEDGE_PROMOTION_TARGET_BRAINS)}",
             name="ck_knowledge_promotion_proposals_target_brain",
         ),
         CheckConstraint(
-            f"target_type IN {KNOWLEDGE_PROMOTION_TARGET_TYPES!r}",
+            f"target_type IN {_in_members(KNOWLEDGE_PROMOTION_TARGET_TYPES)}",
             name="ck_knowledge_promotion_proposals_target_type",
         ),
         CheckConstraint(
-            f"authority IN {KNOWLEDGE_PROMOTION_AUTHORITIES!r}",
+            f"authority IN {_in_members(KNOWLEDGE_PROMOTION_AUTHORITIES)}",
             name="ck_knowledge_promotion_proposals_authority",
         ),
         CheckConstraint(
@@ -1165,7 +1173,7 @@ class KnowledgePromotionProposalAction(UUIDPrimaryKey, Base):
         UniqueConstraint("event_id"),
         UniqueConstraint("proposal_id", "action"),
         CheckConstraint(
-            f"action IN {KNOWLEDGE_PROMOTION_ACTIONS!r}",
+            f"action IN {_in_members(KNOWLEDGE_PROMOTION_ACTIONS)}",
             name="ck_knowledge_promotion_proposal_actions_action",
         ),
         CheckConstraint(
@@ -1214,7 +1222,7 @@ class DecompositionProposal(UUIDPrimaryKey, Base):
         UniqueConstraint("work_package_revision_id", "proposal_number"),
         UniqueConstraint("id", "work_package_revision_id"),
         CheckConstraint(
-            f"state IN {PROPOSAL_STATES!r}",
+            f"state IN {_in_members(PROPOSAL_STATES)}",
             name="ck_decomposition_proposals_state",
         ),
         CheckConstraint("rationale <> ''", name="ck_decomposition_proposals_rationale"),
@@ -1424,7 +1432,7 @@ class ReconciliationResolution(UUIDPrimaryKey, Base):
         UniqueConstraint("condition_id", name="uq_reconciliation_resolutions_condition"),
         UniqueConstraint("idempotency_key", name="uq_reconciliation_resolutions_idempotency"),
         CheckConstraint(
-            f"decision IN {RECONCILIATION_DECISIONS!r}",
+            f"decision IN {_in_members(RECONCILIATION_DECISIONS)}",
             name="ck_reconciliation_resolutions_decision",
         ),
         CheckConstraint(
