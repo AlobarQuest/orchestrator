@@ -1,7 +1,9 @@
 """Who may write a lease, a unit's version and a claim's release, and who may dispatch.
 
-Four rules in CLAUDE.md name a closed set of callers. Each set is pinned here by walking the source,
-so a new caller fails this file and has to be read against the rule before it joins the table:
+Four rules name a closed set of callers: the lease, version and claim-release rules in
+`src/orchestrator/services/lifecycle/CLAUDE.md`, and the dispatch rule in the root CLAUDE.md. Each
+set is pinned here by walking the source, so a new caller fails this file and has to be read against
+the rule before it joins the table:
 
 * A lease is granted or extended in exactly three places, each sized by `claim_lease`. A rule added
   to `claim_unit` alone misses the other two.

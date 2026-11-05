@@ -18,6 +18,7 @@ paths = [
   "src/orchestrator/api/error_shape.py",
   "src/orchestrator/api/health.py",
   "src/orchestrator/api/server_errors.py",
+  "src/orchestrator/api/CLAUDE.md",
   "src/orchestrator/api/routes/__init__.py",
   "src/orchestrator/api/routes/common.py",
   "src/orchestrator/api/schemas/__init__.py",
@@ -29,6 +30,7 @@ paths = [
   "src/orchestrator/services/__init__.py",
   "src/orchestrator/services/github_app.py",
   "src/orchestrator/web.py",
+  "src/orchestrator/CLAUDE.md",
   "src/orchestrator/cli.py",
   "src/orchestrator/main.py",
   "src/orchestrator/config.py",
@@ -106,6 +108,7 @@ description = "What keeps the lanes running and the orchestrator deployed: share
 paths = [
   "src/estate_clients/**",
   "src/alert_hub_client/**",
+  "scripts/CLAUDE.md",
   "tests/alert_hub_client/**",
   "src/standing_identity/**",
   "tests/standing_identity/**",
@@ -345,6 +348,7 @@ paths = [
   # landing, with the bump half of its tests.
   "src/unit_verifier/__init__.py",
   "src/unit_verifier/alerts.py",
+  "src/unit_verifier/CLAUDE.md",
   "src/unit_verifier/cli.py",
   "src/unit_verifier/client.py",
   "tests/unit_verifier/__init__.py",
