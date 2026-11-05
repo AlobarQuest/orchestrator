@@ -129,3 +129,12 @@ def test_error_body_drops_none_details() -> None:
     assert error_body("c", "m", recovery=None, current_version=0) == {
         "error": {"code": "c", "message": "m", "current_version": 0}
     }
+
+
+@pytest.mark.parametrize("name", ["code", "message"])
+def test_a_detail_cannot_overwrite_the_code_or_message(name: str) -> None:
+    """`code` and `message` are keyword-bindable parameters, so a detail of either name is a
+    `TypeError` at the call, never a silent overwrite of the body. Making them positional-only
+    would let such a detail through into the spread, and this would then fail."""
+    with pytest.raises(TypeError, match=f"multiple values for argument '{name}'"):
+        error_body("c", "m", **{name: "x"})

@@ -13,14 +13,18 @@ from tests.api.test_lifecycle_api import SYSTEM, WORKER
 
 ROUTE = "/api/v1/held-credentials"
 HELD = "a-throwaway-read-bearer-for-tests-only-0123"
+SENDER = "a-throwaway-alert-sender-for-tests-only-4567"
 
 
-def _configure(client: TestClient, executor: str | None, held: str | None = HELD) -> None:
+def _configure(
+    client: TestClient, executor: str | None, held: str | None = HELD, sender: str | None = None
+) -> None:
     app = cast(FastAPI, client.app)
     configured = get_settings().model_copy(
         update={
             "rotation_executor_agent_id": executor,
             "change_record_token": SecretStr(held) if held is not None else None,
+            "alert_hub_token": SecretStr(sender) if sender is not None else None,
         }
     )
     app.dependency_overrides[get_settings] = lambda: configured
@@ -37,6 +41,32 @@ def test_the_executor_reads_the_fingerprint_of_the_loaded_copy(client: TestClien
         "ORCHESTRATOR_CHANGE_RECORD_TOKEN": {"sha256_prefix": digest[:16], "length": len(HELD)}
     }
     assert HELD not in response.text
+
+
+def _fingerprint(value: str) -> dict[str, object]:
+    return {"sha256_prefix": hashlib.sha256(value.encode()).hexdigest()[:16], "length": len(value)}
+
+
+def test_both_held_copies_are_reported(client: TestClient) -> None:
+    _configure(client, "worker", sender=SENDER)
+
+    response = client.get(ROUTE, headers=WORKER)
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "ORCHESTRATOR_CHANGE_RECORD_TOKEN": _fingerprint(HELD),
+        "ORCHESTRATOR_ALERT_HUB_TOKEN": _fingerprint(SENDER),
+    }
+    assert HELD not in response.text and SENDER not in response.text
+
+
+def test_the_alert_sender_alone_is_reported(client: TestClient) -> None:
+    _configure(client, "worker", held=None, sender=SENDER)
+
+    response = client.get(ROUTE, headers=WORKER)
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"ORCHESTRATOR_ALERT_HUB_TOKEN": _fingerprint(SENDER)}
 
 
 def test_a_setting_that_isnt_set_is_left_out(client: TestClient) -> None:

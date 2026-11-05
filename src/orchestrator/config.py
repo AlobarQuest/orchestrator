@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     change_record_url: str = ""
     change_record_token: SecretStr | None = None
     change_record_timeout_seconds: float = 5.0
+    # The `sds-orchestrator` sender's token, held to call alert-hub (a held copy, ADR-0055
+    # amendment 13), so an unhandled exception's 500 raises one keyed alert
+    # (`api/server_errors.py`). Unset in every test, and unset means a 500 is logged and not sent.
+    alert_hub_token: SecretStr | None = None
     # ADR-0019 increment 5b. Whether this deployment may land a pull request into a repository
     # where landing changes something already serving.
     #

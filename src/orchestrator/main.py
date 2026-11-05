@@ -1,4 +1,6 @@
 import json
+import logging
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -21,7 +23,14 @@ from orchestrator.api.routes import (
     rotation,
     verifier,
 )
-from orchestrator.config import Settings
+from orchestrator.api.server_errors import (
+    NO_ALERTS,
+    ServerAlertConfig,
+    log_level,
+    server_alert_config,
+    server_error_handler,
+)
+from orchestrator.config import Settings, get_settings
 from orchestrator.errors import DomainError
 from orchestrator.identity.auth import (
     TOKEN_HASH_PATTERN,
@@ -52,9 +61,14 @@ API_ROUTERS = (
 )
 
 
-def create_app(auth_config: AuthConfig | None = None) -> FastAPI:
+def create_app(
+    auth_config: AuthConfig | None = None, alert_config: ServerAlertConfig | None = None
+) -> FastAPI:
     application = FastAPI(title="Orchestrator")
     application.state.auth_config = auth_config
+    # Exception handlers get no `Depends`, so the 500 handler reads its config from here; a test
+    # replaces `application.state.alert_config`, never a settings override.
+    application.state.alert_config = alert_config or NO_ALERTS
 
     @application.exception_handler(APIAuthenticationError)
     async def authentication_error_handler(
@@ -83,6 +97,9 @@ def create_app(auth_config: AuthConfig | None = None) -> FastAPI:
                 current_version=error.current_version,
             ),
         )
+
+    # Everything no handler above answers: the nested shape, a log line and one keyed alert.
+    application.add_exception_handler(Exception, server_error_handler)
 
     for api_router in API_ROUTERS:
         application.include_router(api_router)
@@ -276,4 +293,7 @@ def _email_actor_mapping(registry: RegistryAdapter, raw: str | None) -> dict[str
     return mapping
 
 
-app = create_app(load_auth_config())
+# Once, at import: uvicorn configures only its own loggers, so without this the root logger drops
+# INFO and `alert_not_configured` and `notified` never reach the container log.
+logging.basicConfig(level=log_level(os.environ.get("LOG_LEVEL")))
+app = create_app(load_auth_config(), server_alert_config(get_settings()))
