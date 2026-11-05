@@ -20,12 +20,14 @@ FIXTURE = Path(__file__).parent.parent / "fixtures" / "model_in_checks.json"
 
 def _model_in_checks() -> list[tuple[str, str, str]]:
     """(table name, constraint name, rendered text) for every model `IN (` CHECK."""
-    return [
+    # `table.constraints` is a set, so sort: pytest-xdist needs every worker to collect the same
+    # parameters in the same order.
+    return sorted(
         (table.name, str(constraint.name), str(constraint.sqltext))
         for table in Base.metadata.tables.values()
         for constraint in table.constraints
         if isinstance(constraint, CheckConstraint) and " IN (" in str(constraint.sqltext)
-    ]
+    )
 
 
 def _member_order_ignored(definition: str) -> str:
