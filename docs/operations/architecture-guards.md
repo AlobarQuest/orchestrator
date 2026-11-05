@@ -352,3 +352,15 @@ and nothing else, over the schema's paths, the web router and the four documenta
 never reads `app.routes`, which holds included-router objects in this FastAPI version.
 `test_the_method_guard_fails_on_a_put_route_on_the_web_router_or_the_app` is its control. A new
 route of any method fails one of these until the inventory or the guard names it.
+
+## The /review handler gates
+
+`tests/architecture/test_review_handlers.py` scans `web.py` once and holds two rules. Every
+function decorated `@router.get` or `@router.post` calls `_human(actor)` as a direct statement of
+its body, so a worker credential cannot reach a human page. Every `@router.post` function calls
+`_require_form(` in its own body, not in a nested `def`, so no form skips CSRF and explicit
+confirmation. It also holds the decorated set equal to the router's registered endpoints, so a
+route registered another way is not missed. Its control tests feed the scanner source text with the
+call removed, hidden in a branch, or placed in a nested function, and each is reported. A handler
+that fails the scan is not fixed by adding the call in the same change without a decision: the gate
+it lacks is a behaviour change.
