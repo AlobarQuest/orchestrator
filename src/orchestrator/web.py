@@ -338,7 +338,9 @@ def queue(
     """Every decision waiting on a person, grouped by what the decision IS.
 
     Grouping by lifecycle state meant you had to know which states imply a gate before you could
-    find your own work -- and five of the eight kinds are not work-unit states at all.
+    find your own work -- and several of the kinds (`KIND_ORDER`) are not work-unit states at all:
+    member and decomposition proposals, staged intakes, package breakdowns and reconciliation
+    conditions.
 
     This is also where the WS-P2.19 stall report is read, and it is the whole of its wiring. A
     stalled unit is a decision waiting on a person, so it belongs on the list a person already
@@ -754,9 +756,9 @@ def create_intake(
 def _parse_intake_payload(payload: str, idempotency_key: str) -> PackageIntakeRegistration:
     """Parse and validate the pasted JSON, as a DomainError on every failure path.
 
-    Only `DomainError` and `APIAuthenticationError` have registered exception handlers, so a bare
-    `json.JSONDecodeError` or a Pydantic `ValidationError` raised from here would surface as an
-    unhandled HTTP 500 rather than a message the human can act on. The idempotency key is taken
+    A bare `json.JSONDecodeError` or a Pydantic `ValidationError` raised from here would be the
+    server's `internal_error` 500, not a refusal the person can act on; a `DomainError` renders the
+    refusal page (`RefusalPageRoute`). The idempotency key is taken
     from the CSRF-bound form field, not from the payload: it is what the form already committed
     to, and letting the pasted text override it would let one token be replayed under a new key.
 
@@ -1577,8 +1579,8 @@ def approve_decomposition_route(
             idempotency_key=idempotency_key,
         )
     except DomainError as error:
-        # A withdrawn grant is the one refusal a person can read and act on from this page: say
-        # which repository, in place, instead of the API's JSON. Every other refusal stays JSON.
+        # A withdrawn grant is the one refusal shown in place, on the proposal page with the
+        # repository named; every other refusal renders the refusal page (`RefusalPageRoute`).
         if error.code != TARGET_REPOSITORY_NOT_GRANTED:
             raise
         session.rollback()

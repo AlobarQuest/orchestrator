@@ -142,6 +142,16 @@ Placement rule: global CLAUDE.md §7.
   (`tests/api/test_server_errors.py`). Route parsing must raise `DomainError`, and a service must
   reject every value a DB CHECK would before the write. History:
   `docs/history/claude-md-invariants-archive.md` #44.
+- A refused `/review` request (`DomainError`, `APIAuthenticationError` or `RequestValidationError`,
+  raised in a handler or a dependency) renders `refusal.html` through `web.py`'s `RefusalPageRoute`
+  at `status_for`'s status (401 and 422 for the other two), with no cookie and no database read.
+  Only the router's own routes are covered: an unrouted `/review` path (404) and a wrong method
+  (405) are Starlette's JSON `{"detail": ...}`, FastAPI's unparseable-body 400 stays JSON, and a
+  500 stays the JSON `internal_error`. The decomposition grant refusal stays in place on its
+  proposal page. The page escapes every field and links back only to a `/review` path. Every
+  `/review` handler calls `_human(actor)` and every POST `_require_form`
+  (`test_refusal_page.py`, `test_review_handlers.py`). Tests read a page refusal through
+  `tests/_support/refusal_page.py`. Detail: ADR-0006 amendment 3.
 - Any "may this unit run again" rule belongs in `claims._readiness_eligibility_error`, shared by reclaim,
   release and requeue (`test_reclaim.py`, `test_requeue.py`). Archive #45.
 - The evidence-pack markdown is redacted for public PR comments (no approver ids, rationale, actor
