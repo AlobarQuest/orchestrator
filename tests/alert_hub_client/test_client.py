@@ -369,6 +369,26 @@ def test_fire_once_unusable_base_url_returns_false(monkeypatch: pytest.MonkeyPat
     assert hub.sent == []
 
 
+def test_fire_once_never_raises_when_closing_the_client_does(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real = alert_hub_client._build_client
+
+    def closing_badly(*args: Any, **kwargs: Any) -> Any:
+        client = real(*args, **kwargs)
+
+        def close() -> None:
+            raise RuntimeError("close failed")
+
+        client.close = close
+        return client
+
+    monkeypatch.setattr(alert_hub_client, "_build_client", closing_badly)
+    hub = Hub()
+    assert fire(hub) is True
+    assert len(hub.sent) == 1
+
+
 def test_fire_once_logs_never_carry_the_token(caplog: pytest.LogCaptureFixture) -> None:
     def explode(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError(f"cannot reach with {TOKEN}", request=request)

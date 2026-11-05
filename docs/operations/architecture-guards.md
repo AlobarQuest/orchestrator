@@ -320,7 +320,7 @@ narrow the predicate instead. A predicate built per instance or inline is captur
 
 ## The layer manifest
 
-`layers.toml` assigns every file in the repository to one of fifteen layers (fifteen sections in the file, counted 2026-11-05): thirteen units of
+`layers.toml` assigns every file in the repository to one of fifteen layers: thirteen units of
 ownership on the SDS layer map, plus `tooling` (build, dependency, lint, CI and agent
 configuration) and `records` (plans, evidence, history and the roadmap). It exists so the
 orchestrator can be worked on one layer at a time.

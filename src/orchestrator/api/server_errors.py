@@ -12,7 +12,8 @@ cause however often it recurs.
 * **The send can't change the response.** It is a `BackgroundTask` that the middleware runs after
   the body is sent, through `alert_hub_client.fire_once`, which never raises. An alert-hub outage
   loses the alert; the log line still holds the fact.
-* **No token, no send.** Unset in every test; the 500 is then logged as `alert_not_configured`.
+* **No token, no send.** Unset or empty, as `held-credentials` reads it (unset in every test);
+  the 500 is then logged as `alert_not_configured`.
 * **One send after one response** is not a concurrent actor: ADR-0002's rule against loops and
   schedulers in the server holds.
 """
@@ -79,6 +80,11 @@ def _send(config: ServerAlertConfig, token: str, key: str, alert: Alert, facts: 
         transport=config.transport,
     ):
         LOG.info("notified %s", facts)
+    else:
+        # `fire_once` reports only that alert-hub did not accept it, and its own line carries its
+        # facts in `extra`, which the root handler's format never prints; this line is the one
+        # that names the request.
+        LOG.warning("notify_failed %s", facts)
 
 
 async def server_error_handler(request: Request, error: Exception) -> JSONResponse:
@@ -93,7 +99,8 @@ async def server_error_handler(request: Request, error: Exception) -> JSONRespon
     LOG.error("server_error %s", facts)
     config: ServerAlertConfig = request.app.state.alert_config
     background = None
-    if config.token is None:
+    token = config.token.get_secret_value() if config.token is not None else ""
+    if not token:
         LOG.info("alert_not_configured %s", facts)
     else:
         alert = Alert(
@@ -105,9 +112,7 @@ async def server_error_handler(request: Request, error: Exception) -> JSONRespon
             ),
         )
         key = alert_key(KEY_PREFIX, template, error_type)
-        background = BackgroundTask(
-            _send, config, config.token.get_secret_value(), key, alert, facts
-        )
+        background = BackgroundTask(_send, config, token, key, alert, facts)
     return JSONResponse(
         status_code=500,
         content=error_body("internal_error", MESSAGE, request_id=request_id),

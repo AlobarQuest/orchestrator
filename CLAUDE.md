@@ -167,8 +167,11 @@ Placement rule: global CLAUDE.md §7.
   the pilot workflow.
 - New routes must be added to the exact POST/GET inventories in `test_scope_guards.py`. The POST
   inventory includes `/review`, and the GET inventory holds the `/api/v1` GETs, the nine `/review`
-  pages and `/health/live` and `/health/ready`. The app serves GET, HEAD and POST only: a PUT,
-  PATCH or DELETE route fails `test_only_get_head_and_post_are_served`. A new ingress POST route
+  pages and `/health/live` and `/health/ready`. Both read the schema and the routers' own
+  routes, so a route with `include_in_schema=False` on a domain or web router is held to them. The
+  app serves GET, HEAD and POST only: a PUT, PATCH or DELETE route on those routers or in the
+  schema fails `test_only_get_head_and_post_are_served`; one added straight to the app with
+  `include_in_schema=False` is not seen. A new ingress POST route
   also needs a row in `tests/idempotency/test_matrix.py` or a reasoned `NON_INGRESS_POST_ROUTES`
   entry; a `workflow_dispatch` workflow needs both workflow-guard allowlists edited. Detail:
   `docs/operations/architecture-guards.md`.
@@ -546,9 +549,11 @@ Placement rule: global CLAUDE.md §7.
   a branch, edit, or run uv there while a pass may fire; edit in a worktree. Detail:
   `docs/operations/local-development.md`.
 - The dispatch App's installation reach is deliberately wider than its work, so every call site
-  that mints or resolves its token is bounded by a grant or allowlist check before any read, and
-  `test_platform_edges.py` lists each site with its bound and requires the bound to be reached by
-  calls (`test_every_call_that_mints_or_resolves_the_token_is_listed_with_its_bound`). The one
+  that mints or resolves its token is bounded by a grant or allowlist check before any read. The
+  order is pinned by the `_no_github_read` assertions in `test_estate_landing_admission.py` and
+  `test_inert_landing_admission.py`; `test_platform_edges.py` lists each site with its bound and
+  requires the bound to be reachable by calls, not ordered first
+  (`test_every_call_that_mints_or_resolves_the_token_is_listed_with_its_bound`). The one
   exception is the verifier's named-check read of a unit's own repository for work already
   dispatched, which asks no grant and has a named reason
   (`test_the_verifier_read_is_the_one_named_reason_and_reaches_no_grant`); every landing asks the

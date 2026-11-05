@@ -207,12 +207,44 @@ def test_nothing_the_exception_said_leaves_the_handler(caplog: pytest.LogCapture
 
     ours = [record for record in caplog.records if record.name == "orchestrator.server_errors"]
     assert [record.msg.split()[0] for record in ours] == ["server_error", "notified"]
-    for fact in (request_id, "GET", "/boom", "RuntimeError"):
-        assert fact in ours[0].getMessage(), fact
+    for record in ours:
+        for fact in (request_id, "GET", "/boom", "RuntimeError"):
+            assert fact in record.getMessage(), (record.msg, fact)
     for record in caplog.records:
         assert SECRET not in _texts(record), record
         assert record.exc_info is None, record
         assert "Traceback" not in _texts(record), record
+
+
+def test_a_refused_send_is_logged_with_the_request_and_route(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    sent: list[httpx.Request] = []
+    application = _app(_recording(401, sent), token=PLACEHOLDER_TOKEN)
+
+    with caplog.at_level(logging.INFO):
+        response = _get(application)
+
+    request_id = response.json()["error"]["request_id"]
+    assert len(sent) == 1
+    ours = [record for record in caplog.records if record.name == "orchestrator.server_errors"]
+    assert [record.msg.split()[0] for record in ours] == ["server_error", "notify_failed"]
+    for record in ours:
+        for fact in (request_id, "GET", "/boom", "RuntimeError"):
+            assert fact in record.getMessage(), (record.msg, fact)
+    assert all(SECRET not in _texts(record) for record in caplog.records)
+    assert all(PLACEHOLDER_TOKEN not in _texts(record) for record in caplog.records)
+
+
+def test_an_empty_token_is_not_a_token(caplog: pytest.LogCaptureFixture) -> None:
+    application = _app(_refusing_any_request(), token="")
+
+    with caplog.at_level(logging.INFO):
+        response = _get(application)
+
+    assert response.status_code == 500
+    ours = [record for record in caplog.records if record.name == "orchestrator.server_errors"]
+    assert [record.msg.split()[0] for record in ours] == ["server_error", "alert_not_configured"]
 
 
 def test_with_no_token_nothing_is_sent_and_that_is_logged(

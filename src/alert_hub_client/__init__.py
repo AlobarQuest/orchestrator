@@ -215,7 +215,10 @@ def fire_once(
         logger.warning("notify_failed", extra={"key": key, "reason": failure.error_type})
         return False
     finally:
-        client.close()
+        try:
+            client.close()
+        except Exception:  # closing must never turn a finished send into a raise
+            logger.warning("close_failed", extra={"key": key})
     if response.status_code != ACCEPTED:
         logger.warning("notify_failed", extra={"key": key, "status": response.status_code})
         return False

@@ -5,7 +5,8 @@ from fastapi import APIRouter, FastAPI
 from fastapi.routing import APIRoute
 from starlette.routing import Route
 
-from orchestrator.main import create_app
+from orchestrator.api.health import router as health_router
+from orchestrator.main import API_ROUTERS, create_app
 from orchestrator.web import router as web_router
 
 
@@ -154,12 +155,14 @@ def test_application_defines_no_event_publisher_or_dispatch_objects() -> None:
     assert not forbidden.intersection(identifiers)
 
 
-def test_production_get_route_inventory_is_explicit() -> None:
-    """The POST inventory has always been pinned; the GET surface was not.
+def _domain_routes(
+    routers: tuple[APIRouter, ...] = (*API_ROUTERS, health_router),
+) -> list[APIRoute]:
+    """The domain routers' own routes, so a route with `include_in_schema=False` is seen too."""
+    return [route for router in routers for route in router.routes if isinstance(route, APIRoute)]
 
-    WS-P2.1 adds read surfaces that enumerate failures and divergence, so a new GET must be added
-    here DELIBERATELY -- the same discipline the POST set has always had.
-    """
+
+def _observed_gets(domain_routes: list[APIRoute]) -> set[str]:
     paths = create_app().openapi()["paths"]
     observed = {
         path
@@ -168,9 +171,19 @@ def test_production_get_route_inventory_is_explicit() -> None:
     }
     observed.update(
         route.path
-        for route in web_router.routes
+        for route in (*web_router.routes, *domain_routes)
         if isinstance(route, APIRoute) and "GET" in (route.methods or set())
     )
+    return observed
+
+
+def test_production_get_route_inventory_is_explicit() -> None:
+    """The POST inventory has always been pinned; the GET surface was not.
+
+    WS-P2.1 adds read surfaces that enumerate failures and divergence, so a new GET must be added
+    here DELIBERATELY -- the same discipline the POST set has always had.
+    """
+    observed = _observed_gets(_domain_routes())
 
     assert observed == {
         "/api/v1/change-records/{change_record_id}/work",
@@ -242,18 +255,21 @@ def test_production_get_route_inventory_is_explicit() -> None:
 SERVED_METHODS = frozenset({"GET", "HEAD", "POST"})
 
 
-def _served_methods(app: FastAPI, web_routes: list) -> dict[str, set[str]]:
+def _served_methods(
+    app: FastAPI, web_routes: list, domain_routes: list[APIRoute] | None = None
+) -> dict[str, set[str]]:
     """Every method the application answers, by path.
 
     Never walks `app.routes`: under the pinned FastAPI it holds nested `_IncludedRouter` objects.
-    The schema carries the domain routes, `web_routes` the `/review` pages (schema-excluded), and
+    The schema carries the domain routes and `domain_routes` (the routers' own, default all of them)
+    the ones hidden from it, `web_routes` the `/review` pages (schema-excluded), and
     the four documentation routes are the plain `Route`s at the top of the router, found by the
     URLs the application reports for them.
     """
     served: dict[str, set[str]] = {}
     for path, operations in app.openapi()["paths"].items():
         served.setdefault(path, set()).update(method.upper() for method in operations)
-    for route in web_routes:
+    for route in [*web_routes, *(_domain_routes() if domain_routes is None else domain_routes)]:
         if isinstance(route, APIRoute):
             served.setdefault(route.path, set()).update(route.methods or set())
     documentation = {
@@ -296,3 +312,18 @@ def test_the_method_guard_fails_on_a_put_route_on_the_web_router_or_the_app() ->
     assert _unserved(_served_methods(app, list(web_router.routes))) == {
         "/api/v1/throwaway": {"PUT"}
     }
+
+
+def test_schema_hidden_domain_routes_are_seen_by_the_method_guard_and_the_get_inventory() -> None:
+    hidden = APIRouter()
+    hidden.add_api_route("/api/v1/hidden", lambda: None, methods=["PUT"], include_in_schema=False)
+    hidden.add_api_route(
+        "/api/v1/hidden-read", lambda: None, methods=["GET"], include_in_schema=False
+    )
+    routes = _domain_routes((*API_ROUTERS, health_router, hidden))
+
+    assert _unserved(_served_methods(create_app(), list(web_router.routes), routes)) == {
+        "/api/v1/hidden": {"PUT"}
+    }
+    assert "/api/v1/hidden-read" in _observed_gets(routes)
+    assert "/api/v1/hidden-read" not in _observed_gets(_domain_routes())

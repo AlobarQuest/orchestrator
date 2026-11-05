@@ -130,7 +130,7 @@ class PackageIntakeRegistration(CommandBase):
     # ADR-0026: the change-manager record a human approved to cause this work. Bounded by int4
     # because the column is an Integer, and `strict` because pydantic's lax mode reads `true`
     # as 1 -- which would attribute a revision to change record 1 rather than refusing.
-    change_record_id: int | None = Field(default=None, gt=0, le=2_147_483_647, strict=True)
+    change_record_id: int | None = Field(default=None, gt=0, le=INTEGER_COLUMN_MAX, strict=True)
     # ADR-0026 amendment 1: the observation that caused the record above. Typed as a UUID so
     # pydantic refuses a malformed one with a 422 rather than letting an unwrapped
     # `uuid.UUID(bad)` reach the wire as a bare 500 further in. Whether the id names a row that

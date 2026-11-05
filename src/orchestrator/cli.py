@@ -72,6 +72,13 @@ def request(method: str, path: str, payload: JsonObject | None = None) -> Any:
     if settings.credential_key_id:
         headers["X-Credential-Key-Id"] = settings.credential_key_id
     try:
+        # httpx serializes with `allow_nan=False`, so `--data '{"x": NaN}'` fails here.
+        json.dumps(payload, allow_nan=False)
+    except ValueError:
+        raise CliError(
+            {"code": "request_body_invalid", "message": "request body is not valid JSON"}
+        ) from None
+    try:
         with httpx.Client(
             base_url=settings.api_url,
             headers=headers,
