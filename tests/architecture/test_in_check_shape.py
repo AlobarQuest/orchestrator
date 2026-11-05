@@ -47,12 +47,6 @@ def repr_in_violations(source: str) -> list[int]:
             )
             if uses_repr and " IN " in _literal_text(node):
                 violations.append(node.lineno)
-        elif (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == "repr"
-        ):
-            continue
         elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mod):
             left = node.left
             if isinstance(left, ast.Constant) and isinstance(left.value, str):

@@ -32,14 +32,31 @@ def _member_order_ignored(definition: str) -> str:
     """Sort the members of the `ARRAY[...]` list Postgres prints, so only membership is compared.
 
     Two observation vocabularies list the same members in a different order from the migration
-    that created them; the order has no effect on what the CHECK accepts.
+    that created them; the order has no effect on what the CHECK accepts. Any `::<type>` cast is
+    accepted, and an ARRAY whose members cannot all be parsed raises rather than comparing empty.
     """
 
     def sort_members(match: re.Match[str]) -> str:
-        members = sorted(re.findall(r"'[^']*'::character varying", match.group(1)))
-        return "ARRAY[" + ", ".join(members) + "]"
+        body = match.group(1)
+        members = re.findall(r"'[^']*'::[\w ]+", body)
+        if not members or len(members) != body.count("'") // 2:
+            raise AssertionError(f"cannot parse the members of ARRAY[{body}]")
+        return "ARRAY[" + ", ".join(sorted(members)) + "]"
 
     return re.sub(r"ARRAY\[(.*?)\]", sort_members, definition)
+
+
+def test_the_member_sorter_refuses_an_array_it_cannot_parse() -> None:
+    with pytest.raises(AssertionError):
+        _member_order_ignored("CHECK ((x = ANY (ARRAY[1, 2])))")
+
+
+def test_the_member_sorter_still_tells_two_text_member_lists_apart() -> None:
+    first = "CHECK ((x = ANY (ARRAY['a'::text, 'b'::text])))"
+    second = "CHECK ((x = ANY (ARRAY['a'::text, 'c'::text])))"
+    reordered = "CHECK ((x = ANY (ARRAY['b'::text, 'a'::text])))"
+    assert _member_order_ignored(first) != _member_order_ignored(second)
+    assert _member_order_ignored(first) == _member_order_ignored(reordered)
 
 
 def test_the_model_renders_the_in_checks_the_fixture_records() -> None:
