@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from typing import cast
 
 import pytest
-from fastapi import APIRouter, FastAPI
+from fastapi import APIRouter, FastAPI, HTTPException
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, func, select
@@ -62,6 +62,10 @@ def _probe_router() -> APIRouter:
     @probe.get("/_probe/escape")
     def escape() -> None:
         raise DomainError("x_refused", "<script>alert(1)</script>", "<b>r</b>")
+
+    @probe.get("/_probe/teapot")
+    def teapot() -> None:
+        raise HTTPException(status_code=418, detail="teapot")
 
     @probe.get("/_probe/crash")
     def crash() -> None:
@@ -262,6 +266,14 @@ def test_the_link_back_is_a_review_path_only(db_client: TestClient) -> None:
     # Only the path is used, so another host's /review path cannot send a person off the host.
     for referer in (f"https://evil.example{unit_path}", f"//evil.example{unit_path}"):
         assert back(referer) == unit_path, referer
+
+
+def test_an_http_exception_in_a_handler_stays_fastapis_json(probe_client: TestClient) -> None:
+    response = probe_client.get("/review/_probe/teapot")
+
+    assert response.status_code == 418
+    assert response.headers["content-type"].startswith("application/json")
+    assert response.json() == {"detail": "teapot"}
 
 
 def test_a_500_stays_the_json_internal_error(probe_client: TestClient) -> None:
