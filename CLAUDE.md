@@ -97,17 +97,18 @@ Placement rule: global CLAUDE.md §7.
   Detail: `docs/operations/driving-a-unit.md`.
 - Request entry points own their transaction and must `session.commit()`; a function that commits
   reaches another committer only as its last commit point, a sole handoff
-  (`test_transaction_ownership.py`; it reads plain-name calls only, so method calls, module-attribute
-  calls and sequences of committed steps in a non-committing function pass unchecked). A
+  (`test_transaction_ownership.py`; it misses calls through `from package import module`, calls
+  through an object, a commit on a receiver not named `session`, and functions that commit nothing
+  themselves, and it does not check the first half: that entry points must commit). A
   persistence test must re-read through a different session, not `expire_all()`.
   History: `docs/history/claude-md-invariants-archive.md` #27.
 - `test_unreachable_guards.py` requires every public kernel/services function to be import-reachable
   from a production entry point; an allowlist entry that would read "in fact it is called" means the
   predicate is wrong. Detail: `docs/operations/architecture-guards.md`.
 - `work_units.version` moves only on a state transition, in three places (`test_execution_writers.py`). Archive #30.
-- A DB trigger rewrites `work_units.updated_at` on every update, so tests exercise staleness by
-  shrinking the env-overridable threshold, never by back-dating the row
-  (`test_updated_at_trigger_overwrites_a_back_dated_value`).
+- A DB trigger rewrites `work_units.updated_at` on every update
+  (`test_updated_at_trigger_overwrites_a_back_dated_value`), so tests exercise staleness by
+  shrinking the env-overridable threshold, never by back-dating the row.
   History: `docs/history/claude-md-invariants-archive.md` #31.
 - Never run two pytest runs against one base test database. Each run drops and re-migrates the
   schema once, then `TRUNCATE`s per test; `-n auto` workers get their own `<base>_gwN` databases,

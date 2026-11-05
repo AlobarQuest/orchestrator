@@ -123,7 +123,7 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   services commit internally by design, and a persistence assertion must re-read through a
   DIFFERENT session, neither of which survives an outer transaction. A test that alters the schema
   marks it dirty, and the next test rebuilds it. The measurement that motivated this (2026-08-01,
-  per-test rebuild of 21 migrations: 169s of a 203s suite) is history; #298 replaced it.
+  per-test rebuild of 21 migrations: 169s of a 203s suite) is history; PR #298 replaced it.
   The Makefile exports `PYTEST_ADDOPTS ?= -n auto --dist loadgroup`, so a `make check` run uses
   xdist, and each worker owns its own database (`<base>_gw0`, `<base>_gw1`, ...), created and
   dropped by the session fixtures. The hazard that remains is two separate pytest runs against one

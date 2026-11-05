@@ -615,18 +615,15 @@ class Adjudication(UUIDPrimaryKey, Base):
             name="ck_adjudications_waiver_fields",
         ),
         CheckConstraint(
-            "risk IS NULL OR risk IN ("
-            + ", ".join(f"'{value}'" for value in WAIVER_RISK_CLASSES)
-            + ")",
+            f"risk IS NULL OR risk IN {_in_members(WAIVER_RISK_CLASSES)}",
             name="ck_adjudications_risk_class",
         ),
         # WS-P3.7. NULL is every row written before the column existed, and it must read as
         # *unknown* rather than as *not human* -- the historical population is not clean, so no
         # boundary drawn through it is sound (ADR-0014). Not back-filled, deliberately.
         CheckConstraint(
-            "decided_by_role IS NULL OR decided_by_role IN ("
-            + ", ".join(f"'{role.value}'" for role in ActorRole)
-            + ")",
+            "decided_by_role IS NULL OR decided_by_role IN "
+            + _in_members(tuple(role.value for role in ActorRole)),
             name="ck_adjudications_decided_by_role",
         ),
     )
@@ -764,7 +761,7 @@ class ReleaseArtifactBinding(UUIDPrimaryKey, Base):
             postgresql_nulls_not_distinct=True,
         ),
         CheckConstraint(
-            "kind IN ({})".format(", ".join(f"'{kind}'" for kind in RELEASE_ARTIFACT_KINDS)),
+            f"kind IN {_in_members(RELEASE_ARTIFACT_KINDS)}",
             name="ck_release_artifact_kind",
         ),
         CheckConstraint(
@@ -873,7 +870,7 @@ class DeploymentObservation(UUIDPrimaryKey, Base):
             name="uq_deployment_observation_binding_environment",
         ),
         CheckConstraint(
-            "kind IN ({})".format(", ".join(f"'{kind}'" for kind in DEPLOYMENT_OBSERVATION_KINDS)),
+            f"kind IN {_in_members(DEPLOYMENT_OBSERVATION_KINDS)}",
             name="ck_deployment_observations_kind",
         ),
         CheckConstraint(
@@ -1373,15 +1370,11 @@ class ReconciliationCondition(UUIDPrimaryKey, Base):
             name="uq_reconciliation_conditions_divergence",
         ),
         CheckConstraint(
-            "observation_kind IN ({})".format(
-                ", ".join(f"'{kind}'" for kind in RECONCILIATION_OBSERVATION_KINDS)
-            ),
+            f"observation_kind IN {_in_members(RECONCILIATION_OBSERVATION_KINDS)}",
             name="ck_reconciliation_conditions_observation_kind",
         ),
         CheckConstraint(
-            "condition_type IN ({})".format(
-                ", ".join(f"'{kind}'" for kind in RECONCILIATION_CONDITION_TYPES)
-            ),
+            f"condition_type IN {_in_members(RECONCILIATION_CONDITION_TYPES)}",
             name="ck_reconciliation_conditions_type",
         ),
         CheckConstraint(
@@ -1517,7 +1510,7 @@ class UnitPrMerge(UUIDPrimaryKey, Base):
         UniqueConstraint("work_unit_id", name="uq_unit_pr_merge_work_unit"),
         UniqueConstraint("idempotency_key", name="uq_unit_pr_merge_idempotency"),
         CheckConstraint(
-            "status IN ({})".format(", ".join(f"'{status}'" for status in PR_MERGE_STATUSES)),
+            f"status IN {_in_members(PR_MERGE_STATUSES)}",
             name="ck_unit_pr_merge_status",
         ),
         CheckConstraint("pr_number > 0", name="ck_unit_pr_merge_positive_pr_number"),
@@ -1571,7 +1564,7 @@ class EstatePrMerge(UUIDPrimaryKey, Base):
         UniqueConstraint("repository", "pr_number", name="uq_estate_pr_merge_subject"),
         UniqueConstraint("idempotency_key", name="uq_estate_pr_merge_idempotency"),
         CheckConstraint(
-            "status IN ({})".format(", ".join(f"'{status}'" for status in PR_MERGE_STATUSES)),
+            f"status IN {_in_members(PR_MERGE_STATUSES)}",
             name="ck_estate_pr_merge_status",
         ),
         CheckConstraint("pr_number > 0", name="ck_estate_pr_merge_positive_pr_number"),
@@ -1631,7 +1624,7 @@ class LandingRevert(UUIDPrimaryKey, Base):
     __table_args__ = (
         UniqueConstraint("repository", "pr_number", name="uq_landing_reverts_subject"),
         CheckConstraint(
-            "status IN ({})".format(", ".join(f"'{s}'" for s in LANDING_REVERT_STATUSES)),
+            f"status IN {_in_members(LANDING_REVERT_STATUSES)}",
             name="ck_landing_reverts_status",
         ),
     )
@@ -1684,7 +1677,7 @@ class StagedPackageIntake(UUIDPrimaryKey, Base):
         # Built via join, not `{STAGED_INTAKE_STATES!r}`, so the CHECK stays valid SQL whatever
         # the tuple's length.
         CheckConstraint(
-            "state IN ({})".format(", ".join(f"'{state}'" for state in STAGED_INTAKE_STATES)),
+            f"state IN {_in_members(STAGED_INTAKE_STATES)}",
             name="ck_staged_package_intakes_state",
         ),
         # A registered row names its revision, and only a registered row does.
@@ -1737,17 +1730,13 @@ GRANT_STATES = ("not_assessed", "remediating", "granted", "not_applicable", "wit
 MEMBER_PROPOSAL_STATES = ("staged", "confirmed", "withdrawn")
 
 
-def _in_list(column: str, vocabulary: tuple[str, ...]) -> str:
-    return "{} IN ({})".format(column, ", ".join(f"'{member}'" for member in vocabulary))
-
-
 class SdsMember(UUIDPrimaryKey, Base):
     """A repository the SDS maintains: who owns it, where its working copy lives, and its state."""
 
     __tablename__ = "sds_members"
     __table_args__ = (
         Index("uq_sds_members_repository_lower", text("lower(repository)"), unique=True),
-        CheckConstraint(_in_list("state", MEMBER_STATES), name="ck_sds_members_state"),
+        CheckConstraint(f"state IN {_in_members(MEMBER_STATES)}", name="ck_sds_members_state"),
         CheckConstraint(
             "NOT machine_local OR working_copy IS NOT NULL",
             name="ck_sds_members_machine_local_working_copy",
@@ -1779,8 +1768,10 @@ class SdsMemberGrant(Base):
 
     __tablename__ = "sds_member_grants"
     __table_args__ = (
-        CheckConstraint(_in_list("service", MEMBER_SERVICES), name="ck_sds_member_grants_service"),
-        CheckConstraint(_in_list("state", GRANT_STATES), name="ck_sds_member_grants_state"),
+        CheckConstraint(
+            f"service IN {_in_members(MEMBER_SERVICES)}", name="ck_sds_member_grants_service"
+        ),
+        CheckConstraint(f"state IN {_in_members(GRANT_STATES)}", name="ck_sds_member_grants_state"),
         CheckConstraint("reason <> ''", name="ck_sds_member_grants_reason"),
     )
 
@@ -1839,7 +1830,7 @@ class SdsMemberProposal(UUIDPrimaryKey, Base):
     __table_args__ = (
         UniqueConstraint("idempotency_key", name="uq_sds_member_proposals_idempotency"),
         CheckConstraint(
-            _in_list("state", MEMBER_PROPOSAL_STATES), name="ck_sds_member_proposals_state"
+            f"state IN {_in_members(MEMBER_PROPOSAL_STATES)}", name="ck_sds_member_proposals_state"
         ),
         # Only a staged row is undecided; a decided row says who decided it and when.
         CheckConstraint(
