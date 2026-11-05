@@ -2,7 +2,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from orchestrator.api.dependencies import APIAuthenticationError
-from orchestrator.api.error_shape import error_body, status_for
+from orchestrator.api.error_shape import authentication_message, error_body, status_for
 from orchestrator.errors import DomainError
 
 
@@ -138,3 +138,14 @@ def test_a_detail_cannot_overwrite_the_code_or_message(name: str) -> None:
     would let such a detail through into the spread, and this would then fail."""
     with pytest.raises(TypeError, match=f"multiple values for argument '{name}'"):
         error_body("c", "m", **{name: "x"})
+
+
+def test_authentication_message_is_the_one_copy_of_the_401_text() -> None:
+    assert (
+        authentication_message("authentication_required")
+        == "valid authentication credentials are required"
+    )
+    assert (
+        authentication_message("authentication_failed")
+        == "authentication credentials were rejected"
+    )

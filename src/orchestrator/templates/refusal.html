@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Refused · Orchestrator review{% endblock %}
+{% block content %}
+<section id="refusal" data-refusal-code="{{ code }}" data-refusal-message="{{ message }}"{% for name, _label, value in details %} data-refusal-{{ name }}="{{ value }}"{% endfor %}>
+  <h1>Refused</h1>
+  <p><code>{{ code }}</code></p>
+  <p>{{ message }}</p>
+  {% if details %}
+  <dl>
+    {% for _name, label, value in details %}
+    <dt>{{ label }}</dt>
+    <dd>{{ value }}</dd>
+    {% endfor %}
+  </dl>
+  {% endif %}
+  <p><a href="{{ back }}">Back</a></p>
+</section>
+{% endblock %}

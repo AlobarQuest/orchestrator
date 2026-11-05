@@ -1,5 +1,7 @@
 """The API's error status map and body, shared by every handler that answers an error."""
 
+from orchestrator.errors import DomainError
+
 # Nothing about the request is wrong: this process cannot answer it right now, either because of
 # its own configuration or because something it must read is unreachable. A 409 would tell the
 # caller to change the request, which is the wrong instruction.
@@ -46,3 +48,21 @@ def error_body(code: str, message: str, **detail: object) -> dict[str, object]:
             **{name: value for name, value in detail.items() if value is not None},
         }
     }
+
+
+def domain_error_body(error: DomainError) -> dict[str, object]:
+    """The wire body of a `DomainError`: its code, message and the context it carries."""
+    return error_body(
+        error.code,
+        error.message,
+        recovery=error.recovery,
+        current_state=error.current_state,
+        current_version=error.current_version,
+    )
+
+
+def authentication_message(code: str) -> str:
+    """The text a 401 carries for an authentication refusal code."""
+    if code == "authentication_required":
+        return "valid authentication credentials are required"
+    return "authentication credentials were rejected"

@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from orchestrator.api.routes.common import get_page_landing_source
 from orchestrator.persistence.models import Event, StagedPackageIntake, WorkPackageRevision
 from orchestrator.services.landing.estate_landing import LANDING_REDEPLOYS, EstateAnswer
+from tests._support.refusal_page import refusal, refusal_code
 from tests.api.test_lifecycle_api import HUMAN, SYSTEM, WORKER
 from tests.api.test_package_intake_api import intake_payload
 
@@ -74,10 +75,6 @@ def _press(client: TestClient, staged_id: str, fields: dict[str, str], **overrid
         headers=HUMAN,
         follow_redirects=False,
     )
-
-
-def _code(response: Any) -> str:
-    return response.json()["error"]["code"]
 
 
 def _decision_section(page: str) -> str:
@@ -184,7 +181,7 @@ def test_a_token_for_one_staged_row_cannot_confirm_another(db_client: TestClient
     response = _press(db_client, second, _confirm_fields(page.text, first))
 
     assert response.status_code == 403
-    assert response.json()["error"]["code"] == "csrf_rejected"
+    assert refusal_code(response) == "csrf_rejected"
 
 
 def test_a_tampered_idempotency_key_is_refused(db_client: TestClient) -> None:
@@ -196,7 +193,7 @@ def test_a_tampered_idempotency_key_is_refused(db_client: TestClient) -> None:
     )
 
     assert response.status_code == 403
-    assert _code(response) == "csrf_rejected"
+    assert refusal_code(response) == "csrf_rejected"
 
 
 def test_an_unconfirmed_press_is_refused(db_client: TestClient) -> None:
@@ -206,7 +203,7 @@ def test_an_unconfirmed_press_is_refused(db_client: TestClient) -> None:
     response = _press(db_client, staged_id, _confirm_fields(page.text, staged_id), confirm="")
 
     assert response.status_code == 403
-    assert _code(response) == "csrf_rejected"
+    assert refusal_code(response) == "csrf_rejected"
 
 
 def test_a_machine_can_neither_read_nor_confirm_the_page(db_client: TestClient) -> None:
@@ -215,7 +212,7 @@ def test_a_machine_can_neither_read_nor_confirm_the_page(db_client: TestClient) 
     for headers in (SYSTEM, WORKER):
         page = db_client.get(f"/review/staged-intakes/{staged_id}", headers=headers)
         assert page.status_code == 403
-        assert _code(page) == "human_actor_required"
+        assert refusal_code(page) == "human_actor_required"
         response = db_client.post(
             f"/review/staged-intakes/{staged_id}/confirm",
             data={"confirm": "yes"},
@@ -224,7 +221,7 @@ def test_a_machine_can_neither_read_nor_confirm_the_page(db_client: TestClient) 
         )
         assert response.status_code == 403
         # Refused for being a machine, before any token is looked at.
-        assert _code(response) == "human_actor_required"
+        assert refusal_code(response) == "human_actor_required"
 
 
 def test_an_unknown_staged_row_is_not_found(db_client: TestClient) -> None:
@@ -297,7 +294,7 @@ def test_a_withdrawn_row_refuses_the_confirm(db_client: TestClient) -> None:
     response = _press(db_client, staged_id, _confirm_fields(page, staged_id))
 
     assert response.status_code == 409
-    assert response.json()["error"]["code"] == "staged_intake_not_confirmable"
+    assert refusal_code(response) == "staged_intake_not_confirmable"
 
 
 def test_each_token_does_only_its_own_action(db_client: TestClient) -> None:
@@ -309,7 +306,7 @@ def test_each_token_does_only_its_own_action(db_client: TestClient) -> None:
         _press(db_client, staged_id, _withdraw_fields(page, staged_id)),
     ):
         assert response.status_code == 403
-        assert _code(response) == "csrf_rejected"
+        assert refusal_code(response) == "csrf_rejected"
 
 
 def test_a_withdraw_token_for_one_row_cannot_withdraw_another(db_client: TestClient) -> None:
@@ -319,7 +316,7 @@ def test_a_withdraw_token_for_one_row_cannot_withdraw_another(db_client: TestCli
     response = _withdraw(db_client, second, _withdraw_fields(page, first))
 
     assert response.status_code == 403
-    assert _code(response) == "csrf_rejected"
+    assert refusal_code(response) == "csrf_rejected"
 
 
 def test_a_withdraw_needs_a_reason_and_a_confirmation(db_client: TestClient) -> None:
@@ -331,7 +328,7 @@ def test_a_withdraw_needs_a_reason_and_a_confirmation(db_client: TestClient) -> 
     assert _withdraw(db_client, staged_id, fields, reason="").status_code == 422
     unconfirmed = _withdraw(db_client, staged_id, fields, confirm="")
     assert unconfirmed.status_code == 403
-    assert _code(unconfirmed) == "csrf_rejected"
+    assert refusal_code(unconfirmed) == "csrf_rejected"
 
 
 def test_a_machine_cannot_withdraw(db_client: TestClient) -> None:
@@ -345,7 +342,7 @@ def test_a_machine_cannot_withdraw(db_client: TestClient) -> None:
             follow_redirects=False,
         )
         assert response.status_code == 403
-        assert _code(response) == "human_actor_required"
+        assert refusal_code(response) == "human_actor_required"
 
 
 def test_payload_text_is_rendered_escaped(db_client: TestClient) -> None:
@@ -416,6 +413,6 @@ def test_a_stored_payload_that_no_longer_validates_says_to_withdraw_and_restage(
     response = _press(db_client, staged_id, _confirm_fields(page.text, staged_id))
 
     assert response.status_code == 409
-    error = response.json()["error"]
-    assert error["code"] == "intake_payload_invalid"
-    assert "withdraw this staged intake and re-stage" in str(error)
+    shown = refusal(response)
+    assert shown["code"] == "intake_payload_invalid"
+    assert "withdraw this staged intake and re-stage" in shown["recovery"]

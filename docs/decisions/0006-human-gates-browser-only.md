@@ -224,3 +224,26 @@ fourth because the grant is the authority and his decision 1 covers the factory'
    bumps already land and install there unattended, and every failed bump measured was in the
    orchestrator. What's new is the agent's source; required checks and the refused gate files bound
    it, and a malicious change could still pass them.
+
+## Amendment 3, 2026-11-05: a refused /review request renders a page
+
+**Decided by Devon, 2026-11-05** (decision 2 of the platform layer design, Part 3). A refusal on a
+`/review` route used to reach the browser as the API's JSON body. It now renders
+`templates/refusal.html`, so a person reads the refusal's code, message, recovery, and current state
+and version, with a link back, at the status the JSON had (`status_for`; 401 for
+`APIAuthenticationError`, 422 for `RequestValidationError`).
+
+What a person can confirm is unchanged: no gate gains or loses a control, and the refusing checks
+are the same. Only the rendering of the refusal changes.
+
+- `RefusalPageRoute`, the web router's `route_class`, catches those three exception types from a
+  handler or a dependency. The page sets no cookie, reads no database and performs no rollback itself: the request's session closes without committing, which discards any uncommitted write.
+- The decomposition grant refusal stays in place: the proposal page shows it with the repository
+  named.
+- The page covers only what a `/review` route handles. An unrouted `/review/...` path (404) and a
+  wrong method (405) are answered by Starlette's router, and FastAPI's unparseable-body 400 is an
+  `HTTPException`; all three stay the JSON `{"detail": ...}`. A 500 stays the JSON `internal_error`
+  of the platform layer's Part 2.
+- Every `/review` handler calls `_human(actor)` and every POST `_require_form`
+  (`tests/architecture/test_review_handlers.py`); the page is pinned by
+  `tests/web/test_refusal_page.py`.

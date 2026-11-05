@@ -38,6 +38,7 @@ from orchestrator.services.intake.decomposition import _require_submission_actor
 from orchestrator.services.release.observations import _authorize_actor
 from orchestrator.web import _human
 from orchestrator.web import router as web_router
+from tests._support.refusal_page import refusal_code
 from tests.api.test_observations_api import observation_body
 
 OBSERVER = {"Authorization": "Bearer observer-token", "X-Credential-Key-Id": "observer-key"}
@@ -118,7 +119,11 @@ def test_an_observer_is_refused_at_every_post_route_but_observations(
     response = db_client.post(_concrete(path), headers=OBSERVER, json={})
 
     assert response.status_code == 403, (path, response.status_code, response.text)
-    assert response.json()["error"]["code"] == "role_forbidden"
+    # A /review route answers a person with the refusal page; every other route with JSON.
+    if path.startswith("/review/"):
+        assert refusal_code(response) == "role_forbidden"
+    else:
+        assert response.json()["error"]["code"] == "role_forbidden"
 
 
 def test_an_observer_records_an_observation(db_client: TestClient) -> None:

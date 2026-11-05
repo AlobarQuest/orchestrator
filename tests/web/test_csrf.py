@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 import orchestrator.web
 from orchestrator.api.dependencies import AuthConfig
 from orchestrator.persistence.models import WorkUnit
+from tests._support.refusal_page import refusal_code
 from tests.api.test_lifecycle_api import HUMAN, WORKER
 
 
@@ -135,7 +136,7 @@ def test_malformed_base64_is_rejected_not_raised(
     )
 
     assert response.status_code == 403
-    assert response.json()["error"]["code"] == "csrf_rejected"
+    assert refusal_code(response) == "csrf_rejected"
 
 
 def test_csrf_secret_configuration_is_strong_and_missing_is_stable(
@@ -151,4 +152,64 @@ def test_csrf_secret_configuration_is_strong_and_missing_is_stable(
     response = db_client.get(f"/review/units/{review_unit.id}", headers=HUMAN)
 
     assert response.status_code == 503
-    assert response.json()["error"]["code"] == "csrf_unavailable"
+    assert refusal_code(response) == "csrf_unavailable"
+
+
+def _post_review(db_client: TestClient, unit: WorkUnit, token: str, key: str, **kwargs):
+    return db_client.post(
+        f"/review/units/{unit.id}/review",
+        data={
+            "csrf_token": token,
+            "idempotency_key": key,
+            "expected_version": str(unit.version),
+            "reason": "non-ascii",
+            "outcome": "revision_required",
+            "confirm": "yes",
+        },
+        **kwargs,
+    )
+
+
+def test_a_non_ascii_signature_is_refused_as_csrf_rejected(
+    db_client: TestClient, review_unit: WorkUnit
+) -> None:
+    page = db_client.get(f"/review/units/{review_unit.id}", headers=HUMAN)
+    token, key = _form_fields(page.text, review_unit.id, "review")
+    payload, _ = token.rsplit(".", 1)
+
+    response = _post_review(db_client, review_unit, f"{payload}.{'é' * 64}", key, headers=HUMAN)
+
+    assert response.status_code == 403
+    assert "csrf_rejected" in response.text
+
+
+_HUMAN_BYTES = [(k.lower().encode(), v.encode()) for k, v in HUMAN.items()]
+_BAD_COOKIE = (b"cookie", b"orchestrator_review_session=x.\xe9")
+
+
+def test_a_non_ascii_session_cookie_is_replaced_not_raised(
+    db_client: TestClient, review_unit: WorkUnit
+) -> None:
+    response = db_client.get(
+        f"/review/units/{review_unit.id}", headers=[_BAD_COOKIE, *_HUMAN_BYTES]
+    )
+
+    assert response.status_code == 200
+    fresh = re.search(rf"{orchestrator.web.CSRF_COOKIE}=([^;]+)", response.headers["set-cookie"])
+    assert fresh is not None
+    assert fresh.group(1) != "x.é"
+
+
+def test_a_post_on_a_non_ascii_session_cookie_is_refused(
+    db_client: TestClient, review_unit: WorkUnit
+) -> None:
+    page = db_client.get(f"/review/units/{review_unit.id}", headers=HUMAN)
+    token, key = _form_fields(page.text, review_unit.id, "review")
+    db_client.cookies.clear()
+
+    response = _post_review(
+        db_client, review_unit, token, key, headers=[_BAD_COOKIE, *_HUMAN_BYTES]
+    )
+
+    assert response.status_code == 403
+    assert "csrf_rejected" in response.text
