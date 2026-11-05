@@ -270,11 +270,34 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
 
 ## The edge tables
 
-Each lane layer has one test that states its whole outbound surface:
-`tests/architecture/test_bridge_edges.py`, `test_landing_edges.py` and `test_rotation_edges.py`.
-They share `edge_table.py`. A row is compared with the predicates the lane's `ConfinedClient` really
-asks, under every verb, over a corpus of listed routes, near misses and named probes. The test
-fails when a predicate widens to a route in the corpus, or when a row drifts from the code.
+Each layer that reaches outside the process has one test that states its whole outbound surface.
+There are eleven, in `tests/architecture/`:
+
+- `test_admission_edges.py`
+- `test_bridge_edges.py`
+- `test_execution_edges.py`
+- `test_intent_edges.py`
+- `test_landing_edges.py`
+- `test_membership_edges.py`
+- `test_platform_edges.py`
+- `test_release_edges.py`
+- `test_rotation_edges.py`
+- `test_runtime_edges.py`
+- `test_verification_edges.py`
+
+Nine of them share `edge_table.py` (the admission and intent tests read their layer's source
+directly). A row is compared with the predicates the layer's `ConfinedClient` really asks, under
+every verb, over a corpus of listed routes, near misses and named probes. The test fails when a
+predicate widens to a route in the corpus, or when a row drifts from the code. Each test's
+docstring lists what it cannot see.
+
+`test_platform_edges.py` states the Core platform layer. Its rows are the GitHub App mint (one host,
+one request, no body), every caller of the App token or its credentials with the grant or allowlist
+check that bounds it, the CLI's one client, the `Settings` fields and every raw environment read,
+the files the layer reads, the routes that answer without an actor, and the exception handlers with
+the one alert the 500 handler may send. Reachability from a route to its grant check uses the
+unreachable-guards call graph. The verifier's named-check read of a unit's own repository is the
+one row with a named reason in place of a grant.
 
 The rotation table states more than routes, because the rotation lanes reach more than HTTP:
 
@@ -297,7 +320,7 @@ narrow the predicate instead. A predicate built per instance or inline is captur
 
 ## The layer manifest
 
-`layers.toml` assigns every file in the repository to one of fourteen layers: the twelve units of
+`layers.toml` assigns every file in the repository to one of fifteen layers: thirteen units of
 ownership on the SDS layer map, plus `tooling` (build, dependency, lint, CI and agent
 configuration) and `records` (plans, evidence, history and the roadmap). It exists so the
 orchestrator can be worked on one layer at a time.
@@ -313,3 +336,19 @@ orchestrator can be worked on one layer at a time.
   just to quiet the guard.
 - Patterns use `PurePosixPath.full_match`, which needs Python 3.13 or later: `*` stays within one
   path segment, and `**` spans any number.
+
+## The method guard and the route inventories
+
+Two route inventories in `tests/architecture/test_scope_guards.py` list every path the app serves,
+and each fails on a missing or a stale entry:
+
+- `test_production_post_route_inventory_is_explicit` holds every POST path, `/api/v1` and `/review`.
+- `test_production_get_route_inventory_is_explicit` holds the `/api/v1` GET paths, the nine
+  `/review` GET pages (read from the web router, because they are not in the OpenAPI schema), and
+  `/health/live` and `/health/ready`.
+
+`test_only_get_head_and_post_are_served` holds the method set. The app serves GET, HEAD and POST
+and nothing else, over the schema's paths, the web router and the four documentation routes. It
+never reads `app.routes`, which holds included-router objects in this FastAPI version.
+`test_the_method_guard_fails_on_a_put_route_on_the_web_router_or_the_app` is its control. A new
+route of any method fails one of these until the inventory or the guard names it.

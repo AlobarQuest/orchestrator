@@ -63,13 +63,18 @@ Placement rule: global CLAUDE.md §7.
 - A path that mutates a unit's envelope must ship a fail-closed expansion check; there is no detector
   (`test_authority_write_once.py`; never "fix" it). Archive #4.
 - Protocol smoke tests may manipulate time or lease expiry as fixture setup; runtime recovery
-  behaviour must go through public API/CLI surfaces, never private service shortcuts. History:
-  `docs/history/claude-md-invariants-archive.md` #5.
+  behaviour must go through public API/CLI surfaces, never private service shortcuts. The scan
+  covers every `.py` file under `tests/protocol/` except the shared setup it names, so a new
+  protocol test is scanned without being listed
+  (`test_the_scan_covers_every_protocol_test_and_not_the_shared_setup`).
+  History: `docs/history/claude-md-invariants-archive.md` #5.
 - Generated post-deploy criteria are verifier-owned: public adjudication rejects their AC IDs
   (`test_generated_post_deploy_unit_rejects_direct_public_adjudication`). Archive #8.
 - Production `/api` is M2M-only at the Traefik proxy (identity headers stripped); a human API route
-  needs a dedicated forward-auth router. A browser 401 on `/api` means M2M-only, never a retry
-  quirk. Detail: `docs/operations/driving-a-unit.md`.
+  needs a dedicated forward-auth router. The app deliberately does not duplicate this: an in-app
+  list of human routes could only be confirmed against the live Traefik file, and the test harness
+  calls `/api` with human headers about 60 times. A browser 401 on `/api` means M2M-only, never a
+  retry quirk. Detail: `docs/operations/driving-a-unit.md`.
 - Coolify `/envs` responses carry `value` and `real_value` (DB passwords) for any token with
   `read:sensitive`: parse in-process, print whitelisted fields only. Each variable is two rows
   (`is_preview` false and true) and a PATCH changes one; PATCH may 500, fall back to delete +
@@ -128,9 +133,15 @@ Placement rule: global CLAUDE.md §7.
   observer bearers in `Rotation / Keepers`, which the narrow `sds-operator` account reads by a
   direct grant on each. Bootstrap with `scripts/sds-token.sh` (never vps-backup's helper), UUIDs in
   `.bws-secrets.toml`; never echo values. Detail: `docs/operations/credentials.md`.
-- Only `DomainError` and `APIAuthenticationError` have handlers; anything else is a bare 500. Route
-  parsing must raise `DomainError`, and a service must reject every value a DB CHECK would before
-  the write. History: `docs/history/claude-md-invariants-archive.md` #44.
+- The exception handlers beyond FastAPI's defaults are exactly `APIAuthenticationError`,
+  `DomainError` and `Exception` (`test_the_handlers_beyond_fastapis_defaults_are_exactly_three`,
+  and `test_the_handlers_beyond_fastapis_defaults_are_the_listed_ones` in
+  `test_platform_edges.py`). An unhandled exception is a 500 with the nested `internal_error` body
+  and a request id, and one keyed alert per route template and exception type; the body is the same
+  whatever alert-hub does, and neither the exception's text nor a traceback leaves the handler
+  (`tests/api/test_server_errors.py`). Route parsing must raise `DomainError`, and a service must
+  reject every value a DB CHECK would before the write. History:
+  `docs/history/claude-md-invariants-archive.md` #44.
 - Any "may this unit run again" rule belongs in `claims._readiness_eligibility_error`, shared by reclaim,
   release and requeue (`test_reclaim.py`, `test_requeue.py`). Archive #45.
 - The evidence-pack markdown is redacted for public PR comments (no approver ids, rationale, actor
@@ -147,11 +158,23 @@ Placement rule: global CLAUDE.md §7.
   identifiers, imports and non-docstring strings with no whitespace. ws32 forbids `dispatch`,
   `deploy`, `coolify`, `workflow_dispatch`, `factory-runner`, `auto_merge`, `merge_pull_request` and
   similar; ws34 forbids `workflow_dispatch`, `factory_runner`, `github.actions`, `coolify` and
-  `merge_to_main`. Read the lists in the tests; reword rather than allowlist.
-- New routes must be added to the exact POST/GET inventories in `test_scope_guards.py` (POST
-  includes `/review`); a new ingress POST route also needs a row in `tests/idempotency/test_matrix.py`
-  or a reasoned `NON_INGRESS_POST_ROUTES` entry; a `workflow_dispatch` workflow
-  needs both workflow-guard allowlists edited. Detail: `docs/operations/architecture-guards.md`.
+  `merge_to_main`. Read the lists in the tests; reword rather than allowlist. ws32 excuses
+  `config.py` for `dispatch` and `factory-runner`, and `models.py` for `dispatch` and `deploy`, by
+  label: a term carrying any other forbidden label is reported, and a label that stops occurring
+  fails the rot check (`LABEL_EXEMPT_PATHS`,
+  `test_ws32_label_exemptions_name_only_labels_their_files_still_trip`).
+  ws33 still scans `config.py`'s whole text, comments and docstrings included, because they name
+  the pilot workflow.
+- New routes must be added to the exact POST/GET inventories in `test_scope_guards.py`. The POST
+  inventory includes `/review`, and the GET inventory holds the `/api/v1` GETs, the nine `/review`
+  pages and `/health/live` and `/health/ready`. Both read the schema and the routers' own
+  routes, so a route with `include_in_schema=False` on a domain or web router is held to them. The
+  app serves GET, HEAD and POST only: a PUT, PATCH or DELETE route on those routers or in the
+  schema fails `test_only_get_head_and_post_are_served`; one added straight to the app with
+  `include_in_schema=False` is not seen. A new ingress POST route
+  also needs a row in `tests/idempotency/test_matrix.py` or a reasoned `NON_INGRESS_POST_ROUTES`
+  entry; a `workflow_dispatch` workflow needs both workflow-guard allowlists edited. Detail:
+  `docs/operations/architecture-guards.md`.
 - Coolify only pulls prebuilt GHCR tags; build with the `Release image` workflow (full 40-char sha
   as input). A hand build needs the labels and `ORCHESTRATOR_REVISION`. Detail:
   `docs/operations/deploy.md`.
@@ -345,7 +368,10 @@ Placement rule: global CLAUDE.md §7.
   History: `docs/history/claude-md-invariants-archive.md` #157.
 - Code promising "nothing raises" on an httpx call must catch `(httpx.HTTPError, httpx.InvalidURL,
   ValueError)` at construction and request: a malformed host raises `UnicodeError`, and an escape is
-  a bare HTTP 500. History: `docs/history/claude-md-invariants-archive.md` #161.
+  a bare HTTP 500. The CLI and the App token mint hold it
+  (`test_a_malformed_api_url_is_a_stable_cli_error` in `tests/cli/test_cli_errors.py`,
+  `test_a_malformed_mint_request_fails_closed` in `tests/services/test_github_app.py`). History:
+  `docs/history/claude-md-invariants-archive.md` #161.
 - `TransactionClock.now()` is `transaction_timestamp()` and does not advance: every admission term,
   including change windows, is judged at the instant the transaction opened
   (`test_the_clock_does_not_advance_inside_a_transaction`).
@@ -522,9 +548,16 @@ Placement rule: global CLAUDE.md §7.
 - The scheduled lanes run the main tree's working copy and `.venv` by absolute path: never check out
   a branch, edit, or run uv there while a pass may fire; edit in a worktree. Detail:
   `docs/operations/local-development.md`.
-- The dispatch App's installation reach is deliberately wider than its work; every App call site
-  must stay bounded by a grant or allowlist check, since the ruling rests on that. Detail:
-  `docs/operations/credentials.md`.
+- The dispatch App's installation reach is deliberately wider than its work, so every call site
+  that mints or resolves its token is bounded by a grant or allowlist check before any read. The
+  order is pinned by the `_no_github_read` assertions in `test_estate_landing_admission.py` and
+  `test_inert_landing_admission.py`; `test_platform_edges.py` lists each site with its bound and
+  requires the bound to be reachable by calls, not ordered first
+  (`test_every_call_that_mints_or_resolves_the_token_is_listed_with_its_bound`). The one
+  exception is the verifier's named-check read of a unit's own repository for work already
+  dispatched, which asks no grant and has a named reason
+  (`test_the_verifier_read_is_the_one_named_reason_and_reaches_no_grant`); every landing asks the
+  grant again. Detail: `docs/operations/credentials.md`.
 - An envelope's verifier must exercise what the change could break (build, tests), not merely
   confirm the edit; use the profile's generated command list, never a hand-authored one. Detail:
   `docs/operations/driving-a-unit.md`.
@@ -770,7 +803,8 @@ Placement rule: global CLAUDE.md §7.
   (ADR-0055 amendment 13), never unregistered: a rotation that misses one strands its holder on a
   dead value. Distribute writes it and restarts the holder; it counts switched only when the
   holder reports the new fingerprint, and only the orchestrator reports
-  (`GET /api/v1/held-credentials`, executor-only, its `HELD_SETTINGS`), so the checks refuse a
+  (`GET /api/v1/held-credentials`, executor-only, its `HELD_SETTINGS`, which names
+  `ORCHESTRATOR_CHANGE_RECORD_TOKEN` and `ORCHESTRATOR_ALERT_HUB_TOKEN`), so the checks refuse a
   held destination anywhere else, or one the report doesn't list, before the claim. Detail:
   `docs/operations/rotation-executor.md`, "Held copies".
 - The executor writes an Actions secret only through the rotation App, with a token minted for

@@ -960,11 +960,20 @@ is already in the keeper, so the rotation has happened without its proof:
 ## Held copies
 
 A held copy is a value an application keeps in its own Coolify settings to call another service,
-named by a `coolify-env-held` destination (ADR-0055 amendment 13). The only one is the
-orchestrator's `ORCHESTRATOR_CHANGE_RECORD_TOKEN`, its copy of change-manager's read bearer:
+named by a `coolify-env-held` destination (ADR-0055 amendment 13). The orchestrator holds two,
+both in `HELD_SETTINGS`:
+
+- `ORCHESTRATOR_CHANGE_RECORD_TOKEN`, its copy of change-manager's read bearer.
+- `ORCHESTRATOR_ALERT_HUB_TOKEN`, its copy of alert-hub's `sds-orchestrator` sender token, which the
+  server uses to alert on an unhandled exception.
+
+The first is rotated by the SDS:
 
 `coolify-env-held instance="prod" resource_type="application" uuid="eqj5l7k705fhi12x9i74fqf0"
 key="ORCHESTRATOR_CHANGE_RECORD_TOKEN"`
+
+The second has no SDS rotation, because no alert-hub adapter exists. Its registry row carries no
+`rotated_by_sds`, and a person rotates it from the manual checklist.
 
 - **Distribute writes it**, both rows, and restarts the orchestrator. It asks whether a restart
   would strand a dispatched run before writing and again before restarting, and refuses if one

@@ -1215,17 +1215,99 @@ def test_a_held_bump_names_the_ceiling_even_when_the_policy_cannot_be_read(
     assert LANDING_VERSION_CEILING_EXCEEDED in answer.refusals
 
 
+def test_a_granted_held_bump_keeps_its_whole_answer(migrated_session: Session) -> None:
+    """Part 2 call 4 pin: grant-first must not change what a GRANTED repository's answer holds."""
+    _hold_typer(migrated_session)
+    gateway = _typer_gateway()
+
+    answer = _answer(migrated_session, gateway=gateway)
+
+    assert answer.satisfied is False
+    assert answer.refusals == (LANDING_VERSION_CEILING_EXCEEDED,)
+    assert answer.head_sha == HEAD
+    assert [(b.dependency, b.ceiling) for b in answer.ceiling_breaches] == [("typer", "0.20.5")]
+    assert answer.update_bot_authored is True
+    assert answer.merge_method == SQUASH
+    assert gateway.reads == [(INERT_REPOSITORY, PR)]
+    assert gateway.commit_reads == [(INERT_REPOSITORY, PR)]
+    assert gateway.compares == [(INERT_REPOSITORY, "main", HEAD)]
+    assert gateway.blobs == []
+    assert gateway.run_reads == []
+    assert gateway.open_reads == []
+    assert gateway.tree_reads == []
+
+
+def _sync_gateway() -> FakeEstateGateway:
+    return FakeEstateGateway(
+        pull=pull_request(number=PR, head_ref=SYNC_BRANCH, author_login=SYNC_BOT)
+    )
+
+
+def test_a_granted_wholesale_sync_keeps_its_whole_answer(migrated_session: Session) -> None:
+    gateway = _sync_gateway()
+
+    answer = _answer(
+        migrated_session,
+        gateway=gateway,
+        policy_source=FakeInertPolicySource(InertLandingAnswer(_sync_rules())),
+    )
+
+    assert answer.refusals == ()
+    assert answer.head_sha == HEAD
+    assert answer.merge_method == MERGE_COMMIT
+    assert gateway.reads == [(INERT_REPOSITORY, PR)]
+    assert gateway.commit_reads == []
+
+
+def test_a_wholesale_sync_with_only_dependency_updates_is_read_then_asked_past_it(
+    migrated_session: Session,
+) -> None:
+    """Both services are asked after the read: the pull request is read, and the second service's
+    absence refuses with the wholesale answer's other fields intact."""
+    gateway = _sync_gateway()
+
+    answer = _answer(
+        migrated_session,
+        gateway=gateway,
+        policy_source=FakeInertPolicySource(InertLandingAnswer(_sync_rules())),
+        granted=("dependency_updates",),
+    )
+
+    assert answer.refusals == (LANDING_REPOSITORY_NOT_GRANTED,)
+    assert answer.head_sha == HEAD
+    assert answer.merge_method == MERGE_COMMIT
+    assert gateway.reads == [(INERT_REPOSITORY, PR)]
+
+
 # ---------------------------------------------------------------------------------------------
 # The member record's grant (Landing Part 2): the lane's own declaration admits nothing the
 # record does not also grant.
 # ---------------------------------------------------------------------------------------------
 
 
+def _no_github_read(gateway: FakeEstateGateway) -> None:
+    """Every read list the double keeps is empty: the question was never put to GitHub."""
+    assert gateway.reads == []
+    assert gateway.compares == []
+    assert gateway.blobs == []
+    assert gateway.run_reads == []
+    assert gateway.commit_reads == []
+    assert gateway.open_reads == []
+    assert gateway.tree_reads == []
+
+
 def test_an_ungranted_repository_is_refused_not_granted(migrated_session: Session) -> None:
-    answer = _answer(migrated_session, granted=())
+    gateway = FakeEstateGateway(pull=pull_request(number=PR, head_ref=UV_BRANCH))
+
+    answer = _answer(migrated_session, gateway=gateway, granted=())
 
     assert answer.satisfied is False
     assert answer.refusals == (LANDING_REPOSITORY_NOT_GRANTED,)
+    # Nothing was read, so no head, no ceiling breach and no bot authorship are claimed.
+    assert answer.head_sha is None
+    assert answer.ceiling_breaches == ()
+    assert answer.update_bot_authored is False
+    _no_github_read(gateway)
     # Every act built on the answer inherits the bound: nothing to freshen either.
     assert answer.branch_update_qualifies is False
 
@@ -1242,17 +1324,25 @@ def test_an_ungranted_repository_is_refused_not_granted(migrated_session: Sessio
 def test_a_fork_sync_needs_both_security_patches_and_dependency_updates(
     migrated_session: Session, granted: tuple[str, ...], satisfied: bool
 ) -> None:
+    gateway = FakeEstateGateway(
+        pull=pull_request(number=PR, head_ref=SYNC_BRANCH, author_login=SYNC_BOT)
+    )
     answer = _answer(
         migrated_session,
-        gateway=FakeEstateGateway(
-            pull=pull_request(number=PR, head_ref=SYNC_BRANCH, author_login=SYNC_BOT)
-        ),
+        gateway=gateway,
         policy_source=FakeInertPolicySource(InertLandingAnswer(_sync_rules())),
         granted=granted,
     )
 
     assert answer.satisfied is satisfied
     assert answer.refusals == (() if satisfied else (LANDING_REPOSITORY_NOT_GRANTED,))
+    if "dependency_updates" not in granted:
+        # Every branch needs dependency_updates, so without it nothing is read.
+        _no_github_read(gateway)
+    else:
+        # With it the pull request is read; only then is the author a fork sync, which asks the
+        # second service as well.
+        assert gateway.reads == [(INERT_REPOSITORY, PR)]
 
 
 def test_a_dependabot_pull_request_needs_only_dependency_updates(
@@ -1286,19 +1376,34 @@ def test_a_retired_member_or_a_grant_not_in_state_granted_is_refused(
     else:
         grant_services(migrated_session, INERT_REPOSITORY, *BOTH_SERVICES, state=withdrawn)
 
-    answer = _answer(migrated_session, granted=())
+    gateway = FakeEstateGateway(pull=pull_request(number=PR, head_ref=UV_BRANCH))
+
+    answer = _answer(migrated_session, gateway=gateway, granted=())
 
     assert answer.satisfied is False
     assert LANDING_REPOSITORY_NOT_GRANTED in answer.refusals
+    _no_github_read(gateway)
 
 
-def test_a_pull_request_that_could_not_be_read_still_asks_the_grant(
+def test_an_ungranted_repository_is_not_read_even_when_the_read_would_fail(
+    migrated_session: Session,
+) -> None:
+    """The grant is asked before GitHub: an unreadable pull request adds no refusal of its own."""
+    gateway = FakeEstateGateway(read_error=EstateGatewayError("read_status", 502))
+
+    answer = _answer(migrated_session, gateway=gateway, granted=())
+
+    assert answer.refusals == (LANDING_REPOSITORY_NOT_GRANTED,)
+    _no_github_read(gateway)
+
+
+def test_a_granted_repository_with_an_unreadable_pull_request_keeps_its_own_refusal(
     migrated_session: Session,
 ) -> None:
     answer = _answer(
         migrated_session,
         gateway=FakeEstateGateway(read_error=EstateGatewayError("read_status", 502)),
-        granted=(),
+        granted=("dependency_updates",),
     )
 
-    assert LANDING_REPOSITORY_NOT_GRANTED in answer.refusals
+    assert answer.refusals == (LANDING_PULL_REQUEST_UNREADABLE,)

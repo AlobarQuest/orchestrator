@@ -489,3 +489,31 @@ def test_decomposition_decision_routes_update_state_and_approval_creates_drafts(
             )
         )
     assert [unit.state for unit in units] == ["draft", "draft"]
+
+
+def _proposed_unit(max_attempts: int) -> dict[str, object]:
+    return {
+        "unit_key": "u",
+        "title": "t",
+        "outcome": "o",
+        "required_capability": "c",
+        "authority": {},
+        "max_attempts": max_attempts,
+    }
+
+
+@pytest.mark.parametrize(
+    ("value", "valid"), [(2**31, False), (2**31 - 1, True), (0, True), (-1, False)]
+)
+def test_a_proposed_unit_max_attempts_is_bounded_at_the_integer_column(
+    value: int, valid: bool
+) -> None:
+    from pydantic import ValidationError
+
+    from orchestrator.api.schemas.intake import ProposedUnitCommand
+
+    if valid:
+        assert ProposedUnitCommand.model_validate(_proposed_unit(value)).max_attempts == value
+    else:
+        with pytest.raises(ValidationError):
+            ProposedUnitCommand.model_validate(_proposed_unit(value))

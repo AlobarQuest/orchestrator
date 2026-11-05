@@ -8,9 +8,9 @@ from sqlalchemy.orm import Session
 
 from orchestrator.errors import DomainError
 from orchestrator.kernel.states import ActorContext, ActorRole
-from orchestrator.persistence.models import Event, SdsMemberHold
+from orchestrator.persistence.models import Event, SdsMember, SdsMemberHold
 from orchestrator.services.membership.holds import release
-from orchestrator.services.membership.members import list_members
+from orchestrator.services.membership.members import holds_for, list_members
 from orchestrator.services.membership.proposals import (
     confirm_member_proposal,
     read_digest,
@@ -44,6 +44,11 @@ def holds_change(*holds: dict[str, Any], reason: str = "2.0.55 broke the build")
 
 def place(session: Session, key: str = "place", **overrides: Any) -> None:
     confirm(session, stage(session, body(holds_change(hold(**overrides))), key))
+
+
+def place_for(session: Session, repository: str) -> None:
+    change = {**holds_change(hold()), "repository": repository}
+    confirm(session, stage(session, body(change), f"place:{repository}"))
 
 
 def place_hold(
@@ -107,6 +112,21 @@ def test_a_confirmed_hold_is_read_back(migrated_engine: Engine) -> None:
                 "new": "2.0.54",
             }
         ]
+
+
+def test_a_retired_members_hold_is_returned_and_its_name_is_case_folded(
+    migrated_engine: Engine,
+) -> None:
+    with Session(migrated_engine) as session:
+        add_member(session, "AlobarQuest/Change-Manager")
+        place_for(session, "AlobarQuest/Change-Manager")
+        member = session.scalars(select(SdsMember)).one()
+        member.state = "retired"
+        session.commit()
+
+    with Session(migrated_engine) as session:
+        [view] = holds_for(session, "alobarquest/change-manager")
+        assert (view.ecosystem, view.dependency, view.ceiling) == ("uv", "sqlalchemy", "2.0.54")
 
 
 def test_a_member_with_no_holds_reads_an_empty_tuple(migrated_engine: Engine) -> None:

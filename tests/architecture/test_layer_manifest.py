@@ -1,9 +1,10 @@
 """Architecture guard: every tracked file belongs to exactly one layer.
 
 `layers.toml` maps path patterns to the layers the orchestrator is worked on one at a time (the
-SDS layer map's twelve units of ownership, plus tooling and config, and project records). A layer's
-file list is only useful if it is complete, so this guard holds the manifest to three rules: no
-file is in no layer, no file is in two, and no pattern names a path that no longer exists.
+SDS layer map's thirteen units of ownership, plus tooling and config, and project records). A
+layer's file list is only useful if it is complete, so this guard holds the manifest to three
+rules: no file is in no layer, no file is in two, and no pattern names a path that no longer
+exists.
 
 When a test here fails, place the file in `layers.toml`; never widen a pattern until the failure
 goes away. A placement the rules in the manifest's header do not settle is a decision to record in

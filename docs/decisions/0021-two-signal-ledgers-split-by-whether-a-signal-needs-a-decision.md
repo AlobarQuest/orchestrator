@@ -217,3 +217,44 @@ grace. Measured on 2026-11-03: every missed run in Healthchecks' retained window
 down, except the six `sds-bump-driver` runs this amendment unmasks. The key read fails when BWS or
 the network does, and anything else that could report it needs the same two, so no second hearer
 is built.
+
+## Amendment 4 (2026-11-05): the server alerts on its own unhandled exceptions
+
+Devon decided on 2026-11-04 (Core platform layer, decision 1), with calls 1 and 2 of
+`docs/superpowers/specs/2026-11-04-platform-layer-design.md`, in Part 2.
+
+### Decision
+
+An unhandled exception in the orchestrator is a signal whose home is alert-hub. Amendment 1's table
+already sends "a person goes untold" there. This is the orchestrator's first send of its own.
+
+- **The sender is `sds-orchestrator`.** The server sends the alert itself, so a 500 names the
+  orchestrator, not the bridge lanes. The sender has no `silent:` schedule, because it sends only
+  when something breaks.
+- **One keyed alert per route template and exception type.** The key is
+  `alert_key("server-error", <route template or "unmatched">, <exception type>)`. A request id
+  never goes in the key; it appears in the log line, the alert message and the response body's
+  `error` object.
+- **The send is fire-only, after the response.** `alert_hub_client.fire_once` runs as a background
+  task on the 500 response. It permits only `POST /v1/alerts`, waits on no 429 and never raises,
+  so no alert-hub outcome changes the response. With no token configured the server logs
+  `alert_not_configured` and sends nothing.
+- **Nothing carries the exception's text or a traceback.** Either can hold a database URL or a
+  token. uvicorn already logs the traceback.
+- **A person closes the alert after the fix.** The server never resolves it.
+- **The four deliberate 503 `DomainError`s keep their home.** Each is a configuration refusal that
+  a calling lane already treats as an error, and the lane's outcome alarm or dead-man check hears
+  it.
+
+`tests/api/test_server_errors.py` pins the body, the key and the send;
+`tests/architecture/test_platform_edges.py` pins the handler set and the one route the send may
+use.
+
+### Why this is not ADR-0002's concern
+
+ADR-0002 keeps runners report-only and forbids loops and background actors. One send after one
+response is neither: it reports, once, and nothing it does feeds back into a decision.
+
+### Cost
+
+An alert-hub outage loses the alert. The log line still holds the fact.

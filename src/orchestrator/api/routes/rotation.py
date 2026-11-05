@@ -40,8 +40,12 @@ def m2m_identities(request: Request, actor: ActorDep, settings: SettingsDep) -> 
 
 
 # The settings that hold another service's credential, by the variable a rotation's
-# `coolify-env-held` destination names (ADR-0055 amendment 13). The read bearer is change-manager's.
-HELD_SETTINGS = {"ORCHESTRATOR_CHANGE_RECORD_TOKEN": "change_record_token"}
+# `coolify-env-held` destination names (ADR-0055 amendment 13). The read bearer is change-manager's;
+# the alert sender token is alert-hub's `sds-orchestrator` sender's.
+HELD_SETTINGS = {
+    "ORCHESTRATOR_CHANGE_RECORD_TOKEN": "change_record_token",
+    "ORCHESTRATOR_ALERT_HUB_TOKEN": "alert_hub_token",
+}
 # As long as the executor's fingerprints, and no longer.
 HELD_PREFIX_LENGTH = 16
 

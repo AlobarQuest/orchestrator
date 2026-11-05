@@ -545,6 +545,11 @@ OUTBOUND_ALLOWLIST = {
     # with a per-sender token, pinned by tests/alert_hub_client/test_client.py.
     Path("src/alert_hub_client/__init__.py"),
     Path("src/orchestrator/cli.py"),
+    # Platform layer Part 2, call 2. The server's first alert egress of its own: one
+    # `POST /v1/alerts` through `alert_hub_client.fire_once` after a 500 response, keyed on route
+    # template and exception type, as the `sds-orchestrator` sender. Every other alert-hub entry's
+    # egress is a lane's.
+    Path("src/orchestrator/api/server_errors.py"),
     Path("src/orchestrator/services/execution/dispatch.py"),
     Path("src/orchestrator/services/github_app.py"),
     # WS-P2.20. Named-check evidence is only worth anything if the orchestrator saw the result

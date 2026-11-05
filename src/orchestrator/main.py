@@ -1,4 +1,6 @@
 import json
+import logging
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -7,6 +9,7 @@ from fastapi.responses import JSONResponse
 from pydantic import SecretStr
 
 from orchestrator.api.dependencies import APIAuthenticationError, AuthConfig
+from orchestrator.api.error_shape import error_body, status_for
 from orchestrator.api.health import router as health_router
 from orchestrator.api.routes import (
     execution,
@@ -20,7 +23,14 @@ from orchestrator.api.routes import (
     rotation,
     verifier,
 )
-from orchestrator.config import Settings
+from orchestrator.api.server_errors import (
+    NO_ALERTS,
+    ServerAlertConfig,
+    log_level,
+    server_alert_config,
+    server_error_handler,
+)
+from orchestrator.config import Settings, get_settings
 from orchestrator.errors import DomainError
 from orchestrator.identity.auth import (
     TOKEN_HASH_PATTERN,
@@ -32,9 +42,10 @@ from orchestrator.identity.registry import RegistryAdapter
 from orchestrator.kernel.states import ActorRole
 from orchestrator.web import router as web_router
 
-# One router per domain, included in this order. FastAPI's include_router copies routes rather
-# than nesting them, so an aggregate router would hide every route from `router.routes`; each
-# domain's router is included here directly. No two routes overlap on a method, so the order
+# One router per domain, included in this order. Routers are included per domain so each
+# domain's router keeps its own `.routes`; inventories read `openapi()["paths"]` and the domain
+# routers, never `app.routes` (under FastAPI 0.159.1 that holds `_IncludedRouter` objects, not
+# routes). No two routes overlap on a method, so the order
 # decides nothing today -- keep it so if a route is added.
 API_ROUTERS = (
     intake.router,
@@ -50,9 +61,14 @@ API_ROUTERS = (
 )
 
 
-def create_app(auth_config: AuthConfig | None = None) -> FastAPI:
+def create_app(
+    auth_config: AuthConfig | None = None, alert_config: ServerAlertConfig | None = None
+) -> FastAPI:
     application = FastAPI(title="Orchestrator")
     application.state.auth_config = auth_config
+    # Exception handlers get no `Depends`, so the 500 handler reads its config from here; a test
+    # replaces `application.state.alert_config`, never a settings override.
+    application.state.alert_config = alert_config or NO_ALERTS
 
     @application.exception_handler(APIAuthenticationError)
     async def authentication_error_handler(
@@ -65,41 +81,25 @@ def create_app(auth_config: AuthConfig | None = None) -> FastAPI:
         )
         return JSONResponse(
             status_code=401,
-            content={"error": {"code": error.code, "message": message}},
+            content=error_body(error.code, message),
             headers={"WWW-Authenticate": "Bearer"},
         )
 
     @application.exception_handler(DomainError)
     async def domain_error_handler(_request: Request, error: DomainError) -> JSONResponse:
-        status = 404 if error.code.endswith("_not_found") else 409
-        # Nothing about the request is wrong: this process cannot answer it right now, either
-        # because of its own configuration or because something it must read is unreachable.
-        # A 409 would tell the caller to change the request, which is the wrong instruction.
-        if error.code in {
-            "csrf_unavailable",
-            "factory_policy_invalid",
-            "factory_policy_version_unsupported",
-            "named_check_observation_unavailable",
-        }:
-            status = 503
-        # ADR-0027 split intake's role refusal out of `human_actor_required`, and a refusal that
-        # left this set would have regressed 403 -> 409 -- telling a worker credential to change
-        # its request rather than that it may not make one. `intake_change_record_required` is
-        # deliberately NOT here: that actor MAY register, and what is wrong is the request.
-        if error.code in {
-            "role_forbidden",
-            "human_actor_required",
-            "csrf_rejected",
-            "intake_registrar_invalid",
-        }:
-            status = 403
-        detail = {"code": error.code, "message": error.message}
-        if error.recovery is not None:
-            detail["recovery"] = error.recovery
-        for name in ("current_state", "current_version"):
-            if getattr(error, name) is not None:
-                detail[name] = getattr(error, name)
-        return JSONResponse(status_code=status, content={"error": detail})
+        return JSONResponse(
+            status_code=status_for(error.code),
+            content=error_body(
+                error.code,
+                error.message,
+                recovery=error.recovery,
+                current_state=error.current_state,
+                current_version=error.current_version,
+            ),
+        )
+
+    # Everything no handler above answers: the nested shape, a log line and one keyed alert.
+    application.add_exception_handler(Exception, server_error_handler)
 
     for api_router in API_ROUTERS:
         application.include_router(api_router)
@@ -293,4 +293,7 @@ def _email_actor_mapping(registry: RegistryAdapter, raw: str | None) -> dict[str
     return mapping
 
 
-app = create_app(load_auth_config())
+# Once, at import: uvicorn configures only its own loggers, so without this the root logger drops
+# INFO and `alert_not_configured` and `notified` never reach the container log.
+logging.basicConfig(level=log_level(os.environ.get("LOG_LEVEL")))
+app = create_app(load_auth_config(), server_alert_config(get_settings()))

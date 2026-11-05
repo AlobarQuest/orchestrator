@@ -4,6 +4,7 @@ file is the only memory (Bridge Part 3, task 6)."""
 from __future__ import annotations
 
 import json
+import logging
 import re
 from pathlib import Path
 from typing import Any
@@ -11,7 +12,16 @@ from typing import Any
 import httpx
 import pytest
 
-from alert_hub_client import ALERTS, MAX_MESSAGE, Alert, AlertHubError, KeyedAlerts, alert_key
+import alert_hub_client
+from alert_hub_client import (
+    ALERTS,
+    MAX_MESSAGE,
+    Alert,
+    AlertHubError,
+    KeyedAlerts,
+    alert_key,
+    fire_once,
+)
 
 TOKEN = "sender-token-that-must-never-be-printed"
 KEY_GRAMMAR = re.compile(r"[A-Za-z0-9._:/-]{1,200}")
@@ -291,3 +301,101 @@ def test_a_message_at_the_limit_is_left_alone(tmp_path: Path) -> None:
     text = "x" * MAX_MESSAGE
     hub.alerts(tmp_path / "s.json").sync({"k:a": Alert("t", text)})
     assert hub.sent[0]["message"] == text
+
+
+# ---- fire_once ----------------------------------------------------------------------------------
+
+LONG = "x" * (MAX_MESSAGE + 50)
+
+
+def fire(
+    handler: Any, key: str = "orchestrator:500", alert: Alert | None = None, **kwargs: Any
+) -> bool:
+    return fire_once(
+        TOKEN,
+        key,
+        alert or Alert("Boom", LONG, "https://sds.alobar.net/x"),
+        user_agent="test-server/1",
+        timeout=3.0,
+        severity="critical",
+        transport=httpx.MockTransport(handler),
+        **kwargs,
+    )
+
+
+def test_fire_once_posts_one_firing_alert_and_reports_acceptance() -> None:
+    hub = Hub()
+    assert fire(hub) is True
+    [sent] = hub.sent
+    assert sent == {
+        "key": "orchestrator:500",
+        "severity": "critical",
+        "kind": "alert",
+        "status": "firing",
+        "title": "Boom",
+        "message": "x" * MAX_MESSAGE,
+        "link": "https://sds.alobar.net/x",
+    }
+
+
+@pytest.mark.parametrize("status", [401, 500, 429])
+def test_fire_once_refusals_return_false_after_one_request(status: int) -> None:
+    hub = Hub(httpx.Response(status), httpx.Response(202))
+    assert fire(hub) is False
+    assert len(hub.sent) == 1  # a 429 is not waited on or retried
+
+
+def test_fire_once_transport_failure_returns_false_after_one_request() -> None:
+    calls: list[httpx.Request] = []
+
+    def refuse(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        raise httpx.ConnectTimeout("slow", request=request)
+
+    assert fire(refuse) is False
+    assert len(calls) == 1
+
+
+def test_fire_once_refuses_a_key_outside_the_grammar_and_sends_nothing() -> None:
+    hub = Hub()
+    assert fire(hub, key="not a key!") is False
+    assert hub.sent == []
+
+
+def test_fire_once_unusable_base_url_returns_false(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(alert_hub_client, "BASE_URL", "https://bad host\u00ff:99999")
+    hub = Hub()
+    assert fire(hub) is False
+    assert hub.sent == []
+
+
+def test_fire_once_never_raises_when_closing_the_client_does(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real = alert_hub_client._build_client
+
+    def closing_badly(*args: Any, **kwargs: Any) -> Any:
+        client = real(*args, **kwargs)
+
+        def close() -> None:
+            raise RuntimeError("close failed")
+
+        client.close = close
+        return client
+
+    monkeypatch.setattr(alert_hub_client, "_build_client", closing_badly)
+    hub = Hub()
+    assert fire(hub) is True
+    assert len(hub.sent) == 1
+
+
+def test_fire_once_logs_never_carry_the_token(caplog: pytest.LogCaptureFixture) -> None:
+    def explode(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError(f"cannot reach with {TOKEN}", request=request)
+
+    with caplog.at_level(logging.DEBUG, logger="alert_hub_client"):
+        assert fire(explode) is False
+        assert fire(Hub(httpx.Response(401))) is False
+    assert caplog.records
+    assert TOKEN not in caplog.text
+    assert all(TOKEN not in str(vars(record)) for record in caplog.records)

@@ -228,3 +228,103 @@ def test_transport_failure_cli_exit_is_stable_and_sanitized(monkeypatch) -> None
     assert "private.example" not in result.stdout
     assert "secret-token" not in result.stderr
     assert "private.example" not in result.stderr
+
+
+def _serve(monkeypatch, handler) -> None:
+    monkeypatch.setattr("orchestrator.cli.HTTP_TRANSPORT", httpx.MockTransport(handler))
+    monkeypatch.setenv("ORCHESTRATOR_API_TOKEN", "t")
+    monkeypatch.setenv("ORCHESTRATOR_API_URL", "https://api.example.invalid")
+
+
+def _unreachable(request: httpx.Request) -> httpx.Response:
+    raise httpx.ConnectError("refused", request=request)
+
+
+@pytest.mark.parametrize(
+    ("handler", "code"),
+    [
+        (
+            lambda _r: httpx.Response(
+                401, json={"error": {"code": "unauthorized", "message": "no"}}
+            ),
+            "unauthorized",
+        ),
+        (lambda _r: httpx.Response(503, text="upstream down"), "http_error"),
+        (_unreachable, "api_unavailable"),
+    ],
+)
+def test_check_consistency_failures_exit_one_without_a_traceback(
+    monkeypatch, handler, code: str
+) -> None:
+    _serve(monkeypatch, handler)
+
+    result = CliRunner().invoke(app, ["check-consistency"])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert f"code={code} message=" in result.stderr
+    assert "Traceback" not in result.output + result.stderr
+
+
+def test_check_consistency_reports_divergence_then_exits_one(monkeypatch) -> None:
+    _serve(monkeypatch, lambda _r: httpx.Response(200, json={"divergent": True}))
+
+    result = CliRunner().invoke(app, ["check-consistency", "--json"])
+
+    assert result.exit_code == 1
+    assert json.loads(result.stdout) == {"divergent": True}
+
+
+def test_check_consistency_clean_report_exits_zero(monkeypatch) -> None:
+    _serve(monkeypatch, lambda _r: httpx.Response(200, json={"divergent": False}))
+
+    result = CliRunner().invoke(app, ["check-consistency", "--json"])
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout) == {"divergent": False}
+
+
+@pytest.mark.parametrize("api_url", ["http://a..b", "http://exa\x01mple"])
+def test_a_malformed_api_url_is_a_stable_cli_error(monkeypatch, api_url: str) -> None:
+    _serve(monkeypatch, lambda _r: httpx.Response(200, json={}))
+    monkeypatch.setenv("ORCHESTRATOR_API_URL", api_url)
+    monkeypatch.setattr("orchestrator.cli.HTTP_TRANSPORT", None)
+
+    result = CliRunner().invoke(app, ["history", "unit-1"])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert "code=api_url_invalid" in result.stderr
+
+
+def test_a_payload_that_cannot_be_serialized_is_not_a_url_error(monkeypatch) -> None:
+    _serve(monkeypatch, lambda _r: httpx.Response(200, json={}))
+
+    result = CliRunner().invoke(app, ["renew", "unit-1", "--data", '{"x": NaN}'])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert "code=request_body_invalid" in result.stderr
+    assert "api_url_invalid" not in result.stderr
+
+
+def test_an_unresolvable_host_with_a_space_is_unavailable_not_a_traceback(monkeypatch) -> None:
+    _serve(monkeypatch, lambda _r: httpx.Response(200, json={}))
+    monkeypatch.setenv("ORCHESTRATOR_API_URL", "http://exa mple")
+    monkeypatch.setattr("orchestrator.cli.HTTP_TRANSPORT", None)
+
+    result = CliRunner().invoke(app, ["history", "unit-1"])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert "code=api_unavailable" in result.stderr
+
+
+def test_a_control_character_in_a_unit_id_is_a_stable_cli_error(monkeypatch) -> None:
+    _serve(monkeypatch, lambda _r: httpx.Response(200, json={}))
+
+    result = CliRunner().invoke(app, ["history", "unit\x01-1"])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert "code=api_url_invalid" in result.stderr
