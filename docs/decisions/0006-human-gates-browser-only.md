@@ -156,7 +156,8 @@ gate when the conditions below all hold. No credential changes: there is still n
 credential, and this removes a gate rather than crossing one by machine. A person keeps every
 decomposition these conditions don't cover.
 
-`decomposition._bump_policy_approval` approves, in the proposal's own transaction, only when:
+The bump branch of `decomposition._policy_approval` (`_bump_policy_outcome`) approves, in the
+proposal's own transaction, only when:
 
 - SYSTEM proposed it;
 - the revision's approver starts `policy:dependency-update@`, its profile is `dependency-update`,
@@ -172,7 +173,9 @@ decomposition these conditions don't cover.
   binding), and the target repository is the package's;
 - the unit's `title` and `outcome` are the text the generator derives from `profile_fields`, since
   both reach the agent's prompt beside `repo.edit`;
-- the member record grants `dependency_updates` on that repository.
+- the member record grants `dependency_updates` on that repository. The grant is asked earlier, in
+  `submit_decomposition_proposal`, before either policy branch runs, as `_bump_policy_outcome`'s
+  docstring says.
 
 The recorded approver is the proposing SYSTEM identity, as on the rotation path (ADR-0055
 amendment 16). The decision reason names the patterns, the policy version and the revision's

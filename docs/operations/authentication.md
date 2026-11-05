@@ -38,6 +38,24 @@ When the embedded `ORCHESTRATOR_REGISTRY_BUNDLE` path is enabled, startup requir
 - `ORCHESTRATOR_EMAIL_TO_ACTOR`: JSON normalized-email to actor-ID mappings.
 - `ORCHESTRATOR_CSRF_SECRET`: at least 32 bytes of runtime secret material.
 
+Three optional settings:
+
+- `ORCHESTRATOR_ROTATION_EXECUTOR_AGENT_ID` names the credential-rotation executor's VM instance
+  (ADR-0055). Only that identity may claim a rotation unit whose adapter is not a Keychain adapter,
+  and it may claim nothing else. Unset refuses every claim on those units.
+- `ORCHESTRATOR_ROTATION_KEYCHAIN_EXECUTOR_AGENT_ID` names the Keychain instance on the operator
+  machine (ADR-0055 amendment 12). Only that identity may claim a unit of a Keychain adapter, and
+  it may claim nothing else. Unset refuses every claim on those units.
+- `ORCHESTRATOR_ALERT_HUB_TOKEN` is the `sds-orchestrator` sender's token for alert-hub. With it
+  set, an unhandled exception raises one keyed alert (`api/server_errors.py`). Unset, the 500 is
+  logged and no alert is sent. The setting is a held copy; see "Held copies" in
+  `docs/operations/rotation-executor.md`.
+
+Boot refuses a credential whose identity holds `rotation-executor-v1` or
+`rotation-executor-keychain-v1` unless the setting for that profile names that identity. It also
+refuses a configured executor that does not hold its own profile. The failure is the generic
+`invalid runtime authentication configuration`.
+
 Optional `ORCHESTRATOR_M2M_ROLES` JSON assigns non-worker machine roles. Missing or
 malformed required authentication configuration aborts process startup without logging
 the supplied values. Local Compose disables bundle loading and remains fail-closed for

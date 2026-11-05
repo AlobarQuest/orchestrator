@@ -1,6 +1,6 @@
 """Tracked file -> layer, as a function of `layers.toml`.
 
-The orchestrator is worked on one layer at a time: the twelve units of ownership on the SDS layer
+The orchestrator is worked on one layer at a time: the thirteen units of ownership on the SDS layer
 map, plus tooling and config, and project records. `layers.toml` says which files make up each
 layer, by path pattern. This module reads it and answers two questions: which files belong to a
 layer, and which tracked files belong to no layer or to more than one.

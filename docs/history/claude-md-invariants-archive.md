@@ -2366,3 +2366,46 @@ rules each name a pinning test; the unit-registration rule cites the test's real
   `docs/history/claude-md-invariants-archive.md` #163.
 - Unit registration asks only the field and level terms of that predicate, not the command term
   (`test_registration_asks_the_field_and_level_terms`).
+
+### Platform Part 2, 2026-11-05
+
+The text these rules held in CLAUDE.md until the second Core platform layer pass rewrote each as it
+stands. The exception-handler rule gained the catch-all `Exception` handler and its keyed alert;
+the `/api` rule gained the reason the app does not duplicate Traefik's confinement; the App
+call-site rule is pinned by `test_platform_edges.py` and names the verifier's read as its one
+exception; the word-guard rule gained the ws32 label exemptions and ws33's whole-text scan of
+`config.py`; the route-inventory rule gained the `/review` and `/health` GETs and the method guard;
+the httpx rule names the CLI and mint tests; the protocol rule says the scan covers every protocol
+test; the held-copy rule names the two settings in `HELD_SETTINGS`.
+
+- Protocol smoke tests may manipulate time or lease expiry as fixture setup; runtime recovery
+  behaviour must go through public API/CLI surfaces, never private service shortcuts. History:
+  `docs/history/claude-md-invariants-archive.md` #5.
+- Production `/api` is M2M-only at the Traefik proxy (identity headers stripped); a human API route
+  needs a dedicated forward-auth router. A browser 401 on `/api` means M2M-only, never a retry
+  quirk. Detail: `docs/operations/driving-a-unit.md`.
+- Only `DomainError` and `APIAuthenticationError` have handlers; anything else is a bare 500. Route
+  parsing must raise `DomainError`, and a service must reject every value a DB CHECK would before
+  the write. History: `docs/history/claude-md-invariants-archive.md` #44.
+- Under `src/orchestrator/` the word guards (ADR-0051) refuse forbidden terms in CODE only:
+  identifiers, imports and non-docstring strings with no whitespace. ws32 forbids `dispatch`,
+  `deploy`, `coolify`, `workflow_dispatch`, `factory-runner`, `auto_merge`, `merge_pull_request` and
+  similar; ws34 forbids `workflow_dispatch`, `factory_runner`, `github.actions`, `coolify` and
+  `merge_to_main`. Read the lists in the tests; reword rather than allowlist.
+- New routes must be added to the exact POST/GET inventories in `test_scope_guards.py` (POST
+  includes `/review`); a new ingress POST route also needs a row in `tests/idempotency/test_matrix.py`
+  or a reasoned `NON_INGRESS_POST_ROUTES` entry; a `workflow_dispatch` workflow
+  needs both workflow-guard allowlists edited. Detail: `docs/operations/architecture-guards.md`.
+- Code promising "nothing raises" on an httpx call must catch `(httpx.HTTPError, httpx.InvalidURL,
+  ValueError)` at construction and request: a malformed host raises `UnicodeError`, and an escape is
+  a bare HTTP 500. History: `docs/history/claude-md-invariants-archive.md` #161.
+- The dispatch App's installation reach is deliberately wider than its work; every App call site
+  must stay bounded by a grant or allowlist check, since the ruling rests on that. Detail:
+  `docs/operations/credentials.md`.
+- A value one application holds to call another service is a `coolify-env-held` destination
+  (ADR-0055 amendment 13), never unregistered: a rotation that misses one strands its holder on a
+  dead value. Distribute writes it and restarts the holder; it counts switched only when the
+  holder reports the new fingerprint, and only the orchestrator reports
+  (`GET /api/v1/held-credentials`, executor-only, its `HELD_SETTINGS`), so the checks refuse a
+  held destination anywhere else, or one the report doesn't list, before the claim. Detail:
+  `docs/operations/rotation-executor.md`, "Held copies".
