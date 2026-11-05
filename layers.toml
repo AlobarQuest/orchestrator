@@ -135,6 +135,7 @@ paths = [
   "docs/operations/deploy.md",
   "docs/decisions/0046-*.md",
   "docs/decisions/0050-*.md",
+  "docs/decisions/0059-*.md",
   ".github/workflows/release-image.yml",
 ]
 
