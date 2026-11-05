@@ -2,9 +2,10 @@ import uuid
 from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
-from sqlalchemy import Engine, select
+from sqlalchemy import BigInteger, Engine, select
 from sqlalchemy.orm import Session
 
+from orchestrator.errors import DomainError
 from orchestrator.main import app
 from orchestrator.persistence.models import WorkUnit
 from tests._support.seeding import SEED_REVISIONS, seed_units_path
@@ -617,3 +618,56 @@ def test_work_unit_registration_idempotency_conflicts_on_raw_authority_change(
 
     assert conflicting.status_code == 409
     assert conflicting.json()["error"]["code"] == "idempotency_conflict"
+
+
+RETRY_UNIT = "00000000-0000-0000-0000-0000000000a1"
+
+
+def _retry_body(new_max_attempts: int) -> dict[str, object]:
+    return {
+        "idempotency_key": "retry-bound",
+        "expected_version": 4,
+        "new_max_attempts": new_max_attempts,
+        "reason": "bounded",
+    }
+
+
+def test_retry_attempts_above_the_integer_column_are_refused_as_422(db_client: TestClient) -> None:
+    response = db_client.post(
+        f"/api/v1/work-units/{RETRY_UNIT}/retry-authorization",
+        headers=HUMAN,
+        json=_retry_body(2**31),
+    )
+
+    assert response.status_code == 422
+
+
+def test_retry_attempts_at_the_integer_column_limit_reach_the_service(
+    db_client: TestClient, monkeypatch
+) -> None:
+    seen: list[int] = []
+
+    def fake(_session, _unit_id, _actor, *, new_max_attempts, **_kwargs):
+        seen.append(new_max_attempts)
+        return DomainError("version_conflict", "stale", "reload")
+
+    monkeypatch.setattr("orchestrator.api.routes.lifecycle.authorize_retry", fake)
+    response = db_client.post(
+        f"/api/v1/work-units/{RETRY_UNIT}/retry-authorization",
+        headers=HUMAN,
+        json=_retry_body(2**31 - 1),
+    )
+
+    assert response.status_code != 422
+    assert seen == [2**31 - 1]
+
+
+def test_retry_bound_is_published_and_matches_the_column() -> None:
+    from sqlalchemy import Integer
+
+    from orchestrator.main import create_app
+
+    schema = create_app().openapi()["components"]["schemas"]["RetryCommand"]
+    assert schema["properties"]["new_max_attempts"]["maximum"] == 2147483647
+    column = WorkUnit.__table__.c.max_attempts
+    assert isinstance(column.type, Integer) and not isinstance(column.type, BigInteger)

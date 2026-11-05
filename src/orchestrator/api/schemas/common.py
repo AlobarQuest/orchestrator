@@ -4,7 +4,7 @@ Every other model lives in `api/schemas/<domain>.py`, beside the routes of the d
 it; a model moves here only when a second domain's routes need it.
 """
 
-from typing import Any
+from typing import Any, Final
 from uuid import UUID
 
 from pydantic import (
@@ -12,6 +12,9 @@ from pydantic import (
     ConfigDict,
     Field,
 )
+
+# The largest value a 32-bit `Integer` column holds; a larger request is a database 500.
+INTEGER_COLUMN_MAX: Final = 2**31 - 1
 
 
 class CommandBase(BaseModel):

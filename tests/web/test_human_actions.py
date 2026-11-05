@@ -720,3 +720,63 @@ def test_unknown_envelope_field_hides_and_rejects_authority_approval(
 
     assert response.status_code >= 400
     assert response.json()["error"]["code"] == "authority_unknown_fields"
+
+
+def _retry_form_data(new_max_attempts: int, review_unit: WorkUnit) -> dict[str, str]:
+    return {
+        "csrf_token": "x",
+        "idempotency_key": "k",
+        "expected_version": str(review_unit.version),
+        "new_max_attempts": str(new_max_attempts),
+        "reason": "bounded",
+        "confirm": "yes",
+    }
+
+
+def test_retry_form_refuses_attempts_above_the_integer_column(
+    db_client: TestClient, review_unit: WorkUnit
+) -> None:
+    response = db_client.post(
+        f"/review/units/{review_unit.id}/retry",
+        headers=HUMAN,
+        data=_retry_form_data(2**31, review_unit),
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 422
+
+
+def test_retry_form_accepts_attempts_at_the_integer_column_limit(
+    db_client: TestClient, review_unit: WorkUnit, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[int] = []
+
+    def fake(*_args, new_max_attempts, **_kwargs):
+        seen.append(new_max_attempts)
+        return DomainError("version_conflict", "stale", "reload")
+
+    monkeypatch.setattr("orchestrator.web.authorize_retry", fake)
+    monkeypatch.setattr("orchestrator.web._require_form", lambda *_a, **_k: None)
+    response = db_client.post(
+        f"/review/units/{review_unit.id}/retry",
+        headers=HUMAN,
+        data=_retry_form_data(2**31 - 1, review_unit),
+        follow_redirects=False,
+    )
+
+    assert response.status_code != 422
+    assert seen == [2**31 - 1]
+
+
+def test_retry_input_carries_the_column_limit(
+    db_client: TestClient, migrated_engine: Engine, review_unit: WorkUnit
+) -> None:
+    with Session(migrated_engine) as session:
+        unit = session.get(WorkUnit, review_unit.id)
+        assert unit is not None
+        unit.state = WorkUnitState.FAILED
+        unit.attempt_count = unit.max_attempts
+        session.commit()
+    page = db_client.get(f"/review/units/{review_unit.id}", headers=HUMAN)
+
+    assert re.search(r'id="new-max-attempts"[^>]*max="2147483647"', page.text)

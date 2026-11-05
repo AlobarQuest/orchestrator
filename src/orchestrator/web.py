@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from orchestrator.api.dependencies import AuthConfig, SettingsDep, get_actor, get_session
 from orchestrator.api.routes.common import PageLandingSourceDep
 from orchestrator.api.routes.intake import package_intake_command
+from orchestrator.api.schemas.common import INTEGER_COLUMN_MAX
 from orchestrator.api.schemas.intake import PackageIntakeRegistration
 from orchestrator.errors import DomainError
 from orchestrator.kernel.authority import normalize_authority
@@ -1293,7 +1294,7 @@ def retry(
     actor: ActorDep,
     session: SessionDep,
     expected_version: Annotated[int, Form()],
-    new_max_attempts: Annotated[int, Form(gt=0)],
+    new_max_attempts: Annotated[int, Form(gt=0, le=INTEGER_COLUMN_MAX)],
     reason: Annotated[str, Form(min_length=1)],
     idempotency_key: Annotated[str, Form()] = "",
     csrf_token: Annotated[str, Form()] = "",

@@ -9,7 +9,7 @@ from pydantic import (
     model_validator,
 )
 
-from orchestrator.api.schemas.common import CommandBase
+from orchestrator.api.schemas.common import INTEGER_COLUMN_MAX, CommandBase
 
 
 class ClaimCommand(CommandBase):
@@ -31,7 +31,7 @@ class ReleaseCommand(CommandBase):
 
 
 class RetryCommand(CommandBase):
-    new_max_attempts: int = Field(gt=0)
+    new_max_attempts: int = Field(gt=0, le=INTEGER_COLUMN_MAX)
     reason: str = Field(min_length=1)
 
 
