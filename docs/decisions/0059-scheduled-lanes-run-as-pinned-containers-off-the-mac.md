@@ -2,8 +2,10 @@
 
 - **Status:** Proposed
 - **Date:** 2026-11-05
-- **Decided by:** not yet decided. Three questions are Devon's to decide and are marked
-  **Open (Q1–Q3)**. "Open questions" gives each one's options, costs and a recommendation.
+- **Decided by:** Devon decided Q2 and Q3 on 2026-11-05 (HQ decisions D-4 and D-5), recorded in
+  "Devon's decisions". Q1 (HQ D-3) is still his to decide and is marked **Open (Q1)**. "Open
+  questions" gives its options, costs and a recommendation. The rest of the ADR is proposed and
+  not yet accepted.
 - **Relates to:** ADR-0055 (the rotation executor's isolated runtime and decisions 2 and 4,
   amendments 6 and 12), ADR-0058 (lanes read their scope from the member record), ADR-0039
   (out-of-process producers carry only structured facts), ADR-0021 amendments 2 and 3 (the
@@ -103,7 +105,8 @@ One container per lane already gives each lane its own process, filesystem and e
   separate decision: see "Who pushes" (**Open, Q1**).
 - **`.bws-secrets.toml` and `.cred-consumers.toml` gain each lane identity and each secret it
   reads**, in the same change as the lane's move. The credential registry gains each lane token
-  as a credential. Who rotates it is **Open, Q3**.
+  as a credential. The VM rotation executor rotates it once increment 7 moves the executor to
+  the VPS (Q3, decided).
 - **This ADR creates no identity.** Each increment that moves a lane creates that lane's account
   and grants.
 
@@ -124,15 +127,17 @@ One container per lane already gives each lane its own process, filesystem and e
 
 ### 4. What stays on the Mac
 
-Two agents stay, both because their subject is the Mac itself:
+Three agents stay, all because their subject is the Mac itself:
 
 - **The tool installer** installs binaries and the Claude plugin on this machine.
 - **The Keychain rotation instance** rotates BWS machine tokens held in this machine's Keychain
   (ADR-0055 amendment 12).
+- **The machine-activation sweep** measures this machine's working copies, and both of its passes
+  (`sweep` and `bind`) read `~/Projects/<member>`. It acts on no member, so the phase bar allows
+  it to stay. It remains ADR-0030's only control over ADR-0031 (Q2, decided).
 
-**Open (Q2): the machine-activation sweep.** Both of its passes read `~/Projects/<member>` on this
-machine, so it can't move. It acts on no member, so the phase bar allows it to stay. The year plan
-names only the two agents in the preceding list.
+The year plan's Phase 1 text names only the first two. Keeping the sweep departs from that text by
+Devon's decision; HQ updates the year plan.
 
 **The VM rotation executor** isn't a launch agent, but it runs on the Mac (OrbStack) and acts on
 members. ADR-0055 decision 2 built it to "move unchanged to a VPS". Increment 7 in the
@@ -143,7 +148,7 @@ amendment to ADR-0055, not here.
 
 | Launch agent | Disposition | Reason |
 |---|---|---|
-| `activation-sweep` | **Open (Q2)** | Measures this machine's working copies, and both passes read local checkouts. |
+| `activation-sweep` | Stays | Measures this machine's working copies, and both passes read local checkouts (Q2). |
 | `bump-driver` | Moves | Dispatches and merges bump units as SYSTEM, acting on members. |
 | `bump-proposer` | Moves | Pushes standing-package revisions to intent-packages `main` (Q1). |
 | `change-proposer` | Moves | Reads pull requests and writes change records, with no local state. |
@@ -164,8 +169,7 @@ amendment to ADR-0055, not here.
 | `unit-verifier` | Moves | Runs `/verify` as VERIFIER, with no local state. |
 | `work-carrier` | Moves | Registers intakes from package clones, with no other local state. |
 
-No agent retires under this ADR unless Q2's answer retires the sweep. Seventeen move, two stay,
-and one is open.
+No agent retires under this ADR. Seventeen move and three stay.
 
 The rotation proposer reads `~/.config/infra-drift/cred-consumers.list` through infraops's CLI.
 Its increment must find that file's source and carry it as data in the clone or in BWS. A file that
@@ -219,7 +223,7 @@ places.
 
 #### The week bar
 
-The Mac can't be literally off while two agents stay on it. The bar is measured as follows:
+The Mac can't be literally off while three agents stay on it. The bar is measured as follows:
 for 7 consecutive days, with every moved lane's Mac agent booted out, each moved lane's
 Healthchecks check records no down event and no `/fail` caused by the move. The week also contains
 at least one window where the Mac is asleep or powered off for 24 hours or longer, during which
@@ -248,14 +252,38 @@ through the read-only Healthchecks key, and the Mac's power log for the off wind
   machine identity write access to an authoring repository (intent-packages), the ADR-0039
   amendment that follows this ADR must restate who authors a package revision. That amendment is
   written separately.
-- **ADR-0055.** Q3 and increment 7 each need an ADR-0055 amendment.
+- **ADR-0055.** Increment 7's ADR-0055 amendment moves the VM executor to the VPS and, by Q3's
+  decision, lifts decision 4 for lane tokens so that the executor rotates them.
+
+## Devon's decisions
+
+Devon decided two of the three questions on 2026-11-05.
+
+### Q2: the machine-activation sweep stays on the Mac (HQ D-4)
+
+Option (a): `activation-sweep` stays on the Mac as a third exception, beside the tool installer
+and the Keychain rotation instance. It observes the Mac, and the Mac is where what it measures
+lives. The rejected options were to retire it, which would leave ADR-0031's activation helper with
+no control, and to rebuild it to bind from GitHub, which is new code that still leaves the sweep on
+the Mac. This departs from the year plan's two-exception text; HQ updates the year plan.
+
+### Q3: the VM executor rotates lane BWS tokens (HQ D-5)
+
+Option (a): once increment 7 moves the VM rotation executor to the VPS, it rotates each lane's BWS
+token. It already writes Coolify variables with its own Coolify token. ADR-0055 decision 4, as
+amended, says a BWS consumer token may be handled only by an executor instance on the machine that
+already holds it, and never by the VM. Increment 7's ADR-0055 amendment lifts decision 4 for lane
+tokens. The cost is accepted: the executor gains write reach over every lane's identity. Until that
+amendment, lane tokens are registered and unrotated. The rejected options were the hand-rotated
+set, which conflicts with Devon's "SDS can not do an all human rotation" (2026-10-21), and a new
+confined rotation instance, which would add a third orchestrator identity.
 
 ## Open questions
 
-Each of the following questions changes what is built or who can write what, so Devon decides it.
-Each recommendation is the author's and isn't a decision.
+This question changes who can write what, so Devon decides it (HQ D-3). The recommendation is
+the author's and isn't a decision.
 
-### Q1: who pushes when a lane leaves Devon's `gh` login
+### Open (Q1): who pushes when a lane leaves Devon's `gh` login
 
 Three moved lanes push as Devon's interactive login today. `bump-proposer` and
 `rotation-proposer` run `git push origin main` on intent-packages, and `fork-harden` pushes each
@@ -277,38 +305,3 @@ machine.
 
 **Recommendation: (c).** The authorship it records is true, and the App reaches only the
 repositories it pushes to, unlike the dispatch App. (b) is the fallback if no new App is wanted.
-
-### Q2: the machine-activation sweep
-
-`activation-sweep` reads `~/Projects/<member>` on the Mac in both of its passes, `sweep` and `bind`.
-Its subject is this machine's working copies, and it's ADR-0030's only control over ADR-0031. It
-acts on no member, so the phase bar permits it to stay, but the year plan names only two agents
-that stay.
-
-- **(a) It stays as a third Mac exception.** Cost: nothing built; the year plan's "only two" wording
-  needs a one-line amendment.
-- **(b) Retire it.** Cost: ADR-0031's activation helper loses its only control, which still guards
-  the other enrolled working copies after the lanes stop running the main tree.
-- **(c) Rebuild it to bind from GitHub and sweep only on the Mac.** Cost: new code, and the sweep
-  half still stays.
-
-**Recommendation: (a).** It observes the Mac, and the Mac is where what it measures lives.
-
-### Q3: who rotates a lane's BWS token
-
-Each lane's token becomes a Coolify environment variable on `sds-lanes`. BWS machine tokens are
-Keychain items today, and the Keychain rotation instance switches them (ADR-0055 amendment 12).
-ADR-0055 decision 4, as amended, says a BWS consumer token may be handled by an executor instance
-on the machine that already holds it, and never by the VM. A VPS-held lane token fits neither
-instance.
-
-- **(a) The VM executor rotates lane tokens** after increment 7 moves it to the VPS, since it
-  already writes Coolify variables with its own Coolify token. Cost: an ADR-0055 amendment that
-  lifts decision 4 for lane tokens, and the executor gains write reach over every lane's identity.
-- **(b) Lane tokens join the hand-rotated set.** Cost: about 17 more hand rotations, against
-  Devon's "SDS can not do an all human rotation" (2026-10-21).
-- **(c) A new rotation instance confined to lane tokens, in its own container on `sds-lanes`.**
-  Cost: a third orchestrator identity and a new instance, amendment 12's shape again.
-
-**Recommendation: (a), decided in increment 7's ADR-0055 amendment.** Until then, lane tokens are
-registered and unrotated. (c) is the option that keeps decision 4 intact.
