@@ -20,6 +20,9 @@ Either way a remembered key that stops firing is sent `resolved` and forgotten, 
   code, nothing the token store or `httpx` said.
 * **A message is cut to alert-hub's limit here**, the one place every lane's send passes through,
   because alert-hub refuses a longer one outright and the alert would never go out.
+* **`fire_once` is the stateless, fire-only send**: no state file, no `refire`, no 429 wait, one
+  request, and it never raises (it returns whether alert-hub accepted). It keeps every guarantee
+  above and is for a caller with no pass to retry on, such as a server reporting its own 500.
 * **Keys follow alert-hub's grammar** (1-200 of `[A-Za-z0-9._:/-]`); `alert_key` builds one from
   free text deterministically, and `sync` refuses a key outside it before sending anything.
 """
@@ -149,6 +152,76 @@ def dependency_bump_prefix(repository: str) -> str:
     return alert_key(DEPENDENCY_BUMP, repository.lower()) + ":"
 
 
+def _build_client(
+    token: str,
+    user_agent: str,
+    timeout: float,
+    refuse: Callable[[str, str], Exception],
+    transport: httpx.BaseTransport | None,
+) -> ConfinedClient:
+    """The one client both senders use, so there is one permits predicate."""
+    return ConfinedClient(
+        base_url=BASE_URL,
+        user_agent=user_agent,
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=timeout,
+        permits=lambda method, path: (method, path) == ("POST", ALERTS),
+        refuse=refuse,
+        transport=transport,
+    )
+
+
+def _payload(key: str, severity: str, status: str, alert: Alert) -> dict[str, str]:
+    return {
+        "key": key,
+        "severity": severity,
+        "kind": "alert",
+        "status": status,
+        "title": alert.title,
+        **({"message": _clip_message(alert.message)} if alert.message else {}),
+        **({"link": alert.link} if alert.link else {}),
+    }
+
+
+def fire_once(
+    token: str,
+    key: str,
+    alert: Alert,
+    *,
+    user_agent: str,
+    timeout: float,
+    severity: str = "warning",
+    transport: httpx.BaseTransport | None = None,
+    logger: logging.Logger = LOG,
+) -> bool:
+    """Send one firing alert and report whether alert-hub accepted it. Stateless; never raises."""
+    if not KEY_GRAMMAR.fullmatch(key):
+        logger.warning("notify_failed", extra={"reason": "invalid_key"})
+        return False
+    try:
+        client = _build_client(
+            token,
+            user_agent,
+            timeout,
+            lambda method, path: AlertHubError(f"may not {method} {path}"),
+            transport,
+        )
+    except (TransportFailure, ValueError) as error:
+        logger.warning("notify_failed", extra={"key": key, "reason": type(error).__name__})
+        return False
+    try:
+        response = client.request("POST", ALERTS, json=_payload(key, severity, "firing", alert))
+    except TransportFailure as failure:
+        logger.warning("notify_failed", extra={"key": key, "reason": failure.error_type})
+        return False
+    finally:
+        client.close()
+    if response.status_code != ACCEPTED:
+        logger.warning("notify_failed", extra={"key": key, "status": response.status_code})
+        return False
+    return True
+
+
 class KeyedAlerts:
     def __init__(
         self,
@@ -218,28 +291,14 @@ class KeyedAlerts:
         except Exception as error:  # a token store's failure; only its type is reported
             raise TokenUnreadable(f"sender token unreadable: {type(error).__name__}") from None
         try:
-            return ConfinedClient(
-                base_url=BASE_URL,
-                user_agent=self._user_agent,
-                headers={"Authorization": f"Bearer {token}"},
-                timeout=TIMEOUT_SECONDS,
-                permits=lambda method, path: (method, path) == ("POST", ALERTS),
-                refuse=self._refuse,
-                transport=self._transport,
+            return _build_client(
+                token, self._user_agent, TIMEOUT_SECONDS, self._refuse, self._transport
             )
         except (TransportFailure, ValueError) as error:
             raise AlertHubError(f"alert-hub client unusable: {type(error).__name__}") from None
 
     def _send(self, client: ConfinedClient, key: str, status: str, alert: Alert) -> bool:
-        payload = {
-            "key": key,
-            "severity": self._severity,
-            "kind": "alert",
-            "status": status,
-            "title": alert.title,
-            **({"message": _clip_message(alert.message)} if alert.message else {}),
-            **({"link": alert.link} if alert.link else {}),
-        }
+        payload = _payload(key, self._severity, status, alert)
         try:
             response = client.request("POST", ALERTS, json=payload)
             if response.status_code == RATE_LIMITED and not self._refire:

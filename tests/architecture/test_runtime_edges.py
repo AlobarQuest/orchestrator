@@ -43,6 +43,7 @@ from tests.architecture.edge_table import (
     ALERT_HUB_PERMITS,
     Permits,
     ShellUnplaced,
+    captured_permits,
     literal_hosts,
     near_misses,
     read_shell,
@@ -81,6 +82,29 @@ def alert_routes(permits: Permits) -> frozenset[tuple[str, str]]:
 def test_the_alert_client_sends_one_route_to_one_host() -> None:
     assert alert_hub_client.BASE_URL == "https://alerts.alobar.net"
     assert alert_routes(ALERT_HUB_PERMITS) == {("POST", "/v1/alerts")}
+
+
+FIRE_ONCE_PERMITS = captured_permits(
+    alert_hub_client,
+    lambda: alert_hub_client.fire_once(
+        "token",
+        "edges:key",
+        alert_hub_client.Alert("t"),
+        user_agent="edges/1",
+        timeout=1.0,
+    ),
+)
+
+
+def test_fire_once_sends_the_same_one_route() -> None:
+    assert alert_routes(FIRE_ONCE_PERMITS) == {("POST", "/v1/alerts")}
+
+
+def test_control_a_widened_fire_once_predicate_fails_the_row() -> None:
+    def wider(method: str, path: str) -> bool:
+        return FIRE_ONCE_PERMITS(method, path) or method == "GET"
+
+    assert ("GET", "/v1/alerts") in alert_routes(wider)
 
 
 def test_control_a_widened_alert_predicate_fails_the_row() -> None:
