@@ -28,7 +28,12 @@ from orchestrator.api.dependencies import (
     get_actor,
     get_session,
 )
-from orchestrator.api.error_shape import authentication_message, error_body, status_for
+from orchestrator.api.error_shape import (
+    authentication_message,
+    domain_error_body,
+    error_body,
+    status_for,
+)
 from orchestrator.api.routes.common import PageLandingSourceDep
 from orchestrator.api.routes.intake import package_intake_command
 from orchestrator.api.schemas.common import INTEGER_COLUMN_MAX
@@ -117,7 +122,10 @@ templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 
 def _back_link(request: Request) -> str:
     """The `Referer`'s path when it is a /review page, else `/review`; never a scheme or host."""
-    path = urlsplit(request.headers.get("referer", "")).path
+    try:
+        path = urlsplit(request.headers.get("referer", "")).path
+    except ValueError:  # an unparseable Referer, e.g. an unclosed IPv6 bracket
+        return "/review"
     if path == "/review" or path.startswith("/review/"):
         return path
     return "/review"
@@ -138,7 +146,9 @@ def _validation_message(error: RequestValidationError) -> str:
     return "; ".join(parts)
 
 
-def _refusal_page(request: Request, error: Exception) -> HTMLResponse:
+def _refusal_page(
+    request: Request, error: DomainError | APIAuthenticationError | RequestValidationError
+) -> HTMLResponse:
     """Render a /review refusal as `refusal.html`, at the status the JSON body had.
 
     The fields are the ones `error_body` gives the API, so the page shows exactly what the JSON
@@ -153,22 +163,14 @@ def _refusal_page(request: Request, error: Exception) -> HTMLResponse:
     headers: dict[str, str] = {}
     if isinstance(error, DomainError):
         status = status_for(error.code)
-        body = error_body(
-            error.code,
-            error.message,
-            recovery=error.recovery,
-            current_state=error.current_state,
-            current_version=error.current_version,
-        )
+        body = domain_error_body(error)
     elif isinstance(error, APIAuthenticationError):
         status = 401
         body = error_body(error.code, authentication_message(error.code))
         headers["WWW-Authenticate"] = "Bearer"
-    elif isinstance(error, RequestValidationError):
+    else:
         status = 422
         body = error_body("request_invalid", _validation_message(error))
-    else:
-        raise TypeError(f"not a refusal: {type(error).__name__}")
     fields = cast(dict[str, object], body["error"])
     details = [
         (name.replace("_", "-"), label, fields[name])

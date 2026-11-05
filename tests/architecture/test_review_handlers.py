@@ -6,8 +6,8 @@ else would notice, so one scan of `web.py` pins both:
 
 - every function decorated `@router.get(...)` or `@router.post(...)` calls `_human(actor)` as a
   direct statement of its body (a call inside a branch is not the gate);
-- every `@router.post` function calls `_require_form(` somewhere in its own body (a call inside a
-  nested `def` never runs for the request and does not count);
+- every `@router.post` function calls `_require_form(...)` as a direct statement of its body too
+  (a call inside an `if`, an `except` or a nested `def` does not run for every request);
 - the decorated set equals the router's registered endpoints, so a route registered any other way
   is not missed.
 """
@@ -44,28 +44,19 @@ def _call_name(call: ast.Call) -> str | None:
     return call.func.id if isinstance(call.func, ast.Name) else None
 
 
-def _own_calls(function: ast.FunctionDef) -> list[ast.Call]:
-    """Calls in the function's own body, not inside a nested def or lambda."""
-    calls: list[ast.Call] = []
-    stack: list[ast.AST] = list(function.body)
-    while stack:
-        node = stack.pop()
-        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda):
-            continue
-        if isinstance(node, ast.Call):
-            calls.append(node)
-        stack.extend(ast.iter_child_nodes(node))
-    return calls
-
-
-def _has_direct_human_call(function: ast.FunctionDef) -> bool:
+def _has_direct_call(function: ast.FunctionDef, name: str, *, argument: str | None = None) -> bool:
+    """Whether a top-level statement of the body is a bare call of `name` (on `argument`)."""
     for statement in function.body:
         if (
             isinstance(statement, ast.Expr)
             and isinstance(statement.value, ast.Call)
-            and _call_name(statement.value) == "_human"
+            and _call_name(statement.value) == name
         ):
-            return True
+            args = statement.value.args
+            if argument is None or (
+                args and isinstance(args[0], ast.Name) and args[0].id == argument
+            ):
+                return True
     return False
 
 
@@ -73,12 +64,10 @@ def violations(source: str) -> list[str]:
     """Every handler in `source` missing its `_human` or (for a POST) `_require_form` call."""
     problems: list[str] = []
     for name, (method, node) in sorted(_decorated(ast.parse(source)).items()):
-        if not _has_direct_human_call(node):
+        if not _has_direct_call(node, "_human", argument="actor"):
             problems.append(f"{name}: no direct _human(actor) statement")
-        if method == "post" and "_require_form" not in {
-            _call_name(call) for call in _own_calls(node)
-        }:
-            problems.append(f"{name}: POST without _require_form")
+        if method == "post" and not _has_direct_call(node, "_require_form"):
+            problems.append(f"{name}: POST without a direct _require_form statement")
     return problems
 
 
@@ -110,7 +99,7 @@ def test_the_scan_accepts_a_gated_post() -> None:
 
 def test_the_scan_reports_a_post_without_require_form() -> None:
     source = _GOOD_POST.replace("    _require_form(1)\n", "")
-    assert violations(source) == ["handler: POST without _require_form"]
+    assert violations(source) == ["handler: POST without a direct _require_form statement"]
 
 
 def test_the_scan_reports_a_get_without_human() -> None:
@@ -123,8 +112,28 @@ def test_the_scan_reports_a_human_call_hidden_in_a_branch() -> None:
     assert violations(source) == ["handler: no direct _human(actor) statement"]
 
 
+def test_the_scan_reports_a_human_call_on_something_other_than_actor() -> None:
+    source = _GOOD_POST.replace("_human(actor)", "_human(other)")
+    assert violations(source) == ["handler: no direct _human(actor) statement"]
+
+
+def test_the_scan_reports_a_require_form_only_in_a_branch() -> None:
+    source = _GOOD_POST.replace(
+        "    _require_form(1)\n", "    if actor:\n        _require_form(1)\n"
+    )
+    assert violations(source) == ["handler: POST without a direct _require_form statement"]
+
+
+def test_the_scan_reports_a_require_form_only_in_an_except_clause() -> None:
+    source = _GOOD_POST.replace(
+        "    _require_form(1)\n",
+        "    try:\n        pass\n    except ValueError:\n        _require_form(1)\n",
+    )
+    assert violations(source) == ["handler: POST without a direct _require_form statement"]
+
+
 def test_the_scan_reports_a_require_form_only_in_a_nested_def() -> None:
     source = _GOOD_POST.replace(
         "    _require_form(1)\n", "    def never_runs():\n        _require_form(1)\n"
     )
-    assert violations(source) == ["handler: POST without _require_form"]
+    assert violations(source) == ["handler: POST without a direct _require_form statement"]

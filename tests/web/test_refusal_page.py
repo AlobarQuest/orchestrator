@@ -250,6 +250,15 @@ def test_the_link_back_is_a_review_path_only(db_client: TestClient) -> None:
     ):
         link = back(referer)
         assert link == "/review", (referer, link)
+    # An unparseable Referer (unclosed IPv6 bracket) must not turn the refusal into a 500.
+    for referer in ("http://[::1/review/x", "//[x/review", "http://a]/review"):
+        assert back(referer) == "/review", referer
+    # A path carrying markup is escaped into the attribute, never injected as markup.
+    markup = '/review/x"><script>alert(1)</script>'
+    response = db_client.get(unit_path, headers={**HUMAN, "Referer": f"https://h{markup}"})
+    assert response.status_code == 404
+    assert "<script>alert(1)</script>" not in response.text
+    assert _back(response).startswith("/review")
     # Only the path is used, so another host's /review path cannot send a person off the host.
     for referer in (f"https://evil.example{unit_path}", f"//evil.example{unit_path}"):
         assert back(referer) == unit_path, referer
@@ -276,6 +285,69 @@ def test_a_write_made_before_the_refusal_is_not_kept(
             .where(ObservationSource.source_system == _PROBE_SOURCE)
         )
     assert count == 0
+
+
+def test_the_production_session_does_not_keep_a_write_made_before_a_refusal(
+    auth_config: AuthConfig, migrated_engine: Engine
+) -> None:
+    """With no `get_session` override: the route class swallows the refusal, so the generator
+    exits normally, and it must not commit on that path."""
+    app = create_app(auth_config)
+    app.include_router(_probe_router())
+    with TestClient(app, base_url="https://testserver", raise_server_exceptions=False) as client:
+        response = client.post("/review/_probe/write-then-refuse")
+    _assert_page(response, 409, "probe_refused")
+    with Session(migrated_engine) as session:
+        assert (
+            session.scalar(
+                select(func.count())
+                .select_from(ObservationSource)
+                .where(ObservationSource.source_system == _PROBE_SOURCE)
+            )
+            == 0
+        )
+
+
+def test_the_production_session_generator_does_not_commit_on_normal_exit(
+    migrated_engine: Engine,
+) -> None:
+    generator = get_session()
+    session = next(generator)
+    session.add(
+        ObservationSource(
+            source_system=_PROBE_SOURCE,
+            subject_reference="direct",
+            last_seen_at=datetime.now(UTC),
+        )
+    )
+    session.flush()
+    with pytest.raises(StopIteration):
+        next(generator)
+    with Session(migrated_engine) as other:
+        assert (
+            other.scalar(
+                select(func.count())
+                .select_from(ObservationSource)
+                .where(ObservationSource.source_system == _PROBE_SOURCE)
+            )
+            == 0
+        )
+
+
+def test_an_unrouted_path_a_wrong_method_and_an_unparseable_body_stay_json(
+    db_client: TestClient,
+) -> None:
+    unrouted = db_client.get("/review/no-such-page", headers=HUMAN)
+    wrong_method = db_client.delete("/review", headers=HUMAN)
+    unparseable = db_client.post(
+        f"/review/units/{uuid.uuid4()}/cancel",
+        headers={**HUMAN, "Content-Type": "multipart/form-data; boundary=x"},
+        content=b"not a multipart body",
+    )
+    for response, status in ((unrouted, 404), (wrong_method, 405), (unparseable, 400)):
+        assert response.status_code == status, (status, response.status_code, response.text)
+        assert response.headers["content-type"].startswith("application/json")
+        assert "detail" in response.json()
 
 
 def _not_refusal_routes(routes: list) -> list[str]:

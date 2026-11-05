@@ -9,7 +9,12 @@ from fastapi.responses import JSONResponse
 from pydantic import SecretStr
 
 from orchestrator.api.dependencies import APIAuthenticationError, AuthConfig
-from orchestrator.api.error_shape import authentication_message, error_body, status_for
+from orchestrator.api.error_shape import (
+    authentication_message,
+    domain_error_body,
+    error_body,
+    status_for,
+)
 from orchestrator.api.health import router as health_router
 from orchestrator.api.routes import (
     execution,
@@ -84,13 +89,7 @@ def create_app(
     async def domain_error_handler(_request: Request, error: DomainError) -> JSONResponse:
         return JSONResponse(
             status_code=status_for(error.code),
-            content=error_body(
-                error.code,
-                error.message,
-                recovery=error.recovery,
-                current_state=error.current_state,
-                current_version=error.current_version,
-            ),
+            content=domain_error_body(error),
         )
 
     # Everything no handler above answers: the nested shape, a log line and one keyed alert.

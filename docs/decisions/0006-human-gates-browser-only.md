@@ -237,7 +237,7 @@ What a person can confirm is unchanged: no gate gains or loses a control, and th
 are the same. Only the rendering of the refusal changes.
 
 - `RefusalPageRoute`, the web router's `route_class`, catches those three exception types from a
-  handler or a dependency. The page sets no cookie, reads no database and rolls nothing back.
+  handler or a dependency. The page sets no cookie, reads no database and performs no rollback itself: the request's session closes without committing, which discards any uncommitted write.
 - The decomposition grant refusal stays in place: the proposal page shows it with the repository
   named.
 - The page covers only what a `/review` route handles. An unrouted `/review/...` path (404) and a

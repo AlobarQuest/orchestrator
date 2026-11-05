@@ -148,10 +148,18 @@ Placement rule: global CLAUDE.md §7.
   Only the router's own routes are covered: an unrouted `/review` path (404) and a wrong method
   (405) are Starlette's JSON `{"detail": ...}`, FastAPI's unparseable-body 400 stays JSON, and a
   500 stays the JSON `internal_error`. The decomposition grant refusal stays in place on its
-  proposal page. The page escapes every field and links back only to a `/review` path. Every
-  `/review` handler calls `_human(actor)` and every POST `_require_form`
-  (`test_refusal_page.py`, `test_review_handlers.py`). Tests read a page refusal through
-  `tests/_support/refusal_page.py`. Detail: ADR-0006 amendment 3.
+  proposal page. The page escapes every field and links back only to a `/review` path (an
+  unparseable `Referer` links to `/review`). The page performs no rollback: `get_session` must
+  never commit on normal exit, because the route class swallows the refusal and the generator
+  exits normally, so the closing session is what discards a write flushed before the refusal
+  (`test_the_production_session_generator_does_not_commit_on_normal_exit`,
+  `test_the_production_session_does_not_keep_a_write_made_before_a_refusal`). Tests read a page
+  refusal through `tests/_support/refusal_page.py`; the 404, 405 and 400 pins are in
+  `test_an_unrouted_path_a_wrong_method_and_an_unparseable_body_stay_json`
+  (`test_refusal_page.py`). Detail: ADR-0006 amendment 3.
+- Every `/review` handler calls `_human(actor)`, and every POST calls `_require_form(...)`, each as
+  a direct top-level statement of its body: a call inside a branch, an `except` clause or a
+  nested def is not the gate (`tests/architecture/test_review_handlers.py`).
 - Any "may this unit run again" rule belongs in `claims._readiness_eligibility_error`, shared by reclaim,
   release and requeue (`test_reclaim.py`, `test_requeue.py`). Archive #45.
 - The evidence-pack markdown is redacted for public PR comments (no approver ids, rationale, actor
