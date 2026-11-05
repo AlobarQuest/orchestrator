@@ -2,7 +2,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import Engine, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -188,6 +188,39 @@ def test_work_unit_state_and_version_remain_mutable(migrated_session: Session) -
     assert unit.state == "ready"
     assert unit.version == 2
     assert unit.updated_at > previous_updated_at
+
+
+def test_updated_at_trigger_overwrites_a_back_dated_value(migrated_engine: Engine) -> None:
+    past = datetime(2020, 1, 1, tzinfo=UTC)
+    with Session(migrated_engine) as writer:
+        revision = _revision(writer)
+        unit = WorkUnit(
+            unit_key="unit-1",
+            work_package_revision_id=revision.id,
+            title="Title",
+            outcome="Outcome",
+            state="draft",
+            decomposition_approved_by="human-1",
+            decomposition_approved_at="2026-07-05T12:00:00+00:00",
+            required_capability="python",
+            authority=AUTHORITY,
+            authority_fingerprint="authority",
+        )
+        writer.add(unit)
+        writer.commit()
+        unit_id = unit.id
+        writer.execute(
+            text("UPDATE work_units SET updated_at = :past WHERE id = :id"),
+            {"past": past, "id": unit_id},
+        )
+        writer.commit()
+
+    with Session(migrated_engine) as reader:
+        stored = reader.execute(
+            text("SELECT updated_at FROM work_units WHERE id = :id"), {"id": unit_id}
+        ).scalar_one()
+    assert stored != past
+    assert stored > past
 
 
 def test_evidence_supersession_must_match_revision_unit_and_ac(
