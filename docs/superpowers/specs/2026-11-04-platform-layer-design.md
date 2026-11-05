@@ -1,6 +1,8 @@
 # Core platform layer design
 
-**Status:** Approved by Devon 2026-11-04, after the builder check. Layer id: `platform`
+**Status:** Finished 2026-11-05 and deployed as `5834824-plat3-amd64`: Part 1 in #610, Part 2 in
+#611 and #612 (with infraops #163), Part 3 in #613. Approved by Devon 2026-11-04, after the builder
+check. Layer id: `platform`
 (`make layer L=platform`).
 
 ## Intent
