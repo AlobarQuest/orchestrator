@@ -95,18 +95,25 @@ Placement rule: global CLAUDE.md §7.
   appear in this repo's authority envelope; the dependency-update profile's verifier is
   `uv lock --check`, and CI's `Quality` job runs the tests.
   Detail: `docs/operations/driving-a-unit.md`.
-- Request entry points own their transaction and must `session.commit()`; functions called inside
-  another transaction must never commit. A persistence test must re-read through a different
-  session, not `expire_all()`. History: `docs/history/claude-md-invariants-archive.md` #27.
+- Request entry points own their transaction and must `session.commit()`; a function that commits
+  reaches another committer only as its last commit point, a sole handoff
+  (`test_transaction_ownership.py`; it misses calls through `from package import module`, calls
+  through an object, a commit on a receiver not named `session`, and functions that commit nothing
+  themselves, and it does not check the first half: that entry points must commit). A
+  persistence test must re-read through a different session, not `expire_all()`.
+  History: `docs/history/claude-md-invariants-archive.md` #27.
 - `test_unreachable_guards.py` requires every public kernel/services function to be import-reachable
   from a production entry point; an allowlist entry that would read "in fact it is called" means the
   predicate is wrong. Detail: `docs/operations/architecture-guards.md`.
 - `work_units.version` moves only on a state transition, in three places (`test_execution_writers.py`). Archive #30.
-- A DB trigger rewrites `work_units.updated_at` on every update, so tests exercise staleness by
-  shrinking the env-overridable threshold, never by back-dating the row. History:
-  `docs/history/claude-md-invariants-archive.md` #31.
-- Never run two pytest suites against one test database: fixtures drop and recreate it. Use a
-  per-worktree database. Detail: `docs/operations/local-development.md`.
+- A DB trigger rewrites `work_units.updated_at` on every update
+  (`test_updated_at_trigger_overwrites_a_back_dated_value`), so tests exercise staleness by
+  shrinking the env-overridable threshold, never by back-dating the row.
+  History: `docs/history/claude-md-invariants-archive.md` #31.
+- Never run two pytest runs against one base test database. Each run drops and re-migrates the
+  schema once, then `TRUNCATE`s per test; `-n auto` workers get their own `<base>_gwN` databases,
+  so the hazard is two separate invocations. Use a per-worktree database. Detail:
+  `docs/operations/local-development.md`.
 - `release_claim` alone ends a claim, from its listed callers (`test_execution_writers.py`); keep
   replay-before-release and unit-then-claim lock order. Archive #34.
 - `automated_test` floors to deterministic-permitted: it resolves from arriving evidence that has an
@@ -149,8 +156,11 @@ Placement rule: global CLAUDE.md §7.
   as input). A hand build needs the labels and `ORCHESTRATOR_REVISION`. Detail:
   `docs/operations/deploy.md`.
 - Never build a SQL `IN (...)` CHECK with `f"{VOCAB!r}"`: a one-element tuple renders a trailing
-  comma. Join quoted members explicitly, identically in model and migration. History:
-  `docs/history/claude-md-invariants-archive.md` #54.
+  comma. Build it with `models._in_members`; the model's rendered text is pinned by
+  `tests/fixtures/model_in_checks.json` and compared with the migrated database
+  (`test_postgres_stores_the_model_check_as_it_stores_the_migrated_one`), and
+  `test_no_in_list_is_built_with_repr` refuses the shape.
+  History: `docs/history/claude-md-invariants-archive.md` #54.
 - Files importing an HTTP client must be in `OUTBOUND_ALLOWLIST` (`test_wsp21_invariant_scan.py`)
   with a reason; these whole-repo scans run only in a full `make check`. Detail:
   `docs/operations/architecture-guards.md`.
@@ -159,7 +169,8 @@ Placement rule: global CLAUDE.md §7.
   (`test_cross_boundary_vocabulary.py`); register genuine cross-boundary ones. Detail:
   `docs/operations/architecture-guards.md`.
 - Alembic revision ids must be at most 32 characters (`alembic_version.version_num` is
-  `varchar(32)`). History: `docs/history/claude-md-invariants-archive.md` #57.
+  `varchar(32)`;
+  `test_revision_ids_fit_alembic_version_num`). History: `docs/history/claude-md-invariants-archive.md` #57.
 - The traceability observation hop reads unit-scoped observations plus the landing ledger's record
   of each release binding's merge commit, joined on `source_system`, `subject_type` and
   `observation_type` (`github`, `repo`, `landing`), the repository case-folded and the commit
@@ -301,7 +312,7 @@ Placement rule: global CLAUDE.md §7.
   approval (service and form) and admission; `test_authority_asking_points.py` pins the surfaces.
   History: `docs/history/claude-md-invariants-archive.md` #149.
 - Unit registration asks only the field and level terms of that predicate, not the command term
-  (`test_registration_asks_the_field_and_level_terms`).
+  (`test_registration_asks_the_field_and_level_terms_and_not_the_command_term`).
 - A capability name outside the runner's vocabulary is refused only at admission
   (`test_dispatch_blocks_a_legacy_capability_outside_the_runner_vocabulary`); both ingress paths
   refuse names outside the orchestrator's wider set (`test_capability_ingress.py`).
@@ -328,15 +339,17 @@ Placement rule: global CLAUDE.md §7.
   (`test_a_unit_with_no_criteria_goes_to_a_person`, `_completion_satisfied`). Only an app-change unit reads the member
   record: no grant is `verify-refused`, and an empty or unread record holds the unit silently.
   `image_release` shares the `orchestrator-verifier` identity. Detail: `docs/operations/verifier.md`.
-- Columns holding GitHub Actions run ids must be `BigInteger`: ids exceed 2^31, and `Integer` fails
-  only on Postgres (`integer out of range`), never on SQLite. History:
-  `docs/history/claude-md-invariants-archive.md` #157.
+- A column holding a GitHub Actions run id is never a 32-bit integer: use `BigInteger` or `String`.
+  Ids exceed 2^31, and `Integer` fails only on Postgres (`integer out of range`), never on SQLite
+  (`test_run_id_columns_are_not_narrow_integers`).
+  History: `docs/history/claude-md-invariants-archive.md` #157.
 - Code promising "nothing raises" on an httpx call must catch `(httpx.HTTPError, httpx.InvalidURL,
   ValueError)` at construction and request: a malformed host raises `UnicodeError`, and an escape is
   a bare HTTP 500. History: `docs/history/claude-md-invariants-archive.md` #161.
 - `TransactionClock.now()` is `transaction_timestamp()` and does not advance: every admission term,
-  including change windows, is judged at the instant the transaction opened. History:
-  `docs/history/claude-md-invariants-archive.md` #163.
+  including change windows, is judged at the instant the transaction opened
+  (`test_the_clock_does_not_advance_inside_a_transaction`).
+  History: `docs/history/claude-md-invariants-archive.md` #163.
 - `change_window` is optional per reach row in `factory-policy.toml`; `live_estate` must keep one,
   enforced by `test_the_live_estate_row_declares_a_change_window`. Never require a window in
   `reach_admission.change_window_refusal`. History: `docs/history/claude-md-invariants-archive.md`
@@ -438,9 +451,11 @@ Placement rule: global CLAUDE.md §7.
   watched), and no record naming it as a revert. `UnitPrMerge.repository` is the envelope's
   spelling and `landing_reverts` is folded, so every join folds it. Detail:
   `docs/operations/landing-lanes.md`, "Automatic reverts (inert repositories)".
-- Making a UNIQUE constraint's column nullable disables it for NULL rows; use
-  `postgresql_nulls_not_distinct=True` and test by writing around the service. History:
-  `docs/history/claude-md-invariants-archive.md` #229.
+- A UNIQUE constraint or unique index over a nullable column is disabled for NULL rows: set
+  `postgresql_nulls_not_distinct=True` or record a reason in `NULLABLE_UNIQUE_REASONS`
+  (`test_nullable_unique_constraints_say_how_they_treat_null`), and test by writing around the
+  service.
+  History: `docs/history/claude-md-invariants-archive.md` #229.
 - A producer that shells out to `uv` must resolve it with `shutil.which` and fall back to
   `~/.local/bin`; launchd's PATH names only system directories. Detail:
   `docs/operations/local-development.md`.

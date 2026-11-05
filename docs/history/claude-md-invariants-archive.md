@@ -2331,3 +2331,38 @@ neither alarm rule named `--told` (ADR-0021 amendment 3).
   pinging only on the bridge lanes' acting run. They never arm the dead-man switch, and a launcher
   that doesn't arm it must not contain the arming function's name, which `test_sds_deadman.py`
   keys on. Detail: ADR-0021 amendment 2.
+
+### Platform Part 1, 2026-11-04
+
+The text these rules held in CLAUDE.md until the Core platform layer pass rewrote each as it stands.
+The transaction rule gained its guard (`test_transaction_ownership.py`) and dropped "functions called
+inside another transaction must never commit", which the guard states as a last-commit-point rule;
+the test-database rule names the migrate-once, TRUNCATE-per-test mechanism and xdist's per-worker
+databases; the `IN (...)` rule names `_in_members` and its two tests; the run-id rule now forbids any
+32-bit integer, not only requiring `BigInteger`; the nullable-UNIQUE, revision-id, trigger and clock
+rules each name a pinning test; the unit-registration rule cites the test's real name.
+
+- Request entry points own their transaction and must `session.commit()`; functions called inside
+  another transaction must never commit. A persistence test must re-read through a different
+  session, not `expire_all()`. History: `docs/history/claude-md-invariants-archive.md` #27.
+- A DB trigger rewrites `work_units.updated_at` on every update, so tests exercise staleness by
+  shrinking the env-overridable threshold, never by back-dating the row. History:
+  `docs/history/claude-md-invariants-archive.md` #31.
+- Never run two pytest suites against one test database: fixtures drop and recreate it. Use a
+  per-worktree database. Detail: `docs/operations/local-development.md`.
+- Never build a SQL `IN (...)` CHECK with `f"{VOCAB!r}"`: a one-element tuple renders a trailing
+  comma. Join quoted members explicitly, identically in model and migration. History:
+  `docs/history/claude-md-invariants-archive.md` #54.
+- Alembic revision ids must be at most 32 characters (`alembic_version.version_num` is
+  `varchar(32)`). History: `docs/history/claude-md-invariants-archive.md` #57.
+- Columns holding GitHub Actions run ids must be `BigInteger`: ids exceed 2^31, and `Integer` fails
+  only on Postgres (`integer out of range`), never on SQLite. History:
+  `docs/history/claude-md-invariants-archive.md` #157.
+- Making a UNIQUE constraint's column nullable disables it for NULL rows; use
+  `postgresql_nulls_not_distinct=True` and test by writing around the service. History:
+  `docs/history/claude-md-invariants-archive.md` #229.
+- `TransactionClock.now()` is `transaction_timestamp()` and does not advance: every admission term,
+  including change windows, is judged at the instant the transaction opened. History:
+  `docs/history/claude-md-invariants-archive.md` #163.
+- Unit registration asks only the field and level terms of that predicate, not the command term
+  (`test_registration_asks_the_field_and_level_terms`).

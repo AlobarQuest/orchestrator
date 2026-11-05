@@ -27,6 +27,14 @@ class Base(DeclarativeBase):
     pass
 
 
+def _in_members(vocabulary: tuple[str, ...]) -> str:
+    """A SQL `IN` list of the members, each quoted: `('a', 'b')`.
+
+    Never `repr(tuple)`: a one-element tuple renders `('a',)`, which is not the migration's text.
+    """
+    return "({})".format(", ".join(f"'{member}'" for member in vocabulary))
+
+
 class UUIDPrimaryKey:
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
@@ -246,11 +254,11 @@ class WorkPackageRevision(UUIDPrimaryKey, Base):
         UniqueConstraint("work_package_id", "content_hash"),
         CheckConstraint("revision > 0", name="ck_work_package_revisions_positive_revision"),
         CheckConstraint(
-            f"intake_source IN {INTAKE_SOURCES!r}",
+            f"intake_source IN {_in_members(INTAKE_SOURCES)}",
             name="ck_work_package_revisions_intake_source",
         ),
         CheckConstraint(
-            f"verification_mode IS NULL OR verification_mode IN {VERIFICATION_MODES!r}",
+            f"verification_mode IS NULL OR verification_mode IN {_in_members(VERIFICATION_MODES)}",
             name="ck_work_package_revisions_verification_mode",
         ),
         CheckConstraint(
@@ -359,7 +367,7 @@ class WorkUnit(UUIDPrimaryKey, Base):
             unique=True,
             postgresql_where=text("state <> 'cancelled'"),
         ),
-        CheckConstraint(f"state IN {WORK_UNIT_STATES!r}", name="ck_work_units_state"),
+        CheckConstraint(f"state IN {_in_members(WORK_UNIT_STATES)}", name="ck_work_units_state"),
         CheckConstraint(
             "attempt_count >= 0 AND max_attempts >= 0 AND attempt_count <= max_attempts",
             name="ck_work_units_attempts",
@@ -488,11 +496,11 @@ class ContextSnapshot(UUIDPrimaryKey, Base):
             name="fk_context_snapshots_claim_attempt",
         ),
         CheckConstraint(
-            f"classification IN {CONTEXT_CLASSIFICATIONS!r}",
+            f"classification IN {_in_members(CONTEXT_CLASSIFICATIONS)}",
             name="ck_context_snapshots_classification",
         ),
         CheckConstraint(
-            f"decision IN {CONTEXT_DECISIONS!r}",
+            f"decision IN {_in_members(CONTEXT_DECISIONS)}",
             name="ck_context_snapshots_decision",
         ),
         CheckConstraint("attempt > 0", name="ck_context_snapshots_positive_attempt"),
@@ -607,18 +615,15 @@ class Adjudication(UUIDPrimaryKey, Base):
             name="ck_adjudications_waiver_fields",
         ),
         CheckConstraint(
-            "risk IS NULL OR risk IN ("
-            + ", ".join(f"'{value}'" for value in WAIVER_RISK_CLASSES)
-            + ")",
+            f"risk IS NULL OR risk IN {_in_members(WAIVER_RISK_CLASSES)}",
             name="ck_adjudications_risk_class",
         ),
         # WS-P3.7. NULL is every row written before the column existed, and it must read as
         # *unknown* rather than as *not human* -- the historical population is not clean, so no
         # boundary drawn through it is sound (ADR-0014). Not back-filled, deliberately.
         CheckConstraint(
-            "decided_by_role IS NULL OR decided_by_role IN ("
-            + ", ".join(f"'{role.value}'" for role in ActorRole)
-            + ")",
+            "decided_by_role IS NULL OR decided_by_role IN "
+            + _in_members(tuple(role.value for role in ActorRole)),
             name="ck_adjudications_decided_by_role",
         ),
     )
@@ -681,7 +686,7 @@ class DispatchRecord(UUIDPrimaryKey, Base):
         UniqueConstraint("work_unit_id", "runner_attempt"),
         CheckConstraint("runner_attempt > 0", name="ck_dispatch_records_positive_attempt"),
         CheckConstraint(
-            f"status IN {DISPATCH_RECORD_STATUSES!r}",
+            f"status IN {_in_members(DISPATCH_RECORD_STATUSES)}",
             name="ck_dispatch_records_status",
         ),
     )
@@ -756,7 +761,7 @@ class ReleaseArtifactBinding(UUIDPrimaryKey, Base):
             postgresql_nulls_not_distinct=True,
         ),
         CheckConstraint(
-            "kind IN ({})".format(", ".join(f"'{kind}'" for kind in RELEASE_ARTIFACT_KINDS)),
+            f"kind IN {_in_members(RELEASE_ARTIFACT_KINDS)}",
             name="ck_release_artifact_kind",
         ),
         CheckConstraint(
@@ -865,7 +870,7 @@ class DeploymentObservation(UUIDPrimaryKey, Base):
             name="uq_deployment_observation_binding_environment",
         ),
         CheckConstraint(
-            "kind IN ({})".format(", ".join(f"'{kind}'" for kind in DEPLOYMENT_OBSERVATION_KINDS)),
+            f"kind IN {_in_members(DEPLOYMENT_OBSERVATION_KINDS)}",
             name="ck_deployment_observations_kind",
         ),
         CheckConstraint(
@@ -967,27 +972,27 @@ class Observation(UUIDPrimaryKey, Base):
             name="uq_observations_source_fact",
         ),
         CheckConstraint(
-            f"source_system IN {OBSERVATION_SOURCE_SYSTEMS!r}",
+            f"source_system IN {_in_members(OBSERVATION_SOURCE_SYSTEMS)}",
             name="ck_observations_source_system",
         ),
         CheckConstraint(
-            f"trust_classification IN {OBSERVATION_TRUST_CLASSIFICATIONS!r}",
+            f"trust_classification IN {_in_members(OBSERVATION_TRUST_CLASSIFICATIONS)}",
             name="ck_observations_trust_classification",
         ),
         CheckConstraint(
-            f"subject_type IN {OBSERVATION_SUBJECT_TYPES!r}",
+            f"subject_type IN {_in_members(OBSERVATION_SUBJECT_TYPES)}",
             name="ck_observations_subject_type",
         ),
         CheckConstraint(
-            f"observation_type IN {OBSERVATION_TYPES!r}",
+            f"observation_type IN {_in_members(OBSERVATION_TYPES)}",
             name="ck_observations_type",
         ),
         CheckConstraint(
-            f"status IN {OBSERVATION_STATUSES!r}",
+            f"status IN {_in_members(OBSERVATION_STATUSES)}",
             name="ck_observations_status",
         ),
         CheckConstraint(
-            f"severity IN {OBSERVATION_SEVERITIES!r}",
+            f"severity IN {_in_members(OBSERVATION_SEVERITIES)}",
             name="ck_observations_severity",
         ),
         CheckConstraint(
@@ -1055,11 +1060,11 @@ class EventPublication(UUIDPrimaryKey, Base):
             name="ck_event_publications_source_system",
         ),
         CheckConstraint(
-            f"source_kind IN {EVENT_PUBLICATION_KINDS!r}",
+            f"source_kind IN {_in_members(EVENT_PUBLICATION_KINDS)}",
             name="ck_event_publications_source_kind",
         ),
         CheckConstraint(
-            f"status IN {EVENT_PUBLICATION_STATUSES!r}",
+            f"status IN {_in_members(EVENT_PUBLICATION_STATUSES)}",
             name="ck_event_publications_status",
         ),
         CheckConstraint("attempt_count >= 0", name="ck_event_publications_attempt_count"),
@@ -1097,15 +1102,15 @@ class KnowledgePromotionProposal(UUIDPrimaryKey, Base):
         UniqueConstraint("proposal_hash"),
         UniqueConstraint("correlation_identity"),
         CheckConstraint(
-            f"target_brain IN {KNOWLEDGE_PROMOTION_TARGET_BRAINS!r}",
+            f"target_brain IN {_in_members(KNOWLEDGE_PROMOTION_TARGET_BRAINS)}",
             name="ck_knowledge_promotion_proposals_target_brain",
         ),
         CheckConstraint(
-            f"target_type IN {KNOWLEDGE_PROMOTION_TARGET_TYPES!r}",
+            f"target_type IN {_in_members(KNOWLEDGE_PROMOTION_TARGET_TYPES)}",
             name="ck_knowledge_promotion_proposals_target_type",
         ),
         CheckConstraint(
-            f"authority IN {KNOWLEDGE_PROMOTION_AUTHORITIES!r}",
+            f"authority IN {_in_members(KNOWLEDGE_PROMOTION_AUTHORITIES)}",
             name="ck_knowledge_promotion_proposals_authority",
         ),
         CheckConstraint(
@@ -1165,7 +1170,7 @@ class KnowledgePromotionProposalAction(UUIDPrimaryKey, Base):
         UniqueConstraint("event_id"),
         UniqueConstraint("proposal_id", "action"),
         CheckConstraint(
-            f"action IN {KNOWLEDGE_PROMOTION_ACTIONS!r}",
+            f"action IN {_in_members(KNOWLEDGE_PROMOTION_ACTIONS)}",
             name="ck_knowledge_promotion_proposal_actions_action",
         ),
         CheckConstraint(
@@ -1214,7 +1219,7 @@ class DecompositionProposal(UUIDPrimaryKey, Base):
         UniqueConstraint("work_package_revision_id", "proposal_number"),
         UniqueConstraint("id", "work_package_revision_id"),
         CheckConstraint(
-            f"state IN {PROPOSAL_STATES!r}",
+            f"state IN {_in_members(PROPOSAL_STATES)}",
             name="ck_decomposition_proposals_state",
         ),
         CheckConstraint("rationale <> ''", name="ck_decomposition_proposals_rationale"),
@@ -1365,15 +1370,11 @@ class ReconciliationCondition(UUIDPrimaryKey, Base):
             name="uq_reconciliation_conditions_divergence",
         ),
         CheckConstraint(
-            "observation_kind IN ({})".format(
-                ", ".join(f"'{kind}'" for kind in RECONCILIATION_OBSERVATION_KINDS)
-            ),
+            f"observation_kind IN {_in_members(RECONCILIATION_OBSERVATION_KINDS)}",
             name="ck_reconciliation_conditions_observation_kind",
         ),
         CheckConstraint(
-            "condition_type IN ({})".format(
-                ", ".join(f"'{kind}'" for kind in RECONCILIATION_CONDITION_TYPES)
-            ),
+            f"condition_type IN {_in_members(RECONCILIATION_CONDITION_TYPES)}",
             name="ck_reconciliation_conditions_type",
         ),
         CheckConstraint(
@@ -1424,7 +1425,7 @@ class ReconciliationResolution(UUIDPrimaryKey, Base):
         UniqueConstraint("condition_id", name="uq_reconciliation_resolutions_condition"),
         UniqueConstraint("idempotency_key", name="uq_reconciliation_resolutions_idempotency"),
         CheckConstraint(
-            f"decision IN {RECONCILIATION_DECISIONS!r}",
+            f"decision IN {_in_members(RECONCILIATION_DECISIONS)}",
             name="ck_reconciliation_resolutions_decision",
         ),
         CheckConstraint(
@@ -1509,7 +1510,7 @@ class UnitPrMerge(UUIDPrimaryKey, Base):
         UniqueConstraint("work_unit_id", name="uq_unit_pr_merge_work_unit"),
         UniqueConstraint("idempotency_key", name="uq_unit_pr_merge_idempotency"),
         CheckConstraint(
-            "status IN ({})".format(", ".join(f"'{status}'" for status in PR_MERGE_STATUSES)),
+            f"status IN {_in_members(PR_MERGE_STATUSES)}",
             name="ck_unit_pr_merge_status",
         ),
         CheckConstraint("pr_number > 0", name="ck_unit_pr_merge_positive_pr_number"),
@@ -1563,7 +1564,7 @@ class EstatePrMerge(UUIDPrimaryKey, Base):
         UniqueConstraint("repository", "pr_number", name="uq_estate_pr_merge_subject"),
         UniqueConstraint("idempotency_key", name="uq_estate_pr_merge_idempotency"),
         CheckConstraint(
-            "status IN ({})".format(", ".join(f"'{status}'" for status in PR_MERGE_STATUSES)),
+            f"status IN {_in_members(PR_MERGE_STATUSES)}",
             name="ck_estate_pr_merge_status",
         ),
         CheckConstraint("pr_number > 0", name="ck_estate_pr_merge_positive_pr_number"),
@@ -1623,7 +1624,7 @@ class LandingRevert(UUIDPrimaryKey, Base):
     __table_args__ = (
         UniqueConstraint("repository", "pr_number", name="uq_landing_reverts_subject"),
         CheckConstraint(
-            "status IN ({})".format(", ".join(f"'{s}'" for s in LANDING_REVERT_STATUSES)),
+            f"status IN {_in_members(LANDING_REVERT_STATUSES)}",
             name="ck_landing_reverts_status",
         ),
     )
@@ -1676,7 +1677,7 @@ class StagedPackageIntake(UUIDPrimaryKey, Base):
         # Built via join, not `{STAGED_INTAKE_STATES!r}`, so the CHECK stays valid SQL whatever
         # the tuple's length.
         CheckConstraint(
-            "state IN ({})".format(", ".join(f"'{state}'" for state in STAGED_INTAKE_STATES)),
+            f"state IN {_in_members(STAGED_INTAKE_STATES)}",
             name="ck_staged_package_intakes_state",
         ),
         # A registered row names its revision, and only a registered row does.
@@ -1729,17 +1730,13 @@ GRANT_STATES = ("not_assessed", "remediating", "granted", "not_applicable", "wit
 MEMBER_PROPOSAL_STATES = ("staged", "confirmed", "withdrawn")
 
 
-def _in_list(column: str, vocabulary: tuple[str, ...]) -> str:
-    return "{} IN ({})".format(column, ", ".join(f"'{member}'" for member in vocabulary))
-
-
 class SdsMember(UUIDPrimaryKey, Base):
     """A repository the SDS maintains: who owns it, where its working copy lives, and its state."""
 
     __tablename__ = "sds_members"
     __table_args__ = (
         Index("uq_sds_members_repository_lower", text("lower(repository)"), unique=True),
-        CheckConstraint(_in_list("state", MEMBER_STATES), name="ck_sds_members_state"),
+        CheckConstraint(f"state IN {_in_members(MEMBER_STATES)}", name="ck_sds_members_state"),
         CheckConstraint(
             "NOT machine_local OR working_copy IS NOT NULL",
             name="ck_sds_members_machine_local_working_copy",
@@ -1771,8 +1768,10 @@ class SdsMemberGrant(Base):
 
     __tablename__ = "sds_member_grants"
     __table_args__ = (
-        CheckConstraint(_in_list("service", MEMBER_SERVICES), name="ck_sds_member_grants_service"),
-        CheckConstraint(_in_list("state", GRANT_STATES), name="ck_sds_member_grants_state"),
+        CheckConstraint(
+            f"service IN {_in_members(MEMBER_SERVICES)}", name="ck_sds_member_grants_service"
+        ),
+        CheckConstraint(f"state IN {_in_members(GRANT_STATES)}", name="ck_sds_member_grants_state"),
         CheckConstraint("reason <> ''", name="ck_sds_member_grants_reason"),
     )
 
@@ -1831,7 +1830,7 @@ class SdsMemberProposal(UUIDPrimaryKey, Base):
     __table_args__ = (
         UniqueConstraint("idempotency_key", name="uq_sds_member_proposals_idempotency"),
         CheckConstraint(
-            _in_list("state", MEMBER_PROPOSAL_STATES), name="ck_sds_member_proposals_state"
+            f"state IN {_in_members(MEMBER_PROPOSAL_STATES)}", name="ck_sds_member_proposals_state"
         ),
         # Only a staged row is undecided; a decided row says who decided it and when.
         CheckConstraint(

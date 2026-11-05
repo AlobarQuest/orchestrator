@@ -3,7 +3,8 @@
 A lease is the period during which this orchestrator **refuses to hand the unit to anybody else**.
 It was never stall control and this module must not be read as though it were: nothing here detects
 a worker that has hung, and lapsing merely makes the unit available to be reclaimed by a SYSTEM
-actor who asks. Bounding a hung worker is a real, open hole and it belongs to WS-P2.19.
+actor who asks. A hung worker is noticed elsewhere: the WS-P2.19 stall report (#132) names a unit
+whose worker went quiet past `execution_stall_grace_seconds`.
 
 Both constants live in the kernel rather than in the policy artifact because the artifact may only
 ever move the number BETWEEN them. That is what keeps a duration compatible with ADR-0010's

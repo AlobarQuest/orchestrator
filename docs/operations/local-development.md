@@ -114,19 +114,20 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
 
 ### #84
 
-- **83% of this repo's test runtime is per-test schema rebuild, and no test runs in parallel.**
-  Measured 2026-08-01: `migrated_engine` (`tests/services/conftest.py`, re-exported by
-  `tests/persistence`, `tests/api` and `tests/web`) is **function-scoped** and does
-  `DROP SCHEMA public CASCADE` → `CREATE SCHEMA` → **a full `alembic upgrade head` over 21
-  migrations** for every test that requests it. One rebuild is **0.554s**; **305 test functions**
-  take it, which is **169s of a 203s local suite** (~620s of ~750s in CI). Separately,
-  `pytest-xdist` is a declared dev dependency that is **never invoked** — there is no `addopts`, so
-  nothing is parallel locally or in CI. The fix is a session-scoped schema plus a fast per-test
-  reset, and the reset must be **`TRUNCATE ... RESTART IDENTITY CASCADE`, not transaction
-  rollback**: services commit internally by design, and a persistence assertion must re-read through
-  a DIFFERENT session, neither of which survives being wrapped in an outer transaction. Only after
-  that is xdist safe, keyed per worker (`orchestrator_test_gw0…`), because the fixtures drop and
-  recreate the database and two suites must never share it.
+- **The test database is migrated once per process and emptied by `TRUNCATE` per test.** The
+  session-scoped `_schema` fixture in `tests/conftest.py` runs `DROP SCHEMA public CASCADE`, then
+  `CREATE SCHEMA`, then one `alembic upgrade head` over all 47 migrations
+  (`tests/_support/database.py::rebuild_schema`). `migrated_engine` (same file, re-exported by the
+  persistence, API and web suites) then empties every data table with
+  `TRUNCATE ... RESTART IDENTITY CASCADE` before each test. It is not a transaction rollback:
+  services commit internally by design, and a persistence assertion must re-read through a
+  DIFFERENT session, neither of which survives an outer transaction. A test that alters the schema
+  marks it dirty, and the next test rebuilds it. The measurement that motivated this (2026-08-01,
+  per-test rebuild of 21 migrations: 169s of a 203s suite) is history; PR #298 replaced it.
+  The Makefile exports `PYTEST_ADDOPTS ?= -n auto --dist loadgroup`, so a `make check` run uses
+  xdist, and each worker owns its own database (`<base>_gw0`, `<base>_gw1`, ...), created and
+  dropped by the session fixtures. The hazard that remains is two separate pytest runs against one
+  base database: each run drops and re-migrates the schema once, under the other's tests.
 
 ### #98
 
@@ -490,23 +491,19 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   **THE TRAILING CLAUSE USED TO READ "the main tree's 3.12 is deliberate and is the floor CI
   pins", AND THE SECOND HALF IS GONE.** CI moved to 3.14 on 2026-09-02 (`6fe1f95`), and since
   2026-09-09 `.python-version` is what CI, a build worktree and this tree are all meant to
-  resolve — one number, not a deliberate split. `requires-python` is still `>=3.12` and is
-  deliberately BEHIND it: raising the floor is the obviously right end state and was measured to
-  be a 26-file change rather than a line, because ruff derives both its lint and its format
-  target from `requires-python` and 3.14 turns on PEP 758 (`except A, B:`, a hard SyntaxError on
-  3.12) plus 11 forward-reference unquotings. Three of the files that reformats back scheduled
-  lanes. So the floor moves in its own increment AFTER this tree's venv does, at which point both
-  cascades are free; `tests/architecture/test_interpreter_agreement.py` holds it to not
-  EXCLUDING the pin in the meantime and records the whole measurement.
-  **COUNT THE LANES, DO NOT RECALL THEM.** This bullet's headline says EIGHT and there are
-  **eleven** (`ls scripts/com.devon.*.plist`, all loaded — measured 2026-09-09: activation-sweep,
-  bump-proposer, change-proposer, deploy-watcher, estate-landing, inert-landing, landing-ledger,
-  pin-watcher, revision-watcher, tool-installer, work-carrier). Eight was last true on 2026-09-03;
+  resolve — one number, not a deliberate split. `requires-python` is `>=3.14`, equal to it: the
+  floor moved in its own increment (26 sites across 23 files, because ruff derives its lint and
+  format target from `requires-python`; 3.14 turns on PEP 758 `except A, B:` and unquotes forward
+  references), and `tests/architecture/test_interpreter_agreement.py` holds `.python-version`, the
+  Dockerfile, pyright and `requires-python` equal (#145).
+  **COUNT THE LANES, DO NOT RECALL THEM.** This bullet's headline says EIGHT and there are now
+  **twenty** launch agents (`ls scripts/com.devon.*.plist`): 19 `scripts/run-*.sh` lanes plus
+  `rotation-worker`, the executor. Measured 2026-11-04; eight was last true on 2026-09-03, and
   `pin-watcher`, `tool-installer` and `revision-watcher` arrived over the following five days. The
-  headline is left as written because it is the record of what was measured then — and because the
-  way it went stale is the more useful half: **the 2026-09-09 correction rewrote the sentence
-  below it and copied the digit forward without re-measuring**, two thousand lines from its own new
-  line saying a number in prose ages. A count in a heading is a number in prose.
+  headline is left as written because it is the record of what was measured then. A count in a
+  heading is a number in prose, and the way it went stale is the more useful half: **a correction
+  once rewrote the sentence below it and copied the digit forward without re-measuring.**
+  Re-measure with `ls`; do not edit the number from memory.
 
 ### #300
 
