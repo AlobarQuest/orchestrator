@@ -27,8 +27,6 @@ WS42_DISPATCH_PATHS = {
     Path("src/orchestrator/api/schemas/reporting.py"),
     Path("src/orchestrator/api/schemas/release.py"),
     Path("src/orchestrator/api/schemas/verifier.py"),
-    Path("src/orchestrator/config.py"),
-    Path("src/orchestrator/persistence/models.py"),
     Path("src/orchestrator/services/execution/dispatch.py"),
     # ADR-0052: superseding a decomposition refuses a unit whose run may have started, read from
     # its dispatch records. It reads them; it never starts a run.
@@ -39,6 +37,15 @@ WS42_DISPATCH_PATHS = {
     # Verification re-reads that dispatch identity before trusting stored named-check evidence.
     # The helper is read-only apart from locking the canonical PR binding through transition.
     Path("src/orchestrator/services/verifier/verifier_named_check.py"),
+}
+# Two files excused for the labels they were measured to trip, not wholesale: a term in one is
+# skipped only when every label it matches is listed. `config.py` names the dispatch settings and
+# the pilot workflow file; `models.py` names the dispatch record and the post-deploy columns. A new
+# `deploy`, `coolify` or merge term in either is reported. ws33's whole-text scan of `config.py`
+# (`DISPATCH_EXEMPT_PATHS`) stays: it reads comments and docstrings, which name the pilot workflow.
+LABEL_EXEMPT_PATHS: dict[Path, frozenset[str]] = {
+    Path("src/orchestrator/config.py"): frozenset({"dispatch", "factory-runner"}),
+    Path("src/orchestrator/persistence/models.py"): frozenset({"dispatch", "deploy"}),
 }
 WS53_POST_DEPLOY_PATHS = {
     Path("src/orchestrator/services/release/deployment_observations.py"),
@@ -149,6 +156,11 @@ def _iter_string_terms(path: Path, tree: ast.AST) -> list[RuntimeTerm]:
     ]
 
 
+def _label_excused(path: Path, labels: tuple[str, ...]) -> bool:
+    """A listed file excuses a term only when EVERY label the term matched is one it lists."""
+    return path in LABEL_EXEMPT_PATHS and set(labels) <= LABEL_EXEMPT_PATHS[path]
+
+
 def _find_matches(term_kind: str) -> list[str]:
     matches: set[str] = set()
     for path in sorted(SOURCE_ROOT.rglob("*.py")):
@@ -168,6 +180,8 @@ def _find_matches(term_kind: str) -> list[str]:
             # AND a deploy is not excused by the merge exemption -- it is the thing the exemption
             # exists to keep refusing.
             if path in MERGE_EXEMPT_PATHS and set(labels) <= MERGE_LABELS:
+                continue
+            if _label_excused(path, labels):
                 continue
             matches.add(f"{term.path} [{term.kind}] {term.value!r} matched {labels[0]!r}")
     return sorted(matches)
@@ -269,6 +283,67 @@ def test_ws32_file_exemptions_name_only_files_that_exist_and_still_need_them() -
         assert not unused, (
             f"{name} exempts files that no longer carry any forbidden term: {unused}. Remove them."
         )
+
+
+def _labels_occurring_in(path: Path) -> set[str]:
+    tree = _parse_source(path)
+    return {
+        label
+        for kind in (_iter_identifier_terms, _iter_string_terms)
+        for term in kind(path, tree)
+        for label in _forbidden_labels(term.tokens)
+    }
+
+
+def _rotten_labels(exempt: dict[Path, frozenset[str]]) -> list[str]:
+    """Each listed (path, label) pair whose file is gone or no longer trips that label."""
+    return sorted(
+        f"{path} {label!r}"
+        for path, labels in exempt.items()
+        for label in labels
+        if not path.is_file() or label not in _labels_occurring_in(path)
+    )
+
+
+def test_ws32_label_exemptions_name_only_labels_their_files_still_trip() -> None:
+    """The rot check for `LABEL_EXEMPT_PATHS`: a label that stops occurring goes on excusing the
+    next term that carries it, unwatched. Labels must also be real forbidden labels."""
+    known = {label for label, _ in FORBIDDEN_SEQUENCES}
+    assert all(labels <= known for labels in LABEL_EXEMPT_PATHS.values())
+    assert _rotten_labels(LABEL_EXEMPT_PATHS) == []
+
+
+def test_ws32_label_exemption_excuses_only_the_labels_it_lists() -> None:
+    config = Path("src/orchestrator/config.py")
+    models = Path("src/orchestrator/persistence/models.py")
+
+    assert _label_excused(config, _forbidden_labels(_tokenize("dispatch_enabled")))
+    assert _label_excused(config, _forbidden_labels(_tokenize("factory-runner-pilot.yml")))
+    # A deploy identifier in config.py's text is reported, as is a coolify one.
+    assert not _label_excused(config, _forbidden_labels(_tokenize("deploy_target")))
+    assert not _label_excused(config, _forbidden_labels(_tokenize("coolify_url")))
+    # One term carrying a listed label AND an unlisted one is not excused.
+    assert not _label_excused(config, _forbidden_labels(_tokenize("dispatch_deploy")))
+    assert _label_excused(models, _forbidden_labels(_tokenize("post_deploy_event_id")))
+    assert not _label_excused(models, _forbidden_labels(_tokenize("factory_runner_id")))
+    # A file that is not listed is never excused.
+    assert not _label_excused(Path("src/orchestrator/main.py"), ("dispatch",))
+
+
+def test_ws32_label_rot_check_fails_on_a_label_no_term_matches() -> None:
+    assert _rotten_labels({Path("src/orchestrator/config.py"): frozenset({"coolify"})}) == [
+        "src/orchestrator/config.py 'coolify'"
+    ]
+    assert _rotten_labels({Path("src/orchestrator/gone.py"): frozenset({"dispatch"})}) == [
+        "src/orchestrator/gone.py 'dispatch'"
+    ]
+
+
+def test_ws32_label_exempt_files_are_scanned_not_skipped() -> None:
+    """The two files left the whole-file allowlist: they must still be read."""
+    for path in LABEL_EXEMPT_PATHS:
+        assert path not in WS42_DISPATCH_PATHS
+        assert path not in WS53_POST_DEPLOY_PATHS
 
 
 def _labels_in(source: str) -> list[str]:
