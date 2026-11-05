@@ -233,6 +233,7 @@ for their date and are not current policy.
 - [ ] (P3) Add a retire action for a registered package with no decomposition. Only staged intakes can be withdrawn; a registered package that is never decomposed waits forever in execution-status (example: f921c842, WS-P2.11 conformance kit, delivered by hand). Rejecting a proposal is the only thing that ends a package's wait. — added 2026-11-03
 - [ ] (P3) The policy-approver pattern (_POLICY_APPROVER_RE in orchestrator package_sources.py, and its writer in intent-packages approval_policy) ends in $, which matches before a trailing newline, so an approver 'policy:x@v1' followed by a newline in lineage.yaml is accepted. Use re.fullmatch or \Z on both sides together. — added 2026-11-04
 - [ ] (P2) deploy_orchestrator.py holds the bump-driver launch agent during a deploy (disable before recheck, re-enable after finish, also on failure) so a deploy never waits on the clock; replaces the 'deploy away from :50' rule in docs/operations/deploy.md — added 2026-11-05
+- [ ] (P3) Register the sds-bridge alert-hub sender token (BWS b415d03b, SDS Operator) in .cred-consumers.toml: no rotated_by_sds (no alert-hub rotation adapter), with its lane readers as consumers, like the sds-orchestrator row added in #612 — added 2026-11-05
 ## Future plans
 
 ## Known Non-obvious Invariants

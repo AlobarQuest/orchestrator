@@ -357,10 +357,37 @@ route of any method fails one of these until the inventory or the guard names it
 
 `tests/architecture/test_review_handlers.py` scans `web.py` once and holds two rules. Every
 function decorated `@router.get` or `@router.post` calls `_human(actor)` as a direct statement of
-its body, so a worker credential cannot reach a human page. Every `@router.post` function calls
-`_require_form(` in its own body, not in a nested `def`, so no form skips CSRF and explicit
-confirmation. It also holds the decorated set equal to the router's registered endpoints, so a
-route registered another way is not missed. Its control tests feed the scanner source text with the
-call removed, hidden in a branch, or placed in a nested function, and each is reported. A handler
+its body, with `actor` as the argument, so a worker credential cannot reach a human page. Every
+`@router.post` function calls `_require_form(` as a direct statement of its body, never only inside a
+branch, an `except` clause or a nested `def`, so no form skips CSRF and explicit confirmation. It
+also holds the decorated set equal to the router's registered endpoints, so a route registered
+another way is not missed. Its control tests feed the scanner source text with the call removed,
+hidden in a branch or an `except` clause, placed in a nested function, or given another argument,
+and each is reported. A handler
 that fails the scan is not fixed by adding the call in the same change without a decision: the gate
 it lacks is a behaviour change.
+
+## The schema and transaction rules
+
+Five tests hold the persistence rules that Postgres or Alembic would otherwise enforce only in
+production.
+
+- **`IN (...)` CHECKs.** `tests/persistence/test_check_constraint_text.py` pins every model
+  `IN (...)` CHECK's text to `tests/fixtures/model_in_checks.json`
+  (`test_the_model_renders_the_in_checks_the_fixture_records`). It also adds each one to a
+  temporary copy of its table, and compares the result with the migrated constraint in Postgres's
+  own form (`test_postgres_stores_the_model_check_as_it_stores_the_migrated_one`), so the model
+  can't drift from its migration. `tests/architecture/test_in_check_shape.py` refuses `!r`,
+  `repr(` and `%r` in an `IN` list, in `models.py` and in revisions numbered above 0047.
+  `persistence/models.py` builds every list with `_in_members`.
+- **Run ids, nullable UNIQUE and revision ids.** `tests/persistence/test_schema_rules.py` holds
+  three rules over `Base.metadata` and Alembic's script directory. A column ending `run_id` is
+  `BigInteger` or `String`, never a 32-bit integer. A unique constraint or index over a nullable
+  column, expression indexes included, sets `postgresql_nulls_not_distinct=True` or has an entry in
+  `NULLABLE_UNIQUE_REASONS`. A revision id fits `varchar(32)`. Each rule has a control that feeds
+  its predicate a bad input.
+- **Transaction ownership.** `tests/architecture/test_transaction_ownership.py` refuses a function
+  that commits and also calls, directly or through helpers, a committing function that has another
+  commit point after it. A sole tail handoff passes. Its docstring states what the scan can't see:
+  calls through an object or a `from package import module` import, a commit on a receiver not
+  named `session`, and functions that commit nothing themselves.
