@@ -148,7 +148,7 @@ class Settings(BaseSettings):
     # every claim on them, and boot holds this setting to its profile the same way.
     rotation_keychain_executor_agent_id: str | None = None
     # Runtime authentication, read once at boot by `main.load_auth_config`. Every one of these is
-    # a RAW STRING on purpose, including the three that hold JSON. A `dict` or `list` annotation
+    # a RAW STRING on purpose, including the four that hold JSON. A `dict` or `list` annotation
     # would have pydantic-settings decode them itself, so a malformed value would fail while
     # `get_settings()` runs at import -- with a different error, and even when no registry bundle
     # is set and authentication is off. Keeping them strings leaves the parsing, the shape checks,
