@@ -67,6 +67,7 @@ Placement rule: global CLAUDE.md §7.
   covers every `.py` file under `tests/protocol/` except the shared setup it names, so a new
   protocol test is scanned without being listed
   (`test_the_scan_covers_every_protocol_test_and_not_the_shared_setup`).
+  History: `docs/history/claude-md-invariants-archive.md` #5.
 - Generated post-deploy criteria are verifier-owned: public adjudication rejects their AC IDs
   (`test_generated_post_deploy_unit_rejects_direct_public_adjudication`). Archive #8.
 - Production `/api` is M2M-only at the Traefik proxy (identity headers stripped); a human API route
@@ -366,7 +367,8 @@ Placement rule: global CLAUDE.md §7.
   ValueError)` at construction and request: a malformed host raises `UnicodeError`, and an escape is
   a bare HTTP 500. The CLI and the App token mint hold it
   (`test_a_malformed_api_url_is_a_stable_cli_error` in `tests/cli/test_cli_errors.py`,
-  `test_a_malformed_mint_request_fails_closed` in `tests/services/test_github_app.py`).
+  `test_a_malformed_mint_request_fails_closed` in `tests/services/test_github_app.py`). History:
+  `docs/history/claude-md-invariants-archive.md` #161.
 - `TransactionClock.now()` is `transaction_timestamp()` and does not advance: every admission term,
   including change windows, is judged at the instant the transaction opened
   (`test_the_clock_does_not_advance_inside_a_transaction`).
