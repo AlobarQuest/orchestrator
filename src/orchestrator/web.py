@@ -6,18 +6,29 @@ import json
 import secrets
 import time
 import uuid
+from collections.abc import Callable, Coroutine
 from datetime import datetime
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, Form, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.routing import APIRoute
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from orchestrator.api.dependencies import AuthConfig, SettingsDep, get_actor, get_session
+from orchestrator.api.dependencies import (
+    APIAuthenticationError,
+    AuthConfig,
+    SettingsDep,
+    get_actor,
+    get_session,
+)
+from orchestrator.api.error_shape import authentication_message, error_body, status_for
 from orchestrator.api.routes.common import PageLandingSourceDep
 from orchestrator.api.routes.intake import package_intake_command
 from orchestrator.api.schemas.common import INTEGER_COLUMN_MAX
@@ -101,8 +112,115 @@ from orchestrator.services.verifier.evidence import (
     record_adjudications,
 )
 
-router = APIRouter(prefix="/review", include_in_schema=False)
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
+
+
+def _back_link(request: Request) -> str:
+    """The `Referer`'s path when it is a /review page, else `/review`; never a scheme or host."""
+    path = urlsplit(request.headers.get("referer", "")).path
+    if path == "/review" or path.startswith("/review/"):
+        return path
+    return "/review"
+
+
+def _validation_message(error: RequestValidationError) -> str:
+    """The first five errors as `<field>: <msg>`; never pydantic's `input` or `ctx`.
+
+    `input` is the submitted value, so it never reaches the page. The location's leading
+    `body`/`path`/`query` says where the field was sent, which a person doesn't need.
+    """
+    parts = []
+    for item in list(error.errors())[:5]:
+        location = list(item.get("loc", ()))
+        if location and location[0] in ("body", "path", "query", "header", "cookie"):
+            location = location[1:]
+        parts.append(f"{'.'.join(str(part) for part in location)}: {item.get('msg', '')}")
+    return "; ".join(parts)
+
+
+def _refusal_page(request: Request, error: Exception) -> HTMLResponse:
+    """Render a /review refusal as `refusal.html`, at the status the JSON body had.
+
+    The fields are the ones `error_body` gives the API, so the page shows exactly what the JSON
+    did. It is rendered without `_render`, so it sets no cookie and reads no CSRF secret (a
+    `csrf_unavailable` refusal would otherwise recurse), and it reads nothing from the database.
+
+    It performs no rollback either (ruling R1): the route class caught the exception, so
+    `get_session`'s `with` block exits normally once the handler returns and closes its plain
+    `sessionmaker` session, which rolls back any open transaction. A write the handler flushed
+    before refusing is not kept (`test_a_write_made_before_the_refusal_is_not_kept`).
+    """
+    headers: dict[str, str] = {}
+    if isinstance(error, DomainError):
+        status = status_for(error.code)
+        body = error_body(
+            error.code,
+            error.message,
+            recovery=error.recovery,
+            current_state=error.current_state,
+            current_version=error.current_version,
+        )
+    elif isinstance(error, APIAuthenticationError):
+        status = 401
+        body = error_body(error.code, authentication_message(error.code))
+        headers["WWW-Authenticate"] = "Bearer"
+    elif isinstance(error, RequestValidationError):
+        status = 422
+        body = error_body("request_invalid", _validation_message(error))
+    else:
+        raise TypeError(f"not a refusal: {type(error).__name__}")
+    fields = cast(dict[str, object], body["error"])
+    details = [
+        (name.replace("_", "-"), label, fields[name])
+        for name, label in (
+            ("recovery", "Recovery"),
+            ("current_state", "Current state"),
+            ("current_version", "Current version"),
+        )
+        if name in fields
+    ]
+    return templates.TemplateResponse(
+        request=request,
+        name="refusal.html",
+        context={
+            "code": fields["code"],
+            "message": fields["message"],
+            "details": details,
+            "back": _back_link(request),
+        },
+        status_code=status,
+        headers=headers,
+    )
+
+
+class RefusalPageRoute(APIRoute):
+    """A /review route whose refusals a person reads as a page (Devon's decision 2).
+
+    `DomainError`, `APIAuthenticationError` and `RequestValidationError`, raised in the handler or
+    in a dependency (`get_actor`, the form's validation), render `refusal.html` at the status the
+    JSON had. Nothing else is caught, so any other exception reaches the app's `Exception` handler
+    and stays Part 2's JSON `internal_error` 500.
+
+    It is a route class, not an `app.exception_handler`, so the API's JSON is unchanged and the
+    app's handler set stays `{APIAuthenticationError, DomainError, Exception}`
+    (`test_the_handlers_beyond_fastapis_defaults_are_exactly_three` and
+    `test_the_handlers_beyond_fastapis_defaults_are_the_listed_ones`). FastAPI calls this
+    override again for each inclusion of the router, so it holds under `create_app()`.
+    """
+
+    def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
+        handler = super().get_route_handler()
+
+        async def refusing_handler(request: Request) -> Response:
+            try:
+                return await handler(request)
+            except (DomainError, APIAuthenticationError, RequestValidationError) as error:
+                return _refusal_page(request, error)
+
+        return refusing_handler
+
+
+router = APIRouter(prefix="/review", include_in_schema=False, route_class=RefusalPageRoute)
 SessionDep = Annotated[Session, Depends(get_session)]
 ActorDep = Annotated[ActorContext, Depends(get_actor)]
 CSRF_COOKIE = "orchestrator_review_session"

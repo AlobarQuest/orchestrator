@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 import orchestrator.web
 from orchestrator.api.dependencies import AuthConfig
 from orchestrator.persistence.models import WorkUnit
+from tests._support.refusal_page import refusal_code
 from tests.api.test_lifecycle_api import HUMAN, WORKER
 
 
@@ -135,7 +136,7 @@ def test_malformed_base64_is_rejected_not_raised(
     )
 
     assert response.status_code == 403
-    assert response.json()["error"]["code"] == "csrf_rejected"
+    assert refusal_code(response) == "csrf_rejected"
 
 
 def test_csrf_secret_configuration_is_strong_and_missing_is_stable(
@@ -151,7 +152,7 @@ def test_csrf_secret_configuration_is_strong_and_missing_is_stable(
     response = db_client.get(f"/review/units/{review_unit.id}", headers=HUMAN)
 
     assert response.status_code == 503
-    assert response.json()["error"]["code"] == "csrf_unavailable"
+    assert refusal_code(response) == "csrf_unavailable"
 
 
 def _post_review(db_client: TestClient, unit: WorkUnit, token: str, key: str, **kwargs):

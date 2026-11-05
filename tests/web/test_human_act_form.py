@@ -13,6 +13,7 @@ from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
 from orchestrator.persistence.models import Dependency, Event, WorkUnit
+from tests._support.refusal_page import refusal_code
 from tests._support.seeding import register_unit
 from tests.api.test_lifecycle_api import HUMAN, SYSTEM
 
@@ -155,7 +156,7 @@ def test_a_malformed_resolution_is_refused_and_writes_nothing(
     response = _post(db_client, dependency.id, fields, values)
 
     assert response.status_code == 409, response.text
-    assert response.json()["error"]["code"] == code
+    assert refusal_code(response) == code
     assert _dependency(migrated_engine, review_unit).status == "pending"
 
 
@@ -221,7 +222,7 @@ def test_a_work_unit_dependency_gets_no_form_and_is_refused(
     response = _post(db_client, dependency.id, fields)
 
     assert response.status_code == 409, response.text
-    assert response.json()["error"]["code"] == "dependency_not_a_human_act"
+    assert refusal_code(response) == "dependency_not_a_human_act"
     assert _dependency(migrated_engine, review_unit).status == "pending"
 
 
@@ -265,7 +266,7 @@ def test_a_stale_form_cannot_overwrite_a_recorded_outcome(
     response = _post(db_client, dependency.id, second, {"outcome": "failed"})
 
     assert response.status_code == 409, response.text
-    assert response.json()["error"]["code"] == "dependency_not_pending"
+    assert refusal_code(response) == "dependency_not_pending"
     assert _dependency(migrated_engine, review_unit).status == "satisfied"
 
 
@@ -284,5 +285,5 @@ def test_the_route_refuses_a_settled_unit(
     response = _post(db_client, dependency.id, fields)
 
     assert response.status_code == 409, response.text
-    assert response.json()["error"]["code"] == "dependency_unit_settled"
+    assert refusal_code(response) == "dependency_unit_settled"
     assert _dependency(migrated_engine, review_unit).status == "pending"

@@ -17,6 +17,7 @@ from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
 from orchestrator.persistence.models import Event, WorkPackageRevision
+from tests._support.refusal_page import refusal_code
 from tests.api.test_lifecycle_api import HUMAN, WORKER
 from tests.api.test_package_intake_api import intake_payload
 
@@ -112,7 +113,7 @@ def test_a_submission_without_csrf_is_refused(db_client: TestClient) -> None:
         follow_redirects=False,
     )
     assert response.status_code == 403
-    assert response.json()["error"]["code"] == "csrf_rejected"
+    assert refusal_code(response) == "csrf_rejected"
 
 
 def test_an_unconfirmed_submission_is_refused(db_client: TestClient) -> None:

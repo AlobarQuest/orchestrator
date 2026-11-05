@@ -8,6 +8,7 @@ from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
 
 from orchestrator.persistence.models import SdsMember, SdsMemberGrant, SdsMemberProposal
+from tests._support.refusal_page import refusal_code
 from tests.api.test_lifecycle_api import HUMAN, SYSTEM, VERIFIER, WORKER
 from tests.api.test_membership_api import OBSERVER
 from tests.architecture.test_membership_writers import WRITE_ROUTES
@@ -156,7 +157,7 @@ def test_a_record_that_moved_after_the_page_rendered_is_refused(
     )
 
     assert response.status_code == 409
-    assert response.json()["error"]["code"] == "member_proposal_changed"
+    assert refusal_code(response) == "member_proposal_changed"
     with Session(migrated_engine) as session:
         assert len(session.scalars(select(SdsMember)).all()) == 1
         row = session.get(SdsMemberProposal, uuid.UUID(first))
@@ -216,6 +217,8 @@ def test_each_write_route_refuses_every_other_role(
             assert response.status_code == 403, (route, role, response.status_code)
             if route.startswith("/api/"):
                 assert response.json()["error"]["code"] in refusals, (route, role)
+            else:
+                assert refusal_code(response) in refusals, (route, role)
     assert _counts(migrated_engine) == before
 
 

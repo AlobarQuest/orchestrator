@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from orchestrator.persistence.models import ReconciliationCondition, WorkUnit
 from orchestrator.services.reconciliation.reconciliation import open_conditions
+from tests._support.refusal_page import refusal_code
 from tests.api.test_lifecycle_api import HUMAN, SYSTEM
 
 
@@ -103,9 +104,9 @@ def test_resolution_requires_csrf_and_explicit_confirmation(
     forged = _post(db_client, condition_id, {**fields, "csrf_token": "/w==.invalid"})
 
     assert unconfirmed.status_code == 403
-    assert unconfirmed.json()["error"]["code"] == "csrf_rejected"
+    assert refusal_code(unconfirmed) == "csrf_rejected"
     assert forged.status_code == 403
-    assert forged.json()["error"]["code"] == "csrf_rejected"
+    assert refusal_code(forged) == "csrf_rejected"
     with Session(migrated_engine) as session:
         assert len(open_conditions(session, flagged_unit.id)) == 1
 
@@ -152,6 +153,6 @@ def test_a_machine_actor_cannot_resolve(
     )
 
     assert response.status_code == 403
-    assert response.json()["error"]["code"] == "human_actor_required"
+    assert refusal_code(response) == "human_actor_required"
     with Session(migrated_engine) as session:
         assert len(open_conditions(session, flagged_unit.id)) == 1

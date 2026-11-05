@@ -15,6 +15,7 @@ from orchestrator.kernel.transitions import TransitionGuards, authorize_transiti
 from orchestrator.main import create_app
 from orchestrator.persistence.models import Approval, Event, WorkUnit
 from orchestrator.services.reporting.pending_decisions import SETTLED_STATES
+from tests._support.refusal_page import refusal, refusal_code
 from tests.api.test_lifecycle_api import HUMAN, WORKER
 
 _ALLOWED_COMMANDS = (
@@ -228,7 +229,7 @@ def test_invalid_legacy_authority_hides_and_rejects_authority_approval(
     )
 
     assert response.status_code == 409
-    assert response.json()["error"]["code"] == "authority_mutation_commands_invalid"
+    assert refusal_code(response) == "authority_mutation_commands_invalid"
     with Session(migrated_engine) as session:
         assert session.scalar(select(func.count()).select_from(Approval)) == 1
         assert session.scalar(select(func.count()).select_from(Event)) == 0
@@ -309,8 +310,8 @@ def test_stale_version_form_returns_conflict(db_client: TestClient, review_unit:
         },
     )
     assert response.status_code == 409
-    assert response.json()["error"]["code"] == "version_conflict"
-    assert response.json()["error"]["current_version"] == review_unit.version
+    assert refusal_code(response) == "version_conflict"
+    assert int(refusal(response)["current-version"]) == review_unit.version
 
 
 def test_approving_on_the_page_returns_the_unit_to_ready(
@@ -719,7 +720,7 @@ def test_unknown_envelope_field_hides_and_rejects_authority_approval(
     )
 
     assert response.status_code >= 400
-    assert response.json()["error"]["code"] == "authority_unknown_fields"
+    assert refusal_code(response) == "authority_unknown_fields"
 
 
 def _retry_form_data(new_max_attempts: int, review_unit: WorkUnit) -> dict[str, str]:
@@ -744,6 +745,7 @@ def test_retry_form_refuses_attempts_above_the_integer_column(
     )
 
     assert response.status_code == 422
+    assert refusal_code(response) == "request_invalid"
 
 
 def test_retry_form_accepts_attempts_at_the_integer_column_limit(

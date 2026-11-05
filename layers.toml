@@ -91,6 +91,7 @@ paths = [
   "tests/web/test_queue.py",
   "tests/web/test_unit_page_layout.py",
   "tests/web/test_decision_surface.py",
+  "tests/web/test_refusal_page.py",
   "tests/cli/__init__.py",
   "tests/cli/conftest.py",
   "tests/cli/test_cli_contract.py",
