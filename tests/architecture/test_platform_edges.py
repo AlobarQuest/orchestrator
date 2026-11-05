@@ -30,6 +30,11 @@ What this cannot see, stated so a green run is not read as more than it is:
 * The bound each token caller names is checked to be a call that still exists in the module that
   holds it, not that the call is reached on every path or that its result is honoured. Those are
   the landing, execution and verification edge tests' and the services' own tests.
+* Reachability from a route to its grant check is the unreachable-guards call graph's: calls
+  resolved by name through the module's imports. A call through an object is no edge, so
+  dispatch's `grant_source.is_granted` is shown as a reachable function making that call, not as
+  a check on the receiver; a test pins the receiver the route passes. That a reached grant result
+  is honoured (the `.met` is used) is not read.
 * Handlers added with `add_middleware`, or by a router's own handlers, are not handlers here;
   `add_middleware` appears nowhere in the layer today and is not scanned for.
 """
@@ -37,6 +42,7 @@ What this cannot see, stated so a green run is not read as more than it is:
 from __future__ import annotations
 
 import ast
+import shutil
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from itertools import product
@@ -62,6 +68,7 @@ from orchestrator.web import router as web_router
 from scripts.layers import load
 from tests.architecture.edge_table import Permits, built_clients, near_misses, sendable
 from tests.architecture.import_scan import file_imports
+from tests.architecture.test_unreachable_guards import CallGraph
 
 SOURCE = Path("src/orchestrator")
 GITHUB_APP = "src/orchestrator/services/github_app.py"
@@ -205,24 +212,49 @@ REVERT_ACT = "src/orchestrator/services/landing/revert_act.py"
 NAMED_CHECK = "src/orchestrator/services/verifier/verifier_evidence.py"
 
 
+Node = tuple[str, str]  # (dotted module under src/, function name), as `CallGraph` names them
+GRANT_CHECKS: Final = ("grant_term", "unit_grant_refusal", "is_granted")
+
+
+def _module(path: str) -> str:
+    return path.removeprefix("src/").removesuffix(".py").replace("/", ".")
+
+
+def _node(path: str, function: str) -> Node:
+    return (_module(path), function)
+
+
 @dataclass(frozen=True)
 class Caller:
     """One function that mints or resolves, how often, and what bounds it.
 
-    `anchors` are the calls (module, callee) that carry the bound; each must still exist.
+    `kind` is how the bound is checked, against the call graph rather than by name:
+    * `grant`: every `via` function is reachable, through calls, from each entry, and calls a
+      grant check (`GRANT_CHECKS`) itself.
+    * `exception`: a named reason instead; no function reachable from any entry calls a grant
+      check, so a grant added later makes the row move.
+    * `callers`: the function only builds gateways; every function in its file that calls it must
+      itself be a `grant` row.
+    `entries` are the functions whose reach is tested; empty means the row's own function.
     """
 
     provider: int
     credentials: int
     bound: str
-    anchors: tuple[tuple[str, str], ...] = ()
+    kind: str = "grant"
+    via: tuple[Node, ...] = ()
+    entries: tuple[Node, ...] = ()
 
 
+ESTATE_VIA = (_node(ESTATE_ADMISSION, "estate_landing_admission"),)
+INERT_VIA = (_node(INERT_ADMISSION, "inert_landing_admission"),)
 _GRANT_AT_ADMISSION = "the admission asks the member record's grant before any read or write"
 _REVERT = (
-    "the lane gateways are built here and handed to revert_act, whose watch and acts ask the "
-    "dependency_updates grant per repository before any read (`_refuse_unless_permitted`)"
+    "the lane gateways are built in `_revert_lanes` and handed to revert_act, whose watch and "
+    "acts ask the dependency_updates grant per repository before any read"
 )
+WATCH_VIA = (_node(REVERT_ACT, "landing_watch"),)
+ACT_VIA = (_node(REVERT_ACT, "_refuse_unless_permitted"),)
 
 TOKEN_CALLERS: Final[dict[tuple[str, str], Caller]] = {
     (EXECUTION_ROUTES, "dispatch_route"): Caller(
@@ -230,48 +262,48 @@ TOKEN_CALLERS: Final[dict[tuple[str, str], Caller]] = {
         1,
         "dispatch_work_unit is handed the member record as its grant source and refuses a "
         "repository it does not grant (`target_repository_not_granted`); the gateway's own "
-        "predicate allows only the one workflow-dispatch route",
-        ((DISPATCH, "is_granted"),),
+        "predicate allows only the one workflow-dispatch route. The ask is a call through an "
+        "object (`grant_source.is_granted`), so the graph shows a reachable function making it, "
+        "not the receiver; the route test below pins the receiver",
+        via=(_node(DISPATCH, "_envelope_reason"),),
     ),
     (LANDING_ROUTES, "estate_landing_admission_route"): Caller(
-        1, 1, f"{_GRANT_AT_ADMISSION} (estate)", ((ESTATE_ADMISSION, "grant_term"),)
+        1, 1, f"{_GRANT_AT_ADMISSION} (estate)", via=ESTATE_VIA
     ),
     (LANDING_ROUTES, "estate_pr_merge_route"): Caller(
-        1, 1, f"{_GRANT_AT_ADMISSION}; the merge needs it met", ((ESTATE_ADMISSION, "grant_term"),)
+        1, 1, f"{_GRANT_AT_ADMISSION}; the merge needs it met", via=ESTATE_VIA
     ),
     (LANDING_ROUTES, "estate_pr_branch_update_route"): Caller(
-        1, 1, f"{_GRANT_AT_ADMISSION}; the update needs it met", ((ESTATE_ADMISSION, "grant_term"),)
+        1, 1, f"{_GRANT_AT_ADMISSION}; the update needs it met", via=ESTATE_VIA
     ),
     (LANDING_ROUTES, "inert_landing_admission_route"): Caller(
-        1, 1, f"{_GRANT_AT_ADMISSION} (inert)", ((INERT_ADMISSION, "grant_term"),)
+        1, 1, f"{_GRANT_AT_ADMISSION} (inert)", via=INERT_VIA
     ),
     (LANDING_ROUTES, "inert_pr_merge_route"): Caller(
-        1, 1, f"{_GRANT_AT_ADMISSION}; the merge needs it met", ((INERT_ADMISSION, "grant_term"),)
+        1, 1, f"{_GRANT_AT_ADMISSION}; the merge needs it met", via=INERT_VIA
     ),
     (LANDING_ROUTES, "inert_pr_branch_update_route"): Caller(
-        1, 1, f"{_GRANT_AT_ADMISSION}; the update needs it met", ((INERT_ADMISSION, "grant_term"),)
+        1, 1, f"{_GRANT_AT_ADMISSION}; the update needs it met", via=INERT_VIA
     ),
     (LANDING_ROUTES, "pr_merge_route"): Caller(
         1,
         1,
         "the factory merge asks the grant on the unit's own envelope target "
         "(`merge_repository_not_granted`)",
-        ((PR_MERGE_ADMISSION, "grant_term"),),
+        via=(_node(PR_MERGE_ADMISSION, "admission_for"),),
     ),
     (LANDING_ROUTES, "held_pr_close_route"): Caller(
         2,
         1,
         "the named lane's admission is composed again in the act, grant term included",
-        ((ESTATE_ADMISSION, "grant_term"), (INERT_ADMISSION, "grant_term")),
+        via=ESTATE_VIA + INERT_VIA,
     ),
-    (LANDING_ROUTES, "_revert_lanes"): Caller(1, 0, _REVERT, ((REVERT_ACT, "grant_term"),)),
-    (LANDING_ROUTES, "landing_watch_route"): Caller(0, 1, _REVERT, ((REVERT_ACT, "grant_term"),)),
-    (LANDING_ROUTES, "landing_revert_route"): Caller(0, 1, _REVERT, ((REVERT_ACT, "grant_term"),)),
-    (LANDING_ROUTES, "landing_repoint_route"): Caller(0, 1, _REVERT, ((REVERT_ACT, "grant_term"),)),
-    (LANDING_ROUTES, "landing_pinned_route"): Caller(0, 1, _REVERT, ((REVERT_ACT, "grant_term"),)),
-    (LANDING_ROUTES, "landing_restored_route"): Caller(
-        0, 1, _REVERT, ((REVERT_ACT, "grant_term"),)
-    ),
+    (LANDING_ROUTES, "_revert_lanes"): Caller(1, 0, _REVERT, kind="callers"),
+    (LANDING_ROUTES, "landing_watch_route"): Caller(0, 1, _REVERT, via=WATCH_VIA),
+    (LANDING_ROUTES, "landing_revert_route"): Caller(0, 1, _REVERT, via=ACT_VIA),
+    (LANDING_ROUTES, "landing_repoint_route"): Caller(0, 1, _REVERT, via=ACT_VIA),
+    (LANDING_ROUTES, "landing_pinned_route"): Caller(0, 1, _REVERT, via=ACT_VIA),
+    (LANDING_ROUTES, "landing_restored_route"): Caller(0, 1, _REVERT, via=ACT_VIA),
     (VERIFIER_ROUTES, "get_check_observer"): Caller(
         1,
         1,
@@ -279,26 +311,44 @@ TOKEN_CALLERS: Final[dict[tuple[str, str], Caller]] = {
         "unit's own repository, for work already dispatched, so a grant withdrawn since can still "
         "be observed; the repository is the unit's envelope target and the same as its dispatch "
         "target, and every landing asks the grant again",
-        ((NAMED_CHECK, "_target_repository"),),
+        kind="exception",
+        entries=(
+            _node(VERIFIER_ROUTES, "record_verifier_named_check_evidence"),
+            _node(NAMED_CHECK, "record_named_check_evidence"),
+        ),
     ),
 }
 
 
 def token_call_sites(sources: Mapping[str, str]) -> dict[tuple[str, str], tuple[int, int]]:
-    """(file, enclosing function) -> (provider calls, credentials calls)."""
+    """(file, enclosing qualified function) -> (provider calls, credentials calls).
+
+    A qualified name (`Class.method`, `outer.inner`) keeps same-named functions apart, and a
+    name defined twice accumulates rather than overwrites.
+    """
     found: dict[tuple[str, str], list[int]] = {}
+
+    def visit(path: str, node: ast.AST, prefix: str) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+                qualified = f"{prefix}{child.name}"
+                if not isinstance(child, ast.ClassDef):
+                    names = [
+                        _callee(n)
+                        for n in _own_nodes(child)
+                        if isinstance(n, ast.Call) and _callee(n) in (PROVIDER, CREDENTIALS)
+                    ]
+                    if names:
+                        counts = found.setdefault((path, qualified), [0, 0])
+                        counts[0] += names.count(PROVIDER)
+                        counts[1] += names.count(CREDENTIALS)
+                visit(path, child, f"{qualified}.")
+            else:
+                visit(path, child, prefix)
+
     for path, text in sources.items():
         tree = _parse(text)
-        for function in ast.walk(tree):
-            if not isinstance(function, ast.FunctionDef | ast.AsyncFunctionDef):
-                continue
-            names = [
-                _callee(node)
-                for node in _own_nodes(function)
-                if isinstance(node, ast.Call) and _callee(node) in (PROVIDER, CREDENTIALS)
-            ]
-            if names:
-                found[(path, function.name)] = [names.count(PROVIDER), names.count(CREDENTIALS)]
+        visit(path, tree, "")
         for node in tree.body:  # a call at module level has no function to name
             if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
                 continue
@@ -349,23 +399,162 @@ def test_the_per_file_counts_are_the_ones_the_design_recorded() -> None:
     }
 
 
-def test_every_listed_bound_is_a_call_that_still_exists() -> None:
-    callees: dict[str, set[str]] = {}
-    for row in TOKEN_CALLERS.values():
-        assert row.bound.strip()
-        for module, name in row.anchors:
-            if module not in callees:
-                callees[module] = {
-                    _callee(node)
-                    for node in ast.walk(_parse(Path(module).read_text()))
-                    if isinstance(node, ast.Call)
-                }
-            assert name in callees[module], f"{module} no longer calls {name}"
-    assert not [
-        key
-        for key, row in TOKEN_CALLERS.items()
-        if not row.anchors and not row.bound.startswith("named reason")
+def _reach(graph: CallGraph, start: Node) -> set[Node]:
+    seen: set[Node] = set()
+    frontier = [start]
+    while frontier:
+        node = frontier.pop()
+        if node in seen:
+            continue
+        seen.add(node)
+        definition = graph.defs.get(node)
+        if definition is not None:
+            frontier.extend(graph._edges(node[0], definition) - seen)
+    return seen
+
+
+def _asks_grant(graph: CallGraph, node: Node) -> bool:
+    definition = graph.defs.get(node)
+    return definition is not None and any(
+        isinstance(call, ast.Call) and _callee(call) in GRANT_CHECKS
+        for call in ast.walk(definition)
+    )
+
+
+def bound_findings(
+    graph: CallGraph, table: Mapping[tuple[str, str], Caller]
+) -> dict[tuple[str, str], list[str]]:
+    """For each row, how the call graph departs from its kind; empty when every bound holds."""
+    found: dict[tuple[str, str], list[str]] = {}
+    for key, row in table.items():
+        path, function = key
+        problems: list[str] = []
+        entries = row.entries or (_node(path, function),)
+        if row.kind == "grant":
+            if not row.via:
+                problems.append("names no function that asks the grant")
+            for entry in entries:
+                reached = _reach(graph, entry)
+                problems += [
+                    f"{entry[1]} does not reach {via[1]}" for via in row.via if via not in reached
+                ]
+            problems += [
+                f"{via[1]} makes no grant call" for via in row.via if not _asks_grant(graph, via)
+            ]
+        elif row.kind == "exception":
+            for entry in entries:
+                problems += [
+                    f"{entry[1]} reaches a grant call in {node[1]}"
+                    for node in sorted(_reach(graph, entry))
+                    if _asks_grant(graph, node)
+                ]
+        else:
+            callers = [
+                (path, node[1])
+                for node in graph.defs
+                if node[0] == _module(path)
+                and any(
+                    isinstance(c, ast.Call) and _callee(c) == function
+                    for c in ast.walk(graph.defs[node])
+                )
+                and node[1] != function
+            ]
+            problems += [f"{c[1]} is not a grant row" for c in callers if c not in table]
+            problems += [
+                f"{c[1]} is not a grant row"
+                for c in callers
+                if c in table and table[c].kind != "grant"
+            ]
+            if not callers:
+                problems.append("has no callers")
+        if problems:
+            found[key] = problems
+    return found
+
+
+@pytest.fixture(scope="module")
+def graph() -> CallGraph:
+    return CallGraph(Path("src"))
+
+
+def test_every_bound_is_reached_through_calls_from_the_function_it_bounds(
+    graph: CallGraph,
+) -> None:
+    assert all(row.bound.strip() for row in TOKEN_CALLERS.values())
+    assert bound_findings(graph, TOKEN_CALLERS) == {}
+
+
+def test_the_verifier_read_is_the_one_named_reason_and_reaches_no_grant(graph: CallGraph) -> None:
+    [(key, row)] = [(k, r) for k, r in TOKEN_CALLERS.items() if r.kind == "exception"]
+    assert key == (VERIFIER_ROUTES, "get_check_observer")
+    assert row.bound.startswith("named reason")
+    for entry in row.entries:
+        assert not [n for n in _reach(graph, entry) if _asks_grant(graph, n)]
+
+
+def _fake_graph(root: Path, service: str) -> CallGraph:
+    for rel, body in {
+        "orchestrator/api/routes/fake.py": (
+            "from orchestrator.services.fake import serve\ndef fake_route():\n    return serve()\n"
+        ),
+        "orchestrator/services/fake.py": service,
+    }.items():
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(body)
+    return CallGraph(root)
+
+
+FAKE_KEY = ("src/orchestrator/api/routes/fake.py", "fake_route")
+FAKE_VIA = (("orchestrator.services.fake", "serve"),)
+
+
+def test_control_a_caller_that_reaches_no_grant_check_is_refused(tmp_path: Path) -> None:
+    asks = "def serve():\n    return grant_term(1, 2, 3)\n"
+    silent = "def serve():\n    return 1\n"
+    grant = Caller(1, 0, "x", via=FAKE_VIA)
+    assert bound_findings(_fake_graph(tmp_path / "a", asks), {FAKE_KEY: grant}) == {}
+    refused = bound_findings(_fake_graph(tmp_path / "b", silent), {FAKE_KEY: grant})
+    assert refused[FAKE_KEY] == ["serve makes no grant call"]
+    # A route that never reaches the function which asks.
+    unreached = Caller(1, 0, "x", via=(("orchestrator.services.fake", "other"),))
+    graph = _fake_graph(tmp_path / "c", asks + "def other():\n    return grant_term(1, 2, 3)\n")
+    assert bound_findings(graph, {FAKE_KEY: unreached})[FAKE_KEY] == [
+        "fake_route does not reach other"
     ]
+    # A row naming nothing that asks.
+    assert bound_findings(graph, {FAKE_KEY: Caller(1, 0, "x")})[FAKE_KEY] == [
+        "names no function that asks the grant"
+    ]
+
+
+def test_control_a_named_reason_row_whose_function_gains_a_grant_check_must_move(
+    tmp_path: Path,
+) -> None:
+    exception = {
+        **TOKEN_CALLERS,
+        FAKE_KEY: Caller(1, 0, "named reason", kind="exception"),
+    }
+    graph = _fake_graph(tmp_path, "def serve():\n    return grant_term(1, 2, 3)\n")
+    found = bound_findings(graph, exception)
+    assert found[FAKE_KEY] == ["fake_route reaches a grant call in serve"]
+
+
+def test_control_deleting_the_grant_ask_from_the_admission_is_reported(tmp_path: Path) -> None:
+    copy = tmp_path / "src"
+    shutil.copytree("src", copy, ignore=shutil.ignore_patterns("__pycache__"))
+    target = copy / "orchestrator/services/landing/estate_landing_admission.py"
+    text = target.read_text()
+    ask = "granted = grant_term(MemberRecordGrants(session), repository, "
+    ask += "(DEPENDENCY_UPDATES_SERVICE,))"
+    assert ask in text
+    target.write_text(text.replace(ask, "granted = Term(True, ())"))
+    found = bound_findings(CallGraph(copy), TOKEN_CALLERS)
+    assert {key[1] for key in found} == {
+        "estate_landing_admission_route",
+        "estate_pr_merge_route",
+        "estate_pr_branch_update_route",
+        "held_pr_close_route",
+    }
 
 
 def test_the_dispatch_route_passes_the_member_record_as_its_grant_source() -> None:
@@ -388,6 +577,20 @@ PLANTED_MINT = (
     "def stray_route(settings):\n    return token_provider_for(credentials_of(settings))\n"
 )
 PLANTED_RESOLVE = "def stray(settings):\n    return github_app_credentials_for(settings)\n"
+
+
+def test_control_same_named_functions_are_kept_apart_and_a_repeat_accumulates() -> None:
+    source = (
+        "class A:\n    def go(self):\n        token_provider_for(1)\n"
+        "class B:\n    def go(self):\n        token_provider_for(2)\n"
+        "def go():\n    token_provider_for(3)\n"
+        "def go():\n    token_provider_for(4)\n"
+    )
+    assert token_call_sites({"m.py": source}) == {
+        ("m.py", "A.go"): (1, 0),
+        ("m.py", "B.go"): (1, 0),
+        ("m.py", "go"): (2, 0),
+    }
 
 
 def test_control_a_planted_call_in_a_fake_module_is_reported() -> None:
@@ -427,6 +630,9 @@ def test_control_a_listed_function_that_stops_calling_is_reported() -> None:
 
 API_PREFIX: Final = "/api/v1/"
 CLI_PATH_ARGUMENT: Final = {"request": 1, "_post_data": 0}
+HTTPX_SENDERS: Final = frozenset(
+    {"get", "post", "put", "patch", "delete", "head", "options", "request", "stream", "send"}
+)
 
 
 def cli_findings(source: str) -> list[str]:
@@ -445,9 +651,18 @@ def cli_findings(source: str) -> list[str]:
         if [_dotted(value) for value in base] != ["settings.api_url"]:
             found.append(f"base_url {[_dotted(v) for v in base]}")
     for node in ast.walk(tree):
-        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)):
+        if not isinstance(node, ast.Call):
             continue
-        index = CLI_PATH_ARGUMENT.get(node.func.id)
+        dotted = _dotted(node.func)
+        if dotted.startswith("httpx.") and dotted.removeprefix("httpx.") in HTTPX_SENDERS:
+            found.append(f"line {node.lineno}: {dotted} outside the one client")
+            continue
+        if isinstance(node.func, ast.Name):
+            index = CLI_PATH_ARGUMENT.get(node.func.id)
+        elif isinstance(node.func, ast.Attribute) and node.func.attr == "request":
+            index = 1  # `client.request(method, path, ...)`
+        else:
+            continue
         if index is None or len(node.args) <= index:
             continue
         path = node.args[index]
@@ -459,8 +674,8 @@ def cli_findings(source: str) -> list[str]:
             and isinstance(path.values[0], ast.Constant)
         ):
             literal = str(path.values[0].value)
-        elif isinstance(path, ast.Name) and _enclosing_is_post_data(tree, node):
-            continue  # the body of `_post_data`, whose callers are scanned in their own right
+        elif isinstance(path, ast.Name) and _enclosing_function(tree, node) in CLI_PATH_ARGUMENT:
+            continue  # the bodies of `request` and `_post_data`; their callers are scanned
         else:
             found.append(f"line {node.lineno}: path not a literal: {_dotted(path)}")
             continue
@@ -469,13 +684,17 @@ def cli_findings(source: str) -> list[str]:
     return found
 
 
-def _enclosing_is_post_data(tree: ast.Module, call: ast.Call) -> bool:
-    return any(
-        isinstance(function, ast.FunctionDef)
-        and function.name == "_post_data"
-        and call in ast.walk(function)
-        for function in ast.walk(tree)
-    )
+def _enclosing_function(tree: ast.Module, call: ast.Call) -> str:
+    for function in ast.walk(tree):
+        if isinstance(function, ast.FunctionDef) and call in ast.walk(function):
+            if not any(
+                isinstance(inner, ast.FunctionDef)
+                and inner is not function
+                and call in ast.walk(inner)
+                for inner in ast.walk(function)
+            ):
+                return function.name
+    return ""
 
 
 def test_the_cli_builds_one_client_and_sends_only_api_v1_paths() -> None:
@@ -519,6 +738,28 @@ def test_control_a_path_off_api_v1_or_a_second_base_is_reported(edit: str, menti
 def test_control_a_second_client_is_reported() -> None:
     text = Path(CLI).read_text() + "\n\ndef planted():\n    return httpx.Client(base_url='x')\n"
     assert cli_findings(text)
+
+
+@pytest.mark.parametrize("verb", sorted(HTTPX_SENDERS))
+def test_control_a_bare_httpx_call_is_reported(verb: str) -> None:
+    text = (
+        Path(CLI).read_text() + f"\n\ndef planted():\n    return httpx.{verb}('https://x.test')\n"
+    )
+    assert any(f"httpx.{verb}" in finding for finding in cli_findings(text))
+
+
+def test_control_a_client_request_off_api_v1_or_with_a_variable_path_is_reported() -> None:
+    base = Path(CLI).read_text()
+    for planted in (
+        'client.request("GET", "https://api.github.com/x")',
+        'client.request("GET", f"{host}/api/v1/x")',
+        'client.request("GET", where)',
+        'self.http.request("POST", "/health/live")',
+    ):
+        text = base + f"\n\ndef planted(client, where, host):\n    return {planted}\n"
+        assert cli_findings(text), planted
+    ok = base + '\n\ndef planted(client):\n    return client.request("GET", "/api/v1/x")\n'
+    assert cli_findings(ok) == []
 
 
 # ---- 4. Configuration ----------------------------------------------------------------------------
@@ -764,8 +1005,13 @@ def _dependency_calls(dependant: object) -> set[Callable[..., object]]:
     return found
 
 
-def routes_without_actor(routers: Iterable[APIRouter]) -> frozenset[str]:
-    """`METHOD path` of every route whose dependant tree, walked recursively, lacks `get_actor`."""
+def routes_without_actor(routers: Iterable[APIRouter | FastAPI]) -> frozenset[str]:
+    """`METHOD path` of every route whose dependant tree, walked recursively, lacks `get_actor`.
+
+    An app is walked like a router: its own `APIRoute`s (a route added directly with
+    `@app.get`) are held to the rule, and its included-router wrappers are skipped because the
+    routers they wrap are walked on their own.
+    """
     found: set[str] = set()
     for router in routers:
         for route in router.routes:
@@ -787,11 +1033,28 @@ def documentation_routes(application: FastAPI) -> frozenset[str]:
 def test_the_routes_that_answer_without_an_actor_are_the_listed_ones() -> None:
     application = create_app()
     routers = [*API_ROUTERS, health_router, web_router]
-    assert routes_without_actor(routers) | documentation_routes(application) == UNAUTHENTICATED
+    walked = routes_without_actor([*routers, application])
+    assert walked | documentation_routes(application) == UNAUTHENTICATED
     served = {
         route.path for router in routers for route in router.routes if isinstance(route, APIRoute)
     }
     assert set(application.openapi()["paths"]) <= served
+
+
+def test_control_a_route_added_directly_on_the_app_is_held_to_the_same_rule() -> None:
+    application = create_app()
+    before = routes_without_actor([application])
+    assert before == frozenset()
+
+    @application.get("/direct-open")
+    def direct_open() -> dict[str, str]:
+        return {}
+
+    @application.get("/direct-guarded", dependencies=[Depends(get_actor)])
+    def direct_guarded() -> dict[str, str]:
+        return {}
+
+    assert routes_without_actor([application]) == {"GET /direct-open"}
 
 
 def test_control_a_route_with_no_actor_dependency_is_reported() -> None:
