@@ -1,6 +1,6 @@
 # Core platform layer design
 
-**Status:** Draft, 2026-11-04, revised after the builder check. Layer id: `platform`
+**Status:** Approved by Devon 2026-11-04, after the builder check. Layer id: `platform`
 (`make layer L=platform`).
 
 ## Intent
