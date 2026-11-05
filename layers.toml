@@ -15,6 +15,7 @@ paths = [
   "src/orchestrator/__init__.py",
   "src/orchestrator/api/__init__.py",
   "src/orchestrator/api/dependencies.py",
+  "src/orchestrator/api/error_shape.py",
   "src/orchestrator/api/health.py",
   "src/orchestrator/api/routes/__init__.py",
   "src/orchestrator/api/routes/common.py",
