@@ -1,4 +1,4 @@
-"""A function that commits never calls, before its own last commit, a function that commits.
+"""A function that commits hands its transaction to a committing callee only as its last act.
 
 The repository rule (CLAUDE.md, "Request entry points own their transaction"): entry points own
 their transaction and commit; a function called inside another transaction never commits. A
@@ -10,15 +10,22 @@ THE PREDICATE. Over the import-resolved call graph `test_unreachable_guards.Call
   * a DIRECT committer is a function in `orchestrator.` whose body calls `session.commit()`;
   * an EFFECTIVE committer is a direct committer, or a function that references an effective
     committer (the transitive closure, so a non-committing helper that reaches a commit counts);
-  * a direct committer must not reference an effective committer other than itself on a line
-    before its own last `session.commit()`.
+  * in a direct committer, every `session.commit()` and every reference to an effective
+    committer other than itself is a COMMIT POINT;
+  * a reference to an effective committer must not be followed, by line, by another commit point
+    (the caller's own commit or another committing reference).
 
-A reference after the caller's last commit is allowed. It is sequential, not nested: the caller's
-transaction is already committed. That is the shape of `record_named_check_evidence`, which commits
-only on its replay branch and otherwise ends with `return append_verifier_evidence(...)`, handing
-its transaction to the callee. Functions that commit nothing themselves and call several committers
-in sequence (`verify_work_unit`, the reconciliation detectors, some routes) are outside the
-predicate on purpose: each step is its own transaction, and nothing here says they should be one.
+So a committing callee may only be the last commit point in its caller: a sole handoff. The
+caller's work before it, and the callee's, then commit together in the callee's one commit. That
+is the shape of `record_named_check_evidence`: it commits only on its replay branch, which returns,
+and on the path that reaches `return append_verifier_evidence(...)` nothing has committed yet; the
+callee commits the whole transaction. A commit on an early-return branch exempts nothing after it:
+a committing call followed by another commit point is flagged whatever comes before. A committing
+call after the caller's own last commit, with nothing after it, also passes (it starts a new
+transaction once the caller's is done). Functions that commit nothing themselves and call several
+committers in sequence (`verify_work_unit`, the reconciliation detectors, some routes) are outside
+the predicate on purpose: each step is its own transaction, and nothing here says they should be
+one.
 
 Measured when this file was written: 51 direct committers, 110 effective, no flagged reference,
 and no allowlist. The designed own-step commits (`pr_merge.land_unit_pull_request` and
@@ -36,6 +43,12 @@ WHAT THIS GUARD DOES NOT CATCH:
   * Functions are keyed `(module, name)`, so two same-named functions in one module are one node.
   * The rule's first half, "entry points must commit", is not checked: about thirty routes
     delegate their commit to the service they call by design.
+  * A function that does not commit itself is never checked, so its own writes before a
+    committing call (committed early by that callee) go unseen, not only its sequence of steps.
+  * A commit counts only when its receiver is literally named `session` (`self.session.commit()`
+    or `db.commit()` is invisible). Every commit in `src/orchestrator` uses `session` today.
+  * `ast.walk` descends into nested functions and lambdas, so a commit or committing reference in
+    an inner function counts toward the outer one, wherever the inner function actually runs.
 """
 
 import ast
@@ -115,12 +128,18 @@ def nested_commits(graph: CallGraph) -> list[str]:
                 grew = True
     offenders: list[str] = []
     for caller, lines in sorted(direct.items()):
-        last = max(lines)
-        for line, callee in references[caller]:
-            if callee != caller and callee in effective and line < last:
+        committing = [
+            (line, callee)
+            for line, callee in references[caller]
+            if callee != caller and callee in effective
+        ]
+        points = [*lines, *(line for line, _ in committing)]
+        for line, callee in committing:
+            later = [point for point in points if point > line]
+            if later:
                 offenders.append(
                     f"{caller[0]}.{caller[1]} line {line} reaches {callee[0]}.{callee[1]}, "
-                    f"which commits, before its own commit at line {last}"
+                    f"which commits, before another commit point at line {min(later)}"
                 )
     return offenders
 
@@ -155,7 +174,8 @@ def tree(tmp_path: Path) -> Path:
     package.mkdir()
     (package / "__init__.py").write_text("", encoding="utf-8")
     (package / "inner.py").write_text(
-        "def store(session):\n    session.add(1)\n    session.commit()\n",
+        "def store(session):\n    session.add(1)\n    session.commit()\n\n\n"
+        "def finish(session):\n    session.add(9)\n    session.commit()\n",
         encoding="utf-8",
     )
     return tmp_path
@@ -163,7 +183,7 @@ def tree(tmp_path: Path) -> Path:
 
 def _outer(tree: Path, body: str) -> list[str]:
     (tree / "orchestrator" / "outer.py").write_text(
-        "from orchestrator.inner import store\n\n\n" + body, encoding="utf-8"
+        "from orchestrator.inner import finish, store\n\n\n" + body, encoding="utf-8"
     )
     return nested_commits(CallGraph(tree))
 
@@ -185,8 +205,23 @@ def test_a_helper_that_reaches_a_commit_before_the_callers_commit_is_flagged(tre
     assert offenders and "reaches orchestrator.outer._helper" in offenders[0]
 
 
-def test_handing_the_transaction_to_a_committer_after_an_early_commit_passes(tree: Path) -> None:
-    """Today's `record_named_check_evidence` shape: commit on the replay branch, else delegate."""
+def test_a_committing_call_after_an_early_return_commit_is_flagged(tree: Path) -> None:
+    """An early-return commit exempts nothing: `store` commits the main path's work, and the
+    tail `finish` then commits the rest in a second transaction."""
+    offenders = _outer(
+        tree,
+        "def handle(session, replay):\n    if replay:\n        session.commit()\n"
+        "        return replay\n    session.add(2)\n    store(session)\n    session.add(3)\n"
+        "    return finish(session)\n",
+    )
+    assert offenders and "reaches orchestrator.inner.store" in offenders[0]
+    assert len(offenders) == 1
+
+
+def test_a_sole_tail_handoff_after_an_early_return_commit_passes(tree: Path) -> None:
+    """Today's `record_named_check_evidence` shape: commit only on the replay branch, which
+    returns; on the other path nothing has committed and the one committing callee, last,
+    commits the whole transaction."""
     assert not _outer(
         tree,
         "def handle(session, replay):\n    if replay:\n        session.commit()\n"
