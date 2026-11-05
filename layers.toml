@@ -60,6 +60,7 @@ paths = [
   "tests/architecture/test_layering.py",
   "tests/architecture/test_registry_provenance.py",
   "tests/architecture/test_scope_guards.py",
+  "tests/architecture/test_transaction_ownership.py",
   "tests/architecture/test_unreachable_guards.py",
   "tests/architecture/test_ws32_scope_guards.py",
   "tests/architecture/test_ws33_scope_guards.py",
