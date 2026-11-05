@@ -1,13 +1,13 @@
-"""The drills change state only through public routes.
+"""The protocol tests change state only through public routes.
 
-A drill that writes a row, or calls a service or route function directly, proves something about a
-path production cannot take. So drill files may read the database but never write it, and may not
-import a service, a route module or a SQL write construct. The one sanctioned write is lease expiry,
-because `DEFAULT_LEASE` is fifteen real minutes and nothing may shorten it: `expire_latest_claim` is
-the only function in the shared setup allowed to write.
+A protocol test that writes a row, or calls a service or route function directly, proves
+something about a path production cannot take. So protocol test files may read the database but
+never write it, and may not import a service, a route module or a SQL write construct. The one
+sanctioned write is lease expiry, because `DEFAULT_LEASE` is fifteen real minutes and nothing may
+shorten it: `expire_latest_claim` is the only function in the shared setup allowed to write.
 
 The scan catches accidental shortcuts, not deliberate evasion: `getattr(session, "commit")()` would
-pass it. It is a tripwire for a drill author reaching for the convenient path, not a sandbox.
+pass it. It is a tripwire for a test author reaching for the convenient path, not a sandbox.
 """
 
 import ast
@@ -17,8 +17,13 @@ import pytest
 
 DRILL_DIR = Path("tests/protocol/drills")
 DRILLS = sorted(DRILL_DIR.glob("test_drill_*.py"))
-SCANNED = sorted(DRILL_DIR.glob("*.py"))
-SHARED_SETUP = [Path("tests/_support/protocol.py"), Path("tests/protocol/conftest.py")]
+SHARED_SETUP = [
+    Path("tests/_support/protocol.py"),
+    Path("tests/_support/review_forms.py"),
+    Path("tests/protocol/conftest.py"),
+]
+# Every protocol file, not only the drills: the shared setup is scanned by its own test below.
+SCANNED = sorted(path for path in Path("tests/protocol").rglob("*.py") if path not in SHARED_SETUP)
 WRITES = frozenset(
     {
         "commit",
@@ -38,9 +43,9 @@ WRITES = frozenset(
 FORBIDDEN_MODULES = ("orchestrator.services", "orchestrator.api.routes")
 SQL_WRITE_CONSTRUCTS = frozenset({"update", "insert", "delete", "text"})
 SANCTIONED_WRITERS = ["expire_latest_claim"]
-# Drills may take their helpers only from the shared setup scanned above: a writer in an unscanned
-# `tests._support` module would be a write path this guard never sees.
-ALLOWED_SUPPORT_MODULES = frozenset({"tests._support.protocol"})
+# Protocol tests may take their helpers only from the shared setup scanned above: a writer in an
+# unscanned `tests._support` module would be a write path this guard never sees.
+ALLOWED_SUPPORT_MODULES = frozenset({"tests._support.protocol", "tests._support.review_forms"})
 
 
 def _writes(tree: ast.AST) -> list[str]:
@@ -53,7 +58,7 @@ def _writes(tree: ast.AST) -> list[str]:
     ]
 
 
-def _forbidden_imports(tree: ast.AST, *, drill: bool = False) -> list[str]:
+def _forbidden_imports(tree: ast.AST, *, protocol: bool = False) -> list[str]:
     found: list[str] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -61,7 +66,7 @@ def _forbidden_imports(tree: ast.AST, *, drill: bool = False) -> list[str]:
             found += [
                 a.name
                 for a in node.names
-                if drill
+                if protocol
                 and a.name.startswith("tests._support")
                 and a.name not in ALLOWED_SUPPORT_MODULES
             ]
@@ -74,7 +79,7 @@ def _forbidden_imports(tree: ast.AST, *, drill: bool = False) -> list[str]:
             elif node.module == "orchestrator.api" and "routes" in names:
                 found.append("orchestrator.api.routes")
             elif (
-                drill
+                protocol
                 and node.module.startswith("tests._support")
                 and node.module not in ALLOWED_SUPPORT_MODULES
             ):
@@ -99,12 +104,21 @@ def test_there_are_drills_to_check() -> None:
     assert len(DRILLS) == 5
 
 
+def test_the_scan_covers_every_protocol_test_and_not_the_shared_setup() -> None:
+    names = {path.name for path in SCANNED}
+
+    assert {"test_ws33_smoke.py", "test_decomposition_supersession_route.py"} <= names
+    assert set(DRILLS) <= set(SCANNED)
+    assert not set(SHARED_SETUP) & set(SCANNED)
+    assert all(path.exists() for path in SHARED_SETUP)
+
+
 @pytest.mark.parametrize("path", SCANNED, ids=lambda path: path.stem)
-def test_a_drill_file_neither_writes_nor_reaches_past_the_routes(path: Path) -> None:
+def test_a_protocol_test_file_neither_writes_nor_reaches_past_the_routes(path: Path) -> None:
     tree = _parse(path)
 
     assert _writes(tree) == []
-    assert _forbidden_imports(tree, drill=True) == []
+    assert _forbidden_imports(tree, protocol=True) == []
 
 
 def test_lease_expiry_is_the_only_write_the_shared_setup_makes() -> None:
@@ -138,17 +152,18 @@ def test_the_scan_sees_a_write_or_a_forbidden_import(source: str) -> None:
     assert _writes(tree) or _forbidden_imports(tree)
 
 
-def test_a_drill_may_not_take_a_helper_from_an_unscanned_support_module() -> None:
+def test_a_protocol_test_may_not_take_a_helper_from_an_unscanned_support_module() -> None:
     tree = ast.parse("from tests._support.seeding import grant_service\n")
 
-    assert _forbidden_imports(tree, drill=True) == ["tests._support.seeding"]
+    assert _forbidden_imports(tree, protocol=True) == ["tests._support.seeding"]
     assert (
-        _forbidden_imports(ast.parse("from tests._support.protocol import ok\n"), drill=True) == []
+        _forbidden_imports(ast.parse("from tests._support.protocol import ok\n"), protocol=True)
+        == []
     )
-    assert _forbidden_imports(ast.parse("import tests._support.seeding\n"), drill=True) == [
+    assert _forbidden_imports(ast.parse("import tests._support.seeding\n"), protocol=True) == [
         "tests._support.seeding"
     ]
-    assert _forbidden_imports(ast.parse("import tests._support.protocol\n"), drill=True) == []
+    assert _forbidden_imports(ast.parse("import tests._support.protocol\n"), protocol=True) == []
 
 
 def test_the_scan_sees_a_write_in_a_nested_or_async_function() -> None:
