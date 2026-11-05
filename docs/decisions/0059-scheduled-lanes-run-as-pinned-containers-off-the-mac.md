@@ -99,14 +99,21 @@ One container per lane already gives each lane its own process, filesystem and e
 - **Each identity is proven before its lane cuts over.** The proof is the lane's launcher, run in
   its container with `env -i PATH=… HOME=… BWS_ACCESS_TOKEN=…`. A dry run reads every secret, and
   a deliberately revoked token fails, tested with an empty `HOME` because `bws` caches sessions per
-  token id (workspace invariant #23).
-- **Every GitHub credential moves to BWS.** No moved lane reads `gh auth token`. Reads use one
-  read-only fine-grained token in BWS, with a direct grant per lane identity. A write needs a
-  separate decision: see "Who pushes" (**Open, Q1**).
+  token id (workspace invariant #23). The proof also shows the token is narrow, not only
+  sufficient: under the same `env -i` start with an empty `HOME`, reading a secret this lane
+  doesn't fetch is refused. The refused read names another lane's secret UUID from
+  `.bws-secrets.toml`, or, for the first lane, a secret only the broad account reads.
+- **Every GitHub credential moves to BWS.** No moved lane reads `gh auth token`. Each lane keeps
+  its own `<LANE>_GITHUB_TOKEN` variable (`BUMP_DRIVER_GITHUB_TOKEN`, `DEPLOY_WATCHER_GITHUB_TOKEN`,
+  `CHANGE_PROPOSER_GITHUB_TOKEN`, `BUMP_PROPOSER_GITHUB_TOKEN` and the rest), and its launcher
+  feeds that variable from BWS instead of `gh auth token`. A read-only lane's variable is fed from
+  one read-only fine-grained token in BWS, with a direct grant per lane identity. A lane that needs
+  write scope (the bump driver and the proposers) is tied to "Who pushes" (**Open, Q1**), and this
+  ADR doesn't decide its token.
 - **`.bws-secrets.toml` and `.cred-consumers.toml` gain each lane identity and each secret it
   reads**, in the same change as the lane's move. The credential registry gains each lane token
-  as a credential. The VM rotation executor rotates it once increment 7 moves the executor to
-  the VPS (Q3, decided).
+  as a credential. The VM rotation executor rotates it once ADR-0059 increment 7 moves the
+  executor to the VPS (Q3, decided).
 - **This ADR creates no identity.** Each increment that moves a lane creates that lane's account
   and grants.
 
@@ -140,8 +147,8 @@ The year plan's Phase 1 text names only the first two. Keeping the sweep departs
 Devon's decision; HQ updates the year plan.
 
 **The VM rotation executor** isn't a launch agent, but it runs on the Mac (OrbStack) and acts on
-members. ADR-0055 decision 2 built it to "move unchanged to a VPS". Increment 7 in the
-"Increments" section moves it. Its decision 2 and T1 residual are amended in that increment's own
+members. ADR-0055 decision 2 built it to "move unchanged to a VPS". ADR-0059 increment 7, in the
+"Increments" section, moves it. Its decision 2 and T1 residual are amended in that increment's own
 amendment to ADR-0055, not here.
 
 ### 5. Classification of the 20 launch agents
@@ -195,7 +202,8 @@ exists only on the Mac would keep the lane tied to it.
    without widening that.
 6. **Retire the Mac's lane plumbing:** the moved plists and their installers,
    `activate-checkout.sh`'s use by lanes, and the two Keychain items' lane role. The Keychain items
-   themselves are retired only once no remaining reader names them.
+   themselves are retired only once no remaining reader names them. This increment starts only
+   after the week bar has passed, because it ends the rollback path.
 7. **The VM rotation executor moves to the VPS** under its own ADR-0055 amendment. This increment
    is last because it moves the root of the rotation design.
 
@@ -205,8 +213,11 @@ Each increment's plan records which repositories it changes and which identities
 
 1. Create the lane's BWS identity and grants, and prove them under `env -i` in the lane's container
    with `--dry-run`. The container's scheduler is disabled.
-2. Pick a cut-over time between two scheduled passes. Boot out the Mac agent with `launchctl
-   bootout gui/<uid>/com.devon.<lane>`, and keep its plist.
+2. Pick a cut-over time between two scheduled passes. Confirm no pass is running:
+   `launchctl print gui/<uid>/com.devon.<lane>` shows no running PID, and for the bump driver no
+   process holds its `pass.lock` (the only lane with a pass lock). `bootout` stops a running pass
+   midway. Then boot out the Mac agent with `launchctl bootout gui/<uid>/com.devon.<lane>`, and keep
+   its plist.
 3. Enable the container's schedule. Its first pass pings the same check.
 4. Verify that the check's last ping came from the container and that the Mac agent isn't loaded.
    The lane's own output in the container log must match the Mac log's last pass.
@@ -221,14 +232,27 @@ from the main tree with the Keychain identities it had, which stay valid until i
 rollback takes no new credential and changes no record, because the lane code is identical in both
 places.
 
+Rollback is available for every moved lane until increment 6, which removes the plists and the
+Keychain items' lane role. Increment 6 requires a passed week bar, so no lane loses its rollback
+before the week has shown the move holds.
+
 #### The week bar
 
-The Mac can't be literally off while three agents stay on it. The bar is measured as follows:
-for 7 consecutive days, with every moved lane's Mac agent booted out, each moved lane's
-Healthchecks check records no down event and no `/fail` caused by the move. The week also contains
-at least one window where the Mac is asleep or powered off for 24 hours or longer, during which
-each check's pings continue on schedule. The evidence is each check's ping log for the week, read
-through the read-only Healthchecks key, and the Mac's power log for the off window.
+The bar is the year plan's: a lane survives the Mac being off for a week. It's measured as
+follows: for 7 consecutive days the Mac is off or asleep, and every moved lane's Mac agent is
+booted out. Over those 7 days, each moved lane's Healthchecks check records no down event and no
+`/fail` that is absent from that lane's pre-move baseline. The baseline is the same check's ping
+log for the 4 weeks before that lane's cut-over: a down event fails the bar unless the baseline
+has a down event too, and a `/fail` fails it unless the baseline has a `/fail` with the same
+finding.
+
+What stays on the Mac goes quiet that week and is excluded from the bar: the three agents in
+decision 4, and the VM rotation executor until ADR-0059 increment 7 moves it. Their checks going
+down is expected. Neither the rotation proposer's `cred-consumers.list` nor any other moved lane's
+input may still live on the Mac by then (decision 5).
+
+The evidence is each moved check's ping log for the week and its baseline, read through the
+read-only Healthchecks key, and the Mac's power log (`pmset -g log`) covering the 7 days.
 
 ## Consequences
 
@@ -244,6 +268,13 @@ through the read-only Healthchecks key, and the Mac's power log for the off wind
   equivalents. The relevant ones are "the scheduled lanes run the main tree's working copy", the
   launcher-credential rules, and the PATH rule for `uv`. Each increment rewrites the invariant it
   makes untrue.
+- By Q3's decision, the VM rotation executor gains write reach over every lane's BWS identity once
+  ADR-0059 increment 7 lifts ADR-0055 decision 4 for lane tokens. A compromised executor could then
+  re-issue any lane's token.
+- Lane tokens are registered and unrotated from the first lane identity (increment 2) until
+  ADR-0059 increment 7. That window is bounded: it must not outlast the credential registry's
+  rotation interval for a lane token. If the increments would run past that interval, HQ decides
+  how to proceed before the interval passes; the increments don't extend it.
 
 ## Dependencies
 
@@ -252,8 +283,8 @@ through the read-only Healthchecks key, and the Mac's power log for the off wind
   machine identity write access to an authoring repository (intent-packages), the ADR-0039
   amendment that follows this ADR must restate who authors a package revision. That amendment is
   written separately.
-- **ADR-0055.** Increment 7's ADR-0055 amendment moves the VM executor to the VPS and, by Q3's
-  decision, lifts decision 4 for lane tokens so that the executor rotates them.
+- **ADR-0055.** ADR-0059 increment 7's ADR-0055 amendment moves the VM executor to the VPS and,
+  by Q3's decision, lifts decision 4 for lane tokens so that the executor rotates them.
 
 ## Devon's decisions
 
@@ -269,14 +300,15 @@ the Mac. This departs from the year plan's two-exception text; HQ updates the ye
 
 ### Q3: the VM executor rotates lane BWS tokens (HQ D-5)
 
-Option (a): once increment 7 moves the VM rotation executor to the VPS, it rotates each lane's BWS
-token. It already writes Coolify variables with its own Coolify token. ADR-0055 decision 4, as
-amended, says a BWS consumer token may be handled only by an executor instance on the machine that
-already holds it, and never by the VM. Increment 7's ADR-0055 amendment lifts decision 4 for lane
-tokens. The cost is accepted: the executor gains write reach over every lane's identity. Until that
-amendment, lane tokens are registered and unrotated. The rejected options were the hand-rotated
-set, which conflicts with Devon's "SDS can not do an all human rotation" (2026-10-21), and a new
-confined rotation instance, which would add a third orchestrator identity.
+Option (a): once ADR-0059 increment 7 moves the VM rotation executor to the VPS, it rotates each
+lane's BWS token. It already writes Coolify variables with its own Coolify token. ADR-0055
+decision 4, as amended, says a BWS consumer token may be handled only by an executor instance on
+the machine that already holds it, and never by the VM. ADR-0059 increment 7's ADR-0055 amendment
+lifts decision 4 for lane tokens. The cost is accepted: the executor gains write reach over every
+lane's identity. Until that amendment, lane tokens are registered and unrotated. The rejected
+options were the hand-rotated set, which conflicts with Devon's "SDS can not do an all human
+rotation" (2026-10-21), and a new confined rotation instance, which would add a third orchestrator
+identity.
 
 ## Open questions
 
