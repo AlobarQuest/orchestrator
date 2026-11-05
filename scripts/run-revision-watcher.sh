@@ -40,7 +40,7 @@ set -uo pipefail
 
 # BWS UUIDs (values fetched at runtime; never stored in this repo). See .bws-secrets.toml.
 OBSERVER_BEARER_UUID="f793576f-e9aa-4f9d-8089-b4a000b9e2d5"   # orchestrator-observer OBSERVER bearer
-PLATFORM_TOKEN_UUID="bbd71f41-b7df-4ae9-8fdb-b41501447308"    # read-only hosting-platform API token
+PLATFORM_TOKEN_UUID="bbd71f41-b7df-4ae9-8fdb-b41501447308"    # hosting-platform API token (can write envs; this script only lists apps)
 ESTATE_READ_KEY_UUID="726a18ba-7a38-4ecc-aa03-b49a015fd302"   # App Brain READ-ONLY key
 SDS_BRIDGE_ALERT_UUID="${REVISION_WATCHER_ALERT_BWS_UUID:-b415d03b-f92d-46b1-8a9d-b4f10103df49}"  # sds-bridge alert sender
 
