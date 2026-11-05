@@ -646,3 +646,33 @@ disposition = "reissue"
   ref = "scripts/run-estate-landing.sh"
   healthchecks_check = "sds-estate-landing"
   note = "reads it on --submit passes with the narrow sds-operator identity, as ESTATE_LANDING_COOLIFY_TOKEN; pings sds-estate-landing"
+
+# ── The orchestrator's alert-hub sender token ────────────────────────────────────
+# Platform layer Part 2. alert-hub source `sds-orchestrator` (id 74885df2-cd25-494f-a13d-050cb3a0e67c),
+# created 2026-11-05. The keeper was created by hand in the Bitwarden web app, in `Alert Hub Senders`,
+# because no machine identity can create secrets. The orchestrator holds a copy as the Coolify env
+# ORCHESTRATOR_ALERT_HUB_TOKEN and reports its fingerprint on /api/v1/held-credentials. No adapter
+# rotates this class, so it is not rotated_by_sds and falls to the manual checklist.
+# sha256[:8] computed in-process 2026-11-05.
+[[credential]]
+id = "alert-hub-sds-orchestrator-sender"
+class = "alert-hub-sender-token"
+fingerprint_sha256_8 = "819bcf3f"
+provider = "alert-hub"
+provider_identity = "alert-hub sender sds-orchestrator (source 74885df2-cd25-494f-a13d-050cb3a0e67c)"
+bws_uuid = "54fa81ba-216d-40d9-b02b-b4f900bccee9"
+created = "2026-11-05"
+disposition = "reissue"
+
+  [[credential.consumer]]
+  kind = "bws-secret"
+  uuid = "54fa81ba-216d-40d9-b02b-b4f900bccee9"
+  note = "ALERT_HUB_SENDER_TOKEN_SDS_ORCHESTRATOR (Alert Hub Senders) — keeper; nothing scheduled reads it"
+
+  [[credential.consumer]]
+  kind = "coolify-env-held"
+  instance = "prod"
+  resource_type = "application"
+  uuid = "eqj5l7k705fhi12x9i74fqf0"
+  key = "ORCHESTRATOR_ALERT_HUB_TOKEN"
+  note = "the orchestrator's copy, which it sends alerts to alert-hub with; it reports the fingerprint on /api/v1/held-credentials (ADR-0055 amendment 13); no adapter rotates it, so a person re-sets it"
