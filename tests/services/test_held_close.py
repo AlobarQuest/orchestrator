@@ -308,15 +308,14 @@ def test_a_repository_outside_the_declared_population_is_not_closed(
 def test_a_held_pull_request_in_an_ungranted_repository_is_not_closed(
     migrated_session: Session, migrated_engine: Engine
 ) -> None:
-    """The hold breached and the grant withdrawn: admission reads no GitHub for an ungranted
-    repository, so the answer cannot name the hold (`held_close_not_held`) and no close reaches
-    the gateway."""
+    """The hold breached and the grant withdrawn: the repository is outside the lane's population,
+    whatever else the answer refuses, so no close reaches the gateway."""
     _hold(migrated_session, INERT_REPOSITORY, "typer", "0.20.5", granted=())
     gateway = _typer_gateway()
 
     code = _refused(lambda: _close_inert(migrated_session, gateway))
 
-    assert code == HELD_CLOSE_NOT_HELD
+    assert code == HELD_CLOSE_OUTSIDE_POPULATION
     _assert_untouched(gateway, migrated_engine)
 
 
@@ -479,7 +478,7 @@ def test_the_deploying_lane_does_not_close_a_held_pull_request_in_an_ungranted_r
 
     code = _refused(lambda: _close_estate(migrated_session, gateway))
 
-    assert code == HELD_CLOSE_NOT_HELD
+    assert code == HELD_CLOSE_OUTSIDE_POPULATION
     _assert_untouched(gateway, migrated_engine)
 
 

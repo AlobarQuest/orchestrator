@@ -1215,6 +1215,70 @@ def test_a_held_bump_names_the_ceiling_even_when_the_policy_cannot_be_read(
     assert LANDING_VERSION_CEILING_EXCEEDED in answer.refusals
 
 
+def test_a_granted_held_bump_keeps_its_whole_answer(migrated_session: Session) -> None:
+    """Part 2 call 4 pin: grant-first must not change what a GRANTED repository's answer holds."""
+    _hold_typer(migrated_session)
+    gateway = _typer_gateway()
+
+    answer = _answer(migrated_session, gateway=gateway)
+
+    assert answer.satisfied is False
+    assert answer.refusals == (LANDING_VERSION_CEILING_EXCEEDED,)
+    assert answer.head_sha == HEAD
+    assert [(b.dependency, b.ceiling) for b in answer.ceiling_breaches] == [("typer", "0.20.5")]
+    assert answer.update_bot_authored is True
+    assert answer.merge_method == SQUASH
+    assert gateway.reads == [(INERT_REPOSITORY, PR)]
+    assert gateway.commit_reads == [(INERT_REPOSITORY, PR)]
+    assert gateway.compares == [(INERT_REPOSITORY, "main", HEAD)]
+    assert gateway.blobs == []
+    assert gateway.run_reads == []
+    assert gateway.open_reads == []
+    assert gateway.tree_reads == []
+
+
+def _sync_gateway() -> FakeEstateGateway:
+    return FakeEstateGateway(
+        pull=pull_request(number=PR, head_ref=SYNC_BRANCH, author_login=SYNC_BOT)
+    )
+
+
+def test_a_granted_wholesale_sync_keeps_its_whole_answer(migrated_session: Session) -> None:
+    gateway = _sync_gateway()
+
+    answer = _answer(
+        migrated_session,
+        gateway=gateway,
+        policy_source=FakeInertPolicySource(InertLandingAnswer(_sync_rules())),
+    )
+
+    assert answer.refusals == ()
+    assert answer.head_sha == HEAD
+    assert answer.merge_method == MERGE_COMMIT
+    assert gateway.reads == [(INERT_REPOSITORY, PR)]
+    assert gateway.commit_reads == []
+
+
+def test_a_wholesale_sync_with_only_dependency_updates_is_read_then_asked_past_it(
+    migrated_session: Session,
+) -> None:
+    """Both services are asked after the read: the pull request is read, and the second service's
+    absence refuses with the wholesale answer's other fields intact."""
+    gateway = _sync_gateway()
+
+    answer = _answer(
+        migrated_session,
+        gateway=gateway,
+        policy_source=FakeInertPolicySource(InertLandingAnswer(_sync_rules())),
+        granted=("dependency_updates",),
+    )
+
+    assert answer.refusals == (LANDING_REPOSITORY_NOT_GRANTED,)
+    assert answer.head_sha == HEAD
+    assert answer.merge_method == MERGE_COMMIT
+    assert gateway.reads == [(INERT_REPOSITORY, PR)]
+
+
 # ---------------------------------------------------------------------------------------------
 # The member record's grant (Landing Part 2): the lane's own declaration admits nothing the
 # record does not also grant.

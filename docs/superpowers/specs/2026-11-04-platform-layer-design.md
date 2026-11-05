@@ -79,8 +79,11 @@ container's log (counts only). Nothing was written.
    grant refusal and the terms that need no GitHub read (estate, policy, record, window, pace and
    prior), with `head_sha` and the other remote fields as for an unreadable pull request. The
    change applies to the acting paths too, since they share the functions. Both landers already
-   treat `landing_repository_not_granted` as an exception and never close such a pull request,
-   so no lander outcome changes; an ungranted repository's answer lists fewer refusals. That
+   treat `landing_repository_not_granted` as an exception and never close such a pull request.
+   What changes: an ungranted repository's answer is that refusal alone, which reads as an
+   exception in both landers (silent), never held or settled, and is never closed; before, an
+   answer that also carried a GitHub-read refusal such as `landing_checks_not_clean` could read as
+   held (alerting). An ungranted repository is not an SDS target, so that is intended. That
    closes "every App call site stays bounded by a grant" for reads, the way the revert path
    already asks first. Cost if wrong: a person reading an ungranted repository's answer sees one
    refusal, not all of them.

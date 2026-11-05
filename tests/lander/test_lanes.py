@@ -328,6 +328,23 @@ def test_a_held_bump_in_an_ungranted_repository_is_an_exception_and_never_closed
 
 
 @pytest.mark.parametrize("module", LANDERS)
+@pytest.mark.parametrize("submit", [True, False], ids=["acting", "dry-run"])
+def test_the_grant_refusal_alone_is_an_exception_and_closes_nothing(
+    module: Any, submit: bool
+) -> None:
+    """Admission reads no GitHub for an ungranted repository, so its answer is this refusal alone
+    (Part 2, call 4). It reads as an exception, silent, where an answer that also carried a
+    GitHub-read refusal such as `landing_checks_not_clean` used to read as held. An ungranted
+    repository is not an SDS target, so that is intended."""
+    client = _Client({"satisfied": False, "refusals": [NOT_GRANTED], "head_sha": None})
+
+    [outcome] = module._pass(SUBJECT, client, submit)
+
+    assert outcome.status == "exception"
+    assert client.closed == []
+
+
+@pytest.mark.parametrize("module", LANDERS)
 def test_no_ceiling_refusal_closes_nothing(module: Any) -> None:
     client = _Client(
         {"satisfied": False, "refusals": ["landing_dependency_list_unreadable"], "head_sha": HEAD}

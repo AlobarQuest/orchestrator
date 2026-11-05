@@ -316,6 +316,15 @@ def _refuse_unless_held(admission: _HeldAdmission, in_population: bool) -> None:
     clauses = (
         (not refusals & _LANE_OFF, HELD_CLOSE_LANE_OFF, "the lane may not act"),
         (
+            # The member record not granting the repository puts it outside every lane's
+            # population (Landing Part 2). Admission reads no GitHub for such a repository, so its
+            # answer can never name a hold: this is asked before the hold, or the refusal would
+            # read as "no hold" when the truth is "not ours".
+            LANDING_REPOSITORY_NOT_GRANTED not in refusals,
+            HELD_CLOSE_OUTSIDE_POPULATION,
+            "the repository is not granted to the lander",
+        ),
+        (
             LANDING_VERSION_CEILING_EXCEEDED in refusals,
             HELD_CLOSE_NOT_HELD,
             "the lane's answer does not refuse this pull request for a hold",
@@ -326,9 +335,8 @@ def _refuse_unless_held(admission: _HeldAdmission, in_population: bool) -> None:
             "the update bot did not open this pull request",
         ),
         (
-            # The member record not granting the repository puts it outside every lane's
-            # population (Landing Part 2), whatever the lane's own declaration says.
-            in_population and LANDING_REPOSITORY_NOT_GRANTED not in refusals,
+            # The lane's own declaration of the repository.
+            in_population,
             HELD_CLOSE_OUTSIDE_POPULATION,
             "the repository is not this lane's",
         ),

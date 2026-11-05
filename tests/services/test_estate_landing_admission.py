@@ -1385,6 +1385,31 @@ def test_a_granted_members_hold_is_case_folded(migrated_session: Session) -> Non
     assert answer.refusals == (LANDING_VERSION_CEILING_EXCEEDED,)
 
 
+def test_a_granted_held_bump_keeps_its_whole_answer(migrated_session: Session) -> None:
+    """Part 2 call 4 pin: grant-first must not change what a GRANTED repository's answer holds."""
+    _hold_alembic(migrated_session)
+    gateway = FakeEstateGateway()
+
+    answer = _ask(migrated_session, gateway=gateway)
+
+    assert answer.satisfied is False
+    assert answer.refusals == (LANDING_VERSION_CEILING_EXCEEDED,)
+    assert answer.head_sha == HEAD
+    assert [(b.dependency, b.ceiling) for b in answer.ceiling_breaches] == [("alembic", "1.18.9")]
+    assert answer.update_bot_authored is True
+    assert answer.rollout_base_matches_pin is True
+    assert gateway.reads == [(REPOSITORY, PR)]
+    assert gateway.commit_reads == [(REPOSITORY, PR)]
+    assert gateway.compares == [(REPOSITORY, "main", HEAD)]
+    assert gateway.blobs == [
+        (REPOSITORY, ".github/workflows/deploy.yml", "main"),
+        (REPOSITORY, ".github/workflows/deploy.yml", HEAD),
+    ]
+    assert gateway.run_reads == []
+    assert gateway.open_reads == []
+    assert gateway.tree_reads == []
+
+
 def test_a_group_with_one_held_member_is_refused(migrated_session: Session) -> None:
     _hold_alembic(migrated_session)
     message = trailer(("click", "8.2.0"), ("alembic", "1.19.0"), title=GROUP_TITLE)
