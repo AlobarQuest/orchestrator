@@ -66,8 +66,23 @@ system with only `PATH` and `HOME` set, and holding nothing that can't be rebuil
   lane code.
 - **A lane's image is pinned to the served orchestrator tag and updated by the deploy command.**
   `scripts/deploy_orchestrator.py` writes the same tag to `sds-lanes` after the orchestrator's
-  `finish` passes, and no lane runs code the served orchestrator doesn't. This replaces
-  `activate-checkout.sh`'s fast-forward of the main tree. A moved lane never reads a working copy.
+  `finish` passes. A lane runs either the served tag or, while the deploy command waits for a
+  quiet slot (following bullet), the tag the orchestrator served until that release, and no
+  other. This replaces `activate-checkout.sh`'s fast-forward of the main tree. A moved lane never
+  reads a working copy.
+- **A routine tag update redeploys `sds-lanes` only in a quiet slot.** Coolify's deploy
+  (`/deploy`) and restart (`/services/{uuid}/restart`) API endpoints take only a resource's
+  UUID and name no service within it, so every tag update recreates every lane's container at
+  once, and a running pass is stopped midway. The deploy command therefore applies the
+  cut-over's two checks to the whole resource before it redeploys: the time is outside estate
+  landing's 02:00 to 06:00 New York window, and no moved lane's check reports `started`, read
+  through the Healthchecks API just before the redeploy. Every scheduled pass pings `/start`
+  first, so `started` is the one signal every lane already sends. A check that is also `down`
+  doesn't hold the deploy, because its pass stopped without a final ping and the down alert
+  already reports it. Until both checks pass, the deploy command waits and reads again. The
+  residual: a pass that starts between the read and the redeploy is still stopped. The P2 backlog
+  item in which `deploy_orchestrator.py` holds the bump-driver launch agent during a deploy is
+  re-scoped by this rule once the bump driver moves.
 - **The lanes that need other repositories clone them at the start of each pass.** These lanes
   are the bump driver (intent-packages and its venv, project-standards, security-standards), both
   bridge proposers (intent-packages; the rotation proposer also needs infraops-mcp-server), the
@@ -75,7 +90,8 @@ system with only `PATH` and `HOME` set, and holding nothing that can't be rebuil
   `main`, into a container-local directory that's discarded with the container, so a container
   holds nothing that can't be rebuilt.
 - **A lane's kill switch stays the variable it is today** (ADR-0046). Stopping one service stops
-  one lane.
+  one lane, but redeploying the resource restarts every lane, so a routine tag update follows the
+  quiet-slot rule.
 
 **Rejected: Coolify scheduled tasks.** A Coolify scheduled task runs a command inside a running
 container of an application or service. The lanes would share one container and its environment,
@@ -126,8 +142,11 @@ One container per lane already gives each lane its own process, filesystem and e
   today only the broad account reads. Without it, the lane pings nothing and the check goes down
   after its grace (ADR-0021 amendment 3).
 - **Each check's schedule and grace are re-checked against the container's crontab** at cut-over.
-  Every check without one is provisioned through `sds_upsert_check`, which closes the "5 of 20
-  installers" gap the runtime pass left.
+  Every moved lane already has a check: the runtime pass measured 19 lane checks on 2026-11-04,
+  one per `run-*.sh` lane, each matching its plist's schedule. Only 5 of the 20 installers
+  create theirs (`sds_upsert_check`), so each lane's increment provisions its check from the
+  lane's own setup through `sds_upsert_check`, which closes the "5 of 20 installers" gap the
+  runtime pass left.
 - **The outcome alarm and the dead-man switch keep their semantics.** The lane code doesn't
   change, so `--finding` and `--told` keep their meanings and `test_sds_deadman.py` still holds
   them.
@@ -213,14 +232,23 @@ Each increment's plan records which repositories it changes and which identities
 
 1. Create the lane's BWS identity and grants, and prove them under `env -i` in the lane's container
    with `--dry-run`. The container's scheduler is disabled.
-2. Pick a cut-over time between two scheduled passes. Confirm no pass is running:
+2. Pick a cut-over time between two scheduled passes. In that gap, run the lane's reporting mode
+   (the invocation that changes no record: `--dry-run` where the launcher takes it, or the
+   invocation without its acting flag, such as `--submit`, `--register` or `--push`) on the Mac
+   and in the container within the same minute.
+   Keep both outputs for step 4. Then confirm no pass is running:
    `launchctl print gui/<uid>/com.devon.<lane>` shows no running PID, and for the bump driver no
    process holds its `pass.lock` (the only lane with a pass lock). `bootout` stops a running pass
    midway. Then boot out the Mac agent with `launchctl bootout gui/<uid>/com.devon.<lane>`, and keep
    its plist.
 3. Enable the container's schedule. Its first pass pings the same check.
 4. Verify that the check's last ping came from the container and that the Mac agent isn't loaded.
-   The lane's own output in the container log must match the Mac log's last pass.
+   Compare the two reporting runs from step 2. They must agree on the exit code, the set of
+   record identifiers the lane reported (pull request numbers, unit ids, package names, record
+   ids), and each record's finding kind or proposed action. Timestamps, durations, run and request
+   ids, temporary paths, hostnames and log prefixes differ by nature and are excluded. A scheduled
+   pass isn't the comparison, because the Mac's last pass may already have acted on a record that
+   the container's first pass then finds done.
 
 The Mac agent and the container never run the same lane at once. Two landers, or two carriers,
 would race on the same records.
@@ -241,18 +269,38 @@ before the week has shown the move holds.
 The bar is the year plan's: a lane survives the Mac being off for a week. It's measured as
 follows: for 7 consecutive days the Mac is off or asleep, and every moved lane's Mac agent is
 booted out. Over those 7 days, each moved lane's Healthchecks check records no down event and no
-`/fail` that is absent from that lane's pre-move baseline. The baseline is the same check's ping
-log for the 4 weeks before that lane's cut-over: a down event fails the bar unless the baseline
-has a down event too, and a `/fail` fails it unless the baseline has a `/fail` with the same
-finding.
+`/fail` that is absent from that lane's pre-move baseline. A down event fails the bar unless the
+baseline has a down event too, and a `/fail` fails it unless the baseline has a `/fail` with the
+same finding.
+
+The baseline is captured at the lane's cut-over and kept as evidence, because Healthchecks
+removes the history it's drawn from before the week runs:
+
+- **Down events** come from the check's flips (`/api/v3/checks/<id>/flips/`), which Healthchecks
+  keeps for the current month and the two full months before it. Every moved lane has a check
+  (decision 3), so at cut-over every lane has 4 weeks of flips, its down baseline.
+- **`/fail` pings** come from the check's ping log (`/api/v3/checks/<uuid>/pings/`), which keeps
+  only a check's most recent pings, up to the account's ping-log limit (100 by Healthchecks'
+  default). Every pass sends two pings, `/start` and its result, so at that default a daily lane
+  keeps about 7 weeks and an hourly lane about 2 days. A lane has a `/fail` baseline only if its
+  ping log, read at cut-over, reaches back 4 weeks. At the default limit that's the seven daily
+  lanes (bump proposer, fork hardening, landing ledger, membership check, pin watcher, rotation
+  proposer and work carrier), and not the ten that run more often.
+- **A lane whose ping log doesn't reach back 4 weeks is held to zero `/fail` for the week.**
+  Pinging its check longer on the Mac can't give it a baseline, because the log keeps no more
+  than its limit however long the lane runs. Zero `/fail` needs no history, so it keeps the bar
+  objective. It's also the lane's ordinary contract: a delivered finding pings success
+  (`--finding`, `--told`), so a `/fail` means a pass that couldn't do its job.
 
 What stays on the Mac goes quiet that week and is excluded from the bar: the three agents in
 decision 4, and the VM rotation executor until ADR-0059 increment 7 moves it. Their checks going
 down is expected. Neither the rotation proposer's `cred-consumers.list` nor any other moved lane's
 input may still live on the Mac by then (decision 5).
 
-The evidence is each moved check's ping log for the week and its baseline, read through the
-read-only Healthchecks key, and the Mac's power log (`pmset -g log`) covering the 7 days.
+The evidence is each moved check's flips and ping log for the week, its baseline as captured at
+cut-over, and the Mac's power log (`pmset -g log`) covering the 7 days. The read-only Healthchecks
+key reads flips. The ping log needs the read-write key (`51509d5e-…`), because Healthchecks
+refuses `/pings/` to a read-only key.
 
 ## Consequences
 
