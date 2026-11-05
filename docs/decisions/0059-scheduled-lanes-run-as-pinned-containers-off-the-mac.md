@@ -2,8 +2,8 @@
 
 - **Status:** Proposed
 - **Date:** 2026-11-05
-- **Decided by:** not yet decided. HQ's three open questions are marked **Open (Q1–Q3)** in the
-  text that follows.
+- **Decided by:** not yet decided. Three questions are Devon's to decide and are marked
+  **Open (Q1–Q3)**. "Open questions" gives each one's options, costs and a recommendation.
 - **Relates to:** ADR-0055 (the rotation executor's isolated runtime and decisions 2 and 4,
   amendments 6 and 12), ADR-0058 (lanes read their scope from the member record), ADR-0039
   (out-of-process producers carry only structured facts), ADR-0021 amendments 2 and 3 (the
@@ -252,8 +252,63 @@ through the read-only Healthchecks key, and the Mac's power log for the off wind
 
 ## Open questions
 
-- **Q1: who pushes.** Three moved lanes push as Devon's `gh` login today: the bump proposer and the
-  rotation proposer push intent-packages `main`, and fork hardening pushes forks' `hardened`
-  branches.
-- **Q2: the activation sweep.** Stay as a third Mac exception, retire it, or rebuild it.
-- **Q3: who rotates a lane's BWS token** once it's a Coolify variable and no longer a Keychain item.
+Each of the following questions changes what is built or who can write what, so Devon decides it.
+Each recommendation is the author's and isn't a decision.
+
+### Q1: who pushes when a lane leaves Devon's `gh` login
+
+Three moved lanes push as Devon's interactive login today. `bump-proposer` and
+`rotation-proposer` run `git push origin main` on intent-packages, and `fork-harden` pushes each
+fork's `hardened` branch. A container has no Devon login. The identity that pushes instead becomes
+the author on intent-packages `main` and must be admitted by its branch protection.
+`landing_ledger` derives a landing's basis from the GitHub identity: a `[bot]` suffix means a
+machine.
+
+- **(a) A pull request instead of a push.** Each lane opens a pull request with a machine identity,
+  and the existing landing path merges it. Cost: lane changes in two proposers, a revision reaches
+  `main` one landing later, and the direct-push rule (`PUBLISH_COMMAND`) retires for these lanes.
+- **(b) One write-scoped fine-grained PAT per pushing lane, in BWS.** Authorship stays
+  `AlobarQuest`. Cost: the least code, but a scheduled machine pushes as Devon. That's true today
+  too, and the token would sit in a VPS environment variable instead of the Mac's login.
+- **(c) A dedicated "SDS lanes" GitHub App**, installed only on intent-packages and the forks, with
+  `contents: write`. Commits are authored by `<app>[bot]`. Cost: a new App, a key in BWS,
+  branch-protection changes on intent-packages, and a check of every reader that keys on a package
+  revision commit's author.
+
+**Recommendation: (c).** The authorship it records is true, and the App reaches only the
+repositories it pushes to, unlike the dispatch App. (b) is the fallback if no new App is wanted.
+
+### Q2: the machine-activation sweep
+
+`activation-sweep` reads `~/Projects/<member>` on the Mac in both of its passes, `sweep` and `bind`.
+Its subject is this machine's working copies, and it's ADR-0030's only control over ADR-0031. It
+acts on no member, so the phase bar permits it to stay, but the year plan names only two agents
+that stay.
+
+- **(a) It stays as a third Mac exception.** Cost: nothing built; the year plan's "only two" wording
+  needs a one-line amendment.
+- **(b) Retire it.** Cost: ADR-0031's activation helper loses its only control, which still guards
+  the other enrolled working copies after the lanes stop running the main tree.
+- **(c) Rebuild it to bind from GitHub and sweep only on the Mac.** Cost: new code, and the sweep
+  half still stays.
+
+**Recommendation: (a).** It observes the Mac, and the Mac is where what it measures lives.
+
+### Q3: who rotates a lane's BWS token
+
+Each lane's token becomes a Coolify environment variable on `sds-lanes`. BWS machine tokens are
+Keychain items today, and the Keychain rotation instance switches them (ADR-0055 amendment 12).
+ADR-0055 decision 4, as amended, says a BWS consumer token may be handled by an executor instance
+on the machine that already holds it, and never by the VM. A VPS-held lane token fits neither
+instance.
+
+- **(a) The VM executor rotates lane tokens** after increment 7 moves it to the VPS, since it
+  already writes Coolify variables with its own Coolify token. Cost: an ADR-0055 amendment that
+  lifts decision 4 for lane tokens, and the executor gains write reach over every lane's identity.
+- **(b) Lane tokens join the hand-rotated set.** Cost: about 17 more hand rotations, against
+  Devon's "SDS can not do an all human rotation" (2026-10-21).
+- **(c) A new rotation instance confined to lane tokens, in its own container on `sds-lanes`.**
+  Cost: a third orchestrator identity and a new instance, amendment 12's shape again.
+
+**Recommendation: (a), decided in increment 7's ADR-0055 amendment.** Until then, lane tokens are
+registered and unrotated. (c) is the option that keeps decision 4 intact.
