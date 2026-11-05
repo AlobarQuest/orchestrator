@@ -254,27 +254,34 @@ def inert_landing_admission(
 
     estate = _inert_estate_term(repository, landing_source)
     policy = _policy_term(repository, policy_source)
-    remote = _remote_terms(
-        repository,
-        pr_number,
-        policy.rules,
-        holds_for(session, repository),
-        reverted_versions(session, repository),
-        recorded_revert(session, repository, pr_number),
-        revert_in_progress(session, repository),
-        gateway,
-    )
     # Landing Part 2. The member record must grant what this subject is: a bump needs
     # `dependency_updates`; a fork's upstream sync, someone else's release carried wholesale, also
-    # needs `security_patches`. Asked once on every path, after the author is known; where it is
-    # not (the pull request or the policy could not be read) a bump's grant is asked, and those
-    # paths already refuse on their own. A revert subject asks a bump's grant: it undoes one.
-    services = (
-        (SECURITY_PATCHES_SERVICE, DEPENDENCY_UPDATES_SERVICE)
-        if remote.wholesale
-        else (DEPENDENCY_UPDATES_SERVICE,)
-    )
-    granted = grant_term(MemberRecordGrants(session), repository, services)
+    # needs `security_patches`. Every branch needs `dependency_updates`, so that is asked FIRST and
+    # a repository without it makes no GitHub read: the answer is the grant refusal plus the terms
+    # that read none. The acting paths share this function, so they get the same order: both
+    # landers already treat `landing_repository_not_granted` as an exception and never close such
+    # a pull request, and this is the revert path's order (`revert_act._refuse_unless_permitted`).
+    # Once the pull request is read, a wholesale subject is asked both services. A revert subject
+    # asks a bump's grant: it undoes one.
+    grants = MemberRecordGrants(session)
+    granted = grant_term(grants, repository, (DEPENDENCY_UPDATES_SERVICE,))
+    if not granted.met:
+        remote = _RemoteTerms(Term(False, ()), None, SQUASH)
+    else:
+        remote = _remote_terms(
+            repository,
+            pr_number,
+            policy.rules,
+            holds_for(session, repository),
+            reverted_versions(session, repository),
+            recorded_revert(session, repository, pr_number),
+            revert_in_progress(session, repository),
+            gateway,
+        )
+        if remote.wholesale:
+            granted = grant_term(
+                grants, repository, (SECURITY_PATCHES_SERVICE, DEPENDENCY_UPDATES_SERVICE)
+            )
 
     refusals.extend(estate.refusals)
     refusals.extend(policy.term.refusals)

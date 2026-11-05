@@ -1353,24 +1353,36 @@ def test_a_bump_beyond_a_hold_is_refused_by_the_ceiling(migrated_session: Sessio
     assert gateway.commit_reads == [(REPOSITORY, PR)]
 
 
-def test_a_retired_members_hold_still_refuses_and_its_name_is_case_folded(
+def test_a_retired_member_is_refused_not_granted_and_nothing_is_read(
     migrated_session: Session,
 ) -> None:
-    """Kills: `holds_for` skipping a retired member, or comparing the repository
-    case-sensitively (the member is `AlobarQuest/Change-Manager`, the pull request's
-    `alobarquest/change-manager`)."""
+    """A retired member grants nothing, so the answer is the grant refusal alone: its hold's
+    ceiling is a GitHub-read term and is not asked. (`holds_for` still returns a retired member's
+    hold: `test_member_holds.py`.)"""
     _hold_alembic(migrated_session)
     member = migrated_session.scalars(
         select(SdsMember).where(SdsMember.repository == HELD_MEMBER)
     ).one()
     member.state = "retired"
     migrated_session.flush()
+    gateway = FakeEstateGateway()
+
+    answer = _ask(migrated_session, gateway=gateway)
+
+    assert answer.refusals == (LANDING_REPOSITORY_NOT_GRANTED,)
+    assert gateway.commit_reads == []
+    assert gateway.reads == []
+
+
+def test_a_granted_members_hold_is_case_folded(migrated_session: Session) -> None:
+    """Kills: `holds_for` comparing the repository case-sensitively (the member is
+    `AlobarQuest/Change-Manager`, the pull request's `alobarquest/change-manager`)."""
+    _hold_alembic(migrated_session)
     assert HELD_MEMBER != REPOSITORY
 
     answer = _ask(migrated_session)
 
-    # A retired member grants nothing (Landing Part 2), and its hold still refuses beside that.
-    assert answer.refusals == (LANDING_REPOSITORY_NOT_GRANTED, LANDING_VERSION_CEILING_EXCEEDED)
+    assert answer.refusals == (LANDING_VERSION_CEILING_EXCEEDED,)
 
 
 def test_a_group_with_one_held_member_is_refused(migrated_session: Session) -> None:
@@ -1428,6 +1440,8 @@ def test_a_held_bump_with_no_change_record_still_names_the_ceiling(
     ceiling code being present, so the hold is asked before the record's conditions are."""
     _hold_alembic(migrated_session)
 
+    grant_services(migrated_session, REPOSITORY, "dependency_updates")
+
     answer = estate_landing_admission(
         migrated_session,
         REPOSITORY,
@@ -1449,15 +1463,34 @@ def test_a_held_bump_with_no_change_record_still_names_the_ceiling(
 # ---------------------------------------------------------------------------------------------
 
 
+def _no_github_read(gateway: FakeEstateGateway) -> None:
+    """Every read list the double keeps is empty: the question was never put to GitHub."""
+    assert gateway.reads == []
+    assert gateway.compares == []
+    assert gateway.blobs == []
+    assert gateway.run_reads == []
+    assert gateway.commit_reads == []
+    assert gateway.open_reads == []
+    assert gateway.tree_reads == []
+
+
 def test_an_ungranted_repository_is_refused_not_granted(migrated_session: Session) -> None:
-    answer = _ask(migrated_session, granted=())
+    gateway = FakeEstateGateway()
+
+    answer = _ask(migrated_session, gateway=gateway, granted=())
 
     assert answer.satisfied is False
     assert answer.refusals == (LANDING_REPOSITORY_NOT_GRANTED,)
     assert answer.branch_update_qualifies is False
+    assert answer.head_sha is None
+    assert answer.rollout_base_matches_pin is False
+    _no_github_read(gateway)
 
 
 def test_security_patches_alone_does_not_grant_this_lane(migrated_session: Session) -> None:
-    answer = _ask(migrated_session, granted=("security_patches",))
+    gateway = FakeEstateGateway()
+
+    answer = _ask(migrated_session, gateway=gateway, granted=("security_patches",))
 
     assert answer.refusals == (LANDING_REPOSITORY_NOT_GRANTED,)
+    _no_github_read(gateway)

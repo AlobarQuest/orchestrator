@@ -359,7 +359,14 @@ def estate_landing_admission(
     # subject asks a bump's grant: it undoes one.
     granted = grant_term(MemberRecordGrants(session), repository, (DEPENDENCY_UPDATES_SERVICE,))
 
-    if revert_rule is not None:
+    # No GitHub read for a repository the record does not grant. The acting paths (merge, branch
+    # update, held close) share this function, so they get the same order: both landers already
+    # treat `landing_repository_not_granted` as an exception and never close such a pull request,
+    # and this is the revert path's order (`revert_act._refuse_unless_permitted`). The answer is
+    # the grant refusal plus the terms that read no GitHub.
+    if not granted.met:
+        remote = _RemoteTerms(Term(False, ()), None, False)
+    elif revert_rule is not None:
         remote = _revert_remote_terms(
             repository,
             pr_number,
