@@ -8,7 +8,7 @@ from pydantic import (
     Field,
 )
 
-from orchestrator.api.schemas.common import CommandBase
+from orchestrator.api.schemas.common import INTEGER_COLUMN_MAX, CommandBase
 
 
 class ApprovalCommand(CommandBase):
@@ -199,7 +199,7 @@ class ProposedUnitCommand(BaseModel):
     required_capability: str = Field(min_length=1)
     authority: dict[str, Any]
     context_enrichment: dict[str, Any] | None = None
-    max_attempts: int = Field(ge=0, default=3)
+    max_attempts: int = Field(ge=0, le=INTEGER_COLUMN_MAX, default=3)
 
 
 class ProposedDependencyCommand(BaseModel):

@@ -662,12 +662,19 @@ def test_retry_attempts_at_the_integer_column_limit_reach_the_service(
     assert seen == [2**31 - 1]
 
 
-def test_retry_bound_is_published_and_matches_the_column() -> None:
+def test_max_attempts_bounds_are_published_and_match_the_columns() -> None:
     from sqlalchemy import Integer
 
     from orchestrator.main import create_app
+    from orchestrator.persistence.models import DecompositionProposalUnit
 
-    schema = create_app().openapi()["components"]["schemas"]["RetryCommand"]
-    assert schema["properties"]["new_max_attempts"]["maximum"] == 2147483647
-    column = WorkUnit.__table__.c.max_attempts
-    assert isinstance(column.type, Integer) and not isinstance(column.type, BigInteger)
+    schemas = create_app().openapi()["components"]["schemas"]
+    retry = schemas["RetryCommand"]["properties"]["new_max_attempts"]
+    proposed = schemas["ProposedUnitCommand"]["properties"]["max_attempts"]
+    assert retry["maximum"] == 2147483647
+    assert proposed["maximum"] == 2147483647
+    for column in (
+        WorkUnit.__table__.c.max_attempts,
+        DecompositionProposalUnit.__table__.c.max_attempts,
+    ):
+        assert isinstance(column.type, Integer) and not isinstance(column.type, BigInteger)
