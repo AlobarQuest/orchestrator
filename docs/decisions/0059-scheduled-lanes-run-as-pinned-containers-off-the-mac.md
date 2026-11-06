@@ -5,7 +5,8 @@
 - **Decided by:** Devon decided Q1 to Q5 on 2026-11-05 (HQ decisions D-3 to D-7) and Q6 to Q11 on
   2026-11-06 (HQ decisions D-8 to D-11, D-13, D-14 and D-16 to D-18), all recorded in "Devon's
   decisions". Devon accepted the ADR on 2026-11-06 (HQ D-16, Q11) on HQ's clean Opus review. Devon
-  decided D-19 on 2026-11-06, recorded in Amendment 1 (one Coolify compose resource per lane).
+  decided D-19 and D-20 on 2026-11-06, recorded in Amendment 1 (one Coolify compose resource per
+  lane, and the three cases in which HQ deletes a lane's resource).
 - **Relates to:** ADR-0055 (the rotation executor's isolated runtime and decisions 2 and 4,
   amendments 6, 12 and 15), ADR-0058 (lanes read their scope from the member record), ADR-0039
   (out-of-process producers carry only structured facts), ADR-0021 amendments 2 and 3 (the
@@ -166,7 +167,7 @@ each of those lanes keeps it in a volume of its own (decision 1, "Lane state").
     session's write names each edit it applies. It prints the inverse too, for `lanes-finish` to
     name if the redeploy fails: for `--tag` and `--schedule`, the recorded compose and the replaced
     variable value; for an `--add`, deleting the lane's resource, which HQ performs as its own
-    production act under D-20 (open at the time of this amendment; "Adding a lane creates its
+    production act under D-20 (Amendment 1; "Adding a lane creates its
     resource"). The old tag or schedule value, and a stateful
     lane's volume (the following list), are what the session reads from the running container and
     passes in, as `prepare` takes `--coolify-health-check-enabled`. The session reads the tag with
@@ -448,7 +449,7 @@ each of those lanes keeps it in a volume of its own (decision 1, "Lane state").
   of the lane's resource alone, with no second `coolify_deploy` (the lane-phase bullets). The delete
   is HQ's own announced production act, framed exactly as the create: `prod announce`, the
   `coolify_delete_service` call, a check at the source that the resource is gone, and
-  `prod verified`. Its authority is D-20 (open at the time of this amendment); D-16 doesn't cover
+  `prod verified`. Its authority is D-20 (Amendment 1); D-16 doesn't cover
   it. The delete removes the resource's volumes: infraops's tool calls `DELETE /services/{uuid}`
   with no query (`coolifyDelete('/services/${uuid}')`, `src/tools/services.ts` line 326 at
   infraops-mcp-server `32a13046`), and Coolify's `delete_volumes` defaults to `true`
@@ -827,11 +828,13 @@ Healthchecks before it relies on it. A fact it can't confirm stops the increment
   endpoint refuses `type` beside `docker_compose_raw` and accepts the compose only base64-encoded
   (Q11). infraops-mcp-server #164 (squash `32a13046`) fixed the tool to match: it takes exactly one
   of `type` or `docker_compose_raw`, sends `type` only when given, and base64-encodes the compose
-  (`src/tools/services.ts`, 213 and 234-239, at `32a13046`). The fix is live on the Mac only after
-  Devon syncs the infraops checkout and reconnects infraops, an open gate. Increment 1 checks the
-  live tool against Coolify before HQ's first create. No lane phase creates a resource: HQ runs each
-  create through infraops (Q11), and increment 1 decides only how a resource's first compose is
-  recorded as the one its first lane-phase run replaces.
+  (`src/tools/services.ts`, 213 and 234-239, at `32a13046`). The fix is live on the Mac: Devon
+  synced the infraops checkout on the Mac and reconnected infraops on 2026-11-06, and HQ confirmed
+  that the checkout contains `32a13046` and that the live `coolify_create_service` schema takes
+  exactly one of `type` or `docker_compose_raw`. Increment 1 checks the live tool against Coolify
+  before HQ's first create. No lane phase creates a resource: HQ runs each create through infraops
+  (Q11), and increment 1 decides only how a resource's first compose is recorded as the one its
+  first lane-phase run replaces.
 - Where each lane-phase run's state file lives, so that the next run for a lane, from any session,
   reads the compose Coolify was last given for that lane's resource and finds a waiting or
   unfinished run, and `prepare` and `lanes-prepare` read them with no new credential (decision 1).
@@ -909,7 +912,7 @@ Healthchecks before it relies on it. A fact it can't confirm stops the increment
    Once `lanes-finish` has passed the `--add` of `sds-lane-execution-watch`, increment 2 retires
    `sds-lane-placeholder`: a release whose `prepare` stops naming it in the lag check is served
    first, and only then HQ deletes the placeholder's resource and its volume, as its own announced
-   production act under D-20 (open at the time of this amendment), framed as the delete in decision
+   production act under D-20 (Amendment 1), framed as the delete in decision
    1's "Adding a lane creates its resource". The placeholder has no token to revoke and no registry
    entry to remove. It also writes the ADR-0055 amendment that lifts decision 4 for lane tokens and
    ping URLs, so the VM executor writes each from its inbox (Q8 for lane tokens, Q10 for ping URLs).
@@ -1137,7 +1140,7 @@ three acts, in this order, and none starts before the one before it is confirmed
    `.bws-secrets.toml` lists for the lane, each of which must read `refused`. Until Devon revokes
    it, the resource and the registry entry stay, so the token is never live and untracked.
 2. HQ deletes `sds-lane-<lane>` through infraops, as its own announced production act under D-20
-   (open at the time of this amendment), framed exactly as the create: `prod announce`, the
+   (Amendment 1), framed exactly as the create: `prod announce`, the
    `coolify_delete_service` call, a check at the source that the resource is gone
    (`coolify_list_services` no longer lists it, and `vps_docker_ps` shows no container of it), and
    `prod verified`. Coolify's delete only queues the deletion, so the check re-reads both for up
@@ -1342,7 +1345,7 @@ interactive session on the Mac reads it through the broad account, as with the i
 ## Devon's decisions
 
 Devon decided Q1 to Q5 on 2026-11-05 and Q6 to Q11 on 2026-11-06. Q9 also records D-14, D-17
-and D-18, and Amendment 1 records D-19, which he decided on 2026-11-06.
+and D-18, and Amendment 1 records D-19 and D-20, which he decided on 2026-11-06.
 
 ### Q1: the pushing lanes push as a new "SDS lanes" GitHub App (HQ D-3)
 
@@ -1495,16 +1498,18 @@ both `type` and `docker_compose_raw` and accepts `docker_compose_raw` only base6
 (`app/Http/Controllers/Api/ServicesController.php`, 347-351 and 578-595). infraops-mcp-server
 #164 (squash `32a13046`) fixed the tool to match: it takes exactly one of `type` or
 `docker_compose_raw`, sends `type` only when given, and base64-encodes the compose
-(`src/tools/services.ts`, 213 and 234-239, at `32a13046`). The fix is live on the Mac only after
-Devon syncs the infraops checkout and reconnects infraops, an open gate, and increment 1 checks the
-live tool against Coolify before HQ's first create. Increment 1 decides only how a resource's first
-compose is recorded as the one its first lane-phase run replaces ("Verify before increment 1").
+(`src/tools/services.ts`, 213 and 234-239, at `32a13046`). The fix is live on the Mac: Devon synced
+the infraops checkout on the Mac and reconnected infraops on 2026-11-06, and HQ confirmed that the
+checkout contains `32a13046` and that the live `coolify_create_service` schema takes exactly one of
+`type` or `docker_compose_raw`. Increment 1 checks the live tool against Coolify before HQ's first
+create. Increment 1 decides only how a resource's first compose is recorded as the one its first
+lane-phase run replaces ("Verify before increment 1").
 
 ## Amendment 1 (2026-11-06): one Coolify compose resource per lane
 
 - **Status:** Accepted on merge. HQ merges it only after a clean Opus whole-branch review (HQ
   D-12, limit 3). The ADR's own status is unchanged.
-- **Decided by:** Devon, on 2026-11-06 (HQ D-19).
+- **Decided by:** Devon, on 2026-11-06 (HQ D-19 and D-20).
 - **Relates to:** decision 1 (the runtime), "Verify before increment 1", increments 1, 2 and 7,
   the cut-over and rollback, Q8 and Q11
 
@@ -1525,6 +1530,13 @@ HQ asked Devon (D-19) to pick one of three: (a) one Coolify compose resource per
 has its own variables; (b) keep lane tokens out of Coolify variables; (c) accept that every lane can
 read every token. Devon answered **A** (2026-11-06T20:23 UTC, Slack).
 
+HQ then asked Devon (D-20) whether HQ may delete a lane's own Coolify resource, which also deletes
+its volume, as an announced production act, only in three cases: undoing a failed first start of a
+lane, retiring the placeholder lane once the first real lane runs, and the last step of moving a
+lane back to the Mac (after its state is copied back and checked, one Mac run pings its check, and
+Devon has revoked the lane's token). Devon answered **Yes** (2026-11-06, Slack and the interactive
+session). D-20 covers those three deletes and no other.
+
 ### What changes
 
 1. **One resource per lane.** Each moved lane is its own Coolify compose resource,
@@ -1538,8 +1550,10 @@ read every token. Devon answered **A** (2026-11-06T20:23 UTC, Slack).
 2. **HQ creates each resource (D-16 under D-19).** HQ creates each lane's resource through infraops
    (`coolify_create_service`), each as its own announced production act. infraops-mcp-server #164
    (squash `32a13046`) fixed that tool for a raw-compose service at this Coolify version (Q11). The
-   fix is live on the Mac only after Devon syncs the infraops checkout and reconnects infraops, an
-   open gate, and increment 1 checks the live tool against Coolify before HQ's first create.
+   fix is live on the Mac: Devon synced the infraops checkout on the Mac and reconnected infraops
+   on 2026-11-06, and HQ confirmed that the checkout contains `32a13046` and that the live
+   `coolify_create_service` schema takes exactly one of `type` or `docker_compose_raw`. Increment 1
+   checks the live tool against Coolify before HQ's first create.
 3. **The executor writes each token into its lane's resource (D-10 (b) under D-19).** The VM
    rotation executor writes each lane's token into that lane's own resource
    (`PATCH /services/{uuid}/envs` on `sds-lane-<lane>`), so its registry needs each lane's resource
@@ -1564,8 +1578,8 @@ read every token. Devon answered **A** (2026-11-06T20:23 UTC, Slack).
    executor's registry, merges. Until Devon revokes the token, the resource and the entry stay.
    Each delete of a lane's resource, whether this one, the inverse of a failed `--add` or the
    placeholder's retirement, is HQ's own announced production act, framed as the create
-   (`prod announce`, the act, a check at the source, `prod verified`), under D-20 (open at the time
-   of this amendment); D-16 doesn't cover it. The lane's BWS secret and its Healthchecks check
+   (`prod announce`, the act, a check at the source, `prod verified`), under D-20; D-16 doesn't
+   cover it. The lane's BWS secret and its Healthchecks check
    stay. Moving the lane again is a new cut-over, with a new resource, a new volume name and a new
    token write. `prepare`'s lag check reads persisted per-lane run files, which outlive the
    resource, so it is scoped to the lanes registered at the time of the check, and removing the
