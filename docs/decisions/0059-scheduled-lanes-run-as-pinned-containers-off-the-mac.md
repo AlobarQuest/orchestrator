@@ -73,24 +73,24 @@ system with only `PATH` and `HOME` set, and holding nothing that can't be rebuil
   (`POST /services/{uuid}/restart`) takes the service resource's `uuid` and a `latest` flag.
   Neither names a service within a compose resource (Coolify API reference, "Deploy" and
   "Restart Service", read 2026-11-05). So every tag update recreates every lane's container at
-  once, and a running pass is stopped midway. The deploy command therefore applies the cut-over's two checks to the whole
-  resource before it redeploys: the time is outside estate landing's 02:00 to 06:00 New York window,
-  and no moved lane's check has `started` set to `true`. `started` is the boolean field of each
-  check in the Healthchecks Management API's check listing (`GET /api/v3/checks/`, API docs "List
-  Existing Checks"), read just before the redeploy. Every scheduled pass pings `/start` first, so
-  `started` is the one signal every lane already sends. A check whose `status` is also `down`
-  doesn't hold the deploy, because its pass stopped without a final ping and the down alert already
-  reports it. The deploy command runs where it runs today, in the deploying session on the Mac,
-  inside `finish`. It reads the listing with the read-only Healthchecks key (BWS `f07b1368-…`, in
-  `Rotation / Healthchecks`), through a direct read grant to `sds-operator` that increment 1 adds
-  (Q5, decided). Until
-  both checks pass, the deploy command waits and reads again, for at most 6 hours: long enough to
-  outlast the 4-hour landing window and a pass already running when it closes. At 6 hours the deploy
-  command raises an alert through alert-hub, exits with its "condition unmet" code (2) and leaves
-  `sds-lanes` on its previous tag, and HQ decides whether to re-run it or redeploy by hand. The
-  residual: a pass that starts between the read and the redeploy is still stopped. The P2 backlog
-  item in which `deploy_orchestrator.py` holds the bump-driver launch agent during a deploy is
-  re-scoped by this rule once the bump driver moves.
+  once, and a running pass is stopped midway. The deploy command therefore applies the
+  cut-over's two checks to the whole resource before it redeploys: the time is outside estate
+  landing's 02:00 to 06:00 New York window, and no moved lane's check has `started` set to `true`.
+  `started` is the boolean field of each check in the Healthchecks Management API's check listing
+  (`GET /api/v3/checks/`, API docs "List Existing Checks"), read just before the redeploy. Every
+  scheduled pass pings `/start` first, so `started` is the one signal every lane already sends. A
+  check whose `status` is also `down` doesn't hold the deploy, because its pass stopped without a
+  final ping and the down alert already reports it. The deploy command runs where it runs today,
+  in the deploying session on the Mac, inside `finish`. It reads the listing with the read-only
+  Healthchecks key (BWS `f07b1368-…`, in `Rotation / Healthchecks`), through a direct read grant
+  to `sds-operator` that increment 1 adds (Q5, decided). Until both checks pass, the deploy
+  command waits and reads again, for at most 6 hours: long enough to outlast the 4-hour landing
+  window and a pass already running when it closes. At 6 hours the deploy command raises an alert
+  through alert-hub, exits with its "condition unmet" code (2) and leaves `sds-lanes` on its
+  previous tag, and HQ decides whether to re-run it or redeploy by hand. The residual: a pass that
+  starts between the read and the redeploy is still stopped. The P2 backlog item in which
+  `deploy_orchestrator.py` holds the bump-driver launch agent during a deploy is re-scoped by this
+  rule once the bump driver moves.
 - **While the deploy command waits, the old lane code runs against the new orchestrator.** A
   release's orchestrator is served from `finish`, but its lanes stay on the previous tag until
   the quiet slot, up to the 6-hour maximum. So every release must keep the previous release's lane
