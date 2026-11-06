@@ -156,25 +156,24 @@ One container per lane already gives each lane its own process, filesystem and e
   sufficient: under the same `env -i` start with an empty `HOME`, reading a secret this lane
   doesn't fetch is refused. The refused read names another lane's secret UUID from
   `.bws-secrets.toml`, or, for the first lane, a secret only the broad account reads.
-- **Every GitHub credential moves to BWS.** No moved lane reads `gh auth token`. Each lane keeps
-  its own `<LANE>_GITHUB_TOKEN` variable (`BUMP_DRIVER_GITHUB_TOKEN`, `DEPLOY_WATCHER_GITHUB_TOKEN`,
-  `CHANGE_PROPOSER_GITHUB_TOKEN`, `BUMP_PROPOSER_GITHUB_TOKEN` and the rest), and its launcher
-  feeds that variable from BWS instead of `gh auth token`. A read-only lane's variable is fed from
-  one read-only fine-grained token in BWS, with a direct grant per lane identity. That token is
-  this ADR's proposal for increment 3, which moves the first lane that reads GitHub (the landing
-  ledger), and it's created there. It feeds the eleven lanes whose GitHub variable only reads:
-  bump driver, change proposer, deploy watcher, estate landing, inert landing, landing ledger,
-  membership check, pin watcher, revision watcher, unit verifier and work carrier. Both landers
-  read through `GitHubReader` and land through the orchestrator's dispatch App, not with this
-  token. It reads the repositories those lanes read through Devon's login today: the members'
-  repositories, the member record's repository, intent-packages and the standards repositories
-  the lanes clone. Increment 3
+- **Every GitHub credential moves to BWS.** No moved lane reads `gh auth token`. Each lane keeps its
+  own `<LANE>_GITHUB_TOKEN` variable (`BUMP_DRIVER_GITHUB_TOKEN`, `DEPLOY_WATCHER_GITHUB_TOKEN`,
+  `CHANGE_PROPOSER_GITHUB_TOKEN`, `BUMP_PROPOSER_GITHUB_TOKEN` and the rest), and its launcher feeds
+  that variable from BWS instead of `gh auth token`. A read-only lane's variable is fed from one
+  read-only fine-grained token in BWS, with a direct grant per lane identity. That token is this
+  ADR's proposal for increment 3, which moves the first lane that reads GitHub (the landing ledger),
+  and it's created there. It feeds the eleven lanes whose GitHub variable only reads: bump driver,
+  change proposer, deploy watcher, estate landing, inert landing, landing ledger, membership check,
+  pin watcher, revision watcher, unit verifier and work carrier. Both landers read through
+  `GitHubReader` and land through the orchestrator's dispatch App, not with this token. It reads the
+  repositories those lanes read through Devon's login today: the members' repositories, the member
+  record's repository, intent-packages and the standards repositories the lanes clone. Increment 3
   lists them from the member record and the lanes' clone lists, and selects only those. Its
   permissions are read-only, and only the ones the lanes' GitHub calls use: Metadata, Contents
   (files, commits, compares and clones), Pull requests, Actions (workflow runs and jobs) and
-  Administration (the `required_status_checks` reads in `deploy_watcher`, `landing_ledger` and
-  `unit_verifier`). It has no write permission, and no later increment widens it: a lane that
-  needs more gets its own credential by its own decision.
+  Administration (the unit verifier's read of `main`'s `required_status_checks`, in
+  `unit_verifier/required_checks.py`). It has no write permission, and no later increment widens it:
+  a lane that needs more gets its own credential by its own decision.
 - **The three pushing lanes push as the "SDS lanes" GitHub App (Q1, decided).** `bump-proposer`,
   `rotation-proposer` and `fork-harden` feed their GitHub variable with an installation token of a
   new GitHub App, installed only on intent-packages and the forks with `contents: write`. Each
@@ -188,7 +187,8 @@ One container per lane already gives each lane its own process, filesystem and e
   the orchestrator as SYSTEM. Its variable is fed from the read-only token.
 - **`.bws-secrets.toml` and `.cred-consumers.toml` gain each lane identity and each secret it
   reads**, in the same change as the lane's move. The credential registry gains each lane token
-  as a credential, and the "SDS lanes" App's private key as one more. The VM rotation executor
+  and each lane's Healthchecks ping URL (decision 3) as a credential, and the "SDS lanes" App's
+  private key as one more. The VM rotation executor
   rotates each lane token once ADR-0059 increment 7 moves the executor to the VPS (Q3, decided).
   The App key joins ADR-0055's hand-rotated set, as the `alobar-sds-rotation` App's key did
   (Q4, decided): Devon rotates it on the App's settings page, and no executor handles it.
@@ -225,14 +225,15 @@ One container per lane already gives each lane its own process, filesystem and e
   version: that a UUID ping URL needs no other credential and does nothing beyond pinging, that
   the upsert response carries `ping_url`, and the URL's base (`PING_ENDPOINT`).
 - **What changes in `sds-deadman.sh`, in increment 2** (the first lane whose container pings).
-  `sds_deadman_resolve` gains a first path: when the service's environment names the lane's
-  ping-URL secret UUID, it reads the URL with `sds_bws_value` and the lane's own token, and lists
-  no check. The name-lookup path through the broad account stays for the lanes still on the Mac,
-  and increment 6 removes it with their plumbing. The helper still reports and never gates: a URL
-  it can't read logs one reason and disables that run's pings. `sds_deadman_ping` moves its URL
-  to curl's stdin config, as `sds_outcome_ping` already does, because the URL is a secret and
-  must not be a process argument. `install-fork-harden-launchd.sh`'s private upsert is replaced
-  by `sds_upsert_check` when fork hardening moves.
+  `sds_deadman_resolve` gains a first path: when `SDS_DEADMAN_PING_URL_UUID` is set, it reads the
+  URL with `sds_bws_value` and the lane's own token, and lists no check. `SDS_DEADMAN_PING_URL_UUID`
+  is a service variable tracked in the `sds-lanes` compose file. Its value is the lane's ping-URL
+  secret UUID from `.bws-secrets.toml`, not a secret. The name-lookup path through the broad account
+  stays for the lanes still on the Mac, and increment 6 removes it with their plumbing. The helper
+  still reports and never gates: a URL it can't read logs one reason and disables that run's pings.
+  `sds_deadman_ping` moves its URL to curl's stdin config, as `sds_outcome_ping` already does,
+  because the URL is a secret and must not be a process argument. `install-fork-harden-launchd.sh`'s
+  private upsert is replaced by `sds_upsert_check` when fork hardening moves.
 - **Each check's schedule and grace are re-checked against the container's crontab** at cut-over.
   Every moved lane already has a check. The runtime pass measured 19 lane checks on 2026-11-04, one
   per `run-*.sh` launcher, each matching its plist's schedule
