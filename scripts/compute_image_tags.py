@@ -14,6 +14,9 @@ the build instead of labelling an image with a provenance claim that cannot be r
 Note the derivable tag is derivable, not immutable: rebuilding a commit re-points the tag at
 a fresh digest, because the base image is a moving tag and the created label is a timestamp.
 The digest the workflow reports remains the artifact's identity.
+
+The lane image (ADR-0059) is built from the same commit in the same run and takes the same tag
+names under its own repository, so a lane's `SDS_LANES_IMAGE_TAG` is the served orchestrator tag.
 """
 
 import argparse
@@ -21,6 +24,8 @@ import re
 from collections.abc import Sequence
 
 IMAGE = "ghcr.io/alobarquest/orchestrator"
+LANE_IMAGE = "ghcr.io/alobarquest/sds-lanes"
+IMAGES = {"orchestrator": IMAGE, "lanes": LANE_IMAGE}
 SOURCE_URL = "https://github.com/AlobarQuest/orchestrator"
 SHORT_SHA_LENGTH = 7
 
@@ -34,27 +39,27 @@ def _validated_revision(revision: str) -> str:
     return revision
 
 
-def derivable_tag(revision: str) -> str:
+def derivable_tag(revision: str, image: str = IMAGE) -> str:
     """The tag that is a pure function of the commit. Carries no operator input."""
-    return f"{IMAGE}:sha-{_validated_revision(revision)}"
+    return f"{image}:sha-{_validated_revision(revision)}"
 
 
-def readable_tag(revision: str, label: str = "") -> str:
+def readable_tag(revision: str, label: str = "", image: str = IMAGE) -> str:
     """The human-facing tag the estate already reads: short sha, optional label, arch."""
     short = _validated_revision(revision)[:SHORT_SHA_LENGTH]
     if label and not LABEL.match(label):
         raise ValueError(f"label must match {LABEL.pattern}, got {label!r}")
     suffix = f"-{label}" if label else ""
-    return f"{IMAGE}:{short}{suffix}-amd64"
+    return f"{image}:{short}{suffix}-amd64"
 
 
-def tag_outputs(revision: str, label: str = "") -> dict[str, str]:
+def tag_outputs(revision: str, label: str = "", image: str = IMAGE) -> dict[str, str]:
     """The `key=value` lines the release workflow appends to `$GITHUB_OUTPUT`."""
     return {
         "revision": _validated_revision(revision),
         "source": SOURCE_URL,
-        "tag": readable_tag(revision, label),
-        "sha_tag": derivable_tag(revision),
+        "tag": readable_tag(revision, label, image),
+        "sha_tag": derivable_tag(revision, image),
     }
 
 
@@ -62,9 +67,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Emit release image tags as GITHUB_OUTPUT lines.")
     parser.add_argument("--revision", required=True, help="full 40-character commit sha")
     parser.add_argument("--label", default="", help="optional human-readable tag suffix")
+    parser.add_argument("--image", choices=sorted(IMAGES), default="orchestrator")
     args = parser.parse_args(argv)
     try:
-        outputs = tag_outputs(args.revision, args.label)
+        outputs = tag_outputs(args.revision, args.label, IMAGES[args.image])
     except ValueError as error:
         parser.error(str(error))
     for key, value in outputs.items():

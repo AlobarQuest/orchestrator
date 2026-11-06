@@ -812,6 +812,83 @@ def test_the_real_release_log_yields_its_pushed_digest() -> None:
         deploy.pushed_digest(world, 37494595944, "c" * 40)
 
 
+RELEASE_SHA = "c88fba9de91775856ada8db0aa5b975b28d1f362"
+ORCHESTRATOR_DIGEST = "sha256:a0ca700d4aeb8db10ec991a4a51c42a3f537024e5fa401d77178923facdf0c05"
+LANE_DIGEST = "sha256:" + "1" * 64
+
+
+def _lane_lines(digest: str = LANE_DIGEST, image: str = "ghcr.io/alobarquest/sds-lanes") -> str:
+    """The lane steps' `env:` echoes as GitHub logs them: the overwrite refusal names the tags,
+    the verify step the digest, revision and derivable tag."""
+    step = "build-and-push\tCheck the lane image's pushed provenance\t2026-10-06T16:19:50Z"
+    refuse = "build-and-push\tRefuse to overwrite an existing tag\t2026-10-06T16:18:23Z"
+    sha_tag = f"{image}:sha-{RELEASE_SHA}"
+    return (
+        f"{refuse}   LANE_TAG: {image}:c88fba9-sds11verify-amd64\n"
+        f"{refuse}   LANE_SHA_TAG: {sha_tag}\n"
+        f"{step}   LANE_DIGEST: {digest}\n"
+        f"{step}   LANE_REVISION: {RELEASE_SHA}\n"
+        f"{step}   LANE_SHA_TAG: {sha_tag}\n"
+    )
+
+
+def _log_world(log: str) -> World:
+    def gh(argv: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        return _done(log)
+
+    return World(run=gh)
+
+
+def _release_log() -> str:
+    return Path("tests/fixtures/release_image_run_37494595944.log").read_text()
+
+
+def test_the_orchestrator_digest_read_ignores_the_lane_lines() -> None:
+    """The orchestrator deploy reads exactly its own `DIGEST:` line whether or not the run also
+    built the lane image (ADR-0059 amendment 1, item 7)."""
+    for log in (_release_log(), _release_log() + _lane_lines()):
+        assert deploy.pushed_digest(_log_world(log), 1, RELEASE_SHA) == ORCHESTRATOR_DIGEST
+
+
+def test_the_lane_digest_read_takes_only_the_lane_lines() -> None:
+    world = _log_world(_release_log() + _lane_lines())
+
+    assert deploy.pushed_lane_digest(world, 1, RELEASE_SHA) == LANE_DIGEST
+    with pytest.raises(deploy.Refused, match="somebody else"):
+        deploy.pushed_lane_digest(world, 1, "c" * 40)
+
+
+def test_the_lane_digest_read_refuses_a_run_without_the_lane_image() -> None:
+    with pytest.raises(deploy.Refused, match="0 distinct LANE_DIGEST values"):
+        deploy.pushed_lane_digest(_log_world(_release_log()), 1, RELEASE_SHA)
+
+
+def test_the_lane_digest_read_refuses_two_distinct_lane_digests() -> None:
+    log = _release_log() + _lane_lines() + _lane_lines(digest="sha256:" + "2" * 64)
+
+    with pytest.raises(deploy.Refused, match="2 distinct LANE_DIGEST values"):
+        deploy.pushed_lane_digest(_log_world(log), 1, RELEASE_SHA)
+    assert deploy.pushed_digest(_log_world(log), 1, RELEASE_SHA) == ORCHESTRATOR_DIGEST
+
+
+def test_the_lane_digest_read_refuses_another_images_tag() -> None:
+    """A lane line naming the orchestrator's repository, or any other, is somebody else's run."""
+    log = _release_log() + _lane_lines(image="ghcr.io/alobarquest/orchestrator")
+
+    with pytest.raises(deploy.Refused, match="somebody else"):
+        deploy.pushed_lane_digest(_log_world(log), 1, RELEASE_SHA)
+
+
+@pytest.mark.parametrize("prefix", ["LANES-", "LANE-", "XLANE_", "ORCHESTRATOR_"])
+def test_a_look_alike_digest_name_is_neither_images_line(prefix: str) -> None:
+    """Only `DIGEST:` after a boundary that is neither a word character nor `-` is the
+    orchestrator's, and only `LANE_DIGEST:` so bounded is the lanes'."""
+    log = _release_log() + _lane_lines() + f"x\ty\tz   {prefix}DIGEST: sha256:{'3' * 64}\n"
+
+    assert deploy.pushed_lane_digest(_log_world(log), 1, RELEASE_SHA) == LANE_DIGEST
+    assert deploy.pushed_digest(_log_world(log), 1, RELEASE_SHA) == ORCHESTRATOR_DIGEST
+
+
 # --------------------------------------------------------------------------------------------
 # recheck: the prepare-time checks that age, run again immediately before the swap
 # --------------------------------------------------------------------------------------------

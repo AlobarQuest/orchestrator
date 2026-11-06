@@ -1,0 +1,3 @@
+# sds-lane-placeholder runs no launcher (ADR-0059 increment 1), so its tracked crontab has no job.
+# A lane's crontab holds that lane's lines alone, each running `lane-run <lane> <arguments>` at the
+# schedule its plist sets, in America/New_York time.

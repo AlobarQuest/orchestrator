@@ -1,0 +1,4 @@
+#!/bin/sh
+# The lane image's `lane-run` command: scripts/lane_run.py under the orchestrator image's venv.
+# `-I` keeps the interpreter from reading PYTHON* variables or importing from the working directory.
+exec /app/.venv/bin/python -I /app/scripts/lane_run.py "$@"

@@ -52,7 +52,7 @@ from typing import Any, NoReturn
 
 import httpx
 
-from scripts.compute_image_tags import derivable_tag, readable_tag
+from scripts.compute_image_tags import LANE_IMAGE, derivable_tag, readable_tag
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -82,9 +82,16 @@ CLAIMED_STATE = "claimed"
 EXIT_OK, EXIT_USAGE, EXIT_CONDITION, EXIT_REFUSED = 0, 1, 2, 3
 FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
 DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
-LOG_DIGEST = re.compile(r"\bDIGEST: (sha256:[0-9a-f]{64})\b")
-LOG_REVISION = re.compile(r"\bREVISION: ([0-9a-f]{40})\b")
-LOG_SHA_TAG = re.compile(r"\bSHA_TAG: (\S+)")
+# The verify steps' `env:` echoes. The orchestrator's step logs `DIGEST:`, `REVISION:` and
+# `SHA_TAG:`, the lane image's logs the same names behind `LANE_` (ADR-0059 amendment 1, item 7).
+# No name may be preceded by a word character or `-`, so each reader matches only its own lines.
+LOG_PREFIX_ORCHESTRATOR, LOG_PREFIX_LANES = "", "LANE_"
+
+
+def _log_line(prefix: str, name: str, value: str) -> re.Pattern[str]:
+    return re.compile(rf"(?<![\w-]){prefix}{name}: ({value})")
+
+
 STATE_SCHEMA = 1
 
 RUN_APPEAR_SECONDS = 120
@@ -474,17 +481,34 @@ def wait_for_build(world: World, run_id: int) -> None:
         raise Refused(f"Release image run {view.get('url')} concluded {view.get('conclusion')}")
 
 
-def pushed_digest(world: World, run_id: int, sha: str) -> str:
-    """The digest the run pushed, read from its verify step, which also names the revision."""
-    log = _gh(world, "run", "view", str(run_id), "-R", REPOSITORY, "--log")
-    digests = set(LOG_DIGEST.findall(log))
-    revisions = set(LOG_REVISION.findall(log))
-    sha_tags = set(LOG_SHA_TAG.findall(log))
+def logged_digest(log: str, run_id: int, sha: str, prefix: str, image: str) -> str:
+    """The digest one image's verify step logged, with the revision and tag it names.
+
+    Refuses more than one distinct digest, and a revision or tag that isn't `sha`'s on `image`.
+    """
+    digests = set(_log_line(prefix, "DIGEST", r"sha256:[0-9a-f]{64}\b").findall(log))
+    revisions = set(_log_line(prefix, "REVISION", r"[0-9a-f]{40}\b").findall(log))
+    sha_tags = set(_log_line(prefix, "SHA_TAG", r"\S+").findall(log))
+    label = f"{prefix}DIGEST"
     if len(digests) != 1:
-        raise Refused(f"run {run_id} logged {len(digests)} distinct digests, not one")
-    if revisions != {sha} or sha_tags != {derivable_tag(sha)}:
+        raise Refused(f"run {run_id} logged {len(digests)} distinct {label} values, not one")
+    if revisions != {sha} or sha_tags != {derivable_tag(sha, image)}:
         raise Refused(f"run {run_id} did not build {sha}; it is somebody else's run")
     return digests.pop()
+
+
+def _run_log(world: World, run_id: int) -> str:
+    return _gh(world, "run", "view", str(run_id), "-R", REPOSITORY, "--log")
+
+
+def pushed_digest(world: World, run_id: int, sha: str) -> str:
+    """The orchestrator digest the run pushed, read from its verify step's `DIGEST:` line."""
+    return logged_digest(_run_log(world, run_id), run_id, sha, LOG_PREFIX_ORCHESTRATOR, IMAGE_NAME)
+
+
+def pushed_lane_digest(world: World, run_id: int, sha: str) -> str:
+    """The lane image digest the same run pushed, read from its `LANE_DIGEST:` line."""
+    return logged_digest(_run_log(world, run_id), run_id, sha, LOG_PREFIX_LANES, LANE_IMAGE)
 
 
 def readiness(world: World) -> tuple[int, str | None]:

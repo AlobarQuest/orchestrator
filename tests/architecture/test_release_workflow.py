@@ -121,3 +121,41 @@ def test_the_run_is_titled_by_the_commit_it_builds():
     workflow = yaml.safe_load(RELEASE_WORKFLOW.read_text())
     assert workflow["run-name"] == "Release image ${{ inputs.ref }}"
     assert run_title("abc") == "Release image abc"
+
+
+def _steps() -> list[dict]:
+    return _workflow()["jobs"]["build-and-push"]["steps"]
+
+
+def test_the_lane_image_is_built_from_the_pushed_orchestrator_digest_after_its_check():
+    """ADR-0059 decision 1: the lane image is `FROM` the orchestrator image at the same commit,
+    named by the digest this run pushed, never by a tag a rebuild can re-point."""
+    names = [step.get("name", "") for step in _steps()]
+    build = _step("Build the lane image and push it")
+
+    assert names.index("Build the lane image and push it (amd64)") > names.index(
+        "Verify the pushed image asserts its own provenance"
+    )
+    assert build["env"]["ORCHESTRATOR_DIGEST"] == "${{ steps.build.outputs.digest }}"
+    assert "-f lanes/Dockerfile" in build["run"]
+    assert '"${ORCHESTRATOR_SHA_TAG%:*}@${ORCHESTRATOR_DIGEST}"' in build["run"]
+    assert '-t "${{ steps.lane_tag.outputs.sha_tag }}"' in build["run"]
+    assert '-t "${{ steps.lane_tag.outputs.tag }}"' in build["run"]
+    assert "--image lanes" in _step("Compute the lane image's tags")["run"]
+
+
+def test_the_lane_steps_log_only_lane_prefixed_names():
+    """`pushed_digest` reads every logged `DIGEST:`, `REVISION:` and `SHA_TAG:` as the
+    orchestrator's and refuses a second distinct value (ADR-0059 amendment 1, item 7). So the
+    lane image's names are `LANE_`-prefixed wherever a step's `env:` echo logs them."""
+    verify = _step("Check the lane image's pushed provenance")
+
+    assert set(verify["env"]) == {"LANE_DIGEST", "LANE_REVISION", "LANE_SHA_TAG"}
+    assert verify["env"]["LANE_DIGEST"] == "${{ steps.lane_build.outputs.digest }}"
+    refuse = _step("Refuse to overwrite an existing tag")
+    assert refuse["env"]["LANE_SHA_TAG"] == "${{ steps.lane_tag.outputs.sha_tag }}"
+    assert '"$LANE_SHA_TAG" "$LANE_TAG"' in refuse["run"]
+    bare = {"DIGEST", "REVISION", "SHA_TAG", "TAG"}
+    for step in _steps():
+        if "lane" in step.get("name", "").lower():
+            assert not bare & set(step.get("env", {})), step["name"]
