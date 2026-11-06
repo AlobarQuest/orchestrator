@@ -10,6 +10,7 @@ import pytest
 
 from scripts.compute_image_tags import (
     IMAGE,
+    LANE_IMAGE,
     SHORT_SHA_LENGTH,
     derivable_tag,
     main,
@@ -98,3 +99,25 @@ def test_cli_exits_non_zero_on_a_short_sha(capsys):
         main(["--revision", "c755c99"])
     assert exit_info.value.code != 0
     assert "full 40-character" in capsys.readouterr().err
+
+
+def test_the_lane_image_takes_the_orchestrators_tag_names_in_its_own_repository():
+    """A lane's `SDS_LANES_IMAGE_TAG` is the served orchestrator tag (ADR-0059 decision 1), so the
+    lane image must carry the same tag names; only the repository differs."""
+    lanes = tag_outputs(PRODUCTION_REVISION, "wsp218inc5", LANE_IMAGE)
+    orchestrator = tag_outputs(PRODUCTION_REVISION, "wsp218inc5")
+
+    assert LANE_IMAGE == "ghcr.io/alobarquest/sds-lanes"
+    for key in ("tag", "sha_tag"):
+        assert lanes[key].removeprefix(LANE_IMAGE) == orchestrator[key].removeprefix(IMAGE)
+    assert lanes["revision"] == orchestrator["revision"]
+
+
+def test_the_cli_emits_the_lane_tags_only_when_asked(capsys):
+    main(["--revision", PRODUCTION_REVISION, "--image", "lanes"])
+    lanes = capsys.readouterr().out
+    main(["--revision", PRODUCTION_REVISION])
+    default = capsys.readouterr().out
+
+    assert f"sha_tag={LANE_IMAGE}:sha-{PRODUCTION_REVISION}" in lanes.splitlines()
+    assert f"sha_tag={IMAGE}:sha-{PRODUCTION_REVISION}" in default.splitlines()

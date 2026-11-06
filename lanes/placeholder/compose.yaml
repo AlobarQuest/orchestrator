@@ -1,0 +1,15 @@
+# sds-lane-placeholder (ADR-0059 increment 1, Amendment 1): the lane image with no lane. HQ creates
+# the resource from this file. It holds no token, maps no variable but the two below, and serves
+# nothing: no port, no domain, so no Traefik labels.
+services:
+  placeholder:
+    image: ghcr.io/alobarquest/sds-lanes:${SDS_LANES_IMAGE_TAG}
+    command: ["placeholder"]
+    environment:
+      LANE_SCHEDULE_ENABLED: ${LANE_SCHEDULE_ENABLED:-false}
+    volumes:
+      - sds-lanes-placeholder-state:/var/lib/sds/placeholder
+    restart: unless-stopped
+
+volumes:
+  sds-lanes-placeholder-state:
