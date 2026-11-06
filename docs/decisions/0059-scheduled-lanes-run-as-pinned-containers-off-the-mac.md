@@ -71,8 +71,9 @@ each of those lanes keeps it in a volume of its own (decision 1, "Lane state").
   the production VPS beside the orchestrator (Amendment 1).** Coolify writes every variable of a
   resource into every container of it, so one resource per lane is what gives each lane its own
   variables. Each `sds-lane-<lane>` is a Coolify *service* resource of type `docker-compose`, not an
-  application: infraops creates one with `coolify_create_service` (`docker_compose_raw`; that tool
-  waits on an infraops-mcp-server fix, Q11), replaces its compose with `coolify_update_service`
+  application: infraops creates one with `coolify_create_service` (`docker_compose_raw` alone,
+  which the tool base64-encodes, as fixed in infraops-mcp-server #164, Q11), replaces its compose
+  with `coolify_update_service`
   (`docker_compose_raw`, sent as a `PATCH /services/{uuid}`), and writes its variables with
   `coolify_create_service_env` and `coolify_update_service_env` (infraops-mcp-server
   `src/tools/services.ts` and `src/tools/env-vars.ts`). The orchestrator's own
@@ -172,7 +173,8 @@ each of those lanes keeps it in a volume of its own (decision 1, "Lane state").
     the lane's container, and a volume and an image digest with `vps_exec` running `docker inspect`
     with a `--format` that prints only the container's mounts or its image, so no read lists
     another variable's value.
-  - **`lanes-recheck`** repeats the two quiet-slot reads. The session runs it, then the writes and
+  - **`lanes-recheck`** repeats the two quiet-slot reads (one for the placeholder, following
+    bullet). The session runs it, then the writes and
     the redeploy, with no other step between: the writes are staged only if this exits 0, and
     immediately before the redeploy. A non-zero exit sends the session back to `lanes-prepare`.
   - **`lanes-finish`** takes the session's reads of the redeployed container, the one service of
@@ -197,7 +199,9 @@ each of those lanes keeps it in a volume of its own (decision 1, "Lane state").
     then takes the session's two reads that the resource is gone (`coolify_list_services`, whose
     default summary carries only each resource's `uuid`, `name`, `status` and `fqdn`, no longer
     lists `sds-lane-<lane>`, and `vps_docker_ps` shows no container of it), exits 0 only if both
-    show it gone, and closes the run. That restore is the session's act, or for an `--add` HQ's
+    show it gone, and closes the run. Coolify's delete only queues the deletion, so the session
+    re-reads both for up to 10 minutes before it passes them in, and a resource still listed then
+    fails the check. That restore is the session's act, or for an `--add` HQ's
     delete, which the command names and then checks.
 
   No phase holds a Coolify credential, and none needs one.
@@ -209,7 +213,10 @@ each of those lanes keeps it in a volume of its own (decision 1, "Lane state").
   container, and that lane's running pass is stopped midway. The lane phases therefore apply the
   cut-over's two checks to the lane before the session redeploys its resource: the time is outside
   estate landing's 02:00 to 06:00 New York window, and the lane's own check doesn't have `started`
-  set to `true`. No other lane's check holds it. `started` is the boolean field of each
+  set to `true`. No other lane's check holds it. For `sds-lane-placeholder` alone, named, the quiet
+  slot is the landing-window check only, because the placeholder runs no launcher and has no
+  Healthchecks check, as `lanes-finish` skips the token check for it alone (increment 1); its
+  `lanes-recheck` repeats that one read. `started` is the boolean field of each
   check in the Healthchecks Management API's check listing (`GET /api/v3/checks/`, API docs "List
   Existing Checks"), read just before the redeploy. The API docs show `started` only in their
   example responses and don't describe it, so increment 1 verifies, before it relies on the field,
@@ -235,8 +242,10 @@ each of those lanes keeps it in a volume of its own (decision 1, "Lane state").
   staged in the lane's resource while the command waits: the session writes the compose and any tag
   or schedule variable (the following bullets) only after `lanes-recheck` exits 0, immediately
   before its redeploy call. So a wait that times out leaves nothing staged, and no later redeploy
-  can apply a change silently. If the redeploy fails after the writes, `lanes-finish` names the
-  inverse writes and the session restores the values at once. The residual: a pass that starts
+  can apply a change silently. If a `--tag` or `--schedule` redeploy fails after the writes,
+  `lanes-finish` names the inverse writes and the session restores the values at once. For an
+  `--add` the inverse is the delete of the lane's resource, HQ's act under D-20 (the lane-phase
+  bullets and "Adding a lane creates its resource"). The residual: a pass that starts
   between `lanes-recheck`'s read and the redeploy is still stopped, as `recheck` before an
   orchestrator swap accepts a unit claimed after it. The P2 backlog item in which
   `deploy_orchestrator.py` holds the bump-driver launch agent during a deploy is re-scoped by this
@@ -306,27 +315,17 @@ each of those lanes keeps it in a volume of its own (decision 1, "Lane state").
 
   | Lane | Variable | Mac source directory | Files | If it starts empty |
   |---|---|---|---|---|
-  | `bump-driver` | `BUMP_DRIVER_STATE_DIR` | `sds/bump-driver` | `alerts.json`, `pass.lock`,
-  `mirrors/` | Alerts the Mac fired never resolve. The lock and mirrors rebuild. | | `bump-proposer`
-  | `BUMP_PROPOSER_STATE_DIR` (the launcher sets it) | `sds/bump-proposer` | `alerts.json` | Alerts
-  the Mac fired never resolve. | | `estate-landing` | `LANDER_STATE_DIR` | `sds/estate-landing` |
-  `held-since.json`, `alerts.json` | Alerts never resolve, and every held pull request's 24-hour
-  clock restarts, so its held alert fires a day late. | | `execution-watch` |
-  `EXECUTION_WATCH_STATE_DIR` | `sds/execution-watch` | `alerts.json`, `first-seen.json`,
-  `known.json` | Every `--submit` pass refuses without `known.json` (exit 1, a `/fail`), and
-  `--seed` would re-baseline. Alerts never resolve, and stuck-unit clocks restart. | |
-  `inert-landing` | `LANDER_STATE_DIR` | `sds/inert-landing` | `held-since.json`, `alerts.json`,
-  `revert-alerts.json` | As estate landing, and revert alerts never resolve. | | `pin-watcher` |
-  `PIN_WATCHER_STATE_DIR` | `sds/pin-watcher` | `alerts.json` | Alerts the Mac fired never resolve.
-  | | `revision-watcher` | `REVISION_WATCHER_STATE_DIR` | `sds/revision-watcher` | `alerts.json` |
-  Alerts the Mac fired never resolve. | | `rotation-decomposer` | `ROTATION_DECOMPOSER_STATE_DIR` |
-  `sds/rotation-decomposer` | `alerts.json`, `approval-since.json` | Alerts never resolve, and
-  approval-wait clocks restart. | | `rotation-proposer` | `ROTATION_PROPOSER_STATE_DIR` |
-  `sds/rotation-proposer` | `alerts.json`, `approval-since.json` | Alerts never resolve, and
-  approval-wait clocks restart. | | `unit-verifier` | `VERIFIER_STATE_DIR` | `sds/verifier` |
-  `alerts.json` | Alerts the Mac fired never resolve. | | `work-carrier` | `WORK_WATCHER_STATE_DIR`
-  (the launcher sets it) | `sds/work-watcher` | `alerts.json` | Alerts the Mac fired never resolve.
-  |
+  | `bump-driver` | `BUMP_DRIVER_STATE_DIR` | `sds/bump-driver` | `alerts.json`, `pass.lock`, `mirrors/` | Alerts the Mac fired never resolve. The lock and mirrors rebuild. |
+  | `bump-proposer` | `BUMP_PROPOSER_STATE_DIR` (the launcher sets it) | `sds/bump-proposer` | `alerts.json` | Alerts the Mac fired never resolve. |
+  | `estate-landing` | `LANDER_STATE_DIR` | `sds/estate-landing` | `held-since.json`, `alerts.json` | Alerts never resolve, and every held pull request's 24-hour clock restarts, so its held alert fires a day late. |
+  | `execution-watch` | `EXECUTION_WATCH_STATE_DIR` | `sds/execution-watch` | `alerts.json`, `first-seen.json`, `known.json` | Every `--submit` pass refuses without `known.json` (exit 1, a `/fail`), and `--seed` would re-baseline. Alerts never resolve, and stuck-unit clocks restart. |
+  | `inert-landing` | `LANDER_STATE_DIR` | `sds/inert-landing` | `held-since.json`, `alerts.json`, `revert-alerts.json` | As estate landing, and revert alerts never resolve. |
+  | `pin-watcher` | `PIN_WATCHER_STATE_DIR` | `sds/pin-watcher` | `alerts.json` | Alerts the Mac fired never resolve. |
+  | `revision-watcher` | `REVISION_WATCHER_STATE_DIR` | `sds/revision-watcher` | `alerts.json` | Alerts the Mac fired never resolve. |
+  | `rotation-decomposer` | `ROTATION_DECOMPOSER_STATE_DIR` | `sds/rotation-decomposer` | `alerts.json`, `approval-since.json` | Alerts never resolve, and approval-wait clocks restart. |
+  | `rotation-proposer` | `ROTATION_PROPOSER_STATE_DIR` | `sds/rotation-proposer` | `alerts.json`, `approval-since.json` | Alerts never resolve, and approval-wait clocks restart. |
+  | `unit-verifier` | `VERIFIER_STATE_DIR` | `sds/verifier` | `alerts.json` | Alerts the Mac fired never resolve. |
+  | `work-carrier` | `WORK_WATCHER_STATE_DIR` (the launcher sets it) | `sds/work-watcher` | `alerts.json` | Alerts the Mac fired never resolve. |
 
   "Never resolve" is `KeyedAlerts.sync` (`src/alert_hub_client/__init__.py`): it sends `resolved`
   only for keys its state file remembers, so an empty file orphans every alert the Mac left
@@ -450,7 +449,8 @@ each of those lanes keeps it in a volume of its own (decision 1, "Lane state").
   `coolify_delete_service` call, a check at the source that the resource is gone, and
   `prod verified`. Its authority is D-20 (open at the time of this amendment); D-16 doesn't cover
   it. The delete removes the resource's volumes: infraops's tool calls `DELETE /services/{uuid}`
-  with no query (`src/tools/services.ts`, 302), and Coolify's `delete_volumes` defaults to `true`
+  with no query (`coolifyDelete('/services/${uuid}')`, `src/tools/services.ts` line 326 at
+  infraops-mcp-server `32a13046`), and Coolify's `delete_volumes` defaults to `true`
   (`ServicesController.php`, 737 and 789, at `v4.0.0-beta.473`). Then `lanes-finish --restored`
   confirms the resource is gone and closes the run.
 
@@ -822,11 +822,13 @@ Healthchecks before it relies on it. A fact it can't confirm stops the increment
   write's response carries the written row's `value`, so a lane token never goes through
   infraops's service env tools. If the compose can't be replaced this way, no infraops tool
   replaces it, and increment 1 stops for a decision.
-- `coolify_create_service` creates a lane's resource. At Coolify `v4.0.0-beta.473` it can't: the
-  create endpoint refuses `type` beside `docker_compose_raw` and accepts the compose only
-  base64-encoded, while infraops's tool sends `type` and the compose plain (Q11). The create waits
-  on the infraops-mcp-server fix (HQ step `infraops-create-service-compose`), and increment 1
-  verifies the fixed tool before HQ runs a create. No lane phase creates a resource: HQ runs each
+- `coolify_create_service` creates a lane's resource. At Coolify `v4.0.0-beta.473` the create
+  endpoint refuses `type` beside `docker_compose_raw` and accepts the compose only base64-encoded
+  (Q11). infraops-mcp-server #164 (squash `32a13046`) fixed the tool to match: it takes exactly one
+  of `type` or `docker_compose_raw`, sends `type` only when given, and base64-encodes the compose
+  (`src/tools/services.ts`, 213 and 234-239, at `32a13046`). The fix is live on the Mac only after
+  Devon syncs the infraops checkout and reconnects infraops, an open gate. Increment 1 checks the
+  live tool against Coolify before HQ's first create. No lane phase creates a resource: HQ runs each
   create through infraops (Q11), and increment 1 decides only how a resource's first compose is
   recorded as the one its first lane-phase run replaces.
 - Where each lane-phase run's state file lives, so that the next run for a lane, from any session,
@@ -867,9 +869,9 @@ Healthchecks before it relies on it. A fact it can't confirm stops the increment
    (Amendment 1). The image's scheduler is supercronic `v0.2.51`, downloaded as the
    `supercronic-linux-amd64` release asset and checked against its sha256 digest, never `:latest`,
    and the entrypoint starts it as `exec supercronic -json <crontab>` under `USER orchestrator`.
-   Once the infraops-mcp-server fix (HQ step `infraops-create-service-compose`) is verified, HQ
-   creates the placeholder's resource, `sds-lane-placeholder`, through infraops (Q11), after
-   confirming "Verify before increment 1". It has one service, which runs the lane image's
+   Once the infraops-mcp-server fix (#164, `32a13046`) is live on the Mac and checked against
+   Coolify (Q11), HQ creates the placeholder's resource, `sds-lane-placeholder`, through infraops,
+   after confirming "Verify before increment 1". It has one service, which runs the lane image's
    entrypoint and whose compose entry maps `LANE_SCHEDULE_ENABLED: ${LANE_SCHEDULE_ENABLED:-false}`
    like any lane's, so its scheduler has an empty table and it runs no launcher. It holds no token
    and maps no resource variable but `LANE_SCHEDULE_ENABLED` and `SDS_LANES_IMAGE_TAG`. Its first
@@ -879,18 +881,20 @@ Healthchecks before it relies on it. A fact it can't confirm stops the increment
    on which increment 1 verifies volume naming and ownership. The lane phases treat it as a lane
    with no token and no state: `lanes-finish` reads its image digest and its
    `LANE_SCHEDULE_ENABLED`, which must be `false`, and skips only the token check, for the
-   placeholder by name. `prepare`'s lag check covers it by name, because it has no registry entry:
-   it skips it until its `--add` passes, and then compares its last finished run's tag with the
-   served one, as for any lane. It stays until increment 2, which retires it. It isn't one of the
-   eleven stateful lanes, so its mount isn't among the volume checks. Add the deploy command's three
-   lane phases (`lanes-prepare`, `lanes-recheck`, `lanes-finish`), each acting on one lane's
-   resource, for a tag update, a schedule change and an added lane: `lanes-prepare` waits for the
-   lane's quiet slot across runs and exits 4 when the wait times out, and the phases print the whole
-   compose write and record the file they sent, print the session's exact infraops calls and their
-   inverse, and verify the session's reads of the redeployed container (image digest, schedule and
-   state volume), and an `--add` refuses a compose entry whose schedule doesn't default to `false`
-   (decision 1). Add `lane-run` with its variable list and its `--read` mode (decisions 1 and 2).
-   Give `sds-operator` its direct read grant on the read-only Healthchecks key (Q5), and add
+   placeholder by name. Its quiet slot is the landing-window check only, by name, because it has
+   no Healthchecks check, so `lanes-prepare` and `lanes-recheck` read no check listing for it
+   (decision 1, the quiet-slot bullet). `prepare`'s lag check covers it by name, because it has no
+   registry entry: it skips it until its `--add` passes, and then compares its last finished run's
+   tag with the served one, as for any lane. It stays until increment 2, which retires it. It isn't
+   one of the eleven stateful lanes, so its mount isn't among the volume checks. Add the deploy
+   command's three lane phases (`lanes-prepare`, `lanes-recheck`, `lanes-finish`), each acting on
+   one lane's resource, for a tag update, a schedule change and an added lane: `lanes-prepare` waits
+   for the lane's quiet slot across runs and exits 4 when the wait times out, and the phases print
+   the whole compose write and record the file they sent, print the session's exact infraops calls
+   and their inverse, and verify the session's reads of the redeployed container (image digest,
+   schedule and state volume), and an `--add` refuses a compose entry whose schedule doesn't default
+   to `false` (decision 1). Add `lane-run` with its variable list and its `--read` mode (decisions 1
+   and 2). Give `sds-operator` its direct read grant on the read-only Healthchecks key (Q5), and add
    `f07b1368-…` to `.bws-secrets.toml` in the same change: the BWS secret-handling standard has a
    repository's manifest name every UUID it consumes, and the security scanner reports manifest
    drift.
@@ -1104,9 +1108,13 @@ Set the lane resource's `LANE_SCHEDULE_ENABLED` to `false` by the lane phases wi
 `--schedule false`, and wait for `lanes-finish` to pass on the session's quiet-slot redeploy of that
 resource. For the bump driver, also confirm no process in the container holds `pass.lock`
 (`vps_exec` running `flock -n` on it in the lane's container). For a lane with state, copy its
-volume's files back into the Mac's state directory with infraops's `vps_read_file`. Then `launchctl
-bootstrap` the kept plist. The Mac agent is bootstrapped only after the redeploy, so the two never
-run the lane at once. Then confirm one Mac run of the lane finishes and pings the lane's check.
+volume's files back into the Mac's state directory with infraops's `vps_read_file`, then check the
+copy as cut-over step 2 checks its own: compare the Mac's copied-back files with the volume's by
+SHA-256, and check each Mac file's owner is the Mac user the agent runs as and its mode is the
+volume file's. If any differs, copy that file again and set owner and mode again; the copy-back is
+checked only when all match. Then `launchctl bootstrap` the kept plist. The Mac agent is
+bootstrapped only after the redeploy, so the two never run the lane at once. Then confirm one Mac
+run of the lane finishes and pings the lane's check.
 
 The wait is at most 6 hours when `lanes-prepare` finds a slot, and lasts until HQ acts when it times
 out. During it the container keeps running the lane on its schedule. For that interval, the ADR-0046
@@ -1122,16 +1130,22 @@ running pass midway, and no other lane's.
 The last step retires the lane's resource, once the lane is back on the Mac (Amendment 1). It's
 three acts, in this order, and none starts before the one before it is confirmed:
 
-1. Devon revokes the lane's BWS access token, his act. HQ confirms the revoke. Until Devon revokes
+1. Devon revokes the lane's BWS access token, his act. HQ confirms the revoke with the read
+   decision 2 already names for a revoked token: `lane-run --read` through `vps_exec` in the lane's
+   container, which is still running, under a new empty `HOME`, over every UUID
+   `.bws-secrets.toml` lists for the lane, each of which must read `refused`. Until Devon revokes
    it, the resource and the registry entry stay, so the token is never live and untracked.
 2. HQ deletes `sds-lane-<lane>` through infraops, as its own announced production act under D-20
    (open at the time of this amendment), framed exactly as the create: `prod announce`, the
    `coolify_delete_service` call, a check at the source that the resource is gone
    (`coolify_list_services` no longer lists it, and `vps_docker_ps` shows no container of it), and
-   `prod verified`. D-16 doesn't cover the delete. The delete removes the resource's volumes and
-   its executor-written token variable: infraops's tool calls `DELETE /services/{uuid}` with no
-   query (`src/tools/services.ts`, 302), and Coolify's `delete_volumes` defaults to `true`
-   (`ServicesController.php`, 737 and 789, at `v4.0.0-beta.473`).
+   `prod verified`. Coolify's delete only queues the deletion, so the check re-reads both for up
+   to 10 minutes until they show it gone; if they don't, the check fails and HQ tells Devon. D-16
+   doesn't cover the delete. The delete removes the resource's volumes and its executor-written
+   token variable: infraops's tool calls `DELETE /services/{uuid}` with no query
+   (`coolifyDelete('/services/${uuid}')`, `src/tools/services.ts` line 326 at infraops-mcp-server
+   `32a13046`), and Coolify's `delete_volumes` defaults to `true` (`ServicesController.php`, 737
+   and 789, at `v4.0.0-beta.473`).
 3. HQ's pull request to `main` removes the lane token's entry from `.cred-consumers.toml`, the
    executor's registry, and merges. That drops the lane from `prepare`'s lag check (decision 1, "No
    release starts while a lane lags"). Between the delete and the merge, an executor write to the
@@ -1144,7 +1158,8 @@ write.
 
 A lane's `--tag` rollback refuses a tag older than the lane's first image, because that image has
 no launcher for the lane. That lane goes back to the Mac first, by this procedure, whose last
-step deletes its resource, so the lane no longer holds any release (Amendment 1).
+three acts delete its resource and then remove its registry entry, so the lane no longer holds any
+release (Amendment 1).
 
 The Mac agent runs from the main tree with the Keychain identities it had, which stay valid until
 increment 6. A rollback takes no new credential and changes no orchestrator record, because each
@@ -1474,14 +1489,15 @@ on HQ's clean Opus review of its Accepted text. Amendment 1 (D-19) replaces the 
 resource with one resource per lane, so HQ creates each lane's resource, `sds-lane-<lane>`, and
 increment 1's `sds-lane-placeholder`, through infraops (`coolify_create_service`), each as its own
 announced production act. If HQ finds a reason it shouldn't, it tells Devon instead of creating the
-resource. At Coolify `v4.0.0-beta.473` that tool can't create a raw-compose service: Coolify's
-create endpoint refuses a request that carries both `type` and `docker_compose_raw` and accepts
-`docker_compose_raw` only base64-encoded (`app/Http/Controllers/Api/ServicesController.php`,
-347-351 and 578-595), while infraops's tool requires `type`, sends it, and sends the compose plain
-(infraops-mcp-server `src/tools/services.ts`, 172-219). So every create waits on an
-infraops-mcp-server fix (HQ step `infraops-create-service-compose`), which increment 1 verifies
-before HQ runs the first create. Increment 1 decides only how a resource's first compose is
-recorded as the one its first lane-phase run replaces ("Verify before increment 1").
+resource. At Coolify `v4.0.0-beta.473`, Coolify's create endpoint refuses a request that carries
+both `type` and `docker_compose_raw` and accepts `docker_compose_raw` only base64-encoded
+(`app/Http/Controllers/Api/ServicesController.php`, 347-351 and 578-595). infraops-mcp-server
+#164 (squash `32a13046`) fixed the tool to match: it takes exactly one of `type` or
+`docker_compose_raw`, sends `type` only when given, and base64-encodes the compose
+(`src/tools/services.ts`, 213 and 234-239, at `32a13046`). The fix is live on the Mac only after
+Devon syncs the infraops checkout and reconnects infraops, an open gate, and increment 1 checks the
+live tool against Coolify before HQ's first create. Increment 1 decides only how a resource's first
+compose is recorded as the one its first lane-phase run replaces ("Verify before increment 1").
 
 ## Amendment 1 (2026-11-06): one Coolify compose resource per lane
 
@@ -1514,12 +1530,15 @@ read every token. Devon answered **A** (2026-11-06T20:23 UTC, Slack).
    `sds-lane-<lane>`, with one service. Each resource has its own variables: its own
    `SDS_LANES_IMAGE_TAG`, its own `<LANE>_BWS_ACCESS_TOKEN` and its own `LANE_SCHEDULE_ENABLED`.
    Each lane has its own chain of lane-phase runs and its own quiet slot, which reads only that
-   lane's Healthchecks check. A tag update, schedule change or restart recreates only that lane's
-   container. Increment 1's placeholder is its own resource, `sds-lane-placeholder`.
+   lane's Healthchecks check beside the landing window. A tag update, schedule change or restart
+   recreates only that lane's container. Increment 1's placeholder is its own resource,
+   `sds-lane-placeholder`; it has no Healthchecks check, so for it alone, by name, the quiet slot is
+   the landing-window check only.
 2. **HQ creates each resource (D-16 under D-19).** HQ creates each lane's resource through infraops
-   (`coolify_create_service`), each as its own announced production act. infraops can't create a
-   raw-compose service at this Coolify version (Q11), so the create waits on an
-   infraops-mcp-server fix (HQ step `infraops-create-service-compose`), which increment 1 verifies.
+   (`coolify_create_service`), each as its own announced production act. infraops-mcp-server #164
+   (squash `32a13046`) fixed that tool for a raw-compose service at this Coolify version (Q11). The
+   fix is live on the Mac only after Devon syncs the infraops checkout and reconnects infraops, an
+   open gate, and increment 1 checks the live tool against Coolify before HQ's first create.
 3. **The executor writes each token into its lane's resource (D-10 (b) under D-19).** The VM
    rotation executor writes each lane's token into that lane's own resource
    (`PATCH /services/{uuid}/envs` on `sds-lane-<lane>`), so its registry needs each lane's resource
@@ -1534,8 +1553,10 @@ read every token. Devon answered **A** (2026-11-06T20:23 UTC, Slack).
    lane's compose entry, and the question of how a rollback compose keeps each lane cut over since,
    are deleted with their verify items. One rule replaces them: a lane's `--tag` rollback refuses a
    tag older than the lane's first image, because that image has no launcher for it, and that lane
-   goes back to the Mac first ("Rollback for one lane"). After one Mac run has finished and pinged
-   the lane's check, that procedure ends in three ordered acts: Devon revokes the lane's access
+   goes back to the Mac first ("Rollback for one lane"). That procedure checks the state it copies
+   back to the Mac by SHA-256, owner and mode before it bootstraps the Mac agent, as the cut-over
+   checks its copy. After the checked copy-back and one Mac run that has finished and pinged the
+   lane's check, that procedure ends in three ordered acts: Devon revokes the lane's access
    token and HQ confirms the revoke; HQ deletes the lane's resource, `sds-lane-<lane>`, with its
    volumes (Coolify's `delete_volumes` defaults to `true`) and its executor-written token variable;
    then HQ's pull request removing the lane token's entry from `.cred-consumers.toml`, the
