@@ -76,6 +76,12 @@ checks these, in order:
   production already serves the commit. It refuses a `previous_commit` the checkout does not hold
   (fetch first), and one that is not an ancestor of the built commit, because a rollback is not
   this procedure.
+- **Every lane is current.** It refuses while any lane-phase run is unfinished, and while a
+  registered lane's last finished run shows a tag other than the served one. The refusal names the
+  lane and its two exits: re-run that lane's phases with `--tag` at the served tag, or roll that
+  lane back (ADR-0059, "Rollback for one lane"). A registered lane with no passed `--add` is
+  skipped. The check runs before the state file is saved, so a refusal dispatches nothing. "The
+  lane phases", following, defines a registered lane.
 - **The database is at the outgoing head.** It requires the old image's `/health/ready` to
   answer 200 before building. A 503 `migration_drift` here means the database is already ahead of
   the running image (a migration applied without its swap, or a hand change). `recheck` would then
@@ -90,7 +96,9 @@ checks these, in order:
   saves that run's id, waits for it to succeed, and survives up to three consecutive failed `gh`
   calls while polling. It reads the pushed digest from the `DIGEST:` line of the "Verify the
   pushed image" step in `gh run view --log`. Neither a step summary nor an artifact can be read
-  through the API. It refuses unless that step names this commit's `REVISION` and `SHA_TAG`. The
+  through the API. It refuses unless that step names this commit's `REVISION` and `SHA_TAG`. It
+  reads the lane image's digest from the same log's `LANE_DIGEST:` line, under the same refusals
+  for `LANE_REVISION` and `LANE_SHA_TAG`, and records it as `lane_digest`. The
   readable tag comes from `scripts/compute_image_tags.py`, the same function the workflow uses.
 - **Migrations.** It lists every `migrations/versions/*.py` changed between the pre-swap revision
   and the built commit. Only then does it print the migration step.
@@ -115,14 +123,148 @@ appears, and `prepare` says to remove the state file and start again.
    field (#194). The OpenAPI document carries no revision; the revision match is `/health/live`'s.
 5. It runs `image-release bind` with the recorded `previous_commit`, never a fresh read. Both
    bearers are fetched in-process from BWS and passed in the binder's environment.
+6. It prints, on stderr and as `lane_phases`, the lane phases' first command,
+   `lanes-prepare --lane <lane> --tag sha-<built commit>`, for each registered lane with a passed
+   `--add`. It reads the registry and the run files before the binder, so an unreadable registry
+   stops `finish` before it binds.
 
 Every command prints one JSON result, including when a subprocess times out, `gh` is missing, or
 the OpenAPI document is malformed. Exit 0 means done. Exit 2 means a condition: a live unit, a digest
-mismatch, a revision not served, readiness failing, a missing schema model, or a binder
-condition. Exit 3 means a state it cannot read or will not deploy from. Exit 1 means usage.
+mismatch, a revision not served, readiness failing, a missing schema model, a binder
+condition, or a lane's quiet slot unmet. Exit 3 means a state it cannot read or will not deploy
+from. Exit 4 means a lane's quiet-slot wait passed its deadline (`lanes-prepare` only). Exit 1
+means usage.
 
 The numbered entries below remain the procedure's record, and the manual fallback when the command
 cannot run. The command adds no step they do not describe.
+
+## The lane phases (ADR-0059 increment 1)
+
+Each scheduled lane that has moved off the Mac is its own Coolify compose resource,
+`sds-lane-<lane>`, with one service named after the lane (ADR-0059 Amendment 1). The deploy
+command's three lane phases change one lane's resource at a time, the way `prepare`, `recheck` and
+`finish` change the orchestrator's: the command checks and prints, and the deploying session makes
+every infraops call. The command never calls Coolify, holds no Coolify credential, sends no alert,
+reads no alert-hub token, and creates or deletes no resource.
+
+Each phase takes `--lane <lane>` and exactly one change:
+
+- `--tag sha-<40 hex>`: move the lane to a release's sha tag. It must be the served orchestrator
+  tag, and its commit must descend from the commit of the lane's first passed `--add`; an older
+  target goes back to the Mac first ("Rollback for one lane").
+- `--schedule <true|false>`: change the lane's `LANE_SCHEDULE_ENABLED`. It keeps the running tag
+  and writes the tracked compose at that tag.
+- `--add --tag sha-<40 hex>`: the lane's first start, on the resource HQ created. The tag must be
+  the served orchestrator tag.
+
+A `--tag` takes the release's sha tag only. The command resolves it to its full commit on
+`origin/main`, finds that commit's one successful `Release image` run (in the newest 200), and
+reads the lane image digest from that run's `LANE_DIGEST:` line.
+
+### Run files
+
+The phases keep their record under `~/Library/Application Support/sds/deploy-lanes/`
+(`LANES_STATE_DIR`), outside every repository, so any session on the Mac finds a lane's chain:
+one directory per lane, one JSON file per run, written atomically, with `.lock` held (`flock`)
+while a phase reads and writes. Each file holds the change and its `change_key`
+(`tag:<commit>`, `add:<commit>` or `schedule:<value>`), the 6-hour deadline as an absolute UTC
+time, the resource uuid, the tag with its full commit, the lane digest, the compose it sends, the
+compose and values it replaces, the recorded volume, and one status:
+
+| Status | Meaning |
+|---|---|
+| `waiting` | Recorded by `lanes-prepare`; nothing is written to the resource yet. |
+| `refused` | `lanes-prepare` refused the change; nothing was written. |
+| `timed_out` | The quiet-slot wait passed its deadline (exit 4); nothing was written. |
+| `superseded` | A run for another change to the same lane replaced it; nothing was written. |
+| `unfinished` | `lanes-recheck` exited 0, so the session writes the resource. |
+| `finished` | `lanes-finish` passed. The newest one is the lane's record: its compose is the one Coolify was last given, and its tag is the lane's tag. |
+| `restored` | `lanes-finish --restored` passed: the lane is back on the values the run replaced, so it never becomes the lane's record. |
+
+The phases find the lane's current run by `--lane` and the change, never by a path. The first
+compose of a resource is the one its `--add` sends: an `--add` has no replaced compose, so its
+diff shows the whole tracked file as new, and the compose its `lanes-finish` records is the lane's
+recorded compose from then on.
+
+### The quiet slot
+
+A lane's resource is redeployed only in its quiet slot: outside estate landing's 02:00 to 06:00
+New York window, and while the lane's own Healthchecks check doesn't have `started` set to `true`.
+A `started` check whose `status` is also `down` doesn't hold it. `LANE_CHECKS` in
+`scripts/deploy_orchestrator.py` names each lane's check as its launcher's dead-man ping names it
+(`tests/scripts/test_deploy_lanes.py::test_the_check_names_are_the_launchers`). The command reads
+`GET https://healthcheck.alobar.net/api/v3/checks/` with the read-only key, BWS
+`f07b1368-f937-4287-baf1-b4ed00b6b274` (`HC_API_KEY`, `Rotation / Healthchecks`), as
+`sds-operator`. For `sds-lane-placeholder` alone the quiet slot is the window only, and no phase
+reads the listing for it.
+
+No process waits: the first `lanes-prepare` for a change records a deadline 6 hours later. A
+re-run for the same change resumes against it; a run for another change marks the waiting one
+`superseded` and records its own. The run that finds the deadline passed marks it `timed_out`,
+prints one line naming the lane, the change and the deadline, and exits 4. Raise the alert through
+your own channel; a later `lanes-prepare` records a new deadline. `lanes-prepare` refuses while a
+run of its lane is `unfinished`.
+
+### Run a change
+
+1. Read the running container before `lanes-prepare` (not for an `--add`, which has no container).
+   For `--tag`, its tag with `vps_docker_ps`. For `--schedule`, its value with `vps_exec` running
+   `docker exec <container> printenv LANE_SCHEDULE_ENABLED`. For each of the eleven stateful lanes,
+   the source of its `/var/lib/sds/<lane>` mount, with `vps_exec` running `docker inspect` with a
+   `--format` that prints only that mount. No read lists another variable's value.
+2. Run `lanes-prepare` with the change and those reads:
+
+   ```bash
+   rtk proxy uv run python -m scripts.deploy_orchestrator lanes-prepare --lane <lane> \
+     --tag sha-<served> --running-tag <tag> [--running-volume <volume>]
+   rtk proxy uv run python -m scripts.deploy_orchestrator lanes-prepare --lane <lane> \
+     --schedule <true|false> --running-schedule <value> [--running-volume <volume>]
+   rtk proxy uv run python -m scripts.deploy_orchestrator lanes-prepare --lane <lane> \
+     --add --tag sha-<served> --resource-uuid <uuid> --schedule-written false
+   ```
+
+   Exit 2 means the quiet slot is unmet: re-run it on a later cycle. Exit 4 means the wait timed
+   out. Exit 0 prints, on stderr, how the compose differs from the recorded one, the exact calls of
+   the following steps, and their inverse.
+3. Run `lanes-recheck` with the same `--lane` and change, then the writes and the redeploy, with no
+   other step between them. Write only if it exits 0; a non-zero exit sends you back to
+   `lanes-prepare`. The writes are `coolify_update_service` with the whole compose as
+   `docker_compose_raw`, and one variable: `SDS_LANES_IMAGE_TAG` through
+   `coolify_update_service_env` for `--tag`, through `coolify_create_service_env` for `--add`
+   (Coolify makes no row for a `${VAR}` in `image:`), or `LANE_SCHEDULE_ENABLED` through
+   `coolify_update_service_env` for `--schedule`. Then `coolify_deploy` on the resource.
+4. Once the deployment has finished, read the new container with the `vps_exec` commands
+   `lanes-prepare` printed: its image's `RepoDigest`, its `LANE_SCHEDULE_ENABLED`, the source of a
+   stateful lane's state mount, and for an `--add` of any lane but the placeholder whether its
+   `BWS_ACCESS_TOKEN` is non-empty (`test -n`, which prints no value).
+5. Run `lanes-finish` with the change and the reads (`--observed-digest`, `--observed-schedule`,
+   `--observed-volume`, `--token-present`). It exits 0 only when the container runs the release's
+   lane digest, has the expected schedule, mounts the recorded volume (or, for an `--add`, the
+   resource's one named volume, never a double-prefixed one), and, for an `--add`, holds a token.
+   If the redeploy itself failed, pass `--redeploy-failed` instead of the reads.
+6. When `lanes-finish` exits 2, run the inverse it prints at once:
+   - For `--tag` and `--schedule`: `coolify_update_service` with the recorded compose, the
+     replaced variable value, and a second `coolify_deploy`. Read the container again, then run
+     `lanes-finish --restored` with fresh reads. It exits 0 only when the container shows the
+     replaced values again.
+   - For `--add`: the delete of `sds-lane-<lane>` alone (`coolify_delete_service`), with no
+     second `coolify_deploy`, which HQ performs as its own announced production act under D-20.
+     Coolify only queues the deletion, so re-read for up to 10 minutes until
+     `coolify_list_services` no longer lists `sds-lane-<lane>` and `vps_docker_ps` shows no
+     container of it. Then run `lanes-finish --restored --service-listed false
+     --container-present false`. The command doesn't wait; a resource still listed after
+     10 minutes fails the check.
+
+### Registered lanes and the lane-token matcher
+
+A lane is registered while this repository's `.cred-consumers.toml` at `origin/main` holds its
+token entry; `sds-lane-placeholder` has none, so it's registered by name. The matcher
+(`lanes_in_registry`) takes any `[[credential.consumer]]` with `kind = "coolify-env"`,
+`resource_type = "service"` and `key = "<LANE>_BWS_ACCESS_TOKEN"`, and reads the lane as `<LANE>`
+lower-cased with `_` as `-` (`EXECUTION_WATCH_BWS_ACCESS_TOKEN` is `execution-watch`). It refuses a
+key that names no lane the command knows, and two entries for one lane. Removing a lane's entry,
+the last step of "Rollback for one lane", drops the lane from `prepare`'s check; its run files
+remain.
 
 ## Rotation instances
 

@@ -2,7 +2,8 @@
 
 * `alert_hub_client`: the one route its client's predicate permits (`POST /v1/alerts`).
 * `estate_clients.confined`: one `httpx.Client`, redirects off unless a caller asks.
-* `scripts/deploy_orchestrator.py`: the one HTTP host it names, the requests and commands it
+* `scripts/deploy_orchestrator.py`: the two HTTP hosts it names (production and the lane phases'
+  Healthchecks listing), the requests and commands it
   makes when its three phases run, and the programs it can start.
 * The shell helpers `sds-deadman.sh`, `sds-install.sh`, `sds-bws.sh` and `sds-token.sh`: the
   external commands, literal hosts and sourced scripts each one names, and where `launchctl`
@@ -195,6 +196,8 @@ def test_control_a_second_client_or_a_redirecting_default_fails_the_row() -> Non
 
 DEPLOY = SCRIPTS / "deploy_orchestrator.py"
 SDS = "https://sds.alobar.net"
+# The lane phases' quiet-slot read (ADR-0059): the check listing, with the read-only key.
+HEALTHCHECKS = "https://healthcheck.alobar.net"
 BINDER = "image-release"
 
 # The programs the code spells, as `process_scan` reads them; `str(world.binder)` is the binder.
@@ -302,11 +305,12 @@ def driven(
     return recorder, requests
 
 
-def test_the_deploy_command_names_one_host_and_one_client() -> None:
+def test_the_deploy_command_names_two_hosts_and_one_client() -> None:
     text = DEPLOY.read_text(encoding="utf-8")
-    assert string_hosts(text) == {SDS}
+    assert string_hosts(text) == {SDS, HEALTHCHECKS}
     assert script_network(DEPLOY) == {"httpx"}
     assert deploy.API_BASE == SDS
+    assert deploy.HEALTHCHECKS_LISTING == f"{HEALTHCHECKS}/api/v3/checks/"
 
 
 def test_the_deploy_command_starts_exactly_its_programs() -> None:
@@ -354,7 +358,7 @@ def test_control_a_merge_command_is_seen_by_the_recorder_and_fails_the_row() -> 
 
 def test_control_a_second_host_or_a_second_program_fails_the_row(tmp_path: Path) -> None:
     text = DEPLOY.read_text(encoding="utf-8")
-    assert string_hosts(text + '\nOTHER = "https://other.example/x"\n') != {SDS}
+    assert string_hosts(text + '\nOTHER = "https://other.example/x"\n') != {SDS, HEALTHCHECKS}
     widened = tmp_path / "deploy_orchestrator.py"
     widened.write_text(text + '\nimport requests\nsubprocess.run(["curl", "x"])\n')
     assert script_network(widened) != {"httpx"}
