@@ -145,9 +145,10 @@ as far as the triage agent and the ticket. Every other route stays closed.
    apps, the mock client, that's Devon acting only as owner.
 4. **Authority never comes from the request.** What a unit may do comes from the member record's
    `app_changes` grant on its target repository (ADR-0058: asked at the decomposition proposal, its
-   approval, the claim, and admission) and from the envelope that policy computes for it. The
-   request names no capability, command, reach, or repository that any gate reads, and nothing in a
-   restatement can widen an envelope past what policy computes.
+   approval, the claim, admission, and every landing) and from the envelope that policy computes
+   for it. No gate reads a capability, command, reach, or repository from the request. The
+   restatement does declare reach and risk, and the owner approves those values, but no envelope
+   it produces can pass what policy admits and the grant allows.
 5. **The ticket is the cause the intake names.** A ticket is a change-manager change record with a
    new `source`. ADR-0027 already requires a machine-registered intake to name the approved change
    record that caused it (`intake_change_record_required`), so the request path needs no new
