@@ -497,8 +497,11 @@ One container per lane already gives each lane its own process, filesystem and e
   watch, factory-runner (whose `.cred-consumers.toml` lists the forks, `fork_sync/onboarding.py`
   `REGISTRY_REPO`) and each fork it lists. Devon decided where the read-only App is installed: on
   the members' repositories, the member record's repository and the standards repositories (Q6),
-  and on factory-runner and each fork (Q9). The "SDS lanes" App stays installed only on
-  intent-packages and the forks, as Q1 decided, so no read lane holds a key that can write.
+  and on factory-runner and each fork (Q9). The read lanes also read intent-packages, and no
+  decision covers installing the read-only App there: that install is pending Devon, as a new HQ
+  decision, and it blocks increment 3, as D-14 did. Until he decides, no read lane reads
+  intent-packages with the write-capable "SDS lanes" key. The "SDS lanes" App stays installed only
+  on intent-packages and the forks, as Q1 decided, so no read lane holds a key that can write.
   Increment 3, which moves the first lane that reads GitHub (the landing ledger), lists the exact
   set from the member record, the lanes' clone lists and that registry, and Devon installs the
   read-only App on those alone. Verify before increment 3 whether factory-runner, which is public,
@@ -1222,11 +1225,13 @@ The read-only App is installed on factory-runner and each fork as well as the re
 (the members' repositories, the member record's repository and the standards repositories), and
 increment 3 lists the exact set and checks whether factory-runner, which is public, needs the
 install at all. And the bump proposer reads the read-only App's key for its read mint, a thirteenth
-reader beside the twelve lanes of the read-only set. The read-only App's private key joins
-ADR-0055's hand-rotated set by D-6's rule (Q4), on the same hand-rotation interval as the "SDS
-lanes" App's key, and Devon rotates both in the same sitting. Creating and installing the read-only
-App is Devon's act, as for the "SDS lanes" App. The rejected option was (a), one App for both, whose
-leaked key could mint `contents: write` on every member repository it's installed on.
+reader beside the twelve lanes of the read-only set. No decision covers installing the read-only App
+on intent-packages, which the read lanes also read; that install is pending Devon (decision 2). The
+read-only App's private key joins ADR-0055's hand-rotated set by D-6's rule (Q4), on the same
+hand-rotation interval as the "SDS lanes" App's key, and Devon rotates both in the same sitting.
+Creating and installing the read-only App is Devon's act, as for the "SDS lanes" App. The rejected
+option was (a), one App for both, whose leaked key could mint `contents: write` on every member
+repository it's installed on.
 
 ### Q10: Devon pastes each lane's ping URL by hand (HQ D-13)
 
