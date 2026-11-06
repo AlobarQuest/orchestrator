@@ -3,9 +3,10 @@
 - **Status:** Proposed
 - **Date:** 2026-11-05
 - **Decided by:** Devon decided Q1 to Q5 on 2026-11-05 (HQ decisions D-3 to D-7), recorded in
-  "Devon's decisions". Q6 is open, pending HQ decision D-8 ("Open questions"), and four of the five
-  agents outside this repository (change-window, infra-drift, factory-events and sds-hq) are
-  pending D-9 (decision 5). The rest of the ADR is proposed and not yet accepted.
+  "Devon's decisions". Q6 is open, pending HQ decision D-8, and lane-token transit is open,
+  pending HQ decision D-10 (both in "Open questions"). Four of the five agents outside this
+  repository (change-window, infra-drift, factory-events and sds-hq) are pending D-9
+  (decision 5). The rest of the ADR is proposed and not yet accepted.
 - **Relates to:** ADR-0055 (the rotation executor's isolated runtime and decisions 2 and 4,
   amendments 6 and 12), ADR-0058 (lanes read their scope from the member record), ADR-0039
   (out-of-process producers carry only structured facts), ADR-0021 amendments 2 and 3 (the
@@ -71,23 +72,39 @@ each of those lanes keeps it in a volume of its own (decision 1, "Lane state").
   the way each plist is tracked today. The lane image bakes it in, so a schedule change is a
   reviewed commit and a new image, as a plist change is now.
 - **The lane image is built `FROM` the orchestrator image at the same commit.** It adds only what
-  the lanes need beyond the orchestrator. The tools are `git`, `gh`, `uv`, `node`, the `bws` CLI
-  and the scheduler binary. The files come from this repository: the orchestrator `Dockerfile`
-  copies only `src` and `scripts/build_registry_bundle.py` (and the latter only into its builder
-  stage), so the lane image adds the `scripts/run-*.sh` launchers, the four `scripts/sds-*.sh`
-  helpers they source, the tracked crontab, and the `lane-run` command (cut-over step 1). It copies
-  the launchers and helpers to `/app/scripts/`. Each launcher sets `REPO_ROOT` to its own
+  the lanes need beyond the orchestrator. The tools are `git`, `gh`, `uv`, `node`, the `bws` CLI,
+  `curl` with `ca-certificates` (every ping goes through `curl`: `scripts/sds-deadman.sh` and
+  `sds_upsert_check` in `scripts/sds-install.sh`, and the runtime stage is `python:3.14-slim`
+  with no `apt-get` step), and the scheduler binary. The files come from this repository. The
+  orchestrator `Dockerfile`'s runtime stage holds the venv, `src`, `alembic.ini` and `migrations`
+  (its builder stage also copies `pyproject.toml`, `uv.lock` and
+  `scripts/build_registry_bundle.py`) and no launcher. So the lane image adds the
+  `scripts/run-*.sh` launchers, the four `scripts/sds-*.sh` helpers they source,
+  `scripts/sds_scope.py` (which `run-landing-ledger.sh` and `run-fork-harden.sh` run as
+  `.venv/bin/python -m scripts.sds_scope` from `REPO_ROOT`), the tracked crontab, and the
+  `lane-run` command (cut-over step 1). It copies the launchers, the helpers and
+  `sds_scope.py` to `/app/scripts/`. It also creates each `/var/lib/sds/<lane>` state directory
+  (decision 1, "Lane state") owned by `orchestrator`: the orchestrator image ends
+  `USER orchestrator`, so the lane image does its installs and that `mkdir` as root, then returns
+  to `USER orchestrator`. Each launcher sets `REPO_ROOT` to its own
   directory's parent, so in the image `REPO_ROOT` is `/app`, and `$REPO_ROOT/.venv/bin/<lane>` is
   the orchestrator image's `/app/.venv/bin/<lane>`, with no launcher edit. The image carries no
   `~/.claude/bin/activate-checkout.sh`, so a launcher that sources it takes its missing-helper
   branch, which prints one `[activation]` line and updates nothing. The `Release image` workflow
   builds the lane image beside the orchestrator image from the same 40-character sha, so a lane
-  image and an orchestrator image with the same tag run the same lane code.
+  image and an orchestrator image built by the same run hold the same lane code. A `sha-` tag is
+  derivable, not immutable: a rebuild re-points it, and the digest is the identity
+  (`docs/operations/deploy.md`, "`sha-<full-sha>` is DERIVABLE, not IMMUTABLE"). So `prepare`
+  reads the lane image's pushed digest from the same run's verify step, which increment 1 makes
+  log it, as it reads the orchestrator's, and records it in its state file. The lane phases carry
+  that digest, and `lanes-finish` checks every container runs it (following bullets).
 - **A lane's image is pinned to the served orchestrator tag, and the deploying session moves it.**
   After the orchestrator's `finish` passes, `scripts/deploy_orchestrator.py` prints the lane phases'
   first command, and the deploying session writes the same tag to `sds-lanes` by the lane phases
   (following bullets). A lane runs either the served tag or, until the session's quiet-slot
-  redeploy, the tag the orchestrator served until that release, and no other. This replaces
+  redeploy, the tag the orchestrator served until that release, and no other. An orchestrator
+  rollback keeps that true the same way: it also runs the lane phases with `--tag` set to the
+  rollback target, so the lanes follow the orchestrator back. This replaces
   `activate-checkout.sh`'s fast-forward of the main tree. A moved lane never reads a working copy.
 - **The deploy command never calls Coolify; it checks, prints the calls, and verifies.** Its
   docstring states the rule this keeps: every Coolify change goes through the infraops MCP tools,
@@ -95,63 +112,81 @@ each of those lanes keeps it in a volume of its own (decision 1, "Lane state").
   `coolify_deploy` calls and the deploying session runs them. HQ is that session, as the one
   production actor. Increment 1 gives `sds-lanes` changes the same shape, in three phases of the
   same program. Each phase takes one change, `--tag <tag>`, `--schedule <lane>=<true|false>` or
-  `--add <lane>`, and a state file:
-  - **`lanes-prepare`** waits for a quiet slot (following bullet), then records the change and the
-    value it replaces, and prints, exactly, the session's calls: the one write (a variable through
-    `coolify_update_service_env`, or the added service's compose entry through
-    `coolify_set_compose_config`), then `coolify_deploy` on `sds-lanes`, then `lanes-finish`. It
-    prints the inverse write too, for `lanes-finish` to name if the redeploy fails. The value it
-    replaces comes from what the command can read without Coolify: the old compose file is the
-    tracked one at the tag `sds-lanes` runs, and the old tag or schedule value is what the session
-    reads from the running containers and passes in, as `prepare` takes
-    `--coolify-health-check-enabled`. The session reads the tag with `vps_docker_ps` and a schedule
-    value with `vps_exec` running `printenv LANE_SCHEDULE_ENABLED` in that service's container, so
-    no read lists another variable's value.
-  - **`lanes-recheck`** repeats the two quiet-slot reads. The session runs it, then the write and
-    the redeploy, with no other step between: the write is staged only if this exits 0, and
+  `--add <lane>`, and a state file. Every run writes the whole compose file, so a tracked compose
+  edit deploys with the tag that carries it: Coolify's `coolify_set_compose_config` replaces the
+  whole file, so no run writes less. The compose a run writes is the tracked file at the tag it
+  deploys (the new tag for `--tag`, the running tag otherwise), and its state file records that
+  compose exactly. The compose it replaces is the one the last finished run's state file
+  recorded, the file Coolify was last given, never the tracked file at the running tag. Increment
+  1's run that creates `sds-lanes` records the first.
+  - **`lanes-prepare`** waits for a quiet slot (following bullet), then records the change, the
+    compose it writes, and the values they replace, and prints, exactly, the session's calls: the
+    writes (the whole compose through `coolify_set_compose_config`, and for `--tag` or
+    `--schedule` the variable through `coolify_update_service_env`), then `coolify_deploy` on
+    `sds-lanes`, then `lanes-finish`. It prints every service whose compose entry differs from the
+    recorded compose, so the session's write names each edit it applies. A service is added only
+    by `--add` for that lane: a run whose compose adds any other service is refused. It prints the
+    inverse writes too (the recorded compose, and the replaced variable value), for
+    `lanes-finish` to name if the redeploy fails. The old tag or schedule value, and each stateful
+    service's volume (the following list), are what the session reads from the running
+    containers and passes in, as `prepare` takes `--coolify-health-check-enabled`. The session
+    reads the tag with `vps_docker_ps`, a schedule value with `vps_exec` running
+    `printenv LANE_SCHEDULE_ENABLED` in that service's container, and a volume and an image digest
+    with `vps_exec` running `docker inspect` with a `--format` that prints only the container's
+    mounts or its image, so no read lists another variable's value.
+  - **`lanes-recheck`** repeats the two quiet-slot reads. The session runs it, then the writes and
+    the redeploy, with no other step between: the writes are staged only if this exits 0, and
     immediately before the redeploy. A non-zero exit sends the session back to `lanes-prepare`.
-  - **`lanes-finish`** takes the session's reads of the redeployed containers: each service's
-    image tag, and for a schedule change or an added service that container's
-    `LANE_SCHEDULE_ENABLED`. It exits 0 only if they show the change and no other. Otherwise, or if
-    the redeploy failed, it exits 2 and prints the inverse write and a second `coolify_deploy`, and
-    the session runs them, then `lanes-finish --restored` with fresh reads, which exits 0 only if
-    the containers show the replaced value again. That restore is the session's act, which the
-    command names and then checks.
+  - **`lanes-finish`** takes the session's reads of the redeployed containers, for every service,
+    not only the changed one:
+    - its image's digest, read container to image to repository digest as
+      `docs/operations/deploy.md` reads the orchestrator's, which must equal the lane image digest
+      the release recorded (preceding bullet). The tag alone isn't the check;
+    - its `LANE_SCHEDULE_ENABLED`;
+    - for each of the eleven stateful services (decision 1, "Lane state"), the source of the mount
+      at `/var/lib/sds/<lane>`, which must be the volume name recorded for that service. Coolify's
+      `parse()` of a stored compose definition can double-prefix a volume's name and start the
+      service on a new, empty volume while its health stays green (workspace invariant #4), so a
+      green redeploy proves nothing about the volume. An added service has no recorded volume; its
+      `lanes-finish` records the one it reads, and the cut-over copies into that one.
+
+    It exits 0 only if they show the change and no other. Otherwise, or if the redeploy failed, it
+    exits 2 and prints the inverse writes and a second `coolify_deploy`, and the session runs them,
+    then `lanes-finish --restored` with fresh reads, which exits 0 only if the containers show the
+    replaced values again. That restore is the session's act, which the command names and then
+    checks.
 
   No phase holds a Coolify credential, and none needs one.
 - **A routine tag update redeploys `sds-lanes` only in a quiet slot.** Coolify's deploy endpoint
   (`POST /deploy`) takes resources by `uuid` or `tag`, and its restart endpoint
-  (`POST /services/{uuid}/restart`) takes the service resource's `uuid` and a `latest` flag.
-  Neither names a service within a compose resource (Coolify API reference, "Deploy" and
-  "Restart Service", read 2026-11-05). So every tag update recreates every lane's container at
-  once, and a running pass is stopped midway. The lane phases therefore apply the cut-over's two
-  checks to the whole resource before the session redeploys: the time is outside estate landing's
-  02:00 to 06:00 New York window, and no moved lane's check has `started` set to `true`.
-  `started` is the boolean field of each check in the Healthchecks Management API's check listing
-  (`GET /api/v3/checks/`, API docs "List Existing Checks"), read just before the redeploy. The API
-  docs show `started` only in their example responses and don't describe it, so increment 1
-  verifies, before it relies on the field, that the self-hosted version returns it in the listing
-  and sets it to `true` from a `/start` ping until the pass's result ping. Every
-  scheduled pass pings `/start` first, so `started` is the one signal every lane already sends. A
-  check whose `status` is also `down` doesn't hold the deploy, because its pass stopped without a
-  final ping and the down alert already reports it. The deploy command runs where it runs today,
-  in the deploying session on the Mac. It reads the listing with the read-only
-  Healthchecks key (BWS `f07b1368-…`, in `Rotation / Healthchecks`), through a direct read grant
-  to `sds-operator` that increment 1 adds (Q5, decided). Until both checks pass, `lanes-prepare`
-  waits and reads again, for at most 6 hours: long enough to outlast the 4-hour landing
-  window and a pass already running when it closes. At 6 hours it raises an alert
-  through alert-hub and exits with its "condition unmet" code (2). The session has written
-  nothing, so `sds-lanes` stays as it was until HQ re-runs `lanes-prepare` or redeploys by hand.
-  Nothing is staged in `sds-lanes` while the command waits: the session writes a tag, a service
-  variable (the following bullets) or an added service's compose entry only after
-  `lanes-recheck` exits 0, immediately before its redeploy call. So a wait that times out leaves
-  nothing staged, and no later redeploy can apply a change silently. If the redeploy fails after
-  the write, `lanes-finish` names the inverse write and the session restores the value at once.
-  The residual: a pass that starts between `lanes-recheck`'s read and the redeploy is still
-  stopped, as `recheck` before an orchestrator swap accepts a unit claimed after it. The P2
-  backlog item in which
-  `deploy_orchestrator.py` holds the bump-driver launch agent during a deploy is re-scoped by this
-  rule once the bump driver moves.
+  (`POST /services/{uuid}/restart`) takes the service resource's `uuid` and a `latest` flag. Neither
+  names a service within a compose resource (Coolify API reference, "Deploy" and "Restart Service",
+  read 2026-11-05). So every tag update recreates every lane's container at once, and a running pass
+  is stopped midway. The lane phases therefore apply the cut-over's two checks to the whole resource
+  before the session redeploys: the time is outside estate landing's 02:00 to 06:00 New York window,
+  and no moved lane's check has `started` set to `true`. `started` is the boolean field of each
+  check in the Healthchecks Management API's check listing (`GET /api/v3/checks/`, API docs "List
+  Existing Checks"), read just before the redeploy. The API docs show `started` only in their
+  example responses and don't describe it, so increment 1 verifies, before it relies on the field,
+  that the self-hosted version returns it in the listing and sets it to `true` from a `/start` ping
+  until the pass's result ping. Every scheduled pass pings `/start` first, so `started` is the one
+  signal every lane already sends. A check whose `status` is also `down` doesn't hold the deploy,
+  because its pass stopped without a final ping and the down alert already reports it. The deploy
+  command runs where it runs today, in the deploying session on the Mac. It reads the listing with
+  the read-only Healthchecks key (BWS `f07b1368-…`, in `Rotation / Healthchecks`), through a direct
+  read grant to `sds-operator` that increment 1 adds (Q5, decided). Until both checks pass,
+  `lanes-prepare` waits and reads again, for at most 6 hours: long enough to outlast the 4-hour
+  landing window and a pass already running when it closes. At 6 hours it raises an alert through
+  alert-hub and exits with its "condition unmet" code (2). The session has written nothing, so
+  `sds-lanes` stays as it was until HQ re-runs `lanes-prepare` or redeploys by hand. Nothing is
+  staged in `sds-lanes` while the command waits: the session writes the compose and any tag or
+  service variable (the following bullets) only after `lanes-recheck` exits 0, immediately before
+  its redeploy call. So a wait that times out leaves nothing staged, and no later redeploy can apply
+  a change silently. If the redeploy fails after the writes, `lanes-finish` names the inverse writes
+  and the session restores the values at once. The residual: a pass that starts between
+  `lanes-recheck`'s read and the redeploy is still stopped, as `recheck` before an orchestrator swap
+  accepts a unit claimed after it. The P2 backlog item in which `deploy_orchestrator.py` holds the
+  bump-driver launch agent during a deploy is re-scoped by this rule once the bump driver moves.
 - **Until the lanes' redeploy, the old lane code runs against the new orchestrator.** A
   release's orchestrator is served from `finish`, but its lanes stay on the previous tag until
   the session's quiet-slot redeploy: at most 6 hours when `lanes-prepare` finds a slot, and until
@@ -164,8 +199,15 @@ each of those lanes keeps it in a volume of its own (decision 1, "Lane state").
   work carrier (package checkouts) and fork hardening (the forks). Each clone is shallow, at
   `main`, into a directory the pass discards. A clone carries no venv, so the bump driver's
   launcher builds intent-packages' venv in its clone with `uv sync` each pass, for the `factory`
-  command it puts on `PATH`; it points uv's cache (`UV_CACHE_DIR`) into the lane's state volume
-  (following bullet), so a pass downloads only what changed. The other caches a lane keeps are
+  command it puts on `PATH`; it points uv's cache (`UV_CACHE_DIR`) and uv's managed Pythons
+  (`UV_PYTHON_INSTALL_DIR`) into the lane's state volume (following bullet), because each pass
+  has a new `HOME`, so a pass downloads only what changed. Three Mac checkout variables point at
+  these clones in the container, and each launcher sets its own from the pass's clone directory,
+  so none joins `lane-run`'s list: `BUMP_PROPOSER_PACKAGES_CHECKOUT` (both bridge proposers) at
+  the intent-packages clone, `ROTATION_PROPOSER_INFRAOPS_CHECKOUT` at the infraops-mcp-server
+  clone, and `WORK_CARRIER_CHECKOUT_ROOT` at the directory that holds the work carrier's package
+  clones, each as `<root>/<repo>` (`work_carrier/cli.py`). On the Mac the plists set them to
+  `~/Projects` paths. The other caches a lane keeps are
   rebuildable and may start empty: the bump driver's `mirrors` (in its state directory, so in its
   volume), fork hardening's bare caches (`fork_harden/cli.py`, `DEFAULT_CACHE` under `HOME`) and
   the `RepoMirror` roots of the rotation decomposer and rotation proposer (`~/.cache/<program>`,
@@ -174,22 +216,24 @@ each of those lanes keeps it in a volume of its own (decision 1, "Lane state").
   is too slow.
 - **Lane state: each lane that keeps state has a named volume, and its state variable points at
   it.** Eleven moving lanes keep files between passes that a pass can't rebuild from a read. Each
-  file sits under `~/Library/Application Support/sds/<lane>/` on the Mac, or under the lane's
-  `*_STATE_DIR` variable when it's set:
+  file sits on the Mac in the lane's source directory, under
+  `~/Library/Application Support/sds/`, or under the lane's `*_STATE_DIR` variable when it's set.
+  The source directory is the lane's name except for two lanes, whose modules name another
+  (`unit_verifier/alerts.py`, `work_watcher/alerts.py`):
 
-  | Lane | Variable | Files | If it starts empty |
-  |---|---|---|---|
-  | `bump-driver` | `BUMP_DRIVER_STATE_DIR` | `alerts.json`, `pass.lock`, `mirrors/` | Alerts the Mac fired never resolve. The lock and mirrors rebuild. |
-  | `bump-proposer` | `BUMP_PROPOSER_STATE_DIR` (the launcher sets it) | `alerts.json` | Alerts the Mac fired never resolve. |
-  | `estate-landing` | `LANDER_STATE_DIR` | `held-since.json`, `alerts.json` | Alerts never resolve, and every held pull request's 24-hour clock restarts, so its held alert fires a day late. |
-  | `execution-watch` | `EXECUTION_WATCH_STATE_DIR` | `alerts.json`, `first-seen.json`, `known.json` | Every `--submit` pass refuses without `known.json` (exit 1, a `/fail`), and `--seed` would re-baseline. Alerts never resolve, and stuck-unit clocks restart. |
-  | `inert-landing` | `LANDER_STATE_DIR` | `held-since.json`, `alerts.json`, `revert-alerts.json` | As estate landing, and revert alerts never resolve. |
-  | `pin-watcher` | `PIN_WATCHER_STATE_DIR` | `alerts.json` | Alerts the Mac fired never resolve. |
-  | `revision-watcher` | `REVISION_WATCHER_STATE_DIR` | `alerts.json` | Alerts the Mac fired never resolve. |
-  | `rotation-decomposer` | `ROTATION_DECOMPOSER_STATE_DIR` | `alerts.json`, `approval-since.json` | Alerts never resolve, and approval-wait clocks restart. |
-  | `rotation-proposer` | `ROTATION_PROPOSER_STATE_DIR` | `alerts.json`, `approval-since.json` | Alerts never resolve, and approval-wait clocks restart. |
-  | `unit-verifier` | `VERIFIER_STATE_DIR` | `alerts.json` | Alerts the Mac fired never resolve. |
-  | `work-carrier` | `WORK_WATCHER_STATE_DIR` (the launcher sets it) | `alerts.json` | Alerts the Mac fired never resolve. |
+  | Lane | Variable | Mac source directory | Files | If it starts empty |
+  |---|---|---|---|---|
+  | `bump-driver` | `BUMP_DRIVER_STATE_DIR` | `sds/bump-driver` | `alerts.json`, `pass.lock`, `mirrors/` | Alerts the Mac fired never resolve. The lock and mirrors rebuild. |
+  | `bump-proposer` | `BUMP_PROPOSER_STATE_DIR` (the launcher sets it) | `sds/bump-proposer` | `alerts.json` | Alerts the Mac fired never resolve. |
+  | `estate-landing` | `LANDER_STATE_DIR` | `sds/estate-landing` | `held-since.json`, `alerts.json` | Alerts never resolve, and every held pull request's 24-hour clock restarts, so its held alert fires a day late. |
+  | `execution-watch` | `EXECUTION_WATCH_STATE_DIR` | `sds/execution-watch` | `alerts.json`, `first-seen.json`, `known.json` | Every `--submit` pass refuses without `known.json` (exit 1, a `/fail`), and `--seed` would re-baseline. Alerts never resolve, and stuck-unit clocks restart. |
+  | `inert-landing` | `LANDER_STATE_DIR` | `sds/inert-landing` | `held-since.json`, `alerts.json`, `revert-alerts.json` | As estate landing, and revert alerts never resolve. |
+  | `pin-watcher` | `PIN_WATCHER_STATE_DIR` | `sds/pin-watcher` | `alerts.json` | Alerts the Mac fired never resolve. |
+  | `revision-watcher` | `REVISION_WATCHER_STATE_DIR` | `sds/revision-watcher` | `alerts.json` | Alerts the Mac fired never resolve. |
+  | `rotation-decomposer` | `ROTATION_DECOMPOSER_STATE_DIR` | `sds/rotation-decomposer` | `alerts.json`, `approval-since.json` | Alerts never resolve, and approval-wait clocks restart. |
+  | `rotation-proposer` | `ROTATION_PROPOSER_STATE_DIR` | `sds/rotation-proposer` | `alerts.json`, `approval-since.json` | Alerts never resolve, and approval-wait clocks restart. |
+  | `unit-verifier` | `VERIFIER_STATE_DIR` | `sds/verifier` | `alerts.json` | Alerts the Mac fired never resolve. |
+  | `work-carrier` | `WORK_WATCHER_STATE_DIR` (the launcher sets it) | `sds/work-watcher` | `alerts.json` | Alerts the Mac fired never resolve. |
 
   "Never resolve" is `KeyedAlerts.sync` (`src/alert_hub_client/__init__.py`): it sends `resolved`
   only for keys its state file remembers, so an empty file orphans every alert the Mac left
@@ -197,7 +241,12 @@ each of those lanes keeps it in a volume of its own (decision 1, "Lane state").
   watch, landing ledger and membership check) keep no state beyond the rebuildable caches of the
   preceding bullet. Each of the eleven gets one named volume in the tracked compose file,
   `sds-lanes-<lane>-state`, mounted at `/var/lib/sds/<lane>` in its own service alone, and that
-  service's compose entry sets the lane's variable to that path. So no lane starts empty: the
+  service's compose entry sets the lane's variable to that path. The name Docker gives the volume
+  depends on how Coolify renders compose volumes (verify before increment 1), so `lanes-finish`
+  checks each mount's source against the name recorded for it (preceding bullets), never against
+  the tracked name. The lane image creates `/var/lib/sds/<lane>` owned by `orchestrator`, the user
+  every lane process runs as; whether a new volume takes that directory's owner is also verified
+  before increment 1. So no lane starts empty: the
   cut-over copies the Mac's files into the volume (cut-over step 2), and a rollback copies them
   back. A volume outlives every redeploy, so the state survives a tag update as it survives a
   launchd restart today.
@@ -211,6 +260,10 @@ each of those lanes keeps it in a volume of its own (decision 1, "Lane state").
   rollback order (section 6) keep the Mac and the container from running the lane at once.
 - **`lane-run` passes the launcher a fixed, tracked list of variables, and one secret.** Every
   container run of a launcher goes through `lane-run`, the scheduler's and a one-off exec alike.
+  So the scheduler must run as `orchestrator`, not root, and must start `lane-run` with the
+  container's environment, from which `lane-run` copies the token and the listed variables.
+  Debian's `cron` does neither: it runs as root and starts jobs with a minimal environment.
+  Increment 1 picks a scheduler that meets both requirements.
   It starts the launcher with exactly these, and no other:
   - `PATH`, set by `lane-run` to the image's directories, and `HOME`, a new empty directory per
     run, so `bws` holds no cached session (workspace invariant #23);
@@ -256,26 +309,27 @@ each of those lanes keeps it in a volume of its own (decision 1, "Lane state").
   (`<LANE>_BWS_ACCESS_TOKEN` and `<LANE>_LANE_SCHEDULE_ENABLED`, for example
   `EXECUTION_WATCH_BWS_ACCESS_TOKEN`), and the tracked compose file maps each to the plain name in
   that service's `environment` entry and in no other service's. The image tag is one more resource
-  variable, `SDS_LANES_IMAGE_TAG`, which every service's `image:` names, so a tag update is one
-  variable write. Verify before increment 1 that Coolify substitutes a resource variable in a
-  compose `image:` field, and that a
-  resource variable reaches only the containers whose compose entry maps it. If Coolify injects
-  every resource variable into every service's container, every lane container would hold every
-  lane's token, which defeats one identity per lane, and increment 1 stops for a decision.
-- **Adding a lane's service is itself a resource-wide redeploy.** A new service is a compose
-  change, and Coolify applies a compose change only by redeploying the whole resource, which
-  stops every moved lane's running pass. So a service is added only by the lane phases with
-  `--add <lane>`, under the same quiet-slot rule, the same two reads and the same 6-hour maximum as
-  a tag update. The session writes the service's compose entry only after `lanes-recheck` exits
-  0, as the quiet-slot bullet says. Before that, the session sets the lane's two resource
-  variables: its BWS token and its schedule variable, `false`. They're inert until then, because
-  no compose entry maps them. The token is a secret, so it can't travel as an infraops tool
-  argument, which the transcript records. How the first lane token reaches Coolify is decided
-  before increment 2; if the answer needs a credential or a person's act, HQ asks Devon first.
-  The command can't read Coolify's variable listing, and the session
-  must not either, because that listing carries every variable's value (`value`,
-  `real_value`), every lane's token included. So the guarantee that a lane's container never
-  starts scheduled is built, not read:
+  variable, `SDS_LANES_IMAGE_TAG`, which every service's `image:` names, so a tag update writes that
+  one variable beside the whole compose (preceding bullets). Verify before increment 1 that Coolify
+  substitutes a resource variable in a compose `image:` field, and that a resource variable reaches
+  only the containers whose compose entry maps it. If Coolify injects every resource variable into
+  every service's container, every lane container would hold every lane's token, which defeats one
+  identity per lane, and increment 1 stops for a decision.
+- **Adding a lane's service is itself a resource-wide redeploy.** A new service is a compose change,
+  and Coolify applies a compose change only by redeploying the whole resource, which stops every
+  moved lane's running pass. So a service is added only by the lane phases with `--add <lane>`,
+  under the same quiet-slot rule, the same two reads and the same 6-hour maximum as a tag update.
+  The session writes the compose that adds the service only after `lanes-recheck` exits 0, as the
+  quiet-slot bullet says. Before that, the session sets the lane's two resource variables: its BWS
+  token and its schedule variable, `false`. They're inert until then, because no compose entry maps
+  them. The token is a secret, so it can't travel as an infraops tool argument, which the transcript
+  records. How it reaches Coolify is pending D-10 ("Open questions", "Lane-token transit"). The
+  command can't read Coolify's variable listing, and the session must not either, because that
+  listing carries every variable's value (`value`, `real_value`), every lane's token included. Nor
+  may the session make any other read that can return a variable's real value: `coolify_get_service`
+  on `sds-lanes`, whose response may carry a variable's real value, and any read like it. Its reads
+  of `sds-lanes` are the container reads the lane phases name. So the guarantee that a lane's
+  container never starts scheduled is built, not read:
   - The added service's compose entry maps its schedule as
     `LANE_SCHEDULE_ENABLED: ${<LANE>_LANE_SCHEDULE_ENABLED:-false}`, so an unset variable starts it
     unscheduled, and `lanes-prepare` refuses an `--add` whose tracked entry maps it any other way.
@@ -283,8 +337,8 @@ each of those lanes keeps it in a volume of its own (decision 1, "Lane state").
     refuses any other.
   - `lanes-finish` takes the new container's `LANE_SCHEDULE_ENABLED` and whether its
     `BWS_ACCESS_TOKEN` is non-empty (the session runs `test -n` in the container and prints no
-    value). It refuses, and names the inverse write that removes the service, unless the
-    container is unscheduled and holds a token.
+    value). It refuses, and names the inverse write, the recorded compose, which removes the
+    service, unless the container is unscheduled and holds a token.
 
   A container that starts without its token runs no pass, because it's unscheduled, and the
   identity proof (cut-over step 1) fails on it.
@@ -335,7 +389,9 @@ One container per lane already gives each lane its own process, filesystem and e
     `<LANE>_GITHUB_TOKEN` (`BUMP_DRIVER_GITHUB_TOKEN`, `DEPLOY_WATCHER_GITHUB_TOKEN` and the rest),
     with two other spellings: `SDS_MEMBERS_GITHUB_TOKEN` for the membership check and
     `ROTATION_VERIFIER_GITHUB_TOKEN` for the unit verifier. Each launcher feeds that variable from
-    BWS instead of its `gh auth token` fallback.
+    BWS instead of its `gh auth token` fallback; that BWS secret is the read-only token under
+    D-8's option (a) or (b), and under option (c) the launcher mints a read token from the App in
+    its place (pending D-8, Q6).
   - **`gh` commands.** The fork-sync watch has no such variable: it reads GitHub through `gh api`
     on the stored login (`src/fork_sync/gh.py`). Its launcher exports its token as `GH_TOKEN`,
     which `gh` reads in place of a stored login.
@@ -442,8 +498,8 @@ One container per lane already gives each lane its own process, filesystem and e
 - **`.bws-secrets.toml` and `.cred-consumers.toml` gain each lane identity and each secret it
   reads**, in the same change as the lane's move. The credential registry gains each lane token
   and each lane's Healthchecks ping URL (decision 3) as a credential, and the "SDS lanes" App's
-  private key as one more. The VM rotation executor rotates each lane token once ADR-0059
-  increment 7 moves the executor to the VPS (Q3, decided).
+  private key as one more. Once ADR-0059 increment 7 moves the VM rotation executor to the VPS, it
+  carries out each lane token's rotation between Devon's mint and his revoke (Q3, decided).
   The App key joins ADR-0055's hand-rotated set, as the `alobar-sds-rotation` App's key did
   (Q4, decided): Devon rotates it on the App's settings page, and no executor handles it. It's
   registered as class `github-app-private-key`, whose interval in infraops's rotation policy
@@ -484,7 +540,9 @@ One container per lane already gives each lane its own process, filesystem and e
   lookup moves to install time: the increment that moves a lane runs `sds_upsert_check` from the
   deploying session on the Mac, through the broad account as today, reads the check's `ping_url`
   from the upsert response (today the response is discarded), and stores it as the lane's
-  ping-URL secret without printing it. Storing the secret is that increment's act. Verify before
+  ping-URL secret without printing it. Storing the secret is that increment's act, and how it's
+  stored is pending D-10: `bws secret create` and `bws secret edit` take the value as an argument.
+  Verify before
   increment 1, on the self-hosted version: that a UUID ping URL needs no other credential and does
   nothing beyond pinging, that the upsert response carries `ping_url`, and the URL's base
   (`PING_ENDPOINT`).
@@ -598,18 +656,35 @@ them.
 
 ### 6. Migration order, cut-over, rollback and the week bar
 
+#### Verify before increment 1
+
+Increment 1 confirms each of these on the production Coolify, Docker and self-hosted
+Healthchecks before it relies on it. A fact it can't confirm stops the increment for a decision:
+
+- Coolify substitutes a resource variable in a compose `image:` field, and a resource variable
+  reaches only the containers whose compose entry maps it (decision 1).
+- How Coolify names a compose file's volumes, and whether it honors a volume's `name:` or
+  `external` setting (decision 1, "Lane state").
+- Whether a new named volume takes the owner of the lane image's `/var/lib/sds/<lane>`
+  directory (decision 1, "Lane state").
+- The Healthchecks check listing returns `started`, set to `true` from a `/start` ping until the
+  pass's result ping (decision 1).
+- A UUID ping URL needs no other credential and does nothing beyond pinging, the upsert response
+  carries `ping_url`, and the URL's base (`PING_ENDPOINT`) (decision 3).
+
 #### Increments
 
 1. **The lane image and `sds-lanes`, with no lane.** Build the lane image in `Release image` and
-   create the compose resource with one placeholder service that runs `--dry-run` on a schedule
-   and holds no credential. Add the deploy command's three lane phases (`lanes-prepare`,
-   `lanes-recheck`, `lanes-finish`) for a tag update, a schedule change and an added service:
-   each waits for a quiet slot, prints the session's exact infraops calls and their inverse, and
-   verifies the session's reads of the redeployed containers, and an `--add` refuses a compose
-   entry whose schedule doesn't default to `false` (decision 1). Add `lane-run` with its variable
-   list and its `--read` mode (decisions 1 and 2). Give `sds-operator` its direct read grant on the
-   read-only Healthchecks key (Q5), and add `f07b1368-…` to `.bws-secrets.toml` in the same
-   change: the BWS secret-handling standard has a repository's manifest name every UUID it
+   create the compose resource with one placeholder service that runs `--dry-run` on a schedule and
+   holds no credential, after confirming "Verify before increment 1". Add the deploy command's three
+   lane phases (`lanes-prepare`, `lanes-recheck`, `lanes-finish`) for a tag update, a schedule
+   change and an added service: each waits for a quiet slot, writes the whole compose and records
+   it, prints the session's exact infraops calls and their inverse, and verifies the session's reads
+   of the redeployed containers (image digest, schedule and state volume), and an `--add` refuses a
+   compose entry whose schedule doesn't default to `false` (decision 1). Add `lane-run` with its
+   variable list and its `--read` mode (decisions 1 and 2). Give `sds-operator` its direct read
+   grant on the read-only Healthchecks key (Q5), and add `f07b1368-…` to `.bws-secrets.toml` in the
+   same change: the BWS secret-handling standard has a repository's manifest name every UUID it
    consumes, and the security scanner reports manifest drift.
 2. **One observe-only lane first: `execution-watch`.** It has one identity, three secrets (the
    observer bearer, the alert token and its ping-URL secret), no GitHub credential, and state that
@@ -617,7 +692,7 @@ them.
    (15 minutes) is the shortest of the lanes with no GitHub credential, so its check shows a failure
    fastest of the lanes that can move before any GitHub read credential exists. The unit verifier's
    10-minute interval is shorter, but it reads GitHub, so it waits for increment 3. It proves the
-   identity, the `env -i` start, the dead-man ping and the cut-over procedure.
+   identity, `lane-run`'s fixed start (decision 1), the dead-man ping and the cut-over procedure.
 3. **The other observe-only lanes:** landing ledger, pin watcher, deploy watcher, revision watcher,
    fork-sync watch, membership check and unit verifier, one at a time. Pending D-8 (Q6), this
    increment creates the read-only GitHub token (decision 2); under option (c) no such token exists,
@@ -649,12 +724,16 @@ them.
    is last because it moves the root of the rotation design. A lane token the executor rotates
    reaches a container only at its next start, because the entrypoint and `lane-run` read the
    service's environment as it was then. Every start is a resource-wide `sds-lanes` redeploy
-   (decision 1). So the amendment must order each lane-token rotation as follows: write the new
-   token to the lane's `<LANE>_BWS_ACCESS_TOKEN`, redeploy under the quiet-slot rule (the lane
+   (decision 1). Bitwarden has no machine path to create or revoke an access token
+   (`rotation_worker/adapters/bws_machine_token.py`, ADR-0055 amendment 12), so Devon mints each
+   new lane token and revokes the old one, and the executor does what's between. The amendment
+   decides how Devon's minted token reaches the executor. So it must order each lane-token
+   rotation as follows: Devon mints the new token, the executor writes it to the lane's
+   `<LANE>_BWS_ACCESS_TOKEN`, redeploys under the quiet-slot rule (the lane
    phases' two reads; the amendment decides whether the executor, which holds its own Coolify
    token, runs them or hands the redeploy to the deploying session), verify the new token in the
    lane's container (`lane-run --read` over every secret `.bws-secrets.toml` lists for the lane,
-   each `ok`), and only then revoke the old token. Revoking before that redeploy
+   each `ok`), and only then does Devon revoke the old token. Revoking before that redeploy
    would leave the lane's container holding a dead token until the next quiet slot.
 
 Each increment's plan records which repositories it changes and which identities it creates.
@@ -662,7 +741,8 @@ Each increment's plan records which repositories it changes and which identities
 #### Cut-over for one lane
 
 1. Create the lane's BWS identity and grants. Set the lane's two resource variables, its token and
-   its schedule variable `false`, and add the lane's service by the lane phases with `--add` in a
+   its schedule variable `false` (how the token is written is pending D-10, "Open questions"), and
+   add the lane's service by the lane phases with `--add` in a
    quiet slot (decision 1). Then prove the identity in the lane's container: `lane-run --read`
    over every secret `.bws-secrets.toml` lists for the lane (each `ok`), one UUID it doesn't read
    (`refused`), and the launcher's `--dry-run` (decision 2). The service runs with
@@ -671,20 +751,22 @@ Each increment's plan records which repositories it changes and which identities
    `docker exec` into the running service container, and runs the lane image's `lane-run` command
    with the launcher's arguments. `lane-run` starts the launcher with `BWS_ACCESS_TOKEN` as its one
    secret, copied from the service's own environment, beside `PATH`, a new empty `HOME` and its
-   fixed list of non-secret variables (decision 1): decision 2's `env -i` start, without the token
+   fixed list of non-secret variables (decision 1), without the token
    in a process argument. So the run holds the lane's identity and no other, and the token never
    appears in the session's command or transcript. The scheduler's crontab line runs the same
    command. Then capture the lane's
    week-bar baseline (its flips and ping log, "The week bar"), before any run in step 2, because
    some of those runs ping the lane's real check.
-2. Pick a cut-over time between two scheduled passes. In that gap, for a lane with state
-   (decision 1, "Lane state"), first copy its Mac state directory into its volume: the session
-   reads each file, which holds alert keys and timestamps and no secret, and writes it with
-   infraops's `vps_write_file` under the volume's host mount point (`docker volume inspect`). The
-   bump driver's `pass.lock` and `mirrors` aren't copied. Then run the lane's reporting mode
-   (the invocation that changes no record) on the Mac and in the container within the same
-   minute. Keep both outputs for step 4. A reporting run touches the real check or not by lane
-   (`scripts/sds-deadman.sh`, "A dry run must not count as a pass"):
+2. Pick a cut-over time between two scheduled passes. In that gap, for a lane with state (decision
+   1, "Lane state"), first copy its Mac state directory into its volume: the session reads each
+   file, which holds alert keys and timestamps and no secret, and writes it with infraops's
+   `vps_write_file` under the volume's host mount point (`docker volume inspect` on the volume
+   `lanes-finish` recorded). `vps_write_file` writes as root, so the session then sets each copied
+   file's owner to `orchestrator` and its mode to the Mac file's mode. The bump driver's `pass.lock`
+   and `mirrors` aren't copied. Then run the lane's reporting mode (the invocation that changes no
+   record) on the Mac and in the container within the same minute. Keep both outputs for step 4. A
+   reporting run touches the real check or not by lane (`scripts/sds-deadman.sh`, "A dry run must
+   not count as a pass"):
    - **It pings nothing** for a launcher run with `--dry-run` (deploy watcher, execution watch,
      landing ledger, pin watcher, revision watcher and unit verifier), and for an outcome-alarm
      launcher run without its acting flag, which resolves no ping URL (bump driver, bump
@@ -696,13 +778,14 @@ Each increment's plan records which repositories it changes and which identities
      it pings the real check. Fork hardening's launcher always passes `--push`, so its comparison
      runs `fork-harden run` without `--push` directly, outside the launcher, and pings nothing.
 
-   A ping from step 2 lands after the baseline and before the week, so it counts in neither.
-   Then confirm no pass is running:
-   `launchctl print gui/<uid>/com.devon.<lane>` shows no running PID, and for the bump driver no
-   process holds its `pass.lock` (the only lane with a pass lock). `bootout` stops a running pass
-   midway. Then boot out the Mac agent with `launchctl bootout gui/<uid>/com.devon.<lane>`, and keep
-   its plist. Then compare the Mac's state files with the volume's by SHA-256, and if any differs,
-   replace the volume's files with the Mac's: until the bootout the Mac's are the lane's state.
+   A ping from step 2 lands after the baseline and before the week, so it counts in neither. Then
+   confirm no pass is running: `launchctl print gui/<uid>/com.devon.<lane>` shows no running PID,
+   and for the bump driver no process holds its `pass.lock` (the only lane with a pass lock).
+   `bootout` stops a running pass midway. Then boot out the Mac agent with
+   `launchctl bootout gui/<uid>/com.devon.<lane>`, and keep its plist. Then compare the Mac's
+   state files with the volume's by SHA-256, and check each volume file's owner is `orchestrator`
+   and its mode is the Mac file's. If any differs, replace the volume's files with the Mac's and
+   set owner and mode again: until the bootout the Mac's are the lane's state.
 3. Set the service's `LANE_SCHEDULE_ENABLED` to `true` by the lane phases with `--schedule`,
    which the session redeploys in the next quiet slot (decision 1). Until that redeploy, neither
    host runs the lane on a schedule, which is the safe direction. The gap is at most 6 hours when
@@ -837,9 +920,10 @@ broad account, as the install-time upsert does. No lane holds it.
   equivalents. The relevant ones are "the scheduled lanes run the main tree's working copy", the
   launcher-credential rules, and the PATH rule for `uv`. Each increment rewrites the invariant it
   makes untrue.
-- By Q3's decision, the VM rotation executor gains write reach over every lane's BWS identity once
-  ADR-0059 increment 7 lifts ADR-0055 decision 4 for lane tokens. A compromised executor could then
-  re-issue any lane's token.
+- By Q3's decision, the VM rotation executor handles every lane's BWS token once ADR-0059
+  increment 7 lifts ADR-0055 decision 4 for lane tokens. It can't mint or revoke one: those are
+  Devon's acts (ADR-0055 amendment 12). A compromised executor could then read every staged lane
+  token and write any lane's Coolify variable.
 - Lane tokens are registered and unrotated from the first lane identity (increment 2) until
   ADR-0059 increment 7. That window is bounded: it must not outlast the credential registry's
   rotation interval for a lane token. If the increments would run past that interval, HQ decides
@@ -875,8 +959,9 @@ broad account, as the install-time upsert does. No lane holds it.
   carry, from `AlobarQuest` to the "SDS lanes" App's `[bot]`. So this ADR proposes no ADR-0039
   amendment; increment 4's check of every reader that keys on a revision commit's author
   (Consequences) covers the change.
-- **ADR-0055.** ADR-0059 increment 7's ADR-0055 amendment moves the VM executor to the VPS and,
-  by Q3's decision, lifts decision 4 for lane tokens so that the executor rotates them.
+- **ADR-0055.** ADR-0059 increment 7's ADR-0055 amendment moves the VM executor to the VPS and, by
+  Q3's decision, lifts decision 4 for lane tokens so that the executor carries out their rotation
+  between Devon's mint and his revoke.
 
 ## Devon's decisions
 
@@ -908,15 +993,18 @@ the Mac. This departs from the year plan's two-exception text; HQ updates the ye
 
 ### Q3: the VM executor rotates lane BWS tokens (HQ D-5)
 
-Option (a): once ADR-0059 increment 7 moves the VM rotation executor to the VPS, it rotates each
-lane's BWS token. It already writes Coolify variables with its own Coolify token. ADR-0055
-decision 4, as amended, says a BWS consumer token may be handled only by an executor instance on
-the machine that already holds it, and never by the VM. ADR-0059 increment 7's ADR-0055 amendment
-lifts decision 4 for lane tokens. The cost is accepted: the executor gains write reach over every
-lane's identity. Until that amendment, lane tokens are registered and unrotated. The rejected
-options were the hand-rotated set, which conflicts with Devon's "SDS can not do an all human
-rotation" (2026-10-21), and a new confined rotation instance, which would add a third orchestrator
-identity.
+Option (a): once ADR-0059 increment 7 moves the VM rotation executor to the VPS, it carries out each
+lane's BWS token rotation. Bitwarden has no machine path to create or revoke an access token
+(ADR-0055 amendment 12), so Devon mints each new lane token and revokes the old one, and the
+executor does what's between: it takes the staged token, writes the lane's Coolify variable,
+redeploys and verifies (increment 7). It already writes Coolify variables with its own Coolify
+token. ADR-0055 decision 4, as amended, says a BWS consumer token may be handled only by an executor
+instance on the machine that already holds it, and never by the VM. ADR-0059 increment 7's ADR-0055
+amendment lifts decision 4 for lane tokens. The cost is accepted: a compromised executor could read
+every staged lane token and write any lane's Coolify variable. Until that amendment, lane tokens are
+registered and unrotated. The rejected options were the hand-rotated set, which conflicts with
+Devon's "SDS can not do an all human rotation" (2026-10-21), and a new confined rotation instance,
+which would add a third orchestrator identity.
 
 ### Q4: the "SDS lanes" App's private key is hand-rotated (HQ D-6)
 
@@ -969,3 +1057,31 @@ hand-rotated set, at 180 days (decision 2). Until D-8 is decided, the read-only 
 the read-token text are pending wherever they appear: decision 2 (the read-only token bullets and
 the bump driver's variable "fed from the read-only token"), decision 5's `fork-sync-watch` row,
 and increment 3's creation of the token. Under option (c) no such token exists.
+
+### Lane-token transit (pending D-10)
+
+A lane's secrets must reach Coolify and BWS without passing through an infraops tool argument or
+a process argument, because the transcript records the one and `ps` shows the other. Devon
+hasn't decided how; HQ asked him as D-10. Its reach is every secret value this ADR moves into a
+store:
+
+- every lane's BWS token, written to its `<LANE>_BWS_ACCESS_TOKEN` resource variable (decision 1,
+  "Adding a lane's service", and cut-over step 1);
+- any lane-token rotation before increment 7: Q3 leaves lane tokens unrotated until then
+  (Consequences), so a rotation in that window is by hand;
+- the per-lane ping-URL secrets, which the increment that moves each lane stores in BWS
+  (decision 3), and `bws secret create` and `bws secret edit` take the value as an argument;
+- under D-8's option (a) or (b), the read-only GitHub tokens (Q6).
+
+A person's act is already certain whichever option is chosen: Devon mints every lane token
+(ADR-0055 amendment 12). The options are:
+
+- **(a) Devon pastes each value into the Coolify UI.**
+- **(b) The VM rotation executor writes it.** That lifts ADR-0055 decision 4 for lane tokens before
+  increment 7, which Q3 places at increment 7.
+- **(c) A new infraops tool takes a BWS UUID and writes the value server-side**, so only the UUID
+  is a tool argument.
+
+Until D-10 is decided, cut-over step 1's token write and decision 3's ping-URL store are pending.
+The merge of this ADR doesn't wait on it: increment 1 creates no identity, and its placeholder
+service holds no credential, so nothing increment 1 does moves a secret.
