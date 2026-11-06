@@ -112,28 +112,31 @@ each of those lanes keeps it in a volume of its own (decision 1, "Lane state").
   `coolify_deploy` calls and the deploying session runs them. HQ is that session, as the one
   production actor. Increment 1 gives `sds-lanes` changes the same shape, in three phases of the
   same program. Each phase takes one change, `--tag <tag>`, `--schedule <lane>=<true|false>` or
-  `--add <lane>`, and a state file. Every run writes the whole compose file, so a tracked compose
-  edit deploys with the tag that carries it: Coolify's `coolify_set_compose_config` replaces the
-  whole file, so no run writes less. The compose a run writes is the tracked file at the tag it
-  deploys (the new tag for `--tag`, the running tag otherwise), and its state file records that
-  compose exactly. The compose it replaces is the one the last finished run's state file
-  recorded, the file Coolify was last given, never the tracked file at the running tag. Increment
-  1's run that creates `sds-lanes` records the first.
+  `--add <lane> --tag <tag>`, and a state file. An `--add` names the tag whose tracked compose
+  carries the lane's service, which must be the served orchestrator tag, because a new service
+  arrives with the commit that adds its launcher and crontab line. Every run writes the whole
+  compose file, so a tracked compose edit deploys with the tag that carries it: Coolify's
+  `coolify_set_compose_config` replaces the whole file, so no run writes less. The compose a run
+  writes is the tracked file at the tag it deploys (the named tag for `--tag` and `--add`, the
+  running tag for `--schedule`), and its state file records that compose exactly. The compose it
+  replaces is the one the last finished run's state file recorded, the file Coolify was last given,
+  never the tracked file at the running tag. Increment 1's run that creates `sds-lanes` records the
+  first.
   - **`lanes-prepare`** waits for a quiet slot (following bullet), then records the change, the
     compose it writes, and the values they replace, and prints, exactly, the session's calls: the
-    writes (the whole compose through `coolify_set_compose_config`, and for `--tag` or
-    `--schedule` the variable through `coolify_update_service_env`), then `coolify_deploy` on
-    `sds-lanes`, then `lanes-finish`. It prints every service whose compose entry differs from the
-    recorded compose, so the session's write names each edit it applies. A service is added only
-    by `--add` for that lane: a run whose compose adds any other service is refused. It prints the
-    inverse writes too (the recorded compose, and the replaced variable value), for
-    `lanes-finish` to name if the redeploy fails. The old tag or schedule value, and each stateful
-    service's volume (the following list), are what the session reads from the running
-    containers and passes in, as `prepare` takes `--coolify-health-check-enabled`. The session
-    reads the tag with `vps_docker_ps`, a schedule value with `vps_exec` running
-    `printenv LANE_SCHEDULE_ENABLED` in that service's container, and a volume and an image digest
-    with `vps_exec` running `docker inspect` with a `--format` that prints only the container's
-    mounts or its image, so no read lists another variable's value.
+    writes (the whole compose through `coolify_set_compose_config`, and the variable through
+    `coolify_update_service_env`: `SDS_LANES_IMAGE_TAG` for `--tag` and `--add`, the lane's schedule
+    variable for `--schedule`), then `coolify_deploy` on `sds-lanes`, then `lanes-finish`. It prints
+    every service whose compose entry differs from the recorded compose, so the session's write
+    names each edit it applies. A service is added only by `--add` for that lane: a run whose
+    compose adds any service but the `--add` lane's is refused. It prints the inverse writes too
+    (the recorded compose, and the replaced variable value), for `lanes-finish` to name if the
+    redeploy fails. The old tag or schedule value, and each stateful service's volume (the following
+    list), are what the session reads from the running containers and passes in, as `prepare` takes
+    `--coolify-health-check-enabled`. The session reads the tag with `vps_docker_ps`, a schedule
+    value with `vps_exec` running `printenv LANE_SCHEDULE_ENABLED` in that service's container, and
+    a volume and an image digest with `vps_exec` running `docker inspect` with a `--format` that
+    prints only the container's mounts or its image, so no read lists another variable's value.
   - **`lanes-recheck`** repeats the two quiet-slot reads. The session runs it, then the writes and
     the redeploy, with no other step between: the writes are staged only if this exits 0, and
     immediately before the redeploy. A non-zero exit sends the session back to `lanes-prepare`.
