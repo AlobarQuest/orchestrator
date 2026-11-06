@@ -3,8 +3,8 @@
 - **Status:** Proposed
 - **Date:** 2026-11-05
 - **Decided by:** Devon decided Q1 to Q5 on 2026-11-05 (HQ decisions D-3 to D-7) and Q6 to Q10 on
-  2026-11-06 (HQ decisions D-8 to D-11 and D-13), all recorded in "Devon's decisions". The rest of
-  the ADR is proposed and not yet accepted.
+  2026-11-06 (HQ decisions D-8 to D-11, D-13 and D-14), all recorded in "Devon's decisions". The
+  rest of the ADR is proposed and not yet accepted.
 - **Relates to:** ADR-0055 (the rotation executor's isolated runtime and decisions 2 and 4,
   amendments 6, 12 and 15), ADR-0058 (lanes read their scope from the member record), ADR-0039
   (out-of-process producers carry only structured facts), ADR-0021 amendments 2 and 3 (the
@@ -495,11 +495,14 @@ One container per lane already gives each lane its own process, filesystem and e
   lanes read through Devon's login today are the members' repositories, the member record's
   repository, intent-packages, the standards repositories the lanes clone, and, for the fork-sync
   watch, factory-runner (whose `.cred-consumers.toml` lists the forks, `fork_sync/onboarding.py`
-  `REGISTRY_REPO`) and each fork it lists. So the read-only App is installed on all of them. The
-  "SDS lanes" App stays installed only on intent-packages and the forks, as Q1 decided, so no read
-  lane holds a key that can write. Increment 3, which moves the first lane that reads GitHub (the
-  landing ledger), lists them from the member record, the lanes' clone lists and that registry, and
-  Devon installs the read-only App on those alone. The fork-sync watch also reads each fork's
+  `REGISTRY_REPO`) and each fork it lists. Devon decided where the read-only App is installed: on
+  the members' repositories, the member record's repository and the standards repositories (Q6),
+  and on factory-runner and each fork (Q9). The "SDS lanes" App stays installed only on
+  intent-packages and the forks, as Q1 decided, so no read lane holds a key that can write.
+  Increment 3, which moves the first lane that reads GitHub (the landing ledger), lists the exact
+  set from the member record, the lanes' clone lists and that registry, and Devon installs the
+  read-only App on those alone. Verify before increment 3 whether factory-runner, which is public,
+  needs the install at all (Q9). The fork-sync watch also reads each fork's
   upstream's public releases (`fork_sync/watch.py`); verify before increment 3 that an installation
   token reads an upstream's public releases without the read-only App installed on the upstream, or
   that increment decides. The read permissions the mints draw on are Metadata, Contents (files,
@@ -519,14 +522,14 @@ One container per lane already gives each lane its own process, filesystem and e
   its tokens from an App's private key, which lives in BWS and is read by UUID, with a direct read
   grant to each lane identity that mints from that App, and to no other. The "SDS lanes" App's key
   is read by the three pushing lanes. The read-only App's key is read by the twelve of the read-only
-  set and by the bump proposer, for its read mint, thirteen in all. So the bump proposer reads both
-  keys, and fifteen lane identities read one or both. The tokens are short-lived and never stored.
-  Both keys are created in increment 3, which moves the first lane that mints, by Devon, because
-  only an App's settings page generates a GitHub App private key (GitHub Docs, "Managing private
-  keys for GitHub Apps"). The bump driver needs no GitHub write scope: its token only reads pull
-  request state and makes shallow clones (`src/bump_driver/client.py`, `src/bump_driver/mirror.py`),
-  and it dispatches and merges through the orchestrator as SYSTEM. Its variable is fed from its read
-  mint.
+  set and by the bump proposer, for its read mint, thirteen in all (Q9). So the bump proposer reads
+  both keys, and fifteen lane identities read one or both. The tokens are short-lived and never
+  stored. Both keys are created in increment 3, which moves the first lane that mints, by Devon,
+  because only an App's settings page generates a GitHub App private key (GitHub Docs, "Managing
+  private keys for GitHub Apps"). The bump driver needs no GitHub write scope: its token only reads
+  pull request state and makes shallow clones (`src/bump_driver/client.py`,
+  `src/bump_driver/mirror.py`), and it dispatches and merges through the orchestrator as SYSTEM. Its
+  variable is fed from its read mint.
 - **`.bws-secrets.toml` and `.cred-consumers.toml` gain each lane identity and each secret it
   reads**, in the same change as the lane's move. The credential registry gains each lane token and
   each lane's Healthchecks ping URL (decision 3) as a credential, and each App's private key, the
@@ -746,14 +749,14 @@ Healthchecks before it relies on it. A fact it can't confirm stops the increment
    (15 minutes) is the shortest of the lanes with no GitHub credential, so its check shows a failure
    fastest of the lanes that can move before any GitHub read credential exists. The unit verifier's
    10-minute interval is shorter, but it reads GitHub, so it waits for increment 3. It proves the
-   identity, `lane-run`'s fixed start (decision 1), the dead-man ping and the cut-over procedure.
-   It also writes the ADR-0055 amendment that lifts decision 4 for lane tokens and ping URLs, so
-   the VM executor writes each from its inbox (Q8). As built, the inbox won't bind a first lane
-   token or a ping URL: `bind` in `rotation_worker/inbox.py` binds a value only to a rotation that
-   waits on a person's mint, and only when `same_identity` finds it for the same account as an old
-   value that still answers, and neither has an old value. So the amendment extends the executor,
-   and increment 2 waits on it. Verify before increment 2, in `rotation_worker` and on the VM
-   instance:
+   identity, `lane-run`'s fixed start (decision 1), the dead-man ping and the cut-over procedure. It
+   also writes the ADR-0055 amendment that lifts decision 4 for lane tokens and ping URLs, so the VM
+   executor writes each from its inbox (Q8 for lane tokens, Q10 for ping URLs). As built, the inbox
+   won't bind a first lane token or a ping URL: `bind` in `rotation_worker/inbox.py` binds a value
+   only to a rotation that waits on a person's mint, and only when `same_identity` finds it for the
+   same account as an old value that still answers, and neither has an old value. So the amendment
+   extends the executor, and increment 2 waits on it. Verify before increment 2, in
+   `rotation_worker` and on the VM instance:
    - The executor's Coolify client only `PATCH`es `/services/{uuid}/envs` and never `POST`s one
      (`rotation_worker/coolify.py`, `permits`), so a new `<LANE>_BWS_ACCESS_TOKEN` variable must
      exist before the executor writes it. No actor creates it yet.
@@ -1046,22 +1049,22 @@ interactive session on the Mac reads it through the broad account, as with the i
   equivalents. The relevant ones are "the scheduled lanes run the main tree's working copy", the
   launcher-credential rules, and the PATH rule for `uv`. Each increment rewrites the invariant it
   makes untrue.
-- By Q8's decision, the VM rotation executor handles every lane's BWS token and ping URL from
-  increment 2, when increment 2's ADR-0055 amendment lifts decision 4 for them. It can't mint or
-  revoke a lane token: those are Devon's acts (ADR-0055 amendment 12). Devon mints and revokes; the
-  executor transits and writes. A compromised executor could then read every staged lane token
-  and write any lane's Coolify variable. It could also overwrite any lane's ping-URL secret, which
-  blinds that lane's alarm: the lane's pings stop reaching its check.
-- Lane tokens are registered and unrotated from the first lane identity (increment 2) until
-  ADR-0059 increment 7, which moves the executor that rotates them (Q3). That window is bounded:
-  it must not outlast the credential registry's rotation interval for a lane token. If the
-  increments would run past that interval, HQ decides how to proceed before the interval passes;
-  the increments don't extend it. An early or leak rotation before increment 7 takes the path a
-  first lane token takes from increment 2 (Q8): Devon mints the new token and pastes it into the VM
-  executor's inbox, and the executor writes the lane's `<LANE>_BWS_ACCESS_TOKEN`. Once the old
-  token is revoked it no longer answers, so the inbox can't bind the new one, and it's staged by
-  hand (`rotation-worker stage`, `docs/operations/rotation-executor.md`, "Mint and stage a value
-  by hand").
+- By Q8's and Q10's decisions, the VM rotation executor handles every lane's BWS token (Q8) and ping
+  URL (Q10) from increment 2, when increment 2's ADR-0055 amendment lifts decision 4 for them. It
+  can't mint or revoke a lane token: those are Devon's acts (ADR-0055 amendment 12). Devon mints and
+  revokes; the executor transits and writes. A compromised executor could then read every staged
+  lane token and write any lane's Coolify variable. It could also overwrite any lane's ping-URL
+  secret, which blinds that lane's alarm: the lane's pings stop reaching its check.
+- Lane tokens are registered and unrotated from the first lane identity (increment 2) until ADR-0059
+  increment 7, which moves the executor that rotates them (Q3). That window is bounded: it must not
+  outlast the credential registry's rotation interval for a lane token. If the increments would run
+  past that interval, HQ asks Devon to rotate the lane tokens before the interval passes; the
+  increments don't extend it. An early or leak rotation before increment 7 takes the path a first
+  lane token takes from increment 2 (Q8): Devon mints the new token and pastes it into the VM
+  executor's inbox, and the executor writes the lane's `<LANE>_BWS_ACCESS_TOKEN`. Once the old token
+  is revoked it no longer answers, so the inbox can't bind the new one, and it's staged by hand
+  (`rotation-worker stage`, `docs/operations/rotation-executor.md`, "Mint and stage a value by
+  hand").
 - Each App's private key reaches what its installation reaches, with its permissions, because a
   minted token is narrowed by its request but the key isn't. By Q1's and Q9's decisions, the
   "SDS lanes" App is installed only on intent-packages and the forks, so a leaked write-capable key
@@ -1097,14 +1100,16 @@ interactive session on the Mac reads it through the broad account, as with the i
   amendment; increment 4's check of every reader that keys on a revision commit's author
   (Consequences) covers the change.
 - **ADR-0055.** Two amendments. Increment 2's lifts decision 4, as amendment 12 left it, for lane
-  tokens and ping URLs, so that the VM executor writes them from its inbox (Q8). Increment 7's moves
+  tokens and ping URLs, so that the VM executor writes them from its inbox (Q8 for lane tokens, Q10
+  for ping URLs). Increment 7's moves
   the VM executor to the VPS, where it carries out each lane token's rotation between Devon's mint
   and his revoke (Q3). Each takes the next free amendment number when it's written; amendment 18
   is the last at `origin/main` on 2026-11-06.
 
 ## Devon's decisions
 
-Devon decided Q1 to Q5 on 2026-11-05 and Q6 to Q10 on 2026-11-06.
+Devon decided Q1 to Q5 on 2026-11-05 and Q6 to Q10 on 2026-11-06. Q9 also records D-14, which
+he decided on 2026-11-06.
 
 ### Q1: the pushing lanes push as a new "SDS lanes" GitHub App (HQ D-3)
 
@@ -1173,19 +1178,19 @@ broad account; no lane identity reads it (decision 3).
 
 ### Q6: read-only lanes mint read tokens from the "SDS lanes" App (HQ D-8)
 
-Option (c), decided by Devon on 2026-11-06 (HQ D-8): each lane of the read-only set (twelve
-lanes, decision 2) mints a downscoped installation token from the "SDS lanes" App each pass,
-naming only that lane's repositories and read permissions. Feeding the bump proposer's API reads
-the same way is HQ's derivation from option (c), not part of Devon's answer. No fine-grained token
+Option (c), decided by Devon on 2026-11-06 (HQ D-8): each lane of the read-only set (twelve lanes,
+decision 2) mints a downscoped installation token from the "SDS lanes" App each pass, naming only
+that lane's repositories and read permissions. Devon decided on 2026-11-06 (HQ D-14) that the bump
+proposer's API reads are fed by a read mint too, from the read-only App (Q9). No fine-grained token
 exists, so none is created, registered or rotated. The App is installed on every repository those
 lanes read, which widens Q1's install scope beyond intent-packages and the forks. D-8 asked Devon
 whether he accepts the App installed for read-only use on members' repositories, and he chose (c).
-Q9 changes which App the read lanes mint from: a second, read-only App, so the "SDS lanes" App
-keeps Q1's install scope. The key stays hand-rotated (Q4). The rejected options were one
-read-only fine-grained token per lane, which costs Devon one token to create and rotate per lane,
-and one shared read-only token with the union of the lanes' repositories and permissions, which
-gives every lane Administration read and Issues read, and whose leaked copy reads everything every
-one of those lanes reads.
+Q9 changes which App the read lanes mint from: a second, read-only App, so the "SDS lanes" App keeps
+Q1's install scope. The key stays hand-rotated (Q4). The rejected options were one read-only
+fine-grained token per lane, which costs Devon one token to create and rotate per lane, and one
+shared read-only token with the union of the lanes' repositories and permissions, which gives every
+lane Administration read and Issues read, and whose leaked copy reads everything every one of those
+lanes reads.
 
 ### Q7: change-window and infra-drift move as later increments (HQ D-9)
 
@@ -1193,31 +1198,35 @@ Decided by Devon on 2026-11-06 (HQ D-9): `com.devon.change-window` and `com.devo
 both owned by infraops-mcp-server, move off the Mac as increments 8 and 9 (decision 5).
 `com.devon.factory-events` and SDS HQ itself stay outside this phase.
 
-### Q8: lane secrets reach their stores through the VM executor (HQ D-10)
+### Q8: lane tokens reach their stores through the VM executor (HQ D-10)
 
 Option (b), decided by Devon on 2026-11-06 (HQ D-10): the VM rotation executor writes each lane
-token into its `<LANE>_BWS_ACCESS_TOKEN` variable from its inbox, and each lane's ping URL into its
-BWS secret the same way, so no secret value is an infraops tool argument or a process argument.
-Devon mints every lane token (ADR-0055 amendment 12) and pastes each value into the inbox. This
-lifts ADR-0055 decision 4 for lane tokens and ping URLs at increment 2, in that increment's
-ADR-0055 amendment, instead of at increment 7. The rejected options were Devon pasting each value
-into the Coolify UI, and a new infraops tool that takes a BWS UUID and writes the value
-server-side. Increment 1 still moves no secret: its placeholder service holds no credential.
+token into its `<LANE>_BWS_ACCESS_TOKEN` variable from its inbox, so no lane token is an infraops
+tool argument or a process argument. Devon mints every lane token (ADR-0055 amendment 12) and pastes
+each value into the inbox. This lifts ADR-0055 decision 4 for lane tokens at increment 2, in that
+increment's ADR-0055 amendment, instead of at increment 7. Each lane's ping URL takes the same inbox
+path into its BWS secret by Q10's decision, so the same amendment lifts decision 4 for ping URLs.
+The rejected options were Devon pasting each value into the Coolify UI, and a new infraops tool that
+takes a BWS UUID and writes the value server-side. Increment 1 still moves no secret: its
+placeholder service holds no credential.
 
-### Q9: the read lanes mint from a second, read-only App (HQ D-11)
+### Q9: the read lanes mint from a second, read-only App (HQ D-11 and D-14)
 
 Option (b), decided by Devon on 2026-11-06 (HQ D-11): the twelve lanes of the read-only set mint
-their read tokens from a second GitHub App with read permissions only, installed on the
-repositories those lanes read, member repositories included. The "SDS lanes" App keeps
-`contents: write` and is installed only on intent-packages and the forks, for the three pushing
-lanes, as Q1 decided. So a leaked write-capable key no longer reaches any member repository. The
-cost is accepted: a second App to create, install and rotate. Feeding the bump proposer's read mint
-from the read-only App is HQ's derivation from Q6 and option (b), not part of Devon's answer. The
-read-only App's private key joins ADR-0055's hand-rotated set by D-6's rule (Q4), on the same
-hand-rotation interval as the "SDS lanes" App's key, and Devon rotates both in the same sitting.
-Creating and installing the read-only App is Devon's act, as for the "SDS lanes" App. The rejected
-option was (a), one App for both, whose leaked key could mint `contents: write` on every member
-repository it's installed on.
+their read tokens from a second GitHub App with read permissions only, installed on the repositories
+those lanes read, member repositories included. The "SDS lanes" App keeps `contents: write` and is
+installed only on intent-packages and the forks, for the three pushing lanes, as Q1 decided. So a
+leaked write-capable key no longer reaches any member repository. The cost is accepted: a second App
+to create, install and rotate. Devon also decided on 2026-11-06 (HQ D-14) two read-only extensions.
+The read-only App is installed on factory-runner and each fork as well as the repositories Q6 named
+(the members' repositories, the member record's repository and the standards repositories), and
+increment 3 lists the exact set and checks whether factory-runner, which is public, needs the
+install at all. And the bump proposer reads the read-only App's key for its read mint, a thirteenth
+reader beside the twelve lanes of the read-only set. The read-only App's private key joins
+ADR-0055's hand-rotated set by D-6's rule (Q4), on the same hand-rotation interval as the "SDS
+lanes" App's key, and Devon rotates both in the same sitting. Creating and installing the read-only
+App is Devon's act, as for the "SDS lanes" App. The rejected option was (a), one App for both, whose
+leaked key could mint `contents: write` on every member repository it's installed on.
 
 ### Q10: Devon pastes each lane's ping URL by hand (HQ D-13)
 
