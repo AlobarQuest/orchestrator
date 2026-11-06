@@ -945,7 +945,7 @@ broad account; no lane identity reads it (decision 3).
 Decision 2 proposes one read-only fine-grained token, read through a direct grant by every lane
 whose GitHub credential only reads. That departs from one narrow identity per lane: a leaked copy
 reads everything every one of those lanes reads. Devon hasn't decided it; HQ asked him as D-8. The
-lanes it would feed are the twelve decision 2 names and the bump proposer, whose
+lanes it would feed are decision 2's read-only set (twelve lanes) and the bump proposer, whose
 `BUMP_PROPOSER_GITHUB_TOKEN` reads the members' pull requests, which the "SDS lanes" App can't.
 That makes thirteen, pending D-8. Two lanes need more than Metadata, Contents, Pull requests and
 Actions: the unit verifier needs Administration read (`main`'s `required_status_checks`, in
