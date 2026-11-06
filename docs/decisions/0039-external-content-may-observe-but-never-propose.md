@@ -113,12 +113,12 @@ as far as the triage agent and the ticket. Every other route stays closed.
 
 - **Observations never become work on their own.** `POST /api/v1/observations` reaches no code
   that constructs a `WorkUnit`, `OBSERVER_WRITE_ROUTES` is unchanged, and the request path adds no
-  fourth constructor: an approved restatement enters through `register_package_intake`
-  (`services/intake/package_intake.py`), the intake path every package already takes, and its
-  units are constructed in `services/intake/packages.py`. The measurement earlier in this file
-  names that module `services/packages.py`, its location when ADR-0039 was written; today's three
-  constructor modules are `WORK_UNIT_CONSTRUCTORS` in
-  `tests/architecture/test_external_content_observes_only.py`.
+  fourth constructor: an approved restatement, once committed to intent-packages, enters through
+  `register_package_intake` (`services/intake/package_intake.py`), the intake path every package
+  already takes, and its units are constructed in `services/intake/packages.py`. The measurement
+  earlier in this file names the constructor modules at their locations when ADR-0039 was written
+  (`services/packages.py` among them); all three have since moved, and today's three are
+  `WORK_UNIT_CONSTRUCTORS` in `tests/architecture/test_external_content_observes_only.py`.
   `test_exactly_three_modules_construct_a_work_unit` stays at three.
 - **Every machine producer still carries only structured facts it derived itself.** The
   dependency-update and rotation lanes keep today's path, and so does every other
@@ -140,7 +140,10 @@ as far as the triage agent and the ticket. Every other route stays closed.
    operational task, or out of scope), asks clarifying questions in the ticket, and drafts an
    intent package: a plain-language restatement, acceptance criteria the owner can observe, reach,
    risk, and a cost estimate (the year plan's Phase 4 "Request intake", step 2). The ticket is the
-   only place its output goes.
+   only place its output goes: it drafts the restatement into the ticket and commits nothing.
+   `register_package_intake` takes a package committed in intent-packages, so something other
+   than the triage agent commits the bytes the owner approved; what that is, the ticket-intake
+   increment decides (see "Planned, not decided").
 3. **The owner approves the restatement, never the request.** The approval binds to the
    restatement's package fingerprint: the `canonical_package_hash` that a lineage approval names
    and that the intake emitter verifies before it emits (`work_carrier/prepare.py`,
@@ -154,12 +157,15 @@ as far as the triage agent and the ticket. Every other route stays closed.
    for it. No gate reads a capability, command, reach, or repository from the request. The
    restatement does declare reach and risk, and the owner approves those values, but no envelope
    it produces can pass what policy admits and the grant allows.
-5. **The ticket is the cause the intake names.** A ticket is a change-manager change record with a
-   new `source`. ADR-0027 already requires a machine-registered intake to name the approved change
-   record that caused it (`intake_change_record_required`), so the request path needs no new
-   exception there. change-manager's work policy approves only the standing dependency-update and
-   rotation shapes (change-manager `app/work_policy.py`; `docs/operations/landing-lanes.md`), so a
-   ticket's record waits for a person.
+5. **The ticket is the cause the intake names.** A ticket is to be a change-manager change record
+   with a new `source`. ADR-0027 already requires a machine-registered intake to name the change
+   record that caused it (`intake_change_record_required` checks that one is named; the work
+   carrier carries only approved records), so the request path needs no new exception there. No
+   policy approves a ticket's record: the ticket source is to be added outside change-manager's
+   `POLICY_APPROVED_SOURCES` (`app/sources.py`, today only the `deploy` source) and given no policy
+   of its own, so its record waits for a person. change-manager's work policy
+   (`app/work_policy.py`) is no part of this: it applies only to `work`-source records. This is a
+   planned commitment, verified by the ticket-intake increment.
 6. **A request over a size limit becomes a quote instead of a package.**
 7. **The existing loop builds it** (carry, admission, factory-runner, verifier), and **the owner
    accepts a preview** before landing and deploy run.
@@ -186,8 +192,12 @@ The following later work is planned, and this amendment decides none of its mech
 names the Phase 4 increment that decides and verifies it, the same increments as the preceding
 table:
 
-- A ticket `source` in change-manager, with a client-facing portal in front of it. Verified by the
-  ticket-intake increment.
+- A ticket `source` in change-manager, with a client-facing portal in front of it, added outside
+  `POLICY_APPROVED_SOURCES` and with no approval policy of its own. Verified by the ticket-intake
+  increment.
+- What commits the owner-approved restatement to intent-packages, where `register_package_intake`
+  reads it. The triage agent doesn't; the mechanism is undecided. Verified by the ticket-intake
+  increment.
 - The triage agent: where it runs, which model, and how its read-only reach is confined. Verified
   by the triage-agent increment.
 - Owner acceptance of a preview: hosting, scrubbed data, test-mode credentials, the owner's Alobar
