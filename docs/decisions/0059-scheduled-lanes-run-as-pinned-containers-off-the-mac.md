@@ -196,7 +196,7 @@ each of those lanes keeps it in a volume of its own (decision 1, "Lane state").
   because its pass stopped without a final ping and the down alert already reports it. The deploy
   command runs where it runs today, in the deploying session on the Mac. It reads the listing with
   the read-only Healthchecks key (BWS `f07b1368-…`, in `Rotation / Healthchecks`), through a direct
-  read grant to `sds-operator` that increment 1 adds (Q5, decided). No one process waits for the
+  read grant to `sds-operator` that increment 1 adds (Q5, decided). No single process waits for the
   slot: an HQ cycle is capped at 1200 seconds (`cycle_limit_s` in sds-hq's `config.toml`). The
   first `lanes-prepare` run for a change records a deadline 6 hours later in its state file, long
   enough to outlast the 4-hour landing window and a pass already running when it closes. A run
@@ -752,9 +752,9 @@ Healthchecks before it relies on it. A fact it can't confirm stops the increment
   accepts is verified. No lane phase creates `sds-lanes`: HQ runs the create through infraops
   (Q11), and increment 1 decides only how the first compose is recorded as the one the first lane
   phase run replaces.
-- Where the last finished run's state file lives, so that the next run, from any session, reads
-  the compose Coolify was last given, and `prepare` and `lanes-prepare` read it with no new
-  credential (decision 1).
+- Where each lane-phase run's state file lives, so that the next run, from any session, reads
+  the compose Coolify was last given and finds a waiting or unfinished run, and `prepare` and
+  `lanes-prepare` read them with no new credential (decision 1).
 - `prepare` refuses when the last finished run's state file shows the lanes on a tag other than
   the served one, or a lane-phase run is unfinished (its `lanes-recheck` exited 0 and
   `lanes-finish` hasn't passed it), and its message names re-running the lane phases with `--tag`
