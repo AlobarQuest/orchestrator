@@ -1050,13 +1050,11 @@ Devon decided Q1 to Q5 on 2026-11-05 and Q6 to Q8 on 2026-11-06.
 
 ### Q1: the pushing lanes push as a new "SDS lanes" GitHub App (HQ D-3)
 
-Option (c), decided by Devon on 2026-11-05 (HQ D-3): a new "SDS lanes" GitHub App with
-`contents: write`, which pushes for `bump-proposer`, `rotation-proposer` and `fork-harden` once they
-leave his `gh` login. Its commits are the App's (`<app>[bot]`), so the authorship they record is
-true. As decided, its installation was limited to intent-packages and the forks, the repositories
-it pushes to. Q6 (2026-11-06) widened that: the App is also installed on every repository the
-read-only set reads, and its push tokens are minted naming only intent-packages or the forks. The
-rejected options were a pull request instead of a push, which changes two proposers,
+Option (c), decided by Devon on 2026-11-05 (HQ D-3): a new "SDS lanes" GitHub App, installed only on
+intent-packages and the forks with `contents: write`, pushes for `bump-proposer`,
+`rotation-proposer` and `fork-harden` once they leave his `gh` login. Its commits are the App's
+(`<app>[bot]`), so the authorship they record is true, and the App reaches only the repositories it
+pushes to. The rejected options were a pull request instead of a push, which changes two proposers,
 delays each revision by one landing and retires the direct-push rule for these lanes
 (`PUBLISH_COMMAND` in `bump_proposer/standing.py`, which the bump proposer runs and the rotation
 proposer runs through `standing.publish`; fork hardening doesn't use it, and the tool installer's
@@ -1065,6 +1063,9 @@ pushing lane, which keeps a scheduled machine pushing as Devon. The App's cost i
 App, its key in BWS, the intent-packages branch-protection change, and a check of every reader that
 keys on a package revision commit's author (Consequences). Creating the App is a later increment's
 work and Devon's act; this ADR plans it.
+
+Q6 (2026-11-06) widened the installation to every repository the read-only set reads; the push
+tokens are still minted naming only intent-packages or the forks.
 
 ### Q2: the machine-activation sweep stays on the Mac (HQ D-4)
 
