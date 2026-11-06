@@ -72,8 +72,9 @@ each of those lanes keeps it in a volume of its own (decision 1, "Lane state").
   resource into every container of it, so one resource per lane is what gives each lane its own
   variables. Each `sds-lane-<lane>` is a Coolify *service* resource of type `docker-compose`, not an
   application: infraops creates one with `coolify_create_service` (`docker_compose_raw` alone,
-  which the tool base64-encodes, as fixed in infraops-mcp-server #164, Q11), replaces its compose
-  with `coolify_update_service`
+  which the tool base64-encodes, as fixed in infraops-mcp-server #164, `32a13046`; the fix is live
+  only after Devon syncs and reconnects infraops, and increment 1 checks it, "Verify before
+  increment 1" and Q11), replaces its compose with `coolify_update_service`
   (`docker_compose_raw`, sent as a `PATCH /services/{uuid}`), and writes its variables with
   `coolify_create_service_env` and `coolify_update_service_env` (infraops-mcp-server
   `src/tools/services.ts` and `src/tools/env-vars.ts`). The orchestrator's own
