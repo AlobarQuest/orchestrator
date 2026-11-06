@@ -90,8 +90,13 @@ system with only `PATH` and `HOME` set, and holding nothing that can't be rebuil
   command waits and reads again, for at most 6 hours: long enough to outlast the 4-hour landing
   window and a pass already running when it closes. At 6 hours the deploy command raises an alert
   through alert-hub, exits with its "condition unmet" code (2) and leaves `sds-lanes` on its
-  previous tag, and HQ decides whether to re-run it or redeploy by hand. The residual: a pass that
-  starts between the read and the redeploy is still stopped. The P2 backlog item in which
+  previous tag, and HQ decides whether to re-run it or redeploy by hand. The deploy command stages
+  nothing in `sds-lanes` while it waits: a tag, a service variable (the following bullets) and an
+  added service's compose entry are each written only after both checks pass, immediately before
+  the redeploy call. So a wait that times out leaves nothing staged, and no later redeploy can
+  apply a change silently. If the redeploy call fails after the write, the deploy command restores
+  the value it replaced before it exits. The residual: a pass that starts between the read and the
+  redeploy is still stopped. The P2 backlog item in which
   `deploy_orchestrator.py` holds the bump-driver launch agent during a deploy is re-scoped by this
   rule once the bump driver moves.
 - **While the deploy command waits, the old lane code runs against the new orchestrator.** A
@@ -117,17 +122,37 @@ system with only `PATH` and `HOME` set, and holding nothing that can't be rebuil
   only per-lane stop that needs no `sds-lanes` redeploy. No Coolify API call stops one service of
   `sds-lanes`, so any stop through Coolify, like any redeploy, is resource-wide and follows the
   quiet-slot rule.
-- **Each service's schedule is switched by one variable, `LANE_SCHEDULE_ENABLED`, set on that
-  service alone.** The lane image's entrypoint reads it once, at container start. When it's
-  `true`, the entrypoint installs the lane's tracked crontab line and starts the scheduler. When
-  it's anything else, or absent, the entrypoint starts the scheduler with an empty table, so the
-  container stays running, runs no pass on its own, and can still be entered for a one-off run
-  (cut-over step 2). A service is created with it `false`. Changing it is a Coolify variable
-  change on that service plus a redeploy of `sds-lanes`, because the entrypoint reads it only at
-  start. That redeploy is resource-wide, so the deploy command performs it under the quiet-slot
-  rule: increment 1 teaches the deploy command to set one service's variable and redeploy with
-  the same two reads and the same 6-hour maximum as a tag update. A schedule change therefore
-  takes effect in the next quiet slot, at worst 6 hours after it's asked for.
+- **Each service's schedule is switched by one variable, `LANE_SCHEDULE_ENABLED`, in that
+  service's environment alone.** The lane image's entrypoint reads it once, at container start.
+  When it's `true`, the entrypoint installs the lane's tracked crontab line and starts the
+  scheduler. When it's anything else, or absent, the entrypoint starts the scheduler with an empty
+  table, so the container stays running, runs no pass on its own, and can still be entered for a
+  one-off run (cut-over step 2). A service first starts with it `false` (the following bullet).
+  Changing it is a Coolify variable change plus a redeploy of `sds-lanes`, because the entrypoint
+  reads it only at start. That redeploy is resource-wide, so the deploy command performs it under
+  the quiet-slot rule: increment 1 teaches the deploy command to set one service's variable and
+  redeploy with the same two reads and the same 6-hour maximum as a tag update. A schedule change
+  therefore takes effect in the next quiet slot, at worst 6 hours after it's asked for.
+- **A per-service value is a distinctly named resource variable, mapped in the compose file.**
+  Coolify holds one variable set per compose resource, not one per service. So each service's
+  `BWS_ACCESS_TOKEN` and `LANE_SCHEDULE_ENABLED` are resource variables named for the lane
+  (`<LANE>_BWS_ACCESS_TOKEN` and `<LANE>_LANE_SCHEDULE_ENABLED`, for example
+  `EXECUTION_WATCH_BWS_ACCESS_TOKEN`), and the tracked compose file maps each to the plain name in
+  that service's `environment` entry and in no other service's. Verify before increment 1: that a
+  resource variable reaches only the containers whose compose entry maps it. If Coolify injects
+  every resource variable into every service's container, every lane container would hold every
+  lane's token, which defeats one identity per lane, and increment 1 stops for a decision.
+- **Adding a lane's service is itself a resource-wide redeploy.** A new service is a compose
+  change, and Coolify applies a compose change only by redeploying the whole resource, which
+  stops every moved lane's running pass. So a service is added only through the deploy command,
+  under the same quiet-slot rule, the same two reads and the same 6-hour maximum as a tag update.
+  The deploy command writes the service's compose entry only after both checks pass, as the
+  quiet-slot bullet says. Before that, the deploying session sets the lane's two resource
+  variables: its BWS token and its schedule variable, `false`. They're inert until then, because
+  no compose entry maps them. The deploy command refuses to add a service unless both variables
+  exist and the schedule variable is `false`, so a lane's container never starts scheduled or
+  without its identity. It checks this in-process from Coolify's variable listing and prints no
+  value, because that listing carries values (`value`, `real_value`).
 
 **Rejected: Coolify scheduled tasks.** A Coolify scheduled task runs a command inside a running
 container of an application or service. The lanes would share one container and its environment,
@@ -144,10 +169,11 @@ One container per lane already gives each lane its own process, filesystem and e
   ADR-0055 amendment 6: grants on secrets, not on projects. Today's two Keychain identities stop
   being any lane's identity. The narrow-versus-broad split, and the two-identity trap the
   launchers guard against, end with them: one lane has one token.
-- **The token reaches the container as one environment variable, `BWS_ACCESS_TOKEN`**, set on that
-  service alone in `sds-lanes`. A lane's launcher reads every secret it needs from BWS by UUID at
-  the start of each pass, as it does now, through `scripts/sds-bws.sh`. The token is never in the
-  image or the repository, and no value passes through a process argument.
+- **The token reaches the container as one environment variable, `BWS_ACCESS_TOKEN`**, in that
+  service's environment alone, mapped from the lane's `<LANE>_BWS_ACCESS_TOKEN` resource variable
+  (decision 1; verify before increment 1). A lane's launcher reads every secret it needs from BWS
+  by UUID at the start of each pass, as it does now, through `scripts/sds-bws.sh`. The token is
+  never in the image or the repository, and no value passes through a process argument.
 - **Each identity is proven before its lane cuts over.** The proof is the lane's launcher, run in
   its container through `lane-run` (cut-over step 1), which starts it with only `PATH`, `HOME` and
   `BWS_ACCESS_TOKEN` set. A dry run reads every secret, and
@@ -156,24 +182,34 @@ One container per lane already gives each lane its own process, filesystem and e
   sufficient: under the same `env -i` start with an empty `HOME`, reading a secret this lane
   doesn't fetch is refused. The refused read names another lane's secret UUID from
   `.bws-secrets.toml`, or, for the first lane, a secret only the broad account reads.
-- **Every GitHub credential moves to BWS.** No moved lane reads `gh auth token`. Each lane keeps its
-  own `<LANE>_GITHUB_TOKEN` variable (`BUMP_DRIVER_GITHUB_TOKEN`, `DEPLOY_WATCHER_GITHUB_TOKEN`,
-  `CHANGE_PROPOSER_GITHUB_TOKEN`, `BUMP_PROPOSER_GITHUB_TOKEN` and the rest), and its launcher feeds
-  that variable from BWS instead of `gh auth token`. A read-only lane's variable is fed from one
-  read-only fine-grained token in BWS, with a direct grant per lane identity. That token is this
-  ADR's proposal for increment 3, which moves the first lane that reads GitHub (the landing ledger),
-  and it's created there. It feeds the eleven lanes whose GitHub variable only reads: bump driver,
-  change proposer, deploy watcher, estate landing, inert landing, landing ledger, membership check,
-  pin watcher, revision watcher, unit verifier and work carrier. Both landers read through
-  `GitHubReader` and land through the orchestrator's dispatch App, not with this token. It reads the
-  repositories those lanes read through Devon's login today: the members' repositories, the member
-  record's repository, intent-packages and the standards repositories the lanes clone. Increment 3
-  lists them from the member record and the lanes' clone lists, and selects only those. Its
-  permissions are read-only, and only the ones the lanes' GitHub calls use: Metadata, Contents
-  (files, commits, compares and clones), Pull requests, Actions (workflow runs and jobs) and
-  Administration (the unit verifier's read of `main`'s `required_status_checks`, in
-  `unit_verifier/required_checks.py`). It has no write permission, and no later increment widens it:
-  a lane that needs more gets its own credential by its own decision.
+- **Every GitHub credential moves to BWS.** No moved lane reads `gh auth token` or Devon's stored
+  `gh` login. Each lane keeps its own `<LANE>_GITHUB_TOKEN` variable (`BUMP_DRIVER_GITHUB_TOKEN`,
+  `DEPLOY_WATCHER_GITHUB_TOKEN`, `CHANGE_PROPOSER_GITHUB_TOKEN`, `BUMP_PROPOSER_GITHUB_TOKEN` and
+  the rest), and its launcher feeds that variable from BWS instead of `gh auth token`. The one lane
+  without such a variable is the fork-sync watch, which reads GitHub through `gh api` on the stored
+  login (`src/fork_sync/gh.py`); its launcher exports the token as `GH_TOKEN`, which `gh` reads in
+  place of a stored login, so the lane's code is unchanged.
+- **A read-only lane's GitHub variable is fed from one read-only fine-grained token in BWS**, with
+  a direct grant per lane identity. That token is this ADR's proposal for increment 3, which moves
+  the first lane that reads GitHub (the landing ledger), and it's created there. It feeds the
+  twelve lanes whose GitHub credential only reads: bump driver, change proposer, deploy watcher,
+  estate landing, fork-sync watch, inert landing, landing ledger, membership check, pin watcher,
+  revision watcher, unit verifier and work carrier. Both landers read through `GitHubReader` and
+  land through the orchestrator's dispatch App, not with this token. The fork-sync watch gets this
+  token and not the "SDS lanes" App: it writes nothing. It reads the repositories those lanes read
+  through Devon's login today: the members' repositories, the member record's repository,
+  intent-packages, the standards repositories the lanes clone, and, for the fork-sync watch,
+  factory-runner (whose `.cred-consumers.toml` lists the forks, `fork_sync/onboarding.py`
+  `REGISTRY_REPO`) and each fork it lists. Increment 3 lists them from the member record, the
+  lanes' clone lists and that registry, and selects only those. The fork-sync watch also reads each
+  fork's upstream's public releases (`fork_sync/watch.py`); verify before increment 3 that the
+  token reads an upstream's public releases without the upstream in its set, or that increment
+  decides. Its permissions are read-only, and only the ones the lanes' GitHub calls use: Metadata,
+  Contents (files, commits, compares and clones), Pull requests, Issues (the fork-sync watch's read
+  of each fork's open review alert), Actions (workflow runs and jobs) and Administration (the unit
+  verifier's read of `main`'s `required_status_checks`, in `unit_verifier/required_checks.py`). It
+  has no write permission, and no later increment widens it: a lane that needs more gets its own
+  credential by its own decision.
 - **The three pushing lanes push as the "SDS lanes" GitHub App (Q1, decided).** `bump-proposer`,
   `rotation-proposer` and `fork-harden` feed their GitHub variable with an installation token of a
   new GitHub App, installed only on intent-packages and the forks with `contents: write`. Each
@@ -188,8 +224,8 @@ One container per lane already gives each lane its own process, filesystem and e
 - **`.bws-secrets.toml` and `.cred-consumers.toml` gain each lane identity and each secret it
   reads**, in the same change as the lane's move. The credential registry gains each lane token
   and each lane's Healthchecks ping URL (decision 3) as a credential, and the "SDS lanes" App's
-  private key as one more. The VM rotation executor
-  rotates each lane token once ADR-0059 increment 7 moves the executor to the VPS (Q3, decided).
+  private key as one more. The VM rotation executor rotates each lane token once ADR-0059
+  increment 7 moves the executor to the VPS (Q3, decided).
   The App key joins ADR-0055's hand-rotated set, as the `alobar-sds-rotation` App's key did
   (Q4, decided): Devon rotates it on the App's settings page, and no executor handles it.
 - **This ADR creates no identity.** Each increment that moves a lane creates that lane's account
@@ -217,11 +253,12 @@ One container per lane already gives each lane its own process, filesystem and e
   is rejected: it's the project's key, so it pings any check in the project by slug, and with
   `create=1` it creates checks (Pinging API docs, "UUIDs and Slugs"). Each lane's ping URL is
   one BWS secret with a direct read grant to that lane's identity alone, read through the lane's
-  own `BWS_ACCESS_TOKEN` like its other secrets. The name lookup moves to install time: the
-  increment that moves a lane runs `sds_upsert_check` from the deploying session on the Mac,
-  through the broad account as today, reads the check's `ping_url` from the upsert response
-  (today the response is discarded), and stores it as the lane's ping-URL secret without printing
-  it. Storing the secret is that increment's act. Verify before increment 1, on the self-hosted
+  own `BWS_ACCESS_TOKEN` like its other secrets. The per-lane ping-URL secret and its per-lane
+  read grant are this ADR's proposal, created by the increment that moves each lane. The name
+  lookup moves to install time: the increment that moves a lane runs `sds_upsert_check` from the
+  deploying session on the Mac, through the broad account as today, reads the check's `ping_url`
+  from the upsert response (today the response is discarded), and stores it as the lane's
+  ping-URL secret without printing it. Storing the secret is that increment's act. Verify before increment 1, on the self-hosted
   version: that a UUID ping URL needs no other credential and does nothing beyond pinging, that
   the upsert response carries `ping_url`, and the URL's base (`PING_ENDPOINT`).
 - **What changes in `sds-deadman.sh`, in increment 2** (the first lane whose container pings).
@@ -279,7 +316,7 @@ amendment to ADR-0055, not here.
 | `estate-landing` | Moves | Lands pull requests and re-points production, acting on members. |
 | `execution-watch` | Moves | Reads execution status and raises alerts, with no local state. |
 | `fork-harden` | Moves | Pushes forks' `hardened` branches, as the "SDS lanes" App (Q1). Its clone cache is rebuildable. |
-| `fork-sync-watch` | Moves | Reads fork sync state through APIs only. |
+| `fork-sync-watch` | Moves | Reads fork sync state through APIs only, with the read-only GitHub token as `GH_TOKEN`. |
 | `inert-landing` | Moves | Lands update-bot pull requests, acting on members. |
 | `landing-ledger` | Moves | Files observations from GitHub reads, with no local checkouts. |
 | `pin-watcher` | Moves | Reads callers' runner pins through APIs only. |
@@ -304,14 +341,19 @@ exists only on the Mac would keep the lane tied to it.
 
 1. **The lane image and `sds-lanes`, with no lane.** Build the lane image in `Release image` and
    create the compose resource with one placeholder service that runs `--dry-run` on a schedule
-   and holds no credential. Teach the deploy command to write the `sds-lanes` tag and to wait for
-   a quiet slot, and give `sds-operator` its direct read grant on the read-only Healthchecks key
-   (Q5).
+   and holds no credential. Teach the deploy command to write the `sds-lanes` tag, to set one
+   service's variable, and to add a lane's service, each only after it waits for a quiet slot,
+   and to refuse an added service whose two resource variables aren't set (decision 1). Give
+   `sds-operator` its direct read grant on the read-only Healthchecks key (Q5).
 2. **One observe-only lane first: `execution-watch`.** It has one identity, two secrets, no local
    state and the shortest interval (15 minutes), so its check shows a failure fastest. It proves
    the identity, the `env -i` start, the dead-man ping and the cut-over procedure.
 3. **The other observe-only lanes:** landing ledger, pin watcher, deploy watcher, revision
    watcher, fork-sync watch, membership check, unit verifier and rotation decomposer, one at a time.
+   This increment creates the read-only GitHub token (decision 2). It changes
+   `scripts/run-fork-sync-watch.sh` to read that token from BWS and export it as `GH_TOKEN`, and
+   rewrites the "operator's own `gh` login" text in `src/fork_sync/gh.py` and
+   `src/fork_sync/watch.py`, whose code is unchanged.
 4. **The proposers and carrier, which need clones:** change proposer, work carrier, then bump and
    rotation proposers. Before the bump proposer moves, Devon creates the "SDS lanes" App, installs
    it on intent-packages and the forks, and stores its private key in BWS (Q1).
@@ -330,9 +372,11 @@ Each increment's plan records which repositories it changes and which identities
 
 #### Cut-over for one lane
 
-1. Create the lane's BWS identity and grants, and prove them under `env -i` in the lane's container
-   with `--dry-run`. The service runs with `LANE_SCHEDULE_ENABLED=false` (decision 1), so the
-   container runs no pass on its own. Every container run in steps 1 and 2 is a one-off exec: the
+1. Create the lane's BWS identity and grants. Set the lane's two resource variables, its token and
+   its schedule variable `false`, and add the lane's service through the deploy command in a
+   quiet slot (decision 1). Then prove the identity under `env -i` in the lane's container with
+   `--dry-run`. The service runs with `LANE_SCHEDULE_ENABLED=false`, so the container runs no
+   pass on its own. Every container run in steps 1 and 2 is a one-off exec: the
    deploying session, through infraops's `vps_exec`, runs `docker exec` into the running service
    container, and runs the lane image's `lane-run` command with the launcher's arguments.
    `lane-run` starts the launcher with only `PATH`, `HOME` (a new empty directory) and
