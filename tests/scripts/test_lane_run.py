@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -206,3 +207,15 @@ def test_the_schedule_switch_and_lane_tokens_are_not_in_the_list() -> None:
     assert "LANE_SCHEDULE_ENABLED" not in passed
     assert [name for name in passed if "TOKEN" in name] == ["BWS_ACCESS_TOKEN"]
     assert os.path.basename(lane_run.LAUNCHER_DIR) == "scripts"
+
+
+def test_the_state_list_is_every_state_variable_a_moving_lane_reads() -> None:
+    """A state variable missing from the list is stripped, and its lane writes its state outside
+    its volume. The activation sweep and the tool installer stay on the Mac (ADR-0059), so their
+    variables are the only ones the list leaves out."""
+    staying = {"ACTIVATION_SWEEP_STATE_DIR", "TOOL_INSTALLER_STATE_DIR"}
+    read = set()
+    for path in Path("src").rglob("*.py"):
+        read |= set(re.findall(r'"([A-Z_]+_STATE_DIR)"', path.read_text()))
+
+    assert read - staying == set(lane_run.STATE_VARIABLES)

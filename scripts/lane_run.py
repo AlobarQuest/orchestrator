@@ -98,6 +98,8 @@ def read_secrets(uuids: Sequence[str], source: Mapping[str, str]) -> int:
         return _fail(f"not a BWS secret UUID: {', '.join(malformed)}")
     if not source.get(TOKEN):
         return _fail(f"{TOKEN} is not set in this container; nothing can be read")
+    # Found on the container's own PATH, the image's `ENV PATH`, which holds every directory of
+    # `LANE_PATH`; a test puts a stand-in `bws` there.
     bws = shutil.which("bws", path=source.get("PATH"))
     if bws is None:
         return _fail("bws is not on PATH")
