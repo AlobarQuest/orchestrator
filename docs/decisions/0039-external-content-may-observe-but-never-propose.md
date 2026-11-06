@@ -92,8 +92,8 @@ reaches the work path, so the ruling holds.
   and open questions": "Amend ADR-0039"), and the text is the plan's Phase 4 "Request intake". This
   amendment awaits acceptance. Until it's accepted, the Decision section stands unamended.
 - **Relates to:** ADR-0027 (a machine registers an intake by naming the change record that caused
-  it), ADR-0058 (the member record's `app_changes` grant), ADR-0001 (the authority envelope and its
-  fingerprint), ADR-0006 (human gates are browser-only)
+  it), ADR-0058 (the member record's `app_changes` grant), ADR-0028 (bump-created standing
+  packages), ADR-0055 (rotation packages)
 
 This amendment builds nothing. It states the boundary that Phase 4's request intake is to be built
 inside, so that the intake is designed against a ruling rather than ahead of one.
@@ -113,9 +113,13 @@ as far as the triage agent and the ticket. Every other route stays closed.
 
 - **Observations never become work on their own.** `POST /api/v1/observations` reaches no code
   that constructs a `WorkUnit`, `OBSERVER_WRITE_ROUTES` is unchanged, and the request path adds no
-  fourth constructor: an approved restatement enters through `register_package_intake`, the path
-  `services/packages.py` already owns. `test_exactly_three_modules_construct_a_work_unit` stays at
-  three.
+  fourth constructor: an approved restatement enters through `register_package_intake`
+  (`services/intake/package_intake.py`), the intake path every package already takes, and its
+  units are constructed in `services/intake/packages.py`. The measurement earlier in this file
+  names that module `services/packages.py`, its location when ADR-0039 was written; today's three
+  constructor modules are `WORK_UNIT_CONSTRUCTORS` in
+  `tests/architecture/test_external_content_observes_only.py`.
+  `test_exactly_three_modules_construct_a_work_unit` stays at three.
 - **Every machine producer still carries only structured facts it derived itself.** The
   dependency-update and rotation lanes keep today's path, and so does every other
   machine-originated update; previews and owner acceptance apply only to request-originated app
@@ -135,7 +139,8 @@ as far as the triage agent and the ticket. Every other route stays closed.
    more, and it holds no write tools. It classifies the request (change, bug, question,
    operational task, or out of scope), asks clarifying questions in the ticket, and drafts an
    intent package: a plain-language restatement, acceptance criteria the owner can observe, reach,
-   risk, and a cost estimate. The ticket is the only place its output goes.
+   risk, and a cost estimate (the year plan's Phase 4 "Request intake", step 2). The ticket is the
+   only place its output goes.
 3. **The owner approves the restatement, never the request.** The approval binds to the
    restatement's package fingerprint: the `canonical_package_hash` that a lineage approval names
    and that the intake emitter verifies before it emits (`work_carrier/prepare.py`,
@@ -153,7 +158,8 @@ as far as the triage agent and the ticket. Every other route stays closed.
    new `source`. ADR-0027 already requires a machine-registered intake to name the approved change
    record that caused it (`intake_change_record_required`), so the request path needs no new
    exception there. change-manager's work policy approves only the standing dependency-update and
-   rotation shapes, so a ticket's record waits for a person.
+   rotation shapes (change-manager `app/work_policy.py`; `docs/operations/landing-lanes.md`), so a
+   ticket's record waits for a person.
 6. **A request over a size limit becomes a quote instead of a package.**
 7. **The existing loop builds it** (carry, admission, factory-runner, verifier), and **the owner
    accepts a preview** before landing and deploy run.
@@ -171,19 +177,30 @@ adds the following items. Each is planned, and none exists yet.
 | The triage agent, if it's a program under `src/`, gets a `CLASSIFICATION` row with role `NOT_AN_ORCHESTRATOR_WRITER`, so the existing guard fails the build if it can send any orchestrator write. | Phase 4, the triage-agent increment |
 | A check that the triage agent holds no write tools at all, not only no orchestrator writes: the existing predicate reads orchestrator paths, not tool grants, so it can't see a repository or ticket write. | Phase 4, the triage-agent increment |
 | A test that an intake registered from a ticket is refused unless its lineage approval names the package's `canonical_package_hash` and the member's owner, and that no request field reaches the envelope. | Phase 4, the ticket-intake increment |
-| `owner_acceptance` as a criterion type only the member's owner can decide: never in `DETERMINISTIC_TYPES`, routed through `human_may_adjudicate`, and the verifier can't decide it. Landing waits for it, and `human_review` stays out of factory-landed packages. | Phase 4, the preview increment |
+| `owner_acceptance` as a criterion type only the member's owner can decide: never in `DETERMINISTIC_TYPES`, routed through `human_may_adjudicate`, and the verifier can't decide it. Landing waits for it. A request-originated package carries no `human_review` criterion, as a bump-created standing package carries none today (ADR-0028); rotation packages do use `human_review` (ADR-0055) and are unaffected. | Phase 4, the preview increment |
 | `test_exactly_three_modules_construct_a_work_unit` and `test_the_observations_service_reaches_no_work_unit_constructor` stay unchanged and green. | Every increment |
 
 ### Planned, not decided
 
-The following later work is planned, and this amendment decides none of its mechanism:
+The following later work is planned, and this amendment decides none of its mechanism. Each item
+names the Phase 4 increment that decides and verifies it, the same increments as the preceding
+table:
 
-- A ticket `source` in change-manager, with a client-facing portal in front of it.
-- The triage agent: where it runs, which model, and how its read-only reach is confined.
+- A ticket `source` in change-manager, with a client-facing portal in front of it. Verified by the
+  ticket-intake increment.
+- The triage agent: where it runs, which model, and how its read-only reach is confined. Verified
+  by the triage-agent increment.
 - Owner acceptance of a preview: hosting, scrubbed data, test-mode credentials, the owner's Alobar
-  ID role, and what an unanswered preview does.
-- The size limit, and how a request over it becomes a quote.
-- How the owner's approval is recorded against the fingerprint.
+  ID role, and what an unanswered preview does. Verified by the preview increment.
+- The size limit, and how a request over it becomes a quote. Verified by the ticket-intake
+  increment.
+- How the owner's approval is recorded against the fingerprint. Verified by the ticket-intake
+  increment.
+- How "the member's owner" maps to an identity that can approve a restatement and decide
+  `owner_acceptance`. Today `SdsMember.owner` is a free string (`persistence/models.py`), and
+  `human_may_adjudicate` (`services/verifier/verifier_evaluators.py`) admits any human on a
+  human-floor type, so nothing yet ties a decision to the owner. Verified by the ticket-intake
+  increment for the restatement approval, and by the preview increment for `owner_acceptance`.
 
 ### Open questions
 
