@@ -3,7 +3,7 @@
 - **Status:** Accepted, 2026-11-06
 - **Date:** 2026-11-05
 - **Decided by:** Devon decided Q1 to Q5 on 2026-11-05 (HQ decisions D-3 to D-7) and Q6 to Q11 on
-  2026-11-06 (HQ decisions D-8 to D-11, D-13, D-14, D-16 and D-17), all recorded in "Devon's
+  2026-11-06 (HQ decisions D-8 to D-11, D-13, D-14 and D-16 to D-18), all recorded in "Devon's
   decisions". Devon accepted the ADR on 2026-11-06 (HQ D-16, Q11) on HQ's clean Opus review.
 - **Relates to:** ADR-0055 (the rotation executor's isolated runtime and decisions 2 and 4,
   amendments 6, 12 and 15), ADR-0058 (lanes read their scope from the member record), ADR-0039
@@ -542,8 +542,7 @@ One container per lane already gives each lane its own process, filesystem and e
   open review alert), Actions (workflow runs and jobs) and Administration (the unit verifier's read
   of `main`'s `required_status_checks`, in `unit_verifier/required_checks.py`), so the read-only App
   holds each of them as read, and no write permission. That list is HQ's derivation from the
-  lanes' code. It needs Devon's confirmation, which HQ asks as decision D-18, before increment 3
-  creates the App, and no lane uses the App until then. Verify before
+  lanes' code. Devon confirmed the list on 2026-11-06 (HQ D-18: "Yes"). Verify before
   increment 3 that an installation-token mint narrowed by repository and permission returns a token
   that refuses
   everything outside the request. A lane that needs more than its read mint gets it by its own
@@ -1182,8 +1181,8 @@ interactive session on the Mac reads it through the broad account, as with the i
 
 ## Devon's decisions
 
-Devon decided Q1 to Q5 on 2026-11-05 and Q6 to Q11 on 2026-11-06. Q9 also records D-14 and
-D-17, which he decided on 2026-11-06.
+Devon decided Q1 to Q5 on 2026-11-05 and Q6 to Q11 on 2026-11-06. Q9 also records D-14, D-17
+and D-18, which he decided on 2026-11-06.
 
 ### Q1: the pushing lanes push as a new "SDS lanes" GitHub App (HQ D-3)
 
@@ -1301,7 +1300,9 @@ install at all. And the bump proposer reads the read-only App's key for its read
 reader beside the twelve lanes of the read-only set. Devon also decided on 2026-11-06 (HQ D-17) a
 third read-only extension: the read-only App is installed on intent-packages, which the read lanes
 also read, so they read it with the read-only key and not the "SDS lanes" App's. The read-only
-App's private key joins ADR-0055's hand-rotated set by D-6's rule (Q4). By Devon's D-11 addendum
+App's private key joins ADR-0055's hand-rotated set by D-6's rule (Q4). Devon confirmed on
+2026-11-06 (HQ D-18: "Yes") the read-only App's permission list: Administration, Issues, Actions,
+Pull requests, Contents and Metadata, all read-only, and nothing else. By Devon's D-11 addendum
 in the interactive session on 2026-11-06 ("For D-11, I concur with your recommendation"), it
 rotates on the same interval as the "SDS lanes" App's key, and Devon rotates both in the same
 sitting.
