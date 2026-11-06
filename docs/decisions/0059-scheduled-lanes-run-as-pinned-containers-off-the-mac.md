@@ -2,10 +2,8 @@
 
 - **Status:** Proposed
 - **Date:** 2026-11-05
-- **Decided by:** Devon decided Q1, Q2 and Q3 on 2026-11-05 (HQ decisions D-3, D-4 and D-5),
-  recorded in "Devon's decisions". Two narrower questions, who rotates the "SDS lanes" App's key
-  and which key the deploy command reads lane checks with, are in "Open questions" for HQ. The
-  rest of the ADR is proposed and not yet accepted.
+- **Decided by:** Devon decided Q1 to Q5 on 2026-11-05 (HQ decisions D-3 to D-7), recorded in
+  "Devon's decisions". The rest of the ADR is proposed and not yet accepted.
 - **Relates to:** ADR-0055 (the rotation executor's isolated runtime and decisions 2 and 4,
   amendments 6 and 12), ADR-0058 (lanes read their scope from the member record), ADR-0039
   (out-of-process producers carry only structured facts), ADR-0021 amendments 2 and 3 (the
@@ -72,10 +70,10 @@ system with only `PATH` and `HOME` set, and holding nothing that can't be rebuil
   reads a working copy.
 - **A routine tag update redeploys `sds-lanes` only in a quiet slot.** Coolify's deploy endpoint
   (`POST /deploy`) takes resources by `uuid` or `tag`, and its restart endpoint
-  (`POST /services/{uuid}/restart`) takes the service resource's `uuid` and a `latest` flag. Neither names
-  a service within a compose resource (Coolify API reference, "Deploy" and "Restart Service", read
-  2026-11-05). So every tag update recreates every lane's container at once, and a running pass is
-  stopped midway. The deploy command therefore applies the cut-over's two checks to the whole
+  (`POST /services/{uuid}/restart`) takes the service resource's `uuid` and a `latest` flag.
+  Neither names a service within a compose resource (Coolify API reference, "Deploy" and
+  "Restart Service", read 2026-11-05). So every tag update recreates every lane's container at
+  once, and a running pass is stopped midway. The deploy command therefore applies the cut-over's two checks to the whole
   resource before it redeploys: the time is outside estate landing's 02:00 to 06:00 New York window,
   and no moved lane's check has `started` set to `true`. `started` is the boolean field of each
   check in the Healthchecks Management API's check listing (`GET /api/v3/checks/`, API docs "List
@@ -83,7 +81,9 @@ system with only `PATH` and `HOME` set, and holding nothing that can't be rebuil
   `started` is the one signal every lane already sends. A check whose `status` is also `down`
   doesn't hold the deploy, because its pass stopped without a final ping and the down alert already
   reports it. The deploy command runs where it runs today, in the deploying session on the Mac,
-  inside `finish`; the key it reads the listing with is an open question ("Open questions"). Until
+  inside `finish`. It reads the listing with the read-only Healthchecks key (BWS `f07b1368-…`, in
+  `Rotation / Healthchecks`), through a direct read grant to `sds-operator` that increment 1 adds
+  (Q5, decided). Until
   both checks pass, the deploy command waits and reads again, for at most 6 hours: long enough to
   outlast the 4-hour landing window and a pass already running when it closes. At 6 hours the deploy
   command raises an alert through alert-hub, exits with its "condition unmet" code (2) and leaves
@@ -156,7 +156,8 @@ One container per lane already gives each lane its own process, filesystem and e
   reads**, in the same change as the lane's move. The credential registry gains each lane token
   as a credential, and the "SDS lanes" App's private key as one more. The VM rotation executor
   rotates each lane token once ADR-0059 increment 7 moves the executor to the VPS (Q3, decided).
-  Who rotates the App key is an open question ("Open questions").
+  The App key joins ADR-0055's hand-rotated set, as the `alobar-sds-rotation` App's key did
+  (Q4, decided): Devon rotates it on the App's settings page, and no executor handles it.
 - **This ADR creates no identity.** Each increment that moves a lane creates that lane's account
   and grants.
 
@@ -239,7 +240,9 @@ exists only on the Mac would keep the lane tied to it.
 
 1. **The lane image and `sds-lanes`, with no lane.** Build the lane image in `Release image` and
    create the compose resource with one placeholder service that runs `--dry-run` on a schedule
-   and holds no credential. Teach the deploy command to write the `sds-lanes` tag.
+   and holds no credential. Teach the deploy command to write the `sds-lanes` tag and to wait for
+   a quiet slot, and give `sds-operator` its direct read grant on the read-only Healthchecks key
+   (Q5).
 2. **One observe-only lane first: `execution-watch`.** It has one identity, two secrets, no local
    state and the shortest interval (15 minutes), so its check shows a failure fastest. It proves
    the identity, the `env -i` start, the dead-man ping and the cut-over procedure.
@@ -381,7 +384,8 @@ instance before the increment).
   reaches: intent-packages and the forks, with `contents: write`. A leaked key lets its holder push
   to intent-packages `main` and to each fork's branches until the key is deleted on the App's
   settings page. It reaches no other repository, unlike the dispatch App, whose installation is
-  deliberately wider than its work.
+  deliberately wider than its work. The key is hand-rotated (Q4), so its rotation depends on
+  Devon, as the rotation App's key does.
 - intent-packages `main` requires three status checks under classic branch protection with
   `enforce_admins` off (read 2026-11-05), which is what lets Devon's admin push land directly
   today. The App isn't an admin, so its direct push would be refused until intent-packages admits
@@ -405,7 +409,7 @@ instance before the increment).
 
 ## Devon's decisions
 
-Devon decided all three questions on 2026-11-05.
+Devon decided all five questions on 2026-11-05.
 
 ### Q1: the pushing lanes push as a new "SDS lanes" GitHub App (HQ D-3)
 
@@ -441,27 +445,21 @@ options were the hand-rotated set, which conflicts with Devon's "SDS can not do 
 rotation" (2026-10-21), and a new confined rotation instance, which would add a third orchestrator
 identity.
 
-## Open questions
+### Q4: the "SDS lanes" App's private key is hand-rotated (HQ D-6)
 
-These two questions came up in recording Q1 and fixing the third review. HQ answers them; the
-proposals are the author's and aren't decisions.
+Option 1: the App's private key joins ADR-0055's hand-rotated set, like the `alobar-sds-rotation`
+App's key. Q3's answer, rotation by the VM executor, doesn't fit it: GitHub generates an App
+private key only on the App's settings page (Credentials, Key pairs, **New key**), and GitHub Docs,
+"Managing private keys for GitHub Apps", documents no API that creates one. The rejected option was
+Devon minting the key and the executor taking it from its inbox
+(`docs/operations/rotation-executor.md`, "A person's mint is taken from the inbox"), which needs
+a new adapter.
 
-### Open: who rotates the "SDS lanes" App's private key
+### Q5: the deploy command reads lane checks with the read-only Healthchecks key (HQ D-7)
 
-Q3's answer, rotation by the VM executor, doesn't fit this key. A GitHub App private key is
-generated only on the App's settings page (Credentials, Key pairs, **New key**), and GitHub
-documents no API that creates one (GitHub Docs, "Managing private keys for GitHub Apps"), so no
-executor can mint it. The rotation App's own key (`alobar-sds-rotation`) is in ADR-0055's
-hand-rotated set for the same reason (`docs/operations/rotation-executor.md`, "Its
-credentials"). The options are the hand-rotated set, as for that key, or Devon mints in the
-settings page and the executor takes the value from its inbox, stores it and verifies it
-(`docs/operations/rotation-executor.md`, "A person's mint is taken from the inbox").
-
-### Open: which key the deploy command reads lane checks with
-
-The quiet-slot read (decision 1) runs in the deploy command on the Mac, which reads BWS as the
-narrow `sds-operator` identity. That identity reads neither Healthchecks key today: the
-Management API key (`51509d5e-…`) is in `Ops / Platform`, read by the broad account, and the
-read-only key (`f07b1368-…`) is in `Rotation / Healthchecks`, read by the rotation executor. The
-narrowest proposal is a direct read grant for `sds-operator` on the read-only key, added in
-increment 1; a read-only key may list checks, which is all the read needs.
+The quiet-slot wait (decision 1) runs in the deploy command on the Mac, which reads BWS as the
+narrow `sds-operator` identity. Increment 1 gives `sds-operator` a direct read grant on the
+read-only Healthchecks key (BWS `f07b1368-…`, `Rotation / Healthchecks`), and the wait reads lane
+checks with it. A read-only key may list checks (Healthchecks API docs, "List Existing Checks"),
+which is all the read needs. The Management API key (`51509d5e-…`) stays readable only by the
+broad account and the lane identities.
