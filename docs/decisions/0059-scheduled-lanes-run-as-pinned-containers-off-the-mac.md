@@ -135,7 +135,8 @@ each of those lanes keeps it in a volume of its own (decision 1, "Lane state").
   (that the next `coolify_deploy` applies it is verified before increment 1). The compose a run
   writes is the tracked file at the tag it deploys (the named tag for `--tag` and `--add`, the
   running tag for `--schedule`), and its state file records that compose exactly. The compose it
-  replaces is the one the last finished run's state file recorded, the file Coolify was last given,
+  replaces is the one the last finished run's state file recorded (the newest one `lanes-finish`
+  passed, as the following "No release starts" bullet defines), the file Coolify was last given,
   never the tracked file at the running tag. No phase creates `sds-lanes`: HQ creates it through
   infraops in increment 1, as an announced production act, unless HQ finds a reason it shouldn't,
   and then HQ tells Devon (Q11). No phase yet records the first compose a later run replaces
@@ -195,11 +196,16 @@ each of those lanes keeps it in a volume of its own (decision 1, "Lane state").
   because its pass stopped without a final ping and the down alert already reports it. The deploy
   command runs where it runs today, in the deploying session on the Mac. It reads the listing with
   the read-only Healthchecks key (BWS `f07b1368-…`, in `Rotation / Healthchecks`), through a direct
-  read grant to `sds-operator` that increment 1 adds (Q5, decided). Until both checks pass,
-  `lanes-prepare` waits and reads again, for at most 6 hours: long enough to outlast the 4-hour
-  landing window and a pass already running when it closes. At 6 hours it raises an alert through
-  alert-hub and exits with its "condition unmet" code (2). The session has written nothing, so
-  `sds-lanes` stays as it was until HQ re-runs `lanes-prepare` or redeploys by hand. Nothing is
+  read grant to `sds-operator` that increment 1 adds (Q5, decided). No one process waits for the
+  slot: an HQ cycle is capped at 1200 seconds (`cycle_limit_s` in sds-hq's `config.toml`). The
+  first `lanes-prepare` run for a change records a deadline 6 hours later in its state file, long
+  enough to outlast the 4-hour landing window and a pass already running when it closes. A run
+  that finds either check unmet exits with its "condition unmet" code (2), and HQ re-runs
+  `lanes-prepare` on a later cycle. A re-run for the same change resumes against the recorded
+  deadline; a run for another change supersedes it and records its own. The run that finds the
+  deadline passed raises an alert through alert-hub and exits 2, and a re-run after that records a
+  new deadline. The session has written nothing to `sds-lanes`, so it stays as it was until HQ
+  re-runs `lanes-prepare` or redeploys by hand. Nothing is
   staged in `sds-lanes` while the command waits: the session writes the compose and any tag or
   service variable (the following bullets) only after `lanes-recheck` exits 0, immediately before
   its redeploy call. So a wait that times out leaves nothing staged, and no later redeploy can apply
@@ -214,16 +220,21 @@ each of those lanes keeps it in a volume of its own (decision 1, "Lane state").
   HQ acts when it times out. So every release must keep the previous release's lane code working
   against its orchestrator for that interval: a route or response field a lane reads can't be
   removed or changed incompatibly in the release that stops the lane needing it.
-- **No release starts while the lanes lag or a lane-phase run is unfinished.** Increment 1 makes
-  `prepare` read the last lane-phase run's state file and refuse when it shows the lanes on a tag
-  other than the served one, or a lane-phase run that `lanes-finish` hasn't passed (or
-  `lanes-finish --restored`, after a failed redeploy). A `--ref` at the commit the lanes run is the
-  one lag it admits, because that rollback leaves the lanes on the served tag. Its refusal names the
-  two exits: re-run the lane phases with `--tag` at the served tag, or roll the lanes back. It
-  refuses and doesn't wait, so the deploy gains no blocking wait. `lanes-prepare` refuses on the
-  same unfinished run, so two lane-phase runs never overlap and "the last finished run's state
-  file" is always one file. So a lane never runs code older than the previous release's, however
-  long a timed-out redeploy waits.
+- **No release starts while the lanes lag or a lane-phase run is unfinished.** Each lane-phase run
+  has its own state file, the command's own record, which isn't a write to `sds-lanes`. A run is
+  *unfinished* from its `lanes-recheck` exit 0, after which the session writes to `sds-lanes`,
+  until `lanes-finish` passes it (or `lanes-finish --restored`, after a failed redeploy). A run
+  whose `lanes-recheck` never exited 0, such as a waiting, timed-out or refused `lanes-prepare`,
+  wrote nothing to `sds-lanes`, so it isn't unfinished, and the next `lanes-prepare` supersedes it.
+  "The last finished run's state file" is the newest one `lanes-finish` passed; a run that wrote
+  nothing never replaces it. Increment 1 makes `prepare` read that file and refuse when it shows
+  the lanes on a tag other than the served one, or when a lane-phase run is unfinished. A `--ref`
+  at the commit of the lanes' tag in that file is the one lag it admits, because that rollback
+  leaves the lanes on the served tag. Its refusal names the two exits: re-run the lane phases with
+  `--tag` at the served tag, or roll the lanes back. It refuses and doesn't wait, so the deploy
+  gains no blocking wait. `lanes-prepare` refuses while a run is unfinished, so two runs that write
+  never overlap. So a lane never runs code older than the previous release's, however long a
+  timed-out redeploy waits.
 - **The lanes that need other repositories clone them at the start of each pass.** These lanes
   are the bump driver (intent-packages, project-standards, security-standards), both
   bridge proposers (intent-packages; the rotation proposer also needs infraops-mcp-server, which
@@ -391,7 +402,10 @@ One container per lane already gives each lane its own process, filesystem and e
 ### 2. One narrow BWS identity per lane, replacing every Keychain read
 
 - **Each moved lane gets its own BWS machine account**, named `sds-lane-<lane>`, with a direct
-  read grant on exactly the secrets its launcher fetches today and nothing else. This follows
+  read grant on exactly the lane's `.bws-secrets.toml` entries and nothing else: the secrets its
+  launcher fetches today less the Healthchecks Management API key, which every launcher reads
+  today through `sds_deadman_resolve` and no lane may hold (decision 3), plus its ping-URL secret
+  (decision 3) and the private key of each App it mints from (the following bullets). This follows
   ADR-0055 amendment 6: grants on secrets, not on projects. Today's two Keychain identities stop
   being any lane's identity. The narrow-versus-broad split, and the two-identity trap the
   launchers guard against, end with them: one lane has one token.
@@ -510,8 +524,9 @@ One container per lane already gives each lane its own process, filesystem and e
   repository, intent-packages, the standards repositories the lanes clone, and, for the fork-sync
   watch, factory-runner (whose `.cred-consumers.toml` lists the forks, `fork_sync/onboarding.py`
   `REGISTRY_REPO`) and each fork it lists. Devon decided where the read-only App is installed: on
-  the members' repositories, the member record's repository and the standards repositories (Q6),
-  on factory-runner and each fork (Q9, HQ D-14), and on intent-packages (Q9, HQ D-17). The
+  the members' repositories, the member record's repository and the standards repositories (Q6,
+  HQ D-8, whose repositories D-14's and D-17's wording names again), on factory-runner and each
+  fork (Q9, HQ D-14), and on intent-packages (Q9, HQ D-17). The
   "SDS lanes" App stays installed only on intent-packages and the forks, as Q1 decided. The
   read-only App is installed on both too, and the read lanes read them with the read-only key, so
   no read lane holds a key that can write.
@@ -527,7 +542,8 @@ One container per lane already gives each lane its own process, filesystem and e
   open review alert), Actions (workflow runs and jobs) and Administration (the unit verifier's read
   of `main`'s `required_status_checks`, in `unit_verifier/required_checks.py`), so the read-only App
   holds each of them as read, and no write permission. That list is HQ's derivation from the
-  lanes' code, and Devon confirms it when he creates the App in increment 3. Verify before
+  lanes' code. It needs Devon's confirmation, which HQ asks as decision D-18, before increment 3
+  creates the App, and no lane uses the App until then. Verify before
   increment 3 that an installation-token mint narrowed by repository and permission returns a token
   that refuses
   everything outside the request. A lane that needs more than its read mint gets it by its own
@@ -535,20 +551,21 @@ One container per lane already gives each lane its own process, filesystem and e
 - **The three pushing lanes push as the "SDS lanes" GitHub App (Q1, decided).** `bump-proposer`,
   `rotation-proposer` and `fork-harden` push with an installation token of a new GitHub App, with
   `contents: write`, minted naming only intent-packages or the forks, the only repositories it's
-  installed on. The push token reaches git only through `sds_git_credential` (the preceding
-  bullets); none of the three feeds it to an HTTP API client. The bump proposer's own
-  `BUMP_PROPOSER_GITHUB_TOKEN` comes from its separate read mint (preceding bullet). Each pass mints
-  its tokens from an App's private key, which lives in BWS and is read by UUID, with a direct read
-  grant to each lane identity that mints from that App, and to no other. The "SDS lanes" App's key
-  is read by the three pushing lanes. The read-only App's key is read by the twelve of the read-only
-  set and by the bump proposer, for its read mint, thirteen in all (Q9). So the bump proposer reads
-  both keys, and fifteen lane identities read one or both. The tokens are short-lived and never
-  stored. Both keys are created in increment 3, which moves the first lane that mints, by Devon,
-  because only an App's settings page generates a GitHub App private key (GitHub Docs, "Managing
-  private keys for GitHub Apps"). The bump driver needs no GitHub write scope: its token only reads
-  pull request state and makes shallow clones (`src/bump_driver/client.py`,
-  `src/bump_driver/mirror.py`), and it dispatches and merges through the orchestrator as SYSTEM. Its
-  variable is fed from its read mint.
+  installed on. Whether fork hardening's push also needs `workflows: write` is verified before
+  increment 5 (increment 5), and this ADR grants nothing more. The push token reaches git only
+  through `sds_git_credential` (the preceding bullets); none of the three feeds it to an HTTP API
+  client. The bump proposer's own `BUMP_PROPOSER_GITHUB_TOKEN` comes from its separate read mint
+  (preceding bullet). Each pass mints its tokens from an App's private key, which lives in BWS and
+  is read by UUID, with a direct read grant to each lane identity that mints from that App, and to
+  no other. The "SDS lanes" App's key is read by the three pushing lanes. The read-only App's key is
+  read by the twelve of the read-only set and by the bump proposer, for its read mint, thirteen in
+  all (Q9). So the bump proposer reads both keys, and fifteen lane identities read one or both. The
+  tokens are short-lived and never stored. Both keys are created in increment 3, which moves the
+  first lane that mints, by Devon, because only an App's settings page generates a GitHub App
+  private key (GitHub Docs, "Managing private keys for GitHub Apps"). The bump driver needs no
+  GitHub write scope: its token only reads pull request state and makes shallow clones
+  (`src/bump_driver/client.py`, `src/bump_driver/mirror.py`), and it dispatches and merges through
+  the orchestrator as SYSTEM. Its variable is fed from its read mint.
 - **`.bws-secrets.toml` and `.cred-consumers.toml` gain each lane identity and each secret it
   reads**, in the same change as the lane's move. The credential registry gains each lane token and
   each lane's Healthchecks ping URL (decision 3) as a credential, and each App's private key, the
@@ -558,7 +575,8 @@ One container per lane already gives each lane its own process, filesystem and e
   `alobar-sds-rotation` App's key did (Q4 and Q9, decided): Devon rotates each on its App's settings
   page, and no executor handles either. Each is registered as class `github-app-private-key`, whose
   interval in infraops's rotation policy (`CLASS_POLICY` in `src/security-drift/cred-rotation.ts`)
-  is 365 days, so both keys have the same interval, and Devon rotates both in the same sitting (Q9).
+  is 365 days, so both keys have the same interval, and Devon rotates both in the same sitting
+  (Devon's D-11 addendum, 2026-11-06).
   The minted tokens are short-lived and never stored, so none is registered.
 - **This ADR creates no identity.** Each increment that moves a lane creates that lane's account
   and grants.
@@ -737,10 +755,19 @@ Healthchecks before it relies on it. A fact it can't confirm stops the increment
 - Where the last finished run's state file lives, so that the next run, from any session, reads
   the compose Coolify was last given, and `prepare` and `lanes-prepare` read it with no new
   credential (decision 1).
-- `prepare` refuses when the last lane-phase run's state file shows the lanes on a tag other than
-  the served one, or a lane-phase run not yet finished, and its message names re-running the lane
-  phases with `--tag` and rolling the lanes back; `lanes-prepare` refuses on an unfinished run
-  (decision 1, "No release starts while the lanes lag").
+- `prepare` refuses when the last finished run's state file shows the lanes on a tag other than
+  the served one, or a lane-phase run is unfinished (its `lanes-recheck` exited 0 and
+  `lanes-finish` hasn't passed it), and its message names re-running the lane phases with `--tag`
+  and rolling the lanes back. `prepare` reads the lanes' commit from that state file for the
+  `--ref` admission. `lanes-prepare` refuses on an unfinished run, and a run that wrote nothing to
+  `sds-lanes` (a waiting, timed-out or refused `lanes-prepare`) doesn't block a re-run, which
+  supersedes it (decision 1, "No release starts while the lanes lag").
+- The quiet-slot wait survives across HQ cycles: `lanes-prepare` keeps its deadline in the state
+  file, and a re-run for the same change resumes against it, instead of one process waiting 6
+  hours (decision 1, "A routine tag update redeploys `sds-lanes` only in a quiet slot").
+- `prepare` refuses a ref whose tracked compose adds more than one service that the last finished
+  run's recorded compose lacks, so a release carries at most one new lane's compose entry, and its
+  `--add` is the one exit from the lag it leaves (decision 1, cut-over step 1).
 - How Coolify treats a service container whose `HEALTHCHECK` reports unhealthy, and what the lane
   image sets in place of the inherited one (decision 1).
 - `pushed_digest()` in `scripts/deploy_orchestrator.py` refuses a run whose log holds more than
@@ -759,10 +786,14 @@ Healthchecks before it relies on it. A fact it can't confirm stops the increment
    no `LANE_SCHEDULE_ENABLED`, so its
    scheduler has an empty table and it runs no launcher, holds no token and maps no resource
    variable but `SDS_LANES_IMAGE_TAG`. It mounts one named volume, on which increment 1 verifies
-   volume naming and ownership. Add the deploy command's three
+   volume naming and ownership. The placeholder is kept, not removed by the first `--add`, so no
+   lane-phase run removes a service. `lanes-finish`'s every-service reads cover it: its image
+   digest, and its `LANE_SCHEDULE_ENABLED`, which must stay unset. It isn't one of the eleven
+   stateful services, so its mount isn't among the volume checks. Add the deploy command's three
    lane phases (`lanes-prepare`, `lanes-recheck`, `lanes-finish`) for a tag update, a schedule
-   change and an added service: each waits for a quiet slot, writes the whole compose and records
-   it, prints the session's exact infraops calls and their inverse, and verifies the session's reads
+   change and an added service: `lanes-prepare` waits for a quiet slot across runs, and the phases
+   print the whole compose write and record it, print the session's exact infraops calls and their
+   inverse, and verify the session's reads
    of the redeployed containers (image digest, schedule and state volume), and an `--add` refuses a
    compose entry whose schedule doesn't default to `false` (decision 1). Add `lane-run` with its
    variable list and its `--read` mode (decisions 1 and 2). Give `sds-operator` its direct read
@@ -841,7 +872,12 @@ Healthchecks before it relies on it. A fact it can't confirm stops the increment
    launcher's header and `fork_harden/cli.py`'s docstring are rewritten, and its code doesn't
    change. Each moves outside its landing
    window. Estate landing sends its Coolify token only over the tailnet today, so its increment
-   decides how the container reaches Coolify without widening that.
+   decides how the container reaches Coolify without widening that. Verify before increment 5
+   whether fork hardening's `hardened` push needs the "SDS lanes" App's `workflows: write`: the push
+   carries any change `main` made to the fork's `.github/workflows/`, and GitHub refuses a push
+   that creates or updates a workflow file from a credential without the workflows permission
+   (`docs/operations/credentials.md`, #127, records the refusal for tokens). If it does, the
+   widening goes to Devon before increment 5, and nothing is granted until he decides.
 6. **Retire the Mac's lane plumbing:** the moved plists and their installers,
    `activate-checkout.sh`'s use by lanes, and the two Keychain items' lane role. The Keychain items
    themselves are retired only once no remaining reader names them. This increment starts only
@@ -884,7 +920,10 @@ Each increment's plan records which repositories it changes and which identities
 1. Create the lane's BWS identity and grants. Set the lane's two resource variables: the VM executor
    writes its token from its inbox after Devon mints it (Q8), and the session writes its schedule
    variable `false`. After the token binds, Devon copies the lane's ping URL from its check's page
-   into the inbox by hand, and the executor writes the lane's ping-URL secret (Q10). Then add the
+   into the inbox by hand, and the executor writes the lane's ping-URL secret (Q10). These three,
+   the identity, its token write and the ping URL, are in place before the release whose tracked
+   compose adds the lane's service merges: that release leaves the lanes lagging until its `--add`
+   passes, and `prepare` refuses every later release until then (decision 1). Then add the
    lane's service by the lane phases with `--add` in a quiet slot (decision 1). Then prove the
    identity in the lane's container: `lane-run --read` over every secret `.bws-secrets.toml` lists
    for the lane (each `ok`), one UUID it doesn't read (`refused`), and the launcher's `--dry-run`
@@ -1107,18 +1146,20 @@ interactive session on the Mac reads it through the broad account, as with the i
   permissions only, so its leaked key reads all of them and writes none. The cost of the split is
   a second App for Devon to create, install and rotate (Q9). Both keys are hand-rotated (Q4, Q9),
   so their rotation depends on Devon, as the rotation App's key does, and he rotates both in the
-  same sitting. ADR-0055's hand-rotated set names who rotates its members, not how often, so the
-  interval comes from the credential registry: each key is registered with a rotation interval in
-  increment 3, which creates both, as a lane token is. If the keys would outlast that interval, HQ
-  asks Devon to rotate them before the interval passes. Increment 3 also states how the keys' due
-  date is reported without a rotation package being proposed for a key no executor handles.
+  same sitting (D-11 addendum). ADR-0055's hand-rotated set names who rotates its members, not
+  how often, so the interval comes from the credential registry: each key is registered with a
+  rotation interval in increment 3, which creates both, as a lane token is. If the keys would
+  outlast that interval, HQ asks Devon to rotate them before the interval passes. Increment 3 also
+  states how the keys' due date is reported without a rotation package being proposed for a key no
+  executor handles.
 - intent-packages `main` requires three status checks under classic branch protection with
   `enforce_admins` off (read 2026-11-05), which is what lets Devon's admin push land directly today.
   The "SDS lanes" App isn't an admin, so its direct push would be refused until intent-packages
   admits it, for example as a bypass actor of a ruleset that replaces the classic rule (verify
   before increment 4). That change is Devon's, in increment 4, and it doesn't add a required review:
   intent-packages requires none. Each fork's `hardened` branch forbids only force-push and deletion
-  (ADR-0057 decision 7), so fork hardening's fast-forward push needs no change.
+  (ADR-0057 decision 7), so fork hardening's fast-forward push needs no branch-protection change.
+  Whether it needs the App's `workflows: write` is verified before increment 5 (increment 5).
 - Package revision commits on intent-packages `main` become the App's (`<app>[bot]`), not
   `AlobarQuest`'s. Increment 4 checks every reader that keys on a package revision commit's author
   before the bump proposer moves; `landing_ledger` reads a `[bot]` suffix as a machine basis.
@@ -1252,15 +1293,18 @@ those lanes read, member repositories included. The "SDS lanes" App keeps `conte
 installed only on intent-packages and the forks, for the three pushing lanes, as Q1 decided. So a
 leaked write-capable key no longer reaches any member repository. The cost is accepted: a second App
 to create, install and rotate. Devon also decided on 2026-11-06 (HQ D-14) two read-only extensions.
-The read-only App is installed on factory-runner and each fork as well as the repositories Q6 named
-(the members' repositories, the member record's repository and the standards repositories), and
+The read-only App is installed on factory-runner and each fork as well as the repositories Q6 (D-8)
+named and D-14's and D-17's wording names again (the members' repositories, the member record's
+repository and the standards repositories), and
 increment 3 lists the exact set and checks whether factory-runner, which is public, needs the
 install at all. And the bump proposer reads the read-only App's key for its read mint, a thirteenth
 reader beside the twelve lanes of the read-only set. Devon also decided on 2026-11-06 (HQ D-17) a
 third read-only extension: the read-only App is installed on intent-packages, which the read lanes
 also read, so they read it with the read-only key and not the "SDS lanes" App's. The read-only
-App's private key joins ADR-0055's hand-rotated set by D-6's rule (Q4), on the same
-hand-rotation interval as the "SDS lanes" App's key, and Devon rotates both in the same sitting.
+App's private key joins ADR-0055's hand-rotated set by D-6's rule (Q4). By Devon's D-11 addendum
+in the interactive session on 2026-11-06 ("For D-11, I concur with your recommendation"), it
+rotates on the same interval as the "SDS lanes" App's key, and Devon rotates both in the same
+sitting.
 Creating and installing the read-only App is Devon's act, as for the "SDS lanes" App. The rejected
 option was (a), one App for both, whose leaked key could mint `contents: write` on every member
 repository it's installed on.
