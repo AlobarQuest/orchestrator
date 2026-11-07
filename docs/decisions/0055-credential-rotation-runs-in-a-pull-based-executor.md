@@ -24,6 +24,8 @@
   - 2026-10-29, amendment 16 (one click per rotation: the revision approval).
   - 2026-10-30, amendment 17 (a type with no overlap; the VPS helper as the executor's reach).
   - 2026-11-01, amendment 18 (the rotation layer's outcomes; the 04:00 window retires).
+  - 2026-11-07, amendment 19, proposed (the VM executor issues lane tokens and ping URLs from its
+    inbox).
 - **Supersedes:** the parts of ADR-0054 named in "What this changes in ADR-0054".
 - **Relates to:** ADR-0054 (the SDS owns credential rotation), ADR-0052 (superseding an unworked
   decomposition), ADR-0039 (out-of-process producers), ADR-0011 (known-good patterns)
@@ -2179,3 +2181,191 @@ The change-manager `rotation` source was a free string that no producer posted a
 so retiring it removed the tab, the seeder, and the mentions. Its two resolved rows stay. The
 `security-executor` identity stays in the agent registry as `retired`, so recorded events still
 resolve.
+
+## Amendment 19 — The VM executor issues lane tokens and ping URLs from its inbox (2026-11-07)
+
+**Status: Proposed.** ADR-0059 increment 2 waits on it (ADR-0059, "Increments", item 2, and
+"Dependencies", ADR-0055).
+
+ADR-0059 moves the scheduled lanes off the Mac, one BWS identity per lane, each lane its own
+Coolify compose resource, `sds-lane-<lane>` (ADR-0059 Amendment 1). Devon decided that the VM
+rotation executor writes each lane's token into its `<LANE>_BWS_ACCESS_TOKEN` variable from its
+inbox (ADR-0059 Q8, HQ D-10, option (b)), that it writes each lane's Healthchecks ping URL into the
+lane's ping-URL secret the same way, after Devon pastes it by hand (Q10, D-13), and that the VM
+executor later rotates lane tokens (Q3, D-5, option (a)), lifting decision 4 for them at increment
+2 rather than increment 7. This amendment states that lift and the executor extension it needs.
+
+Code reads cite orchestrator `8875e1bf`, Coolify `v4.0.0-beta.473` (`57ea0764`), and
+infraops-mcp-server `main` at `9cdaab1f`.
+
+### What the executor can't do today
+
+- **It binds a pasted value only to a rotation that replaces one.** `bind` reads the keeper's
+  value (`rotation_worker/inbox.py`, line 135) and requires the provider's `same_identity` to hold
+  against it (lines 140-146), which for a BWS token is a fresh login with each value
+  (`adapters/bws_machine_token.py`, lines 157-170). A first lane token and a first ping URL have no
+  old value, and a lane token revoked after a leak no longer answers.
+- **Its contract has no plan without a revoke.** `validate_plan` requires exactly one
+  `retire_old` and one `confirm_dead` (`rotation_worker/contract.py`, lines 217-230), and only
+  `confirm_dead` may follow `retire_old` (lines 236-238). A first issue has nothing to retire.
+- **BWS machine tokens belong to the Keychain instance.** `CLASS_TYPES` maps the class
+  `bws-machine-token` to the one type of that name (`rotation_worker/types.py`, lines 49-57), and
+  that adapter is in `KEYCHAIN_ADAPTERS` (`rotation_worker/envelope.py`, line 13), which the VM
+  instance never claims. Its provider hosts no destination (`bws_machine_token.py`, line 133).
+- **Two waiting mints block each other.** `other_mints` lists every unclaimed unit of another
+  rotation that comes straight after a person's mint (`inbox.py`, lines 101-116), and `bind`
+  refuses while that list isn't empty (lines 130-134). If a lane's token issue and its ping-URL
+  issue were both listed, neither would ever bind.
+
+### Decision proposed
+
+1. **Decision 4 is lifted for two kinds of credential, on the VM instance only.** A lane's BWS
+   access token and a lane's Healthchecks ping URL may transit the VM instance's inbox
+   (`Rotation / Inbox`) and staging, and their keepers live in `Rotation / Keepers`, which only the
+   root writes. Every other BWS consumer token stays as amendment 12 left it: handled only by an
+   executor instance on the machine that already holds it.
+2. **Two new classes, each with its own type.** A lane token's registry row takes the class
+   `bws-lane-token`, and a ping URL's the class `healthchecks-ping-url`. Each maps to a type of
+   the same name in `CLASS_TYPES`, with store kind `bws-secret`, so the VM instance claims it and
+   the Keychain instance never does. `bws-lane-token`'s provider hosts destinations, and its one
+   hosted destination is a `coolify-env` on the lane's resource with `redeploy` false.
+   `healthchecks-ping-url` has no hosted destination: its keeper is the lane's ping-URL secret,
+   which the lane's account reads by a direct grant (amendment 6).
+3. **An issue is a rotation's first half.** A type may declare an issue plan: a person's mint and
+   stage, then `verify_new`, `store`, `distribute` (for a type with a hosted destination) and
+   `verify_consumers`, with no `retire_old` or `confirm_dead`. The contract validates it by its own rule, and `validate_plan` is unchanged for
+   every rotation. Every other decision 3 invariant holds. The issue plan runs only when the
+   keeper holds exactly the inbox's empty marker (`EMPTY`, `inbox.py`, line 46), so "nothing to
+   retire" is a fact the executor reads, not a declaration. A sibling of `adopt-keeper` creates
+   that keeper on the VM, holding the marker, and prints its secret id, so the registry row names
+   the keeper before any package does. The row lands in two changes, as amendment 17's did.
+4. **A lane token binds by its declared reach, never by `same_identity`.** The registry row lists
+   the BWS secrets the lane's account must see: the UUIDs `.bws-secrets.toml` lists for that lane.
+   `bind` takes a pasted token for a `bws-lane-token` issue or rotation only when all of these
+   hold:
+   - no other rotation waits on a person's mint (`other_mints`, unchanged);
+   - it isn't the keeper's value, and a fresh login accepts it beside a refused known-bad control
+     (`accepts`, unchanged);
+   - the digest of what it can see, which `_REACH` computes (`bws_machine_token.py`, lines
+     98-112), equals the digest of the declared set;
+   - no other keeper of its type holds it.
+
+   This is stronger than `same_identity`, and it holds after a leak's early revoke. Each lane's
+   set is distinct, because each holds that lane's own ping-URL secret, and the checks refuse a
+   registry in which two rows declare the same set. The lane's account must already have its grant
+   on the ping-URL secret, holding the marker, when the token binds, or the digests differ.
+5. **A ping URL binds by shape and by its check, never by a ping.** A ping marks the check up, so
+   no probe may send one. `bind` takes a pasted ping URL for a `healthchecks-ping-url` issue only
+   when the keeper holds the marker, the URL is exactly the self-hosted instance's ping base
+   followed by one UUID, no other keeper of its type holds it, and a read of the lane's check
+   identifies it (see "Open before building").
+6. **The executor never redeploys a lane.** A `bws-lane-token` destination with `redeploy` true is
+   refused before a claim, and its distribute step writes the variable with the client's one
+   `PATCH` and never calls `restart()`. `redeploy` is part of the destination's identity
+   (`rotation_worker/destinations.py`, lines 17-19 and 38), so a row that changes it is a change
+   Devon approves. The lane's container takes the new value only at its next start, which is the
+   lane phases' redeploy in that lane's quiet slot (ADR-0059 decision 1).
+7. **What the executor proves, and what the lane phases prove.** The executor can't read a
+   service variable back: its Coolify token has no `read:sensitive` (amendment 1). So its
+   `verify_consumers` for the Coolify destination is the `PATCH` answering 2xx, and for a BWS
+   destination it reads the secret back by fingerprint (`SecretStore.locate`). The proof that the
+   lane loaded the new token is the lane phases': `lanes-finish` reads that the container's
+   `BWS_ACCESS_TOKEN` is non-empty, and `lane-run --read` reads every secret the lane lists, each
+   `ok` (ADR-0059, "Cut-over for one lane"). A read of the lane's check since the keeper's
+   revision doesn't discriminate, because a pass between the write and the redeploy runs on the
+   old token and still pings, so no plan uses it.
+8. **The order is a mechanism, not a sequence.** A lane's ping-URL row is registered with what
+   makes it due only after the lane token's `store` unit completes, so the ping URL's issue unit
+   doesn't exist while the token's waits and `other_mints` never sees both. The lane's cut-over is
+   then:
+   1. The identity's creator grants the lane's account its secrets, including the ping-URL
+      secret, which holds the marker.
+   2. Devon mints the lane token and pastes it into the inbox. It binds, and the executor stores it
+      and writes `<LANE>_BWS_ACCESS_TOKEN` on `sds-lane-<lane>`.
+   3. The ping URL's row becomes due. Devon copies the URL from the check's page and pastes it into
+      the inbox (Q10). It binds, and the executor writes the ping-URL secret.
+   4. The lane phases' `--add` starts the lane in its quiet slot.
+9. **The executor still can't mint or revoke** (amendment 12). Devon mints every lane token and
+   revokes every old one, in the Bitwarden web app. A lane token's row is `rotated_by_sds` from
+   its first issue, so the age rule applies, but no scheduled rotation runs on the VM before
+   ADR-0059 increment 7. The rotations this amendment allows before then are the early and leak
+   reissues in the following item, and HQ asks Devon before the age interval passes, as ADR-0059's
+   Consequences say.
+10. **Early and leak reissue before increment 7 (proposed; Devon decides).** The proposed actor is
+    the rotation proposer, from infraops findings it already reads: an exposure recorded on the
+    lane token's row (`cred.exposure-rotate`) or a `rotate_requested` date
+    (`cred.rotation-requested`). HQ records the trigger in infraops's registry, and Devon's one
+    click is the revision approval (amendment 16). The proposed order of the revoke:
+    - **After a leak, Devon revokes first**, as the exposure response decision 6 already makes
+      his, then the reissue runs and its `retire_old` finds the old token refused. The token
+      binds by its reach (item 4), so it needs no hand staging. Until the lane's quiet-slot
+      redeploy, the lane fails every pass on a dead token, and its dead-man check reports it. A
+      leaked token that stayed live through the redeploy's 6-hour wait would leave an exposure
+      open for that long, and Infra Brain's `cred.exposure-rotate` rule ends a leak in revoke and
+      reissue.
+    - **Otherwise, Devon revokes after the lane phases' `lanes-finish` passes and `lane-run --read`
+      reads every listed secret `ok`** on the redeployed container. HQ reports that read, and
+      Devon resolves the revoke act at `/review` after it.
+11. **What a bind records.** Every bind and refusal logs as the executor logs today: structured
+    JSON on stdout (`rotation_worker/logs.py`), naming the unit, the keeper's or staging secret's
+    UUID, the destination string and the value's fingerprint, never the value. The Coolify
+    `PATCH` response echoes the written row (Coolify `ServicesController.php`, line 1258), and the
+    client keeps only the status (`rotation_worker/coolify.py`, lines 99-108). A value that doesn't
+    bind stays in the inbox with its reason, as today (`inbox.py`, lines 130-151); a failure after
+    the claim fails the unit and is recorded as the unit's failure, never skipped.
+
+### What the code settles
+
+- **Who creates `<LANE>_BWS_ACCESS_TOKEN`: the compose parse, at create.** The executor's client
+  allows only `PATCH /api/v1/services/{uuid}/envs` and `POST .../restart` (`rotation_worker/coolify.py`,
+  lines 63-65 and 82-83), and Coolify's `PATCH` answers 404 for a key with no row
+  (`ServicesController.php`, lines 1238-1241), which the client raises as `CoolifyRefused`. Coolify's
+  create saves the raw compose and parses it (`ServicesController.php`, lines 616 and 627), and
+  `serviceParser` (from `bootstrap/helpers/parsers.php`, line 1504) runs `firstOrCreate` for a
+  `${VAR}` with no default in `environment:` (lines 2447-2459), making the row with no value. A
+  lane's tracked compose maps `BWS_ACCESS_TOKEN: ${<LANE>_BWS_ACCESS_TOKEN}` (ADR-0059, decision
+  1), so HQ's create of `sds-lane-<lane>` makes the row, and a later parse doesn't overwrite the
+  executor's value, because `firstOrCreate` never updates. The placeholder's compose maps no token,
+  so it can't confirm this; the first lane's create does (see "Open before building").
+- **`postgres_role` requires `redeploy` true and restarts.** `hosted_destination` refuses a
+  `coolify-env` without `redeploy` true (`adapters/postgres_role.py`, lines 169-182), and `host`
+  calls `restart()` (line 316), which is `POST /services/{uuid}/restart`
+  (`rotation_worker/coolify.py`, lines 65 and 96-97). Item 6 is the inverse for lane tokens.
+- **infraops has no class for a ping URL.** `CLASS_POLICY` (`src/security-drift/cred-rotation.ts`,
+  line 31) has `bws-machine-token` (lines 88-93) and no Healthchecks class, and a row whose class
+  isn't there raises `cred.unknown-class` (lines 242-253). The infraops change adds two classes:
+  `bws-lane-token` with `maxAgeDays` 365, beside `bws-machine-token`, and `healthchecks-ping-url`
+  with `maxAgeDays` infinite and a landmine saying the URL can't be rotated, only replaced by
+  recreating the check, which starts a new history. That change lands first, because
+  `test_every_type_names_a_class_infraops_knows` holds `CLASS_TYPES` to infraops's classes
+  (`tests/architecture/test_rotation_agreement.py`, lines 55-56).
+
+### Open before building
+
+- **The ping URL's check read.** Which Healthchecks read ties a pasted UUID to the lane's check
+  without the Management key, whether `/pings/` needs that key, the flips endpoint and the ping-log
+  limit are Healthchecks reads that this amendment doesn't settle. If no read-only read
+  identifies the check, item 5 binds by shape alone and the lane phases' first `--add` proves the
+  URL, by a ping that reaches that check.
+- **The token's row at create.** HQ's create of the first lane's resource confirms the empty
+  `<LANE>_BWS_ACCESS_TOKEN` row by the executor's `PATCH` answering 2xx; a 404 means another actor
+  must create the row, and the issue unit fails with `CoolifyRefused` rather than skipping.
+- **What makes a first issue due.** Whether infraops raises `cred.rotation-requested` for a row
+  with a `rotate_requested` date and no recorded rotation is read in the build.
+- **Questions for Devon:** the reissue actor and the leak order (item 10), and whether lane
+  tokens keep a keeper in `Rotation / Keepers` (item 1).
+
+### Consequences
+
+- **Threat model.** The VM root gains every lane token at rest, in `Rotation / Keepers`, beside
+  every other rotated credential's keeper, and every ping URL. A compromised executor could use
+  any lane's token, write any lane's token variable, and overwrite any lane's ping-URL secret,
+  which blinds that lane's alarm. ADR-0059 accepted transit (Q3, Q8); the keeper adds the value at
+  rest, which a reissue's quarantine and increment 7's `same_identity` and confirm-dead need. The
+  alternative, no keeper and staging deleted after the write, holds less but leaves increment 7
+  nothing to prove the old token dead against.
+- **Builds.** An infraops change (the two classes), then one orchestrator change: the two types,
+  the issue plan's validation, the reach and shape binds, the keeper command, and the `redeploy`
+  refusal. Each lane's registry rows land in two changes, as amendment 17's row did.
+- **Unchanged.** The Keychain instance, its adapter and its inbox; every existing plan and
+  generated package; the one click per rotation (amendment 16).
