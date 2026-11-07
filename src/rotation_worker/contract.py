@@ -200,10 +200,15 @@ class WritesVariables(Protocol):
 
 @runtime_checkable
 class ShapeVerified(Protocol):
-    """A provider whose new value is proved by its shape alone, never by a probe."""
+    """A provider whose new value must have its issued shape before anything probes it, so a
+    probe never sends a malformed value (a ping URL, ADR-0055 amendment 21)."""
 
     def shape_problem(self, new: Value) -> str | None:
         """Why `new` isn't the shape its provider issues, or `None`."""
+        ...
+
+    def lookup_note(self, new: Value) -> str:
+        """What verify_new files beside its probes to name what was looked up, never a value."""
         ...
 
 
@@ -642,19 +647,20 @@ def _host(run: UnitRun, step: Step) -> None:
 
 def _verify_new(run: UnitRun, step: Step) -> None:
     new, old = run.new_and_old()
-    if run.issue and isinstance(run.provider, ShapeVerified):
-        # The one exception to decision 3's R14 rule: a ping marks a Healthchecks check up, so a
-        # ping URL's issue is proved by its shape, with no probe and no control (ADR-0055
-        # amendment 19 item 5, Devon's D-30). Cut-over step 4 proves the URL.
+    note = None
+    if isinstance(run.provider, ShapeVerified):
+        # A ping URL is checked for its shape first, then probed by a read-only lookup of its
+        # check beside a random one's (ADR-0055 amendment 21, Devon's D-31): nothing pings it.
         problem = run.provider.shape_problem(new)
         if problem is not None:
             raise ContractError(problem)
-        note = "the shape check alone, with no probe (ADR-0055 amendment 19 item 5)"
-        run.record(step, StepEvidence(step.kind, fingerprints=_fingerprints(new, old), note=note))
-        return
+        note = run.provider.lookup_note(new)
     probes = run.probe(new, "new", "live")
     run.record(
-        step, StepEvidence(step.kind, fingerprints=_fingerprints(new, old), probes=tuple(probes))
+        step,
+        StepEvidence(
+            step.kind, fingerprints=_fingerprints(new, old), probes=tuple(probes), note=note
+        ),
     )
 
 

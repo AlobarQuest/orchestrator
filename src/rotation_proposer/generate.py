@@ -157,7 +157,7 @@ def acceptance(plan: Plan, overlap: bool = True, *, by_shape: bool = False) -> l
     """One criterion per machine step, in the plan's numbering.
 
     A type with no overlap states its host step as the replacement and restart it is; an issue
-    states that nothing was there before; a type proved by its shape says so at verify_new."""
+    states that nothing was there before; a type checked by its shape says so at verify_new."""
     conditions = {**_CONDITIONS, StepKind.HOST: _HOST_REPLACES} if not overlap else _CONDITIONS
     if plan.issue:
         conditions = {**conditions, **_ISSUE}

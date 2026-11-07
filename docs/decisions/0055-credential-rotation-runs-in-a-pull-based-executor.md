@@ -28,6 +28,8 @@
     inbox).
   - 2026-11-07, amendment 20 (a revision re-renders a generated package whose derived plan
     changed).
+  - 2026-11-07, amendment 21 (a ping URL is proved by a read-only lookup of its check beside a
+    random one's).
 - **Supersedes:** the parts of ADR-0054 named in "What this changes in ADR-0054".
 - **Relates to:** ADR-0054 (the SDS owns credential rotation), ADR-0052 (superseding an unworked
   decomposition), ADR-0039 (out-of-process producers), ADR-0011 (known-good patterns)
@@ -2255,7 +2257,9 @@ infraops-mcp-server `main` at `9cdaab1f`.
    rule, and `validate_plan` is unchanged for every rotation. Every other decision 3 invariant
    holds, with one exception: for a `healthchecks-ping-url` issue, `verify_new` is item 5's shape
    check, with no probe and no known-bad control. That departs from decision 3's R14 rule, and
-   Devon accepted it (2026-11-07, HQ D-30: "Yes"); item 5 states it. The issue plan runs only
+   Devon accepted it (2026-11-07, HQ D-30: "Yes"); item 5 states it. (Amendment 21 withdraws this
+   exception: a ping URL's `verify_new` is a read-only lookup of its check beside a refused
+   random one's, so R14 holds for every issue.) The issue plan runs only
    when the keeper holds exactly the inbox's empty marker (`EMPTY`, `inbox.py`, line 46), so
    "nothing to retire" is a fact the executor reads, not a declaration. A sibling of `adopt-keeper` creates
    that keeper on the VM, holding the marker, and prints its secret id, so the registry row names
@@ -2299,7 +2303,10 @@ infraops-mcp-server `main` at `9cdaab1f`.
    (ADR-0059 decision 3), and the Management key manages every check in the project. The issue
    plan's `verify_new` for a ping URL repeats this shape check and sends no ping; it departs from
    decision 3's R14 rule for ping URLs only (Devon, 2026-11-07, HQ D-30: "Yes"), and cut-over
-   step 4 is the proof.
+   step 4 is the proof. (Amendment 21 replaces the bind and the `verify_new` of this item: a ping
+   URL binds by its shape and by the read-only key finding its check by `unique_key` beside a
+   random UUID's that it refuses, still sending no ping, under Devon's D-31, which supersedes D-28
+   and D-30.)
 
    Cut-over step 4 proves the URL, not the `--add`. The `--add` runs the lane with
    `LANE_SCHEDULE_ENABLED=false`, and the launcher's `--dry-run` after it pings nothing (ADR-0059,
@@ -2452,7 +2459,8 @@ Each item is settled in ADR-0059 increment 2, before its code merges.
   key that identifies a check (D-28), so item 5 binds by shape alone, and cut-over step 4 proves
   the URL: the container's first scheduled pass pings the check, and step 4 verifies that the
   check's last ping came from the container (ADR-0059, "Cut-over for one lane", steps 3 and 4). A
-  wrong URL shows as the lane's check going overdue.
+  wrong URL shows as the lane's check going overdue. (Amendment 21 settles it: a read-only key
+  reads a check by its `unique_key`, which the executor derives from the pasted UUID.)
 - **The token's row at create (increment 2).** HQ's create of the first lane's resource confirms
   the empty `<LANE>_BWS_ACCESS_TOKEN` row by the executor's `PATCH` answering 2xx; a 404 means
   another actor must create the row, and the issue unit fails with `CoolifyRefused` rather than
@@ -2550,3 +2558,88 @@ token's first reissue. **Devon's answer (2026-11-07T21:31 UTC, HQ D-32): A.**
   (decision 3 here) and writes nothing, and an operator hand-revises it onto the derived plan.
 - **Unchanged.** The executor, the decomposer, `select_plan`, every existing generated package's
   bytes, and the ping URL's `verify_new` criterion and adapter.
+
+## Amendment 21 — A ping URL is proved by a read-only lookup of its check (2026-11-07)
+
+**Status: Accepted on merge.** It's accepted when the pull request that carries it merges after a
+clean Opus whole-branch review, the bar HQ set for this change.
+
+### Context
+
+Amendment 19 bound a ping URL by its shape alone and had its `verify_new` repeat that shape check,
+with no probe and no known-bad control (items 3 and 5). That rested on two answers: the VM gets no
+Healthchecks key that identifies a check (HQ D-28, "No Key"), and a ping URL's `verify_new` may
+depart from decision 3's R14 rule (HQ D-30, "Yes"). The read Amendment 19 left open ("Open before
+building", "The ping URL's check read") shows that the read-only key the executor already holds
+does identify a check, without ever being shown its UUID.
+
+Healthchecks `v4.4`, the self-hosted instance's image tag, reads at that tag as follows:
+
+- `hc/api/urls.py` line 51 routes `checks/<sha1:unique_key>` to `get_check_by_unique_key`, and the
+  `sha1` converter (`SHA1Converter`, line 21) matches 40 characters.
+- `get_check_by_unique_key` (`hc/api/views.py` lines 489-496) is `@authorize_read`, so a read-only
+  key may call it. It searches only the key's own project, and answers 404 for any other key.
+- `Check.unique_key` (`hc/api/models.py` lines 432-434) is
+  `hashlib.sha1(self.code.hex[:16].encode()).hexdigest()`: the SHA-1 hex digest of the first 16
+  characters of the check UUID's hex form, which has no hyphens.
+
+So the executor can derive a pasted URL's `unique_key` itself, and ask the read-only key whether
+that check exists, without sending anything to the URL.
+
+HQ put this to Devon as D-31 on 2026-11-07. **Devon's answer (2026-11-07, HQ D-31): C**, the
+read-only lookup beside a random UUID's lookup as the known-bad control, with the verifier
+deciding the step. D-31 supersedes D-28 and D-30.
+
+### Decision
+
+1. **A ping URL binds by its shape and by a read-only lookup of its check.** `bind` takes a pasted
+   ping URL for a `healthchecks-ping-url` issue only when the keeper holds the marker, the URL is
+   exactly the self-hosted instance's ping base followed by one UUID, and the read-only key's
+   lookup of a random UUID's `unique_key` answers 404 while the lookup of the URL's answers 200,
+   and no other keeper of its type holds it. A value that doesn't bind stays in the inbox with its
+   reason, as amendment 19 item 11 says.
+2. **A ping URL's `verify_new` is that lookup beside that control, and R14 holds with no
+   exception.** The contract checks the shape first, so nothing malformed is looked up, then runs
+   decision 3's probe: the control, then the subject, on one target. Lookup 200 with control 404
+   passes. A lookup answering 404 (a wrong URL, or a check in another project) fails the step. A
+   control answering anything but 404 fails it, because the probe then can't tell a good URL from
+   a bad one. Any other status, or no answer, fails it. No ping is sent: the probe reaches
+   Healthchecks' Management API, never the URL.
+3. **The verifier decides the step: one click per issue.** The step files the two probes on one
+   target, the control refused and the new value live, which `rotation_step_verdict` already
+   decides. The one click left is the package revision approval (amendment 16).
+4. **What is filed and logged.** The evidence names the check by the first 12 characters of its
+   `unique_key`, in the step's note, and records the two HTTP statuses. It never holds the URL, its
+   UUID, the whole `unique_key` or the key. The whole `unique_key` is 40 hex characters, and the
+   orchestrator's rotation evidence scan refuses any run of 32 or more (`rotation_evidence.py`,
+   `LONG_RUN`), so a prefix is the form that can be stored. Healthchecks shows a read-only key the
+   `unique_key` in place of the UUID, so neither it nor its prefix is a credential. A lookup with
+   no answer logs the same prefix and the transport error's type, as structured JSON on stdout.
+5. **The read-only key's reach widens by one read.** The executor reads the read-only key in
+   `Rotation / Healthchecks` while it reads a scheduled reader's check, and also while it binds or
+   verifies a ping URL. Its client permits the check listing and `GET /api/v3/checks/<unique_key>`
+   for a 40-character lowercase hex key, nothing else. No new secret, grant or rotation is needed.
+6. **No revoke.** A ping URL is still issued only, never rotated or revoked; this amendment adds no
+   revoke, and the issue package's authority keeps `credential_revoke` prohibited (Infra Brain rule
+   1032).
+
+### Verify at cut-over
+
+- **The `sds-execution-watch` check sits in the read-only key's project.** The lookup searches
+  only that project, so a check in any other answers 404 and the issue refuses, failing closed.
+  The first lane's ping-URL bind proves it; a refusal reading "finds no such check" for a URL
+  copied from the right check means the check is in another project.
+
+### Consequences
+
+- **Amendment 19 items 3 and 5 are narrowed**, not withdrawn: item 3's exception to R14 is gone,
+  and item 5's bind and `verify_new` are this amendment's. Item 5's other rules stand: the marker,
+  the shape and no other keeper holding the URL. Cut-over step 4 still proves that the lane's
+  container pings the check; it no longer stands in for `verify_new`.
+- **The generated issue package's wording is unchanged.** Its `verify_new` criterion states the
+  shape, that no other keeper holds the URL and that nothing pings it, all still true; the lookup
+  is in the evidence the verifier reads. Its bytes are pinned with intent-packages
+  (`rotation_package_issue_healthchecks-ping-url.json`), so a wording that names the lookup is a
+  change to both repositories together.
+- **Unchanged.** The issue plan, the lane token's types and binds, the verifier's code, every
+  generated package's bytes, and the one click per issue.

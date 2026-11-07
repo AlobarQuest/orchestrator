@@ -11,9 +11,12 @@ import contextlib
 import hashlib
 import io
 import json
+import logging
+import re
 import sys
 import textwrap
 import types
+import uuid
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -49,6 +52,7 @@ from rotation_worker.evidence import StepEvidence
 from rotation_worker.git_mirror import RepoMirror
 from rotation_worker.inbox import bind
 from rotation_worker.plans import candidates, derive, derive_issue, writes_hosted_service
+from rotation_worker.readers import CHECKS, HEALTHCHECKS_URL, Healthchecks, ReadError
 from rotation_worker.registry import RegistryEntry
 from rotation_worker.types import CLASS_TYPES, TYPES
 from rotation_worker.values import Value
@@ -74,7 +78,40 @@ PING_DESTINATIONS = (KEEPER_DESTINATION, 'provider name="healthchecks-ping-url"'
 NEW_TOKEN = Value("lane-token-placeholder-new")
 OLD_TOKEN = Value("lane-token-placeholder-old")
 PING_URL = Value(f"{ping.PING_BASE}00000000-0000-4000-8000-0000000000aa")
+# Its check's `unique_key`, worked by hand from Healthchecks `v4.4` `Check.unique_key`
+# (`hashlib.sha1(self.code.hex[:16].encode()).hexdigest()`): `code.hex[:16]` is
+# "0000000000004000", and `printf %s 0000000000004000 | shasum -a 1` gives this.
+PING_KEY = "07c99f22ce44ac16c776ebcecbb911799bcc675c"
+# Its first 16 hex characters differ from the URL's: a `unique_key` reads only those.
+CONTROL = uuid.UUID("ffffffff-0000-4000-8000-0000000000bb")
+HC_KEY = Value("hc-read-only-key-placeholder")
 M, H = Actor.MACHINE, Actor.HUMAN
+
+
+class HealthchecksStub:
+    """The self-hosted Healthchecks behind a mock transport: the URL's check answers `found`,
+    every other `unique_key` answers `control`, or every request raises `error`."""
+
+    def __init__(
+        self, found: int = 200, control: int = 404, error: Exception | None = None
+    ) -> None:
+        self.found, self.control, self.error = found, control, error
+        self.requests: list[httpx.Request] = []
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        if self.error is not None:
+            raise self.error
+        key = request.url.path.removeprefix(CHECKS)
+        return httpx.Response(self.found if key == PING_KEY else self.control, json={})
+
+    def client(self) -> Healthchecks:
+        return Healthchecks(lambda: HC_KEY, transport=httpx.MockTransport(self))
+
+
+def _ping(stub: HealthchecksStub | None = None) -> ping.HealthchecksPingUrlProvider:
+    healthchecks = (stub or HealthchecksStub()).client()
+    return ping.HealthchecksPingUrlProvider(healthchecks, random_uuid=lambda: CONTROL)
 
 
 def _row(**changes: Any) -> dict[str, Any]:
@@ -313,15 +350,19 @@ PING_PLAN = candidates(
 )[0]
 
 
-def test_a_ping_url_issue_stores_it_proves_its_shape_and_deletes_staging() -> None:
-    issue = Issue(ping.HealthchecksPingUrlProvider(), PING_DESTINATIONS, PING_URL)
+def test_a_ping_url_issue_stores_it_proves_its_check_and_deletes_staging() -> None:
+    issue = Issue(_ping(), PING_DESTINATIONS, PING_URL)
     issue.run(PING_PLAN)
     assert issue.keeper().same_as(PING_URL)
     assert issue.store.find(WORK, issue.rotation.quarantine_key) is None
     assert issue.store.find(WORK, issue.rotation.staging_key) is None
     assert issue.recorded.kinds() == ["verify_new", "store", "verify_consumers", "verify_consumers"]
     verify_new = issue.recorded.filed[0][1]
-    assert verify_new.probes == () and "amendment 19 item 5" in str(verify_new.note)
+    assert [(p.subject, p.http_status, p.outcome) for p in verify_new.probes] == [
+        ("known_bad", 404, "dead"),
+        ("new", 200, "live"),
+    ]
+    assert verify_new.note is not None and PING_KEY[:12] in verify_new.note
     assert "deleted staging" in str(issue.recorded.filed[-1][1].note)
     # The marker stands as the old value in every fingerprint pair.
     for _, evidence in issue.recorded.filed:
@@ -338,33 +379,35 @@ SCHEMA = json.loads(
 
 def test_every_issue_payload_conforms_to_the_orchestrator_s_schema() -> None:
     issues = [
-        (Issue(ping.HealthchecksPingUrlProvider(), PING_DESTINATIONS, PING_URL), PING_PLAN),
+        (Issue(_ping(), PING_DESTINATIONS, PING_URL), PING_PLAN),
         (Issue(_lane([]), LANE_DESTINATIONS, NEW_TOKEN), LANE_ISSUE),
     ]
     for issue, plan in issues:
         issue.run(plan)
         for _, evidence in issue.recorded.filed:
             jsonschema.validate(evidence.as_payload(), SCHEMA)
-            assert PING_URL.reveal() not in json.dumps(evidence.as_payload())
-            assert NEW_TOKEN.reveal() not in json.dumps(evidence.as_payload())
+            filed = json.dumps(evidence.as_payload())
+            assert PING_URL.reveal() not in filed and NEW_TOKEN.reveal() not in filed
+            assert PING_URL.reveal().removeprefix(ping.PING_BASE) not in filed
+            assert PING_KEY not in filed and HC_KEY.reveal() not in filed
 
 
 def test_a_ping_url_of_another_shape_is_never_stored() -> None:
     wrong = Value("https://hc-ping.com/00000000-0000-4000-8000-0000000000aa")
-    issue = Issue(ping.HealthchecksPingUrlProvider(), PING_DESTINATIONS, wrong)
+    issue = Issue(_ping(), PING_DESTINATIONS, wrong)
     with pytest.raises(ContractError, match="ping base"):
         issue.run(PING_PLAN)
     assert issue.keeper().reveal() == EMPTY
 
 
 def test_a_staged_value_equal_to_the_marker_is_refused() -> None:
-    issue = Issue(ping.HealthchecksPingUrlProvider(), PING_DESTINATIONS, Value(EMPTY))
+    issue = Issue(_ping(), PING_DESTINATIONS, Value(EMPTY))
     with pytest.raises(ContractError, match="equals the old"):
         issue.run(PING_PLAN)
 
 
 def test_a_retried_store_finding_the_staged_value_in_the_keeper_counts_as_done() -> None:
-    issue = Issue(ping.HealthchecksPingUrlProvider(), PING_DESTINATIONS, PING_URL)
+    issue = Issue(_ping(), PING_DESTINATIONS, PING_URL)
     issue.store.write(KEEPER, PING_URL)
     issue.run(PING_PLAN)
     store = issue.recorded.filed[1][1]
@@ -372,7 +415,7 @@ def test_a_retried_store_finding_the_staged_value_in_the_keeper_counts_as_done()
 
 
 def test_an_issue_store_on_a_keeper_holding_another_value_fails_and_writes_nothing() -> None:
-    issue = Issue(ping.HealthchecksPingUrlProvider(), PING_DESTINATIONS, PING_URL)
+    issue = Issue(_ping(), PING_DESTINATIONS, PING_URL)
     issue.store.write(KEEPER, Value("a-value-nobody-staged"))
     with pytest.raises(ContractError, match="neither the marker"):
         issue.run(PING_PLAN)
@@ -380,14 +423,14 @@ def test_an_issue_store_on_a_keeper_holding_another_value_fails_and_writes_nothi
 
 
 def test_an_issue_with_a_quarantine_is_refused() -> None:
-    issue = Issue(ping.HealthchecksPingUrlProvider(), PING_DESTINATIONS, PING_URL)
+    issue = Issue(_ping(), PING_DESTINATIONS, PING_URL)
     issue.store.create(WORK, issue.rotation.quarantine_key, Value("quarantined"))
     with pytest.raises(ContractError, match="quarantines nothing"):
         issue.run(PING_PLAN)
 
 
 def test_an_issue_store_quarantines_nothing() -> None:
-    issue = Issue(ping.HealthchecksPingUrlProvider(), PING_DESTINATIONS, PING_URL)
+    issue = Issue(_ping(), PING_DESTINATIONS, PING_URL)
     issue.run(PING_PLAN)
     assert all("quarantine" not in key for _, key, _ in issue.store.secrets.values())
 
@@ -573,7 +616,7 @@ def test_a_lane_token_another_keeper_holds_is_refused() -> None:
 
 
 def test_a_ping_url_binds_by_its_shape_to_a_keeper_holding_the_marker() -> None:
-    provider = ping.HealthchecksPingUrlProvider()
+    provider = _ping()
     assert _bind(provider, Value(EMPTY), PING_URL)[0] is None
     reason = _bind(provider, Value("an-issued-url"), PING_URL)[0]
     assert reason is not None and "only the marker" in reason
@@ -591,15 +634,125 @@ def test_a_ping_url_binds_by_its_shape_to_a_keeper_holding_the_marker() -> None:
     ],
 )
 def test_a_value_that_isn_t_a_self_hosted_ping_url_is_refused_without_naming_it(text: str) -> None:
-    reason = _bind(ping.HealthchecksPingUrlProvider(), Value(EMPTY), Value(text))[0]
+    reason = _bind(_ping(), Value(EMPTY), Value(text))[0]
     assert reason is not None and "ping base" in reason and text not in reason
 
 
 def test_nothing_ever_sends_a_ping_url_anything() -> None:
-    provider = ping.HealthchecksPingUrlProvider()
-    for call in (lambda: provider.probe(PING_URL), provider.known_bad, provider.mint):
+    """Kills: a probe that pings the URL, which would mark the check up."""
+    stub = HealthchecksStub()
+    issue = Issue(_ping(stub), PING_DESTINATIONS, PING_URL)
+    issue.run(PING_PLAN)
+    assert _bind(_ping(stub), Value(EMPTY), PING_URL)[0] is None
+    assert stub.requests
+    for request in stub.requests:
+        assert (request.method, request.url.host) == ("GET", "healthcheck.alobar.net")
+        assert request.url.path.startswith(CHECKS) and "/ping/" not in str(request.url)
+        assert request.headers["X-Api-Key"] == HC_KEY.reveal()
+    provider = _ping(stub)
+    for call in (provider.mint, lambda: provider.probe_before_revoke(PING_URL)):
         with pytest.raises(ContractError):
             call()
+
+
+def test_the_unique_key_is_healthchecks_own_derivation() -> None:
+    assert ping.unique_key(PING_URL) == PING_KEY
+    # Independently of the module: the hyphenless hex form's first 16 characters, SHA-1'd.
+    code = uuid.UUID(PING_URL.reveal().removeprefix(ping.PING_BASE))
+    assert hashlib.sha1(code.hex[:16].encode()).hexdigest() == PING_KEY
+    assert ping.unique_key(Value(f"{ping.PING_BASE}{CONTROL}")) != PING_KEY
+    # Only the first half counts: a UUID that differs only in its second half is the same check.
+    same_half = Value(f"{ping.PING_BASE}00000000-0000-4000-ffff-ffffffffffff")
+    assert ping.unique_key(same_half) == PING_KEY
+
+
+def test_the_lookup_and_its_control_are_one_target_on_the_listing_s_host() -> None:
+    stub = HealthchecksStub()
+    issue = Issue(_ping(stub), PING_DESTINATIONS, PING_URL)
+    issue.run(PING_PLAN)
+    assert [r.url.path for r in stub.requests] == [
+        CHECKS + ping.unique_key(Value(f"{ping.PING_BASE}{CONTROL}")),
+        CHECKS + PING_KEY,
+    ]
+    assert all(str(r.url).startswith(HEALTHCHECKS_URL) for r in stub.requests)
+    targets = {probe.target for probe in issue.recorded.filed[0][1].probes}
+    assert targets == {ping.HealthchecksPingUrlProvider.probe_target}
+
+
+@pytest.mark.parametrize(
+    ("stub", "reason"),
+    [
+        (HealthchecksStub(found=404), "probed dead (404)"),
+        (HealthchecksStub(control=200), "didn't refuse a known-bad value (200)"),
+        (HealthchecksStub(found=500), "probed indeterminate (500)"),
+        (HealthchecksStub(error=httpx.ConnectError("unreachable")), "known-bad value (None)"),
+    ],
+    ids=["no-such-check", "control-found", "server-error", "no-answer"],
+)
+def test_a_lookup_that_doesn_t_prove_the_check_fails_verify_new_and_stores_nothing(
+    stub: HealthchecksStub, reason: str
+) -> None:
+    issue = Issue(_ping(stub), PING_DESTINATIONS, PING_URL)
+    with pytest.raises(ContractError, match=re.escape(reason)):
+        issue.run(PING_PLAN)
+    assert issue.keeper().reveal() == EMPTY
+    assert issue.recorded.filed == []
+
+
+@pytest.mark.parametrize(
+    ("stub", "reason"),
+    [
+        (HealthchecksStub(found=404), "finds no such check"),
+        (HealthchecksStub(control=200), "a random UUID's check answered 200, not 404"),
+        (HealthchecksStub(found=500), "its check answered 500"),
+        (HealthchecksStub(error=httpx.ConnectError("unreachable")), "answered None, not 404"),
+    ],
+    ids=["no-such-check", "control-found", "server-error", "no-answer"],
+)
+def test_a_ping_url_whose_check_isn_t_proved_doesn_t_bind(
+    stub: HealthchecksStub, reason: str
+) -> None:
+    found, store, rotation = _bind(_ping(stub), Value(EMPTY), PING_URL)
+    assert found is not None and reason in found
+    assert PING_URL.reveal() not in found and PING_KEY not in found
+    assert store.find(WORK, rotation.staging_key) is None
+
+
+def test_a_ping_url_with_no_healthchecks_key_configured_is_refused() -> None:
+    provider = ping.HealthchecksPingUrlProvider(None)
+    with pytest.raises(ContractError, match="read-only Healthchecks key"):
+        provider.probe(PING_URL)
+    issue = Issue(provider, PING_DESTINATIONS, PING_URL)
+    with pytest.raises(ContractError, match="read-only Healthchecks key"):
+        issue.run(PING_PLAN)
+    assert issue.keeper().reveal() == EMPTY
+
+
+def test_a_lookup_with_no_answer_logs_the_check_by_its_key_s_start_only(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A test that ran alembic's `fileConfig` on this xdist worker disabled the existing loggers.
+    monkeypatch.setattr(logging.getLogger("rotation_worker"), "disabled", False)
+    stub = HealthchecksStub(error=httpx.ConnectError("unreachable"))
+    with caplog.at_level("WARNING", logger="rotation_worker"):
+        assert stub.client().check_status(PING_KEY) is None
+    (record,) = [r for r in caplog.records if r.getMessage() == "healthchecks_unanswered"]
+    assert vars(record)["check"] == PING_KEY[:12]
+    assert vars(record)["error_type"] == "ConnectError"
+    logged = json.dumps([vars(r) for r in caplog.records], default=str)
+    assert PING_KEY not in logged and HC_KEY.reveal() not in logged
+
+
+def test_the_client_looks_up_only_a_unique_key_shaped_path() -> None:
+    client = HealthchecksStub().client()
+    for bad in (
+        "../ping/x",
+        PING_KEY.upper(),
+        PING_KEY[:-1],
+        "00000000-0000-4000-8000-0000000000aa",
+    ):
+        with pytest.raises(ReadError):
+            client.check_status(bad)
 
 
 # ---- what `_REACH` lists for a lane's account ----------------------------------------------

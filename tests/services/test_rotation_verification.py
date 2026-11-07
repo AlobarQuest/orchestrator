@@ -250,9 +250,10 @@ def test_before_revoke_with_the_old_value_filed_refused_after_a_leak_stays_judgm
     assert _verdict("verify_consumers", _with("verify_consumers", note=note, probes=probes))
 
 
-def test_a_verify_new_proved_by_shape_alone_stays_judgment() -> None:
-    # A ping URL's issue (ADR-0055 amendment 19 item 5) files no probe: a person decides it.
-    note = "the shape check alone, with no probe (ADR-0055 amendment 19 item 5)"
+def test_a_verify_new_with_no_probe_stays_judgment() -> None:
+    # A shape check alone is no proof: a ping URL's verify_new files its lookup and its control
+    # (ADR-0055 amendment 21), and one that filed neither goes to a person.
+    note = "the read-only key looked up the check whose unique_key starts 07c99f22ce44"
     assert _verdict("verify_new", _with("verify_new", probes=[], note=note)) is not None
 
 
