@@ -8,14 +8,15 @@ package is rendered from them:
 * the **criteria** are the type's derived plan (`plans.derive`), one per machine step, numbered
   as the plan numbers them, with the evidence text `select_plan` and the verifier read. A step's
   unit is named only where its kind appears in more than one unit, as every authored package does.
-  A type with no rotation plan gets its issue plan (`plans.derive_issue`, ADR-0055 amendment 19),
-  whose criteria say nothing is quarantined, retired or proved dead;
+  A type that declares an issue plan (`plans.derive_issue`, ADR-0055 amendment 19) gets it for
+  a credential infraops has never recorded rotated (`last_rotated` null), and its rotation plan
+  for a reissue; an issue's criteria say nothing is quarantined, retired or proved dead;
 * the **reach** is `external_system`, plus `operator_machine` for a credential the Mac keeps and
   `live_estate` where a step writes a hosted service: a hosted type, or a Coolify setting among
   the destinations (a held copy distribute writes and restarts);
 * the **authority** allows reading and writing secrets, minting where the provider mints by
-  machine, revoking where it revokes by machine, and changing infrastructure wherever the reach
-  is `live_estate`, and prohibits the rest;
+  machine, revoking where it revokes by machine and the plan retires, and changing
+  infrastructure wherever the reach is `live_estate`, and prohibits the rest;
 * the **prose** is one template, naming the credential, its provider identity and its plan.
 
 Only a new package is generated. An authored package keeps its approved wording; the proposer
@@ -78,15 +79,17 @@ _CONDITIONS: Final[dict[StepKind, str]] = {
 # An issue has no old value (ADR-0055 amendment 19 item 3): the keeper held the empty marker.
 _ISSUE: Final[dict[StepKind, str]] = {
     StepKind.STORE: (
-        "The keeper held the empty marker and reads back the new value; nothing is quarantined."
+        "The executor read the empty marker in the keeper before writing it, and the keeper reads "
+        "back the new value; nothing is quarantined."
     ),
     StepKind.VERIFY_CONSUMERS: (
         "Every consumer the registry names holds the new value, and the staging secret is deleted."
     ),
 }
-# A type proved by its shape, never a probe (amendment 19 item 5).
+# A type proved by its shape, never a probe (amendment 19 items 5 and 3, HQ D-30): a ping URL.
 _BY_SHAPE: Final = (
-    "The new value has the shape its provider issues; nothing probes it, because a probe would act."
+    "The new value is exactly the self-hosted instance's ping base followed by one UUID, and no "
+    "other keeper of its type holds it; nothing pings it, because a ping marks the check up."
 )
 
 # A type whose provider keeps no old value alive (`Capabilities.overlap` false) replaces it at the
@@ -103,16 +106,38 @@ class GenerateError(RuntimeError):
     """The row names no type the SDS rotates, or a type whose plan can't be derived."""
 
 
-def plan_for(entry: RegistryEntry) -> tuple[str, Plan]:
-    """The adapter that rotates this row's credential, and the plan derived for it."""
+def plan_for(entry: RegistryEntry, *, first_issue: bool | None = None) -> tuple[str, Plan]:
+    """The adapter that rotates this row's credential, and the plan derived for it.
+
+    `first_issue` is whether infraops has never recorded the credential rotated (its
+    `last_rotated` is null), or `None` where infraops doesn't say. It chooses between a type's
+    two plans only for a type that declares an issue plan: the issue plan for a first issue, the
+    rotation plan for a reissue (ADR-0055 amendment 19 items 3 and 10). Every other type gets its
+    rotation plan whatever it is. A choice that can't be made raises; it never falls back."""
     credential_class = entry.credential.get("class")
     adapter_name = CLASS_TYPES.get(str(credential_class))
     if adapter_name is None:
         raise GenerateError(f"class {credential_class!r} is no type the SDS rotates")
     declared = TYPES[adapter_name]
-    # Its rotation plan, or its issue plan for a type that has no rotation plan.
     plans = candidates(declared.capabilities, entry.destinations, entry.keeper, declared.store_kind)
-    return adapter_name, plans[0]
+    if not declared.capabilities.issues:
+        return adapter_name, plans[0]
+    issue = next(plan for plan in plans if plan.issue)
+    rotation = next((plan for plan in plans if not plan.issue), None)
+    if first_issue is True:
+        return adapter_name, issue
+    if rotation is None:
+        if first_issue is False:
+            raise GenerateError(
+                f"{adapter_name} has no rotation plan, and infraops records the credential issued"
+            )
+        return adapter_name, issue  # Its one plan; an issue is all the type does.
+    if first_issue is None:
+        raise GenerateError(
+            f"{adapter_name} has an issue plan and a rotation plan, and infraops serves no "
+            "last_rotated to say which this is"
+        )
+    return adapter_name, rotation
 
 
 def acceptance(plan: Plan, overlap: bool = True, *, by_shape: bool = False) -> list[dict[str, str]]:
@@ -160,12 +185,16 @@ def reach(adapter_name: str, destinations: Sequence[str]) -> list[str]:
     ]
 
 
-def authority(adapter_name: str, destinations: Sequence[str]) -> dict[str, Any]:
+def authority(
+    adapter_name: str, destinations: Sequence[str], *, issue: bool = False
+) -> dict[str, Any]:
+    """What the package allows. An issue revokes nothing, so it never allows `credential_revoke`
+    (Infra Brain rule 1032)."""
     capabilities = TYPES[adapter_name].capabilities
     allowed = {"secret_read", "secret_write"}
     if capabilities.machine_mint:
         allowed.add("credential_create")
-    if capabilities.machine_revoke:
+    if capabilities.machine_revoke and not issue:
         allowed.add("credential_revoke")
     if writes_live_estate(adapter_name, destinations):
         allowed.add("infra_mutation")
@@ -177,12 +206,43 @@ def authority(adapter_name: str, destinations: Sequence[str]) -> dict[str, Any]:
     }
 
 
-def render(entry: RegistryEntry, occurrence: str, created_at: str) -> dict[str, Any]:
-    """Revision 1 of the standing package for this row's credential, as a draft."""
+def _risk(plan: Plan, overlap: bool) -> tuple[str, str]:
+    """The package's maximum impact and rollback: an issue revokes nothing, a type whose provider
+    keeps the old value alive overlaps, and one that doesn't replaces it at host."""
+    if plan.issue:
+        return (
+            "A destination holds no value it can use until the issue completes; nothing is "
+            "revoked, because no value was there before.",
+            "Nothing is revoked, so nothing needs restoring: until store the keeper holds the "
+            "empty marker, and after it recovery is forward, with a new value.",
+        )
+    if overlap:
+        return (
+            "A destination holds a value it can't use until the rotation completes or is "
+            "undone; the old value stays valid until it is revoked.",
+            "Before the revoke the old value stays valid and is quarantined; after it, the "
+            "recovery is forward: a new value and the rotation run again.",
+        )
+    return (
+        "The hosted service's dependents are unavailable while the service restarts on the new "
+        "value, and the old value stops working at that step." + _RESTART_HOUR,
+        "If the host step itself fails, the executor writes the old value back and restarts, "
+        "leaving the keeper unchanged. Once host finishes, recovery is forward: a new value and "
+        "the rotation run again.",
+    )
+
+
+def render(
+    entry: RegistryEntry, occurrence: str, created_at: str, *, first_issue: bool | None = None
+) -> dict[str, Any]:
+    """Revision 1 of the standing package for this row's credential, as a draft. `first_issue`
+    is `plan_for`'s."""
     credential_id = str(entry.credential["id"])
-    adapter_name, plan = plan_for(entry)
+    adapter_name, plan = plan_for(entry, first_issue=first_issue)
+    granted = authority(adapter_name, entry.destinations, issue=plan.issue)
     identity = str(entry.credential.get("provider_identity") or credential_id)
     overlap = TYPES[adapter_name].capabilities.overlap
+    max_impact, rollback = _risk(plan, overlap)
     units = [s.name for s in plan.segments if isinstance(s, UnitPlan)]
     acts = [s.name for s in plan.segments if isinstance(s, HumanAct)]
     person = (
@@ -282,11 +342,11 @@ def render(entry: RegistryEntry, occurrence: str, created_at: str) -> dict[str, 
             "other": [],
         },
         "acceptance": acceptance(plan, overlap, by_shape=TYPES[adapter_name].verify_by_shape),
-        "authority": authority(adapter_name, entry.destinations),
+        "authority": granted,
         "deliverables": {
             "artifacts": [
-                "A rotated credential in its keeper, and terminal work units carrying each step's "
-                "evidence."
+                f"{'An issued' if plan.issue else 'A rotated'} credential in its keeper, and "
+                "terminal work units carrying each step's evidence."
             ],
             "destination": "the production ledger",
             "recipient": OWNER,
@@ -305,7 +365,7 @@ def render(entry: RegistryEntry, occurrence: str, created_at: str) -> dict[str, 
                 "ADR-0055 amendment 15: plans derived from a type's capabilities (2026-10-27)."
             ],
             "required_people_systems": ["The rotation executor", "Devon"],
-            "required_capabilities": authority(adapter_name, entry.destinations)["allowed"],
+            "required_capabilities": granted["allowed"],
             "blocking_conditions": [
                 "The executor refuses a unit at its checks; the refusal names the reason."
             ],
@@ -315,22 +375,9 @@ def render(entry: RegistryEntry, occurrence: str, created_at: str) -> dict[str, 
                 "A contract refusal fails a unit partway; the executor resumes from its store on "
                 "a retry after a requeue."
             ],
-            "max_impact": (
-                "A destination holds a value it can't use until the rotation completes or is "
-                "undone; the old value stays valid until it is revoked."
-                if overlap
-                else "The hosted service's dependents are unavailable while the service restarts "
-                "on the new value, and the old value stops working at that step." + _RESTART_HOUR
-            ),
+            "max_impact": max_impact,
             "stop_conditions": ["A value appears anywhere it should not."],
-            "rollback": (
-                "Before the revoke the old value stays valid and is quarantined; after it, the "
-                "recovery is forward: a new value and the rotation run again."
-                if overlap
-                else "If the host step itself fails, the executor writes the old value back and "
-                "restarts, leaving the keeper unchanged. Once host finishes, recovery is forward: "
-                "a new value and the rotation run again."
-            ),
+            "rollback": rollback,
             "escalation_target": OWNER,
         },
         "verification": {

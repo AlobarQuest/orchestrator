@@ -21,7 +21,7 @@ from rotation_proposer.generate import (
     render,
 )
 from rotation_worker.adapters import ADAPTERS
-from rotation_worker.plans import select_plan
+from rotation_worker.plans import candidates, select_plan
 from rotation_worker.registry import RegistryEntry
 from rotation_worker.types import CLASS_TYPES, TYPES
 
@@ -64,13 +64,171 @@ def test_the_rendered_package_is_the_one_intent_packages_validates() -> None:
     assert text == FIXTURE.read_text(encoding="utf-8")
 
 
-@pytest.mark.parametrize("credential_class", sorted(CLASS_TYPES))
-def test_every_type_s_criteria_describe_its_derived_plan(credential_class: str) -> None:
+def _first_issues(credential_class: str) -> list[bool]:
+    """The `first_issue` values a type renders a package for: both for a type with an issue plan
+    and a rotation plan, only an issue for a type with no rotation plan, either for the rest."""
+    capabilities = TYPES[CLASS_TYPES[credential_class]].capabilities
+    return [True] if not capabilities.rotates else [True, False]
+
+
+@pytest.mark.parametrize(
+    ("credential_class", "first_issue"),
+    [(c, first) for c in sorted(CLASS_TYPES) for first in _first_issues(c)],
+)
+def test_every_type_s_criteria_describe_its_derived_plan(
+    credential_class: str, first_issue: bool
+) -> None:
     # The executor runs the plan an approved package's criteria describe (`select_plan`), so a
-    # generated package must describe the plan derived for its row, step for step.
+    # generated package must describe the plan derived for its row, step for step, and no other
+    # candidate the type runs.
     entry = _entry(credential_class)
-    _, plan = plan_for(entry)
-    assert select_plan((plan,), acceptance(plan)) is plan
+    _, plan = plan_for(entry, first_issue=first_issue)
+    declared = TYPES[CLASS_TYPES[credential_class]]
+    plans = candidates(declared.capabilities, entry.destinations, entry.keeper, declared.store_kind)
+    rendered = render(
+        entry, "2026-11-07-requested", "2026-11-07T12:00:00Z", first_issue=first_issue
+    )
+    assert select_plan(plans, rendered["acceptance"]) == plan
+    assert select_plan(tuple(reversed(plans)), rendered["acceptance"]) == plan
+
+
+# ---- an issue (ADR-0055 amendment 19) ----------------------------------------------------------
+
+LANE_SERVICE = "lanesvc0000000000000000"
+LANE_ROWS: dict[str, dict[str, Any]] = {
+    "bws-lane-token": {
+        "id": "example-lane-bws-token",
+        "class": "bws-lane-token",
+        "provider": "bws-lane-token",
+        "provider_identity": "Bitwarden Secrets Manager (machine account sds-lane-example)",
+        "bws_uuid": KEEPER_UUID,
+        "rotated_by_sds": True,
+        "consumer": [
+            {"kind": "bws-secret", "uuid": KEEPER_UUID},
+            {
+                "kind": "coolify-env",
+                "instance": "prod",
+                "resource_type": "service",
+                "uuid": LANE_SERVICE,
+                "key": "EXAMPLE_BWS_ACCESS_TOKEN",
+                "redeploy": False,
+            },
+        ],
+    },
+    "healthchecks-ping-url": {
+        "id": "example-lane-ping-url",
+        "class": "healthchecks-ping-url",
+        "provider": "healthchecks-ping-url",
+        "provider_identity": "Healthchecks (the example lane's check)",
+        "bws_uuid": KEEPER_UUID,
+        "rotated_by_sds": True,
+        "consumer": [{"kind": "bws-secret", "uuid": KEEPER_UUID}],
+    },
+}
+
+
+def _issue_fixture(credential_class: str) -> Path:
+    return FIXTURE.parent / f"rotation_package_issue_{credential_class}.json"
+
+
+def _lane_entry(credential_class: str) -> RegistryEntry:
+    return RegistryEntry("AlobarQuest/example-registry", "c" * 40, LANE_ROWS[credential_class])
+
+
+def _dumped(package: dict[str, Any]) -> str:
+    return json.dumps(package, indent=2, sort_keys=True) + "\n"
+
+
+@pytest.mark.parametrize("credential_class", sorted(LANE_ROWS))
+def test_a_first_issue_renders_its_fixture(credential_class: str) -> None:
+    rendered = render(
+        _lane_entry(credential_class),
+        "2026-11-07-requested",
+        "2026-11-07T12:00:00Z",
+        first_issue=True,
+    )
+    assert _dumped(rendered) == _issue_fixture(credential_class).read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("credential_class", sorted(LANE_ROWS))
+def test_an_issue_package_states_no_retire_and_no_revoke(credential_class: str) -> None:
+    """Kills: an issue package carrying a retire's criteria, prose or authority."""
+    rendered = json.loads(_issue_fixture(credential_class).read_text(encoding="utf-8"))
+    evidence = " ".join(c["evidence"] for c in rendered["acceptance"])
+    assert "retire_old" not in evidence and "confirm_dead" not in evidence
+    assert "credential_revoke" in rendered["authority"]["prohibited"]
+    assert "credential_revoke" not in rendered["dependencies"]["required_capabilities"]
+    prose = " ".join(
+        [
+            rendered["outcome"]["what"],
+            rendered["outcome"]["success_signal"],
+            rendered["risk"]["max_impact"],
+            rendered["risk"]["rollback"],
+        ]
+    )
+    for retire_word in ("proved dead", "is refused", "quarantined;", "stays valid"):
+        assert retire_word not in prose, retire_word
+    destinations = rendered["profile_fields"]["destinations"]
+    assert sum(d.startswith("provider ") for d in destinations) == 1
+
+
+def test_a_lane_token_s_issue_and_reissue_render_different_plans() -> None:
+    """A lane token's first issue renders the issue plan, and a reissue the rotation plan, each
+    of which `select_plan` picks over the other (amendment 19 items 3 and 10)."""
+    entry = _lane_entry("bws-lane-token")
+    issue = render(entry, "2026-11-07-requested", "2026-11-07T12:00:00Z", first_issue=True)
+    reissue = render(entry, "2026-12-01-requested", "2026-12-01T12:00:00Z", first_issue=False)
+    issue_steps = [c["evidence"].split(" step's")[0] for c in issue["acceptance"]]
+    reissue_steps = [c["evidence"].split(" step's")[0] for c in reissue["acceptance"]]
+    assert issue_steps == [
+        "external: the verify_new",
+        "external: the store",
+        "external: the distribute",
+        "external: the verify_consumers",
+    ]
+    assert reissue_steps == [
+        "external: the verify_new",
+        "external: the store",
+        "external: the distribute",
+        "external: the verify_consumers",
+        "external: the confirm_dead",
+    ]
+    assert "proved dead" in reissue["outcome"]["what"]
+    assert "proved dead" not in issue["outcome"]["what"]
+    # A person revokes a lane token, so neither package lets the executor revoke.
+    assert "credential_revoke" in reissue["authority"]["prohibited"]
+
+
+def test_a_lane_token_whose_history_infraops_doesn_t_serve_generates_nothing() -> None:
+    """Kills: a fallback to either plan when infraops can't say whether this is a first issue."""
+    with pytest.raises(GenerateError, match="serves no last_rotated"):
+        plan_for(_lane_entry("bws-lane-token"))
+
+
+def test_a_ping_url_infraops_records_issued_generates_nothing() -> None:
+    """A ping URL has no rotation plan: it is replaced only by recreating its check."""
+    with pytest.raises(GenerateError, match="no rotation plan"):
+        plan_for(_lane_entry("healthchecks-ping-url"), first_issue=False)
+    _, plan = plan_for(_lane_entry("healthchecks-ping-url"))
+    assert plan.issue
+
+
+def test_the_issue_signal_never_moves_a_type_with_no_issue_plan() -> None:
+    """Kills: `last_rotated` null giving an existing type anything but its rotation plan."""
+    for credential_class, adapter in CLASS_TYPES.items():
+        if TYPES[adapter].capabilities.issues:
+            continue
+        entry = _entry(credential_class)
+        rendered = {
+            first: render(entry, "2026-10-29-requested", "2026-10-29T12:00:00Z", first_issue=first)
+            for first in (None, True, False)
+        }
+        assert rendered[None] == rendered[True] == rendered[False], credential_class
+
+
+def test_an_issue_allows_no_revoke_even_where_the_provider_revokes() -> None:
+    assert "credential_revoke" in authority("openrouter", [])["allowed"]
+    assert "credential_revoke" in authority("openrouter", [], issue=True)["prohibited"]
 
 
 def test_a_step_names_its_unit_only_where_its_kind_repeats() -> None:
@@ -184,3 +342,17 @@ def test_existing_generated_packages_are_unchanged() -> None:
         entry = _entry(credential_class)
         rendered = render(entry, "2026-10-29-requested", "2026-10-29T12:00:00Z")
         assert rendered == package, credential_class
+
+
+def test_every_generated_fixture_renders_byte_identical() -> None:
+    """Every generated package fixture, re-rendered at the base's inputs, is the same bytes:
+    an issue changes no package it doesn't issue."""
+    before = BEFORE_OVERLAP.read_text(encoding="utf-8")
+    expected = json.loads(before)
+    rendered = {
+        credential_class: render(
+            _entry(credential_class), "2026-10-29-requested", "2026-10-29T12:00:00Z"
+        )
+        for credential_class in expected
+    }
+    assert json.dumps(rendered, indent=2, sort_keys=True) + "\n" == before

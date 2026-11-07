@@ -15,6 +15,7 @@ from dataclasses import dataclass, field, replace
 
 import httpx
 import pytest
+import yaml
 
 from bump_proposer import standing as shared
 from bump_proposer.change_manager import ChangeManagerClient
@@ -768,6 +769,54 @@ def test_a_dry_run_says_it_would_generate_and_writes_nothing(rig, capsys) -> Non
     assert rig.acts() == ([], 0, 0, 0)
     assert not (rig.root / "packages" / f"rotation-{GENERATED}").exists()
     assert "would-generate" in capsys.readouterr().out
+
+
+LANE = "example-lane-bws-token"
+LANE_DESTINATIONS = [
+    'bws-secret uuid="11111111-1111-4111-8111-111111111111"',
+    'provider name="bws-lane-token"',
+]
+
+
+def _generated_lane(rig, served: dict[str, str | None] | None) -> dict | None:
+    rig.due = [Due(LANE, "bws-lane-token", "requested", "2026-11-07", "2026-11-07", True)]
+    rig.classes[LANE] = "bws-lane-token"
+    rig.registry = list(LANE_DESTINATIONS)
+    rig.last_rotated = served
+    run(["--submit"])
+    package = rig.root / "packages" / f"rotation-{LANE}" / "package.yaml"
+    return yaml.safe_load(package.read_text()) if package.exists() else None
+
+
+def _steps(package: dict) -> list[str]:
+    return [c["evidence"].split(" step's")[0].rsplit(" ", 1)[-1] for c in package["acceptance"]]
+
+
+def test_a_lane_token_infraops_never_recorded_rotated_is_generated_as_an_issue(rig) -> None:
+    """ADR-0055 amendment 19 item 3: `last_rotated` null is a first issue."""
+    package = _generated_lane(rig, {CREDENTIAL: "2025-01-02", LANE: None})
+    assert package is not None
+    assert _steps(package) == ["verify_new", "store", "verify_consumers"]
+    assert "proved dead" not in package["outcome"]["what"]
+
+
+def test_a_lane_token_infraops_records_rotated_is_generated_as_a_reissue(rig) -> None:
+    """Amendment 19 item 10: once `_record_retired` dates the issue, a reissue is the full plan."""
+    package = _generated_lane(rig, {CREDENTIAL: "2025-01-02", LANE: "2026-11-08T00:00:00.000Z"})
+    assert package is not None
+    assert _steps(package) == ["verify_new", "store", "verify_consumers", "confirm_dead"]
+    assert "proved dead" in package["outcome"]["what"]
+
+
+@pytest.mark.parametrize("served", [None, {CREDENTIAL: "2025-01-02"}])
+def test_a_lane_token_whose_history_infraops_doesn_t_serve_is_a_finding(
+    rig, capsys, served
+) -> None:
+    """Kills: generating either plan when infraops can't say whether the token was ever issued."""
+    assert _generated_lane(rig, served) is None
+    out = capsys.readouterr().out
+    assert "unlaned" in out and "serves no last_rotated" in out
+    assert rig.acts() == ([], 0, 0, 0)
 
 
 def test_generation_refuses_an_unpublishable_checkout_before_writing_anything(

@@ -178,7 +178,9 @@ changes the exit code.
   and proposes nothing for it; a finished rotation still records, and stranded records are still
   reported. Grant it with a member proposal (`docs/operations/membership.md`), or clear the flag.
 - **`unlaned`** (a finding): the registry hands the credential to the SDS, but no standing package exists and none can be generated: its registry `class`
-  names no type the SDS rotates (`rotation_worker.types.CLASS_TYPES`).
+  names no type the SDS rotates (`rotation_worker.types.CLASS_TYPES`), or its type has an issue
+  plan and a rotation plan and infraops serves no `last_rotated` for it, or its type has only an
+  issue plan and infraops records it issued.
 
 Every finding carries `rotated_by_sds` from infraops' `cred-findings`. A finding without it (an
 infraops older than the handover) stops the whole pass with exit 2.
@@ -192,6 +194,12 @@ type's capabilities and the row:
 
 - **Criteria:** one per machine step of the derived plan (`plans.derive`), numbered as the plan
   numbers them, with the evidence text the executor's `select_plan` and the verifier read.
+- **Issue or rotation:** a type that declares an issue plan (`bws-lane-token`,
+  `healthchecks-ping-url`; ADR-0055 amendment 19) gets it when infraops' `last_rotated` for the
+  credential is null, and its rotation plan when it holds a date. `_record_retired` writes that
+  date once `work-watcher` retires the issue's record. Every other type gets its rotation plan
+  whatever `last_rotated` says. An issue package states no retire and allows no
+  `credential_revoke`.
 - **Reach:** `external_system`, plus `operator_machine` for a credential the Mac keeps and
   `live_estate` for a hosted service.
 - **Authority:** reading and writing secrets, minting and revoking where the provider does them

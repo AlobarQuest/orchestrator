@@ -380,10 +380,24 @@ def _generate(
     due: Due,
     observer: OrchestratorClient | None,
     root: Path,
+    last_rotated: dict[str, str | None] | None,
 ) -> Outcome:
-    """Revision 1 of a missing package, generated from the registry row, to review."""
+    """Revision 1 of a missing package, generated from the registry row, to review.
+
+    infraops' `last_rotated` tells a first issue from a reissue (ADR-0055 amendment 19): null is
+    a credential never recorded rotated, and `_record_retired` dates it once an issue's record is
+    retired. Absent, from an infraops predating the field or one that omits the row, it says
+    nothing, and a type with both plans is then a finding (`plan_for`)."""
+    first_issue = None
+    if last_rotated is not None and due.credential_id in last_rotated:
+        first_issue = last_rotated[due.credential_id] is None
     try:
-        rendered = render(entry, due.occurrence, datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"))
+        rendered = render(
+            entry,
+            due.occurrence,
+            datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            first_issue=first_issue,
+        )
     except GenerateError as error:
         return Outcome(
             due.credential_id,
@@ -636,6 +650,7 @@ def _pass(
     registry: Callable[[], dict[str, RegistryEntry]],
     *,
     granted: Callable[[], set[str]] | None,
+    last_rotated: dict[str, str | None] | None,
 ) -> list[Outcome]:
     outcomes: list[Outcome] = []
     for item in due:
@@ -647,7 +662,7 @@ def _pass(
             entry = _entry(registry, item.credential_id)
             if package is None:
                 refusal = _ungranted(item, entry.repository, granted)
-                outcomes.append(refusal or _generate(entry, item, observer, root))
+                outcomes.append(refusal or _generate(entry, item, observer, root, last_rotated))
                 continue
             outcomes.extend(_act(package, item, entry, client, observer, records, root, granted))
         except MembersUnreadable as error:
@@ -794,6 +809,7 @@ def _walks(
         inputs.root,
         registry,
         granted=granted,
+        last_rotated=inputs.last_rotated,
     )
     if reader is None:
         return outcomes

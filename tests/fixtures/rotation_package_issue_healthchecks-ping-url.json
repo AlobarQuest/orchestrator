@@ -1,0 +1,173 @@
+{
+  "acceptance": [
+    {
+      "approver": "devon",
+      "condition": "The new value is exactly the self-hosted instance's ping base followed by one UUID, and no other keeper of its type holds it; nothing pings it, because a ping marks the check up.",
+      "evidence": "external: the verify_new step's rotation-step/1 evidence, filed by the rotation executor.",
+      "evidence_type": "external_attestation",
+      "id": "AC-001"
+    },
+    {
+      "approver": "devon",
+      "condition": "The executor read the empty marker in the keeper before writing it, and the keeper reads back the new value; nothing is quarantined.",
+      "evidence": "external: the store step's rotation-step/1 evidence, filed by the rotation executor.",
+      "evidence_type": "external_attestation",
+      "id": "AC-002"
+    },
+    {
+      "approver": "devon",
+      "condition": "Every consumer the registry names holds the new value, and the staging secret is deleted.",
+      "evidence": "external: the verify_consumers step's rotation-step/1 evidence, filed by the rotation executor.",
+      "evidence_type": "external_attestation",
+      "id": "AC-003"
+    }
+  ],
+  "applicable_standards": {
+    "project": "1.0",
+    "security": "1.0"
+  },
+  "authority": {
+    "allowed": [
+      "secret_read",
+      "secret_write"
+    ],
+    "budgets": {
+      "max_attempts": 3,
+      "max_llm_calls": null
+    },
+    "prohibited": [
+      "credential_create",
+      "credential_revoke",
+      "repository_write",
+      "infra_mutation",
+      "outward_publish",
+      "email_send"
+    ],
+    "requires_approval": []
+  },
+  "constraints": {
+    "compatibility": null,
+    "operational": null,
+    "other": [],
+    "policy_legal": null,
+    "privacy_security": "No value appears in a transcript, a tool argument, a process argument, a log or evidence. Values are identified by sha256 prefix and length only.",
+    "quality_accessibility": null,
+    "technology": "The rotation executor at the orchestrator revision installed.",
+    "time_budget": "Each unit at the executor's next pass once its waits clear."
+  },
+  "created_at": "2026-11-07T12:00:00Z",
+  "created_by": "rotation-proposer",
+  "deliverables": {
+    "artifacts": [
+      "An issued credential in its keeper, and terminal work units carrying each step's evidence."
+    ],
+    "definition_of_done": "Every unit is completed and every acceptance criterion carries evidence and an adjudication, and infraops reports no rotation finding for example-lane-ping-url.",
+    "destination": "the production ledger",
+    "operator_responsibilities": [
+      "Devon approves this revision and the change record, and performs each act the executor announces."
+    ],
+    "recipient": "devon"
+  },
+  "dependencies": {
+    "blocking_conditions": [
+      "The executor refuses a unit at its checks; the refusal names the reason."
+    ],
+    "external_decisions": [
+      "ADR-0055 amendment 15: plans derived from a type's capabilities (2026-10-27)."
+    ],
+    "predecessor_packages": [],
+    "required_capabilities": [
+      "secret_read",
+      "secret_write"
+    ],
+    "required_people_systems": [
+      "The rotation executor",
+      "Devon"
+    ]
+  },
+  "follow_up": {
+    "owner": "devon",
+    "required": false,
+    "revisit_when": "The next rotation of example-lane-ping-url, which arrives as a new revision.",
+    "signals": []
+  },
+  "outcome": {
+    "beneficiary": "Devon, whose credentials the SDS rotates.",
+    "success_signal": "Every unit completes, the keeper holds a value different from the one it started with and infraops reports no rotation finding for example-lane-ping-url.",
+    "what": "example-lane-ping-url (Healthchecks (the example lane's check)) is issued: its keeper and every destination the registry names hold the new value.",
+    "why": "The credential is due for rotation (2026-11-07-requested), and the registry hands its rotation to the SDS."
+  },
+  "owner": "devon",
+  "package_id": "rotation-example-lane-ping-url",
+  "profile": "non-software-operational",
+  "profile_fields": {
+    "credential_id": "example-lane-ping-url",
+    "destinations": [
+      "bws-secret uuid=\"11111111-1111-4111-8111-111111111111\"",
+      "provider name=\"healthchecks-ping-url\""
+    ],
+    "external_systems": [
+      "Healthchecks (the example lane's check), the credential's provider"
+    ],
+    "occurrence": "2026-11-07-requested",
+    "operating_procedure": "The rotation executor (orchestrator src/rotation_worker/) works this rotation with its healthchecks-ping-url adapter and the plan derived from the type's capabilities and this credential's registry row: units store. A person's acts, each announced by an alert and observed by the executor: mint. Evidence carries fingerprints, probe status codes and notes only.",
+    "owner": "devon",
+    "standing": true
+  },
+  "reach": [
+    "external_system"
+  ],
+  "revision": 1,
+  "risk": {
+    "escalation_target": "devon",
+    "failure_modes": [
+      "A contract refusal fails a unit partway; the executor resumes from its store on a retry after a requeue."
+    ],
+    "max_impact": "A destination holds no value it can use until the issue completes; nothing is revoked, because no value was there before.",
+    "rollback": "Nothing is revoked, so nothing needs restoring: until store the keeper holds the empty marker, and after it recovery is forward, with a new value.",
+    "stop_conditions": [
+      "A value appears anywhere it should not."
+    ]
+  },
+  "schema_version": 1,
+  "scope": {
+    "assumptions": [
+      "The executor instance that keeps this credential runs the healthchecks-ping-url adapter at a revision with derived plans (ADR-0055 amendment 15)."
+    ],
+    "excluded": [
+      "Every other credential, each rotated by its own package."
+    ],
+    "included": [
+      "The healthchecks-ping-url plan's units, worked by the rotation executor."
+    ],
+    "non_goals": [
+      "Changing what the credential can reach."
+    ],
+    "open_questions": []
+  },
+  "sources": [
+    {
+      "authority_level": "authoritative",
+      "location": "orchestrator docs/decisions/0055-credential-rotation-runs-in-a-pull-based-executor.md, amendment 15 (one mechanism, a declaration per type).",
+      "required_version": "2026-10-28",
+      "sensitivity": "internal",
+      "trust": "trusted_instruction"
+    },
+    {
+      "authority_level": "authoritative",
+      "location": "AlobarQuest/example-registry .cred-consumers.toml, credential example-lane-ping-url: its keeper and every destination.",
+      "required_version": "2026-11-07",
+      "sensitivity": "internal",
+      "trust": "trusted_instruction"
+    }
+  ],
+  "status": "draft",
+  "supersedes": null,
+  "title": "Standing rotation of example-lane-ping-url",
+  "verification": {
+    "independent_review": [
+      "The rotation verifier decides each criterion from the executor's step evidence."
+    ],
+    "non_mechanical": []
+  }
+}
