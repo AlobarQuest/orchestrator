@@ -462,6 +462,35 @@ def test_add_refuses_a_compose_that_maps_no_lane_token(lanes: Lanes) -> None:
     assert "BWS_ACCESS_TOKEN" in lanes.runs("execution-watch")[-1].reason
 
 
+@pytest.mark.parametrize("source", ["./state", "/srv/state", "${STATE_VOLUME}"])
+def test_add_refuses_a_state_mount_that_isnt_a_named_volume(lanes: Lanes, source: str) -> None:
+    edited = WATCH_COMPOSE.replace("- sds-lanes-execution-watch-state:", f"- {source}:")
+    sha = _commit(lanes.work, {"lanes/execution-watch/compose.yaml": edited}, "a bind mount")
+    _git(lanes.work, "push", "-q", "origin", "main")
+    lanes.served = lanes.later = sha
+    assert lanes.add("execution-watch", sha) == EXIT_REFUSED
+    assert "no named volume" in lanes.runs("execution-watch")[-1].reason
+
+
+def test_a_refused_change_keeps_the_waiting_runs_deadline(lanes: Lanes) -> None:
+    lanes.added_watch()
+    lanes.served, lanes.now = lanes.following, LANDING + timedelta(days=1)
+    assert lanes.prepare_tag("execution-watch", lanes.following) == EXIT_CONDITION
+    waiting = lanes.runs("execution-watch")[-1]
+    lanes.checks = []  # the next change's slot read refuses
+    lanes.now += timedelta(hours=1)
+    schedule = ("--schedule", "true", "--running-schedule", "false")
+    volume = ("--running-volume", WATCH_VOLUME)
+    assert lanes.main("lanes-prepare", "--lane", "execution-watch", *schedule, *volume) == (
+        EXIT_REFUSED
+    )
+    by_id = {r.run_id: r for r in lanes.runs("execution-watch")}
+    assert by_id[waiting.run_id].status == "superseded"
+    newest = lanes.runs("execution-watch")[-1]
+    assert (newest.change_key, newest.status) == ("schedule:true", "waiting")
+    assert datetime.fromisoformat(newest.deadline) == lanes.now + timedelta(hours=6)
+
+
 def test_add_refuses_a_tag_production_doesnt_serve(lanes: Lanes) -> None:
     lanes.served = lanes.later
     assert lanes.add("placeholder", lanes.added) == EXIT_REFUSED
@@ -517,6 +546,8 @@ def test_finish_checks_the_digest_the_schedule_and_the_volume(
         f"{WATCH_UUID}_{WATCH_UUID}_sds-lanes-execution-watch-state",
         f"{WATCH_UUID}_sds-lanes-execution-watch-state_sds-lanes-execution-watch-state",
         f"{WATCH_UUID}_sds-lanes-other-state",
+        "sds-lanes-execution-watch-state",
+        "otheruuid000000000000000_sds-lanes-execution-watch-state",
     ],
 )
 def test_an_added_lanes_double_prefixed_volume_refuses(lanes: Lanes, volume: str) -> None:

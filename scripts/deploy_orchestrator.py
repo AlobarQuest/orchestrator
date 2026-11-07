@@ -895,6 +895,7 @@ def _finish(args: argparse.Namespace, world: World) -> dict[str, Any]:
             "binder must match the served image"
         )
     # Read before the binder, so a registry that can't be read stops `finish` before it binds.
+    _git(world, "fetch", "-q", "origin")
     follow = lanes_to_follow(world)
     wait_for_revision(world, state)
     ready = require_ready(world)
@@ -969,9 +970,9 @@ LANE_CHECKS: dict[str, str] = {
     "unit-verifier": "sds-unit-verifier",
     "work-carrier": "sds-work-carrier",
 }
-LANES = frozenset({*LANE_CHECKS, PLACEHOLDER})  # not-a-vocabulary: argument validation only
+LANES = frozenset({*LANE_CHECKS, PLACEHOLDER})
 # The eleven lanes whose state volume `lanes-finish` checks (decision 1, "Lane state").
-STATEFUL_LANES = frozenset(  # not-a-vocabulary: the volume check's scope only
+STATEFUL_LANES = frozenset(
     {
         "bump-driver",
         "bump-proposer",
@@ -1132,9 +1133,7 @@ def _save_run(world: World, run: LaneRun) -> None:
     os.replace(temporary, directory / f"{run.run_id}.json")
 
 
-def _new_run(
-    world: World, lane: str, change: Change, status: str, runs: list[LaneRun]
-) -> LaneRun:
+def _new_run(world: World, lane: str, change: Change, status: str, runs: list[LaneRun]) -> LaneRun:
     now = world.now()
     run_id = f"{now.astimezone(UTC):%Y%m%dT%H%M%S%fZ}-{change.kind}-{uuid_module.uuid4().hex[:8]}"
     return LaneRun(
@@ -1321,12 +1320,15 @@ def _state_volume(service: dict[str, Any], lane: str) -> str | None:
     """The named volume the lane's service mounts at its state directory, or None."""
     target = LANE_STATE_MOUNT.format(lane=lane)
     for entry in service.get("volumes") or []:
+        source = None
         if isinstance(entry, str):
-            source, _, rest = entry.partition(":")
-            if rest.split(":")[0] == target:
-                return source
+            named, _, rest = entry.partition(":")
+            source = named if rest.split(":")[0] == target else None
         elif isinstance(entry, dict) and entry.get("target") == target:
-            return str(entry.get("source", "")) or None
+            source = str(entry.get("source", ""))
+        # A bind mount (`./x`, `/x`) or an interpolated source is no named volume.
+        if source is not None:
+            return source if VOLUME_NAME.match(source) else None
     return None
 
 
@@ -1442,9 +1444,9 @@ def _plan_change(
         )
     if change.tag == last.tag:
         raise Refused(f"lane {lane} already runs {change.tag}")
-    require_descendant(world, added.commit, change.commit)
     run.schedule = last.schedule
-    _take_served_tag(world, change, run)
+    _take_served_tag(world, change, run)  # fetches first, so the descendant check sees the tag
+    require_descendant(world, added.commit, run.commit)
 
 
 def _plan(world: World, args: argparse.Namespace, run: LaneRun, runs: list[LaneRun]) -> None:
@@ -1658,6 +1660,8 @@ def _lanes_prepare(args: argparse.Namespace, world: World) -> dict[str, Any]:
                 deadline=resumed.deadline,
                 sequence=resumed.sequence,
             )
+        # Saved before anything it supersedes, so no later refusal loses a recorded deadline.
+        _save_run(world, run)
         for other in runs:
             if other.status == WAITING and other.run_id != run.run_id:
                 other.status, other.reason = SUPERSEDED, f"superseded by run {run.run_id}"
@@ -1709,11 +1713,11 @@ def volume_refusal(run: LaneRun, observed: str) -> str | None:
         if observed == run.volume:
             return None
         return f"it mounts {observed!r}, not the recorded volume {run.volume!r}"
-    slug = run.volume_slug
-    named = observed == slug or observed.endswith(f"_{slug}")
-    if named and observed.count(slug) == 1 and observed.count(run.resource_uuid) <= 1:
+    # Coolify names a compose volume `<resource uuid>_<name>` (the verify report's item 2).
+    expected = f"{run.resource_uuid}_{run.volume_slug}"
+    if observed == expected:
         return None
-    return f"it mounts {observed!r}, which isn't the resource's one {slug!r} volume"
+    return f"it mounts {observed!r}, not the resource's new volume {expected!r}"
 
 
 def finish_mismatches(args: argparse.Namespace, run: LaneRun) -> list[str]:
