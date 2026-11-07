@@ -24,7 +24,7 @@
   - 2026-10-29, amendment 16 (one click per rotation: the revision approval).
   - 2026-10-30, amendment 17 (a type with no overlap; the VPS helper as the executor's reach).
   - 2026-11-01, amendment 18 (the rotation layer's outcomes; the 04:00 window retires).
-  - 2026-11-07, amendment 19, proposed (the VM executor issues lane tokens and ping URLs from its
+  - 2026-11-07, amendment 19, accepted (the VM executor issues lane tokens and ping URLs from its
     inbox).
 - **Supersedes:** the parts of ADR-0054 named in "What this changes in ADR-0054".
 - **Relates to:** ADR-0054 (the SDS owns credential rotation), ADR-0052 (superseding an unworked
@@ -2184,8 +2184,9 @@ resolve.
 
 ## Amendment 19 — The VM executor issues lane tokens and ping URLs from its inbox (2026-11-07)
 
-**Status: Proposed.** ADR-0059 increment 2 waits on it (ADR-0059, "Increments", item 2, and
-"Dependencies", ADR-0055).
+**Status: Accepted (2026-11-07).** It met HQ's bar, under HQ's standing answer of 2026-11-06
+(limit 3): a clean Opus whole-branch review of PR #626 at `f17ee687` and of PR #PRNUM, which accepts it.
+ADR-0059 increment 2 waits on it (ADR-0059, "Increments", item 2, and "Dependencies", ADR-0055).
 
 ADR-0059 moves the scheduled lanes off the Mac, one BWS identity per lane, each lane its own
 Coolify compose resource, `sds-lane-<lane>` (ADR-0059 Amendment 1). Devon decided that the VM

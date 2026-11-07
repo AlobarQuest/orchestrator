@@ -940,9 +940,9 @@ Healthchecks before it relies on it. A fact it can't confirm stops the increment
    1's "Adding a lane creates its resource". The placeholder has no token to revoke and no registry
    entry to remove. It also writes the ADR-0055 amendment that lifts decision 4 for lane tokens and
    ping URLs, so the VM executor writes each from its inbox (Q8 for lane tokens, Q10 for ping URLs).
-   That amendment is ADR-0055 amendment 19 (proposed, merged at `d485d051`), which Amendment 2
-   follows here. As built, the inbox won't bind a first lane token or a ping URL: `bind` in
-   `rotation_worker/inbox.py` binds a value only to a rotation that waits on a person's mint, and
+   That amendment is ADR-0055 amendment 19 (merged at `d485d051`, accepted in PR #PRNUM), which
+   Amendment 2 follows here. As built, the inbox won't bind a first lane token or a ping URL: `bind`
+   in `rotation_worker/inbox.py` binds a value only to a rotation that waits on a person's mint, and
    only when `same_identity` finds it for the same account as an old value that still answers, and
    neither has an old value. So the amendment extends the executor, and increment 2 waits on it.
    Verify before increment 2, in `rotation_worker` and on the VM instance:
@@ -1405,8 +1405,8 @@ interactive session on the Mac reads it through the broad account, as with the i
   for ping URLs), each into that lane's own resource, `sds-lane-<lane>` (Amendment 1). Increment
   7's moves the VM executor to the VPS, where it carries out each lane token's rotation between
   Devon's mint and his revoke (Q3). Each takes the next free amendment number when it's written.
-  Increment 2's is ADR-0055 amendment 19 (proposed, merged at `d485d051`), which Amendment 2
-  follows; increment 7's takes the next free number after it.
+  Increment 2's is ADR-0055 amendment 19 (merged at `d485d051`, accepted in PR #PRNUM), which
+  Amendment 2 follows; increment 7's takes the next free number after it.
 
 ## Devon's decisions
 
@@ -1703,8 +1703,8 @@ ADR-0055; Q8 and Q11.
 - **Status:** Accepted on merge. HQ merges it only after a clean Opus whole-branch review (HQ
   D-12, limit 3). The ADR's own status is unchanged.
 - **Decided by:** Devon, on 2026-11-07 (HQ D-24 to D-28), recorded in ADR-0055 amendment 19
-  (Proposed, merged at `d485d051`, PR #626). This amendment follows that one and decides nothing
-  of its own.
+  (merged at `d485d051`, PR #626, and accepted in PR #PRNUM). This amendment follows that one and
+  decides nothing of its own.
 - **Relates to:** decision 1 (the lane phases, the per-resource-variable bullet), decision 2 (the
   token bullet and the `.cred-consumers.toml` bullet), decision 3 (the ping-URL secret),
   increments 2 and 7, the cut-over, the Consequences on the executor and on lane-token rotation,
