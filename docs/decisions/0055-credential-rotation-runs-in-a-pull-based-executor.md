@@ -2346,9 +2346,10 @@ infraops-mcp-server `main` at `9cdaab1f`.
    only after the lane token's `store` unit completes, so the ping URL's issue unit doesn't exist
    while the token's waits and `other_mints` never sees both. The order rests on HQ making that
    change in that order. A mistake fails safe: if both units wait on a person's mint at once,
-   `other_mints` refuses both binds, nothing is written, and each value stays in the inbox with its
-   reason (item 11) until HQ fails and cancels the ping URL's unit, as a stranded unit is. The
-   lane's cut-over is then:
+   `other_mints` refuses both binds, nothing is written, and the pasted value stays in the inbox
+   with its reason (item 11) until HQ fails and cancels the ping URL's unit, as a stranded unit
+   is. The lane's cut-over is then as follows. The steps assume the lane token's keeper (item 1,
+   D-24); under the transit-only alternative, step 1 and item 3's precondition are redesigned.
    1. The root runs the keeper command (item 3) for the lane's ping-URL secret, and for the lane
       token's keeper if Devon keeps it (D-24). Each holds the marker, and the command prints each
       secret id.
