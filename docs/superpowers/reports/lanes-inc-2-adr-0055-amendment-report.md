@@ -20,7 +20,7 @@ added it to the front-matter list. The amendment covers the handoff's five goals
    - An issue plan with no `retire_old` or `confirm_dead`, validated by its own rule. It runs only
      when the keeper holds the inbox's `EMPTY` marker, which a sibling of `adopt-keeper` writes
      (item 3).
-   - A lane-token bind by declared BWS reach (the `_REACH` digest against the lane's
+   - A lane-token bind by declared BWS reach (what `_REACH` reads, against the lane's
      `.bws-secrets.toml` UUIDs), in place of `same_identity`. The same bind serves a reissue after
      a leak's early revoke (item 4).
    - A ping-URL bind by shape and check read, never by a ping (item 5).
@@ -128,6 +128,29 @@ pasted ping URL to its check.
 - **Unconfirmed infraops behavior.** I didn't confirm whether infraops raises
   `cred.rotation-requested` for a row with a `rotate_requested` date and no recorded rotation. The
   amendment's first-issue trigger depends on it, and the amendment lists it as open.
+
+## Open questions
+
+For Devon (PR #626, "Questions for Devon"):
+
+1. The early and leak reissue actor before increment 7 (proposed: the rotation proposer).
+2. The revoke order (proposed: before the redeploy after a leak, after it otherwise).
+3. Whether lane tokens keep a keeper at rest in `Rotation / Keepers` (proposed: yes).
+
+Open verify items, listed in the amendment's "Open before building":
+
+- The Healthchecks reads: the flips endpoint, the ping-log limit, whether `/pings/` needs the
+  Management key, and which read ties a pasted ping URL to its check.
+- Whether the empty `<LANE>_BWS_ACCESS_TOKEN` row exists for the executor's PATCH at the first
+  lane's create.
+- Whether infraops raises `cred.rotation-requested` for a row with a `rotate_requested` date and
+  no recorded rotation.
+- What `_REACH` lists for a direct-grant-only lane account (projects as well as secrets), which
+  decides how the declared set is written.
+
+After review I added three things to the amendment: the reach measurement as an open item, the
+named departure from decision 3's machine-verify rule for `bws-lane-token` until increment 7, and
+the full build list (agreement fixture, policy pattern, `create-rotation`).
 
 ## Standards followed
 

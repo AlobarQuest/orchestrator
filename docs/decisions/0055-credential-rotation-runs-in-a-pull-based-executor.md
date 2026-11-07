@@ -2246,8 +2246,8 @@ infraops-mcp-server `main` at `9cdaab1f`.
    - no other rotation waits on a person's mint (`other_mints`, unchanged);
    - it isn't the keeper's value, and a fresh login accepts it beside a refused known-bad control
      (`accepts`, unchanged);
-   - the digest of what it can see, which `_REACH` computes (`bws_machine_token.py`, lines
-     98-112), equals the digest of the declared set;
+   - what it can see, which `_REACH` reads (`bws_machine_token.py`, lines 98-112), is exactly the
+     declared set (see "Open before building" for what `_REACH` lists for such an account);
    - no other keeper of its type holds it.
 
    This is stronger than `same_identity`, and it holds after a leak's early revoke. Each lane's
@@ -2273,7 +2273,12 @@ infraops-mcp-server `main` at `9cdaab1f`.
    `BWS_ACCESS_TOKEN` is non-empty, and `lane-run --read` reads every secret the lane lists, each
    `ok` (ADR-0059, "Cut-over for one lane"). A read of the lane's check since the keeper's
    revision doesn't discriminate, because a pass between the write and the redeploy runs on the
-   old token and still pings, so no plan uses it.
+   old token and still pings, so no plan uses it. This departs from decision 3's rule that
+   `retire_old` follows a machine `verify_consumers` for every registered consumer: for
+   `bws-lane-token`, until ADR-0059 increment 7, that rule is met by the lane phases' reads
+   outside the plan, and the revoke act's precondition is HQ's report of them. Amendment 12's
+   "Holders no machine can restart" is the precedent for a person's attestation at the revoke.
+   Increment 7, which gives the executor the redeploy, restores a machine read.
 8. **The order is a mechanism, not a sequence.** A lane's ping-URL row is registered with what
    makes it due only after the lane token's `store` unit completes, so the ping URL's issue unit
    doesn't exist while the token's waits and `other_mints` never sees both. The lane's cut-over is
@@ -2287,8 +2292,8 @@ infraops-mcp-server `main` at `9cdaab1f`.
    4. The lane phases' `--add` starts the lane in its quiet slot.
 9. **The executor still can't mint or revoke** (amendment 12). Devon mints every lane token and
    revokes every old one, in the Bitwarden web app. A lane token's row is `rotated_by_sds` from
-   its first issue, so the age rule applies, but no scheduled rotation runs on the VM before
-   ADR-0059 increment 7. The rotations this amendment allows before then are the early and leak
+   its first issue, so the age rule applies; at `maxAgeDays` 365, a token first issued in
+   November 2026 isn't due by age until November 2027. The rotations this amendment allows before then are the early and leak
    reissues in the following item, and HQ asks Devon before the age interval passes, as ADR-0059's
    Consequences say.
 10. **Early and leak reissue before increment 7 (proposed; Devon decides).** The proposed actor is
@@ -2350,6 +2355,10 @@ infraops-mcp-server `main` at `9cdaab1f`.
 - **The token's row at create.** HQ's create of the first lane's resource confirms the empty
   `<LANE>_BWS_ACCESS_TOKEN` row by the executor's `PATCH` answering 2xx; a 404 means another actor
   must create the row, and the issue unit fails with `CoolifyRefused` rather than skipping.
+- **What `_REACH` lists for a lane account.** A lane's account has only direct secret grants
+  (amendment 6), and `_REACH` hashes both the projects and the secrets a token lists. Measure what
+  it prints for such an account, and declare the set as secrets alone or secrets and projects to
+  match.
 - **What makes a first issue due.** Whether infraops raises `cred.rotation-requested` for a row
   with a `rotate_requested` date and no recorded rotation is read in the build.
 - **Questions for Devon:** the reissue actor and the leak order (item 10), and whether lane
@@ -2364,8 +2373,12 @@ infraops-mcp-server `main` at `9cdaab1f`.
   rest, which a reissue's quarantine and increment 7's `same_identity` and confirm-dead need. The
   alternative, no keeper and staging deleted after the write, holds less but leaves increment 7
   nothing to prove the old token dead against.
-- **Builds.** An infraops change (the two classes), then one orchestrator change: the two types,
-  the issue plan's validation, the reach and shape binds, the keeper command, and the `redeploy`
-  refusal. Each lane's registry rows land in two changes, as amendment 17's row did.
+- **Builds.** An infraops change (the two classes in `CLASS_POLICY` and its class fixture), then
+  one orchestrator change: the two types, the issue plan's validation, the reach and shape binds,
+  the keeper command, the `redeploy` refusal, the agreement fixture that
+  `test_rotation_agreement.py` reads, and the policy pattern that recognizes rotation units by
+  type (amendment 17), with a new `decided` date. intent-packages' `create-rotation` and the
+  proposer's `acceptance()` learn an issue plan with no retire. Each lane's registry rows land in
+  two changes, as amendment 17's row did.
 - **Unchanged.** The Keychain instance, its adapter and its inbox; every existing plan and
   generated package; the one click per rotation (amendment 16).
