@@ -42,19 +42,28 @@ ARMS = re.compile(r"^sds_deadman_arm (?P<check>\S+) --finding (?P<code>\d+) ", r
 # it "something was found"; the zero line says "nothing was found", which this does not match.
 DECLARES_FINDING = re.compile(r"^#\s+(?P<code>\d+)\s+something was found", re.MULTILINE)
 
+# The listing request carries its URL as an argument; a ping carries its URL on stdin, as curl's
+# config (`url = "<url>"`), and never as an argument. Every argument list is logged, so `_run` can
+# assert that no ping URL ever was one.
 _CURL_STUB = """#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$CURL_ARGS"
 for argument in "$@"; do
     case "$argument" in
         *healthcheck.alobar.net/api/v3/checks/*)
             printf '%s' "$LISTING"
             exit 0
             ;;
-        https://hc.example/*)
-            echo "$argument" >> "$PING_LOG"
-            exit 0
-            ;;
     esac
 done
+config="$(cat)"
+url="${config#url = \\"}"
+url="${url%\\"}"
+case "$url" in
+    https://hc.example/*)
+        echo "$url" >> "$PING_LOG"
+        exit 0
+        ;;
+esac
 exit 1
 """
 
@@ -101,10 +110,13 @@ def _run(
     finding: str | None,
     listing_name: str | None = None,
     arguments: str = "",
+    environment_extra: dict[str, str] | None = None,
 ) -> tuple[int, list[str], str]:
     """Source the real helper, arm it, exit with `exit_code`; return (rc, pings, stderr+stdout)."""
     ping_log = tmp_path / "pings.txt"
     ping_log.write_text("")
+    curl_args = tmp_path / "curl-args.txt"
+    curl_args.write_text("")
     listing = json.dumps({"checks": [{"name": listing_name or check_name, "ping_url": PING_URL}]})
     declaration = "" if finding is None else f"--finding {finding} "
     driver = tmp_path / "driver.sh"
@@ -121,6 +133,9 @@ def _run(
     environment["BWS_ACCESS_TOKEN_BROAD"] = "not-a-real-identity"
     environment["LISTING"] = listing
     environment["PING_LOG"] = str(ping_log)
+    environment["CURL_ARGS"] = str(curl_args)
+    environment.pop("SDS_DEADMAN_PING_URL_UUID", None)
+    environment.update(environment_extra or {})
     completed = subprocess.run(
         [shutil.which("bash") or "/bin/bash", str(driver)],
         capture_output=True,
@@ -128,7 +143,10 @@ def _run(
         env=environment,
     )
     pings = [line for line in ping_log.read_text().splitlines() if line]
-    return completed.returncode, pings, completed.stdout + completed.stderr
+    output = completed.stdout + completed.stderr
+    # The ping URL is a secret: never a process argument, never printed.
+    assert PING_URL not in curl_args.read_text() + output
+    return completed.returncode, pings, output
 
 
 # ---------------------------------------------------------------------------------------------
@@ -348,6 +366,16 @@ def test_the_outcome_ping_sends_the_report_as_the_body_and_the_url_on_stdin(
     assert stdin == f'url = "{PING_URL}/fail"\n'
     assert f"--data-binary @{tmp_path / 'report.txt'}" in args
     assert "rc=0" in output
+
+
+def test_the_dead_man_ping_sends_the_url_on_stdin(tmp_path: Path) -> None:
+    for suffix in ("/start", "", "/fail"):
+        case = tmp_path / (suffix.strip("/") or "success")
+        case.mkdir()
+        args, stdin, output = _outcome(case, PING_URL, f'sds_deadman_ping "{suffix}"')
+        assert PING_URL not in args + output
+        assert stdin == f'url = "{PING_URL}{suffix}"\n'
+        assert "rc=0" in output
 
 
 def test_the_outcome_ping_does_nothing_without_a_resolved_url(tmp_path: Path) -> None:
@@ -577,3 +605,99 @@ def test_the_told_header_check_finds_an_indented_call() -> None:
     indented = '# EXIT CODES:\n#   0  fine.\n\nif x; then\n    sds_outcome_end "$rc" --told 2\nfi\n'
 
     assert told_violations(indented) != []
+
+
+# ---------------------------------------------------------------------------------------------
+# A lane in its container reads its own ping-URL secret by UUID (ADR-0059 decision 3).
+# ---------------------------------------------------------------------------------------------
+
+PING_URL_UUID = "33333333-3333-4333-8333-333333333333"
+
+# `bws secret get <uuid> --output json --color no`: the lane's ping-URL secret holds `$PING_VALUE`;
+# `$BWS_DEAD` (a revoked token) refuses every read. The token must arrive in the environment.
+_UUID_BWS_STUB = """#!/usr/bin/env bash
+printf '%s token=%s\\n' "$*" "${BWS_ACCESS_TOKEN:+set}" >> "$BWS_LOG"
+[ -n "${BWS_DEAD:-}" ] && exit 1
+[ "$3" = "$PING_URL_UUID" ] || exit 1
+printf '{"value": "%s"}' "$PING_VALUE"
+"""
+
+
+def _by_uuid(
+    tmp_path: Path, bin_stubs: Path, *, exit_code: int, value: str = PING_URL, **extra: str
+) -> tuple[int, list[str], str, str]:
+    (bin_stubs / "bws").write_text(_UUID_BWS_STUB)
+    bws_log = tmp_path / "bws.txt"
+    environment = {
+        "SDS_DEADMAN_PING_URL_UUID": PING_URL_UUID,
+        "PING_URL_UUID": PING_URL_UUID,
+        "BWS_ACCESS_TOKEN": "a-lane-token",
+        "PING_VALUE": value,
+        "BWS_LOG": str(bws_log),
+        **extra,
+    }
+    rc, pings, output = _run(
+        tmp_path,
+        bin_stubs,
+        check_name="sds-execution-watch",
+        exit_code=exit_code,
+        finding="2",
+        environment_extra=environment,
+    )
+    return rc, pings, output, bws_log.read_text() if bws_log.exists() else ""
+
+
+def test_a_ping_url_uuid_reads_the_lanes_own_secret_and_lists_no_check(
+    tmp_path: Path, bin_stubs: Path
+) -> None:
+    rc, pings, output, bws = _by_uuid(tmp_path, bin_stubs, exit_code=0)
+
+    assert rc == 0
+    assert pings == [f"{PING_URL}/start", PING_URL]
+    assert "armed (sds-execution-watch)" in output
+    # One read, of the ping-URL secret, with the lane's token in the environment, not argv.
+    assert bws.splitlines() == [f"secret get {PING_URL_UUID} --output json --color no token=set"]
+    assert "a-lane-token" not in bws + output
+    assert "healthcheck.alobar.net" not in (tmp_path / "curl-args.txt").read_text()
+
+
+def test_a_pass_on_a_dead_token_sends_no_start(tmp_path: Path, bin_stubs: Path) -> None:
+    """ADR-0059 Amendment 2, "A pass on a dead token": the ping-URL read is the first read of the
+    lane's token, so a revoked token fails it, no `/start` is sent, and the check is never left
+    `started` to hold off the `--token` redeploy. The pass's own exit code is untouched."""
+    for exit_code in (0, 1):
+        case = tmp_path / f"exit-{exit_code}"
+        case.mkdir()
+        rc, pings, output, _ = _by_uuid(case, bin_stubs, exit_code=exit_code, BWS_DEAD="1")
+        assert rc == exit_code
+        assert pings == []
+        reason = f"the ping-URL secret {PING_URL_UUID} could not be read"
+        assert output.count(reason) == 1
+        assert "alerting disabled this run" in output
+
+
+@pytest.mark.parametrize(
+    ("value", "reason"),
+    [
+        ("", "could not be read"),
+        ("an-empty-marker", "holds no https URL"),
+        ("http://hc.example/ping/abcdef", "holds no https URL"),
+        # A space would let the value add a second option to curl's config line.
+        ("https://hc.example/ping/a -o /tmp/x", "holds no usable URL"),
+    ],
+)
+def test_a_ping_url_secret_that_isnt_a_url_disables_the_pings(
+    tmp_path: Path, bin_stubs: Path, value: str, reason: str
+) -> None:
+    rc, pings, output, _ = _by_uuid(tmp_path, bin_stubs, exit_code=0, value=value)
+    assert rc == 0
+    assert pings == []
+    assert reason in output
+
+
+def test_a_ping_url_uuid_without_a_lane_token_disables_the_pings(
+    tmp_path: Path, bin_stubs: Path
+) -> None:
+    rc, pings, output, bws = _by_uuid(tmp_path, bin_stubs, exit_code=0, BWS_ACCESS_TOKEN="")
+    assert (rc, pings, bws) == (0, [], "")
+    assert "SDS_DEADMAN_PING_URL_UUID is set but BWS_ACCESS_TOKEN is not" in output

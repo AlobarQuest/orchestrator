@@ -1,0 +1,4 @@
+# sds-lane-execution-watch's schedule: the scheduled pass every 15 minutes, as the Mac job's
+# `StartInterval` of 900 runs it (`scripts/com.devon.execution-watch.plist`), in the image's
+# America/New_York time. The entrypoint runs this file only when LANE_SCHEDULE_ENABLED is `true`.
+*/15 * * * * lane-run execution-watch --submit
