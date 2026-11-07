@@ -2261,7 +2261,7 @@ infraops-mcp-server `main` at `9cdaab1f`.
      deletion is recorded, as decision 3 records it after confirm-dead.
 
    Item 7's departure from decision 3's R10 rule applies to a lane token's reissue, not its issue,
-   which has no `retire_old`; Devon decides it ("Open before building", D-27).
+   which has no `retire_old`; Devon accepted it (D-27).
 4. **A lane token binds by its declared reach, never by `same_identity`.** The registry row lists
    the BWS secrets the lane's account must see: the UUIDs `.bws-secrets.toml` lists for that lane.
    `bind` takes a pasted token for a `bws-lane-token` issue or rotation only when all of these
@@ -2279,16 +2279,20 @@ infraops-mcp-server `main` at `9cdaab1f`.
    on the ping-URL secret, holding the marker, when the token binds, or the digests differ. The
    second and fourth checks compare with keepers' values (item 1, D-24): the reach check alone
    can't tell the lane's current token from a new one, because both see the same set.
-5. **A ping URL binds by shape and by its check, never by a ping.** A ping marks the check up, so
+5. **A ping URL binds by shape, never by a ping.** A ping marks the check up, so
    no probe may send one. `bind` takes a pasted ping URL for a `healthchecks-ping-url` issue only
    when the keeper holds the marker, the URL is exactly the self-hosted instance's ping base
    followed by one UUID, and no other keeper of its type holds it. The bind is by shape alone
-   unless Devon grants a key that can identify the check. The VM's read-only Healthchecks key
-   (decision 4) gets no `ping_url` or `uuid` in any Management API response (ADR-0059 decision 3),
-   and the Management key manages every check in the project, so a read that ties the URL to the
-   lane's check needs a credential the VM doesn't hold. Devon decides whether to grant one ("Open
-   before building", D-28). The lane phases' first `--add` proves the URL either way, by a ping that
-   reaches that check.
+   (Devon, 2026-11-07, HQ D-28: "No Key"): the VM gets no Healthchecks key that identifies a check.
+   Its read-only key (decision 4) gets no `ping_url` or `uuid` in any Management API response
+   (ADR-0059 decision 3), and the Management key manages every check in the project.
+
+   Cut-over step 4 proves the URL, not the `--add`. The `--add` runs the lane with
+   `LANE_SCHEDULE_ENABLED=false`, and the launcher's `--dry-run` after it pings nothing (ADR-0059,
+   "Cut-over for one lane", step 1 and step 2's first bullet). The container's first scheduled
+   pass pings the check (step 3), and step 4 verifies that the check's last ping came from the
+   container. A wrong URL shows as the lane's own check going overdue, its dead-man alarm, so a
+   bad paste fails visibly and never passes silently.
 6. **The executor never redeploys a lane.** A `bws-lane-token` destination with `redeploy` true is
    refused before a claim, and its distribute step writes the variable with the client's one
    `PATCH` and never calls `restart()`. `redeploy` is part of the destination's identity
@@ -2340,9 +2344,9 @@ infraops-mcp-server `main` at `9cdaab1f`.
    met by the lane phases' reads outside the plan, and the revoke act's precondition is HQ's report
    of them. Amendment 12's "Holders no machine can restart" is the precedent for a person's
    attestation at the revoke. If increment 7's amendment gives the executor the redeploy, it
-   restores a machine read; otherwise that amendment states how R10 is met. The departure is
-   proposed; Devon decides it ("Open before building", D-27). `retire_old` and confirm-dead test
-   the old token against its keeper (item 1, D-24).
+   restores a machine read; otherwise that amendment states how R10 is met. Devon accepted the
+   departure, for lane tokens only (2026-11-07, HQ D-27: "Accepted"). `retire_old` and
+   confirm-dead test the old token against its keeper (item 1, D-24).
 8. **The order is a mechanism, not a sequence.** HQ changes a lane's ping-URL row to make it due
    only after the lane token's `store` unit completes, so the ping URL's issue unit doesn't exist
    while the token's waits and `other_mints` never sees both. The order rests on HQ making that
@@ -2430,10 +2434,11 @@ Each item is settled in ADR-0059 increment 2, before its code merges.
 - **The ping URL's check read (increment 2).** The VM's read-only Healthchecks key gets no
   `ping_url` or `uuid` (item 5), so whether any field a read-only response does return ties a
   pasted UUID to the lane's check, whether `/pings/` needs the Management key, the flips endpoint
-  and the ping-log limit are Healthchecks reads that this amendment doesn't settle. A read that
-  identifies the check by a key the VM doesn't hold is a new VM credential, which Devon grants or
-  doesn't. Without one, item 5 binds by shape alone and the lane phases' first `--add` proves the
-  URL, by a ping that reaches that check.
+  and the ping-log limit are Healthchecks reads that this amendment doesn't settle. The VM gets no
+  key that identifies a check (D-28), so item 5 binds by shape alone, and cut-over step 4 proves
+  the URL: the container's first scheduled pass pings the check, and step 4 verifies that the
+  check's last ping came from the container (ADR-0059, "Cut-over for one lane", steps 3 and 4). A
+  wrong URL shows as the lane's check going overdue.
 - **The token's row at create (increment 2).** HQ's create of the first lane's resource confirms
   the empty `<LANE>_BWS_ACCESS_TOKEN` row by the executor's `PATCH` answering 2xx; a 404 means
   another actor must create the row, and the issue unit fails with `CoolifyRefused` rather than
@@ -2457,10 +2462,7 @@ Each item is settled in ADR-0059 increment 2, before its code merges.
 - **A pass on a dead token and the quiet slot (increment 2).** Whether a lane pass that fails on a
   revoked token leaves its check `started`, which would hold off the leak's `--token` redeploy
   (the quiet slot waits while `started` is `true` and `status` isn't `down`), is read in the build.
-- **Questions for Devon (increment 2):**
-  - item 7's departure from decision 3's machine `verify_consumers` rule (R10) for a lane token's
-    reissue until increment 7, which item 3 cross-references (HQ D-27);
-  - whether to grant the VM a Healthchecks key that identifies a check (item 5, HQ D-28).
+- **Questions for Devon.** None open: D-24 to D-28 are answered and recorded in this amendment.
 
 ### Consequences
 
