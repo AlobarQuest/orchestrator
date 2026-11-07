@@ -24,7 +24,7 @@
   - 2026-10-29, amendment 16 (one click per rotation: the revision approval).
   - 2026-10-30, amendment 17 (a type with no overlap; the VPS helper as the executor's reach).
   - 2026-11-01, amendment 18 (the rotation layer's outcomes; the 04:00 window retires).
-  - 2026-11-07, amendment 19, proposed (the VM executor issues lane tokens and ping URLs from its
+  - 2026-11-07, amendment 19, accepted (the VM executor issues lane tokens and ping URLs from its
     inbox).
 - **Supersedes:** the parts of ADR-0054 named in "What this changes in ADR-0054".
 - **Relates to:** ADR-0054 (the SDS owns credential rotation), ADR-0052 (superseding an unworked
@@ -2184,8 +2184,9 @@ resolve.
 
 ## Amendment 19 — The VM executor issues lane tokens and ping URLs from its inbox (2026-11-07)
 
-**Status: Proposed.** ADR-0059 increment 2 waits on it (ADR-0059, "Increments", item 2, and
-"Dependencies", ADR-0055).
+**Status: Accepted (2026-11-07).** It met HQ's bar, under HQ's standing answer of 2026-11-06
+(limit 3): a clean Opus whole-branch review of PR #626 at `f17ee687` and of PR #628, which accepts
+it. ADR-0059 increment 2 waits on it (ADR-0059, "Increments", item 2, and "Dependencies", ADR-0055).
 
 ADR-0059 moves the scheduled lanes off the Mac, one BWS identity per lane, each lane its own
 Coolify compose resource, `sds-lane-<lane>` (ADR-0059 Amendment 1). Devon decided that the VM
@@ -2244,9 +2245,11 @@ infraops-mcp-server `main` at `9cdaab1f`.
    stage, then `verify_new`, `store`, `distribute` (for a type with a hosted destination) and
    `verify_consumers`, with no `retire_old` or `confirm_dead`. The contract validates it by its own
    rule, and `validate_plan` is unchanged for every rotation. Every other decision 3 invariant
-   holds. The issue plan runs only when the keeper holds exactly the inbox's empty marker
-   (`EMPTY`, `inbox.py`, line 46), so "nothing to retire" is a fact the executor reads, not a
-   declaration. A sibling of `adopt-keeper` creates
+   holds, with one exception: for a `healthchecks-ping-url` issue, `verify_new` is item 5's shape
+   check, with no probe and no known-bad control. That departs from decision 3's R14 rule, and
+   Devon accepted it (2026-11-07, HQ D-30: "Yes"); item 5 states it. The issue plan runs only
+   when the keeper holds exactly the inbox's empty marker (`EMPTY`, `inbox.py`, line 46), so
+   "nothing to retire" is a fact the executor reads, not a declaration. A sibling of `adopt-keeper` creates
    that keeper on the VM, holding the marker, and prints its secret id, so the registry row names
    the keeper before any package does. The row lands in two changes, as amendment 17's did.
    Decision 3's invariants, on a keeper that holds only the marker:
@@ -2285,7 +2288,10 @@ infraops-mcp-server `main` at `9cdaab1f`.
    followed by one UUID, and no other keeper of its type holds it. The bind is by shape alone
    (Devon, 2026-11-07, HQ D-28: "No Key"): the VM gets no Healthchecks key that identifies a check.
    Its read-only key (decision 4) gets no `ping_url` or `uuid` in any Management API response
-   (ADR-0059 decision 3), and the Management key manages every check in the project.
+   (ADR-0059 decision 3), and the Management key manages every check in the project. The issue
+   plan's `verify_new` for a ping URL repeats this shape check and sends no ping; it departs from
+   decision 3's R14 rule for ping URLs only (Devon, 2026-11-07, HQ D-30: "Yes"), and cut-over
+   step 4 is the proof.
 
    Cut-over step 4 proves the URL, not the `--add`. The `--add` runs the lane with
    `LANE_SCHEDULE_ENABLED=false`, and the launcher's `--dry-run` after it pings nothing (ADR-0059,
@@ -2462,7 +2468,8 @@ Each item is settled in ADR-0059 increment 2, before its code merges.
 - **A pass on a dead token and the quiet slot (increment 2).** Whether a lane pass that fails on a
   revoked token leaves its check `started`, which would hold off the leak's `--token` redeploy
   (the quiet slot waits while `started` is `true` and `status` isn't `down`), is read in the build.
-- **Questions for Devon.** None open: D-24 to D-28 are answered and recorded in this amendment.
+- **Questions for Devon.** None open: D-24 to D-28 and D-30 are answered and recorded in this
+  amendment.
 
 ### Consequences
 
