@@ -6,9 +6,11 @@
   2026-11-06 (HQ decisions D-8 to D-11, D-13, D-14 and D-16 to D-18), all recorded in "Devon's
   decisions". Devon accepted the ADR on 2026-11-06 (HQ D-16, Q11) on HQ's clean Opus review. Devon
   decided D-19 and D-20 on 2026-11-06, recorded in Amendment 1 (one Coolify compose resource per
-  lane, and the three cases in which HQ deletes a lane's resource).
+  lane, and the three cases in which HQ deletes a lane's resource). Devon decided D-24 to D-28 on
+  2026-11-07, recorded in ADR-0055 amendment 19 and followed here by Amendment 2 (how lane tokens
+  and ping URLs are issued and reissued).
 - **Relates to:** ADR-0055 (the rotation executor's isolated runtime and decisions 2 and 4,
-  amendments 6, 12 and 15), ADR-0058 (lanes read their scope from the member record), ADR-0039
+  amendments 6, 12, 15 and 19), ADR-0058 (lanes read their scope from the member record), ADR-0039
   (out-of-process producers carry only structured facts), ADR-0021 amendments 2 and 3 (the
   dead-man and outcome alarms), ADR-0030 and ADR-0031 (the machine-activation sweep), ADR-0046
   (the lane kill switches)
@@ -137,7 +139,8 @@ each of those lanes keeps it in a volume of its own (decision 1, "Lane state").
   `coolify_deploy` calls and the deploying session runs them. HQ is that session, as the one
   production actor. Increment 1 gives a lane resource's changes the same shape, in three phases of
   the same program. Each phase acts on one lane's resource: it takes the lane, `--lane <lane>`, one
-  change, `--tag <tag>`, `--schedule <true|false>` or `--add --tag <tag>`, and a state file. An
+  change, `--tag <tag>`, `--schedule <true|false>`, `--add --tag <tag>` or `--token` (Amendment 2,
+  the token-change mode, which follows ADR-0055 amendment 19 item 6), and a state file. An
   `--add` names the tag whose tracked files carry the lane's compose, which must be the served
   orchestrator tag, because a lane arrives with the commit that adds its launcher, crontab line and
   compose file. Every run writes the lane's whole compose file, so a tracked compose edit deploys
@@ -158,7 +161,9 @@ each of those lanes keeps it in a volume of its own (decision 1, "Lane state").
     the writes (the whole compose through `coolify_update_service`, and one variable:
     `SDS_LANES_IMAGE_TAG` through `coolify_update_service_env` for `--tag`, and through
     `coolify_create_service_env` for `--add`, and `LANE_SCHEDULE_ENABLED` through
-    `coolify_update_service_env` for `--schedule`), then `coolify_deploy` on `sds-lane-<lane>`, then
+    `coolify_update_service_env` for `--schedule`; no variable for `--token`, whose compose is the
+    lane's tracked file at its running tag, as for `--schedule`, because the VM rotation executor
+    has already written the token, Amendment 2), then `coolify_deploy` on `sds-lane-<lane>`, then
     `lanes-finish`. An `--add` creates the tag variable because Coolify's parser makes no variable
     row for a `${VAR}` in `image:` (the verify report's item 1), and `coolify_update_service_env` is
     a `PATCH` of `/services/{uuid}/envs` (infraops `src/tools/env-vars.ts`, 478) that Coolify
@@ -203,7 +208,12 @@ each of those lanes keeps it in a volume of its own (decision 1, "Lane state").
     lists `sds-lane-<lane>`, and `vps_docker_ps` shows no container of it), exits 0 only if both
     show it gone, and closes the run. Coolify's delete only queues the deletion, so the session
     re-reads both for up to 10 minutes before it passes them in, and a resource still listed then
-    fails the check. That restore is the session's act, or for an `--add` HQ's
+    fails the check. A `--token` run passes on other reads and closes another way (Amendment 2):
+    it passes when the image digest, schedule and volume are unchanged, the container's
+    `BWS_ACCESS_TOKEN` is non-empty, and `lane-run --read` reads every listed secret `ok`; a
+    mismatch exits 2, and its `lanes-finish --restored` writes nothing and closes the run as
+    failed, because its compose is the one the lane already ran. That restore is the session's
+    act, or for an `--add` HQ's
     delete, which the command names and then checks.
 
   No phase holds a Coolify credential, and none needs one.
@@ -240,12 +250,18 @@ each of those lanes keeps it in a volume of its own (decision 1, "Lane state").
   "timed out" code (Amendment 1). The session that runs the deploy command raises the alert through
   its own channel; the deploy command sends no alert and reads no alert-hub token. A re-run after
   that records a new deadline. The session has written nothing to the lane's resource, so it stays
-  as it was until HQ re-runs `lanes-prepare` or redeploys by hand. Nothing is
-  staged in the lane's resource while the command waits: the session writes the compose and any tag
+  as it was until HQ re-runs `lanes-prepare` or redeploys by hand. The session
+  writes nothing to the lane's resource while the command waits: it writes the compose and any tag
   or schedule variable (the following bullets) only after `lanes-recheck` exits 0, immediately
   before its redeploy call. So a wait that times out leaves nothing staged, and no later redeploy
-  can apply a change silently. If a `--tag` or `--schedule` redeploy fails after the writes,
-  `lanes-finish` names the inverse writes and the session restores the values at once. For an
+  can apply a change silently, except in a `--token` run (Amendment 2): the VM rotation executor's
+  `PATCH` writes the lane's `<LANE>_BWS_ACCESS_TOKEN` before `lanes-prepare` runs, so the new token
+  is already staged while the command waits, and any later redeploy of the lane (by hand, `--tag`
+  or `--schedule`) loads it without `--token`'s reads. Increment 2 verifies that case (Amendment
+  2's "Verify in increment 2", the `--tag` run after the executor's `PATCH`; amendment 19's "Open
+  before building", `--token` sub-item 4). If a `--tag`
+  or `--schedule` redeploy fails after the writes, `lanes-finish` names the inverse writes and the
+  session restores the values at once. For an
   `--add` the inverse is the delete of the lane's resource, HQ's act under D-20 (the lane-phase
   bullets and "Adding a lane creates its resource"). The residual: a pass that starts
   between `lanes-recheck`'s read and the redeploy is still stopped, as `recheck` before an
@@ -410,7 +426,8 @@ each of those lanes keeps it in a volume of its own (decision 1, "Lane state").
   first start (the verify report's item 1), and every later `--tag` updates it.
   A lane token never goes through infraops's service env tools, whose responses carry the written
   row's `value` (the verify report's item 6). The VM rotation executor writes it, into the lane's
-  own resource (Q8).
+  own resource (Q8), with `redeploy` false: it never redeploys the lane, and the container takes
+  the value at a lane phases' redeploy in the lane's quiet slot (Amendment 2).
 - **Adding a lane creates its resource (Amendment 1).** Adding a lane changes no other lane's
   compose: HQ creates the lane's resource, `sds-lane-<lane>`, through infraops from the lane's
   tracked compose at the served tag, without `instant_deploy`, so no container starts (Q11). Its
@@ -479,7 +496,10 @@ One container per lane already gives each lane its own process, filesystem and e
   resource, `sds-lane-<lane>`, whose variables reach no other lane's container (decision 1,
   Amendment 1). A lane's launcher reads every secret it needs from BWS
   by UUID at the start of each pass, as it does now, through `scripts/sds-bws.sh`. The token is
-  never in the image or the repository, and no value passes through a process argument.
+  never in the image or the repository, and no value passes through a process argument. Beside the
+  variable, each lane token keeps a stored copy, its keeper, in `Rotation / Keepers` on the VM, so
+  the token isn't only in transit through the executor (Amendment 2; D-24, a standing answer for
+  every later lane token).
 - **Each identity is proven before its lane cuts over, by direct reads of every secret.** A dry
   run isn't the proof, because the acting lanes fetch some secrets only when they act: the change
   proposer's propose token only when submitting (`run-change-proposer.sh`), the bump proposer's
@@ -638,12 +658,13 @@ One container per lane already gives each lane its own process, filesystem and e
   destination, `<LANE>_BWS_ACCESS_TOKEN` in the lane's own resource by that resource's uuid, which
   the VM rotation executor's registry needs (Amendment 1). Once ADR-0059 increment 7 moves the VM
   rotation executor to the VPS, it carries out each lane token's rotation between Devon's mint and
-  his revoke (Q3, decided). Both App keys join ADR-0055's hand-rotated set, as the
-  `alobar-sds-rotation` App's key did (Q4 and Q9, decided): Devon rotates each on its App's settings
-  page, and no executor handles either. Each is registered as class `github-app-private-key`, whose
-  interval in infraops's rotation policy (`CLASS_POLICY` in `src/security-drift/cred-rotation.ts`)
-  is 365 days, so both keys have the same interval, and Devon rotates both in the same sitting
-  (Devon's D-11 addendum, 2026-11-06).
+  his revoke (Q3, decided). Before then it carries out a lane token's first issue and any early or
+  leak reissue the same way, from its inbox (Amendment 2). Both App keys join ADR-0055's
+  hand-rotated set, as the `alobar-sds-rotation` App's key did (Q4 and Q9, decided): Devon rotates
+  each on its App's settings page, and no executor handles either. Each is registered as class
+  `github-app-private-key`, whose interval in infraops's rotation policy (`CLASS_POLICY` in
+  `src/security-drift/cred-rotation.ts`) is 365 days, so both keys have the same interval, and Devon
+  rotates both in the same sitting (Devon's D-11 addendum, 2026-11-06).
   The minted tokens are short-lived and never stored, so none is registered.
 - **This ADR creates no identity.** Each increment that moves a lane creates that lane's account
   and grants.
@@ -671,18 +692,21 @@ One container per lane already gives each lane its own process, filesystem and e
   `create=1` it creates checks (Pinging API docs, "UUIDs and Slugs"). Each lane's ping URL is one
   BWS secret with a direct read grant to that lane's identity alone, read through the lane's own
   `BWS_ACCESS_TOKEN` like its other secrets. The per-lane ping-URL secret and its per-lane read
-  grant are this ADR's proposal, created by the increment that moves each lane. The name lookup
+  grant are this ADR's proposal, created by the increment that moves each lane: in that increment's
+  cut-over, the VM root creates the secret in `Rotation / Keepers` with the keeper command, holding
+  the inbox's empty marker, before the lane's account is granted it (Amendment 2). The name lookup
   moves to install time: in the increment that moves a lane, Devon or an interactive session on the
   Mac runs `sds_upsert_check` through the broad account, as interactive installers do today, to
   create or update the check. HQ doesn't run it: HQ's identity is its own BWS token
   (`BWS_ACCESS_TOKEN_SDS_HQ`), and no decision grants HQ the broad account. The URL reaches its BWS
   secret as a lane token does (Q8, decided): Devon copies it from the check's page and pastes it
-  into the VM executor's inbox by hand, and the executor writes the lane's ping-URL secret. That
-  paste is Devon's step in each lane's cut-over (step 1), one URL per moved lane, one at a time,
-  from increment 2 on; no machine path carries a ping URL (Q10, decided). No session stores it,
-  because `bws secret create` and `bws secret edit` take the value as an argument. Verify before
-  increment 1, on the self-hosted version: that a UUID ping URL needs no other credential and does
-  nothing beyond pinging, and the URL's base (`PING_ENDPOINT`).
+  into the VM executor's inbox by hand, and the executor writes the lane's ping-URL secret. The
+  executor binds the paste by its shape alone, never by a ping, so cut-over step 4 is what proves
+  the URL (Amendment 2; D-28). That paste is Devon's step in each lane's cut-over (step 1), one URL
+  per moved lane, one at a time, from increment 2 on; no machine path carries a ping URL (Q10,
+  decided). No session stores it, because `bws secret create` and `bws secret edit` take the value
+  as an argument. Verify before increment 1, on the self-hosted version: that a UUID ping URL needs
+  no other credential and does nothing beyond pinging, and the URL's base (`PING_ENDPOINT`).
 - **What changes in `sds-deadman.sh`, in increment 2** (the first lane whose container pings).
   `sds_deadman_resolve` gains a first path: when `SDS_DEADMAN_PING_URL_UUID` is set, it reads the
   URL with `sds_bws_value` and the lane's own token, and lists no check. `SDS_DEADMAN_PING_URL_UUID`
@@ -916,40 +940,56 @@ Healthchecks before it relies on it. A fact it can't confirm stops the increment
    1's "Adding a lane creates its resource". The placeholder has no token to revoke and no registry
    entry to remove. It also writes the ADR-0055 amendment that lifts decision 4 for lane tokens and
    ping URLs, so the VM executor writes each from its inbox (Q8 for lane tokens, Q10 for ping URLs).
-   As built, the inbox won't bind a first lane token or a ping URL: `bind` in
+   That amendment is ADR-0055 amendment 19 (proposed, merged at `d485d051`), which Amendment 2
+   follows here. As built, the inbox won't bind a first lane token or a ping URL: `bind` in
    `rotation_worker/inbox.py` binds a value only to a rotation that waits on a person's mint, and
    only when `same_identity` finds it for the same account as an old value that still answers, and
    neither has an old value. So the amendment extends the executor, and increment 2 waits on it.
    Verify before increment 2, in `rotation_worker` and on the VM instance:
-   - The executor's Coolify client only `PATCH`es `/services/{uuid}/envs` and never `POST`s one
-     (`rotation_worker/coolify.py`, `permits`), so a lane's `<LANE>_BWS_ACCESS_TOKEN` variable must
-     exist in its own resource, `sds-lane-<lane>`, before the executor writes it, and the
-     executor's registry needs that resource's uuid (Amendment 1). The verify report reads
-     Coolify's parser as making a row for each `${VAR}` a compose entry maps when the create
-     parses it (`docs/superpowers/reports/lanes-inc-1-verify-report.md`, items 1 and 7); whether
-     that row exists for the executor's `PATCH`, or another actor must create it, is verified
-     here.
-   - The one adapter that writes a Coolify service variable, `postgres_role`, requires its
-     `coolify-env` destination to have `redeploy` true and then calls `restart()`
-     (`adapters/postgres_role.py`), which is `POST /services/{uuid}/restart`
-     (`rotation_worker/coolify.py`). On a lane's resource that recreates the lane's container
-     outside the quiet-slot rule (decision 1), stopping a running pass, so increment 2's
-     destination needs `redeploy` false, and the extension must honor it. The BWS machine-token
-     adapter hosts no destination (`adapters/bws_machine_token.py`, `hosts_destinations = False`).
-   - `other_mints` refuses to bind while two rotations wait on a person's mint
-     (`rotation_worker/inbox.py`), so Devon pastes a lane token and its ping URL one after the
-     other, each after the previous one binds.
-   - Devon's hand paste of a ping URL (Q10) binds only to a rotation that waits on a person's mint
-     (`rotation_worker/inbox.py`), so something must make the executor wait on that paste. If the
-     extension does that through a registered credential, note that infraops's `CLASS_POLICY`
-     (`src/security-drift/cred-rotation.ts`) has no class for a ping URL, a UUID URL that can't be
-     rotated, so registering one (Consequences) needs a new class.
-   - Before increment 7, an early or leak rotation of a lane token (Consequences) has no scheduled
-     trigger: which actor proposes the rotation unit for an unscheduled rotation.
-   - For a leaked lane token, whether Devon revokes it before or after the quiet-slot redeploy of
-     the lane's resource that gives its container the new token: before leaves the lane holding a
-     dead token until that redeploy, and after leaves the leaked token valid for up to the
-     redeploy's 6-hour wait.
+   - Answered by ADR-0055 amendment 19, "What the code settles" (Amendment 2): the compose parse
+     creates the row at create. The executor's Coolify client only `PATCH`es
+     `/services/{uuid}/envs` and never `POST`s one (`rotation_worker/coolify.py`, `permits`), so a
+     lane's `<LANE>_BWS_ACCESS_TOKEN` variable must exist in its own resource, `sds-lane-<lane>`,
+     before the executor writes it, and the executor's registry needs that resource's uuid
+     (Amendment 1). Coolify's parser makes a row with no value for each `${VAR}` with no default
+     that a compose entry maps in `environment:`, when the create parses it, and a later parse
+     doesn't overwrite the executor's value (the verify report,
+     `docs/superpowers/reports/lanes-inc-1-verify-report.md`, items 1 and 7; amendment 19). The
+     residual check is the first lane's create: the executor's `PATCH` answering 2xx confirms the
+     row, and a 404 fails the issue unit with `CoolifyRefused` (amendment 19, "Open before
+     building", "The token's row at create").
+   - Answered by ADR-0055 amendment 19 item 6 (Amendment 2): the one adapter that writes a Coolify
+     service variable, `postgres_role`, requires its `coolify-env` destination to have `redeploy`
+     true and then calls `restart()` (`adapters/postgres_role.py`), which is
+     `POST /services/{uuid}/restart` (`rotation_worker/coolify.py`). On a lane's resource that
+     recreates the lane's container outside the quiet-slot rule (decision 1), stopping a running
+     pass. So a `bws-lane-token` destination with `redeploy` true is refused before a claim, its
+     distribute step writes the variable with one `PATCH` and never calls `restart()`, and the
+     lane's container takes the new token at a lane phases' redeploy in its quiet slot. The BWS
+     machine-token adapter hosts no destination (`adapters/bws_machine_token.py`,
+     `hosts_destinations = False`); amendment 19 item 2 gives lane tokens their own class and type,
+     `bws-lane-token`, whose provider hosts the lane's `coolify-env` destination.
+   - Answered by ADR-0055 amendment 19 item 8 (Amendment 2): `other_mints` refuses to bind while
+     two rotations wait on a person's mint (`rotation_worker/inbox.py`). The order is a mechanism:
+     HQ makes the lane's ping-URL row due only after the lane token's `store` unit completes, so the
+     ping URL's issue unit doesn't exist while the token's waits. If both wait at once, both binds
+     are refused and nothing is written.
+   - Answered by ADR-0055 amendment 19 items 2, 3 and 5, and its "What the code settles"
+     (Amendment 2): Devon's hand paste of a ping URL (Q10) binds to an issue, a rotation's first
+     half, which runs when the lane's ping-URL secret holds only the inbox's empty marker. The ping
+     URL is registered with a new infraops class, `healthchecks-ping-url`, beside a new
+     `bws-lane-token` class. The paste binds by shape alone, never by a ping (D-28): the URL is
+     exactly the self-hosted instance's ping base followed by one UUID, and no other keeper of its
+     type holds it. Cut-over step 4 proves the URL.
+   - Answered by D-25 (ADR-0055 amendment 19 item 10; Amendment 2): before increment 7, the
+     rotation proposer starts an early or leak reissue of a lane token, from the infraops findings
+     it already reads (`cred.exposure-rotate` or `cred.rotation-requested`), and Devon's revision
+     approval is the only person step.
+   - Answered by D-26 (ADR-0055 amendment 19 item 10; Amendment 2): after a leak, Devon revokes the
+     old token first, and the lane fails its passes on a dead token until the `--token` redeploy in
+     its next quiet slot, which its dead-man check reports. Otherwise, Devon revokes after the
+     `--token` run's `lanes-finish` passes and `lane-run --read` reads every listed secret `ok` on
+     the redeployed container.
    - Answered: the executor has a destination that writes a Coolify service variable and one that
      writes a BWS secret. `coolify-env` takes `resource_type` (`rotation_worker/destinations.py`),
      and the client builds `/api/v1/services/{uuid}/envs` for `service`
@@ -1005,12 +1045,17 @@ Healthchecks before it relies on it. A fact it can't confirm stops the increment
    lane token and revokes the old one, and the executor does what's between, taking the token from
    its inbox as it has since increment 2 (Q8). So the amendment must order each lane-token rotation
    as follows: Devon mints the new token, the executor writes it to `<LANE>_BWS_ACCESS_TOKEN` in the
-   lane's resource, redeploys that resource under the quiet-slot rule (the lane phases' two reads,
-   on that lane's check; the amendment decides whether the executor, which holds its own Coolify
-   token, runs them or hands the redeploy to the deploying session), verify the new token in the
-   lane's container (`lane-run --read` over every secret `.bws-secrets.toml` lists for the lane,
-   each `ok`), and only then does Devon revoke the old token. Revoking before that redeploy would
-   leave the lane's container holding a dead token until the next quiet slot.
+   lane's resource, the resource is redeployed under the quiet-slot rule (the lane phases' two
+   reads, on that lane's check), the new token is verified in the lane's container (`lane-run
+   --read` over every secret `.bws-secrets.toml` lists for the lane, each `ok`), and only then does
+   Devon revoke the old token. Revoking before that redeploy would leave the lane's container
+   holding a dead token until the next quiet slot, which after a leak is the accepted order (D-26).
+   The executor never redeploys a lane (ADR-0055 amendment 19 item 6; Amendment 2): until
+   increment 7 the deploying session redeploys, by the lane phases' `--token` mode, and increment
+   7's own ADR-0055 amendment decides whether the executor, which holds its own Coolify token,
+   runs the redeploy or hands it to the deploying session. If it gives the executor the redeploy,
+   it restores a machine read before the revoke; otherwise it states how decision 3's R10 rule is
+   met (amendment 19 item 7).
 8. **`com.devon.change-window` moves off the Mac** (D-9). infraops-mcp-server owns it:
    `scripts/change-window.sh`, `scripts/com.devon.change-window.plist.template` and
    `scripts/install-change-window-launchd.sh`. It runs `run-window` from infraops-mcp-server's
@@ -1037,7 +1082,14 @@ Each increment's plan records which repositories it changes and which identities
    starts (Q11, Amendment 1). Set the resource's two lane variables: the VM executor writes its
    token from its inbox after Devon mints it (Q8), and the session writes its schedule variable
    `false`. After the token binds, Devon copies the lane's ping URL from its check's page into the
-   inbox by hand, and the executor writes the lane's ping-URL secret (Q10). These three, the
+   inbox by hand, and the executor writes the lane's ping-URL secret (Q10). The token and the ping
+   URL take ADR-0055 amendment 19 item 8's order (Amendment 2): the VM root runs the keeper command
+   for the lane's ping-URL secret and the lane token's keeper, each holding the inbox's empty
+   marker; HQ lands the lane's registry rows naming them, in two changes, the token's row due for
+   its issue and the ping URL's not yet due; the identity's creator grants the lane's account its
+   secrets, the ping-URL secret included; Devon mints the token and pastes it into the inbox, and
+   the executor stores it and writes `<LANE>_BWS_ACCESS_TOKEN`; after the token's `store` unit
+   completes, HQ makes the ping URL's row due, and Devon pastes the URL. These three, the
    identity, its token write and the ping URL, are in place before the lane's `--add`. The lane has
    no lane-phase run until its `--add` passes, so it holds no release. Then deploy the lane's
    resource by the lane phases with `--add` in a quiet slot (decision 1). Then prove the
@@ -1094,12 +1146,14 @@ Each increment's plan records which repositories it changes and which identities
    the week starts, so it counts in neither the baseline nor the week. The container's first
    scheduled pass pings the same check.
 4. Verify that the check's last ping came from the container and that the Mac agent isn't loaded.
-   Compare the two reporting runs from step 2 on exactly three things: the exit code, the set of
-   record identifiers the lane reported (pull request numbers, unit ids, package names, record
-   ids), and, for each identifier, its finding kind or proposed action. Nothing else in the output
-   is compared, since timestamps, durations, run and request ids, temporary paths, hostnames and
-   log prefixes differ by nature. If any of the three differs, the cut-over has failed, and the
-   lane rolls back ("Rollback for one lane"). A scheduled
+   That read is also the proof of the ping URL, which the executor bound by its shape alone (D-28,
+   ADR-0055 amendment 19 item 5; Amendment 2): a wrong URL shows as the lane's own check going
+   overdue, and the cut-over fails. Compare the two reporting runs from step 2 on exactly three
+   things: the exit code, the set of record identifiers the lane reported (pull request numbers,
+   unit ids, package names, record ids), and, for each identifier, its finding kind or proposed
+   action. Nothing else in the output is compared, since timestamps, durations, run and request ids,
+   temporary paths, hostnames and log prefixes differ by nature. If any of the three differs, the
+   cut-over has failed, and the lane rolls back ("Rollback for one lane"). A scheduled
    pass isn't the comparison, because the Mac's last pass may already have acted on a record that
    the container's first pass then finds done.
 
@@ -1284,21 +1338,32 @@ interactive session on the Mac reads it through the broad account, as with the i
 - By Q8's and Q10's decisions, the VM rotation executor handles every lane's BWS token (Q8) and ping
   URL (Q10) from increment 2, when increment 2's ADR-0055 amendment lifts decision 4 for them. It
   can't mint or revoke a lane token: those are Devon's acts (ADR-0055 amendment 12). Devon mints and
-  revokes; the executor transits and writes. A compromised executor could then read every staged
-  lane token and write any lane's token variable, in that lane's own resource (Amendment 1). It
-  could also overwrite any lane's ping-URL secret, which blinds that lane's alarm: the lane's pings
-  stop reaching its check.
-- Lane tokens are registered and unrotated from the first lane identity (increment 2) until ADR-0059
-  increment 7, which moves the executor that rotates them (Q3). That window is bounded: it must not
+  revokes; the executor transits, keeps and writes. Each lane token also keeps a stored copy, its
+  keeper, in `Rotation / Keepers` on the VM (D-24, ADR-0055 amendment 19 item 1; Amendment 2), so
+  the VM root holds every lane token at rest, beside every other rotated credential's keeper. A
+  compromised executor could then use any lane's token and write any lane's token variable, in that
+  lane's own resource (Amendment 1). It could also overwrite any lane's ping-URL secret, which
+  blinds that lane's alarm: the lane's pings stop reaching its check.
+- Lane tokens are registered from their first issue (increment 2), and none is rotated by age
+  before ADR-0059 increment 7, which moves the executor that rotates them (Q3). A lane token's row
+  is rotated by SDS from its first issue, so the age rule applies: at the registry's 365-day
+  interval for `bws-lane-token`, a token first issued in November 2026 isn't due by age until
+  November 2027 (ADR-0055 amendment 19 item 9; Amendment 2). That window is bounded: it must not
   outlast the credential registry's rotation interval for a lane token. If the increments would run
   past that interval, HQ asks Devon to rotate the lane tokens before the interval passes; the
-  increments don't extend it. An early or leak rotation before increment 7 takes the path a first
-  lane token takes from increment 2 (Q8): Devon mints the new token and pastes it into the VM
-  executor's inbox, and the executor writes `<LANE>_BWS_ACCESS_TOKEN` in the lane's own resource,
-  `sds-lane-<lane>`. Once the old token
-  is revoked it no longer answers, so the inbox can't bind the new one, and it's staged by hand
-  (`rotation-worker stage`, `docs/operations/rotation-executor.md`, "Mint and stage a value by
-  hand").
+  increments don't extend it. An early or leak reissue before increment 7 takes the path a first
+  lane token takes from increment 2 (Q8), started by the rotation proposer from the infraops
+  findings it already reads, an exposure (`cred.exposure-rotate`) or a requested rotation
+  (`cred.rotation-requested`) recorded on the lane token's row (D-25, ADR-0055 amendment 19 item
+  10; Amendment 2). Devon's revision approval is the only person step that starts it. Devon mints
+  the new token and pastes it into the VM executor's inbox, and the executor carries out the
+  reissue from its inbox and writes `<LANE>_BWS_ACCESS_TOKEN` in the lane's own resource,
+  `sds-lane-<lane>`. The inbox binds the new token by its declared reach, not by the old token, so
+  it binds after a leak's early revoke too, and no hand stage is needed (amendment 19 items 4 and
+  10). After a leak Devon revokes the old token first; otherwise he revokes after the lane phases'
+  `--token` run passes `lanes-finish` and `lane-run --read` (D-26). Until increment 7, the reissue
+  retires the old token on HQ's report of those lane-phase reads, not on a machine
+  `verify_consumers` check, for lane tokens only (D-27, amendment 19 item 7).
 - Each App's private key reaches what its installation reaches, with its permissions, because a
   minted token is narrowed by its request but the key isn't. By Q1's and Q9's decisions, the
   "SDS lanes" App is installed only on intent-packages and the forks, so a leaked write-capable key
@@ -1339,13 +1404,15 @@ interactive session on the Mac reads it through the broad account, as with the i
   tokens and ping URLs, so that the VM executor writes them from its inbox (Q8 for lane tokens, Q10
   for ping URLs), each into that lane's own resource, `sds-lane-<lane>` (Amendment 1). Increment
   7's moves the VM executor to the VPS, where it carries out each lane token's rotation between
-  Devon's mint and his revoke (Q3). Each takes the next free amendment number when it's written;
-  amendment 18 is the last at `origin/main` on 2026-11-06.
+  Devon's mint and his revoke (Q3). Each takes the next free amendment number when it's written.
+  Increment 2's is ADR-0055 amendment 19 (proposed, merged at `d485d051`), which Amendment 2
+  follows; increment 7's takes the next free number after it.
 
 ## Devon's decisions
 
 Devon decided Q1 to Q5 on 2026-11-05 and Q6 to Q11 on 2026-11-06. Q9 also records D-14, D-17
-and D-18, and Amendment 1 records D-19 and D-20, which he decided on 2026-11-06.
+and D-18, and Amendment 1 records D-19 and D-20, which he decided on 2026-11-06. ADR-0055
+amendment 19 records D-24 to D-28, which he decided on 2026-11-07, and Amendment 2 follows them.
 
 ### Q1: the pushing lanes push as a new "SDS lanes" GitHub App (HQ D-3)
 
@@ -1382,16 +1449,21 @@ Option (a): once ADR-0059 increment 7 moves the VM rotation executor to the VPS,
 lane's BWS token rotation. Bitwarden has no machine path to create or revoke an access token
 (ADR-0055 amendment 12), so Devon mints each new lane token and revokes the old one, and the
 executor does what's between: it takes the staged token, writes the lane's Coolify variable,
-redeploys and verifies (increment 7). It already writes Coolify variables with its own Coolify
-token. ADR-0055 decision 4, as amendment 12 left it, says a BWS consumer token may be handled only
-by an executor instance on the machine that already holds it, and never by the VM. Q8 lifts decision
-4 for lane tokens earlier, at increment 2, so increment 7 only moves the executor. The cost is
-accepted, stated as Q8 corrected it: Devon mints each token and revokes the old one, and the
-executor transits and writes it, so a compromised executor could read every staged lane token, write
-any lane's Coolify variable, and overwrite any lane's ping-URL secret. Until increment 7, lane
-tokens are registered and unrotated. The rejected options were the hand-rotated set, which conflicts
-with Devon's "SDS can not do an all human rotation" (2026-10-21), and a new confined rotation
-instance, which would add a third orchestrator identity.
+redeploys and verifies (increment 7). The executor never redeploys a lane before increment 7, and
+increment 7's own ADR-0055 amendment decides whether it takes the redeploy over from the deploying
+session (ADR-0055 amendment 19 item 6; Amendment 2). It already writes Coolify variables with its
+own Coolify token. ADR-0055 decision 4, as amendment 12 left it, says a BWS consumer token may be
+handled only by an executor instance on the machine that already holds it, and never by the VM. Q8
+lifts decision 4 for lane tokens earlier, at increment 2, so increment 7 only moves the executor.
+The cost is accepted, stated as Q8 corrected it: Devon mints each token and revokes the old one, and
+the executor transits and writes it, so a compromised executor could read every staged lane token,
+write any lane's Coolify variable, and overwrite any lane's ping-URL secret. Until increment 7, lane
+tokens are registered and none is due by age, and the executor carries out only the early and leak
+reissues the rotation proposer starts (D-25, ADR-0055 amendment 19 items 9 and 10; Amendment 2).
+By D-24 (amendment 19 item 1) each lane token also keeps a stored copy in `Rotation / Keepers`, so
+the executor holds it at rest, not only in transit. The rejected options were the hand-rotated
+set, which conflicts with Devon's "SDS can not do an all human rotation" (2026-10-21), and a new
+confined rotation instance, which would add a third orchestrator identity.
 
 ### Q4: the "SDS lanes" App's private key is hand-rotated (HQ D-6)
 
@@ -1444,6 +1516,9 @@ resource, so the executor writes it with `PATCH /services/{uuid}/envs` on `sds-l
 registry holds each lane's resource uuid; its authority gains nothing else. Devon mints every lane
 token (ADR-0055 amendment 12) and pastes each value into the inbox. This lifts ADR-0055 decision 4
 for lane tokens at increment 2, in that increment's ADR-0055 amendment, instead of at increment 7.
+That amendment is ADR-0055 amendment 19, which also gives each lane token a stored copy in
+`Rotation / Keepers` (D-24, its item 1; Amendment 2), so a lane token is kept at rest on the VM,
+not only in transit through the inbox.
 Each lane's ping URL takes the same inbox path into its BWS secret by Q10's decision, so the same
 amendment lifts decision 4 for ping URLs. The rejected options were Devon pasting each value into
 the Coolify UI, and a new infraops tool that takes a BWS UUID and writes the value server-side.
@@ -1622,3 +1697,164 @@ per-resource-variable and adding-a-lane bullets; decision 2's token bullet and i
 increments 1, 2 and 7; the cut-over and "Rollback for one lane", which gains its delete step; the
 Consequences on the VPS's tokens, the lanes' lag, the release hold and the executor; Dependencies on
 ADR-0055; Q8 and Q11.
+
+## Amendment 2 (2026-11-07): lane tokens and ping URLs as ADR-0055 amendment 19 issues them
+
+- **Status:** Accepted on merge. HQ merges it only after a clean Opus whole-branch review (HQ
+  D-12, limit 3). The ADR's own status is unchanged.
+- **Decided by:** Devon, on 2026-11-07 (HQ D-24 to D-28), recorded in ADR-0055 amendment 19
+  (Proposed, merged at `d485d051`, PR #626). This amendment follows that one and decides nothing
+  of its own.
+- **Relates to:** decision 1 (the lane phases, the per-resource-variable bullet), decision 2 (the
+  token bullet and the `.cred-consumers.toml` bullet), decision 3 (the ping-URL secret),
+  increments 2 and 7, the cut-over, the Consequences on the executor and on lane-token rotation,
+  Dependencies on ADR-0055, Q3 and Q8
+
+### Why
+
+Increment 2 writes the ADR-0055 amendment that lifts decision 4 for lane tokens and ping URLs
+(increment 2; Dependencies, ADR-0055). That amendment is ADR-0055 amendment 19. It extends the VM
+rotation executor to issue a first lane token and a first ping URL from its inbox, and it changes
+how a lane token is reissued and retired before increment 7. Devon decided its five questions on
+2026-11-07: D-24 (each lane token keeps a stored copy: "Keep a stored copy"), D-25 (the rotation
+proposer starts an early or leak reissue: "The proposer as recommended"), D-26 (the order of the
+revoke: "I approve the proposed answer"), D-27 (the departure from decision 3's R10 rule, for lane
+tokens only: "Accepted") and D-28 (a ping URL binds by shape alone: "No Key").
+
+Several passages of this ADR then contradicted amendment 19: the lane phases had no mode that
+redeploys a lane after a token write, increment 7 left the redeploy's actor open, increment 2's
+verify list held questions amendment 19 answers, and the Consequences said a leaked lane token is
+staged by hand and that lane tokens are unrotated until increment 7. This amendment matches the
+ADR to amendment 19 and cites amendment 19's items for each change. Where amendment 19 leaves a
+point to increment 2's code, this amendment carries it as an increment-2 verify item and states no
+behavior for it.
+
+### What changes
+
+1. **The lane phases gain a token-change mode, `--token` (amendment 19 item 6 and "Open before
+   building").** As accepted, the phases take only `--tag`, `--schedule` and `--add`, and
+   `lanes-finish` passes only "the change and no other", so none redeploys a lane after the
+   executor writes a reissued token. Increment 2 adds `--token`, built and verified before
+   `execution-watch` holds a real token, so a leak's path works from the first lane. Its
+   definition, from amendment 19 item 6:
+   - **What it writes.** The lane's compose at its running tag, as `--schedule` does, and no
+     variable, because the executor has written the token. The command prints the calls and the
+     deploying session makes them (`docs/operations/deploy.md`, "The lane phases"): the existing
+     `coolify_update_service` and `coolify_deploy`, under the same quiet-slot reads as every other
+     mode.
+   - **What `lanes-finish` checks.** It passes when the image digest, the schedule and the volume
+     are unchanged, the container's `BWS_ACCESS_TOKEN` is non-empty, and `lane-run --read` reads
+     every secret the lane lists `ok`. The `lane-run --read` result is a new `lanes-finish` input:
+     `finish_mismatches` (`scripts/deploy_orchestrator.py`) checks only the digest, schedule, token
+     presence and volume.
+   - **How a failed run closes.** A mismatch at `lanes-finish` exits 2 and leaves the run
+     `unfinished`, and an `unfinished` run refuses the lane's next `lanes-prepare` and every
+     orchestrator release (`require_lanes_current`). `--token` has nothing to undo, because its
+     compose is the one the lane already ran, so its `lanes-finish --restored` form makes no
+     inverse write: it closes the run as failed, with the mismatches recorded as its reason in the
+     run file, and the run never becomes the lane's record. The lane can then take a retry
+     `--token`, a `--tag`, or a rollback to the Mac. HQ records the failure in its report of the
+     reads (amendment 19 item 7), and the reissue's revoke stays unresolved.
+
+   The rest of the mode is settled in increment 2's code ("Verify in increment 2").
+2. **The executor never redeploys a lane (amendment 19 item 6).** A `bws-lane-token` destination
+   with `redeploy` true is refused before a claim, and its distribute step writes the variable with
+   the client's one `PATCH` and never calls `restart()`. The lane's container takes the new token
+   only at its next start, which is a lane phases' redeploy in that lane's quiet slot. Until
+   increment 7, the deploying session runs that redeploy by `--token`. Increment 7's own ADR-0055
+   amendment decides whether the executor runs the redeploy or hands it to the deploying session;
+   if it gives the executor the redeploy, it restores a machine read before the revoke, and
+   otherwise it states how decision 3's R10 rule is met (amendment 19 item 7).
+3. **Increment 2's open questions are answered.** Each of increment 2's verify items is marked
+   answered, with its source:
+   - the token variable's row: the compose parse creates it at create, confirmed by the first
+     lane's create ("What the code settles" and "Open before building");
+   - `redeploy` false: item 6;
+   - two waiting mints: item 8, an order HQ makes by when it makes the ping URL's row due;
+   - what makes the executor wait on a ping URL's paste: items 2, 3 and 5, an issue plan on a
+     keeper that holds the inbox's empty marker, under a new `healthchecks-ping-url` class;
+   - the ping URL's bind: by shape alone, never by a ping, proven at cut-over step 4 (D-28, item 5);
+   - the actor for an early or leak reissue: the rotation proposer (D-25, item 10);
+   - the leak revoke order: after a leak Devon revokes first; otherwise after the `--token` run's
+     `lanes-finish` passes and `lane-run --read` reads every listed secret `ok` (D-26, item 10).
+4. **Early and leak reissue, and retirement, before increment 7 (amendment 19 items 4, 7, 9 and
+   10).** A lane token's row is rotated by SDS from its first issue, so the age rule applies, and
+   at 365 days none is due by age before November 2027 (item 9). Before increment 7 the rotation
+   proposer starts an early or leak reissue from the infraops findings it already reads
+   (`cred.exposure-rotate` or `cred.rotation-requested`), Devon's revision approval is the only
+   person step, and the executor carries the reissue out from its inbox (D-25, item 10). The new
+   token binds by its declared reach, so it binds after a leak's early revoke, and no hand stage
+   is needed (items 4 and 10). Until increment 7, a reissue retires the old token on HQ's report of
+   the lane phases' reads, not on a machine `verify_consumers` check, for lane tokens only (D-27,
+   item 7). The leak path still ends in revoke and reissue.
+5. **Each lane token keeps a keeper in `Rotation / Keepers` (D-24, amendment 19 item 1).** ADR-0059
+   accepted the token's transit through the executor (Q3, Q8); D-24 adds the value at rest on the
+   VM, and it is a standing answer for every later lane token. Decision 2's token bullet, Q3, Q8 and
+   the Consequences on the executor carry the cross-reference.
+6. **Who creates a lane's ping-URL secret: the VM root, with the keeper command, in the increment
+   that moves the lane (amendment 19 items 1, 3 and 8).** Amendment 19 item 1 says the keeper
+   command creates the ping-URL secret in `Rotation / Keepers`, and its item 8 step 1 has the root
+   run that command in the lane's cut-over, holding the inbox's empty marker. Decision 3 says the
+   increment that moves each lane creates the secret. Both hold: the increment's cut-over is where
+   the root runs the command. Decision 3 now says so.
+7. **The cut-over takes amendment 19 item 8's order.** Cut-over step 1 now names the keeper
+   command, the two registry-row changes, the grants (the ping-URL secret included, while it holds
+   the marker), the token's mint and bind, and HQ making the ping URL's row due only after the
+   token's `store` unit completes. Step 4's read that the check's last ping came from the container
+   is also the proof of the ping URL (D-28).
+
+### Verify in increment 2
+
+Each item is verified in increment 2, before its code merges. The first five are the sub-items of
+amendment 19's "Open before building" item for the `--token` mode, the sixth is its "A pass on a
+dead token and the quiet slot" item, and the last two come from the reviews of PR #626.
+Amendment 19's other "Open before building" items (the ping URL's check read, the token's row at
+create, what `_REACH` lists for a lane account, and what makes a first issue due) are increment
+2's too.
+
+- **The mode's own `change_key` (increment 2)**, beside `tag:`, `add:` and `schedule:`.
+- **Its `lanes-finish --restored` form (increment 2)**, which closes a failed run with no inverse
+  write (What changes, item 1).
+- **The `lane-run --read` result as a `lanes-finish` input (increment 2)** (What changes, item 1).
+  Increment 2's code settles its form.
+- **A `--tag` run after the executor's `PATCH` (increment 2)** also loads the new token, without
+  `--token`'s reads, so the revoke's precondition needs those reads re-run on that container.
+- **`--token` refuses `sds-lane-placeholder` (increment 2)**, which holds no token.
+- **A pass on a dead token and the quiet slot (increment 2).** Whether a lane pass that fails on a
+  revoked token leaves its check `started`, which would hold off the leak's `--token` redeploy (the
+  quiet slot waits while `started` is `true` and `status` isn't `down`).
+- **A closed failed `--token` run has a distinct status (increment 2).** `lanes-finish` closes an
+  `unfinished` run as `finished` or `restored` (`scripts/deploy_orchestrator.py` line 1017 at
+  `d485d051`; line 1016 holds the run file's other statuses, `waiting`, `refused`, `timed_out` and
+  `superseded`). A failed `--token` run restored nothing, so it closes with a status of its own, not
+  `restored`, which `last_finished` and `prepare`'s lag check (`require_lanes_current`) ignore, as
+  they ignore `restored` today (`last_finished` takes only `finished`). The failure stays visible:
+  the closing call doesn't report the run as a success, and HQ reports it.
+- **`lanes-finish`'s failure message fits the mode (increment 2).** On a mismatch, `lanes-finish`
+  prints the run's inverse and raises "Run the inverse printed on stderr now" (`_lanes_finish`). A
+  `--token` run has no inverse write, so its message names its own close: `lanes-finish --restored`,
+  which records the mismatches and closes the run as failed.
+
+The ping-URL secret's creator isn't carried: amendment 19's text settles it (What changes, item 6).
+
+### What stays
+
+Every rule of decision 1 that isn't about the token-change mode stays: the image pinned to the
+served orchestrator, the three phases and their inverse writes for `--tag`, `--schedule` and
+`--add`, the quiet-slot conditions (the quiet-slot bullet's "nothing staged" sentence, qualified for
+`--token`), the 6-hour deadline, the lag check, and the bans on reading a resource's variable
+listing and on `coolify_get_service`. Devon still mints every lane token and revokes every old one
+(amendment 19 item 9; ADR-0055 amendment 12). Increment 7 still moves the VM executor under its own
+ADR-0055 amendment. Amendment 2 adds no credential, scope, permission, BWS grant or Healthchecks
+key: the lane-token keepers are amendment 19's, by D-24, and this amendment only cross-references
+them.
+
+### Passages this amendment changed
+
+The header's `Decided by` and `Relates to`; decision 1's lane-phase bullet (the `--token` change,
+`lanes-prepare`'s writes and `lanes-finish`'s close), its quiet-slot bullet (the "nothing
+staged" sentence, qualified for `--token`) and its per-resource-variable bullet;
+decision 2's token bullet and its `.cred-consumers.toml` bullet; decision 3's ping-URL secret
+bullet; increment 2 (its ADR-0055 amendment and its verify items, each marked answered) and
+increment 7; cut-over steps 1 and 4; the Consequences on the executor and on lane-token rotation;
+Dependencies on ADR-0055; the "Devon's decisions" introduction, Q3 and Q8.
