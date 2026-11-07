@@ -63,7 +63,7 @@ class HealthchecksPingUrlProvider:
     def bind_refusal(self, new: Value, old: Value) -> str | None:
         """Why a pasted value isn't a ping URL to issue (item 5), or `None`."""
         if old.reveal() != EMPTY:
-            return "the keeper doesn't hold the empty marker: a ping URL is issued, never rotated"
+            return "the keeper doesn't hold only the marker: a ping URL is issued, never rotated"
         return self.shape_problem(new)
 
     def mint(self) -> Value:

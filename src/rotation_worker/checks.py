@@ -189,13 +189,13 @@ def _check_issue_fact(adapter: Adapter, plan: Plan, rotation: Rotation, store: S
     keeper = store.read(rotation.keeper_id)
     if not plan.issue:
         if keeper.reveal() == EMPTY:
-            raise ContractError("the keeper holds the empty marker: nothing is issued to rotate")
+            raise ContractError("the keeper holds only the marker: nothing is issued to rotate")
         return
     staging = store.find(rotation.work_project_id, rotation.staging_key)
     if keeper.reveal() == EMPTY or staging is None:
         return
     if not store.read(staging.id).same_as(keeper):
-        raise ContractError("an issue runs only on a keeper holding the empty marker")
+        raise ContractError("an issue runs only on a keeper holding only the marker")
 
 
 def _keeper_id(entry: RegistryEntry, packaged: list[str], store: SecretStore) -> str:

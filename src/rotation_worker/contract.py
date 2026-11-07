@@ -697,7 +697,7 @@ def _store_issue(run: UnitRun, step: Step) -> None:
     elif keeper.same_as(old):
         run.store.write(run.rotation.keeper_id, new)
     else:
-        raise ContractError("the keeper holds neither the empty marker nor the staged value")
+        raise ContractError("the keeper holds neither the marker nor the staged value")
     if not run.store.read(run.rotation.keeper_id).same_as(new):
         raise ContractError("the keeper doesn't read back the new value")
     run.record(step, StepEvidence(step.kind, fingerprints=_fingerprints(new, old), note=note))

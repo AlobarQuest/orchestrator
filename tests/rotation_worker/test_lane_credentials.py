@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import jsonschema
 import pytest
 
 from rotation_worker import cli
@@ -330,6 +331,24 @@ def test_a_ping_url_issue_stores_it_proves_its_shape_and_deletes_staging() -> No
     assert len(issue.recorded.filed) == 4
 
 
+SCHEMA = json.loads(
+    (Path(__file__).resolve().parents[1] / "fixtures" / "rotation_evidence_schema.json").read_text()
+)
+
+
+def test_every_issue_payload_conforms_to_the_orchestrator_s_schema() -> None:
+    issues = [
+        (Issue(ping.HealthchecksPingUrlProvider(), PING_DESTINATIONS, PING_URL), PING_PLAN),
+        (Issue(_lane([]), LANE_DESTINATIONS, NEW_TOKEN), LANE_ISSUE),
+    ]
+    for issue, plan in issues:
+        issue.run(plan)
+        for _, evidence in issue.recorded.filed:
+            jsonschema.validate(evidence.as_payload(), SCHEMA)
+            assert PING_URL.reveal() not in json.dumps(evidence.as_payload())
+            assert NEW_TOKEN.reveal() not in json.dumps(evidence.as_payload())
+
+
 def test_a_ping_url_of_another_shape_is_never_stored() -> None:
     wrong = Value("https://hc-ping.com/00000000-0000-4000-8000-0000000000aa")
     issue = Issue(ping.HealthchecksPingUrlProvider(), PING_DESTINATIONS, wrong)
@@ -355,7 +374,7 @@ def test_a_retried_store_finding_the_staged_value_in_the_keeper_counts_as_done()
 def test_an_issue_store_on_a_keeper_holding_another_value_fails_and_writes_nothing() -> None:
     issue = Issue(ping.HealthchecksPingUrlProvider(), PING_DESTINATIONS, PING_URL)
     issue.store.write(KEEPER, Value("a-value-nobody-staged"))
-    with pytest.raises(ContractError, match="neither the empty marker"):
+    with pytest.raises(ContractError, match="neither the marker"):
         issue.run(PING_PLAN)
     assert issue.keeper().reveal() == "a-value-nobody-staged"
 
@@ -557,7 +576,7 @@ def test_a_ping_url_binds_by_its_shape_to_a_keeper_holding_the_marker() -> None:
     provider = ping.HealthchecksPingUrlProvider()
     assert _bind(provider, Value(EMPTY), PING_URL)[0] is None
     reason = _bind(provider, Value("an-issued-url"), PING_URL)[0]
-    assert reason is not None and "empty marker" in reason
+    assert reason is not None and "only the marker" in reason
 
 
 @pytest.mark.parametrize(
@@ -848,7 +867,7 @@ def test_an_issue_on_a_keeper_holding_another_value_than_staged_is_refused(
     def staged(store: MemoryStore, rotation: Rotation) -> None:
         store.create(CHECKS_WORK, rotation.staging_key, NEW_TOKEN)
 
-    with pytest.raises(ContractError, match="only on a keeper holding the empty marker"):
+    with pytest.raises(ContractError, match="only on a keeper holding only the marker"):
         _check(world, LANE_ISSUE, "store", OLD_TOKEN, stage=staged)
 
 
