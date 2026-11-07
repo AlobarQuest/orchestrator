@@ -1111,8 +1111,11 @@ def test_the_execution_watch_compose_meets_the_add_refusals() -> None:
     assert environment["EXECUTION_WATCH_STATE_DIR"] == "/var/lib/sds/execution-watch"
     assert deploy._state_volume(service, "execution-watch") == "sds-lanes-execution-watch-state"
     assert service["restart"] == "unless-stopped"
-    # Every variable is a fixed path or a `${...}` reference: the compose holds no value.
-    assert all(value.startswith(("${", "/")) for name, value in environment.items()), environment
+    # Every variable is a fixed path, a `${...}` reference, or a BWS UUID, which is no secret
+    # (`SDS_DEADMAN_PING_URL_UUID`, which lands with the cut-over): the compose holds no value.
+    for name, value in environment.items():
+        named = value.startswith(("${", "/")) or deploy.BWS_UUID.match(value)
+        assert named, (name, value)
     assert "networks" not in service and "ports" not in service and "labels" not in service
 
 
