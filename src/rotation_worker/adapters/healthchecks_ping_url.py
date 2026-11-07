@@ -95,11 +95,15 @@ class HealthchecksPingUrlProvider:
         if problem is not None:
             return problem
         control = self.probe(self.known_bad())
+        if control is None:
+            return "Healthchecks gave no answer to the lookup, so it is asked again next pass"
         if control != NOT_FOUND:
             return f"the lookup of a random UUID's check answered {control}, not {NOT_FOUND}"
         status = self.probe(new)
         if status == NOT_FOUND:
             return "the read-only key finds no such check: a wrong URL or another project's check"
+        if status is None:
+            return "Healthchecks gave no answer to the lookup, so it is asked again next pass"
         if status != LIVE_STATUS:
             return f"the lookup of its check answered {status}"
         return None

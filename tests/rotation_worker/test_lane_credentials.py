@@ -705,7 +705,7 @@ def test_a_lookup_that_doesn_t_prove_the_check_fails_verify_new_and_stores_nothi
         (HealthchecksStub(found=404), "finds no such check"),
         (HealthchecksStub(control=200), "a random UUID's check answered 200, not 404"),
         (HealthchecksStub(found=500), "its check answered 500"),
-        (HealthchecksStub(error=httpx.ConnectError("unreachable")), "answered None, not 404"),
+        (HealthchecksStub(error=httpx.ConnectError("unreachable")), "gave no answer"),
     ],
     ids=["no-such-check", "control-found", "server-error", "no-answer"],
 )
