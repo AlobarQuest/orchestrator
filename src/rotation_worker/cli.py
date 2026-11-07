@@ -14,7 +14,10 @@ into a package, then compares them with the standing package's, at each reposito
 Exit codes: 0 equal, 1 different (the package needs a revision before approval), 2 unreadable.
 `adopt-keeper <credential>` reads a Postgres role's password on stdin, once, and creates its keeper
 in `Rotation / Keepers`; `pg-restore <credential>` puts the keeper's value back everywhere a host
-step writes it. Neither prints a value, and neither takes one as an argument.
+step writes it. Neither prints a value, and neither takes one as an argument. `create-keeper
+<credential>` creates an issued credential's keeper in `Rotation / Keepers` holding the inbox's
+empty marker and prints its secret id (ADR-0055 amendment 19 item 3); it reads no value, and runs
+before the registry row exists, since the row names the id it prints.
 `grants` is read-only: it reads the member record with the instance's own bearer and prints whether
 each registry repository holds the `credential_rotation` grant. Exit 0, or 2 when it can't be read.
 """
@@ -37,7 +40,7 @@ from typing import Final, TextIO
 from rotation_worker.adapters import ADAPTERS, AdapterContext, fake, postgres_role
 from rotation_worker.compare import Comparison, report
 from rotation_worker.config import DEFAULT_PATH, Config, ConfigError, load, read_root_token
-from rotation_worker.contract import ContractError, Rotation
+from rotation_worker.contract import EMPTY, ContractError, Rotation
 from rotation_worker.destinations import DestinationError, parse, render
 from rotation_worker.git_mirror import MirrorError, RepoMirror, default_mirror_root
 from rotation_worker.github_actions import RotationApp
@@ -76,6 +79,8 @@ KEYCHAIN_BEARER: Final = "worker-bearer"
 BWS_TOKEN: Final = re.compile(
     r"^0\.[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.[A-Za-z0-9]+:[A-Za-z0-9+/]+=*$"
 )
+# A registry row's `id`, which names its keeper: lowercase words joined by hyphens.
+CREDENTIAL_ID: Final = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 # A Postgres role's password: what `PostgresRoleProvider.mint` makes and the helper accepts.
 POSTGRES_PASSWORD: Final = re.compile(r"^[0-9a-f]{64}$")
 POSTGRES_CLASS: Final = "postgres-role-password"
@@ -361,6 +366,33 @@ def adopt_keeper(config: Config, credential_id: str, mirror: RepoMirror, stdin: 
     return 0
 
 
+def create_keeper(config: Config, credential_id: str) -> int:
+    """Create a keeper in `Rotation / Keepers` holding the empty marker, named by the registry
+    row's `id`; print its secret id. The row lands after, naming that id, so nothing is read from
+    the registry. Nothing is overwritten, and no value is read or printed."""
+    if not CREDENTIAL_ID.fullmatch(credential_id):
+        print(
+            "create-keeper: a credential id is lowercase words joined by hyphens", file=sys.stderr
+        )
+        return EXIT_UNREADABLE
+    if config.keepers_project_id is None:
+        print("create-keeper: the configuration names no keepers_project_id", file=sys.stderr)
+        return EXIT_UNREADABLE
+    try:
+        store = open_store(config)
+        if store.find(config.keepers_project_id, credential_id) is not None:
+            print(
+                f"create-keeper: {credential_id!r} already exists; nothing stored", file=sys.stderr
+            )
+            return EXIT_UNREADABLE
+        created = store.create(config.keepers_project_id, credential_id, Value(EMPTY))
+    except (StoreError, ConfigError) as error:
+        print(f"create-keeper: {error}", file=sys.stderr)
+        return EXIT_UNREADABLE
+    print(json.dumps({"secret_id": created.id}))
+    return 0
+
+
 def pg_restore(setup: Setup, credential_id: str) -> int:
     """Put the keeper's value back everywhere a host step writes it. For a host whose undo
     failed too: it needs no `/review`, no requeue and no value in an argument."""
@@ -427,6 +459,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         "adopt-keeper", help="create a Postgres role's keeper from its password on stdin"
     )
     adopting.add_argument("credential_id")
+    creating = commands.add_parser(
+        "create-keeper", help="create an issued credential's keeper holding the empty marker"
+    )
+    creating.add_argument("credential_id")
     restoring = commands.add_parser(
         "pg-restore", help="put a Postgres role's keeper value back where host writes it"
     )
@@ -441,6 +477,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         reading,
         staging,
         adopting,
+        creating,
         restoring,
         reading_grants,
     ):
@@ -469,6 +506,8 @@ def _command(arguments: argparse.Namespace, config: Config) -> int:
         return adopt_keeper(
             config, arguments.credential_id, RepoMirror(config.mirror_root), sys.stdin
         )
+    if arguments.command == "create-keeper":
+        return create_keeper(config, arguments.credential_id)
     if arguments.command == "grants":
         return grants(config)
     if arguments.command == "pg-restore":

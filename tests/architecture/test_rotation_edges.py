@@ -443,6 +443,11 @@ PROVIDER_EDGES: dict[str, Reach] = {
     ),
     # No client: a fresh login in a child process (`PROCESSES`).
     "bws-machine-token": Reach((), frozenset(), frozenset()),
+    # No client of its own: its login is the machine-token provider's child process, and its one
+    # write is the `coolify_service` row's PATCH, from a client that can't restart.
+    "bws-lane-token": Reach((), frozenset(), frozenset()),
+    # No client: a ping URL is never sent anything (ADR-0055 amendment 19 item 5).
+    "healthchecks-ping-url": Reach((), frozenset(), frozenset()),
     "postgres-role": Reach(
         tuple(
             built_clients(
@@ -544,7 +549,7 @@ BORROWED: dict[str, dict[str, frozenset[str]]] = {
             {"MirrorError", "RepoMirror", "default_mirror_root"}
         ),
         "rotation_worker.grants": frozenset({"GrantUnread", "rotation_granted"}),
-        "rotation_worker.plans": frozenset({"derive", "select_plan", "writes_hosted_service"}),
+        "rotation_worker.plans": frozenset({"candidates", "select_plan", "writes_hosted_service"}),
         "rotation_worker.registry": frozenset({"RegistryEntry", "RegistryError", "credentials"}),
         "rotation_worker.types": frozenset({"CLASS_TYPES", "TYPES"}),
     },
@@ -588,7 +593,7 @@ BORROWED: dict[str, dict[str, frozenset[str]]] = {
             {"ConfinedClient", "TransportFailure", "base_url_problem", "error_code"}
         ),
         "rotation_worker.contract": frozenset(
-            {"ContractError", "HELD_KIND", "HumanAct", "Plan", "StepKind", "UnitPlan"}
+            {"ContractError", "HELD_KIND", "HumanAct", "Plan", "StepKind", "UnitPlan", "is_issue"}
         ),
         "rotation_worker.destinations": frozenset(
             {"DestinationError", "HOSTED_KINDS", "parse", "same"}
@@ -596,7 +601,7 @@ BORROWED: dict[str, dict[str, frozenset[str]]] = {
         "rotation_worker.git_mirror": frozenset(
             {"MirrorError", "RepoMirror", "default_mirror_root"}
         ),
-        "rotation_worker.plans": frozenset({"criteria_steps", "derive"}),
+        "rotation_worker.plans": frozenset({"candidates", "criteria_steps"}),
         "rotation_worker.registry": frozenset(
             {"RegistryEntry", "RegistryError", "credentials", "standing_credential"}
         ),
@@ -656,9 +661,11 @@ NOT_IDENTITIES = frozenset(
 # Every provider an adapter names either has an entry in `Config.admin_secrets` or has none: the
 # secret its adapter needs to mint or revoke, or the Coolify token a hosted adapter writes with.
 ADMIN_SECRET_PROVIDERS = frozenset(
-    {"openrouter", "orchestrator", "change-manager", "postgres-role"}
+    {"openrouter", "orchestrator", "change-manager", "postgres-role", "bws-lane-token"}
 )
-NO_ADMIN_SECRET = frozenset({"bitbucket", "bitwarden-sm", "fake", "github"})
+NO_ADMIN_SECRET = frozenset(
+    {"bitbucket", "bitwarden-sm", "fake", "github", "healthchecks-ping-url"}
+)
 
 METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD")
 

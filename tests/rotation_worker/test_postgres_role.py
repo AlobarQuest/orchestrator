@@ -325,7 +325,8 @@ def test_existing_types_derive_unchanged(name: str) -> None:
 
 
 def test_every_existing_type_has_a_pinned_plan() -> None:
-    assert set(EXISTING_PLANS) == set(TYPES) - {pg.NAME}
+    # ADR-0055 amendment 19's types pin theirs in `test_lane_credentials.py`.
+    assert set(EXISTING_PLANS) == set(TYPES) - {pg.NAME, "bws-lane-token", "healthchecks-ping-url"}
 
 
 def test_the_type_is_registered_under_its_class_and_adapter() -> None:

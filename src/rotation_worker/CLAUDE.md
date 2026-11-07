@@ -36,7 +36,8 @@
   (`worker._mint_waits`). The inbox binds a value only while no other rotation on either
   instance waits on a mint, and only after the provider accepts it beside a refused control,
   `same_identity` (same account, not scope) holds against the keeper, and no other SDS-rotated
-  keeper of its type holds it;
+  keeper of its type holds it; a lane token binds by its row's declared reach and a ping URL by
+  its shape instead (`inbox.BindsByItself`, ADR-0055 amendment 19), never by `same_identity`;
   it writes staging before emptying the inbox. The Keychain instance reads its inbox with its
   own narrow BWS identity, which the VM's root can't reach. Detail:
   `docs/operations/rotation-executor.md`, "A person's mint is taken from the inbox".
@@ -90,3 +91,10 @@
 - `rotation-heartbeat` is sent as `resolved` after every finished pass and is never raised; its
   meaning is the absence of the ping, heard by an alert-hub schedule. A pass that raises sends none.
   `rotation-instance-behind` is held when the mirror lacks the running revision.
+- An issue (`plans.derive_issue`, ADR-0055 amendment 19) runs only on a keeper holding the inbox's
+  empty marker (`contract.EMPTY`), which stands as its old value; `checks._check_issue_fact`
+  reads that before the claim, and refuses a rotation plan on the marker. A lane token's variable
+  is written at `distribute` with one `PATCH` by a Coolify client that can't restart
+  (`restarts=False`); a ping URL is never sent anything, and its `verify_new` is a shape check,
+  the one exception to decision 3's probe rule. Detail: `docs/operations/rotation-executor.md`,
+  "Lane tokens and ping URLs".

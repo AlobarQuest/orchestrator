@@ -23,6 +23,9 @@ class CredentialType:
     # The destination kind of the store its keepers live in: only the executor instance whose
     # store reads that kind takes its units (ADR-0055 amendment 12).
     store_kind: str = "bws-secret"
+    # Its new value is proved by its shape alone, because a probe would act (a ping marks a
+    # Healthchecks check up, ADR-0055 amendment 19 item 5). Its provider is `ShapeVerified`.
+    verify_by_shape: bool = False
 
 
 # By adapter name: each is the `NAME` its adapter module declares, which a test holds equal.
@@ -42,15 +45,28 @@ TYPES: Final[dict[str, CredentialType]] = {
     "postgres-role": CredentialType(
         Capabilities(machine_mint=True, machine_revoke=True, hosted=True, overlap=False)
     ),
+    # ADR-0055 amendment 19: a lane's BWS access token and its Healthchecks ping URL, each issued
+    # into a keeper holding the inbox's empty marker. A person mints both; the VM instance keeps
+    # them. Only the token is rotated (reissued), and only it has a copy beyond its keeper: the
+    # lane's Coolify variable, written with no restart.
+    "bws-lane-token": CredentialType(
+        Capabilities(machine_mint=False, machine_revoke=False, issues=True, env_at_distribute=True)
+    ),
+    "healthchecks-ping-url": CredentialType(
+        Capabilities(machine_mint=False, machine_revoke=False, issues=True, rotates=False),
+        verify_by_shape=True,
+    ),
 }
 
 # A registry row's `class`, mapped to its type (increment 4). A class with no entry is a type the
 # SDS doesn't rotate: nothing is generated for it.
 CLASS_TYPES: Final[dict[str, str]] = {
     "atlassian-api-token": "bitbucket",
+    "bws-lane-token": "bws-lane-token",
     "bws-machine-token": "bws-machine-token",
     "change-manager-m2m-bearer": "change-manager",
     "github-pat-fine-grained": "github-pat",
+    "healthchecks-ping-url": "healthchecks-ping-url",
     "openrouter-key": "openrouter",
     "orchestrator-m2m-bearer": "orchestrator",
     "postgres-role-password": "postgres-role",

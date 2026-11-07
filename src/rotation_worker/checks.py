@@ -17,6 +17,9 @@ from intent-packages' and the registries' public git:
   is kept where this instance's store reads, every one fits a `rotation-step/1` row, and a unit
   marked as touching no hosted service writes none;
 * the registry row says everything its adapter reads from it (`Adapter.check_row`);
+* an issue plan runs only on a keeper holding the inbox's empty marker, or the value its own
+  staging holds after an earlier attempt's store, and a rotation plan never on the marker
+  (ADR-0055 amendment 19 item 3);
 * a unit declaring a host with no overlap has a host step (whether an overlap is impossible is
   `m2m_setting.build`'s to refuse, from what the orchestrator serves);
 * every `runtime-fetch` consumer can be verified: the registry names its scheduled read, or the
@@ -37,6 +40,8 @@ from rotation_worker.adapters import ADAPTERS, Adapter
 from rotation_worker.canonical import CanonicalError, package_hash
 from rotation_worker.contract import (
     ACTIONS_KIND,
+    EMPTY,
+    ENV_KIND,
     HELD_KIND,
     ContractError,
     HumanAct,
@@ -44,13 +49,14 @@ from rotation_worker.contract import (
     Rotation,
     StepKind,
     UnitPlan,
+    is_issue,
 )
 from rotation_worker.destinations import HOSTED_KINDS, parse, same
 from rotation_worker.envelope import ADAPTER_KEY, NON_HOSTED_KEY
 from rotation_worker.evidence import MAX_DESTINATION
 from rotation_worker.git_mirror import COMMIT_PATTERN as COMMIT
 from rotation_worker.git_mirror import MirrorError, RepoMirror
-from rotation_worker.plans import derive, select_plan, writes_hosted_service
+from rotation_worker.plans import candidates, select_plan, writes_hosted_service
 from rotation_worker.readers import Read, scheduled_reads
 from rotation_worker.registry import (
     PACKAGES_REPOSITORY,
@@ -135,16 +141,22 @@ def check_unit(
     for step in unit.steps:
         if step.ac_id not in criteria:
             raise ContractError(f"the package has no {step.ac_id} for the {step.kind} step")
+    env_at_distribute = adapter.capabilities is not None and adapter.capabilities.env_at_distribute
     _check_destination_fit(
-        packaged, plan, unit, marked_non_hosted=constraints.get(NON_HOSTED_KEY) is True
+        packaged,
+        plan,
+        unit,
+        marked_non_hosted=constraints.get(NON_HOSTED_KEY) is True,
+        env_at_distribute=env_at_distribute,
     )
     without_overlap = _declared_without_overlap(constraints, unit)
     _check_runtime_fetch_verifiable(packaged, plan, reads)
-    _check_human_retire_verifiable(packaged, plan, reads, store)
+    _check_human_retire_verifiable(packaged, plan, reads, store, env_by_patch=env_at_distribute)
     occurrence = fields.get("occurrence")
     if not isinstance(occurrence, str) or not occurrence.strip():
         raise ContractError("the approved revision names no occurrence")
     rotation = Rotation(credential_id, occurrence, keeper, work_project_id, tuple(packaged))
+    _check_issue_fact(adapter, plan, rotation, store)
     return Approved(adapter, plan, unit, rotation, entry, reads, without_overlap)
 
 
@@ -154,10 +166,33 @@ def _plan(
     store: SecretStore,
     acceptance: object,
 ) -> Plan:
-    if adapter.capabilities is None:
+    capabilities = adapter.capabilities
+    if capabilities is None:
         return adapter.plan
-    derived = derive(adapter.capabilities, entry.destinations, entry.keeper, store.read_back_kind)
-    return select_plan((derived, adapter.plan), acceptance)
+    derived = candidates(capabilities, entry.destinations, entry.keeper, store.read_back_kind)
+    # A type with an issue plan has no packages from before derivation: its `adapter.plan` only
+    # names the units a person's acts sit between, and would write no copy if it ran.
+    pre_derivation = () if capabilities.issues else (adapter.plan,)
+    return select_plan((*derived, *pre_derivation), acceptance)
+
+
+def _check_issue_fact(adapter: Adapter, plan: Plan, rotation: Rotation, store: SecretStore) -> None:
+    """Whether there is nothing to retire is read from the keeper, never declared (ADR-0055
+    amendment 19 item 3): for a type that issues, an issue runs on the empty marker, or on the
+    value an earlier attempt stored from this rotation's staging; a rotation never runs on the
+    marker."""
+    if adapter.capabilities is None or not adapter.capabilities.issues:
+        return
+    keeper = store.read(rotation.keeper_id)
+    if not is_issue(plan):
+        if keeper.reveal() == EMPTY:
+            raise ContractError("the keeper holds the empty marker: nothing is issued to rotate")
+        return
+    if keeper.reveal() == EMPTY:
+        return
+    staging = store.find(rotation.work_project_id, rotation.staging_key)
+    if staging is None or not store.read(staging.id).same_as(keeper):
+        raise ContractError("an issue runs only on a keeper holding the empty marker")
 
 
 def _keeper_id(entry: RegistryEntry, packaged: list[str], store: SecretStore) -> str:
@@ -233,7 +268,12 @@ def _local[T](read: Callable[..., T], *arguments: str) -> T:
 
 
 def _check_destination_fit(
-    destinations: list[str], plan: Plan, unit: UnitPlan, *, marked_non_hosted: bool
+    destinations: list[str],
+    plan: Plan,
+    unit: UnitPlan,
+    *,
+    marked_non_hosted: bool,
+    env_at_distribute: bool = False,
 ) -> None:
     hosted = [d for d in destinations if parse(d)["kind"] in HOSTED_KINDS]
     held = [d for d in destinations if parse(d)["kind"] == HELD_KIND]
@@ -243,7 +283,15 @@ def _check_destination_fit(
             # Writing a held copy restarts the application that holds it.
             raise ContractError("the unit is marked non-hosted but restarts an application")
         raise ContractError("the unit is marked non-hosted but writes a hosted consumer")
-    if hosted and StepKind.HOST not in {step.kind for step in plan.steps()}:
+    kinds = {step.kind for step in plan.steps()}
+    # A type that writes its Coolify variable at distribute needs that step (ADR-0055 amendment
+    # 19 item 6); a `coolify-env-hash` is only ever a host step's.
+    by_distribute = env_at_distribute and StepKind.DISTRIBUTE in kinds
+    if (
+        hosted
+        and StepKind.HOST not in kinds
+        and not (by_distribute and all(parse(d)["kind"] == ENV_KIND for d in hosted))
+    ):
         # Only an adapter whose provider is the hosted service can write or verify one: refuse
         # before claiming rather than strand a rotation half done.
         raise ContractError("this adapter reaches no hosted consumer")
@@ -271,7 +319,12 @@ def _check_runtime_fetch_verifiable(
 
 
 def _check_human_retire_verifiable(
-    destinations: list[str], plan: Plan, reads: Mapping[str, Read], store: SecretStore
+    destinations: list[str],
+    plan: Plan,
+    reads: Mapping[str, Read],
+    store: SecretStore,
+    *,
+    env_by_patch: bool = False,
 ) -> None:
     # A person who revokes has no machine step after the last verify_consumers to re-check
     # every consumer, so the wait before that unit's claim must be able to see each one.
@@ -285,6 +338,10 @@ def _check_human_retire_verifiable(
     for destination in destinations:
         consumer = parse(destination)
         stored = store.locate(consumer) is not None or consumer["kind"] == HELD_KIND
+        # A lane token's variable is proved by its `PATCH` answering 2xx; that the lane loaded it
+        # is the lane phases' read, outside the plan, which meets decision 3's R10 rule for its
+        # revoke until ADR-0059 increment 7 (ADR-0055 amendment 19 item 7, Devon's D-27).
+        stored = stored or (env_by_patch and consumer["kind"] == ENV_KIND)
         if consumer["kind"] != "provider" and not stored and destination not in reads:
             raise ContractError(f"a person revokes, and nothing machine-verifies {destination}")
 

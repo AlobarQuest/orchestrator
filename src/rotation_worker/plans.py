@@ -28,6 +28,7 @@ from typing import Any, Final
 
 from rotation_worker.contract import (
     ACTIONS_KIND,
+    ENV_KIND,
     HELD_KIND,
     Actor,
     ContractError,
@@ -36,6 +37,7 @@ from rotation_worker.contract import (
     Step,
     StepKind,
     UnitPlan,
+    validate_issue_plan,
     validate_plan,
 )
 from rotation_worker.destinations import HOSTED_KINDS, parse
@@ -55,12 +57,34 @@ class Capabilities:
 
     `overlap` says whether the old value keeps working once the service holds the new one. It moves
     no step, only the words the generated package uses for host (ADR-0055 amendment 17).
+
+    ADR-0055 amendment 19 adds three. `issues`: the type has an issue plan (`derive_issue`), for a
+    keeper holding nothing yet. `rotates`: it has a rotation plan too; a ping URL has none, since
+    it can't be rotated, only replaced by recreating its check. `env_at_distribute`: its provider
+    writes its `coolify-env` destination at distribute, with one `PATCH`, never a restart and no
+    host step.
     """
 
     machine_mint: bool
     machine_revoke: bool
     hosted: bool = False
     overlap: bool = True
+    issues: bool = False
+    rotates: bool = True
+    env_at_distribute: bool = False
+
+
+def _distributes(
+    capabilities: Capabilities, destinations: Sequence[str], keeper: str, store_kind: str
+) -> bool:
+    """Whether a destination other than the keeper is written at distribute."""
+    kinds = {ACTIONS_KIND, HELD_KIND, store_kind}
+    if capabilities.env_at_distribute:
+        kinds.add(ENV_KIND)
+    return any(
+        destination != keeper and parse(destination)["kind"] in kinds
+        for destination in destinations
+    )
 
 
 def derive(
@@ -70,11 +94,7 @@ def derive(
     store_kind: str,
 ) -> Plan:
     """The plan for one credential of a type."""
-    distributes = any(
-        destination != keeper
-        and parse(destination)["kind"] in {ACTIONS_KIND, HELD_KIND, store_kind}
-        for destination in destinations
-    )
+    distributes = _distributes(capabilities, destinations, keeper, store_kind)
     switch = [
         *([StepKind.HOST] if capabilities.hosted else []),
         StepKind.VERIFY_NEW,
@@ -101,6 +121,46 @@ def derive(
     plan = Plan(tuple(_numbered(segments)))
     validate_plan(plan)
     return plan
+
+
+def derive_issue(
+    capabilities: Capabilities,
+    destinations: Sequence[str],
+    keeper: str,
+    store_kind: str,
+) -> Plan:
+    """The issue plan for one credential of a type that declares one (ADR-0055 amendment 19 item
+    3): a person's mint, then one `store` unit that proves, stores, writes every copy and verifies
+    every consumer. There is nothing to retire."""
+    if not capabilities.issues or capabilities.machine_mint or capabilities.hosted:
+        raise ContractError("only a type a person mints and nothing hosts declares an issue")
+    distributes = _distributes(capabilities, destinations, keeper, store_kind)
+    store = [
+        StepKind.VERIFY_NEW,
+        StepKind.STORE,
+        *([StepKind.DISTRIBUTE] if distributes else []),
+        StepKind.VERIFY_CONSUMERS,
+    ]
+    mint = HumanAct("mint", (Step(StepKind.MINT, H), Step(StepKind.STAGE, H)))
+    plan = Plan(tuple(_numbered([mint, ("store", store)])))
+    validate_issue_plan(plan)
+    return plan
+
+
+def candidates(
+    capabilities: Capabilities,
+    destinations: Sequence[str],
+    keeper: str,
+    store_kind: str,
+) -> tuple[Plan, ...]:
+    """Every plan derived for one credential of a type: its rotation plan, its issue plan, or
+    both. The approved package's criteria pick one (`select_plan`)."""
+    plans: list[Plan] = []
+    if capabilities.rotates:
+        plans.append(derive(capabilities, destinations, keeper, store_kind))
+    if capabilities.issues:
+        plans.append(derive_issue(capabilities, destinations, keeper, store_kind))
+    return tuple(plans)
 
 
 def _numbered(
@@ -133,8 +193,12 @@ def person_acts_beside(plan: Plan, unit: UnitPlan, offset: int, kind: StepKind) 
 
 
 # The steps that write a hosted service: host gives it the new value, and retire_old takes the
-# old one away. Store and distribute write BWS only.
+# old one away. Store and distribute write BWS only, except where a type with no host step writes
+# a Coolify variable (`ENV_WRITING_STEPS`).
 WRITING_STEPS: Final = frozenset({StepKind.HOST, StepKind.RETIRE_OLD})
+# A `coolify-env` destination in a plan with no host step is written at distribute and proved by
+# verify_consumers' `PATCH` (ADR-0055 amendment 19 items 6 and 7).
+ENV_WRITING_STEPS: Final = frozenset({StepKind.DISTRIBUTE, StepKind.VERIFY_CONSUMERS})
 
 
 def writes_hosted_service(destinations: Sequence[str], plan: Plan, unit: UnitPlan) -> bool:
@@ -142,12 +206,15 @@ def writes_hosted_service(destinations: Sequence[str], plan: Plan, unit: UnitPla
     plan has a host step) or of a credential with a hosted destination, or distribute writing a
     held copy, whose application it restarts. A unit that doesn't may be marked
     `touches_no_hosted_service`, and only such a unit; the executor refuses any other so marked
-    (`checks._check_destination_fit`)."""
+    (`checks._check_destination_fit`). A `coolify-env` in a plan with no host step is written at
+    distribute and verify_consumers."""
     kinds = {parse(destination)["kind"] for destination in destinations}
     steps = {step.kind for step in unit.steps}
-    hosts = StepKind.HOST in {step.kind for step in plan.steps()} or bool(kinds & HOSTED_KINDS)
+    has_host = StepKind.HOST in {step.kind for step in plan.steps()}
+    hosts = has_host or bool(kinds & HOSTED_KINDS)
     held = HELD_KIND in kinds and StepKind.DISTRIBUTE in steps
-    return (hosts and bool(steps & WRITING_STEPS)) or held
+    env = ENV_KIND in kinds and not has_host and bool(steps & ENV_WRITING_STEPS)
+    return (hosts and bool(steps & WRITING_STEPS)) or held or env
 
 
 def criteria_steps(plan: Plan) -> dict[str, tuple[str, StepKind]]:

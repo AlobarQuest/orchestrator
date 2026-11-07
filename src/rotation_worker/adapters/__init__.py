@@ -17,10 +17,12 @@ from typing import Any, Final
 
 from rotation_worker.adapters import (
     bitbucket,
+    bws_lane_token,
     bws_machine_token,
     change_manager,
     fake,
     github_pat,
+    healthchecks_ping_url,
     openrouter,
     orchestrator_bearer,
     postgres_role,
@@ -31,6 +33,7 @@ from rotation_worker.helper_client import HelperClient
 from rotation_worker.orchestrator_client import OrchestratorClient
 from rotation_worker.plans import Capabilities
 from rotation_worker.readers import Healthchecks
+from rotation_worker.registry import provider_entries
 from rotation_worker.secret_store import SecretStore
 from rotation_worker.types import TYPES
 
@@ -90,6 +93,9 @@ class Adapter:
     capabilities: Capabilities | None = None
     # Refuses, before a claim, a registry row this adapter couldn't act on.
     check_row: Callable[[Mapping[str, Any]], None] | None = None
+    # A person may revoke the old value before the rotation runs, after a leak (ADR-0055
+    # amendment 19 item 10, D-26), so the probe before the person's revoke takes either answer.
+    revoke_may_come_first: bool = False
 
 
 def _change_manager(context: AdapterContext) -> Provider:
@@ -136,6 +142,26 @@ def _postgres_role(context: AdapterContext) -> Provider:
         coolify_token_id=context.admin_secret_id,
         coolify_url=context.coolify_url,
         pg_helper=context.pg_helper,
+    )
+
+
+def _bws_lane_token(context: AdapterContext) -> Provider:
+    credential, mirror = context.credential, context.mirror
+
+    def siblings() -> list[str]:
+        if mirror is None or credential is None:
+            raise ContractError("the bws-lane-token adapter reads the registry for other lanes")
+        entries = provider_entries(mirror, bws_lane_token.PROVIDER)
+        return bws_lane_token.sharing_reach(entries, credential)
+
+    return bws_lane_token.build_provider(
+        rotation=context.rotation,
+        credential=credential,
+        store_read=context.store.read,
+        coolify_token_id=context.admin_secret_id,
+        coolify_url=context.coolify_url,
+        organization_id=context.organization_id,
+        siblings=siblings,
     )
 
 
@@ -196,6 +222,22 @@ ADAPTERS: Final[dict[str, Adapter]] = {
         _postgres_role,
         capabilities=TYPES[postgres_role.NAME].capabilities,
         check_row=postgres_role.check_row,
+    ),
+    bws_lane_token.NAME: Adapter(
+        bws_lane_token.PROVIDER,
+        bws_lane_token.PLAN,
+        _bws_lane_token,
+        revoke_settles=bws_machine_token.REVOKE_SETTLES,
+        capabilities=TYPES[bws_lane_token.NAME].capabilities,
+        check_row=bws_lane_token.check_row,
+        revoke_may_come_first=True,
+    ),
+    healthchecks_ping_url.NAME: Adapter(
+        healthchecks_ping_url.PROVIDER,
+        healthchecks_ping_url.PLAN,
+        lambda context: healthchecks_ping_url.HealthchecksPingUrlProvider(),
+        capabilities=TYPES[healthchecks_ping_url.NAME].capabilities,
+        check_row=healthchecks_ping_url.check_row,
     ),
     change_manager.ATTESTED_NAME: Adapter(
         change_manager.NAME, change_manager.ATTESTED_PLAN, _change_manager

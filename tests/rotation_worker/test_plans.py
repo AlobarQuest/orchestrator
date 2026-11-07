@@ -20,7 +20,13 @@ from rotation_worker.adapters import (
 )
 from rotation_worker.checks import _plan
 from rotation_worker.contract import ContractError, HumanAct, Plan, StepKind, UnitPlan
-from rotation_worker.plans import Capabilities, derive, packaged_steps, select_plan
+from rotation_worker.plans import (
+    Capabilities,
+    candidates,
+    derive,
+    packaged_steps,
+    select_plan,
+)
 from rotation_worker.registry import RegistryEntry
 from tests.rotation_worker.stores import MemoryStore
 
@@ -232,12 +238,13 @@ def test_the_wait_before_a_person_s_revoke_reads_the_plan_that_runs() -> None:
 def test_a_type_s_derived_plan_has_its_pinned_plan_s_units_in_order(
     name: str, extra: list[str]
 ) -> None:
-    """`overlaps._from_store` places a unit against the store from `Adapter.plan`, so the plan a
-    credential runs must have the same units, in the same order."""
+    """`overlaps._from_store` places a unit against the store from `Adapter.plan`, so every plan a
+    credential runs must have its units, in the same order: an issue plan its first two."""
     adapter = ADAPTERS[name]
     keeper = KEYCHAIN_KEEPER if adapter.store_kind == "keychain" else KEEPER
-    plan = derive(_capabilities(name), [keeper, *extra], keeper, adapter.store_kind)
-    assert [s.name for s in plan.segments] == [s.name for s in adapter.plan.segments]
+    for plan in candidates(_capabilities(name), [keeper, *extra], keeper, adapter.store_kind):
+        names = [s.name for s in plan.segments]
+        assert names == [s.name for s in adapter.plan.segments][: len(names)]
 
 
 def test_a_type_s_derived_plan_has_its_fixed_plan_s_units_and_acts_in_order() -> None:
@@ -248,9 +255,10 @@ def test_a_type_s_derived_plan_has_its_fixed_plan_s_units_and_acts_in_order() ->
     for adapter in ADAPTERS.values():
         if adapter.capabilities is None:
             continue
-        derived = derive(adapter.capabilities, [], "keeper", adapter.store_kind)
-        names = [(type(s).__name__, s.name) for s in derived.segments]
-        assert names == [(type(s).__name__, s.name) for s in adapter.plan.segments], adapter
+        for derived in candidates(adapter.capabilities, [], "keeper", adapter.store_kind):
+            names = [(type(s).__name__, s.name) for s in derived.segments]
+            pinned = [(type(s).__name__, s.name) for s in adapter.plan.segments]
+            assert names == pinned[: len(names)], adapter
 
 
 def test_the_shared_hosted_service_rule_is_the_one_the_executor_checks() -> None:

@@ -13,7 +13,9 @@ then emptying the inbox, only when all of these hold:
   a pasted value says which credential it was made for;
 * it isn't the value it replaces, and the provider accepts it beside a refused known-bad control;
 * it is for the same account as the value it replaces (`same_identity`), which must still answer:
-  after an early revoke or an expiry, the value is staged by hand;
+  after an early revoke or an expiry, the value is staged by hand. A type that binds by what the
+  value is instead (`BindsByItself`, ADR-0055 amendment 19 items 4 and 5) asks that in place of
+  this check and the one before it: a lane token by its declared reach, a ping URL by its shape;
 * it is no other keeper's value of the same type: two BWS machine tokens can reach exactly the
   same projects, so only this tells one pasted for the other.
 
@@ -32,7 +34,7 @@ from typing import Final, Protocol, runtime_checkable
 
 from rotation_worker.adapters import ADAPTERS
 from rotation_worker.checks import UNIT_KEY
-from rotation_worker.contract import ContractError, Provider, Rotation, StepKind, accepts
+from rotation_worker.contract import EMPTY, ContractError, Provider, Rotation, StepKind, accepts
 from rotation_worker.envelope import ADAPTER_KEY, is_rotation_unit
 from rotation_worker.envelope import constraints as envelope_constraints
 from rotation_worker.orchestrator_client import OrchestratorClient
@@ -42,8 +44,6 @@ from rotation_worker.values import Value, scrub
 
 LOG = logging.getLogger("rotation_worker")
 INBOX_KEY: Final = "rotation-inbox"
-# What an empty inbox holds: BWS keeps no secret without a value.
-EMPTY: Final = "empty"
 # Where each instance's person pastes, by the kind of store the instance keeps.
 INBOX_PROJECTS: Final = {"bws-secret": "Rotation / Inbox", "keychain": "Rotation / Inbox (Mac)"}
 STATE_FILE: Final = "inbox-refused.json"
@@ -54,6 +54,16 @@ class ConfirmsIdentity(Protocol):
     """A provider that can tell whether two values are for the same account and reach."""
 
     def same_identity(self, new: Value, old: Value) -> bool: ...
+
+
+@runtime_checkable
+class BindsByItself(Protocol):
+    """A provider whose pasted value binds by what it is, not by matching the value it replaces,
+    which may be the empty marker or, after a leak, refused (ADR-0055 amendment 19)."""
+
+    def bind_refusal(self, new: Value, old: Value) -> str | None:
+        """Why `new` isn't this credential's value, or `None`. Never probes in a way that acts."""
+        ...
 
 
 class Inbox:
@@ -135,11 +145,15 @@ def bind(
     old = store.read(rotation.keeper_id)
     if new.same_as(old):
         return "it is the value the keeper already holds"
-    if not accepts(provider, new):
+    if isinstance(provider, BindsByItself):
+        refusal = provider.bind_refusal(new, old)
+        if refusal is not None:
+            return refusal
+    elif not accepts(provider, new):
         return "the provider doesn't accept it beside a refused known-bad value"
-    if not isinstance(provider, ConfirmsIdentity):
+    elif not isinstance(provider, ConfirmsIdentity):
         return "this type can't tell whose a value is, so nothing is taken from the inbox"
-    if not provider.same_identity(new, old):
+    elif not provider.same_identity(new, old):
         return (
             "it isn't for the same account as the value it replaces, or that value no longer "
             "answers"

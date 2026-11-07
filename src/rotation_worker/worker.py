@@ -55,6 +55,7 @@ from rotation_worker.contract import (
     Step,
     StepKind,
     UnitRun,
+    is_issue,
 )
 from rotation_worker.coolify import CoolifyClient
 from rotation_worker.destinations import DestinationError, parse
@@ -932,6 +933,8 @@ def _work(
             scheduled=reads,
             actions_secrets=ActionsSecrets(setup.github_app) if setup.github_app else None,
             person_revokes_next=_person_revokes_next(approved),
+            old_may_be_revoked=approved.adapter.revoke_may_come_first,
+            issue=is_issue(approved.plan),
             held=held,
         )
         run.run(approved.unit)
