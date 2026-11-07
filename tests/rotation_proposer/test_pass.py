@@ -57,6 +57,8 @@ class _Rig:
         self.due: list[Due] = [REQUESTED]
         self.unrecognised: list[Unrecognised] = []
         self.published: list[str] = []
+        # Each published commit's `rerendered` flag, in order.
+        self.rerendered: list[bool] = []
         self.user_agents: set[str] = set()
         # Every `sync_alerts` call this pass made, as (outcomes, token, state_dir).
         self.synced: list[tuple[list, str, object]] = []
@@ -183,8 +185,9 @@ def rig(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "require_clean", lambda root: None)
     monkeypatch.setattr(cli, "require_publishable", lambda root: None)
 
-    def commit(package, root, *, generated=False):
+    def commit(package, root, *, generated=False, rerendered=False):
         rig.published.append(package.package_id)
+        rig.rerendered.append(rerendered)
         return "c" * 40
 
     monkeypatch.setattr(cli, "commit", commit)
@@ -519,7 +522,7 @@ def test_a_refused_publish_stops_the_next_credential_from_stacking_on_it(
     rig.due = [REQUESTED, replace(LEGACY, handed_over=True)]
     residue: list[str] = []
 
-    def refused(package, root):
+    def refused(package, root, **_flags):
         residue.append(package.package_id)
         raise shared.StandingError(f"{package.package_id} rev 2 is committed and unpublished")
 
@@ -817,6 +820,78 @@ def test_a_lane_token_whose_history_infraops_doesn_t_serve_is_a_finding(
     out = capsys.readouterr().out
     assert "unlaned" in out and "serves no last_rotated" in out
     assert rig.acts() == ([], 0, 0, 0)
+
+
+def _reissued_lane(rig, capsys, served: str | None) -> tuple[dict, dict, str]:
+    """A lane token's generated issue package, approved by name, then due again with infraops
+    serving `served` as its `last_rotated`: the package before and after that pass, and its
+    output."""
+    issued = _generated_lane(rig, {CREDENTIAL: "2025-01-02", LANE: None})
+    assert issued is not None
+    path = rig.root / "packages" / f"rotation-{LANE}" / "package.yaml"
+    path.write_text(path.read_text().replace("status: ready_for_review", "status: approved"))
+    before = yaml.safe_load(path.read_text())
+    rig.lifecycle.calls.clear()
+    capsys.readouterr()
+    rig.due = [Due(LANE, "bws-lane-token", "requested", "2026-12-01", "2026-12-01", True)]
+    rig.last_rotated = {CREDENTIAL: "2025-01-02", LANE: served}
+    assert run(["--submit"]) == EXIT_OK
+    return before, yaml.safe_load(path.read_text()), capsys.readouterr().out
+
+
+def test_a_lane_token_s_first_reissue_revises_onto_the_full_plan(rig, capsys) -> None:
+    """HQ D-32 (A): the revision after a dated `last_rotated` states the full plan, in the one
+    revision Devon approves; nothing else is asked of a person."""
+    before, after, out = _reissued_lane(rig, capsys, "2026-11-08T00:00:00.000Z")
+    assert _steps(before) == ["verify_new", "store", "verify_consumers"]
+    assert _steps(after) == ["verify_new", "store", "verify_consumers", "confirm_dead"]
+    assert (after["revision"], after["status"]) == (2, "ready_for_review")
+    assert after["created_at"] == before["created_at"]
+    assert after["profile_fields"]["occurrence"] == "2026-12-01-requested"
+    assert "proved dead" in after["outcome"]["what"]
+    assert [call[0] for call in rig.lifecycle.calls] == ["revise", "transition", "hash"]
+    assert rig.rerendered[-1] is True
+    assert "re-rendered for its derived plan" in out
+
+
+def test_a_generated_package_whose_plan_is_unchanged_revises_only_its_occurrence(
+    rig, capsys
+) -> None:
+    """Kills: re-rendering on every revision. A plan that didn't change leaves every field but
+    the revision, its state and the occurrence as approved."""
+    before, after, out = _reissued_lane(rig, capsys, None)
+    changed = {"revision", "status"}
+    assert {k: v for k, v in after.items() if k not in changed | {"profile_fields"}} == {
+        k: v for k, v in before.items() if k not in changed | {"profile_fields"}
+    }
+    assert {**after["profile_fields"], "occurrence": None} == {
+        **before["profile_fields"],
+        "occurrence": None,
+    }
+    assert after["profile_fields"]["occurrence"] == "2026-12-01-requested"
+    assert rig.rerendered[-1] is False
+    assert "re-rendered" not in out
+
+
+def test_a_reissue_whose_signal_infraops_doesn_t_serve_is_a_finding_and_writes_nothing(
+    rig, capsys
+) -> None:
+    """Kills: a revision that falls back to either plan when infraops omits the token's row."""
+    issued = _generated_lane(rig, {CREDENTIAL: "2025-01-02", LANE: None})
+    assert issued is not None
+    path = rig.root / "packages" / f"rotation-{LANE}" / "package.yaml"
+    path.write_text(path.read_text().replace("status: ready_for_review", "status: approved"))
+    text = path.read_text()
+    rig.lifecycle.calls.clear()
+    capsys.readouterr()
+    posted = len(rig.spine.posted)
+    rig.due = [Due(LANE, "bws-lane-token", "requested", "2026-12-01", "2026-12-01", True)]
+    rig.last_rotated = {CREDENTIAL: "2025-01-02"}
+    assert run(["--submit"]) == EXIT_FINDINGS
+    out = capsys.readouterr().out
+    assert "unlaned" in out and "serves no last_rotated" in out
+    assert path.read_text() == text
+    assert rig.lifecycle.calls == [] and len(rig.spine.posted) == posted
 
 
 def test_generation_refuses_an_unpublishable_checkout_before_writing_anything(

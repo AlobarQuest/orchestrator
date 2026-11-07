@@ -19,19 +19,28 @@ package is rendered from them:
   infrastructure wherever the reach is `live_estate`, and prohibits the rest;
 * the **prose** is one template, naming the credential, its provider identity and its plan.
 
-Only a new package is generated. An authored package keeps its approved wording; the proposer
-revises it only for its occurrence and destinations.
+An authored package keeps its approved wording; the proposer revises it only for its occurrence
+and destinations. A generated one is re-rendered at revision only when the plan its row derives
+is no longer the plan it states (`reissue_body`, ADR-0055 amendment 20): a lane token's first
+reissue, after its issue. The person approves the new wording in that revision's one click.
 """
 
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, Final
 
-from rotation_worker.contract import HELD_KIND, HumanAct, Plan, StepKind, UnitPlan
+from rotation_worker.contract import (
+    HELD_KIND,
+    ContractError,
+    HumanAct,
+    Plan,
+    StepKind,
+    UnitPlan,
+)
 from rotation_worker.destinations import HOSTED_KINDS, parse
-from rotation_worker.plans import candidates, criteria_steps
+from rotation_worker.plans import candidates, criteria_steps, select_plan
 from rotation_worker.registry import RegistryEntry
 from rotation_worker.types import CLASS_TYPES, TYPES
 
@@ -104,6 +113,10 @@ _RESTART_HOUR: Final = " The restart can happen at any hour of the change window
 
 class GenerateError(RuntimeError):
     """The row names no type the SDS rotates, or a type whose plan can't be derived."""
+
+
+class StatedPlanError(RuntimeError):
+    """A generated package's criteria describe no plan its row derives."""
 
 
 def plan_for(entry: RegistryEntry, *, first_issue: bool | None = None) -> tuple[str, Plan]:
@@ -396,3 +409,35 @@ def render(
         },
         "applicable_standards": {"project": "1.0", "security": "1.0"},
     }
+
+
+def reissue_body(
+    entry: RegistryEntry, stated: Mapping[str, Any], occurrence: str, *, first_issue: bool | None
+) -> dict[str, Any] | None:
+    """The body a revision of this package re-renders to, or `None` to keep its wording.
+
+    Only a package this program generated (`created_by`) is ever re-rendered, and only when the
+    plan its row derives (`plan_for`) isn't the plan its criteria state (`select_plan`'s match
+    among the row's candidates): a lane token's issue package once infraops dates its
+    `last_rotated` (ADR-0055 amendment 20, HQ D-32). A hand-authored package, the pre-derivation
+    ones among them, keeps its approved wording. `plan_for`'s refusal of an unknown signal
+    raises; a generated package whose criteria describe no derived plan raises too, since which
+    plan it states is unknown. It renders with the package's own `created_at`, so only the text a
+    plan and the occurrence decide changes."""
+    if stated.get("created_by") != CREATED_BY:
+        return None
+    adapter_name, derived = plan_for(entry, first_issue=first_issue)
+    declared = TYPES[adapter_name]
+    plans = candidates(declared.capabilities, entry.destinations, entry.keeper, declared.store_kind)
+    try:
+        current = select_plan(plans, stated.get("acceptance"))
+    except ContractError as error:
+        raise StatedPlanError(
+            f"{stated.get('package_id')}'s criteria describe no plan its row derives: {error}"
+        ) from error
+    if current == derived:
+        return None
+    created_at = stated.get("created_at")
+    if not isinstance(created_at, str):
+        raise StatedPlanError(f"{stated.get('package_id')} states no created_at to re-render with")
+    return render(entry, occurrence, created_at, first_issue=first_issue)

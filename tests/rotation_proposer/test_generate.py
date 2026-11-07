@@ -13,11 +13,14 @@ from typing import Any
 import pytest
 
 from rotation_proposer.generate import (
+    CREATED_BY,
     GenerateError,
+    StatedPlanError,
     acceptance,
     authority,
     plan_for,
     reach,
+    reissue_body,
     render,
 )
 from rotation_worker.adapters import ADAPTERS
@@ -39,27 +42,30 @@ def _entry(credential_class: str, **fields: Any) -> RegistryEntry:
     return RegistryEntry("AlobarQuest/example-registry", "c" * 40, credential)
 
 
+# The row `rotation_package_generated.json` is rendered from.
+GENERATED_ENTRY = RegistryEntry(
+    "AlobarQuest/example-registry",
+    "c" * 40,
+    {
+        "id": "example-pat",
+        "class": "github-pat-fine-grained",
+        "provider": "github",
+        "provider_identity": "AlobarQuest (fine-grained PAT)",
+        "bws_uuid": KEEPER_UUID,
+        "rotated_by_sds": True,
+        "consumer": [
+            {
+                "kind": "gh-actions-secret",
+                "repo": "AlobarQuest/example-app",
+                "name": "EXAMPLE_TOKEN",
+            }
+        ],
+    },
+)
+
+
 def test_the_rendered_package_is_the_one_intent_packages_validates() -> None:
-    entry = RegistryEntry(
-        "AlobarQuest/example-registry",
-        "c" * 40,
-        {
-            "id": "example-pat",
-            "class": "github-pat-fine-grained",
-            "provider": "github",
-            "provider_identity": "AlobarQuest (fine-grained PAT)",
-            "bws_uuid": KEEPER_UUID,
-            "rotated_by_sds": True,
-            "consumer": [
-                {
-                    "kind": "gh-actions-secret",
-                    "repo": "AlobarQuest/example-app",
-                    "name": "EXAMPLE_TOKEN",
-                }
-            ],
-        },
-    )
-    rendered = render(entry, "2026-10-28-requested", "2026-10-28T12:00:00Z")
+    rendered = render(GENERATED_ENTRY, "2026-10-28-requested", "2026-10-28T12:00:00Z")
     text = json.dumps(rendered, indent=2, sort_keys=True) + "\n"
     assert text == FIXTURE.read_text(encoding="utf-8")
 
@@ -356,3 +362,97 @@ def test_every_generated_fixture_renders_byte_identical() -> None:
         for credential_class in expected
     }
     assert json.dumps(rendered, indent=2, sort_keys=True) + "\n" == before
+
+
+# ---- a revision re-renders a generated package only when its plan changes (amendment 20) ------
+
+
+def _generated_fixtures() -> list[tuple[str, RegistryEntry, dict[str, Any], list[bool | None]]]:
+    """Every generated package fixture, with its row and the signals under which the plan its row
+    derives is the plan it states."""
+    before = json.loads(BEFORE_OVERLAP.read_text(encoding="utf-8"))
+    every: list[bool | None] = [None, True, False]
+    return [
+        ("generated", GENERATED_ENTRY, json.loads(FIXTURE.read_text(encoding="utf-8")), every),
+        *((c, _entry(c), package, every) for c, package in before.items()),
+        (
+            "issue bws-lane-token",
+            _lane_entry("bws-lane-token"),
+            json.loads(_issue_fixture("bws-lane-token").read_text(encoding="utf-8")),
+            [True],
+        ),
+        (
+            "issue healthchecks-ping-url",
+            _lane_entry("healthchecks-ping-url"),
+            json.loads(_issue_fixture("healthchecks-ping-url").read_text(encoding="utf-8")),
+            [None, True],
+        ),
+    ]
+
+
+def test_a_lane_token_s_first_reissue_re_renders_its_issue_package_onto_the_full_plan() -> None:
+    """HQ D-32 (A): once infraops dates the issued token, the revision states the full plan, which
+    `select_plan` picks over the issue plan; nothing is revoked by machine, and verify_consumers
+    still precedes confirm_dead (Infra Brain rule 1032)."""
+    entry = _lane_entry("bws-lane-token")
+    issued = json.loads(_issue_fixture("bws-lane-token").read_text(encoding="utf-8"))
+    body = reissue_body(entry, issued, "2026-12-01-requested", first_issue=False)
+    assert body is not None
+    declared = TYPES["bws-lane-token"]
+    plans = candidates(declared.capabilities, entry.destinations, entry.keeper, declared.store_kind)
+    chosen = select_plan(plans, body["acceptance"])
+    assert not chosen.issue and select_plan(plans, issued["acceptance"]).issue
+    assert body == render(entry, "2026-12-01-requested", issued["created_at"], first_issue=False)
+    steps = [c["evidence"].split(" step's")[0].rsplit(" ", 1)[-1] for c in body["acceptance"]]
+    assert steps.index("verify_consumers") < steps.index("confirm_dead")
+    assert "credential_revoke" in body["authority"]["prohibited"]
+    assert "proved dead" in body["outcome"]["what"]
+    assert body["created_at"] == issued["created_at"]
+
+
+@pytest.mark.parametrize(
+    ("name", "entry", "package", "signals"),
+    _generated_fixtures(),
+    ids=[fixture[0] for fixture in _generated_fixtures()],
+)
+def test_a_generated_package_whose_plan_is_unchanged_keeps_its_wording(
+    name: str, entry: RegistryEntry, package: dict[str, Any], signals: list[bool | None]
+) -> None:
+    """Kills: re-rendering a package whose plan didn't change, which would rewrite approved
+    wording a revision only carries an occurrence through."""
+    assert package["created_by"] == CREATED_BY
+    for first_issue in signals:
+        assert reissue_body(entry, package, "2027-01-01-age", first_issue=first_issue) is None
+
+
+def test_an_unknown_signal_refuses_rather_than_choosing_a_plan() -> None:
+    """Kills: falling back to either plan when infraops can't say whether the token was issued."""
+    issued = json.loads(_issue_fixture("bws-lane-token").read_text(encoding="utf-8"))
+    with pytest.raises(GenerateError, match="serves no last_rotated"):
+        reissue_body(
+            _lane_entry("bws-lane-token"), issued, "2026-12-01-requested", first_issue=None
+        )
+
+
+@pytest.mark.parametrize("author", ["factory-create", None])
+def test_a_hand_authored_package_is_never_re_rendered(author: str | None) -> None:
+    """Kills: re-rendering by plan alone. A hand-authored package keeps its wording even when it
+    states another plan, or a pre-derivation plan no candidate is (amendment 15 decision 5)."""
+    issued = json.loads(_issue_fixture("bws-lane-token").read_text(encoding="utf-8"))
+    for package in (issued, {**issued, "acceptance": [{"id": "AC-001", "evidence": "by hand"}]}):
+        authored = {**package, "created_by": author}
+        if author is None:
+            del authored["created_by"]
+        entry = _lane_entry("bws-lane-token")
+        assert reissue_body(entry, authored, "2026-12-01-requested", first_issue=False) is None
+        assert reissue_body(entry, authored, "2026-12-01-requested", first_issue=None) is None
+
+
+def test_a_generated_package_stating_no_derived_plan_is_refused() -> None:
+    """Kills: re-rendering a package whose stated plan is unknown, repairing it silently."""
+    issued = json.loads(_issue_fixture("bws-lane-token").read_text(encoding="utf-8"))
+    broken = {**issued, "acceptance": issued["acceptance"][:2]}
+    with pytest.raises(StatedPlanError, match="describe no plan its row derives"):
+        reissue_body(
+            _lane_entry("bws-lane-token"), broken, "2026-12-01-requested", first_issue=True
+        )

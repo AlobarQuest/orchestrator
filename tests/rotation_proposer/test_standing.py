@@ -369,3 +369,79 @@ def test_an_item_folded_onto_continuation_lines_is_replaced_whole(tmp_path) -> N
     package = discover(tmp_path)["openrouter-generic"]
     standing.write_destinations(package, ['provider name="orchestrator"'])
     assert path.read_text().endswith("  destinations:\n  - 'provider name=\"orchestrator\"'\n")
+
+
+# --- a re-rendered body (ADR-0055 amendment 20) -----------------------------------------------
+
+BODY_FILE = """\
+schema_version: 1
+package_id: rotation-openrouter-generic
+revision: 2
+status: draft
+created_by: rotation-proposer
+created_at: '2026-11-07T12:00:00Z'
+title: old title
+profile: non-software-operational
+profile_fields:
+  standing: true
+  credential_id: openrouter-generic
+  occurrence: 'old'
+
+# A comment intent-packages puts before the criteria.
+acceptance:
+- id: AC-001
+  condition: old
+"""
+
+
+def test_a_re_rendered_body_replaces_the_wording_and_keeps_lifecycle_and_comments(
+    tmp_path,
+) -> None:
+    """Kills: a body that overwrites the revision `revise` wrote, or loses a comment."""
+    write_package(tmp_path)
+    (tmp_path / "packages" / "rotation-openrouter-generic" / "package.yaml").write_text(BODY_FILE)
+    package = discover(tmp_path)["openrouter-generic"]
+    body = {
+        "schema_version": 1,
+        "package_id": "rotation-openrouter-generic",
+        "revision": 1,
+        "status": "draft",
+        "created_by": "rotation-proposer",
+        "created_at": "2099-01-01T00:00:00Z",
+        "title": "new title",
+        "profile": "non-software-operational",
+        "profile_fields": {
+            "standing": True,
+            "credential_id": "openrouter-generic",
+            "occurrence": "x",
+        },
+        "acceptance": [{"id": "AC-001", "condition": "new"}, {"id": "AC-002", "condition": "two"}],
+    }
+    standing.write_body(package, body)
+    text = (package.path / "package.yaml").read_text()
+    assert "# A comment intent-packages puts before the criteria.\nacceptance:\n" in text
+    written = yaml.safe_load(text)
+    assert (written["revision"], written["created_at"]) == (2, "2026-11-07T12:00:00Z")
+    assert written["title"] == "new title"
+    assert written["acceptance"] == body["acceptance"]
+
+
+def test_a_body_naming_other_keys_writes_nothing(tmp_path) -> None:
+    write_package(tmp_path)
+    path = tmp_path / "packages" / "rotation-openrouter-generic" / "package.yaml"
+    path.write_text(BODY_FILE)
+    package = discover(tmp_path)["openrouter-generic"]
+    with pytest.raises(StandingError, match="names other keys"):
+        standing.write_body(package, {"title": "only this"})
+    assert path.read_text() == BODY_FILE
+
+
+def test_a_body_that_can_t_land_spends_no_revision(tmp_path, lifecycle) -> None:
+    """Kills: running `revise` before the splice is known to fit, which strands a draft."""
+    write_package(tmp_path)
+    path = tmp_path / "packages" / "rotation-openrouter-generic" / "package.yaml"
+    path.write_text(BODY_FILE.replace("status: draft", "status: approved"))
+    package = discover(tmp_path)["openrouter-generic"]
+    with pytest.raises(StandingError, match="names other keys"):
+        to_review(package, "new", DESTINATIONS, tmp_path, body={"title": "only this"})
+    assert lifecycle.calls == []

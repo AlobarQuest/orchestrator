@@ -26,6 +26,8 @@
   - 2026-11-01, amendment 18 (the rotation layer's outcomes; the 04:00 window retires).
   - 2026-11-07, amendment 19, accepted (the VM executor issues lane tokens and ping URLs from its
     inbox).
+  - 2026-11-07, amendment 20 (a revision re-renders a generated package whose derived plan
+    changed).
 - **Supersedes:** the parts of ADR-0054 named in "What this changes in ADR-0054".
 - **Relates to:** ADR-0054 (the SDS owns credential rotation), ADR-0052 (superseding an unworked
   decomposition), ADR-0039 (out-of-process producers), ADR-0011 (known-good patterns)
@@ -1947,7 +1949,8 @@ has no repository to grant.
    revision. The proposer sees only due credentials, so a newly flagged credential gets its package
    when it first comes due.
 5. **Approved wording is never rewritten.** Only a new package is generated; an existing package
-   is revised only for its occurrence and destinations.
+   is revised only for its occurrence and destinations. (Amendment 20 narrows this for a package
+   the proposer generated, when the plan its row derives changes.)
 
 Measured before building: rendered for each of the 16 standing packages' registry rows, the
 generator's criteria describe the derived plan for all 15 rotated types (the canary is no type),
@@ -2489,3 +2492,54 @@ Each item is settled in ADR-0059 increment 2, before its code merges.
   two changes, as amendment 17's row did.
 - **Unchanged.** The Keychain instance, its adapter and its inbox; every existing plan and
   generated package; the one click per rotation (amendment 16).
+
+## Amendment 20 — A revision re-renders a generated package whose derived plan changed (2026-11-07)
+
+**Status: Accepted on merge.** It's accepted when the pull request that carries it merges after a
+clean Opus whole-branch review, the bar HQ set for this change.
+
+### Context
+
+Amendment 19 gives a lane token two plans: an issue plan for its first value and the full plan for
+every reissue (items 3 and 10). The proposer generates the issue package when infraops'
+`last_rotated` for the token is null, and `_record_retired` dates it once `work-watcher` retires
+the issue's record. Every later revision then went through intent-packages' `revise`, which writes
+only the occurrence and destinations (amendment 15 decision 5). So an early or leak reissue still
+stated the issue plan's criteria, and the executor refused it: the keeper holds the issued value,
+not the empty marker (`checks._check_issue_fact`).
+
+HQ put the fork to Devon as D-32 on 2026-11-07: (A) the proposer re-renders a generated package's
+criteria, prose and authority at revision time when the plan its row derives differs, and Devon
+approves the new criteria in that same one revision click; or (B) a person hand-revises each lane
+token's first reissue. **Devon's answer (2026-11-07T21:31 UTC, HQ D-32): A.**
+
+### Decision
+
+1. **A generated package is re-rendered at revision only when its derived plan changes.** When the
+   proposer revises a package it generated (`created_by: rotation-proposer`), it derives the plan
+   the row calls for (`generate.plan_for`, with the `last_rotated` signal) and the plan the package
+   states (`select_plan`'s match among the row's candidates). Only when the two differ does the
+   revision re-render the package's criteria, prose and authority from the row
+   (`generate.reissue_body`). The re-render keeps the package's identity, lifecycle and
+   `created_at`, which `revise` and `transition` own, and it writes the due occurrence and the
+   registry's destinations, as every revision does. One case changes plan: a lane token's
+   issue package once infraops dates its `last_rotated`.
+2. **Every other revision is unchanged.** A generated package whose plan is unchanged keeps its
+   approved wording, and a revision writes only its occurrence and destinations. A hand-authored
+   package, including the four that run pinned pre-derivation plans, is never re-rendered.
+3. **Nothing is guessed.** A type with two plans and no `last_rotated` for the credential is an
+   `unlaned` finding, and the pass writes nothing for it. A generated package whose criteria
+   describe no plan its row derives is that credential's `error`. Neither falls back to a plan.
+4. **No new person step.** The re-render rides the revision Devon approves by name (amendment 16;
+   amendment 19 item 10). The approval shows the new criteria as part of that revision's change.
+
+### Consequences
+
+- **Infra Brain rule 1032.** A re-rendered full plan keeps `verify_consumers` (AC-004) before
+  `confirm_dead` (AC-005). A lane token's authority still prohibits `credential_revoke` in both
+  plans, because a person revokes it.
+- **Decision 5 of amendment 15 is narrowed**, not withdrawn: approved wording is rewritten only
+  when the plan it describes is no longer the one the row derives, and only in a revision a person
+  approves.
+- **Unchanged.** The executor, the decomposer, `select_plan`, every existing generated package's
+  bytes, and the ping URL's `verify_new` criterion and adapter.
