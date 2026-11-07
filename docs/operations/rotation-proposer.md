@@ -75,8 +75,8 @@ For a due credential whose package is `rotation-<credential_id>`:
      and prints the registry's destinations as a package lists them, then compares them with the
      package's, both at `main`: `both`, `registry` (missing from the package) or `package` (not in
      the registry) on each line, then the verdict. Exit 0 means equal; 1 means the registry
-     changed after the revision was written, and the next pass revises it again; 2 means it
-     couldn't read one of them. The command is the executor's own comparison
+     changed after the revision was written, and the next pass acts as step 4 describes; 2 means
+     it couldn't read one of them. The command is the executor's own comparison
      (`src/rotation_worker/compare.py`).
 4. **The next pass.** If the registry's destinations changed since the approved revision was
    written, the pass revises it again instead of proposing (step 1), because the executor would
@@ -85,13 +85,12 @@ For a due credential whose package is `rotation-<credential_id>`:
    because the destination change adds a `distribute` step. `reissue_body` raises
    `StatedPlanError`, the pass reports that credential's `error` and writes nothing, neither a
    revision nor a proposal, and an operator hand-revises the package onto the derived plan
-   (ADR-0055 amendment 20 decision 3). Otherwise it files the
-   observation again. It replays and returns the same id. Then it proposes
-   the `work` record with the propose-scoped bearer. The record names the approved revision and
-   that observation, with `bump_proposer`'s asserted fields (`WORK_RECORD_FIELDS`). Later passes
-   replay it. Once Devon approves the record, the work carrier registers its intake, and the
-   rotation decomposer proposes its decomposition for a person to approve on `/review` (see
-   "The rotation decomposer" in `rotation-executor.md`).
+   (ADR-0055 amendment 20 decision 3). Otherwise it files the observation again. It replays and
+   returns the same id. Then it proposes the `work` record with the propose-scoped bearer. The
+   record names the approved revision and that observation, with `bump_proposer`'s asserted fields
+   (`WORK_RECORD_FIELDS`). Later passes replay it. Once Devon approves the record, the work carrier
+   registers its intake, and the rotation decomposer proposes its decomposition for a person to
+   approve on `/review` (see "The rotation decomposer" in `rotation-executor.md`).
 5. **The pass after the rotation completes.** The work watcher retires the record once every unit
    it caused has completed: `resolved`, decided by `work-watcher`. A due credential whose carrying
    revision has such a record reports `retired` and nothing is proposed again. The record walk
