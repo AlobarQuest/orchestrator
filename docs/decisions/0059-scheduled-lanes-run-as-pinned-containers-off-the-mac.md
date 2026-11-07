@@ -250,12 +250,18 @@ each of those lanes keeps it in a volume of its own (decision 1, "Lane state").
   "timed out" code (Amendment 1). The session that runs the deploy command raises the alert through
   its own channel; the deploy command sends no alert and reads no alert-hub token. A re-run after
   that records a new deadline. The session has written nothing to the lane's resource, so it stays
-  as it was until HQ re-runs `lanes-prepare` or redeploys by hand. Nothing is
-  staged in the lane's resource while the command waits: the session writes the compose and any tag
+  as it was until HQ re-runs `lanes-prepare` or redeploys by hand. The session
+  writes nothing to the lane's resource while the command waits: it writes the compose and any tag
   or schedule variable (the following bullets) only after `lanes-recheck` exits 0, immediately
   before its redeploy call. So a wait that times out leaves nothing staged, and no later redeploy
-  can apply a change silently. If a `--tag` or `--schedule` redeploy fails after the writes,
-  `lanes-finish` names the inverse writes and the session restores the values at once. For an
+  can apply a change silently, except in a `--token` run (Amendment 2): the VM rotation executor's
+  `PATCH` writes the lane's `<LANE>_BWS_ACCESS_TOKEN` before `lanes-prepare` runs, so the new token
+  is already staged while the command waits, and any later redeploy of the lane (by hand, `--tag`
+  or `--schedule`) loads it without `--token`'s reads. Increment 2 verifies that case (Amendment
+  2's "Verify in increment 2", the `--tag` run after the executor's `PATCH`; amendment 19's "Open
+  before building", `--token` sub-item 4). If a `--tag`
+  or `--schedule` redeploy fails after the writes, `lanes-finish` names the inverse writes and the
+  session restores the values at once. For an
   `--add` the inverse is the delete of the lane's resource, HQ's act under D-20 (the lane-phase
   bullets and "Adding a lane creates its resource"). The residual: a pass that starts
   between `lanes-recheck`'s read and the redeploy is still stopped, as `recheck` before an
@@ -1817,12 +1823,13 @@ create, what `_REACH` lists for a lane account, and what makes a first issue due
 - **A pass on a dead token and the quiet slot (increment 2).** Whether a lane pass that fails on a
   revoked token leaves its check `started`, which would hold off the leak's `--token` redeploy (the
   quiet slot waits while `started` is `true` and `status` isn't `down`).
-- **A closed failed `--token` run has a distinct status (increment 2).** The run file's statuses are
-  `unfinished`, `finished` and `restored` (`scripts/deploy_orchestrator.py`, `RESTORED`). A failed
-  `--token` run restored nothing, so it closes with a status of its own, not `restored`, which
-  `last_finished` and `prepare`'s lag check (`require_lanes_current`) ignore, as they ignore
-  `restored` today (`last_finished` takes only `finished`). The failure stays visible: the closing
-  call doesn't report the run as a success, and HQ reports it.
+- **A closed failed `--token` run has a distinct status (increment 2).** `lanes-finish` closes an
+  `unfinished` run as `finished` or `restored` (`scripts/deploy_orchestrator.py` line 1017 at
+  `d485d051`; line 1016 holds the run file's other statuses, `waiting`, `refused`, `timed_out` and
+  `superseded`). A failed `--token` run restored nothing, so it closes with a status of its own, not
+  `restored`, which `last_finished` and `prepare`'s lag check (`require_lanes_current`) ignore, as
+  they ignore `restored` today (`last_finished` takes only `finished`). The failure stays visible:
+  the closing call doesn't report the run as a success, and HQ reports it.
 - **`lanes-finish`'s failure message fits the mode (increment 2).** On a mismatch, `lanes-finish`
   prints the run's inverse and raises "Run the inverse printed on stderr now" (`_lanes_finish`). A
   `--token` run has no inverse write, so its message names its own close: `lanes-finish --restored`,
@@ -1834,17 +1841,19 @@ The ping-URL secret's creator isn't carried: amendment 19's text settles it (Wha
 
 Every rule of decision 1 that isn't about the token-change mode stays: the image pinned to the
 served orchestrator, the three phases and their inverse writes for `--tag`, `--schedule` and
-`--add`, the quiet-slot conditions, the 6-hour deadline, the lag check, and the bans on reading a
-resource's variable listing and on `coolify_get_service`. Devon still mints every lane token and
-revokes every old one (amendment 19 item 9; ADR-0055 amendment 12). Increment 7 still moves the
-VM executor under its own ADR-0055 amendment. Amendment 2 adds no credential, scope, permission,
-BWS grant or Healthchecks key: the lane-token keepers are amendment 19's, by D-24, and this
-amendment only cross-references them.
+`--add`, the quiet-slot conditions (the quiet-slot bullet's "nothing staged" sentence, qualified for
+`--token`), the 6-hour deadline, the lag check, and the bans on reading a resource's variable
+listing and on `coolify_get_service`. Devon still mints every lane token and revokes every old one
+(amendment 19 item 9; ADR-0055 amendment 12). Increment 7 still moves the VM executor under its own
+ADR-0055 amendment. Amendment 2 adds no credential, scope, permission, BWS grant or Healthchecks
+key: the lane-token keepers are amendment 19's, by D-24, and this amendment only cross-references
+them.
 
 ### Passages this amendment changed
 
 The header's `Decided by` and `Relates to`; decision 1's lane-phase bullet (the `--token` change,
-`lanes-prepare`'s writes and `lanes-finish`'s close) and its per-resource-variable bullet;
+`lanes-prepare`'s writes and `lanes-finish`'s close), its quiet-slot bullet (the "nothing
+staged" sentence, qualified for `--token`) and its per-resource-variable bullet;
 decision 2's token bullet and its `.cred-consumers.toml` bullet; decision 3's ping-URL secret
 bullet; increment 2 (its ADR-0055 amendment and its verify items, each marked answered) and
 increment 7; cut-over steps 1 and 4; the Consequences on the executor and on lane-token rotation;
