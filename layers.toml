@@ -131,6 +131,7 @@ paths = [
   ".cred-consumers.toml",
   "tests/scripts/test_compute_image_tags.py",
   "tests/scripts/test_deploy_orchestrator.py",
+  "tests/scripts/test_deploy_lanes.py",
   "tests/scripts/test_launchd_installers.py",
   "tests/scripts/test_sds_bws.py",
   "tests/scripts/test_sds_deadman.py",

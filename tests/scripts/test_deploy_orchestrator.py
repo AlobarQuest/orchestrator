@@ -90,6 +90,7 @@ def repo(tmp_path: Path) -> Repo:
             "Dockerfile": GOOD_DOCKERFILE,
             "docker-compose.yml": GOOD_COMPOSE,
             "migrations/versions/0001_first.py": "x = 1\n",
+            ".cred-consumers.toml": "version = 1\n",
         },
         "base",
     )
@@ -170,6 +171,7 @@ class Gh:
     log_revision: str | None = None
     log_sha_tag_revision: str | None = None
     digests: tuple[str, ...] = (DIGEST,)
+    lane_digest: str = "sha256:" + "1" * 64
     failures: int = 0  # consecutive failed `run view` calls before one succeeds
     # Answers for successive `run view --json` polls: "fail" or "in_progress"; then completed.
     view_plan: list[str] = field(default_factory=list)
@@ -229,6 +231,14 @@ class Gh:
         lines += [
             f"{prefix}{stamp}   REVISION: {revision}",
             f"{prefix}{stamp}   SHA_TAG: {sha_tag}",
+        ]
+        # The lane image's verify step, which every `Release image` run since #624 logs.
+        lane = "build-and-push\tCheck the lane image's pushed provenance\t"
+        lane_tag = deploy.derivable_tag(self.log_sha_tag_revision or revision, deploy.LANE_IMAGE)
+        lines += [
+            f"{lane}{stamp}   LANE_DIGEST: {self.lane_digest}",
+            f"{lane}{stamp}   LANE_REVISION: {revision}",
+            f"{lane}{stamp}   LANE_SHA_TAG: {lane_tag}",
         ]
         return "\n".join(lines)
 
@@ -305,6 +315,7 @@ class Harness:
             clock=clock,
             checkout=self.repo.work,
             binder=self.binder_path,
+            lanes_state_dir=self.tmp / "deploy-lanes",
         )
 
     @property
@@ -1195,3 +1206,77 @@ def test_the_readiness_predicate_names_every_file_that_reads_readiness() -> None
 
     assert deploy.readiness_consumers(files) == ["Dockerfile"]
     assert deploy.readiness_consumers({"Dockerfile": GOOD_DOCKERFILE}) == []
+
+
+# --------------------------------------------------------------------------------------------
+# the lanes (ADR-0059 increment 1)
+# --------------------------------------------------------------------------------------------
+
+
+def _finished_placeholder(h: Harness, commit: str) -> None:
+    """A passed placeholder `--add` at `commit`, as `lanes-finish` writes it."""
+    world = h.world()
+    run = deploy.LaneRun(
+        lane=deploy.PLACEHOLDER,
+        change="add",
+        change_key=f"add:{commit}",
+        status=deploy.FINISHED,
+        created_at="2026-11-06T15:00:00+00:00",
+        updated_at="2026-11-06T15:00:00+00:00",
+        tag=f"sha-{commit}",
+        commit=commit,
+        run_id="20261106T150000000000Z-add-00000000",
+        sequence=1,
+    )
+    deploy._save_run(world, run)
+
+
+def test_prepare_refuses_a_lagging_lane_and_dispatches_nothing(
+    h: Harness, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _finished_placeholder(h, h.repo.plain)  # production serves `base`
+    assert h.prepare(h.repo.migrated) == EXIT_REFUSED
+    out, _ = _output(capsys)
+    assert "placeholder runs sha-" in out["reason"]
+    assert f"--tag sha-{h.repo.base}" in out["reason"]
+    assert h.gh.dispatched == [] and not h.state_path.exists()
+
+
+def test_prepare_admits_a_lane_on_the_served_tag(h: Harness) -> None:
+    _finished_placeholder(h, h.repo.base)
+    assert h.prepare(h.repo.migrated) == EXIT_OK
+
+
+def test_prepare_records_the_lane_digest_from_the_same_run(
+    h: Harness, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert h.prepare(h.repo.migrated) == EXIT_OK
+    out, _ = _output(capsys)
+    assert out["lane_digest"] == h.gh.lane_digest
+    assert State.load(h.state_path).lane_digest == h.gh.lane_digest
+
+
+def test_a_state_file_written_before_the_lane_digest_still_loads(h: Harness) -> None:
+    assert h.prepare(h.repo.migrated) == EXIT_OK
+    raw = json.loads(h.state_path.read_text())
+    del raw["lane_digest"]
+    h.state_path.write_text(json.dumps(raw))
+    assert State.load(h.state_path).lane_digest == ""
+
+
+def test_finish_prints_the_lane_phases_first_command_for_each_added_lane(
+    prepared: Harness, capsys: pytest.CaptureFixture[str]
+) -> None:
+    capsys.readouterr()
+    assert prepared.finish() == EXIT_OK
+    out, err = _output(capsys)
+    assert out["lane_phases"] == []
+    _finished_placeholder(prepared, prepared.repo.base)
+    assert prepared.finish() == EXIT_OK
+    out, err = _output(capsys)
+    command = (
+        "uv run python -m scripts.deploy_orchestrator lanes-prepare "
+        f"--lane placeholder --tag sha-{prepared.repo.migrated}"
+    )
+    assert out["lane_phases"] == [command]
+    assert command in err
