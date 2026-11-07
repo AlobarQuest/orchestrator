@@ -1799,33 +1799,34 @@ behavior for it.
 
 ### Verify in increment 2
 
-Each item is verified in increment 2, before its code merges. The first six are amendment 19's
-"Open before building" items for the `--token` mode; the next two come from the reviews of PR #626.
+Each item is verified in increment 2, before its code merges. The first five are the sub-items of
+amendment 19's "Open before building" item for the `--token` mode, the sixth is its "A pass on a
+dead token and the quiet slot" item, and the last two come from the reviews of PR #626.
 Amendment 19's other "Open before building" items (the ping URL's check read, the token's row at
 create, what `_REACH` lists for a lane account, and what makes a first issue due) are increment
 2's too.
 
-- **The mode's own `change_key`**, beside `tag:`, `add:` and `schedule:`.
-- **Its `lanes-finish --restored` form**, which closes a failed run with no inverse write
-  (What changes, item 1).
-- **The `lane-run --read` result as a `lanes-finish` input** (What changes, item 1). Increment 2's
-  code settles its form.
-- **A `--tag` run after the executor's `PATCH`** also loads the new token, without `--token`'s
-  reads, so the revoke's precondition needs those reads re-run on that container.
-- **`--token` refuses `sds-lane-placeholder`**, which holds no token.
-- **A pass on a dead token and the quiet slot.** Whether a lane pass that fails on a revoked token
-  leaves its check `started`, which would hold off the leak's `--token` redeploy (the quiet slot
-  waits while `started` is `true` and `status` isn't `down`).
-- **A closed failed `--token` run has a distinct status.** The run file's statuses are
+- **The mode's own `change_key` (increment 2)**, beside `tag:`, `add:` and `schedule:`.
+- **Its `lanes-finish --restored` form (increment 2)**, which closes a failed run with no inverse
+  write (What changes, item 1).
+- **The `lane-run --read` result as a `lanes-finish` input (increment 2)** (What changes, item 1).
+  Increment 2's code settles its form.
+- **A `--tag` run after the executor's `PATCH` (increment 2)** also loads the new token, without
+  `--token`'s reads, so the revoke's precondition needs those reads re-run on that container.
+- **`--token` refuses `sds-lane-placeholder` (increment 2)**, which holds no token.
+- **A pass on a dead token and the quiet slot (increment 2).** Whether a lane pass that fails on a
+  revoked token leaves its check `started`, which would hold off the leak's `--token` redeploy (the
+  quiet slot waits while `started` is `true` and `status` isn't `down`).
+- **A closed failed `--token` run has a distinct status (increment 2).** The run file's statuses are
   `unfinished`, `finished` and `restored` (`scripts/deploy_orchestrator.py`, `RESTORED`). A failed
   `--token` run restored nothing, so it closes with a status of its own, not `restored`, which
   `last_finished` and `prepare`'s lag check (`require_lanes_current`) ignore, as they ignore
   `restored` today (`last_finished` takes only `finished`). The failure stays visible: the closing
   call doesn't report the run as a success, and HQ reports it.
-- **`lanes-finish`'s failure message fits the mode.** On a mismatch, `lanes-finish` prints the
-  run's inverse and raises "Run the inverse printed on stderr now" (`_lanes_finish`). A `--token`
-  run has no inverse write, so its message names its own close: `lanes-finish --restored`, which
-  records the mismatches and closes the run as failed.
+- **`lanes-finish`'s failure message fits the mode (increment 2).** On a mismatch, `lanes-finish`
+  prints the run's inverse and raises "Run the inverse printed on stderr now" (`_lanes_finish`). A
+  `--token` run has no inverse write, so its message names its own close: `lanes-finish --restored`,
+  which records the mismatches and closes the run as failed.
 
 The ping-URL secret's creator isn't carried: amendment 19's text settles it (What changes, item 6).
 

@@ -44,7 +44,7 @@ Line numbers are at the branch head (file
 | 1407-1409 | "Devon's decisions" introduction: D-24 to D-28 | amendment 19 |
 | 1445-1460 | Q3: the executor never redeploys before increment 7; reissues before it; keepers | items 1, 6, 9, 10 |
 | 1511-1514 | Q8: the amendment is amendment 19, and it adds keepers | item 1 |
-| 1695-1850 | Amendment 2 | amendment 19 |
+| 1695-1851 | Amendment 2 | amendment 19 |
 
 The five passages HQ found are all covered: (1) lines 142-216 and Amendment 2 item 1; (2) lines
 1040-1051 and item 2; (3) lines 943-986 and item 3; (4) lines 1341-1360 and item 4; (5) lines
@@ -77,7 +77,11 @@ Amendment 2 item 6 state this.
   `UNFINISHED, FINISHED, RESTORED` (line 1017), `last_finished` takes only `FINISHED` (1165-1169),
   `require_lanes_current` (1221), `finish_mismatches` (1723), and `_lanes_finish`'s message "Run
   the inverse printed on stderr now" (1772-1775).
-- The BWS scanner runs at session end through the Stop hook.
+- The BWS security scanner (`security_scan.cli . --category security`, from the worktree root):
+  `BLOCK: 0`. Its WARN findings are the pre-existing gitignore-coverage pattern check.
+- After the advisor's review, the verify section's lead-in cites amendment 19 exactly (five
+  `--token` sub-items, then its dead-token item, then the two PR #626 items), and each verify
+  item names increment 2.
 
 ## Files changed
 
