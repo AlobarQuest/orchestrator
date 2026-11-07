@@ -932,6 +932,8 @@ def _work(
             scheduled=reads,
             actions_secrets=ActionsSecrets(setup.github_app) if setup.github_app else None,
             person_revokes_next=_person_revokes_next(approved),
+            old_may_be_revoked=approved.adapter.revoke_may_come_first,
+            issue=approved.plan.issue,
             held=held,
         )
         run.run(approved.unit)

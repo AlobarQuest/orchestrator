@@ -244,6 +244,18 @@ def test_before_revoke_with_the_old_value_already_dead() -> None:
     assert _verdict("verify_consumers", payload) is not None
 
 
+def test_before_revoke_with_the_old_value_filed_refused_after_a_leak_stays_judgment() -> None:
+    note = "2 of 2 consumers hold or attest the new value; the old value is dead before the revoke"
+    probes = [BAD, _probe("old", "live", "dead", 401)]
+    assert _verdict("verify_consumers", _with("verify_consumers", note=note, probes=probes))
+
+
+def test_a_verify_new_proved_by_shape_alone_stays_judgment() -> None:
+    # A ping URL's issue (ADR-0055 amendment 19 item 5) files no probe: a person decides it.
+    note = "the shape check alone, with no probe (ADR-0055 amendment 19 item 5)"
+    assert _verdict("verify_new", _with("verify_new", probes=[], note=note)) is not None
+
+
 def test_retire_old_with_no_probe() -> None:
     assert _verdict("retire_old", _with("retire_old", probes=[])) is not None
 

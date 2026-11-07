@@ -20,7 +20,7 @@ from typing import Any, Final
 from rotation_worker.contract import ContractError, Plan, UnitPlan
 from rotation_worker.destinations import same
 from rotation_worker.envelope import NON_HOSTED_KEY
-from rotation_worker.plans import derive, select_plan, writes_hosted_service
+from rotation_worker.plans import candidates, select_plan, writes_hosted_service
 from rotation_worker.registry import RegistryEntry
 from rotation_worker.types import CLASS_TYPES, TYPES
 
@@ -54,11 +54,14 @@ def decomposition(intake: Mapping[str, Any], entry: RegistryEntry) -> dict[str, 
     if adapter is None:
         raise DecomposeError(f"{credential}'s class names no type the SDS rotates")
     declared = TYPES[adapter]
-    derived = derive(declared.capabilities, entry.destinations, entry.keeper, declared.store_kind)
+    # A rotation plan, an issue plan (ADR-0055 amendment 19), or either: the criteria pick one.
+    derived = candidates(
+        declared.capabilities, entry.destinations, entry.keeper, declared.store_kind
+    )
     criteria = _criteria(intake)
     try:
         plan = select_plan(
-            (derived,), [{"id": ac, "evidence": text} for ac, (_, text) in criteria.items()]
+            derived, [{"id": ac, "evidence": text} for ac, (_, text) in criteria.items()]
         )
     except ContractError:
         raise DecomposeError(

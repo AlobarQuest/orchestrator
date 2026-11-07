@@ -7,7 +7,9 @@ package is rendered from them:
 
 * the **criteria** are the type's derived plan (`plans.derive`), one per machine step, numbered
   as the plan numbers them, with the evidence text `select_plan` and the verifier read. A step's
-  unit is named only where its kind appears in more than one unit, as every authored package does;
+  unit is named only where its kind appears in more than one unit, as every authored package does.
+  A type with no rotation plan gets its issue plan (`plans.derive_issue`, ADR-0055 amendment 19),
+  whose criteria say nothing is quarantined, retired or proved dead;
 * the **reach** is `external_system`, plus `operator_machine` for a credential the Mac keeps and
   `live_estate` where a step writes a hosted service: a hosted type, or a Coolify setting among
   the destinations (a held copy distribute writes and restarts);
@@ -28,7 +30,7 @@ from typing import Any, Final
 
 from rotation_worker.contract import HELD_KIND, HumanAct, Plan, StepKind, UnitPlan
 from rotation_worker.destinations import HOSTED_KINDS, parse
-from rotation_worker.plans import criteria_steps, derive
+from rotation_worker.plans import candidates, criteria_steps
 from rotation_worker.registry import RegistryEntry
 from rotation_worker.types import CLASS_TYPES, TYPES
 
@@ -73,6 +75,20 @@ _CONDITIONS: Final[dict[StepKind, str]] = {
 }
 
 
+# An issue has no old value (ADR-0055 amendment 19 item 3): the keeper held the empty marker.
+_ISSUE: Final[dict[StepKind, str]] = {
+    StepKind.STORE: (
+        "The keeper held the empty marker and reads back the new value; nothing is quarantined."
+    ),
+    StepKind.VERIFY_CONSUMERS: (
+        "Every consumer the registry names holds the new value, and the staging secret is deleted."
+    ),
+}
+# A type proved by its shape, never a probe (amendment 19 item 5).
+_BY_SHAPE: Final = (
+    "The new value has the shape its provider issues; nothing probes it, because a probe would act."
+)
+
 # A type whose provider keeps no old value alive (`Capabilities.overlap` false) replaces it at the
 # host step, and what depends on the service restarts. The package states that outage, because the
 # person approving the revision is approving it.
@@ -94,15 +110,21 @@ def plan_for(entry: RegistryEntry) -> tuple[str, Plan]:
     if adapter_name is None:
         raise GenerateError(f"class {credential_class!r} is no type the SDS rotates")
     declared = TYPES[adapter_name]
-    plan = derive(declared.capabilities, entry.destinations, entry.keeper, declared.store_kind)
-    return adapter_name, plan
+    # Its rotation plan, or its issue plan for a type that has no rotation plan.
+    plans = candidates(declared.capabilities, entry.destinations, entry.keeper, declared.store_kind)
+    return adapter_name, plans[0]
 
 
-def acceptance(plan: Plan, overlap: bool = True) -> list[dict[str, str]]:
+def acceptance(plan: Plan, overlap: bool = True, *, by_shape: bool = False) -> list[dict[str, str]]:
     """One criterion per machine step, in the plan's numbering.
 
-    A type with no overlap states its host step as the replacement and restart it is."""
+    A type with no overlap states its host step as the replacement and restart it is; an issue
+    states that nothing was there before; a type proved by its shape says so at verify_new."""
     conditions = {**_CONDITIONS, StepKind.HOST: _HOST_REPLACES} if not overlap else _CONDITIONS
+    if plan.issue:
+        conditions = {**conditions, **_ISSUE}
+    if by_shape:
+        conditions = {**conditions, StepKind.VERIFY_NEW: _BY_SHAPE}
     steps = criteria_steps(plan)
     units_per_kind = Counter(kind for _, kind in set(steps.values()))
     criteria = []
@@ -197,8 +219,11 @@ def render(entry: RegistryEntry, occurrence: str, created_at: str) -> dict[str, 
         },
         "outcome": {
             "what": (
-                f"{credential_id} ({identity}) is replaced by a new value, every destination the "
-                "registry names holds it, and the old value is proved dead."
+                f"{credential_id} ({identity}) is issued: its keeper and every destination the "
+                "registry names hold the new value."
+                if plan.issue
+                else f"{credential_id} ({identity}) is replaced by a new value, every destination "
+                "the registry names holds it, and the old value is proved dead."
             ),
             "why": (
                 f"The credential is due for rotation ({occurrence}), and the registry hands its "
@@ -207,8 +232,8 @@ def render(entry: RegistryEntry, occurrence: str, created_at: str) -> dict[str, 
             "beneficiary": "Devon, whose credentials the SDS rotates.",
             "success_signal": (
                 "Every unit completes, the keeper holds a value different from the one it started "
-                "with, the old value is refused, and infraops reports no rotation finding for "
-                f"{credential_id}."
+                + ("with" if plan.issue else "with, the old value is refused,")
+                + f" and infraops reports no rotation finding for {credential_id}."
             ),
         },
         "scope": {
@@ -256,7 +281,7 @@ def render(entry: RegistryEntry, occurrence: str, created_at: str) -> dict[str, 
             "operational": None,
             "other": [],
         },
-        "acceptance": acceptance(plan, overlap),
+        "acceptance": acceptance(plan, overlap, by_shape=TYPES[adapter_name].verify_by_shape),
         "authority": authority(adapter_name, entry.destinations),
         "deliverables": {
             "artifacts": [

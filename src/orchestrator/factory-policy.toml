@@ -466,6 +466,26 @@ rotation_units = ["confirm", "mint", "retire", "store", "verify"]
 capabilities = { "operational_action" = "allowed" }
 max_attempts = 3
 
+[[reach.live_estate.rotation_known_good]]
+name = "BWS lane-token unit of an approved standing package"
+rationale = """
+A scheduled lane's BWS access token is written into the lane's own Coolify service
+variable, so its units reach the live estate (ADR-0055 amendment 19). Recognised for
+the reason the pattern above gives: the envelope is derived from a package revision a
+named person approved, and the executor holds its destinations to the package's and
+the registry's before it acts. Its own pattern, so that only this adapter's machine
+units are named: a person creates and revokes the token in the web app, so no mint
+or retire unit exists. An issue has a `store` unit alone; a reissue adds `verify` and
+`confirm`. The executor writes the variable with one PATCH and never restarts the
+lane, and refuses a destination with `redeploy` true before a claim, so this pattern
+recognises no redeploy.
+"""
+decided = "2026-11-07"
+rotation_adapters = ["bws-lane-token"]
+rotation_units = ["confirm", "store", "verify"]
+capabilities = { "operational_action" = "allowed" }
+max_attempts = 3
+
 [reach.live_estate.change_window]
 rationale = """
 Something already serving is changed, and the change is felt the moment it lands,
@@ -569,6 +589,38 @@ the web app, so no mint or retire unit of this adapter exists to recognise.
 decided = "2026-10-22"
 rotation_adapters = ["bws-machine-token"]
 rotation_units = ["confirm", "store", "verify"]
+capabilities = { "operational_action" = "allowed" }
+max_attempts = 3
+
+[[reach.external_system.rotation_known_good]]
+name = "BWS lane-token unit of an approved standing package"
+rationale = """
+A scheduled lane's BWS access token is proved, and proved dead, by logging in to
+Bitwarden, so its rotation's machine units reach that service (ADR-0055 amendment
+19). Recognised for the reason the first pattern in this row gives. Its own pattern,
+so that only this adapter's machine units are named: a person creates and revokes
+the token in the web app, so no mint or retire unit exists. An issue has a `store`
+unit alone; a reissue adds `verify` and `confirm`.
+"""
+decided = "2026-11-07"
+rotation_adapters = ["bws-lane-token"]
+rotation_units = ["confirm", "store", "verify"]
+capabilities = { "operational_action" = "allowed" }
+max_attempts = 3
+
+[[reach.external_system.rotation_known_good]]
+name = "Healthchecks ping-URL issue unit of an approved standing package"
+rationale = """
+A scheduled lane's Healthchecks ping URL is written into its keeper, the lane's
+ping-URL secret in BWS (ADR-0055 amendment 19). Recognised for the reason the first
+pattern in this row gives. A ping URL is only ever issued, never rotated: a person
+copies it from the check's page, and its one unit, `store`, checks its shape,
+stores it and reads it back. Nothing sends it a ping, so no other unit and no other
+reach exists to name.
+"""
+decided = "2026-11-07"
+rotation_adapters = ["healthchecks-ping-url"]
+rotation_units = ["store"]
 capabilities = { "operational_action" = "allowed" }
 max_attempts = 3
 

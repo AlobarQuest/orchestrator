@@ -19,6 +19,11 @@ here, once, so the invariants hold for every adapter rather than being re-writte
   anything else stops the rotation.
 * **After confirm-dead the quarantine and staging secrets are deleted**, and the deletion is
   filed as evidence.
+* **An issue is a rotation's first half** (ADR-0055 amendment 19 item 3): a person's mint and
+  stage, then verify_new, store, distribute where a copy is written, and verify_consumers, with no
+  retire_old or confirm_dead. It runs only on a keeper holding the inbox's empty marker (`EMPTY`),
+  which stands as the old value: nothing is quarantined, every step refuses a value equal to the
+  marker, and staging is deleted, and the deletion filed, once verify_consumers passes.
 * **A provider that is a hosted service learns the new value before anything probes it.** A
   self-issued bearer works only once the service accepts it, so its plan has a `host` step
   between stage and verify_new (ADR-0055 amendment 9). Host writes only the service, never BWS,
@@ -44,7 +49,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, Final, Protocol
+from typing import Any, Final, Protocol, runtime_checkable
 
 from rotation_worker.destinations import HOSTED_KINDS, parse
 from rotation_worker.evidence import ProbeAnswer, State, StepEvidence, Subject, Which
@@ -63,6 +68,10 @@ ACTIONS_KIND: Final = "gh-actions-secret"
 # the holding application can say what it loaded.
 HELD_KIND: Final = "coolify-env-held"
 ATTESTED_KINDS: Final = frozenset({"runtime-fetch", "keychain", "shell-export"})
+# What an empty inbox, and a keeper with nothing issued yet, hold: BWS keeps no empty secret.
+EMPTY: Final = "empty"
+# A Coolify variable a type writes at distribute, with no host step and no restart (amendment 19).
+ENV_KIND: Final = "coolify-env"
 
 
 class StepKind(StrEnum):
@@ -109,6 +118,9 @@ class HumanAct:
 @dataclass(frozen=True)
 class Plan:
     segments: tuple[UnitPlan | HumanAct, ...]
+    # An issue: a rotation's first half, with nothing to retire (ADR-0055 amendment 19 item 3).
+    # Declared, never inferred from the steps; each kind has its own validation.
+    issue: bool = False
 
     def unit(self, name: str) -> UnitPlan:
         for segment in self.segments:
@@ -178,6 +190,23 @@ class Provider(Protocol):
         ...
 
 
+@runtime_checkable
+class WritesVariables(Protocol):
+    """A provider that writes its credential's `coolify-env` destination at distribute: one
+    `PATCH` and never a restart (ADR-0055 amendment 19 item 6)."""
+
+    def write_variable(self, consumer: Mapping[str, Any], new: Value) -> None: ...
+
+
+@runtime_checkable
+class ShapeVerified(Protocol):
+    """A provider whose new value is proved by its shape alone, never by a probe."""
+
+    def shape_problem(self, new: Value) -> str | None:
+        """Why `new` isn't the shape its provider issues, or `None`."""
+        ...
+
+
 class ActionsSecretWriter(Protocol):
     """Writes one repository's Actions secret, and confirms GitHub recorded the write."""
 
@@ -206,6 +235,8 @@ class ScheduledReads(Protocol):
 
 def validate_plan(plan: Plan) -> None:
     """Refuse a plan whose order could break an invariant. Run once, when the adapter loads."""
+    if plan.issue:
+        raise ContractError("an issue is validated by its own rule (validate_issue_plan)")
     _validate_segments(plan)
     kinds = [step.kind for step in plan.steps()]
     _validate_counts(kinds)
@@ -263,6 +294,41 @@ def _validate_host(kinds: list[StepKind]) -> None:
         < kinds.index(StepKind.VERIFY_NEW)
     ):
         raise ContractError("host comes after stage, before verify_new")
+
+
+ISSUE_ORDER: Final = (
+    StepKind.MINT,
+    StepKind.STAGE,
+    StepKind.VERIFY_NEW,
+    StepKind.STORE,
+    StepKind.DISTRIBUTE,
+    StepKind.VERIFY_CONSUMERS,
+)
+
+
+def validate_issue_plan(plan: Plan) -> None:
+    """Refuse an issue plan that could break an invariant (ADR-0055 amendment 19 item 3): its own
+    rule, beside `validate_plan`'s for a rotation.
+
+    A person mints and stages; then verify_new, store, distribute if a copy is written, and
+    verify_consumers, each once, in that order, each a machine's. Nothing is hosted, retired or
+    confirmed dead, because nothing is replaced.
+    """
+    if not plan.issue:
+        raise ContractError("only a plan declared an issue is validated as one")
+    _validate_segments(plan)
+    _validate_mint_and_stage(plan)
+    steps = plan.steps()
+    kinds = [step.kind for step in steps]
+    if kinds not in (list(ISSUE_ORDER), [k for k in ISSUE_ORDER if k is not StepKind.DISTRIBUTE]):
+        raise ContractError(
+            "an issue is mint, stage, verify_new, store, an optional distribute and "
+            "verify_consumers, each once and in that order"
+        )
+    if any(step.actor is not Actor.HUMAN for step in steps[:2]):
+        raise ContractError("a person mints and stages an issue")
+    if any(step.actor is not Actor.MACHINE for step in steps[2:]):
+        raise ContractError("every step of an issue after the mint is a machine's")
 
 
 def _validate_segments(plan: Plan) -> None:
@@ -333,12 +399,21 @@ class UnitRun:
     # proves the old value live: the first half of amendment 1's pair, which no machine retire
     # step is there to file.
     person_revokes_next: bool = False
+    # A person may have revoked the old value before this rotation began, after a leak (ADR-0055
+    # amendment 19 item 10, D-26), so the probe before the revoke accepts it live or refused.
+    old_may_be_revoked: bool = False
+    # The unit is an issue's (`Plan.issue`): the keeper's `EMPTY` stands as the old value.
+    issue: bool = False
     _minted: Value | None = field(default=None, repr=False)
 
     def run(self, unit: UnitPlan) -> None:
         if self.finished():
             return
         steps = unit.steps
+        if self.issue and self.quarantined() is not None:
+            raise ContractError(
+                "an issue quarantines nothing, and a quarantine exists: never guess"
+            )
         if self.staged() is None and self.quarantined() is not None:
             # Only confirm_dead deletes staging, and only after proving the old value dead, so
             # this is its cleanup interrupted. Nothing but confirm_dead may run: it proves death
@@ -359,7 +434,10 @@ class UnitRun:
 
         Only a unit that filed confirm_dead can be finished, and nothing is skipped on that
         evidence alone: both secrets must also be gone, which only confirm_dead's cleanup does.
+        An issue's last step is verify_consumers, which deletes staging after filing.
         """
+        if self.issue:
+            return StepKind.VERIFY_CONSUMERS in self.filed and self.staged() is None
         return (
             StepKind.CONFIRM_DEAD in self.filed
             and self.quarantined() is None
@@ -396,6 +474,10 @@ class UnitRun:
         return self.store.find(self.rotation.work_project_id, self.rotation.quarantine_key)
 
     def old(self) -> Value:
+        if self.issue:
+            # Nothing was issued before: the keeper's marker stands as the old value, so every
+            # step refuses a new value equal to it.
+            return Value(EMPTY)
         quarantine = self.quarantined()
         if quarantine is not None:
             return self.store.read(quarantine.id)
@@ -560,6 +642,16 @@ def _host(run: UnitRun, step: Step) -> None:
 
 def _verify_new(run: UnitRun, step: Step) -> None:
     new, old = run.new_and_old()
+    if run.issue and isinstance(run.provider, ShapeVerified):
+        # The one exception to decision 3's R14 rule: a ping marks a Healthchecks check up, so a
+        # ping URL's issue is proved by its shape, with no probe and no control (ADR-0055
+        # amendment 19 item 5, Devon's D-30). Cut-over step 4 proves the URL.
+        problem = run.provider.shape_problem(new)
+        if problem is not None:
+            raise ContractError(problem)
+        note = "the shape check alone, with no probe (ADR-0055 amendment 19 item 5)"
+        run.record(step, StepEvidence(step.kind, fingerprints=_fingerprints(new, old), note=note))
+        return
     probes = run.probe(new, "new", "live")
     run.record(
         step, StepEvidence(step.kind, fingerprints=_fingerprints(new, old), probes=tuple(probes))
@@ -567,6 +659,9 @@ def _verify_new(run: UnitRun, step: Step) -> None:
 
 
 def _store(run: UnitRun, step: Step) -> None:
+    if run.issue:
+        _store_issue(run, step)
+        return
     new = run.new()
     keeper = run.store.read(run.rotation.keeper_id)
     quarantine = run.quarantined()
@@ -588,13 +683,38 @@ def _store(run: UnitRun, step: Step) -> None:
     run.record(step, StepEvidence(step.kind, fingerprints=_fingerprints(new, old)))
 
 
+def _store_issue(run: UnitRun, step: Step) -> None:
+    """Write the keeper only after reading the marker there; there is no old value to quarantine.
+
+    A keeper already holding the staged value is an earlier attempt's write, done. Any other value
+    is a state no step could have left, so the unit fails rather than guess.
+    """
+    new, old = run.new_and_old()
+    keeper = run.store.read(run.rotation.keeper_id)
+    note = None
+    if keeper.same_as(new):
+        note = "the keeper already held the staged value: an earlier attempt stored it"
+    elif keeper.same_as(old):
+        run.store.write(run.rotation.keeper_id, new)
+    else:
+        raise ContractError("the keeper holds neither the marker nor the staged value")
+    if not run.store.read(run.rotation.keeper_id).same_as(new):
+        raise ContractError("the keeper doesn't read back the new value")
+    run.record(step, StepEvidence(step.kind, fingerprints=_fingerprints(new, old), note=note))
+
+
 def _distribute(run: UnitRun, step: Step) -> None:
     new, old = run.new_and_old()
-    written = actions = held = 0
+    written = actions = held = variables = 0
     for destination in run.rotation.destinations:
         consumer = parse(destination)
         secret_id = run.store.locate(consumer)
-        if secret_id is not None:
+        if consumer["kind"] == ENV_KIND and isinstance(run.provider, WritesVariables):
+            # One PATCH, never a restart: the consumer takes the value at its own next start
+            # (ADR-0055 amendment 19 item 6). A type that hosts writes its variables at host.
+            run.provider.write_variable(consumer, new)
+            variables += 1
+        elif secret_id is not None:
             if secret_id != run.rotation.keeper_id:
                 run.store.write(secret_id, new)
                 written += 1
@@ -611,10 +731,16 @@ def _distribute(run: UnitRun, step: Step) -> None:
             # reports the new value loaded.
             run.held.write(consumer, new)
             held += 1
-    note = (
-        f"wrote {written} secret(s) beside the keeper, {actions} Actions secret(s) "
-        f"and {held} held cop(ies)"
-    )
+    if variables:
+        note = (
+            f"wrote {written} secret(s) beside the keeper, {actions} Actions secret(s), "
+            f"{held} held cop(ies) and {variables} Coolify variable(s), with no restart"
+        )
+    else:
+        note = (
+            f"wrote {written} secret(s) beside the keeper, {actions} Actions secret(s) "
+            f"and {held} held cop(ies)"
+        )
     run.record(step, StepEvidence(step.kind, fingerprints=_fingerprints(new, old), note=note))
 
 
@@ -628,17 +754,30 @@ def _verify_consumers(run: UnitRun, step: Step) -> None:
     verified = sum(1 for d in run.rotation.destinations if parse(d)["kind"] != "provider")
     note = f"{verified - len(missing)} of {verified} consumers hold or attest the new value"
     probes: list[ProbeAnswer] = []
-    if run.person_revokes_next:
+    if run.person_revokes_next and run.old_may_be_revoked:
+        # After a leak the person revokes first (ADR-0055 amendment 19 item 10, D-26), so the old
+        # value may be refused already; either answer is filed, and confirm_dead proves death.
+        probes = run.probe(old, "old", None, before_revoke=True)
+        note += f"; the old value is {probes[-1].outcome} before the revoke"
+    elif run.person_revokes_next:
         # The old value must be live when the person is asked to revoke it, or confirm_dead's
         # "dead" would prove nothing about the revoke (ADR-0055 amendment 1).
         probes = run.probe(old, "old", "live", before_revoke=True)
         note += "; the old value is live before the revoke"
-    run.record(
-        step,
-        StepEvidence(
-            step.kind, fingerprints=_fingerprints(new, old), probes=tuple(probes), note=note
-        ),
-    )
+    prints = _fingerprints(new, old)
+    run.record(step, StepEvidence(step.kind, fingerprints=prints, probes=tuple(probes), note=note))
+    if run.issue:
+        # An issue has no confirm_dead, so staging goes once its last step passes, and the
+        # deletion is filed as confirm_dead's is.
+        staging = run.staged()
+        if staging is not None:
+            run.store.delete(staging.id)
+            run.record(
+                step,
+                StepEvidence(
+                    step.kind, fingerprints=prints, note=f"{note}; deleted staging {staging.id}"
+                ),
+            )
 
 
 def _retire_old(run: UnitRun, step: Step) -> None:

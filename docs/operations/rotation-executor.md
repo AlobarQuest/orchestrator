@@ -67,9 +67,10 @@ instance reads it with its bearer; it exits 2 when the record can't be read.
 ## The plan a credential runs
 
 A credential type (`openrouter`, `orchestrator`, `change-manager`, `github-pat`, `bitbucket`,
-`bws-machine-token`, `postgres-role`) declares only which steps its provider does by machine
-(`Adapter.capabilities`). The executor derives each credential's plan from that and the
-credential's registry row (`plans.derive`, ADR-0055 amendment 15):
+`bws-machine-token`, `postgres-role`, `bws-lane-token`, `healthchecks-ping-url`) declares only
+which steps its provider does by machine (`Adapter.capabilities`). The executor derives each
+credential's plan from that and the credential's registry row (`plans.derive`, ADR-0055
+amendment 15):
 
 - **Mint and revoke** are machine units when the provider does them, and human acts otherwise.
 - **`host`** runs for a hosted type, before anything probes the new value.
@@ -79,6 +80,11 @@ credential's registry row (`plans.derive`, ADR-0055 amendment 15):
   a `confirm` unit follows it.
 - **No person attests a consumer.** A `runtime-fetch` reader whose registry row names no read is
   refused before the claim until its row names one.
+- **An issue** (`plans.derive_issue`, amendment 19) is a rotation's first half, for a type that
+  declares one: a person's mint, then one `store` unit of `verify_new`, `store`, `distribute`
+  where a copy is written, and `verify_consumers`. It runs only on a keeper holding the inbox's
+  empty marker, quarantines nothing, and deletes staging after `verify_consumers`. "Lane tokens
+  and ping URLs" covers the two types that have one.
 
 Criteria are numbered AC-001 onward over the machine steps in order. `rotation_adapter` names the
 type. The approved package pins its plan: the executor runs the derived plan when the package's
@@ -192,6 +198,11 @@ value to the waiting rotation only when all of the following hold:
 - It is no other SDS-rotated keeper's value of the same type. Two BWS machine tokens can see
   exactly the same projects (`ops-mini` and `content-mini` do), so only this refuses one pasted
   for the other.
+
+A lane token and a ping URL bind by what the value is instead of the third check, since there's no
+old value to compare with before the first issue, or one that answers after a leak's revoke: a lane
+token sees exactly the reach its registry row declares, and a ping URL has the self-hosted ping
+URL's shape. "Lane tokens and ping URLs" says how.
 
 A value that binds is written to the rotation's staging secret, and the inbox is set back to the
 word `empty`. A value that doesn't bind stays in the inbox and fails nothing. If the same value
@@ -1228,3 +1239,90 @@ usual place. Two levers need neither:
   not, with no traceback, including a Coolify refusal.
 
 When the service is back, requeue the unit; the keeper never changed, so the retry is clean.
+
+## Lane tokens and ping URLs
+
+ADR-0055 amendment 19. Each scheduled lane runs as its own BWS machine account in its own Coolify
+service, `sds-lane-<lane>` (ADR-0059). The VM instance issues the lane's BWS access token, writes
+it into the lane's `<LANE>_BWS_ACCESS_TOKEN` variable, and issues the lane's Healthchecks ping URL
+into the lane's ping-URL secret. A person mints both, in the Bitwarden web app and on the check's
+page, and pastes each into the VM's inbox.
+
+### Create the keepers
+
+Each credential's keeper is a secret in `Rotation / Keepers` that holds the inbox's empty marker
+until its first issue. Create it before its registry row lands, since the row names the id it
+prints. In the VM, for each of the lane token and the ping URL, with the row's `id`:
+
+```sh
+orb -m rotation-executor -u root runuser -u rotation -- env -i PATH=/usr/bin:/bin \
+  HOME=/var/lib/rotation-worker /opt/rotation-worker/venv/bin/rotation-worker create-keeper \
+  execution-watch-bws-token --config /etc/rotation-worker/config.toml
+```
+
+It prints `{"secret_id": ...}` and refuses a key that already exists. It reads no value. The
+configuration needs `keepers_project_id`, and, for a lane token, `bws-lane-token` in
+`admin_secrets` pointing at the Coolify token's secret id in `Rotation / Coolify`: the executor
+writes the lane's variable with it.
+
+### The registry rows
+
+A lane token's row names its keeper, the lane's one variable, and what the lane's account sees.
+The variable is a production service's, with `redeploy` false, and a key ending
+`_BWS_ACCESS_TOKEN`; a row with `redeploy` true, or any other destination, is refused before a
+claim. `reach_secrets` lists the BWS secret ids the lane's account reads (the lane's entries in
+`.bws-secrets.toml`, its ping-URL secret among them), and `reach_projects` lists any project it is
+granted, empty for an account with only direct secret grants. No two lane-token rows may declare
+the same reach:
+
+```toml
+[[credential]]
+id = "execution-watch-bws-token"
+class = "bws-lane-token"
+provider = "bws-lane-token"
+bws_uuid = "<the keeper's secret id, printed by create-keeper>"
+rotated_by_sds = true
+reach_secrets = ["<each secret id the lane reads>"]
+reach_projects = []
+
+  [[credential.consumer]]
+  kind = "bws-secret"
+  uuid = "<the same secret id>"
+
+  [[credential.consumer]]
+  kind = "coolify-env"
+  instance = "prod"
+  resource_type = "service"
+  uuid = "<sds-lane-execution-watch's service uuid>"
+  key = "EXECUTION_WATCH_BWS_ACCESS_TOKEN"
+  redeploy = false
+```
+
+A ping URL's row has class and provider `healthchecks-ping-url`, its keeper as `bws_uuid`, and the
+keeper as its one consumer.
+
+### What each unit does
+
+- **Bind.** A lane token binds when a fresh login accepts it beside a refused known-bad token,
+  what it sees (projects and secrets, listed by that login) is exactly the row's declared reach,
+  and no other lane token's keeper holds it. A ping URL binds when its keeper holds the marker and
+  the value is exactly `https://healthcheck.alobar.net/ping/` followed by one lowercase UUID.
+  Nothing pings it: a ping marks the check up.
+- **`store`, an issue.** `verify_new` logs in with the token, or checks the ping URL's shape;
+  `store` writes the keeper after reading the marker there; for a lane token `distribute` sends
+  one `PATCH` of the lane's variable and never restarts the lane; `verify_consumers` reads the
+  keeper back and, for the variable, counts the `PATCH` answering 2xx, since the executor's
+  Coolify token can't read a variable. Staging is then deleted, and the deletion filed.
+- **A `PATCH` answering 404** means the service has no such variable row: the unit fails with
+  `CoolifyRefused`, never a skip. The row is made when the lane's service is created from its
+  compose.
+- **A reissue** runs the lane token's rotation plan, `store`, `verify` and `confirm`, with the
+  revoke a person's act between `verify` and `confirm`. After a leak, Devon revokes first, so
+  `verify` takes the old token refused as well as live; otherwise he revokes after the lane
+  phases' `--token` run passes (D-26).
+
+The lane loads its new token only at its next start, a lane phases' redeploy in its quiet slot.
+That the lane runs on it is the lane phases' proof (`lanes-finish` and `lane-run --read`), outside
+the plan, which stands in for decision 3's machine check before a lane token's revoke until
+ADR-0059 increment 7 (D-27).
+

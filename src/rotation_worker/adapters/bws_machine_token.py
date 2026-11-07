@@ -26,6 +26,7 @@ Keychain instance of the executor, on the machine whose Keychain holds the token
 from __future__ import annotations
 
 import base64
+import hashlib
 import re
 import secrets
 import string
@@ -33,7 +34,7 @@ import subprocess
 import sys
 import tempfile
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime, time, timedelta
 from typing import Any, Final
 from zoneinfo import ZoneInfo
@@ -116,6 +117,13 @@ else:
 """
 
 
+def reach_digest(projects: Iterable[str], secrets: Iterable[str]) -> str:
+    """The digest `_REACH` prints for a token that sees exactly these project and secret ids."""
+    ids = sorted(f"project {project}" for project in projects)
+    ids += sorted(f"secret {secret}" for secret in secrets)
+    return hashlib.sha256("\n".join(ids).encode()).hexdigest()
+
+
 def wait_reason(unit: UnitPlan, history: Sequence[Mapping[str, Any]], now: datetime) -> str | None:
     """Why this unit can't be claimed yet, or `None`. Asked before every claim."""
     if unit.name == "store":
@@ -161,13 +169,17 @@ class BwsMachineTokenProvider:
         2026-10-27), so this refuses a token for another kind of account, and the inbox's keeper
         comparison refuses one pasted for its twin.
         """
+        reach = [self.reach(new), self.reach(old)]
+        return reach[0] is not None and reach[0] == reach[1]
+
+    def reach(self, value: Value) -> str | None:
+        """The digest of every project and secret `value` can see (`_REACH`), or `None` when the
+        login or a listing fails. Only a digest counts: a child that died before printing answers
+        nothing."""
         if self._organization_id is None:
             raise ContractError("no organization is configured to list what a token can see")
-        reach = [self._fresh(_REACH, f"{self._organization_id}\n{v.reveal()}") for v in (new, old)]
-        # Only a digest counts: a child that died before printing answers "" for both.
-        return (
-            reach[0] is not None and DIGEST.fullmatch(reach[0]) is not None and reach[0] == reach[1]
-        )
+        answer = self._fresh(_REACH, f"{self._organization_id}\n{value.reveal()}")
+        return answer if answer is not None and DIGEST.fullmatch(answer) else None
 
     def _fresh(self, script: str, stdin: str) -> str | None:
         """What `script` prints, run in a child with a new SDK client and an empty, throwaway

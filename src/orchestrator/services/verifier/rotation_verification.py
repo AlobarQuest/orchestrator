@@ -33,6 +33,9 @@ _CRITERION = re.compile(
 # The executor's coverage note (`rotation_worker/contract.py::_verify_consumers`).
 _COVERAGE = re.compile(r"^(?P<held>\d+) of (?P<total>\d+) consumers hold or attest the new value")
 _BEFORE_REVOKE = "the old value is live before the revoke"
+# Any answer for the old value before a person's revoke: after a leak the executor may file it
+# refused (ADR-0055 amendment 19 item 10), which a person judges.
+_ANY_BEFORE_REVOKE = " before the revoke"
 # confirm_dead files twice; only the second records the deletions (`contract.py::_confirm_dead`).
 _DELETED = "deleted "
 # Steps whose probes are the whole point: each needs at least one, answered as expected.
@@ -117,7 +120,7 @@ def _coverage(note: str, subjects: list[ProbeResult]) -> str | None:
     held, total = int(counted["held"]), int(counted["total"])
     if total < 1 or held > total:
         return "the consumer count is inconsistent"
-    if _BEFORE_REVOKE not in note:
+    if _ANY_BEFORE_REVOKE not in note:
         # Partial coverage before the retire is by design: retire_old refuses any consumer
         # still missing the new value.
         return None

@@ -53,13 +53,19 @@ class CoolifyClient:
         resource_type: Literal["application", "service"],
         uuid: str,
         transport: httpx.BaseTransport | None = None,
+        *,
+        restarts: bool = True,
     ) -> None:
+        """`restarts` false builds a client that may only write the variable: its `permits`
+        refuses the restart, for a resource the executor must never redeploy (ADR-0055
+        amendment 19 item 6)."""
         if resource_type not in ("application", "service"):
             raise ContractError("a Coolify resource is an application or a service")
         problem = url_problem(base_url)
         if problem is not None:
             raise ContractError(f"the Coolify URL {problem}")
         self._service = resource_type == "service"
+        self._restarts = restarts
         if self._service:
             self._envs = f"/api/v1/services/{uuid}/envs"
             self._restart = f"/api/v1/services/{uuid}/restart"
@@ -80,7 +86,10 @@ class CoolifyClient:
             raise ContractError(f"the Coolify URL is unusable: {failure.error_type}") from None
 
     def permits(self, method: str, path: str) -> bool:
-        return (method, path) in {("PATCH", self._envs), ("POST", self._restart)}
+        allowed = {("PATCH", self._envs)}
+        if self._restarts:
+            allowed.add(("POST", self._restart))
+        return (method, path) in allowed
 
     def set_variable(self, key: str, value: str) -> None:
         """Write `value` to `key`: both rows of an application's, the one row of a service's.
