@@ -1940,7 +1940,11 @@ has no repository to grant.
 3. **The proposer writes the registry's destinations.** A revision it writes for a due credential
    carries the registry's destination list, not the previous revision's. An approved revision whose
    destinations differ from the registry is revised again rather than proposed, so drift reaches
-   Devon as a revision to approve instead of a unit the executor refuses.
+   Devon as a revision to approve instead of a unit the executor refuses. (Amendment 20 narrows
+   this for a package the proposer generated: when its criteria describe no plan its row derives,
+   for example after a destination change adds a `distribute` step, the pass reports that
+   credential's `error` and writes nothing, and an operator hand-revises the package onto the
+   derived plan.)
 4. **The proposer generates a missing package.** A due credential that the registry hands to the
    SDS, with no standing package, gets revision 1 generated from its row and its type's derived
    plan (`plans.derive`): reach, authority and one criterion per machine step follow from the
@@ -1950,7 +1954,8 @@ has no repository to grant.
    when it first comes due.
 5. **Approved wording is never rewritten.** Only a new package is generated; an existing package
    is revised only for its occurrence and destinations. (Amendment 20 narrows this for a package
-   the proposer generated, when the plan its row derives changes.)
+   the proposer generated, when the plan its row derives changes: the criteria, prose and
+   authority are re-rendered, and the person approves them in that revision's one click.)
 
 Measured before building: rendered for each of the 16 standing packages' registry rows, the
 generator's criteria describe the derived plan for all 15 rotated types (the canary is no type),
@@ -2538,8 +2543,10 @@ token's first reissue. **Devon's answer (2026-11-07T21:31 UTC, HQ D-32): A.**
 - **Infra Brain rule 1032.** A re-rendered full plan keeps `verify_consumers` (AC-004) before
   `confirm_dead` (AC-005). A lane token's authority still prohibits `credential_revoke` in both
   plans, because a person revokes it.
-- **Decision 5 of amendment 15 is narrowed**, not withdrawn: approved wording is rewritten only
-  when the plan it describes is no longer the one the row derives, and only in a revision a person
-  approves.
+- **Decisions 3 and 5 of amendment 15 are narrowed**, not withdrawn. Decision 5: approved wording
+  is rewritten only when the plan it describes is no longer the one the row derives, and only in a
+  revision a person approves. Decision 3: a generated package whose criteria describe no plan its
+  row derives isn't revised for destination drift. The pass refuses it as that credential's `error`
+  (decision 3 here) and writes nothing, and an operator hand-revises it onto the derived plan.
 - **Unchanged.** The executor, the decomposer, `select_plan`, every existing generated package's
   bytes, and the ping URL's `verify_new` criterion and adapter.

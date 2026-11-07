@@ -80,7 +80,12 @@ For a due credential whose package is `rotation-<credential_id>`:
      (`src/rotation_worker/compare.py`).
 4. **The next pass.** If the registry's destinations changed since the approved revision was
    written, the pass revises it again instead of proposing (step 1), because the executor would
-   refuse the first unit of a package that differs from the registry. Otherwise it files the
+   refuse the first unit of a package that differs from the registry. One case is refused instead:
+   a package the proposer generated whose criteria describe no plan its row derives, for example
+   because the destination change adds a `distribute` step. `reissue_body` raises
+   `StatedPlanError`, the pass reports that credential's `error` and writes nothing, neither a
+   revision nor a proposal, and an operator hand-revises the package onto the derived plan
+   (ADR-0055 amendment 20 decision 3). Otherwise it files the
    observation again. It replays and returns the same id. Then it proposes
    the `work` record with the propose-scoped bearer. The record names the approved revision and
    that observation, with `bump_proposer`'s asserted fields (`WORK_RECORD_FIELDS`). Later passes
