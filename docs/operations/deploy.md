@@ -138,7 +138,7 @@ means usage.
 The numbered entries below remain the procedure's record, and the manual fallback when the command
 cannot run. The command adds no step they do not describe.
 
-## The lane phases (ADR-0059 increment 1)
+## The lane phases (ADR-0059 increments 1 and 2)
 
 Each scheduled lane that has moved off the Mac is its own Coolify compose resource,
 `sds-lane-<lane>`, with one service named after the lane (ADR-0059 Amendment 1). The deploy
@@ -156,6 +156,10 @@ Each phase takes `--lane <lane>` and exactly one change:
   and writes the tracked compose at that tag.
 - `--add --tag sha-<40 hex>`: the lane's first start, on the resource HQ created. The tag must be
   the served orchestrator tag.
+- `--token`: redeploy the lane after the VM rotation executor wrote its `<LANE>_BWS_ACCESS_TOKEN`
+  (ADR-0059 Amendment 2). It keeps the running tag, digest and schedule, writes the tracked compose
+  at that tag, and writes no variable. It refuses `placeholder`, which holds no token, and a lane
+  with no passed `--add`.
 
 A `--tag` takes the release's sha tag only. The command resolves it to its full commit on
 `origin/main`, finds that commit's one successful `Release image` run (in the newest 200), and
@@ -167,9 +171,10 @@ The phases keep their record under `~/Library/Application Support/sds/deploy-lan
 (`LANES_STATE_DIR`), outside every repository, so any session on the Mac finds a lane's chain:
 one directory per lane, one JSON file per run, written atomically, with `.lock` held (`flock`)
 while a phase reads and writes. Each file holds the change and its `change_key`
-(`tag:<commit>`, `add:<commit>` or `schedule:<value>`), the 6-hour deadline as an absolute UTC
+(`tag:<commit>`, `add:<commit>`, `schedule:<value>` or `token`), the 6-hour deadline as an absolute UTC
 time, the resource uuid, the tag with its full commit, the lane digest, the compose it sends, the
-compose and values it replaces, the recorded volume, and one status:
+compose and values it replaces, the recorded volume, for a `--token` run the secret UUIDs its
+`lane-run --read` must read, and one status:
 
 | Status | Meaning |
 |---|---|
@@ -180,6 +185,7 @@ compose and values it replaces, the recorded volume, and one status:
 | `unfinished` | `lanes-recheck` exited 0, so the session writes the resource. |
 | `finished` | `lanes-finish` passed. The newest one is the lane's record: its compose is the one Coolify was last given, and its tag is the lane's tag. |
 | `restored` | `lanes-finish --restored` passed: the lane is back on the values the run replaced, so it never becomes the lane's record. |
+| `closed_failed` | A `--token` run whose `lanes-finish` failed, closed by `lanes-finish --restored` with no write. Its `reason` holds the mismatches the failing `lanes-finish` recorded. It restored nothing and never becomes the lane's record; `prepare`'s lag check reads past it, as it reads past `restored`. |
 
 The phases find the lane's current run by `--lane` and the change, never by a path. The first
 compose of a resource is the one its `--add` sends: an `--add` has no replaced compose, so its
@@ -208,7 +214,7 @@ run of its lane is `unfinished`.
 ### Run a change
 
 1. Read the running container before `lanes-prepare` (not for an `--add`, which has no container).
-   For `--tag`, its tag with `vps_docker_ps`. For `--schedule`, its value with `vps_exec` running
+   For `--tag` and `--token`, its tag with `vps_docker_ps`. For `--schedule`, its value with `vps_exec` running
    `docker exec <container> printenv LANE_SCHEDULE_ENABLED`. For each of the eleven stateful lanes,
    the source of its `/var/lib/sds/<lane>` mount, with `vps_exec` running `docker inspect` with a
    `--format` that prints only that mount. No read lists another variable's value.
@@ -221,7 +227,13 @@ run of its lane is `unfinished`.
      --schedule <true|false> --running-schedule <value> [--running-volume <volume>]
    rtk proxy uv run python -m scripts.deploy_orchestrator lanes-prepare --lane <lane> \
      --add --tag sha-<served> --resource-uuid <uuid> --schedule-written false
+   rtk proxy uv run python -m scripts.deploy_orchestrator lanes-prepare --lane <lane> \
+     --token --running-tag <tag> [--running-volume <volume>]
    ```
+
+   A `--token` run records the UUIDs `.bws-secrets.toml` lists for the lane at its running tag:
+   each `[[secret]]` whose `lanes` field names the lane. It refuses a lane the manifest lists no
+   secret for.
 
    Exit 2 means the quiet slot is unmet: re-run it on a later cycle. Exit 4 means the wait timed
    out. Exit 0 prints, on stderr, how the compose differs from the recorded one, the exact calls of
@@ -232,16 +244,25 @@ run of its lane is `unfinished`.
    `docker_compose_raw`, and one variable: `SDS_LANES_IMAGE_TAG` through
    `coolify_update_service_env` for `--tag`, through `coolify_create_service_env` for `--add`
    (Coolify makes no row for a `${VAR}` in `image:`), or `LANE_SCHEDULE_ENABLED` through
-   `coolify_update_service_env` for `--schedule`. Then `coolify_deploy` on the resource.
+   `coolify_update_service_env` for `--schedule`; `--token` writes no variable, because the
+   executor has written the token. Then `coolify_deploy` on the resource.
 4. Once the deployment has finished, read the new container with the `vps_exec` commands
    `lanes-prepare` printed: its image's `RepoDigest`, its `LANE_SCHEDULE_ENABLED`, the source of a
-   stateful lane's state mount, and for an `--add` of any lane but the placeholder whether its
-   `BWS_ACCESS_TOKEN` is non-empty (`test -n`, which prints no value).
+   stateful lane's state mount, and for an `--add` of any lane but the placeholder and for a
+   `--token` whether its `BWS_ACCESS_TOKEN` is non-empty (`test -n`, which prints no value). A
+   `--token` run adds one more read: `docker exec <container> lane-run --read <uuid>...` over the
+   run's recorded UUIDs, which prints one `<uuid> ok` or `<uuid> refused` line per UUID and never a
+   value. Save those lines, as printed, to a file outside the repository.
 5. Run `lanes-finish` with the change and the reads (`--observed-digest`, `--observed-schedule`,
-   `--observed-volume`, `--token-present`). It exits 0 only when the container runs the release's
-   lane digest, has the expected schedule, mounts the recorded volume (or, for an `--add`, the
-   resource's one named volume, never a double-prefixed one), and, for an `--add`, holds a token.
-   If the redeploy itself failed, pass `--redeploy-failed` instead of the reads.
+   `--observed-volume`, `--token-present`, and for `--token` `--read-result <file>`, the path of
+   the saved `lane-run --read` lines). It exits 0 only when the container runs the release's lane
+   digest, has the expected schedule, mounts the recorded volume (or, for an `--add`, the
+   resource's one named volume, never a double-prefixed one), and, for an `--add` or a `--token`,
+   holds a token. A `--token` run passes only if every recorded UUID reads `ok` too. A read-result
+   line that isn't `<uuid> ok|refused`, a UUID named twice, or a UUID the run didn't record is a
+   usage error (exit 1), and the command never repeats the line. `--read-result` is for `--token`
+   only. If the redeploy itself failed, pass `--redeploy-failed` instead of the reads. A failing
+   `lanes-finish` records its mismatches as the run's `reason`.
 6. When `lanes-finish` exits 2, run the inverse it prints at once:
    - For `--tag` and `--schedule`: `coolify_update_service` with the recorded compose, the
      replaced variable value, and a second `coolify_deploy`. Read the container again, then run
@@ -254,6 +275,23 @@ run of its lane is `unfinished`.
      container of it. Then run `lanes-finish --restored --service-listed false
      --container-present false`. The command doesn't wait; a resource still listed after
      10 minutes fails the check.
+   - For `--token`: nothing to undo, because its compose is the one the lane already ran. Run
+     `lanes-finish --lane <lane> --token --restored`, with no reads. It writes nothing, closes the
+     run `closed_failed` with the recorded mismatches as its reason, prints them on stderr, and
+     answers `"result": "closed_failed"`, never a success. It refuses a run with no failed
+     `lanes-finish` recorded. Report the failure: the reissue's revoke stays unresolved. The lane
+     can then take a retry `--token`, a `--tag`, or a rollback to the Mac.
+
+### Before a lane token's revoke
+
+Devon revokes a reissued lane token's old value only after a `--token` run's `lanes-finish`
+passes on the redeployed container (ADR-0055 amendment 19, D-26), unless a leak had him revoke
+first. Every redeploy after the executor's `PATCH` loads the new token, a `--tag` or `--schedule`
+included, but only `--token` reads `lane-run --read`. So when another change redeploys the lane
+between the `PATCH` and the `--token` run, still run `--token` after it passes: its compose and
+values are the ones the lane already runs, so the second redeploy changes nothing but proves the
+reads on the container that holds the token. Report that `lanes-finish`, not the other change's,
+as the revoke's precondition.
 
 ### Registered lanes and the lane-token matcher
 
@@ -265,6 +303,14 @@ lower-cased with `_` as `-` (`EXECUTION_WATCH_BWS_ACCESS_TOKEN` is `execution-wa
 key that names no lane the command knows, and two entries for one lane. Removing a lane's entry,
 the last step of "Rollback for one lane", drops the lane from `prepare`'s check; its run files
 remain.
+
+`execution-watch`'s tracked files (`lanes/execution-watch/compose.yaml` and `crontab`) don't
+register it: its token entry lands with its cut-over. Its compose doesn't name
+`SDS_DEADMAN_PING_URL_UUID` until then either, because the ping-URL secret is created in the
+cut-over; without it the container's dead-man helper finds no ping URL and pings nothing
+(`scripts/sds-deadman.sh`). The secrets a lane reads are listed in `.bws-secrets.toml` by each
+secret's `lanes` field, which `lane_secrets` reads for a `--token` run and the cut-over's identity
+proof uses.
 
 ## Rotation instances
 

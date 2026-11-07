@@ -31,7 +31,20 @@
 # block and asserts the declared code is the one that block calls a finding, so the declaration
 # cannot drift from the prose it restates.
 #
-# WHY IT LOOKS UP THE CHECK BY NAME RATHER THAN READING A PING URL FROM AN ENV FILE. Two patterns
+# A LANE IN ITS CONTAINER READS ITS OWN PING URL, BY UUID (ADR-0059 decision 3). When
+# `SDS_DEADMAN_PING_URL_UUID` is set (the lane's tracked compose names it, and `lane-run` passes it
+# on), `sds_deadman_resolve` reads that one BWS secret with the lane's own `BWS_ACCESS_TOKEN`, lists
+# no check and reads no other credential. A UUID ping URL pings its one check and can do nothing
+# else, so the lane holds the narrowest credential there is. The value must be an `https://` URL: a
+# secret still holding the inbox's empty marker, or anything else, is refused by its shape and
+# disables the run's pings, with one reason logged. A lane whose compose doesn't name the variable
+# yet (`execution-watch` until its cut-over) falls through to the name lookup below, which in a
+# container finds no broad identity, so it pings nothing and logs that reason. A revoked lane token
+# fails the read itself: no `/start` is sent, so the check is never left `started`, and it goes
+# down after its grace.
+#
+# WHY A LANE STILL ON THE MAC LOOKS UP THE CHECK BY NAME RATHER THAN READING A PING URL FROM AN
+# ENV FILE. Two patterns
 # exist in this estate and the difference grows with every check. `infraops-mcp-server`'s
 # `drift-audit.sh` reads a ping URL from an env file: one secret per check, and this estate has
 # already been bitten by a credential copied per repository and rotated in only some of the copies
@@ -48,7 +61,8 @@
 # in fact working. That is the right direction to fail in. A false page is answerable; a lane that
 # stopped reporting is not.
 #
-# TWO BWS IDENTITIES, and this one is the BROAD account, not the narrow `sds-operator`. The
+# THE NAME LOOKUP USES TWO BWS IDENTITIES, and this one is the BROAD account, not the narrow
+# `sds-operator`. The
 # Healthchecks Management API key lives in a project only the broad machine account can read, while
 # the orchestrator bearers live in one only the narrow account can. That is why this helper reads
 # the Keychain item DIRECTLY into a local variable and passes it per-call rather than exporting
@@ -83,13 +97,40 @@ sds_deadman_log() {
     echo "[deadman] $*"
 }
 
-# The ping URL of the check named "$1", or nothing. Never fails the caller.
+# The lane's ping URL from its own ping-URL secret, `SDS_DEADMAN_PING_URL_UUID`, read with the
+# lane's `BWS_ACCESS_TOKEN` in the one-argument form, so the token stays in the environment and
+# never becomes a process argument. Never fails the caller; never prints the URL.
+sds_deadman_resolve_by_uuid() {
+    local url secret="the ping-URL secret $SDS_DEADMAN_PING_URL_UUID"
+    if [ -z "${BWS_ACCESS_TOKEN:-}" ]; then
+        SDS_DEADMAN_REASON="SDS_DEADMAN_PING_URL_UUID is set but BWS_ACCESS_TOKEN is not"
+        return 0
+    fi
+    url="$(sds_bws_value "$SDS_DEADMAN_PING_URL_UUID" 2>/dev/null || true)"
+    case "$url" in
+        '') SDS_DEADMAN_REASON="$secret could not be read" ;;
+        # The URL becomes one quoted line of curl's config, so it may hold no quote, backslash or
+        # whitespace.
+        *[[:space:]\"\\]*) SDS_DEADMAN_REASON="$secret holds no usable URL" ;;
+        https://*) SDS_DEADMAN_PING_URL="$url" ;;
+        *) SDS_DEADMAN_REASON="$secret holds no https URL" ;;
+    esac
+    return 0
+}
+
+# The ping URL of the check named "$1", or nothing: by the lane's ping-URL secret when
+# `SDS_DEADMAN_PING_URL_UUID` is set, otherwise by name through the broad account. Never fails the
+# caller.
 sds_deadman_resolve() {
     local name="$1" broad key
+    if [ -n "${SDS_DEADMAN_PING_URL_UUID:-}" ]; then
+        sds_deadman_resolve_by_uuid
+        return 0
+    fi
     broad="${BWS_ACCESS_TOKEN_BROAD:-$(/usr/bin/security find-generic-password \
         -s 'Claude' -a 'BWS_ACCESS_TOKEN_VPS_BACKUP' -w 2>/dev/null || true)}"
     if [ -z "$broad" ]; then
-        SDS_DEADMAN_REASON="no broad BWS identity"
+        SDS_DEADMAN_REASON="no SDS_DEADMAN_PING_URL_UUID and no broad BWS identity"
         return 0
     fi
     # The shared reader, so the colour guard and the venv interpreter live in one place.
@@ -127,12 +168,10 @@ else:
     return 0
 }
 
-# The ping itself. `$1` is the suffix: empty for success, `/start` or `/fail`.
+# The ping itself. `$1` is the suffix: empty for success, `/start` or `/fail`. The URL is a secret,
+# so it goes to curl on stdin as its config, never as a process argument: the outcome ping's path.
 sds_deadman_ping() {
-    [ -n "$SDS_DEADMAN_PING_URL" ] || return 0
-    curl -fsS --max-time 10 "${SDS_DEADMAN_PING_URL}$1" >/dev/null 2>&1 \
-        || sds_deadman_log "ping '${1:-/}' failed (non-fatal)"
-    return 0
+    sds_outcome_ping "$1"
 }
 
 # An OUTCOME ping, for a lane that pings what its pass found rather than arming the dead-man switch.

@@ -57,6 +57,22 @@ id = "bws-lane-execution-watch-token"
   key = "EXECUTION_WATCH_BWS_ACCESS_TOKEN"
   redeploy = false
 """
+# The lanes' secrets at `added`: two execution-watch reads, and one secret no lane reads.
+OBSERVER = "11111111-1111-4111-8111-111111111111"
+ALERT = "22222222-2222-4222-8222-222222222222"
+SECRETS = f"""consumption = "environment-injection"
+
+[[secret]]
+uuid = "{OBSERVER}"
+lanes = ["execution-watch"]
+
+[[secret]]
+uuid = "00000000-0000-4000-8000-000000000001"
+
+[[secret]]
+uuid = "{ALERT}"
+lanes = ["execution-watch"]
+"""
 PLACEHOLDER_UUID = "phuuid00000000000000000a"
 WATCH_UUID = "ewuuid00000000000000000a"
 WATCH_VOLUME = f"{WATCH_UUID}_sds-lanes-execution-watch-state"
@@ -222,6 +238,33 @@ class Lanes:
         )
         assert self.finish("execution-watch", *change, *reads) == EXIT_OK
 
+    def prepare_token(self, lane: str = "execution-watch", *extra: str) -> int:
+        reads = ["--running-tag", tag(self.added)]
+        if lane == "execution-watch":
+            reads += ["--running-volume", WATCH_VOLUME]
+        return self.main("lanes-prepare", "--lane", lane, "--token", *reads, *extra)
+
+    def read_result(self, text: str) -> str:
+        path = self.tmp / "read-result.txt"
+        path.write_text(text)
+        return str(path)
+
+    def token_reads(self, *, present: str = "true", result: str | None = None) -> list[str]:
+        """The reads of a container redeployed by `--token`, unchanged but for the token."""
+        result = f"{OBSERVER} ok\n{ALERT} ok\n" if result is None else result
+        return [
+            *_watch_reads(self.added),
+            "--token-present",
+            present,
+            "--read-result",
+            self.read_result(result),
+        ]
+
+    def prepared_token(self) -> None:
+        self.added_watch()
+        assert self.prepare_token() == EXIT_OK
+        assert self.recheck("execution-watch", "--token") == EXIT_OK
+
     def prepare_tag(self, lane: str, sha: str, *extra: str, running: str | None = None) -> int:
         reads = ["--running-tag", running or tag(self.added)]
         if lane == "execution-watch":
@@ -244,6 +287,7 @@ def lanes(tmp_path: Path) -> Lanes:
         {
             "lanes/placeholder/compose.yaml": PLACEHOLDER_COMPOSE,
             "lanes/execution-watch/compose.yaml": WATCH_COMPOSE,
+            ".bws-secrets.toml": SECRETS,
         },
         "the lanes' composes",
     )
@@ -814,3 +858,282 @@ def test_the_landing_window_is_the_estate_landers() -> None:
 def test_the_healthchecks_key_is_in_the_manifest() -> None:
     manifest = (ROOT / ".bws-secrets.toml").read_text()
     assert f'uuid = "{deploy.HEALTHCHECKS_READ_KEY_UUID}"' in manifest
+
+
+# ---- --token (ADR-0059 Amendment 2) ---------------------------------------------------------
+
+
+def test_a_token_run_redeploys_what_the_lane_runs_and_writes_no_variable(
+    lanes: Lanes, capsys: pytest.CaptureFixture[str]
+) -> None:
+    lanes.added_watch()
+    added = lanes.runs("execution-watch")[0]
+    capsys.readouterr()
+    assert lanes.prepare_token() == EXIT_OK
+    err = capsys.readouterr().err
+    run = lanes.runs("execution-watch")[-1]
+    assert (run.change, run.change_key, run.status) == ("token", "token", "waiting")
+    assert (run.tag, run.commit, run.lane_digest, run.schedule, run.volume) == (
+        added.tag,
+        added.commit,
+        added.lane_digest,
+        added.schedule,
+        added.volume,
+    )
+    assert run.compose_sent == run.compose_replaced == added.compose_sent
+    assert run.read_uuids == [OBSERVER, ALERT]
+    # The compose and the redeploy, and no variable: the executor wrote the token.
+    assert f'coolify_update_service(uuid="{WATCH_UUID}", instance="prod")' in err
+    assert f'3. coolify_deploy(uuid="{WATCH_UUID}", instance="prod")' in err
+    assert "coolify_update_service_env" not in err and "coolify_create_service_env" not in err
+    assert f'docker exec "$C" lane-run --read {OBSERVER} {ALERT}' in err
+    assert "lanes-finish --lane execution-watch --token" in err and "--read-result <read>" in err
+    assert "has no inverse write" in err
+
+    assert lanes.recheck("execution-watch", "--token") == EXIT_OK
+    assert lanes.finish("execution-watch", "--token", *lanes.token_reads()) == EXIT_OK
+    assert _status(lanes, "execution-watch") == ["finished", "finished"]
+    last = deploy.last_finished(lanes.runs("execution-watch"))
+    assert last is not None and (last.change, last.commit) == ("token", lanes.added)
+
+
+@pytest.mark.parametrize(
+    ("reads", "mismatch"),
+    [
+        ({"present": "false"}, "holds no BWS_ACCESS_TOKEN"),
+        ({"result": f"{OBSERVER} ok\n{ALERT} refused\n"}, f"{ALERT} refused"),
+        ({"result": f"{OBSERVER} ok\n"}, f"didn't read {ALERT}"),
+    ],
+)
+def test_a_token_mismatch_names_the_restored_close_and_records_why(
+    lanes: Lanes, capsys: pytest.CaptureFixture[str], reads: dict[str, str], mismatch: str
+) -> None:
+    lanes.prepared_token()
+    capsys.readouterr()
+    assert lanes.finish("execution-watch", "--token", *lanes.token_reads(**reads)) == (
+        EXIT_CONDITION
+    )
+    out = capsys.readouterr()
+    reason = json.loads(out.out)["reason"]
+    assert "lanes-finish --restored" in reason and "Run the inverse" not in reason
+    assert "closed_failed" in reason
+    assert "lanes-finish --lane execution-watch --token --restored" in out.err
+    run = lanes.runs("execution-watch")[-1]
+    assert run.status == "unfinished" and mismatch in run.reason
+
+
+@pytest.mark.parametrize(
+    ("flag", "value"),
+    [
+        ("--observed-digest", lane_digest("f" * 40)),
+        ("--observed-schedule", "true"),
+        ("--observed-volume", f"{WATCH_UUID}_{WATCH_VOLUME}"),
+    ],
+)
+def test_a_token_run_fails_when_the_digest_schedule_or_volume_changed(
+    lanes: Lanes, flag: str, value: str
+) -> None:
+    lanes.prepared_token()
+    reads = lanes.token_reads()
+    reads[reads.index(flag) + 1] = value
+    assert lanes.finish("execution-watch", "--token", *reads) == EXIT_CONDITION
+    assert _status(lanes, "execution-watch") == ["finished", "unfinished"]
+
+
+def test_restored_closes_a_failed_token_run_and_it_never_becomes_the_record(
+    lanes: Lanes, capsys: pytest.CaptureFixture[str]
+) -> None:
+    lanes.prepared_token()
+    failing = lanes.token_reads(present="false")
+    assert lanes.finish("execution-watch", "--token", *failing) == EXIT_CONDITION
+    capsys.readouterr()
+    assert lanes.finish("execution-watch", "--token", "--restored") == EXIT_OK
+    out = capsys.readouterr()
+    assert json.loads(out.out)["result"] == "closed_failed"
+    assert "closed as failed: it holds no BWS_ACCESS_TOKEN" in out.err
+    runs = lanes.runs("execution-watch")
+    assert [r.status for r in runs] == ["finished", "closed_failed"]
+    assert runs[-1].reason == "it holds no BWS_ACCESS_TOKEN"
+    # `last_finished` ignores it: the lane's record is still its --add.
+    last = deploy.last_finished(runs)
+    assert last is not None and last.change == "add"
+    # `require_lanes_current` ignores it: nothing is unfinished, and the lag check reads the add.
+    deploy.require_lanes_current(lanes.world(), lanes.added, lanes.later)
+    # The lane can take a retry --token.
+    assert lanes.prepare_token() == EXIT_OK
+    assert _status(lanes, "execution-watch") == ["finished", "closed_failed", "waiting"]
+
+
+def test_the_lag_check_reads_past_a_closed_failed_token_run(lanes: Lanes) -> None:
+    registry = "version = 1\n" + WATCH_TOKEN_ENTRY
+    _commit(lanes.work, {".cred-consumers.toml": registry}, "register execution-watch")
+    _git(lanes.work, "push", "-q", "origin", "main")
+    lanes.prepared_token()
+    assert lanes.finish("execution-watch", "--token", "--redeploy-failed") == EXIT_CONDITION
+    with pytest.raises(deploy.Refused, match="unfinished"):
+        deploy.require_lanes_current(lanes.world(), lanes.added, lanes.later)
+    assert lanes.finish("execution-watch", "--token", "--restored") == EXIT_OK
+    assert lanes.runs("execution-watch")[-1].reason == "the redeploy failed"
+    deploy.require_lanes_current(lanes.world(), lanes.added, lanes.later)
+    with pytest.raises(deploy.Refused, match=f"execution-watch runs {tag(lanes.added)}"):
+        deploy.require_lanes_current(lanes.world(), lanes.later, lanes.later)
+
+
+def test_last_finished_takes_only_finished_runs() -> None:
+    def run(status: str, sequence: int) -> deploy.LaneRun:
+        lane, change = "execution-watch", "token"
+        return deploy.LaneRun(lane, change, change, status, "", "", sequence=sequence)
+
+    runs = [run("finished", 1), run("closed_failed", 2), run("restored", 3)]
+    assert deploy.last_finished(runs) is runs[0]
+    assert deploy.last_finished([run("closed_failed", 1)]) is None
+
+
+def test_restored_refuses_a_token_run_with_no_failed_finish(lanes: Lanes) -> None:
+    lanes.prepared_token()
+    assert lanes.finish("execution-watch", "--token", "--restored") == EXIT_REFUSED
+    assert _status(lanes, "execution-watch") == ["finished", "unfinished"]
+
+
+def test_token_refuses_the_placeholder_and_a_lane_with_no_passed_add(lanes: Lanes) -> None:
+    lanes.added_placeholder()
+    assert lanes.prepare_token("placeholder") == EXIT_REFUSED
+    assert "--token refuses the placeholder" in lanes.runs("placeholder")[-1].reason
+    lanes.served = lanes.added
+    assert lanes.prepare_token() == EXIT_REFUSED
+    assert "no passed --add" in lanes.runs("execution-watch")[-1].reason
+
+
+def test_token_refuses_a_container_not_on_the_recorded_tag(lanes: Lanes) -> None:
+    lanes.added_watch()
+    assert (
+        lanes.main(
+            "lanes-prepare",
+            "--lane",
+            "execution-watch",
+            "--token",
+            "--running-tag",
+            tag(lanes.later),
+            "--running-volume",
+            WATCH_VOLUME,
+        )
+        == EXIT_REFUSED
+    )
+
+
+@pytest.mark.parametrize(
+    ("manifest", "reason"),
+    [
+        (SECRETS.replace('lanes = ["execution-watch"]', ""), "lists no secret"),
+        (SECRETS.replace('lanes = ["execution-watch"]', 'lanes = ["no-such-lane"]'), "unknown"),
+        (SECRETS.replace(OBSERVER, "not-a-uuid"), "malformed"),
+    ],
+)
+def test_token_refuses_a_manifest_that_gives_the_read_nothing_sound(
+    lanes: Lanes, manifest: str, reason: str
+) -> None:
+    lanes.added_watch()
+    sha = _commit(lanes.work, {".bws-secrets.toml": manifest}, "a bad manifest")
+    _git(lanes.work, "push", "-q", "origin", "main")
+    # The read list comes from the manifest at the tag the lane runs: move the lane there first.
+    lanes.served = lanes.later = sha  # the gh fake serves the four named commits
+    assert lanes.prepare_tag("execution-watch", sha) == EXIT_OK
+    assert lanes.recheck("execution-watch", "--tag", tag(sha)) == EXIT_OK
+    assert lanes.finish("execution-watch", "--tag", tag(sha), *_watch_reads(sha)) == EXIT_OK
+    reads = ["--running-tag", tag(sha), "--running-volume", WATCH_VOLUME]
+    assert lanes.main("lanes-prepare", "--lane", "execution-watch", "--token", *reads) == (
+        EXIT_REFUSED
+    )
+    assert reason in lanes.runs("execution-watch")[-1].reason
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        f"{OBSERVER} ok\nsecret-value-xyz\n",
+        f"{OBSERVER} ok\n{ALERT} maybe\n",
+        f"{OBSERVER} ok\n{OBSERVER} ok\n{ALERT} ok\n",
+        f"{OBSERVER} ok\n{ALERT} ok\n33333333-3333-4333-8333-333333333333 refused\n",
+    ],
+)
+def test_a_read_result_that_isnt_the_printed_reads_is_usage_and_never_echoed(
+    lanes: Lanes, capsys: pytest.CaptureFixture[str], result: str
+) -> None:
+    lanes.prepared_token()
+    capsys.readouterr()
+    reads = lanes.token_reads(result=result)
+    assert lanes.finish("execution-watch", "--token", *reads) == EXIT_USAGE
+    out = capsys.readouterr()
+    assert "secret-value-xyz" not in out.out + out.err
+    assert _status(lanes, "execution-watch") == ["finished", "unfinished"]
+    assert lanes.runs("execution-watch")[-1].reason == ""
+
+
+def test_a_missing_read_result_file_is_usage(lanes: Lanes) -> None:
+    lanes.prepared_token()
+    reads = [*lanes.token_reads()[:-1], str(lanes.tmp / "absent.txt")]
+    assert lanes.finish("execution-watch", "--token", *reads) == EXIT_USAGE
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["lanes-prepare", "--lane", "execution-watch", "--token", "--tag", "sha-" + "a" * 40],
+        ["lanes-prepare", "--lane", "execution-watch", "--token", "--schedule", "true"],
+        ["lanes-prepare", "--lane", "execution-watch", "--token", "--add"],
+        ["lanes-prepare", "--lane", "execution-watch", "--token", "--running-volume", "v"],
+        ["lanes-finish", "--lane", "execution-watch", "--token", *_watch_reads("a" * 40)],
+        [
+            "lanes-finish",
+            "--lane",
+            "execution-watch",
+            "--tag",
+            "sha-" + "a" * 40,
+            *_watch_reads("a" * 40),
+            "--read-result",
+            "x",
+        ],
+    ],
+)
+def test_a_malformed_token_command_is_usage(lanes: Lanes, argv: list[str]) -> None:
+    assert lanes.main(*argv) == EXIT_USAGE
+    assert not (lanes.tmp / "deploy-lanes" / "execution-watch").exists()
+
+
+# ---- the execution-watch lane's tracked files ----------------------------------------------
+
+
+def test_the_execution_watch_compose_meets_the_add_refusals() -> None:
+    compose = (ROOT / "lanes/execution-watch/compose.yaml").read_text()
+    service = deploy.lane_service(compose, "execution-watch")
+    assert deploy.add_refusals(service, "execution-watch") == []
+    environment = deploy._environment(service)
+    assert environment["EXECUTION_WATCH_STATE_DIR"] == "/var/lib/sds/execution-watch"
+    assert deploy._state_volume(service, "execution-watch") == "sds-lanes-execution-watch-state"
+    assert service["restart"] == "unless-stopped"
+    # Every variable is a fixed path or a `${...}` reference: the compose holds no value.
+    assert all(value.startswith(("${", "/")) for name, value in environment.items()), environment
+    assert "networks" not in service and "ports" not in service and "labels" not in service
+
+
+def test_the_execution_watch_crontab_runs_the_scheduled_pass_every_fifteen_minutes() -> None:
+    lines = [
+        line
+        for line in (ROOT / "lanes/execution-watch/crontab").read_text().splitlines()
+        if line.strip() and not line.startswith("#")
+    ]
+    assert lines == ["*/15 * * * * lane-run execution-watch --submit"]
+    # The Mac job's cadence, which this replaces.
+    plist = (ROOT / "scripts/com.devon.execution-watch.plist").read_text()
+    assert re.search(r"<key>StartInterval</key>\s*<integer>900</integer>", plist)
+
+
+def test_the_repositorys_manifest_lists_execution_watchs_secrets() -> None:
+    manifest = (ROOT / ".bws-secrets.toml").read_text()
+    assert deploy.lane_secrets(manifest, "execution-watch") == [
+        "f793576f-e9aa-4f9d-8089-b4a000b9e2d5",
+        "b415d03b-f92d-46b1-8a9d-b4f10103df49",
+    ]
+    launcher = (ROOT / "scripts/run-execution-watch.sh").read_text()
+    for uuid in deploy.lane_secrets(manifest, "execution-watch"):
+        assert uuid in launcher

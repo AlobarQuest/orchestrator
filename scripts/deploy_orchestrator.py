@@ -937,6 +937,7 @@ LANE_RESOURCE_PREFIX = "sds-lane-"
 LANE_COMPOSE = "lanes/{lane}/compose.yaml"
 LANE_STATE_MOUNT = "/var/lib/sds/{lane}"
 CRED_CONSUMERS = ".cred-consumers.toml"
+SECRETS_MANIFEST = ".bws-secrets.toml"
 COOLIFY_INSTANCE = "prod"
 TAG_VARIABLE = "SDS_LANES_IMAGE_TAG"
 SCHEDULE_VARIABLE = "LANE_SCHEDULE_ENABLED"
@@ -1015,6 +1016,14 @@ VOLUME_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 LANE_RUN_SCHEMA = 1
 WAITING, REFUSED, TIMED_OUT, SUPERSEDED = "waiting", "refused", "timed_out", "superseded"
 UNFINISHED, FINISHED, RESTORED = "unfinished", "finished", "restored"
+# A `--token` run whose `lanes-finish` failed and whose `lanes-finish --restored` closed it: it
+# wrote nothing to undo, so it restored nothing, and it never becomes the lane's record
+# (ADR-0059 Amendment 2, "Verify in increment 2").
+CLOSED_FAILED = "closed_failed"
+# One line of `lane-run --read`'s output (`scripts/lane_run.py`): a UUID and its result, nothing
+# else.
+BWS_UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+READ_LINE = re.compile(r"^(\S+) (ok|refused)$")
 
 
 def _healthchecks_listing() -> list[dict[str, Any]]:
@@ -1042,7 +1051,10 @@ def _healthchecks_listing() -> list[dict[str, Any]]:
 
 @dataclass(frozen=True)
 class Change:
-    """One lane-phase change: `tag`, `schedule` or `add`, as its arguments name it."""
+    """One lane-phase change: `tag`, `schedule`, `add` or `token`, as its arguments name it.
+
+    A `token` change carries nothing: the VM rotation executor has written the lane's token
+    variable, and the run redeploys the lane on what it already runs (ADR-0059 Amendment 2)."""
 
     kind: str
     tag: str = ""  # sha-<commit> for `tag` and `add`
@@ -1055,11 +1067,15 @@ class Change:
 
     @property
     def key(self) -> str:
+        if self.kind == "token":
+            return "token"
         return (
             f"schedule:{self.schedule}" if self.kind == "schedule" else f"{self.kind}:{self.commit}"
         )
 
     def argv(self) -> list[str]:
+        if self.kind == "token":
+            return ["--token"]
         if self.kind == "schedule":
             return ["--schedule", self.schedule]
         return (["--add"] if self.kind == "add" else []) + ["--tag", self.tag]
@@ -1092,6 +1108,9 @@ class LaneRun:
     replaced_schedule: str = ""
     replaced_digest: str = ""
     slot_open: bool = False
+    # A `--token` run's secrets, as `.bws-secrets.toml` at its commit lists them for the lane:
+    # what `lane-run --read` must read `ok` (ADR-0059 Amendment 2).
+    read_uuids: list[str] = field(default_factory=list)
     run_id: str = ""
     # The run's place in its lane's chain, assigned under the lane's lock: the order, even for two
     # runs created in the same instant.
@@ -1206,6 +1225,35 @@ def lanes_in_registry(text: str) -> set[str]:
     if twice:
         raise Refused(f"{CRED_CONSUMERS} at main has more than one token entry for {twice}")
     return set(found)
+
+
+def lane_secrets(text: str, lane: str) -> list[str]:
+    """The UUIDs `.bws-secrets.toml` lists for `lane`: each `[[secret]]` whose `lanes` names it.
+
+    `lanes` is optional (a secret no lane reads has none); when present it is a list of lanes
+    this command knows."""
+    try:
+        document = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as error:
+        raise Refused(f"{SECRETS_MANIFEST} doesn't parse: {error}") from error
+    secrets = document.get("secret", [])
+    if not isinstance(secrets, list):
+        raise Refused(f"{SECRETS_MANIFEST} has no secret array")
+    found = []
+    for secret in secrets:
+        if not isinstance(secret, dict):
+            raise Refused(f"{SECRETS_MANIFEST} has a secret that isn't a table")
+        readers = secret.get("lanes", [])
+        if not isinstance(readers, list) or not all(isinstance(r, str) for r in readers):
+            raise Refused(f"{SECRETS_MANIFEST}: secret {secret.get('uuid')}'s lanes isn't a list")
+        unknown = sorted(set(readers) - LANES)
+        if unknown:
+            raise Refused(
+                f"{SECRETS_MANIFEST}: secret {secret.get('uuid')} names unknown lanes {unknown}"
+            )
+        if lane in readers:
+            found.append(str(secret.get("uuid", "")))
+    return found
 
 
 def registered_lanes(world: World) -> set[str]:
@@ -1410,7 +1458,7 @@ def _plan_add(world: World, args: argparse.Namespace, run: LaneRun, change: Chan
 def _plan_change(
     world: World, args: argparse.Namespace, run: LaneRun, change: Change, runs: list[LaneRun]
 ) -> None:
-    """A `--tag` or `--schedule` replaces the lane's last finished run's values."""
+    """A `--tag`, `--schedule` or `--token` replaces the lane's last finished run's values."""
     lane = run.lane
     last = last_finished(runs)
     added = first_add(runs)
@@ -1442,6 +1490,11 @@ def _plan_change(
         raise Refused(
             f"the running container runs {args.running_tag!r}, not the recorded {last.tag!r}"
         )
+    if change.kind == "token":
+        # The lane keeps what it runs; only the token the executor wrote changes.
+        run.tag, run.commit, run.lane_digest = last.tag, last.commit, last.lane_digest
+        run.workflow_run_url, run.schedule = last.workflow_run_url, last.schedule
+        return
     if change.tag == last.tag:
         raise Refused(f"lane {lane} already runs {change.tag}")
     run.schedule = last.schedule
@@ -1457,6 +1510,8 @@ def _plan(world: World, args: argparse.Namespace, run: LaneRun, runs: list[LaneR
         if last is not None:
             raise Refused(f"lane {lane} was already added (run {last.run_id}); use --tag")
         _plan_add(world, args, run, change)
+    elif change.kind == "token" and lane == PLACEHOLDER:
+        raise Refused("--token refuses the placeholder: it holds no token")
     else:
         _plan_change(world, args, run, change, runs)
     run.compose_sent = _git(world, "show", f"{run.commit}:{LANE_COMPOSE.format(lane=lane)}")
@@ -1466,21 +1521,36 @@ def _plan(world: World, args: argparse.Namespace, run: LaneRun, runs: list[LaneR
         if refusals:
             raise Refused(f"the tracked compose of lane {lane} at {run.tag}: {'; '.join(refusals)}")
         run.volume_slug = _state_volume(service, lane) or ""
+    if change.kind == "token":
+        manifest = _git(world, "show", f"{run.commit}:{SECRETS_MANIFEST}")
+        run.read_uuids = lane_secrets(manifest, lane)
+        if not run.read_uuids:
+            raise Refused(
+                f"{SECRETS_MANIFEST} at {run.tag} lists no secret for lane {lane}, so "
+                "lane-run --read has nothing to prove"
+            )
+        malformed = [u for u in run.read_uuids if not BWS_UUID.match(u)]
+        if malformed:
+            raise Refused(f"{SECRETS_MANIFEST} lists malformed UUIDs for lane {lane}: {malformed}")
 
 
 def _change(args: argparse.Namespace) -> Change:
-    """Exactly one change: `--tag`, `--schedule` or `--add --tag`."""
+    """Exactly one change: `--tag`, `--schedule`, `--add --tag` or `--token`."""
+    if args.token:
+        if args.add or args.tag or args.schedule is not None:
+            raise Usage("--token takes no --add, --tag or --schedule")
+        return Change("token")
     if args.add:
         if not args.tag or args.schedule is not None:
             raise Usage("--add takes --tag <sha tag> and no --schedule")
         return Change("add", tag=args.tag)
     if args.tag and args.schedule is not None:
-        raise Usage("give exactly one change: --tag, --schedule or --add --tag")
+        raise Usage("give exactly one change: --tag, --schedule, --add --tag or --token")
     if args.tag:
         return Change("tag", tag=args.tag)
     if args.schedule is not None:
         return Change("schedule", schedule=args.schedule)
-    raise Usage("give exactly one change: --tag, --schedule or --add --tag")
+    raise Usage("give exactly one change: --tag, --schedule, --add --tag or --token")
 
 
 def _current(runs: list[LaneRun], change: Change, status: str) -> LaneRun | None:
@@ -1517,7 +1587,7 @@ def lane_reads(run: LaneRun) -> list[tuple[str, str]]:
                 f'{{{{if eq .Destination "{mount}"}}}}{{{{.Name}}}}{{{{end}}}}{{{{end}}}}\'',
             )
         )
-    if run.change == "add" and run.lane != PLACEHOLDER:
+    if run.change in ("add", "token") and run.lane != PLACEHOLDER:
         reads.append(
             (
                 "--token-present",
@@ -1525,6 +1595,10 @@ def lane_reads(run: LaneRun) -> list[tuple[str, str]]:
                 "&& echo true || echo false",
             )
         )
+    if run.change == "token":
+        # Prints `<uuid> ok|refused` per UUID and never a value (`scripts/lane_run.py`).
+        uuids = " ".join(run.read_uuids)
+        reads.append(("--read-result", container + f'docker exec "$C" lane-run --read {uuids}'))
     return reads
 
 
@@ -1557,6 +1631,18 @@ def _compose_block(title: str, text: str) -> list[str]:
 def lane_inverse(run: LaneRun) -> str:
     """What undoes the run's writes, for `lanes-finish` to name when the redeploy fails."""
     resource = f"{LANE_RESOURCE_PREFIX}{run.lane}"
+    if run.change == "token":
+        closed = _phase_command("lanes-finish", run, "--restored")
+        return "\n".join(
+            [
+                f"A --token run of {resource} has no inverse write: its compose is the one the",
+                "lane already ran, and the executor wrote the token. If lanes-finish fails, close",
+                "the run as failed, with the mismatches lanes-finish recorded as its reason:",
+                f"   {closed}",
+                "The lane can then take a retry --token, a --tag, or a rollback to the Mac; the",
+                "reissue's revoke stays unresolved.",
+            ]
+        )
     if run.change == "add":
         restored = _phase_command(
             "lanes-finish", run, "--restored", "--service-listed false", "--container-present false"
@@ -1598,6 +1684,9 @@ def lane_next_steps(run: LaneRun) -> str:
         lineterm="",
     )
     reads = lane_reads(run)
+    # A `--token` run writes no variable: the executor has written the token (Amendment 2).
+    variable = [] if run.change == "token" else [_variable_write(run, inverse=False)]
+    calls = [*variable, _call("coolify_deploy", run)]
     lines = [
         f"Lane {run.lane}'s quiet slot is open. Run {run.run_id} changes {resource} "
         f"({run.change_key}); the lane image is {LANE_IMAGE}@{run.lane_digest}.",
@@ -1609,16 +1698,20 @@ def lane_next_steps(run: LaneRun) -> str:
         "   Only if it exits 0, the writes. A non-zero exit means go back to lanes-prepare.",
         f"2. {_call('coolify_update_service', run)} with docker_compose_raw set to exactly:",
         *_compose_block("compose to send", run.compose_sent),
-        f"3. {_variable_write(run, inverse=False)}",
-        f"4. {_call('coolify_deploy', run)}",
-        "5. Once the deployment has finished, read the new container with vps_exec(instance="
-        f'"{COOLIFY_INSTANCE}"):',
+        *(f"{step}. {call}" for step, call in enumerate(calls, start=3)),
+        f"{3 + len(calls)}. Once the deployment has finished, read the new container with "
+        f'vps_exec(instance="{COOLIFY_INSTANCE}"):',
     ]
     for name, command in reads:
         lines += [f"   {name}:", f"   {command}"]
+    if run.change == "token":
+        lines.append(
+            "   Save the --read-result read's output (its `<uuid> ok|refused` lines) to a file "
+            "and pass that file's path."
+        )
     finish = " ".join(f"{name} <read>" for name, _ in reads)
     lines += [
-        f"6. {_phase_command('lanes-finish', run, finish)}",
+        f"{4 + len(calls)}. {_phase_command('lanes-finish', run, finish)}",
         "   If the redeploy itself failed, run lanes-finish with --redeploy-failed instead.",
         "",
         lane_inverse(run),
@@ -1720,23 +1813,80 @@ def volume_refusal(run: LaneRun, observed: str) -> str | None:
     return f"it mounts {observed!r}, not the resource's new volume {expected!r}"
 
 
+def read_results(path: str) -> dict[str, str]:
+    """`lane-run --read`'s output, saved to `path`: each UUID's `ok` or `refused`.
+
+    Any other line is refused without being repeated, since a line that isn't a result could be
+    anything, a value included."""
+    try:
+        text = Path(path).read_text()
+    except (OSError, UnicodeDecodeError) as error:
+        raise Usage(f"--read-result {path} can't be read ({type(error).__name__})") from error
+    results: dict[str, str] = {}
+    for number, line in enumerate(text.splitlines(), start=1):
+        if not line.strip():
+            continue
+        named = READ_LINE.match(line.strip())
+        if named is None or not BWS_UUID.match(named.group(1)):
+            raise Usage(f"--read-result line {number} isn't a `<uuid> ok|refused` line")
+        uuid, result = named.groups()
+        if uuid in results:
+            raise Usage(f"--read-result names {uuid} twice")
+        results[uuid] = result
+    return results
+
+
+def read_mismatches(run: LaneRun, results: dict[str, str]) -> list[str]:
+    """How `lane-run --read`'s results differ from every listed secret read `ok`."""
+    extra = sorted(set(results) - set(run.read_uuids))
+    if extra:
+        raise Usage(f"--read-result names UUIDs run {run.run_id} doesn't list: {extra}")
+    found = []
+    for uuid in run.read_uuids:
+        result = results.get(uuid)
+        if result is None:
+            found.append(f"lane-run --read didn't read {uuid}")
+        elif result != "ok":
+            found.append(f"lane-run --read: {uuid} {result}")
+    return found
+
+
 def finish_mismatches(args: argparse.Namespace, run: LaneRun) -> list[str]:
-    """How the redeployed container differs from the change and no other."""
+    """How the redeployed container differs from the change and no other. A `--token` run
+    changes nothing it reads here: its tag, digest and schedule are its last finished run's."""
     found = []
     if args.observed_digest != run.lane_digest:
         found.append(f"it runs {args.observed_digest}, not the release's {run.lane_digest}")
     if args.observed_schedule != run.schedule:
         found.append(f"its {SCHEDULE_VARIABLE} is {args.observed_schedule}, not {run.schedule}")
-    if run.change == "add" and run.lane != PLACEHOLDER and args.token_present != "true":
+    holds_token = run.change in ("add", "token") and run.lane != PLACEHOLDER
+    if holds_token and args.token_present != "true":
         found.append(f"it holds no {TOKEN_VARIABLE}")
     if run.lane in STATEFUL_LANES:
         refusal = volume_refusal(run, args.observed_volume)
         if refusal:
             found.append(refusal)
+    if run.change == "token":
+        found += read_mismatches(run, read_results(args.read_result))
     return found
 
 
+def _lanes_closed_failed(world: World, run: LaneRun) -> dict[str, Any]:
+    """Close a failed `--token` run: no inverse write, its recorded mismatches as its reason."""
+    if not run.reason:
+        raise Refused(
+            f"run {run.run_id} has no failed lanes-finish recorded: run lanes-finish with the "
+            "reads first. A --token run's --restored closes only on its recorded mismatches"
+        )
+    run.status = CLOSED_FAILED
+    _save_run(world, run)
+    print(f"lane {run.lane}: run {run.run_id} closed as failed: {run.reason}", file=sys.stderr)
+    return {"result": CLOSED_FAILED, **_run_summary(run, world)}
+
+
 def _lanes_restored(args: argparse.Namespace, world: World, run: LaneRun) -> dict[str, Any]:
+    if run.change == "token":
+        return _lanes_closed_failed(world, run)
     if run.change == "add":
         if args.service_listed or args.container_present:
             raise Condition(
@@ -1769,9 +1919,18 @@ def _lanes_finish(args: argparse.Namespace, world: World) -> dict[str, Any]:
             return _lanes_restored(args, world, run)
         found = ["the redeploy failed"] if args.redeploy_failed else finish_mismatches(args, run)
         if found:
+            # Recorded, so a --token run's --restored closes on them and the run file says why.
+            run.reason = "; ".join(found)
+            _save_run(world, run)
             print(lane_inverse(run), file=sys.stderr)
+            if run.change == "token":
+                raise Condition(
+                    f"lane {lane} doesn't pass {change.key}: {run.reason}. Close the run with "
+                    "lanes-finish --restored, printed on stderr: it writes nothing and closes "
+                    f"the run {CLOSED_FAILED}"
+                )
             raise Condition(
-                f"lane {lane} doesn't show {change.key} and no other: {'; '.join(found)}. Run "
+                f"lane {lane} doesn't show {change.key} and no other: {run.reason}. Run "
                 "the inverse printed on stderr now"
             )
         if run.change == "add" and lane in STATEFUL_LANES:
@@ -1839,6 +1998,9 @@ def _lane_parsers(phases: Any) -> None:
     change.add_argument("--tag", help="the release's sha tag, sha-<40 hex>")
     change.add_argument("--schedule", choices=["true", "false"], help="LANE_SCHEDULE_ENABLED")
     change.add_argument("--add", action="store_true", help="the lane's first start (with --tag)")
+    change.add_argument(
+        "--token", action="store_true", help="redeploy on the token the executor wrote"
+    )
     prepare = phases.add_parser(
         "lanes-prepare", parents=[change], help="wait for the quiet slot, print the calls"
     )
@@ -1854,7 +2016,8 @@ def _lane_parsers(phases: Any) -> None:
     finish.add_argument("--observed-digest", help="the container's image RepoDigest")
     finish.add_argument("--observed-schedule", choices=["true", "false"])
     finish.add_argument("--observed-volume", help="the source of the state mount")
-    finish.add_argument("--token-present", choices=["true", "false"], help="(--add)")
+    finish.add_argument("--token-present", choices=["true", "false"], help="(--add, --token)")
+    finish.add_argument("--read-result", help="a file holding lane-run --read's output (--token)")
     finish.add_argument("--redeploy-failed", action="store_true")
     finish.add_argument("--restored", action="store_true", help="check the inverse took")
     finish.add_argument("--service-listed", type=_boolean, help="(--add --restored)")
@@ -1887,7 +2050,7 @@ def _validate_lanes_prepare(args: argparse.Namespace, change: Change) -> None:
         return
     if args.schedule_written is not None:
         raise Usage("--schedule-written is for --add only")
-    _require(args, "running_tag" if change.kind == "tag" else "running_schedule")
+    _require(args, "running_schedule" if change.kind == "schedule" else "running_tag")
     if args.lane in STATEFUL_LANES:
         _require(args, "running_volume")
 
@@ -1897,9 +2060,17 @@ def _validate_lanes_finish(args: argparse.Namespace, change: Change) -> None:
         raise Usage("--restored and --redeploy-failed are separate steps")
     if args.redeploy_failed:
         return
+    if args.read_result is not None and change.kind != "token":
+        raise Usage("--read-result is for --token only")
     if args.restored and change.kind == "add":
         _require(args, "service_listed", "container_present")
-        return
+    elif not (args.restored and change.kind == "token"):
+        # A `--token` run's --restored reads nothing: it closes on the recorded mismatches.
+        _validate_container_reads(args, change)
+
+
+def _validate_container_reads(args: argparse.Namespace, change: Change) -> None:
+    """The reads of a redeployed container that `lanes-finish` (or a restore) checks."""
     _require(args, "observed_digest", "observed_schedule")
     if not DIGEST.match(args.observed_digest):
         raise Usage("--observed-digest must be sha256:<64 lowercase hex>")
@@ -1909,6 +2080,8 @@ def _validate_lanes_finish(args: argparse.Namespace, change: Change) -> None:
             raise Usage("--observed-volume must be a Docker volume name")
     if change.kind == "add" and args.lane != PLACEHOLDER and not args.restored:
         _require(args, "token_present")
+    if change.kind == "token":
+        _require(args, "token_present", "read_result")
 
 
 def _validate(args: argparse.Namespace) -> None:
