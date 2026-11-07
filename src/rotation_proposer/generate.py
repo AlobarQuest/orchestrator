@@ -28,7 +28,7 @@ from collections import Counter
 from collections.abc import Sequence
 from typing import Any, Final
 
-from rotation_worker.contract import HELD_KIND, HumanAct, Plan, StepKind, UnitPlan, is_issue
+from rotation_worker.contract import HELD_KIND, HumanAct, Plan, StepKind, UnitPlan
 from rotation_worker.destinations import HOSTED_KINDS, parse
 from rotation_worker.plans import candidates, criteria_steps
 from rotation_worker.registry import RegistryEntry
@@ -121,7 +121,7 @@ def acceptance(plan: Plan, overlap: bool = True, *, by_shape: bool = False) -> l
     A type with no overlap states its host step as the replacement and restart it is; an issue
     states that nothing was there before; a type proved by its shape says so at verify_new."""
     conditions = {**_CONDITIONS, StepKind.HOST: _HOST_REPLACES} if not overlap else _CONDITIONS
-    if is_issue(plan):
+    if plan.issue:
         conditions = {**conditions, **_ISSUE}
     if by_shape:
         conditions = {**conditions, StepKind.VERIFY_NEW: _BY_SHAPE}
@@ -221,7 +221,7 @@ def render(entry: RegistryEntry, occurrence: str, created_at: str) -> dict[str, 
             "what": (
                 f"{credential_id} ({identity}) is issued: its keeper and every destination the "
                 "registry names hold the new value."
-                if is_issue(plan)
+                if plan.issue
                 else f"{credential_id} ({identity}) is replaced by a new value, every destination "
                 "the registry names holds it, and the old value is proved dead."
             ),
@@ -232,7 +232,7 @@ def render(entry: RegistryEntry, occurrence: str, created_at: str) -> dict[str, 
             "beneficiary": "Devon, whose credentials the SDS rotates.",
             "success_signal": (
                 "Every unit completes, the keeper holds a value different from the one it started "
-                + ("with" if is_issue(plan) else "with, the old value is refused,")
+                + ("with" if plan.issue else "with, the old value is refused,")
                 + f" and infraops reports no rotation finding for {credential_id}."
             ),
         },

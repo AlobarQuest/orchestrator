@@ -118,6 +118,9 @@ class HumanAct:
 @dataclass(frozen=True)
 class Plan:
     segments: tuple[UnitPlan | HumanAct, ...]
+    # An issue: a rotation's first half, with nothing to retire (ADR-0055 amendment 19 item 3).
+    # Declared, never inferred from the steps; each kind has its own validation.
+    issue: bool = False
 
     def unit(self, name: str) -> UnitPlan:
         for segment in self.segments:
@@ -232,6 +235,8 @@ class ScheduledReads(Protocol):
 
 def validate_plan(plan: Plan) -> None:
     """Refuse a plan whose order could break an invariant. Run once, when the adapter loads."""
+    if plan.issue:
+        raise ContractError("an issue is validated by its own rule (validate_issue_plan)")
     _validate_segments(plan)
     kinds = [step.kind for step in plan.steps()]
     _validate_counts(kinds)
@@ -309,6 +314,8 @@ def validate_issue_plan(plan: Plan) -> None:
     verify_consumers, each once, in that order, each a machine's. Nothing is hosted, retired or
     confirmed dead, because nothing is replaced.
     """
+    if not plan.issue:
+        raise ContractError("only a plan declared an issue is validated as one")
     _validate_segments(plan)
     _validate_mint_and_stage(plan)
     steps = plan.steps()
@@ -322,11 +329,6 @@ def validate_issue_plan(plan: Plan) -> None:
         raise ContractError("a person mints and stages an issue")
     if any(step.actor is not Actor.MACHINE for step in steps[2:]):
         raise ContractError("every step of an issue after the mint is a machine's")
-
-
-def is_issue(plan: Plan) -> bool:
-    """Whether the plan is an issue: nothing is retired, so there is no old value."""
-    return StepKind.RETIRE_OLD not in {step.kind for step in plan.steps()}
 
 
 def _validate_segments(plan: Plan) -> None:
@@ -400,7 +402,7 @@ class UnitRun:
     # A person may have revoked the old value before this rotation began, after a leak (ADR-0055
     # amendment 19 item 10, D-26), so the probe before the revoke accepts it live or refused.
     old_may_be_revoked: bool = False
-    # The unit is an issue's (`is_issue`): the keeper holds `EMPTY`, which stands as the old value.
+    # The unit is an issue's (`Plan.issue`): the keeper's `EMPTY` stands as the old value.
     issue: bool = False
     _minted: Value | None = field(default=None, repr=False)
 
@@ -729,12 +731,16 @@ def _distribute(run: UnitRun, step: Step) -> None:
             # reports the new value loaded.
             run.held.write(consumer, new)
             held += 1
-    note = (
-        f"wrote {written} secret(s) beside the keeper, {actions} Actions secret(s) "
-        f"and {held} held cop(ies)"
-    )
     if variables:
-        note += f", and {variables} Coolify variable(s) with no restart"
+        note = (
+            f"wrote {written} secret(s) beside the keeper, {actions} Actions secret(s), "
+            f"{held} held cop(ies) and {variables} Coolify variable(s), with no restart"
+        )
+    else:
+        note = (
+            f"wrote {written} secret(s) beside the keeper, {actions} Actions secret(s) "
+            f"and {held} held cop(ies)"
+        )
     run.record(step, StepEvidence(step.kind, fingerprints=_fingerprints(new, old), note=note))
 
 

@@ -142,7 +142,7 @@ def derive_issue(
         StepKind.VERIFY_CONSUMERS,
     ]
     mint = HumanAct("mint", (Step(StepKind.MINT, H), Step(StepKind.STAGE, H)))
-    plan = Plan(tuple(_numbered([mint, ("store", store)])))
+    plan = Plan(tuple(_numbered([mint, ("store", store)])), issue=True)
     validate_issue_plan(plan)
     return plan
 

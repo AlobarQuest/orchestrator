@@ -49,7 +49,6 @@ from rotation_worker.contract import (
     Rotation,
     StepKind,
     UnitPlan,
-    is_issue,
 )
 from rotation_worker.destinations import HOSTED_KINDS, parse, same
 from rotation_worker.envelope import ADAPTER_KEY, NON_HOSTED_KEY
@@ -180,18 +179,22 @@ def _check_issue_fact(adapter: Adapter, plan: Plan, rotation: Rotation, store: S
     """Whether there is nothing to retire is read from the keeper, never declared (ADR-0055
     amendment 19 item 3): for a type that issues, an issue runs on the empty marker, or on the
     value an earlier attempt stored from this rotation's staging; a rotation never runs on the
-    marker."""
+    marker.
+
+    With nothing staged, a keeper holding a value is either an issue that finished (its last step
+    deleted staging, and the unit run says so) or one whose value isn't staged yet: the mint waits,
+    and store writes only after reading the marker there, so neither needs refusing here."""
     if adapter.capabilities is None or not adapter.capabilities.issues:
         return
     keeper = store.read(rotation.keeper_id)
-    if not is_issue(plan):
+    if not plan.issue:
         if keeper.reveal() == EMPTY:
             raise ContractError("the keeper holds the empty marker: nothing is issued to rotate")
         return
-    if keeper.reveal() == EMPTY:
-        return
     staging = store.find(rotation.work_project_id, rotation.staging_key)
-    if staging is None or not store.read(staging.id).same_as(keeper):
+    if keeper.reveal() == EMPTY or staging is None:
+        return
+    if not store.read(staging.id).same_as(keeper):
         raise ContractError("an issue runs only on a keeper holding the empty marker")
 
 

@@ -593,7 +593,7 @@ BORROWED: dict[str, dict[str, frozenset[str]]] = {
             {"ConfinedClient", "TransportFailure", "base_url_problem", "error_code"}
         ),
         "rotation_worker.contract": frozenset(
-            {"ContractError", "HELD_KIND", "HumanAct", "Plan", "StepKind", "UnitPlan", "is_issue"}
+            {"ContractError", "HELD_KIND", "HumanAct", "Plan", "StepKind", "UnitPlan"}
         ),
         "rotation_worker.destinations": frozenset(
             {"DestinationError", "HOSTED_KINDS", "parse", "same"}

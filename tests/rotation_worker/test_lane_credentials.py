@@ -39,7 +39,6 @@ from rotation_worker.contract import (
     StepKind,
     UnitPlan,
     UnitRun,
-    is_issue,
     validate_issue_plan,
     validate_plan,
 )
@@ -131,7 +130,7 @@ def test_a_lane_token_issues_and_reissues_and_writes_its_variable_at_distribute(
             ("store", ["verify_new", "store", "distribute", "verify_consumers"]),
         ],
     ]
-    assert [is_issue(plan) for plan in plans] == [False, True]
+    assert [plan.issue for plan in plans] == [False, True]
 
 
 def test_a_ping_url_is_only_ever_issued_and_has_no_copy_to_distribute() -> None:
@@ -141,6 +140,17 @@ def test_a_ping_url_is_only_ever_issued_and_has_no_copy_to_distribute() -> None:
         [("mint", ["mint", "stage"]), ("store", ["verify_new", "store", "verify_consumers"])]
     ]
     assert TYPES["healthchecks-ping-url"].verify_by_shape
+
+
+def test_a_type_is_declared_proved_by_shape_exactly_when_its_provider_is() -> None:
+    """The package's wording reads the type; the executor's verify_new reads the provider."""
+    providers = {
+        lane.NAME: lane.BwsLaneTokenProvider,
+        ping.NAME: ping.HealthchecksPingUrlProvider,
+        bws.NAME: bws.BwsMachineTokenProvider,
+    }
+    for name, provider in providers.items():
+        assert TYPES[name].verify_by_shape is hasattr(provider, "shape_problem"), name
 
 
 def test_no_existing_type_issues_or_writes_a_variable_at_distribute() -> None:
@@ -179,14 +189,19 @@ def _issue(steps: list[tuple[StepKind, Actor]]) -> Plan:
         Step(kind, actor, f"AC-00{n}")
         for n, (kind, actor) in enumerate((s for s in steps if s[1] is M), start=1)
     ]
-    return Plan((HumanAct("mint", tuple(human)), UnitPlan("store", tuple(machine))))
+    return Plan((HumanAct("mint", tuple(human)), UnitPlan("store", tuple(machine))), issue=True)
 
 
 def test_the_issue_plan_is_valid_by_its_own_rule_and_never_by_a_rotation_s() -> None:
     plan = _issue(ISSUE)
     validate_issue_plan(plan)
-    with pytest.raises(ContractError, match="exactly one retire_old"):
+    with pytest.raises(ContractError, match="its own rule"):
         validate_plan(plan)
+    undeclared = Plan(plan.segments)
+    with pytest.raises(ContractError, match="declared an issue"):
+        validate_issue_plan(undeclared)
+    with pytest.raises(ContractError, match="exactly one retire_old"):
+        validate_plan(undeclared)
 
 
 @pytest.mark.parametrize(
@@ -217,7 +232,8 @@ def test_an_issue_whose_consumers_a_person_verifies_is_refused() -> None:
                 (Step(StepKind.VERIFY_NEW, M, "AC-001"), Step(StepKind.STORE, M, "AC-002")),
             ),
             HumanAct("verify", (Step(StepKind.VERIFY_CONSUMERS, H),)),
-        )
+        ),
+        issue=True,
     )
     with pytest.raises(ContractError, match="after the mint is a machine"):
         validate_issue_plan(plan)
@@ -232,7 +248,7 @@ def test_an_issue_minted_by_a_machine_is_refused() -> None:
         Step(StepKind.VERIFY_CONSUMERS, M, "AC-005"),
     ]
     with pytest.raises(ContractError, match="a person mints"):
-        validate_issue_plan(Plan((UnitPlan("mint", tuple(steps)),)))
+        validate_issue_plan(Plan((UnitPlan("mint", tuple(steps)),), issue=True))
 
 
 def test_a_unit_writing_the_lane_s_variable_is_never_marked_non_hosted() -> None:
@@ -281,7 +297,7 @@ class Issue:
             record=self.recorded,
             before_step=lambda: None,
             filed=frozenset(StepKind(kind) for kind in self.recorded.kinds()),
-            issue=is_issue(plan),
+            issue=plan.issue,
         )
         for name, value in changes.items():
             setattr(run, name, value)
@@ -425,7 +441,7 @@ def test_a_lane_token_issue_writes_the_variable_once_and_never_restarts() -> Non
     assert json.loads(seen[0].content)["key"] == "EXECUTION_WATCH_BWS_ACCESS_TOKEN"
     assert issue.keeper().same_as(NEW_TOKEN)
     assert issue.store.find(WORK, issue.rotation.staging_key) is None
-    assert "1 Coolify variable(s) with no restart" in str(issue.recorded.filed[2][1].note)
+    assert "and 1 Coolify variable(s), with no restart" in str(issue.recorded.filed[2][1].note)
 
 
 def test_a_variable_with_no_row_fails_the_unit_and_is_never_skipped() -> None:
@@ -798,11 +814,20 @@ def world(origins: Origins, mirror: RepoMirror) -> World:
     return world
 
 
-def _check(world: World, plan: Plan, unit: str, keeper: Value, **constraints: Any) -> Any:
+def _check(
+    world: World,
+    plan: Plan,
+    unit: str,
+    keeper: Value,
+    stage: Callable[[MemoryStore, Rotation], None] | None = None,
+    **constraints: Any,
+) -> Any:
     destinations = sorted(LANE_DESTINATIONS)
     world.publish(_package(_acceptance(plan), destinations=destinations))
     store = MemoryStore()
     store.secrets[KEEPER] = ("keepers", "keeper", keeper)
+    if stage is not None:
+        stage(store, Rotation("canary", "2026-10-11-requested", KEEPER, CHECKS_WORK, ()))
     view = world.unit(
         rotation_adapter="bws-lane-token",
         rotation_unit=unit,
@@ -814,12 +839,22 @@ def _check(world: World, plan: Plan, unit: str, keeper: Value, **constraints: An
 
 def test_a_lane_token_issue_passes_on_a_keeper_holding_the_marker(world: World) -> None:
     approved = _check(world, LANE_ISSUE, "store", Value(EMPTY))
-    assert approved.plan == LANE_ISSUE and is_issue(approved.plan)
+    assert approved.plan == LANE_ISSUE and approved.plan.issue
 
 
-def test_an_issue_on_a_keeper_holding_a_value_is_refused(world: World) -> None:
+def test_an_issue_on_a_keeper_holding_another_value_than_staged_is_refused(
+    world: World,
+) -> None:
+    def staged(store: MemoryStore, rotation: Rotation) -> None:
+        store.create(CHECKS_WORK, rotation.staging_key, NEW_TOKEN)
+
     with pytest.raises(ContractError, match="only on a keeper holding the empty marker"):
-        _check(world, LANE_ISSUE, "store", OLD_TOKEN)
+        _check(world, LANE_ISSUE, "store", OLD_TOKEN, stage=staged)
+
+
+def test_a_finished_issue_passes_the_checks_so_its_unit_run_can_say_so(world: World) -> None:
+    # The issue's last step deleted staging; the keeper holds what it stored.
+    assert _check(world, LANE_ISSUE, "store", NEW_TOKEN).plan == LANE_ISSUE
 
 
 def test_a_reissue_on_a_keeper_holding_the_marker_is_refused(world: World) -> None:
