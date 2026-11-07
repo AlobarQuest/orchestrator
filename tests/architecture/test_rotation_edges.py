@@ -601,7 +601,7 @@ BORROWED: dict[str, dict[str, frozenset[str]]] = {
         "rotation_worker.git_mirror": frozenset(
             {"MirrorError", "RepoMirror", "default_mirror_root"}
         ),
-        "rotation_worker.plans": frozenset({"candidates", "criteria_steps"}),
+        "rotation_worker.plans": frozenset({"candidates", "criteria_steps", "select_plan"}),
         "rotation_worker.registry": frozenset(
             {"RegistryEntry", "RegistryError", "credentials", "standing_credential"}
         ),

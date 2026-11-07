@@ -27,7 +27,7 @@ from __future__ import annotations
 import json
 import re
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
@@ -46,6 +46,15 @@ _OCCURRENCE_LINE: Final = re.compile(r"^(\s*occurrence:).*$", re.MULTILINE)
 # the continuation lines a YAML writer folds a long item onto.
 _DESTINATIONS_BLOCK: Final = re.compile(
     r"^(  destinations:\n)((?:  - .*\n(?:    .*\n)*)*)", re.MULTILINE
+)
+
+# A top-level key's line; everything up to the next one, less the comments and blank lines before
+# it, is that key's block.
+_TOP_LEVEL_KEY: Final = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*):")
+# What a re-rendered body never writes: the package's identity and lifecycle, which `revise` and
+# `transition` own, and its creation, which a revision keeps.
+_LIFECYCLE_KEYS: Final = frozenset(
+    {"schema_version", "package_id", "revision", "status", "created_by", "created_at", "supersedes"}
 )
 
 DRAFT: Final = "draft"
@@ -164,6 +173,64 @@ def write_destinations(package: RotationPackage, destinations: Sequence[str]) ->
     path.write_text(text, encoding="utf-8")
 
 
+def document(package: RotationPackage) -> dict[str, Any]:
+    """The package's document as it stands on disk."""
+    try:
+        loaded = yaml.safe_load((package.path / "package.yaml").read_text(encoding="utf-8"))
+    except yaml.YAMLError as error:
+        raise StandingError(f"{package.package_id}: package.yaml doesn't parse: {error}") from error
+    if not isinstance(loaded, dict):
+        raise StandingError(f"{package.package_id}: package.yaml is no mapping")
+    return loaded
+
+
+def _blocks(lines: list[str]) -> dict[str, tuple[int, int]]:
+    """Each top-level key's `[start, end)` line span, comments before the next key left out."""
+    starts = [
+        (index, match.group(1))
+        for index, line in enumerate(lines)
+        if (match := _TOP_LEVEL_KEY.match(line))
+    ]
+    blocks: dict[str, tuple[int, int]] = {}
+    for position, (start, key) in enumerate(starts):
+        end = starts[position + 1][0] if position + 1 < len(starts) else len(lines)
+        while end > start + 1 and (not lines[end - 1].strip() or lines[end - 1].startswith("#")):
+            end -= 1
+        blocks[key] = (start, end)
+    return blocks
+
+
+def _spliced(package: RotationPackage, body: Mapping[str, Any]) -> str:
+    """The package's text with every top-level block but the lifecycle's replaced from `body`.
+
+    Each block is replaced by the same dump intent-packages' `create-rotation` writes, so a comment
+    it put between blocks stays. The result must parse to the file's lifecycle keys plus the body,
+    or nothing is written: a block the splice misread is refused, never written."""
+    text = (package.path / "package.yaml").read_text(encoding="utf-8")
+    lines = text.splitlines(keepends=True)
+    blocks = _blocks(lines)
+    written = {key: value for key, value in body.items() if key not in _LIFECYCLE_KEYS}
+    if set(written) != set(blocks) - _LIFECYCLE_KEYS:
+        raise StandingError(f"{package.package_id}: the re-rendered body names other keys")
+    for key, (start, end) in sorted(blocks.items(), key=lambda item: -item[1][0]):
+        if key in written:
+            dumped = yaml.safe_dump(
+                {key: written[key]}, sort_keys=False, default_flow_style=False, allow_unicode=True
+            )
+            lines[start:end] = [dumped]
+    spliced = "".join(lines)
+    kept = {key: value for key, value in document(package).items() if key in _LIFECYCLE_KEYS}
+    if yaml.safe_load(spliced) != {**kept, **written}:
+        raise StandingError(f"{package.package_id}: the re-rendered body didn't splice cleanly")
+    return spliced
+
+
+def write_body(package: RotationPackage, body: Mapping[str, Any]) -> None:
+    """Write a re-rendered body over every top-level key but the lifecycle's, and nothing else."""
+    spliced = _spliced(package, body)
+    (package.path / "package.yaml").write_text(spliced, encoding="utf-8")
+
+
 def create(rendered: dict[str, Any], root: Path) -> RotationPackage:
     """Write revision 1 of a generated package, as a draft, through intent-packages, which
     validates it and begins its lineage (`create-rotation`)."""
@@ -187,22 +254,34 @@ def reread(package: RotationPackage, root: Path) -> RotationPackage:
 
 
 def to_review(
-    package: RotationPackage, occurrence: str, destinations: Sequence[str], root: Path
+    package: RotationPackage,
+    occurrence: str,
+    destinations: Sequence[str],
+    root: Path,
+    *,
+    body: Mapping[str, Any] | None = None,
 ) -> RotationPackage:
     """Take the package to a revision carrying this occurrence and the registry's destinations,
-    in review -- and never past it.
+    in review -- and never past it. A `body` (`generate.reissue_body`) is written over the
+    revision's wording first.
 
     Resumable from any point a previous pass could have stopped at, which is why the state is
     re-read between steps: a crash between the write and `transition` leaves a draft that already
-    carries both and needs only transitioning.
+    carries both and needs only transitioning. A crash before the body lands leaves a package
+    the next pass still finds stating the old plan, so it passes the body again.
     """
     current = package
-    if not current.carries(occurrence) or not current.lists(destinations):
+    if body is not None or not current.carries(occurrence) or not current.lists(destinations):
+        if body is not None:
+            # Before `revise`: a body that can't land spends no revision.
+            _spliced(current, body)
         if current.state != DRAFT:
             # A draft has never been approved, so its revision number is still free and writing
             # over it is correct. Anything else gets a new revision.
             shared.lifecycle(root, "revise", str(current.path))
             current = reread(current, root)
+        if body is not None:
+            write_body(current, body)
         write_occurrence(current, occurrence)
         write_destinations(current, destinations)
         current = reread(current, root)
@@ -213,14 +292,22 @@ def to_review(
     return current
 
 
-def commit(package: RotationPackage, root: Path, *, generated: bool = False) -> str:
+def commit(
+    package: RotationPackage, root: Path, *, generated: bool = False, rerendered: bool = False
+) -> str:
     """Commit and publish the revision through `bump_proposer`'s one publishing act (ADR-0033)."""
-    made = (
-        "The package is generated from the credential's registry row and its type's derived\n"
-        "plan (ADR-0055 amendment 15, increment 4)."
-        if generated
-        else "The revision carries the rotation and the registry's destinations."
-    )
+    if generated:
+        made = (
+            "The package is generated from the credential's registry row and its type's derived\n"
+            "plan (ADR-0055 amendment 15, increment 4)."
+        )
+    elif rerendered:
+        made = (
+            "The revision re-renders the generated package for the plan its registry row now\n"
+            "derives (ADR-0055 amendment 20): its criteria, prose and authority change."
+        )
+    else:
+        made = "The revision carries the rotation and the registry's destinations."
     message = (
         f"{package.package_id} rev {package.revision}: rotate for {package.occurrence}\n\n"
         "Written by rotation-proposer (ADR-0054). infraops reports this credential due for\n"

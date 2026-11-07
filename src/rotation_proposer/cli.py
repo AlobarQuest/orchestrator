@@ -93,7 +93,7 @@ from rotation_proposer.findings import (
     read_due,
     record_rotation,
 )
-from rotation_proposer.generate import GenerateError, render
+from rotation_proposer.generate import GenerateError, StatedPlanError, reissue_body, render
 from rotation_proposer.observation import ObservationUncomposable, rotation_observation
 from rotation_proposer.outcome import FINDING_STATUSES, Outcome
 from rotation_proposer.standing import (
@@ -106,6 +106,7 @@ from rotation_proposer.standing import (
     commit,
     create,
     discover,
+    document,
     to_review,
 )
 from rotation_worker.contract import ContractError
@@ -309,6 +310,7 @@ def _act(
     records: list[dict[str, Any]],
     root: Path,
     granted: Callable[[], set[str]] | None,
+    last_rotated: dict[str, str | None] | None,
 ) -> list[Outcome]:
     destinations = entry.destinations
     action, detail = _decide(package, due, destinations)
@@ -337,6 +339,11 @@ def _act(
             ),
             *_superseded(records, package),
         ]
+    body = _revision_body(package, due, entry, last_rotated) if action == _ADVANCE else None
+    if isinstance(body, Outcome):
+        return [body, *_superseded(records, package)]
+    if body is not None:
+        detail = f"{detail}, re-rendered for its derived plan"
     if client is None or observer is None:
         return [Outcome(subject, f"would-{action}", f"{detail} -> {due.occurrence}")]
     refusal = _ungranted(due, entry.repository, granted)
@@ -350,15 +357,16 @@ def _act(
 
     if action == _ADVANCE:
         require_publishable(root)
-        package = to_review(package, due.occurrence, destinations, root)
+        package = to_review(package, due.occurrence, destinations, root, body=body)
         snapshot_hash(package, root)
-        published = commit(package, root)
+        published = commit(package, root, rerendered=body is not None)
+        rerendered = ", re-rendered for its derived plan," if body is not None else ""
         return [
             Outcome(
                 subject,
                 "revised",
-                f"{package.package_id} rev {package.revision} carries {due.occurrence}, "
-                f"published {published[:12]}; awaiting a named human's approval",
+                f"{package.package_id} rev {package.revision}{rerendered} carries "
+                f"{due.occurrence}, published {published[:12]}; awaiting a named human's approval",
             ),
             *_superseded(records, package),
         ]
@@ -375,15 +383,61 @@ def _act(
     return outcomes + _superseded(records, package)
 
 
+def _revision_body(
+    package: RotationPackage,
+    due: Due,
+    entry: RegistryEntry,
+    last_rotated: dict[str, str | None] | None,
+) -> dict[str, Any] | Outcome | None:
+    """The re-rendered body a revision writes (`reissue_body`), `None` to keep the wording, or the
+    outcome that refuses the revision. Asked before anything is written, a dry run included, so a
+    revision whose plan can't be derived spends no observation and no revision."""
+    try:
+        return reissue_body(
+            entry,
+            document(package),
+            due.occurrence,
+            first_issue=_first_issue(last_rotated, due.credential_id),
+        )
+    except GenerateError as error:
+        return Outcome(
+            due.credential_id,
+            "unlaned",
+            f"{package.package_id} rev {package.revision}: its revision can't derive a plan: "
+            f"{error}",
+        )
+    except StatedPlanError as error:
+        return Outcome(due.credential_id, "error", str(error))
+
+
+def _first_issue(last_rotated: dict[str, str | None] | None, credential_id: str) -> bool | None:
+    """Whether infraops has never recorded the credential rotated (`last_rotated` null), or
+    `None` where it doesn't say: an infraops predating the field, or one that omits the row."""
+    if last_rotated is None or credential_id not in last_rotated:
+        return None
+    return last_rotated[credential_id] is None
+
+
 def _generate(
     entry: RegistryEntry,
     due: Due,
     observer: OrchestratorClient | None,
     root: Path,
+    last_rotated: dict[str, str | None] | None,
 ) -> Outcome:
-    """Revision 1 of a missing package, generated from the registry row, to review."""
+    """Revision 1 of a missing package, generated from the registry row, to review.
+
+    infraops' `last_rotated` tells a first issue from a reissue (ADR-0055 amendment 19): null is
+    a credential never recorded rotated, and `_record_retired` dates it once an issue's record is
+    retired. Absent, from an infraops predating the field or one that omits the row, it says
+    nothing, and a type with both plans is then a finding (`plan_for`)."""
     try:
-        rendered = render(entry, due.occurrence, datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"))
+        rendered = render(
+            entry,
+            due.occurrence,
+            datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            first_issue=_first_issue(last_rotated, due.credential_id),
+        )
     except GenerateError as error:
         return Outcome(
             due.credential_id,
@@ -636,6 +690,7 @@ def _pass(
     registry: Callable[[], dict[str, RegistryEntry]],
     *,
     granted: Callable[[], set[str]] | None,
+    last_rotated: dict[str, str | None] | None,
 ) -> list[Outcome]:
     outcomes: list[Outcome] = []
     for item in due:
@@ -647,9 +702,11 @@ def _pass(
             entry = _entry(registry, item.credential_id)
             if package is None:
                 refusal = _ungranted(item, entry.repository, granted)
-                outcomes.append(refusal or _generate(entry, item, observer, root))
+                outcomes.append(refusal or _generate(entry, item, observer, root, last_rotated))
                 continue
-            outcomes.extend(_act(package, item, entry, client, observer, records, root, granted))
+            outcomes.extend(
+                _act(package, item, entry, client, observer, records, root, granted, last_rotated)
+            )
         except MembersUnreadable as error:
             # Only a credential whose next act needs the grant gets here, and each one reports
             # it. `error` holds that credential's other alerts (`alerts.py`).
@@ -794,6 +851,7 @@ def _walks(
         inputs.root,
         registry,
         granted=granted,
+        last_rotated=inputs.last_rotated,
     )
     if reader is None:
         return outcomes

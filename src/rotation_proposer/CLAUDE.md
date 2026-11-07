@@ -18,9 +18,16 @@
   that sentence's wording is a contract with `record_occurrence`. A due credential nothing will
   move is a finding (`record-wontfix`, `due-after-rotation`), never a quiet pass.
   A revision it writes carries the registry's destinations; an approved revision that
-  differs from the registry is revised, never proposed; and a due, handed-over credential with no
+  differs from the registry is revised, never proposed, except a package it generated whose
+  criteria describe no plan its row derives (for example, a destination change that adds a
+  `distribute` step): `reissue_body` raises `StatedPlanError`, the pass reports that credential's
+  `error` and writes nothing, and an operator hand-revises the package onto the derived plan
+  (ADR-0055 amendment 20 decision 3); and a due, handed-over credential with no
   package gets revision 1 generated from its row and its `class`'s type (`generate.py`,
-  `CLASS_TYPES`), validated and written by intent-packages' `create-rotation`. The work
+  `CLASS_TYPES`), validated and written by intent-packages' `create-rotation`. A revision of a
+  package it generated re-renders the wording only when the plan its row derives isn't the plan
+  its criteria state (`generate.reissue_body`, ADR-0055 amendment 20); a hand-authored one never.
+  The work
   carrier carries a standing rotation package only when its credential's registry row sets
   `rotated_by_sds` and the member record grants `credential_rotation` on that registry's
   repository. The proposer reads the same grant before it observes, revises, generates or

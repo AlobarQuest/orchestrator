@@ -49,9 +49,27 @@ def _entry(credential_class: str, *consumers: dict[str, Any]) -> RegistryEntry:
     return RegistryEntry("AlobarQuest/example-registry", "c" * 40, credential)
 
 
-def _intake(entry: RegistryEntry, acceptance: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+# Each type's generated packages: an issue and a reissue for a type with both plans (ADR-0055
+# amendment 19), its one plan for every other. `first_issue` is the proposer's signal.
+CASES: list[tuple[str, bool | None]] = [
+    (credential_class, first_issue)
+    for credential_class in sorted(CLASS_TYPES)
+    for first_issue in (
+        ((True, False) if TYPES[CLASS_TYPES[credential_class]].capabilities.rotates else (True,))
+        if TYPES[CLASS_TYPES[credential_class]].capabilities.issues
+        else (None,)
+    )
+]
+
+
+def _intake(
+    entry: RegistryEntry,
+    acceptance: list[dict[str, Any]] | None = None,
+    *,
+    first_issue: bool | None = None,
+) -> dict[str, Any]:
     """An intake as `GET /package-intakes/{id}` answers it, for the package generated for it."""
-    package = render(entry, "2026-10-29-requested", "2026-10-29T12:00:00Z")
+    package = render(entry, "2026-10-29-requested", "2026-10-29T12:00:00Z", first_issue=first_issue)
     return {
         "package_id": package["package_id"],
         "revision": 2,
@@ -67,13 +85,15 @@ def _constraints(body: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return {u["unit_key"]: u["authority"]["constraints"] for u in body["proposed_units"]}
 
 
-@pytest.mark.parametrize("credential_class", sorted(CLASS_TYPES))
-def test_every_type_decomposes_into_its_derived_plan_s_units(credential_class: str) -> None:
+@pytest.mark.parametrize(("credential_class", "first_issue"), CASES)
+def test_every_type_decomposes_into_its_derived_plan_s_units(
+    credential_class: str, first_issue: bool | None
+) -> None:
     entry = _entry(credential_class)
-    intake = _intake(entry)
+    intake = _intake(entry, first_issue=first_issue)
     body = decomposition(intake, entry)
 
-    _, plan = plan_for(entry)
+    _, plan = plan_for(entry, first_issue=first_issue)
     steps = criteria_steps(plan)
     units = [u["authority"]["constraints"]["rotation_unit"] for u in body["proposed_units"]]
     assert units == list(dict.fromkeys(unit for unit, _ in steps.values()))
@@ -84,9 +104,12 @@ def test_every_type_decomposes_into_its_derived_plan_s_units(credential_class: s
     assert len(body["ac_mappings"]) == len(steps) and body["retained_acs"] == []
 
 
-@pytest.mark.parametrize("credential_class", sorted(CLASS_TYPES))
-def test_each_unit_waits_only_on_the_one_before_it(credential_class: str) -> None:
-    body = decomposition(_intake(_entry(credential_class)), _entry(credential_class))
+@pytest.mark.parametrize(("credential_class", "first_issue"), CASES)
+def test_each_unit_waits_only_on_the_one_before_it(
+    credential_class: str, first_issue: bool | None
+) -> None:
+    entry = _entry(credential_class)
+    body = decomposition(_intake(entry, first_issue=first_issue), entry)
     keys = [u["unit_key"] for u in body["proposed_units"]]
     assert body["dependencies"] == [
         {
@@ -99,13 +122,15 @@ def test_each_unit_waits_only_on_the_one_before_it(credential_class: str) -> Non
     ]
 
 
-@pytest.mark.parametrize("credential_class", sorted(CLASS_TYPES))
-def test_every_envelope_is_one_the_rotation_pattern_recognises(credential_class: str) -> None:
+@pytest.mark.parametrize(("credential_class", "first_issue"), CASES)
+def test_every_envelope_is_one_the_rotation_pattern_recognises(
+    credential_class: str, first_issue: bool | None
+) -> None:
     """Kills: an envelope field the pattern doesn't name, which would put the authority click
     back on every unit."""
     entry = _entry(credential_class)
-    intake = _intake(entry)
-    reach = render(entry, "x", "2026-10-29T12:00:00Z")["reach"]
+    intake = _intake(entry, first_issue=first_issue)
+    reach = render(entry, "x", "2026-10-29T12:00:00Z", first_issue=first_issue)["reach"]
     policy = load_factory_policy()
     for unit in decomposition(intake, entry)["proposed_units"]:
         unit_id = uuid.uuid4()

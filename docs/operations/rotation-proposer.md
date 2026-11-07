@@ -52,7 +52,9 @@ For a due credential whose package is `rotation-<credential_id>`:
    `credential`). Then `revise` the package, write the quoted `occurrence:` line and the
    registry's destination list, `transition --to ready_for_review`, re-pin the hash fixture,
    commit, and publish. The publish goes through `bump_proposer.standing.publish`, which is the
-   one publishing act. Nothing is proposed. The line reads `revised`. A credential with no
+   one publishing act. Nothing is proposed. The line reads `revised`. A package the proposer
+   generated is re-rendered in that revision when its derived plan changed (see "A revision
+   re-renders a generated package"). A credential with no
    package gets one generated instead (see "A package generated from the registry"), and the
    line reads `generated`.
 2. **Passes while it waits.** The pass writes nothing and reports `awaiting-approval`.
@@ -73,18 +75,22 @@ For a due credential whose package is `rotation-<credential_id>`:
      and prints the registry's destinations as a package lists them, then compares them with the
      package's, both at `main`: `both`, `registry` (missing from the package) or `package` (not in
      the registry) on each line, then the verdict. Exit 0 means equal; 1 means the registry
-     changed after the revision was written, and the next pass revises it again; 2 means it
-     couldn't read one of them. The command is the executor's own comparison
+     changed after the revision was written, and the next pass acts as step 4 describes; 2 means
+     it couldn't read one of them. The command is the executor's own comparison
      (`src/rotation_worker/compare.py`).
 4. **The next pass.** If the registry's destinations changed since the approved revision was
    written, the pass revises it again instead of proposing (step 1), because the executor would
-   refuse the first unit of a package that differs from the registry. Otherwise it files the
-   observation again. It replays and returns the same id. Then it proposes
-   the `work` record with the propose-scoped bearer. The record names the approved revision and
-   that observation, with `bump_proposer`'s asserted fields (`WORK_RECORD_FIELDS`). Later passes
-   replay it. Once Devon approves the record, the work carrier registers its intake, and the
-   rotation decomposer proposes its decomposition for a person to approve on `/review` (see
-   "The rotation decomposer" in `rotation-executor.md`).
+   refuse the first unit of a package that differs from the registry. One case is refused instead:
+   a package the proposer generated whose criteria describe no plan its row derives, for example
+   because the destination change adds a `distribute` step. `reissue_body` raises
+   `StatedPlanError`, the pass reports that credential's `error` and writes nothing, neither a
+   revision nor a proposal, and an operator hand-revises the package onto the derived plan
+   (ADR-0055 amendment 20 decision 3). Otherwise it files the observation again. It replays and
+   returns the same id. Then it proposes the `work` record with the propose-scoped bearer. The
+   record names the approved revision and that observation, with `bump_proposer`'s asserted fields
+   (`WORK_RECORD_FIELDS`). Later passes replay it. Once Devon approves the record, the work carrier
+   registers its intake, and the rotation decomposer proposes its decomposition for a person to
+   approve on `/review` (see "The rotation decomposer" in `rotation-executor.md`).
 5. **The pass after the rotation completes.** The work watcher retires the record once every unit
    it caused has completed: `resolved`, decided by `work-watcher`. A due credential whose carrying
    revision has such a record reports `retired` and nothing is proposed again. The record walk
@@ -177,8 +183,11 @@ changes the exit code.
   does not grant `credential_rotation` on its repository. The pass observes, revises, generates
   and proposes nothing for it; a finished rotation still records, and stranded records are still
   reported. Grant it with a member proposal (`docs/operations/membership.md`), or clear the flag.
-- **`unlaned`** (a finding): the registry hands the credential to the SDS, but no standing package exists and none can be generated: its registry `class`
-  names no type the SDS rotates (`rotation_worker.types.CLASS_TYPES`).
+- **`unlaned`** (a finding): the registry hands the credential to the SDS, but no plan can be
+  derived for it, so no package is generated and a generated one isn't revised: its registry
+  `class` names no type the SDS rotates (`rotation_worker.types.CLASS_TYPES`), or its type has an
+  issue plan and a rotation plan and infraops serves no `last_rotated` for it, or its type has only
+  an issue plan and infraops records it issued. The pass writes nothing for it.
 
 Every finding carries `rotated_by_sds` from infraops' `cred-findings`. A finding without it (an
 infraops older than the handover) stops the whole pass with exit 2.
@@ -192,6 +201,12 @@ type's capabilities and the row:
 
 - **Criteria:** one per machine step of the derived plan (`plans.derive`), numbered as the plan
   numbers them, with the evidence text the executor's `select_plan` and the verifier read.
+- **Issue or rotation:** a type that declares an issue plan (`bws-lane-token`,
+  `healthchecks-ping-url`; ADR-0055 amendment 19) gets it when infraops' `last_rotated` for the
+  credential is null, and its rotation plan when it holds a date. `_record_retired` writes that
+  date once `work-watcher` retires the issue's record. Every other type gets its rotation plan
+  whatever `last_rotated` says. An issue package states no retire and allows no
+  `credential_revoke`.
 - **Reach:** `external_system`, plus `operator_machine` for a credential the Mac keeps and
   `live_estate` for a hosted service.
 - **Authority:** reading and writing secrets, minting and revoking where the provider does them
@@ -211,6 +226,25 @@ record and says so. An empty record or one that can't be read is an `error` for 
 that needed it, which holds that credential's other alerts; the rest of the pass, its report and
 its alerts go on. `membership_check` reports a `rotated_by_sds` row of a type the SDS rotates in a
 repository without the grant, and the reverse.
+
+### A revision re-renders a generated package
+
+A revision of a package the proposer generated (`created_by: rotation-proposer`) re-renders its
+criteria, prose and authority only when the plan its row derives (`plan_for`, with the
+`last_rotated` signal) isn't the plan its criteria state (`select_plan`'s match). The check is
+`generate.reissue_body`, run in `cli._act` before anything is written, and `standing.write_body`
+writes the result over every top-level block except the package's identity, lifecycle and
+`created_at` (ADR-0055 amendment 20, HQ D-32). One case changes plan: a lane token's issue
+package once infraops dates its `last_rotated`, so its first reissue states the full plan. Devon
+approves the new criteria in that revision's one click, and the `revised` line says
+"re-rendered for its derived plan".
+
+- A generated package whose plan is unchanged keeps its approved wording; the revision writes
+  only its occurrence and destinations.
+- A hand-authored package, including the four on pinned pre-derivation plans, is never
+  re-rendered.
+- A type with two plans and no `last_rotated` for the credential is `unlaned`, and a generated
+  package whose criteria describe no plan its row derives is an `error`. Neither writes anything.
 
 ## Authoring a standing rotation package by hand
 
