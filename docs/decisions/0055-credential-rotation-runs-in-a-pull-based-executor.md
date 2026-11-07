@@ -2185,8 +2185,8 @@ resolve.
 ## Amendment 19 — The VM executor issues lane tokens and ping URLs from its inbox (2026-11-07)
 
 **Status: Accepted (2026-11-07).** It met HQ's bar, under HQ's standing answer of 2026-11-06
-(limit 3): a clean Opus whole-branch review of PR #626 at `f17ee687` and of PR #PRNUM, which accepts it.
-ADR-0059 increment 2 waits on it (ADR-0059, "Increments", item 2, and "Dependencies", ADR-0055).
+(limit 3): a clean Opus whole-branch review of PR #626 at `f17ee687` and of PR #628, which accepts
+it. ADR-0059 increment 2 waits on it (ADR-0059, "Increments", item 2, and "Dependencies", ADR-0055).
 
 ADR-0059 moves the scheduled lanes off the Mac, one BWS identity per lane, each lane its own
 Coolify compose resource, `sds-lane-<lane>` (ADR-0059 Amendment 1). Devon decided that the VM
