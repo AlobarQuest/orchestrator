@@ -2226,9 +2226,10 @@ infraops-mcp-server `main` at `9cdaab1f`.
    - **A ping URL's keeper is the lane's own ping-URL secret**, already approved (ADR-0059
      decision 3, Q10, D-13). The keeper command (item 3) creates it in `Rotation / Keepers`, which
      only the root writes, and the lane's account reads it by a direct grant (amendment 6).
-   - **A lane token's keeper in `Rotation / Keepers` is proposed; Devon decides (HQ D-24).**
-     ADR-0059 accepted the token's transit (Q3, Q8), not the value at rest on the VM. Items 3, 4,
-     7 and 10 depend on this keeper, and each says what the transit-only alternative changes.
+   - **Each lane token keeps a keeper in `Rotation / Keepers`** (Devon, 2026-11-07, HQ D-24: "Keep
+     a stored copy"). ADR-0059 accepted the token's transit (Q3, Q8); D-24 adds the value at rest
+     on the VM, and it is a standing answer for every later lane token. Items 3, 4, 7 and 10 rest
+     on this keeper.
 
    Every other BWS consumer token stays as amendment 12 left it: handled only by an executor
    instance on the machine that already holds it.
@@ -2259,12 +2260,8 @@ infraops-mcp-server `main` at `9cdaab1f`.
      staging secret in `Rotation / Work` is deleted once `verify_consumers` passes, and the
      deletion is recorded, as decision 3 records it after confirm-dead.
 
-   For a lane token this item depends on its keeper (item 1, D-24). Under the transit-only
-   alternative, a token issue has no keeper to read the marker from, so "nothing to retire" would
-   again be a declaration; that alternative needs a different precondition, which this amendment
-   doesn't design. A ping URL's issue is unaffected. Item 7's departure from decision 3's R10 rule
-   applies to a lane token's reissue, not its issue, which has no `retire_old`; Devon decides it
-   ("Open before building").
+   Item 7's departure from decision 3's R10 rule applies to a lane token's reissue, not its issue,
+   which has no `retire_old`; Devon decides it ("Open before building", D-27).
 4. **A lane token binds by its declared reach, never by `same_identity`.** The registry row lists
    the BWS secrets the lane's account must see: the UUIDs `.bws-secrets.toml` lists for that lane.
    `bind` takes a pasted token for a `bws-lane-token` issue or rotation only when all of these
@@ -2279,13 +2276,9 @@ infraops-mcp-server `main` at `9cdaab1f`.
    This is stronger than `same_identity`, and it holds after a leak's early revoke. Each lane's
    set is distinct, because each holds that lane's own ping-URL secret, and the checks refuse a
    registry in which two rows declare the same set. The lane's account must already have its grant
-   on the ping-URL secret, holding the marker, when the token binds, or the digests differ.
-
-   The second and fourth checks compare with keepers' values, so they depend on the lane token's
-   keeper (item 1, D-24). Under the transit-only alternative they have nothing to compare with, and
-   the reach check alone can't tell the lane's current token from a new one, because both see the
-   same set. Keeping only a fingerprint would restore those two checks but not `retire_old`'s
-   (item 7), and that is a different design this amendment doesn't make.
+   on the ping-URL secret, holding the marker, when the token binds, or the digests differ. The
+   second and fourth checks compare with keepers' values (item 1, D-24): the reach check alone
+   can't tell the lane's current token from a new one, because both see the same set.
 5. **A ping URL binds by shape and by its check, never by a ping.** A ping marks the check up, so
    no probe may send one. `bind` takes a pasted ping URL for a `healthchecks-ping-url` issue only
    when the keeper holds the marker, the URL is exactly the self-hosted instance's ping base
@@ -2294,7 +2287,7 @@ infraops-mcp-server `main` at `9cdaab1f`.
    (decision 4) gets no `ping_url` or `uuid` in any Management API response (ADR-0059 decision 3),
    and the Management key manages every check in the project, so a read that ties the URL to the
    lane's check needs a credential the VM doesn't hold. Devon decides whether to grant one ("Open
-   before building"). The lane phases' first `--add` proves the URL either way, by a ping that
+   before building", D-28). The lane phases' first `--add` proves the URL either way, by a ping that
    reaches that check.
 6. **The executor never redeploys a lane.** A `bws-lane-token` destination with `redeploy` true is
    refused before a claim, and its distribute step writes the variable with the client's one
@@ -2304,16 +2297,27 @@ infraops-mcp-server `main` at `9cdaab1f`.
    lane phases' redeploy in that lane's quiet slot (ADR-0059 decision 1).
    - **A token-change mode for the lane phases, in ADR-0059 increment 2's code (amends ADR-0059's
      lane phases).** As accepted, the phases take only `--tag`, `--schedule` and `--add`, and
-     `lanes-finish` passes only "the change and no other", so none redeploys a lane after a reissue
-     (ADR-0059 increment 7 left that to the executor). Increment 2 adds `--token`, carried as a
+     `lanes-finish` passes only "the change and no other", so none redeploys a lane after a reissue.
+     ADR-0059 increment 7's amendment decides whether the executor runs the redeploy or hands it
+     to the deploying session; before it, increment 2 adds `--token`, carried as a
      verify item in that increment and built before `execution-watch` holds a real token, so a
      leak's path works from the first lane. It writes the lane's compose at its running tag, as
-     `--schedule` does, and no variable, because the executor has written the token: its calls are
-     the deploy command's existing `coolify_update_service` and `coolify_deploy`, under the same
+     `--schedule` does, and no variable, because the executor has written the token. The command
+     prints the calls and the deploying session makes them (`docs/operations/deploy.md`, "The
+     lane phases"): the existing `coolify_update_service` and `coolify_deploy`, under the same
      quiet-slot reads. Its `lanes-finish` passes when the image digest, schedule and volume are
      unchanged, the container's `BWS_ACCESS_TOKEN` is non-empty, and `lane-run --read` reads every
-     listed secret `ok`. It has no inverse write: a failure exits 2, HQ records it in its report
-     of the reads (item 7), and the reissue's revoke stays unresolved.
+     listed secret `ok`. The `lane-run --read` result is a new `lanes-finish` input
+     (`finish_mismatches` checks only the digest, schedule, token presence and volume), and
+     increment 2's code settles its form.
+   - **How a failed `--token` run closes.** A mismatch at `lanes-finish` exits 2 and leaves the run
+     `unfinished`, and an `unfinished` run refuses the lane's next `lanes-prepare` and every
+     orchestrator release (`require_lanes_current`). `--token` has nothing to undo, because its
+     compose is the one the lane already ran, so its `lanes-finish --restored` form needs no
+     inverse write: it closes the run as failed, with the mismatches recorded as its reason in the
+     run file, and the run never becomes the lane's record. The lane can then take a retry
+     `--token`, a `--tag`, or a rollback to the Mac. HQ records the failure in its report of the
+     reads (item 7), and the reissue's revoke stays unresolved.
 7. **What the executor proves, and what the lane phases prove.** The executor can't read a
    service variable back: its Coolify token has no `read:sensitive` (amendment 1). So its
    `verify_consumers` for the Coolify destination is the `PATCH` answering 2xx, and for a BWS
@@ -2335,24 +2339,19 @@ infraops-mcp-server `main` at `9cdaab1f`.
    every registered consumer (R10): for `bws-lane-token`, until ADR-0059 increment 7, that rule is
    met by the lane phases' reads outside the plan, and the revoke act's precondition is HQ's report
    of them. Amendment 12's "Holders no machine can restart" is the precedent for a person's
-   attestation at the revoke. Increment 7, which gives the executor the redeploy, restores a
-   machine read. The departure is proposed; Devon decides it ("Open before building").
-
-   `retire_old` and confirm-dead test the old token, so a reissue depends on the lane token's
-   keeper (item 1, D-24). Under the transit-only alternative the executor holds no old value to
-   test, `retire_old` can't prove the old token refused, and a reissue needs a different plan, which
-   this amendment doesn't design.
+   attestation at the revoke. If increment 7's amendment gives the executor the redeploy, it
+   restores a machine read; otherwise that amendment states how R10 is met. The departure is
+   proposed; Devon decides it ("Open before building", D-27). `retire_old` and confirm-dead test
+   the old token against its keeper (item 1, D-24).
 8. **The order is a mechanism, not a sequence.** HQ changes a lane's ping-URL row to make it due
    only after the lane token's `store` unit completes, so the ping URL's issue unit doesn't exist
    while the token's waits and `other_mints` never sees both. The order rests on HQ making that
    change in that order. A mistake fails safe: if both units wait on a person's mint at once,
    `other_mints` refuses both binds, nothing is written, and the pasted value stays in the inbox
    with its reason (item 11) until HQ fails and cancels the ping URL's unit, as a stranded unit
-   is. The lane's cut-over is then as follows. The steps assume the lane token's keeper (item 1,
-   D-24); under the transit-only alternative, step 1 and item 3's precondition are redesigned.
-   1. The root runs the keeper command (item 3) for the lane's ping-URL secret, and for the lane
-      token's keeper if Devon keeps it (D-24). Each holds the marker, and the command prints each
-      secret id.
+   is. The lane's cut-over is then as follows.
+   1. The root runs the keeper command (item 3) for the lane's ping-URL secret and for the lane
+      token's keeper (D-24). Each holds the marker, and the command prints each secret id.
    2. HQ lands the lane's registry rows naming those keepers, in two changes as amendment 17's did:
       the token's row due for its issue, and the ping URL's row not yet due.
    3. The identity's creator grants the lane's account its secrets, including the ping-URL
@@ -2369,14 +2368,15 @@ infraops-mcp-server `main` at `9cdaab1f`.
    November 2026 isn't due by age until November 2027. The rotations this amendment allows before
    then are the early and leak reissues in the following item, and HQ asks Devon before the age
    interval passes, as ADR-0059's Consequences say.
-10. **Early and leak reissue before increment 7 (proposed; Devon decides).** The proposed actor is
-    the rotation proposer, from infraops findings it already reads: an exposure recorded on the
-    lane token's row (`cred.exposure-rotate`) or a `rotate_requested` date
-    (`cred.rotation-requested`). HQ records the trigger in infraops's registry, and Devon's one
-    click is the revision approval (amendment 16). The proposed order of the revoke:
+10. **Early and leak reissue before increment 7.** The actor is the rotation proposer (Devon,
+    2026-11-07, HQ D-25: "The proposer as recommended"), from infraops findings it already reads:
+    an exposure recorded on the lane token's row (`cred.exposure-rotate`) or a `rotate_requested`
+    date (`cred.rotation-requested`). HQ records the trigger in infraops's registry, and Devon's
+    revision approval is the only person step (amendment 16). The order of the revoke (Devon,
+    2026-11-07, HQ D-26: "I approve the proposed answer"):
     - **After a leak, Devon revokes first**, as the exposure response decision 6 already makes
-      his, then the reissue runs and its `retire_old` finds the old token refused (which needs
-      the token's keeper: item 7, D-24). The token binds by its reach (item 4), so it needs no
+      his, then the reissue runs and its `retire_old` finds the old token refused against its
+      keeper (item 7, D-24). The token binds by its reach (item 4), so it needs no
       hand staging. Until item 6's `--token` redeploy in the lane's next quiet slot, the lane
       fails every pass on a dead token, and its dead-man check reports it. A leaked token that
       stayed live through the redeploy's 6-hour wait would leave an exposure open for that long,
@@ -2447,26 +2447,29 @@ Each item is settled in ADR-0059 increment 2, before its code merges.
   read in the build.
 - **The lane phases' `--token` mode (increment 2, carried verify item).** Item 6's mode is built
   and verified in increment 2, before `execution-watch` holds a real token, using only the deploy
-  command's existing calls. It amends ADR-0059's lane phases.
+  command's existing calls. It amends ADR-0059's lane phases. The build settles each of these:
+  - its own `change_key`, beside `tag:`, `add:` and `schedule:`;
+  - its `lanes-finish --restored` form, which closes a failed run with no inverse write (item 6);
+  - the `lane-run --read` result as a `lanes-finish` input (item 6);
+  - a `--tag` run after the executor's `PATCH` also loads the new token, without `--token`'s
+    reads, so the revoke's precondition needs those reads re-run on that container;
+  - `--token` refuses `sds-lane-placeholder`, which holds no token.
+- **A pass on a dead token and the quiet slot (increment 2).** Whether a lane pass that fails on a
+  revoked token leaves its check `started`, which would hold off the leak's `--token` redeploy
+  (the quiet slot waits while `started` is `true` and `status` isn't `down`), is read in the build.
 - **Questions for Devon (increment 2):**
-  - whether lane tokens keep a keeper in `Rotation / Keepers` (item 1, HQ D-24), on which items 3,
-    4, 7 and 10 depend;
   - item 7's departure from decision 3's machine `verify_consumers` rule (R10) for a lane token's
-    reissue until increment 7, which item 3 cross-references;
-  - the reissue actor and the leak order (item 10);
-  - whether to grant the VM a Healthchecks key that identifies a check (item 5).
+    reissue until increment 7, which item 3 cross-references (HQ D-27);
+  - whether to grant the VM a Healthchecks key that identifies a check (item 5, HQ D-28).
 
 ### Consequences
 
-- **Threat model.** If Devon keeps the lane token's keeper (D-24), the VM root gains every lane
-  token at rest, in `Rotation / Keepers`, beside every other rotated credential's keeper; it gains
-  every ping URL at rest either way (ADR-0059 decision 3). A compromised executor could use
-  any lane's token, write any lane's token variable, and overwrite any lane's ping-URL secret,
-  which blinds that lane's alarm. ADR-0059 accepted transit (Q3, Q8); the proposed token keeper
-  adds the value at rest, which a reissue's quarantine and increment 7's `same_identity` and
-  confirm-dead need. The alternative, no keeper and staging deleted after the write, holds less but
-  leaves increment 7 nothing to prove the old token dead against, and needs a different design
-  for items 3, 4, 7 and 10.
+- **Threat model.** The VM root gains every lane token at rest, in `Rotation / Keepers`, beside
+  every other rotated credential's keeper, and every ping URL at rest (ADR-0059 decision 3). A
+  compromised executor could use any lane's token, write any lane's token variable, and overwrite
+  any lane's ping-URL secret, which blinds that lane's alarm. ADR-0059 accepted transit (Q3, Q8);
+  the value at rest is accepted by D-24, and a reissue's quarantine, `retire_old` and confirm-dead
+  need it.
 - **Builds.** An infraops change (the two classes in `CLASS_POLICY` and its class fixture), then
   one orchestrator change: the two types, the issue plan's validation, the reach and shape binds,
   the keeper command, the `redeploy` refusal, the agreement fixture that
