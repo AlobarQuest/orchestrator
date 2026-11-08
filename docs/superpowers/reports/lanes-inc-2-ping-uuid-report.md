@@ -4,8 +4,9 @@ Outcome: done
 
 Handoff: sds-hq `state/handoffs/lanes-inc-2-ping-uuid.md`. Branch `hq/lanes-inc-2-ping-uuid`, base
 `origin/main` at `31ecf2b4`. Draft PR
-[#638](https://github.com/AlobarQuest/orchestrator/pull/638). The change is commit `def611e8`;
-the PR head is the commit that adds this report on top of it. Not merged, not marked ready.
+[#638](https://github.com/AlobarQuest/orchestrator/pull/638). The change is commit `def611e8`,
+plus `9dafbc62`, which rewords one manifest comment. The PR head is the last commit on the
+branch, which only edits this report. Not merged, not marked ready.
 
 ## What I built
 
