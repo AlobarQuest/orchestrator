@@ -1303,6 +1303,15 @@ reach_projects = []
 A ping URL's row has class and provider `healthchecks-ping-url`, its keeper as `bws_uuid`, and the
 keeper as its one consumer.
 
+A row whose first unit is an issue (a lane token or a ping URL that the SDS creates) carries no
+`created` and no `last_rotated`; the first `record-rotation` sets its rotation anchor. infraops
+reads either field as a rotation date (`rotationAnchor` in infraops-mcp-server
+`src/security-drift/cred-rotation.ts`), and serves that date as the row's `last_rotated`. The
+proposer's `_first_issue` then reads the credential as already issued, so `plan_for` picks the
+rotation plan, or refuses a type that has none, and the issue never runs. With neither field, the
+first issue is due from `rotate_requested` alone. For more information, see
+`docs/superpowers/reports/lanes-inc-2-registry-rows-report.md`.
+
 ### What each unit does
 
 - **Bind.** A lane token binds when a fresh login accepts it beside a refused known-bad token,
