@@ -8,7 +8,8 @@
   decided D-19 and D-20 on 2026-11-06, recorded in Amendment 1 (one Coolify compose resource per
   lane, and the three cases in which HQ deletes a lane's resource). Devon decided D-24 to D-28 on
   2026-11-07, recorded in ADR-0055 amendment 19 and followed here by Amendment 2 (how lane tokens
-  and ping URLs are issued and reissued).
+  and ping URLs are issued and reissued). Devon's D-31 C (2026-11-07), recorded in ADR-0055
+  amendment 21, superseded D-28: a ping URL binds by its shape and a read-only lookup of its check.
 - **Relates to:** ADR-0055 (the rotation executor's isolated runtime and decisions 2 and 4,
   amendments 6, 12, 15 and 19), ADR-0058 (lanes read their scope from the member record), ADR-0039
   (out-of-process producers carry only structured facts), ADR-0021 amendments 2 and 3 (the
@@ -701,12 +702,15 @@ One container per lane already gives each lane its own process, filesystem and e
   (`BWS_ACCESS_TOKEN_SDS_HQ`), and no decision grants HQ the broad account. The URL reaches its BWS
   secret as a lane token does (Q8, decided): Devon copies it from the check's page and pastes it
   into the VM executor's inbox by hand, and the executor writes the lane's ping-URL secret. The
-  executor binds the paste by its shape alone, never by a ping, so cut-over step 4 is what proves
-  the URL (Amendment 2; D-28). That paste is Devon's step in each lane's cut-over (step 1), one URL
-  per moved lane, one at a time, from increment 2 on; no machine path carries a ping URL (Q10,
-  decided). No session stores it, because `bws secret create` and `bws secret edit` take the value
-  as an argument. Verify before increment 1, on the self-hosted version: that a UUID ping URL needs
-  no other credential and does nothing beyond pinging, and the URL's base (`PING_ENDPOINT`).
+  executor binds the paste by its shape and by the read-only key's lookup of its check beside a
+  random UUID's, never by a ping (ADR-0055 amendment 21; D-31 C, which superseded D-28). The lookup
+  proves the check exists in the key's project and the UUID's first half, so cut-over step 4 is
+  still what proves the full URL (Amendment 2). That paste is Devon's step in each lane's cut-over
+  (step 1), one URL per moved lane, one at a time, from increment 2 on; no machine path carries a
+  ping URL (Q10, decided). No session stores it, because `bws secret create` and `bws secret edit`
+  take the value as an argument. Verify before increment 1, on the self-hosted version: that a UUID
+  ping URL needs no other credential and does nothing beyond pinging, and the URL's base
+  (`PING_ENDPOINT`).
 - **What changes in `sds-deadman.sh`, in increment 2** (the first lane whose container pings).
   `sds_deadman_resolve` gains a first path: when `SDS_DEADMAN_PING_URL_UUID` is set, it reads the
   URL with `sds_bws_value` and the lane's own token, and lists no check. `SDS_DEADMAN_PING_URL_UUID`
@@ -978,9 +982,11 @@ Healthchecks before it relies on it. A fact it can't confirm stops the increment
      (Amendment 2): Devon's hand paste of a ping URL (Q10) binds to an issue, a rotation's first
      half, which runs when the lane's ping-URL secret holds only the inbox's empty marker. The ping
      URL is registered with a new infraops class, `healthchecks-ping-url`, beside a new
-     `bws-lane-token` class. The paste binds by shape alone, never by a ping (D-28): the URL is
-     exactly the self-hosted instance's ping base followed by one UUID, and no other keeper of its
-     type holds it. Cut-over step 4 proves the URL.
+     `bws-lane-token` class. The paste binds by its shape and by a read-only lookup of its check,
+     never by a ping (ADR-0055 amendment 21; D-31 C, which superseded D-28): the URL is exactly the
+     self-hosted instance's ping base followed by one UUID, no other keeper of its type holds it,
+     and the read-only key finds its check by `unique_key` while refusing a random UUID's. The
+     lookup reaches only the UUID's first half, so cut-over step 4 proves the full URL.
    - Answered by D-25 (ADR-0055 amendment 19 item 10; Amendment 2): before increment 7, the
      rotation proposer starts an early or leak reissue of a lane token, from the infraops findings
      it already reads (`cred.exposure-rotate` or `cred.rotation-requested`), and Devon's revision
@@ -1146,14 +1152,15 @@ Each increment's plan records which repositories it changes and which identities
    the week starts, so it counts in neither the baseline nor the week. The container's first
    scheduled pass pings the same check.
 4. Verify that the check's last ping came from the container and that the Mac agent isn't loaded.
-   That read is also the proof of the ping URL, which the executor bound by its shape alone (D-28,
-   ADR-0055 amendment 19 item 5; Amendment 2): a wrong URL shows as the lane's own check going
-   overdue, and the cut-over fails. Compare the two reporting runs from step 2 on exactly three
-   things: the exit code, the set of record identifiers the lane reported (pull request numbers,
-   unit ids, package names, record ids), and, for each identifier, its finding kind or proposed
-   action. Nothing else in the output is compared, since timestamps, durations, run and request ids,
-   temporary paths, hostnames and log prefixes differ by nature. If any of the three differs, the
-   cut-over has failed, and the lane rolls back ("Rollback for one lane"). A scheduled
+   That read is also the only proof of the full ping URL. The executor bound it by its shape and by
+   a read-only lookup of its check (ADR-0055 amendment 21, under D-31 C, which superseded D-28;
+   Amendment 2), and the lookup reaches only the UUID's first half: a wrong URL shows as the lane's
+   own check going overdue, and the cut-over fails. Compare the two reporting runs from step 2 on
+   exactly three things: the exit code, the set of record identifiers the lane reported (pull
+   request numbers, unit ids, package names, record ids), and, for each identifier, its finding kind
+   or proposed action. Nothing else in the output is compared, since timestamps, durations, run and
+   request ids, temporary paths, hostnames and log prefixes differ by nature. If any of the three
+   differs, the cut-over has failed, and the lane rolls back ("Rollback for one lane"). A scheduled
    pass isn't the comparison, because the Mac's last pass may already have acted on a record that
    the container's first pass then finds done.
 
@@ -1413,6 +1420,7 @@ interactive session on the Mac reads it through the broad account, as with the i
 Devon decided Q1 to Q5 on 2026-11-05 and Q6 to Q11 on 2026-11-06. Q9 also records D-14, D-17
 and D-18, and Amendment 1 records D-19 and D-20, which he decided on 2026-11-06. ADR-0055
 amendment 19 records D-24 to D-28, which he decided on 2026-11-07, and Amendment 2 follows them.
+ADR-0055 amendment 21 records D-31 C, which he decided on 2026-11-07 and which superseded D-28.
 
 ### Q1: the pushing lanes push as a new "SDS lanes" GitHub App (HQ D-3)
 
@@ -1719,7 +1727,9 @@ how a lane token is reissued and retired before increment 7. Devon decided its f
 2026-11-07: D-24 (each lane token keeps a stored copy: "Keep a stored copy"), D-25 (the rotation
 proposer starts an early or leak reissue: "The proposer as recommended"), D-26 (the order of the
 revoke: "I approve the proposed answer"), D-27 (the departure from decision 3's R10 rule, for lane
-tokens only: "Accepted") and D-28 (a ping URL binds by shape alone: "No Key").
+tokens only: "Accepted") and D-28 (a ping URL binds by shape alone: "No Key"). Devon's D-31 C
+(2026-11-07, ADR-0055 amendment 21) later superseded D-28: a ping URL binds by its shape and by a
+read-only lookup of its check.
 
 Several passages of this ADR then contradicted amendment 19: the lane phases had no mode that
 redeploys a lane after a token write, increment 7 left the redeploy's actor open, increment 2's
@@ -1773,7 +1783,9 @@ behavior for it.
    - two waiting mints: item 8, an order HQ makes by when it makes the ping URL's row due;
    - what makes the executor wait on a ping URL's paste: items 2, 3 and 5, an issue plan on a
      keeper that holds the inbox's empty marker, under a new `healthchecks-ping-url` class;
-   - the ping URL's bind: by shape alone, never by a ping, proven at cut-over step 4 (D-28, item 5);
+   - the ping URL's bind: by shape alone, never by a ping, proven at cut-over step 4 (D-28, item 5;
+     ADR-0055 amendment 21, under D-31 C, replaced it with the shape and a read-only lookup of the
+     check, and step 4 proves the full URL);
    - the actor for an early or leak reissue: the rotation proposer (D-25, item 10);
    - the leak revoke order: after a leak Devon revokes first; otherwise after the `--token` run's
      `lanes-finish` passes and `lane-run --read` reads every listed secret `ok` (D-26, item 10).
@@ -1801,7 +1813,8 @@ behavior for it.
    command, the two registry-row changes, the grants (the ping-URL secret included, while it holds
    the marker), the token's mint and bind, and HQ making the ping URL's row due only after the
    token's `store` unit completes. Step 4's read that the check's last ping came from the container
-   is also the proof of the ping URL (D-28).
+   is also the proof of the ping URL (D-28; under ADR-0055 amendment 21 it's the proof of the full
+   URL, since the lookup reaches only the UUID's first half).
 
 ### Verify in increment 2
 

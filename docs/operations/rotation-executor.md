@@ -1310,7 +1310,8 @@ keeper as its one consumer.
   and no other lane token's keeper holds it. A ping URL binds when its keeper holds the marker,
   the value is exactly `https://healthcheck.alobar.net/ping/` followed by one lowercase UUID, no
   other ping URL's keeper holds it, and the read-only key's lookup finds its check (ADR-0055
-  amendment 21; the following bullet says what that proves). Nothing pings it: a ping marks the check up.
+  amendment 21; the following bullet says what that proves). Nothing pings it: a ping marks the
+  check up.
 - **The ping URL's lookup.** The executor derives the check's `unique_key` from the pasted UUID,
   as Healthchecks does (the SHA-1 hex digest of the first 16 characters of the UUID without
   hyphens), and asks `GET /api/v3/checks/<unique_key>` with the read-only key. First it asks the
