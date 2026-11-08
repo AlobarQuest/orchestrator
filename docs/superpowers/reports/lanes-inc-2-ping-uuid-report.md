@@ -17,7 +17,7 @@ the PR head is the commit that adds this report on top of it. Not merged, not ma
     token. They also say that the helper pings nothing while the secret holds the inbox's empty
     marker.
   - Line 18: `SDS_DEADMAN_PING_URL_UUID: 97802aac-5a7f-45e8-8185-b4fc00cd318e`, a literal.
-- `.bws-secrets.toml`, lines 262-273 (end of file): a `[[secret]]` entry for `97802aac-…`,
+- `.bws-secrets.toml`, lines 262-274 (end of file): a `[[secret]]` entry for `97802aac-…`,
   `name = "execution-watch-ping-url"`, `project = "Rotation / Keepers"`,
   `lanes = ["execution-watch"]`. Its comment says what the secret holds, that only the lane's
   container reads it with the lane's own token (compose → `lane-run` →
@@ -152,9 +152,16 @@ What the code wants, field by field:
   "the keeper as its one consumer" agrees.
 - `provider_identity`: optional. `worker.py:732-747` adds "It is …" to the mint task only when
   it's a string. The runbook omits it; I omitted it too.
-- `created`, `disposition`: optional in infraops' schema (`cred-consumers.ts:57,62`). I omitted
-  both. `created` would only start the age clock (the token's 365-day maximum), and the token
-  doesn't exist yet.
+- `created`: optional in infraops' schema (`cred-consumers.ts:62`), but the registry's convention
+  wants it: "Dates are BWS creationDate" (`.cred-consumers.toml:20`), every existing row carries
+  one, and the canary dates its keeper's creation (`created = "2026-10-11"` beside its
+  `bws_uuid`). By that convention both rows take `created = "2026-11-08"`, the day the VM root
+  created both keepers. On the token row it starts the 365-day age clock, which counts until the
+  first `record-rotation` puts `lastRotated` in infraops' state (`rotationAnchor` prefers state).
+  On the ping-URL row it does nothing, since the class never ages. I left it out of the drafts;
+  HQ decides whether to add it.
+- `disposition`: optional (`cred-consumers.ts:57`); only `revoke-no-replacement` changes
+  behavior. I omitted it.
 
 How a row is marked due or not yet due. The runbook doesn't say, and ADR-0059 (~1094-1098) says
 "the token's row due for its issue and the ping URL's not yet due" without naming the field.
@@ -210,6 +217,11 @@ token's `store` unit completes by adding `rotate_requested` to it.
 
 ## Concerns
 
+- The `.bws-secrets.toml` comment on the new entry refers to the token keeper's
+  `.cred-consumers.toml` row, which lands in cut-over item 4. The comment says so.
+- Besides `deploy.md`, I searched ADR-0055, ADR-0059, and `docs/operations/` for
+  `SDS_DEADMAN_PING_URL_UUID` and "ping-URL secret". No hit claims that the compose doesn't name
+  the variable or that the secret doesn't exist, so no ADR line changed.
 - `scripts/sds-deadman.sh:40-41` says a lane whose compose doesn't name the variable "yet
   (`execution-watch` until its cut-over)" falls through to the name lookup. After this change
   that example is stale. The handoff rules out changing `sds-deadman.sh`, so I left it. It's a
