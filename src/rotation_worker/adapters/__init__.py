@@ -235,7 +235,7 @@ ADAPTERS: Final[dict[str, Adapter]] = {
     healthchecks_ping_url.NAME: Adapter(
         healthchecks_ping_url.PROVIDER,
         healthchecks_ping_url.PLAN,
-        lambda context: healthchecks_ping_url.HealthchecksPingUrlProvider(),
+        lambda context: healthchecks_ping_url.HealthchecksPingUrlProvider(context.healthchecks),
         capabilities=TYPES[healthchecks_ping_url.NAME].capabilities,
         check_row=healthchecks_ping_url.check_row,
     ),

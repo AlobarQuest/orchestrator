@@ -67,3 +67,50 @@ def test_the_verifier_reads_the_executors_notes() -> None:
     assert verdict(_note(6, 0, revoke_next=True)) is None
     assert verdict(_note(6, 4, revoke_next=False)) is None
     assert verdict(_note(6, 1, revoke_next=True)) is not None
+
+
+def test_a_ping_url_s_verify_new_is_decided_by_the_verifier_and_passes_the_evidence_scan() -> None:
+    """ADR-0055 amendment 21: the lookup beside its control decides the step, with no person,
+    and what the executor files for it is what the orchestrator stores."""
+    from orchestrator.kernel.secret_metadata import secret_metadata_path
+    from orchestrator.services.verifier.rotation_evidence import (
+        LONG_RUN,
+        MAX_TEXT,
+        RotationStepEvidence,
+    )
+    from tests.rotation_worker.test_lane_credentials import (
+        PING_DESTINATIONS,
+        PING_PLAN,
+        PING_URL,
+        HealthchecksStub,
+        Issue,
+        _ping,
+    )
+
+    issue = Issue(_ping(HealthchecksStub()), PING_DESTINATIONS, PING_URL)
+    issue.run(PING_PLAN)
+    (payload,) = [e.as_payload() for _, e in issue.recorded.filed if e.step == "verify_new"]
+    RotationStepEvidence.model_validate(payload)
+    assert secret_metadata_path({"payload": payload}, max_string=MAX_TEXT) is None
+    assert LONG_RUN.search(str(payload)) is None
+    criterion = (
+        "external: the verify_new step's rotation-step/1 evidence, filed by the rotation executor."
+    )
+    verdict = rotation_step_verdict(
+        "external_attestation", criterion, "store", ROTATION_STEP_EVIDENCE_TYPE, payload
+    )
+    assert verdict is None
+    # The same step with the control found stays with a person: the verifier reads the control.
+    found = {
+        **payload,
+        "probes": [
+            dict(p, outcome="live", http_status=200) if p["subject"] == "known_bad" else p
+            for p in payload["probes"]
+        ],
+    }
+    assert (
+        rotation_step_verdict(
+            "external_attestation", criterion, "store", ROTATION_STEP_EVIDENCE_TYPE, found
+        )
+        == "a probe has no refused known-bad control on the same target"
+    )

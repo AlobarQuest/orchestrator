@@ -37,7 +37,8 @@
   instance waits on a mint, and only after the provider accepts it beside a refused control,
   `same_identity` (same account, not scope) holds against the keeper, and no other SDS-rotated
   keeper of its type holds it; a lane token binds by its row's declared reach and a ping URL by
-  its shape instead (`inbox.BindsByItself`, ADR-0055 amendment 19), never by `same_identity`;
+  its shape and its check's read-only lookup instead (`inbox.BindsByItself`, ADR-0055 amendments
+  19 and 21), never by `same_identity`;
   it writes staging before emptying the inbox. The Keychain instance reads its inbox with its
   own narrow BWS identity, which the VM's root can't reach. Detail:
   `docs/operations/rotation-executor.md`, "A person's mint is taken from the inbox".
@@ -95,6 +96,10 @@
   empty marker (`contract.EMPTY`), which stands as its old value; `checks._check_issue_fact`
   reads that before the claim, and refuses a rotation plan on the marker. A lane token's variable
   is written at `distribute` with one `PATCH` by a Coolify client that can't restart
-  (`restarts=False`); a ping URL is never sent anything, and its `verify_new` is a shape check,
-  the one exception to decision 3's probe rule. Detail: `docs/operations/rotation-executor.md`,
+  (`restarts=False`); a ping URL is never sent anything: its `verify_new` checks its shape, then
+  probes by the read-only key's lookup of its check's `unique_key` beside a random UUID's, which
+  must answer 404 (amendment 21). `unique_key` hashes only the UUID's first half, so the lookup
+  can't tell a URL wrong in its second half; cut-over step 4's first scheduled ping is the only
+  proof of the full URL. Evidence holds only a 12-character `unique_key` prefix: the
+  orchestrator's scan refuses a 32-character run. Detail: `docs/operations/rotation-executor.md`,
   "Lane tokens and ping URLs".

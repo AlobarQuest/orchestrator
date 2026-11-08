@@ -41,6 +41,8 @@ configuration, refused before a claim rather than waited on forever.
 
 from __future__ import annotations
 
+import logging
+import re
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -62,8 +64,15 @@ from rotation_worker.registry import RegistryError
 from rotation_worker.secret_store import StoreError
 from rotation_worker.values import Fingerprint, Value
 
+LOG = logging.getLogger("rotation_worker")
 HEALTHCHECKS_URL: Final = "https://healthcheck.alobar.net"
 CHECKS: Final = "/api/v3/checks/"
+# A check's `unique_key`: what a read-only key reads a check by, never its UUID (Healthchecks
+# `v4.4`, `hc/api/urls.py` line 51 and its `SHA1Converter`). Kept lowercase, as `hexdigest` is.
+UNIQUE_KEY: Final = re.compile(r"[0-9a-f]{40}")
+# How much of a `unique_key` a log line or evidence names: enough for a person to find the check
+# among the project's, and short of the run of 32 the orchestrator's evidence scan refuses.
+KEY_PREFIX: Final = 12
 SKEW: Final = timedelta(minutes=2)
 # Long enough to hold a weekly reader's latest run after it has missed one.
 LOOKBACK: Final = timedelta(days=15)
@@ -185,6 +194,24 @@ class Healthchecks:
                 running.append(name)
         return running
 
+    def check_status(self, unique_key: str) -> int | None:
+        """The HTTP status of the read-only lookup of one check by its `unique_key`.
+
+        200 is a check in the key's project; 404 is none there (Healthchecks `v4.4`,
+        `hc/api/views.py`, `get_check_by_unique_key`). `None` is no answer, which no caller may
+        read as either: it is logged, and the probe it answers counts as indeterminate.
+        """
+        if UNIQUE_KEY.fullmatch(unique_key) is None:
+            raise ReadError("a check's unique_key is 40 lowercase hex characters")
+        try:
+            return self._connect().request("GET", CHECKS + unique_key).status_code
+        except TransportFailure as failure:
+            LOG.warning(
+                "healthchecks_unanswered",
+                extra={"check": unique_key[:KEY_PREFIX], "error_type": failure.error_type},
+            )
+            return None
+
     def _checks(self) -> list[dict[str, Any]]:
         # One listing per pass: every reader's check is in it.
         if self._listing is None:
@@ -213,11 +240,19 @@ class Healthchecks:
                 user_agent=USER_AGENT,
                 headers={"X-Api-Key": self._key().reveal()},
                 timeout=TIMEOUT_SECONDS,
-                permits=lambda method, path: (method, path) == ("GET", CHECKS),
+                permits=_permits,
                 refuse=lambda method, path: ReadError(f"may not {method} {path}"),
                 transport=self._transport,
             )
         return self._client
+
+
+def _permits(method: str, path: str) -> bool:
+    """The listing, and one check by its `unique_key`: both reads a read-only key may make."""
+    if method != "GET" or not path.startswith(CHECKS):
+        return False
+    rest = path.removeprefix(CHECKS)
+    return rest == "" or UNIQUE_KEY.fullmatch(rest) is not None
 
 
 class ConsumerReads:

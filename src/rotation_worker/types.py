@@ -23,8 +23,9 @@ class CredentialType:
     # The destination kind of the store its keepers live in: only the executor instance whose
     # store reads that kind takes its units (ADR-0055 amendment 12).
     store_kind: str = "bws-secret"
-    # Its new value is proved by its shape alone, because a probe would act (a ping marks a
-    # Healthchecks check up, ADR-0055 amendment 19 item 5). Its provider is `ShapeVerified`.
+    # Its new value is checked for its shape before a read-only lookup probes it, because the
+    # value itself is never sent (a ping marks a Healthchecks check up, ADR-0055 amendment 21).
+    # Its provider is `ShapeVerified`.
     verify_by_shape: bool = False
 
 

@@ -202,7 +202,8 @@ value to the waiting rotation only when all of the following hold:
 A lane token and a ping URL bind by what the value is instead of the third check, since there's no
 old value to compare with before the first issue, or one that answers after a leak's revoke: a lane
 token sees exactly the reach its registry row declares, and a ping URL has the self-hosted ping
-URL's shape. "Lane tokens and ping URLs" says how.
+URL's shape and names a check the read-only Healthchecks key finds. "Lane tokens and ping URLs"
+says how.
 
 A value that binds is written to the rotation's staging secret, and the inbox is set back to the
 word `empty`. A value that doesn't bind stays in the inbox and fails nothing. If the same value
@@ -395,8 +396,9 @@ expired, the node logged out and every write timed out before it connected (ADR-
    Coolify's tailnet address: the Coolify client sends its
    token only over TLS or to a tailnet address, and production Coolify has no TLS (ADR-0055
    amendment 9). `healthchecks_key_id` is the read-only key of the self-hosted Healthchecks at
-   `https://healthcheck.alobar.net`, in `Rotation / Healthchecks`, read only when a scheduled reader's check is (the following
-   "Scheduled readers" section). `github_app_id` and `github_app_key_id` name the rotation
+   `https://healthcheck.alobar.net`, in `Rotation / Healthchecks`, read only when a scheduled
+   reader's check is (the following "Scheduled readers" section) or a ping URL's check is looked
+   up ("Lane tokens and ping URLs"). `github_app_id` and `github_app_key_id` name the rotation
    GitHub App and its private key in `Rotation / Admin`; they come together, and the executor
    reads the key only when a step writes an Actions secret or a wait reads a report ("Actions
    secrets"). `inbox_secret_id` is where a person pastes a value they minted, read with the root
@@ -424,7 +426,7 @@ copy of the Healthchecks key, which the Keychain instance reads.
 |---|---|---|
 | The root: the `rotation-executor` BWS machine account's access token | `/etc/rotation-worker/root-token` in the VM, owner `rotation`, mode `0400` | The executor, to log in to BWS |
 | The executor's WORKER bearer | BWS secret `rotation-executor WORKER bearer` in `Rotation / Executor`; its hash in the orchestrator's `ORCHESTRATOR_M2M_CREDENTIALS` under key `rotation-executor-1`, agent `rotation-executor` | The executor, from BWS at each pass |
-| The read-only Healthchecks API key (self-hosted, `healthcheck.alobar.net`) | BWS secret `f07b1368-…` in `Rotation / Healthchecks`; its id in `config.toml` as `healthchecks_key_id` | The executor, from BWS, only while it reads a scheduled reader's check |
+| The read-only Healthchecks API key (self-hosted, `healthcheck.alobar.net`) | BWS secret `f07b1368-…` in `Rotation / Healthchecks`; its id in `config.toml` as `healthchecks_key_id` | The executor, from BWS, only while it reads a scheduled reader's check or looks up a ping URL's check |
 | The OpenRouter management key | BWS secret `openrouter management key` in `Rotation / Admin`; its id in `config.toml`'s `admin_secrets` | The executor, from BWS, only while an `openrouter` unit mints or revokes |
 | The rotation GitHub App's private key (`alobar-sds-rotation`, App id 5383095) | BWS secret `rotation github app private key` in `Rotation / Admin`; its id in `config.toml` as `github_app_key_id` | The executor, from BWS, only while it writes an Actions secret or reads a report |
 | The production Coolify token (`read`, `write`, `deploy`; not `read:sensitive`) | BWS secret `rotation-coolify-token` in `Rotation / Coolify`; its id in `admin_secrets` as `orchestrator` and `change-manager` | The executor, from BWS, only while an `orchestrator` or `change-manager` unit hosts or retires |
@@ -1305,10 +1307,23 @@ keeper as its one consumer.
 
 - **Bind.** A lane token binds when a fresh login accepts it beside a refused known-bad token,
   what it sees (projects and secrets, listed by that login) is exactly the row's declared reach,
-  and no other lane token's keeper holds it. A ping URL binds when its keeper holds the marker and
-  the value is exactly `https://healthcheck.alobar.net/ping/` followed by one lowercase UUID.
-  Nothing pings it: a ping marks the check up.
-- **`store`, an issue.** `verify_new` logs in with the token, or checks the ping URL's shape;
+  and no other lane token's keeper holds it. A ping URL binds when its keeper holds the marker,
+  the value is exactly `https://healthcheck.alobar.net/ping/` followed by one lowercase UUID, no
+  other ping URL's keeper holds it, and the read-only key's lookup finds its check (ADR-0055
+  amendment 21; the following bullet says what that proves). Nothing pings it: a ping marks the check up.
+- **The ping URL's lookup.** The executor derives the check's `unique_key` from the pasted UUID,
+  as Healthchecks does (the SHA-1 hex digest of the first 16 characters of the UUID without
+  hyphens), and asks `GET /api/v3/checks/<unique_key>` with the read-only key. First it asks the
+  same for a random UUID, the known-bad control. It passes only on 404 for the control and 200 for
+  the URL's check. A 404 for the URL's check is a URL wrong in its UUID's first half, or a check
+  in a project the key doesn't read; a control that isn't 404, any other status, or no answer
+  fails too. The lookup proves that the check exists in the key's project and that the UUID
+  matches it in its first half, the part `unique_key` hashes: a URL wrong only in its last 16 hex
+  characters passes. Cut-over step 4, the container's first scheduled ping landing on that check,
+  is the only proof of the full URL. The evidence and logs name the check by the first 12
+  characters of its `unique_key`, never the URL or UUID.
+- **`store`, an issue.** `verify_new` logs in with the token, or runs the ping URL's shape check
+  and then its lookup;
   `store` writes the keeper after reading the marker there; for a lane token `distribute` sends
   one `PATCH` of the lane's variable and never restarts the lane; `verify_consumers` reads the
   keeper back and, for the variable, counts the `PATCH` answering 2xx, since the executor's
