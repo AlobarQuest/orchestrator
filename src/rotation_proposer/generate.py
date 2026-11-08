@@ -95,7 +95,7 @@ _ISSUE: Final[dict[StepKind, str]] = {
         "Every consumer the registry names holds the new value, and the staging secret is deleted."
     ),
 }
-# A type proved by its shape, never a probe (amendment 19 items 5 and 3, HQ D-30): a ping URL.
+# A type checked by its shape, then probed by a read-only lookup (amendment 21, D-31): a ping URL.
 _BY_SHAPE: Final = (
     "The new value is exactly the self-hosted instance's ping base followed by one UUID, and no "
     "other keeper of its type holds it; nothing pings it, because a ping marks the check up."

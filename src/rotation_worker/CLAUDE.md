@@ -98,6 +98,8 @@
   is written at `distribute` with one `PATCH` by a Coolify client that can't restart
   (`restarts=False`); a ping URL is never sent anything: its `verify_new` checks its shape, then
   probes by the read-only key's lookup of its check's `unique_key` beside a random UUID's, which
-  must answer 404 (amendment 21). Evidence holds only a 12-character `unique_key` prefix: the
+  must answer 404 (amendment 21). `unique_key` hashes only the UUID's first half, so the lookup
+  can't tell a URL wrong in its second half; cut-over step 4's first scheduled ping is the only
+  proof of the full URL. Evidence holds only a 12-character `unique_key` prefix: the
   orchestrator's scan refuses a 32-character run. Detail: `docs/operations/rotation-executor.md`,
   "Lane tokens and ping URLs".

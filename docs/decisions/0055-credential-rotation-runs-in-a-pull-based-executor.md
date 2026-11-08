@@ -28,8 +28,8 @@
     inbox).
   - 2026-11-07, amendment 20 (a revision re-renders a generated package whose derived plan
     changed).
-  - 2026-11-07, amendment 21 (a ping URL is proved by a read-only lookup of its check beside a
-    random one's).
+  - 2026-11-07, amendment 21 (a read-only lookup finds a ping URL's check, beside a random
+    one's; cut-over step 4 still proves the full URL).
 - **Supersedes:** the parts of ADR-0054 named in "What this changes in ADR-0054".
 - **Relates to:** ADR-0054 (the SDS owns credential rotation), ADR-0052 (superseding an unworked
   decomposition), ADR-0039 (out-of-process producers), ADR-0011 (known-good patterns)
@@ -2306,7 +2306,8 @@ infraops-mcp-server `main` at `9cdaab1f`.
    step 4 is the proof. (Amendment 21 replaces the bind and the `verify_new` of this item: a ping
    URL binds by its shape and by the read-only key finding its check by `unique_key` beside a
    random UUID's that it refuses, still sending no ping, under Devon's D-31, which supersedes D-28
-   and D-30.)
+   and D-30. The lookup covers only the UUID's first half, so cut-over step 4 still proves the
+   full URL.)
 
    Cut-over step 4 proves the URL, not the `--add`. The `--add` runs the lane with
    `LANE_SCHEDULE_ENABLED=false`, and the launcher's `--dry-run` after it pings nothing (ADR-0059,
@@ -2460,7 +2461,8 @@ Each item is settled in ADR-0059 increment 2, before its code merges.
   the URL: the container's first scheduled pass pings the check, and step 4 verifies that the
   check's last ping came from the container (ADR-0059, "Cut-over for one lane", steps 3 and 4). A
   wrong URL shows as the lane's check going overdue. (Amendment 21 settles it: a read-only key
-  reads a check by its `unique_key`, which the executor derives from the pasted UUID.)
+  reads a check by its `unique_key`, which the executor derives from the pasted UUID. That key
+  covers only the UUID's first half, so cut-over step 4 still proves the full URL.)
 - **The token's row at create (increment 2).** HQ's create of the first lane's resource confirms
   the empty `<LANE>_BWS_ACCESS_TOKEN` row by the executor's `PATCH` answering 2xx; a 404 means
   another actor must create the row, and the issue unit fails with `CoolifyRefused` rather than
@@ -2559,7 +2561,7 @@ token's first reissue. **Devon's answer (2026-11-07T21:31 UTC, HQ D-32): A.**
 - **Unchanged.** The executor, the decomposer, `select_plan`, every existing generated package's
   bytes, and the ping URL's `verify_new` criterion and adapter.
 
-## Amendment 21 — A ping URL is proved by a read-only lookup of its check (2026-11-07)
+## Amendment 21 — A read-only lookup finds a ping URL's check (2026-11-07)
 
 **Status: Accepted on merge.** It's accepted when the pull request that carries it merges after a
 clean Opus whole-branch review, the bar HQ set for this change.
@@ -2584,7 +2586,10 @@ Healthchecks `v4.4`, the self-hosted instance's image tag, reads at that tag as 
   characters of the check UUID's hex form, which has no hyphens.
 
 So the executor can derive a pasted URL's `unique_key` itself, and ask the read-only key whether
-that check exists, without sending anything to the URL.
+that check exists, without sending anything to the URL. The lookup proves less than the whole
+URL: `unique_key` hashes only the first half of the UUID, so a URL whose last 16 hex characters
+are wrong has the same `unique_key` and the same 200. It proves that the check exists in the
+read-only key's project and that the URL's UUID matches it in its first half.
 
 HQ put this to Devon as D-31 on 2026-11-07. **Devon's answer (2026-11-07, HQ D-31): C**, the
 read-only lookup beside a random UUID's lookup as the known-bad control, with the verifier
@@ -2601,7 +2606,8 @@ deciding the step. D-31 supersedes D-28 and D-30.
 2. **A ping URL's `verify_new` is that lookup beside that control, and R14 holds with no
    exception.** The contract checks the shape first, so nothing malformed is looked up, then runs
    decision 3's probe: the control, then the subject, on one target. Lookup 200 with control 404
-   passes. A lookup answering 404 (a wrong URL, or a check in another project) fails the step. A
+   passes. A lookup answering 404 (a URL wrong in its UUID's first half, or a check in another
+   project) fails the step; a URL wrong only in its second half answers 200 and passes. A
    control answering anything but 404 fails it, because the probe then can't tell a good URL from
    a bad one. Any other status, or no answer, fails it. No ping is sent: the probe reaches
    Healthchecks' Management API, never the URL.
@@ -2635,7 +2641,8 @@ deciding the step. D-31 supersedes D-28 and D-30.
 - **Amendment 19 items 3 and 5 are narrowed**, not withdrawn: item 3's exception to R14 is gone,
   and item 5's bind and `verify_new` are this amendment's. Item 5's other rules stand: the marker,
   the shape and no other keeper holding the URL. Cut-over step 4 still proves that the lane's
-  container pings the check; it no longer stands in for `verify_new`.
+  container pings the check, and it's still the only proof of the full URL: the lookup reaches
+  only the UUID's first half.
 - **The generated issue package's wording is unchanged.** Its `verify_new` criterion states the
   shape, that no other keeper holds the URL and that nothing pings it, all still true; the lookup
   is in the evidence the verifier reads. Its bytes are pinned with intent-packages

@@ -1310,14 +1310,18 @@ keeper as its one consumer.
   and no other lane token's keeper holds it. A ping URL binds when its keeper holds the marker,
   the value is exactly `https://healthcheck.alobar.net/ping/` followed by one lowercase UUID, no
   other ping URL's keeper holds it, and the read-only key's lookup finds its check (ADR-0055
-  amendment 21). Nothing pings it: a ping marks the check up.
+  amendment 21; the following bullet says what that proves). Nothing pings it: a ping marks the check up.
 - **The ping URL's lookup.** The executor derives the check's `unique_key` from the pasted UUID,
   as Healthchecks does (the SHA-1 hex digest of the first 16 characters of the UUID without
   hyphens), and asks `GET /api/v3/checks/<unique_key>` with the read-only key. First it asks the
   same for a random UUID, the known-bad control. It passes only on 404 for the control and 200 for
-  the URL's check. A 404 for the URL's check is a wrong URL, or a check in a project the key
-  doesn't read; a control that isn't 404, any other status, or no answer fails too. The evidence
-  and logs name the check by the first 12 characters of its `unique_key`, never the URL or UUID.
+  the URL's check. A 404 for the URL's check is a URL wrong in its UUID's first half, or a check
+  in a project the key doesn't read; a control that isn't 404, any other status, or no answer
+  fails too. The lookup proves that the check exists in the key's project and that the UUID
+  matches it in its first half, the part `unique_key` hashes: a URL wrong only in its last 16 hex
+  characters passes. Cut-over step 4, the container's first scheduled ping landing on that check,
+  is the only proof of the full URL. The evidence and logs name the check by the first 12
+  characters of its `unique_key`, never the URL or UUID.
 - **`store`, an issue.** `verify_new` logs in with the token, or runs the ping URL's shape check
   and then its lookup;
   `store` writes the keeper after reading the marker there; for a lane token `distribute` sends

@@ -13,6 +13,10 @@ destination: nothing else holds a copy.
   the check by that UUID's `unique_key` (200) while a random UUID's `unique_key` finds none
   (404), the known-bad control. Nothing is ever sent to the ping URL, because a ping marks the
   check up. A check outside the read-only key's project answers 404, so the bind refuses it.
+  The lookup proves only that the check exists in that project and that the UUID matches it in
+  its first half, the part `unique_key` hashes: a URL wrong only in its last 16 hex characters
+  passes. Cut-over step 4 (the container's first scheduled ping landing on that check) is the
+  only proof of the full URL.
 * **The UUID is the secret.** No message names the value or any part of it. A log line or
   evidence names a check only by its `unique_key`'s first characters, which Healthchecks shows a
   read-only key in place of the UUID.
