@@ -1821,9 +1821,9 @@ behavior for it.
 Each item is verified in increment 2, before its code merges. The first five are the sub-items of
 amendment 19's "Open before building" item for the `--token` mode, the sixth is its "A pass on a
 dead token and the quiet slot" item, and the last two come from the reviews of PR #626.
-Amendment 19's other "Open before building" items (the ping URL's check read, the token's row at
-create, what `_REACH` lists for a lane account, and what makes a first issue due) are increment
-2's too.
+Amendment 19's other "Open before building" items (the ping URL's check read, since answered by
+ADR-0055 amendment 21 under D-31 C, the token's row at create, what `_REACH` lists for a lane
+account, and what makes a first issue due) are increment 2's too.
 
 - **The mode's own `change_key` (increment 2)**, beside `tag:`, `add:` and `schedule:`.
 - **Its `lanes-finish --restored` form (increment 2)**, which closes a failed run with no inverse
