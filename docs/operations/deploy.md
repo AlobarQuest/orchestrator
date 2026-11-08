@@ -305,10 +305,10 @@ the last step of "Rollback for one lane", drops the lane from `prepare`'s check;
 remain.
 
 `execution-watch`'s tracked files (`lanes/execution-watch/compose.yaml` and `crontab`) don't
-register it: its token entry lands with its cut-over. Its compose doesn't name
-`SDS_DEADMAN_PING_URL_UUID` until then either, because the ping-URL secret is created in the
-cut-over; without it the container's dead-man helper finds no ping URL and pings nothing
-(`scripts/sds-deadman.sh`). The secrets a lane reads are listed in `.bws-secrets.toml` by each
+register it: its token entry lands with its cut-over. Its compose names
+`SDS_DEADMAN_PING_URL_UUID`, the BWS secret id of the lane's ping-URL secret; until the executor
+writes the URL there, that secret holds the inbox's empty marker and the container's dead-man
+helper pings nothing (`scripts/sds-deadman.sh`). The secrets a lane reads are listed in `.bws-secrets.toml` by each
 secret's `lanes` field, which `lane_secrets` reads for a `--token` run and the cut-over's identity
 proof uses.
 

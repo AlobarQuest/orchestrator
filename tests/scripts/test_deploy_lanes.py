@@ -1111,8 +1111,8 @@ def test_the_execution_watch_compose_meets_the_add_refusals() -> None:
     assert environment["EXECUTION_WATCH_STATE_DIR"] == "/var/lib/sds/execution-watch"
     assert deploy._state_volume(service, "execution-watch") == "sds-lanes-execution-watch-state"
     assert service["restart"] == "unless-stopped"
-    # Every variable is a fixed path, a `${...}` reference, or a BWS UUID, which is no secret
-    # (`SDS_DEADMAN_PING_URL_UUID`, which lands with the cut-over): the compose holds no value.
+    # Every variable is a fixed path, a `${...}` reference, or a BWS secret id, which is no secret
+    # (`SDS_DEADMAN_PING_URL_UUID`): the compose holds no value.
     for name, value in environment.items():
         named = value.startswith(("${", "/")) or deploy.BWS_UUID.match(value)
         assert named, (name, value)
@@ -1133,10 +1133,29 @@ def test_the_execution_watch_crontab_runs_the_scheduled_pass_every_fifteen_minut
 
 def test_the_repositorys_manifest_lists_execution_watchs_secrets() -> None:
     manifest = (ROOT / ".bws-secrets.toml").read_text()
+    ping_url_secret = "97802aac-5a7f-45e8-8185-b4fc00cd318e"
     assert deploy.lane_secrets(manifest, "execution-watch") == [
         "f793576f-e9aa-4f9d-8089-b4a000b9e2d5",
         "b415d03b-f92d-46b1-8a9d-b4f10103df49",
+        ping_url_secret,
     ]
+    # The launcher names each secret it reads, except the ping-URL secret, whose id reaches it
+    # from the compose through `lane-run`.
     launcher = (ROOT / "scripts/run-execution-watch.sh").read_text()
     for uuid in deploy.lane_secrets(manifest, "execution-watch"):
-        assert uuid in launcher
+        assert uuid in launcher or uuid == ping_url_secret, uuid
+
+
+def test_every_lanes_ping_url_secret_is_listed_for_that_lane() -> None:
+    """A lane's `--token` proof reads what `.bws-secrets.toml` lists for it, so a ping-URL secret
+    its compose names but the manifest doesn't list would go unproved until its first ping."""
+    manifest = (ROOT / ".bws-secrets.toml").read_text()
+    named = {}
+    for path in sorted((ROOT / "lanes").glob("*/compose.yaml")):
+        lane = path.parent.name
+        environment = deploy._environment(deploy.lane_service(path.read_text(), lane))
+        if "SDS_DEADMAN_PING_URL_UUID" in environment:
+            named[lane] = environment["SDS_DEADMAN_PING_URL_UUID"]
+    assert named, "no lane compose names a ping-URL secret"
+    for lane, uuid in named.items():
+        assert uuid in deploy.lane_secrets(manifest, lane), lane
