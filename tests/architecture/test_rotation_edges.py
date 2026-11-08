@@ -311,13 +311,16 @@ def _coolify(kind: str, resource: Literal["application", "service"]) -> Reach:
     )
 
 
+# One check by its `unique_key`: a placeholder of the 40-lowercase-hex shape, not a real key.
+_CHECK_PATH = "/api/v3/checks/" + "a" * 40
+
 PLATFORM_EDGES: dict[str, Reach] = {
     "coolify_application": _coolify("applications", "application"),
     "coolify_service": _coolify("services", "service"),
     "healthchecks": Reach(
         tuple(built_clients(readers, lambda: readers.Healthchecks(lambda: _SAMPLE)._connect())),
         frozenset({"https://healthcheck.alobar.net"}),
-        frozenset({("GET", "/api/v3/checks/")}),
+        frozenset({("GET", "/api/v3/checks/"), ("GET", _CHECK_PATH)}),
     ),
     # The signed log URL GitHub redirects to: its path can't be known, so the host is the bound
     # (`test_the_log_host_is_the_bound_on_the_log_reach`) and the client carries no credential.
@@ -446,7 +449,8 @@ PROVIDER_EDGES: dict[str, Reach] = {
     # No client of its own: its login is the machine-token provider's child process, and its one
     # write is the `coolify_service` row's PATCH, from a client that can't restart.
     "bws-lane-token": Reach((), frozenset(), frozenset()),
-    # No client: a ping URL is never sent anything (ADR-0055 amendment 19 item 5).
+    # No client of its own: its lookup is the `healthchecks` platform row's client (ADR-0055
+    # amendment 21).
     "healthchecks-ping-url": Reach((), frozenset(), frozenset()),
     "postgres-role": Reach(
         tuple(
@@ -708,6 +712,7 @@ ROUTES = frozenset(
         "/api/v1/services/u1/envs",
         "/api/v1/services/u1/restart",
         "/api/v3/checks/",
+        _CHECK_PATH,
         "/health",
         "/chat/completions",
         "/key",
@@ -756,6 +761,11 @@ PROBES = BRIDGE_PROBES | {
     "/api/v1/services/u1/stop",
     "/api/v1/deploy",
     "/api/v3/checks/x/pause",
+    "/api/v3/checks/" + "a" * 39,
+    "/api/v3/checks/" + "a" * 41,
+    "/api/v3/checks/" + "A" * 40,
+    "/api/v3/checks/" + "a" * 39 + "g",
+    f"{_CHECK_PATH}/pause",
     "/api/v3/pings/",
     "/health/x",
 }

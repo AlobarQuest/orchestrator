@@ -105,7 +105,10 @@ class HealthchecksPingUrlProvider:
             return f"the lookup of a random UUID's check answered {control}, not {NOT_FOUND}"
         status = self.probe(new)
         if status == NOT_FOUND:
-            return "the read-only key finds no such check: a wrong URL or another project's check"
+            return (
+                "the read-only key finds no such check: a URL wrong in its UUID's first half, "
+                "or another project's check"
+            )
         if status is None:
             return "Healthchecks gave no answer to the lookup, so it is asked again next pass"
         if status != LIVE_STATUS:
