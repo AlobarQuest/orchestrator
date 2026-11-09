@@ -5,7 +5,7 @@ Outcome: done
 - Worker: W-63
 - Branch: `hq/lanes-inc-3-landing-ledger-rows`, based on `55579cb1`.
 - PR: #644, open and marked ready, not merged.
-- Code head: `84e750ff`. This report is committed after it, so the PR head moves by one commit.
+- Code head: `f2f2d43d` (the report and all code are in this commit or earlier).
 
 ## Concerns, most urgent first
 
@@ -225,7 +225,7 @@ working copy after activation, as the handoff intends.
 ## Tests and checks run
 
 - **`make check`** with `TEST_DATABASE_URL` on `orchestrator_test_hq_w_63`, on the clean
-  committed tree at `84e750ff`: ruff check and format are clean (1036 files), pyright reports
+  committed tree at `f2f2d43d` (re-run after the last test edit): ruff check and format are clean (1036 files), pyright reports
   0 errors, and pytest reports **14207 passed, 1 skipped**, 11 warnings, in 320s, exit 0.
 - **Targeted run** before committing: 112 passed (the new test, the execution-watch rows,
   `test_deploy_lanes.py`, and `test_unit_verifier_launcher.py`).
