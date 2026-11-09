@@ -725,6 +725,55 @@ rotate_requested = "2026-11-09"
   uuid = "97802aac-5a7f-45e8-8185-b4fc00cd318e"
   note = "the keeper, in Rotation / Keepers, and the one copy; the lane reads it with its own token"
 
+# ── The landing-ledger lane's token and ping URL (ADR-0059 increment 3) ──────────
+# ADR-0055 amendment 19, item 8: the lane's two rows, both handed to the SDS. The token's row is due
+# for its first issue by `rotate_requested`. The ping URL's row is not yet due: a later change dates
+# it once the token's `store` unit completes, so the two issue units never wait on a mint at once.
+# The VM root's `create-keeper` made both keepers in Rotation / Keepers, each holding the inbox's
+# empty marker.
+# Neither row carries `created`: infraops reads it as the rotation anchor and serves it as
+# `last_rotated`, so the proposer would take the row as already issued and skip its first-issue
+# path. The first `record-rotation` sets the anchor.
+[[credential]]
+id = "landing-ledger-bws-token"
+class = "bws-lane-token"
+provider = "bws-lane-token"
+bws_uuid = "d7813bd9-0d9d-4781-ae86-b4fd017539ff"
+rotated_by_sds = true
+rotate_requested = "2026-11-09"
+# What the lane's account sees, exactly: .bws-secrets.toml's landing-ledger secrets
+# (orchestrator-observer, lanes-read-app-private-key) and the ping URL's keeper.
+reach_secrets = ["f793576f-e9aa-4f9d-8089-b4a000b9e2d5", "314a966c-5654-4e3c-8358-b4fd01268775", "ebabdd63-2eff-4b8e-99b7-b4fd01754eae"]
+reach_projects = []
+
+  [[credential.consumer]]
+  kind = "bws-secret"
+  uuid = "d7813bd9-0d9d-4781-ae86-b4fd017539ff"
+  note = "the keeper, in Rotation / Keepers; only the executor reads it"
+
+  [[credential.consumer]]
+  kind = "coolify-env"
+  instance = "prod"
+  resource_type = "service"
+  uuid = "gs1z8orebdnq9ug574sia6fs"
+  key = "LANDING_LEDGER_BWS_ACCESS_TOKEN"
+  redeploy = false
+  note = "the sds-lane-landing-ledger service's variable; the lane phases redeploy it, never the executor"
+
+# No `created`, for the reason the block above gives, and no `rotate_requested` until the token's
+# `store` unit completes.
+[[credential]]
+id = "landing-ledger-ping-url"
+class = "healthchecks-ping-url"
+provider = "healthchecks-ping-url"
+bws_uuid = "ebabdd63-2eff-4b8e-99b7-b4fd01754eae"
+rotated_by_sds = true
+
+  [[credential.consumer]]
+  kind = "bws-secret"
+  uuid = "ebabdd63-2eff-4b8e-99b7-b4fd01754eae"
+  note = "the keeper, in Rotation / Keepers, and the one copy; the lane reads it with its own token"
+
 # ── The two lane GitHub Apps' private keys (ADR-0059 increment 3) ────────────────
 # Devon created both Apps on 2026-11-09 (HQ gate G-17) and stored each key, base64 of the PEM, in
 # BWS project `SDS / Lane Apps`. `estate_clients/github_app_mint.py` (`sds-github-mint`) reads that
@@ -735,8 +784,9 @@ rotate_requested = "2026-11-09"
 # settings pages in one sitting. `created` is the age anchor: at 365 days (infraops CLASS_POLICY)
 # the 03:00 scan posts `cred.rotation-age` with the manual checklist, and the rotation proposer
 # reports the row `legacy` and proposes no package.
-# No machine account holds a grant on either keeper yet, so each row lists its keeper alone; each
-# lane's runtime-fetch row lands in that lane's move PR.
+# Each lane's runtime-fetch row lands in that lane's move PR. The landing-ledger lane's account
+# holds a read grant on the read App's keeper (HQ gate G-18), so that row lists the lane's reader;
+# no machine account holds a grant on the push App's keeper yet, so its row lists the keeper alone.
 [[credential]]
 id = "lanes-read-app-private-key"
 class = "github-app-private-key"
@@ -750,7 +800,14 @@ rotation_preconditions = ["rotate it with lanes-push-app-private-key, in one sit
   [[credential.consumer]]
   kind = "bws-secret"
   uuid = "314a966c-5654-4e3c-8358-b4fd01268775"
-  note = "the keeper, in SDS / Lane Apps; base64 of the PEM; no reader holds a grant yet"
+  note = "the keeper, in SDS / Lane Apps; base64 of the PEM"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
+  ref = "scripts/run-landing-ledger.sh"
+  healthchecks_check = "sds-landing-ledger"
+  note = "read in the sds-lane-landing-ledger container with the lane's own token, each pass, and piped straight into sds-github-mint; pings sds-landing-ledger"
 
 [[credential]]
 id = "lanes-push-app-private-key"

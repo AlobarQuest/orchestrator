@@ -808,11 +808,11 @@ def test_the_matcher_refuses_an_unknown_lane_or_two_entries() -> None:
         deploy.lanes_in_registry("version = 1\n" + WATCH_TOKEN_ENTRY * 2)
 
 
-def test_the_repositorys_registry_registers_the_execution_watch_lane() -> None:
-    """Increment 2 adds the first lane token entry (ADR-0059). A registered lane holds no release
-    until its `--add` passes."""
+def test_the_repositorys_registry_registers_the_two_moved_lanes() -> None:
+    """Increment 2 adds the first lane token entry and increment 3 the landing ledger's (ADR-0059).
+    A registered lane holds no release until its `--add` passes."""
     text = (ROOT / ".cred-consumers.toml").read_text()
-    assert deploy.lanes_in_registry(text) == {"execution-watch"}
+    assert deploy.lanes_in_registry(text) == {"execution-watch", "landing-ledger"}
 
 
 # ---- the tables, held to their sources ------------------------------------------------------
