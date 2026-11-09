@@ -1,8 +1,8 @@
 """The repository's execution-watch registry rows, read by the code that acts on them.
 
-ADR-0055 amendment 19 item 8 step 2 and ADR-0059 increment 2: the lane token's row is due for its
-issue, and the ping URL's row isn't yet due. The rows are read here as the executor reads them, at
-`main` through `RepoMirror`, from this repository's own `.cred-consumers.toml`.
+ADR-0055 amendment 19 item 8 and ADR-0059 increment 2: both rows are due for their first issue.
+The rows are read here as the executor reads them, at `main` through `RepoMirror`, from this
+repository's own `.cred-consumers.toml`.
 """
 
 from __future__ import annotations
@@ -68,17 +68,16 @@ def test_the_ping_url_row_names_only_its_keeper(rows: dict[str, RegistryEntry]) 
     assert entry.credential["bws_uuid"] in _lane_secrets()
 
 
-def test_only_the_token_row_is_due_and_neither_has_an_age_anchor(
-    rows: dict[str, RegistryEntry],
+@pytest.mark.parametrize("credential_id", [TOKEN, PING_URL])
+def test_each_row_is_due_and_has_no_age_anchor(
+    rows: dict[str, RegistryEntry], credential_id: str
 ) -> None:
     """infraops serves `created` as `last_rotated`, which would make the proposer skip a first
     issue; `rotate_requested` is what makes a row due."""
-    token, ping_url = rows[TOKEN].credential, rows[PING_URL].credential
-    assert "rotate_requested" in token
-    assert "rotate_requested" not in ping_url
-    for credential in (token, ping_url):
-        assert "created" not in credential
-        assert "last_rotated" not in credential
+    credential = rows[credential_id].credential
+    assert "rotate_requested" in credential
+    assert "created" not in credential
+    assert "last_rotated" not in credential
 
 
 @pytest.mark.parametrize("credential_id", [TOKEN, PING_URL])
