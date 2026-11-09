@@ -21,9 +21,10 @@ Both go through `mint`, so one mint and one echo check exist.
   request. The token leaves only as the return value, and the console script prints it alone.
 
 `sds-github-mint` is the console script. It reads the key on stdin (never argv, never an
-environment variable), prints only the token on stdout, and writes `FATAL: <cause>` on stderr for
-every failure. It accepts only `read` levels unless `--allow-write` is given, so a read lane's
-launcher can't ask for write by a typo; `mint` itself accepts the levels its caller passes.
+environment variable) and prints only the token on stdout. Once its arguments parse, every failure
+writes `FATAL: <cause>` on stderr and exits 1; a usage error is argparse's and exits 2. It accepts
+only `read` levels unless `--allow-write` is given, so a read lane's launcher can't ask for write
+by a typo; `mint` itself accepts the levels its caller passes.
 """
 
 from __future__ import annotations
@@ -73,15 +74,16 @@ def mint(
     *,
     transport: httpx.BaseTransport | None = None,
     clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    user_agent: str = USER_AGENT,
 ) -> str:
     """An installation token for exactly `repositories` (`owner/name`) with exactly `permissions`.
 
     Raises `MintRefused` for a request or answer outside that, and `MintUnavailable` when GitHub
-    couldn't be asked.
+    couldn't be asked. `user_agent` names the caller, so GitHub's logs tell the callers apart.
     """
     wanted = _check_request(app_id, repositories, permissions)
     label = ", ".join(repositories)
-    client = _client(_jwt(app_id, private_key_pem, clock), wanted, transport)
+    client = _client(_jwt(app_id, private_key_pem, clock), wanted, transport, user_agent)
     try:
         installations = {_installation(client, repository) for repository in wanted.values()}
         if len(installations) != 1:
@@ -104,13 +106,23 @@ def mint(
     if minted.get("permissions") != dict(permissions):
         raise MintRefused(f"the token for {label} was minted with other permissions")
     # GitHub resolves a repository's name in any case and answers with its own spelling.
-    echoed = [str(r.get("full_name")).casefold() for r in minted.get("repositories") or []]
-    if len(echoed) != len(wanted) or set(echoed) != set(wanted):
+    echoed = _echoed_repositories(minted.get("repositories"))
+    if echoed is None or len(echoed) != len(wanted) or set(echoed) != set(wanted):
         raise MintRefused(f"the token for {label} reaches other repositories")
     token = minted.get("token")
     if not isinstance(token, str) or not token:
         raise MintRefused(f"the mint for {label} returned no token")
     return token
+
+
+def _echoed_repositories(listed: object) -> list[str] | None:
+    """The casefolded `full_name` of each repository the answer lists, or None if it's malformed."""
+    if not isinstance(listed, list):
+        return None
+    names = [r.get("full_name") if isinstance(r, dict) else None for r in listed]
+    if not all(isinstance(name, str) for name in names):
+        return None
+    return [str(name).casefold() for name in names]
 
 
 def _check_request(
@@ -123,6 +135,10 @@ def _check_request(
     if not permissions:
         # GitHub grants every permission the App holds when none is named.
         raise MintRefused("a mint names at least one permission")
+    if "metadata" not in permissions:
+        # GitHub grants metadata=read with every installation token, so a request without it could
+        # never match the answer's permissions; name it rather than fail on the echo.
+        raise MintRefused("a mint names metadata=read, which GitHub grants with every token")
     for name, level in permissions.items():
         if not PERMISSION_NAME.fullmatch(name) or not isinstance(level, str) or not level:
             raise MintRefused(f"{name!r} isn't a permission name and level")
@@ -175,13 +191,16 @@ def _jwt(app_id: str, private_key_pem: str, clock: Callable[[], datetime]) -> st
 
 
 def _client(
-    assertion: str, wanted: Mapping[str, str], transport: httpx.BaseTransport | None
+    assertion: str,
+    wanted: Mapping[str, str],
+    transport: httpx.BaseTransport | None,
+    user_agent: str = USER_AGENT,
 ) -> ConfinedClient:
     lookups = {("GET", f"/repos/{repository}/installation") for repository in wanted.values()}
     try:
         return ConfinedClient(
             base_url=API,
-            user_agent=USER_AGENT,
+            user_agent=user_agent,
             headers={**HEADERS, "Authorization": f"Bearer {assertion}"},
             timeout=TIMEOUT_SECONDS,
             permits=lambda m, p: (
@@ -295,7 +314,7 @@ def run(
                     + ("" if arguments.allow_write else "; only read levels without --allow-write")
                 )
             permissions[name] = level
-        pem = decode_stored_key(stdin.read())
+        pem = decode_stored_key(_read_key(stdin))
         token = mint(arguments.app_id, pem, arguments.repository, permissions, transport=transport)
     except (MintRefused, MintUnavailable) as error:
         print(f"FATAL: {error}", file=stderr)
@@ -303,6 +322,13 @@ def run(
     stdout.write(token)
     stdout.flush()
     return 0
+
+
+def _read_key(stdin: TextIO) -> str:
+    try:
+        return stdin.read()
+    except (UnicodeDecodeError, OSError) as error:
+        raise MintRefused(f"stdin couldn't be read as text: {type(error).__name__}") from None
 
 
 def main(argv: Sequence[str] | None = None) -> int:

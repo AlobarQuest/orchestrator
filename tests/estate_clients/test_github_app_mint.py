@@ -54,10 +54,13 @@ class GitHub:
         self.echoed: list[str] | None = None
         self.token = TOKEN
         self.assertions: list[str] = []
+        self.raw_repositories: object = None
+        self.agents: list[str] = []
 
     def api(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
         path = request.url.path
+        self.agents.append(request.headers["User-Agent"])
         assertion = request.headers["Authorization"].removeprefix("Bearer ")
         self.assertions.append(assertion)
         claims = jwt.decode(
@@ -76,15 +79,13 @@ class GitHub:
         if path == f"/app/installations/{INSTALLATION}/access_tokens":
             body = json.loads(request.content)
             names = self.echoed or [f"{OWNER}/{name}" for name in body["repositories"]]
+            granted = self.granted if self.granted is not None else body["permissions"]
+            listed = self.raw_repositories
+            if listed is None:
+                listed = [{"full_name": n} for n in names]
             return httpx.Response(
                 201,
-                json={
-                    "token": self.token,
-                    "permissions": self.granted
-                    if self.granted is not None
-                    else body["permissions"],
-                    "repositories": [{"full_name": n} for n in names],
-                },
+                json={"token": self.token, "permissions": granted, "repositories": listed},
             )
         return httpx.Response(418)
 
@@ -376,3 +377,44 @@ def test_the_console_script_is_main_and_main_reads_stdin(
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "the stored form is base64" in captured.err
+
+
+@pytest.mark.parametrize(
+    "listed",
+    [
+        pytest.param("AlobarQuest/brain", id="a-string"),
+        pytest.param(["AlobarQuest/brain", "AlobarQuest/orchestrator"], id="names-not-objects"),
+        pytest.param([{"full_name": 7}, {"full_name": REPOS[1]}], id="a-name-not-a-string"),
+    ],
+)
+def test_a_malformed_repository_echo_is_refused_not_a_crash(gh: GitHub, listed: object) -> None:
+    gh.raw_repositories = listed
+    code, out, err = _run(_argv(), transport=httpx.MockTransport(gh.api))
+    assert (code, out) == (1, "")
+    assert "reaches other repositories" in err
+
+
+def test_a_request_without_metadata_is_refused_before_any_request(gh: GitHub) -> None:
+    code, _, err = _run(
+        _argv(permissions={"contents": "read"}), transport=httpx.MockTransport(gh.api)
+    )
+    assert code == 1
+    assert "names metadata=read" in err
+    assert gh.requests == []
+
+
+def test_stdin_that_isn_t_text_is_a_stated_failure(gh: GitHub) -> None:
+    stdin = io.TextIOWrapper(io.BytesIO(b"\xff\xfe\x00 not utf-8"), encoding="utf-8")
+    stdout, stderr = io.StringIO(), io.StringIO()
+    code = run(_argv(), stdin, stdout, stderr, transport=httpx.MockTransport(gh.api))
+    assert (code, stdout.getvalue()) == (1, "")
+    assert stderr.getvalue() == "FATAL: stdin couldn't be read as text: UnicodeDecodeError\n"
+    assert gh.requests == []
+
+
+def test_the_caller_names_itself_to_github(gh: GitHub) -> None:
+    _mint(gh)
+    assert set(gh.agents) == {github_app_mint.USER_AGENT}
+    gh.agents.clear()
+    mint(APP_ID, PEM, REPOS, READ, transport=httpx.MockTransport(gh.api), user_agent="caller/1")
+    assert set(gh.agents) == {"caller/1"}

@@ -104,6 +104,7 @@ class RotationApp:
                     permissions,
                     transport=self._transport,
                     clock=self._clock,
+                    user_agent=USER_AGENT,
                 )
             )
         except MintUnavailable as error:

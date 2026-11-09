@@ -330,15 +330,16 @@ The helper takes the following inputs:
   writes it or wrapped. It refuses raw PEM, because that means the keeper holds something other
   than the stored form. It never reads the key from argv or an environment variable.
 - **`--app-id`**, one **`--repository owner/name`** per repository, and one
-  **`--permission name=level`** per permission. It accepts only `read` levels unless
-  **`--allow-write`** is given, which only the push lanes pass.
+  **`--permission name=level`** per permission, `metadata=read` among them (GitHub grants it with
+  every token, so a request without it can't match the answer). It accepts only `read` levels
+  unless **`--allow-write`** is given, which only the push lanes pass.
 
 It prints only the token on stdout, so the launcher captures it into the lane's existing
 `<LANE>_GITHUB_TOKEN` variable. It finds the installation from the repositories, never from a
 configured id. It refuses repositories of more than one owner, lookups that resolve more than one
-installation, and an answer whose permissions or repositories differ from the request. Every
-failure exits 1 with `FATAL: <cause>` on stderr and nothing on stdout; no message carries the key,
-the JWT or the token.
+installation, and an answer whose permissions or repositories differ from the request. Once its
+arguments parse, every failure exits 1 with `FATAL: <cause>` on stderr and nothing on stdout; a
+usage error is argparse's and exits 2. No message carries the key, the JWT or the token.
 
 ```sh
 LANDING_LEDGER_GITHUB_TOKEN="$(sds_bws_value "$READ_APP_KEY_UUID" \
