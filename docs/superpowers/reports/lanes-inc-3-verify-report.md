@@ -456,9 +456,8 @@ No other item widens a credential. Every lane's permission need is inside D-18.
 ## Standards followed
 
 - **Code Brain rule 5 (never log secrets).** The report holds no token, key, private key or ping
-  URL. The identifiers it names are repository names, commit hashes, and App ids already in tracked
-  files (factory-runner's registry) and no BWS UUID beyond one already committed in that registry.
-  No value was read from BWS.
+  URL. The identifiers it names are repository names and commit hashes; it names no App id,
+  installation id or BWS UUID. No value was read from BWS.
 - **Code Brain rules 3 and 4 (structured logs; never swallow an exception).** No code changed.
   Item 7's recommendation requires the helper to exit non-zero with a named cause and to catch the
   transport errors explicitly, never silently.
