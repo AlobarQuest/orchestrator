@@ -541,6 +541,10 @@ OUTBOUND_ALLOWLIST = {
     # where a request goes -- each program passes in the paths it may reach -- and every module
     # that imports it is listed here on its own account.
     Path("src/estate_clients/confined.py"),
+    # ADR-0059 increment 3. The one GitHub App mint: it may send only the requested repositories'
+    # `GET /repos/{owner}/{name}/installation` and one `POST /app/installations/{id}/access_tokens`,
+    # through `ConfinedClient`. Pinned by tests/estate_clients/test_github_app_mint.py.
+    Path("src/estate_clients/github_app_mint.py"),
     # Bridge Part 3: the one alert-hub client the lanes share. It may send only `POST /v1/alerts`
     # with a per-sender token, pinned by tests/alert_hub_client/test_client.py.
     Path("src/alert_hub_client/__init__.py"),

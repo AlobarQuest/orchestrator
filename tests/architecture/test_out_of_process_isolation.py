@@ -389,15 +389,26 @@ TABLE: dict[str, Row] = {
         no_sibling_lanes=True,
     ),
     # ADR-0050: the one confined transport every program reaches a service through. It holds the
-    # guards and none of any program's wording, and imports no program.
+    # guards and none of any program's wording, and imports no program. Beside it, the one GitHub
+    # App mint (ADR-0059 increment 3).
     "estate_clients": _row(
         "__future__",
+        # The App mint's console script: its arguments, the key on stdin, the token on stdout.
+        "argparse",
+        # The App mint reads the key's stored form, base64 of the PEM.
+        "base64",
+        "binascii",
         "collections",
+        # The App mint loads the PEM and signs its JWT (ADR-0059 increment 3).
+        "cryptography",
+        "datetime",
         "httpx",
         # Whether a plain-HTTP base URL is a tailnet address (the Coolify write token's rule).
         "ipaddress",
+        "jwt",
         # The control-character refusal.
         "re",
+        "sys",
         "typing",
         # `urllib.parse` only, for the base-URL shape check.
         "urllib",
@@ -481,7 +492,6 @@ TABLE: dict[str, Row] = {
         "base64",
         "bitwarden_sdk",
         "collections",
-        "cryptography",
         "dataclasses",
         "datetime",
         "enum",
@@ -493,7 +503,6 @@ TABLE: dict[str, Row] = {
         "httpx",
         "ipaddress",
         "json",
-        "jwt",
         "logging",
         "nacl",
         "os",

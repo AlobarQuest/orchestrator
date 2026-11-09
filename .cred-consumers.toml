@@ -724,3 +724,45 @@ rotate_requested = "2026-11-09"
   kind = "bws-secret"
   uuid = "97802aac-5a7f-45e8-8185-b4fc00cd318e"
   note = "the keeper, in Rotation / Keepers, and the one copy; the lane reads it with its own token"
+
+# ── The two lane GitHub Apps' private keys (ADR-0059 increment 3) ────────────────
+# Devon created both Apps on 2026-11-09 (HQ gate G-17) and stored each key, base64 of the PEM, in
+# BWS project `SDS / Lane Apps`. `estate_clients/github_app_mint.py` (`sds-github-mint`) reads that
+# form on stdin. Modelled on factory-runner's `fork-sync-app-private-key` row (factory-runner
+# `4b1580f7246b7a12f08b33181dc691ee50487133`).
+# Hand-rotated, so neither row is rotated_by_sds: no executor adapter handles the class (ADR-0055's
+# hand-rotated set; ADR-0059 Q4, Q9 and the D-11 addendum). Devon rotates both on the Apps'
+# settings pages in one sitting. `created` is the age anchor: at 365 days (infraops CLASS_POLICY)
+# the 03:00 scan posts `cred.rotation-age` with the manual checklist, and the rotation proposer
+# reports the row `legacy` and proposes no package.
+# No machine account holds a grant on either keeper yet, so each row lists its keeper alone; each
+# lane's runtime-fetch row lands in that lane's move PR.
+[[credential]]
+id = "lanes-read-app-private-key"
+class = "github-app-private-key"
+provider = "github"
+provider_identity = "GitHub App alobar-sds-lanes-read (id 5684758, installation 180257215), Credentials page Key pairs tab"
+bws_uuid = "314a966c-5654-4e3c-8358-b4fd01268775"
+created = "2026-11-09"
+disposition = "reissue"
+rotation_preconditions = ["rotate it with lanes-push-app-private-key, in one sitting", "after every reader reads the new key delete the App's other key pairs on its settings page: a new key pair does not revoke the old one", "the BWS keeper holds base64 of the PEM: encode the downloaded PEM before storing it"]
+
+  [[credential.consumer]]
+  kind = "bws-secret"
+  uuid = "314a966c-5654-4e3c-8358-b4fd01268775"
+  note = "the keeper, in SDS / Lane Apps; base64 of the PEM; no reader holds a grant yet"
+
+[[credential]]
+id = "lanes-push-app-private-key"
+class = "github-app-private-key"
+provider = "github"
+provider_identity = "GitHub App alobar-sds-lanes (id 5684778, installation 180257673), Credentials page Key pairs tab"
+bws_uuid = "b8f547b9-67d7-4417-adc0-b4fd0126b0f0"
+created = "2026-11-09"
+disposition = "reissue"
+rotation_preconditions = ["rotate it with lanes-read-app-private-key, in one sitting", "after every reader reads the new key delete the App's other key pairs on its settings page: a new key pair does not revoke the old one", "the BWS keeper holds base64 of the PEM: encode the downloaded PEM before storing it"]
+
+  [[credential.consumer]]
+  kind = "bws-secret"
+  uuid = "b8f547b9-67d7-4417-adc0-b4fd0126b0f0"
+  note = "the keeper, in SDS / Lane Apps; base64 of the PEM; no reader holds a grant yet"

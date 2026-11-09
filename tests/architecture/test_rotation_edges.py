@@ -38,6 +38,7 @@ import alert_hub_client
 from bump_proposer import change_manager as bump_change_manager
 from bump_proposer import orchestrator_client as bump_orchestrator
 from bump_proposer import standing as bump_standing
+from estate_clients import github_app_mint
 from estate_clients.confined import has_control_character
 from rotation_decomposer import cli as decomposer_cli
 from rotation_decomposer import client as decomposer_client
@@ -244,9 +245,10 @@ _app = mock.Mock(spec=github_actions.RotationApp)
 _app.token.return_value = _SAMPLE
 _LOG_HOST_SAMPLE = "https://productionresultssa1.blob.core.windows.net"
 
+# The rotation App mints through the shared mint, which builds its one client per mint.
 _app_permits = captured_permits(
-    github_actions,
-    lambda: github_actions.RotationApp("1", lambda: _SAMPLE)._client({}, "o/r"),
+    github_app_mint,
+    lambda: github_app_mint._client("assertion", {"o/r": "o/r"}, None),
 )
 _secret_permits = captured_permits(
     github_actions,
@@ -503,7 +505,8 @@ PROCESSES: dict[str, dict[str, frozenset[str]]] = {
 _WORKER_CLIENTS = {
     "src/rotation_worker/orchestrator_client.py": 1,
     "src/rotation_worker/coolify.py": 1,
-    "src/rotation_worker/github_actions.py": 4,
+    "src/rotation_worker/github_actions.py": 3,
+    "src/estate_clients/github_app_mint.py": 1,
     "src/rotation_worker/readers.py": 1,
     "src/rotation_worker/notify.py": 0,
     "src/rotation_worker/adapters/openrouter.py": 1,
@@ -636,6 +639,7 @@ BORROWED: dict[str, dict[str, frozenset[str]]] = {
                 "tailnet_or_https_problem",
             }
         ),
+        "estate_clients.github_app_mint": frozenset({"MintRefused", "MintUnavailable", "mint"}),
     },
 }
 
