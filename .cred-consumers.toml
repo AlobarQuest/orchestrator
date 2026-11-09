@@ -795,7 +795,7 @@ provider_identity = "GitHub App alobar-sds-lanes-read (id 5684758, installation 
 bws_uuid = "314a966c-5654-4e3c-8358-b4fd01268775"
 created = "2026-11-09"
 disposition = "reissue"
-rotation_preconditions = ["rotate it with lanes-push-app-private-key, in one sitting", "after every reader reads the new key delete the App's other key pairs on its settings page: a new key pair does not revoke the old one", "the BWS keeper holds base64 of the PEM: encode the downloaded PEM before storing it"]
+rotation_preconditions = ["rotate it with lanes-push-app-private-key in one sitting", "after every reader reads the new key delete the App's other key pairs on its settings page: a new key pair does not revoke the old one", "the BWS keeper holds base64 of the PEM: encode the downloaded PEM before storing it"]
 
   [[credential.consumer]]
   kind = "bws-secret"
@@ -817,7 +817,7 @@ provider_identity = "GitHub App alobar-sds-lanes (id 5684778, installation 18025
 bws_uuid = "b8f547b9-67d7-4417-adc0-b4fd0126b0f0"
 created = "2026-11-09"
 disposition = "reissue"
-rotation_preconditions = ["rotate it with lanes-read-app-private-key, in one sitting", "after every reader reads the new key delete the App's other key pairs on its settings page: a new key pair does not revoke the old one", "the BWS keeper holds base64 of the PEM: encode the downloaded PEM before storing it"]
+rotation_preconditions = ["rotate it with lanes-read-app-private-key in one sitting", "after every reader reads the new key delete the App's other key pairs on its settings page: a new key pair does not revoke the old one", "the BWS keeper holds base64 of the PEM: encode the downloaded PEM before storing it"]
 
   [[credential.consumer]]
   kind = "bws-secret"
