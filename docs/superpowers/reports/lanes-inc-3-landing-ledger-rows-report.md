@@ -29,13 +29,20 @@ Outcome: done
      I also added `tests/rotation_worker/test_registry_array_strings.py`, which fails on
      `origin/main`'s text. It flags `credential[12]` and `credential[13]`, which are the two App
      key rows.
-   - Merging #644 before 03:00 avoids one failed scan. The infraops reader's split isn't
+   - Merging #644 alone doesn't fix the scan. The scan reads the main tree's working copy, so the
+     fix takes effect at the first activation pass after the merge (check 5). Merging and
+     activating before 03:00 avoids one failed scan. The infraops reader's split isn't
      quote-aware, and that belongs to infraops; I didn't change it.
-2. **`other_mints` is estate-wide.** `rotation_worker/inbox.py:111` waits on any other rotation
-   that waits on a person's mint. The proposer log (10:51) shows `execution-watch-ping-url`
-   proposed as item 190, approved. If that issue is still waiting on Devon's paste, then once this
-   merges, `landing-ledger-bws-token`'s issue unit refuses to bind until the paste completes.
-   Ordering is HQ's call. The diff doesn't depend on it.
+2. **`other_mints` is estate-wide, and its refusal is mutual.**
+   - `other_mints` (`rotation_worker/inbox.py` 111-126) lists every active rotation unit, from any
+     other revision, that has never been claimed and comes straight after a person's mint.
+   - `bind` refuses while that list isn't empty, and `worker.py:685` passes the list on every bind.
+   - Each waiting unit appears in the other's list, so two issues waiting on mints at once refuse
+     both binds.
+   - The proposer log (10:51) shows `execution-watch-ping-url` proposed as item 190, approved.
+     Suppose that issue still waits on Devon's paste when the landing-ledger token's issue unit
+     reaches its mint. Then neither binds until one of them is cancelled.
+   - Ordering is HQ's call. The diff doesn't depend on it.
 3. **The `.bws-secrets.toml` comment is stale.** The comment on `lanes-read-app-private-key`
    (~281) still says "no grant exists until the lane's cut-over", but G-18 granted it. The
    manifest also doesn't list `ebabdd63-…`, and `lanes/landing-ledger/compose.yaml` still has
@@ -197,7 +204,7 @@ These readers use the main tree's working copy:
   7-12, "Neither file is opened by this program").
 - The main tree moves only by fast-forward. Each lane launcher's activation helper calls
   `activate_checkout "$REPO_ROOT"` (for example `scripts/run-landing-ledger.sh` 45-60, ADR-0031),
-  and the main-tree reflog shows only `merge @{u}: Fast-forward` entries.
+  and the three most recent main-tree reflog entries are each `merge @{u}: Fast-forward`.
 
 The handoff's "nothing else fetches it" isn't true as written. These readers fetch the registry
 themselves:
@@ -228,7 +235,8 @@ working copy after activation, as the handoff intends.
   - My diff touches neither file. `git archive` trees of both `origin/main` and `HEAD`, scanned
     the same way, report 0 BLOCK and 0 WARN (1 INFO). The two WARNs come from worktree context,
     not from this change.
-- **`/code-review` (low) on `origin/main...HEAD`:** no findings.
+- **`/code-review` (low) on `origin/main...HEAD`:** it returned an empty result, `(none)`, with no
+  findings listed.
 
 ## Files changed
 
@@ -257,8 +265,12 @@ working copy after activation, as the handoff intends.
   parse error.
 - The `SDS_DEADMAN_PING_URL_UUID` change: add `ebabdd63` to `.bws-secrets.toml` with
   `lanes = ["landing-ledger"]` and fix the stale "no grant exists" comment.
-- The later one-line change that adds `rotate_requested` to `landing-ledger-ping-url` once the
-  token's `store` unit completes.
+- The later change that adds `rotate_requested` to `landing-ledger-ping-url` once the token's
+  `store` unit completes. That change must also update `test_only_the_token_row_is_due` in
+  `tests/rotation_worker/test_landing_ledger_rows.py`, so it's more than one line.
+- Scratch to delete: `/tmp/w63-infraops.Lgey` (a copy of the infraops checkout without `.git`,
+  which includes its gitignored files), `/tmp/w63-mainscan.*`, and `/tmp/w63-headscan.*`. The
+  catastrophic-command deny rule blocked my `rm -rf`.
 - Session teardown: worktree, `orchestrator_test_hq_w_63`, and the merged branch.
 
 ## Standards followed

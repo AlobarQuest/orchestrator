@@ -122,7 +122,7 @@ def test_a_first_issue_derives_the_issue_plan(
 def test_the_read_app_key_is_read_by_the_lane_s_launcher() -> None:
     registry: dict[str, Any] = tomllib.loads((ROOT / REGISTRY_PATH).read_text())
     [row] = [c for c in registry["credential"] if c["id"] == "lanes-read-app-private-key"]
-    [reader] = [c for c in row["consumer"] if c["kind"] == "runtime-fetch"]
-    assert reader["ref"] == "scripts/run-landing-ledger.sh"
+    [reader] = [c for c in row["consumer"] if c.get("ref") == "scripts/run-landing-ledger.sh"]
+    assert reader["kind"] == "runtime-fetch"
     assert reader["healthchecks_check"] == "sds-landing-ledger"
     assert row["bws_uuid"] in (ROOT / reader["ref"]).read_text()
