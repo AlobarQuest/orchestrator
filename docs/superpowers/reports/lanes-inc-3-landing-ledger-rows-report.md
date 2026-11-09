@@ -5,7 +5,7 @@ Outcome: done
 - Worker: W-63
 - Branch: `hq/lanes-inc-3-landing-ledger-rows`, based on `55579cb1`.
 - PR: #644, open and marked ready, not merged.
-- Code head: `f2f2d43d` (the report and all code are in this commit or earlier).
+- Code head: `f2f2d43d` (all code; this report is committed after it).
 
 ## Concerns, most urgent first
 
