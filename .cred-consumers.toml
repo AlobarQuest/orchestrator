@@ -678,11 +678,10 @@ disposition = "reissue"
   note = "the orchestrator's copy, which it sends alerts to alert-hub with; it reports the fingerprint on /api/v1/held-credentials (ADR-0055 amendment 13); no adapter rotates it, so a person re-sets it"
 
 # ── The execution-watch lane's token and ping URL (ADR-0059 increment 2) ─────────
-# ADR-0055 amendment 19, item 8 step 2: the lane's two rows, landed in two changes. This one adds
-# both: the token's row is due for its issue (rotate_requested), and the ping URL's row isn't yet
-# due (nothing ages or requests it). A later change makes the ping URL's row due, after the token's
-# `store` unit completes, so the two issue units never wait on a mint at once. The VM root's
-# `create-keeper` made both keepers in Rotation / Keepers, each holding the inbox's empty marker.
+# ADR-0055 amendment 19, item 8: the lane's two rows. Both are due for their first issue by
+# `rotate_requested`. The ping URL's row is dated only after the token's `store` unit completed, so
+# the two issue units never waited on a mint at once. The VM root's `create-keeper` made both
+# keepers in Rotation / Keepers, each holding the inbox's empty marker.
 # Neither row carries `created`: infraops reads it as the rotation anchor and serves it as
 # `last_rotated`, so the proposer would take the row as already issued and skip its first-issue
 # path. The first `record-rotation` sets the anchor.
@@ -712,14 +711,14 @@ reach_projects = []
   redeploy = false
   note = "the sds-lane-execution-watch service's variable; the lane phases redeploy it, never the executor"
 
-# No `created`, for the reason the block above gives. No `rotate_requested` yet: the later change
-# adds it.
+# No `created`, for the reason the block above gives.
 [[credential]]
 id = "execution-watch-ping-url"
 class = "healthchecks-ping-url"
 provider = "healthchecks-ping-url"
 bws_uuid = "97802aac-5a7f-45e8-8185-b4fc00cd318e"
 rotated_by_sds = true
+rotate_requested = "2026-11-09"
 
   [[credential.consumer]]
   kind = "bws-secret"
