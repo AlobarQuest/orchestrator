@@ -228,7 +228,6 @@ def test_without_a_ping_url_secret_a_pass_pings_nothing(tmp_path: Path) -> None:
     assert "alerting disabled this run" in result.stdout
 
 
-
 def test_on_the_mac_the_github_token_is_the_gh_login_and_nothing_is_minted(tmp_path: Path) -> None:
     """The Mac path, unchanged until increment 6: no lane token, a Keychain identity (stood in
     for, so `/usr/bin/security` is never asked) and the operator's `gh` login."""
@@ -245,6 +244,7 @@ def test_on_the_mac_the_github_token_is_the_gh_login_and_nothing_is_minted(tmp_p
     assert READ_APP_KEY_UUID not in "\n".join(logs["bws"])
     assert all("github=gh-token" in line for line in logs["lane"] if line.startswith("ledger"))
     assert sum(line.startswith("ledger") for line in logs["lane"]) == 2
+
 
 # ---- the lane's tracked files --------------------------------------------------------------
 
