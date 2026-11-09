@@ -211,11 +211,12 @@ ever proposed for them.
 
 ## Self-review
 
-- **`metadata` is required, not added.** GitHub's echo includes `metadata: read` whether or not
-  it was asked for (the rotation App's `READ` and `WRITE` always name it). If the helper added it
-  silently, the request would differ from what the caller wrote. Requiring it gives a clear cause.
-  I haven't confirmed GitHub's behavior with a live mint (none allowed); requiring it costs nothing
-  if GitHub doesn't add it.
+- **Requiring `metadata` is my design choice, not the handoff's; HQ can reverse it.** The review
+  said GitHub may add `metadata: read` to every token's echo. If it does, a request without it
+  always fails the echo check with a misleading cause. I haven't confirmed that with a live mint
+  (none was allowed). Every caller so far names it anyway (the rotation App's `READ` and `WRITE`,
+  W-60's launcher example), so requiring it costs nothing, and the failure names the real cause.
+  I chose to refuse rather than add it silently, so the request stays what the caller wrote.
 - **One lookup per repository**, as the handoff states it ("a lookup that resolves another
   installation for any of them"). For the read lanes' 14 members that's 14 GETs with one JWT per
   pass. Because the repositories must share one owner, one lookup plus the echo check would also
