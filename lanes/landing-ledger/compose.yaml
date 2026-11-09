@@ -1,0 +1,23 @@
+# sds-lane-landing-ledger (ADR-0059 increment 3, Amendment 1): the landing-ledger lane. HQ creates
+# the resource from this file. It serves nothing: no port, no domain, so no Traefik labels and no
+# `networks:` entry, as `lanes/execution-watch/compose.yaml`. The ledger keeps no state (decision
+# 1, "Lane state"), so it mounts no volume. The lane's token is the resource's own
+# `LANDING_LEDGER_BWS_ACCESS_TOKEN` variable, which the VM rotation executor writes; this file names
+# it and never holds a value. With it the launcher reads the observer bearer and the read-only App's
+# key, and mints the pass's GitHub token (`scripts/run-landing-ledger.sh`).
+#
+# PLACEHOLDER: `SDS_DEADMAN_PING_URL_UUID` is empty until the lane's ping-URL secret exists. The VM
+# root's keeper command creates it at cut-over, and a later change writes its BWS secret id here and
+# in `.bws-secrets.toml`, as execution-watch's did. While it is empty the dead-man helper finds no
+# ping-URL secret and, in the container, no other identity, so a pass logs "alerting disabled this
+# run" and pings nothing: it can't report success, and `sds-landing-ledger` is answered by the Mac
+# job alone (`scripts/sds-deadman.sh`, `sds_deadman_resolve`).
+services:
+  landing-ledger:
+    image: ghcr.io/alobarquest/sds-lanes:${SDS_LANES_IMAGE_TAG}
+    command: ["landing-ledger"]
+    environment:
+      BWS_ACCESS_TOKEN: ${LANDING_LEDGER_BWS_ACCESS_TOKEN}
+      LANE_SCHEDULE_ENABLED: ${LANE_SCHEDULE_ENABLED:-false}
+      SDS_DEADMAN_PING_URL_UUID: ""  # PLACEHOLDER: the ping-URL secret's id, at cut-over
+    restart: unless-stopped

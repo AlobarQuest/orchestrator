@@ -1150,14 +1150,21 @@ def test_the_repositorys_manifest_lists_execution_watchs_secrets() -> None:
 
 def test_every_lanes_ping_url_secret_is_listed_for_that_lane() -> None:
     """A lane's `--token` proof reads what `.bws-secrets.toml` lists for it, so a ping-URL secret
-    its compose names but the manifest doesn't list would go unproved until its first ping."""
+    its compose names but the manifest doesn't list would go unproved until its first ping. An
+    empty value is a placeholder until the lane's ping-URL secret exists, allowed only for a lane
+    named in `placeholders`; a later change writes the id and removes the lane from it."""
     manifest = (ROOT / ".bws-secrets.toml").read_text()
+    placeholders = {"landing-ledger"}
     named = {}
+    blank = set()
     for path in sorted((ROOT / "lanes").glob("*/compose.yaml")):
         lane = path.parent.name
         environment = deploy._environment(deploy.lane_service(path.read_text(), lane))
-        if "SDS_DEADMAN_PING_URL_UUID" in environment:
+        if environment.get("SDS_DEADMAN_PING_URL_UUID") == "":
+            blank.add(lane)
+        elif "SDS_DEADMAN_PING_URL_UUID" in environment:
             named[lane] = environment["SDS_DEADMAN_PING_URL_UUID"]
+    assert blank == placeholders
     assert named, "no lane compose names a ping-URL secret"
     for lane, uuid in named.items():
         assert uuid in deploy.lane_secrets(manifest, lane), lane

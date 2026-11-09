@@ -1,0 +1,6 @@
+# sds-lane-landing-ledger's schedule: one pass daily at 07:30, as the Mac job's
+# `StartCalendarInterval` runs it (`scripts/com.devon.landing-ledger.plist`), in the image's
+# America/New_York time. The ledger takes no scheduled-pass flag: every run but `--dry-run` records
+# and arms the dead-man switch. The entrypoint runs this file only when LANE_SCHEDULE_ENABLED is
+# `true`.
+30 7 * * * lane-run landing-ledger

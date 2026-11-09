@@ -471,6 +471,7 @@ paths = [
   "scripts/run-landing-ledger.sh",
   "scripts/install-landing-ledger-launchd.sh",
   "scripts/com.devon.landing-ledger.plist",
+  "tests/scripts/test_run_landing_ledger.py",
   "scripts/run-pin-watcher.sh",
   "tests/scripts/test_run_pin_watcher.py",
   "scripts/install-pin-watcher-launchd.sh",

@@ -81,6 +81,10 @@ def _run(
         "BWS_LOG": str(logs["bws"]),
         **fake,
     }
+    if launcher == LEDGER:
+        # A set `BWS_ACCESS_TOKEN` is the ledger's container path (`test_run_landing_ledger.py`);
+        # these tests hold its Mac path, which launchd starts with PATH and HOME alone.
+        del env["BWS_ACCESS_TOKEN"]
     result = subprocess.run(
         [
             "/usr/bin/env",
