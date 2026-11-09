@@ -16,6 +16,19 @@
 # NOTHING HERE ACTS. Both passes read and file observations; neither changes a pull request, a
 # repository setting, or any canonical state.
 #
+# TWO HOSTS, ONE LAUNCHER (ADR-0059 increment 3). A set `BWS_ACCESS_TOKEN` means the lane's
+# container: `lane-run` passes the lane's own token as its one secret, and every BWS read below
+# goes through it in the environment, never as a process argument. There the GitHub credential is
+# an installation token minted each pass from the read-only App `alobar-sds-lanes-read`, narrowed
+# to the scoped repositories and the four read permissions the ledger's calls use, and `gh` is
+# never asked.
+# Without it this is the Mac's launchd job, unchanged until increment 6: the narrow identity from
+# the Keychain and the operator's `gh` login. Either way the BWS token is unset before the ledger
+# runs, which needs neither it nor the App's key.
+#
+# ACTIVATION is the Mac's: the container runs the image's own code and has no
+# `activate-checkout.sh`, so there it is skipped rather than logged as missing.
+#
 # Usage:
 #   scripts/run-landing-ledger.sh [--dry-run]
 # Install as a scheduled job with:
@@ -24,6 +37,9 @@ set -uo pipefail
 
 # BWS UUIDs (values fetched at runtime; never stored in this repo). See .bws-secrets.toml.
 OBSERVER_BEARER_UUID="f793576f-e9aa-4f9d-8089-b4a000b9e2d5"   # orchestrator-observer OBSERVER bearer
+# The read-only lane App `alobar-sds-lanes-read`: its key (base64 of the PEM) and its id, no secret.
+READ_APP_KEY_UUID="314a966c-5654-4e3c-8358-b4fd01268775"
+READ_APP_ID="5684758"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # ACTIVATION — a merged change is not live on this machine until the code is pulled. The estate's
@@ -33,17 +49,19 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # and returns 0 whatever it finds, so this job is never gated on being able to update itself. It
 # re-execs this script when HEAD moves, because bash reads a script incrementally by byte offset
 # and the file it just rewrote is this one.
-_SDS_ACTIVATE="$HOME/.claude/bin/activate-checkout.sh"
-if [ -r "$_SDS_ACTIVATE" ]; then
-    # shellcheck source=/dev/null
-    . "$_SDS_ACTIVATE"
-else
-    activate_checkout() {
-        echo "[activation] helper missing at $HOME/.claude/bin/activate-checkout.sh —" \
-             "this run is not activated"
-    }
+if [ -z "${BWS_ACCESS_TOKEN:-}" ]; then
+    _SDS_ACTIVATE="$HOME/.claude/bin/activate-checkout.sh"
+    if [ -r "$_SDS_ACTIVATE" ]; then
+        # shellcheck source=/dev/null
+        . "$_SDS_ACTIVATE"
+    else
+        activate_checkout() {
+            echo "[activation] helper missing at $HOME/.claude/bin/activate-checkout.sh —" \
+                 "this run is not activated"
+        }
+    fi
+    activate_checkout "$REPO_ROOT" "$0" "$@"
 fi
-activate_checkout "$REPO_ROOT" "$0" "$@"
 
 # THE DEAD-MAN SWITCH. `launchd` discards this script's exit code, so the codes documented above
 # reach nobody: a pass that stops running, or that fails every morning, is silent. Armed AFTER
@@ -54,40 +72,49 @@ source "$REPO_ROOT/scripts/sds-deadman.sh"
 sds_deadman_arm sds-landing-ledger --finding 2 "$@"
 
 
-# ONE BWS IDENTITY: the observer bearer is in a project only the narrow `sds-operator` account can
-# read, fetched from its own Keychain item and never from an ambient `BWS_ACCESS_TOKEN`. The
-# change-manager READ bearer this launcher used to fetch with a second, broad identity fed only the
-# scope derivation, which now asks the orchestrator for the member record.
-NARROW_IDENTITY="${BWS_ACCESS_TOKEN_SDS:-$(/usr/bin/security find-generic-password \
-  -s 'Claude' -a 'BWS_ACCESS_TOKEN_SDS' -w 2>/dev/null || true)}"
-if [ -z "$NARROW_IDENTITY" ]; then
-  echo "FATAL: no BWS identity for the orchestrator observer credential (Keychain service Claude," \
-       "account BWS_ACCESS_TOKEN_SDS)" >&2
-  exit 1
-fi
-
 # The shared BWS reader (`sds-bws.sh`), which carries the colour guard and the venv interpreter.
 # shellcheck disable=SC1091
 source "$REPO_ROOT/scripts/sds-bws.sh"
 
-LANDING_LEDGER_TOKEN="$(sds_bws_value "$OBSERVER_BEARER_UUID" "$NARROW_IDENTITY")"
+# ONE BWS IDENTITY, whichever host runs the pass. In the container it is the lane's own token,
+# already in the environment. On the Mac the observer bearer is in a project only the narrow
+# `sds-operator` account can read, fetched from its own Keychain item into a variable that is never
+# exported, so it serves only the read below.
+if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
+  IN_CONTAINER=1
+  _lane_secret() { sds_bws_value "$1"; }
+else
+  IN_CONTAINER=0
+  NARROW_IDENTITY="${BWS_ACCESS_TOKEN_SDS:-$(/usr/bin/security find-generic-password \
+    -s 'Claude' -a 'BWS_ACCESS_TOKEN_SDS' -w 2>/dev/null || true)}"
+  if [ -z "$NARROW_IDENTITY" ]; then
+    echo "FATAL: no BWS identity for the orchestrator observer credential" \
+         "(Keychain service Claude, account BWS_ACCESS_TOKEN_SDS)" >&2
+    exit 1
+  fi
+  _lane_secret() { sds_bws_value "$1" "$NARROW_IDENTITY"; }
+fi
+
+LANDING_LEDGER_TOKEN="$(_lane_secret "$OBSERVER_BEARER_UUID")"
 export LANDING_LEDGER_TOKEN
 if [ -z "$LANDING_LEDGER_TOKEN" ]; then
   echo "FATAL: could not read the orchestrator observer credential from BWS" >&2
   exit 1
 fi
+unset NARROW_IDENTITY
 
-# THE GITHUB CREDENTIAL HAS NO BWS RECORD. The backfill was run by hand with an ad-hoc token, so
-# there is nothing to fetch by UUID and this falls back to the operator's own `gh` credential.
-# That is a real gap, not a design: a scheduled job resting on an interactive login breaks the
-# moment the login is re-issued, and nothing would say so but this script's exit 1.
-if [ -z "${LANDING_LEDGER_GITHUB_TOKEN:-}" ]; then
-  LANDING_LEDGER_GITHUB_TOKEN="$(gh auth token 2>/dev/null || true)"
-  export LANDING_LEDGER_GITHUB_TOKEN
-fi
-if [ -z "${LANDING_LEDGER_GITHUB_TOKEN:-}" ]; then
-  echo "FATAL: no GitHub credential. Set LANDING_LEDGER_GITHUB_TOKEN, or authenticate gh." >&2
-  exit 1
+# ON THE MAC THE GITHUB CREDENTIAL IS THE OPERATOR'S `gh` LOGIN, until increment 6 retires this
+# path: a scheduled job resting on an interactive login breaks the moment the login is re-issued,
+# and nothing would say so but this script's exit 1. The container never takes it (below).
+if [ "$IN_CONTAINER" -eq 0 ]; then
+  if [ -z "${LANDING_LEDGER_GITHUB_TOKEN:-}" ]; then
+    LANDING_LEDGER_GITHUB_TOKEN="$(gh auth token 2>/dev/null || true)"
+    export LANDING_LEDGER_GITHUB_TOKEN
+  fi
+  if [ -z "${LANDING_LEDGER_GITHUB_TOKEN:-}" ]; then
+    echo "FATAL: no GitHub credential. Set LANDING_LEDGER_GITHUB_TOKEN, or authenticate gh." >&2
+    exit 1
+  fi
 fi
 
 # THE REPOSITORIES ARE READ FROM THE MEMBER RECORD, NOT LISTED: the ledger covers the record's
@@ -100,7 +127,7 @@ fi
 # other non-zero code is the tool failing (1) or not running at all (126, 127, 137), and is passed
 # through verbatim.
 REPOSITORIES="$(cd "$REPO_ROOT" && SDS_SCOPE_ORCHESTRATOR_TOKEN="$LANDING_LEDGER_TOKEN" \
-  "$REPO_ROOT/.venv/bin/python" -m scripts.sds_scope ledger)"
+  env -u BWS_ACCESS_TOKEN "$REPO_ROOT/.venv/bin/python" -m scripts.sds_scope ledger)"
 scope_rc=$?
 if [ "$scope_rc" -ne 0 ] && [ "$scope_rc" -ne 3 ]; then
   echo "the ledger's repositories could not be derived: sds_scope exited $scope_rc" >&2
@@ -114,6 +141,29 @@ TARGETS=()
 while IFS= read -r repository; do
   TARGETS+=(--repository "$repository")
 done <<< "$REPOSITORIES"
+
+# IN THE CONTAINER THE GITHUB TOKEN IS MINTED HERE, after the scope, because the mint names the
+# scoped repositories: so an unreadable scope (exit 3 above) mints nothing. The App's key goes from
+# the BWS read straight to the mint's stdin in its stored form, base64 of the PEM; it is never in a
+# variable, an argument or a file, and the mint runs without the lane's token. The four permissions
+# are what the ledger's GET calls use (`src/landing_ledger/github.py`): the repository, branch,
+# commits and gate file (`metadata`, `contents`), pull requests (`pull_requests`), and workflow
+# runs, jobs and attempts (`actions`).
+# Any preset value is replaced, so the pass runs only on the token it minted.
+if [ "$IN_CONTAINER" -eq 1 ]; then
+  LANDING_LEDGER_GITHUB_TOKEN="$(_lane_secret "$READ_APP_KEY_UUID" \
+    | env -u BWS_ACCESS_TOKEN "$REPO_ROOT/.venv/bin/sds-github-mint" \
+        --app-id "$READ_APP_ID" "${TARGETS[@]}" \
+        --permission metadata=read --permission contents=read \
+        --permission pull_requests=read --permission actions=read)"
+  mint_rc=$?
+  export LANDING_LEDGER_GITHUB_TOKEN
+  if [ "$mint_rc" -ne 0 ] || [ -z "$LANDING_LEDGER_GITHUB_TOKEN" ]; then
+    echo "FATAL: could not mint the ledger's GitHub token from the read-only App" >&2
+    exit 1
+  fi
+fi
+unset BWS_ACCESS_TOKEN
 
 PASS_ID="$(date -u +%Y%m%dT%H%M%SZ)"
 LEDGER="$REPO_ROOT/.venv/bin/landing-ledger"

@@ -312,6 +312,23 @@ helper pings nothing (`scripts/sds-deadman.sh`). The secrets a lane reads are li
 secret's `lanes` field, which `lane_secrets` reads for a `--token` run and the cut-over's identity
 proof uses.
 
+`landing-ledger`'s tracked files (`lanes/landing-ledger/compose.yaml` and `crontab`) don't register
+it either. It keeps no state, so its compose mounts no volume. Its crontab runs
+`lane-run landing-ledger` daily at 07:30 New York time, as the Mac job does; the ledger has no
+scheduled-pass flag. Its `.bws-secrets.toml` secrets are the observer bearer and the read-only
+App's key. Its compose leaves `SDS_DEADMAN_PING_URL_UUID` empty, a placeholder: with no id the
+container's dead-man helper finds no ping URL and no other identity, so a pass logs "alerting
+disabled this run" and pings nothing. Its cut-over (ADR-0059, "Cut-over for one lane") still
+needs the following, each in its own change or act:
+
+1. The keepers of the lane's token and ping-URL secret, their `.cred-consumers.toml` rows, the
+   lane's BWS account with grants on its secrets and the ping-URL secret, and the token's write.
+2. The ping-URL secret's id in the compose's `SDS_DEADMAN_PING_URL_UUID` and in
+   `.bws-secrets.toml`.
+3. The `sds-lane-landing-ledger` resource and its `--add`, then the `lane-run --read` proof and a
+   `--dry-run` in the container.
+4. Cut-over steps 2 onward: the paired reporting runs, the schedule, and the Mac job's retirement.
+
 ### A lane's GitHub token (ADR-0059 increment 3)
 
 A lane that reads or pushes to GitHub mints its own installation token each pass from one of the
@@ -347,6 +364,22 @@ LANDING_LEDGER_GITHUB_TOKEN="$(sds_bws_value "$READ_APP_KEY_UUID" \
       --repository AlobarQuest/brain --repository AlobarQuest/orchestrator \
       --permission contents=read --permission metadata=read)"
 ```
+
+The landing ledger is the first lane that mints. In its container, `scripts/run-landing-ledger.sh`
+derives the repositories with `scripts.sds_scope ledger` first, so an unreadable scope exits 3
+before any mint, and then runs, once per pass:
+
+```sh
+_lane_secret "$READ_APP_KEY_UUID" \
+  | env -u BWS_ACCESS_TOKEN "$REPO_ROOT/.venv/bin/sds-github-mint" \
+      --app-id 5684758 --repository <owner/name>... \
+      --permission metadata=read --permission contents=read \
+      --permission pull_requests=read --permission actions=read
+```
+
+Those four permissions cover every GET in `src/landing_ledger/github.py`. A failed or empty mint
+exits 1 before the ledger runs, and the container never falls back to `gh auth token`. On the Mac
+the launcher keeps the `gh` login until increment 6.
 
 The narrowing bounds what the token is granted. It doesn't stop the token reading public
 resources, which need no token at all
