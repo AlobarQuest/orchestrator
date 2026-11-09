@@ -7,9 +7,10 @@ the same repository reports about them.
 
 * **One token per repository and purpose.** Each write mints an installation token for the
   destination's one repository with exactly `{secrets: write, metadata: read}`; each read mints
-  one with exactly `{actions: read, metadata: read}`. The mint refuses unless GitHub's answer
-  names that repository alone and exactly those permissions, so an App granted more can't hand
-  the executor more. Nothing assumes a token's length: GitHub is lengthening them.
+  one with exactly `{actions: read, metadata: read}`. The mint (`estate_clients.github_app_mint`,
+  shared with the read lanes) refuses unless GitHub's answer names that repository alone and
+  exactly those permissions, so an App granted more can't hand the executor more. Nothing
+  assumes a token's length: GitHub is lengthening them.
 * **A write reaches only what the approved destination names.** The client is built for one
   repository and one secret name, and permits only that secret's public key, read and write.
 * **A write is sealed with the repository's public key** (libsodium's sealed box, through
@@ -35,6 +36,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from estate_clients.confined import ConfinedClient, TransportFailure
+from estate_clients.github_app_mint import MintRefused, MintUnavailable, mint
 from rotation_worker.contract import ContractError
 from rotation_worker.values import Fingerprint, Value
 
@@ -50,10 +52,8 @@ REPORT_WORKFLOW: Final = "secret-fingerprint.yml"
 REPORT_MAX_AGE: Final = timedelta(hours=3)
 # Where GitHub's job-log redirect points (measured 2026-10-19: productionresultssa3).
 LOG_HOST: Final = re.compile(r"^productionresultssa\d+\.blob\.core\.windows\.net$")
-REPOSITORY: Final = re.compile(r"^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$")
 SECRET_NAME: Final = re.compile(r"^[A-Z_][A-Z0-9_]*$")
 REPORT_LINE: Final = re.compile(r"(?:^|\s)fingerprint ([A-Z_][A-Z0-9_]*) ([0-9a-f]{8}) (\d+)$")
-JWT_LIFETIME: Final = timedelta(minutes=9)
 UPDATE_CHECKS: Final = 3
 UPDATE_RECHECK_SECONDS: Final = 2.0
 
@@ -78,11 +78,6 @@ def _refuse(method: str, path: str) -> ContractError:
     return ContractError(f"the rotation App may not {method} {path}")
 
 
-def _check_repository(repository: str) -> None:
-    if not REPOSITORY.fullmatch(repository):
-        raise ContractError(f"{repository!r} isn't an owner/name repository")
-
-
 class RotationApp:
     """The App's identity: it mints installation tokens, and nothing else."""
 
@@ -100,69 +95,22 @@ class RotationApp:
 
     def token(self, repository: str, permissions: Mapping[str, str]) -> Value:
         """An installation token for `repository` alone, with exactly `permissions`."""
-        _check_repository(repository)
-        owner, name = repository.split("/")
-        app = self._client({"Authorization": f"Bearer {self._jwt()}"}, repository)
-        installation = _json(self._send(app, "GET", f"/repos/{repository}/installation", 200))
-        installation_id = installation.get("id")
-        if not isinstance(installation_id, int):
-            raise ContractError(f"the rotation App isn't installed on {repository}")
-        minted = _json(
-            self._send(
-                app,
-                "POST",
-                f"/app/installations/{installation_id}/access_tokens",
-                201,
-                json={"repositories": [name], "permissions": dict(permissions)},
+        try:
+            return Value(
+                mint(
+                    self._app_id,
+                    self._private_key().reveal(),
+                    [repository],
+                    permissions,
+                    transport=self._transport,
+                    clock=self._clock,
+                    user_agent=USER_AGENT,
+                )
             )
-        )
-        granted = minted.get("permissions")
-        repositories = [r.get("full_name") for r in minted.get("repositories") or []]
-        if granted != dict(permissions):
-            raise ContractError(f"the token for {repository} was minted with other permissions")
-        # GitHub resolves a repository's name in any case and answers with its own spelling.
-        if [str(r).casefold() for r in repositories] != [f"{owner}/{name}".casefold()]:
-            raise ContractError(f"the token for {repository} reaches other repositories")
-        token = minted.get("token")
-        if not isinstance(token, str) or not token:
-            raise ContractError(f"the mint for {repository} returned no token")
-        return Value(token)
-
-    def _jwt(self) -> str:
-        import jwt
-        from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
-        from cryptography.hazmat.primitives.serialization import load_pem_private_key
-
-        key = load_pem_private_key(self._private_key().reveal().encode(), password=None)
-        if not isinstance(key, RSAPrivateKey):
-            raise ContractError("the rotation App's key isn't an RSA private key")
-        now = self._clock()
-        claims = {
-            # A minute back, for the clocks GitHub and the VM disagree by.
-            "iat": int((now - timedelta(minutes=1)).timestamp()),
-            "exp": int((now + JWT_LIFETIME).timestamp()),
-            "iss": self._app_id,
-        }
-        return jwt.encode(claims, key, algorithm="RS256")
-
-    def _client(self, headers: Mapping[str, str], repository: str) -> ConfinedClient:
-        mint = re.compile(r"^/app/installations/\d+/access_tokens$")
-        allowed = {("GET", f"/repos/{repository}/installation")}
-        return ConfinedClient(
-            base_url=API,
-            user_agent=USER_AGENT,
-            headers={**HEADERS, **headers},
-            timeout=TIMEOUT_SECONDS,
-            permits=lambda m, p: (m, p) in allowed or (m == "POST" and bool(mint.fullmatch(p))),
-            refuse=_refuse,
-            transport=self._transport,
-        )
-
-    @staticmethod
-    def _send(
-        client: ConfinedClient, method: str, path: str, expected: int, **kwargs: Any
-    ) -> httpx.Response:
-        return send(client, method, path, (expected,), **kwargs)
+        except MintUnavailable as error:
+            raise GitHubUnavailable(str(error)) from None
+        except MintRefused as error:
+            raise ContractError(str(error)) from None
 
 
 def send(

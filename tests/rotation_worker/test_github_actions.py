@@ -292,3 +292,10 @@ def test_a_repository_spelled_in_another_case_is_the_same_repository(gh: GitHub)
 
     app = RotationApp(APP_ID, lambda: Value(PEM.strip()), httpx.MockTransport(lower))
     assert app.token("alobarquest/orchestrator", WRITE).reveal().startswith("ghs_")
+
+
+def test_the_mint_names_the_rotation_worker(gh: GitHub) -> None:
+    _app(gh).token(REPO, READ)
+    assert {r.headers["User-Agent"] for r in gh.requests} == {
+        "rotation-worker/1 (+AlobarQuest/orchestrator)"
+    }
