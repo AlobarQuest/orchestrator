@@ -1,7 +1,8 @@
 """`scripts/run-landing-ledger.sh` in the lane's container (ADR-0059 increment 3): which secrets it
 reads with the lane's token, the GitHub mint's exact arguments, and that `gh` is never asked.
 
-The Mac path is held by `test_launcher_scope.py`, whose runs set no `BWS_ACCESS_TOKEN`. Here the
+The Mac path's scope handling is held by `test_launcher_scope.py`, whose runs set no
+`BWS_ACCESS_TOKEN`; its GitHub credential, the `gh` login, by one test here. Here the
 launcher runs from a throwaway tree under `env -i` with what `lane-run` passes it: the lane's token
 as `BWS_ACCESS_TOKEN`, and no Keychain identity. `bws`, `gh` and `curl` are stubs on PATH; the
 venv's `python -m scripts.sds_scope`, `sds-github-mint` and `landing-ledger` are stubs that log.
@@ -226,6 +227,24 @@ def test_without_a_ping_url_secret_a_pass_pings_nothing(tmp_path: Path) -> None:
     assert logs["ping"] == []
     assert "alerting disabled this run" in result.stdout
 
+
+
+def test_on_the_mac_the_github_token_is_the_gh_login_and_nothing_is_minted(tmp_path: Path) -> None:
+    """The Mac path, unchanged until increment 6: no lane token, a Keychain identity (stood in
+    for, so `/usr/bin/security` is never asked) and the operator's `gh` login."""
+    result, logs = _run(
+        tmp_path,
+        BWS_ACCESS_TOKEN="",
+        BWS_ACCESS_TOKEN_SDS="narrow",
+        BWS_ACCESS_TOKEN_BROAD="broad",
+        SDS_DEADMAN_PING_URL_UUID="",
+    )
+    assert result.returncode == 0, result.stderr
+    assert logs["gh"] == ["gh auth token"]
+    assert not any(line.startswith(("mint", "stdin=")) for line in logs["lane"])
+    assert READ_APP_KEY_UUID not in "\n".join(logs["bws"])
+    assert all("github=gh-token" in line for line in logs["lane"] if line.startswith("ledger"))
+    assert sum(line.startswith("ledger") for line in logs["lane"]) == 2
 
 # ---- the lane's tracked files --------------------------------------------------------------
 
