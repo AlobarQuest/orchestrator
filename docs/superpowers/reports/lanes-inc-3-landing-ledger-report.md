@@ -8,7 +8,8 @@ and ready for review. It isn't merged.
 
 ## What changed
 
-The commits are `ef884dcf`, `d7455933` and `ab0d18bb`.
+The code commits are `ef884dcf`, `d7455933`, `ab0d18bb`, `65565852` and `fc61e1ee`. The last commit
+changes only this report.
 
 | File | Change |
 |---|---|
@@ -16,7 +17,7 @@ The commits are `ef884dcf`, `d7455933` and `ab0d18bb`.
 | `lanes/landing-ledger/crontab` | New. `30 7 * * * lane-run landing-ledger`, in the image's America/New_York time, as the Mac job's `StartCalendarInterval` runs it. The ledger has no `--submit` flag: every run except `--dry-run` records and arms the dead-man switch. |
 | `scripts/run-landing-ledger.sh` | Adds the container path, which a set `BWS_ACCESS_TOKEN` selects. The Mac path is unchanged. |
 | `.bws-secrets.toml` | The observer bearer's (`f793576f-…`) `lanes` is now `["execution-watch", "landing-ledger"]`. A new `[[secret]]` row for `314a966c-…` has `name = "lanes-read-app-private-key"`, `project = "SDS / Lane Apps"` and `lanes = ["landing-ledger"]`. |
-| `tests/scripts/test_run_landing_ledger.py` | New. 15 tests: 12 for the container path and 3 for the lane's files. |
+| `tests/scripts/test_run_landing_ledger.py` | New. 16 tests: 12 for the container path, 1 for the Mac path's `gh` login with no mint, and 3 for the lane's files. |
 | `tests/scripts/test_launcher_scope.py` | Its ledger runs drop the ambient `BWS_ACCESS_TOKEN`, so they keep holding the Mac path. |
 | `tests/scripts/test_deploy_lanes.py` | `test_every_lanes_ping_url_secret_is_listed_for_that_lane` allows an empty id only for the lanes it names, `{"landing-ledger"}`. |
 | `layers.toml` | Places the new test file in `sensors`, beside the launcher. |
@@ -87,11 +88,9 @@ logged reason differs ("Healthchecks could not be reached").
 
 ## Tests and checks
 
-- `make check` on `ef884dcf` plus `d7455933`, with `orchestrator_test_hq_w_62` and `PGTZ=UTC`:
-  exit 0. Lint and type checks passed; **14,193 passed, 1 skipped**.
-- `ab0d18bb` changes only one test. `test_deploy_lanes.py` and `test_run_landing_ledger.py`
-  pass (104 tests), and `ruff check` and `ruff format --check` pass on the changed test files.
-- Mutation run on the launcher: 8 mutations, all failing at least one test, no survivors. Each
+- `make check` at `fc61e1ee`, the last code commit, with `orchestrator_test_hq_w_62` and
+  `PGTZ=UTC`: exit 0. Lint, format and type checks passed; **14,194 passed, 1 skipped**.
+- Mutation run on the launcher: 9 mutations, all failing at least one test, no survivors. Each
   mutation removed one of the following:
   - `env -u` on the scope.
   - `env -u` on the mint.
@@ -101,8 +100,10 @@ logged reason differs ("Healthchecks could not be reached").
   - The mint exit-code check.
   - The activation skip.
   - The mint itself.
-- Security scanner from the repo root: no BLOCK findings. Two WARNs are on `main` already
-  (`*-migration/` glob coverage, and UUID `aaff45ca-…`, which this change doesn't touch).
+  - The Mac path's `gh auth token` fallback.
+- Security scanner from the repo root: no BLOCK findings. Two WARNs come from files this change
+  doesn't touch: `*-migration/` glob coverage, and UUID `aaff45ca-…`, which
+  `git grep aaff45ca origin/main` finds in reports already on `main`.
 - `/code-review` (medium) returned five findings:
   - The test relaxation: fixed in `ab0d18bb`.
   - Ambient-token detection: the first item under "Concerns".
@@ -167,26 +168,29 @@ logged reason differs ("Healthchecks could not be reached").
 
 These follow ADR-0059's "Cut-over for one lane", each in its own change or act:
 
-1. The VM root runs the keeper command for the lane token's keeper and the lane's ping-URL
+1. Once the orchestrator serves this release, HQ creates `sds-lane-landing-ledger` from the
+   tracked compose without `instant_deploy`, so nothing starts. The token's registry row names
+   this resource's uuid, so the resource comes first.
+2. The VM root runs the keeper command for the lane token's keeper and the lane's ping-URL
    secret, each holding the inbox's empty marker.
-2. HQ lands the lane's two registry rows in `.cred-consumers.toml`: the token row, due for its
+3. HQ lands the lane's two registry rows in `.cred-consumers.toml`: the token row, due for its
    issue, and the ping-URL row, not yet due. The read App key's runtime-fetch row, if HQ places it
    there (concern 3), lands then too.
-3. The identity's creator makes the `sds-lane-landing-ledger` BWS account and grants it
+4. The identity's creator makes the `sds-lane-landing-ledger` BWS account and grants it
    `f793576f-…`, `314a966c-…` and the ping-URL secret.
-4. Devon mints the token into the inbox, and the executor writes
+5. Devon mints the token into the inbox, and the executor writes
    `LANDING_LEDGER_BWS_ACCESS_TOKEN`. After the `store` unit completes, HQ makes the ping-URL row
    due and Devon pastes the URL.
-5. A small PR writes the ping-URL secret's id into `SDS_DEADMAN_PING_URL_UUID` and
+6. A small PR writes the ping-URL secret's id into `SDS_DEADMAN_PING_URL_UUID` and
    `.bws-secrets.toml`. The same PR removes `landing-ledger` from the `placeholders` set in
    `test_every_lanes_ping_url_secret_is_listed_for_that_lane` and updates
    `test_the_compose_meets_the_add_refusals_and_maps_nothing_else`.
-6. Once the orchestrator serves this release, HQ creates the resource without `instant_deploy`,
-   runs `lanes-prepare --add`, and checks the following in the container:
+7. Once that PR is served, HQ runs the lane's `--add` through the lane phases, then checks the
+   following in the container:
    - `lane-run --read` on the two secrets and the ping-URL secret: each `ok`.
    - One foreign UUID: `refused`.
    - `lane-run landing-ledger --dry-run`.
-7. HQ runs cut-over steps 2 onward: the paired `--dry-run` reporting runs, the week-bar baseline,
+8. HQ runs cut-over steps 2 onward: the paired `--dry-run` reporting runs, the week-bar baseline,
    `--schedule true`, and retiring `com.devon.landing-ledger`.
 
 Teardown is still to do after merge: the worktree, the `orchestrator_test_hq_w_62` database and
