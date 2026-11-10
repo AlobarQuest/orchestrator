@@ -944,10 +944,6 @@ SCHEDULE_VARIABLE = "LANE_SCHEDULE_ENABLED"
 SCHEDULE_MAPPING = "${LANE_SCHEDULE_ENABLED:-false}"
 TOKEN_VARIABLE = "BWS_ACCESS_TOKEN"
 
-# Increment 1's placeholder lane: no token, no registry entry, no Healthchecks check, no state.
-# Every exception the phases make for it names it.
-PLACEHOLDER = "placeholder"
-
 # Each moving lane's Healthchecks check, as its launcher names it in its dead-man ping
 # (`sds_deadman_arm <name>` or `CHECK_NAME=`); `test_the_check_names_are_the_launchers` holds the
 # table to `scripts/run-*.sh`. A table, not a derivation: fork hardening pings
@@ -971,7 +967,7 @@ LANE_CHECKS: dict[str, str] = {
     "unit-verifier": "sds-unit-verifier",
     "work-carrier": "sds-work-carrier",
 }
-LANES = frozenset({*LANE_CHECKS, PLACEHOLDER})
+LANES = frozenset(LANE_CHECKS)
 # The eleven lanes whose state volume `lanes-finish` checks (decision 1, "Lane state").
 STATEFUL_LANES = frozenset(
     {
@@ -1257,8 +1253,8 @@ def lane_secrets(text: str, lane: str) -> list[str]:
 
 
 def registered_lanes(world: World) -> set[str]:
-    """Each lane the release hold covers: the registry's at `origin/main`, plus the placeholder."""
-    return lanes_in_registry(_git(world, "show", f"origin/main:{CRED_CONSUMERS}")) | {PLACEHOLDER}
+    """Each lane the release hold covers: the registry's at `origin/main`."""
+    return lanes_in_registry(_git(world, "show", f"origin/main:{CRED_CONSUMERS}"))
 
 
 def _recorded_lanes(world: World) -> list[str]:
@@ -1402,13 +1398,9 @@ def add_refusals(service: dict[str, Any], lane: str) -> list[str]:
             f"it maps {SCHEDULE_VARIABLE} as {environment.get(SCHEDULE_VARIABLE)!r}, "
             f"not {SCHEDULE_MAPPING!r}"
         )
-    if lane == PLACEHOLDER:
-        if TOKEN_VARIABLE in environment:
-            refusals.append(f"the placeholder maps {TOKEN_VARIABLE}, and it holds no token")
-    else:
-        mapped = "${" + lane.upper().replace("-", "_") + "_BWS_ACCESS_TOKEN}"
-        if environment.get(TOKEN_VARIABLE) != mapped:
-            refusals.append(f"it doesn't map {TOKEN_VARIABLE} as {mapped!r}")
+    mapped = "${" + lane.upper().replace("-", "_") + "_BWS_ACCESS_TOKEN}"
+    if environment.get(TOKEN_VARIABLE) != mapped:
+        refusals.append(f"it doesn't map {TOKEN_VARIABLE} as {mapped!r}")
     if lane in STATEFUL_LANES and _state_volume(service, lane) is None:
         refusals.append(f"it mounts no named volume at {LANE_STATE_MOUNT.format(lane=lane)}")
     return refusals
@@ -1420,8 +1412,6 @@ def quiet_slot_unmet(world: World, lane: str) -> list[str]:
     local = world.now().astimezone(LANDING_ZONE)
     if local.hour in LANDING_HOURS:
         unmet.append(f"it is {local:%H:%M} New York, inside estate landing's 02:00-06:00 window")
-    if lane == PLACEHOLDER:
-        return unmet  # no launcher, no check: the window is its whole quiet slot
     name = LANE_CHECKS[lane]
     named = [c for c in world.checks() if isinstance(c, dict) and c.get("name") == name]
     if len(named) != 1:
@@ -1510,8 +1500,6 @@ def _plan(world: World, args: argparse.Namespace, run: LaneRun, runs: list[LaneR
         if last is not None:
             raise Refused(f"lane {lane} was already added (run {last.run_id}); use --tag")
         _plan_add(world, args, run, change)
-    elif change.kind == "token" and lane == PLACEHOLDER:
-        raise Refused("--token refuses the placeholder: it holds no token")
     else:
         _plan_change(world, args, run, change, runs)
     run.compose_sent = _git(world, "show", f"{run.commit}:{LANE_COMPOSE.format(lane=lane)}")
@@ -1587,7 +1575,7 @@ def lane_reads(run: LaneRun) -> list[tuple[str, str]]:
                 f'{{{{if eq .Destination "{mount}"}}}}{{{{.Name}}}}{{{{end}}}}{{{{end}}}}\'',
             )
         )
-    if run.change in ("add", "token") and run.lane != PLACEHOLDER:
+    if run.change in ("add", "token"):
         reads.append(
             (
                 "--token-present",
@@ -1859,7 +1847,7 @@ def finish_mismatches(args: argparse.Namespace, run: LaneRun) -> list[str]:
         found.append(f"it runs {args.observed_digest}, not the release's {run.lane_digest}")
     if args.observed_schedule != run.schedule:
         found.append(f"its {SCHEDULE_VARIABLE} is {args.observed_schedule}, not {run.schedule}")
-    holds_token = run.change in ("add", "token") and run.lane != PLACEHOLDER
+    holds_token = run.change in ("add", "token")
     if holds_token and args.token_present != "true":
         found.append(f"it holds no {TOKEN_VARIABLE}")
     if run.lane in STATEFUL_LANES:
@@ -2078,7 +2066,7 @@ def _validate_container_reads(args: argparse.Namespace, change: Change) -> None:
         _require(args, "observed_volume")
         if not VOLUME_NAME.match(args.observed_volume):
             raise Usage("--observed-volume must be a Docker volume name")
-    if change.kind == "add" and args.lane != PLACEHOLDER and not args.restored:
+    if change.kind == "add" and not args.restored:
         _require(args, "token_present")
     if change.kind == "token":
         _require(args, "token_present", "read_result")

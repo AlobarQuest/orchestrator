@@ -66,11 +66,11 @@ COPY lanes/lane-run /usr/local/bin/lane-run
 # Each lane's tracked crontab and compose. The entrypoint reads only `/app/lanes/<lane>/crontab`.
 COPY lanes/ /app/lanes/
 
-# One state directory per stateful lane (decision 1, "Lane state"), and the placeholder's, owned
-# by the user every lane process runs as. A new named volume mounted on one takes its owner.
+# One state directory per stateful lane (decision 1, "Lane state"), owned by the user every lane
+# process runs as. A new named volume mounted on one takes its owner.
 RUN for lane in bump-driver bump-proposer estate-landing execution-watch inert-landing \
       pin-watcher revision-watcher rotation-decomposer rotation-proposer unit-verifier \
-      work-carrier placeholder; do \
+      work-carrier; do \
       install -d -m 0700 -o orchestrator -g orchestrator "/var/lib/sds/$lane"; \
     done \
     && for crontab in /app/lanes/*/crontab; do supercronic -test "$crontab" || exit 1; done

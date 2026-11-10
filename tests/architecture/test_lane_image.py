@@ -1,10 +1,9 @@
-"""The lane image and the placeholder lane's compose hold the shape ADR-0059 increment 1 sets.
+"""The lane image holds the shape ADR-0059 increment 1 sets.
 
 What a build proves (the tools run, the state directories are owned by `orchestrator`, supercronic
 keeps a comment-only crontab running) is in the increment's build report. These tests hold the
 tracked files to the rules a build can't show: every download is checked against a digest, no
-tool floats, the inherited health check and `CMD` are replaced, and the placeholder's compose maps
-nothing beyond its two variables.
+tool floats, and the inherited health check and `CMD` are replaced.
 """
 
 from __future__ import annotations
@@ -12,15 +11,12 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-import yaml
-
 from scripts import lane_run
 
 ROOT = Path(__file__).resolve().parents[2]
 LANES = ROOT / "lanes"
 DOCKERFILE = LANES / "Dockerfile"
 ENTRYPOINT = LANES / "entrypoint.sh"
-PLACEHOLDER_COMPOSE = LANES / "placeholder" / "compose.yaml"
 STATEFUL_LANES = {
     "bump-driver",
     "bump-proposer",
@@ -86,11 +82,11 @@ def test_the_inherited_health_check_and_command_are_replaced_and_it_ends_as_orch
     assert not any(line.startswith("CMD") for line in final)
 
 
-def test_every_stateful_lane_and_the_placeholder_have_an_orchestrator_owned_directory() -> None:
+def test_every_stateful_lane_has_an_orchestrator_owned_directory() -> None:
     loop = next(line for line in _instructions() if "/var/lib/sds/$lane" in line)
     lanes = set(loop.split(" in ", 1)[1].split(";", 1)[0].split())
 
-    assert lanes == STATEFUL_LANES | {"placeholder"}
+    assert lanes == STATEFUL_LANES
     assert "-o orchestrator -g orchestrator" in loop
 
 
@@ -129,27 +125,3 @@ def test_the_entrypoint_runs_the_tracked_crontab_only_on_exactly_true() -> None:
 
 def test_lane_run_lives_beside_the_launchers_it_starts() -> None:
     assert lane_run.LAUNCHER_DIR == ROOT / "scripts"
-
-
-def test_the_placeholder_compose_maps_only_its_two_variables() -> None:
-    compose = yaml.safe_load(PLACEHOLDER_COMPOSE.read_text())
-    ((name, service),) = compose["services"].items()
-    text = PLACEHOLDER_COMPOSE.read_text()
-
-    assert name == "placeholder"
-    assert service == {
-        "image": "ghcr.io/alobarquest/sds-lanes:${SDS_LANES_IMAGE_TAG}",
-        "command": ["placeholder"],
-        "environment": {"LANE_SCHEDULE_ENABLED": "${LANE_SCHEDULE_ENABLED:-false}"},
-        "volumes": ["sds-lanes-placeholder-state:/var/lib/sds/placeholder"],
-        "restart": "unless-stopped",
-    }
-    assert compose["volumes"] == {"sds-lanes-placeholder-state": None}
-    assert set(re.findall(r"\$\{(\w+)", text)) == {"SDS_LANES_IMAGE_TAG", "LANE_SCHEDULE_ENABLED"}
-    assert (LANES / "placeholder" / "crontab").is_file()
-
-
-def test_the_placeholder_crontab_has_no_job() -> None:
-    lines = (LANES / "placeholder" / "crontab").read_text().splitlines()
-
-    assert all(line.startswith("#") or not line.strip() for line in lines)
