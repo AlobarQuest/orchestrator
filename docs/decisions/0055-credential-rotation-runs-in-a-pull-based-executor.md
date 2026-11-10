@@ -30,7 +30,7 @@
     changed).
   - 2026-11-07, amendment 21 (a read-only lookup finds a ping URL's check, beside a random
     one's; cut-over step 4 still proves the full URL).
-  - 2026-11-10, amendment 22, proposed (a standing answer approves revision 1 of a lane
+  - 2026-11-10, amendment 22, accepted (a standing answer approves revision 1 of a lane
     credential's generated package).
 - **Supersedes:** the parts of ADR-0054 named in "What this changes in ADR-0054".
 - **Relates to:** ADR-0054 (the SDS owns credential rotation), ADR-0052 (superseding an unworked
@@ -2655,8 +2655,9 @@ deciding the step. D-31 supersedes D-28 and D-30.
 
 ## Amendment 22 — A standing answer approves revision 1 of a lane credential's generated package (2026-11-10)
 
-**Status: proposed.** It's accepted when Devon accepts it. It rests on Devon's answer to HQ
-decision D-34 (2026-11-10T12:37 UTC, sds-hq `state/decisions.md`). The question offered: "(A) A
+**Status: Accepted (2026-11-10).** Devon accepted it from Slack ("G-23: accept", recorded
+2026-11-10 15:51 UTC), after a clean Opus whole-branch review of PR #647 at `d21a43cc` (HQ's D-12
+standing answer, limit 3). It rests on Devon's answer to HQ decision D-34 (2026-11-10T12:37 UTC, sds-hq `state/decisions.md`). The question offered: "(A) A
 standing answer approves a proposer-generated revision 1 of a lane credential whose
 compare-destinations is equal and whose authority is the type's standard set; a cycle records the
 approval in a PR that cites it. Reissues (revision 2 and later) still need you. You keep only the
@@ -2952,6 +2953,8 @@ The increments, by number:
   (item 2's issue-plan condition), so the second case waits for him. The first case is covered by
   that condition only when the earlier issue set `last_rotated`; whether every issue does is
   checked in increment 2.
+  Devon accepted the amendment without widening it (G-23), so the default stands: the standing
+  answer covers only the issue plan.
 - **The carrier importing the generator.** `work_carrier` imports `rotation_worker` today
   (`work_carrier/cli.py`, lines 82-84) but not `rotation_proposer`. Whether the carrier may import
   `generate`, or the check moves into a module both lanes may import, is the architecture guards'
