@@ -44,6 +44,16 @@ WATCH_COMPOSE = """services:
 volumes:
   sds-lanes-execution-watch-state:
 """
+# A stateless lane: it mounts no state volume, so its phases read and check none.
+LEDGER_COMPOSE = """services:
+  landing-ledger:
+    image: ghcr.io/alobarquest/sds-lanes:${SDS_LANES_IMAGE_TAG}
+    command: ["landing-ledger"]
+    environment:
+      BWS_ACCESS_TOKEN: ${LANDING_LEDGER_BWS_ACCESS_TOKEN}
+      LANE_SCHEDULE_ENABLED: ${LANE_SCHEDULE_ENABLED:-false}
+    restart: unless-stopped
+"""
 WATCH_TOKEN_ENTRY = """
 [[credential]]
 id = "bws-lane-execution-watch-token"
@@ -73,6 +83,7 @@ uuid = "{ALERT}"
 lanes = ["execution-watch"]
 """
 WATCH_UUID = "ewuuid00000000000000000a"
+LEDGER_UUID = "lluuid00000000000000000a"
 WATCH_VOLUME = f"{WATCH_UUID}_sds-lanes-execution-watch-state"
 # 10:00 in New York (EST), outside estate landing's window; 03:00 is inside it.
 QUIET = datetime(2026, 11, 6, 15, 0, tzinfo=UTC)
@@ -122,6 +133,7 @@ class Lanes:
     checks: list[dict[str, Any]] = field(
         default_factory=lambda: [
             {"name": "sds-execution-watch", "started": False, "status": "up"},
+            {"name": "sds-landing-ledger", "started": False, "status": "up"},
             {"name": "sds-pin-watcher", "started": True, "status": "up"},
         ]
     )
@@ -200,7 +212,7 @@ class Lanes:
             "--tag",
             tag(sha),
             "--resource-uuid",
-            WATCH_UUID,
+            LEDGER_UUID if lane == "landing-ledger" else WATCH_UUID,
             *(extra or ("--schedule-written", "false")),
         )
 
@@ -209,6 +221,21 @@ class Lanes:
 
     def finish(self, lane: str, *change_and_reads: str) -> int:
         return self.main("lanes-finish", "--lane", lane, *change_and_reads)
+
+    def added_ledger(self) -> None:
+        self.served = self.added
+        change = ("--add", "--tag", tag(self.added))
+        assert self.add("landing-ledger", self.added) == EXIT_OK
+        assert self.recheck("landing-ledger", *change) == EXIT_OK
+        reads = (
+            "--observed-digest",
+            lane_digest(self.added),
+            "--observed-schedule",
+            "false",
+            "--token-present",
+            "true",
+        )
+        assert self.finish("landing-ledger", *change, *reads) == EXIT_OK
 
     def added_watch(self) -> None:
         self.served = self.added
@@ -229,7 +256,7 @@ class Lanes:
 
     def prepare_token(self, lane: str = "execution-watch", *extra: str) -> int:
         reads = ["--running-tag", tag(self.added)]
-        if lane == "execution-watch":
+        if lane in deploy.STATEFUL_LANES:
             reads += ["--running-volume", WATCH_VOLUME]
         return self.main("lanes-prepare", "--lane", lane, "--token", *reads, *extra)
 
@@ -256,7 +283,7 @@ class Lanes:
 
     def prepare_tag(self, lane: str, sha: str, *extra: str, running: str | None = None) -> int:
         reads = ["--running-tag", running or tag(self.added)]
-        if lane == "execution-watch":
+        if lane in deploy.STATEFUL_LANES:
             reads += ["--running-volume", WATCH_VOLUME]
         return self.main("lanes-prepare", "--lane", lane, "--tag", tag(sha), *reads, *extra)
 
@@ -275,6 +302,7 @@ def lanes(tmp_path: Path) -> Lanes:
         work,
         {
             "lanes/execution-watch/compose.yaml": WATCH_COMPOSE,
+            "lanes/landing-ledger/compose.yaml": LEDGER_COMPOSE,
             ".bws-secrets.toml": SECRETS,
         },
         "the lanes' composes",
@@ -372,29 +400,26 @@ def test_a_re_run_resumes_the_deadline_and_a_timeout_exits_4(
 
 
 def test_a_run_for_another_change_supersedes_the_waiting_one(lanes: Lanes) -> None:
-    lanes.added_watch()
+    lanes.added_ledger()
     lanes.served, lanes.now = lanes.later, LANDING + timedelta(days=1)
-    assert lanes.prepare_tag("execution-watch", lanes.later) == EXIT_CONDITION
-    waiting = lanes.runs("execution-watch")[-1]
+    assert lanes.prepare_tag("landing-ledger", lanes.later) == EXIT_CONDITION
+    waiting = lanes.runs("landing-ledger")[-1]
     assert waiting.status == "waiting"
     schedule = ("--schedule", "true", "--running-schedule", "false")
-    volume = ("--running-volume", WATCH_VOLUME)
-    assert lanes.main("lanes-prepare", "--lane", "execution-watch", *schedule, *volume) == (
-        EXIT_CONDITION
-    )
-    by_id = {r.run_id: r for r in lanes.runs("execution-watch")}
+    assert lanes.main("lanes-prepare", "--lane", "landing-ledger", *schedule) == EXIT_CONDITION
+    by_id = {r.run_id: r for r in lanes.runs("landing-ledger")}
     assert by_id[waiting.run_id].status == "superseded"
-    assert _status(lanes, "execution-watch")[-1] == "waiting"
+    assert _status(lanes, "landing-ledger")[-1] == "waiting"
 
 
 def test_a_waiting_run_doesnt_block_a_re_run_and_an_unfinished_one_does(lanes: Lanes) -> None:
     lanes.served = lanes.added
     change = ("--add", "--tag", tag(lanes.added))
-    assert lanes.add("execution-watch", lanes.added) == EXIT_OK
-    assert lanes.add("execution-watch", lanes.added) == EXIT_OK
-    assert lanes.recheck("execution-watch", *change) == EXIT_OK
-    assert lanes.add("execution-watch", lanes.added) == EXIT_REFUSED
-    assert _status(lanes, "execution-watch") == ["unfinished"]
+    assert lanes.add("landing-ledger", lanes.added) == EXIT_OK
+    assert lanes.add("landing-ledger", lanes.added) == EXIT_OK
+    assert lanes.recheck("landing-ledger", *change) == EXIT_OK
+    assert lanes.add("landing-ledger", lanes.added) == EXIT_REFUSED
+    assert _status(lanes, "landing-ledger") == ["unfinished"]
 
 
 # ---- lanes-recheck --------------------------------------------------------------------------
@@ -421,9 +446,9 @@ def test_recheck_marks_the_run_unfinished_only_on_exit_0(lanes: Lanes) -> None:
 
 def test_add_refuses_a_schedule_written_other_than_false(lanes: Lanes) -> None:
     lanes.served = lanes.added
-    assert lanes.add("execution-watch", lanes.added, "--schedule-written", "true") == EXIT_REFUSED
-    assert _status(lanes, "execution-watch") == ["refused"]
-    assert "--schedule-written must be false" in lanes.runs("execution-watch")[0].reason
+    assert lanes.add("landing-ledger", lanes.added, "--schedule-written", "true") == EXIT_REFUSED
+    assert _status(lanes, "landing-ledger") == ["refused"]
+    assert "--schedule-written must be false" in lanes.runs("landing-ledger")[0].reason
 
 
 @pytest.mark.parametrize(
@@ -432,14 +457,14 @@ def test_add_refuses_a_schedule_written_other_than_false(lanes: Lanes) -> None:
 def test_add_refuses_a_compose_whose_schedule_doesnt_default_to_false(
     lanes: Lanes, mapping: str
 ) -> None:
-    edited = WATCH_COMPOSE.replace("${LANE_SCHEDULE_ENABLED:-false}", mapping)
-    sha = _commit(lanes.work, {"lanes/execution-watch/compose.yaml": edited}, "a bad default")
+    edited = LEDGER_COMPOSE.replace("${LANE_SCHEDULE_ENABLED:-false}", mapping)
+    sha = _commit(lanes.work, {"lanes/landing-ledger/compose.yaml": edited}, "a bad default")
     _git(lanes.work, "push", "-q", "origin", "main")
     lanes.served = sha
     lanes.successes[sha] = 1
     lanes.later = sha  # the gh fake serves the four named commits
-    assert lanes.add("execution-watch", sha) == EXIT_REFUSED
-    assert "LANE_SCHEDULE_ENABLED" in lanes.runs("execution-watch")[-1].reason
+    assert lanes.add("landing-ledger", sha) == EXIT_REFUSED
+    assert "LANE_SCHEDULE_ENABLED" in lanes.runs("landing-ledger")[-1].reason
 
 
 def test_an_adds_finish_requires_the_token_read_and_a_present_token(lanes: Lanes) -> None:
@@ -507,14 +532,14 @@ def test_a_refused_change_keeps_the_waiting_runs_deadline(lanes: Lanes) -> None:
 
 def test_add_refuses_a_tag_production_doesnt_serve(lanes: Lanes) -> None:
     lanes.served = lanes.later
-    assert lanes.add("execution-watch", lanes.added) == EXIT_REFUSED
-    assert "not the served orchestrator tag" in lanes.runs("execution-watch")[0].reason
+    assert lanes.add("landing-ledger", lanes.added) == EXIT_REFUSED
+    assert "not the served orchestrator tag" in lanes.runs("landing-ledger")[0].reason
 
 
 def test_a_tag_with_two_successful_releases_refuses(lanes: Lanes) -> None:
     lanes.served = lanes.added
     lanes.successes[lanes.added] = 2
-    assert lanes.add("execution-watch", lanes.added) == EXIT_REFUSED
+    assert lanes.add("landing-ledger", lanes.added) == EXIT_REFUSED
 
 
 # ---- lanes-finish ---------------------------------------------------------------------------
@@ -577,17 +602,17 @@ def test_an_added_lanes_double_prefixed_volume_refuses(lanes: Lanes, volume: str
 def test_a_failed_redeploy_prints_the_inverse_writes(
     lanes: Lanes, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    lanes.added_watch()
+    lanes.added_ledger()
     lanes.served = lanes.later
     change = ("--tag", tag(lanes.later))
-    assert lanes.prepare_tag("execution-watch", lanes.later) == EXIT_OK
-    assert lanes.recheck("execution-watch", *change) == EXIT_OK
+    assert lanes.prepare_tag("landing-ledger", lanes.later) == EXIT_OK
+    assert lanes.recheck("landing-ledger", *change) == EXIT_OK
     capsys.readouterr()
-    assert lanes.finish("execution-watch", *change, "--redeploy-failed") == EXIT_CONDITION
+    assert lanes.finish("landing-ledger", *change, "--redeploy-failed") == EXIT_CONDITION
     err = capsys.readouterr().err
     assert f'key="SDS_LANES_IMAGE_TAG", value="{tag(lanes.added)}"' in err
-    assert WATCH_COMPOSE.strip() in err  # the recorded compose, restored
-    assert "lanes-finish --lane execution-watch --tag" in err and "--restored" in err
+    assert LEDGER_COMPOSE.strip() in err  # the recorded compose, restored
+    assert "lanes-finish --lane landing-ledger --tag" in err and "--restored" in err
 
 
 # ---- --restored -----------------------------------------------------------------------------
@@ -614,48 +639,48 @@ def test_restored_after_an_add_takes_the_two_gone_reads(
 ) -> None:
     lanes.served = lanes.added
     change = ("--add", "--tag", tag(lanes.added))
-    assert lanes.add("execution-watch", lanes.added) == EXIT_OK
-    assert lanes.recheck("execution-watch", *change) == EXIT_OK
+    assert lanes.add("landing-ledger", lanes.added) == EXIT_OK
+    assert lanes.recheck("landing-ledger", *change) == EXIT_OK
     capsys.readouterr()
-    assert lanes.finish("execution-watch", *change, "--redeploy-failed") == EXIT_CONDITION
+    assert lanes.finish("landing-ledger", *change, "--redeploy-failed") == EXIT_CONDITION
     err = capsys.readouterr().err
-    assert f'coolify_delete_service(uuid="{WATCH_UUID}", instance="prod")' in err
+    assert f'coolify_delete_service(uuid="{LEDGER_UUID}", instance="prod")' in err
     assert "D-20" in err and "10 minutes" in err
     gone = ("--restored", "--service-listed")
-    assert lanes.finish("execution-watch", *change, *gone) == EXIT_USAGE
+    assert lanes.finish("landing-ledger", *change, *gone) == EXIT_USAGE
     assert (
-        lanes.finish("execution-watch", *change, *gone, "true", "--container-present", "false")
+        lanes.finish("landing-ledger", *change, *gone, "true", "--container-present", "false")
         == EXIT_CONDITION
     )
     assert (
-        lanes.finish("execution-watch", *change, *gone, "false", "--container-present", "true")
+        lanes.finish("landing-ledger", *change, *gone, "false", "--container-present", "true")
         == EXIT_CONDITION
     )
     assert (
-        lanes.finish("execution-watch", *change, *gone, "false", "--container-present", "false")
+        lanes.finish("landing-ledger", *change, *gone, "false", "--container-present", "false")
         == EXIT_OK
     )
-    assert _status(lanes, "execution-watch") == ["restored"]
+    assert _status(lanes, "landing-ledger") == ["restored"]
 
 
 # ---- --tag and --schedule -------------------------------------------------------------------
 
 
 def test_a_tag_below_the_lanes_add_refuses(lanes: Lanes) -> None:
-    lanes.added_watch()
+    lanes.added_ledger()
     lanes.served = lanes.old
-    assert lanes.prepare_tag("execution-watch", lanes.old) == EXIT_REFUSED
-    assert "not a descendant" in lanes.runs("execution-watch")[-1].reason
+    assert lanes.prepare_tag("landing-ledger", lanes.old) == EXIT_REFUSED
+    assert "not a descendant" in lanes.runs("landing-ledger")[-1].reason
 
 
 def test_a_tag_needs_a_passed_add_and_the_recorded_running_tag(lanes: Lanes) -> None:
     lanes.served = lanes.later
-    assert lanes.prepare_tag("execution-watch", lanes.later) == EXIT_REFUSED
-    lanes.added_watch()
+    assert lanes.prepare_tag("landing-ledger", lanes.later) == EXIT_REFUSED
+    lanes.added_ledger()
     lanes.served = lanes.later
     stale = tag(lanes.old)
-    assert lanes.prepare_tag("execution-watch", lanes.later, running=stale) == EXIT_REFUSED
-    assert lanes.prepare_tag("execution-watch", lanes.later) == EXIT_OK
+    assert lanes.prepare_tag("landing-ledger", lanes.later, running=stale) == EXIT_REFUSED
+    assert lanes.prepare_tag("landing-ledger", lanes.later) == EXIT_OK
 
 
 def test_a_tag_prints_the_writes_with_only_the_two_lane_variables(
@@ -679,22 +704,21 @@ def test_a_tag_prints_the_writes_with_only_the_two_lane_variables(
 
 
 def test_a_schedule_change_keeps_the_running_tag_and_compose(lanes: Lanes) -> None:
-    lanes.added_watch()
+    lanes.added_ledger()
     change = ("--schedule", "true")
-    prepare = ("lanes-prepare", "--lane", "execution-watch", *change, "--running-volume")
-    assert lanes.main(*prepare, WATCH_VOLUME, "--running-schedule", "true") == EXIT_REFUSED
-    assert lanes.main(*prepare, WATCH_VOLUME, "--running-schedule", "false") == EXIT_OK
-    run = lanes.runs("execution-watch")[-1]
+    prepare = ("lanes-prepare", "--lane", "landing-ledger", *change)
+    assert lanes.main(*prepare, "--running-schedule", "true") == EXIT_REFUSED
+    assert lanes.main(*prepare, "--running-schedule", "false") == EXIT_OK
+    run = lanes.runs("landing-ledger")[-1]
     assert (run.tag, run.lane_digest, run.compose_sent) == (
         tag(lanes.added),
         lane_digest(lanes.added),
         run.compose_replaced,
     )
-    assert lanes.recheck("execution-watch", *change) == EXIT_OK
-    reads = _watch_reads(lanes.added, schedule="false")
-    assert lanes.finish("execution-watch", *change, *reads) == EXIT_CONDITION
-    reads = _watch_reads(lanes.added, schedule="true")
-    assert lanes.finish("execution-watch", *change, *reads) == EXIT_OK
+    assert lanes.recheck("landing-ledger", *change) == EXIT_OK
+    reads = ("--observed-digest", lane_digest(lanes.added), "--observed-schedule")
+    assert lanes.finish("landing-ledger", *change, *reads, "false") == EXIT_CONDITION
+    assert lanes.finish("landing-ledger", *change, *reads, "true") == EXIT_OK
 
 
 @pytest.mark.parametrize(
