@@ -12,7 +12,8 @@ draft) and isn't merged.
 The `landing-ledger-ping-url` row is due for its first issue, by ADR-0055 amendment 19 item 8
 step 5. The change mirrors #641 (`fb485d2c`) for execution-watch. HQ's handoff states the
 precondition: the token's `store` unit completed, and no `rotation-mint` or
-`rotation-unit-failed` alert is open.
+`rotation-unit-failed` alert is open. I confirmed the first half read-only:
+`~/Library/Logs/unit-verifier.log:5747` reads `landing-ledger-bws-token-store completed`.
 
 ## Items 1-6
 
@@ -41,7 +42,7 @@ precondition: the token's `store` unit completed, and no `rotation-mint` or
    November 7, 2026, after that commit, and contains both new classes. I didn't edit or build the
    checkout. `INFRADRIFT_CONFIG_DIR` pointed at a scratch list naming only this worktree's file,
    and `SECURITY_DRIFT_STATE_DIR` at a copy of `~/.config/infra-drift/cred-rotation-state.json`
-   (modified November 10, 2026 06:30). I didn't use `~/.config/infra-drift/cred-consumers.list`.
+   (modified 2026-11-10 11:30 UTC). I didn't use `~/.config/infra-drift/cred-consumers.list`.
    The run exited 0 and printed these landing-ledger results:
    - `{'check': 'cred.rotation-requested', 'id': 'landing-ledger-ping-url', 'class': 'healthchecks-ping-url', 'rotate_requested': '2026-11-10', 'rotated_by_sds': True}`
    - `{'check': 'cred.rotation-requested', 'id': 'landing-ledger-bws-token', 'class': 'bws-lane-token', 'rotate_requested': '2026-11-09', 'rotated_by_sds': True}`
@@ -53,7 +54,7 @@ precondition: the token's `store` unit completed, and no `rotation-mint` or
    **The token row still lists, with `last_rotated` null.** The state copy holds no recorded
    rotation for `landing-ledger-bws-token`. For comparison, it serves `2026-11-09T00:00:00.000Z`
    for both execution-watch rows, which no longer list. So the token's `store` completed but its
-   `record-rotation` hasn't reached infraops' state as of 06:30 today. I reported this and didn't
+   `record-rotation` hadn't reached infraops' state when the state file was last written (11:30 UTC). I reported this and didn't
    change it.
 
    **Parse.** `doCredFindings` throws on a registry that doesn't parse
@@ -103,7 +104,7 @@ The change adds no logging.
 - **Code Brain rule 4 (never swallow an exception silently):** the rewritten test has no `try`
   and catches nothing; a failure fails the assertion.
 - **Code Brain rule 5 (never log secrets):** nothing added prints a token, a ping URL, or a ping
-  URL's UUID. The `bws_uuid` values in the rows and this report are BWS secret ids, which differ
+  URL's UUID. The `bws_uuid` values in the rows are BWS secret ids, which differ
   from a ping URL's UUID.
 - **Infra Brain 591, 592, 593:** the diff adds no BWS token to any tracked file or to history, and
   the test adds no test values. The security scan reports 0 BLOCK.
