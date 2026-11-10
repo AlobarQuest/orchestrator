@@ -31,7 +31,11 @@ Orchestrator citations are at `5145adff`, and intent-packages citations are at `
    approver (`package_sources.py:256-273`), and it accepts a person or `policy:` (lines 26 and
    199-214). **Finding:** the carrier doesn't itself check for a named person. Two places enforce
    it: intent-packages' missing grant, and `services/intake/decomposition.py:357-358`
-   (`revision_approved_by_policy`). Both go into the amendment's Context and increments.
+   (`revision_approved_by_policy`). A `policy:non-software-operational@` approver reaches that
+   line, because `is_bump_revision` (`bump_policy.py:20, 31-32`) diverts only the
+   `policy:dependency-update@` prefix. The executor reads only the latest approval's hash
+   (`rotation_worker/checks.py:257-260`). A grep of `src/` for `approved_by` and `approver` finds
+   no other gate. Both places go into the amendment's Context and increments.
 3. **`compare-destinations`, and what "equal" means.** The command is at
    `rotation_worker/cli.py:91-112` and exits 0, 1 or 2. An unforeseen exception exits 2 (lines
    101-107). It reads the registry at `main` (`registry.py:99-104`). "Equal" is
@@ -55,7 +59,9 @@ doesn't treat any marker as proof.
 Amendment 22 narrows amendment 16 decision 1, and the basis of decisions 2 and 4, for a lane
 credential's revision 1 only. The following statements are listed as narrowed, not withdrawn:
 
-- amendment 15 decision 7;
+- amendment 2's destinations read (decision 1 in "What the answers change");
+- amendment 11 decision 5;
+- amendment 15 decision 7, and its increment 4 design item 5, which is unchanged in effect;
 - amendment 16 decisions 1 to 4 and its Consequences;
 - amendment 17's Consequences;
 - amendment 19 item 10 and its "Unchanged" line;
@@ -68,12 +74,16 @@ click is decision 3, and the amendment cites decision 3.
 ## Increments (not built)
 
 1. intent-packages: an `approval-policy.toml` schema-4 grant for `non-software-operational`
-   (`approval_policy.py`, versions at line 58).
+   (`approval_policy.py`, versions at line 58), with per-type destination kinds. `operations.py`
+   passes the lineage into the policy's refusal, because `refusals_for` sees only the package.
 2. orchestrator: `rotation-proposer standing-approval <credential_id>`, which re-renders, compares
    destinations and checks authority. It logs structured JSON and exits 0, 1 or 2.
-3. orchestrator: the carrier re-runs that command for a `policy:`-approved rotation revision, and
-   the decomposition gate admits exactly `policy:non-software-operational@v4` for the two types.
-   The CLAUDE.md invariants are rewritten in the same change.
+3. orchestrator: the carrier runs the command's carry form for a `policy:`-approved rotation
+   revision. That form requires exactly the one policy approval, reads the registry at `main`,
+   and accepts either derived plan, leaving the plan to the executor's issue-fact check. The
+   decomposition gate admits the `policy:non-software-operational@` prefix for the two types. The
+   CLAUDE.md invariants and `docs/operations/rotation-proposer.md` step 3 are rewritten in the
+   same change.
 4. sds-hq: the cycle step that runs the command, approves, and opens the PR that cites the
    standing answer.
 
@@ -86,13 +96,18 @@ click is decision 3, and the amendment cites decision 3.
 - Whether the approving cycle and the carrier read the same factory-events chain (both are on the
   Mac today), given ADR-0059's lane moves.
 - Which agent id the cycle emits as (`FACTORY_AGENT_ID`).
+- Whether the carry form needs infraops' `last_rotated`, or the executor's issue-fact check is
+  enough.
 - Generator drift fails closed to Devon. This is stated as an expected cost.
 - Related, separate work: the 2026-11-10 standing answer that a ping URL is configuration might
   retire the ping-URL issue package and narrow the type condition.
 
 ## Tests and checks run
 
-- `make check` against `orchestrator_test_hq_w_66`, migrated to head with
+- `pytest tests/architecture` at the final tree (including `test_layer_manifest.py`): **2046
+  passed**.
+- `make check` (run before the report and the advisor fixes, which touch only these two docs)
+  against `orchestrator_test_hq_w_66`, migrated to head with
   `SECURITY_STANDARDS_DIR` set to the fixtures: ruff "All checks passed!", pyright "0 errors", and
   pytest **14207 passed, 1 skipped**. Exit 0.
 - Security scan from the repo root (`security_scan.cli . --category security`): exit 0, no BLOCK
@@ -108,6 +123,15 @@ click is decision 3, and the amendment cites decision 3.
   report.
 
 ## Self-review
+
+- An advisor review before I finished found three defects, which are now fixed:
+  - The carrier's re-run couldn't pass after approval, so the amendment now defines a carry form.
+  - Increment 1 claimed `operations.py` needed no change, which was wrong.
+  - The "two places" claim needed a wider grep. It held, and the amendment now cites
+    `is_bump_revision`.
+
+  The same review added amendment 2's destinations read, with its residual in Consequences, and
+  amendment 11 decision 5 to the narrowed list.
 
 - Every code claim in the amendment cites a file and line that I read at the pinned commits. The
   re-render equality is measured, not assumed.
@@ -138,8 +162,9 @@ click is decision 3, and the amendment cites decision 3.
   refusal, and any unreadable input or exception exits 2, following `compare-destinations`'
   pattern (`cli.py:103-107`). The carrier and the decomposition gate fail closed to a person.
   Consequences restates this.
-- **Code Brain rule 5 (never log secrets):** the amendment names only package ids, commits, BWS
-  secret ids that are already public in tracked packages, and no values.
+- **Code Brain rule 5 (never log secrets):** the amendment names only package ids, commits and
+  change-record numbers. It names no secret id and no value, and increment 2's logging names no
+  value.
 - **Infra Brain 591, 592 and 593:** the diff contains no BWS token, no inline `BWS_ACCESS_TOKEN`
   value and no token-shaped example. I grepped the diff to confirm, and the scan has no BLOCK
   finding.

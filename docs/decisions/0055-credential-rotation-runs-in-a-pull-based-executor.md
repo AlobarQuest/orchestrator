@@ -2710,7 +2710,11 @@ Where "only a named person approves a rotation revision" is enforced today:
    requirement therefore rests on two places only: intent-packages' missing grant, and the
    orchestrator's refusal to approve a rotation decomposition by policy when its revision was
    approved by a policy (`services/intake/decomposition.py`, lines 357-358,
-   `revision_approved_by_policy`).
+   `revision_approved_by_policy`). A `policy:non-software-operational@` approver reaches that
+   refusal: `is_bump_revision` routes to the bump branch only the `dependency-update` profile or
+   the `policy:dependency-update@` prefix (`services/intake/bump_policy.py`, lines 20 and 31-32).
+   The executor reads only that the latest lineage approval's hash is the revision's
+   (`rotation_worker/checks.py`, lines 257-260), never who approved it.
 3. **`compare-destinations`** (`rotation_worker/cli.py`, lines 91-112) reads the registry row at
    each registry repository's `main` (`registry.find_credential`, lines 99-104) and the standing
    package's `profile_fields.destinations` at intent-packages' `main`, prints the registry commit
@@ -2736,7 +2740,12 @@ Where "only a named person approves a rotation revision" is enforced today:
    policy re-checked its shape and raised no objection, and the chain holds the approval under the
    policy's approver string. Every other rotation revision keeps the named person's click. These
    statements are **narrowed, not withdrawn**, in the same way:
-   - amendment 15 decision 7 ("Approving the generated package stays a person's act");
+   - amendment 2's "What the answers change", decision 1: Devon's read of a revision's
+     destinations against the last approved revision, before approving. A lane credential's
+     revision 1 has no earlier approval, and `compare-destinations` stands in for the read;
+   - amendment 11 decision 5 ("The package revision approval ... untouched");
+   - amendment 15 decision 7 ("Approving the generated package stays a person's act"), and
+     increment 4's design item 5, which concerns reissues and so is unchanged in effect;
    - amendment 16 decisions 1 to 4 and its Consequences;
    - amendment 17's Consequences ("the one click every rotation has");
    - amendment 19 item 10 ("Devon's revision approval is the only person step") and its
@@ -2759,12 +2768,16 @@ Where "only a named person approves a rotation revision" is enforced today:
      `last_rotated` infraops serves), and refuses unless the result equals the stored package in
      every field apart from `status`. It also refuses a `created_by` other than `rotation-proposer`.
    - **Revision 1, with no earlier approval.** The package's `revision` is 1, its lineage lists
-     one revision and no approval, and its `current_state` is `ready_for_review`.
+     one revision and no approval, and its `current_state` is `ready_for_review`. The carrier's
+     form of the command (item 3) instead requires exactly one approval, on revision 1, by the
+     policy approver, whose hash is the package's.
    - **One of the two types.** The row's `class` is `bws-lane-token` or `healthchecks-ping-url`,
      and the package's destinations hold the matching `provider name="<type>"` destination.
    - **Destinations equal.** `compare-destinations`' comparison is equal for the credential, with
      the registry read at the commit the command names, which is also the commit the re-render
-     used.
+     used. The grant (item 3) also limits the destination kinds: for `bws-lane-token`, one
+     `bws-secret`, one `coolify-env` with `redeploy` false, and the `provider`; for
+     `healthchecks-ping-url`, one `bws-secret` and the `provider`.
    - **Standard authority, exactly.** The package's `authority` equals `generate.authority` for
      the type, the row's destinations and the plan, compared whole: allowed, requires-approval,
      prohibited and budgets. The re-render already implies it; the command reports it separately
@@ -2780,8 +2793,9 @@ Where "only a named person approves a rotation revision" is enforced today:
    - **intent-packages re-checks what it can see.** `approval-policy.toml` schema 4 gives
      `non-software-operational` a grant that refuses unless the package is a standing revision 1
      with no earlier approval in its lineage, `created_by` is `rotation-proposer`, it names
-     exactly one of the two types by its `provider name=` destination, its authority equals one of
-     the grant's listed sets for that type, and no criterion is a `human_review`. It can't read
+     exactly one of the two types by its `provider name=` destination, its destinations are of
+     that type's kinds (item 2), its authority equals one of the grant's listed sets for that
+     type, and no criterion is a `human_review`. It can't read
      the registry, so it can't re-check the re-render or the destinations; the carrier does (the
      next bullet). The grant names only shapes, so every other `non-software-operational` package
      still draws an objection.
@@ -2790,13 +2804,24 @@ Where "only a named person approves a rotation revision" is enforced today:
      written.
    - **The merger's identity is not relied on.** HQ's merge shows on GitHub as Devon's login,
      like every approval PR before this one. The carrier relies instead on the policy approver in
-     a verified chain event that matches the lineage, and on running item 2's command itself: a
-     rotation revision approved by `policy:` is carried only when the command, run at carry time
-     against the same commits, refuses nothing. Otherwise the record is refused as
-     `standing_approval_refused` and waits for a person.
+     a verified chain event that matches the lineage, and on running item 2's checks itself: a
+     rotation revision approved by `policy:` is carried only when the command's carry form
+     refuses nothing. Otherwise the record is refused as `standing_approval_refused` and waits
+     for a person. The carry form differs from the approving form in three ways:
+     - it requires exactly the one policy approval on revision 1 (item 2), not none;
+     - it reads the registry at `main`, as the executor does, because the lineage records only
+       the package commit. A registry that moved since the approval makes the re-render differ,
+       so the carrier refuses and Devon decides, failing closed;
+     - it doesn't read infraops, so it accepts the re-render under either plan the row derives
+       (`plan_for`'s issue and rotation plans). Which plan runs is still the executor's to check:
+       `checks._check_issue_fact` refuses an issue plan whose keeper doesn't hold the marker, and
+       a rotation plan whose keeper does.
    - **The orchestrator's decomposition gate** (`decomposition.py`, lines 357-358) refuses a
-     `policy:` approver on the rotation branch except exactly
-     `policy:non-software-operational@v4` on a revision 1 whose package names one of the two types.
+     `policy:` approver on the rotation branch except one with the prefix
+     `policy:non-software-operational@`, on a revision 1 whose package names one of the two types.
+     It keys on the prefix, as `bump_policy.py` keys on `policy:dependency-update@` (line 20), so
+     a later schema version doesn't stop every standing approval; intent-packages already refuses
+     any version but the loaded policy's (`_authorize_approver`, lines 200-206).
      A decomposition the policy then approves stays attributed as amendment 16 decision 3 says.
 4. **The standing answer is a precondition.** The approval rests on an entry in sds-hq
    `standing-answers.md`, which changes only through Devon's own words in an interactive session.
@@ -2820,9 +2845,10 @@ Each increment ships on its own; none is built by this amendment.
 1. **intent-packages: the schema-4 grant.** `approval_policy.py` learns schema 4 (the version set,
    line 58, and a grant shape for the rotation profile's checks), `approval-policy.toml` gains
    `[profile.non-software-operational.grant]` with the two types' authority sets and the
-   standing answer's date in its rationale, and its tests pin every refusal. `operations.py` needs
-   no change: `_authorize_approver` already requires the exact approver string and an empty
-   refusal list.
+   standing answer's date in its rationale, and its tests pin every refusal. `operations.py`
+   changes too: `refusals_for` and `_authorize_approver` (lines 174-209) see only the package, so
+   the lineage check needs `_authorize_approver` to pass the lineage `do_approve` already reads
+   (line 256) into the policy's refusal. The exact-approver check is unchanged.
 2. **orchestrator: the fixed command.** `rotation-proposer standing-approval <credential_id>` in
    `src/rotation_proposer/`, reusing `generate.render`, `generate.authority`, `plan_for` and
    `rotation_worker.compare`. It logs as the proposer logs today: structured JSON on stdout,
@@ -2834,7 +2860,8 @@ Each increment ships on its own; none is built by this amendment.
    item 3. `package_sources.py` needs no change, because its policy arm already recognises the
    shape (line 26). The root and `src/rotation_proposer/CLAUDE.md` invariants that say the
    proposer never approves and that a named human approves each rotation revision are rewritten
-   in that change.
+   in that change, and so is `docs/operations/rotation-proposer.md` step 3 ("No approval policy
+   grants this profile").
 4. **sds-hq: the cycle step.** After Devon writes the standing answer, a cycle runs increment 2's
    command for each lane credential's revision 1 in `ready_for_review`, and on exit 0 approves it
    as item 3 says and opens the PR. A refusal leaves the revision for Devon and is reported to
@@ -2856,6 +2883,9 @@ Each increment ships on its own; none is built by this amendment.
   one chain.
 - **The cycle's emitting identity.** Which registry agent id the cycle sets as `FACTORY_AGENT_ID`,
   and whether `factory_events` requires it to resolve in security-standards' registry.
+- **The carry form's plan.** Accepting the re-render under either derived plan leaves the plan's
+  choice to the executor's issue-fact check. Whether that's enough, or the carrier needs infraops'
+  `last_rotated` too, is settled in increment 3.
 - **Generator drift.** The re-render uses the generator at the orchestrator revision the command
   runs at. A wording change in `generate.py` after a package was generated makes the re-render
   differ, which refuses the standing approval and leaves the revision for Devon. That fails
@@ -2875,6 +2905,12 @@ Each increment ships on its own; none is built by this amendment.
   person pastes a value. Anyone able to change a registry row can already make the proposer
   generate a revision 1 for it; the paste stays a person's, and the executor's pre-claim check
   that registry, package and envelope destinations are equal still refuses a mismatch.
+- **No person reads a lane credential's revision 1 destinations.** Amendment 2 had Devon read
+  them before approving, and T4's defence against a hostile registry consumer rested on that
+  read. For these revisions the registry is the only source, so an actor who can land a registry
+  row can choose where a lane credential is written. The grant's per-type destination kinds
+  (item 2) limit the choice to one keeper and, for a lane token, one Coolify variable that is
+  never redeployed. This residual is accepted under D-34.
 - **Code Brain rule 4.** Every condition refuses on error, the command exits 2 for anything it
   can't read, and the carrier and the decomposition gate fail closed to a person.
 - **Unchanged.** The executor, the decomposer, the verifier, every generated package's bytes, the
