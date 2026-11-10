@@ -130,7 +130,7 @@ holds the outcome: exit 0, no ping, and both programs run. The schedule stays of
 
 ## Tests and checks
 
-- `make check`: green (`rc=0`), with ruff, ruff format, pyright, and pytest. **14,276 passed, 1
+- `make check`: green (`rc=0`), with ruff, ruff format, pyright, and pytest. **14,275 passed, 1
   skipped**, against `orchestrator_test_hq_w_80`, migrated to head, on the committed tree.
   An earlier run, before the first commit, failed only `test_every_pattern_names_a_file`, because
   the new test file wasn't yet tracked. It passed after the commit.
