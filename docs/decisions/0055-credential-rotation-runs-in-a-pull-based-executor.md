@@ -3228,8 +3228,9 @@ package is open.
   use it, not a new grant. Copying the key into `Rotation / Healthchecks` instead would be a second
   copy of a secret, which its other consumers would have to track. Under (b) the question is a new
   key instead, in a new project.
-  Devon's acceptance (G-25) didn't answer the grant: it stays open, asked as sds-hq decision D-36,
-  and increment 3 can't read the key until it's answered.
+  Answered yes by Devon (sds-hq D-36, "yes", from Slack, recorded 2026-11-10 17:14 UTC). The grant
+  itself is a person's act in BWS, done before increment 3 reads the key; this item's check
+  (confirm the key's project in BWS first) still applies.
 - **Whether the package names the check.** The `healthchecks_check` field sits in the registry,
   beside `note`, outside the three-way destination comparison, like the scheduled readers' fields
   (`readers.py`, module docstring), and registry rows merge without review. So amendment 22's
@@ -3248,8 +3249,8 @@ package is open.
   only the lanes'. ADR-0059 says that key "is no lane's credential", and D-28's "No Key" was lifted
   only for the read-only lookup (amendment 21). The executor's client allows only the listing
   `GET`, but a compromised root isn't bound by its client: it could silence every self-hosted
-  check, where today it can silence only the lanes'. That widening is what Devon's grant accepts or
-  refuses; (b) is the narrower option.
+  check, where today it can silence only the lanes'. Devon accepted that widening by answering the
+  grant yes (sds-hq D-36); (b) is the narrower option.
 - **The path with no person, for a ping URL.** With amendment 22, a registry row that merges
   without review becomes, through the proposer's revision 1, the standing approval, the carrier's
   record and the executor's read, a write to the row's keeper with no person in the path. Its
