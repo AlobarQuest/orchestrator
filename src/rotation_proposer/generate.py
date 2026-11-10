@@ -14,9 +14,10 @@ package is rendered from them:
 * the **reach** is `external_system`, plus `operator_machine` for a credential the Mac keeps and
   `live_estate` where a step writes a hosted service: a hosted type, or a Coolify setting among
   the destinations (a held copy distribute writes and restarts);
-* the **authority** allows reading and writing secrets, minting where the provider mints by
-  machine, revoking where it revokes by machine and the plan retires, and changing
-  infrastructure wherever the reach is `live_estate`, and prohibits the rest;
+* the **authority** allows reading and writing secrets, creating where the provider mints by
+  machine and its mint creates (`Capabilities.creates`, ADR-0055 amendment 23), revoking where
+  it revokes by machine and the plan retires, and changing infrastructure wherever the reach is
+  `live_estate`, and prohibits the rest;
 * the **prose** is one template, naming the credential, its provider identity and its plan.
 
 An authored package keeps its approved wording; the proposer revises it only for its occurrence
@@ -41,7 +42,7 @@ from rotation_worker.contract import (
 )
 from rotation_worker.destinations import HOSTED_KINDS, parse
 from rotation_worker.plans import candidates, criteria_steps, select_plan
-from rotation_worker.registry import RegistryEntry
+from rotation_worker.registry import CHECK_FIELD, RegistryEntry
 from rotation_worker.types import CLASS_TYPES, TYPES
 
 PROFILE: Final = "non-software-operational"
@@ -101,6 +102,14 @@ _BY_SHAPE: Final = (
     "other keeper of its type holds it; nothing pings it, because a ping marks the check up."
 )
 
+# A mint that creates nothing reads the value its provider already holds (`Capabilities.creates`,
+# ADR-0055 amendment 23): a ping URL, from the check the registry row names. The criterion names
+# that check, so the approval's re-render and a person's read cover which check's URL a lane gets.
+_READS_CHECK: Final = (
+    "The executor reads the ping URL of the Healthchecks check named {check!r} from the "
+    "Management key's check listing, before the unit is claimed; nothing is created."
+)
+
 # A type whose provider keeps no old value alive (`Capabilities.overlap` false) replaces it at the
 # host step, and what depends on the service restarts. The package states that outage, because the
 # person approving the revision is approving it.
@@ -153,16 +162,21 @@ def plan_for(entry: RegistryEntry, *, first_issue: bool | None = None) -> tuple[
     return adapter_name, rotation
 
 
-def acceptance(plan: Plan, overlap: bool = True, *, by_shape: bool = False) -> list[dict[str, str]]:
+def acceptance(
+    plan: Plan, overlap: bool = True, *, by_shape: bool = False, reads_check: str | None = None
+) -> list[dict[str, str]]:
     """One criterion per machine step, in the plan's numbering.
 
     A type with no overlap states its host step as the replacement and restart it is; an issue
-    states that nothing was there before; a type checked by its shape says so at verify_new."""
+    states that nothing was there before; a type checked by its shape says so at verify_new; a
+    mint that reads a check's URL names the check."""
     conditions = {**_CONDITIONS, StepKind.HOST: _HOST_REPLACES} if not overlap else _CONDITIONS
     if plan.issue:
         conditions = {**conditions, **_ISSUE}
     if by_shape:
         conditions = {**conditions, StepKind.VERIFY_NEW: _BY_SHAPE}
+    if reads_check is not None:
+        conditions = {**conditions, StepKind.MINT: _READS_CHECK.format(check=reads_check)}
     steps = criteria_steps(plan)
     units_per_kind = Counter(kind for _, kind in set(steps.values()))
     criteria = []
@@ -205,7 +219,7 @@ def authority(
     (Infra Brain rule 1032)."""
     capabilities = TYPES[adapter_name].capabilities
     allowed = {"secret_read", "secret_write"}
-    if capabilities.machine_mint:
+    if capabilities.machine_mint and capabilities.creates:
         allowed.add("credential_create")
     if capabilities.machine_revoke and not issue:
         allowed.add("credential_revoke")
@@ -243,6 +257,20 @@ def _risk(plan: Plan, overlap: bool) -> tuple[str, str]:
         "leaving the keeper unchanged. Once host finishes, recovery is forward: a new value and "
         "the rotation run again.",
     )
+
+
+def _read_check(adapter_name: str, entry: RegistryEntry) -> str | None:
+    """The check a mint that creates nothing reads, from the row's `healthchecks_check`; `None`
+    for every type whose mint creates or that mints by a person. A row that names none raises."""
+    capabilities = TYPES[adapter_name].capabilities
+    if not capabilities.machine_mint or capabilities.creates:
+        return None
+    check = entry.credential.get(CHECK_FIELD)
+    if not isinstance(check, str) or not check or check.strip() != check:
+        raise GenerateError(
+            f"{entry.credential.get('id')}: a {adapter_name} row names its check in {CHECK_FIELD}"
+        )
+    return check
 
 
 def render(
@@ -354,7 +382,12 @@ def render(
             "operational": None,
             "other": [],
         },
-        "acceptance": acceptance(plan, overlap, by_shape=TYPES[adapter_name].verify_by_shape),
+        "acceptance": acceptance(
+            plan,
+            overlap,
+            by_shape=TYPES[adapter_name].verify_by_shape,
+            reads_check=_read_check(adapter_name, entry),
+        ),
         "authority": granted,
         "deliverables": {
             "artifacts": [

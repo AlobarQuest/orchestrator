@@ -66,6 +66,9 @@ def test_the_ping_url_row_names_only_its_keeper(rows: dict[str, RegistryEntry]) 
     entry = rows[PING_URL]
     healthchecks_ping_url.check_row(entry.credential)
     assert entry.credential["bws_uuid"] in _lane_secrets()
+    # The check the lane's launcher pings (`scripts/run-execution-watch.sh`), whose URL the
+    # executor reads (ADR-0055 amendment 23).
+    assert entry.credential["healthchecks_check"] == "sds-execution-watch"
 
 
 @pytest.mark.parametrize("credential_id", [TOKEN, PING_URL])

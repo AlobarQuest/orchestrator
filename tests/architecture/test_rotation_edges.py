@@ -164,6 +164,7 @@ EDGES: dict[str, RotationEdge] = {
                 "credential_key_id",
                 "github_app_key_id",
                 "healthchecks_key_id",
+                "healthchecks_management_key_id",
                 "inbox_secret_id",
                 "inbox_token_id",
                 "pg_helper_key_id",
@@ -507,7 +508,7 @@ _WORKER_CLIENTS = {
     "src/rotation_worker/coolify.py": 1,
     "src/rotation_worker/github_actions.py": 3,
     "src/estate_clients/github_app_mint.py": 1,
-    "src/rotation_worker/readers.py": 1,
+    "src/rotation_worker/readers.py": 2,
     "src/rotation_worker/notify.py": 0,
     "src/rotation_worker/adapters/openrouter.py": 1,
     "src/rotation_worker/adapters/orchestrator_bearer.py": 1,
@@ -610,7 +611,7 @@ BORROWED: dict[str, dict[str, frozenset[str]]] = {
         ),
         "rotation_worker.plans": frozenset({"candidates", "criteria_steps", "select_plan"}),
         "rotation_worker.registry": frozenset(
-            {"RegistryEntry", "RegistryError", "credentials", "standing_credential"}
+            {"CHECK_FIELD", "RegistryEntry", "RegistryError", "credentials", "standing_credential"}
         ),
         "rotation_worker.types": frozenset({"CLASS_TYPES", "TYPES"}),
         "sds_members.client": frozenset({"MembersUnreadable", "read_members"}),

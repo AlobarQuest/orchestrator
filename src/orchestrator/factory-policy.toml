@@ -613,10 +613,10 @@ name = "Healthchecks ping-URL issue unit of an approved standing package"
 rationale = """
 A scheduled lane's Healthchecks ping URL is written into its keeper, the lane's
 ping-URL secret in BWS (ADR-0055 amendment 19). Recognised for the reason the first
-pattern in this row gives. A ping URL is only ever issued, never rotated: a person
-copies it from the check's page, and its one unit, `store`, checks its shape,
-stores it and reads it back. Nothing sends it a ping, so no other unit and no other
-reach exists to name.
+pattern in this row gives. A ping URL is only ever issued, never rotated: its one
+unit, `store`, reads it from the Healthchecks check listing (ADR-0055 amendment
+23), checks its shape, stores it and reads it back. Nothing sends it a ping, so no
+other unit and no other reach exists to name.
 """
 decided = "2026-11-07"
 rotation_adapters = ["healthchecks-ping-url"]

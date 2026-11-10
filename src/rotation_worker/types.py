@@ -47,14 +47,17 @@ TYPES: Final[dict[str, CredentialType]] = {
         Capabilities(machine_mint=True, machine_revoke=True, hosted=True, overlap=False)
     ),
     # ADR-0055 amendment 19: a lane's BWS access token and its Healthchecks ping URL, each issued
-    # into a keeper holding the inbox's empty marker. A person mints both; the VM instance keeps
-    # them. Only the token is rotated (reissued), and only it has a copy beyond its keeper: the
-    # lane's Coolify variable, written with no restart.
+    # into a keeper holding the inbox's empty marker; the VM instance keeps them. A person mints
+    # the token. The executor reads the ping URL from the Management key's check listing, which
+    # creates nothing (amendment 23). Only the token is rotated (reissued), and only it has a copy
+    # beyond its keeper: the lane's Coolify variable, written with no restart.
     "bws-lane-token": CredentialType(
         Capabilities(machine_mint=False, machine_revoke=False, issues=True, env_at_distribute=True)
     ),
     "healthchecks-ping-url": CredentialType(
-        Capabilities(machine_mint=False, machine_revoke=False, issues=True, rotates=False),
+        Capabilities(
+            machine_mint=True, machine_revoke=False, issues=True, rotates=False, creates=False
+        ),
         verify_by_shape=True,
     ),
 }

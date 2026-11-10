@@ -711,6 +711,12 @@ One container per lane already gives each lane its own process, filesystem and e
   take the value as an argument. Verify before increment 1, on the self-hosted version: that a UUID
   ping URL needs no other credential and does nothing beyond pinging, and the URL's base
   (`PING_ENDPOINT`).
+  - **Narrowed by ADR-0055 amendment 23 (2026-11-10).** No person copies or pastes a ping URL,
+    and the inbox doesn't carry one: before the claim, the VM rotation executor reads the lane
+    check's `ping_url` from the Management key's check listing, by the name the ping URL's
+    registry row gives in `healthchecks_check`, and writes the lane's ping-URL secret. The
+    executor's root reads the Management key by a direct grant; the lane still holds only its own
+    check's ping URL, never the key.
 - **What changes in `sds-deadman.sh`, in increment 2** (the first lane whose container pings).
   `sds_deadman_resolve` gains a first path: when `SDS_DEADMAN_PING_URL_UUID` is set, it reads the
   URL with `sds_bws_value` and the lane's own token, and lists no check. `SDS_DEADMAN_PING_URL_UUID`
@@ -1114,6 +1120,10 @@ Each increment's plan records which repositories it changes and which identities
    before any run in step 2, because some of those runs ping the lane's real check. The ping log
    needs the Management API key, so Devon or an interactive session captures the baseline through
    the broad account, not HQ ("The week bar").
+
+   ADR-0055 amendment 23 narrows this step's ping URL: once HQ makes the ping URL's row due, the
+   executor reads the URL from the Healthchecks check listing and writes the lane's ping-URL
+   secret. Devon pastes nothing, and the ping URL's issue raises no mint alert.
 2. Pick a cut-over time between two scheduled passes. In that gap, for a lane with state (decision
    1, "Lane state"), first copy its Mac state directory into its volume: the session reads each
    file, which holds alert keys and timestamps and no secret, and writes it with infraops's

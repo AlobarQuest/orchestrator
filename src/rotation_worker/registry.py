@@ -32,6 +32,10 @@ REGISTRY_REPOSITORIES: Final = (
 )
 REGISTRY_PATH: Final = ".cred-consumers.toml"
 PACKAGES_REPOSITORY: Final = "AlobarQuest/intent-packages"
+# A Healthchecks check's exact name, a parsed field beside `note`: on a scheduled reader's
+# consumer, the check its run pings (`readers.py`); on a ping URL's row, the check whose URL its
+# keeper gets (ADR-0055 amendment 23).
+CHECK_FIELD: Final = "healthchecks_check"
 
 
 class RegistryError(RuntimeError):

@@ -2,24 +2,38 @@
   "acceptance": [
     {
       "approver": "devon",
+      "condition": "The executor reads the ping URL of the Healthchecks check named 'sds-example-lane' from the Management key's check listing, before the unit is claimed; nothing is created.",
+      "evidence": "external: the mint step's rotation-step/1 evidence, filed by the rotation executor.",
+      "evidence_type": "external_attestation",
+      "id": "AC-001"
+    },
+    {
+      "approver": "devon",
+      "condition": "The new value is staged in the executor's work store, with a fingerprint different from the old value's.",
+      "evidence": "external: the stage step's rotation-step/1 evidence, filed by the rotation executor.",
+      "evidence_type": "external_attestation",
+      "id": "AC-002"
+    },
+    {
+      "approver": "devon",
       "condition": "The new value is exactly the self-hosted instance's ping base followed by one UUID, and no other keeper of its type holds it; nothing pings it, because a ping marks the check up.",
       "evidence": "external: the verify_new step's rotation-step/1 evidence, filed by the rotation executor.",
       "evidence_type": "external_attestation",
-      "id": "AC-001"
+      "id": "AC-003"
     },
     {
       "approver": "devon",
       "condition": "The executor read the empty marker in the keeper before writing it, and the keeper reads back the new value; nothing is quarantined.",
       "evidence": "external: the store step's rotation-step/1 evidence, filed by the rotation executor.",
       "evidence_type": "external_attestation",
-      "id": "AC-002"
+      "id": "AC-004"
     },
     {
       "approver": "devon",
       "condition": "Every consumer the registry names holds the new value, and the staging secret is deleted.",
       "evidence": "external: the verify_consumers step's rotation-step/1 evidence, filed by the rotation executor.",
       "evidence_type": "external_attestation",
-      "id": "AC-003"
+      "id": "AC-005"
     }
   ],
   "applicable_standards": {
@@ -110,7 +124,7 @@
       "Healthchecks (the example lane's check), the credential's provider"
     ],
     "occurrence": "2026-11-07-requested",
-    "operating_procedure": "The rotation executor (orchestrator src/rotation_worker/) works this rotation with its healthchecks-ping-url adapter and the plan derived from the type's capabilities and this credential's registry row: units store. A person's acts, each announced by an alert and observed by the executor: mint. Evidence carries fingerprints, probe status codes and notes only.",
+    "operating_procedure": "The rotation executor (orchestrator src/rotation_worker/) works this rotation with its healthchecks-ping-url adapter and the plan derived from the type's capabilities and this credential's registry row: units store. No act is a person's. Evidence carries fingerprints, probe status codes and notes only.",
     "owner": "devon",
     "standing": true
   },

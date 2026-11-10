@@ -63,6 +63,10 @@ class Capabilities:
     it can't be rotated, only replaced by recreating its check. `env_at_distribute`: its provider
     writes its `coolify-env` destination at distribute, with one `PATCH`, never a restart and no
     host step.
+
+    `creates` (ADR-0055 amendment 23) says whether a machine mint creates a credential at the
+    provider, which a package allows as `credential_create`. A ping URL's mint creates nothing: it
+    reads the URL Healthchecks already holds for the lane's check.
     """
 
     machine_mint: bool
@@ -72,6 +76,7 @@ class Capabilities:
     issues: bool = False
     rotates: bool = True
     env_at_distribute: bool = False
+    creates: bool = True
 
 
 def _distributes(
@@ -130,10 +135,14 @@ def derive_issue(
     store_kind: str,
 ) -> Plan:
     """The issue plan for one credential of a type that declares one (ADR-0055 amendment 19 item
-    3): a person's mint, then one `store` unit that proves, stores, writes every copy and verifies
-    every consumer. There is nothing to retire."""
-    if not capabilities.issues or capabilities.machine_mint or capabilities.hosted:
-        raise ContractError("only a type a person mints and nothing hosts declares an issue")
+    3): a mint, then the steps that prove, store, write every copy and verify every consumer.
+    There is nothing to retire.
+
+    A person's mint is a human act before one `store` unit. A machine's (a ping URL read from the
+    Healthchecks listing, amendment 23) shares that one unit, named `store` all the same: mint and
+    stage share a unit, and every issue unit keeps the one name its reach row recognises."""
+    if not capabilities.issues or capabilities.hosted:
+        raise ContractError("only a type nothing hosts declares an issue")
     distributes = _distributes(capabilities, destinations, keeper, store_kind)
     store = [
         StepKind.VERIFY_NEW,
@@ -141,8 +150,13 @@ def derive_issue(
         *([StepKind.DISTRIBUTE] if distributes else []),
         StepKind.VERIFY_CONSUMERS,
     ]
-    mint = HumanAct("mint", (Step(StepKind.MINT, H), Step(StepKind.STAGE, H)))
-    plan = Plan(tuple(_numbered([mint, ("store", store)])), issue=True)
+    segments: list[tuple[str, list[StepKind]] | HumanAct]
+    if capabilities.machine_mint:
+        segments = [("store", [StepKind.MINT, StepKind.STAGE, *store])]
+    else:
+        mint = HumanAct("mint", (Step(StepKind.MINT, H), Step(StepKind.STAGE, H)))
+        segments = [mint, ("store", store)]
+    plan = Plan(tuple(_numbered(segments)), issue=True)
     validate_issue_plan(plan)
     return plan
 

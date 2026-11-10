@@ -15,7 +15,8 @@ then emptying the inbox, only when all of these hold:
 * it is for the same account as the value it replaces (`same_identity`), which must still answer:
   after an early revoke or an expiry, the value is staged by hand. A type that binds by what the
   value is instead (`BindsByItself`, ADR-0055 amendment 19 items 4 and 5) asks that in place of
-  this check and the one before it: a lane token by its declared reach, a ping URL by its shape;
+  this check and the one before it: a lane token by its declared reach. A ping URL is never
+  pasted: the executor reads it from the Healthchecks listing (amendment 23);
 * it is no other keeper's value of the same type: two BWS machine tokens can reach exactly the
   same projects, so only this tells one pasted for the other.
 

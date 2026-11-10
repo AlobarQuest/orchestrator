@@ -1,25 +1,29 @@
-"""The Healthchecks ping-URL adapter: a lane's dead-man check's ping URL (ADR-0055 amendment 19).
+"""The Healthchecks ping-URL adapter: a lane's dead-man check's ping URL (ADR-0055 amendments 19,
+21 and 23).
 
-A person copies the URL from the check's page on the self-hosted Healthchecks and pastes it into
-the VM's inbox (ADR-0059 Q10). The executor writes it into its keeper, the lane's ping-URL secret
-in `Rotation / Keepers`, which the lane's account reads by a direct grant. That secret is the only
-destination: nothing else holds a copy.
+The executor reads the URL from the Management key's check listing (`readers.PingUrls`), taking
+the one check whose name is the registry row's `healthchecks_check`, before the unit is claimed
+(`worker._read_mint_waits`), and writes it into its keeper, the lane's ping-URL secret in
+`Rotation / Keepers`, which the lane's account reads by a direct grant. That secret is the only
+destination: nothing else holds a copy. No person pastes a ping URL, and the inbox is never read
+for one (amendment 23, under Devon's standing answer that a ping URL is configuration while the
+estate is in development).
 
 * **Issue only.** A ping URL can't be rotated, only replaced by recreating its check, which starts
   a new history (infraops's class landmine), so the type has an issue plan and no rotation plan.
-* **Bind and verify by shape, then by a read-only lookup** (ADR-0055 amendment 21, Devon's
-  D-31): the keeper holds the inbox's empty marker, the value is exactly the self-hosted
-  instance's ping base followed by one UUID, and the executor's read-only Healthchecks key finds
-  the check by that UUID's `unique_key` (200) while a random UUID's `unique_key` finds none
-  (404), the known-bad control. Nothing is ever sent to the ping URL, because a ping marks the
-  check up. A check outside the read-only key's project answers 404, so the bind refuses it.
-  The lookup proves only that the check exists in that project and that the UUID matches it in
-  its first half, the part `unique_key` hashes: a URL wrong only in its last 16 hex characters
-  passes. Cut-over step 4 (the container's first scheduled ping landing on that check) is the
-  only proof of the full URL.
-* **The UUID is the secret.** No message names the value or any part of it. A log line or
-  evidence names a check only by its `unique_key`'s first characters, which Healthchecks shows a
-  read-only key in place of the UUID.
+  Its mint creates nothing (`Capabilities.creates`), so a package allows no `credential_create`.
+* **Verify by shape, then by a read-only lookup** (ADR-0055 amendment 21, Devon's D-31): the
+  keeper holds the inbox's empty marker, the value is exactly the self-hosted instance's ping base
+  followed by one UUID, and the executor's read-only Healthchecks key finds the check by that
+  UUID's `unique_key` (200) while a random UUID's `unique_key` finds none (404), the known-bad
+  control. Nothing is ever sent to the ping URL, because a ping marks the check up. The lookup
+  reaches only the UUID's first half, the part `unique_key` hashes; on this path nobody types the
+  URL, since Healthchecks builds `ping_url` from its own `PING_ENDPOINT` and the check's UUID.
+  Cut-over step 4 (the container's first scheduled ping landing on that check) is the only proof
+  of the full URL.
+* **No message names the value.** A log line names the URL by fingerprint only, and evidence names
+  a check only by its `unique_key`'s first characters, which Healthchecks shows a read-only key in
+  place of the UUID.
 """
 
 from __future__ import annotations
@@ -30,10 +34,18 @@ import uuid
 from collections.abc import Callable, Mapping
 from typing import Any, Final
 
-from rotation_worker.contract import EMPTY, LIVE_STATUS, ContractError
+from rotation_worker.contract import ContractError
 from rotation_worker.destinations import DestinationError, credential_destinations, parse
 from rotation_worker.plans import derive_issue
-from rotation_worker.readers import CHECKS, HEALTHCHECKS_URL, KEY_PREFIX, Healthchecks
+from rotation_worker.readers import (
+    CHECKS,
+    HEALTHCHECKS_URL,
+    KEY_PREFIX,
+    Healthchecks,
+    PingUrls,
+    ReadError,
+)
+from rotation_worker.registry import CHECK_FIELD
 from rotation_worker.types import TYPES
 from rotation_worker.values import Value
 
@@ -50,13 +62,23 @@ PLAN: Final = derive_issue(TYPES[NAME].capabilities, (), "", "bws-secret")
 
 
 def check_row(credential: Mapping[str, Any]) -> None:
-    """Refuse, before a claim, a row naming any destination beyond its provider and keeper."""
+    """Refuse, before a claim, a row naming any destination beyond its provider and keeper, or no
+    check to read the URL of."""
     try:
         kinds = sorted(parse(d)["kind"] for d in credential_destinations(credential))
     except DestinationError as error:
         raise ContractError(f"a ping-URL row's consumers are malformed: {error}") from None
     if kinds != ["bws-secret", "provider"]:
         raise ContractError("a ping-URL row's one destination is its keeper")
+    check_name(credential)
+
+
+def check_name(credential: Mapping[str, Any]) -> str:
+    """The name of the check whose URL the row's keeper gets: its `healthchecks_check`."""
+    name = credential.get(CHECK_FIELD)
+    if not isinstance(name, str) or not name or name.strip() != name:
+        raise ContractError(f"a ping-URL row names its check in {CHECK_FIELD}, a trimmed string")
+    return name
 
 
 def unique_key(ping_url: Value) -> str:
@@ -81,38 +103,39 @@ class HealthchecksPingUrlProvider:
         self,
         healthchecks: Healthchecks | None,
         random_uuid: Callable[[], uuid.UUID] = uuid.uuid4,
+        *,
+        ping_urls: PingUrls | None = None,
+        check: str | None = None,
     ) -> None:
         self._healthchecks = healthchecks
         self._random_uuid = random_uuid
+        self._ping_urls = ping_urls
+        self._check = check
+
+    @property
+    def mint_source(self) -> str:
+        """What the mint reads, for a log line: the check, by its name."""
+        return self._check or "no check"
+
+    def read_mint(self) -> Value:
+        """The check's ping URL, from this pass's listing, refused unless it is of the self-hosted
+        shape. `ReadError` refuses the unit; `ReadUnavailable` and `StoreError` wait."""
+        if self._ping_urls is None:
+            raise ReadError("no Healthchecks Management key configured to read a ping URL with")
+        if self._check is None:
+            raise ReadError(f"the row names no check in {CHECK_FIELD}")
+        url = self._ping_urls.ping_url(self._check)
+        if self.shape_problem(url) is not None:
+            raise ReadError(
+                f"check {self._check!r}'s ping_url isn't the self-hosted ping base followed "
+                "by one UUID"
+            )
+        return url
 
     def shape_problem(self, new: Value) -> str | None:
         """Why `new` isn't a ping URL of the self-hosted instance, or `None`."""
         if SHAPE.fullmatch(new.reveal()) is None:
             return "it isn't the self-hosted Healthchecks ping base followed by one UUID"
-        return None
-
-    def bind_refusal(self, new: Value, old: Value) -> str | None:
-        """Why a pasted value isn't a ping URL to issue (amendment 21), or `None`."""
-        if old.reveal() != EMPTY:
-            return "the keeper doesn't hold only the marker: a ping URL is issued, never rotated"
-        problem = self.shape_problem(new)
-        if problem is not None:
-            return problem
-        control = self.probe(self.known_bad())
-        if control is None:
-            return "Healthchecks gave no answer to the lookup, so it is asked again next pass"
-        if control != NOT_FOUND:
-            return f"the lookup of a random UUID's check answered {control}, not {NOT_FOUND}"
-        status = self.probe(new)
-        if status == NOT_FOUND:
-            return (
-                "the read-only key finds no such check: a URL wrong in its UUID's first half, "
-                "or another project's check"
-            )
-        if status is None:
-            return "Healthchecks gave no answer to the lookup, so it is asked again next pass"
-        if status != LIVE_STATUS:
-            return f"the lookup of its check answered {status}"
         return None
 
     def lookup_note(self, new: Value) -> str:
@@ -121,7 +144,9 @@ class HealthchecksPingUrlProvider:
         return f"the read-only key looked up the check whose unique_key starts {start}"
 
     def mint(self) -> Value:
-        raise ContractError("a person copies a ping URL from its check's page")
+        """The URL `read_mint` found before the claim: the listing is read once per pass, so
+        nothing is read again here."""
+        return self.read_mint()
 
     def known_bad(self) -> Value:
         """A ping URL of a random UUID: no check in the project has its `unique_key`."""

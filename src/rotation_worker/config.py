@@ -46,6 +46,7 @@ VM_ONLY: Final = (
     "pg_helper_host",
     "pg_helper_known_host",
     "keepers_project_id",
+    "healthchecks_management_key_id",
 )
 
 
@@ -81,6 +82,11 @@ class Config:
     # The read-only Healthchecks key in `Rotation / Healthchecks`, read only when a scheduled
     # reader's check is (ADR-0055 amendment 9, decision 5).
     healthchecks_key_id: str | None = None
+    # The self-hosted Healthchecks project's Management (read-write) key, in `Ops / Platform`: the
+    # only key shown a check's `ping_url`, read only while a ping-URL unit is about to be claimed
+    # or runs (ADR-0055 amendment 23). VM only. Absent, every ping-URL unit is refused before the
+    # claim.
+    healthchecks_management_key_id: str | None = None
     # The rotation GitHub App (increment 7): its numeric id, and its private key's secret id in
     # `Rotation / Admin`. Both or neither; read only when a step writes or reads an Actions secret.
     github_app_id: str | None = None
@@ -150,6 +156,7 @@ def load(path: Path) -> Config:
         orchestrator_application=_optional_string(raw, "orchestrator_application"),
         change_manager_application=_optional_string(raw, "change_manager_application"),
         healthchecks_key_id=healthchecks_key,
+        healthchecks_management_key_id=_optional_uuid(raw, "healthchecks_management_key_id"),
         github_app_id=app_id,
         github_app_key_id=app_key,
         pg_helper_key_id=helper_key,

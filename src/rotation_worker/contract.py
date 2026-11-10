@@ -19,9 +19,10 @@ here, once, so the invariants hold for every adapter rather than being re-writte
   anything else stops the rotation.
 * **After confirm-dead the quarantine and staging secrets are deleted**, and the deletion is
   filed as evidence.
-* **An issue is a rotation's first half** (ADR-0055 amendment 19 item 3): a person's mint and
-  stage, then verify_new, store, distribute where a copy is written, and verify_consumers, with no
-  retire_old or confirm_dead. It runs only on a keeper holding the inbox's empty marker (`EMPTY`),
+* **An issue is a rotation's first half** (ADR-0055 amendment 19 item 3): a mint and stage, a
+  person's or, for a value read from its provider, a machine's (amendment 23), then verify_new,
+  store, distribute where a copy is written, and verify_consumers, with no retire_old or
+  confirm_dead. It runs only on a keeper holding the inbox's empty marker (`EMPTY`),
   which stands as the old value: nothing is quarantined, every step refuses a value equal to the
   marker, and staging is deleted, and the deletion filed, once verify_consumers passes.
 * **A provider that is a hosted service learns the new value before anything probes it.** A
@@ -315,9 +316,10 @@ def validate_issue_plan(plan: Plan) -> None:
     """Refuse an issue plan that could break an invariant (ADR-0055 amendment 19 item 3): its own
     rule, beside `validate_plan`'s for a rotation.
 
-    A person mints and stages; then verify_new, store, distribute if a copy is written, and
-    verify_consumers, each once, in that order, each a machine's. Nothing is hosted, retired or
-    confirmed dead, because nothing is replaced.
+    Mint and stage, both a person's or both a machine's (ADR-0055 amendment 23): they share a
+    segment, and a segment's steps are all one actor's. Then verify_new, store, distribute if a
+    copy is written, and verify_consumers, each once, in that order, each a machine's. Nothing is
+    hosted, retired or confirmed dead, because nothing is replaced.
     """
     if not plan.issue:
         raise ContractError("only a plan declared an issue is validated as one")
@@ -330,8 +332,6 @@ def validate_issue_plan(plan: Plan) -> None:
             "an issue is mint, stage, verify_new, store, an optional distribute and "
             "verify_consumers, each once and in that order"
         )
-    if any(step.actor is not Actor.HUMAN for step in steps[:2]):
-        raise ContractError("a person mints and stages an issue")
     if any(step.actor is not Actor.MACHINE for step in steps[2:]):
         raise ContractError("every step of an issue after the mint is a machine's")
 

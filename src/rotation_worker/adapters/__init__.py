@@ -32,8 +32,8 @@ from rotation_worker.git_mirror import RepoMirror
 from rotation_worker.helper_client import HelperClient
 from rotation_worker.orchestrator_client import OrchestratorClient
 from rotation_worker.plans import Capabilities
-from rotation_worker.readers import Healthchecks
-from rotation_worker.registry import provider_entries
+from rotation_worker.readers import Healthchecks, PingUrls
+from rotation_worker.registry import CHECK_FIELD, provider_entries
 from rotation_worker.secret_store import SecretStore
 from rotation_worker.types import TYPES
 
@@ -57,6 +57,8 @@ class AdapterContext:
     change_manager_application: str | None = None
     mirror: RepoMirror | None = None
     healthchecks: Healthchecks | None = None
+    # The Management key's check listing, which a ping URL's mint reads (ADR-0055 amendment 23).
+    ping_urls: PingUrls | None = None
     # The unit's approved envelope declares a host with no overlap (`checks.WITHOUT_OVERLAP_KEY`).
     host_without_overlap: bool = False
     # The credential's registry entry, for a provider that reads its own fields (Bitbucket's
@@ -235,7 +237,11 @@ ADAPTERS: Final[dict[str, Adapter]] = {
     healthchecks_ping_url.NAME: Adapter(
         healthchecks_ping_url.PROVIDER,
         healthchecks_ping_url.PLAN,
-        lambda context: healthchecks_ping_url.HealthchecksPingUrlProvider(context.healthchecks),
+        lambda context: healthchecks_ping_url.HealthchecksPingUrlProvider(
+            context.healthchecks,
+            ping_urls=context.ping_urls,
+            check=(context.credential or {}).get(CHECK_FIELD),
+        ),
         capabilities=TYPES[healthchecks_ping_url.NAME].capabilities,
         check_row=healthchecks_ping_url.check_row,
     ),

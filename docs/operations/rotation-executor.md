@@ -82,7 +82,9 @@ amendment 15):
   refused before the claim until its row names one.
 - **An issue** (`plans.derive_issue`, amendment 19) is a rotation's first half, for a type that
   declares one: a person's mint, then one `store` unit of `verify_new`, `store`, `distribute`
-  where a copy is written, and `verify_consumers`. It runs only on a keeper holding the inbox's
+  where a copy is written, and `verify_consumers`. A type whose mint reads a value its provider
+  already holds (a ping URL, amendment 23) has no person's act: its `store` unit starts with the
+  machine's `mint` and `stage`. It runs only on a keeper holding the inbox's
   empty marker, quarantines nothing, and deletes staging after `verify_consumers`. "Lane tokens
   and ping URLs" covers the two types that have one.
 
@@ -199,11 +201,10 @@ value to the waiting rotation only when all of the following hold:
   exactly the same projects (`ops-mini` and `content-mini` do), so only this refuses one pasted
   for the other.
 
-A lane token and a ping URL bind by what the value is instead of the third check, since there's no
-old value to compare with before the first issue, or one that answers after a leak's revoke: a lane
-token sees exactly the reach its registry row declares, and a ping URL has the self-hosted ping
-URL's shape and names a check the read-only Healthchecks key finds. "Lane tokens and ping URLs"
-says how.
+A lane token binds by what the value is instead of the third check, since there's no old value to
+compare with before the first issue, or one that answers after a leak's revoke: it sees exactly
+the reach its registry row declares. A ping URL never comes through the inbox: the executor reads
+it from the Healthchecks listing (ADR-0055 amendment 23). "Lane tokens and ping URLs" says how.
 
 A value that binds is written to the rotation's staging secret, and the inbox is set back to the
 word `empty`. A value that doesn't bind stays in the inbox and fails nothing. If the same value
@@ -375,6 +376,7 @@ expired, the node logged out and every write timed out before it connected (ADR-
    orchestrator_application = "eqj5l7k705fhi12x9i74fqf0"
    change_manager_application = "re45tafypao3nly3qa9a79dp"
    healthchecks_key_id = "f07b1368-f937-4287-baf1-b4ed00b6b274"
+   healthchecks_management_key_id = "51509d5e-64f5-4781-ae82-b4ed00b644e1"
    github_app_id = "5383095"
    github_app_key_id = "80c752aa-866c-43dc-a9e2-b4e80102d444"
    alert_hub_token_id = "<the rotation-executor sender's token, in Rotation / Admin>"
@@ -398,7 +400,11 @@ expired, the node logged out and every write timed out before it connected (ADR-
    amendment 9). `healthchecks_key_id` is the read-only key of the self-hosted Healthchecks at
    `https://healthcheck.alobar.net`, in `Rotation / Healthchecks`, read only when a scheduled
    reader's check is (the following "Scheduled readers" section) or a ping URL's check is looked
-   up ("Lane tokens and ping URLs"). `github_app_id` and `github_app_key_id` name the rotation
+   up ("Lane tokens and ping URLs"). `healthchecks_management_key_id` is the same instance's
+   Management (read-write) key, `healthchecks_selfhosted_api_key` in `Ops / Platform`: the only
+   key Healthchecks shows a check's `ping_url`. The executor reads it only while a ping-URL unit is
+   about to be claimed or runs, and its client may only list the checks. With no id configured,
+   every ping-URL unit is refused before the claim ("Lane tokens and ping URLs"). `github_app_id` and `github_app_key_id` name the rotation
    GitHub App and its private key in `Rotation / Admin`; they come together, and the executor
    reads the key only when a step writes an Actions secret or a wait reads a report ("Actions
    secrets"). `inbox_secret_id` is where a person pastes a value they minted, read with the root
@@ -418,19 +424,22 @@ orb -m rotation-executor -u root runuser -u rotation -- env -i PATH=/usr/bin:/bi
 
 ## Its credentials
 
-All six are in ADR-0055's hand-rotated set: a person creates and rotates them, never the
-executor. None is ever printed or passed as an argument, and none is kept on the Mac except a
-copy of the Healthchecks key, which the Keychain instance reads.
+Six are in ADR-0055's hand-rotated set: a person creates and rotates them, never the executor.
+The seventh, the Healthchecks Management key, is `Ops / Platform`'s; the executor only reads it
+(ADR-0055 amendment 23). None is ever printed or passed as an argument,
+and none is kept on the Mac except a copy of the read-only Healthchecks key, which the Keychain
+instance reads.
 
 | Credential | Lives in | Read by |
 |---|---|---|
 | The root: the `rotation-executor` BWS machine account's access token | `/etc/rotation-worker/root-token` in the VM, owner `rotation`, mode `0400` | The executor, to log in to BWS |
 | The executor's WORKER bearer | BWS secret `rotation-executor WORKER bearer` in `Rotation / Executor`; its hash in the orchestrator's `ORCHESTRATOR_M2M_CREDENTIALS` under key `rotation-executor-1`, agent `rotation-executor` | The executor, from BWS at each pass |
 | The read-only Healthchecks API key (self-hosted, `healthcheck.alobar.net`) | BWS secret `f07b1368-…` in `Rotation / Healthchecks`; its id in `config.toml` as `healthchecks_key_id` | The executor, from BWS, only while it reads a scheduled reader's check or looks up a ping URL's check |
+| The self-hosted Healthchecks Management key (`healthchecks_selfhosted_api_key`, read-write) | BWS secret `51509d5e-…` in `Ops / Platform`; its id in `config.toml` as `healthchecks_management_key_id` | The executor, from BWS, only while a ping-URL unit is about to be claimed or runs, for one request: the check listing (ADR-0055 amendment 23) |
 | The OpenRouter management key | BWS secret `openrouter management key` in `Rotation / Admin`; its id in `config.toml`'s `admin_secrets` | The executor, from BWS, only while an `openrouter` unit mints or revokes |
 | The rotation GitHub App's private key (`alobar-sds-rotation`, App id 5383095) | BWS secret `rotation github app private key` in `Rotation / Admin`; its id in `config.toml` as `github_app_key_id` | The executor, from BWS, only while it writes an Actions secret or reads a report |
 | The production Coolify token (`read`, `write`, `deploy`; not `read:sensitive`) | BWS secret `rotation-coolify-token` in `Rotation / Coolify`; its id in `admin_secrets` as `orchestrator` and `change-manager` | The executor, from BWS, only while an `orchestrator` or `change-manager` unit hosts or retires |
-| The BWS projects | Bitwarden Secrets Manager | The root: write on `Rotation / Work`, `Rotation / Keepers` and `Rotation / Inbox`, read on `Rotation / Admin`, `Rotation / Coolify`, `Rotation / Executor` and `Rotation / Healthchecks`, nothing else. A consumer account: a direct read grant on each keeper secret it consumes, nothing else in `Rotation / Keepers` |
+| The BWS projects | Bitwarden Secrets Manager | The root: write on `Rotation / Work`, `Rotation / Keepers` and `Rotation / Inbox`, read on `Rotation / Admin`, `Rotation / Coolify`, `Rotation / Executor` and `Rotation / Healthchecks`, and a direct read on the Healthchecks Management key's secret in `Ops / Platform` (ADR-0055 amendment 23), nothing else. A consumer account: a direct read grant on each keeper secret it consumes, nothing else in `Rotation / Keepers` |
 
 ### Create them
 
@@ -1247,8 +1256,10 @@ When the service is back, requeue the unit; the keeper never changed, so the ret
 ADR-0055 amendment 19. Each scheduled lane runs as its own BWS machine account in its own Coolify
 service, `sds-lane-<lane>` (ADR-0059). The VM instance issues the lane's BWS access token, writes
 it into the lane's `<LANE>_BWS_ACCESS_TOKEN` variable, and issues the lane's Healthchecks ping URL
-into the lane's ping-URL secret. A person mints both, in the Bitwarden web app and on the check's
-page, and pastes each into the VM's inbox.
+into the lane's ping-URL secret. A person mints the token in the Bitwarden web app and pastes it
+into the VM's inbox. No person copies a ping URL: the executor reads it from the Healthchecks
+check listing (ADR-0055 amendment 23, under Devon's standing answer that a ping URL is
+configuration while the estate is in development).
 
 ### Create the keepers
 
@@ -1300,8 +1311,25 @@ reach_projects = []
   redeploy = false
 ```
 
-A ping URL's row has class and provider `healthchecks-ping-url`, its keeper as `bws_uuid`, and the
-keeper as its one consumer.
+A ping URL's row has class and provider `healthchecks-ping-url`, its keeper as `bws_uuid`, the
+keeper as its one consumer, and `healthchecks_check`, the exact name of the lane's check, whose
+URL the executor reads. A row without it is refused before the claim, and the proposer generates
+no package for it. The generated package names the check in its `mint` criterion, so the
+approval's re-render shows which check's URL a lane gets:
+
+```toml
+[[credential]]
+id = "execution-watch-ping-url"
+class = "healthchecks-ping-url"
+provider = "healthchecks-ping-url"
+bws_uuid = "<the keeper's secret id, printed by create-keeper>"
+rotated_by_sds = true
+healthchecks_check = "sds-execution-watch"
+
+  [[credential.consumer]]
+  kind = "bws-secret"
+  uuid = "<the same secret id>"
+```
 
 A row whose first unit is an issue (a lane token or a ping URL that the SDS creates) carries no
 `created` and no `last_rotated`; the first `record-rotation` sets its rotation anchor. infraops
@@ -1316,12 +1344,22 @@ first issue is due from `rotate_requested` alone. For more information, see
 
 - **Bind.** A lane token binds when a fresh login accepts it beside a refused known-bad token,
   what it sees (projects and secrets, listed by that login) is exactly the row's declared reach,
-  and no other lane token's keeper holds it. A ping URL binds when its keeper holds the marker,
-  the value is exactly `https://healthcheck.alobar.net/ping/` followed by one lowercase UUID, no
-  other ping URL's keeper holds it, and the read-only key's lookup finds its check (ADR-0055
-  amendment 21; the following bullet says what that proves). Nothing pings it: a ping marks the
-  check up.
-- **The ping URL's lookup.** The executor derives the check's `unique_key` from the pasted UUID,
+  and no other lane token's keeper holds it.
+- **The ping URL's read, before the claim** (ADR-0055 amendment 23). The executor lists the checks
+  with the Management key (`GET https://healthcheck.alobar.net/api/v3/checks/`, its client's one
+  permitted request) and takes the `ping_url` of the one check whose name is the row's
+  `healthchecks_check`. No answer, a status other than 200, or a key BWS won't give the root
+  leaves the unit waiting unclaimed on the 48-hour clock. No key configured, no field on the row,
+  no check or two checks of that name, a URL that isn't exactly
+  `https://healthcheck.alobar.net/ping/` followed by one lowercase UUID, or one another ping URL's
+  keeper holds refuses the unit before the claim, and nothing is written. The claimed `mint` and
+  `stage` take the URL from that pass's listing, so nothing is listed after the claim. The pass
+  logs `ping_url_read` with the unit, the check's name and the URL's fingerprint, or
+  `ping_url_unreadable` with the unit, the check and the error's type. Parsing drops every field
+  but each check's name and URL. No mint alert is raised and the inbox isn't read. Nothing pings
+  the URL: a ping marks the check up.
+- **The ping URL's lookup**, at `verify_new` (ADR-0055 amendment 21). The executor derives the
+  check's `unique_key` from the URL's UUID,
   as Healthchecks does (the SHA-1 hex digest of the first 16 characters of the UUID without
   hyphens), and asks `GET /api/v3/checks/<unique_key>` with the read-only key. First it asks the
   same for a random UUID, the known-bad control. It passes only on 404 for the control and 200 for
@@ -1329,11 +1367,13 @@ first issue is due from `rotate_requested` alone. For more information, see
   in a project the key doesn't read; a control that isn't 404, any other status, or no answer
   fails too. The lookup proves that the check exists in the key's project and that the UUID
   matches it in its first half, the part `unique_key` hashes: a URL wrong only in its last 16 hex
-  characters passes. Cut-over step 4, the container's first scheduled ping landing on that check,
-  is the only proof of the full URL. The evidence and logs name the check by the first 12
+  characters passes. On this path nobody types the URL, since Healthchecks builds `ping_url` from
+  its own `PING_ENDPOINT` and the check's UUID. Cut-over step 4, the container's first scheduled
+  ping landing on that check, is the only proof of the full URL. The evidence and logs name the check by the first 12
   characters of its `unique_key`, never the URL or UUID.
-- **`store`, an issue.** `verify_new` logs in with the token, or runs the ping URL's shape check
-  and then its lookup;
+- **`store`, an issue.** For a ping URL it starts with `mint` and `stage`, which stage the URL
+  the read found. `verify_new` logs in with the token, or runs the ping URL's shape check and then
+  its lookup;
   `store` writes the keeper after reading the marker there; for a lane token `distribute` sends
   one `PATCH` of the lane's variable and never restarts the lane; `verify_consumers` reads the
   keeper back and, for the variable, counts the `PATCH` answering 2xx, since the executor's

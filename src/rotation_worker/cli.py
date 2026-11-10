@@ -52,6 +52,7 @@ from rotation_worker.notify import Notifier
 from rotation_worker.orchestrator_client import OrchestratorClient, OrchestratorError
 from rotation_worker.readers import (
     Healthchecks,
+    PingUrls,
     ReadError,
     ReadUnavailable,
     instant,
@@ -133,6 +134,13 @@ def open_healthchecks(config: Config, store: SecretStore) -> Healthchecks | None
         return None
     key_id = secret_id(config, config.healthchecks_key_id)
     return Healthchecks(lambda: store.read(key_id))
+
+
+def open_ping_urls(config: Config, store: SecretStore) -> PingUrls | None:
+    if config.healthchecks_management_key_id is None:
+        return None
+    key_id = config.healthchecks_management_key_id
+    return PingUrls(lambda: store.read(key_id))
 
 
 def open_notifier(config: Config, store: SecretStore) -> Notifier | None:
@@ -236,6 +244,7 @@ def build_setup(config: Config) -> Setup:
         change_manager_application=config.change_manager_application,
         executor_key_id=config.credential_key_id,
         healthchecks=open_healthchecks(config, store),
+        ping_urls=open_ping_urls(config, store),
         github_app=open_github_app(config, store),
         notifier=open_notifier(config, store),
         inbox=open_inbox(config, store),

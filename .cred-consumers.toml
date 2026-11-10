@@ -719,6 +719,9 @@ provider = "healthchecks-ping-url"
 bws_uuid = "97802aac-5a7f-45e8-8185-b4fc00cd318e"
 rotated_by_sds = true
 rotate_requested = "2026-11-09"
+# The check whose ping URL the executor reads into the keeper (ADR-0055 amendment 23); the lane
+# keeps the check it pinged from the Mac (ADR-0059 decision 3).
+healthchecks_check = "sds-execution-watch"
 
   [[credential.consumer]]
   kind = "bws-secret"
@@ -767,6 +770,9 @@ provider = "healthchecks-ping-url"
 bws_uuid = "ebabdd63-2eff-4b8e-99b7-b4fd01754eae"
 rotated_by_sds = true
 rotate_requested = "2026-11-10"
+# The check whose ping URL the executor reads into the keeper (ADR-0055 amendment 23); the lane
+# keeps the check it pinged from the Mac (ADR-0059 decision 3).
+healthchecks_check = "sds-landing-ledger"
 
   [[credential.consumer]]
   kind = "bws-secret"
