@@ -164,7 +164,68 @@ The increments ship in the order 2, 3, 1, 4 (fix round 1).
 - The scratch directories `/tmp/w66-ip`, `/tmp/w66-mut` and `/tmp/w66-scripts`, and the test
   database `orchestrator_test_hq_w_66`, are still in place for HQ's teardown.
 
+## Fix round 1 (2026-11-10)
+
+HQ's Opus whole-branch review found two blocking defects and two small ones. The fix is commit
+`5d97b9d7` on the PR's branch, followed by a commit that updates only the reports. Line numbers
+refer to `docs/decisions/0055-credential-rotation-runs-in-a-pull-based-executor.md` after the fix.
+I checked each citation at `5145adff` before relying on it, and every one held.
+
+1. **The full checks ran only in the carrier, but intake has other doors.** Lines 2846-2870 now
+   name the three doors with their citations: `api/routes/intake.py:118-124` (HUMAN and SYSTEM,
+   `package_intake.py:34`), `web.py:753`, and staged intake at `api/routes/intake.py:142`. They
+   also cite the branch at `decomposition.py:332-335`, where all three doors converge. The gate's
+   exception in `_rotation_policy_outcome` now requires a recorded result of the carry form,
+   bound to the revision. It's an observation by the carrier's own identity, and it binds the
+   package id, the revision number and the package hash. An absent, mismatched or unreadable
+   record refuses.
+   - Lines 2833-2845 define the record. They also state why it needs a new carrier identity: the
+     carrier posts as the shared SYSTEM key (`work_carrier/cli.py:162-167`), any SYSTEM or
+     OBSERVER caller may record an observation (`OBSERVATION_ROLES`,
+     `services/release/observations.py:239`), and `recorded_by` is the authenticated actor
+     (line 210).
+   - Lines 2866-2870 say why the gate doesn't re-run the checks itself: the server has no
+     registry read.
+   - Lines 2736-2744 (decision 1) define "rotation revision" by the package's `profile`, whatever
+     the record's `change_class` says. Lines 2817-2832 (the carrier) and 2920-2933 (increment 3)
+     use that definition.
+   - The overclaims are corrected. The Consequences rule-4 line is at lines 2995-2999, the
+     threat-model bullet at 2980-2987, and the "Unchanged" line at 3000-3002, which now names the
+     new identity, observation type and migration. Increment 3 at 2920-2933 names the migration,
+     the identity and the intake CLAUDE.md file. This report's Code Brain rule 4 line is
+     corrected in "Standards followed".
+2. **The increments didn't fix their order.** Lines 2886-2905 replace "Each increment ships on its
+   own" with the order 2, 3, 1, 4, with a reason for each step. Increment 3 ships as one change,
+   and the gate's exception never lands alone. The grant lands after every check that guards it.
+   The gate's exception also depends on the carrier's record in code, so even out of order it
+   admits nothing unchecked.
+3. **Amendment 15 increment 4 design item 4** is added to the "narrowed, not withdrawn" list at
+   lines 2752-2753.
+4. **The literal ping-URL prefix** in this report's Infra Brain 2890 line now reads "no ping URL".
+
+**Left for Devon, with the narrower default.** The open item at lines 2941-2948 covers a revision 1
+that is in effect a reissue: a deleted and regenerated package, or a new row whose `last_rotated`
+is already set. Devon still decides it. Until then, the amendment's default is the narrower one:
+the standing answer covers only the issue plan. A new decision 2 condition states this at lines
+2781-2785. The carry form accepts only the issue-plan re-render (lines 2829-2832), and the
+"carry form's plan" open item at lines 2959-2962 matches. One more open item, at lines
+2963-2965, covers the carrier's new identity.
+
+**Checks at `5d97b9d7`:**
+
+- `make check` against `orchestrator_test_hq_w_68`, migrated to head, with `SECURITY_STANDARDS_DIR`
+  set to the fixtures and `PGTZ=UTC`: ruff "All checks passed!", pyright "0 errors", and pytest
+  **14207 passed, 1 skipped**. Exit 0.
+- Security scan from the repo root: exit 0, 0 BLOCK, 2 WARN and 1 INFO, the same as before the
+  fix. None of them come from this diff.
+- A grep of the fix diff for `ping/` and the Healthchecks host finds only the removed literal.
+
+The PR stays a draft. Its new head is the commit that adds this section.
+
 ## Standards followed
+
+Refreshed for fix round 1. The standards are the original handoff's.
+
 
 - **Code Brain rule 3 (structured JSON logs to stdout):** docs only, so it doesn't apply to this
   diff. Increment 2 states that the command logs structured JSON on stdout, as the proposer does,
