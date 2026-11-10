@@ -1,0 +1,6 @@
+# sds-lane-deploy-watcher's schedule: one pass every hour, as the Mac job's `StartInterval` of 3600
+# runs it (`scripts/com.devon.deploy-watcher.plist`), in the image's America/New_York time. The
+# watcher takes no scheduled-pass flag: every run but `--dry-run` records and arms the dead-man
+# switch. Minute 20 keeps it off the hour, the quarter-hours `execution-watch` runs on, and the
+# landing ledger's 07:30. The entrypoint runs this file only when LANE_SCHEDULE_ENABLED is `true`.
+20 * * * * lane-run deploy-watcher

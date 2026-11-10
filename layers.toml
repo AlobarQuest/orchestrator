@@ -468,6 +468,7 @@ paths = [
   "scripts/run-deploy-watcher.sh",
   "scripts/install-deploy-watcher-launchd.sh",
   "scripts/com.devon.deploy-watcher.plist",
+  "tests/scripts/test_run_deploy_watcher.py",
   "scripts/run-landing-ledger.sh",
   "scripts/install-landing-ledger-launchd.sh",
   "scripts/com.devon.landing-ledger.plist",

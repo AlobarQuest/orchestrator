@@ -63,7 +63,7 @@ from deploy_watcher.units import (
     is_work_unit_id,
     unit_observation,
 )
-from deploy_watcher.workflows import level_of
+from deploy_watcher.workflows import ROLLOUT_WORKFLOWS, level_of
 
 EXIT_OK = 0
 EXIT_BROKEN = 1
@@ -119,6 +119,23 @@ def _root() -> None:
     It would, and a launcher invoking `deploy-watcher watch` would then fail on an unexpected
     argument -- which is a thing this estate has written down and paid for elsewhere.
     """
+
+
+@app.command()
+def repositories() -> None:
+    """Print the repositories whose rollouts this watcher reads, one per line.
+
+    In the lane's container the launcher mints the pass's GitHub token for exactly these
+    (ADR-0059 increment 3), so `ROLLOUT_WORKFLOWS` stays the one list: a repository without a
+    transcribed rollout is refused before any read, so the token needs no other. The table's
+    lowercase keys are printed as they are; the mint casefolds both its request and GitHub's
+    answer. An empty table prints nothing and exits 3, so the launcher mints nothing.
+    """
+    names = sorted(ROLLOUT_WORKFLOWS)
+    if not names:
+        typer.echo("[incomplete] no repository has a transcribed rollout workflow", err=True)
+        raise typer.Exit(code=EXIT_INCOMPLETE)
+    typer.echo("\n".join(names))
 
 
 def _exit_code(*, findings: bool, incomplete: bool) -> int:
