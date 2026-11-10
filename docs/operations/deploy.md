@@ -327,6 +327,25 @@ still needs the following, each in its own change or act:
 3. The lane's `--add`, then the `lane-run --read` proof and a `--dry-run` in the container.
 4. Cut-over steps 2 onward: the paired reporting runs, the schedule, and the Mac job's retirement.
 
+`deploy-watcher`'s tracked files (`lanes/deploy-watcher/compose.yaml` and `crontab`) don't
+register it either. It keeps no state, so its compose mounts no volume. Its crontab runs
+`lane-run deploy-watcher` hourly at minute 20, as the Mac job's `StartInterval` of 3600 does; the
+watcher has no scheduled-pass flag. Its `.bws-secrets.toml` secrets are the observer bearer,
+change-manager's `M2M_TOKEN_OBSERVE` and the read-only App's key, all read with the lane's one
+token; on the Mac the broad and narrow Keychain identities still read the two bearers. Its compose
+leaves `SDS_DEADMAN_PING_URL_UUID` empty until the lane's ping-URL secret exists, so until then the
+container's dead-man helper pings nothing and says so. Its cut-over still needs the following, each
+in its own change or act:
+
+1. The lane token's and ping-URL secret's registry rows in this repository, and the read-App key
+   row's `runtime-fetch` reader for `scripts/run-deploy-watcher.sh`.
+2. The lane account's read grants on the three secrets, and change-manager's registry consumer
+   for `M2M_TOKEN_OBSERVE` in the lane's container (that row lives in change-manager).
+3. The ping-URL keeper, then a change that writes its id into the compose.
+4. The executor's token write, the lane's `--add`, the `lane-run --read` proof and a `--dry-run`
+   in the container.
+5. Cut-over steps 2 onward: the paired reporting runs, the schedule, and the Mac job's retirement.
+
 ### A lane's GitHub token (ADR-0059 increment 3)
 
 A lane that reads or pushes to GitHub mints its own installation token each pass from one of the
@@ -379,6 +398,13 @@ _lane_secret "$READ_APP_KEY_UUID" \
 Those four permissions cover every GET in `src/landing_ledger/github.py`. A failed or empty mint
 exits 1 before the ledger runs, and the container never falls back to `gh auth token`. On the Mac
 the launcher keeps the `gh` login until increment 6.
+
+The deploy watcher mints the same way in its container (`scripts/run-deploy-watcher.sh`). Its
+repositories are the keys of `ROLLOUT_WORKFLOWS` (`src/deploy_watcher/workflows.py`), printed by
+`deploy-watcher repositories`, because a change record naming any other repository is refused
+before a read. An empty table exits 3 before any mint. The keys are lowercase; the mint casefolds
+both its request and GitHub's answer, so they pass as printed. The same four permissions cover
+every GET in `src/deploy_watcher/github.py`.
 
 The narrowing bounds what the token is granted. It doesn't stop the token reading public
 resources, which need no token at all

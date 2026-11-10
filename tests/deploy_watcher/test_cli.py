@@ -967,3 +967,34 @@ def test_a_refused_record_whose_commit_cannot_be_read_is_incomplete(
 
     assert answer == (True, True)
     assert watcher_cli.UNIT_OBSERVATION_WITHHELD not in capsys.readouterr().out
+
+
+# ---- the repositories the lane's GitHub token is minted for (ADR-0059 increment 3) ----------
+
+
+def test_repositories_prints_the_rollout_tables_keys_one_per_line() -> None:
+    from deploy_watcher.workflows import ROLLOUT_WORKFLOWS
+
+    result = CliRunner().invoke(watcher_cli.app, ["repositories"])
+    assert result.exit_code == 0, result.output
+    assert result.stdout.splitlines() == sorted(ROLLOUT_WORKFLOWS)
+
+
+def test_an_empty_rollout_table_prints_nothing_and_exits_3(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(watcher_cli, "ROLLOUT_WORKFLOWS", {})
+    result = CliRunner().invoke(watcher_cli.app, ["repositories"])
+    assert result.exit_code == watcher_cli.EXIT_INCOMPLETE
+    assert result.stdout == ""
+
+
+def test_the_derived_repositories_pass_the_mints_request_checks() -> None:
+    """The table's keys are lowercase; the mint casefolds its request and GitHub's echo, so the
+    launcher passes them as printed. One owner, so one installation."""
+    from estate_clients.github_app_mint import _check_request
+
+    result = CliRunner().invoke(watcher_cli.app, ["repositories"])
+    names = result.stdout.splitlines()
+    permissions = {name: "read" for name in ("metadata", "contents", "pull_requests", "actions")}
+    assert sorted(_check_request("5684758", names, permissions)) == names
