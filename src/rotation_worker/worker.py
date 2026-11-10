@@ -705,7 +705,12 @@ def _read_mint_waits(
     unit_id, source = str(unit["id"]), provider.mint_source
     try:
         new = provider.read_mint()
-        for credential, value in _other_keepers(setup, approved):
+        try:
+            others = _other_keepers(setup, approved)
+        except (RegistryError, DestinationError, MirrorError) as error:
+            # Nothing was decided about the URL: whether another keeper holds it is asked again.
+            raise ReadUnavailable(f"the other ping-URL keepers can't be read: {error}") from None
+        for credential, value in others:
             if new.same_as(value):
                 raise ReadError(f"{source}'s ping URL is {credential}'s value")
     except (ReadError, ReadUnavailable, StoreError) as error:

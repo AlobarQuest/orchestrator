@@ -25,10 +25,10 @@ from rotation_worker.adapters import healthchecks_ping_url as ping
 from rotation_worker.checks import Approved
 from rotation_worker.config import ConfigError, load
 from rotation_worker.contract import EMPTY, ContractError, Rotation, StepKind
-from rotation_worker.git_mirror import RepoMirror
+from rotation_worker.git_mirror import MirrorError, RepoMirror
 from rotation_worker.orchestrator_client import OrchestratorClient
 from rotation_worker.readers import CHECKS, HEALTHCHECKS_URL, PingUrls, ReadError, _permits_listing
-from rotation_worker.registry import RegistryEntry
+from rotation_worker.registry import RegistryEntry, RegistryError
 from rotation_worker.secret_store import StoreError
 from rotation_worker.values import Value
 from rotation_worker.worker import PassActs, Setup, run_pass
@@ -238,6 +238,22 @@ def test_a_key_the_store_won_t_give_waits_unclaimed(unit: Unit) -> None:
     assert unit.listing.requests == []
 
 
+@pytest.mark.parametrize("error", [RegistryError("x.toml doesn't parse"), MirrorError("no fetch")])
+def test_other_keepers_that_can_t_be_read_wait_unclaimed(
+    unit: Unit, monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> None:
+    """Whether another keeper holds the URL is unknown, so the unit waits, as the bind did."""
+
+    def unreadable(_setup: Setup, _approved: Approved) -> list[tuple[str, Value]]:
+        raise error
+
+    monkeypatch.setattr(worker, "_other_keepers", unreadable)
+    found = unit.take()
+    assert unit.client.calls == []
+    assert "other ping-URL keepers can't be read" in found.waits["u1"].reason
+    assert not found.waits["u1"].stuck
+
+
 @pytest.mark.parametrize(
     ("change", "reason"),
     [
@@ -321,16 +337,20 @@ def test_the_management_client_makes_only_the_listing(method: str, path: str) ->
     assert _permits_listing("GET", CHECKS)
 
 
-def test_parsing_keeps_only_each_check_s_name_and_url() -> None:
-    """Kills: a client that keeps the listing's other fields, other checks' URLs among them."""
+def test_parsing_keeps_only_the_named_check_s_url() -> None:
+    """Kills: a client that keeps the rest of the listing, other checks' URLs among them
+    (amendment 23 item 4: they are dropped as the response is parsed)."""
     listing = Listing()
     client = listing.client()
     assert client.ping_url(CHECK).reveal() == PING_URL
-    kept = json.dumps(vars(client), default=repr)
-    for text in (PING_URL, OTHER_URL, UPDATE_URL, "status"):
-        assert text not in kept
-    assert client.ping_url("sds-other-lane").reveal() == OTHER_URL
+    assert client.ping_url(CHECK).reveal() == PING_URL
     assert len(listing.requests) == 1
+    kept = json.dumps(vars(client), default=repr)
+    for text in (PING_URL, OTHER_URL, UPDATE_URL, "sds-other-lane", "status"):
+        assert text not in kept
+    # Another name is another read.
+    assert client.ping_url("sds-other-lane").reveal() == OTHER_URL
+    assert len(listing.requests) == 2
 
 
 def test_the_key_is_read_only_when_the_listing_is() -> None:

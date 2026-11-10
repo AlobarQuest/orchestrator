@@ -259,9 +259,10 @@ class PingUrls:
 
     Only a read-write key is shown `ping_url`, and that key manages every check in its project, so
     this client may make one request, the listing: `GET /api/v3/checks/` and nothing else, over
-    HTTPS. The key is fetched only when a ping-URL unit first needs the listing, and the listing
-    is read once per pass. Parsing keeps each check's name and its `ping_url` as a `Value`, and
-    drops every other field, other checks' update, pause and resume URLs among them.
+    HTTPS. The key is fetched only when a ping-URL unit first needs a URL. Parsing keeps only the
+    named check's `ping_url`, as a `Value`, and drops the rest of the listing: other checks' URLs
+    and every check's update, pause and resume URLs. A name is read once per pass, so the claimed
+    mint takes what the read before the claim found; another name lists again.
     """
 
     def __init__(
@@ -269,29 +270,17 @@ class PingUrls:
     ) -> None:
         self._key = key
         self._transport = transport
-        self._by_name: dict[str, list[Value | None]] | None = None
+        self._urls: dict[str, Value] = {}
 
     def ping_url(self, name: str) -> Value:
         """The one check named `name`'s ping URL. Raises `ReadError` for no such check, two of
         them, or one shown without a URL; `ReadUnavailable` for no answer; `StoreError` for a key
         the store won't give."""
-        urls = self._listing().get(name, [])
-        if len(urls) != 1:
-            raise ReadError(f"{len(urls)} Healthchecks checks are named {name!r}")
-        url = urls[0]
-        if url is None:
-            raise ReadError(
-                f"check {name!r} is listed without a usable ping_url, as a read-only key's "
-                "listing is"
-            )
-        return url
+        if name not in self._urls:
+            self._urls[name] = self._read(name)
+        return self._urls[name]
 
-    def _listing(self) -> dict[str, list[Value | None]]:
-        if self._by_name is None:
-            self._by_name = self._read()
-        return self._by_name
-
-    def _read(self) -> dict[str, list[Value | None]]:
+    def _read(self, name: str) -> Value:
         key = self._key()
         try:
             client = ConfinedClient(
@@ -317,18 +306,16 @@ class PingUrls:
             raise ReadUnavailable("Healthchecks' listing isn't a list of checks") from None
         if not isinstance(checks, list):
             raise ReadUnavailable("Healthchecks' listing isn't a list of checks")
-        by_name: dict[str, list[Value | None]] = {}
-        for check in checks:
-            if isinstance(check, dict) and isinstance(check.get("name"), str):
-                by_name.setdefault(check["name"], []).append(_url(check.get("ping_url")))
-        return by_name
-
-
-def _url(text: object) -> Value | None:
-    """A listed `ping_url` as a `Value`, or `None` where the listing gives none."""
-    if not isinstance(text, str) or not text or text != text.strip():
-        return None
-    return Value(text)
+        named = [c for c in checks if isinstance(c, dict) and c.get("name") == name]
+        if len(named) != 1:
+            raise ReadError(f"{len(named)} Healthchecks checks are named {name!r}")
+        url = named[0].get("ping_url")
+        if not isinstance(url, str) or not url or url != url.strip():
+            raise ReadError(
+                f"check {name!r} is listed without a usable ping_url, as a read-only key's "
+                "listing is"
+            )
+        return Value(url)
 
 
 def _permits_listing(method: str, path: str) -> bool:
