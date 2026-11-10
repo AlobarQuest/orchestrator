@@ -10,8 +10,10 @@ worktree branch at the PR head `81371d62` with `git switch -C`, because `git res
 denied and the PR's base (`5145adff`) is behind `origin/main`. I didn't merge in `main`, so the
 citations stay pinned at `5145adff` and the push is a fast-forward.
 
-The content commit is `5d97b9d7`, and the following commit adds the reports. I didn't open a new
-PR, merge, or force-push, and the PR is still a draft.
+The commits are `5d97b9d7` (the fix), `a64f6454` (the reports), and a third commit after the
+advisor's review (the issue-fact polarity, the record's order and binding, and the remaining
+overclaims). A last commit updates this report, and it's the PR's head. I didn't open a new PR,
+merge, or force-push, and the PR is still a draft.
 
 - **Blocking finding 1 (other intake doors).** The decomposition gate doesn't re-run the checks.
   The server has no registry read, and adding one would add an outbound path and a token mint
@@ -21,6 +23,8 @@ PR, merge, or force-push, and the PR is still a draft.
   - The record only means something if the carrier holds an identity no other caller holds. At
     `5145adff` the carrier posts as the shared `orchestrator-system` key, so increment 3 gives it
     its own agent id, M2M credential and setting.
+  - The carrier records before it posts the intake, because the gate runs in the proposal's own
+    transaction. The amendment names the departure from ADR-0027's SYSTEM-actor recommendation.
   - "Rotation revision" is defined by the package's `profile`.
   - The Consequences overclaims and the original report's rule-4 line are corrected.
 - **Blocking finding 2 (order).** The increments ship in the order 2, 3, 1, 4, with a reason for
@@ -37,9 +41,12 @@ The original report's new "Fix round 1" section maps each finding to its line nu
 
 ## Tests and checks run
 
-- `make check` against `orchestrator_test_hq_w_68`, migrated to head, with `SECURITY_STANDARDS_DIR`
-  set to the fixtures and `PGTZ=UTC`: ruff "All checks passed!", pyright "0 errors, 0 warnings",
-  and pytest **14207 passed, 1 skipped** in 303 s. Exit 0.
+- `make check` at `5d97b9d7` against `orchestrator_test_hq_w_68`, migrated to head, with
+  `SECURITY_STANDARDS_DIR` set to the fixtures and `PGTZ=UTC`: ruff "All checks passed!", pyright
+  "0 errors, 0 warnings", and pytest **14207 passed, 1 skipped** in 303 s. Exit 0.
+- `pytest tests/architecture` (including `test_layer_manifest.py`) at the third commit, after the
+  last tracked-file change, with the same environment: **2046 passed**. Exit 0. The commits after
+  `5d97b9d7` change docs only.
 - Security scan from the repo root: exit 0, 0 BLOCK, 2 WARN and 1 INFO. None of the findings come
   from this diff.
 - `git diff 81371d62` grepped for `ping/` and the Healthchecks host: the only hit is the removed
@@ -52,7 +59,10 @@ The original report's new "Fix round 1" section maps each finding to its line nu
   - `prepare.py:240-250`;
   - `work_carrier/cli.py:162-167`;
   - `services/release/observations.py:210` and `:239`;
-  - `bump_policy.py:20, 31-32` (`revision.profile`).
+  - `bump_policy.py:20, 31-32` (`revision.profile`);
+  - `rotation_worker/checks.py:178-198` and `generate.py:122-153`;
+  - `WorkPackageRevision.content_hash` and `OBSERVATION_SOURCE_SYSTEMS` in `persistence/models.py`.
+  A grep of `src/orchestrator/` finds no registry read, only a comment.
 
 ## Files changed
 
@@ -68,8 +78,16 @@ The original report's new "Fix round 1" section maps each finding to its line nu
   result can be forged: it can by any SYSTEM caller today, which is why the amendment adds a
   carrier identity. It also listed the text the narrower default touched, and I reconciled each
   place.
-- I checked the cited line ranges against the final file and corrected one of them (the carry
-  form's plan bullet).
+- A second advisor review, after the first push, found the following problems, all fixed in the
+  third commit:
+  - A rewritten sentence reversed `_check_issue_fact`'s polarity. I read the function and
+    corrected it.
+  - A stale "no interactive session" claim and a stale Self-review line in the original report.
+  - Three unsupported claims, each now checked: no registry read under `src/orchestrator/`, the
+    `content_hash` column, and the new source system the migration also needs.
+  - The unnamed ADR-0027 departure.
+  - The record's timing relative to the proposal's transaction.
+- I recomputed every line number in the "Fix round 1" section against the final file.
 - I didn't run `/code-review`, because this round is docs only.
 
 ## Concerns
