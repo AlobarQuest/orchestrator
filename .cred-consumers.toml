@@ -726,11 +726,10 @@ rotate_requested = "2026-11-09"
   note = "the keeper, in Rotation / Keepers, and the one copy; the lane reads it with its own token"
 
 # ── The landing-ledger lane's token and ping URL (ADR-0059 increment 3) ──────────
-# ADR-0055 amendment 19, item 8: the lane's two rows, both handed to the SDS. The token's row is due
-# for its first issue by `rotate_requested`. The ping URL's row is not yet due: a later change dates
-# it once the token's `store` unit completes, so the two issue units never wait on a mint at once.
-# The VM root's `create-keeper` made both keepers in Rotation / Keepers, each holding the inbox's
-# empty marker.
+# ADR-0055 amendment 19, item 8: the lane's two rows, both handed to the SDS. Both are due for their
+# first issue by `rotate_requested`. The ping URL's row is dated only after the token's `store` unit
+# completed, so the two issue units never waited on a mint at once. The VM root's `create-keeper`
+# made both keepers in Rotation / Keepers, each holding the inbox's empty marker.
 # Neither row carries `created`: infraops reads it as the rotation anchor and serves it as
 # `last_rotated`, so the proposer would take the row as already issued and skip its first-issue
 # path. The first `record-rotation` sets the anchor.
@@ -760,14 +759,14 @@ reach_projects = []
   redeploy = false
   note = "the sds-lane-landing-ledger service's variable; the lane phases redeploy it, never the executor"
 
-# No `created`, for the reason the block above gives, and no `rotate_requested` until the token's
-# `store` unit completes.
+# No `created`, for the reason the block above gives.
 [[credential]]
 id = "landing-ledger-ping-url"
 class = "healthchecks-ping-url"
 provider = "healthchecks-ping-url"
 bws_uuid = "ebabdd63-2eff-4b8e-99b7-b4fd01754eae"
 rotated_by_sds = true
+rotate_requested = "2026-11-10"
 
   [[credential.consumer]]
   kind = "bws-secret"
