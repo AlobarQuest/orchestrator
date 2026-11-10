@@ -4,7 +4,7 @@ Outcome: done
 
 PR: [AlobarQuest/orchestrator#645](https://github.com/AlobarQuest/orchestrator/pull/645), branch
 `hq/lanes-inc-3-landing-ledger-ping-url-due`, base `origin/main` at `21ce13b0`. Code commit
-`7ceef21f`; this report is the commit after it (the PR head). The PR is ready for review (not a
+`7ceef21f`; the report commits follow it, and the branch head is the PR head. The PR is ready for review (not a
 draft) and isn't merged.
 
 ## What I built
