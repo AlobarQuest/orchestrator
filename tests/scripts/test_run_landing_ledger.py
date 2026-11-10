@@ -219,9 +219,9 @@ def test_an_unreadable_observer_bearer_exits_1_before_the_scope(tmp_path: Path) 
 
 
 def test_without_a_ping_url_secret_a_pass_pings_nothing(tmp_path: Path) -> None:
-    """The compose's placeholder: an empty `SDS_DEADMAN_PING_URL_UUID` falls through to the name
-    lookup. The stand-in broad identity keeps `/usr/bin/security` unasked, and the listing read
-    fails, so this run's alerting is disabled: the pass can't report success."""
+    """An empty `SDS_DEADMAN_PING_URL_UUID` falls through to the name lookup. The stand-in broad
+    identity keeps `/usr/bin/security` unasked, and the listing read fails, so this run's alerting
+    is disabled: the pass can't report success."""
     result, logs = _run(tmp_path, SDS_DEADMAN_PING_URL_UUID="", BWS_ACCESS_TOKEN_BROAD="broad")
     assert result.returncode == 0
     assert logs["ping"] == []
@@ -258,8 +258,8 @@ def test_the_compose_meets_the_add_refusals_and_maps_nothing_else() -> None:
         "environment": {
             "BWS_ACCESS_TOKEN": "${LANDING_LEDGER_BWS_ACCESS_TOKEN}",
             "LANE_SCHEDULE_ENABLED": "${LANE_SCHEDULE_ENABLED:-false}",
-            # The placeholder until the lane's ping-URL secret exists (the compose's comment).
-            "SDS_DEADMAN_PING_URL_UUID": "",
+            # The BWS secret id of `landing-ledger-ping-url`, not a secret and not the ping URL.
+            "SDS_DEADMAN_PING_URL_UUID": "ebabdd63-2eff-4b8e-99b7-b4fd01754eae",
         },
         "restart": "unless-stopped",
     }
@@ -282,7 +282,14 @@ def test_the_crontab_runs_the_pass_daily_at_0730_as_the_mac_job_does() -> None:
 
 def test_the_repositorys_manifest_lists_the_ledgers_secrets() -> None:
     manifest = Path(".bws-secrets.toml").read_text()
-    assert deploy.lane_secrets(manifest, "landing-ledger") == [OBSERVER_UUID, READ_APP_KEY_UUID]
+    ping_url_secret = "ebabdd63-2eff-4b8e-99b7-b4fd01754eae"
+    assert deploy.lane_secrets(manifest, "landing-ledger") == [
+        OBSERVER_UUID,
+        READ_APP_KEY_UUID,
+        ping_url_secret,
+    ]
+    # The launcher names each secret it reads, except the ping-URL secret, whose id reaches it
+    # from the compose through `lane-run`.
     launcher = LAUNCHER.read_text()
     for uuid in deploy.lane_secrets(manifest, "landing-ledger"):
-        assert uuid in launcher, uuid
+        assert uuid in launcher or uuid == ping_url_secret, uuid
