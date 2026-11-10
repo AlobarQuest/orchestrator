@@ -2063,6 +2063,7 @@ What the chain protects is the set of tools installed on this machine.
 - No lane that moves pushes to a fork. The "SDS lanes" App's write reach on the forks serves no
   lane. Until Devon acts on the first "Open before building" item, a leaked push key still mints
   `contents: write` on the forks, as the Consequences on line 1376 say.
+  That item is done (G-24, 2026-11-10): the forks have left the installation.
 - The two lanes keep reading through Devon's `gh` login and the Keychain items. The bar's exclusion
   is of their subject, not their credential. Increment 6 retires "the moved plists and their
   installers" (line 1040), so their own plists stay. What else increment 6 keeps for them is the
@@ -2084,6 +2085,9 @@ What the chain protects is the set of tools installed on this machine.
    **Answered (G-22, 2026-11-10): yes.** The forks leave the "SDS lanes" App's installation
    (`180257673`). Removing them is a later act on the App's settings page; this amendment doesn't
    remove them.
+   **Done (G-24, 2026-11-10):** Devon removed the five forks on the App's settings page; the
+   installation's repository list is `AlobarQuest/intent-packages` alone. Recorded from his reply
+   "G-24: done"; the `gh` login can't read that list (HTTP 403), so no machine check confirms it.
 2. **The read-only App's Issues permission.** No moving lane needs Issues read. D-18 confirmed the
    permission list, and dropping Issues is Devon's call on the App's settings page, as for item 1.
    The read-only App's installation on factory-runner and the forks doesn't change (decision item
