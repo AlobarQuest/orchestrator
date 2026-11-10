@@ -13,8 +13,9 @@ Consequences. I also added a line for it to the ADR's `Amended:` list. The chang
   PR #647, which carries amendment 22, merged at 16:15 UTC while I worked (`6d32e881`). I rebased
   onto that commit before I wrote anything, so the branch doesn't conflict with it. No branch has
   a 23.
-- **PR:** #649, a draft, at head `4512f313` for the ADR commit. This report adds one more commit
-  on top of it. I didn't merge it or mark it ready.
+- **PR:** #649, a draft. Its content commits are `4512f313` (the amendment) and the fix commit
+  after it; this report's commit is the head (`git ls-remote` gives the final sha). I didn't merge
+  it or mark it ready.
 
 ## Citations for "Read first"
 
@@ -87,8 +88,14 @@ All of these are narrowed, not withdrawn:
 - Amendment 19 item 8: the order between the token and the ping URL is no longer needed, and step
   5 is rewritten.
 - Amendment 21 decision 1: the bind is retired.
-- Amendment 22 decision 6: the ping-URL paste is gone. Its type condition is unchanged, and its
-  open item is settled.
+- Amendment 22 decision 6: the ping-URL paste is gone, and so, for a ping URL, is the line that an
+  approved revision 1 with no paste changes nothing in production. Its type condition is
+  unchanged, and its open item is settled.
+- Amendment 22's threat model: its bound that the issue writes nothing until a person pastes now
+  holds for the lane token only. Amendment 23's Consequences state the path with no person for a
+  ping URL (registry row, then generated revision 1, standing approval, carrier record, and the
+  executor's read), and its bounds: an issue only, one keeper, and a value the listing and the
+  read-only lookup confirm.
 - The `rotation-mint` alert is no longer raised for a ping URL.
 
 Afterward, the only person act left for a lane's credentials is the token's mint and paste.
@@ -116,7 +123,13 @@ Increment 1 lands only while no ping-URL package is open.
 ## Open items (Devon's, or settled in increment 1)
 
 - **The grant.** It's Devon's decision. Should the root (`rotation-executor`) get a direct read on
-  `51509d5e-…` in `Ops / Platform`?
+  `51509d5e-64f5-4781-ae82-b4ed00b644e1` in `Ops / Platform`? The ADR asks for the project to be
+  confirmed in BWS first: if the key is in `Rotation / Healthchecks`, the question is use, not a
+  new grant.
+- **`credential_create`.** I checked that nothing requires it for a machine `mint` step. Only
+  `generate.py` (lines 53 and 209) uses it under orchestrator `src/`, and intent-packages
+  `c5c9225` names it only in package data. So increment 1 keeps the type's authority at
+  `secret_read` and `secret_write`.
 - **Whether the generated package names the check.** If it does, the standing approval's re-render
   covers the `healthchecks_check` field.
 - **Where each Healthchecks key's registry row lives.** This repo's `.cred-consumers.toml` has
@@ -127,7 +140,8 @@ Increment 1 lands only while no ping-URL package is open.
 - **`make check`:** passed against `orchestrator_test_hq_w_71`. I migrated it to head first and
   exported `TEST_DATABASE_URL`, `ORCHESTRATOR_DATABASE_URL`, `SECURITY_STANDARDS_DIR` (the
   fixtures) and `PGTZ=UTC`. Ruff and pyright are clean, and pytest reported **14207 passed,
-  1 skipped**, with 11 warnings, in 386 s.
+  1 skipped**, with 11 warnings. I ran it twice: once before the fix commit (386 s) and again on
+  the committed tree after it, with the same counts (356 s).
 - **Security scan, from the repo root** (`security_scan.cli . --category security`): **0 BLOCK**,
   2 WARN and 1 INFO. These are the repo's standing findings; this diff changes only Markdown.
 - **Ping URL check:** I grepped the diff for the ping base followed by any value and found none.
@@ -142,6 +156,9 @@ Increment 1 lands only while no ping-URL package is open.
 
 ## Self-review
 
+- The citations were read at `2983cb01` and are cited at `6d32e881`. `git diff --stat` between the
+  two is empty for `src` and `.bws-secrets.toml`, and I re-read each cited range.
+
 - Every "narrowed" item names the amendment and item it narrows, and keeps the rules that still
   stand.
 - No grant is stated as decided.
@@ -154,8 +171,8 @@ Increment 1 lands only while no ping-URL package is open.
 1. **The handoff names the wrong BWS project for the key.** The handoff, and HQ's ~13:05 note,
    place `51509d5e-…` in `Rotation / Healthchecks`. `.bws-secrets.toml` lines 174-177 place it in
    `Ops / Platform`, and `Rotation / Healthchecks` holds the read-only key `f07b1368-…`. I cited
-   the manifest. The grant question names `Ops / Platform` and says that Devon's answer settles
-   which project is right. I couldn't confirm this in BWS without reading BWS, which was out of
+   the manifest. The grant question names `Ops / Platform` and asks for the project to be confirmed
+   in BWS before the grant. I couldn't confirm this in BWS without reading BWS, which was out of
    scope.
 2. **ADR-0059 is now partly stale.** Its text still describes the hand paste. Under the
    amendment, increment 1 rewrites it, not this PR, so its text is stale only once that increment
