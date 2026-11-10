@@ -62,7 +62,9 @@ credential's revision 1 only. The following statements are listed as narrowed, n
 
 - amendment 2's destinations read (decision 1 in "What the answers change");
 - amendment 11 decision 5;
-- amendment 15 decision 7, and its increment 4 design item 5, which is unchanged in effect;
+- amendment 15 decision 7;
+- amendment 15 increment 4's design item 4 (added in fix round 1);
+- amendment 15 increment 4's design item 5, which is unchanged in effect;
 - amendment 16 decisions 1 to 4 and its Consequences;
 - amendment 17's Consequences;
 - amendment 19 item 10 and its "Unchanged" line;
@@ -80,18 +82,22 @@ click is decision 3, and the amendment cites decision 3.
 2. orchestrator: `rotation-proposer standing-approval <credential_id>`, which re-renders, compares
    destinations and checks authority. It logs structured JSON and exits 0, 1 or 2.
 3. orchestrator: the carrier runs the command's carry form for a `policy:`-approved rotation
-   revision. That form requires exactly the one policy approval, reads the registry at `main`,
-   and accepts either derived plan, leaving the plan to the executor's issue-fact check. The
-   decomposition gate admits the `policy:non-software-operational@` prefix for the two types. The
-   CLAUDE.md invariants and `docs/operations/rotation-proposer.md` step 3 are rewritten in the
-   same change.
+   revision, keyed on the package's profile. That form requires exactly the one policy approval,
+   reads the registry at `main`, and accepts only the issue-plan re-render. On a pass, the carrier
+   records an observation bound to the revision under its own new identity. The decomposition
+   gate admits the `policy:non-software-operational@` prefix for the two types only beside that
+   record. The CLAUDE.md invariants and `docs/operations/rotation-proposer.md` step 3 are
+   rewritten in the same change.
+
+The increments ship in the order 2, 3, 1, 4 (fix round 1).
 4. sds-hq: the cycle step that runs the command, approves, and opens the PR that cites the
    standing answer.
 
 ## Open items (in the amendment)
 
-- Whether a revision 1 on a rotation plan qualifies, which happens when `last_rotated` is already
-  set. As D-34 reads, it does. Devon may want the standing answer limited to issue plans.
+- Whether a revision 1 that is in effect a reissue qualifies: a deleted and regenerated package,
+  or a new row whose `last_rotated` is already set. Devon decides. Until he does, the default is
+  the narrower one, and the standing answer covers only the issue plan (fix round 1).
 - Whether `work_carrier` may import `rotation_proposer.generate`. The architecture guards decide
   that.
 - Whether the approving cycle and the carrier read the same factory-events chain (both are on the
@@ -99,6 +105,8 @@ click is decision 3, and the amendment cites decision 3.
 - Which agent id the cycle emits as (`FACTORY_AGENT_ID`).
 - Whether the carry form needs infraops' `last_rotated`, or the executor's issue-fact check is
   enough.
+- The carrier's new identity: its agent id, its roles, and how the rotation executor's rewrite of
+  `ORCHESTRATOR_M2M_CREDENTIALS` treats it (fix round 1).
 - Generator drift fails closed to Devon. This is stated as an expected cost.
 - Related, separate work: the 2026-11-10 standing answer that a ping URL is configuration might
   retire the ping-URL issue package and narrow the type condition.
@@ -163,8 +171,9 @@ click is decision 3, and the amendment cites decision 3.
   and names no value.
 - **Code Brain rule 4 (never swallow an exception silently):** decision 2 makes every condition a
   refusal, and any unreadable input or exception exits 2, following `compare-destinations`'
-  pattern (`cli.py:103-107`). The carrier and the decomposition gate fail closed to a person.
-  Consequences restates this.
+  pattern (`cli.py:103-107`). The carrier refuses unless its carry form refuses nothing. The
+  decomposition gate runs none of the checks itself: it refuses unless the carrier identity's
+  record of them is present and bound to the revision (fix round 1). Consequences restates this.
 - **Code Brain rule 5 (never log secrets):** the amendment names only package ids, commits and
   change-record numbers. It names no secret id and no value, and increment 2's logging names no
   value.
@@ -173,5 +182,5 @@ click is decision 3, and the amendment cites decision 3.
   finding.
 - **Infra Brain 1032 (exposure means rotate):** I saw no secret value anywhere during the work.
 - **Infra Brain 212 (HTTPS for public FQDNs):** docs only, so it doesn't apply.
-- **Infra Brain 2890 (never commit a ping URL):** the diff contains no
-  `https://healthcheck.alobar.net/ping/...` URL. I grepped the diff for `ping/` and found nothing.
+- **Infra Brain 2890 (never commit a ping URL):** the diff contains no ping URL. I grepped the
+  diff for `ping/` and found nothing.
