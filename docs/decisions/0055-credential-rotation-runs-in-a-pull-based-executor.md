@@ -3244,6 +3244,10 @@ package is open.
   and `_read_check`), and refuses a ping-URL row that names no check.
 - **The key's registry rows.** Neither Healthchecks key has a row in this repository's
   `.cred-consumers.toml`; increment 3 finds where each is registered and adds the executor there.
+  Increment 3 found (2026-11-10) that neither key (`51509d5e-…`, `f07b1368-…`) has a
+  `.cred-consumers.toml` row in any registry file `~/.config/infra-drift/cred-consumers.list` names
+  (infraops-mcp-server, change-manager, factory-runner, orchestrator), so it added the executor to
+  `.bws-secrets.toml`'s reader comment only; whether the keys get registry rows is open.
 
 ### Consequences
 
