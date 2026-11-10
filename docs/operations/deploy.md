@@ -249,7 +249,8 @@ run of its lane is `unfinished`.
    stateful lane's state mount, and for an `--add` or a `--token` whether its `BWS_ACCESS_TOKEN`
    is non-empty (`test -n`, which prints no value). A `--token` run adds one more read:
    `docker exec <container> lane-run --read <uuid>...` over the run's recorded UUIDs, which prints
-   one `<uuid> ok` or `<uuid> refused` line per UUID and never a value. Save those lines, as printed, to a file outside the repository.
+   one `<uuid> ok` or `<uuid> refused` line per UUID and never a value. Save those lines, as
+   printed, to a file outside the repository.
 5. Run `lanes-finish` with the change and the reads (`--observed-digest`, `--observed-schedule`,
    `--observed-volume`, `--token-present`, and for `--token` `--read-result <file>`, the path of
    the saved `lane-run --read` lines). It exits 0 only when the container runs the release's lane
@@ -297,9 +298,8 @@ token entry. The matcher (`lanes_in_registry`) takes any `[[credential.consumer]
 `kind = "coolify-env"`, `resource_type = "service"` and `key = "<LANE>_BWS_ACCESS_TOKEN"`, and
 reads the lane as `<LANE>` lower-cased with `_` as `-` (`EXECUTION_WATCH_BWS_ACCESS_TOKEN` is
 `execution-watch`). It refuses a key that names no lane the command knows, and two entries for one
-lane. Removing a lane's entry,
-the last step of "Rollback for one lane", drops the lane from `prepare`'s check; its run files
-remain.
+lane. Removing a lane's entry, the last step of "Rollback for one lane", drops the lane from
+`prepare`'s check; its run files remain.
 
 `execution-watch`'s tracked files (`lanes/execution-watch/compose.yaml` and `crontab`) don't
 register it: its token entry lands with its cut-over. Its compose names
