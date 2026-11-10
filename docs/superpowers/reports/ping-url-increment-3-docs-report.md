@@ -4,7 +4,8 @@ Outcome: done
 
 - PR: #652 (draft), https://github.com/AlobarQuest/orchestrator/pull/652
 - Branch: `hq/ping-url-increment-3-docs`, based on `2a7fb611c22237009ba0a94335ec852786311eae`
-- Head SHA: `39253f402e0546cc632d0f85ca3244f7ab640639`
+- Head SHA of the docs change: `39253f402e0546cc632d0f85ca3244f7ab640639`; this report is committed on
+  top of it (the PR's head is the report commit)
 
 ## What I built
 
