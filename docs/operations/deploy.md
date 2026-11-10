@@ -334,17 +334,23 @@ watcher has no scheduled-pass flag. Its `.bws-secrets.toml` secrets are the obse
 change-manager's `M2M_TOKEN_OBSERVE` and the read-only App's key, all read with the lane's one
 token; on the Mac the broad and narrow Keychain identities still read the two bearers. Its compose
 leaves `SDS_DEADMAN_PING_URL_UUID` empty until the lane's ping-URL secret exists, so until then the
-container's dead-man helper pings nothing and says so. Its cut-over still needs the following, each
-in its own change or act:
+container's dead-man helper pings nothing and says so. Its cut-over (ADR-0059, "Cut-over for one
+lane") still needs the following, in this order, each in its own change or act:
 
-1. The lane token's and ping-URL secret's registry rows in this repository, and the read-App key
-   row's `runtime-fetch` reader for `scripts/run-deploy-watcher.sh`.
-2. The lane account's read grants on the three secrets, and change-manager's registry consumer
-   for `M2M_TOKEN_OBSERVE` in the lane's container (that row lives in change-manager).
-3. The ping-URL keeper, then a change that writes its id into the compose.
-4. The executor's token write, the lane's `--add`, the `lane-run --read` proof and a `--dry-run`
-   in the container.
-5. Cut-over steps 2 onward: the paired reporting runs, the schedule, and the Mac job's retirement.
+1. The orchestrator serving this release; then HQ creates `sds-lane-deploy-watcher` from the
+   compose without deploying it.
+2. The VM root's keeper commands for the lane token and `deploy-watcher-ping-url`.
+3. The lane's registry rows in this repository, in two changes: the token's row and the ping URL's
+   row. In the same work, the read-App key row's `runtime-fetch` reader for
+   `scripts/run-deploy-watcher.sh`, and change-manager's registry consumer for
+   `M2M_TOKEN_OBSERVE` in the lane's container (that row lives in change-manager).
+4. The lane account's grants on its three secrets and its ping-URL secret.
+5. The token's mint and the executor's write; then the ping URL's row made due and the executor's
+   write (ADR-0055 amendment 23).
+6. A served release whose compose names the ping-URL secret's id, with `deploy-watcher` removed
+   from `test_deploy_lanes.py`'s `placeholders`.
+7. The lane's `--add`, then the `lane-run --read` proof and a `--dry-run` in the container.
+8. Cut-over steps 2 onward: the paired reporting runs, the schedule, and the Mac job's retirement.
 
 ### A lane's GitHub token (ADR-0059 increment 3)
 

@@ -172,11 +172,6 @@ def test_the_pass_mints_its_github_token_with_exactly_these_arguments(tmp_path: 
     ]
 
 
-def test_the_mint_names_the_rollout_tables_repositories() -> None:
-    """The table the launcher's derivation prints, held to the two the watcher reads today."""
-    assert sorted(ROLLOUT_WORKFLOWS) == ["alobarquest/brain", "alobarquest/change-manager"]
-
-
 def test_every_read_uses_the_lanes_one_token_and_gh_is_never_asked(tmp_path: Path) -> None:
     result, logs = _run(tmp_path)
     assert result.returncode == 0

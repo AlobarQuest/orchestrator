@@ -29,7 +29,7 @@ This change gives the deploy watcher its own container path, modeled on the land
     row (`314a966c-…`).
   - Adds `lanes = ["deploy-watcher"]` and a comment to the change-manager `M2M_TOKEN_OBSERVE` row
     (`3b9503da-…`).
-- `tests/scripts/test_run_deploy_watcher.py` (new): 21 tests, covering the container branch, the Mac
+- `tests/scripts/test_run_deploy_watcher.py` (new): 20 tests, covering the container branch, the Mac
   path, the compose, the crontab, and the manifest.
 - `tests/deploy_watcher/test_cli.py`: three tests for `repositories`. One feeds the derived list
   through the mint's own `_check_request` with the four permissions.
@@ -134,7 +134,7 @@ holds the outcome: exit 0, no ping, and both programs run. The schedule stays of
   skipped**, against `orchestrator_test_hq_w_80`, migrated to head, on the committed tree.
   An earlier run, before the first commit, failed only `test_every_pattern_names_a_file`, because
   the new test file wasn't yet tracked. It passed after the commit.
-- New launcher tests: 21, all passing. The `bws` stub logs the actual token per UUID, so the tests
+- New launcher tests: 20, all passing. The `bws` stub logs the actual token per UUID, so the tests
   distinguish the container's one lane token from the Mac's broad and narrow identities.
 - Mutation run against the launcher: ten mutations, all caught. Each was restored from the commit.
   - The mint keeps the lane token.
@@ -158,6 +158,9 @@ holds the outcome: exit 0, no ping, and both programs run. The schedule stays of
   - The hand-kept `placeholders` set: the handoff asks for it.
   - The empty ping URL once the schedule is enabled: a cut-over ordering point, covered in
     `deploy.md`.
+
+Shellcheck ran on the launcher as part of `make check` (the repo has a `.shellcheckrc`) and on its
+own, and it's clean.
 
 ## Self-review
 
@@ -203,15 +206,22 @@ holds the outcome: exit 0, no ping, and both programs run. The schedule stays of
 
 - **An ambient `BWS_ACCESS_TOKEN` on the Mac selects the container path.** This is the ledger's
   #643 design, and I mirrored it. It does undo one property the deploy watcher's earlier header
-  described: a token exported in an operator's debugging shell was ignored.
+  described: a token exported in an operator's debugging shell was ignored, and the run succeeded.
 
-  Now a manual Mac run from such a shell skips activation and reads both bearers with that one
-  token. One of the reads is denied, so the launcher exits 1 with a "could not read" line before
-  any mint. Under launchd nothing is exported, so the scheduled job is unaffected. The header
-  states the rule.
+  Now a manual Mac run from such a shell goes as follows:
+  1. Activation is skipped.
+  2. `sds_deadman_arm` resolves the live `sds-deploy-watcher` check by name, through the Keychain's
+     broad identity, and pings `/start`. `SDS_DEADMAN_PING_URL_UUID` is unset on the Mac.
+  3. Both bearers are read with the one ambient token. One read is denied, so the launcher exits 1
+     with a `FATAL: could not read … from BWS` line that names BWS, not the cause.
+  4. The EXIT trap pings `/fail` on the live check.
 
-  If HQ wants a dedicated marker, for example a variable that `lane-run` sets, that's a change to
-  both launchers and `lane_run.py`, which I'd do in its own PR.
+  A `--dry-run` arms nothing, so it pings nothing. Under launchd nothing is exported, so the
+  scheduled job is unaffected.
+
+  I left the selector unchanged, because the handoff names it and the ledger shares it. If HQ
+  wants a dedicated marker, for example a variable that `lane-run` sets, that's a change to both
+  launchers and `lane_run.py`, which I'd do in its own PR.
 - **`recheck` isn't gated on the rollout table.** It re-derives every stored observation on
   `record.target_repository`. Today every stored row comes from `watch`, which refuses
   repositories outside the table, so all rows name a table repository.
@@ -219,29 +229,45 @@ holds the outcome: exit 0, no ping, and both programs run. The schedule stays of
   If a repository leaves `ROLLOUT_WORKFLOWS` while its rows remain, the narrowed token can't read
   it. That recheck reports `[incomplete]` and the hour exits 3. Under `gh` it would still have
   read. This is honest, not silent, but removing a table entry now carries that consequence.
-- **The table's owner names.** `ROLLOUT_WORKFLOWS` keys carry `alobarquest/`, and this change adds
-  no new owner name, as the standing answer requires. Moving those names out of the code is
+- **The table's owner names.** `ROLLOUT_WORKFLOWS` keys carry the owner name. This change adds no
+  new owner name to code, as the standing answer requires: every test reads the table. Moving those names out of the code is
   follow-up work, not part of this PR.
 - **The live echo of lowercase names** is first exercised at the cut-over's `--dry-run`. The code
   path casefolds both sides, and the request side is pinned by a test.
 
 ## Cut-over steps that remain
 
-These follow ADR-0059, "Cut-over for one lane". Each is its own change or act:
+These follow the order of ADR-0059, "Cut-over for one lane", step 1, with ADR-0055 amendment 19
+item 8's token and ping-URL order and amendment 23's ping-URL read. `docs/operations/deploy.md`
+lists the same steps. Each is its own change or act:
 
-1. This release served by the orchestrator, and the lanes image at this commit.
-2. HQ creates `sds-lane-deploy-watcher` from `lanes/deploy-watcher/compose.yaml`.
-3. Registry rows in this repository's `.cred-consumers.toml`:
-   - the lane token's entry, `DEPLOY_WATCHER_BWS_ACCESS_TOKEN`, which registers the lane;
-   - the `deploy-watcher-ping-url` row;
-   - the read-App key row's `runtime-fetch` reader for `scripts/run-deploy-watcher.sh`.
-4. Read grants for the lane's account on the three secrets: `f793576f-…`, `3b9503da-…`, and
-   `314a966c-…`.
-5. **change-manager's registry consumer for `M2M_TOKEN_OBSERVE`**, for this lane's container read.
-   That row lives in change-manager's `.cred-consumers.toml`, and this PR doesn't touch it.
-6. The VM root creates the `deploy-watcher-ping-url` keeper. A later small PR writes its id into
-   the compose and removes `deploy-watcher` from `test_deploy_lanes.py`'s `placeholders`.
-7. The executor's token write, the lane's `--add`, the `lane-run --read` proof of the three
-   secrets, and a `--dry-run` in the container.
-8. Cut-over steps 2 onward: the paired reporting runs, enabling `LANE_SCHEDULE_ENABLED`, and
-   retiring the Mac's `com.devon.deploy-watcher` job.
+1. The orchestrator serves this release, and the lanes image is built at this commit. HQ then
+   creates `sds-lane-deploy-watcher` from `lanes/deploy-watcher/compose.yaml` without
+   `instant_deploy`, with `LANE_SCHEDULE_ENABLED=false`.
+2. The VM root runs the keeper commands for the lane token and `deploy-watcher-ping-url`. Each
+   keeper holds the inbox's empty marker.
+3. HQ lands the lane's registry rows in this repository's `.cred-consumers.toml`, in two changes.
+   The token's row is `DEPLOY_WATCHER_BWS_ACCESS_TOKEN`, which registers the lane, and is due for
+   its issue. The ping URL's row isn't due yet. Two more consumers belong to the same work:
+   - the read-App key row's `runtime-fetch` reader for `scripts/run-deploy-watcher.sh`;
+   - **change-manager's registry consumer for `M2M_TOKEN_OBSERVE`**, for this lane's container
+     read. That row lives in change-manager's `.cred-consumers.toml`, and this PR doesn't touch
+     it.
+4. The identity's creator grants the lane's account read access to `f793576f-…`, `3b9503da-…`,
+   `314a966c-…`, and the ping-URL secret.
+5. Devon mints the token, and the executor writes `DEPLOY_WATCHER_BWS_ACCESS_TOKEN`. After the
+   token's `store` unit completes, HQ makes the ping URL's row due. The executor then reads the URL
+   from the Healthchecks listing and writes the ping-URL secret (ADR-0055 amendment 23).
+6. A small PR writes the ping-URL secret's id into the compose and removes `deploy-watcher` from
+   `test_deploy_lanes.py`'s `placeholders`. The orchestrator then serves that release.
+7. The lane's `--add` runs in a quiet slot. Then come the `lane-run --read` proof (each of the
+   lane's secrets `ok`, one other secret `refused`), the `--dry-run` in the container, and the
+   week-bar baseline.
+8. Cut-over steps 2 onward: the paired `--dry-run` reporting runs, the Mac agent's bootout,
+   `--schedule true`, and the check that the last ping came from the container.
+
+## Teardown
+
+The PR isn't merged, so I left the worktree and the test database `orchestrator_test_hq_w_80` in
+place. Remove both, and the local branch, once the PR merges. The main tree's `git status` shows
+nothing I created.
