@@ -158,8 +158,7 @@ Each phase takes `--lane <lane>` and exactly one change:
   the served orchestrator tag.
 - `--token`: redeploy the lane after the VM rotation executor wrote its `<LANE>_BWS_ACCESS_TOKEN`
   (ADR-0059 Amendment 2). It keeps the running tag, digest and schedule, writes the tracked compose
-  at that tag, and writes no variable. It refuses `placeholder`, which holds no token, and a lane
-  with no passed `--add`.
+  at that tag, and writes no variable. It refuses a lane with no passed `--add`.
 
 A `--tag` takes the release's sha tag only. The command resolves it to its full commit on
 `origin/main`, finds that commit's one successful `Release image` run (in the newest 200), and
@@ -201,8 +200,7 @@ A `started` check whose `status` is also `down` doesn't hold it. `LANE_CHECKS` i
 (`tests/scripts/test_deploy_lanes.py::test_the_check_names_are_the_launchers`). The command reads
 `GET https://healthcheck.alobar.net/api/v3/checks/` with the read-only key, BWS
 `f07b1368-f937-4287-baf1-b4ed00b6b274` (`HC_API_KEY`, `Rotation / Healthchecks`), as
-`sds-operator`. For `sds-lane-placeholder` alone the quiet slot is the window only, and no phase
-reads the listing for it.
+`sds-operator`.
 
 No process waits: the first `lanes-prepare` for a change records a deadline 6 hours later. A
 re-run for the same change resumes against it; a run for another change marks the waiting one
@@ -248,11 +246,10 @@ run of its lane is `unfinished`.
    executor has written the token. Then `coolify_deploy` on the resource.
 4. Once the deployment has finished, read the new container with the `vps_exec` commands
    `lanes-prepare` printed: its image's `RepoDigest`, its `LANE_SCHEDULE_ENABLED`, the source of a
-   stateful lane's state mount, and for an `--add` of any lane but the placeholder and for a
-   `--token` whether its `BWS_ACCESS_TOKEN` is non-empty (`test -n`, which prints no value). A
-   `--token` run adds one more read: `docker exec <container> lane-run --read <uuid>...` over the
-   run's recorded UUIDs, which prints one `<uuid> ok` or `<uuid> refused` line per UUID and never a
-   value. Save those lines, as printed, to a file outside the repository.
+   stateful lane's state mount, and for an `--add` or a `--token` whether its `BWS_ACCESS_TOKEN`
+   is non-empty (`test -n`, which prints no value). A `--token` run adds one more read:
+   `docker exec <container> lane-run --read <uuid>...` over the run's recorded UUIDs, which prints
+   one `<uuid> ok` or `<uuid> refused` line per UUID and never a value. Save those lines, as printed, to a file outside the repository.
 5. Run `lanes-finish` with the change and the reads (`--observed-digest`, `--observed-schedule`,
    `--observed-volume`, `--token-present`, and for `--token` `--read-result <file>`, the path of
    the saved `lane-run --read` lines). It exits 0 only when the container runs the release's lane
@@ -296,11 +293,11 @@ as the revoke's precondition.
 ### Registered lanes and the lane-token matcher
 
 A lane is registered while this repository's `.cred-consumers.toml` at `origin/main` holds its
-token entry; `sds-lane-placeholder` has none, so it's registered by name. The matcher
-(`lanes_in_registry`) takes any `[[credential.consumer]]` with `kind = "coolify-env"`,
-`resource_type = "service"` and `key = "<LANE>_BWS_ACCESS_TOKEN"`, and reads the lane as `<LANE>`
-lower-cased with `_` as `-` (`EXECUTION_WATCH_BWS_ACCESS_TOKEN` is `execution-watch`). It refuses a
-key that names no lane the command knows, and two entries for one lane. Removing a lane's entry,
+token entry. The matcher (`lanes_in_registry`) takes any `[[credential.consumer]]` with
+`kind = "coolify-env"`, `resource_type = "service"` and `key = "<LANE>_BWS_ACCESS_TOKEN"`, and
+reads the lane as `<LANE>` lower-cased with `_` as `-` (`EXECUTION_WATCH_BWS_ACCESS_TOKEN` is
+`execution-watch`). It refuses a key that names no lane the command knows, and two entries for one
+lane. Removing a lane's entry,
 the last step of "Rollback for one lane", drops the lane from `prepare`'s check; its run files
 remain.
 

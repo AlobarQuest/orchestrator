@@ -64,6 +64,22 @@ def _commit(work: Path, files: dict[str, str], message: str) -> str:
     return _git(work, "rev-parse", "HEAD")
 
 
+# One registered lane, so the release's lane checks have a lane to hold.
+REGISTRY = """version = 1
+
+[[credential]]
+id = "bws-lane-execution-watch-token"
+
+  [[credential.consumer]]
+  kind = "coolify-env"
+  instance = "prod"
+  resource_type = "service"
+  uuid = "ewuuid00000000000000000a"
+  key = "EXECUTION_WATCH_BWS_ACCESS_TOKEN"
+  redeploy = false
+"""
+
+
 @dataclass
 class Repo:
     work: Path
@@ -90,7 +106,7 @@ def repo(tmp_path: Path) -> Repo:
             "Dockerfile": GOOD_DOCKERFILE,
             "docker-compose.yml": GOOD_COMPOSE,
             "migrations/versions/0001_first.py": "x = 1\n",
-            ".cred-consumers.toml": "version = 1\n",
+            ".cred-consumers.toml": REGISTRY,
         },
         "base",
     )
@@ -1213,11 +1229,11 @@ def test_the_readiness_predicate_names_every_file_that_reads_readiness() -> None
 # --------------------------------------------------------------------------------------------
 
 
-def _finished_placeholder(h: Harness, commit: str) -> None:
-    """A passed placeholder `--add` at `commit`, as `lanes-finish` writes it."""
+def _finished_lane(h: Harness, commit: str) -> None:
+    """A passed execution-watch `--add` at `commit`, as `lanes-finish` writes it."""
     world = h.world()
     run = deploy.LaneRun(
-        lane=deploy.PLACEHOLDER,
+        lane="execution-watch",
         change="add",
         change_key=f"add:{commit}",
         status=deploy.FINISHED,
@@ -1234,16 +1250,16 @@ def _finished_placeholder(h: Harness, commit: str) -> None:
 def test_prepare_refuses_a_lagging_lane_and_dispatches_nothing(
     h: Harness, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    _finished_placeholder(h, h.repo.plain)  # production serves `base`
+    _finished_lane(h, h.repo.plain)  # production serves `base`
     assert h.prepare(h.repo.migrated) == EXIT_REFUSED
     out, _ = _output(capsys)
-    assert "placeholder runs sha-" in out["reason"]
+    assert "execution-watch runs sha-" in out["reason"]
     assert f"--tag sha-{h.repo.base}" in out["reason"]
     assert h.gh.dispatched == [] and not h.state_path.exists()
 
 
 def test_prepare_admits_a_lane_on_the_served_tag(h: Harness) -> None:
-    _finished_placeholder(h, h.repo.base)
+    _finished_lane(h, h.repo.base)
     assert h.prepare(h.repo.migrated) == EXIT_OK
 
 
@@ -1271,12 +1287,12 @@ def test_finish_prints_the_lane_phases_first_command_for_each_added_lane(
     assert prepared.finish() == EXIT_OK
     out, err = _output(capsys)
     assert out["lane_phases"] == []
-    _finished_placeholder(prepared, prepared.repo.base)
+    _finished_lane(prepared, prepared.repo.base)
     assert prepared.finish() == EXIT_OK
     out, err = _output(capsys)
     command = (
         "uv run python -m scripts.deploy_orchestrator lanes-prepare "
-        f"--lane placeholder --tag sha-{prepared.repo.migrated}"
+        f"--lane execution-watch --tag sha-{prepared.repo.migrated}"
     )
     assert out["lane_phases"] == [command]
     assert command in err

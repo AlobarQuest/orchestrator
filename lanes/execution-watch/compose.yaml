@@ -1,7 +1,7 @@
 # sds-lane-execution-watch (ADR-0059 increment 2, Amendment 1): the execution-watch lane. HQ
 # creates the resource from this file. It serves nothing: no port, no domain, so no Traefik labels
-# and no `networks:` entry, as `lanes/placeholder/compose.yaml`. The lane's token is the resource's
-# own `EXECUTION_WATCH_BWS_ACCESS_TOKEN` variable, which the VM rotation executor writes; this file
+# and no `networks:` entry. The lane's token is the resource's own
+# `EXECUTION_WATCH_BWS_ACCESS_TOKEN` variable, which the VM rotation executor writes; this file
 # names it and never holds a value. `SDS_DEADMAN_PING_URL_UUID` is the BWS secret id of the lane's
 # ping-URL secret, `execution-watch-ping-url` in `Rotation / Keepers`: an id, not a secret and not
 # the ping URL. `lane-run` passes it to the launcher, whose dead-man helper reads the URL from that

@@ -30,7 +30,6 @@ from scripts.deploy_orchestrator import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
-PLACEHOLDER_COMPOSE = (ROOT / "lanes/placeholder/compose.yaml").read_text()
 WATCH_COMPOSE = """services:
   execution-watch:
     image: ghcr.io/alobarquest/sds-lanes:${SDS_LANES_IMAGE_TAG}
@@ -73,7 +72,6 @@ uuid = "00000000-0000-4000-8000-000000000001"
 uuid = "{ALERT}"
 lanes = ["execution-watch"]
 """
-PLACEHOLDER_UUID = "phuuid00000000000000000a"
 WATCH_UUID = "ewuuid00000000000000000a"
 WATCH_VOLUME = f"{WATCH_UUID}_sds-lanes-execution-watch-state"
 # 10:00 in New York (EST), outside estate landing's window; 03:00 is inside it.
@@ -193,8 +191,7 @@ class Lanes:
 
     # ---- the steps a session takes ----------------------------------------------------------
 
-    def add(self, lane: str, sha: str, *extra: str, uuid: str | None = None) -> int:
-        uuid = uuid or (PLACEHOLDER_UUID if lane == "placeholder" else WATCH_UUID)
+    def add(self, lane: str, sha: str, *extra: str) -> int:
         return self.main(
             "lanes-prepare",
             "--lane",
@@ -203,7 +200,7 @@ class Lanes:
             "--tag",
             tag(sha),
             "--resource-uuid",
-            uuid,
+            WATCH_UUID,
             *(extra or ("--schedule-written", "false")),
         )
 
@@ -212,14 +209,6 @@ class Lanes:
 
     def finish(self, lane: str, *change_and_reads: str) -> int:
         return self.main("lanes-finish", "--lane", lane, *change_and_reads)
-
-    def added_placeholder(self) -> None:
-        self.served = self.added
-        change = ("--add", "--tag", tag(self.added))
-        assert self.add("placeholder", self.added) == EXIT_OK
-        assert self.recheck("placeholder", *change) == EXIT_OK
-        reads = ("--observed-digest", lane_digest(self.added), "--observed-schedule", "false")
-        assert self.finish("placeholder", *change, *reads) == EXIT_OK
 
     def added_watch(self) -> None:
         self.served = self.added
@@ -285,7 +274,6 @@ def lanes(tmp_path: Path) -> Lanes:
     added = _commit(
         work,
         {
-            "lanes/placeholder/compose.yaml": PLACEHOLDER_COMPOSE,
             "lanes/execution-watch/compose.yaml": WATCH_COMPOSE,
             ".bws-secrets.toml": SECRETS,
         },
@@ -310,16 +298,6 @@ def _status(lanes: Lanes, lane: str) -> list[str]:
 
 
 # ---- the quiet slot -------------------------------------------------------------------------
-
-
-def test_the_placeholder_reads_no_listing_and_its_slot_is_the_window_alone(lanes: Lanes) -> None:
-    lanes.served = lanes.added
-    lanes.now = LANDING
-    assert lanes.add("placeholder", lanes.added) == EXIT_CONDITION
-    lanes.now = LANDING + timedelta(hours=4)  # 07:00 in New York, within the 6-hour wait
-    assert lanes.add("placeholder", lanes.added) == EXIT_OK
-    assert lanes.recheck("placeholder", "--add", "--tag", tag(lanes.added)) == EXIT_OK
-    assert lanes.listing_reads == 0
 
 
 @pytest.mark.parametrize(
@@ -394,36 +372,29 @@ def test_a_re_run_resumes_the_deadline_and_a_timeout_exits_4(
 
 
 def test_a_run_for_another_change_supersedes_the_waiting_one(lanes: Lanes) -> None:
-    lanes.added_placeholder()
+    lanes.added_watch()
     lanes.served, lanes.now = lanes.later, LANDING + timedelta(days=1)
-    assert lanes.prepare_tag("placeholder", lanes.later) == EXIT_CONDITION
-    waiting = lanes.runs("placeholder")[-1]
+    assert lanes.prepare_tag("execution-watch", lanes.later) == EXIT_CONDITION
+    waiting = lanes.runs("execution-watch")[-1]
     assert waiting.status == "waiting"
-    assert (
-        lanes.main(
-            "lanes-prepare",
-            "--lane",
-            "placeholder",
-            "--schedule",
-            "true",
-            "--running-schedule",
-            "false",
-        )
-        == EXIT_CONDITION
+    schedule = ("--schedule", "true", "--running-schedule", "false")
+    volume = ("--running-volume", WATCH_VOLUME)
+    assert lanes.main("lanes-prepare", "--lane", "execution-watch", *schedule, *volume) == (
+        EXIT_CONDITION
     )
-    by_id = {r.run_id: r for r in lanes.runs("placeholder")}
+    by_id = {r.run_id: r for r in lanes.runs("execution-watch")}
     assert by_id[waiting.run_id].status == "superseded"
-    assert _status(lanes, "placeholder")[-1] == "waiting"
+    assert _status(lanes, "execution-watch")[-1] == "waiting"
 
 
 def test_a_waiting_run_doesnt_block_a_re_run_and_an_unfinished_one_does(lanes: Lanes) -> None:
     lanes.served = lanes.added
     change = ("--add", "--tag", tag(lanes.added))
-    assert lanes.add("placeholder", lanes.added) == EXIT_OK
-    assert lanes.add("placeholder", lanes.added) == EXIT_OK
-    assert lanes.recheck("placeholder", *change) == EXIT_OK
-    assert lanes.add("placeholder", lanes.added) == EXIT_REFUSED
-    assert _status(lanes, "placeholder") == ["unfinished"]
+    assert lanes.add("execution-watch", lanes.added) == EXIT_OK
+    assert lanes.add("execution-watch", lanes.added) == EXIT_OK
+    assert lanes.recheck("execution-watch", *change) == EXIT_OK
+    assert lanes.add("execution-watch", lanes.added) == EXIT_REFUSED
+    assert _status(lanes, "execution-watch") == ["unfinished"]
 
 
 # ---- lanes-recheck --------------------------------------------------------------------------
@@ -450,9 +421,9 @@ def test_recheck_marks_the_run_unfinished_only_on_exit_0(lanes: Lanes) -> None:
 
 def test_add_refuses_a_schedule_written_other_than_false(lanes: Lanes) -> None:
     lanes.served = lanes.added
-    assert lanes.add("placeholder", lanes.added, "--schedule-written", "true") == EXIT_REFUSED
-    assert _status(lanes, "placeholder") == ["refused"]
-    assert "--schedule-written must be false" in lanes.runs("placeholder")[0].reason
+    assert lanes.add("execution-watch", lanes.added, "--schedule-written", "true") == EXIT_REFUSED
+    assert _status(lanes, "execution-watch") == ["refused"]
+    assert "--schedule-written must be false" in lanes.runs("execution-watch")[0].reason
 
 
 @pytest.mark.parametrize(
@@ -461,18 +432,17 @@ def test_add_refuses_a_schedule_written_other_than_false(lanes: Lanes) -> None:
 def test_add_refuses_a_compose_whose_schedule_doesnt_default_to_false(
     lanes: Lanes, mapping: str
 ) -> None:
-    edited = PLACEHOLDER_COMPOSE.replace("${LANE_SCHEDULE_ENABLED:-false}", mapping)
-    sha = _commit(lanes.work, {"lanes/placeholder/compose.yaml": edited}, "a bad default")
+    edited = WATCH_COMPOSE.replace("${LANE_SCHEDULE_ENABLED:-false}", mapping)
+    sha = _commit(lanes.work, {"lanes/execution-watch/compose.yaml": edited}, "a bad default")
     _git(lanes.work, "push", "-q", "origin", "main")
     lanes.served = sha
     lanes.successes[sha] = 1
     lanes.later = sha  # the gh fake serves the four named commits
-    assert lanes.add("placeholder", sha) == EXIT_REFUSED
-    assert "LANE_SCHEDULE_ENABLED" in lanes.runs("placeholder")[-1].reason
+    assert lanes.add("execution-watch", sha) == EXIT_REFUSED
+    assert "LANE_SCHEDULE_ENABLED" in lanes.runs("execution-watch")[-1].reason
 
 
-def test_add_skips_the_token_check_only_for_the_placeholder(lanes: Lanes) -> None:
-    lanes.added_placeholder()
+def test_an_adds_finish_requires_the_token_read_and_a_present_token(lanes: Lanes) -> None:
     lanes.served = lanes.added
     change = ("--add", "--tag", tag(lanes.added))
     assert lanes.add("execution-watch", lanes.added) == EXIT_OK
@@ -537,14 +507,14 @@ def test_a_refused_change_keeps_the_waiting_runs_deadline(lanes: Lanes) -> None:
 
 def test_add_refuses_a_tag_production_doesnt_serve(lanes: Lanes) -> None:
     lanes.served = lanes.later
-    assert lanes.add("placeholder", lanes.added) == EXIT_REFUSED
-    assert "not the served orchestrator tag" in lanes.runs("placeholder")[0].reason
+    assert lanes.add("execution-watch", lanes.added) == EXIT_REFUSED
+    assert "not the served orchestrator tag" in lanes.runs("execution-watch")[0].reason
 
 
 def test_a_tag_with_two_successful_releases_refuses(lanes: Lanes) -> None:
     lanes.served = lanes.added
     lanes.successes[lanes.added] = 2
-    assert lanes.add("placeholder", lanes.added) == EXIT_REFUSED
+    assert lanes.add("execution-watch", lanes.added) == EXIT_REFUSED
 
 
 # ---- lanes-finish ---------------------------------------------------------------------------
@@ -607,17 +577,17 @@ def test_an_added_lanes_double_prefixed_volume_refuses(lanes: Lanes, volume: str
 def test_a_failed_redeploy_prints_the_inverse_writes(
     lanes: Lanes, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    lanes.added_placeholder()
+    lanes.added_watch()
     lanes.served = lanes.later
     change = ("--tag", tag(lanes.later))
-    assert lanes.prepare_tag("placeholder", lanes.later) == EXIT_OK
-    assert lanes.recheck("placeholder", *change) == EXIT_OK
+    assert lanes.prepare_tag("execution-watch", lanes.later) == EXIT_OK
+    assert lanes.recheck("execution-watch", *change) == EXIT_OK
     capsys.readouterr()
-    assert lanes.finish("placeholder", *change, "--redeploy-failed") == EXIT_CONDITION
+    assert lanes.finish("execution-watch", *change, "--redeploy-failed") == EXIT_CONDITION
     err = capsys.readouterr().err
     assert f'key="SDS_LANES_IMAGE_TAG", value="{tag(lanes.added)}"' in err
-    assert PLACEHOLDER_COMPOSE.strip() in err  # the recorded compose, restored
-    assert "lanes-finish --lane placeholder --tag" in err and "--restored" in err
+    assert WATCH_COMPOSE.strip() in err  # the recorded compose, restored
+    assert "lanes-finish --lane execution-watch --tag" in err and "--restored" in err
 
 
 # ---- --restored -----------------------------------------------------------------------------
@@ -644,47 +614,48 @@ def test_restored_after_an_add_takes_the_two_gone_reads(
 ) -> None:
     lanes.served = lanes.added
     change = ("--add", "--tag", tag(lanes.added))
-    assert lanes.add("placeholder", lanes.added) == EXIT_OK
-    assert lanes.recheck("placeholder", *change) == EXIT_OK
+    assert lanes.add("execution-watch", lanes.added) == EXIT_OK
+    assert lanes.recheck("execution-watch", *change) == EXIT_OK
     capsys.readouterr()
-    assert lanes.finish("placeholder", *change, "--redeploy-failed") == EXIT_CONDITION
+    assert lanes.finish("execution-watch", *change, "--redeploy-failed") == EXIT_CONDITION
     err = capsys.readouterr().err
-    assert f'coolify_delete_service(uuid="{PLACEHOLDER_UUID}", instance="prod")' in err
+    assert f'coolify_delete_service(uuid="{WATCH_UUID}", instance="prod")' in err
     assert "D-20" in err and "10 minutes" in err
     gone = ("--restored", "--service-listed")
-    assert lanes.finish("placeholder", *change, *gone) == EXIT_USAGE
+    assert lanes.finish("execution-watch", *change, *gone) == EXIT_USAGE
     assert (
-        lanes.finish("placeholder", *change, *gone, "true", "--container-present", "false")
+        lanes.finish("execution-watch", *change, *gone, "true", "--container-present", "false")
         == EXIT_CONDITION
     )
     assert (
-        lanes.finish("placeholder", *change, *gone, "false", "--container-present", "true")
+        lanes.finish("execution-watch", *change, *gone, "false", "--container-present", "true")
         == EXIT_CONDITION
     )
     assert (
-        lanes.finish("placeholder", *change, *gone, "false", "--container-present", "false")
+        lanes.finish("execution-watch", *change, *gone, "false", "--container-present", "false")
         == EXIT_OK
     )
-    assert _status(lanes, "placeholder") == ["restored"]
+    assert _status(lanes, "execution-watch") == ["restored"]
 
 
 # ---- --tag and --schedule -------------------------------------------------------------------
 
 
 def test_a_tag_below_the_lanes_add_refuses(lanes: Lanes) -> None:
-    lanes.added_placeholder()
+    lanes.added_watch()
     lanes.served = lanes.old
-    assert lanes.prepare_tag("placeholder", lanes.old) == EXIT_REFUSED
-    assert "not a descendant" in lanes.runs("placeholder")[-1].reason
+    assert lanes.prepare_tag("execution-watch", lanes.old) == EXIT_REFUSED
+    assert "not a descendant" in lanes.runs("execution-watch")[-1].reason
 
 
 def test_a_tag_needs_a_passed_add_and_the_recorded_running_tag(lanes: Lanes) -> None:
     lanes.served = lanes.later
-    assert lanes.prepare_tag("placeholder", lanes.later) == EXIT_REFUSED
-    lanes.added_placeholder()
+    assert lanes.prepare_tag("execution-watch", lanes.later) == EXIT_REFUSED
+    lanes.added_watch()
     lanes.served = lanes.later
-    assert lanes.prepare_tag("placeholder", lanes.later, running=tag(lanes.old)) == EXIT_REFUSED
-    assert lanes.prepare_tag("placeholder", lanes.later) == EXIT_OK
+    stale = tag(lanes.old)
+    assert lanes.prepare_tag("execution-watch", lanes.later, running=stale) == EXIT_REFUSED
+    assert lanes.prepare_tag("execution-watch", lanes.later) == EXIT_OK
 
 
 def test_a_tag_prints_the_writes_with_only_the_two_lane_variables(
@@ -708,54 +679,64 @@ def test_a_tag_prints_the_writes_with_only_the_two_lane_variables(
 
 
 def test_a_schedule_change_keeps_the_running_tag_and_compose(lanes: Lanes) -> None:
-    lanes.added_placeholder()
+    lanes.added_watch()
     change = ("--schedule", "true")
-    prepare = ("lanes-prepare", "--lane", "placeholder", *change)
-    assert lanes.main(*prepare, "--running-schedule", "true") == EXIT_REFUSED
-    assert lanes.main(*prepare, "--running-schedule", "false") == EXIT_OK
-    run = lanes.runs("placeholder")[-1]
+    prepare = ("lanes-prepare", "--lane", "execution-watch", *change, "--running-volume")
+    assert lanes.main(*prepare, WATCH_VOLUME, "--running-schedule", "true") == EXIT_REFUSED
+    assert lanes.main(*prepare, WATCH_VOLUME, "--running-schedule", "false") == EXIT_OK
+    run = lanes.runs("execution-watch")[-1]
     assert (run.tag, run.lane_digest, run.compose_sent) == (
         tag(lanes.added),
         lane_digest(lanes.added),
         run.compose_replaced,
     )
-    assert lanes.recheck("placeholder", *change) == EXIT_OK
-    reads = ("--observed-digest", lane_digest(lanes.added), "--observed-schedule")
-    assert lanes.finish("placeholder", *change, *reads, "false") == EXIT_CONDITION
-    assert lanes.finish("placeholder", *change, *reads, "true") == EXIT_OK
+    assert lanes.recheck("execution-watch", *change) == EXIT_OK
+    reads = _watch_reads(lanes.added, schedule="false")
+    assert lanes.finish("execution-watch", *change, *reads) == EXIT_CONDITION
+    reads = _watch_reads(lanes.added, schedule="true")
+    assert lanes.finish("execution-watch", *change, *reads) == EXIT_OK
 
 
 @pytest.mark.parametrize(
     "argv",
     [
         ["lanes-prepare", "--lane", "nope", "--schedule", "true", "--running-schedule", "false"],
-        ["lanes-prepare", "--lane", "placeholder", "--tag", "abc1234", "--running-tag", "x"],
-        ["lanes-prepare", "--lane", "placeholder", "--schedule", "true"],
-        ["lanes-recheck", "--lane", "placeholder"],
+        ["lanes-prepare", "--lane", "execution-watch", "--tag", "abc1234", "--running-tag", "x"],
+        ["lanes-prepare", "--lane", "execution-watch", "--schedule", "true"],
+        ["lanes-recheck", "--lane", "execution-watch"],
         [
             "lanes-recheck",
             "--lane",
-            "placeholder",
+            "execution-watch",
             "--tag",
             "sha-" + "a" * 40,
             "--schedule",
             "true",
         ],
-        ["lanes-recheck", "--lane", "placeholder", "--add", "--schedule", "true"],
-        ["lanes-prepare", "--lane", "placeholder", "--add", "--tag", "sha-" + "a" * 40],
+        ["lanes-recheck", "--lane", "execution-watch", "--add", "--schedule", "true"],
+        ["lanes-prepare", "--lane", "execution-watch", "--add", "--tag", "sha-" + "a" * 40],
+        # The retired placeholder lane is no lane.
+        ["lanes-prepare", "--lane", "placeholder", "--schedule", "true"],
     ],
 )
 def test_a_malformed_lane_command_is_usage(lanes: Lanes, argv: list[str]) -> None:
     assert lanes.main(*argv) == EXIT_USAGE
-    assert not (lanes.tmp / "deploy-lanes" / "placeholder").exists()
+    assert not (lanes.tmp / "deploy-lanes").exists()
 
 
 # ---- prepare's lag check --------------------------------------------------------------------
 
 
+def _register_watch(lanes: Lanes) -> None:
+    registry = "version = 1\n" + WATCH_TOKEN_ENTRY
+    _commit(lanes.work, {".cred-consumers.toml": registry}, "register execution-watch")
+    _git(lanes.work, "push", "-q", "origin", "main")
+
+
 def test_the_lag_check_refuses_a_stale_registered_lane(lanes: Lanes) -> None:
-    lanes.added_placeholder()  # registered by name, finished at `added`
-    with pytest.raises(deploy.Refused, match=r"placeholder runs sha-.*--tag sha-"):
+    _register_watch(lanes)
+    lanes.added_watch()  # finished at `added`
+    with pytest.raises(deploy.Refused, match=r"execution-watch runs sha-.*--tag sha-"):
         deploy.require_lanes_current(lanes.world(), lanes.later, lanes.later)
     deploy.require_lanes_current(lanes.world(), lanes.added, lanes.later)
 
@@ -776,15 +757,42 @@ def test_the_lag_check_skips_an_unregistered_lane(lanes: Lanes) -> None:
 
 
 def test_the_lag_check_skips_a_registered_lane_with_no_passed_add(lanes: Lanes) -> None:
-    registry = "version = 1\n" + WATCH_TOKEN_ENTRY
-    _commit(lanes.work, {".cred-consumers.toml": registry}, "register execution-watch")
-    _git(lanes.work, "push", "-q", "origin", "main")
+    _register_watch(lanes)
     world = lanes.world()
-    assert deploy.registered_lanes(world) == {"placeholder", "execution-watch"}
+    assert deploy.registered_lanes(world) == {"execution-watch"}
     deploy.require_lanes_current(world, lanes.later, lanes.later)
     lanes.added_watch()
     with pytest.raises(deploy.Refused, match="execution-watch runs"):
         deploy.require_lanes_current(lanes.world(), lanes.later, lanes.later)
+
+
+def test_the_retired_placeholder_lane_is_neither_registered_nor_named_by_the_lag_check(
+    lanes: Lanes,
+) -> None:
+    """The placeholder lane retired once real lanes ran (ADR-0059): no registry entry, no name.
+    Its passed `--add`, left in the operator's lane state, is a run file the lag check skips."""
+    assert "placeholder" not in deploy.LANES
+    world = lanes.world()
+    assert deploy.registered_lanes(world) == set()
+    deploy._save_run(
+        world,
+        deploy.LaneRun(
+            lane="placeholder",
+            change="add",
+            change_key=f"add:{lanes.old}",
+            status=deploy.FINISHED,
+            created_at="2026-11-06T15:00:00+00:00",
+            updated_at="2026-11-06T15:00:00+00:00",
+            tag=tag(lanes.old),
+            commit=lanes.old,
+            run_id="20261106T150000000000Z-add-00000000",
+            sequence=1,
+        ),
+    )
+    deploy.require_lanes_current(world, lanes.later, lanes.later)
+    assert deploy.lanes_to_follow(world) == []
+    _register_watch(lanes)
+    assert deploy.registered_lanes(lanes.world()) == {"execution-watch"}
 
 
 # ---- the lane-token matcher -----------------------------------------------------------------
@@ -838,7 +846,6 @@ def test_the_check_names_are_the_launchers() -> None:
     moving = {lane: name for lane, name in launchers.items() if lane not in STAYS_ON_THE_MAC}
     assert deploy.LANE_CHECKS == moving
     assert STAYS_ON_THE_MAC <= launchers.keys()
-    assert "placeholder" not in deploy.LANE_CHECKS
 
 
 def test_the_stateful_lanes_are_the_lane_images_state_directories() -> None:
@@ -846,7 +853,7 @@ def test_the_stateful_lanes_are_the_lane_images_state_directories() -> None:
     named = re.search(r"for lane in (.*?); do", dockerfile, re.DOTALL)
     assert named is not None
     directories = set(named.group(1).replace("\\", " ").split())
-    assert deploy.STATEFUL_LANES == directories - {"placeholder"}
+    assert deploy.STATEFUL_LANES == directories
     assert deploy.STATEFUL_LANES <= deploy.LANE_CHECKS.keys()
 
 
@@ -967,9 +974,7 @@ def test_restored_closes_a_failed_token_run_and_it_never_becomes_the_record(
 
 
 def test_the_lag_check_reads_past_a_closed_failed_token_run(lanes: Lanes) -> None:
-    registry = "version = 1\n" + WATCH_TOKEN_ENTRY
-    _commit(lanes.work, {".cred-consumers.toml": registry}, "register execution-watch")
-    _git(lanes.work, "push", "-q", "origin", "main")
+    _register_watch(lanes)
     lanes.prepared_token()
     assert lanes.finish("execution-watch", "--token", "--redeploy-failed") == EXIT_CONDITION
     with pytest.raises(deploy.Refused, match="unfinished"):
@@ -997,10 +1002,7 @@ def test_restored_refuses_a_token_run_with_no_failed_finish(lanes: Lanes) -> Non
     assert _status(lanes, "execution-watch") == ["finished", "unfinished"]
 
 
-def test_token_refuses_the_placeholder_and_a_lane_with_no_passed_add(lanes: Lanes) -> None:
-    lanes.added_placeholder()
-    assert lanes.prepare_token("placeholder") == EXIT_REFUSED
-    assert "--token refuses the placeholder" in lanes.runs("placeholder")[-1].reason
+def test_token_refuses_a_lane_with_no_passed_add(lanes: Lanes) -> None:
     lanes.served = lanes.added
     assert lanes.prepare_token() == EXIT_REFUSED
     assert "no passed --add" in lanes.runs("execution-watch")[-1].reason
