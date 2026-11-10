@@ -32,6 +32,8 @@
     one's; cut-over step 4 still proves the full URL).
   - 2026-11-10, amendment 22, accepted (a standing answer approves revision 1 of a lane
     credential's generated package).
+  - 2026-11-10, amendment 23, accepted (the executor reads a lane check's ping URL from the
+    Healthchecks API; no paste).
 - **Supersedes:** the parts of ADR-0054 named in "What this changes in ADR-0054".
 - **Relates to:** ADR-0054 (the SDS owns credential rotation), ADR-0052 (superseding an unworked
   decomposition), ADR-0039 (out-of-process producers), ADR-0011 (known-good patterns)
@@ -3010,3 +3012,255 @@ The increments, by number:
   inbox binds, and every revision other than a lane credential's revision 1 on the issue plan.
   New: the carrier's identity, its observation type and source system, and their migration
   (increment 3).
+
+## Amendment 23 — The executor reads a lane check's ping URL from the Healthchecks API (2026-11-10)
+
+**Status: Accepted (2026-11-10).** Devon accepted it from Slack ("G-25: approved", recorded
+2026-11-10 17:04 UTC), after a clean Opus whole-branch review of PR #649 at `9b54674d` (HQ's D-12
+standing answer, limit 3). It rests on Devon's standing answer of 2026-11-10 (sds-hq
+`standing-answers.md`, "a Healthchecks ping URL is configuration, not a secret"):
+
+> This is still in development. There is almost zero risk of a public URL being used against me,
+> and its not really a secret that could not be found either. Please make the change so that I am
+> not copy/pasting a public URL between web pages.
+
+The rule recorded with it: while the estate is in development, a Healthchecks ping URL is
+configuration. Devon never copies one by hand: the SDS reads the check's `ping_url` from the
+Healthchecks API and writes it where a lane needs it, with no mint act and no inbox paste. It
+needn't be kept out of a transcript or log, though nothing has a reason to print it. It's revisited
+when the estate leaves development.
+
+Code reads cite orchestrator `6d32e881` and Healthchecks `v4.4`, the self-hosted instance's image
+tag.
+
+### Context
+
+Amendment 19 made a ping URL a person's mint: Devon copies it from the check's page and pastes it
+into the VM inbox, which binds it (items 5 and 8, step 5), and amendment 21 gave the bind and
+`verify_new` a read-only lookup of the check. As built:
+
+- **The type says a person mints.** `healthchecks-ping-url` declares `machine_mint=False`
+  (`rotation_worker/types.py`, lines 56-59). `derive_issue` refuses an issue for a type that mints
+  by machine (`plans.py`, line 135) and always opens the plan with a person's act (line 144), and
+  `validate_issue_plan` refuses any other first segment ("a person mints and stages an issue",
+  `contract.py`, line 334). The adapter's `mint` raises ("a person copies a ping URL from its
+  check's page", `adapters/healthchecks_ping_url.py`, lines 123-124).
+- **The value arrives only through the inbox.** The unit after a person's mint waits unclaimed
+  until a value is staged (`worker._mint_waits`, lines 630-665), raising the mint act each pass
+  until then (`_mint_act`). The VM has no hand path: `rotation-worker stage` refuses on the VM
+  ("only the Keychain executor stages by prompt", `cli.py`, line 304). A pasted URL binds through
+  `BindsByItself.bind_refusal` (`adapters/healthchecks_ping_url.py`, lines 94-116): the marker in
+  the keeper, the shape, the random-UUID control answering 404 and the URL's lookup answering 200;
+  `inbox.bind` then refuses one another keeper holds (`inbox.py`, lines 129-165).
+- **Only a read-write key is shown `ping_url`.** `Check.to_dict` (Healthchecks `v4.4`,
+  `hc/api/models.py`, lines 439-484) adds `unique_key` for a read-only key (lines 471-472) and
+  otherwise `uuid` and `ping_url`, the instance's `PING_ENDPOINT` followed by the check's UUID
+  (lines 474-475). The listing (`get_checks`, `hc/api/views.py`, lines 414-435) and the single-check
+  reads (lines 486 and 495) all pass the key's `readonly` flag. The hosted Management API docs
+  ("List Existing Checks") say the same: a read-only key's responses omit `uuid`, `ping_url`,
+  `update_url`, `pause_url`, `resume_url` and `channels`. So the executor's read-only key
+  (`f07b1368-…`, `Rotation / Healthchecks`, `healthchecks_key_id`) can't read a URL.
+- **The read-write key is the project's Management key.** It's `51509d5e-…`
+  (`healthchecks_selfhosted_api_key`), which `.bws-secrets.toml` (lines 174-177) places in BWS
+  project `Ops / Platform`, the key `sds_upsert_check` creates and updates checks with (ADR-0059,
+  "A lane holds only its own check's ping URL"). It manages every check in its project. The VM
+  root reads `Rotation / Healthchecks` and no `Ops / Platform` secret
+  (`docs/operations/rotation-executor.md`, the access table), so the executor holds no grant on it.
+- **The worked example.** The landing ledger's ping URL (HQ gate G-20, change record 198, unit
+  `2695999c-fae9-5454-ba4e-83e04f0ca028`) was read by an interactive session from that key's
+  listing and pasted into the inbox by Devon. The pass that bound it logged a fingerprint equal to
+  the one the session computed from the API (sds-hq `state/progress.md`, 2026-11-10 ~12:55 UTC).
+  The paste added nothing the API didn't already hold.
+
+### Decision
+
+1. **Who reads `ping_url`, and with which key.** Three choices; this amendment recommends (a) and
+   grants nothing ("Open before building" asks Devon).
+   - **(a) The VM executor's mint, with the Management key (recommended).** The type mints by
+     machine, and its mint reads the lane's check from the Management key's listing and takes its
+     `ping_url`. The executor already holds every lane's ping-URL keeper and can blind any lane by
+     overwriting it (amendment 19, Consequences), and it runs the issue plan's invariants, evidence
+     and verifier step. It needs one new read for the executor, and no new resource.
+   - **(b) A narrower key, in a Healthchecks project holding only the lane checks.** Its
+     read-write key manages only the lane checks, which is close to the reach the executor already
+     has over the lanes' alarms. It costs more than (a): moving a check keeps its UUID and history,
+     because `transfer` saves only `project` (Healthchecks `v4.4`, `hc/front/views.py`, lines
+     1063-1064), but it then reassigns the check's notification channels to the target project's
+     (`assign_all_channels`, line 1065). The read-only lookup searches only its key's project
+     (amendment 21), so the lookups and the scheduled readers' check reads would need that
+     project's read-only key too, and each lane's `sds_upsert_check` would need its read-write key.
+     A new key, a new BWS secret and a check move per lane are more than the standing answer's risk
+     calls for. It's the narrowing named for the revisit (item 5).
+   - **(c) The lane setup, in the deploy command's phases.** The deploying session reads `ping_url`
+     and writes the value. Only the root writes `Rotation / Keepers` (amendment 19 item 1), so the
+     session either writes the inbox, leaving a person's mint in the plan and its alert, with a
+     session doing the paste, or is granted write on the keepers and skips the executor's issue
+     invariants and evidence. HQ holds no grant on the Management key either (ADR-0059, "A lane
+     holds only its own check's ping URL"). Not recommended.
+2. **What replaces the inbox paste, under (a).** For a `healthchecks-ping-url` issue:
+   1. HQ makes the ping URL's row due, as today. The proposer generates revision 1 and a standing
+      approval approves it (amendment 22).
+   2. **Before the claim**, the executor reads the Management key's listing (`GET
+      /api/v3/checks/`, over HTTPS at `https://healthcheck.alobar.net`) and finds the one check
+      whose name is the row's `healthchecks_check` field. Each claimed step fails the unit and
+      spends an attempt on any exception (`src/rotation_worker/CLAUDE.md`), so a step that must
+      wait waits before the claim, as `_mid_run_waits` does (`worker.py`, lines 544-562). No
+      answer, or a status other than 200, is `ReadUnavailable`: the unit waits unclaimed, logged
+      and on the 48-hour wait clock; so is a key BWS won't give the root (`StoreError`, which the
+      executor treats as transient, `worker.py`, line 119). No key configured, no field on the row, no check or two
+      checks of that name, a `ping_url` not of the self-hosted ping shape (`SHAPE`), or a URL
+      another `healthchecks-ping-url` keeper holds is `ReadError`: the unit is refused before the
+      claim, and nothing is written. Neither case passes.
+   3. **The claimed unit's `mint` and `stage`** take the URL from that pass's listing, which the
+      client keeps for the pass (`readers.Healthchecks._checks`, lines 215-219), so nothing is read
+      again after the claim. `contract._mint` (lines 609-626) and `_stage` are unchanged: the old
+      value is the marker, a mint equal to it is refused, and a retry re-proves what an earlier
+      attempt staged.
+   4. **`verify_new`, `store` and `verify_consumers`** run as amendments 19 and 21 say. No mint act
+      is raised and the inbox isn't read for this type.
+
+   **`verify_new` keeps amendment 21's lookup, unchanged**: the shape, then the random UUID's
+   `unique_key` answering 404 and the URL's answering 200, with the read-only key. It isn't
+   subsumed. It keeps decision 3's R14 rule with no new exception, keeps the Management key to the
+   one listing read before the claim, and keeps the evidence and the verifier's decision as built.
+   The lookup still reaches only the UUID's first half, but on this path nobody types the URL:
+   Healthchecks builds `ping_url` from its own `PING_ENDPOINT` and the check's UUID, so the gap
+   amendment 21 named (a URL wrong only in its second half) has no source. Cut-over step 4 stays
+   the proof that the lane's container pings that check.
+3. **What it narrows.** These are **narrowed, not withdrawn**:
+   - **Amendment 19 item 5:** a ping URL is no longer pasted or bound from the inbox; it's read by
+     the executor's mint (item 2). The marker, the shape, no other keeper holding the URL, and
+     never sending the URL anything stand.
+   - **Amendment 19 item 8:** the ping URL's unit no longer waits on a person's mint, so
+     `other_mints` (`inbox.py`, lines 111-126) never lists it, and the order that kept the two units
+     from waiting together is no longer needed. HQ still makes the row due, and may make both rows
+     due in one change. Step 5 becomes: HQ makes the ping URL's row due, and the executor reads and
+     writes the ping-URL secret.
+   - **Amendment 19 item 9's "Devon mints every lane token"** is unchanged; its sense that a person
+     mints every lane credential no longer covers ping URLs.
+   - **Amendment 21 decision 1:** the bind it describes is retired with the paste. Decisions 2 to
+     6 stand.
+   - **Amendment 22 decision 6:** "or pastes each ping URL, from the alert" is gone, and so, for a
+     ping URL, is its statement that an approved revision 1 with no paste changes nothing in
+     production: the executor's read is the value. The type condition of its item 2 is unchanged,
+     because the ping URL keeps its generated issue package. The related open item ("Ping URLs as
+     configuration") is settled by this amendment without narrowing that condition.
+   - **Amendment 22's Consequences ("Threat model"):** its bound, "two types whose issue writes
+     nothing until a person pastes a value" and "the paste stays a person's", now holds for the
+     lane token only. This amendment's Consequences state the path for a ping URL.
+   - **The mint alert** (`rotation-mint`, `_mint_act`) is no longer raised for a ping URL.
+
+   A lane's credentials then need a person for one act: the token's mint and paste, from its alert,
+   with amendment 22's standing approval in place.
+4. **Logging.** The standing answer lets a ping URL appear in a log; nothing has a reason to print
+   one, and Infra Brain rule 2890 still forbids committing one. The executor logs as it logs today,
+   structured JSON on stdout (`rotation_worker/logs.py`): `ping_url_read` names the unit, the check
+   by its name and the URL's fingerprint (SHA-256 prefix and length), and `ping_url_unreadable`
+   names the unit, the check and the error's type. The URL is held only as a `Value` and never in a
+   message, evidence or exception text. The listing's other fields (other checks' URLs,
+   `update_url`, `pause_url`) are dropped as the response is parsed, and the key is never logged.
+   Evidence is as amendment 21 decision 4 says: a 12-character `unique_key` prefix and two statuses.
+5. **Revisit trigger.** The standing answer holds only while the estate is in development. When it
+   leaves development, the ping URL is treated as a secret again, and the path falls back in one of
+   two ways, which Devon chooses then:
+   - **To the paste.** The executor's grant on the Management key is withdrawn, the key's id
+     leaves the root's `config.toml`, and the type's capability goes back to a person's mint,
+     restoring amendment 19 item 5 and amendment 21 decision 1 by reverting increment 1. Between
+     those acts nothing is written: with the grant gone and the id still configured, the key's
+     read is a `StoreError` and the unit waits, raising the wait alert; with the id removed, every
+     ping-URL unit is refused before the claim ("no key configured"). The withdrawal fails closed,
+     never into a silent paste.
+   - **To option (b),** keeping the machine read with a key narrowed to the lane checks.
+6. **Code impact, as later increments.** None is built by this amendment ("Increments").
+
+### Increments
+
+They ship after Devon's grant, in this order; 1 and 2 land together, because the issue package's
+bytes are pinned with intent-packages.
+
+1. **orchestrator: the machine-read mint.**
+   - `rotation_worker/types.py` (lines 56-59): `healthchecks-ping-url` mints by machine.
+     `generate.authority` (`rotation_proposer/generate.py`, line 208) adds `credential_create` for
+     every machine mint, but this mint creates nothing and its client can't create a check, so a
+     `Capabilities` field says whether a machine mint creates, and the type's authority stays
+     `secret_read` and `secret_write`. Nothing else requires `credential_create` for a machine
+     `mint` step: `generate.py` (lines 53 and 209) is its only use under orchestrator `src/`, and
+     intent-packages `c5c9225` names it only in package data. The capability vocabulary isn't
+     widened, and amendment 22's authority set for the type is unchanged.
+   - `plans.derive_issue` (lines 135 and 144) derives a machine-minted issue: one unit of `mint`,
+     `stage`, `verify_new`, `store` and `verify_consumers`, each with its criterion.
+     `contract.validate_issue_plan` (lines 313-336) accepts that shape beside today's.
+   - `adapters/healthchecks_ping_url.py`: `mint` (lines 123-124) returns the URL found in the pass's
+     listing; `bind_refusal` (lines 94-116) and the module docstring's inbox text go.
+   - `readers.py`: a second `Healthchecks` client on the Management key whose `_permits` (the
+     pattern at lines 250-255) allows only `GET /api/v3/checks/`. `config.py` gains
+     `healthchecks_management_key_id` (beside `healthchecks_key_id`, lines 83 and 124), read only
+     while a ping-URL unit is about to be claimed or runs.
+   - `worker._take` (lines 428-470): the pre-claim read of item 2, step 2, beside `_mint_waits` and
+     `_mid_run_waits`.
+   - `registry.py` and the checks: a ping-URL row must carry `healthchecks_check`, refused before
+     the claim otherwise; the landing ledger's and execution-watch's rows gain it.
+   - `rotation_proposer/generate.py` (`acceptance`, line 156): criteria for the machine mint and
+     stage.
+   - Docs in the same change: `docs/operations/rotation-executor.md` ("Lane tokens and ping URLs"
+     and the access table), `src/rotation_worker/CLAUDE.md` (the inbox and issue bullets),
+     ADR-0059's ping-URL lines ("A lane holds only its own check's ping URL" and "Cut-over for one
+     lane", step 1).
+   - Tests: the pre-claim wait and each refusal, a mutation that drops each, and a listing whose
+     log output holds no URL.
+2. **intent-packages: the issue package.** The pinned `rotation_package_issue_healthchecks-ping-url.json`
+   fixture and `create-rotation`'s issue scaffold learn the machine-minted issue.
+3. **VM configuration.** After Devon's grant, the root's `config.toml` names the key's id, and the
+   key's registry consumer rows list the executor as a reader.
+
+An open ping-URL package written for the person's mint plan matches no derived plan once
+increment 1 lands, and the executor refuses it, so increment 1 lands only while no ping-URL
+package is open.
+
+### Open before building
+
+- **The grant (Devon's).** Grant the VM rotation executor's BWS machine account (`rotation-executor`,
+  the root) a direct read on BWS secret `51509d5e-64f5-4781-ae82-b4ed00b644e1`
+  (`healthchecks_selfhosted_api_key`, the self-hosted instance's Management key), in project
+  `Ops / Platform` as `.bws-secrets.toml` (line 177) lists it? It would be the root's first
+  `Ops / Platform` read. The project is confirmed in BWS before the grant: if the key is in fact in
+  `Rotation / Healthchecks`, which the root already reads, the question is whether the executor may
+  use it, not a new grant. Copying the key into `Rotation / Healthchecks` instead would be a second
+  copy of a secret, which its other consumers would have to track. Under (b) the question is a new
+  key instead, in a new project.
+  Answered yes by Devon (sds-hq D-36, "yes", from Slack, recorded 2026-11-10 17:14 UTC). The grant
+  itself is a person's act in BWS, done before increment 3 reads the key; this item's check
+  (confirm the key's project in BWS first) still applies.
+- **Whether the package names the check.** The `healthchecks_check` field sits in the registry,
+  beside `note`, outside the three-way destination comparison, like the scheduled readers' fields
+  (`readers.py`, module docstring), and registry rows merge without review. So amendment 22's
+  residual, that an actor who can land a registry row chooses where a lane credential goes, extends
+  to which check's URL a lane gets. A wrong name points the lane at another check, and the lane's
+  own check goes overdue, its dead-man alarm. Increment 1 settles whether the generator writes the
+  check name into the package's criteria, so the standing approval's re-render and any person's
+  read cover it.
+- **The key's registry rows.** Neither Healthchecks key has a row in this repository's
+  `.cred-consumers.toml`; increment 3 finds where each is registered and adds the executor there.
+
+### Consequences
+
+- **Threat model.** The standing answer covers the URL, not the key. Under (a) the VM root gains
+  the Management key, which can create, change, pause and delete every check in its project, not
+  only the lanes'. ADR-0059 says that key "is no lane's credential", and D-28's "No Key" was lifted
+  only for the read-only lookup (amendment 21). The executor's client allows only the listing
+  `GET`, but a compromised root isn't bound by its client: it could silence every self-hosted
+  check, where today it can silence only the lanes'. Devon accepted that widening by answering the
+  grant yes (sds-hq D-36); (b) is the narrower option.
+- **The path with no person, for a ping URL.** With amendment 22, a registry row that merges
+  without review becomes, through the proposer's revision 1, the standing approval, the carrier's
+  record and the executor's read, a write to the row's keeper with no person in the path. Its
+  bounds: the keeper must hold the marker (an issue only, never a rotation); amendment 22's grant
+  limits the destinations to one keeper; and the value is only what the Management key's listing
+  gives for the named check, of the self-hosted ping shape, that the read-only lookup finds in the
+  key's project. The worst a hostile or mistaken row can do is point a lane at another check in
+  that project, and the lane's own check then goes overdue, its dead-man alarm.
+- **Code Brain rule 4.** A failed read waits or refuses before the claim, logged, and nothing is
+  written; nothing passes on an unread listing.
+- **Devon's acts per lane** fall to the token's mint and paste.
+- **Unchanged.** The Keychain instance, the lane token's type and binds, the issue-fact check, the
+  verifier, amendment 21's lookup and its evidence, and every other type.
