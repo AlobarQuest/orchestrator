@@ -1961,6 +1961,7 @@ What the chain protects is the set of tools installed on this machine.
    | Decision 2, key readers: "The 'SDS lanes' App's key is read by the three pushing lanes" and "fifteen lane identities read one or both" (lines 646-649) | Two lane identities read the "SDS lanes" App's key; the read-only App's key is read by twelve (eleven of the read-only set and the bump proposer); thirteen read one or both. |
    | Decision 3, `install-fork-harden-launchd.sh`'s private upsert "is replaced by `sds_upsert_check` when fork hardening moves" (lines 723-724), and each lane's increment provisioning its check through `sds_upsert_check` (lines 733-734) | Withdrawn for fork hardening. No increment replaces the private upsert. |
    | Decision 4, decision 5's row (line 773) and "Seventeen move and three stay" (line 787) | Replaced by decision item 1. |
+   | "Agents outside this repository": "None is a Mac exception: the exceptions are decision 4's three" (lines 811-812) | The exceptions are five: decision 4's three and these two. |
    | Increment 3, the "SDS lanes" App installed on "intent-packages and the forks" (line 1009) | Increment 3 created both Apps on 2026-11-09 (`.cred-consumers.toml`, `lanes-push-app-private-key`, and the HQ gate G-17 it cites), so this is done. The forks' place in the install is the first "Open before building" item. |
    | Increment 5, "then fork hardening, which pushes as the 'SDS lanes' App (Q1) through `scripts/sds-git.sh`", its rewrites (lines 1029-1032), and the `workflows: write` verify (lines 1035-1039) | Withdrawn. Increment 5 is three lanes: inert landing, then estate landing, then the bump driver. |
    | Cut-over step 2, fork hardening's comparison run `fork-harden run` without `--push` (lines 1135-1136) | Withdrawn: no cut-over. |
@@ -1974,9 +1975,9 @@ What the chain protects is the set of tools installed on this machine.
 
    | Passage | Disposition |
    |---|---|
-   | Decision 2, the "`gh` commands" bullet: its launcher mints its read token and exports it as `GH_TOKEN` (lines 532-534) | Withdrawn. The watch keeps `gh api` on Devon's stored login (`src/fork_sync/gh.py`). |
+   | Decision 2, the "`gh` commands" bullet: its launcher mints its read token and exports it as `GH_TOKEN` (lines 532-534) | Withdrawn for the watch, which keeps `gh api` on Devon's stored login (`src/fork_sync/gh.py`). The membership check, which moves, also reads through `gh api` (`src/membership_check/cli.py`, line 167), so increment 3's `GH_TOKEN` export in `run-membership-check.sh` still stands (`lanes-inc-3-verify-report.md`, lines 318-321 and 426-427). |
    | Decision 2, the read-only set of twelve, "with the fork-sync watch (which reads through `gh`) in place of the bump proposer" (lines 599-603) | The read-only set is eleven: bump driver, change proposer, deploy watcher, estate landing, inert landing, landing ledger, membership check, pin watcher, revision watcher, unit verifier and work carrier. It's the API-variable set less the bump proposer. The API-variable set stays twelve. |
-   | Decision 2, the repositories read "for the fork-sync watch, factory-runner ... and each fork it lists" (lines 610-613), and the verify of an upstream's public releases (lines 623-626) | The watch's reads stay on Devon's login. The upstream-releases verify is withdrawn. The read-only App's installation on factory-runner and the forks stands, because all six are members (`docs/operations/membership-seed.toml`, lines 165-269) and the landing ledger reads every member (`docs/superpowers/reports/lanes-inc-3-verify-report.md`, lines 227-232). |
+   | Decision 2, the repositories read "for the fork-sync watch, factory-runner ... and each fork it lists" (lines 610-613), and the verify of an upstream's public releases (lines 623-626) | The watch's reads stay on Devon's login. The upstream-releases verify is withdrawn. The read-only App's installation on factory-runner and the forks stands, because all six are members (the live record; seed `docs/operations/membership-seed.toml`, lines 165-269), the landing ledger reads every member (`docs/superpowers/reports/lanes-inc-3-verify-report.md`, lines 227-232), and the membership check reads each member's `.cred-consumers.toml` and reads factory-runner (same report, lines 307-308). |
    | Decision 2, Issues read, "the fork-sync watch's read of each fork's open review alert" (lines 628-629) | No moving lane needs Issues read: the increment 3 verify found the fork-sync watch the only lane that does (`lanes-inc-3-verify-report.md`, lines 297-298). The permission's place is the second "Open before building" item. |
    | Increment 3's list of seven lanes, naming the fork-sync watch (lines 1004-1006), and its changes to `scripts/run-fork-sync-watch.sh`, its CREDENTIALS header, `src/fork_sync/gh.py` and `src/fork_sync/watch.py` (lines 1011-1016) | Withdrawn. Increment 3 is six lanes: landing ledger, pin watcher, deploy watcher, revision watcher, membership check and unit verifier. The launcher, header and docstrings describe the Mac credential, which stays. |
    | The increment 3 verify report's follow-up, "run item 2's three-call probe ... before the fork-sync watch moves" (`lanes-inc-3-verify-report.md`, line 429) | Withdrawn: the watch doesn't move. |
@@ -1988,19 +1989,21 @@ What the chain protects is the set of tools installed on this machine.
    isn't decided here (the third "Open before building" item).
 
 3. **Phase 1's bar excludes lanes whose subject is this Mac's tool chain.** The bar is "no lane
-   that acts on a member runs on the Mac" (Context, line 23). Fork hardening pushes to the forks,
-   which are members, and the tool installer installs from member repositories. Read as written,
-   the bar would move both. It excludes them: a lane whose subject is this Mac's tool chain stays,
-   whatever repository it reads or writes to serve that chain. Three lanes are of that kind:
+   that acts on a member runs on the Mac" (Context, line 23). Fork hardening pushes the forks'
+   `hardened` branches, and the forks are members, so read as written the bar would move it. The
+   bar excludes it: a lane whose subject is this Mac's tool chain stays, whatever member
+   repository it reads or writes to serve that chain. The tool installer writes only to this
+   machine, and the fork-sync watch only reads. Three lanes are of that kind:
    `tool-installer`, `fork-sync-watch` and `fork-harden`. The Keychain rotation instance and the
    machine-activation sweep stay on decision 4's own grounds (this machine's Keychain, this
    machine's working copies). The year plan's Phase 1 text (sds-hq `plan/year-plan.md`) names only
    the tool installer and the Keychain rotation instance as staying. Its wording follows in a
    separate change, which Devon makes. This ADR doesn't edit it.
 
-4. **Membership is unchanged.** The five forks stay members (`docs/operations/membership-seed.toml`,
-   lines 197-269, each `state = "member"`). They keep their `dependency_updates` and
-   `security_patches` grants, which the membership check requires of every fork on fork-sync's list
+4. **Membership is unchanged.** The five forks stay members. The authority is the live member
+   record (`GET /api/v1/members`); its seed, `docs/operations/membership-seed.toml`, shows each
+   fork as `state = "member"` with both grants (for `rtk`, lines 197-208). The forks keep their
+   `dependency_updates` and `security_patches` grants, which the membership check requires of every fork on fork-sync's list
    (`src/membership_check/consistency.py`, lines 143-144). So the inert landing lane keeps landing
    their update pull requests: on the forks, those are the fork-sync lane's sync pull requests,
    authored by `fork-secure-upstream-sync[bot]` (change-manager `app/deploy_policy.py`, lines
@@ -2008,7 +2011,7 @@ What the chain protects is the set of tools installed on this machine.
    fails `security review` (Context). The landing ledger keeps observing their landings, because it
    reads every `onboarding` and `member` repository (`scripts/sds_scope.py`, `ledger`). The
    membership check keeps comparing `fork_harden` `FORKS` and fork-sync's fork list with the grants
-   (`consistency.py`, lines 141-144). Inert landing, the landing ledger and the membership check
+   (`consistency.py`, lines 142-144). Inert landing, the landing ledger and the membership check
    all move, in increments 5 and 3, so the forks' landings are landed and observed off the Mac.
 
 5. **What still applies on the Mac.** Both lanes keep what decision 3 requires of every lane,
@@ -2057,10 +2060,12 @@ What the chain protects is the set of tools installed on this machine.
   lane. Until Devon acts on the first "Open before building" item, a leaked push key still mints
   `contents: write` on the forks, as the Consequences on line 1376 say.
 - The two lanes keep reading through Devon's `gh` login and the Keychain items. The bar's exclusion
-  is of their subject, not their credential. The "moved lanes only" wording of increment 6 keeps
-  them out of the retirement, which the fourth "Open before building" item settles.
-- Phase 1's bar admits a third reason for staying beyond decision 4's two: a lane's subject is
-  this Mac's tool chain. Any later lane that claims it states it in its own decision row.
+  is of their subject, not their credential. Increment 6 retires "the moved plists and their
+  installers" (line 1040), so their own plists stay. What else increment 6 keeps for them is the
+  fourth "Open before building" item.
+- The two lanes stay on the ground decision 4 already gives the tool installer, that the Mac is
+  the lane's subject, read as this Mac's tool chain. Any later lane that claims it states it in its
+  own decision 5 row.
 
 ### Open before building
 
@@ -2096,7 +2101,7 @@ passages, cited by line at `531d42c2`: the clone, cache, lane-state and kill-swi
 decision 1 (107, 309-310, 323-327, 351-352, 399-401); decision 2's `gh` commands, git, helper,
 read-only-set, install, permission and pushing-lane bullets (532-541, 559-561, 567-571, 599-629,
 637-649); decision 3's upsert and check-provisioning text (719-724, 728-734); decision 4 (741-754);
-decision 5's two rows and its count (773, 774, 787); increments 3, 5 and 6 (1004-1016, 1029-1043);
+decision 5's two rows and its count (773, 774, 787); "Agents outside this repository" (811-812); increments 3, 5 and 6 (1004-1016, 1029-1043);
 cut-over step 2 (1133-1136); "Rollback for one lane" (1189-1190); the week bar (1262-1264,
 1271-1275); the Consequences (1319-1320, 1376, 1394-1396); Q1 (1428-1429), Q6 (1496-1510) and Q9
 (1536-1560).

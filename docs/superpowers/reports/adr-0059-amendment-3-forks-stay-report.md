@@ -60,6 +60,7 @@ Fork hardening:
 - 723-724, 733-734 (private upsert replaced; provisioning through `sds_upsert_check`): withdrawn
   for fork hardening.
 - 741-754, 773, 787 (decision 4 and 5 rows and counts): replaced.
+- 811-812 ("the exceptions are decision 4's three"): five.
 - 1009 (App install): already done 2026-11-09; the forks' place is Open item 1.
 - 1029-1032, 1035-1039 (increment 5's fork hardening and its verify): withdrawn.
 - 1135-1136 (cut-over comparison run): withdrawn.
@@ -72,11 +73,13 @@ Fork hardening:
 
 The fork-sync watch:
 
-- 532-534 (mint and `GH_TOKEN` export): withdrawn; keeps `gh api` on the stored login.
+- 532-534 (mint and `GH_TOKEN` export): withdrawn for the watch, which keeps `gh api` on the
+  stored login. The membership check's `GH_TOKEN` export (it also reads through `gh api`) still
+  stands.
 - 599-603 (read-only set): eleven.
 - 610-613, 623-626 (factory-runner and fork reads for the watch; upstream-releases verify): verify
   withdrawn; the read-only App's install on factory-runner and the forks stands, because all six
-  are members the landing ledger reads.
+  are members that the landing ledger and the membership check read.
 - 628-629 (Issues read for the watch): no moving lane needs it; Open item 2.
 - 1004-1006, 1011-1016 (increment 3's list and the watch's launcher and docstring rewrites):
   withdrawn; increment 3 is six lanes.
@@ -106,8 +109,9 @@ The fork-sync watch:
 ## Tests and checks run
 
 - `make check`, with `TEST_DATABASE_URL` and `ORCHESTRATOR_DATABASE_URL` at
-  `orchestrator_test_hq_w_67`, `SECURITY_STANDARDS_DIR` at the fixture tree, `PGTZ=UTC`: exit 0. Ruff "All checks passed!", 1036 files already formatted, pyright 0 errors, pytest 14207 passed, 1 skipped, 11 warnings (5:00). `tests/architecture/test_layer_manifest.py` rerun after the report and question files were committed: 3 passed.
-- Security scan from the repo root (`security_scan.cli . --category security`): no BLOCK finding.
+  `orchestrator_test_hq_w_67`, `SECURITY_STANDARDS_DIR` at the fixture tree, `PGTZ=UTC`: exit 0. Ruff "All checks passed!", 1036 files already formatted, pyright 0 errors, pytest 14207 passed, 1 skipped, 11 warnings (5:00). `tests/architecture/test_layer_manifest.py` rerun after the report and question files were committed: 3 passed. The full run predates the last text edits to the amendment and this report, which are prose only; the PR's `Quality` job runs on the final head.
+- Security scan from the repo root (`security_scan.cli . --category security`), rerun on the final
+  tree with the report committed: no BLOCK finding.
   Two WARNs (`.gitignore` glob `*-migration/`, an undeclared UUID `aaff45ca-…` in code) and one
   INFO, none in a file this change touches; they predate it.
 - Every line number the amendment cites in the ADR, in `scripts/deploy_orchestrator.py`, the two
@@ -125,7 +129,12 @@ The fork-sync watch:
 
 ## Self-review
 
-- Each count was re-derived from the ADR's own lists, not from the handoff's summary.
+- Each count was re-derived from the ADR's own lists, not from the handoff's summary, and the base
+  was grepped for count words to find sentences that don't name a fork (lines 811-812 was one).
+- An advisor review before handover corrected five points: decision item 3 no longer says the tool
+  installer acts on a member; the last Consequences bullet rests on decision 4's existing ground;
+  the `gh` commands withdrawal is the watch's alone; one `consistency.py` citation; and membership
+  is cited to the live record, with the seed's grant lines as evidence.
 - The amendment decides no credential change. Every narrowing is an open item for Devon.
 - It states the Dependabot correction once, in Context and decision item 4, and quotes D-35
   unchanged.
@@ -165,4 +174,4 @@ The fork-sync watch:
   Nothing to report.
 - **Infra Brain 212 (HTTPS for public FQDNs):** doesn't apply. The change adds no endpoint or FQDN.
 - **Infra Brain 2890 (never commit a ping URL):** the diff names check names
-  (`sds-fork-hardening`, `sds-fork-sync-watch`) and no `https://healthcheck.alobar.net/ping/...` URL.
+  (`sds-fork-hardening`, `sds-fork-sync-watch`) and no Healthchecks ping URL.
