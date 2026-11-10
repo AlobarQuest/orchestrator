@@ -6,8 +6,8 @@ ADR-0059 increment 3, the landing ledger's cut-over, act (e): the lane's compose
 secret.
 
 - **PR:** AlobarQuest/orchestrator#646 (draft), branch `hq/lanes-inc-3-landing-ledger-ping-uuid`
-- **Head:** the commit that adds this report, on top of the code commit
-  `a3ff7834511aebfd585f2d7e3a5067c6d417eb99`
+- **Head:** the commit that adds this line, on top of `b1ba0826187d82590b58d802b2a9a3142c236f84`
+  (code commits `a3ff7834` and `b1ba0826`)
 - **Base:** `5145adff4093133bbe67d9dc97c1d6d951947c05`
 
 ## The analog PR
@@ -111,6 +111,9 @@ All with `TEST_DATABASE_URL` and `ORCHESTRATOR_DATABASE_URL` at `orchestrator_te
   ("All checks passed!", "0 errors, 0 warnings"); pytest **14,207 passed, 1 skipped**, 0 failed
   (the run prints no collected count; the two sum to 14,208). An earlier run failed on one E501 in
   my docstring edit, which I fixed.
+- PR #646's CI, run 42822388935 at `b1ba0826`: `Quality`, `Rollout transcription currency` and
+  `Runner consumer compatibility` all succeeded; the Quality job's pytest line reads
+  "14197 passed, 11 skipped" (CI skips ten more tests than the local run).
 - Security scan from the repo root: no BLOCK finding. Two WARNs predate this change and don't name
   its ids (`*-migration/` gitignore glob; undeclared `aaff45ca-…`).
 - `git diff` holds no `healthcheck.alobar.net/ping` string.
