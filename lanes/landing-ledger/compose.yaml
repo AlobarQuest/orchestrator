@@ -5,13 +5,12 @@
 # `LANDING_LEDGER_BWS_ACCESS_TOKEN` variable, which the VM rotation executor writes; this file names
 # it and never holds a value. With it the launcher reads the observer bearer and the read-only App's
 # key, and mints the pass's GitHub token (`scripts/run-landing-ledger.sh`).
-#
-# PLACEHOLDER: `SDS_DEADMAN_PING_URL_UUID` is empty until the lane's ping-URL secret exists. The VM
-# root's keeper command creates it at cut-over, and a later change writes its BWS secret id here and
-# in `.bws-secrets.toml`, as execution-watch's did. While it is empty the dead-man helper finds no
-# ping-URL secret and, in the container, no other identity, so a pass logs "alerting disabled this
-# run" and pings nothing: it can't report success, and `sds-landing-ledger` is answered by the Mac
-# job alone (`scripts/sds-deadman.sh`, `sds_deadman_resolve`).
+# `SDS_DEADMAN_PING_URL_UUID` is the BWS secret id of the lane's ping-URL secret,
+# `landing-ledger-ping-url` in `Rotation / Keepers`: an id, not a secret and not the ping URL.
+# `lane-run` passes it to the launcher, whose dead-man helper reads the URL from that secret with
+# the lane's own token (`scripts/sds-deadman.sh`). The VM rotation executor writes the URL there
+# from its inbox; while the secret holds the inbox's empty marker, the helper refuses it and pings
+# nothing.
 services:
   landing-ledger:
     image: ghcr.io/alobarquest/sds-lanes:${SDS_LANES_IMAGE_TAG}
@@ -19,5 +18,5 @@ services:
     environment:
       BWS_ACCESS_TOKEN: ${LANDING_LEDGER_BWS_ACCESS_TOKEN}
       LANE_SCHEDULE_ENABLED: ${LANE_SCHEDULE_ENABLED:-false}
-      SDS_DEADMAN_PING_URL_UUID: ""  # PLACEHOLDER: the ping-URL secret's id, at cut-over
+      SDS_DEADMAN_PING_URL_UUID: ebabdd63-2eff-4b8e-99b7-b4fd01754eae
     restart: unless-stopped

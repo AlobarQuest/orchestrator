@@ -316,18 +316,18 @@ proof uses.
 it either. It keeps no state, so its compose mounts no volume. Its crontab runs
 `lane-run landing-ledger` daily at 07:30 New York time, as the Mac job does; the ledger has no
 scheduled-pass flag. Its `.bws-secrets.toml` secrets are the observer bearer and the read-only
-App's key. Its compose leaves `SDS_DEADMAN_PING_URL_UUID` empty, a placeholder: with no id the
-container's dead-man helper finds no ping URL and no other identity, so a pass logs "alerting
-disabled this run" and pings nothing. Its cut-over (ADR-0059, "Cut-over for one lane") still
-needs the following, each in its own change or act:
+App's key, plus its ping-URL secret. Its compose names `SDS_DEADMAN_PING_URL_UUID`, the BWS secret
+id of `landing-ledger-ping-url`, which the container's dead-man helper reads the URL from with the
+lane's own token (`scripts/sds-deadman.sh`). Its cut-over (ADR-0059, "Cut-over for one lane")
+still needs the following, each in its own change or act:
 
 1. Once the orchestrator serves this release, HQ creates `sds-lane-landing-ledger` from the
    tracked compose, without deploying it.
 2. The keepers of the lane's token and ping-URL secret, their `.cred-consumers.toml` rows (the
    token's names the resource's uuid), the lane's BWS account with grants on its secrets and the
    ping-URL secret, the executor's token write, and the ping URL.
-3. The ping-URL secret's id in the compose's `SDS_DEADMAN_PING_URL_UUID` and in
-   `.bws-secrets.toml`, merged and served.
+3. The orchestrator serving the release whose compose and `.bws-secrets.toml` name the ping-URL
+   secret's id.
 4. The lane's `--add`, then the `lane-run --read` proof and a `--dry-run` in the container.
 5. Cut-over steps 2 onward: the paired reporting runs, the schedule, and the Mac job's retirement.
 
