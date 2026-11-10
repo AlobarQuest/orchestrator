@@ -43,13 +43,25 @@ throughout. #638 is also the PR that added `test_every_lanes_ping_url_secret_is_
      account is to be granted; no grant exists until the lane's cut-over" becomes "The
      `landing-ledger` machine account has a direct read grant on it (made 2026-11-09 at the lane's
      cut-over)."
-   - `docs/operations/deploy.md:317-322`, an operations page (not an ADR): the landing-ledger
+   - `docs/operations/deploy.md:319-322`, an operations page (not an ADR): the landing-ledger
      paragraph said the compose leaves `SDS_DEADMAN_PING_URL_UUID` empty as a placeholder and a
      pass logs "alerting disabled this run". It now says the lane's secrets include the ping-URL
-     secret and the compose names its id. `deploy.md:329-330`, cut-over list item 3 ("the
-     ping-URL secret's id in the compose … and in `.bws-secrets.toml`, merged and served") becomes
-     "The orchestrator serving the release whose compose and `.bws-secrets.toml` name the ping-URL
-     secret's id". #638 made the same kind of edit to `deploy.md`.
+     secret and the compose names its id. #638 made the same kind of edit to `deploy.md`.
+   - `docs/operations/deploy.md:324-327`, the cut-over's "still needs" list. I struck what the
+     sources establish and kept what they don't:
+     - Old item 1 (HQ creates `sds-lane-landing-ledger`): struck. The token row names the
+       resource's uuid (`.cred-consumers.toml:757`), so it exists.
+     - Old item 2 (keepers, registry rows, the lane account's grants, the executor's token write,
+       the ping URL): reduced to "The executor's token write". The handoff states G-18 created the
+       keepers and the grants and that the ping URL is stored (unit `2695999c-…`); the rows are at
+       `.cred-consumers.toml:737-776`. Nothing I can read establishes the token write.
+     - Old item 3 becomes "The orchestrator serving the release whose compose and
+       `.bws-secrets.toml` name the ping-URL secret's id": this PR, until served.
+   - `tests/rotation_worker/test_landing_ledger_rows.py:77-78`: the reach test compared against
+     `_lane_secrets() | {ping_keeper}` because the manifest didn't list the keeper
+     (`lanes-inc-3-landing-ledger-rows-report.md`, "What I built"). It now asserts
+     `ping_keeper in _lane_secrets()` and `secrets == _lane_secrets()`, execution-watch's shape
+     (`test_execution_watch_rows.py:60,68`).
    - `tests/scripts/test_run_landing_ledger.py:222`: the docstring of
      `test_without_a_ping_url_secret_a_pass_pings_nothing` opened "The compose's placeholder:". It
      now states the behaviour alone. The test itself is unchanged: it drives the launcher with an
@@ -95,9 +107,10 @@ All with `TEST_DATABASE_URL` and `ORCHESTRATOR_DATABASE_URL` at `orchestrator_te
 
 - Focused: `test_deploy_lanes.py`, `test_run_landing_ledger.py`, `test_lane_run.py`,
   `test_sds_deadman.py`: 218 passed.
-- `make check` (the Quality job's step): ruff and pyright clean
-  ("All checks passed!", "0 errors, 0 warnings"); pytest **14,208 collected: 14,207 passed,
-  1 skipped**, 0 failed. A first run failed on one E501 in my docstring edit, which I fixed.
+- `make check` (the Quality job's step), final run after every edit: ruff and pyright clean
+  ("All checks passed!", "0 errors, 0 warnings"); pytest **14,207 passed, 1 skipped**, 0 failed
+  (the run prints no collected count; the two sum to 14,208). An earlier run failed on one E501 in
+  my docstring edit, which I fixed.
 - Security scan from the repo root: no BLOCK finding. Two WARNs predate this change and don't name
   its ids (`*-migration/` gitignore glob; undeclared `aaff45ca-…`).
 - `git diff` holds no `healthcheck.alobar.net/ping` string.
@@ -107,6 +120,7 @@ All with `TEST_DATABASE_URL` and `ORCHESTRATOR_DATABASE_URL` at `orchestrator_te
 - `lanes/landing-ledger/compose.yaml`
 - `.bws-secrets.toml`
 - `docs/operations/deploy.md`
+- `tests/rotation_worker/test_landing_ledger_rows.py`
 - `tests/scripts/test_deploy_lanes.py`
 - `tests/scripts/test_run_landing_ledger.py`
 - `docs/superpowers/reports/lanes-inc-3-landing-ledger-ping-uuid-report.md` (this report)
@@ -117,8 +131,7 @@ All with `TEST_DATABASE_URL` and `ORCHESTRATOR_DATABASE_URL` at `orchestrator_te
   token keeper only as `landing-ledger-bws-token`. It commits no ping URL, no check UUID, and no
   token.
 - The guard edit makes the check stricter, not looser: no lane may leave the value empty.
-- I didn't run `/code-review`; the diff is comment, data, and test-expectation edits, mirrored from
-  #638.
+- `/code-review` (low) over the whole branch diff: no findings.
 
 ## Concerns
 
@@ -126,8 +139,11 @@ All with `TEST_DATABASE_URL` and `ORCHESTRATOR_DATABASE_URL` at `orchestrator_te
 - `.bws-secrets.toml:267-269` (execution-watch's entry) says the token keeper's registry row lands
   "once the lane's cut-over lands that row"; that row exists (`.cred-consumers.toml:689`). It was
   made stale by an earlier change, not this one or G-18, so I left it.
-- The `deploy.md` cut-over list's items 1 and 2 may already be done (the registry rows landed in
-  #644 and #645); I changed only item 3, which this change addresses.
+- The `deploy.md` list keeps "The executor's token write" because nothing in the repository or
+  handoff establishes it. If HQ knows it's done, that item can go too.
+- The predecessor report's follow-up for this change (`lanes-inc-3-landing-ledger-rows-report.md`,
+  "Follow-ups": add `ebabdd63` with `lanes = ["landing-ledger"]`, fix the "no grant exists"
+  comment) is met by this diff.
 
 ## Standards followed
 

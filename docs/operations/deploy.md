@@ -321,15 +321,11 @@ id of `landing-ledger-ping-url`, which the container's dead-man helper reads the
 lane's own token (`scripts/sds-deadman.sh`). Its cut-over (ADR-0059, "Cut-over for one lane")
 still needs the following, each in its own change or act:
 
-1. Once the orchestrator serves this release, HQ creates `sds-lane-landing-ledger` from the
-   tracked compose, without deploying it.
-2. The keepers of the lane's token and ping-URL secret, their `.cred-consumers.toml` rows (the
-   token's names the resource's uuid), the lane's BWS account with grants on its secrets and the
-   ping-URL secret, the executor's token write, and the ping URL.
-3. The orchestrator serving the release whose compose and `.bws-secrets.toml` name the ping-URL
+1. The executor's token write.
+2. The orchestrator serving the release whose compose and `.bws-secrets.toml` name the ping-URL
    secret's id.
-4. The lane's `--add`, then the `lane-run --read` proof and a `--dry-run` in the container.
-5. Cut-over steps 2 onward: the paired reporting runs, the schedule, and the Mac job's retirement.
+3. The lane's `--add`, then the `lane-run --read` proof and a `--dry-run` in the container.
+4. Cut-over steps 2 onward: the paired reporting runs, the schedule, and the Mac job's retirement.
 
 ### A lane's GitHub token (ADR-0059 increment 3)
 
