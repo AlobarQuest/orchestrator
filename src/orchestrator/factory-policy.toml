@@ -618,7 +618,7 @@ unit, `store`, reads it from the Healthchecks check listing (ADR-0055 amendment
 23), checks its shape, stores it and reads it back. Nothing sends it a ping, so no
 other unit and no other reach exists to name.
 """
-decided = "2026-11-07"
+decided = "2026-11-10"
 rotation_adapters = ["healthchecks-ping-url"]
 rotation_units = ["store"]
 capabilities = { "operational_action" = "allowed" }

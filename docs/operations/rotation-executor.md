@@ -376,7 +376,7 @@ expired, the node logged out and every write timed out before it connected (ADR-
    orchestrator_application = "eqj5l7k705fhi12x9i74fqf0"
    change_manager_application = "re45tafypao3nly3qa9a79dp"
    healthchecks_key_id = "f07b1368-f937-4287-baf1-b4ed00b6b274"
-   healthchecks_management_key_id = "51509d5e-64f5-4781-ae82-b4ed00b644e1"
+   healthchecks_management_key_id = "51509d5e-64f5-4781-ae82-b4ed00b644e1"  # set at increment 3
    github_app_id = "5383095"
    github_app_key_id = "80c752aa-866c-43dc-a9e2-b4e80102d444"
    alert_hub_token_id = "<the rotation-executor sender's token, in Rotation / Admin>"
@@ -404,7 +404,10 @@ expired, the node logged out and every write timed out before it connected (ADR-
    Management (read-write) key, `healthchecks_selfhosted_api_key` in `Ops / Platform`: the only
    key Healthchecks shows a check's `ping_url`. The executor reads it only while a ping-URL unit is
    about to be claimed or runs, and its client may only list the checks. With no id configured,
-   every ping-URL unit is refused before the claim ("Lane tokens and ping URLs"). `github_app_id` and `github_app_key_id` name the rotation
+   every ping-URL unit is refused before the claim ("Lane tokens and ping URLs"). It isn't configured
+   until ADR-0055 amendment 23's increment 3 (a person's grant and the VM's config); until then
+   every ping-URL unit is refused before the claim ("no Healthchecks Management key configured").
+   `github_app_id` and `github_app_key_id` name the rotation
    GitHub App and its private key in `Rotation / Admin`; they come together, and the executor
    reads the key only when a step writes an Actions secret or a wait reads a report ("Actions
    secrets"). `inbox_secret_id` is where a person pastes a value they minted, read with the root
@@ -435,11 +438,11 @@ instance reads.
 | The root: the `rotation-executor` BWS machine account's access token | `/etc/rotation-worker/root-token` in the VM, owner `rotation`, mode `0400` | The executor, to log in to BWS |
 | The executor's WORKER bearer | BWS secret `rotation-executor WORKER bearer` in `Rotation / Executor`; its hash in the orchestrator's `ORCHESTRATOR_M2M_CREDENTIALS` under key `rotation-executor-1`, agent `rotation-executor` | The executor, from BWS at each pass |
 | The read-only Healthchecks API key (self-hosted, `healthcheck.alobar.net`) | BWS secret `f07b1368-…` in `Rotation / Healthchecks`; its id in `config.toml` as `healthchecks_key_id` | The executor, from BWS, only while it reads a scheduled reader's check or looks up a ping URL's check |
-| The self-hosted Healthchecks Management key (`healthchecks_selfhosted_api_key`, read-write) | BWS secret `51509d5e-…` in `Ops / Platform`; its id in `config.toml` as `healthchecks_management_key_id` | The executor, from BWS, only while a ping-URL unit is about to be claimed or runs, for one request: the check listing (ADR-0055 amendment 23) |
+| The self-hosted Healthchecks Management key (`healthchecks_selfhosted_api_key`, read-write) | BWS secret `51509d5e-…` in `Ops / Platform`; its id in `config.toml` as `healthchecks_management_key_id` (pending increment 3) | The executor, from BWS, only while a ping-URL unit is about to be claimed or runs, for one request: the check listing (ADR-0055 amendment 23) |
 | The OpenRouter management key | BWS secret `openrouter management key` in `Rotation / Admin`; its id in `config.toml`'s `admin_secrets` | The executor, from BWS, only while an `openrouter` unit mints or revokes |
 | The rotation GitHub App's private key (`alobar-sds-rotation`, App id 5383095) | BWS secret `rotation github app private key` in `Rotation / Admin`; its id in `config.toml` as `github_app_key_id` | The executor, from BWS, only while it writes an Actions secret or reads a report |
 | The production Coolify token (`read`, `write`, `deploy`; not `read:sensitive`) | BWS secret `rotation-coolify-token` in `Rotation / Coolify`; its id in `admin_secrets` as `orchestrator` and `change-manager` | The executor, from BWS, only while an `orchestrator` or `change-manager` unit hosts or retires |
-| The BWS projects | Bitwarden Secrets Manager | The root: write on `Rotation / Work`, `Rotation / Keepers` and `Rotation / Inbox`, read on `Rotation / Admin`, `Rotation / Coolify`, `Rotation / Executor` and `Rotation / Healthchecks`, and a direct read on the Healthchecks Management key's secret in `Ops / Platform` (ADR-0055 amendment 23), nothing else. A consumer account: a direct read grant on each keeper secret it consumes, nothing else in `Rotation / Keepers` |
+| The BWS projects | Bitwarden Secrets Manager | The root: write on `Rotation / Work`, `Rotation / Keepers` and `Rotation / Inbox`, read on `Rotation / Admin`, `Rotation / Coolify`, `Rotation / Executor` and `Rotation / Healthchecks`, and a direct read on the Healthchecks Management key's secret in `Ops / Platform` (ADR-0055 amendment 23; pending increment 3), nothing else. A consumer account: a direct read grant on each keeper secret it consumes, nothing else in `Rotation / Keepers` |
 
 ### Create them
 
