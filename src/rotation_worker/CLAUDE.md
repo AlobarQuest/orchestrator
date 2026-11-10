@@ -36,10 +36,15 @@
   (`worker._mint_waits`). The inbox binds a value only while no other rotation on either
   instance waits on a mint, and only after the provider accepts it beside a refused control,
   `same_identity` (same account, not scope) holds against the keeper, and no other SDS-rotated
-  keeper of its type holds it; a lane token binds by its row's declared reach and a ping URL by
-  its shape and its check's read-only lookup instead (`inbox.BindsByItself`, ADR-0055 amendments
-  19 and 21), never by `same_identity`;
-  it writes staging before emptying the inbox. The Keychain instance reads its inbox with its
+  keeper of its type holds it; a lane token binds by its row's declared reach instead
+  (`inbox.BindsByItself`, ADR-0055 amendment 19), never by `same_identity`;
+  it writes staging before emptying the inbox. A ping URL never comes through the inbox: its
+  mint is the machine's (`Capabilities.creates` false, so no `credential_create`), reading the
+  `ping_url` of the check its row's `healthchecks_check` names from the Management key's listing
+  (`readers.PingUrls`, which may only `GET /api/v3/checks/`), before the claim in
+  `worker._read_mint_waits`: no answer or a `StoreError` waits, anything else that fails is a
+  `ReadError` refused before the claim, and the claimed mint reuses that pass's listing (ADR-0055
+  amendment 23). The Keychain instance reads its inbox with its
   own narrow BWS identity, which the VM's root can't reach. Detail:
   `docs/operations/rotation-executor.md`, "A person's mint is taken from the inbox".
 - A scheduled `runtime-fetch` reader is verified by the read its registry row names
@@ -101,5 +106,6 @@
   must answer 404 (amendment 21). `unique_key` hashes only the UUID's first half, so the lookup
   can't tell a URL wrong in its second half; cut-over step 4's first scheduled ping is the only
   proof of the full URL. Evidence holds only a 12-character `unique_key` prefix: the
-  orchestrator's scan refuses a 32-character run. Detail: `docs/operations/rotation-executor.md`,
-  "Lane tokens and ping URLs".
+  orchestrator's scan refuses a 32-character run. A machine-minted issue (a ping URL, amendment
+  23) is one unit, still named `store`, the one unit name the factory policy's ping-URL row
+  recognises. Detail: `docs/operations/rotation-executor.md`, "Lane tokens and ping URLs".

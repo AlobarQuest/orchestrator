@@ -94,6 +94,9 @@ def test_no_other_lane_token_row_declares_the_same_reach(
 
 def test_the_ping_url_row_names_only_its_keeper(rows: dict[str, RegistryEntry]) -> None:
     healthchecks_ping_url.check_row(rows[PING_URL].credential)
+    # The check the lane's launcher pings (`scripts/run-landing-ledger.sh`), whose URL the
+    # executor reads (ADR-0055 amendment 23).
+    assert rows[PING_URL].credential["healthchecks_check"] == "sds-landing-ledger"
 
 
 def test_both_rows_are_due(rows: dict[str, RegistryEntry]) -> None:

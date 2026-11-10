@@ -60,7 +60,7 @@ from rotation_worker.orchestrator_client import (
     OrchestratorClient,
     OrchestratorError,
 )
-from rotation_worker.registry import RegistryError
+from rotation_worker.registry import CHECK_FIELD, RegistryError
 from rotation_worker.secret_store import StoreError
 from rotation_worker.values import Fingerprint, Value
 
@@ -76,7 +76,6 @@ KEY_PREFIX: Final = 12
 SKEW: Final = timedelta(minutes=2)
 # Long enough to hold a weekly reader's latest run after it has missed one.
 LOOKBACK: Final = timedelta(days=15)
-CHECK_FIELD: Final = "healthchecks_check"
 SOURCE_FIELD: Final = "observation_source"
 SUBJECT_FIELD: Final = "observation_subject"
 READ_FIELDS: Final = (CHECK_FIELD, SOURCE_FIELD, SUBJECT_FIELD)
@@ -253,6 +252,75 @@ def _permits(method: str, path: str) -> bool:
         return False
     rest = path.removeprefix(CHECKS)
     return rest == "" or UNIQUE_KEY.fullmatch(rest) is not None
+
+
+class PingUrls:
+    """A named check's `ping_url`, from the Management key's check listing (ADR-0055 amendment 23).
+
+    Only a read-write key is shown `ping_url`, and that key manages every check in its project, so
+    this client may make one request, the listing: `GET /api/v3/checks/` and nothing else, over
+    HTTPS. The key is fetched only when a ping-URL unit first needs a URL. Parsing keeps only the
+    named check's `ping_url`, as a `Value`, and drops the rest of the listing: other checks' URLs
+    and every check's update, pause and resume URLs. A name is read once per pass, so the claimed
+    mint takes what the read before the claim found; another name lists again.
+    """
+
+    def __init__(
+        self, key: Callable[[], Value], transport: httpx.BaseTransport | None = None
+    ) -> None:
+        self._key = key
+        self._transport = transport
+        self._urls: dict[str, Value] = {}
+
+    def ping_url(self, name: str) -> Value:
+        """The one check named `name`'s ping URL. Raises `ReadError` for no such check, two of
+        them, or one shown without a URL; `ReadUnavailable` for no answer; `StoreError` for a key
+        the store won't give."""
+        if name not in self._urls:
+            self._urls[name] = self._read(name)
+        return self._urls[name]
+
+    def _read(self, name: str) -> Value:
+        key = self._key()
+        try:
+            client = ConfinedClient(
+                base_url=HEALTHCHECKS_URL,
+                user_agent=USER_AGENT,
+                headers={"X-Api-Key": key.reveal()},
+                timeout=TIMEOUT_SECONDS,
+                permits=_permits_listing,
+                refuse=lambda method, path: ReadError(f"may not {method} {path}"),
+                transport=self._transport,
+            )
+            try:
+                response = client.request("GET", CHECKS)
+            finally:
+                client.close()
+        except TransportFailure as failure:
+            raise ReadUnavailable(f"Healthchecks gave no answer: {failure.error_type}") from None
+        if response.status_code != httpx.codes.OK:
+            raise ReadUnavailable(f"Healthchecks answered {response.status_code}")
+        try:
+            checks = response.json()["checks"]
+        except ValueError, KeyError, TypeError:
+            raise ReadUnavailable("Healthchecks' listing isn't a list of checks") from None
+        if not isinstance(checks, list):
+            raise ReadUnavailable("Healthchecks' listing isn't a list of checks")
+        named = [c for c in checks if isinstance(c, dict) and c.get("name") == name]
+        if len(named) != 1:
+            raise ReadError(f"{len(named)} Healthchecks checks are named {name!r}")
+        url = named[0].get("ping_url")
+        if not isinstance(url, str) or not url or url != url.strip():
+            raise ReadError(
+                f"check {name!r} is listed without a usable ping_url, as a read-only key's "
+                "listing is"
+            )
+        return Value(url)
+
+
+def _permits_listing(method: str, path: str) -> bool:
+    """The Management key's one request: the listing."""
+    return method == "GET" and path == CHECKS
 
 
 class ConsumerReads:

@@ -1,8 +1,9 @@
 """ADR-0055 amendment 19: a lane's BWS access token and its Healthchecks ping URL.
 
 Each invariant the amendment adds has a test that fails when its check is removed: the issue
-plan's own rule, the marker as the old value, the issue's store and cleanup, the reach and shape
-binds, the one `PATCH` with no restart, and the keeper command.
+plan's own rule, the marker as the old value, the issue's store and cleanup, the lane token's
+reach bind, the one `PATCH` with no restart, and the keeper command. The ping URL's read from the
+Healthchecks listing (amendment 23) is `test_ping_url_read.py`'s.
 """
 
 from __future__ import annotations
@@ -52,7 +53,7 @@ from rotation_worker.evidence import StepEvidence
 from rotation_worker.git_mirror import RepoMirror
 from rotation_worker.inbox import bind
 from rotation_worker.plans import candidates, derive, derive_issue, writes_hosted_service
-from rotation_worker.readers import CHECKS, HEALTHCHECKS_URL, Healthchecks, ReadError
+from rotation_worker.readers import CHECKS, HEALTHCHECKS_URL, Healthchecks, PingUrls, ReadError
 from rotation_worker.registry import RegistryEntry
 from rotation_worker.types import CLASS_TYPES, TYPES
 from rotation_worker.values import Value
@@ -85,6 +86,7 @@ PING_KEY = "07c99f22ce44ac16c776ebcecbb911799bcc675c"
 # Its first 16 hex characters differ from the URL's: a `unique_key` reads only those.
 CONTROL = uuid.UUID("ffffffff-0000-4000-8000-0000000000bb")
 HC_KEY = Value("hc-read-only-key-placeholder")
+PING_CHECK = "sds-example-lane"
 M, H = Actor.MACHINE, Actor.HUMAN
 
 
@@ -109,9 +111,18 @@ class HealthchecksStub:
         return Healthchecks(lambda: HC_KEY, transport=httpx.MockTransport(self))
 
 
+def _listing(request: httpx.Request) -> httpx.Response:
+    """The Management key's listing: one check, the lane's, with `PING_URL`."""
+    checks = [{"name": PING_CHECK, "ping_url": PING_URL.reveal()}]
+    return httpx.Response(200, json={"checks": checks})
+
+
 def _ping(stub: HealthchecksStub | None = None) -> ping.HealthchecksPingUrlProvider:
     healthchecks = (stub or HealthchecksStub()).client()
-    return ping.HealthchecksPingUrlProvider(healthchecks, random_uuid=lambda: CONTROL)
+    urls = PingUrls(lambda: Value("hc-management-key-placeholder"), httpx.MockTransport(_listing))
+    return ping.HealthchecksPingUrlProvider(
+        healthchecks, random_uuid=lambda: CONTROL, ping_urls=urls, check=PING_CHECK
+    )
 
 
 def _row(**changes: Any) -> dict[str, Any]:
@@ -175,9 +186,11 @@ def test_a_ping_url_is_only_ever_issued_and_has_no_copy_to_distribute() -> None:
     capabilities = TYPES["healthchecks-ping-url"].capabilities
     plans = candidates(capabilities, PING_DESTINATIONS, KEEPER_DESTINATION, "bws-secret")
     assert [_shape(plan) for plan in plans] == [
-        [("mint", ["mint", "stage"]), ("store", ["verify_new", "store", "verify_consumers"])]
+        [("store", ["mint", "stage", "verify_new", "store", "verify_consumers"])]
     ]
     assert TYPES["healthchecks-ping-url"].verify_by_shape
+    # It reads a URL Healthchecks already holds: its mint creates nothing (amendment 23).
+    assert capabilities.machine_mint and not capabilities.creates
 
 
 def test_a_type_is_declared_proved_by_shape_exactly_when_its_provider_is() -> None:
@@ -206,7 +219,7 @@ def test_a_coolify_variable_is_distributed_only_by_a_type_that_writes_it_there()
     assert StepKind.DISTRIBUTE not in {step.kind for step in plan.steps()}
 
 
-def test_only_a_person_minted_unhosted_type_declares_an_issue() -> None:
+def test_only_an_unhosted_type_that_declares_an_issue_has_one() -> None:
     for name in ("openrouter", "orchestrator", "bitbucket"):
         with pytest.raises(ContractError, match="declares an issue"):
             derive_issue(TYPES[name].capabilities, (), "", "bws-secret")
@@ -277,16 +290,51 @@ def test_an_issue_whose_consumers_a_person_verifies_is_refused() -> None:
         validate_issue_plan(plan)
 
 
-def test_an_issue_minted_by_a_machine_is_refused() -> None:
-    steps = [
-        Step(StepKind.MINT, M, "AC-001"),
-        Step(StepKind.STAGE, M, "AC-002"),
-        Step(StepKind.VERIFY_NEW, M, "AC-003"),
-        Step(StepKind.STORE, M, "AC-004"),
-        Step(StepKind.VERIFY_CONSUMERS, M, "AC-005"),
-    ]
-    with pytest.raises(ContractError, match="a person mints"):
-        validate_issue_plan(Plan((UnitPlan("mint", tuple(steps)),), issue=True))
+MACHINE_ISSUE = [
+    Step(StepKind.MINT, M, "AC-001"),
+    Step(StepKind.STAGE, M, "AC-002"),
+    Step(StepKind.VERIFY_NEW, M, "AC-003"),
+    Step(StepKind.STORE, M, "AC-004"),
+    Step(StepKind.VERIFY_CONSUMERS, M, "AC-005"),
+]
+
+
+def test_an_issue_minted_by_a_machine_is_one_unit_by_the_issue_s_rule() -> None:
+    """ADR-0055 amendment 23: a machine's mint and stage share the issue's one unit."""
+    validate_issue_plan(Plan((UnitPlan("store", tuple(MACHINE_ISSUE)),), issue=True))
+    with pytest.raises(ContractError, match="its own rule"):
+        validate_plan(Plan((UnitPlan("store", tuple(MACHINE_ISSUE)),), issue=True))
+
+
+@pytest.mark.parametrize(
+    "segments",
+    [
+        # Stage in a unit after the machine's mint: the minted value would exist only in memory.
+        (
+            UnitPlan("mint", tuple(MACHINE_ISSUE[:1])),
+            UnitPlan("store", tuple(MACHINE_ISSUE[1:])),
+        ),
+        # A machine's mint before a person's stage.
+        (
+            UnitPlan("mint", tuple(MACHINE_ISSUE[:1])),
+            HumanAct("stage", (Step(StepKind.STAGE, H),)),
+            UnitPlan("store", tuple(MACHINE_ISSUE[2:])),
+        ),
+        # A machine-minted issue with a retire, or with its steps out of order.
+        (UnitPlan("store", (*MACHINE_ISSUE, Step(StepKind.CONFIRM_DEAD, M, "AC-006"))),),
+        (
+            UnitPlan(
+                "store", (*MACHINE_ISSUE[:2], MACHINE_ISSUE[3], MACHINE_ISSUE[2], MACHINE_ISSUE[4])
+            ),
+        ),
+    ],
+    ids=["split-stage", "mixed-actors", "confirm-dead", "out-of-order"],
+)
+def test_a_machine_minted_issue_that_could_break_an_invariant_is_refused(
+    segments: tuple[UnitPlan | HumanAct, ...],
+) -> None:
+    with pytest.raises(ContractError):
+        validate_issue_plan(Plan(segments, issue=True))
 
 
 def test_a_unit_writing_the_lane_s_variable_is_never_marked_non_hosted() -> None:
@@ -350,14 +398,21 @@ PING_PLAN = candidates(
 )[0]
 
 
-def test_a_ping_url_issue_stores_it_proves_its_check_and_deletes_staging() -> None:
-    issue = Issue(_ping(), PING_DESTINATIONS, PING_URL)
+def test_a_ping_url_issue_reads_stores_and_proves_it_and_deletes_staging() -> None:
+    issue = Issue(_ping(), PING_DESTINATIONS, None)
     issue.run(PING_PLAN)
     assert issue.keeper().same_as(PING_URL)
     assert issue.store.find(WORK, issue.rotation.quarantine_key) is None
     assert issue.store.find(WORK, issue.rotation.staging_key) is None
-    assert issue.recorded.kinds() == ["verify_new", "store", "verify_consumers", "verify_consumers"]
-    verify_new = issue.recorded.filed[0][1]
+    assert issue.recorded.kinds() == [
+        "mint",
+        "stage",
+        "verify_new",
+        "store",
+        "verify_consumers",
+        "verify_consumers",
+    ]
+    verify_new = issue.recorded.filed[2][1]
     assert [(p.subject, p.http_status, p.outcome) for p in verify_new.probes] == [
         ("known_bad", 404, "dead"),
         ("new", 200, "live"),
@@ -369,7 +424,7 @@ def test_a_ping_url_issue_stores_it_proves_its_check_and_deletes_staging() -> No
         assert dict(evidence.fingerprints)["old"] == Value(EMPTY).fingerprint
     # Finished: run again, nothing happens and nothing is filed.
     issue.run(PING_PLAN)
-    assert len(issue.recorded.filed) == 4
+    assert len(issue.recorded.filed) == 6
 
 
 SCHEMA = json.loads(
@@ -410,7 +465,7 @@ def test_a_retried_store_finding_the_staged_value_in_the_keeper_counts_as_done()
     issue = Issue(_ping(), PING_DESTINATIONS, PING_URL)
     issue.store.write(KEEPER, PING_URL)
     issue.run(PING_PLAN)
-    store = issue.recorded.filed[1][1]
+    store = issue.recorded.filed[3][1]
     assert store.step == "store" and "earlier attempt" in str(store.note)
 
 
@@ -615,13 +670,6 @@ def test_a_lane_token_another_keeper_holds_is_refused() -> None:
     assert reason == "it is other-lane's value"
 
 
-def test_a_ping_url_binds_by_its_shape_to_a_keeper_holding_the_marker() -> None:
-    provider = _ping()
-    assert _bind(provider, Value(EMPTY), PING_URL)[0] is None
-    reason = _bind(provider, Value("an-issued-url"), PING_URL)[0]
-    assert reason is not None and "only the marker" in reason
-
-
 @pytest.mark.parametrize(
     "text",
     [
@@ -633,26 +681,28 @@ def test_a_ping_url_binds_by_its_shape_to_a_keeper_holding_the_marker() -> None:
         "https://healthcheck.alobar.net.example/ping/00000000-0000-4000-8000-0000000000aa",
     ],
 )
-def test_a_value_that_isn_t_a_self_hosted_ping_url_is_refused_without_naming_it(text: str) -> None:
-    reason = _bind(_ping(), Value(EMPTY), Value(text))[0]
-    assert reason is not None and "ping base" in reason and text not in reason
+def test_a_staged_value_that_isn_t_a_self_hosted_ping_url_is_refused_without_naming_it(
+    text: str,
+) -> None:
+    issue = Issue(_ping(), PING_DESTINATIONS, Value(text))
+    with pytest.raises(ContractError, match="ping base") as refused:
+        issue.run(PING_PLAN)
+    assert text not in str(refused.value)
+    assert issue.keeper().reveal() == EMPTY
 
 
 def test_nothing_ever_sends_a_ping_url_anything() -> None:
     """Kills: a probe that pings the URL, which would mark the check up."""
     stub = HealthchecksStub()
-    issue = Issue(_ping(stub), PING_DESTINATIONS, PING_URL)
+    issue = Issue(_ping(stub), PING_DESTINATIONS, None)
     issue.run(PING_PLAN)
-    assert _bind(_ping(stub), Value(EMPTY), PING_URL)[0] is None
     assert stub.requests
     for request in stub.requests:
         assert (request.method, request.url.host) == ("GET", "healthcheck.alobar.net")
         assert request.url.path.startswith(CHECKS) and "/ping/" not in str(request.url)
         assert request.headers["X-Api-Key"] == HC_KEY.reveal()
-    provider = _ping(stub)
-    for call in (provider.mint, lambda: provider.probe_before_revoke(PING_URL)):
-        with pytest.raises(ContractError):
-            call()
+    with pytest.raises(ContractError):
+        _ping(stub).probe_before_revoke(PING_URL)
 
 
 def test_the_unique_key_is_healthchecks_own_derivation() -> None:
@@ -675,7 +725,7 @@ def test_the_lookup_and_its_control_are_one_target_on_the_listing_s_host() -> No
         CHECKS + PING_KEY,
     ]
     assert all(str(r.url).startswith(HEALTHCHECKS_URL) for r in stub.requests)
-    targets = {probe.target for probe in issue.recorded.filed[0][1].probes}
+    targets = {probe.target for probe in issue.recorded.filed[2][1].probes}
     assert targets == {ping.HealthchecksPingUrlProvider.probe_target}
 
 
@@ -692,30 +742,11 @@ def test_the_lookup_and_its_control_are_one_target_on_the_listing_s_host() -> No
 def test_a_lookup_that_doesn_t_prove_the_check_fails_verify_new_and_stores_nothing(
     stub: HealthchecksStub, reason: str
 ) -> None:
-    issue = Issue(_ping(stub), PING_DESTINATIONS, PING_URL)
+    issue = Issue(_ping(stub), PING_DESTINATIONS, None)
     with pytest.raises(ContractError, match=re.escape(reason)):
         issue.run(PING_PLAN)
     assert issue.keeper().reveal() == EMPTY
-    assert issue.recorded.filed == []
-
-
-@pytest.mark.parametrize(
-    ("stub", "reason"),
-    [
-        (HealthchecksStub(found=404), "finds no such check"),
-        (HealthchecksStub(control=200), "a random UUID's check answered 200, not 404"),
-        (HealthchecksStub(found=500), "its check answered 500"),
-        (HealthchecksStub(error=httpx.ConnectError("unreachable")), "gave no answer"),
-    ],
-    ids=["no-such-check", "control-found", "server-error", "no-answer"],
-)
-def test_a_ping_url_whose_check_isn_t_proved_doesn_t_bind(
-    stub: HealthchecksStub, reason: str
-) -> None:
-    found, store, rotation = _bind(_ping(stub), Value(EMPTY), PING_URL)
-    assert found is not None and reason in found
-    assert PING_URL.reveal() not in found and PING_KEY not in found
-    assert store.find(WORK, rotation.staging_key) is None
+    assert issue.recorded.kinds() == ["mint", "stage"]
 
 
 def test_a_ping_url_with_no_healthchecks_key_configured_is_refused() -> None:
@@ -870,6 +901,7 @@ def test_a_ping_url_row_names_only_its_keeper() -> None:
     row = {
         "id": "x",
         "provider": "healthchecks-ping-url",
+        "healthchecks_check": PING_CHECK,
         "consumer": [{"kind": "bws-secret", "uuid": KEEPER}],
     }
     ping.check_row(row)

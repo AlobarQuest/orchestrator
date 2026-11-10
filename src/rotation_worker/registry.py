@@ -32,6 +32,10 @@ REGISTRY_REPOSITORIES: Final = (
 )
 REGISTRY_PATH: Final = ".cred-consumers.toml"
 PACKAGES_REPOSITORY: Final = "AlobarQuest/intent-packages"
+# A Healthchecks check's exact name, a parsed field beside `note`: on a scheduled reader's
+# consumer, the check its run pings (`readers.py`); on a ping URL's row, the check whose URL its
+# keeper gets (ADR-0055 amendment 23).
+CHECK_FIELD: Final = "healthchecks_check"
 
 
 class RegistryError(RuntimeError):
@@ -70,6 +74,14 @@ class RegistryEntry:
         raise RegistryError(
             "a credential's keeper is bws_uuid, or keeper_service with keeper_account"
         )
+
+
+def check_name(credential: Mapping[str, Any]) -> str:
+    """The check a ping URL's row names, whose URL its keeper gets (ADR-0055 amendment 23)."""
+    name = credential.get(CHECK_FIELD)
+    if not isinstance(name, str) or not name or name.strip() != name:
+        raise RegistryError(f"a ping-URL row names its check in {CHECK_FIELD}, a trimmed string")
+    return name
 
 
 @dataclass(frozen=True)

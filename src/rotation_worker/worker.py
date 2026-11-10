@@ -10,12 +10,13 @@ For each ready unit whose envelope names a rotation adapter, in order:
 2. **Wait, unclaimed, for the member record's `credential_rotation` grant** on the repository the
    registry names (`grants.py`). A record that can't be read leaves the unit for the next pass.
 3. **Wait, unclaimed, for a person's mint**, taking the value from the inbox once it binds
-   (`inbox.py`), and **for the scheduled readers** (`readers.py`). Each one is read before any
-   unit that verifies consumers is claimed, so a reader the registry names wrongly is refused
-   here. A unit that retires the old value stays ready, spending nothing, until every reader has
-   run since the keeper was written: some run weekly, which no lease could wait out. Each pass
-   logs who it waits for and when the overlap's backstop ends; if the backstop comes first, the
-   overlap ends there and retire finds the old value already refused.
+   (`inbox.py`), **for a mint that reads its value** (a ping URL, from the Healthchecks listing,
+   ADR-0055 amendment 23), and **for the scheduled readers** (`readers.py`). Each one is read
+   before any unit that verifies consumers is claimed, so a reader the registry names wrongly is
+   refused here. A unit that retires the old value stays ready, spending nothing, until every
+   reader has run since the keeper was written: some run weekly, which no lease could wait out.
+   Each pass logs who it waits for and when the overlap's backstop ends; if the backstop comes
+   first, the overlap ends there and retire finds the old value already refused.
    A unit that restarts a service whose own clients are scheduled readers (change-manager) also
    waits, unclaimed, while any of them is mid-run, so a busy reader costs a pass, not an attempt.
 4. **Claim and start**, then run the unit's steps through the contract. Before each step the lease
@@ -91,6 +92,7 @@ from rotation_worker.plans import WRITING_STEPS, person_acts_beside
 from rotation_worker.readers import (
     ConsumerReads,
     Healthchecks,
+    PingUrls,
     Read,
     ReadError,
     ReadUnavailable,
@@ -148,6 +150,8 @@ class Setup:
     executor_key_id: str | None = None
     # The Healthchecks listing, read with the key in `Rotation / Healthchecks`.
     healthchecks: Healthchecks | None = None
+    # The Management key's check listing, which a ping URL's mint reads (ADR-0055 amendment 23).
+    ping_urls: PingUrls | None = None
     # The rotation GitHub App, which writes Actions secrets and reads their reports.
     github_app: RotationApp | None = None
     # Tells a person when one of this instance's units waits on them (`notify.py`).
@@ -460,6 +464,7 @@ def _take(setup: Setup, unit_id: str, found: PassActs) -> int:
     provider = _provider(setup, approved)
     if (
         _mint_waits(setup, approved, provider, unit, found)
+        or _read_mint_waits(setup, approved, provider, unit, found)
         or _adapter_waits(setup, approved, unit_id, found)
         or _revoke_waits(setup, approved, provider, unit_id, found)
         or _overlap_waits(setup, approved, unit, found)
@@ -580,6 +585,7 @@ def _provider(setup: Setup, approved: Approved) -> Provider:
             change_manager_application=setup.change_manager_application,
             mirror=setup.mirror,
             healthchecks=setup.healthchecks,
+            ping_urls=setup.ping_urls,
             host_without_overlap=approved.host_without_overlap,
             credential=approved.registry.credential,
             organization_id=setup.organization_id,
@@ -663,6 +669,66 @@ def _mint_waits(
         LOG.info("unit_waiting", extra={"unit": unit_id, "reason": "the inbox is empty"})
         return True
     return _bind_inbox(setup, setup.inbox, approved, provider, unit, new, found)
+
+
+@runtime_checkable
+class ReadsItsMint(Protocol):
+    """A provider whose machine mint reads a value another service already holds instead of
+    creating one: a ping URL, from the Management key's check listing (ADR-0055 amendment 23)."""
+
+    @property
+    def mint_source(self) -> str:
+        """What the mint reads, by name, for a log line: never the value."""
+        ...
+
+    def read_mint(self) -> Value:
+        """The value; `ReadError` refuses the unit, `ReadUnavailable` or `StoreError` waits."""
+        ...
+
+
+def _read_mint_waits(
+    setup: Setup,
+    approved: Approved,
+    provider: Provider,
+    unit: Mapping[str, Any],
+    found: PassActs,
+) -> bool:
+    """Whether a unit whose mint reads its value can't be claimed: the read is made here, before
+    the claim, because a claimed step that raises spends an attempt. No answer, or a key the store
+    won't give, waits on the 48-hour clock; a read that can't succeed (no key configured, no check
+    or two of the name, a URL not of the ping shape, or one another keeper of its type holds) is
+    refused. The claimed mint takes the value from this pass's listing."""
+    if not isinstance(provider, ReadsItsMint) or not any(
+        step.kind is StepKind.MINT for step in approved.unit.steps
+    ):
+        return False
+    unit_id, source = str(unit["id"]), provider.mint_source
+    try:
+        new = provider.read_mint()
+        try:
+            others = _other_keepers(setup, approved)
+        except (RegistryError, DestinationError, MirrorError) as error:
+            # Nothing was decided about the URL: whether another keeper holds it is asked again.
+            raise ReadUnavailable(f"the other ping-URL keepers can't be read: {error}") from None
+        for credential, value in others:
+            if new.same_as(value):
+                raise ReadError(f"{source}'s ping URL is {credential}'s value")
+    except (ReadError, ReadUnavailable, StoreError) as error:
+        LOG.warning(
+            "ping_url_unreadable",
+            extra={"unit": unit_id, "check": source, "error_type": type(error).__name__},
+        )
+        reason = scrub(str(error))
+        if isinstance(error, ReadError):
+            _refuse(setup, unit, reason, found)
+        else:
+            found.waits[unit_id] = Wait(f"{source}'s ping URL can't be read: {reason}")
+        return True
+    LOG.info(
+        "ping_url_read",
+        extra={"unit": unit_id, "check": source, "fingerprint": str(new.fingerprint)},
+    )
+    return False
 
 
 def _bind_inbox(

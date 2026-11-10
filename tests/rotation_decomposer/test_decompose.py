@@ -43,6 +43,12 @@ def _entry(credential_class: str, *consumers: dict[str, Any]) -> RegistryEntry:
         "class": credential_class,
         "provider": "p",
         **keeper,
+        # A ping URL's row names the check its URL is read from (ADR-0055 amendment 23).
+        **(
+            {"healthchecks_check": "sds-example"}
+            if credential_class == "healthchecks-ping-url"
+            else {}
+        ),
         "rotated_by_sds": True,
         "consumer": list(consumers),
     }

@@ -3239,6 +3239,9 @@ package is open.
   own check goes overdue, its dead-man alarm. Increment 1 settles whether the generator writes the
   check name into the package's criteria, so the standing approval's re-render and any person's
   read cover it.
+  Settled by increment 1: the generator writes the row's `healthchecks_check` into the `mint`
+  criterion's condition, never its evidence text (`rotation_proposer/generate.py`, `_READS_CHECK`
+  and `_read_check`), and refuses a ping-URL row that names no check.
 - **The key's registry rows.** Neither Healthchecks key has a row in this repository's
   `.cred-consumers.toml`; increment 3 finds where each is registered and adds the executor there.
 

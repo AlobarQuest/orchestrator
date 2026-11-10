@@ -7,6 +7,7 @@ The passing payloads are the drift-reporter bearer's retire unit as filed in pro
 from __future__ import annotations
 
 import copy
+import hashlib
 from typing import Any
 
 import pytest
@@ -282,3 +283,32 @@ def test_confirm_dead_first_filing_without_the_deletions() -> None:
 )
 def test_coverage_note_unparseable(note: str) -> None:
     assert _verdict("verify_consumers", _with("verify_consumers", note=note)) is not None
+
+
+def _print(which: str, text: str) -> dict[str, Any]:
+    digest = hashlib.sha256(text.encode()).hexdigest()
+    return {"which": which, "length": len(text), "sha256_prefix": digest[:16]}
+
+
+# A ping URL's issue (ADR-0055 amendment 23): the executor's mint reads the URL, and the old value
+# is the inbox's empty marker, as `rotation_worker.contract` files it. A placeholder URL.
+ISSUE_FINGERPRINTS = [
+    _print("old", "empty"),
+    _print("new", "https://healthcheck.alobar.net/ping/00000000-0000-4000-8000-00000000beef"),
+]
+
+
+@pytest.mark.parametrize("step", ["mint", "stage"])
+@pytest.mark.parametrize("note", [None, "already minted and staged by an earlier attempt"])
+def test_a_machine_minted_issue_s_mint_and_stage_pass(step: str, note: str | None) -> None:
+    payload: dict[str, Any] = {
+        "format": "rotation-step/1",
+        "step": step,
+        "fingerprints": ISSUE_FINGERPRINTS,
+        "probes": [],
+    }
+    if note is not None and step == "mint":
+        payload["note"] = note
+    assert _verdict(step, payload, unit="store") is None
+    same = [ISSUE_FINGERPRINTS[0], {**ISSUE_FINGERPRINTS[0], "which": "new"}]
+    assert _verdict(step, {**payload, "fingerprints": same}, unit="store") is not None

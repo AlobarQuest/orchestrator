@@ -38,7 +38,18 @@ def _entry(credential_class: str, **fields: Any) -> RegistryEntry:
         if TYPES[CLASS_TYPES[credential_class]].store_kind == "keychain"
         else {"bws_uuid": KEEPER_UUID}
     )
-    credential = {"id": "example", "class": credential_class, "provider": "p", **keeper, **fields}
+    # A ping URL's row names the check its URL is read from (ADR-0055 amendment 23).
+    check = (
+        {"healthchecks_check": "sds-example"} if credential_class == "healthchecks-ping-url" else {}
+    )
+    credential = {
+        "id": "example",
+        "class": credential_class,
+        "provider": "p",
+        **keeper,
+        **check,
+        **fields,
+    }
     return RegistryEntry("AlobarQuest/example-registry", "c" * 40, credential)
 
 
@@ -128,6 +139,7 @@ LANE_ROWS: dict[str, dict[str, Any]] = {
         "provider_identity": "Healthchecks (the example lane's check)",
         "bws_uuid": KEEPER_UUID,
         "rotated_by_sds": True,
+        "healthchecks_check": "sds-example-lane",
         "consumer": [{"kind": "bws-secret", "uuid": KEEPER_UUID}],
     },
 }
@@ -217,6 +229,39 @@ def test_a_ping_url_infraops_records_issued_generates_nothing() -> None:
         plan_for(_lane_entry("healthchecks-ping-url"), first_issue=False)
     _, plan = plan_for(_lane_entry("healthchecks-ping-url"))
     assert plan.issue
+
+
+def test_a_ping_url_s_package_names_its_check_and_allows_no_create() -> None:
+    """The check name is in the criterion a person approves, never in its evidence text, which
+    `select_plan` and the verifier match (ADR-0055 amendment 23)."""
+    rendered = render(
+        _lane_entry("healthchecks-ping-url"),
+        "2026-11-07-requested",
+        "2026-11-07T12:00:00Z",
+        first_issue=True,
+    )
+    mint = rendered["acceptance"][0]
+    assert "'sds-example-lane'" in mint["condition"]
+    assert mint["evidence"] == (
+        "external: the mint step's rotation-step/1 evidence, filed by the rotation executor."
+    )
+    assert "credential_create" in rendered["authority"]["prohibited"]
+    assert rendered["authority"]["allowed"] == ["secret_read", "secret_write"]
+
+
+@pytest.mark.parametrize("check", [None, "", " sds-example-lane", 7])
+def test_a_ping_url_row_naming_no_check_generates_nothing(check: Any) -> None:
+    row = {k: v for k, v in LANE_ROWS["healthchecks-ping-url"].items() if k != "healthchecks_check"}
+    if check is not None:
+        row["healthchecks_check"] = check
+    entry = RegistryEntry("AlobarQuest/example-registry", "c" * 40, row)
+    with pytest.raises(GenerateError, match="names its check in healthchecks_check"):
+        render(entry, "2026-11-07-requested", "2026-11-07T12:00:00Z", first_issue=True)
+
+
+def test_a_machine_mint_that_creates_is_still_allowed_to_create() -> None:
+    assert "credential_create" in authority("openrouter", [])["allowed"]
+    assert "credential_create" in authority("healthchecks-ping-url", [])["prohibited"]
 
 
 def test_the_issue_signal_never_moves_a_type_with_no_issue_plan() -> None:
