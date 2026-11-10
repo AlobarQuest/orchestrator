@@ -281,7 +281,8 @@ class PingUrls:
         url = urls[0]
         if url is None:
             raise ReadError(
-                f"check {name!r} is listed without a ping_url: the key isn't read-write"
+                f"check {name!r} is listed without a usable ping_url, as a read-only key's "
+                "listing is"
             )
         return url
 

@@ -76,6 +76,14 @@ class RegistryEntry:
         )
 
 
+def check_name(credential: Mapping[str, Any]) -> str:
+    """The check a ping URL's row names, whose URL its keeper gets (ADR-0055 amendment 23)."""
+    name = credential.get(CHECK_FIELD)
+    if not isinstance(name, str) or not name or name.strip() != name:
+        raise RegistryError(f"a ping-URL row names its check in {CHECK_FIELD}, a trimmed string")
+    return name
+
+
 @dataclass(frozen=True)
 class PackageDestinations:
     commit: str

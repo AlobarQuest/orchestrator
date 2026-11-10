@@ -611,7 +611,7 @@ BORROWED: dict[str, dict[str, frozenset[str]]] = {
         ),
         "rotation_worker.plans": frozenset({"candidates", "criteria_steps", "select_plan"}),
         "rotation_worker.registry": frozenset(
-            {"CHECK_FIELD", "RegistryEntry", "RegistryError", "credentials", "standing_credential"}
+            {"RegistryEntry", "RegistryError", "check_name", "credentials", "standing_credential"}
         ),
         "rotation_worker.types": frozenset({"CLASS_TYPES", "TYPES"}),
         "sds_members.client": frozenset({"MembersUnreadable", "read_members"}),

@@ -45,7 +45,7 @@ from rotation_worker.readers import (
     PingUrls,
     ReadError,
 )
-from rotation_worker.registry import CHECK_FIELD
+from rotation_worker.registry import CHECK_FIELD, RegistryError, check_name
 from rotation_worker.types import TYPES
 from rotation_worker.values import Value
 
@@ -70,15 +70,10 @@ def check_row(credential: Mapping[str, Any]) -> None:
         raise ContractError(f"a ping-URL row's consumers are malformed: {error}") from None
     if kinds != ["bws-secret", "provider"]:
         raise ContractError("a ping-URL row's one destination is its keeper")
-    check_name(credential)
-
-
-def check_name(credential: Mapping[str, Any]) -> str:
-    """The name of the check whose URL the row's keeper gets: its `healthchecks_check`."""
-    name = credential.get(CHECK_FIELD)
-    if not isinstance(name, str) or not name or name.strip() != name:
-        raise ContractError(f"a ping-URL row names its check in {CHECK_FIELD}, a trimmed string")
-    return name
+    try:
+        check_name(credential)
+    except RegistryError as error:
+        raise ContractError(str(error)) from None
 
 
 def unique_key(ping_url: Value) -> str:

@@ -42,7 +42,7 @@ from rotation_worker.contract import (
 )
 from rotation_worker.destinations import HOSTED_KINDS, parse
 from rotation_worker.plans import candidates, criteria_steps, select_plan
-from rotation_worker.registry import CHECK_FIELD, RegistryEntry
+from rotation_worker.registry import RegistryEntry, RegistryError, check_name
 from rotation_worker.types import CLASS_TYPES, TYPES
 
 PROFILE: Final = "non-software-operational"
@@ -265,12 +265,10 @@ def _read_check(adapter_name: str, entry: RegistryEntry) -> str | None:
     capabilities = TYPES[adapter_name].capabilities
     if not capabilities.machine_mint or capabilities.creates:
         return None
-    check = entry.credential.get(CHECK_FIELD)
-    if not isinstance(check, str) or not check or check.strip() != check:
-        raise GenerateError(
-            f"{entry.credential.get('id')}: a {adapter_name} row names its check in {CHECK_FIELD}"
-        )
-    return check
+    try:
+        return check_name(entry.credential)
+    except RegistryError as error:
+        raise GenerateError(f"{entry.credential.get('id')}: {error}") from None
 
 
 def render(

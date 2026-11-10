@@ -244,7 +244,7 @@ def test_a_key_the_store_won_t_give_waits_unclaimed(unit: Unit) -> None:
         ({"ping_urls": None}, "no Healthchecks Management key configured"),
         ({"checks": []}, "0 Healthchecks checks are named 'sds-example-lane'"),
         ({"checks": [_check(CHECK), _check(CHECK)]}, "2 Healthchecks checks are named"),
-        ({"checks": [_check(CHECK, url=None)]}, "listed without a ping_url"),
+        ({"checks": [_check(CHECK, url=None)]}, "listed without a usable ping_url"),
         (
             {
                 "checks": [

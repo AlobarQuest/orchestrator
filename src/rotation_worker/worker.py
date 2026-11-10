@@ -708,20 +708,16 @@ def _read_mint_waits(
         for credential, value in _other_keepers(setup, approved):
             if new.same_as(value):
                 raise ReadError(f"{source}'s ping URL is {credential}'s value")
-    except ReadError as error:
+    except (ReadError, ReadUnavailable, StoreError) as error:
         LOG.warning(
             "ping_url_unreadable",
             extra={"unit": unit_id, "check": source, "error_type": type(error).__name__},
         )
-        _refuse(setup, unit, scrub(str(error)), found)
-        return True
-    except (ReadUnavailable, StoreError) as error:
         reason = scrub(str(error))
-        LOG.warning(
-            "ping_url_unreadable",
-            extra={"unit": unit_id, "check": source, "error_type": type(error).__name__},
-        )
-        found.waits[unit_id] = Wait(f"{source}'s ping URL can't be read: {reason}")
+        if isinstance(error, ReadError):
+            _refuse(setup, unit, reason, found)
+        else:
+            found.waits[unit_id] = Wait(f"{source}'s ping URL can't be read: {reason}")
         return True
     LOG.info(
         "ping_url_read",
