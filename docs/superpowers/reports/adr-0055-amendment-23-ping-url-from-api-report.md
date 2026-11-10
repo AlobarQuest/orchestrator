@@ -26,7 +26,7 @@ Consequences. I also added a line for it to the ADR's `Amended:` list. The chang
 - **ADR-0059:** "A lane holds only its own check's ping URL" (lines 677-712), and "Cut-over for
   one lane", step 1 (lines 1083-1098).
 - **Code at `6d32e881`:**
-  - `rotation_worker/types.py`, lines 56-58.
+  - `rotation_worker/types.py`, lines 56-59.
   - `plans.py`, lines 135 and 144.
   - `contract.py`: lines 313-336 (`validate_issue_plan`, including "a person mints and stages an
     issue"), and lines 609-626 (`_mint`).
@@ -36,7 +36,7 @@ Consequences. I also added a line for it to the ADR's `Amended:` list. The chang
     prompt").
   - `worker.py`: `_mint_waits` (lines 630-665), `_mid_run_waits` (lines 544-562), and `_take`
     (lines 428-470).
-  - `inbox.py`: lines 97-116 (`other_mints`) and lines 129-166 (`bind`).
+  - `inbox.py`: lines 111-126 (`other_mints`) and lines 129-165 (`bind`).
   - `readers.py`: lines 215-219 (the listing is cached for each pass) and lines 250-255
     (`_permits`).
   - `config.py`, lines 83 and 124.
