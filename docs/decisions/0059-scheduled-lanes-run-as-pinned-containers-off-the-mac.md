@@ -1874,7 +1874,11 @@ Dependencies on ADR-0055; the "Devon's decisions" introduction, Q3 and Q8.
 
 ## Amendment 3 (2026-11-10): the fork-sync watch and fork hardening stay on the Mac
 
-- **Status:** Proposed. Devon decided the question on 2026-11-10 (HQ D-35, option 1): "I think the
+- **Status:** Accepted, 2026-11-10. Devon accepted this text on gate G-22: "G-22: accept 1. yes
+  2. No 3. No". He sent it from Slack on 2026-11-10 and restated it in an interactive session at
+  about 15:40 UTC, which is the record; the answers are recorded under "Open before building".
+  Acceptance followed a clean Opus whole-branch review of PR #648 at `01ca2782` (HQ D-12, limit
+  3). Devon decided the question on 2026-11-10 (HQ D-35, option 1): "I think the
   fork-sync and fork-harden should stay on the mac. It is really not part of SDS as much as it is a
   way for me to minimize supply chain risks to my development environment." Then: "Yes, record it
   as a decision with option 1". The amendment takes effect when Devon accepts this text; HQ
@@ -2077,13 +2081,19 @@ What the chain protects is the set of tools installed on this machine.
    decides, read the installation's repository list (`lanes-push-app-private-key`, installation
    `180257673`): the increment 3 verify lists six repositories (`lanes-inc-3-verify-report.md`,
    lines 210-213).
+   **Answered (G-22, 2026-11-10): yes.** The forks leave the "SDS lanes" App's installation
+   (`180257673`). Removing them is a later act on the App's settings page; this amendment doesn't
+   remove them.
 2. **The read-only App's Issues permission.** No moving lane needs Issues read. D-18 confirmed the
    permission list, and dropping Issues is Devon's call on the App's settings page, as for item 1.
    The read-only App's installation on factory-runner and the forks doesn't change (decision item
    2).
+   **Answered (G-22, 2026-11-10): no.** The read-only App keeps its Issues read permission.
 3. **A narrower Mac credential for the two lanes.** Both keep Devon's `gh` login, which this ADR
    doesn't change for any Mac agent. Whether either gets a narrower credential on the Mac is a
    later decision, with nothing proposed here.
+   **Answered (G-22, 2026-11-10): no.** Neither fork lane gets a narrower Mac credential than
+   Devon's `gh` login.
 4. **Increment 6 keeps the Mac plumbing the staying lanes use.** Increment 6 retires "the moved
    plists and their installers, `activate-checkout.sh`'s use by lanes, and the two Keychain items'
    lane role" (lines 1040-1043). Decision 3 says increment 6 removes the name-lookup path "with
