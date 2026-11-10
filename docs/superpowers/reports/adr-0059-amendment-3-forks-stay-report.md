@@ -3,7 +3,7 @@ Outcome: done
 # Report: adr-0059-amendment-3-forks-stay
 
 Worker W-67, 2026-11-10. Branch `hq/adr-0059-amendment-3-forks-stay`, based on orchestrator
-`531d42c2` (`origin/main` at the start). Draft PR: PR_PLACEHOLDER.
+`531d42c2` (`origin/main` at the start). Draft PR: #648 (https://github.com/AlobarQuest/orchestrator/pull/648), amendment commit `96d696a7`; the report's own commit follows it on the branch.
 
 ## What I built
 
