@@ -10,8 +10,9 @@ and added its line to the ADR's "Amended" index. The number is 22 because `origi
 follows the shape of amendments 20 and 21: Status, Context, Decision, Increments, Open before
 building, and Consequences.
 
-Draft PR: **#647**. Its head is the commit that adds this report, on branch
-`hq/adr-0055-amendment-22-lane-credential-standing-approval`. I didn't merge it or mark it ready.
+Draft PR: **#647**, on branch `hq/adr-0055-amendment-22-lane-credential-standing-approval`. Its
+last content commit is `83844be775709ac68d262dc741d66bf34d8f4d99`. The commit after it changes
+only this report, adding the CI result. I didn't merge it or mark it ready.
 
 ## Citations for "Read first" (1)-(4)
 
@@ -110,6 +111,8 @@ click is decision 3, and the amendment cites decision 3.
   against `orchestrator_test_hq_w_66`, migrated to head with
   `SECURITY_STANDARDS_DIR` set to the fixtures: ruff "All checks passed!", pyright "0 errors", and
   pytest **14207 passed, 1 skipped**. Exit 0.
+- PR #647 CI at `83844be7`: `Quality` passed (12m11s), `Rollout transcription currency` passed,
+  and `Runner consumer compatibility` passed.
 - Security scan from the repo root (`security_scan.cli . --category security`): exit 0, no BLOCK
   findings, 2 WARN and 1 INFO (judgment). None of them come from this diff.
 - I ran the read-only re-render probe described in the preceding section with a scratch script in
