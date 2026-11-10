@@ -32,7 +32,7 @@
     one's; cut-over step 4 still proves the full URL).
   - 2026-11-10, amendment 22, accepted (a standing answer approves revision 1 of a lane
     credential's generated package).
-  - 2026-11-10, amendment 23, proposed (the executor reads a lane check's ping URL from the
+  - 2026-11-10, amendment 23, accepted (the executor reads a lane check's ping URL from the
     Healthchecks API; no paste).
 - **Supersedes:** the parts of ADR-0054 named in "What this changes in ADR-0054".
 - **Relates to:** ADR-0054 (the SDS owns credential rotation), ADR-0052 (superseding an unworked
@@ -3015,9 +3015,10 @@ The increments, by number:
 
 ## Amendment 23 — The executor reads a lane check's ping URL from the Healthchecks API (2026-11-10)
 
-**Status: Proposed.** Devon accepts or rejects it himself; HQ doesn't merge it. It rests on
-Devon's standing answer of 2026-11-10 (sds-hq `standing-answers.md`, "a Healthchecks ping URL is
-configuration, not a secret"):
+**Status: Accepted (2026-11-10).** Devon accepted it from Slack ("G-25: approved", recorded
+2026-11-10 17:04 UTC), after a clean Opus whole-branch review of PR #649 at `9b54674d` (HQ's D-12
+standing answer, limit 3). It rests on Devon's standing answer of 2026-11-10 (sds-hq
+`standing-answers.md`, "a Healthchecks ping URL is configuration, not a secret"):
 
 > This is still in development. There is almost zero risk of a public URL being used against me,
 > and its not really a secret that could not be found either. Please make the change so that I am
@@ -3227,6 +3228,8 @@ package is open.
   use it, not a new grant. Copying the key into `Rotation / Healthchecks` instead would be a second
   copy of a secret, which its other consumers would have to track. Under (b) the question is a new
   key instead, in a new project.
+  Devon's acceptance (G-25) didn't answer the grant: it stays open, asked as sds-hq decision D-36,
+  and increment 3 can't read the key until it's answered.
 - **Whether the package names the check.** The `healthchecks_check` field sits in the registry,
   beside `note`, outside the three-way destination comparison, like the scheduled readers' fields
   (`readers.py`, module docstring), and registry rows merge without review. So amendment 22's
