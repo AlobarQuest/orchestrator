@@ -2779,10 +2779,10 @@ Where "only a named person approves a rotation revision" is enforced today:
      form of the command (item 3) instead requires exactly one approval, on revision 1, by the
      policy approver, whose hash is the package's.
    - **The issue plan.** The plan `plan_for` chooses for the row, and the plan the stored package
-     describes, is the issue plan: the row's `last_rotated` is unset. A revision 1 that would
-     carry the full rotation plan (a row whose `last_rotated` is already set) is refused and waits
-     for Devon. This is the amendment's default until Devon says otherwise ("Open before
-     building").
+     describes, is the issue plan: the `last_rotated` infraops serves for the credential is null
+     (`plan_for`'s `first_issue`, lines 125-129). A revision 1 that would carry the full rotation
+     plan (a credential infraops already records rotated) is refused and waits for Devon. This is
+     the amendment's default until Devon says otherwise ("Open before building").
    - **One of the two types.** The row's `class` is `bws-lane-token` or `healthchecks-ping-url`,
      and the package's destinations hold the matching `provider name="<type>"` destination.
    - **Destinations equal.** `compare-destinations`' comparison is equal for the credential, with
@@ -2827,22 +2827,28 @@ Where "only a named person approves a rotation revision" is enforced today:
        the package commit. A registry that moved since the approval makes the re-render differ,
        so the carrier refuses and Devon decides, failing closed;
      - it doesn't read infraops, so it can't read `last_rotated`; it accepts only the re-render
-       under the issue plan, which item 2 already required of the approval. A row whose
-       `last_rotated` was set after the approval is still the executor's to catch:
-       `checks._check_issue_fact` refuses an issue plan whose keeper holds the marker.
+       under the issue plan, which item 2 already required of the approval. A credential issued
+       after the approval is still the executor's to catch: `checks._check_issue_fact` (lines
+       178-198) refuses an issue plan whose keeper holds a value other than the marker and this
+       rotation's staged value, and an issue writes only after reading the marker there.
    - **The carrier records that its checks passed.** When the carry form refuses nothing, the
      carrier records an observation on the revision (subject type `package_revision`, which the
      schema already holds) whose facts bind the package id, the revision number, the package
-     hash, the package commit the lineage names and the registry commit the carry form read. Its
-     `source_reference` names the revision and the registry commit, so a later pass at a moved
-     registry is a new reference, not an `observation_conflict`. The orchestrator stores the
+     hash (the revision's `content_hash` once registered), the package commit the lineage names
+     and the registry commit the carry form read. It records it before it posts the intake,
+     because the gate runs in the decomposition proposal's own transaction and a record written
+     later can't help it. Its `source_reference` names the revision and the registry commit, so a
+     later pass at a moved registry is a new reference, not an `observation_conflict`. The orchestrator stores the
      authenticated actor as `recorded_by` (`services/release/observations.py`, line 210), so the
      record is the carrier's only if the carrier holds an identity no other caller holds. It
      doesn't today: it posts as the shared SYSTEM key `orchestrator-system`
      (`work_carrier/cli.py`, lines 162-167), and any SYSTEM or OBSERVER caller may record an
      observation (`OBSERVATION_ROLES`, line 239). So the carrier gets its own registry agent id
      and M2M credential, and the orchestrator a setting that names it, as the rotation executor
-     identities are named; an unset setting refuses every standing approval.
+     identities are named; an unset setting refuses every standing approval. This departs from
+     ADR-0027's recommendation that the carrier act as SYSTEM, which the comment at
+     `work_carrier/cli.py` cites: a distinct identity is now load-bearing, not only more precise
+     attribution.
    - **The orchestrator's decomposition gate runs no checks of its own, and requires the
      carrier's record.** A revision reaches intake without the carrier: `POST
      /api/v1/package-intakes` (`api/routes/intake.py`, lines 118-124) admits HUMAN and SYSTEM
@@ -2861,10 +2867,10 @@ Where "only a named person approves a rotation revision" is enforced today:
      - the revision is a rotation revision (`revision.profile`, item 1), its number is 1, and its
        package names one of the two types;
      - an observation recorded by the configured carrier identity binds this revision's package
-       id, revision number and package hash, and records that the carry form refused nothing.
+       id, revision number and `content_hash`, and records that the carry form refused nothing.
 
-     The gate doesn't re-run the checks because it can't read the registry: the server has no
-     registry read today, and adding one would add an outbound path and a token mint that the
+     The gate doesn't re-run the checks because it can't read the registry: nothing under
+     `src/orchestrator/` reads it today, and adding a read would add an outbound path and a token mint that the
      dispatch App's grant bounds would have to cover (`test_platform_edges.py`). The carrier
      already reads the registry. A decomposition the policy then approves stays attributed as
      amendment 16 decision 3 says.
@@ -2923,8 +2929,8 @@ The increments, by number:
    pass records the observation of item 3. The carrier gets its own registry agent id and M2M
    credential (a merged security-standards commit and an image rebuild, as every new actor
    needs), and the orchestrator a setting naming it. The observation needs a new
-   `observation_type`, which is a DB CHECK value, so the change carries a migration and the
-   vocabulary registration. `_rotation_policy_outcome` in `decomposition.py` admits the one
+   `observation_type` and a new `source_system` for the carrier, both DB CHECK values, so the
+   change carries a migration and their vocabulary registration. `_rotation_policy_outcome` in `decomposition.py` admits the one
    approver prefix of item 3 only with that record, and refuses with a new reason otherwise.
    `package_sources.py` needs no change, because its policy arm already recognises the shape
    (line 26). The root, `src/orchestrator/services/intake/CLAUDE.md` and
@@ -2940,8 +2946,8 @@ The increments, by number:
 
 - **A revision 1 that is in effect a reissue.** D-34 says "revision 1". Two cases are not first
   issues: a package deleted and generated again for a credential already issued, and a new row on
-  a credential whose `last_rotated` is already set, which `plan_for` (lines 122-153) gives the
-  full rotation plan as revision 1. Devon decides whether the standing answer covers either. Until
+  a credential whose `last_rotated` infraops already serves, which `plan_for` (lines 122-153)
+  gives the full rotation plan as revision 1. Devon decides whether the standing answer covers either. Until
   he does, the default is the narrower one: the standing answer covers only the issue plan
   (item 2's issue-plan condition), so the second case waits for him. The first case is covered by
   that condition only when the earlier issue set `last_rotated`; whether every issue does is
@@ -2976,7 +2982,7 @@ The increments, by number:
 ### Consequences
 
 - **Devon's acts per lane** fall to the mint and the paste; neither lane credential's revision 1
-  needs an interactive session.
+  on the issue plan needs an interactive session.
 - **Threat model.** A cycle can now approve a production credential issue, but only for a package
   a machine reproduces exactly from the registry, for two types whose issue writes nothing until a
   person pastes a value. That holds whichever door the revision enters by, because the
@@ -2999,4 +3005,5 @@ The increments, by number:
   mismatched or unreadable record sends the revision to a person.
 - **Unchanged.** The executor, the decomposer, the verifier, every generated package's bytes, the
   inbox binds, and every revision other than a lane credential's revision 1 on the issue plan.
-  New: the carrier's identity and its observation type, with their migration (increment 3).
+  New: the carrier's identity, its observation type and source system, and their migration
+  (increment 3).

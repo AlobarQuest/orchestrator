@@ -148,7 +148,8 @@ The increments ship in the order 2, 3, 1, 4 (fix round 1).
   re-render equality is measured, not assumed.
 - The design reuses ADR-0028's `policy:` approver shape. The alternative was a new `standing:`
   shape, which would need new recognisers in two repositories. Under this design, intent-packages
-  needs a new grant, and the orchestrator needs one gate change plus the carrier check.
+  needs a new grant. The orchestrator needs one gate change, the carrier check, and (since fix
+  round 1) a carrier identity, an observation type, a source system and their migration.
 - I didn't run `/code-review`, because the change is docs only and the increments carry the code.
 - I didn't read change-manager's source. Amendment 16 decision 2 and the root CLAUDE.md say its
   work policy keys on record fields, not on the approver, so the amendment leaves it unchanged.
@@ -166,35 +167,37 @@ The increments ship in the order 2, 3, 1, 4 (fix round 1).
 
 ## Fix round 1 (2026-11-10)
 
-HQ's Opus whole-branch review found two blocking defects and two small ones. The fix is commit
-`5d97b9d7` on the PR's branch, followed by a commit that updates only the reports. Line numbers
-refer to `docs/decisions/0055-credential-rotation-runs-in-a-pull-based-executor.md` after the fix.
-I checked each citation at `5145adff` before relying on it, and every one held.
+HQ's Opus whole-branch review found two blocking defects and two small ones. The fix is on the
+PR's branch, in commits `5d97b9d7` and later, and the last of them is the head. Line numbers refer
+to `docs/decisions/0055-credential-rotation-runs-in-a-pull-based-executor.md` at that head. I
+checked each citation at `5145adff` before relying on it, and every one held.
 
-1. **The full checks ran only in the carrier, but intake has other doors.** Lines 2846-2870 now
+1. **The full checks ran only in the carrier, but intake has other doors.** Lines 2852-2876 now
    name the three doors with their citations: `api/routes/intake.py:118-124` (HUMAN and SYSTEM,
    `package_intake.py:34`), `web.py:753`, and staged intake at `api/routes/intake.py:142`. They
    also cite the branch at `decomposition.py:332-335`, where all three doors converge. The gate's
    exception in `_rotation_policy_outcome` now requires a recorded result of the carry form,
    bound to the revision. It's an observation by the carrier's own identity, and it binds the
-   package id, the revision number and the package hash. An absent, mismatched or unreadable
-   record refuses.
-   - Lines 2833-2845 define the record. They also state why it needs a new carrier identity: the
-     carrier posts as the shared SYSTEM key (`work_carrier/cli.py:162-167`), any SYSTEM or
-     OBSERVER caller may record an observation (`OBSERVATION_ROLES`,
-     `services/release/observations.py:239`), and `recorded_by` is the authenticated actor
-     (line 210).
-   - Lines 2866-2870 say why the gate doesn't re-run the checks itself: the server has no
-     registry read.
-   - Lines 2736-2744 (decision 1) define "rotation revision" by the package's `profile`, whatever
-     the record's `change_class` says. Lines 2817-2832 (the carrier) and 2920-2933 (increment 3)
+   package id, the revision number and `content_hash`. An absent, mismatched or unreadable record
+   refuses.
+   - Lines 2834-2851 define the record: what it binds, that the carrier records it before it
+     posts the intake, and why it needs a new carrier identity. The carrier posts as the shared
+     SYSTEM key (`work_carrier/cli.py:162-167`), any SYSTEM or OBSERVER caller may record an
+     observation (`OBSERVATION_ROLES`, `services/release/observations.py:239`), and `recorded_by`
+     is the authenticated actor (line 210). The same lines name the departure from ADR-0027's
+     SYSTEM-actor recommendation.
+   - Lines 2872-2876 say why the gate doesn't re-run the checks itself: nothing under
+     `src/orchestrator/` reads the registry.
+   - Lines 2735-2745 (decision 1) define "rotation revision" by the package's `profile`, whatever
+     the record's `change_class` says. Lines 2817-2833 (the carrier) and 2926-2939 (increment 3)
      use that definition.
-   - The overclaims are corrected. The Consequences rule-4 line is at lines 2995-2999, the
-     threat-model bullet at 2980-2987, and the "Unchanged" line at 3000-3002, which now names the
-     new identity, observation type and migration. Increment 3 at 2920-2933 names the migration,
-     the identity and the intake CLAUDE.md file. This report's Code Brain rule 4 line is
-     corrected in "Standards followed".
-2. **The increments didn't fix their order.** Lines 2886-2905 replace "Each increment ships on its
+   - The overclaims are corrected:
+     - Consequences: the rule-4 line (3001-3005), the threat-model bullet (2986-2994), Devon's
+       acts (2984-2985), and the "Unchanged" line (3006-3009), which now names the new identity,
+       observation type, source system and migration.
+     - Increment 3 (2926-2939) names the migration, the identity and the intake CLAUDE.md file.
+     - This report's Code Brain rule 4 line and Self-review are corrected.
+2. **The increments didn't fix their order.** Lines 2892-2911 replace "Each increment ships on its
    own" with the order 2, 3, 1, 4, with a reason for each step. Increment 3 ships as one change,
    and the gate's exception never lands alone. The grant lands after every check that guards it.
    The gate's exception also depends on the carrier's record in code, so even out of order it
@@ -203,24 +206,29 @@ I checked each citation at `5145adff` before relying on it, and every one held.
    lines 2752-2753.
 4. **The literal ping-URL prefix** in this report's Infra Brain 2890 line now reads "no ping URL".
 
-**Left for Devon, with the narrower default.** The open item at lines 2941-2948 covers a revision 1
-that is in effect a reissue: a deleted and regenerated package, or a new row whose `last_rotated`
-is already set. Devon still decides it. Until then, the amendment's default is the narrower one:
-the standing answer covers only the issue plan. A new decision 2 condition states this at lines
-2781-2785. The carry form accepts only the issue-plan re-render (lines 2829-2832), and the
-"carry form's plan" open item at lines 2959-2962 matches. One more open item, at lines
-2963-2965, covers the carrier's new identity.
+**Left for Devon, with the narrower default.** The open item at lines 2947-2954 covers a revision 1
+that is in effect a reissue: a deleted and regenerated package, or a new row on a credential
+infraops already records rotated. Devon still decides it. Until then, the amendment's default is
+the narrower one: the standing answer covers only the issue plan.
+- A new decision 2 condition states this at lines 2781-2785, keyed on the `last_rotated` infraops
+  serves.
+- The carry form accepts only the issue-plan re-render (lines 2829-2833), and it cites the
+  executor's issue-fact check with its real polarity: an issue plan is refused when its keeper
+  holds a value other than the marker and the staged value.
+- The "carry form's plan" open item at lines 2965-2968 matches.
+- One more open item, at lines 2969-2971, covers the carrier's new identity.
 
-**Checks at `5d97b9d7`:**
+**Checks:**
 
-- `make check` against `orchestrator_test_hq_w_68`, migrated to head, with `SECURITY_STANDARDS_DIR`
-  set to the fixtures and `PGTZ=UTC`: ruff "All checks passed!", pyright "0 errors", and pytest
-  **14207 passed, 1 skipped**. Exit 0.
+- `make check` at `5d97b9d7` against `orchestrator_test_hq_w_68`, migrated to head, with
+  `SECURITY_STANDARDS_DIR` set to the fixtures and `PGTZ=UTC`: ruff "All checks passed!",
+  pyright "0 errors", and pytest **14207 passed, 1 skipped**. Exit 0. Later commits change docs
+  only. `tests/architecture` was re-run at the head; the worker report has the result.
 - Security scan from the repo root: exit 0, 0 BLOCK, 2 WARN and 1 INFO, the same as before the
   fix. None of them come from this diff.
 - A grep of the fix diff for `ping/` and the Healthchecks host finds only the removed literal.
 
-The PR stays a draft. Its new head is the commit that adds this section.
+The PR stays a draft.
 
 ## Standards followed
 
