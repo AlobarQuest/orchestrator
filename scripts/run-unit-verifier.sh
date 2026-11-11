@@ -138,8 +138,8 @@ if [ "$IN_CONTAINER" -eq 1 ]; then
           --permission metadata=read --permission administration=read)"
     mint_rc=$?
     if [ "$mint_rc" -ne 0 ] || [ -z "$ROTATION_VERIFIER_GITHUB_TOKEN" ]; then
-      echo "WARNING: could not mint the verifier's GitHub token from the read-only App" \
-           "(exit $mint_rc); this pass runs with no GitHub token" >&2
+      echo "WARNING: could not mint the verifier's GitHub token from the read-only App, or read" \
+           "its key (exit $mint_rc); this pass runs with no GitHub token" >&2
       ROTATION_VERIFIER_GITHUB_TOKEN=""
       GITHUB_TOKEN_MISSING=1
     fi

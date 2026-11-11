@@ -58,13 +58,14 @@ _PYTHON = '#!/bin/bash\nexec "$REAL_PYTHON" "$@"\n'
 # The Mac's `sds-token.sh`, in place of its Keychain read.
 _SDS_TOKEN = f"BWS_ACCESS_TOKEN={MAC_IDENTITY}\nexport BWS_ACCESS_TOKEN\n"
 # The mint logs its arguments, what reached its stdin, and whether the lane token was in its
-# environment.
+# environment. It prints its token before a refusal, so a launcher that kept a failed mint's output
+# would run the pass on it.
 _MINT = """#!/bin/bash
 echo "mint $*" >> "$LANE_LOG"
 echo "stdin=$(cat)" >> "$LANE_LOG"
 echo "mint lane_token=${BWS_ACCESS_TOKEN:+set}" >> "$LANE_LOG"
-[ "${FAKE_MINT_RC:-0}" -eq 0 ] || { echo "FATAL: refused" >&2; exit "$FAKE_MINT_RC"; }
 printf '%s' "$FAKE_MINTED"
+[ "${FAKE_MINT_RC:-0}" -eq 0 ] || { echo "FATAL: refused" >&2; exit "$FAKE_MINT_RC"; }
 """
 # `unit-verifier repositories` is the derivation, answered from the environment; any other run is
 # the pass.
@@ -250,8 +251,10 @@ def test_an_unreadable_verifier_bearer_exits_1_before_anything_runs(tmp_path: Pa
         {"FAKE_REPOSITORIES": "", "FAKE_REPOSITORIES_RC": "3"},
         {"FAKE_REPOSITORIES": ""},
         {"FAKE_REPOSITORIES": "", "FAKE_REPOSITORIES_RC": "127"},
+        # Names on stdout from a derivation that failed are never a shorter list to mint for.
+        {"FAKE_REPOSITORIES_RC": "3"},
     ],
-    ids=["unreadable-record", "empty-list", "cannot-run"],
+    ids=["unreadable-record", "empty-list", "cannot-run", "names-then-failure"],
 )
 def test_an_underivable_list_mints_nothing_runs_the_pass_tokenless_and_exits_3(
     tmp_path: Path, failure: dict[str, str]
@@ -267,6 +270,8 @@ def test_an_underivable_list_mints_nothing_runs_the_pass_tokenless_and_exits_3(
         f"verifier args= github= bearer={BEARER} alert={ALERT} lane_token="
     ]
     assert _pings(logs["ping"])[-1] == f"{PING_URL}/fail"
+    for secret in (LANE_TOKEN, BEARER, ALERT):
+        assert secret not in result.stdout + result.stderr
 
 
 @pytest.mark.parametrize(
@@ -285,6 +290,8 @@ def test_a_failed_mint_runs_the_pass_tokenless_and_exits_3(
         f"verifier args= github= bearer={BEARER} alert={ALERT} lane_token="
     ]
     assert _pings(logs["ping"])[-1] == f"{PING_URL}/fail"
+    for secret in (LANE_TOKEN, MINTED, BEARER, ALERT):
+        assert secret not in result.stdout + result.stderr
 
 
 @pytest.mark.parametrize(("program_exit", "expected"), [(0, 3), (2, 3), (3, 3), (1, 1), (127, 1)])
