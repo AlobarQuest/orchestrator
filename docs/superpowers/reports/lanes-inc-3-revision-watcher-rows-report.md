@@ -12,7 +12,7 @@ Change 1 of the two changes (ADR-0055 amendment 19 item 8 step 2; ADR-0059 "Cut-
 lane" step 1) for the `revision-watcher` lane. The model is the deploy watcher's block from #656.
 
 - `.cred-consumers.toml`, a block "The revision-watcher lane's token and ping URL (ADR-0059
-  increment 3)" (lines 830-874), placed right after the deploy watcher's block:
+  increment 3)" (lines 830-876), placed right after the deploy watcher's block:
   - `revision-watcher-bws-token`: class and provider `bws-lane-token`, keeper
     `e6c8d8cc-c64e-4e91-bb5b-b4ff00cba872`, `rotated_by_sds = true`,
     `rotate_requested = "2026-11-11"`, six `reach_secrets` (check 1), and `reach_projects = []`.
@@ -25,7 +25,7 @@ lane" step 1) for the `revision-watcher` lane. The model is the deploy watcher's
     It carries no `rotate_requested`, the same as the deploy watcher's ping-URL row.
   - Neither row carries `created`. The block comment says the token row is due, a later change
     dates the ping-URL row, and both keepers came from G-30.
-- In the `lanes-read-app-private-key` row, I added a new `runtime-fetch` consumer (lines 920-925)
+- In the `lanes-read-app-private-key` row, I added a new `runtime-fetch` consumer (lines 921-926)
   with these fields:
   - `repo = "orchestrator"`.
   - `ref = "scripts/run-revision-watcher.sh"`. I confirmed the script: line 60 sets
@@ -94,8 +94,8 @@ and cleared the `__pycache__` folders. The run gave `1 failed, 12 passed`, with 
 ContractError: a lane token's coolify-env has redeploy false: the lane redeploys itself
 ```
 
-That error comes from `bws_lane_token.py:85`. I then restored the file from the copy, and the run
-gave `13 passed`. `git diff` showed no leftover change.
+That error comes from `bws_lane_token.py:85`. I then restored the file from the copy, and the rerun
+gave `13 passed`, which confirms the restore.
 
 ### Check 3: due-ness
 
@@ -127,18 +127,44 @@ this worktree's `.cred-consumers.toml` and held an empty mode-0600 state file. T
 
 ### Check 4: fixtures and existing tests
 
-I grepped `tests/` for every reader of `.cred-consumers.toml` and of the lane and App key rows:
+I grepped `tests/` for every reader of `.cred-consumers.toml` and of the lane and App key rows.
+Then I read each hit's loading code to see whether it reads the repository's file or a fixture.
 
-- `tests/scripts/test_deploy_lanes.py:843-847`: the body reads the repository's file through
-  `deploy.lanes_in_registry`. It pinned three lanes, so I updated it to four.
-- The other `lanes_in_registry` and `registered_lanes` tests (lines 786-840) use inline fixtures
-  and a scratch world, not the repository's file. I left them unchanged.
-- `test_deploy_watcher_rows.py`, `test_landing_ledger_rows.py`, and
-  `test_execution_watch_rows.py` select the App key's reader by their own `ref` and check the reach
-  rule against named rows. The new reader and row don't change what they assert. All pass.
-- The rotation fixtures under `tests/fixtures/` (`rotation_package_issue_*.json` and others) are
-  per-class package fixtures and don't enumerate registry rows. `tests/rotation_proposer`,
-  `tests/membership_check`, and `tests/unit_verifier` pass unchanged.
+**Tests that read the repository's file:**
+
+- `tests/scripts/test_deploy_lanes.py:843-853`: reads the file through `deploy.lanes_in_registry`.
+  It pinned three lanes, so I updated it to four.
+- `test_deploy_watcher_rows.py` and `test_landing_ledger_rows.py`: each selects the App key's
+  reader by its own launcher's `ref`. Each runs the reach rule against named other rows: the
+  deploy watcher against execution-watch and landing-ledger, the landing ledger against
+  execution-watch. The new rows don't change what they assert.
+- `test_execution_watch_rows.py`: reads only its own two rows and the manifest's
+  `execution-watch` secrets. It has no App key or reach-rule test, because the read App key's
+  `lanes` doesn't name `execution-watch`.
+- `test_registry_array_strings.py:39`: asserts the file has no comma inside an array string,
+  because infraops's TOML subset would split on it. The new rows' notes and `reach_secrets` pass.
+- `tests/unit_verifier/test_unit_verifier_launcher.py:38`: selects the bootstrap-token row by
+  `keeper_account`, which none of my edits touch.
+
+**Tests that use inline fixtures or fakes, not the repository's file:**
+
+- The other `lanes_in_registry` and `registered_lanes` tests in `test_deploy_lanes.py` (lines
+  786-840).
+- `test_registry_and_compare.py` (a `CANARY` string).
+- `tests/scripts/test_deploy_orchestrator.py:109` (a `REGISTRY` string).
+- `tests/rotation_proposer/test_pass.py`, `tests/rotation_decomposer/test_pass.py`, and
+  `tests/work_carrier/test_operational_branch.py` (raised `RegistryError` fakes).
+- `tests/membership_check/test_rotation_scope.py`, `test_declaration.py`, and
+  `tests/architecture/test_membership_edges.py` (fake API paths).
+- `tests/fork_sync/test_onboard.py` and `test_watch.py` (factory-runner's registry, faked).
+
+None of these needed a change.
+
+**Fixtures:** I grepped `tests/fixtures/rotation_*` for `revision-watcher`, `deploy-watcher`, and
+`lanes-read`, and found no hits, so no fixture enumerates the lane rows. I didn't open each
+fixture file. No file under `tests/fixtures/` has "agreement" in its name. The agreement checks
+(`test_hold_agreement.py`, `test_target_grant.py`, and others) don't read the registry; none
+appeared in the grep.
 
 Before `make check`, `tests/rotation_worker`, `test_deploy_lanes.py`, `tests/rotation_proposer`,
 `tests/membership_check`, and `tests/unit_verifier` gave 2153 passed.
@@ -176,7 +202,9 @@ lane holds no release until its `--add` passes (`require_lanes_current`, lines 1
   - `bws.manifest-matches-usage`: undeclared `aaff45ca-…`, an id this diff doesn't touch.
 
   The INFO is the judgment rule `bws.least-privilege-scope`.
-- `/code-review` (low) on `origin/main...HEAD`: no findings.
+- `/code-review` (low) on `origin/main...HEAD`: no findings. The first run returned an empty
+  result, so I ran it again. The second run said it reviewed `.bws-secrets.toml` and
+  `.cred-consumers.toml`, skipped the tests and this report, and found nothing.
 
 ## Files changed
 
@@ -211,6 +239,8 @@ lane holds no release until its `--add` passes (`require_lanes_current`, lines 1
   passes because it adds the keeper separately. The compose change that writes the id is the
   natural place to add that entry.
 - Teardown: the worktree and `orchestrator_test_hq_w_85` stay until HQ merges the PR.
+  `git -C ~/Projects/orchestrator status --porcelain` printed nothing, so this session left no
+  stray files in the main tree.
   `/tmp/w85-*` holds scratch files only: the infraops copy, configs, logs, and a registry copy.
   None holds a value.
 
