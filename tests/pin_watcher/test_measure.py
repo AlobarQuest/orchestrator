@@ -19,7 +19,7 @@ from tests.pin_watcher.conftest import (
 
 def _sweep(estate: Estate):
     with GitHubReader(token="t", transport=estate.transport()) as reader:
-        return sweep(reader)
+        return sweep(reader, list(estate.members))
 
 
 def test_a_caller_at_the_recommendation_is_not_a_finding() -> None:

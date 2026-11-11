@@ -142,6 +142,13 @@ field the lanes read is deployed to the orchestrator before the main tree is pul
 `GET /api/v1/members` returns each member's `holds` (an empty list when it has none). Staged member
 proposals are listed first on the `/review` queue.
 
+`membership_check` and the pin watcher list one population (ADR-0059 amendment 4): the member
+record's `onboarding` and `member` repositories, plus the public, non-archived repositories of each
+account that owns one. They never list every repository a login owns, so a private repository that
+isn't a member is in neither sweep: its `factory-target.toml` and its caller workflow go unread. Any
+part of the listing that can't be read makes the whole pass incomplete (exit 3), never a sweep of
+the members alone.
+
 `membership_check` compares both directions for `dependency_updates`: a repository in change-manager's
 inert or deploying landing population needs the grant, and a non-retired member granted
 `dependency_updates` that neither population names is reported as "granted dependency_updates, but no

@@ -40,6 +40,12 @@ def _run(
     monkeypatch.setattr(
         cli_module, "open_client", lambda **kw: real_open(**{**kw, "transport": orchestrator})
     )
+    real_members = cli_module.read_members
+    monkeypatch.setattr(
+        cli_module,
+        "read_members",
+        lambda **kw: real_members(**{**kw, "transport": estate.record()}),
+    )
     return runner.invoke(app, list(args))
 
 
@@ -148,3 +154,78 @@ def test_the_report_names_every_caller_and_marks_only_the_findings(
     output: Any = _run(monkeypatch, estate, orchestrator).output
     assert "-> o/stale" in output
     assert "-> o/clean" not in output and "o/clean" in output
+
+
+# ---- ADR-0059 amendment 4: the listing starts from the member record ---------------------------
+
+LISTING_FAILURES = {
+    "no member": {"members": (), "retired": ("o/a",)},
+    "account type unreadable": {"unreadable_accounts": {"o": "type"}},
+    "unknown account type": {"accounts": {"o": "Bot"}},
+    "page unreadable": {"unreadable_accounts": {"o": "page"}},
+    "ceiling reached": {"endless": True},
+}
+
+
+@pytest.mark.parametrize("dry", [(), ("--dry-run",)], ids=["acting", "dry-run"])
+@pytest.mark.parametrize("failure", sorted(LISTING_FAILURES))
+def test_a_listing_that_cannot_be_read_whole_exits_three_and_files_nothing(
+    monkeypatch, orchestrator, written, failure: str, dry: tuple[str, ...]
+) -> None:
+    estate = Estate(
+        callers={"o/a": RECOMMENDED},
+        comparisons={RECOMMENDED: identical()},
+        **LISTING_FAILURES[failure],
+    )
+    result = _run(monkeypatch, estate, orchestrator, *dry)
+    assert result.exit_code == 3
+    assert written == []
+    assert not any("/contents/.github/workflows" in path for path in estate.requests), (
+        "a listing failure must never become a sweep of the members alone"
+    )
+
+
+@pytest.mark.parametrize("dry", [(), ("--dry-run",)], ids=["acting", "dry-run"])
+def test_an_unreadable_member_record_exits_three_before_github_is_read(
+    monkeypatch, orchestrator, written, dry: tuple[str, ...]
+) -> None:
+    estate = Estate(callers={"o/a": RECOMMENDED}, comparisons={RECOMMENDED: identical()})
+    real_members = cli_module.read_members
+    monkeypatch.setattr(
+        cli_module,
+        "read_members",
+        lambda **kw: real_members(
+            **{**kw, "transport": httpx.MockTransport(lambda _: httpx.Response(503))}
+        ),
+    )
+    real_reader = cli_module.GitHubReader
+    monkeypatch.setattr(
+        cli_module,
+        "GitHubReader",
+        lambda **kw: real_reader(**{**kw, "transport": estate.transport()}),
+    )
+    result = runner.invoke(app, list(dry))
+    assert result.exit_code == 3
+    assert "member record is unreadable" in result.output
+    assert estate.requests == [] and written == []
+
+
+def test_a_dry_run_reads_the_member_record_so_it_needs_the_orchestrator_credential(
+    monkeypatch, orchestrator, written
+) -> None:
+    monkeypatch.delenv("ORCHESTRATOR_API_TOKEN")
+    estate = Estate(callers={"o/a": RECOMMENDED}, comparisons={RECOMMENDED: identical()})
+    assert _run(monkeypatch, estate, orchestrator, "--dry-run").exit_code == 1
+
+
+def test_an_unreadable_member_repository_exits_three(monkeypatch, orchestrator, written) -> None:
+    estate = Estate(
+        callers={"o/a": RECOMMENDED},
+        comparisons={RECOMMENDED: identical()},
+        private=("o/canary",),
+        members=("o/a", "o/canary"),
+        unreadable_repositories=("o/canary",),
+    )
+    result = _run(monkeypatch, estate, orchestrator)
+    assert result.exit_code == 3
+    assert "o/canary" in result.output and len(written) == 1

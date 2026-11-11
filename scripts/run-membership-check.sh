@@ -27,7 +27,9 @@
 #   - the observer bearer (BWS `f793576f-…`), through the narrow `sds-operator` identity;
 #   - the change-manager READ bearer (BWS `314f276d-…`), through the broad identity, which also
 #     reads the Healthchecks API key (BWS `51509d5e-…`) to find the ping URL;
-#   - GitHub, through the operator's own `gh` login.
+#   - GitHub, through the operator's own `gh` login. It lists the member record's `onboarding` and
+#     `member` repositories and the public repositories of each account that owns one (ADR-0059
+#     amendment 4), never every repository the login owns.
 #
 # Usage:
 #   scripts/run-membership-check.sh
