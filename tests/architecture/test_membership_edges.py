@@ -72,8 +72,9 @@ CHECK_EDGE = Edge(
     change_manager=frozenset({("GET", LANDING_POLICY)}),
     orchestrator=frozenset({("GET", MEMBERS)}),
     # `declaration` (the two contents files, and the repository its absence probe reads) and
-    # `auto_merge` (the repository, the workflows directory and each workflow file). The account's
-    # repository list and the registry files go by `gh`, `git` and the pin reader: see below.
+    # `auto_merge` (the repository, the workflows directory and each workflow file). The listing
+    # (the members and their accounts' public repositories) goes by the pin reader, and the
+    # registry files by `gh` and `git`: see below.
     github=frozenset(
         {
             ("GET", FACTORY_TARGET),
@@ -183,7 +184,7 @@ def test_every_listed_route_is_in_the_corpus() -> None:
 def test_the_hosts_are_the_ones_the_table_names() -> None:
     [orchestrator] = _built(members_client, _read_members)
     [change_manager] = _built(landing_policy, _read_landing_policy)
-    [github] = _built(pin_github, lambda: pin_github.GitHubReader(token="t").get("/user/repos"))
+    [github] = _built(pin_github, lambda: pin_github.GitHubReader(token="t").get("/users/o"))
 
     assert orchestrator == "https://sds.alobar.net"
     assert change_manager == "https://change-mgr.alobar.net"
@@ -294,6 +295,7 @@ CLI_IMPORTS = {
     },
     "rotation_worker.types": {"of_a_type"},
     "sds_members.client": {"Member", "MembersUnreadable", "read_members"},
+    "sds_members.populations": {"observed"},
     "tool_installer.tools": {"TOOLS"},
 }
 LIBRARY_ROOTS = ("collections", "typing", "os", "__future__", "typer")
@@ -368,31 +370,38 @@ def test_the_program_sends_no_alert() -> None:
     assert launcher_bearers(LAUNCHER).isdisjoint({"b415d03b-f92d-46b1-8a9d-b4f10103df49"})
 
 
-# ---- The account's repository list: the pin reader, one route -------------------------------
+# ---- The listing: the pin reader, an account read and its public listing -----------------------
 
 
-def pin_reader_requests() -> list[tuple[str, str]]:
+def pin_reader_requests(kind: str = "User") -> list[tuple[str, str]]:
     """The requests `repositories` makes, as the cli calls it, sent to a recording transport."""
     seen: list[tuple[str, str]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append((request.method, request.url.path))
+        if request.url.path == "/users/o":
+            return httpx.Response(200, json={"login": "o", "type": kind})
         return httpx.Response(200, json=[])
 
     with pin_github.GitHubReader(token="t", transport=httpx.MockTransport(handler)) as reader:
-        check_cli.repositories(reader)
+        check_cli.repositories(reader, ["o/r"])
     return seen
 
 
-def test_the_account_listing_is_one_get_of_the_users_repositories() -> None:
+@pytest.mark.parametrize(
+    ("kind", "listing"), [("User", "/users/o/repos"), ("Organization", "/orgs/o/repos")]
+)
+def test_the_listing_reads_each_account_and_its_public_repositories(
+    kind: str, listing: str
+) -> None:
     assert check_cli.repositories is pin_github.repositories
-    assert pin_reader_requests() == [("GET", "/user/repos")]
+    assert pin_reader_requests(kind) == [("GET", "/users/o"), ("GET", listing)]
 
 
 def test_the_pin_readers_predicate_is_any_get_so_its_use_is_the_bound() -> None:
     permits = captured_permits(pin_github, lambda: pin_github.GitHubReader(token="t"))
-    assert permits("GET", "/user/repos") and permits("GET", "/repos/o/r/pulls")
-    assert not permits("POST", "/user/repos")
+    assert permits("GET", "/users/o/repos") and permits("GET", "/repos/o/r/pulls")
+    assert not permits("POST", "/users/o/repos")
 
 
 def reader_uses(source: str) -> list[str]:
@@ -411,24 +420,30 @@ def reader_uses(source: str) -> list[str]:
 def test_the_cli_uses_its_pin_reader_only_to_list_repositories() -> None:
     source = Path("src/membership_check/cli.py").read_text("utf-8")
     assert reader_uses(source) == ["GitHubReader()"]
-    assert "repositories(reader)" in source
+    assert "repositories(reader, observed_members)" in source
 
 
 def test_control_a_second_reader_use_is_reported() -> None:
     source = Path("src/membership_check/cli.py").read_text("utf-8")
-    wider = source.replace("owned = repositories(reader)", 'owned = reader.get("/user")')
+    wider = source.replace(
+        "owned = repositories(reader, observed_members)", 'owned = reader.get("/user")'
+    )
     assert reader_uses(wider) == ["GitHubReader()", "reader.get"]
 
 
 def test_control_a_widened_listing_changes_the_requests(monkeypatch: pytest.MonkeyPatch) -> None:
     original = pin_github.repositories
 
-    def wider(reader: pin_github.GitHubReader) -> list[str]:
+    def wider(reader: pin_github.GitHubReader, members: list[str]) -> list[str]:
         reader.get("/user/orgs")
-        return original(reader)
+        return original(reader, members)
 
     monkeypatch.setattr(check_cli, "repositories", wider)
-    assert pin_reader_requests() == [("GET", "/user/orgs"), ("GET", "/user/repos")]
+    assert pin_reader_requests() == [
+        ("GET", "/user/orgs"),
+        ("GET", "/users/o"),
+        ("GET", "/users/o/repos"),
+    ]
 
 
 # ---- The fork list: `gh api` on one file ----------------------------------------------------

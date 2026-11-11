@@ -32,6 +32,7 @@ from rotation_worker.registry import (
 )
 from rotation_worker.types import of_a_type
 from sds_members.client import Member, MembersUnreadable, read_members
+from sds_members.populations import observed
 from tool_installer.tools import TOOLS
 
 OBSERVER_TOKEN_VARIABLE: Final = "SDS_MEMBERS_OBSERVER_TOKEN"
@@ -50,18 +51,21 @@ def _fail(message: str) -> typer.Exit:
     return typer.Exit(EXIT_FAILED)
 
 
-def _declarations(token: str, repositories_of_members: list[str]) -> tuple[Scope, list[str]]:
-    """Factory targets among the account's repositories and the members', and the gaps."""
+def _declarations(token: str, observed_members: list[str]) -> tuple[Scope, list[str]]:
+    """Factory targets among the listing (the members and their accounts' public repositories),
+    the gaps, and the listing.
+
+    `observed_members` is the record's `onboarding` and `member` repositories; an archived one
+    stays, so its declaration is still read.
+    """
     try:
         with GitHubReader(token=token) as reader:
-            owned = repositories(reader)
+            owned = repositories(reader, observed_members)
     except PinWatcherError as error:
-        gap = f"the account's repositories couldn't be listed: {error}"
-        return Scope([], [gap], list(repositories_of_members)), []
-    known = {name.lower() for name in owned}
-    extra = [name for name in repositories_of_members if name.lower() not in known]
+        gap = f"the members' and their accounts' public repositories couldn't be listed: {error}"
+        return Scope([], [gap], list(observed_members)), []
     with GitHubDeclarationSource(token=token) as source:
-        return factory_targets([*owned, *extra], source), owned
+        return factory_targets(owned, source), owned
 
 
 def _landing(
@@ -87,7 +91,8 @@ def _landing(
 
 
 def _spelled(names: Iterable[str], owned: list[str]) -> list[str]:
-    """`names` as GitHub spells them when the account listing is known, else as given."""
+    """`names` as the listing spells them (GitHub's spelling, or the record's for a member it
+    didn't return publicly) when the listing is known, else as given."""
     spelling = {repository.lower(): repository for repository in owned}
     return [spelling.get(name.lower(), name) for name in names]
 
@@ -158,9 +163,7 @@ def main() -> None:
     except MembersUnreadable as error:
         typer.echo(f"membership-check: the member record is unreadable: {error}", err=True)
         raise typer.Exit(EXIT_INCOMPLETE) from None
-    declarations, owned = _declarations(
-        tokens[GITHUB_TOKEN_VARIABLE], [m.repository for m in members]
-    )
+    declarations, owned = _declarations(tokens[GITHUB_TOKEN_VARIABLE], observed(members))
     inert, deploying, gaps, landing_decided = _landing(tokens[CHANGE_MANAGER_TOKEN_VARIABLE], owned)
     synced: list[str] = []
     try:

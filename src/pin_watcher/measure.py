@@ -22,11 +22,12 @@ from pin_watcher.github import (
     SHA,
     GitHubReader,
     PinWatcherError,
+    archived,
     caller_pin,
     committed_at,
     comparison,
+    listing,
     recommendation,
-    repositories,
 )
 
 
@@ -93,12 +94,40 @@ def _classify(
     )
 
 
-def sweep(reader: GitHubReader) -> Pass:
-    """Every caller in the account, measured against the recommendation."""
+def _swept(reader: GitHubReader, members: list[str], result: Pass) -> list[str]:
+    """The listing less its archived members. A member it can't read is unreadable, not dropped.
+
+    The public listing says whether a public member is archived; any other member is read from
+    its own repository.
+    """
+    found = listing(reader, members)
+    member_keys = {member.casefold() for member in found.members}
+    swept = [name for name in found.repositories if name.casefold() not in member_keys]
+    for member in found.members:
+        key = member.casefold()
+        if key in found.archived:
+            continue
+        if key not in found.public:
+            try:
+                if archived(reader, member):
+                    continue
+            except PinWatcherError:
+                result.unreadable.append(member)
+                continue
+        swept.append(member)
+    return swept
+
+
+def sweep(reader: GitHubReader, members: list[str]) -> Pass:
+    """Every caller in the listing, measured against the recommendation.
+
+    `members` is the member record's `onboarding` and `member` repositories; the listing adds
+    their accounts' public repositories (`pin_watcher.github.listing`).
+    """
     recommended = recommendation(reader)
     result = Pass(recommended, committed_at(reader, recommended))
     cache: dict[str, tuple[str, int | None, int | None, str | None]] = {}
-    for repository in repositories(reader):
+    for repository in _swept(reader, members, result):
         try:
             pin = caller_pin(reader, repository)
         except PinWatcherError:

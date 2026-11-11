@@ -40,7 +40,11 @@ class Report:
 
 
 def factory_targets(owned: Iterable[str], source: DeclarationSource) -> Scope:
-    """Every owned repository that declares itself a factory target."""
+    """Every listed repository that declares itself a factory target.
+
+    `owned` is the listing: the members' repositories plus their accounts' public, non-archived
+    repositories (`pin_watcher.github.repositories`).
+    """
     targets: list[str] = []
     gaps: list[str] = []
     unreadable: list[str] = []
@@ -55,12 +59,12 @@ def factory_targets(owned: Iterable[str], source: DeclarationSource) -> Scope:
 
 
 def canonical(names: Iterable[str], owned: Iterable[str]) -> Scope:
-    """`names` respelled as GitHub spells them; any that isn't an active repository is a gap."""
+    """`names` respelled as the listing spells them; any the listing lacks is a gap."""
     spelling: Mapping[str, str] = {repository.lower(): repository for repository in owned}
     known = sorted(spelling[name.lower()] for name in names if name.lower() in spelling)
     gaps = [
-        f"the landing policy names {name}, which isn't an active repository of this account "
-        "(archived, renamed or not owned)"
+        f"the landing policy names {name}, which is neither a member nor a public, non-archived "
+        "repository of a member's account (archived, renamed, private or not owned)"
         for name in sorted(names)
         if name.lower() not in spelling
     ]

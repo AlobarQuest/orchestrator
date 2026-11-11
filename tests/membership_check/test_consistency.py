@@ -352,7 +352,7 @@ def _wire(
         def __exit__(self, *_):
             return None
 
-    def listing(_reader):
+    def listing(_reader, _members):
         if listing_error:
             raise listing_error
         return ["A/one"]
@@ -549,7 +549,7 @@ def test_a_standing_package_for_a_repository_without_dependency_updates_is_a_dis
     _standing_tree(packages_checkout, "a/two")
     members = [*CLEAN, _member("A/two", "app_changes")]
     _wire(monkeypatch, members=members, answers={"A/one": True, "A/two": True})
-    monkeypatch.setattr(cli, "repositories", lambda _r: ["A/one", "A/two"])
+    monkeypatch.setattr(cli, "repositories", lambda _r, _m: ["A/one", "A/two"])
     result = _invoke()
     assert result.exit_code == 2
     assert "A/two: a standing dependency-update package names it" in result.stdout
@@ -573,7 +573,7 @@ def test_the_live_population_agrees(monkeypatch, packages_checkout):
         rollbacks={"alobarquest/brain": 1, "alobarquest/change-manager": 1},
     )
     owned = [m.repository for m in members]
-    monkeypatch.setattr(cli, "repositories", lambda _r: owned)
+    monkeypatch.setattr(cli, "repositories", lambda _r, _m: owned)
     assert _invoke().exit_code == 0
 
 

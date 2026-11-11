@@ -1,9 +1,13 @@
 """A GitHub the watcher can be pointed at, built from a description of an estate.
 
 Every test states the estate it is about -- which repositories exist, which carry a caller, what
-each caller pins -- and gets a transport that answers exactly that. Nothing here reaches the
-network, and a path the fixture was not told about answers 404, so a test that measured something
-the estate does not contain fails rather than passing on a default.
+each caller pins, which are members -- and gets a transport that answers exactly that, plus an
+orchestrator that serves the member record. Nothing here reaches the network, and a path the
+fixture was not told about answers 404, so a test that measured something the estate does not
+contain fails rather than passing on a default.
+
+Every repository is owned by the account its name starts with, a user account unless `accounts`
+says otherwise, and is public unless it is in `private`.
 """
 
 from __future__ import annotations
@@ -21,6 +25,15 @@ from alert_hub_client import KeyedAlerts
 from pin_watcher import alerts as alerts_module
 
 RUNNER = "AlobarQuest/factory-runner"
+SERVICES = (
+    "dependency_updates",
+    "security_patches",
+    "app_changes",
+    "backups",
+    "monitoring",
+    "rollouts",
+    "credential_rotation",
+)
 RECOMMENDED = "a" * 40
 RECOMMENDED_DATE = "2026-09-01T10:00:00Z"
 
@@ -28,6 +41,20 @@ RECOMMENDED_DATE = "2026-09-01T10:00:00Z"
 def _contents(body: str) -> httpx.Response:
     encoded = base64.b64encode(body.encode()).decode()
     return httpx.Response(200, json={"content": encoded, "encoding": "base64"})
+
+
+def member_wire(repository: str, state: str = "member") -> dict[str, Any]:
+    """One member as `GET /api/v1/members` serves it."""
+    return {
+        "repository": repository,
+        "owner": "placeholder-owner",
+        "state": state,
+        "working_copy": None,
+        "machine_local": False,
+        "apps": [],
+        "grants": {service: {"state": "not_granted"} for service in SERVICES},
+        "holds": [],
+    }
 
 
 class Estate:
@@ -43,6 +70,13 @@ class Estate:
         unreadable: set[str] | None = None,
         other_repositories: tuple[str, ...] = (),
         archived: tuple[str, ...] = (),
+        private: tuple[str, ...] = (),
+        members: tuple[str, ...] | None = None,
+        retired: tuple[str, ...] = (),
+        accounts: dict[str, str] | None = None,
+        unreadable_accounts: dict[str, str] | None = None,
+        unreadable_repositories: tuple[str, ...] = (),
+        endless: bool = False,
     ) -> None:
         self.callers = callers
         self.recommended = recommended
@@ -51,29 +85,90 @@ class Estate:
         self.unreadable = unreadable or set()
         self.other_repositories = other_repositories
         self.archived = archived
+        self.private = private
+        self.names = [*callers, *other_repositories, *self.unreadable, *archived, *private]
+        # By default one repository is a member and the rest come through the public listing.
+        self.members = members if members is not None else tuple(self.names[:1])
+        self.retired = retired
+        # login (casefolded) -> GitHub's `type`; absent means a user account.
+        self.accounts = {k.casefold(): v for k, v in (accounts or {}).items()}
+        # login (casefolded) -> "type" (the account answers 404), "page" (a page answers 500) or
+        # "missing" (a page answers 404).
+        self.unreadable_accounts = {k.casefold(): v for k, v in (unreadable_accounts or {}).items()}
+        self.unreadable_repositories = unreadable_repositories
+        self.endless = endless
         self.requests: list[str] = []
+        self.listing_queries: list[tuple[str, dict[str, str]]] = []
 
     def transport(self) -> httpx.MockTransport:
         return httpx.MockTransport(self._handle)
+
+    def record(self) -> httpx.MockTransport:
+        """The orchestrator's member record, as `GET /api/v1/members` serves it."""
+        body = {
+            "members": [member_wire(name) for name in self.members]
+            + [member_wire(name, "retired") for name in self.retired]
+        }
+
+        def handle(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET" and request.url.path == "/api/v1/members":
+                return httpx.Response(200, json=body)
+            return httpx.Response(404)
+
+        return httpx.MockTransport(handle)
+
+    def _type(self, login: str) -> str:
+        return self.accounts.get(login.casefold(), "User")
+
+    def _owned_by(self, login: str) -> list[dict[str, Any]]:
+        return [
+            {
+                "full_name": name,
+                "private": name in self.private,
+                "archived": name in self.archived,
+            }
+            for name in self.names
+            if name.split("/", 1)[0].casefold() == login.casefold()
+        ]
+
+    def _listing(self, request: httpx.Request, login: str, kind: str) -> httpx.Response:
+        self.listing_queries.append((request.url.path, dict(request.url.params)))
+        if self._type(login) != kind:
+            return httpx.Response(404)
+        failure = self.unreadable_accounts.get(login.casefold())
+        if failure in ("page", "missing"):
+            return httpx.Response(500 if failure == "page" else 404)
+        if self.endless:
+            return httpx.Response(200, json=self._owned_by(login) or [{"x": 1}])
+        page = int(request.url.params.get("page", "1"))
+        return httpx.Response(200, json=[] if page > 1 else self._owned_by(login))
 
     def _handle(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
         self.requests.append(path)
         if request.method != "GET":
             return httpx.Response(405)
-        if path == "/user/repos":
-            page = int(request.url.params.get("page", "1"))
-            if page > 1:
-                return httpx.Response(200, json=[])
-            names = [
-                *self.callers,
-                *self.other_repositories,
-                *self.unreadable,
-            ]
+        segments = path.strip("/").split("/")
+        if segments[0] == "users" and len(segments) == 2:
+            login = segments[1]
+            if self.unreadable_accounts.get(login.casefold()) == "type":
+                return httpx.Response(404)
+            return httpx.Response(200, json={"login": login, "type": self._type(login)})
+        if segments[0] == "users" and segments[2:] == ["repos"]:
+            return self._listing(request, segments[1], "User")
+        if segments[0] == "orgs" and segments[2:] == ["repos"]:
+            return self._listing(request, segments[1], "Organization")
+        if segments[0] == "repos" and len(segments) == 3:
+            name = f"{segments[1]}/{segments[2]}"
+            if name in self.unreadable_repositories or name not in self.names:
+                return httpx.Response(404)
             return httpx.Response(
                 200,
-                json=[{"full_name": name, "archived": False} for name in names]
-                + [{"full_name": name, "archived": True} for name in self.archived],
+                json={
+                    "full_name": name,
+                    "private": name in self.private,
+                    "archived": name in self.archived,
+                },
             )
         if path == f"/repos/{RUNNER}/contents/RECOMMENDED_CALLER_PIN":
             return _contents(self.recommended + "\n")

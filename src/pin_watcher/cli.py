@@ -27,6 +27,11 @@ alert per repository (`pin-behind:<repository>`, `pin_watcher.alerts`): a findin
 clean reading resolves it, and a repository the pass could not read keeps whatever key it had. That
 pass needs `SDS_BRIDGE_ALERT_TOKEN` (exit 1 without it, before any work). A failed send or an
 unusable alert state file is the incomplete code, after the pass's own work.
+
+EVERY PASS READS THE MEMBER RECORD FIRST, a dry run included: the listing starts from its
+`onboarding` and `member` repositories (ADR-0059 amendment 4), so the orchestrator credential is
+needed before anything is measured. An unreadable record is the incomplete code, never a sweep of
+less than the listing.
 """
 
 from __future__ import annotations
@@ -46,8 +51,11 @@ from pin_watcher.orchestrator_client import (
     PinWriteError,
     UnusableEndpointError,
     open_client,
+    validate_base_url,
 )
 from pin_watcher.record import pin_observation
+from sds_members.client import MembersUnreadable, read_members
+from sds_members.populations import observed
 
 EXIT_CLEAN = 0
 EXIT_TOOL_FAILED = 1
@@ -100,6 +108,33 @@ def _tell(result: Pass, token: str) -> bool:
     return True
 
 
+def _orchestrator_credential() -> tuple[str, str, str]:
+    """The orchestrator URL, key id and bearer every pass needs; any gap is the tool failing."""
+    base_url = os.environ.get("ORCHESTRATOR_API_URL", "").strip()
+    key_id = os.environ.get("ORCHESTRATOR_API_CREDENTIAL_KEY_ID", "").strip()
+    bearer = os.environ.get("ORCHESTRATOR_API_TOKEN", "").strip()
+    if not (base_url and key_id and bearer):
+        typer.echo("FATAL: the orchestrator credential is not configured.", err=True)
+        raise typer.Exit(EXIT_TOOL_FAILED)
+    try:
+        # Before the bearer is sent anywhere: a typo is the tool being unusable for every caller at
+        # once, deliberately not the per-caller failure that reports as an incomplete pass.
+        validate_base_url(base_url)
+    except UnusableEndpointError as error:
+        typer.echo(f"FATAL: {error}", err=True)
+        raise typer.Exit(EXIT_TOOL_FAILED) from error
+    return base_url, key_id, bearer
+
+
+def _members(base_url: str, key_id: str, bearer: str) -> list[str]:
+    """The record's `onboarding` and `member` repositories; an unreadable record is incomplete."""
+    try:
+        return observed(read_members(token=bearer, credential_key_id=key_id, base_url=base_url))
+    except MembersUnreadable as error:
+        typer.echo(f"INCOMPLETE: the member record is unreadable: {error}", err=True)
+        raise typer.Exit(EXIT_INCOMPLETE) from error
+
+
 @app.command()
 def main(
     dry_run: Annotated[
@@ -113,12 +148,15 @@ def main(
 
     alert_token = _alert_token(acting=not dry_run)
 
+    base_url, key_id, bearer = _orchestrator_credential()
+    members = _members(base_url, key_id, bearer)
+
     try:
         with GitHubReader(token=token) as reader:
-            result = sweep(reader)
+            result = sweep(reader, members)
     except PinWatcherError as error:
-        # The recommendation itself is unreadable, or GitHub is. Either way nothing was measured,
-        # and an unmeasured pass is incomplete rather than clean.
+        # The recommendation, the listing or GitHub itself is unreadable. Either way nothing was
+        # measured, and an unmeasured pass is incomplete rather than clean.
         typer.echo(f"INCOMPLETE: {error}", err=True)
         raise typer.Exit(EXIT_INCOMPLETE) from error
 
@@ -129,12 +167,6 @@ def main(
     if dry_run:
         typer.echo(f"dry run: {len(result.callers)} rows not filed")
     else:
-        base_url = os.environ.get("ORCHESTRATOR_API_URL", "").strip()
-        key_id = os.environ.get("ORCHESTRATOR_API_CREDENTIAL_KEY_ID", "").strip()
-        bearer = os.environ.get("ORCHESTRATOR_API_TOKEN", "").strip()
-        if not (base_url and key_id and bearer):
-            typer.echo("FATAL: the orchestrator credential is not configured.", err=True)
-            raise typer.Exit(EXIT_TOOL_FAILED)
         try:
             with open_client(base_url=base_url, credential_key_id=key_id, token=bearer) as client:
                 unfiled = _file_rows(result, client)

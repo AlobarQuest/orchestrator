@@ -83,7 +83,8 @@ _pin_is_dry_run() {
   return 1
 }
 if ! _pin_is_dry_run "$@"; then
-  # The program files rows on an acting pass only, so only then is an unread bearer fatal.
+  # Fatal here on an acting pass, which files rows. A dry run reads the member record with it too,
+  # so the program itself exits 1 when it is unset.
   if [ -z "$ORCHESTRATOR_API_TOKEN" ]; then
     echo "FATAL: could not read the observer bearer from BWS." >&2
     exit 1
@@ -97,9 +98,11 @@ if ! _pin_is_dry_run "$@"; then
 fi
 
 # THE GITHUB CREDENTIAL HAS NO BWS RECORD, the same gap the landing ledger carries and for the same
-# reason: this reads public repository metadata and has never needed a dedicated identity. A
-# scheduled job resting on an interactive login breaks the moment that login is re-issued, and
-# nothing would say so but this script's exit 1.
+# reason: this reads repository metadata and has never needed a dedicated identity. It reads the
+# member record's repositories and the public repositories of each account that owns one (ADR-0059
+# amendment 4), never every repository the login owns. A scheduled job resting on an interactive
+# login breaks the moment that login is re-issued, and nothing would say so but this script's
+# exit 1.
 if [ -z "${PIN_WATCHER_GITHUB_TOKEN:-}" ]; then
   PIN_WATCHER_GITHUB_TOKEN="$(gh auth token 2>/dev/null || true)"
   export PIN_WATCHER_GITHUB_TOKEN

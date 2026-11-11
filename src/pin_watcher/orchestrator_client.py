@@ -42,7 +42,7 @@ class UnusableEndpointError(RuntimeError):
     """
 
 
-def _validate_base_url(base_url: str) -> None:
+def validate_base_url(base_url: str) -> None:
     """Refuse a URL that would only fail once a request was made.
 
     `httpx` refuses some malformed URLs at the CONSTRUCTOR and others at REQUEST time, so a guard
@@ -70,7 +70,7 @@ def open_client(
     HTTP client at all, and this program's entry in the repository's outbound allowlist stays at
     exactly one file.
     """
-    _validate_base_url(base_url)
+    validate_base_url(base_url)
     try:
         return OrchestratorClient(
             base_url=base_url,
