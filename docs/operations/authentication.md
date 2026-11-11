@@ -38,7 +38,7 @@ When the embedded `ORCHESTRATOR_REGISTRY_BUNDLE` path is enabled, startup requir
 - `ORCHESTRATOR_EMAIL_TO_ACTOR`: JSON normalized-email to actor-ID mappings.
 - `ORCHESTRATOR_CSRF_SECRET`: at least 32 bytes of runtime secret material.
 
-Three optional settings:
+Four optional settings:
 
 - `ORCHESTRATOR_ROTATION_EXECUTOR_AGENT_ID` names the credential-rotation executor's VM instance
   (ADR-0055). Only that identity may claim a rotation unit whose adapter is not a Keychain adapter,
@@ -46,6 +46,10 @@ Three optional settings:
 - `ORCHESTRATOR_ROTATION_KEYCHAIN_EXECUTOR_AGENT_ID` names the Keychain instance on the operator
   machine (ADR-0055 amendment 12). Only that identity may claim a unit of a Keychain adapter, and
   it may claim nothing else. Unset refuses every claim on those units.
+- `ORCHESTRATOR_WORK_CARRIER_AGENT_ID` names the work carrier's observer identity (ADR-0055
+  amendment 22 item 3). The decomposition gate admits a policy-approved lane credential's
+  revision 1 only beside a standing-approval record `recorded_by` that identity. Unset refuses
+  every standing approval.
 - `ORCHESTRATOR_ALERT_HUB_TOKEN` is the `sds-orchestrator` sender's token for alert-hub. With it
   set, an unhandled exception raises one keyed alert (`api/server_errors.py`). Unset, the 500 is
   logged and no alert is sent. The setting is a held copy; see "Held copies" in
@@ -55,6 +59,29 @@ Boot refuses a credential whose identity holds `rotation-executor-v1` or
 `rotation-executor-keychain-v1` unless the setting for that profile names that identity. It also
 refuses a configured executor that does not hold its own profile. The failure is the generic
 `invalid runtime authentication configuration`.
+
+The work carrier's check is stricter (`_require_work_carrier`): the identities whose credentials
+hold `work-carrier-observer-v1` must be exactly the one `ORCHESTRATOR_WORK_CARRIER_AGENT_ID`
+names, or none when it's unset. So boot refuses a credential holding that profile without the
+setting, a setting that names any other identity, a second identity holding the profile, and a
+setting with no credential. Boot also refuses any credential whose identity the registry bundle
+marks `retired` or `reserved`, with the same generic error.
+
+Because either half alone refuses boot, add the carrier's identity with one restart. This is the
+one exception to "verify each variable in the container before the next restart"
+(`credentials.md` #20): no restart between the credential and the setting can boot.
+
+1. Add the `work-carrier-observer` entry (agent id `work-carrier`) to
+   `ORCHESTRATOR_M2M_CREDENTIALS`, both rows (`is_preview` false and true).
+2. Add `"work-carrier-observer": "observer"` to `ORCHESTRATOR_M2M_ROLES`, both rows.
+3. Set `ORCHESTRATOR_WORK_CARRIER_AGENT_ID=work-carrier`, both rows.
+4. Read all three variables back from Coolify, both rows, parsed in-process with only key ids,
+   agent ids and roles printed. This is the only check before the restart.
+5. Restart, confirm it boots, and verify all three variables in the container.
+
+Don't restart between these steps. The rotation executor rewrites `ORCHESTRATOR_M2M_CREDENTIALS`
+from what the running process loaded, so do the four steps with no rotation pending. To remove
+the identity, remove all three in one restart the same way.
 
 Optional `ORCHESTRATOR_M2M_ROLES` JSON assigns non-worker machine roles. Missing or
 malformed required authentication configuration aborts process startup without logging

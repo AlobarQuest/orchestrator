@@ -28,6 +28,8 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
   which is a healthy configuration; a half-applied roles write is an outage (this
   is the WS-6.3 ~3-minute 503). There is no ordering of the two that can strand
   production, at the cost of one extra restart. Never "save a restart".
+  The work carrier's observer identity is the exception: its credential and its setting must
+  arrive in one restart (`authentication.md`, the `_require_work_carrier` paragraph).
 
 ### #21
 

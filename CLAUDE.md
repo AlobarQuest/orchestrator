@@ -377,4 +377,6 @@ Subsystem rules continue in nested files that load only when a session reads fil
   (`WORK_CARRIER_OBSERVATION_KEY_ID`, never `orchestrator-system`) before the intake; the
   decomposition gate admits the policy approver only beside that record, `recorded_by`
   `ORCHESTRATOR_WORK_CARRIER_AGENT_ID`. Either identity unset refuses every standing approval.
-  Detail: `docs/operations/rotation-proposer.md`.
+  Boot requires the credentials holding `work-carrier-observer-v1` to be exactly that setting's
+  identity, or none when unset, so unlike the executors' setting it can't go first
+  (`test_work_carrier_boot.py`). Detail: `docs/operations/rotation-proposer.md`.
