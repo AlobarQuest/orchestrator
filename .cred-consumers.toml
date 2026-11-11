@@ -780,9 +780,10 @@ healthchecks_check = "sds-landing-ledger"
   note = "the keeper, in Rotation / Keepers, and the one copy; the lane reads it with its own token"
 
 # ── The deploy-watcher lane's token and ping URL (ADR-0059 increment 3) ──────────
-# ADR-0055 amendment 19, item 8: the lane's two rows, both handed to the SDS. The token's row is due
-# for its first issue by `rotate_requested`; a later change dates the ping URL's row. Both keepers
-# were created in Rotation / Keepers at HQ gate G-28.
+# ADR-0055 amendment 19, item 8: the lane's two rows, both handed to the SDS. Both are due for their
+# first issue by `rotate_requested`. The ping URL's row is dated only after the token's `store` unit
+# completed, so the two issue units never waited on a mint at once. Both keepers were created in
+# Rotation / Keepers at HQ gate G-28.
 # Neither row carries `created`, for the reason the landing ledger's block gives.
 [[credential]]
 id = "deploy-watcher-bws-token"
@@ -818,6 +819,7 @@ class = "healthchecks-ping-url"
 provider = "healthchecks-ping-url"
 bws_uuid = "4f7f3d8b-a83e-4ae5-a665-b4ff0004b875"
 rotated_by_sds = true
+rotate_requested = "2026-11-11"
 # The check whose ping URL the executor reads into the keeper (ADR-0055 amendment 23); the lane
 # keeps the check it pinged from the Mac (ADR-0059 decision 3).
 healthchecks_check = "sds-deploy-watcher"
