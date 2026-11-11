@@ -827,6 +827,54 @@ healthchecks_check = "sds-deploy-watcher"
   uuid = "4f7f3d8b-a83e-4ae5-a665-b4ff0004b875"
   note = "the keeper, in Rotation / Keepers, and the one copy; the lane reads it with its own token"
 
+# ── The revision-watcher lane's token and ping URL (ADR-0059 increment 3) ────────
+# ADR-0055 amendment 19, item 8: the lane's two rows, both handed to the SDS. The token's row is due
+# for its first issue by `rotate_requested`; a later change dates the ping URL's row. Both keepers
+# were created in Rotation / Keepers at HQ gate G-30.
+# Neither row carries `created`, for the reason the landing ledger's block gives.
+[[credential]]
+id = "revision-watcher-bws-token"
+class = "bws-lane-token"
+provider = "bws-lane-token"
+bws_uuid = "e6c8d8cc-c64e-4e91-bb5b-b4ff00cba872"
+rotated_by_sds = true
+rotate_requested = "2026-11-11"
+# What the lane's account sees, exactly: .bws-secrets.toml's revision-watcher secrets
+# (orchestrator-observer, prod-coolify-api-token, APP_BRAIN_READ_KEY,
+# ALERT_HUB_SENDER_TOKEN_SDS_BRIDGE, lanes-read-app-private-key) and the ping URL's keeper.
+reach_secrets = ["f793576f-e9aa-4f9d-8089-b4a000b9e2d5", "bbd71f41-b7df-4ae9-8fdb-b41501447308", "726a18ba-7a38-4ecc-aa03-b49a015fd302", "b415d03b-f92d-46b1-8a9d-b4f10103df49", "314a966c-5654-4e3c-8358-b4fd01268775", "9b2722ea-8ec1-425b-ac2e-b4ff00cba931"]
+reach_projects = []
+
+  [[credential.consumer]]
+  kind = "bws-secret"
+  uuid = "e6c8d8cc-c64e-4e91-bb5b-b4ff00cba872"
+  note = "the keeper, in Rotation / Keepers; only the executor reads it"
+
+  [[credential.consumer]]
+  kind = "coolify-env"
+  instance = "prod"
+  resource_type = "service"
+  uuid = "kmjkrhlmv6c7ee76g77a8491"
+  key = "REVISION_WATCHER_BWS_ACCESS_TOKEN"
+  redeploy = false
+  note = "the sds-lane-revision-watcher service's variable; the lane phases redeploy it, never the executor"
+
+# No `created`, for the reason the landing ledger's block gives.
+[[credential]]
+id = "revision-watcher-ping-url"
+class = "healthchecks-ping-url"
+provider = "healthchecks-ping-url"
+bws_uuid = "9b2722ea-8ec1-425b-ac2e-b4ff00cba931"
+rotated_by_sds = true
+# The check whose ping URL the executor reads into the keeper (ADR-0055 amendment 23); the lane
+# keeps the check it pinged from the Mac (ADR-0059 decision 3).
+healthchecks_check = "sds-revision-watcher"
+
+  [[credential.consumer]]
+  kind = "bws-secret"
+  uuid = "9b2722ea-8ec1-425b-ac2e-b4ff00cba931"
+  note = "the keeper, in Rotation / Keepers, and the one copy; the lane reads it with its own token"
+
 # ── The two lane GitHub Apps' private keys (ADR-0059 increment 3) ────────────────
 # Devon created both Apps on 2026-11-09 (HQ gate G-17) and stored each key, base64 of the PEM, in
 # BWS project `SDS / Lane Apps`. `estate_clients/github_app_mint.py` (`sds-github-mint`) reads that
@@ -837,10 +885,10 @@ healthchecks_check = "sds-deploy-watcher"
 # settings pages in one sitting. `created` is the age anchor: at 365 days (infraops CLASS_POLICY)
 # the 03:00 scan posts `cred.rotation-age` with the manual checklist, and the rotation proposer
 # reports the row `legacy` and proposes no package.
-# Each lane's runtime-fetch row lands in that lane's move PR. The landing-ledger and deploy-watcher
-# lanes' accounts hold read grants on the read App's keeper (HQ gates G-18 and G-28), so that row
-# lists each lane's reader; no machine account holds a grant on the push App's keeper yet, so its
-# row lists the keeper alone.
+# Each lane's runtime-fetch row lands in that lane's move PR. The landing-ledger, deploy-watcher and
+# revision-watcher lanes' accounts hold read grants on the read App's keeper (HQ gates G-18, G-28
+# and G-30), so that row lists each lane's reader; no machine account holds a grant on the push
+# App's keeper yet, so its row lists the keeper alone.
 [[credential]]
 id = "lanes-read-app-private-key"
 class = "github-app-private-key"
@@ -869,6 +917,13 @@ rotation_preconditions = ["rotate it with lanes-push-app-private-key in one sitt
   ref = "scripts/run-deploy-watcher.sh"
   healthchecks_check = "sds-deploy-watcher"
   note = "read in the sds-lane-deploy-watcher container with the lane's own token, each pass, and piped straight into sds-github-mint; pings sds-deploy-watcher"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
+  ref = "scripts/run-revision-watcher.sh"
+  healthchecks_check = "sds-revision-watcher"
+  note = "read in the sds-lane-revision-watcher container with the lane's own token, each pass, and piped straight into sds-github-mint; pings sds-revision-watcher"
 
 [[credential]]
 id = "lanes-push-app-private-key"
