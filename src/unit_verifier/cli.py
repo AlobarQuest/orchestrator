@@ -26,6 +26,10 @@ refuses a bump with no grant, so neither reads the record.
 A unit the lane could not take to an answer is a keyed alert (`alerts.py`), sent after every unit
 has had its turn, so a refused unit or an alert-hub failure never stops a rotation.
 
+`unit-verifier repositories` verifies nothing: it prints the repositories the lane's container
+mints its GitHub token for (`check_filing_repositories`), read from the member record with the
+same VERIFIER bearer, and exits 0, or prints nothing on stdout and exits 3.
+
 EXIT CODES:
   0  every submitted unit was verified and completed or is waiting on a check, or none was
      submitted.
@@ -52,7 +56,7 @@ from typing import Any
 
 import httpx
 
-from sds_members.client import MembersUnreadable
+from sds_members.client import Member, MembersUnreadable
 from sds_members.populations import granted, service_for_change_class
 from unit_verifier.alerts import (
     CHECKS_UNREADABLE,
@@ -297,6 +301,37 @@ def _grant_hold(
     return (REFUSED, f"the member record does not grant {service} on {repository}")
 
 
+def check_filing_repositories(members: Sequence[Member]) -> list[str]:
+    """The repositories a unit that files checks can target: a bump's grant is `dependency_updates`
+    and an app change's `app_changes` (`service_for_change_class`), so those granted either, each
+    once by casefolded name with the first spelling kept, bumps' first. GitHub's names are
+    case-insensitive, and the App mint refuses a repository named twice that way."""
+    seen: dict[str, str] = {}
+    for service in ("dependency_updates", "app_changes"):
+        for repository in granted(members, service):
+            seen.setdefault(repository.casefold(), repository)
+    return list(seen.values())
+
+
+def print_repositories(client: VerifierClient) -> int:
+    """Print `check_filing_repositories`, one per line. An unreadable or empty record, or no
+    repository granted, prints nothing on stdout and exits 3: never a shorter list."""
+    try:
+        names = check_filing_repositories(client.members())
+    except (VerifierCallError, MembersUnreadable) as error:
+        print(f"unit-verifier repositories: {error}", file=sys.stderr)
+        return INCOMPLETE
+    if not names:
+        print(
+            "unit-verifier repositories: no repository is granted dependency_updates or"
+            " app_changes",
+            file=sys.stderr,
+        )
+        return INCOMPLETE
+    print("\n".join(names))
+    return 0
+
+
 def exit_code(outcomes: Sequence[Outcome]) -> int:
     results = {outcome.result for outcome in outcomes}
     return FOUND if results - {"completed", "would-verify", WAITING} else 0
@@ -335,6 +370,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         prog="unit-verifier", description="Verify every submitted rotation unit."
     )
     parser.add_argument("--dry-run", action="store_true", help="list what would be verified")
+    commands = parser.add_subparsers(dest="command")
+    commands.add_parser(
+        "repositories",
+        help="print the repositories whose required checks a pass may read, one per line",
+    )
     args = parser.parse_args(argv)
     github_token = os.environ.get("ROTATION_VERIFIER_GITHUB_TOKEN", "")
     token = os.environ.get("ORCHESTRATOR_API_TOKEN", "")
@@ -351,6 +391,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     except UnusableEndpointError as error:
         print(f"FATAL: {error}", file=sys.stderr)
         return 1
+    if args.command == "repositories":
+        try:
+            return print_repositories(client)
+        finally:
+            client.close()
     try:
         return run(
             client,

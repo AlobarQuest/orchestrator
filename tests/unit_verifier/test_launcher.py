@@ -1,4 +1,8 @@
-"""The launcher: a dead-man lane whose alert token can never stop a verification."""
+"""The launcher on the Mac: a dead-man lane whose alert token can never stop a verification.
+
+A set `BWS_ACCESS_TOKEN` means the lane's container (`tests/scripts/test_run_unit_verifier.py`), so
+these runs set none and a stand-in `sds-token.sh` exports the Mac's identity in place of the
+Keychain read."""
 
 from __future__ import annotations
 
@@ -16,6 +20,7 @@ case " $* " in
 esac
 printf '{"value": "not-a-real-key"}'
 """
+_SDS_TOKEN = "BWS_ACCESS_TOKEN=not-a-real-identity\nexport BWS_ACCESS_TOKEN\n"
 # Records the NAME of each variable set, never a value, and whether the alert token is empty.
 _PROGRAM = """#!/bin/sh
 env | sed 's/=.*//' > "$ENV_LOG"
@@ -42,6 +47,7 @@ def _run(tmp_path: Path, **env_overrides: str) -> tuple[int, str, set[str]]:
     (root / "scripts").mkdir(parents=True)
     for name in (LAUNCHER.name, "sds-deadman.sh", "sds-bws.sh"):
         shutil.copy(Path("scripts") / name, root / "scripts" / name)
+    (root / "scripts" / "sds-token.sh").write_text(_SDS_TOKEN)
     venv = root / ".venv" / "bin"
     venv.mkdir(parents=True)
     (venv / "python").symlink_to((Path.cwd() / ".venv" / "bin" / "python").resolve())
@@ -57,7 +63,6 @@ def _run(tmp_path: Path, **env_overrides: str) -> tuple[int, str, set[str]]:
     env = {
         "PATH": f"{stubs}:/usr/bin:/bin",
         "HOME": str(home),
-        "BWS_ACCESS_TOKEN": "not-a-real-identity",
         "ENV_LOG": str(env_log),
         **env_overrides,
     }

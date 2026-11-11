@@ -381,6 +381,38 @@ lane") still needs the following, in this order, each in its own change or act:
    left firing never resolve), the paired reporting runs, the schedule, and the Mac job's
    retirement.
 
+`unit-verifier`'s tracked files (`lanes/unit-verifier/compose.yaml` and `crontab`) don't register
+it either. Its state is the pass's `alerts.json`, so its compose mounts the named volume
+`sds-lanes-unit-verifier-state` at `VERIFIER_STATE_DIR` (`/var/lib/sds/unit-verifier`). Its crontab
+runs `lane-run unit-verifier` every ten minutes at minutes 2, 12, 22, 32, 42 and 52
+(`2-52/10`), as the Mac job's `StartInterval` of 600 does; those minutes keep it clear of every
+other lane's start, and the verifier has no scheduled-pass flag. Its `.bws-secrets.toml` secrets
+are the VERIFIER bearer, the `sds-bridge` alert sender (every pass) and the read-only App's key,
+all read with the lane's one token; on the Mac the narrow Keychain identity still reads the first
+two through `sds-token.sh`. Its compose leaves `SDS_DEADMAN_PING_URL_UUID` empty until the lane's
+ping-URL secret exists, so until then the container's dead-man helper pings nothing and says so.
+Its cut-over (ADR-0059, "Cut-over for one lane") still needs the following, in this order, each in
+its own change or act:
+
+1. The orchestrator serving this release; then HQ creates `sds-lane-unit-verifier` from the
+   compose without deploying it.
+2. The VM root's keeper commands for the lane token and `unit-verifier-ping-url`.
+3. The lane's registry rows in this repository, in two changes: the token's row and the ping URL's
+   row. In the same work, the read-App key row's `runtime-fetch` reader for
+   `scripts/run-unit-verifier.sh`.
+4. The lane account's grants on its three secrets and its ping-URL secret.
+5. The token's mint and the executor's write; then the ping URL's row made due and the executor's
+   write (ADR-0055 amendment 23).
+6. A served release whose compose names the ping-URL secret's id, with `unit-verifier` removed
+   from `test_deploy_lanes.py`'s `placeholders`.
+7. The lane's `--add`, then the `lane-run --read` proof and a `--dry-run` in the container. The
+   dry run also proves the read App's installation covers every repository the member record
+   grants `dependency_updates` or `app_changes`: a repository outside it makes the mint refuse,
+   and every pass then runs with no GitHub token and exits 3.
+8. Cut-over steps 2 onward: the copy of the Mac's `sds/verifier/alerts.json` into the volume
+   (cut-over step 2, before the first pass in the container, or the alerts the Mac left firing
+   never resolve), the paired reporting runs, the schedule, and the Mac job's retirement.
+
 ### A lane's GitHub token (ADR-0059 increment 3)
 
 A lane that reads or pushes to GitHub mints its own installation token each pass from one of the
@@ -447,6 +479,17 @@ member record with the observer bearer, each once: the same population its subje
 (`src/revision_watcher/subjects.py`). An unreadable record or an empty population exits 3 before
 any mint. Its GET calls are a branch, a commit and a compare (`src/revision_watcher/github.py`), so
 it mints `metadata=read` and `contents=read` only.
+
+The unit verifier mints the same way in its container (`scripts/run-unit-verifier.sh`), into
+`ROTATION_VERIFIER_GITHUB_TOKEN`. Its repositories are those the member record grants
+`dependency_updates` or `app_changes`, the grants a bump's or an app change's repository is held to,
+printed by `unit-verifier repositories` with the lane's own VERIFIER bearer, each once. Its one
+GitHub call is `GET /repos/{repository}/branches/main/protection/required_status_checks`
+(`src/unit_verifier/required_checks.py`), so it mints `metadata=read` and `administration=read`
+only. Unlike the other lanes, a failed derivation or mint doesn't stop the pass: rotation units
+need no GitHub read, so the pass runs with no GitHub token and the launcher then exits 3, which
+pings `/fail`. In that pass every unit with checks to file is held unverified as `verify-refused`,
+with its alert, and the next pass tries again.
 
 The narrowing bounds what the token is granted. It doesn't stop the token reading public
 resources, which need no token at all

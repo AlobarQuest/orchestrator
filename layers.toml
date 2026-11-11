@@ -364,7 +364,9 @@ paths = [
   "tests/unit_verifier/test_launcher.py",
   "tests/unit_verifier/test_unit_verifier_launcher.py",
   "tests/unit_verifier/test_pass.py",
+  "tests/unit_verifier/test_repositories.py",
   "scripts/run-unit-verifier.sh",
+  "tests/scripts/test_run_unit_verifier.py",
   "scripts/install-unit-verifier-launchd.sh",
   "scripts/com.devon.unit-verifier.plist",
 ]

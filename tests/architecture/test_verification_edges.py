@@ -201,6 +201,8 @@ NAMED_CHECK = f"{UNIT_PATH}/verifier-evidence/named-check"
 REQUIRED = "/repos/o/r/branches/main/protection/required_status_checks"
 # The orchestrator-verifier VERIFIER bearer, which `image_release` shares.
 VERIFIER_BEARER = "660d5846-abcb-4751-be86-b483012899eb"
+# The read-only lane App's key, piped into the container's GitHub mint (ADR-0059 increment 3).
+READ_APP_KEY = "314a966c-5654-4e3c-8358-b4fd01268775"
 LANE = Edge(
     change_manager=frozenset(),
     orchestrator=frozenset(
@@ -214,7 +216,7 @@ LANE = Edge(
     ),
     github=frozenset({("GET", REQUIRED)}),
     alert_hub=frozenset({("POST", "/v1/alerts")}),
-    bearers=DEADMAN | {VERIFIER_BEARER, GH_AUTH_TOKEN, SDS_BRIDGE_ALERT_BEARER},
+    bearers=DEADMAN | {VERIFIER_BEARER, GH_AUTH_TOKEN, SDS_BRIDGE_ALERT_BEARER, READ_APP_KEY},
 )
 LAUNCHERS = ("scripts/run-unit-verifier.sh",)
 LANE_PROBES = frozenset(

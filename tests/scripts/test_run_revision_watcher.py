@@ -22,6 +22,7 @@ import pytest
 import yaml
 
 from scripts import deploy_orchestrator as deploy
+from tests.scripts.test_run_unit_verifier import lane_start_minutes
 
 LAUNCHER = Path("scripts/run-revision-watcher.sh")
 COMPOSE = Path("lanes/revision-watcher/compose.yaml")
@@ -421,17 +422,7 @@ def test_the_crontab_runs_the_pass_hourly_as_the_mac_job_does() -> None:
 def test_no_two_lanes_start_a_pass_in_the_same_minute() -> None:
     """Minute 40 is clear of the deploy watcher's 20, execution-watch's quarter-hours and the
     landing ledger's 07:30."""
-    minutes: dict[str, set[int]] = {}
-    for path in sorted(Path("lanes").glob("*/crontab")):
-        for line in path.read_text().splitlines():
-            if not line.strip() or line.startswith("#"):
-                continue
-            field = line.split()[0]
-            step = field.removeprefix("*/")
-            if step != field:
-                minutes[path.parent.name] = set(range(0, 60, int(step)))
-            else:
-                minutes[path.parent.name] = {int(field)}
+    minutes = lane_start_minutes()
     assert minutes["revision-watcher"] == {40}
     for lane, taken in minutes.items():
         if lane != "revision-watcher":

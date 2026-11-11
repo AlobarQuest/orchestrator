@@ -1,0 +1,32 @@
+# sds-lane-unit-verifier (ADR-0059 increment 3, Amendment 1): the unit-verifier lane. HQ creates the
+# resource from this file. It serves nothing: no port, no domain, so no Traefik labels and no
+# `networks:` entry, as `lanes/landing-ledger/compose.yaml`. Its state is the pass's `alerts.json`,
+# on a named volume at `VERIFIER_STATE_DIR`, as `lanes/execution-watch/compose.yaml`; the Mac's
+# `sds/verifier/alerts.json` is copied in at cut-over, before the first pass in the container, or
+# the alerts the Mac left firing never resolve. The lane's token is the resource's own
+# `UNIT_VERIFIER_BWS_ACCESS_TOKEN` variable, which the VM rotation executor writes; this file names
+# it and never holds a value. With it the launcher reads the orchestrator's VERIFIER bearer, the
+# `sds-bridge` alert sender and the read-only App's key, derives the repositories from the member
+# record and mints the pass's GitHub token (`scripts/run-unit-verifier.sh`).
+# `SDS_DEADMAN_PING_URL_UUID` is empty until the lane's ping-URL secret,
+# `unit-verifier-ping-url` in `Rotation / Keepers`, exists: the VM root creates that keeper at
+# cut-over and a later change writes its id here. While it is empty the dead-man helper falls
+# back to the Mac's lookup by check name, which needs the broad Keychain identity the container
+# doesn't have, so a pass pings nothing and logs `no SDS_DEADMAN_PING_URL_UUID and no broad BWS
+# identity — alerting disabled this run` (`scripts/sds-deadman.sh`). The schedule stays off
+# (`LANE_SCHEDULE_ENABLED`) until the cut-over turns it on.
+services:
+  unit-verifier:
+    image: ghcr.io/alobarquest/sds-lanes:${SDS_LANES_IMAGE_TAG}
+    command: ["unit-verifier"]
+    environment:
+      BWS_ACCESS_TOKEN: ${UNIT_VERIFIER_BWS_ACCESS_TOKEN}
+      LANE_SCHEDULE_ENABLED: ${LANE_SCHEDULE_ENABLED:-false}
+      VERIFIER_STATE_DIR: /var/lib/sds/unit-verifier
+      SDS_DEADMAN_PING_URL_UUID: ""
+    volumes:
+      - sds-lanes-unit-verifier-state:/var/lib/sds/unit-verifier
+    restart: unless-stopped
+
+volumes:
+  sds-lanes-unit-verifier-state:
