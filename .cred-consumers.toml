@@ -877,6 +877,54 @@ healthchecks_check = "sds-revision-watcher"
   uuid = "9b2722ea-8ec1-425b-ac2e-b4ff00cba931"
   note = "the keeper, in Rotation / Keepers, and the one copy; the lane reads it with its own token"
 
+# ── The unit-verifier lane's token and ping URL (ADR-0059 increment 3) ───────────
+# ADR-0055 amendment 19, item 8: the lane's two rows, both handed to the SDS. The token's row is due
+# for its first issue by `rotate_requested`; a later change dates the ping URL's row. Both keepers
+# were created in Rotation / Keepers at HQ gate G-33.
+# Neither row carries `created`, for the reason the landing ledger's block gives.
+[[credential]]
+id = "unit-verifier-bws-token"
+class = "bws-lane-token"
+provider = "bws-lane-token"
+bws_uuid = "c8381bef-f8a0-4b73-8158-b4ff00e87766"
+rotated_by_sds = true
+rotate_requested = "2026-11-11"
+# What the lane's account sees, exactly: .bws-secrets.toml's unit-verifier secrets
+# (orchestrator-verifier-bearer, ALERT_HUB_SENDER_TOKEN_SDS_BRIDGE, lanes-read-app-private-key)
+# and the ping URL's keeper.
+reach_secrets = ["660d5846-abcb-4751-be86-b483012899eb", "b415d03b-f92d-46b1-8a9d-b4f10103df49", "314a966c-5654-4e3c-8358-b4fd01268775", "1cfc8352-c960-4afc-bd49-b4ff00e8783e"]
+reach_projects = []
+
+  [[credential.consumer]]
+  kind = "bws-secret"
+  uuid = "c8381bef-f8a0-4b73-8158-b4ff00e87766"
+  note = "the keeper, in Rotation / Keepers; only the executor reads it"
+
+  [[credential.consumer]]
+  kind = "coolify-env"
+  instance = "prod"
+  resource_type = "service"
+  uuid = "y144dc0981smrtzl587hqa4f"
+  key = "UNIT_VERIFIER_BWS_ACCESS_TOKEN"
+  redeploy = false
+  note = "the sds-lane-unit-verifier service's variable; the lane phases redeploy it, never the executor"
+
+# No `created`, for the reason the landing ledger's block gives.
+[[credential]]
+id = "unit-verifier-ping-url"
+class = "healthchecks-ping-url"
+provider = "healthchecks-ping-url"
+bws_uuid = "1cfc8352-c960-4afc-bd49-b4ff00e8783e"
+rotated_by_sds = true
+# The check whose ping URL the executor reads into the keeper (ADR-0055 amendment 23); the lane
+# keeps the check it pinged from the Mac (ADR-0059 decision 3).
+healthchecks_check = "sds-unit-verifier"
+
+  [[credential.consumer]]
+  kind = "bws-secret"
+  uuid = "1cfc8352-c960-4afc-bd49-b4ff00e8783e"
+  note = "the keeper, in Rotation / Keepers, and the one copy; the lane reads it with its own token"
+
 # ── The two lane GitHub Apps' private keys (ADR-0059 increment 3) ────────────────
 # Devon created both Apps on 2026-11-09 (HQ gate G-17) and stored each key, base64 of the PEM, in
 # BWS project `SDS / Lane Apps`. `estate_clients/github_app_mint.py` (`sds-github-mint`) reads that
@@ -887,10 +935,10 @@ healthchecks_check = "sds-revision-watcher"
 # settings pages in one sitting. `created` is the age anchor: at 365 days (infraops CLASS_POLICY)
 # the 03:00 scan posts `cred.rotation-age` with the manual checklist, and the rotation proposer
 # reports the row `legacy` and proposes no package.
-# Each lane's runtime-fetch row lands in that lane's move PR. The landing-ledger, deploy-watcher and
-# revision-watcher lanes' accounts hold read grants on the read App's keeper (HQ gates G-18, G-28
-# and G-30), so that row lists each lane's reader; no machine account holds a grant on the push
-# App's keeper yet, so its row lists the keeper alone.
+# Each lane's runtime-fetch row lands in that lane's move PR. The landing-ledger, deploy-watcher,
+# revision-watcher and unit-verifier lanes' accounts hold read grants on the read App's keeper (HQ
+# gates G-18, G-28, G-30 and G-33), so that row lists each lane's reader; no machine account holds
+# a grant on the push App's keeper yet, so its row lists the keeper alone.
 [[credential]]
 id = "lanes-read-app-private-key"
 class = "github-app-private-key"
@@ -926,6 +974,13 @@ rotation_preconditions = ["rotate it with lanes-push-app-private-key in one sitt
   ref = "scripts/run-revision-watcher.sh"
   healthchecks_check = "sds-revision-watcher"
   note = "read in the sds-lane-revision-watcher container with the lane's own token, each pass, and piped straight into sds-github-mint; pings sds-revision-watcher"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
+  ref = "scripts/run-unit-verifier.sh"
+  healthchecks_check = "sds-unit-verifier"
+  note = "read in the sds-lane-unit-verifier container with the lane's own token, each pass, and piped straight into sds-github-mint; pings sds-unit-verifier"
 
 [[credential]]
 id = "lanes-push-app-private-key"
