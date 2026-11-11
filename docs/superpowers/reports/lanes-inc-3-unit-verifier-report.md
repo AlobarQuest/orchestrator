@@ -1,6 +1,11 @@
-Outcome: done
+Outcome: blocked
 
 # Build report: the unit verifier's lane files and launcher (ADR-0059 increment 3, step 3e-4)
+
+**Blocked on one question:** `lanes-inc-3-unit-verifier-question.md`. The handoff says that in a
+pass with no GitHub token, check-filing units "wait or go to a person". The code holds them as
+`verify-refused`. The work is committed and `make check` is green. No PR is open yet: the push and
+the PR follow HQ's answer.
 
 Branch `hq/lanes-inc-3-unit-verifier`, based on `origin/main` at `270eec42`. This change has
 no production act. It makes no live mint, no BWS read, no GitHub, Coolify, VM, Healthchecks or
@@ -80,8 +85,9 @@ different for this lane.
   ("the verifier's repositories could not be derived (exit N); nothing was minted and this pass
   runs with no GitHub token"). It doesn't read the App key and doesn't mint.
 - If the mint fails (non-zero, empty answer, or an unreadable key), the launcher logs one line
-  ("could not mint the verifier's GitHub token from the read-only App (exit N); this pass runs
-  with no GitHub token").
+  ("could not mint the verifier's GitHub token from the read-only App, or read its key (exit N);
+  this pass runs with no GitHub token"). `sds_bws_value` fails silently, so the line names both
+  causes. A failed mint's output is discarded even if it printed a token.
 - Either way the pass runs with `ROTATION_VERIFIER_GITHUB_TOKEN` empty. Then the launcher reports
   3, which pings `/fail`: a program exit of 0 or 2 becomes 3, and 3 stays 3. A program exit of 1,
   or of any undescribed code (folded to 1 as before), stays 1, because the tool failing outranks
@@ -136,13 +142,19 @@ this run`. `test_without_a_ping_url_secret_a_pass_pings_nothing` pins this. The 
   3 and empty stdout, no granted repository with exit 3, a missing bearer with exit 1, the service
   literals held to `service_for_change_class`, and a bare `unit-verifier` and `--dry-run` still
   parsing.
-- I ran a mutation check on the launcher. All five mutations were caught by
-  `test_run_unit_verifier.py`, and the launcher was restored by file copy:
+- I ran a mutation check on the launcher. All seven mutations were caught by
+  `test_run_unit_verifier.py`, and the launcher was restored by file copy each time:
   1. No exit-3 promotion.
   2. A preset token kept in the container.
   3. The lane token kept for the pass.
   4. `administration=read` dropped.
   5. The launcher exits on a derivation failure.
+  6. The derivation check's `||` turned to `&&` (a failing derivation that printed names).
+  7. A failed mint's output kept as the token.
+- `/code-review` (medium) on `origin/main...HEAD` returned four findings. I acted on one: the mint
+  warning now names a failed key read. I left three: exit 3 on any tokenless pass (the handoff's
+  rule), the empty ping-URL placeholder (the handoff's design until cut-over), and
+  `--dry-run repositories` parsing (the launcher never passes it).
 - `shellcheck scripts/run-unit-verifier.sh` reports nothing. The security scanner (`--category
   security`) has no BLOCK findings.
 
@@ -152,8 +164,8 @@ this run`. `test_without_a_ping_url_secret_a_pass_pings_nothing` pins this. The 
   only `PATH` and `HOME`, so the Mac path still sources `sds-token.sh`. One behavior changes on
   the Mac: an ad hoc run with `BWS_ACCESS_TOKEN` preset now takes the container branch. The model
   has the same property.
-- `unset BWS_ACCESS_TOKEN` happens in the container only, so the Mac path stays byte-for-byte what
-  it was (apart from comments).
+- `unset BWS_ACCESS_TOKEN` happens in the container only. The Mac path behaves as before, though
+  its activation block is now nested under the container test.
 - I didn't add a module-level collection of service names. The two service names are a local
   literal that `granted()` validates against `SERVICES`, and a test holds them to
   `service_for_change_class`.
@@ -166,8 +178,9 @@ this run`. `test_without_a_ping_url_secret_a_pass_pings_nothing` pins this. The 
   the model, which also writes plain lines.
 - **Code Brain rule 4 (never silently swallow).** The derivation and the mint have no `|| true`.
   Each failure sets `GITHUB_TOKEN_MISSING`, logs one line, and makes the launcher report 3. The
-  existing alert-token `|| true` is followed by its logged warning, and the program's failed
-  alert-hub send exits 3, as before. In `print_repositories` each caught exception is printed and
+  existing alert-token `|| true` is followed by its logged warning. With an empty token,
+  `sync_alerts` always returns a problem, so an acting pass then exits 3, as before. A `--dry-run`
+  sends nothing and needs no alert token. In `print_repositories` each caught exception is printed and
   exits 3.
 - **Code Brain rule 5 (never log secrets).** No log line holds a token, key, bearer or header. Tests
   assert that the lane token, the minted token, the bearer and the alert token don't appear in
