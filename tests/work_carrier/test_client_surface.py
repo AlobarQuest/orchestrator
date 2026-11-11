@@ -75,12 +75,16 @@ def test_the_carrier_cannot_write_to_change_manager_at_all() -> None:
     )
 
 
-def test_the_orchestrator_write_surface_is_one_route_and_no_more() -> None:
+def test_the_orchestrator_write_surface_is_two_routes_and_no_more() -> None:
+    """The intake, and the standing approval's check recorded before it (ADR-0055 amendment 22
+    item 3)."""
     assert is_allowed_write("/api/v1/package-intakes")
+    assert is_allowed_write("/api/v1/observations")
     for forbidden in (
         "/api/v1/package-intakes/",
         "/api/v1/revisions",
-        "/api/v1/observations",
+        "/api/v1/observations/",
+        "/api/v1/observations/1",
         "/api/v1/package-intakes/1/decomposition-proposals",
         "/api/v1/work-units/1/approvals",
         "/api/v1/work-units/1/dispatch",
@@ -119,13 +123,14 @@ def test_neither_allowlist_can_satisfy_the_other() -> None:
 
 
 def test_the_carrier_asks_and_registers_and_can_do_nothing_else_to_the_orchestrator() -> None:
-    """Two public methods, named: one read, one write. A third is a surface nobody decided on."""
+    """Three public methods, named: one read and two writes, the second recording the standing
+    approval's check (ADR-0055 amendment 22 item 3). A fourth is a surface nobody decided on."""
     public = {
         name
         for name in vars(OrchestratorClient)
         if not name.startswith("_") and name not in {"close"}
     }
-    assert public == {"carried_revisions", "register_intake"}
+    assert public == {"carried_revisions", "register_intake", "record_observation"}
 
 
 def test_a_forbidden_write_never_reaches_the_transport() -> None:

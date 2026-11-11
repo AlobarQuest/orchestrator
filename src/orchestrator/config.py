@@ -151,6 +151,11 @@ class Settings(BaseSettings):
     # and it may claim nothing else; the instance above may not claim those units. Unset refuses
     # every claim on them, and boot holds this setting to its profile the same way.
     rotation_keychain_executor_agent_id: str | None = None
+    # ADR-0055 amendment 22 item 3. The registry agent id the work carrier records its
+    # standing-approval check under. The decomposition gate admits a policy-approved lane
+    # credential's revision 1 only beside an observation `recorded_by` this identity, so it must be
+    # one no other caller holds. Unset (or blank) refuses every standing approval.
+    work_carrier_agent_id: str | None = None
     # Runtime authentication, read once at boot by `main.load_auth_config`. Every one of these is
     # a RAW STRING on purpose, including the four that hold JSON. A `dict` or `list` annotation
     # would have pydantic-settings decode them itself, so a malformed value would fail while
@@ -168,7 +173,9 @@ class Settings(BaseSettings):
     credential_key_header: str = "X-Credential-Key-Id"
     csrf_secret: SecretStr | None = None
 
-    @field_validator("rotation_executor_agent_id", "rotation_keychain_executor_agent_id")
+    @field_validator(
+        "rotation_executor_agent_id", "rotation_keychain_executor_agent_id", "work_carrier_agent_id"
+    )
     @classmethod
     def _blank_is_unset(cls, value: str | None) -> str | None:
         return value.strip() or None if value is not None else None

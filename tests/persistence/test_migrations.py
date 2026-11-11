@@ -1091,3 +1091,32 @@ def test_0047_drops_tracker_bindings_and_its_downgrade_restores_them(migrated_en
 
     assert "'tracker'" not in _check_definition(migrated_engine, "observation_kind")
     assert "'tracker_state_divergence'" not in _check_definition(migrated_engine, "type")
+
+
+def _observation_check(engine, name: str) -> str:
+    with engine.connect() as connection:
+        return connection.scalar(
+            text("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = :name"),
+            {"name": name},
+        )
+
+
+def test_0048_admits_the_carrier_s_standing_approval_check_and_downgrades(
+    migrated_engine,
+) -> None:
+    """ADR-0055 amendment 22 item 3: the carrier's source system and observation type."""
+    config = alembic_config()
+    assert "'work_carrier'" in _observation_check(migrated_engine, "ck_observations_source_system")
+    assert "'standing_approval_check'" in _observation_check(
+        migrated_engine, "ck_observations_type"
+    )
+
+    command.downgrade(config, "0047_retire_tracker_bindings")
+    try:
+        source = _observation_check(migrated_engine, "ck_observations_source_system")
+        kinds = _observation_check(migrated_engine, "ck_observations_type")
+        assert "'work_carrier'" not in source and "'rotation_proposer'" in source
+        assert "'standing_approval_check'" not in kinds and "'rotation_due'" in kinds
+    finally:
+        command.upgrade(config, "head")
+    assert "'work_carrier'" in _observation_check(migrated_engine, "ck_observations_source_system")

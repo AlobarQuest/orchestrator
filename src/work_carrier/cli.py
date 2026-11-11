@@ -76,11 +76,11 @@ import argparse
 import json
 import os
 import sys
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from rotation_worker.git_mirror import MirrorError, RepoMirror, default_mirror_root
-from rotation_worker.registry import RegistryError, rotated_by_sds
+from rotation_worker.registry import RegistryEntry, RegistryError, find_credential, rotated_by_sds
 from rotation_worker.types import of_a_type
 from sds_members.client import Hold, Member, MembersUnreadable, read_members_from_environment
 from work_carrier.change_manager import (
@@ -98,7 +98,7 @@ from work_carrier.orchestrator_client import (
     OrchestratorClient,
     OrchestratorError,
 )
-from work_carrier.prepare import Prepared, Refused, held_refusal, prepare
+from work_carrier.prepare import Prepared, Refused, held_refusal, prepare, standing_approval
 from work_carrier.workability import (
     NOT_WORKABLE,
     OPERATIONAL,
@@ -160,12 +160,16 @@ def worst(codes: list[int]) -> int:
 
 DEFAULT_CHECKOUT_ROOT = "~/Projects"
 
-# ADR-0027 recommends the SYSTEM actor: it already performs canonical mutation, so it needs no
-# registry entry and no image rebuild. A carrier-specific actor would attribute more precisely
-# and costs a merged security-standards commit plus a rebuild, because `agent_id` resolves
-# against a bundle baked into the image. `source_system` on the record and the change record id
-# on the revision already carry the provenance a distinct identity would add.
+# The carrier registers intakes as the SYSTEM actor, as ADR-0027 recommended: the change record id
+# on the revision carries the provenance. ADR-0055 amendment 22 item 3 makes a distinct identity
+# load-bearing for one act: the decomposition gate admits a policy-approved lane credential's
+# revision 1 only beside an observation recorded by the carrier's own registry agent id
+# (`ORCHESTRATOR_WORK_CARRIER_AGENT_ID`), and any SYSTEM caller can record an observation. So that
+# observation is posted with a second credential (`WORK_CARRIER_OBSERVATION_KEY_ID` and
+# `_TOKEN`), never with this key; until one is configured, such a revision waits for a person.
 SYSTEM_KEY_ID = "orchestrator-system"
+OBSERVATION_KEY_ID_ENV = "WORK_CARRIER_OBSERVATION_KEY_ID"
+OBSERVATION_TOKEN_ENV = "WORK_CARRIER_OBSERVATION_TOKEN"
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
@@ -212,6 +216,39 @@ def _registrar(args: argparse.Namespace) -> OrchestratorClient | None:
     if not token:
         return None
     return OrchestratorClient(token, SYSTEM_KEY_ID, base_url=args.orchestrator_url)
+
+
+def _observation_identity() -> tuple[str, str] | None:
+    """The carrier's own identity for its standing-approval observation, or `None`.
+
+    The one seam for how that observation is authenticated, whichever identity design is chosen
+    (one credential for both acts, or a second one for observations): set both variables to it.
+    Unset, blank, or naming the SYSTEM key is no identity, and never a fallback to SYSTEM.
+    """
+    key_id = os.environ.get(OBSERVATION_KEY_ID_ENV, "").strip()
+    token = os.environ.get(OBSERVATION_TOKEN_ENV, "")
+    if not key_id or not token or key_id == SYSTEM_KEY_ID:
+        return None
+    return key_id, token
+
+
+def _recorder_for(
+    args: argparse.Namespace, recorder: OrchestratorClient | None
+) -> OrchestratorClient | None:
+    """The client the standing-approval observation is posted with, on a `--register` pass."""
+    if not args.register or recorder is not None:
+        return recorder
+    identity = _observation_identity()
+    if identity is None:
+        return None
+    key_id, token = identity
+    return OrchestratorClient(token, key_id, base_url=args.orchestrator_url)
+
+
+def _registry_reader() -> Callable[[str], RegistryEntry]:
+    """The registry at each repository's `main`, through the carrier's own mirror root."""
+    mirror = RepoMirror(default_mirror_root("work-carrier"))
+    return lambda credential_id: find_credential(mirror, credential_id)
 
 
 def _writer_for(
@@ -296,11 +333,19 @@ def _records_to_carry(
     return pending, carried, findings
 
 
-def _carry(item: Prepared, writer: OrchestratorClient | None, out) -> str | None:
+def _carry(
+    item: Prepared,
+    writer: OrchestratorClient | None,
+    out,
+    recorder: OrchestratorClient | None = None,
+) -> str | None:
     """Report one prepared record, and register it when this pass was asked to.
 
     Returns the refusal message when a registration failed and `None` otherwise -- including on
-    a pass that was not asked to register, which is not a finding.
+    a pass that was not asked to register, which is not a finding. A record carrying a standing
+    approval's observation is registered only after that observation is recorded, under the
+    carrier's own identity (`recorder`): the gate reads it in the decomposition proposal's own
+    transaction, so a record written later couldn't help it, and a failed one posts no intake.
     """
     print(
         f"[PREPARED] change record {item.record.change_record_id}: "
@@ -313,6 +358,10 @@ def _carry(item: Prepared, writer: OrchestratorClient | None, out) -> str | None
         print("           not registered — this pass was not asked to (--register):", file=out)
         print(json.dumps(item.payload, sort_keys=True, default=str), file=out)
         return None
+    if item.standing_observation is not None:
+        failure = _record_standing(item, recorder, out)
+        if failure is not None:
+            return failure
     try:
         revision = writer.register_intake(item.payload)
     except OrchestratorError as error:
@@ -325,6 +374,30 @@ def _carry(item: Prepared, writer: OrchestratorClient | None, out) -> str | None
             print(f"           {guidance}", file=out)
         return str(error)
     print(f"           carried: revision {revision.get('id')}", file=out)
+    return None
+
+
+def _record_standing(item: Prepared, recorder: OrchestratorClient | None, out) -> str | None:
+    """Record the carry form's pass before the intake; the refusal message if it wasn't."""
+    observation = item.standing_observation
+    if recorder is None or observation is None:
+        # `_prepare_all` refuses this record when no identity is configured, so this is reached
+        # only by a caller that bypassed it; it still posts nothing.
+        message = "standing_approval_refused: no carrier observation identity to record with"
+        print(f"           NOT CARRIED: {message}", file=out)
+        return message
+    try:
+        recorder.record_observation(observation)
+    except OrchestratorError as error:
+        print(
+            f"           NOT CARRIED: the standing approval's check wasn't recorded: {error}",
+            file=out,
+        )
+        return str(error)
+    print(
+        f"           recorded the standing approval's check: {observation['source_reference']}",
+        file=out,
+    )
     return None
 
 
@@ -356,12 +429,15 @@ def _guidance(error: OrchestratorError) -> str:
 
 
 def _carry_all(
-    prepared: list[Prepared], writer: OrchestratorClient | None, out
+    prepared: list[Prepared],
+    writer: OrchestratorClient | None,
+    out,
+    recorder: OrchestratorClient | None = None,
 ) -> tuple[int, list[str]]:
     carried = 0
     unregistered: list[str] = []
     for item in prepared:
-        failure = _carry(item, writer, out)
+        failure = _carry(item, writer, out, recorder)
         if failure is not None:
             unregistered.append(failure)
         elif writer is not None:
@@ -370,7 +446,12 @@ def _carry_all(
 
 
 def _prepare_all(
-    pending: list[WorkRecord], root: Path, holds: dict[str, tuple[Hold, ...]]
+    pending: list[WorkRecord],
+    root: Path,
+    holds: dict[str, tuple[Hold, ...]],
+    find_entry: Callable[[str], RegistryEntry] | None = None,
+    *,
+    identified: bool = False,
 ) -> tuple[list[Prepared], list[Refused]]:
     prepared: list[Prepared] = []
     refused: list[Refused] = []
@@ -381,6 +462,10 @@ def _prepare_all(
         outcome = prepare(record, checkout_root=root)
         ceiling = held_refusal(outcome, holds) if isinstance(outcome, Prepared) else None
         outcome = ceiling or outcome
+        if isinstance(outcome, Prepared):
+            if find_entry is None:
+                find_entry = _registry_reader()
+            outcome = standing_approval(outcome, find_entry, identified=identified)
         if isinstance(outcome, Prepared):
             prepared.append(outcome)
         else:
@@ -409,6 +494,8 @@ def run(
     registrar: OrchestratorClient | None = None,
     members: list[Member] | None = None,
     rotated: Mapping[str, str] | None = None,
+    recorder: OrchestratorClient | None = None,
+    find_entry: Callable[[str], RegistryEntry] | None = None,
     out=sys.stdout,
 ) -> int:
     args = _parse_args(argv)
@@ -447,7 +534,10 @@ def run(
 
     pending, already_carried, unanswered = _records_to_carry(records, writer, out)
 
-    prepared, refused = _prepare_all(pending, root, holds)
+    # The carrier's own identity, read in both modes, so a standing approval it can't record is
+    # refused whichever flag was given rather than prepared on a bare pass and refused later.
+    identified = recorder is not None or _observation_identity() is not None
+    prepared, refused = _prepare_all(pending, root, holds, find_entry, identified=identified)
 
     # JUDGED BEFORE ANYTHING IS CARRIED, and the order is the substance rather than the layout:
     # only a record the three constraints all answer YES for reaches the writer. Devon's rule --
@@ -474,7 +564,7 @@ def run(
     ]
     held = [decision for decision in decisions if decision not in _CARRIED]
 
-    carried, unregistered = _carry_all(workable, writer, out)
+    carried, unregistered = _carry_all(workable, writer, out, _recorder_for(args, recorder))
     for item in refused:
         print(
             f"[REFUSED]  change record {item.record.change_record_id}: "

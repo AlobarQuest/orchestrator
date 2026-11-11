@@ -126,6 +126,12 @@ OBSERVATION_SOURCE_SYSTEMS = (
     # infrastructure scan that computes "due" is the SOURCE this producer reads, but this
     # producer is the one that files the row, and every member here names the producer.
     "rotation_proposer",
+    # The work carrier (ADR-0055 amendment 22 item 3): before it registers a lane credential's
+    # revision 1 that a policy approved, it records that its carry-form checks refused nothing.
+    # Its own member because the decomposition gate reads this row as the carrier's record, and the
+    # producer is the carrier. `rotation_proposer` is the near miss and is wrong: the proposer owns
+    # the checks' code, but it never runs this form and never records this row.
+    "work_carrier",
 )
 OBSERVATION_TRUST_CLASSIFICATIONS = ("orchestrator", "delivery_system", "monitor", "external")
 OBSERVATION_SUBJECT_TYPES = (
@@ -216,6 +222,11 @@ OBSERVATION_TYPES = (
     # TRIGGER and nothing about the rotation itself, which is work a person approves. `drift` is
     # the infrastructure digest's, and `alert` is a monitor's word for a running thing.
     "rotation_due",
+    # The work carrier ran the standing approval's carry form on one package revision and it
+    # refused nothing (ADR-0055 amendment 22 item 3), with the registry at a named commit. The
+    # decomposition gate admits a policy-approved lane credential's revision 1 only beside it.
+    # `github_check` is the near miss and is wrong: it names a check GitHub ran on a pull request.
+    "standing_approval_check",
 )
 OBSERVATION_STATUSES = (
     "passed",

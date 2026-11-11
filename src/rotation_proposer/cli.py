@@ -889,6 +889,12 @@ def _mirror() -> RepoMirror:
     return RepoMirror(default_mirror_root("rotation-proposer"))
 
 
+def _standing_approval_mirror() -> RepoMirror:
+    """The command's own mirror root, so it never shares refs with the scheduled pass
+    (`git_mirror` warns that two fetches into one bare clone race on its ref lock)."""
+    return RepoMirror(default_mirror_root("rotation-proposer-standing-approval"))
+
+
 def _served_last_rotated(credential_id: str) -> str | None:
     """What infraops serves as the credential's `last_rotated`. A map infraops doesn't serve, or
     one without the credential, is a read that can't be made, never a null."""
@@ -970,7 +976,7 @@ def _parser() -> argparse.ArgumentParser:
 def _standing_approval_command(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
     if args.submit:
         parser.error("standing-approval reads only; it takes no --submit")
-    return standing_approval(args.credential_id, _mirror())
+    return standing_approval(args.credential_id, _standing_approval_mirror())
 
 
 def run(argv: list[str] | None = None) -> int:

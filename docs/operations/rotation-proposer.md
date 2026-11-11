@@ -59,7 +59,11 @@ For a due credential whose package is `rotation-<credential_id>`:
    line reads `generated`.
 2. **Passes while it waits.** The pass writes nothing and reports `awaiting-approval`.
 3. **Devon approves the revision by name**, in the packages checkout, and publishes that commit.
-   No approval policy grants this profile, and this program never runs `approve`. The approval
+   This program never runs `approve`. The one exception is a lane credential's revision 1 on the
+   issue plan: the standing approval's policy may approve it, and the work carrier then checks it
+   before it registers the intake (see "Check a lane credential's revision 1 for the standing
+   approval"). That works only once intent-packages' schema-4 grant and the carrier's identity
+   exist; until then Devon approves that revision by name too. The approval
    does not move the hash fixture (`package_hash` drops `status`), so the commit holds the
    package and its lineage only. The checkout must be clean and level with `origin/main` again
    before the next pass, or the pass exits 2. Before approving, Devon does two reads of
@@ -250,14 +254,15 @@ approves the new criteria in that revision's one click, and the `revised` line s
 
 `rotation-proposer standing-approval <credential_id>` checks ADR-0055 amendment 22's decision item
 2 on a lane credential's standing package and reports each condition. It approves nothing, writes
-nothing and needs no credential. HQ runs it only after amendment 22's increments 3 (the carrier,
-its record and the decomposition gate) and 1 (intent-packages' schema-4 grant) land; until then
-every rotation revision still needs Devon's named approval.
+nothing and needs no credential. HQ runs it only after amendment 22's increment 1
+(intent-packages' schema-4 grant) lands; until then every rotation revision still needs Devon's
+named approval.
 
 It reads the following sources:
 
-- **The registry row:** at each registry repository's `main`, through this program's own mirror
-  (`~/.cache/rotation-proposer/mirrors`), as `rotation-worker compare-destinations` reads it.
+- **The registry row:** at each registry repository's `main`, through the command's own mirror
+  (`~/.cache/rotation-proposer-standing-approval/mirrors`), so it never shares refs with the
+  scheduled pass, as `rotation-worker compare-destinations` reads it.
 - **The package and its lineage:** `packages/rotation-<credential_id>/package.yaml` and
   `lineage.yaml` at one intent-packages `main` commit, through the same mirror. It doesn't read the
   local packages checkout.
@@ -290,6 +295,34 @@ value. Its exit codes are the following:
 - **1:** at least one condition refused; the verdict lists all of them.
 - **2:** a read failed or something raised, logged as `standing_approval.unreadable`. A ping URL
   that infraops dates exits 2, because its type has no rotation plan for `plan_for` to choose.
+
+### What the carrier checks before it registers an approved revision 1
+
+The work carrier runs the carry form (`standing_approval.carry`) on any rotation revision, keyed on
+the package's `profile`, whose approver is a `policy:` string (`src/work_carrier/standing.py`). It
+differs from the command in three ways:
+
+- **One policy approval, not none.** `policy_approved_revision_1` replaces
+  `unapproved_revision_1`: the lineage records exactly one approval, on revision 1, by
+  `policy:non-software-operational@<version>`, whose hash is the package's.
+- **The registry at `main`,** through the carrier's own mirror (`~/.cache/work-carrier/mirrors`).
+  A registry that moved since the approval makes the re-render differ, so the carrier refuses.
+- **No infraops read.** It accepts only the issue-plan re-render. A credential issued since the
+  approval is the executor's to catch: `checks._check_issue_fact` refuses before the claim, and
+  the issue's store step writes the keeper only after reading the marker there.
+
+It also binds what it read to what the emitter verified: the package must hash to the payload's
+`content_hash`, and the lineage's approval must be the one the emitter matched to a verified
+`package.approved` chain event (approver, hash, revision, commit and event id). A missing chain
+event refuses at the emitter (`package_not_intakeable`); anything else refuses
+`standing_approval_refused`, and the record waits for a person.
+
+On a pass, a `--register` pass records an observation (`work_carrier` / `standing_approval_check`,
+subject `<package_id>@r<revision>`) before it posts the intake, under the carrier's own identity:
+`WORK_CARRIER_OBSERVATION_KEY_ID` and `WORK_CARRIER_OBSERVATION_TOKEN`. With either unset, or the
+key id `orchestrator-system`, every such record refuses `standing_approval_refused`, in both modes.
+The decomposition gate admits the policy approver only beside that record, `recorded_by` the agent
+id `ORCHESTRATOR_WORK_CARRIER_AGENT_ID` names; unset, it refuses every standing approval.
 
 ## Authoring a standing rotation package by hand
 

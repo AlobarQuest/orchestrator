@@ -370,3 +370,11 @@ Subsystem rules continue in nested files that load only when a session reads fil
   bump breaches every hold on its dependency whatever its version (`factory_breaches`); never
   compare it as an exact version until the uv mutator locks one. A hold's ecosystem must be the one
   Dependabot uses for that repository. Detail: `docs/operations/membership.md`, "Hold a dependency".
+- A named person approves every rotation package revision except a lane credential's revision 1
+  that the standing approval's policy (`policy:non-software-operational@`) approved and the work
+  carrier checked (ADR-0055 amendment 22). The carrier runs `rotation_proposer.standing_approval`'s
+  carry form, then records `work_carrier` / `standing_approval_check` under its own identity
+  (`WORK_CARRIER_OBSERVATION_KEY_ID`, never `orchestrator-system`) before the intake; the
+  decomposition gate admits the policy approver only beside that record, `recorded_by`
+  `ORCHESTRATOR_WORK_CARRIER_AGENT_ID`. Either identity unset refuses every standing approval.
+  Detail: `docs/operations/rotation-proposer.md`.

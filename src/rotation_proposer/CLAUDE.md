@@ -1,8 +1,12 @@
 # Known Non-obvious Invariants, continued from the root `CLAUDE.md`: The rotation proposer lane (`src/rotation_proposer/`)
 
 - `rotation_proposer` never approves a package revision. A pass that revises a standing rotation
-  package to `ready_for_review` proposes nothing, and the first pass after a named human approves
-  it proposes. "Due" is infraops' rule, read from `security-drift-cli cred-findings` and never
+  package to `ready_for_review` proposes nothing, and the first pass after the revision is approved
+  proposes. A named person approves every rotation revision except a lane credential's revision 1
+  that the standing approval's policy approved and the work carrier checked with
+  `standing_approval.carry` (ADR-0055 amendment 22), which works only once intent-packages'
+  schema-4 grant and the carrier's identity exist. The carrier imports `standing_approval` and no
+  other module of this package. "Due" is infraops' rule, read from `security-drift-cli cred-findings` and never
   re-implemented here. The occurrence comes from that answer's structured fields and never
   contains today's date. It acts only on a credential its registry entry marks `rotated_by_sds`; a
   package without that flag is a finding and is never acted on. Each `--submit` pass also walks rotation records, due or not, through its own GET-only

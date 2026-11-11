@@ -50,6 +50,10 @@ from orchestrator.services.intake.packages import (
     register_approved_unit,
     register_dependency_with_event,
 )
+from orchestrator.services.intake.standing_approval import (
+    is_standing_approver,
+    standing_approval_refusal,
+)
 from orchestrator.services.lifecycle.lifecycle import (
     TransitionCommand,
     decomposition_unit_id,
@@ -133,7 +137,14 @@ def submit_decomposition_proposal(
     session: Session,
     command: DecompositionProposalCommand,
     actor: ActorContext,
+    *,
+    work_carrier_agent_id: str | None = None,
 ) -> DecompositionProposal:
+    """Register the proposal, then let policy approve it where policy may.
+
+    `work_carrier_agent_id` is `Settings.work_carrier_agent_id`: the identity whose recorded check
+    lets a standing approval stand for a person (ADR-0055 amendment 22). `None` refuses every one.
+    """
     _require_submission_actor(actor)
     revision = session.get(
         WorkPackageRevision,
@@ -264,7 +275,7 @@ def submit_decomposition_proposal(
         )
     )
     session.flush()
-    reason = _policy_approval(session, proposal, revision, actor)
+    reason = _policy_approval(session, proposal, revision, actor, work_carrier_agent_id)
     if reason is None:
         return proposal
     return _approve_by_policy(session, proposal, actor, reason)
@@ -308,7 +319,8 @@ def _approve_by_policy(
 
 
 # The approver a package revision carries when a standing approval policy approved it rather
-# than a person (ADR-0028; `package_sources`). Policy approves no rotation decomposition for one.
+# than a person (ADR-0028; `package_sources`). Policy approves no rotation decomposition for one,
+# except a lane credential's revision 1 the work carrier recorded checking (ADR-0055 amendment 22).
 _POLICY_APPROVER = "policy:"
 
 
@@ -317,6 +329,7 @@ def _policy_approval(
     proposal: DecompositionProposal,
     revision: WorkPackageRevision,
     actor: ActorContext,
+    work_carrier_agent_id: str | None = None,
 ) -> str | None:
     """The reason policy approves this decomposition, or ``None``: a person decides it.
 
@@ -332,7 +345,7 @@ def _policy_approval(
     if is_bump_revision(revision):
         outcome = _bump_policy_outcome(session, proposal, revision, actor)
     elif actor.role is ActorRole.SYSTEM:
-        outcome = _rotation_policy_outcome(session, proposal, revision)
+        outcome = _rotation_policy_outcome(session, proposal, revision, work_carrier_agent_id)
     else:
         return None
     if isinstance(outcome, PolicyRefusal):
@@ -347,15 +360,23 @@ def _rotation_policy_outcome(
     session: Session,
     proposal: DecompositionProposal,
     revision: WorkPackageRevision,
+    work_carrier_agent_id: str | None = None,
 ) -> str | PolicyRefusal:
     """Why policy approves a rotation's decomposition (ADR-0055 amendment 16), or the refusal.
 
-    One a person (not an approval policy) approved, whose dependencies are all unit-on-unit and
-    whose every unit is a rotation unit that only a rotation pattern recognises, through the
-    claim's own gate (``human_authority_gate``), with no more attempts than its envelope budgets.
+    One a person approved, whose dependencies are all unit-on-unit and whose every unit is a
+    rotation unit that only a rotation pattern recognises, through the claim's own gate
+    (``human_authority_gate``), with no more attempts than its envelope budgets. An approval
+    policy's revision is refused, except a lane credential's revision 1 the standing approval
+    approved and the work carrier recorded checking (ADR-0055 amendment 22,
+    ``standing_approval_refusal``), which then meets every other condition here.
     """
     if revision.approved_by.startswith(_POLICY_APPROVER):
-        return PolicyRefusal("revision_approved_by_policy", (revision.approved_by,))
+        if not is_standing_approver(revision.approved_by):
+            return PolicyRefusal("revision_approved_by_policy", (revision.approved_by,))
+        refusal = standing_approval_refusal(session, revision, work_carrier_agent_id)
+        if refusal is not None:
+            return refusal
     try:
         policy = load_factory_policy()
     except DomainError:
@@ -396,6 +417,11 @@ def _rotation_policy_outcome(
         "approved by policy (ADR-0055 amendment 16): every unit is a rotation unit the rotation "
         f"pattern recognises ({', '.join(sorted(patterns))}, policy version {policy.version}), "
         f"and the package revision was approved by {revision.approved_by}"
+        + (
+            ", whose check the work carrier recorded (ADR-0055 amendment 22)"
+            if revision.approved_by.startswith(_POLICY_APPROVER)
+            else ""
+        )
     )
 
 
