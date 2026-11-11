@@ -1,13 +1,13 @@
-Outcome: blocked
+Outcome: done
 
 # Build report: the unit verifier's lane files and launcher (ADR-0059 increment 3, step 3e-4)
 
-**Blocked on one question:** `lanes-inc-3-unit-verifier-question.md`. The handoff says that in a
-pass with no GitHub token, check-filing units "wait or go to a person". The code holds them as
-`verify-refused`. The work is committed and `make check` is green. No PR is open yet: the push and
-the PR follow HQ's answer.
+**B**HQ's answer to the one question** (`lanes-inc-3-unit-verifier-question-answered.md`): option 1,
+keep it as built. The handoff's "wait or go to a person" wording was wrong, and the code's
+`verify-refused` behavior is correct for this PR. Option 2 (a missing token maps to
+`CHECKS_UNREADABLE`) is recorded in the PR body as a follow-up.
 
-Branch `hq/lanes-inc-3-unit-verifier`, based on `origin/main` at `270eec42`. This change has
+nch `hq/lanes-inc-3-unit-verifier`, based on `origin/main` at `270eec42`. This change has
 no production act. It makes no live mint, no BWS read, no GitHub, Coolify, VM, Healthchecks or
 orchestrator call, and no `launchctl`.
 
@@ -200,9 +200,8 @@ this run`. `test_without_a_ping_url_secret_a_pass_pings_nothing` pins this. The 
 
 - A tokenless pass alerts once for each check-filing unit as `verify-refused`, as described in
   "The failure rule as built". So a mint outage gives one `/fail` from the check plus one alert for
-  each such unit. That's loud but not wrong. A follow-up could map "no GitHub token" to
-  `CHECKS_UNREADABLE`, a closer description, but that would change the program's alert kinds,
-  which is out of this scope.
+  each such unit. That's loud but not wrong. HQ chose to keep this behavior. Mapping "no GitHub token"
+  to `CHECKS_UNREADABLE` is a follow-up, recorded in the PR body.
 - The App's installation covers the 14 members. Only the cut-over dry run proves that it covers
   every repository granted `dependency_updates` or `app_changes`. A repository outside it makes
   the mint refuse, and every pass then runs tokenless and exits 3.
