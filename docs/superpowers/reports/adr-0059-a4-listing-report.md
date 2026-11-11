@@ -2,12 +2,29 @@ Outcome: done
 
 # Report: adr-0059-a4-listing (worker W-92)
 
+## Deviation for HQ to rule on before merging
+
+The handoff's stop point reads: "If any guard other than the `pin_watcher` isolation row refuses the
+change, write the question ... and stop." Two guard lines in
+`tests/architecture/test_membership_edges.py` refused the change, outside the lines the handoff
+names (186, 389-395, 422-431), and I changed them:
+
+- **`CLI_IMPORTS` gains `"sds_members.populations": {"observed"}`.** This is forced because the
+  handoff requires `_declarations` to get the members "through `populations.observed`", which means
+  the membership check's CLI imports `observed`.
+- **The reader-use source pin (lines 411-420) now reads `repositories(reader, observed_members)`,
+  and its control replaces that text.** This is forced because the listing now takes the members as
+  an argument, so the old text `repositories(reader)` no longer occurs.
+
+No other guard refused the change. The isolation row change is the one the handoff authorizes:
+`sds_members` added, `no_sibling_lanes` kept.
+
 This change builds ADR-0059 amendment 4, decision item 5. The pin watcher and the membership check no
 longer list repositories with `GET /user/repos`. Both list the members plus the public, non-archived
 repositories of each installation account.
 
 - **PR:** #665 (`hq/adr-0059-a4-listing`), ready for review and not merged.
-- **Code head:** `7f9eec3d`. The report commit follows it.
+- **Code head:** `aa1b9454`. The report commit follows it.
 - **Base:** `4bc30f17`.
 
 ## What I built
@@ -65,7 +82,7 @@ path on the Mac (Devon's login, which sees it) as in the container.
 | A page unreadable (4xx/5xx, or a 404 or non-list body, never read as the last page) | `GitHubReader.get` and `_account` | exit 3 | one gap, exit 3 |
 | A listed entry without a string `full_name` and boolean `private` and `archived` | `_entry` | exit 3 | one gap, exit 3 |
 | Ceiling reached (the message names the account) | `_account` | exit 3 | one gap, exit 3 |
-| Owner isn't a GitHub login (`[A-Za-z0-9-]+`) or the name isn't `owner/name` | `_owner` | exit 3 | one gap, exit 3 |
+| Owner isn't a GitHub login (`[A-Za-z0-9_-]+`) or the name isn't `owner/name` (my addition, from review) | `_owner` | exit 3 | one gap, exit 3 |
 | A member's `GET /repos/...` unreadable | `github.archived` | `result.unreadable`, exit 3 | not read |
 
 The pin watcher exits 3 on every listing failure with `--dry-run` too. A missing orchestrator credential
@@ -77,8 +94,8 @@ is sent.
 `tests/architecture/test_out_of_process_isolation.py`, the `pin_watcher` row:
 
 - It adds `sds_members`.
-- It drops `no_sibling_lanes`, because a row that carries it can't admit a sibling. It follows the
-  `revision_watcher` precedent.
+- It keeps `no_sibling_lanes`: `sds_members` is a `library` row, which the sibling ban permits. I
+  ran the guard with the flag on, and it passes.
 - The row's comment cites amendment 4's open item 3.
 
 ### Other test-file changes
@@ -91,7 +108,8 @@ is sent.
 - The predicate probe and the widened-listing control use the new paths.
 - The source pin reads `repositories(reader, observed_members)`.
 
-Two lines in that file are outside the line numbers the handoff names; the first concern covers them.
+Two lines in that file are outside the line numbers the handoff names; the deviation section
+covers them.
 The `/user/repos` refusal probes in `test_rotation_edges.py`, `test_auto_merge.py` and that file's
 `GITHUB_PROBES` are unchanged.
 
@@ -120,10 +138,12 @@ unchanged.
 ## Tests and checks
 
 - **`make check`** (ruff, format, pyright and pytest with `-n auto`) ran against
-  `orchestrator_test_hq_w_92` on a clean tree at the code commit's content: **14,479 passed, 1
-  skipped, 0 failed**. ruff, format and pyright were clean.
+  `orchestrator_test_hq_w_92` on a clean tree at `aa1b9454`: **14,480 passed, 1 skipped, 0
+  failed**. ruff, format and pyright were clean.
   - An earlier run showed 3 failures. I had edited a test while it ran, and it collected the new
     test before the matching source change. The clean rerun is the one that counts.
+- **CI on PR #665 at `aa1b9454`:** `Quality` passed in 15m40s, along with `Runner consumer
+  compatibility` and `Rollout transcription currency`.
 - **Security scan** from the repository root (`security_scan.cli . --category security`): 0 BLOCK.
   It also reported 2 WARN findings (an uncovered `*-migration/` gitignore glob, and an undeclared
   UUID `aaff45ca-…` in code) and 1 INFO judgment item. Neither WARN involves a file this diff
@@ -174,8 +194,11 @@ unchanged.
 I ran `/code-review` (medium) on the diff. It returned six findings:
 
 1. **Fixed: the owner went into the URL path unvalidated.** `_owner` now requires a GitHub login
-   (`[A-Za-z0-9-]+`) and raises before any request. A test covers `../orgs/name`, `me?x=1/name` and
-   `a%2Fb/name`.
+   (`[A-Za-z0-9_-]+`; the underscore admits an enterprise managed user's login) and raises before
+   any request. Tests cover `../orgs/name`, `me?x=1/name`, `a%2Fb/name` and an underscore login.
+   This is my addition, not amendment 4's: it adds one whole-pass failure the amendment doesn't
+   list, and the character set is from GitHub's login rules, which I didn't check against a source
+   this session.
 2. **Kept: a dry run now needs the orchestrator credential and makes a live record read.**
    Amendment 4 requires this: the pin watcher reads the member record before it sweeps, on a dry run
    too. It's documented in the CLI docstring and the launcher comment. The launcher's logic is
@@ -198,18 +221,7 @@ I ran `/code-review` (medium) on the diff. It returned six findings:
 
 ## Concerns
 
-- **Two guard lines outside the named lines.** `test_membership_edges.py` pins the membership
-  check's imports (`CLI_IMPORTS`) and its reader use (the source must contain
-  `repositories(reader, ...)`). The handoff names only that file's request lines: 186, 389-395 and
-  422-431. Its mandate (`_declarations` gets the repositories "through `populations.observed`") makes
-  both edits necessary. I added `"sds_members.populations": {"observed"}` to `CLI_IMPORTS` and
-  updated the source pin and its control (lines 411-420). The stop point covers "any guard other
-  than the `pin_watcher` isolation row", and I read the handoff's instruction to update this file as
-  covering them, so I didn't stop. If HQ reads it more narrowly, these two lines are the ones to
-  review. No other guard refused the change.
-- **The isolation row lost `no_sibling_lanes`.** A row that carries it permits no sibling program,
-  so admitting `sds_members` required dropping it, as the `revision_watcher` row does. The row now
-  permits exactly `sds_members` beyond its earlier names.
+- **The two guard lines** are in the deviation section at the top.
 - **Open items 1, 2 and 4 stay open.** No code learns installations directly. A minted token's
   public read is still unverified live, and nothing handles members in more than one account. I
   called no live API, ran no lane, and changed no credential.
