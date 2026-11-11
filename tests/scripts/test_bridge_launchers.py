@@ -24,6 +24,9 @@ PROPOSE_UUID = "acccb346-4baa-43ec-a1d4-b4a400c048ee"
 OBSERVER_UUID = "f793576f-e9aa-4f9d-8089-b4a000b9e2d5"
 # The bump proposer's `sds-bridge` alert sender token.
 ALERT_UUID = "b415d03b-f92d-46b1-8a9d-b4f10103df49"
+# The work carrier's own observation bearer (ADR-0055 amendment 22), on a `--register` pass only.
+CARRIER_OBSERVATION_UUID = "a9843d17-e599-4e80-ab1b-b4ff0164d8e2"
+CARRIER_OBSERVATION_NAMES = {"WORK_CARRIER_OBSERVATION_KEY_ID", "WORK_CARRIER_OBSERVATION_TOKEN"}
 
 
 @dataclass(frozen=True)
@@ -477,6 +480,70 @@ def test_an_acting_carrier_whose_sender_token_is_unreadable_never_runs(tmp_path:
     assert pings[1][0] == f"{PING_URL}/fail"
     assert "sds-bridge alert sender token" in pings[1][1]
     assert not env_log.exists()
+
+
+# ---- the carrier's own observation bearer (ADR-0055 amendment 22) ----------------------------
+
+
+def test_an_acting_carrier_fetches_and_exports_its_observation_identity(tmp_path: Path) -> None:
+    env_log = tmp_path / "env.txt"
+    rc, _, output = _run(tmp_path, CARRIER, "--register", ENV_LOG=str(env_log))
+    assert rc == 0, output
+    assert CARRIER_OBSERVATION_NAMES <= set(env_log.read_text().split())
+    fetches = (tmp_path / "bws.log").read_text().splitlines()
+    assert any(f"secret get {CARRIER_OBSERVATION_UUID} " in f"{line} " for line in fetches)
+
+
+def test_a_bare_carrier_neither_fetches_nor_exports_its_observation_identity(
+    tmp_path: Path,
+) -> None:
+    env_log = tmp_path / "env.txt"
+    rc, _, output = _run(tmp_path, CARRIER, ENV_LOG=str(env_log))
+    assert rc == 0, output
+    assert not CARRIER_OBSERVATION_NAMES & set(env_log.read_text().split())
+    assert CARRIER_OBSERVATION_UUID not in (tmp_path / "bws.log").read_text()
+
+
+def test_a_preset_observation_token_is_not_fetched_again(tmp_path: Path) -> None:
+    """As the SYSTEM bearer: an operator may supply it, and then BWS is not asked."""
+    rc, _, output = _run(
+        tmp_path, CARRIER, "--register", WORK_CARRIER_OBSERVATION_TOKEN="preset-value"
+    )
+    assert rc == 0, output
+    assert CARRIER_OBSERVATION_UUID not in (tmp_path / "bws.log").read_text()
+
+
+def test_an_acting_carrier_whose_observation_bearer_is_unreadable_never_runs(
+    tmp_path: Path,
+) -> None:
+    env_log = tmp_path / "env.txt"
+    rc, pings, output = _run(
+        tmp_path,
+        CARRIER,
+        "--register",
+        BWS_FAIL_UUID=CARRIER_OBSERVATION_UUID,
+        ENV_LOG=str(env_log),
+    )
+    assert rc == 1, output
+    assert pings[1][0] == f"{PING_URL}/fail"
+    assert "work carrier's own observation bearer" in pings[1][1]
+    assert not env_log.exists()
+
+
+def test_the_observation_uuid_is_the_one_the_manifest_lists() -> None:
+    import re
+    import tomllib
+
+    manifest = tomllib.loads(Path(".bws-secrets.toml").read_text())
+    listed = {
+        entry["uuid"]
+        for entry in manifest["secret"]
+        if entry["name"] == "work-carrier-observer-bearer"
+    }
+    launcher = (Path("scripts") / CARRIER.launcher).read_text()
+    constant = re.search(r'^WORK_CARRIER_OBSERVATION_UUID="([^"]+)"$', launcher, re.MULTILINE)
+    assert constant is not None
+    assert listed == {constant.group(1)} == {CARRIER_OBSERVATION_UUID}
 
 
 # ---- the installers' Healthchecks checks ------------------------------------------------------

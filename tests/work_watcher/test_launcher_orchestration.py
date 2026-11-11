@@ -39,6 +39,7 @@ CREDENTIALS = {
     "CHANGE_MANAGER_TOKEN": "read-bearer",
     "WORK_CARRIER_ORCHESTRATOR_TOKEN": "system-bearer",
     "SDS_MEMBERS_OBSERVER_TOKEN": "observer-bearer",
+    "WORK_CARRIER_OBSERVATION_TOKEN": "carrier-observation-bearer",
     "WORK_WATCHER_CHANGE_MANAGER_TOKEN": "propose-bearer",
 }
 

@@ -271,6 +271,38 @@ disposition = "reissue"
   ref = "factory CLI verifier commands (operator-invoked)"
 
 [[credential]]
+id = "work-carrier-observer-bearer"
+class = "orchestrator-m2m-bearer"
+# sha256[:8] recorded in-process by the session that minted it, 2026-11-11 (gate G-35).
+fingerprint_sha256_8 = "91de9b26"
+provider = "orchestrator"
+provider_identity = "key id work-carrier-observer, ActorRole.OBSERVER, agent_id work-carrier"
+bws_uuid = "a9843d17-e599-4e80-ab1b-b4ff0164d8e2"
+created = "2026-11-11"
+disposition = "reissue"
+
+  [[credential.consumer]]
+  kind = "bws-secret"
+  uuid = "a9843d17-e599-4e80-ab1b-b4ff0164d8e2"
+  note = "work-carrier-observer-bearer (SDS Operator) — keeper"
+
+  [[credential.consumer]]
+  kind = "coolify-env-hash"
+  instance = "prod"
+  resource_type = "application"
+  uuid = "eqj5l7k705fhi12x9i74fqf0"
+  key = "ORCHESTRATOR_M2M_CREDENTIALS"
+  entry = "work-carrier-observer"
+  note = "work-carrier-observer entry (sha256 only); OBSERVER role in ORCHESTRATOR_M2M_ROLES; ORCHESTRATOR_WORK_CARRIER_AGENT_ID names its agent id"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
+  ref = "scripts/run-work-carrier.sh"
+  healthchecks_check = "sds-work-carrier"
+  note = "launchd com.devon.work-carrier 07:05 (--register only); Keychain Claude/BWS_ACCESS_TOKEN_SDS (sds-operator); Healthchecks check sds-work-carrier"
+
+[[credential]]
 id = "orchestrator-operator-bearer"
 class = "orchestrator-m2m-bearer"
 provider = "orchestrator"

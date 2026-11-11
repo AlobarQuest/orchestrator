@@ -321,6 +321,10 @@ On a pass, a `--register` pass records an observation (`work_carrier` / `standin
 subject `<package_id>@r<revision>`) before it posts the intake, under the carrier's own identity:
 `WORK_CARRIER_OBSERVATION_KEY_ID` and `WORK_CARRIER_OBSERVATION_TOKEN`. With either unset, or the
 key id `orchestrator-system`, every such record refuses `standing_approval_refused`, in both modes.
+`scripts/run-work-carrier.sh` sets both on a `--register` pass: the key id `work-carrier-observer`,
+and the token read from BWS (`a9843d17-…`, `SDS Operator`) through the narrow `sds-operator`
+identity. An unreadable token fails that pass (exit 1, `/fail`). A bare pass sets neither, so it
+reports each such record refused although the scheduled pass would carry it.
 The decomposition gate admits the policy approver only beside that record, `recorded_by` the agent
 id `ORCHESTRATOR_WORK_CARRIER_AGENT_ID` names; unset, it refuses every standing approval.
 

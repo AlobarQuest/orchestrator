@@ -40,7 +40,8 @@
 #     SYSTEM bearer. ADR-0027 admits SYSTEM and HUMAN to intake registration and nothing else.
 #     Fetched ONLY when the arguments carry --register: it is a canonical-mutation credential,
 #     and a pass that cannot use it should not hold it. That also keeps the read-only invocation
-#     usable on a machine with no access to that project.
+#     usable on a machine with no access to that project. The same identity and the same gate
+#     fetch the carrier's own observation bearer (ADR-0055 amendment 22), below.
 #
 # THE VENV'S BIN GOES ON PATH, and that is a requirement rather than tidiness: the carry resolves
 # `orchestrator` from PATH to build each payload, and without it every record refuses with
@@ -105,6 +106,11 @@ set -uo pipefail
 CHANGE_MANAGER_UUID="314f276d-55ca-4ddc-a24d-b4a3013508cd"
 # The orchestrator SYSTEM bearer, in the `SDS Operator` project.
 ORCHESTRATOR_SYSTEM_UUID="221a48d5-3f29-4898-b300-b4820140c880"
+# The carrier's own OBSERVER bearer (key id `work-carrier-observer`, registry agent `work-carrier`),
+# in the `SDS Operator` project, ADR-0055 amendment 22. It records the standing-approval check the
+# decomposition gate requires beside a policy-approved rotation revision; the SYSTEM bearer can't
+# stand in for it, because any SYSTEM caller can record an observation. `--register` only.
+WORK_CARRIER_OBSERVATION_UUID="a9843d17-e599-4e80-ab1b-b4ff0164d8e2"
 # The orchestrator OBSERVER bearer, which reads the member record (`GET /api/v1/members`) the carry
 # judges every record by. Fetched on EVERY run, a bare one included: the grant is the scope
 # authority, so a pass that cannot read it carries nothing and exits 2.
@@ -196,6 +202,18 @@ if [ "$_wants_register" -eq 1 ]; then
   fi
   [ -n "${WORK_CARRIER_ORCHESTRATOR_TOKEN:-}" ] || sds_outcome_fail \
     "FATAL: could not read the orchestrator system credential from BWS"
+  # The observation identity is a credential this pass needs, so an unreadable one is a credential
+  # failure (exit 1), as the SYSTEM bearer's is. Carrying on without it would refuse a queued
+  # policy rotation as "no identity configured", a finding naming the wrong cause, and would say
+  # nothing at all on a pass with no such record queued.
+  export WORK_CARRIER_OBSERVATION_KEY_ID="work-carrier-observer"
+  if [ -z "${WORK_CARRIER_OBSERVATION_TOKEN:-}" ]; then
+    WORK_CARRIER_OBSERVATION_TOKEN="$(sds_bws_value "$WORK_CARRIER_OBSERVATION_UUID" \
+      "$SDS_IDENTITY")"
+    export WORK_CARRIER_OBSERVATION_TOKEN
+  fi
+  [ -n "${WORK_CARRIER_OBSERVATION_TOKEN:-}" ] || sds_outcome_fail \
+    "FATAL: could not read the work carrier's own observation bearer from BWS"
 fi
 
 # THE SENDER TOKEN, for a pass that will act, with the same narrow identity. Only an acting watcher

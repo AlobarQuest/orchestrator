@@ -83,6 +83,10 @@ Don't restart between these steps. The rotation executor rewrites `ORCHESTRATOR_
 from what the running process loaded, so do the four steps with no rotation pending. To remove
 the identity, remove all three in one restart the same way.
 
+The carrier presents this identity from `scripts/run-work-carrier.sh`, which reads its bearer
+from BWS (`work-carrier-observer-bearer`, `a9843d17-…`) on a `--register` pass only. For the
+standing-approval observation, see `docs/operations/rotation-proposer.md`.
+
 Optional `ORCHESTRATOR_M2M_ROLES` JSON assigns non-worker machine roles. Missing or
 malformed required authentication configuration aborts process startup without logging
 the supplied values. Local Compose disables bundle loading and remains fail-closed for
