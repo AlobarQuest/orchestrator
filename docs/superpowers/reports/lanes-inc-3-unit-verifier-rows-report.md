@@ -3,8 +3,9 @@ Outcome: done
 # Report: the unit verifier's registry rows (ADR-0059 increment 3, cut-over step 1)
 
 - **PR:** [#663](https://github.com/AlobarQuest/orchestrator/pull/663), ready for review, not
-  merged. Branch `hq/lanes-inc-3-unit-verifier-rows`. The change commit is `1cfab1ee`; the report
-  commit follows it.
+  merged. Branch `hq/lanes-inc-3-unit-verifier-rows`. The commits are the change (`1cfab1ee`), a
+  first report commit (`9f98e50a`), a test fix (`f8c955b5`), and this report's revision, which is
+  the PR head.
 - **Base:** `origin/main` at `f0213b76` (#661). Every fact the handoff read at `2b5a18d6` held at
   this base.
 
@@ -37,9 +38,9 @@ watcher's block from #658.
   holds the grant (G-33). #658 made the same edit for the revision watcher. The handoff didn't
   name this file, so I've listed it under deviations.
 - **`tests/rotation_worker/test_unit_verifier_rows.py` (new, 16 tests):** It's modelled on
-  `test_revision_watcher_rows.py`, with two additions that #658's review asked for:
-  `variable["redeploy"] is False`, and each row's `bws-secret` consumer uuid equals its
-  `bws_uuid`.
+  `test_revision_watcher_rows.py`, with two additions that #658's review asked for. The test
+  asserts that the row's own `coolify-env` consumer has `redeploy is False`, and that each row's
+  `bws-secret` consumer uuid equals its `bws_uuid`.
 - **`tests/scripts/test_deploy_lanes.py:843-855`:** The registry test now expects five moved lanes
   instead of four.
 
@@ -71,8 +72,11 @@ executor does. The tests cover the following:
 
 - Both rows are handed to the SDS.
 - `bws_lane_token.check_row` and `lane_variable` accept the token row. The variable has uuid
-  `y144dc0981smrtzl587hqa4f`, key `UNIT_VERIFIER_BWS_ACCESS_TOKEN`, and `redeploy is False`.
-  `lanes/unit-verifier/compose.yaml:23` maps that key to the container's `BWS_ACCESS_TOKEN`.
+  `y144dc0981smrtzl587hqa4f` and key `UNIT_VERIFIER_BWS_ACCESS_TOKEN`.
+  `lanes/unit-verifier/compose.yaml:23` maps that key to the container's `BWS_ACCESS_TOKEN`. The
+  row's own `coolify-env` consumer has `redeploy is False`. The test reads it from the row, not
+  from `lane_variable`'s parsed output, because the parser reads a missing `redeploy` as false
+  (`src/rotation_worker/destinations.py:68-69`).
 - `healthchecks_ping_url.check_row` accepts the ping-URL row, and its check is
   `sds-unit-verifier`.
 - **The reach rule:** for each of the four other lane-token rows (deploy-watcher, execution-watch,
@@ -94,12 +98,18 @@ executor does. The tests cover the following:
 restored the copy. Each mutation made exactly one test fail:
 
 1. `redeploy = true` on the token's `coolify-env`: 1 failed, 15 passed
-   (`test_the_token_row_is_one_the_lane_token_adapter_acts_on`). `check_row` refuses first
-   ("redeploy false"), so the direct `is False` assertion is a second line of defense behind it.
+   (`test_the_token_row_is_one_the_lane_token_adapter_acts_on`). `check_row` refuses this first
+   ("redeploy false").
 2. Changing the ping keeper consumer's uuid `1cfc8352` to `1cfc8353`: 1 failed, 15 passed
    (`test_each_row_s_keeper_consumer_is_its_bws_uuid[unit-verifier-ping-url]`).
+3. Deleting the `redeploy = false` line: 1 failed, 15 passed
+   (`test_the_token_row_is_one_the_lane_token_adapter_acts_on`, `KeyError: 'redeploy'` on the
+   row's own consumer). The adapter accepts this row, because the parser reads the missing field
+   as false. Only the direct assertion catches it, which is why commit `f8c955b5` moved the
+   assertion onto the row.
 
-After the restore, the file gave 16 passed and `git diff` showed only the intended edits.
+After each restore, the file gave 16 passed and `git status` showed only the intended edits. I
+cleared `tests/rotation_worker`'s `__pycache__` before mutation 3.
 
 ### Check 3: due-ness
 
@@ -141,15 +151,23 @@ and of the App key rows. Then I read each test's loading code.
 
 - `tests/scripts/test_deploy_lanes.py:843-855` reads the file through `deploy.lanes_in_registry`.
   I updated it from four lanes to five.
-- `test_deploy_watcher_rows.py`, `test_landing_ledger_rows.py`, `test_revision_watcher_rows.py`,
-  and `test_execution_watch_rows.py` each read their own rows. Each selects the App key reader by
-  its own launcher's `ref`, and each runs the reach rule only against the other rows it names. The
-  new rows don't change what they assert. All of them pass.
+- `test_deploy_watcher_rows.py`, `test_landing_ledger_rows.py`, and
+  `test_revision_watcher_rows.py` each read their own rows. Each selects the App key reader by its
+  own launcher's `ref`, and each runs the reach rule against the other rows it names. The new rows
+  don't change what they assert.
+- `test_execution_watch_rows.py` reads its own two rows. It has no App key test. Its reach check
+  (line 62) asserts that `sharing_reach` over every lane-token row returns `[]` for its token. The
+  unit verifier's reach differs from execution-watch's, so that still holds.
+- All five row files pass.
 - `test_registry_array_strings.py:39` asserts the file has no comma inside an array string. The
   new rows pass it.
 - `tests/unit_verifier/test_unit_verifier_launcher.py:37-44` selects the bootstrap-token row by
   `keeper_account` and pins its Mac reader for `run-unit-verifier.sh`, which I left unchanged.
 - `tests/rotation_proposer/test_standing_approval.py:55-58` reads only the landing ledger's rows.
+
+**Fixtures:** `grep -lE` over `tests/fixtures/*` for `unit-verifier`, `revision-watcher`,
+`deploy-watcher`, `lanes-read`, `314a966c`, and `landing-ledger-bws` matched no file, so no
+fixture enumerates the lane rows or the App key rows.
 
 **Tests that use inline fixtures or fakes:** the other `lanes_in_registry` and `registered_lanes`
 tests (`test_deploy_lanes.py:786-840`), `test_deploy_orchestrator.py:109`,
@@ -186,8 +204,9 @@ it. A registered lane holds no release until its `--add` passes (`require_lanes_
 
 - `make check` ran with `TEST_DATABASE_URL` and `ORCHESTRATOR_DATABASE_URL` set to
   `orchestrator_test_hq_w_90`, `SECURITY_STANDARDS_DIR` set to the fixture, and `PGTZ=UTC`. It
-  exited 0. Lint and format passed, and pyright reported 0 errors. The test run gave
-  `14432 passed, 1 skipped, 11 warnings in 410.90s`.
+  exited 0 on `1cfab1ee` with `14432 passed, 1 skipped, 11 warnings in 410.90s`. After the test fix
+  it exited 0 again on `f8c955b5`. Lint and format passed, pyright reported 0 errors, and the test
+  run gave `14432 passed, 1 skipped, 11 warnings in 389.97s`.
 - Before `make check`, I ran a targeted set: the five lane-row files, `test_deploy_lanes.py`,
   `test_registry_array_strings.py`, `tests/unit_verifier`, and `test_standing_approval.py`. It
   gave 307 passed.
@@ -197,7 +216,10 @@ it. A registered lane holds no release until its `--add` passes (`require_lanes_
   - `bws.manifest-matches-usage`: undeclared `aaff45ca-…`, which doesn't appear in this diff.
 
   The INFO is the judgment rule `bws.least-privilege-scope`.
-- `/code-review` (low) on `origin/main...HEAD` returned no findings.
+- `/code-review` (low) on `origin/main...HEAD` ran twice and returned no findings both times. The
+  first run returned a bare `(none)`, so I re-ran it and asked it to name what it reviewed. It
+  said it reviewed `.bws-secrets.toml` and `.cred-consumers.toml`, and skipped the test files under
+  its low-effort rules. The test changes were checked by the three mutations and `make check`.
 
 ## Files changed
 
@@ -233,9 +255,11 @@ None. The handoff's Standards section covers everything this change touches.
 - Change 2 dates the ping-URL row. It also fills `SDS_DEADMAN_PING_URL_UUID` in
   `lanes/unit-verifier/compose.yaml` and drops `unit-verifier` from `placeholders` in
   `test_every_lanes_ping_url_secret_is_listed_for_that_lane`.
-- I left the test database `orchestrator_test_hq_w_90` and the `/tmp/w90-*` scratch files (the
-  infraops copy, the configs, and the findings JSON) for HQ's teardown. None of them holds a
-  secret value.
+- I left the test database `orchestrator_test_hq_w_90` and the `/tmp/w90-*` scratch files for
+  HQ's teardown. Those files are the scratch config, the `cred-findings` and scan JSON, and the
+  `make check` logs. I deleted the infraops copy after the run. It had picked up infraops'
+  gitignored `.worktrees/` (other sessions' trees). I listed file names only, and none was a
+  `.env` file.
 
 ## Standards followed
 
