@@ -160,3 +160,12 @@ def test_apps_with_no_live_app_exits_3(monkeypatch, capsys):
     assert main(["apps"]) == EXIT_INCOMPLETE
     captured = capsys.readouterr()
     assert captured.out == "" and "apps population is empty" in captured.err
+
+
+def test_apps_names_a_repository_once_whatever_its_case(monkeypatch, capsys):
+    """The mint refuses a repository named twice under casefolding, which would fail every pass."""
+    _serve(
+        monkeypatch, [_with_apps("A/Brains", "app-brain"), _with_apps("a/brains", "infra-brain")]
+    )
+    assert main(["apps"]) == EXIT_OK
+    assert capsys.readouterr().out == "A/Brains\n"
