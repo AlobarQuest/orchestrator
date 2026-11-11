@@ -297,8 +297,10 @@ CLASSIFICATION: dict[str, Row] = {
         Role.INTERNAL_LANE_ACTOR,
         "Devon 2026-08-25 ruling: work-carrier is an internal lane actor; ADR-0027/ADR-0028 "
         "register an intake naming its approved change record, from a payload the offline "
-        "emit-intake-payload command builds",
-        frozenset({"/api/v1/package-intakes"}),
+        "emit-intake-payload command builds. ADR-0055 amendment 22 item 3: before it registers a "
+        "policy-approved lane credential's revision 1, it records that its carry-form checks "
+        "passed",
+        frozenset({"/api/v1/package-intakes", OBSERVATIONS}),
         cli=frozenset({"emit-intake-payload"}),
     ),
     "sds_members": Row(

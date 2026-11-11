@@ -723,6 +723,10 @@ TABLE: dict[str, Row] = {
         # check reads it; `collections` is its `Mapping`.
         "rotation_worker",
         "collections",
+        # ADR-0055 amendment 22 item 3: the carrier runs the standing approval's checks itself,
+        # the same checks and not a copy, so it imports `rotation_proposer.standing_approval`
+        # (and nothing else of the proposer: `tests/work_carrier/test_standing.py` holds that).
+        "rotation_proposer",
         "subprocess",
         "sys",
         # The capability source's age report.

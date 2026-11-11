@@ -1,9 +1,12 @@
-"""The confined orchestrator surface for the carry. TWO paths: one read, then the one write.
+"""The confined orchestrator surface for the carry. THREE paths: one read, then two writes.
 
 The carry asks what an approved change record has already caused, and registers the package
-intake it asks for when the answer is nothing. It can reach nothing else -- not a breakdown, not
-an approval, not a work unit. The orchestrator's own registrar guard is the control; this is the
-statement of intent that makes a mistake in this program fail before a request leaves it.
+intake it asks for when the answer is nothing. Before it registers a lane credential's revision 1
+that a policy approved, it records that its checks passed, as an observation (ADR-0055 amendment
+22 item 3), through a second client holding the carrier's own identity. It can reach nothing
+else -- not a breakdown, not an approval, not a work unit. The orchestrator's own registrar guard
+is the control; this is the statement of intent that makes a mistake in this program fail before
+a request leaves it.
 
 **THE READ CAME SECOND AND IT IS WHY THE FIRST LINE MOVED.** Until 2026-08-21 this module was
 write-only and said so. A read that widens the surface a module asserts about ITSELF is a
@@ -47,6 +50,7 @@ USER_AGENT: Final = "work-carrier/1 (+AlobarQuest/orchestrator)"
 TIMEOUT_SECONDS: Final = 60.0
 
 _INTAKES: Final = "/api/v1/package-intakes"
+_OBSERVATIONS: Final = "/api/v1/observations"
 # ADR-0029's route, read here for a different question than the watcher asks of it. Anchored and
 # bounded the same way, so a record id that is not one cannot compose a path to somewhere else.
 _WORK: Final = re.compile(r"^/api/v1/change-records/[0-9]{1,9}/work$")
@@ -74,7 +78,7 @@ class ForbiddenEndpointError(OrchestratorError):
 
 
 def is_allowed_write(path: str) -> bool:
-    return path == _INTAKES
+    return path in (_INTAKES, _OBSERVATIONS)
 
 
 def is_allowed_read(path: str) -> bool:
@@ -210,6 +214,12 @@ class OrchestratorClient:
             raise ForbiddenEndpointError(f"the carry may not POST {_INTAKES}")
         return self._post(_INTAKES, payload)
 
+    def record_observation(self, observation: dict[str, Any]) -> dict[str, Any]:
+        """Record the carry form's pass (ADR-0055 amendment 22 item 3), as composed by
+        `standing.check`. Called on the client holding the carrier's own identity, never the
+        SYSTEM one, because the decomposition gate requires the row recorded by that identity."""
+        return self._post(_OBSERVATIONS, observation)
+
     def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         """The ONE way anything leaves this process; the confined client asks `_permits` first."""
         try:
@@ -235,7 +245,7 @@ class OrchestratorClient:
         try:
             body = response.json()
         except ValueError as error:
-            raise OrchestratorError("the intake response was not JSON") from error
+            raise OrchestratorError(f"the response to POST {path} was not JSON") from error
         if not isinstance(body, dict):
-            raise OrchestratorError("the intake response was not an object")
+            raise OrchestratorError(f"the response to POST {path} was not an object")
         return body

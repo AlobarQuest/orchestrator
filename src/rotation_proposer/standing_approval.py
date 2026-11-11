@@ -7,11 +7,13 @@ intent-packages commit, and the `last_rotated` infraops serves for the credentia
 reads, writes or approves anything. `rotation-proposer standing-approval` (`cli.py`) reads the
 inputs, runs `evaluate`, and reports every condition.
 
-The module imports only the generator and the executor's pure modules, so the carrier's form of
-the command (amendment 22 item 3, increment 3) can import the same checks. That form differs in
-two inputs: it replaces `unapproved_revision_1` with its own lineage condition (one policy
-approval on revision 1), and it reads no infraops, so it passes `first_issue=True` to the
-re-render and the authority instead of deriving it from `last_rotated`.
+The module imports only the generator and the executor's pure modules, so the work carrier runs
+the same checks, not a copy (amendment 22 item 3). `carry` is the carrier's form, and differs in
+three ways: it replaces `unapproved_revision_1` with `policy_approved_revision_1` (exactly one
+policy approval, on revision 1, whose hash is the package's); its caller reads the registry at
+`main`, because the lineage records only the package commit; and it reads no infraops, so it
+accepts only the issue-plan re-render (`first_issue=True`) and states the plan from the row and
+the package's criteria alone.
 
 A condition never catches an exception: anything the generator or the plan reader raises reaches
 the command, which exits 2, because a check it couldn't make is never a pass.
@@ -38,9 +40,13 @@ LANE_KINDS: Final[Mapping[str, Counter[str]]] = {
     "healthchecks-ping-url": Counter({"provider": 1, "bws-secret": 1}),
 }
 READY_FOR_REVIEW: Final = "ready_for_review"
+# The approver the standing approval records (amendment 22 item 3). Keyed on the prefix, as
+# `bump_policy` keys on `policy:dependency-update@`, so a later schema version doesn't stop it.
+POLICY_APPROVER_PREFIX: Final = "policy:non-software-operational@"
 
 GENERATED: Final = "proposer_generated"
 REVISION_1: Final = "unapproved_revision_1"
+POLICY_REVISION_1: Final = "policy_approved_revision_1"
 ISSUE_PLAN: Final = "issue_plan"
 LANE_TYPE: Final = "lane_type"
 DESTINATIONS: Final = "destinations"
@@ -108,6 +114,43 @@ def unapproved_revision_1(package: Mapping[str, Any], lineage: Mapping[str, Any]
     return _condition(REVISION_1, problems, "revision 1, unapproved, ready_for_review")
 
 
+def policy_approved_revision_1(
+    package: Mapping[str, Any], lineage: Mapping[str, Any], *, package_hash: str
+) -> Condition:
+    """The carry form's lineage condition: revision 1, its lineage one revision and exactly one
+    approval, on revision 1, by the standing approval's policy approver, whose hash is the
+    package's. `package_hash` is the package's content hash, which the caller computes (the
+    carrier with `rotation_worker.canonical.package_hash`), as it reads every other input."""
+    problems = []
+    if package.get("revision") != 1:
+        problems.append("the package's revision isn't 1")
+    if lineage.get("package_id") != package.get("package_id"):
+        problems.append("the lineage names another package")
+    revisions = lineage.get("revisions")
+    if not isinstance(revisions, list) or len(revisions) != 1:
+        problems.append("the lineage doesn't list exactly one revision")
+    elif not isinstance(revisions[0], Mapping) or revisions[0].get("revision") != 1:
+        problems.append("the lineage's one revision isn't revision 1")
+    approvals = lineage.get("approvals")
+    if not isinstance(approvals, list) or len(approvals) != 1:
+        problems.append("the lineage doesn't record exactly one approval")
+        return _condition(POLICY_REVISION_1, problems, "")
+    approval = approvals[0]
+    if not isinstance(approval, Mapping):
+        problems.append("the lineage's approval isn't a mapping")
+        return _condition(POLICY_REVISION_1, problems, "")
+    if approval.get("revision") != 1:
+        problems.append("the approval isn't on revision 1")
+    approver = approval.get("approver")
+    if not isinstance(approver, str) or not approver.startswith(POLICY_APPROVER_PREFIX):
+        problems.append(f"the approver isn't {POLICY_APPROVER_PREFIX}<version>")
+    if approval.get("approved_hash") != package_hash:
+        problems.append("the approval's hash isn't the package's")
+    return _condition(
+        POLICY_REVISION_1, problems, "revision 1, approved once by the standing approval's policy"
+    )
+
+
 def issue_plan(
     entry: RegistryEntry, package: Mapping[str, Any], *, last_rotated: str | None
 ) -> Condition:
@@ -116,14 +159,29 @@ def issue_plan(
     problems = []
     if last_rotated is not None:
         problems.append(f"infraops records the credential rotated {last_rotated[:10]}")
-    adapter_name, derived = plan_for(entry, first_issue=last_rotated is None)
+    problems += _plan_problems(entry, package, first_issue=last_rotated is None)
+    return _condition(ISSUE_PLAN, problems, "last_rotated is null and both plans are the issue")
+
+
+def stated_issue_plan(entry: RegistryEntry, package: Mapping[str, Any]) -> Condition:
+    """The carry form's issue-plan condition: it reads no infraops, so it accepts only the issue
+    plan, chosen for the row and stated by the package's criteria (amendment 22 item 3)."""
+    problems = _plan_problems(entry, package, first_issue=True)
+    return _condition(ISSUE_PLAN, problems, "both plans are the issue (infraops not read)")
+
+
+def _plan_problems(
+    entry: RegistryEntry, package: Mapping[str, Any], *, first_issue: bool
+) -> list[str]:
+    problems = []
+    adapter_name, derived = plan_for(entry, first_issue=first_issue)
     if not derived.issue:
         problems.append("plan_for chooses the rotation plan for the row")
     declared = TYPES[adapter_name]
     plans = candidates(declared.capabilities, entry.destinations, entry.keeper, declared.store_kind)
     if not select_plan(plans, package.get("acceptance")).issue:
         problems.append("the package's criteria state the rotation plan")
-    return _condition(ISSUE_PLAN, problems, "last_rotated is null and both plans are the issue")
+    return problems
 
 
 def lane_type(entry: RegistryEntry, package: Mapping[str, Any]) -> Condition:
@@ -189,4 +247,24 @@ def evaluate(
         lane_type(entry, package),
         lane_destinations(entry, package),
         standard_authority(entry, package, first_issue=first_issue),
+    ]
+
+
+def carry(
+    entry: RegistryEntry,
+    package: Mapping[str, Any],
+    lineage: Mapping[str, Any],
+    *,
+    package_hash: str,
+) -> list[Condition]:
+    """The carrier's form of item 2's conditions (amendment 22 item 3), in item 2's order. The
+    caller reads `entry` at the registry's `main` and computes `package_hash`; nothing here reads
+    infraops."""
+    return [
+        proposer_generated(entry, package, first_issue=True),
+        policy_approved_revision_1(package, lineage, package_hash=package_hash),
+        stated_issue_plan(entry, package),
+        lane_type(entry, package),
+        lane_destinations(entry, package),
+        standard_authority(entry, package, first_issue=True),
     ]

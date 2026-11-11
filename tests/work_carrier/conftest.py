@@ -27,6 +27,10 @@ def isolated_workability_inputs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setenv("WORK_CARRIER_PORTFOLIO", str(tmp_path / "no-portfolio.json"))
     monkeypatch.delenv("WORK_CARRIER_GITHUB_TOKEN", raising=False)
     monkeypatch.delenv("SDS_MEMBERS_OBSERVER_TOKEN", raising=False)
+    # The carrier's own identity for the standing approval's observation (ADR-0055 amendment 22):
+    # a test names it when it wants one, never by inheriting the operator's shell.
+    monkeypatch.delenv("WORK_CARRIER_OBSERVATION_KEY_ID", raising=False)
+    monkeypatch.delenv("WORK_CARRIER_OBSERVATION_TOKEN", raising=False)
 
 
 @pytest.fixture(autouse=True)

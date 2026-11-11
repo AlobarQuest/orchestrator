@@ -183,6 +183,7 @@ def create_decomposition_proposal(
     body: DecompositionProposalRegistration,
     actor: ActorDep,
     session: SessionDep,
+    settings: SettingsDep,
 ) -> dict[str, object]:
     require_zero_expected_version(body.expected_version, "decomposition proposal submission")
     proposal = submit_decomposition_proposal(
@@ -199,6 +200,7 @@ def create_decomposition_proposal(
             idempotency_key=body.idempotency_key,
         ),
         actor,
+        work_carrier_agent_id=settings.work_carrier_agent_id,
     )
     session.commit()
     return _proposal_payloads(session, (proposal,))[proposal.id]

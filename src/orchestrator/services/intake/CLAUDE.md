@@ -21,9 +21,18 @@
   other decomposition, waits for a person on `/review`
   (`test_a_person_s_proposal_waits_for_a_person`, `test_a_worker_s_proposal_waits_for_a_person`).
 - A rotation's one click is its package revision approval (ADR-0055 amendment 16): change-manager
-  approves its `work` record by policy.
-- The rotation branch approves only when the revision is a standing rotation package with a
-  recorded approval (`test_a_revision_an_approval_policy_approved_waits_for_a_person`).
+  approves its `work` record by policy. A named person approves every rotation revision except a
+  lane credential's revision 1 that the standing approval's policy approved and the work carrier
+  checked (amendment 22), which works only once intent-packages' schema-4 grant and the carrier's
+  identity exist.
+- The rotation branch approves only when a person approved the revision
+  (`test_a_revision_an_approval_policy_approved_waits_for_a_person`), or when the approver has the
+  prefix `policy:non-software-operational@`, the revision is a `non-software-operational` revision
+  1 naming exactly one lane type's provider, and an observation `recorded_by`
+  `ORCHESTRATOR_WORK_CARRIER_AGENT_ID` (`work_carrier` / `standing_approval_check`) binds its
+  package id, revision and `content_hash` with nothing refused (`standing_approval.py`). Anything
+  else, an unset setting or a failed read refuses `standing_approval_unrecorded`; the gate reads
+  no registry (`tests/services/test_standing_approval_gate.py`).
 - The rotation branch needs every dependency unit-on-unit `completed`
   (`test_a_dependency_on_anything_but_a_unit_completing_waits_for_a_person`).
 - The rotation branch needs every unit a rotation unit `human_authority_gate` finds recognised

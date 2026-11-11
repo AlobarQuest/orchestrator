@@ -90,6 +90,9 @@ EDGES: dict[str, Edge] = {
         orchestrator=frozenset(
             {
                 ("POST", "/api/v1/package-intakes"),
+                # ADR-0055 amendment 22 item 3: the standing approval's check, recorded before
+                # the intake under the carrier's own identity.
+                ("POST", "/api/v1/observations"),
                 ("GET", "/api/v1/change-records/44/work"),
                 ("GET", "/api/v1/members"),
             }

@@ -31,13 +31,17 @@ from __future__ import annotations
 
 import json
 import subprocess
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
+from rotation_worker.registry import RegistryEntry
 from sds_members import holds as hold_matcher
 from sds_members.client import Hold
+from work_carrier import standing
 from work_carrier.change_manager import WorkRecord
+from work_carrier.standing import ROTATION_PROFILE
 from work_carrier.workability import target_repository
 
 EMITTER = "orchestrator"
@@ -51,6 +55,9 @@ class Prepared:
     record: WorkRecord
     package_path: Path
     payload: dict[str, Any]
+    # ADR-0055 amendment 22 item 3: set only on a policy-approved rotation revision the carry
+    # form refused nothing on. The carrier records it, under its own identity, before the intake.
+    standing_observation: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -208,10 +215,9 @@ def _disagreement(record: WorkRecord, payload: dict[str, Any]) -> Refused | None
 
 
 DEPENDENCY_UPDATE = "dependency-update"
-# The rotation proposer's change class (`rotation_proposer.cli.CHANGE_CLASS`) and the profile a
-# standing rotation package carries.
+# The rotation proposer's change class (`rotation_proposer.cli.CHANGE_CLASS`). The profile a
+# standing rotation package carries is `standing.ROTATION_PROFILE`.
 CREDENTIAL_ROTATION = "credential-rotation"
-ROTATION_PROFILE = "non-software-operational"
 
 
 def _policy_disagreement(record: WorkRecord, payload: dict[str, Any]) -> Refused | None:
@@ -250,6 +256,37 @@ def _policy_disagreement(record: WorkRecord, payload: dict[str, Any]) -> Refused
             f"profile is {payload.get('profile')!r}",
         )
     return None
+
+
+NO_OBSERVATION_IDENTITY = (
+    "no carrier observation identity is configured (WORK_CARRIER_OBSERVATION_KEY_ID and "
+    "WORK_CARRIER_OBSERVATION_TOKEN, a key id other than the SYSTEM one), so the carrier can't "
+    "record its check and a person decides"
+)
+
+
+def standing_approval(
+    prepared: Prepared,
+    find_entry: Callable[[str], RegistryEntry],
+    *,
+    identified: bool,
+) -> Prepared | Refused:
+    """A rotation revision a policy approved, carried only when the carry form refuses nothing
+    (ADR-0055 amendment 22 item 3); every other prepared record is returned unchanged.
+
+    Keyed on the package's `profile`, never the record's `change_class`, which a hand-proposed
+    record doesn't carry. `identified` says whether the carrier holds an identity of its own to
+    record the check under; without one the record waits for a person, in both modes, and the
+    carrier never records it as the shared SYSTEM key.
+    """
+    if not standing.is_policy_rotation(prepared.payload):
+        return prepared
+    if not identified:
+        return Refused(prepared.record, standing.REFUSED, NO_OBSERVATION_IDENTITY)
+    checked = standing.check(prepared.payload, prepared.package_path, find_entry)
+    if isinstance(checked, str):
+        return Refused(prepared.record, standing.REFUSED, checked)
+    return replace(prepared, standing_observation=checked.observation)
 
 
 def held_refusal(prepared: Prepared, holds: dict[str, tuple[Hold, ...]]) -> Refused | None:

@@ -27,9 +27,12 @@ from rotation_proposer.standing_approval import (
     GENERATED,
     ISSUE_PLAN,
     LANE_TYPE,
+    POLICY_REVISION_1,
     REVISION_1,
+    carry,
     standard_authority,
 )
+from rotation_worker.canonical import package_hash
 from rotation_worker.git_mirror import RepoMirror
 from rotation_worker.registry import (
     PACKAGES_REPOSITORY,
@@ -102,7 +105,7 @@ class Rig:
         self.origins = origins
         self.monkeypatch = monkeypatch
         self.served: dict[str, str | None] | None = {}
-        monkeypatch.setattr(cli, "_mirror", lambda: mirror)
+        monkeypatch.setattr(cli, "_standing_approval_mirror", lambda: mirror)
         monkeypatch.setattr(cli, "read_due", self._read_due)
 
     def _read_due(self) -> tuple[list[Any], list[Any], dict[str, str | None] | None]:
@@ -485,3 +488,116 @@ def test_no_line_carries_a_value(
     assert SENTINEL not in out + err
     for line in map(json.loads, out.splitlines()):
         assert set(line) == _KEYS[line["event"]]
+
+
+# ---- the carrier's form (amendment 22 item 3) ------------------------------------------------
+
+POLICY = "policy:non-software-operational@v4"
+
+
+def _approved(row: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], str]:
+    """The package as the standing approval leaves it, its lineage, and its content hash."""
+    package = {**_generated(row), "status": "approved"}
+    content_hash = package_hash(package)
+    approval = {
+        "revision": 1,
+        "approved_hash": content_hash,
+        "approver": POLICY,
+        "approved_at": "2026-11-11T12:00:00+00:00",
+        "commit": "a" * 40,
+        "event_id": "evt-1",
+    }
+    lineage = {
+        **_lineage(row["id"]),
+        "current_state": "approved",
+        "approvals": [approval],
+    }
+    return package, lineage, content_hash
+
+
+def _carry_refused(
+    row: dict[str, Any],
+    package: dict[str, Any],
+    lineage: dict[str, Any],
+    content_hash: str,
+) -> list[str]:
+    entry = RegistryEntry(REGISTRY, "b" * 40, row)
+    conditions = carry(entry, package, lineage, package_hash=content_hash)
+    assert [c.name for c in conditions] == [
+        GENERATED,
+        POLICY_REVISION_1,
+        ISSUE_PLAN,
+        LANE_TYPE,
+        DESTINATIONS,
+        AUTHORITY,
+    ]
+    return [c.name for c in conditions if not c.passed]
+
+
+@pytest.mark.parametrize("credential_id", [TOKEN, PING_URL])
+def test_the_carry_form_refuses_nothing_on_a_policy_approved_revision_1(credential_id: str) -> None:
+    row = _real_row(credential_id)
+    assert _carry_refused(row, *_approved(row)) == []
+
+
+def _approval_edit(edit: Callable[[dict[str, Any]], None]) -> list[str]:
+    row = _real_row(TOKEN)
+    package, lineage, content_hash = _approved(row)
+    edit(lineage)
+    return _carry_refused(row, package, lineage, content_hash)
+
+
+@pytest.mark.parametrize(
+    "edit",
+    [
+        pytest.param(lambda lineage: lineage.update(approvals=[]), id="no-approval"),
+        pytest.param(
+            lambda lineage: lineage.update(approvals=lineage["approvals"] * 2), id="two-approvals"
+        ),
+        pytest.param(
+            lambda lineage: lineage["approvals"][0].update(revision=2), id="approval-on-revision-2"
+        ),
+        pytest.param(
+            lambda lineage: lineage["approvals"][0].update(approver="devon"), id="a-person"
+        ),
+        pytest.param(
+            lambda lineage: lineage["approvals"][0].update(approver="policy:dependency-update@v3"),
+            id="another-policy",
+        ),
+        pytest.param(
+            lambda lineage: lineage["approvals"][0].update(approved_hash="0" * 64),
+            id="hash-mismatch",
+        ),
+    ],
+)
+def test_each_lineage_difference_refuses_alone(edit: Callable[[dict[str, Any]], None]) -> None:
+    assert _approval_edit(edit) == [POLICY_REVISION_1]
+
+
+def test_a_package_hash_other_than_the_approval_s_refuses_alone() -> None:
+    row = _real_row(TOKEN)
+    package, lineage, _ = _approved(row)
+    assert _carry_refused(row, package, lineage, "0" * 64) == [POLICY_REVISION_1]
+
+
+def test_a_registry_that_moved_since_the_approval_refuses() -> None:
+    """The carry form reads the registry at `main`; a row edited since the approval no longer
+    re-renders the package, so the carrier refuses and a person decides."""
+    row = _real_row(TOKEN)
+    approved = _approved(row)
+    moved = copy.deepcopy(row)
+    for consumer in moved["consumer"]:
+        if consumer["kind"] == "coolify-env":
+            consumer["key"] = "LANDING_LEDGER_MOVED_VARIABLE"
+    assert _carry_refused(moved, *approved) == [GENERATED, DESTINATIONS]
+
+
+def test_the_carry_form_accepts_only_the_issue_plan() -> None:
+    """It reads no infraops, so a revision 1 stating the rotation plan refuses."""
+    row = _real_row(TOKEN)
+    package = {**_generated(row, first_issue=False), "status": "approved"}
+    _, lineage, _ = _approved(row)
+    content_hash = package_hash(package)
+    lineage["approvals"][0]["approved_hash"] = content_hash
+    refused = _carry_refused(row, package, lineage, content_hash)
+    assert GENERATED in refused and ISSUE_PLAN in refused and POLICY_REVISION_1 not in refused
