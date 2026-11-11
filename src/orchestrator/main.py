@@ -140,6 +140,7 @@ def load_auth_config(settings: Settings | None = None) -> AuthConfig | None:
                 ROTATION_KEYCHAIN_EXECUTOR_PROFILE: settings.rotation_keychain_executor_agent_id,
             },
         )
+        _require_work_carrier(registry, credentials, settings.work_carrier_agent_id)
         marker = _required_secret(settings.proxy_marker)
         csrf_secret = _required_secret(settings.csrf_secret).encode()
         return AuthConfig(
@@ -225,6 +226,8 @@ def _m2m_credentials(registry: RegistryAdapter, document: str | None) -> dict[st
 # instances: the VM (ADR-0055) and the Keychain instance on the operator machine (amendment 12).
 ROTATION_EXECUTOR_PROFILE = "rotation-executor-v1"
 ROTATION_KEYCHAIN_EXECUTOR_PROFILE = "rotation-executor-keychain-v1"
+# The profile of the work carrier's observer identity (ADR-0055 amendment 22 item 3).
+WORK_CARRIER_OBSERVER_PROFILE = "work-carrier-observer-v1"
 
 
 def _require_rotation_executors(
@@ -247,6 +250,27 @@ def _require_rotation_executors(
         profile = registry.resolve(credential.agent_id).authority_profile
         if profile in configured and credential.agent_id != configured[profile]:
             raise RuntimeError("invalid runtime authentication configuration")
+
+
+def _require_work_carrier(
+    registry: RegistryAdapter,
+    credentials: dict[str, M2MCredential],
+    agent_id: str | None,
+) -> None:
+    """Refuse to boot unless the work-carrier setting and the credentials agree exactly.
+
+    The decomposition gate trusts a standing-approval record only when `recorded_by` is
+    `agent_id`, so the setting must name the one identity whose credential holds the observer
+    profile. Unlike the executors' check, a setting with no credential refuses too: it would name
+    an identity nothing can authenticate as, or one that holds another profile.
+    """
+    holders = {
+        credential.agent_id
+        for credential in credentials.values()
+        if registry.resolve(credential.agent_id).authority_profile == WORK_CARRIER_OBSERVER_PROFILE
+    }
+    if holders != ({agent_id} if agent_id is not None else set()):
+        raise RuntimeError("invalid runtime authentication configuration")
 
 
 def _previous_hash(raw: dict[str, object]) -> PreviousHash | None:
