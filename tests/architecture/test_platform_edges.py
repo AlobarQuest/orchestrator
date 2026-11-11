@@ -802,6 +802,8 @@ SETTINGS_FIELDS: Final = frozenset(
         "rotation_executor_agent_id",
         "rotation_keychain_executor_agent_id",
         "trusted_proxy_ips",
+        # ADR-0055 amendment 22 item 3: the work carrier's registry agent id. Not a secret.
+        "work_carrier_agent_id",
     }
 )
 SECRET_FIELDS: Final = frozenset(
@@ -844,7 +846,7 @@ def settings_findings(settings: type[Settings]) -> dict[str, object]:
 
 
 def test_settings_are_the_listed_fields_with_the_listed_secrets() -> None:
-    assert len(SETTINGS_FIELDS) == 36
+    assert len(SETTINGS_FIELDS) == 37
     assert settings_findings(Settings) == {}
 
 
