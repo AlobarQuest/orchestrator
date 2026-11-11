@@ -854,7 +854,7 @@ def _walks(
     reader: Orchestrator | None,
 ) -> list[Outcome]:
     """The due walk, then a writing pass's record walk. `reader` is None on a dry run."""
-    mirror = RepoMirror(default_mirror_root("rotation-proposer"))
+    mirror = _mirror()
     granted = _once(lambda: _granted_repositories(credentials)) if reader is not None else None
     if granted is None:
         print("a dry run does not read the member record: grants were not checked")
