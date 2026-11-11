@@ -75,8 +75,10 @@ def test_the_token_row_is_one_the_lane_token_adapter_acts_on(
     assert variable["uuid"] == "y144dc0981smrtzl587hqa4f"
     # The variable `lanes/unit-verifier/compose.yaml` maps to the container's BWS_ACCESS_TOKEN.
     assert variable["key"] == "UNIT_VERIFIER_BWS_ACCESS_TOKEN"
-    # The lane phases redeploy the service, never the executor.
-    assert variable["redeploy"] is False
+    # The lane phases redeploy the service, never the executor. Read from the row itself: the
+    # destination parser reads a missing `redeploy` as false.
+    [env] = [c for c in entry.credential["consumer"] if c["kind"] == "coolify-env"]
+    assert env["redeploy"] is False
     compose = (ROOT / "lanes" / LANE / "compose.yaml").read_text()
     assert "BWS_ACCESS_TOKEN: ${UNIT_VERIFIER_BWS_ACCESS_TOKEN}" in compose
 
