@@ -1,0 +1,8 @@
+# sds-lane-revision-watcher's schedule: one pass every hour, as the Mac job's `StartInterval` of
+# 3600 runs it (`scripts/com.devon.revision-watcher.plist`), in the image's America/New_York time.
+# The watcher takes no scheduled-pass flag: every run but `--dry-run` files rows, tells alert-hub
+# and arms the dead-man switch. Minute 40 keeps it off the hour and the quarter-hours
+# `execution-watch` runs on, off the deploy watcher's minute 20, and off the landing ledger's
+# 07:30, so no two lanes start a pass in the same minute. The entrypoint runs this file only when
+# LANE_SCHEDULE_ENABLED is `true`.
+40 * * * * lane-run revision-watcher

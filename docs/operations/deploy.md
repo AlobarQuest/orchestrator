@@ -349,6 +349,38 @@ lane") still needs the following, in this order, each in its own change or act:
 7. The lane's `--add`, then the `lane-run --read` proof and a `--dry-run` in the container.
 8. Cut-over steps 2 onward: the paired reporting runs, the schedule, and the Mac job's retirement.
 
+`revision-watcher`'s tracked files (`lanes/revision-watcher/compose.yaml` and `crontab`) don't
+register it either. Its state is the acting pass's `alerts.json`, so its compose mounts the named
+volume `sds-lanes-revision-watcher-state` at `REVISION_WATCHER_STATE_DIR`
+(`/var/lib/sds/revision-watcher`). Its crontab runs `lane-run revision-watcher` hourly at minute
+40, as the Mac job's `StartInterval` of 3600 does; the minute keeps it clear of every other lane's
+start, and the watcher has no scheduled-pass flag. Its `.bws-secrets.toml` secrets are the observer
+bearer, the hosting platform's API token, App Brain's read key, the `sds-bridge` alert sender
+(acting passes only) and the read-only App's key, all read with the lane's one token; on the Mac the
+narrow and broad Keychain identities still read them. Its compose leaves
+`SDS_DEADMAN_PING_URL_UUID` empty until the lane's ping-URL secret exists, so until then the
+container's dead-man helper pings nothing and says so. Its cut-over (ADR-0059, "Cut-over for one
+lane") still needs the following, in this order, each in its own change or act:
+
+1. The orchestrator serving this release; then HQ creates `sds-lane-revision-watcher` from the
+   compose without deploying it.
+2. The VM root's keeper commands for the lane token and `revision-watcher-ping-url`.
+3. The lane's registry rows in this repository, in two changes: the token's row and the ping URL's
+   row. In the same work, the read-App key row's `runtime-fetch` reader for
+   `scripts/run-revision-watcher.sh`.
+4. The lane account's grants on its five secrets and its ping-URL secret.
+5. The token's mint and the executor's write; then the ping URL's row made due and the executor's
+   write (ADR-0055 amendment 23).
+6. A served release whose compose names the ping-URL secret's id, with `revision-watcher` removed
+   from `test_deploy_lanes.py`'s `placeholders`.
+7. The lane's `--add`, then the `lane-run --read` proof and a `--dry-run` in the container. The
+   dry run also proves the read App's installation covers every repository the member record's
+   apps name: a repository outside it makes the mint refuse, and every pass exit 1.
+8. Cut-over steps 2 onward: the copy of the Mac's `sds/revision-watcher/alerts.json` into the
+   volume (cut-over step 2, before the first acting pass in the container, or the alerts the Mac
+   left firing never resolve), the paired reporting runs, the schedule, and the Mac job's
+   retirement.
+
 ### A lane's GitHub token (ADR-0059 increment 3)
 
 A lane that reads or pushes to GitHub mints its own installation token each pass from one of the
@@ -408,6 +440,13 @@ repositories are the keys of `ROLLOUT_WORKFLOWS` (`src/deploy_watcher/workflows.
 before a read. An empty table exits 3 before any mint. The keys are lowercase; the mint casefolds
 both its request and GitHub's answer, so they pass as printed. The same four permissions cover
 every GET in `src/deploy_watcher/github.py`.
+
+The revision watcher mints the same way in its container (`scripts/run-revision-watcher.sh`). Its
+repositories are those of the live members' apps, printed by `scripts.sds_scope apps` from the
+member record with the observer bearer, each once: the same population its subjects come from
+(`src/revision_watcher/subjects.py`). An unreadable record or an empty population exits 3 before
+any mint. Its GET calls are a branch, a commit and a compare (`src/revision_watcher/github.py`), so
+it mints `metadata=read` and `contents=read` only.
 
 The narrowing bounds what the token is granted. It doesn't stop the token reading public
 resources, which need no token at all

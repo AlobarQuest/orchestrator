@@ -46,3 +46,8 @@ def granted(members: Iterable[Member], service: str) -> list[str]:
 
 def app_subjects(members: Iterable[Member]) -> list[tuple[str, App]]:
     return [(m.repository, app) for m in _live(members) for app in m.apps]
+
+
+def app_repositories(members: Iterable[Member]) -> list[str]:
+    """The repositories `app_subjects` names, each once, in the record's order."""
+    return list(dict.fromkeys(repository for repository, _ in app_subjects(members)))

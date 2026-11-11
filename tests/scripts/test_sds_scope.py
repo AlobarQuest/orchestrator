@@ -8,7 +8,7 @@ import pytest
 
 import scripts.sds_scope as sds_scope
 from scripts.sds_scope import EXIT_INCOMPLETE, EXIT_OK, main
-from sds_members.client import SERVICES, Member, MembersUnreadable
+from sds_members.client import SERVICES, App, Member, MembersUnreadable
 
 
 def _member(repository, state="member", working_copy=None, machine_local=False, **grants):
@@ -102,3 +102,61 @@ def test_an_unexpected_error_escapes_rather_than_reading_as_incomplete(monkeypat
     _serve(monkeypatch, error=ZeroDivisionError())
     with pytest.raises(ZeroDivisionError):
         main(["ledger"])
+
+
+def _with_apps(repository, *names, state="member"):
+    apps = tuple(App(name, f"https://{name}.example/health", "main") for name in names)
+    return Member(repository, "devon", state, None, False, apps, dict.fromkeys(SERVICES, "granted"))
+
+
+def test_apps_prints_each_app_repository_once_in_the_records_order(monkeypatch, capsys):
+    _serve(
+        monkeypatch,
+        [
+            _with_apps("A/brains", "app-brain", "infra-brain"),
+            _with_apps("A/none"),
+            _with_apps("A/one", "one"),
+            _with_apps("A/gone", "gone", state="retired"),
+        ],
+    )
+    assert main(["apps"]) == EXIT_OK
+    assert capsys.readouterr().out == "A/brains\nA/one\n"
+
+
+def test_apps_is_the_repositories_the_revision_watchers_subjects_name(monkeypatch, capsys):
+    """The lane's token is minted for these, so they must be exactly the repositories the watcher
+    asks GitHub about: one read of the record, one population."""
+    from revision_watcher import subjects
+
+    members = [
+        _with_apps("A/brains", "app-brain", "infra-brain"),
+        _with_apps("A/one", "one"),
+        _with_apps("A/gone", "gone", state="retired"),
+    ]
+    _serve(monkeypatch, members)
+    monkeypatch.setattr(subjects, "read_members", lambda **_: members)
+    assert main(["apps"]) == EXIT_OK
+    printed = capsys.readouterr().out.splitlines()
+    loaded = subjects.load_subjects(token="test", credential_key_id="orchestrator-observer")
+    assert printed == list(dict.fromkeys(subject.repository for subject in loaded))
+
+
+def test_the_apps_repositories_pass_the_mints_request_checks(monkeypatch, capsys):
+    """Each once and one owner, so one mint; `contents` with the `metadata` every token holds."""
+    from estate_clients.github_app_mint import _check_request
+
+    _serve(
+        monkeypatch,
+        [_with_apps("A/brains", "app-brain", "infra-brain"), _with_apps("A/one", "one")],
+    )
+    assert main(["apps"]) == EXIT_OK
+    names = capsys.readouterr().out.splitlines()
+    permissions = {"metadata": "read", "contents": "read"}
+    assert sorted(_check_request("5684758", names, permissions).values()) == sorted(names)
+
+
+def test_apps_with_no_live_app_exits_3(monkeypatch, capsys):
+    _serve(monkeypatch, [_with_apps("A/none"), _with_apps("A/gone", "gone", state="retired")])
+    assert main(["apps"]) == EXIT_INCOMPLETE
+    captured = capsys.readouterr()
+    assert captured.out == "" and "apps population is empty" in captured.err

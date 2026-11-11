@@ -1,0 +1,33 @@
+# sds-lane-revision-watcher (ADR-0059 increment 3, Amendment 1): the revision-watcher lane. HQ
+# creates the resource from this file. It serves nothing: no port, no domain, so no Traefik labels
+# and no `networks:` entry, as `lanes/landing-ledger/compose.yaml`. Its state is the acting pass's
+# `alerts.json`, on a named volume at `REVISION_WATCHER_STATE_DIR`, as
+# `lanes/execution-watch/compose.yaml`; the Mac's file is copied in at cut-over, before the first
+# acting pass, or the alerts the Mac left firing never resolve. The lane's token is the resource's
+# own `REVISION_WATCHER_BWS_ACCESS_TOKEN` variable, which the VM rotation executor writes; this
+# file names it and never holds a value. With it the launcher reads the orchestrator's observer
+# bearer, the hosting platform's token, App Brain's read key, the `sds-bridge` alert sender (acting
+# passes only) and the read-only App's key, and mints the pass's GitHub token
+# (`scripts/run-revision-watcher.sh`).
+# `SDS_DEADMAN_PING_URL_UUID` is empty until the lane's ping-URL secret,
+# `revision-watcher-ping-url` in `Rotation / Keepers`, exists: the VM root creates that keeper at
+# cut-over and a later change writes its id here. While it is empty the dead-man helper falls
+# back to the Mac's lookup by check name, which needs the broad Keychain identity the container
+# doesn't have, so a pass pings nothing and logs `no SDS_DEADMAN_PING_URL_UUID and no broad BWS
+# identity — alerting disabled this run` (`scripts/sds-deadman.sh`). The schedule stays off
+# (`LANE_SCHEDULE_ENABLED`) until the cut-over turns it on.
+services:
+  revision-watcher:
+    image: ghcr.io/alobarquest/sds-lanes:${SDS_LANES_IMAGE_TAG}
+    command: ["revision-watcher"]
+    environment:
+      BWS_ACCESS_TOKEN: ${REVISION_WATCHER_BWS_ACCESS_TOKEN}
+      LANE_SCHEDULE_ENABLED: ${LANE_SCHEDULE_ENABLED:-false}
+      REVISION_WATCHER_STATE_DIR: /var/lib/sds/revision-watcher
+      SDS_DEADMAN_PING_URL_UUID: ""
+    volumes:
+      - sds-lanes-revision-watcher-state:/var/lib/sds/revision-watcher
+    restart: unless-stopped
+
+volumes:
+  sds-lanes-revision-watcher-state:

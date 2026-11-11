@@ -8,6 +8,7 @@ member record and prints one population of it, one value per line.
     sds_scope checkouts           working copies
     sds_scope bindable            working copies of machine-local members granted rollouts
     sds_scope granted <service>   repositories granted one of the seven services
+    sds_scope apps                repositories of the live members' apps (the revision watcher's)
 
 INCOMPLETE IS SAID OUT LOUD, NEVER IMPLIED BY A SHORTER LIST. An unreadable record, an unset
 token, an unknown service or an empty population prints nothing on stdout, writes
@@ -20,7 +21,13 @@ import sys
 from collections.abc import Sequence
 
 from sds_members.client import SERVICES, MembersUnreadable, read_members
-from sds_members.populations import bindable, granted, observed, working_copies
+from sds_members.populations import (
+    app_repositories,
+    bindable,
+    granted,
+    observed,
+    working_copies,
+)
 
 TOKEN_VARIABLE = "SDS_SCOPE_ORCHESTRATOR_TOKEN"
 KEY_ID = "orchestrator-observer"
@@ -36,7 +43,9 @@ def _incomplete(reason: str) -> int:
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Print a lane's repositories, one per line.")
-    parser.add_argument("population", choices=["ledger", "checkouts", "bindable", "granted"])
+    parser.add_argument(
+        "population", choices=["ledger", "checkouts", "bindable", "granted", "apps"]
+    )
     parser.add_argument("service", nargs="?", help="the service, for `granted`")
     args = parser.parse_args(argv)
     if args.population == "granted" and args.service not in SERVICES:
@@ -55,6 +64,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "checkouts": lambda: working_copies(members),
         "bindable": lambda: bindable(members),
         "granted": lambda: granted(members, args.service),
+        "apps": lambda: app_repositories(members),
     }[args.population]()
     if not names:
         return _incomplete(f"the {args.population} population is empty")
