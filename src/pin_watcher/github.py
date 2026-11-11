@@ -44,9 +44,10 @@ CALLER_PATH = ".github/workflows/factory-runner-pilot.yml"
 # caller at all, which is the GAP-4 state reported as the clean one.
 CALLER_PIN = re.compile(r"factory-runner\.yml@([^\s\"']+)")
 SHA = re.compile(r"\A[0-9a-f]{40}\Z")
-# A GitHub login: letters, digits and hyphens. An owner goes into a URL path, so anything else in
-# the member record is refused rather than sent.
-LOGIN = re.compile(r"\A[A-Za-z0-9-]+\Z")
+# A GitHub login: letters, digits, hyphens, and the underscore an enterprise managed user's login
+# carries. An owner goes into a URL path, so anything else in the member record is refused rather
+# than sent.
+LOGIN = re.compile(r"\A[A-Za-z0-9_-]+\Z")
 
 # 2,000 repositories for each account. The account held 75 on 2026-09-04, so the ceiling is
 # generous by more than an order of magnitude and exists to bound the loop rather than to express an

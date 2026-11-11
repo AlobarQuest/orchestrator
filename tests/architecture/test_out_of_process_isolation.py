@@ -428,10 +428,11 @@ TABLE: dict[str, Row] = {
         "typer",
         "typing",
     ),
-    # Its transport is the shared confined client (ADR-0050), which is plumbing with no lane of its
-    # own. It reads the member record, where its listing starts, through `sds_members`' confined
-    # reader and populations, the one code path the membership check reads it through (ADR-0059
-    # amendment 4, open item 3), so it does not carry `no_sibling_lanes`.
+    # Lanes share DOMAIN knowledge; this one has none to borrow. Its transport is the shared
+    # confined client (ADR-0050), which is plumbing with no lane of its own. It reads the member
+    # record, where its listing starts, through `sds_members`' confined reader and populations,
+    # the one code path the membership check reads it through (ADR-0059 amendment 4, open item 3);
+    # `sds_members` is a library row, so the sibling ban still holds.
     "pin_watcher": _row(
         "__future__",
         "alert_hub_client",
@@ -449,6 +450,7 @@ TABLE: dict[str, Row] = {
         "typing",
         # `urllib.parse` only, for the base-URL shape check.
         "urllib",
+        no_sibling_lanes=True,
     ),
     # ADR-0002: it reads reality and files what it saw. The lanes import one another for DOMAIN
     # knowledge and never for plumbing. It reads its subjects from the member record through

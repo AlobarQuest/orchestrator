@@ -71,6 +71,11 @@ def test_each_owner_is_read_once_compared_without_case() -> None:
     assert [path for path in estate.requests if path.count("/") == 2] == ["/users/u"]
 
 
+def test_a_managed_user_login_with_an_underscore_is_listed() -> None:
+    estate = Estate(callers={}, other_repositories=("dev_corp/one",))
+    assert _listing(estate).repositories == ("dev_corp/one",)
+
+
 def test_two_accounts_are_each_listed() -> None:
     estate = Estate(
         callers={},
