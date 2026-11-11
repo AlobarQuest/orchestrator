@@ -3,8 +3,8 @@ Outcome: done
 # Report: ADR-0055 amendment 22, increment 2
 
 PR [#660](https://github.com/AlobarQuest/orchestrator/pull/660) is open and ready, not merged.
-The code head is `c505ffc8`. This report is committed in the commit after it, so the PR head is that
-commit.
+The code is final at `c505ffc8`. The commits after it hold only this report, so the PR head is the
+last report commit.
 
 ## What I built
 
@@ -111,17 +111,26 @@ I tested the architecture guards. I added a temporary
 `from rotation_proposer import standing_approval` to `src/work_carrier/prepare.py` and ran
 `tests/architecture` and `tests/work_carrier`. Exactly one guard failed on the carrier import:
 `tests/architecture/test_out_of_process_isolation.py::test_each_program_imports_only_its_row_and_the_orchestrator_imports_none_of_it[work_carrier]`,
-because `rotation_proposer` isn't in `work_carrier`'s `TABLE` row. The other failure in that run
+because `rotation_proposer` isn't in `work_carrier`'s `TABLE` row. The other guards I ran
+passed with the import in place. The other failure in that run
 was this change's own `BORROWED` declaration, which I then made. `test_bridge_edges`,
 `test_layering`, `test_layer_manifest`, `test_wsp21_invariant_scan`, and
 `test_external_content_observes_only` passed. I removed the import by an inverse edit, and it isn't
 in the diff.
 
-**For increment 3:** the carrier may import these checks only after `"rotation_proposer"` is added
-to `work_carrier`'s row in `test_out_of_process_isolation.py`, with a reason. I didn't change that
-guard: it's increment 3's change, and the handoff forbids a guard change here. Placing the checks
-anywhere else wouldn't avoid it. They need `generate.render`, `authority`, and `plan_for`, which
-live in `rotation_proposer`.
+**For increment 3, two routes exist:**
+
+- **Allow the import:** add `"rotation_proposer"` to `work_carrier`'s row in
+  `test_out_of_process_isolation.py`, with a reason. That's a one-line guard change.
+- **Move the code:** relocate `generate` (and these checks) into a package the carrier's row
+  already allows, such as `rotation_worker`, which the amendment's "a module both lanes may import"
+  describes. I didn't try this route; it moves code both lanes use.
+
+I changed no guard. The handoff's stop point says to stop and ask if placing the checks where the
+carrier may import them needs a guard change. I reported instead of asking because the handoff
+fixes the module in `src/rotation_proposer/` and offers "say in the report what the architecture
+guards require" as the alternative, and increment 2 needs no carrier import. HQ can overrule this
+before merging.
 
 **The carry form's two differences** are seams, not new code:
 
@@ -132,9 +141,13 @@ live in `rotation_proposer`.
 
 ## Tests and checks
 
-- **`make check`** on `orchestrator_test_hq_w_87`, run from a committed tree: ruff passed, pyright
+- **`make check`** on `orchestrator_test_hq_w_87`, run from a committed tree at `9d765e86` and again
+  at `c620edb2` (after the `_mirror()` fix and this report's first commit, with only this report's
+  later edits uncommitted): ruff passed, pyright
   found 0 errors, and pytest **collected 14,417 tests, 14,416 passed, and 1 was skipped**
-  (10 xdist workers).
+  (10 xdist workers), on both runs. One earlier rerun collided with a second `make check` I'd
+  started on the same database by mistake. Its workers' databases were dropped mid-run (2,553
+  errors, "database ... does not exist"). I discarded it and ran again alone, and that run is green.
 - **36 new tests** are in `tests/rotation_proposer/test_standing_approval.py`. The rows are the
   landing ledger's two real rows from `.cred-consumers.toml`, the package is `generate.render`'s
   output for each, and the registry and intent-packages are throwaway git origins read through the
@@ -161,10 +174,10 @@ live in `rotation_proposer`.
   - The no-value test: a placeholder sentinel is planted in three credential environment variables,
     the row's `note`, and an edited package field. It's absent from stdout and stderr on the exit
     0, 1, and 2 paths, and every line has exactly one of the four key sets.
-- **Mutation controls:** I ran 13 mutants on the condition checks and the command's exit and read
-  paths. All 13 were killed. The first run had two survivors: the `lane_type` class check (masked
-  by its provider check) and the explicit `created_by` check (masked by the re-render). I
-  strengthened both tests and re-ran both mutants, which were then killed.
+- **Mutation controls:** I ran 11 distinct mutants on the condition checks and the command's exit
+  and read paths. Nine were killed on the first run. Two survived: the `lane_type` class check
+  (masked by its provider check) and the explicit `created_by` check (masked by the re-render). I
+  strengthened both tests and re-ran both mutants, and both were killed, so 0 survive.
 - **Security scan** (security-standards scanner, `--category security`, from the repository root):
   0 BLOCK, 2 WARN, 1 INFO. Both WARNs predate this change: the `*-migration/` gitignore glob, and
   undeclared UUID `aaff45ca-…`, which isn't in this diff.
@@ -216,8 +229,21 @@ live in `rotation_proposer`.
   prints text lines (`_report`). This command follows the standard (Code Brain rule 3): one
   `json.dumps` line per event, on stdout. I didn't reuse `rotation_worker.logs.configure`, because
   its `StreamHandler` writes to stderr.
-- **Increment 3 needs one guard row** (`work_carrier`'s isolation row gains `rotation_proposer`).
-  See "Where increment 3 imports the checks from".
+- **Increment 3 needs a guard row or a code move** for the carrier to import the checks. See
+  "Where increment 3 imports the checks from".
+- **The destination kinds don't bind the `bws-secret` to the keeper.** A probe (not committed):
+  a lane-token row whose one `bws-secret` consumer isn't its `bws_uuid` keeper, with the package
+  rendered from it, passes all six conditions (exit 0). Item 2 states kinds only, so the command
+  follows it. The amendment's Consequences section says the kinds limit the choice to "one keeper".
+  Whether to add a condition that the `bws-secret` is the keeper is HQ's decision; I didn't add a
+  seventh condition.
+- **The mirror root.** The handoff says "the executor's mirrors (as `compare-destinations` does)".
+  The command uses the proposer's mirror root (`~/.cache/rotation-proposer/mirrors`), because it's
+  a rotation-proposer command and `default_mirror_root` gives each program its own root. That root
+  is shared with the proposer's scheduled 06:30 pass, and `git_mirror` warns that two passes
+  fetching into one bare clone race on its ref lock. Run the command outside that pass, or move it
+  to its own root (`default_mirror_root("rotation-proposer-standing-approval")`, for example) if
+  HQ prefers.
 - **The handoff's report header** offers `partial`. The worker rules allow only
   `done`/`blocked`/`failed`, so this report uses `done`.
 
