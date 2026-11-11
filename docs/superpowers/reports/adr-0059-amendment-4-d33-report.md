@@ -3,7 +3,8 @@ Outcome: done
 # ADR-0059 amendment 4 (HQ D-33): build report
 
 Worker W-86, branch `hq/adr-0059-amendment-4-d33`, base `origin/main` at `8ac53534`. PR #659
-(ready, not merged). Amendment commit: `84962710`. This report is committed on top of it.
+(ready, not merged). The amendment is in commits `84962710` and the follow-up after the review
+named under "Self-review". This report is in the last commit; read the PR head for the final sha.
 
 ## What I built
 
@@ -51,6 +52,16 @@ unreadable record, no members, an unreadable type or page, and a page ceiling re
 - **Membership check.** A private non-member's `factory-target.toml` is no longer read
   (`factory_targets`). The "its factory-target.toml names it, but the member record does not grant
   app_changes" disagreement is lost for such a repository (`check`, `_require`).
+- **A private retired member** drops out too, because the members' part is `onboarding` and
+  `member` only. The membership check loses the same disagreement for it. Keeping it would make
+  a gap every pass, because a declaration the token can't see reads as unreadable
+  (`_confirm_absence`).
+
+Archived repositories: a non-member that's archived is excluded from both lanes, as today. An
+archived member stays in the membership check, as today's `extra` keeps it, because dropping it
+would cause a false "does not declare" disagreement. The pin watcher excludes an archived member,
+as today. It reads `archived` from the public listing, or from `GET /repos/{owner}/{repo}` for a
+member the public listing didn't return.
 
 ### ADR lines the amendment governs (at `8ac53534`)
 
@@ -90,7 +101,10 @@ marked incomplete for these two lanes. Lines 1388-1390 are narrowed in meaning.
   BLOCK**, 2 WARN. Both WARNs are the gitignore-coverage pattern check, which this docs-only
   diff doesn't touch.
 - I checked every line citation in the amendment against the files at the base and corrected
-  ten.
+  thirteen.
+- After the follow-up edit, I reran `tests/architecture/test_layer_manifest.py` (3 passed). It
+  holds the report file to a layer. The full `make check` ran before the report and the
+  follow-up existed, and both are docs only.
 
 ## Files changed
 
@@ -99,6 +113,18 @@ marked incomplete for these two lanes. Lines 1388-1390 are narrowed in meaning.
 - `docs/superpowers/reports/adr-0059-amendment-4-d33-report.md`: this report.
 
 ## Self-review
+
+- An Opus advisor review of the first draft found three gaps, which a follow-up commit fixes:
+  - **Retired members:** the amendment didn't count the loss of private retired members. It now
+    states the loss and cites why.
+  - **Archived members:** the amendment didn't settle how each lane treats an archived member.
+    It now does, for both lanes.
+  - **Item 5:** the file list missed prose descriptions of the population. It now names the
+    docstrings and gap texts in `membership_check/cli.py` and `consistency.py`.
+
+  The follow-up also adds two sentences. One covers the rate-limit cost of open item 2's no-token
+  fallback. The other gives the Mac's basis for "the members' owners are the installation
+  accounts" (decision 2's install rule).
 
 - The design reads the accounts from the members' owners, not from `GET /app/installations`.
   That endpoint needs the App's JWT, which the lane program doesn't hold, and the Mac path has no
@@ -111,6 +137,9 @@ marked incomplete for these two lanes. Lines 1388-1390 are narrowed in meaning.
   an open item with a live check and a fallback, not a stated fact.
 
 ## Concerns
+
+- Teardown is left to HQ: the test database `orchestrator_test_hq_w_86` and this worktree's
+  `.venv` remain.
 
 - `RUNNER_REPOSITORY = "AlobarQuest/factory-runner"` (`src/pin_watcher/github.py`, line 34) is an
   owner name in code. It names one fixed repository and doesn't find repositories, so the
