@@ -1,0 +1,8 @@
+# sds-lane-unit-verifier's schedule: one pass every ten minutes, as the Mac job's `StartInterval` of
+# 600 runs it (`scripts/com.devon.unit-verifier.plist`), in the image's America/New_York time. The
+# verifier takes no scheduled-pass flag: every run but `--dry-run` verifies, tells alert-hub and
+# arms the dead-man switch. Minutes 2, 12, 22, 32, 42 and 52 keep it off the hour and the
+# quarter-hours `execution-watch` runs on, off the deploy watcher's minute 20 and the revision
+# watcher's minute 40, and off the landing ledger's 07:30, so no two lanes start a pass in the same
+# minute. The entrypoint runs this file only when LANE_SCHEDULE_ENABLED is `true`.
+2-52/10 * * * * lane-run unit-verifier
