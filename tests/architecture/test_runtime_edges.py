@@ -526,7 +526,9 @@ def first_party_imports(path: Path) -> dict[str, frozenset[str]]:
 SDS_SCOPE = SCRIPTS / "sds_scope.py"
 SDS_SCOPE_BORROWS = {
     "sds_members.client": frozenset({"SERVICES", "MembersUnreadable", "read_members"}),
-    "sds_members.populations": frozenset({"bindable", "granted", "observed", "working_copies"}),
+    "sds_members.populations": frozenset(
+        {"app_repositories", "bindable", "granted", "observed", "working_copies"}
+    ),
 }
 
 

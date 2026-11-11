@@ -46,3 +46,15 @@ def granted(members: Iterable[Member], service: str) -> list[str]:
 
 def app_subjects(members: Iterable[Member]) -> list[tuple[str, App]]:
     return [(m.repository, app) for m in _live(members) for app in m.apps]
+
+
+def app_repositories(members: Iterable[Member]) -> list[str]:
+    """The repositories `app_subjects` names, each once, in the record's order.
+
+    Once by casefolded name, first spelling kept: GitHub's names are case-insensitive, and the
+    App mint refuses a repository named twice that way.
+    """
+    seen: dict[str, str] = {}
+    for repository, _ in app_subjects(members):
+        seen.setdefault(repository.casefold(), repository)
+    return list(seen.values())
