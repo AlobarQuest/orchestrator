@@ -2132,7 +2132,9 @@ cut-over step 2 (1133-1136); "Rollback for one lane" (1189-1190); the week bar (
 
 ## Amendment 4 (2026-11-11): the pin watcher and the membership check list members and public repositories
 
-- **Status:** Proposed, 2026-11-11. It records Devon's answer to HQ decision D-33, given on
+- **Status:** Accepted, 2026-11-11. Devon accepted this text on gate G-34, replying "accept"
+  from Slack on 2026-11-11. Acceptance followed a clean Opus whole-branch review of PR #659 at
+  `30b0e2e2` (HQ D-12, limit 3). It records Devon's answer to HQ decision D-33, given on
   2026-11-09 (sds-hq `state/decisions.md`). The question: "Two lanes, the pin watcher and the
   membership check, find repositories by listing every repository you own (GET /user/repos), which
   a GitHub App token can't call. How do they list repositories once they run off the Mac? (A)
@@ -2144,8 +2146,7 @@ cut-over step 2 (1133-1136); "Rollback for one lane" (1189-1190); the week bar (
   in other owners' accounts and organizations, not only `AlobarQuest`. Code finds repositories
   through what each GitHub App installation covers (and, where a design lists public repositories,
   those of each installation's account), never through an owner name written into the code." The
-  amendment becomes Accepted in a later change, after a clean Opus review on the Accepted bar. HQ
-  merges this text as Proposed; the ADR's own status is unchanged.
+  ADR's own status is unchanged.
 - **Decided by:** Devon, on 2026-11-09 (HQ D-33, option C).
 - **Relates to:** decision 2 (the read-only App bullet), decision 5's `pin-watcher` and
   `sds-membership-check` rows, increment 3, cut-over step 2, the Consequences on the read-only
@@ -2154,7 +2155,7 @@ cut-over step 2 (1133-1136); "Rollback for one lane" (1189-1190); the week bar (
 Line numbers in this amendment are this file's at orchestrator `8ac53534`, before the amendment
 was appended. The amendment appends only: no passage before it is rewritten, so each line cited
 here still holds the text it names. Where this amendment and an earlier passage disagree, this
-amendment governs once it's accepted.
+amendment governs.
 
 ### Context
 
