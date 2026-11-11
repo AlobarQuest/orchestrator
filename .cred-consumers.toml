@@ -781,9 +781,8 @@ healthchecks_check = "sds-landing-ledger"
 
 # ── The deploy-watcher lane's token and ping URL (ADR-0059 increment 3) ──────────
 # ADR-0055 amendment 19, item 8: the lane's two rows, both handed to the SDS. The token's row is due
-# for its first issue by `rotate_requested`; a later change dates the ping URL's row. The VM root's
-# `create-keeper` made both keepers in Rotation / Keepers (HQ gate G-28), each holding the inbox's
-# empty marker.
+# for its first issue by `rotate_requested`; a later change dates the ping URL's row. Both keepers
+# were created in Rotation / Keepers at HQ gate G-28.
 # Neither row carries `created`, for the reason the landing ledger's block gives.
 [[credential]]
 id = "deploy-watcher-bws-token"
