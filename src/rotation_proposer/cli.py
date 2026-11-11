@@ -48,6 +48,12 @@ and is a finding while the credential is due. An exposure records nothing either
 record-rotation doesn't close it, and closing it is a person's statement that the old value is
 dead.
 
+**`standing-approval <credential_id>` ONLY READS AND REPORTS** (ADR-0055 amendment 22, increment
+2). It reads the registry row and the standing package with its lineage into this program's
+mirrors, and infraops' `last_rotated`, and checks amendment 22 item 2's conditions
+(`standing_approval.py`), logging each as a JSON line on stdout. Exit 0 when no condition refuses,
+1 when any does, 2 when a read or anything else fails. It approves nothing.
+
 **A REPEAT PASS IS A REPLAY.** A package whose tip already carries the occurrence is not revised
 again; the observation is content-addressed; change-manager answers 200 for an identical proposal.
 """
@@ -55,6 +61,7 @@ again; the observation is content-addressed; change-manager answers 200 for an i
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import sys
@@ -109,15 +116,26 @@ from rotation_proposer.standing import (
     document,
     to_review,
 )
+from rotation_proposer.standing_approval import evaluate
 from rotation_worker.contract import ContractError
 from rotation_worker.destinations import DestinationError
 from rotation_worker.git_mirror import MirrorError, RepoMirror, default_mirror_root
-from rotation_worker.registry import RegistryEntry, RegistryError, standing_credential
+from rotation_worker.registry import (
+    RegistryEntry,
+    RegistryError,
+    find_credential,
+    lineage_path,
+    load_package,
+    package_path,
+    standing_credential,
+)
 from rotation_worker.registry import credentials as registry_entries
 from sds_members import populations
 from sds_members.client import MembersUnreadable, read_members
 
 EXIT_OK: Final = 0
+# `standing-approval` only: a condition refused.
+EXIT_REFUSED: Final = 1
 EXIT_UNUSABLE: Final = 2
 EXIT_FINDINGS: Final = 3
 
@@ -836,7 +854,7 @@ def _walks(
     reader: Orchestrator | None,
 ) -> list[Outcome]:
     """The due walk, then a writing pass's record walk. `reader` is None on a dry run."""
-    mirror = RepoMirror(default_mirror_root("rotation-proposer"))
+    mirror = _mirror()
     granted = _once(lambda: _granted_repositories(credentials)) if reader is not None else None
     if granted is None:
         print("a dry run does not read the member record: grants were not checked")
@@ -861,7 +879,73 @@ def _walks(
     return _settle(outcomes, walked, inputs.last_rotated)
 
 
-def run(argv: list[str] | None = None) -> int:
+def _log(event: str, **fields: object) -> None:
+    """One structured line on stdout (Code Brain rule 3). Callers pass ids, commits and condition
+    results, never a value."""
+    print(json.dumps({"event": event, **fields}), flush=True)
+
+
+def _mirror() -> RepoMirror:
+    return RepoMirror(default_mirror_root("rotation-proposer"))
+
+
+def _served_last_rotated(credential_id: str) -> str | None:
+    """What infraops serves as the credential's `last_rotated`. A map infraops doesn't serve, or
+    one without the credential, is a read that can't be made, never a null."""
+    _, _, last_rotated = read_due()
+    if last_rotated is None:
+        raise FindingsError("infraops serves no last_rotated")
+    if credential_id not in last_rotated:
+        raise FindingsError(f"infraops serves no last_rotated for {credential_id}")
+    return last_rotated[credential_id]
+
+
+def standing_approval(credential_id: str, mirror: RepoMirror) -> int:
+    """Amendment 22 item 2's conditions on the credential's standing package, reported one line
+    each. Reads only; approves nothing."""
+    try:
+        entry = find_credential(mirror, credential_id)
+        commit = mirror.sync(PACKAGES_REPOSITORY)
+        package = load_package(
+            mirror.show(PACKAGES_REPOSITORY, commit, package_path(credential_id))
+        )
+        lineage = load_package(
+            mirror.show(PACKAGES_REPOSITORY, commit, lineage_path(credential_id))
+        )
+        _log(
+            "standing_approval.read",
+            credential_id=credential_id,
+            registry_commit=f"{entry.repository}@{entry.commit}",
+            package_commit=f"{PACKAGES_REPOSITORY}@{commit}",
+        )
+        conditions = evaluate(
+            entry, package, lineage, last_rotated=_served_last_rotated(credential_id)
+        )
+    except Exception as error:
+        # Exit 1 means "refused", and Python's uncaught exit is 1 too, so every failure, foreseen
+        # or not, is reported here as unreadable rather than as a verdict (amendment 22 item 2).
+        _log(
+            "standing_approval.unreadable",
+            credential_id=credential_id,
+            error=f"{type(error).__name__}: {error}",
+            exit_code=EXIT_UNUSABLE,
+        )
+        return EXIT_UNUSABLE
+    for condition in conditions:
+        _log(
+            "standing_approval.condition",
+            credential_id=credential_id,
+            condition=condition.name,
+            passed=condition.passed,
+            reason=condition.reason,
+        )
+    refused = [condition.name for condition in conditions if not condition.passed]
+    code = EXIT_REFUSED if refused else EXIT_OK
+    _log("standing_approval.verdict", credential_id=credential_id, refused=refused, exit_code=code)
+    return code
+
+
+def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--submit",
@@ -871,7 +955,29 @@ def run(argv: list[str] | None = None) -> int:
             "it writes nothing, commits nothing and touches no credential."
         ),
     )
+    commands = parser.add_subparsers(dest="command")
+    approval = commands.add_parser(
+        "standing-approval",
+        help=(
+            "check ADR-0055 amendment 22's conditions on a lane credential's revision 1 and "
+            "report them; reads only, approves nothing"
+        ),
+    )
+    approval.add_argument("credential_id")
+    return parser
+
+
+def _standing_approval_command(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
+    if args.submit:
+        parser.error("standing-approval reads only; it takes no --submit")
+    return standing_approval(args.credential_id, _mirror())
+
+
+def run(argv: list[str] | None = None) -> int:
+    parser = _parser()
     args = parser.parse_args(argv)
+    if args.command == "standing-approval":
+        return _standing_approval_command(parser, args)
 
     credentials = _credentials(submit=args.submit)
     if credentials is None:

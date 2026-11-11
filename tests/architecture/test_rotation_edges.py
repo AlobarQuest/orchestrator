@@ -604,14 +604,27 @@ BORROWED: dict[str, dict[str, frozenset[str]]] = {
             {"ContractError", "HELD_KIND", "HumanAct", "Plan", "StepKind", "UnitPlan"}
         ),
         "rotation_worker.destinations": frozenset(
-            {"DestinationError", "HOSTED_KINDS", "parse", "same"}
+            {"DestinationError", "HOSTED_KINDS", "parse", "render", "same"}
         ),
         "rotation_worker.git_mirror": frozenset(
             {"MirrorError", "RepoMirror", "default_mirror_root"}
         ),
         "rotation_worker.plans": frozenset({"candidates", "criteria_steps", "select_plan"}),
+        # `standing-approval` (ADR-0055 amendment 22, increment 2) reads the row, the package and
+        # its lineage as the executor's `compare-destinations` does.
         "rotation_worker.registry": frozenset(
-            {"RegistryEntry", "RegistryError", "check_name", "credentials", "standing_credential"}
+            {
+                "RegistryEntry",
+                "RegistryError",
+                "check_name",
+                "credentials",
+                "find_credential",
+                "lineage_path",
+                "load_package",
+                "package_path",
+                "standing_credential",
+                "standing_destinations",
+            }
         ),
         "rotation_worker.types": frozenset({"CLASS_TYPES", "TYPES"}),
         "sds_members.client": frozenset({"MembersUnreadable", "read_members"}),

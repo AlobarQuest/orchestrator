@@ -246,6 +246,51 @@ approves the new criteria in that revision's one click, and the `revised` line s
 - A type with two plans and no `last_rotated` for the credential is `unlaned`, and a generated
   package whose criteria describe no plan its row derives is an `error`. Neither writes anything.
 
+## Check a lane credential's revision 1 for the standing approval
+
+`rotation-proposer standing-approval <credential_id>` checks ADR-0055 amendment 22's decision item
+2 on a lane credential's standing package and reports each condition. It approves nothing, writes
+nothing and needs no credential. HQ runs it only after amendment 22's increments 3 (the carrier,
+its record and the decomposition gate) and 1 (intent-packages' schema-4 grant) land; until then
+every rotation revision still needs Devon's named approval.
+
+It reads the following sources:
+
+- **The registry row:** at each registry repository's `main`, through this program's own mirror
+  (`~/.cache/rotation-proposer/mirrors`), as `rotation-worker compare-destinations` reads it.
+- **The package and its lineage:** `packages/rotation-<credential_id>/package.yaml` and
+  `lineage.yaml` at one intent-packages `main` commit, through the same mirror. It doesn't read the
+  local packages checkout.
+- **`last_rotated`:** infraops' `cred-findings`, as a pass reads it. An infraops that serves no
+  `last_rotated`, or none for the credential, is an unreadable read, never a null.
+
+It checks the following conditions, in `src/rotation_proposer/standing_approval.py`, one function
+each:
+
+| Condition | Refuses unless |
+| --- | --- |
+| `proposer_generated` | `generate.render` from the row, with the package's own occurrence and `created_at` and the plan `last_rotated` implies, equals the package in every field apart from `status`, and `created_by` is `rotation-proposer`. |
+| `unapproved_revision_1` | The package is revision 1, and its lineage names it, lists one revision (revision 1), records no approval and is `ready_for_review`. |
+| `issue_plan` | `last_rotated` is null, and the plan `plan_for` chooses and the plan the package's criteria state are both the issue plan. |
+| `lane_type` | The row's `class` is `bws-lane-token` or `healthchecks-ping-url`, and the package lists `provider name="<class>"`. |
+| `destinations` | The package lists the row's destinations (`destinations.same`), and they're the type's kinds: a lane token's one `bws-secret`, one `coolify-env` with `redeploy=false` and its `provider`; a ping URL's one `bws-secret` and its `provider`. |
+| `standard_authority` | The package's `authority` equals `generate.authority` for the type, the row's destinations and the plan, compared whole. |
+
+Unequal destinations, a changed authority and a package revision other than 1 also fail the
+re-render, so `proposer_generated` refuses beside them. Generator drift fails the same way: a
+package rendered before a change to `generate.py` refuses `proposer_generated`, or exits 2 when its
+criteria match no plan its type derives any more. That leaves the revision for Devon.
+
+It logs one JSON line on stdout per event: `standing_approval.read` names the registry commit and
+the package commit, `standing_approval.condition` gives each condition's result and reason, and
+`standing_approval.verdict` lists every refused condition. A reason names fields and ids, never a
+value. Its exit codes are the following:
+
+- **0:** no condition refused.
+- **1:** at least one condition refused; the verdict lists all of them.
+- **2:** a read failed or something raised, logged as `standing_approval.unreadable`. A ping URL
+  that infraops dates exits 2, because its type has no rotation plan for `plan_for` to choose.
+
 ## Authoring a standing rotation package by hand
 
 Generation covers every type in `CLASS_TYPES`. To author one by hand instead, use the
