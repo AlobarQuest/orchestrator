@@ -41,6 +41,7 @@ from tests.architecture.edge_table import (
     READ_BEARER,
     SDS_BRIDGE_ALERT_BEARER,
     SYSTEM_BEARER,
+    WORK_CARRIER_OBSERVATION_BEARER,
     Edge,
     Permits,
     captured_permits,
@@ -99,7 +100,8 @@ EDGES: dict[str, Edge] = {
         ),
         github=frozenset(),
         alert_hub=frozenset(),
-        bearers=DEADMAN | {READ_BEARER, SYSTEM_BEARER, OBSERVER_BEARER},
+        bearers=DEADMAN
+        | {READ_BEARER, SYSTEM_BEARER, OBSERVER_BEARER, WORK_CARRIER_OBSERVATION_BEARER},
     ),
     "work_watcher": Edge(
         # The listing is work_carrier's reader, which work_watcher/pipeline.py imports.
