@@ -2,8 +2,9 @@ Outcome: done
 
 # Report: the revision watcher's lane files and launcher (ADR-0059 increment 3, step 3e-3)
 
-Worker W-82. Branch `hq/lanes-inc-3-revision-watcher`, based on `origin/main` at `8baf0950`. The
-handoff's stop point is a ready pull request, not merged. I made no production calls: no live
+Worker W-82. Branch `hq/lanes-inc-3-revision-watcher`, based on `origin/main` at `8baf0950`.
+Pull request: #655 (https://github.com/AlobarQuest/orchestrator/pull/655), ready and not merged,
+which is the handoff's stop point. I made no production calls: no live
 mint, no reads or writes of a real BWS secret, no GitHub App call, and no Coolify, VM, VPS, App
 Brain, alert-hub, change-manager, Healthchecks or `launchctl` call.
 
@@ -37,6 +38,8 @@ This change follows the deploy watcher (#653, `b0e25764`). The state volume foll
   bearer, `prod-coolify-api-token`, `APP_BRAIN_READ_KEY`, `ALERT_HUB_SENDER_TOKEN_SDS_BRIDGE` and
   `lanes-read-app-private-key`. The platform token and App Brain key rows had no `lanes` field, so
   I added one. I also updated the comments that said only the broad identity reads those two.
+- `docs/operations/membership.md`: "Reading the record" names `sds_scope apps` as the
+  container's reader.
 - `docs/operations/deploy.md`: "Registered lanes" names the revision watcher and its remaining
   cut-over steps. "A lane's GitHub token" names its mint, derivation and permissions.
 - `tests/scripts/test_run_revision_watcher.py`: rewritten, now 34 tests.
@@ -78,7 +81,9 @@ sds_bws_value "$READ_APP_KEY_UUID" \
   `/repos/{r}/branches/{b}`, `/repos/{r}/commits/{sha}` and `/repos/{r}/compare/{base}...{head}`.
   All three are `contents` reads, plus the `metadata` that GitHub grants with every token. The mint
   requires `metadata` by name (`_check_request`). The App holds both permissions, so nothing needs
-  widening.
+  widening. I checked every caller: `census.py` calls `branch_tip`, `relation` and
+  `committed_at`, each with `subject.repository`, and nothing else in `src/revision_watcher/`
+  asks GitHub. So every read stays inside the minted set.
 - **Repositories.** The launcher runs `python -m scripts.sds_scope apps` with
   `SDS_SCOPE_ORCHESTRATOR_TOKEN` set to the observer bearer and under `env -u BWS_ACCESS_TOKEN`.
   It prints the repositories of the live members' `apps` in the member record, each once. That's
@@ -182,9 +187,11 @@ I ran `/code-review` at medium effort on `origin/main...HEAD`. It reported five 
   container. The launchd job sets no `BWS_ACCESS_TOKEN`, so the scheduled path behaves the same:
   it reads the same Keychain item (`Claude`/`BWS_ACCESS_TOKEN_SDS`). The ledger and deploy watcher
   made the same change, and `BWS_ACCESS_TOKEN_SDS` is the named override.
-- **Installation coverage can't be checked offline.** If installation `180257215` doesn't cover
-  every repository the member record's apps name, the mint refuses and every pass exits 1. I can't
-  check that without a live call. It's part of the cut-over `--dry-run` proof (deploy.md step 7).
+- **Installation coverage is checked live at cut-over.** If installation `180257215` didn't cover
+  every repository the member record's apps name, the mint would refuse and every pass would exit
+  1. `app_repositories` is a subset of `observed` by construction, and the ledger mints for
+  `observed` with the same App each day. So a successful ledger mint already shows coverage and a
+  single owner for this set. The cut-over `--dry-run` (deploy.md step 7) confirms it directly.
 - **The scope ignores `ORCHESTRATOR_API_URL`.** `sds_scope` reads the record at its default URL
   (`https://sds.alobar.net`), while the watcher honors an `ORCHESTRATOR_API_URL` override. Under an
   override, the mint set and the subjects could come from different records. The ledger has the
@@ -232,8 +239,9 @@ act:
   - Every BWS read is checked for an empty value and exits 1 with a named cause.
   - The derivation's exit code is checked.
   - The mint's exit code and empty output are checked.
-  - The two `|| true` that remain are on the Mac branch only: the Keychain lookups, which are
-    followed by an empty check and exit 1, and the existing `gh auth token` fallback. Tests pin
+  - The three `|| true` that remain are on the Mac branch only: the two Keychain lookups, each
+    followed by an empty check and exit 1, and the existing `gh auth token` fallback, also
+    followed by an empty check. Tests pin
     each failure.
 - **Code Brain rule 5 (never log secrets).** The App key goes from the BWS read to the mint's
   stdin and is never in a variable, an argument or a file. The tokens stay in the environment and

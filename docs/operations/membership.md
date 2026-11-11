@@ -173,7 +173,9 @@ orchestrator, these read it through `sds_members.client`: the bump driver, bump 
 proposer, estate lander, membership check, revision watcher, rotation proposer, unit verifier and
 work carrier. Fork hardening, the landing ledger and the activation sweep read it through
 `scripts/sds_scope.py` (`run-fork-harden.sh`, `run-landing-ledger.sh`, `run-activation-sweep.sh`),
-which prints nothing and exits 3 on an unreadable record, an empty one included. The rotation
+which prints nothing and exits 3 on an unreadable record, an empty one included. In its lane's
+container, `run-revision-watcher.sh` also reads it through `sds_scope apps`, for the repositories
+its GitHub token is minted for. The rotation
 executor reads the same route itself (`rotation_worker/grants.py`). Project-standards' nightly scan
 reads it with the OBSERVER bearer; its Q2 factory-capability sweep measures the members whose
 app-changes grant is `granted` or `remediating`.
