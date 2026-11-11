@@ -2129,3 +2129,293 @@ decision 5's two rows and its count (773, 774, 787); "Agents outside this reposi
 cut-over step 2 (1133-1136); "Rollback for one lane" (1189-1190); the week bar (1262-1264,
 1271-1275); the Consequences (1319-1320, 1376, 1394-1396); Q1 (1428-1429), Q6 (1496-1510) and Q9
 (1536-1560).
+
+## Amendment 4 (2026-11-11): the pin watcher and the membership check list members and public repositories
+
+- **Status:** Proposed, 2026-11-11. It records Devon's answer to HQ decision D-33, given on
+  2026-11-09 (sds-hq `state/decisions.md`). The question: "Two lanes, the pin watcher and the
+  membership check, find repositories by listing every repository you own (GET /user/repos), which
+  a GitHub App token can't call. How do they list repositories once they run off the Mac? (A)
+  Install the read-only App on all your repositories ... (B) List only the repositories the App is
+  installed on (the 14 members) ... (C) List your public repositories through GitHub's public
+  listing, plus the members. That needs no token and no wider install, but private non-member
+  repositories drop out of both sweeps." Devon's answer: "C". It also follows the standing answer
+  recorded the same day (sds-hq `standing-answers.md`, 2026-11-09): "Rule: design for repositories
+  in other owners' accounts and organizations, not only `AlobarQuest`. Code finds repositories
+  through what each GitHub App installation covers (and, where a design lists public repositories,
+  those of each installation's account), never through an owner name written into the code." The
+  amendment becomes Accepted in a later change, after a clean Opus review on the Accepted bar. HQ
+  merges this text as Proposed; the ADR's own status is unchanged.
+- **Decided by:** Devon, on 2026-11-09 (HQ D-33, option C).
+- **Relates to:** decision 2 (the read-only App bullet), decision 5's `pin-watcher` and
+  `sds-membership-check` rows, increment 3, cut-over step 2, the Consequences on the read-only
+  App's key, Q6, Q9, and Amendment 3's table rows that name the membership check
+
+Line numbers in this amendment are this file's at orchestrator `8ac53534`, before the amendment
+was appended. The amendment appends only: no passage before it is rewritten, so each line cited
+here still holds the text it names. Where this amendment and an earlier passage disagree, this
+amendment governs once it's accepted.
+
+### Context
+
+The pin watcher and the membership check find repositories through one function,
+`repositories()` in `src/pin_watcher/github.py` (lines 146-166). It calls
+`GET /user/repos?affiliation=owner`, drops archived repositories, and raises when it reaches its
+page ceiling (`MAX_PAGES`, 20 pages of 100) instead of returning a truncated list. The pin
+watcher sweeps that list for caller workflows (`sweep`, `src/pin_watcher/measure.py`, lines
+96-113). The membership check reads each listed repository's `factory-target.toml` and adds the
+member repositories the list lacks (`_declarations`, `src/membership_check/cli.py`, lines 53-62).
+The same list, `owned`, also feeds the check's landing-policy spelling and gaps (`_landing`, lines
+67-86, through `canonical`) and every `_spelled` call (lines 89-92 and 176-192).
+
+Both launchers feed that function the token `gh auth token` prints, Devon's login
+(`scripts/run-pin-watcher.sh`, lines 99-110; `scripts/run-membership-check.sh`, lines 80-83).
+Decision 2 replaces that with a read token each lane mints from the read-only App (lines 521-531,
+597-636). The increment 3 verify found that GitHub doesn't let an installation token call
+`/user/repos` (`docs/superpowers/reports/lanes-inc-3-verify-report.md`, lines 18-24 and 243-257,
+quoting GitHub Docs, "List repositories for the authenticated user"). On an App token the pin
+watcher exits incomplete every pass, and the membership check records the listing as a gap and
+shrinks its factory-target sweep to the members (same report, lines 315-317). At the verify, the
+account held 65 non-archived owned repositories, 33 private and 32 public, and the read-only App
+was installed on the 14 members.
+
+Devon chose option C: the members, plus the public repositories. The standing answer adds that
+the code learns the accounts from the App's installations, never from an owner name in code.
+
+### Decision
+
+1. **The listing.** Both lanes list one population: the members' repositories plus the public,
+   non-archived repositories of each installation account. It's computed in four steps:
+
+   1. **The members' repositories** are the member record's `onboarding` and `member`
+      repositories, as `sds_members.populations.observed` gives them and the landing ledger
+      already reads them (`scripts/sds_scope.py`, `ledger`). They come from
+      `GET /api/v1/members` on the orchestrator, read with the lane's observer bearer
+      (`orchestrator-observer`, which both lanes already hold). A retired member is in no lane's
+      population (`populations.py`), so it's listed only if the fourth step lists it as public.
+      Today the membership check passes every member, retired included, to `_declarations`
+      (`cli.py`, lines 161-162). Keeping a private retired member would be a gap every pass: the
+      mint can't name a repository the installation may no longer cover, and a declaration the
+      token can't see reads as unreadable, never as absent
+      (`_confirm_absence`, `src/membership_check/declaration.py`, lines 336-358).
+   2. **The installation accounts** are the distinct owners of those repositories, compared
+      without case. No owner name is written in code. They're the read-only App's installation
+      accounts because every member is inside that App's installation: in the container, a read
+      lane's mint names the members' repositories, and the mint refuses a repository outside the
+      installation (`src/estate_clients/github_app_mint.py`, lines 7-10). On the Mac it rests on
+      decision 2's install rule, which installs the App on the members' repositories (lines
+      620-622). The record lists no
+      account, so an installation account that owns no member isn't listed (the first "Open
+      before building" item).
+   3. **Each account's type** comes from `GET /users/{login}`, whose `type` is `User` or
+      `Organization`.
+   4. **Each account's public repositories** come from the endpoint for its type:
+      `GET /users/{login}/repos?type=owner` for a user account, and
+      `GET /orgs/{org}/repos?type=public` for an organization. Both lists are paged with
+      `per_page=100`. On 2026-11-11, an unauthenticated probe of a generic user and a generic
+      organization found that `GET /users/{login}/repos` also serves an organization's
+      repositories, while `GET /orgs/{login}/repos` answers 404 for a user. The design still uses
+      each type's documented endpoint, so it doesn't depend on behavior GitHub doesn't document.
+
+   The code keeps a listed repository only when it's `private: false` and `archived: false`. It
+   tests both fields itself and doesn't rely on what an endpoint returns for a given token. On the
+   Mac, the token is Devon's login, which can see more than an installation token can. The
+   explicit filter makes the population the same on both hosts. The result is the union of the
+   members' repositories and the public listing, with names compared without case and GitHub's
+   spelling kept. Both lanes use the whole union: the pin watcher sweeps it, and the membership
+   check's `owned` (the factory-target sweep, `canonical`, and every `_spelled` call) is the
+   union, never the public part alone. A private member such as `sds-canary` therefore keeps its
+   spelling, and the landing policy can name it without a gap.
+
+   These rules are unchanged:
+
+   - An archived repository that isn't a member is excluded from both lanes, as today.
+   - An archived member stays in the membership check's population, as today's `extra` keeps it
+     (`cli.py`, lines 61-62). Its declaration is still read. Dropping it would turn its unread
+     declaration into a false "does not declare factory_target = true" disagreement (`check`,
+     `consistency.py`, lines 115-122).
+   - The pin watcher excludes an archived member, as today's listing does: nothing can be
+     dispatched into an archive (`repositories()`'s docstring). It learns that a public member
+     is archived from the public listing's `archived` field. For each member the public listing
+     didn't return, it reads `GET /repos/{owner}/{repo}` with its minted token (Metadata, inside
+     its mint, because the repository is a member). An unreadable answer is unreadable for that
+     repository (`result.unreadable`), never a silent drop.
+   - The page walk has a ceiling for each account (`MAX_PAGES` of `PER_PAGE`). Reaching it
+     raises; it never returns a truncated list.
+   - Any failure is a gap, never a clean pass. Each of the following makes the whole listing
+     unreadable, never a sweep of the members alone: an unreadable member record, a population
+     with no member (so no account), an account whose type or page can't be read, or a ceiling
+     reached. The pin watcher then exits 3 (`INCOMPLETE`, `src/pin_watcher/cli.py`, lines
+     116-123), on a `--dry-run` too. The membership check records one gap and exits 3, as
+     `_declarations` does today (`cli.py`, lines 56-60).
+
+2. **Credentials.** Every call goes out with the lane's own GitHub token. That's its minted read
+   token in the container and Devon's `gh` login on the Mac until increment 6 (lines 594-596). The
+   lanes make these calls:
+
+   | Call | Token | Permission |
+   |---|---|---|
+   | `GET /api/v1/members` (orchestrator) | The lane's observer bearer: `ORCHESTRATOR_API_TOKEN` for the pin watcher (`run-pin-watcher.sh`, lines 36 and 73-76), `SDS_MEMBERS_OBSERVER_TOKEN` for the membership check | Read access to the member record, which the observer identity already has |
+   | `GET /users/{login}` | The lane's GitHub token | None. GitHub Docs, "Endpoints available for GitHub App installation access tokens", lists it, and "Permissions required for GitHub Apps" names no permission for it. |
+   | `GET /users/{login}/repos`, `GET /orgs/{org}/repos` | The lane's GitHub token | Metadata read ("Permissions required for GitHub Apps": both rows read `read`, `UAT, IAT`). GitHub grants Metadata with every installation token, and every read lane's mint requests it (`docs/operations/deploy.md`, "A lane's GitHub token"). |
+   | `GET /repos/{owner}/{repo}`, the pin watcher only, for each member the public listing didn't return | The lane's GitHub token | Metadata read. The repository is a member, so it's inside the mint. |
+   | Per listed repository: the pin watcher's caller file, the membership check's `factory-target.toml` | The lane's GitHub token | Contents read, already in each lane's mint. A public non-member's file is a public read, which needs no install (`lanes-inc-3-verify-report.md`, item 3, lines 113-150). |
+
+   The token is sent even though the listing calls work without one. An unauthenticated client is
+   held to GitHub's anonymous rate limit, and the pin watcher reads one file for each listed
+   repository each pass.
+
+   Each lane's mint names the members' repositories (step 1) with the read permissions its calls
+   already use. It never names a public non-member, which isn't in the installation, so the mint
+   would refuse it. The design grants nothing new: no new permission (the read-only App keeps
+   D-18's six), no new installation or wider install, no new BWS secret, and no new lane
+   identity. Each lane already reads the observer bearer it uses for the member record: on the Mac
+   both read it from BWS (`f793576f-…`), and each lane's container reads it from BWS with the lane's token, as the deploy watcher's does
+   (`docs/operations/deploy.md`).
+
+3. **What drops out.** A private repository that isn't a member is in neither sweep. One code path
+   computes the population on the Mac and in the container, so it drops out on both hosts once the
+   new listing lands, before either lane moves. Each lane loses one kind of report:
+
+   - **The pin watcher** no longer reads a private non-member's caller workflow
+     (`caller_pin`, `src/pin_watcher/github.py`, lines 169-182, through `sweep`, `measure.py`,
+     lines 101-112). A caller there that isn't at the recommendation gets no observation row
+     (`_file_rows`, `cli.py`, lines 60-75) and no `pin-behind:<repository>` alert
+     (`src/pin_watcher/alerts.py`, `classify`). The lost signal is small. The factory dispatches
+     only to a repository the member record grants `app_changes` or `dependency_updates`, so it
+     can't dispatch into a private non-member, whichever runner the caller pins (the root
+     `CLAUDE.md`, the grant invariant; `services/execution/target_grant.py`). One side effect: the
+     first pass under the new listing resolves any open `pin-behind` alert for such a repository,
+     with the title "Caller pin is at the recommendation". `KeyedAlerts.sync` resolves a
+     remembered key that is neither firing nor unread (`src/alert_hub_client/__init__.py`, lines
+     254-275), and a repository that isn't listed is neither.
+   - **The membership check** no longer reads a private non-member's `factory-target.toml`
+     (`factory_targets`, `src/membership_check/consistency.py`, lines 42-54). So a private
+     non-member that declares `factory_target = true` no longer produces the disagreement
+     "`<repository>`: its factory-target.toml names it, but the member record does not grant
+     app_changes" (`check`, `consistency.py`, lines 112-114, through `_require`, lines 78-84). A
+     landing population or configuration list that names a private non-member still produces its
+     own `_require` disagreement, because those lists come from their own sources, not from the
+     listing. It also produces a `canonical` gap for the landing policy (lines 57-67). That gap's
+     text, "isn't an active repository of this account (archived, renamed or not owned)", is the
+     fifth item's to reword.
+
+   - **A private retired member** is now in neither sweep, because the members' part is the
+     `onboarding` and `member` repositories (decision item 1, first step). For the membership
+     check, the loss is the same disagreement as for a private non-member: a retired member is
+     granted nothing (`_granted`, `consistency.py`, lines 70-75), so a private retired member
+     that still declares `factory_target = true` reported it until now, through `/user/repos`
+     and `extra`.
+
+   Option C accepts these losses. Neither lane can see such a repository again unless it becomes a
+   member, or until Devon decides to widen the install (D-33's option A), which this amendment
+   doesn't do.
+
+4. **What it changes in the ADR.** No passage names `/user/repos` or the account listing. Each of
+   the following passages relies on it, or on Devon's login, for these two lanes' population.
+
+   | Passage | Disposition |
+   |---|---|
+   | Decision 2, "Each launcher feeds that variable, instead of its `gh auth token` fallback, with a read token it mints each pass from the lanes' read-only App" (lines 529-531) | Stands. For the pin watcher and the membership check it holds only once decision item 1's listing has replaced `/user/repos`, because on a minted token the old listing fails. |
+   | Decision 2, "Each pass's mint request names only that lane's repositories" (lines 603-605) | Stands. For these two lanes "that lane's repositories" are the members' repositories (decision item 2). The public non-members they also read are public reads, outside the mint. |
+   | Decision 2, "The repositories these lanes read through Devon's login today are the members' repositories, the member record's repository, intent-packages, the standards repositories the lanes clone" (lines 609-613) | Incomplete for these two lanes: today they also read every repository the account owns. After this amendment they read the members' repositories and the installation accounts' public repositories, and no private non-member. |
+   | Decision 2, "Increment 3 ... lists the exact set from the member record, the lanes' clone lists and that registry, and Devon installs the read-only App on those alone" (lines 620-622) | Stands. The two lanes add nothing to the install set: their public non-member reads need no install. |
+   | Decision 2, "Verify before increment 3 that an installation-token mint narrowed by repository and permission returns a token that refuses everything outside the request" (lines 632-635) | The verify answered it for public resources (`lanes-inc-3-verify-report.md`, item 3): the narrowing doesn't stop public reads. This design depends on that answer, which the second "Open before building" item confirms live. |
+   | Decision 5, `pin-watcher`, "Reads callers' runner pins through APIs only" (line 783) | Stands. Its population is decision item 1's. |
+   | Decision 5, `sds-membership-check`, "Compares the member record with declarations through APIs only" (line 788) | Stands. Its population is decision item 1's. |
+   | Increment 3, the observe-only lanes, "pin watcher ... membership check ... one at a time", and "Each launcher then mints its lane's read token from the read-only App" (lines 1010-1017) | Stands, with a precondition: the listing change in decision item 5 lands and runs on the Mac before either lane's cut-over. |
+   | Cut-over step 2, the pin watcher's reporting run "with `--dry-run`" (lines 1137-1138) | Stands. The paired runs compare like with like only when both hosts run the new listing, which the precondition in the preceding row provides. Before that, the Mac run lists private non-members that the container can't see. |
+   | Cut-over step 2, "There is no reporting mode for the fork-sync watch and the membership check" (line 1143), as Amendment 3 left it for the membership check | Stands for the membership check, with the same precondition. |
+   | Consequences, "The read-only App is installed on every repository the read-only set reads, member repositories included ... so its leaked key reads all of them" (lines 1388-1390) | Narrowed in meaning: the two lanes also read public non-members, which the App isn't installed on. A leaked key adds nothing there that anonymous access lacks, beyond the installation's rate limit. |
+   | Q6, "The App is installed on every repository those lanes read" (lines 1512-1513), and Q9, "installed on the repositories those lanes read, member repositories included" (lines 1549-1550) | Stand for private reads. The public non-members these two lanes read are outside the install, by D-33. |
+   | Amendment 3, decision item 2, the "`gh` commands" row: increment 3's `GH_TOKEN` export in `run-membership-check.sh` still stands (line 1992) | Stands. That export serves the `gh api` fork-list read (`cli.py`, line 167), not the listing. |
+   | Amendment 3, decision item 2, the read-only set of eleven, membership check and pin watcher included (line 1993) | Stands. Neither lane leaves the set, and neither gains a credential. |
+   | Amendment 3, decision item 2, "the membership check reads each member's `.cred-consumers.toml` and reads factory-runner" (line 1994) | Stands. Both reads are of members. |
+   | Amendment 3, decision item 2, increment 3's six lanes, pin watcher and membership check included (line 1996) | Stands, with the precondition in the increment 3 row. |
+   | Amendment 3, decision item 2, cut-over step 2 "still applies to the membership check" (line 1998) | Stands, with the same precondition. |
+
+5. **The code that follows, as later work.** None of these files is edited by this amendment.
+   They change in one later change, in increment 3, before the pin watcher or the membership check
+   moves:
+
+   - `src/pin_watcher/github.py`: `repositories()` (lines 146-166) takes the members'
+     repositories and returns decision item 1's union. Its docstring changes from "Every
+     non-archived repository the credential owns", and so does the ceiling's message ("the account
+     has more than ..."), which then names the account. The module docstring's "THE POPULATION
+     IS SELF-DESCRIBING" (lines 3-20) still holds for which repositories carry a caller; its
+     population sentence changes.
+   - `src/pin_watcher/measure.py`, `sweep` (lines 96-113), and `src/pin_watcher/cli.py`, `main`
+     (lines 104-123): the pin watcher reads the member record before it sweeps. How it reads it is
+     the third "Open before building" item.
+   - `src/membership_check/cli.py`: `_declarations` (lines 53-62) passes the `onboarding` and
+     `member` repositories, not every member (lines 161-162), and `owned` becomes the union. Its
+     docstring ("the account's repositories", line 54), its gap text (line 59) and `_spelled`'s
+     docstring ("the account listing", line 90) name the new population.
+   - `src/membership_check/consistency.py`: `factory_targets`' docstring ("Every owned
+     repository", line 43), and `canonical` (lines 57-67), whose gap's "of this account
+     ... or not owned" names a member or an installation account's public repository.
+   - Tests: `tests/pin_watcher/conftest.py` (the fake `/user/repos`, lines 44-70),
+     `tests/pin_watcher/test_measure.py`, and `tests/architecture/test_membership_edges.py`, which
+     pins the membership check's GitHub requests (lines 186, 389-395 and 422-431). If the pin
+     watcher imports `sds_members`, `tests/architecture/test_out_of_process_isolation.py`'s
+     `pin_watcher` row (lines 433-450) also changes. The `/user/repos` entries in
+     `tests/architecture/test_rotation_edges.py` (line 755) and
+     `tests/membership_check/test_auto_merge.py` (line 202) are refusal probes for other clients,
+     and they don't change.
+   - The launchers' CREDENTIALS text: `scripts/run-pin-watcher.sh` (lines 99-102, "THE GITHUB
+     CREDENTIAL HAS NO BWS RECORD ... reads public repository metadata") and
+     `scripts/run-membership-check.sh` (lines 25-30, "GitHub, through the operator's own `gh` login"). Each launcher's mint, which increment 3
+     adds as it does for the other read lanes, names the members' repositories.
+   - `docs/operations/deploy.md`, "A lane's GitHub token": the paragraphs increment 3 adds for
+     these two lanes name the members' repositories as the mint's, and the public listing as
+     unminted reads.
+   - `.bws-secrets.toml` and `.cred-consumers.toml` need no line for this amendment: no secret is
+     added. Increment 3's own rows for these lanes (the lane tokens, ping URLs and the read-App
+     key's `runtime-fetch` readers) are unchanged.
+
+### Consequences
+
+- Neither lane needs `/user/repos` or Devon's login to find its population, so both can move in
+  increment 3 on a minted read token, with no credential, permission or installation beyond what
+  decision 2 already grants.
+- Both lanes stop seeing private non-member repositories on the Mac too, from the release that
+  carries the new listing. That's 33 private repositories at the increment 3 verify, less the one
+  private member (`sds-canary`).
+- The population no longer depends on one account. A member in a second account brings that
+  account's public repositories into both sweeps, provided the read-only App is installed there,
+  which every read lane's mint already requires.
+- Each pass makes a few more calls: one `GET /users/{login}` and one or more pages for each
+  account, plus the member record read in the pin watcher.
+
+### Open before building
+
+1. **An installation account that owns no member.** Decision item 1 learns the accounts from the
+   members, so it can't list an account where the read-only App is installed but no member lives.
+   Today the read-only App has one installation (`180257215`), and its account owns every member
+   (`docs/operations/deploy.md`, "A lane's GitHub token"), so the sets are equal. Reading the
+   App's installations directly (`GET /app/installations`) needs the App's JWT. The lane program
+   doesn't hold the JWT, and the Mac path has no App key, so it would split the code path.
+   Resolved by the increment that installs the read-only App on a second account: it adds that
+   account's first member in the same act, or it decides how the lanes learn the installation.
+2. **A minted token reads a public non-member.** The design rests on the increment 3 verify's
+   documentary answer, that an installation token reads public resources outside its
+   repositories (`lanes-inc-3-verify-report.md`, item 3, and its self-review, lines 451-453).
+   Resolved in the pin watcher's cut-over step 1: its container `--dry-run` must read a public
+   non-member's caller file and list the public repositories through each endpoint the account's
+   type selects, with the minted token. If GitHub refuses, the listing falls back to sending no
+   token on the public calls, which D-33's option C allows, before the lane's cut-over goes on.
+   The fallback covers the per-repository file reads too. At the increment 3 verify's count (32
+   public repositories), each lane makes about 35 unauthenticated calls a pass. GitHub's anonymous
+   limit is 60 requests an hour for one address, so the two lanes fit only if they run in
+   different hours. If the fallback can't fit, it goes back to Devon before the cut-over.
+3. **How the pin watcher reads the member record.** The pin watcher has no member-record read
+   today, and its isolation row admits no sibling lane (`test_out_of_process_isolation.py`, line
+   449). There are two options. It can import `sds_members.client.read_members` with the observer
+   bearer it already holds, and the row admits `sds_members`. Or its launcher can pass the members'
+   repositories that it derives for the mint (`scripts/sds_scope.py`, `ledger`), and the program
+   takes them as input. Resolved by the change in decision item 5, in increment 3.
+4. **Members in more than one account.** `sds-github-mint` refuses repositories of more than one
+   owner (`github_app_mint.py`, lines 7-10, 148-165), and each lane has one GitHub token variable.
+   Once members span two accounts, these two lanes, like every read lane that mints over the
+   members, need a mint for each installation and a token for each account's reads. Resolved by
+   the same increment as the first item, before the first member in a second account is added.
