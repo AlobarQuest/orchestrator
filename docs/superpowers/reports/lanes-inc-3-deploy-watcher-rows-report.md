@@ -3,7 +3,7 @@ Outcome: done
 # Report: the deploy watcher's registry rows (ADR-0059 increment 3, cut-over step 1)
 
 Worker W-83. Branch `hq/lanes-inc-3-deploy-watcher-rows`, base `origin/main` at `9d0a1a3f`.
-PR: PR_PLACEHOLDER. The PR is open and marked ready, and I haven't merged it.
+PR: #656 (https://github.com/AlobarQuest/orchestrator/pull/656), head is this report's commit, the branch head; rows commit `cfc8d977`. The PR is open and marked ready, and I haven't merged it.
 
 ## What I built
 
