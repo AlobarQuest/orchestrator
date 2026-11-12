@@ -166,6 +166,10 @@ uses a stand-in broad identity, so the test never reaches the real macOS Keychai
   variable, so each is already exported when assigned. Mutations 1 to 4 then each failed it; I ran
   2 to 4 only after that change. I
   restored the launcher after each mutation and confirmed it with `cmp`.
+- **CI** on PR #675 (run 43251548364): Quality passed in 13 minutes 42 seconds. Its pytest collected
+  14678 tests, 14655 passed and 23 skipped (CI skips more Postgres-local tests), the same
+  collected count as the local run. Runner consumer compatibility and Rollout transcription
+  currency passed.
 - **The pre-existing tests** pass unchanged: `test_launcher_scope.py`'s Mac-path tests and
   `test_membership_edges.py`'s launcher regexes, apart from the bearer set.
 - **`make check`** ran on the working tree before the commit, against `orchestrator_test_hq_w_107`, with `PGTZ=UTC` and
