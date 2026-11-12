@@ -14,10 +14,11 @@ sessions on different base databases never meet.
 from __future__ import annotations
 
 import os
+from typing import Any
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import Connection, Engine, create_engine, text
+from sqlalchemy import URL, Connection, Engine, text
 from sqlalchemy.engine import make_url
 
 BASE_TEST_DATABASE_URL = os.environ.get(
@@ -47,6 +48,22 @@ os.environ["ORCHESTRATOR_DATABASE_URL"] = TEST_DATABASE_URL
 # transaction. Fail it, naming the cause, rather than hang the run.
 RESET_LOCK_TIMEOUT = "5s"
 
+# The test database's default session zone, which observes DST. The orchestrator's engine factory
+# pins every session to UTC; beneath that pin, CI's Postgres defaults to UTC as well, so without
+# this default a test of the pin, or of arithmetic across a clock change, would pass with the pin
+# removed.
+DEFAULT_ZONE_BENEATH_THE_PIN = "America/New_York"
+
+
+def make_test_engine(url: str | URL = TEST_DATABASE_URL, **kwargs: Any) -> Engine:
+    """An engine built by the orchestrator's own factory, so tests run in its UTC session."""
+    # Imported here, not at the top: `orchestrator.db` reads ORCHESTRATOR_DATABASE_URL when it is
+    # imported, and this module sets it above. Imported first, it would build its engine on
+    # whatever database the shell names, or fail when the shell names none.
+    from orchestrator.db import make_engine
+
+    return make_engine(url, **kwargs)
+
 
 def alembic_config() -> Config:
     config = Config("alembic.ini")
@@ -69,6 +86,19 @@ def create_worker_database() -> None:
         admin.dispose()
 
 
+def set_default_zone_beneath_the_pin() -> None:
+    """Give this process's database a DST-observing default zone for new sessions."""
+    name = make_url(TEST_DATABASE_URL).database
+    admin = _admin_engine()
+    try:
+        with admin.connect() as connection:
+            connection.execute(
+                text(f"ALTER DATABASE \"{name}\" SET timezone = '{DEFAULT_ZONE_BENEATH_THE_PIN}'")
+            )
+    finally:
+        admin.dispose()
+
+
 def drop_worker_database() -> None:
     if WORKER is None:
         return
@@ -83,7 +113,7 @@ def drop_worker_database() -> None:
 
 def _admin_engine() -> Engine:
     url = make_url(TEST_DATABASE_URL).set(database="postgres")
-    return create_engine(url, isolation_level="AUTOCOMMIT")
+    return make_test_engine(url, isolation_level="AUTOCOMMIT")
 
 
 def rebuild_schema(engine: Engine) -> tuple[str, ...]:

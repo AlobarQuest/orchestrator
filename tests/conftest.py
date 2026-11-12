@@ -2,15 +2,17 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 
 import pytest
-from sqlalchemy import Engine, create_engine
+from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
 from tests._support.database import (
     TEST_DATABASE_URL,
     create_worker_database,
     drop_worker_database,
+    make_test_engine,
     rebuild_schema,
     reset_data,
+    set_default_zone_beneath_the_pin,
 )
 from tests._support.posture import harness_posture
 from tests._support.seeding import grant_repository
@@ -46,13 +48,14 @@ GRANTED_TARGETS = (
 @pytest.fixture(scope="session")
 def _test_database() -> Iterator[None]:
     create_worker_database()
+    set_default_zone_beneath_the_pin()
     yield
     drop_worker_database()
 
 
 @pytest.fixture(scope="session")
 def _schema(_test_database: None) -> _Schema:
-    engine = create_engine(TEST_DATABASE_URL)
+    engine = make_test_engine()
     try:
         return _Schema(tables=rebuild_schema(engine))
     finally:
@@ -83,7 +86,7 @@ def migrated_engine(request: pytest.FixtureRequest, _schema: _Schema) -> Iterato
     (`migrated_session`, `db_client`, ...) has closed its session.
     """
     rebuild = request.node.get_closest_marker("schema_rebuild") is not None
-    engine = create_engine(TEST_DATABASE_URL)
+    engine = make_test_engine()
     try:
         if rebuild or _schema.dirty:
             _schema.tables = rebuild_schema(engine)
@@ -122,7 +125,7 @@ def granted_targets(migrated_engine: Engine) -> None:
 
 @pytest.fixture
 def db_session(_test_database: None) -> Iterator[Session]:
-    engine = create_engine(TEST_DATABASE_URL)
+    engine = make_test_engine()
     with Session(engine) as session:
         yield session
         session.rollback()

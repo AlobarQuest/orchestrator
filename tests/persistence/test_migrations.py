@@ -2,7 +2,7 @@ import pytest
 from alembic import command
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from sqlalchemy import Table, create_engine, inspect, select, text
+from sqlalchemy import Table, inspect, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -20,7 +20,7 @@ from orchestrator.services.intake.decomposition import (
 )
 from orchestrator.services.intake.package_intake import register_package_intake
 from orchestrator.services.intake.packages import register_approved_unit, register_revision
-from tests._support.database import TEST_DATABASE_URL, alembic_config
+from tests._support.database import alembic_config, make_test_engine
 from tests._support.seeding import AUTHORITY, NOW, register_test_revision
 from tests.services.test_package_intake import acceptance_criterion, intake_command
 
@@ -36,7 +36,7 @@ def column_default(engine, table: str, column: str) -> str | None:
 
 
 def test_alembic_upgrades_empty_database() -> None:
-    engine = create_engine(TEST_DATABASE_URL)
+    engine = make_test_engine()
     with engine.begin() as connection:
         connection.execute(text("DROP SCHEMA public CASCADE"))
         connection.execute(text("CREATE SCHEMA public"))
@@ -854,7 +854,7 @@ def test_wsp21_evidence_unsuperseded_head_index_exists(migrated_engine) -> None:
 
 
 def test_migration_0020_adds_a_nullable_follow_up_column() -> None:
-    engine = create_engine(TEST_DATABASE_URL)
+    engine = make_test_engine()
     with engine.begin() as connection:
         connection.execute(text("DROP SCHEMA public CASCADE"))
         connection.execute(text("CREATE SCHEMA public"))
