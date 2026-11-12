@@ -33,7 +33,9 @@
   `docs/operations/rotation-executor.md`.
 - A person's mint reaches a rotation only through its instance's `rotation-inbox` BWS secret or a
   staging secret written by hand: the unit after the mint waits, unclaimed, until one is staged
-  (`worker._mint_waits`). The inbox binds a value only while no other rotation on either
+  (`worker._mint_waits`); a staging secret holding only the empty marker, a blank or padded text
+  isn't staged (`inbox.pasted`), and a value bound beside one is written into it, never created
+  beside it. The inbox binds a value only while no other rotation on either
   instance waits on a mint, and only after the provider accepts it beside a refused control,
   `same_identity` (same account, not scope) holds against the keeper, and no other SDS-rotated
   keeper of its type holds it; a lane token binds by its row's declared reach instead
