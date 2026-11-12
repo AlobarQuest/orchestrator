@@ -96,6 +96,29 @@ case " $* " in
   *) NEEDS_CREDENTIAL=0 ;;
 esac
 
+# THE PACKAGES CHECKOUT IS ACTIVATED BEFORE THE PASS READS IT, on a `--submit` run only (ADR-0031
+# amendment 1), for the reason `run-bump-proposer.sh` gives: a revision committed on a behind
+# `main` can't be published, and every later pass refuses it until a person reconciles. After the
+# worktree refusal, so a pass started from a build worktree never moves the shared checkout; after
+# the switch is armed, which is safe because one argument never re-execs (this script doesn't live
+# there); before any bearer is fetched, because the helper may run `uv sync` in that checkout. A
+# dry run writes nothing, so it leaves the checkout alone.
+_SDS_ACTIVATE="$HOME/.claude/bin/activate-checkout.sh"
+if [ -r "$_SDS_ACTIVATE" ]; then
+    # shellcheck source=/dev/null
+    . "$_SDS_ACTIVATE"
+else
+    activate_checkout() {
+        echo "[activation] helper missing at $HOME/.claude/bin/activate-checkout.sh —" \
+             "this run is not activated"
+    }
+fi
+if [ "$NEEDS_CREDENTIAL" -eq 1 ]; then
+  activate_checkout "$BUMP_PROPOSER_PACKAGES_CHECKOUT"
+else
+  echo "[activation] dry run: leaving ${BUMP_PROPOSER_PACKAGES_CHECKOUT/#$HOME/~} as it is"
+fi
+
 if [ "$NEEDS_CREDENTIAL" -eq 1 ]; then
   # TWO BWS IDENTITIES, each read from its own Keychain item into its own variable and passed to
   # the one fetch that needs it, so neither is ever ambient (docs/operations/credentials.md).

@@ -44,16 +44,11 @@
      early, and it leaves the existing slots intact -- 07:05 carry, 07:10 sweep, 07:30 ledger.
      Moving it later would cost nothing a reader should expect it to cost.
 
-     THE PASS COMMITS ON THE CHECKOUT'S CURRENT BRANCH AND NEVER PUSHES. That is the producer's
-     existing behaviour, kept rather than changed, and it is the whole design content of this
-     increment: `standing.commit` says the branch is somebody else's to move. So a pass that
-     proposes work leaves `~/Projects/intent-packages` one commit ahead of its upstream, which
-     the activation sweep records in every row as `ahead_by` and deliberately does not classify.
-     A person pushes it. Nothing waits on that push -- the carry reads the checkout's working
-     files, so the revision is carryable the moment it is committed -- but until it happens the
-     revision has had no CI run and its `source_commit` names a commit only this machine holds.
-     Measured precedent: change record 62's intake registered against 10b13d47, a revision this
-     producer committed to local `main` on 2026-08-19, and the lane completed end to end.
+     THE PASS COMMITS AND PUBLISHES (ADR-0033), AND ITS LAUNCHER FAST-FORWARDS THE CHECKOUT FIRST.
+     A `__HOME__/Projects/intent-packages` that is behind origin is fast-forwarded before each
+     writing pass (ADR-0031 amendment 1), so the commit is written on the current `main` and the
+     push can publish it. A checkout carrying an unpublished commit can't fast-forward; the pass
+     refuses it (exit 2) until a person reconciles it.
 
      A SECOND PASS OVER AN UNCHANGED QUEUE WRITES NOTHING. The producer advances a package only
      when it does not already carry the bump in an approved revision; otherwise it replays, and

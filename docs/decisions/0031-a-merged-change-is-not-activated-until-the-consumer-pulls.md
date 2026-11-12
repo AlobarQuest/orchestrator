@@ -114,3 +114,43 @@ has, which self-clears on the next fire. Accepted; no machinery.
 **The first activation is manual, and the irony is the point.** The helper reaches
 `~/.claude/bin` only when a security-standards main tree has pulled the merge and run
 `make install` — a `git pull` performed by hand, which is exactly the gap being closed.
+
+## Amendment 1, 2026-11-12: the lanes that read the intent-packages checkout activate it
+
+**Decided by** the build session, on HQ's handoff for ADR-0055 amendment 22 increment 4's
+prerequisite. It extends §1 and doesn't change §2 to §6.
+
+**Context.** §1 activates what a launcher executes and not what it reads as data, and the
+Consequences named `intent-packages` as a repository no scheduled consumer reaches. Three
+scheduled lanes now read that checkout: `run-work-carrier.sh` reads each record's package from
+`<WORK_CARRIER_CHECKOUT_ROOT>/intent-packages`, and `run-bump-proposer.sh` and
+`run-rotation-proposer.sh` revise, commit and publish (ADR-0033) from
+`BUMP_PROPOSER_PACKAGES_CHECKOUT`, running that checkout's own `.venv/bin/python` for every
+lifecycle command. Nothing fast-forwarded it. Measured 2026-11-12 at about 00:45 UTC, it was one
+commit behind `origin/main` (intent-packages #171). ADR-0033 named the result, local `main` needing
+manual reconciliation, and two failures follow from it:
+
+- A proposer that commits on a behind `main` has its push refused non-fast-forward, and
+  `standing.require_publishable` then refuses every later pass until a person rebases.
+- An approval merged on GitHub never reaches the carrier's read of the package.
+
+**Decision.** Each of the three launchers calls `activate_checkout "<packages checkout>"` with one
+argument, before its program runs and only on its acting run (`--register` for the carrier,
+`--submit` for the proposers). The checkout's path is the one the program reads: the same variable
+with the same default, so the activation and the read can't name different directories. With one
+argument the helper never re-execs, because no launcher lives in that checkout, so the call may
+follow the `/start` ping; it comes before any bearer is fetched, because it may run `uv sync` in
+that checkout. A dry run or bare reporting run leaves the checkout alone, for the reason
+`run-activation-sweep.sh` gives for its own `--dry-run`. The carrier's activation of its own tree is
+unchanged and still runs on a bare invocation.
+
+The rule in §1 stands for data a launcher only scans. This checkout isn't that: the proposers run
+code from it, and all three lanes act on its contents, so a stale copy makes them act wrongly
+rather than report late.
+
+**What it doesn't do.** A checkout carrying an unpublished commit can't fast-forward: the line says
+`HELD` and `require_publishable` refuses the pass as before, so a person still resolves that case.
+A checkout off `main` is left where it is. `run-bump-driver.sh` puts that checkout's `.venv/bin` on
+`PATH` to run `factory`, and doesn't activate it.
+
+Tests: `tests/scripts/test_packages_checkout_activation.py`.

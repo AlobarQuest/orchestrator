@@ -127,10 +127,11 @@ export BUMP_PROPOSER_PACKAGES_CHECKOUT="${BUMP_PROPOSER_PACKAGES_CHECKOUT:-$HOME
 # `/start` before the pass, then success on 0 or `/fail` on anything else, with the pass's report
 # as the body, which alert-hub delivers. A finding pages; a pass that stops pinging goes down after
 # the grace. Only a `--submit` run pings: a dry run is a person looking, and must neither page nor
-# reset the timer of a schedule that may have stopped. There is no `activate_checkout` here to
-# resolve after, so this is the first thing the pass does, BEFORE the BWS block below: that block
-# can `exit 1` on a Keychain item this machine does not have, and each of those exits now pings
-# `/fail` with its reason. An unresolved check logs one line and never stops the pass.
+# reset the timer of a schedule that may have stopped. Nothing here re-execs this script (the one
+# `activate_checkout` below names a checkout this script doesn't live in), so this is the first
+# thing the pass does, BEFORE the BWS block below: that block can `exit 1` on a Keychain item this
+# machine does not have, and each of those exits now pings `/fail` with its reason. An unresolved
+# check logs one line and never stops the pass.
 CHECK_NAME="sds-bump-proposer"
 case " $* " in
   *" --submit "*) SUBMITTING=1 ;;
@@ -139,6 +140,30 @@ esac
 # shellcheck disable=SC1091
 source "$REPO_ROOT/scripts/sds-deadman.sh"
 sds_outcome_begin "$CHECK_NAME" bump-proposer "$SUBMITTING"
+
+# THE PACKAGES CHECKOUT IS ACTIVATED BEFORE THE PASS READS IT, on a `--submit` run only (ADR-0031
+# amendment 1). The pass revises and publishes from that checkout, and anything landing in
+# intent-packages leaves it behind: a revision committed on a behind `main` is refused
+# non-fast-forward, and `standing.require_publishable` then refuses every later pass until a
+# person reconciles it. One argument, so the helper never re-execs (this script doesn't live
+# there); it may run `uv sync` in that checkout, so it comes before any bearer is fetched. A
+# checkout carrying an unpublished commit can't fast-forward: the line says HELD and the pass
+# refuses it as before. A dry run writes nothing, so it leaves the checkout alone.
+_SDS_ACTIVATE="$HOME/.claude/bin/activate-checkout.sh"
+if [ -r "$_SDS_ACTIVATE" ]; then
+    # shellcheck source=/dev/null
+    . "$_SDS_ACTIVATE"
+else
+    activate_checkout() {
+        echo "[activation] helper missing at $HOME/.claude/bin/activate-checkout.sh —" \
+             "this run is not activated"
+    }
+fi
+if [ "$SUBMITTING" -eq 1 ]; then
+  activate_checkout "$BUMP_PROPOSER_PACKAGES_CHECKOUT"
+else
+  echo "[activation] dry run: leaving ${BUMP_PROPOSER_PACKAGES_CHECKOUT/#$HOME/~} as it is"
+fi
 
 # `--color no` AND an environment with the forcing variables removed. FORCE_COLOR /
 # CLICOLOR_FORCE make `bws secret get` wrap its JSON in ANSI escapes even when stdout is a

@@ -347,8 +347,11 @@ the credential `rotated_by_sds = true` in its registry entry, or the pass report
 
 ## Before the first `--submit`
 
-The intent-packages checkout must be on `main`, level with `origin/main`, and its own `.venv`
-synced. The lifecycle commands run that checkout's interpreter, and an `intent_packages` older
+The intent-packages checkout must be on `main` and its own `.venv` synced. Each `--submit` pass
+first fast-forwards a checkout that is behind `origin/main`, and syncs its `.venv` when the pull
+moves `pyproject.toml` or `uv.lock` (ADR-0031 amendment 1); a checkout off `main`, or one carrying
+an unpublished commit, is left as it is, and the pass refuses it as before. A dry run leaves the
+checkout alone. The lifecycle commands run that checkout's interpreter, and an `intent_packages` older
 than intent-packages #113 does not know `standing`, `credential_id` or `occurrence` on this
 profile, so it refuses the package. The checkout is the bump lane's too, so bring it current
 between passes, never during one.

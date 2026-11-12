@@ -161,6 +161,21 @@ done
 source "$REPO_ROOT/scripts/sds-deadman.sh"
 sds_outcome_begin "$CHECK_NAME" work-carrier "$_wants_register"
 
+# THE PACKAGES CHECKOUT IS ACTIVATED TOO, on a `--register` pass only (ADR-0031 amendment 1). The
+# carry reads each record's package, and the approval on it, from `<checkout root>/intent-packages`,
+# and nothing else fast-forwards that checkout, so an approval merged on GitHub would never reach
+# this read. The path is the one `work-carrier` resolves (`--checkout-root`'s default, then the
+# record's repository name), so the two can't name different directories. One argument: this
+# script doesn't live there, so the helper never re-execs and this may follow the `/start` ping.
+# The bare form is a person looking and changes nothing, so it leaves that checkout alone.
+_PACKAGES_CHECKOUT="${WORK_CARRIER_CHECKOUT_ROOT:-$HOME/Projects}"
+_PACKAGES_CHECKOUT="${_PACKAGES_CHECKOUT/#\~/$HOME}/intent-packages"
+if [ "$_wants_register" -eq 1 ]; then
+  activate_checkout "$_PACKAGES_CHECKOUT"
+else
+  echo "[activation] not --register: leaving ${_PACKAGES_CHECKOUT/#$HOME/~} as it is"
+fi
+
 # `--color no` AND an environment with the forcing variables removed. FORCE_COLOR /
 # CLICOLOR_FORCE make `bws secret get` wrap its JSON in ANSI escapes even when stdout is a pipe,
 # which breaks the parse below.
