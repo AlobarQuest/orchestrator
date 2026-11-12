@@ -2505,7 +2505,8 @@ clone GitHub refuses fails without waiting on a prompt. The container proof is t
      variables, it's the launcher's own setting and doesn't join `lane-run`'s list (lines
      316-317; `COPIED` and `STATE_VARIABLES`, `scripts/lane_run.py`, lines 46-60).
    - **What it isn't.** No token, and no `scripts/sds-git.sh`: increment 4 hasn't created it,
-     and a public clone needs no credential, as for infraops-mcp-server. No venv: `discover()`
+     and this clone is decision 2's second exception to the per-pass credential (lines 541-543),
+     beside the rotation proposer's clone of infraops-mcp-server. No venv: `discover()`
      reads files only. No Python change: `discover()` already reads the variable.
    - **The URL.** The repository is the one `PACKAGES_REPOSITORY` already names
      (`src/bump_proposer/standing.py`, line 57). Amendment 4's standing answer is about finding
