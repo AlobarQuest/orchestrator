@@ -21,7 +21,7 @@ independently confirms the trigger: it serves `last_rotated` `2026-11-12T00:00:0
    `rotate_requested = "2026-11-12"` (`:1004`) directly after `rotated_by_sds = true`, the order
    `deploy-watcher-ping-url` uses. It gains no `created` or `last_rotated`.
 2. **The comment states the rule as it stands.** The pin watcher's block
-   (`.cred-consumers.toml:965-968`) carries the revision watcher's and deploy watcher's wording:
+   (`.cred-consumers.toml:964-967`) carries the revision watcher's and deploy watcher's wording:
    both rows are due for their first issue by `rotate_requested`, and the ping URL's row is dated
    only after the token's `store` unit completed. It keeps its gate sentence (G-37). The membership
    check's comment is unchanged.
