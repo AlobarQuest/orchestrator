@@ -54,6 +54,8 @@ from tests.architecture.edge_table import (
 )
 
 METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
+# The read-only lane App `alobar-sds-lanes-read`'s key, read in the lane's container alone.
+READ_APP_KEY = "314a966c-5654-4e3c-8358-b4fd01268775"
 LAUNCHER = Path("scripts/run-membership-check.sh")
 CHECK_SOURCES = sorted(Path("src/membership_check").glob("*.py"))
 
@@ -86,8 +88,9 @@ CHECK_EDGE = Edge(
     ),
     alert_hub=frozenset(),
     # Its own bearers: the observer and change-manager READ credentials, the operator's `gh`
-    # login, and the dead-man check's API key and ping (`sds-deadman.sh`).
-    bearers=DEADMAN | {OBSERVER_BEARER, READ_BEARER, GH_AUTH_TOKEN},
+    # login on the Mac, the read-only lane App's key its container mints from (ADR-0059 amendment
+    # 5), and the dead-man check's API key and ping (`sds-deadman.sh`).
+    bearers=DEADMAN | {OBSERVER_BEARER, READ_BEARER, READ_APP_KEY, GH_AUTH_TOKEN},
 )
 
 ORCHESTRATOR_PROBES = frozenset(

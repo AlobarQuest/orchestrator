@@ -325,7 +325,13 @@ class _Reader:
                     self.i += 1
                     continue
                 break
-            if t.startswith("<<", self.i) and not t.startswith("<<<", self.i):
+            if t.startswith("<<<", self.i):
+                # A here-string: its word follows on this line, and no body follows the line.
+                # Stepped over whole, or its second and third `<` would read as a heredoc whose
+                # delimiter never comes, and every command after it would go unread.
+                self.i += 3
+                continue
+            if t.startswith("<<", self.i):
                 self.i += 2 + t.startswith("<<-", self.i)
                 while t[self.i] in " \t":
                     self.i += 1
