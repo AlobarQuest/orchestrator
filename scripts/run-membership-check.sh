@@ -21,7 +21,9 @@
 #   1  the tool itself failed (a missing credential, an unhandled error).
 #   2  at least one disagreement. Disagreements outrank gaps.
 #   3  nothing disagrees, but a source could not be read.
-# 1, 2 and 3 all ping `/fail`. The program's code is this script's code.
+# 1, 2 and 3 all ping `/fail`. The program's code is this script's code, except that in the
+# container a repository list that can't be derived exits 3 (or `sds_scope`'s own failure code)
+# before the program runs.
 #
 # TWO HOSTS, ONE LAUNCHER (ADR-0059 increment 3, amendment 5). A set `BWS_ACCESS_TOKEN` means the
 # lane's container: `lane-run` passes the lane's own token as its one secret.
@@ -104,9 +106,11 @@ if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
       "FATAL: could not read the change-manager READ credential from BWS (the lane's token)"
 
   # THE REPOSITORIES ARE THE MEMBER RECORD'S, NOT LISTED HERE: `sds_scope ledger` prints the
-  # record's observed repositories (onboarding and member), the population the check's declaration,
-  # registry-file and auto-merge reads cover (`src/membership_check/cli.py`), each once.
-  # intent-packages and factory-runner are members, so the fork list's read is covered too. The mint
+  # record's observed repositories (onboarding and member), each once: the population the check's
+  # declaration and registry-file reads cover (`src/membership_check/cli.py`). Its auto-merge read
+  # also covers retired members, which the mint doesn't name, so a retired member's state is a gap
+  # in the container. intent-packages and factory-runner are members, so the fork list's read is
+  # covered too. The mint
   # never names a public non-member: the listing reads those through the same token. AN UNDERIVABLE
   # LIST MINTS NOTHING, AND SAYS SO: an unreadable record or an empty population exits 3 (a source
   # couldn't be read) with the program not run. Any other non-zero code is the tool failing (1) or

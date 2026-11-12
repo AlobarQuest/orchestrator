@@ -564,9 +564,10 @@ more than one owner make the mint refuse, which exits 1 (amendment 4 open item 4
 
 The membership check mints the same way in its container (`scripts/run-membership-check.sh`).
 Its repositories are the member record's observed ones, printed by `scripts.sds_scope ledger` with
-the observer bearer: the population its declaration, registry-file and auto-merge reads cover
-(`src/membership_check/cli.py`). intent-packages and factory-runner are members, so the fork list's
-read is covered too. An unreadable record or an empty population exits 3 before any mint, with the
+the observer bearer: the population its declaration and registry-file reads cover
+(`src/membership_check/cli.py`). Its auto-merge read also covers retired members, which the mint
+doesn't name, so in the container a retired member's auto-merge state is a gap. intent-packages and
+factory-runner are members, so the fork list's read is covered too. An unreadable record or an empty population exits 3 before any mint, with the
 program not run; any other `sds_scope` code passes through. It mints `metadata=read` (the listings
 and each repository), `contents=read` (`factory-target.toml`, the registry files, the workflow
 files and the fork list's file) and `administration=read` (`allow_auto_merge`, which GitHub serves

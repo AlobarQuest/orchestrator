@@ -3,7 +3,7 @@ Outcome: done
 # Report: the membership check's lane files and launcher (ADR-0059 increment 3, step 3e-6)
 
 Worker W-107. Branch `hq/lanes-inc-3-membership-check`, based on `origin/main` at `a957cd49`. The
-PR is open and marked ready, not merged.
+PR is PR_PLACEHOLDER, opened ready for review and not merged.
 
 ## What changed
 
@@ -37,7 +37,7 @@ sds_bws_value "$READ_APP_KEY_UUID" \
 ```
 
 - **Repositories.** They come from the member record's observed repositories (onboarding and
-  member). The launcher derives them with
+  member, that is, every non-retired member). The launcher derives them with
   `SDS_SCOPE_ORCHESTRATOR_TOKEN="$SDS_MEMBERS_OBSERVER_TOKEN" env -u BWS_ACCESS_TOKEN
   "$REPO_ROOT/.venv/bin/python" -m scripts.sds_scope ledger`, run from `REPO_ROOT`, exactly as
   `run-pin-watcher.sh` does. There's no typed list and no owner name. intent-packages and
@@ -161,13 +161,15 @@ uses a stand-in broad identity, so the test never reaches the real macOS Keychai
   10. The `sds_scope` code folded to 3.
   11. The edge-table reader fix reverted: 5 tests failed, the new here-string row among them.
 
-  Mutations 1 to 4 first survived because the token variables weren't exported until after the
-  clone. I strengthened the anonymity test to preset them, after which all four failed. I
+  Mutation 1 first survived: `GH_TOKEN` wasn't exported until after the clone, so the default run
+  couldn't show the `-u` mattered. I strengthened the anonymity test to preset every token
+  variable, so each is already exported when assigned. Mutations 1 to 4 then each failed it; I ran
+  2 to 4 only after that change. I
   restored the launcher after each mutation and confirmed it with `cmp`.
 - **The pre-existing tests** pass unchanged: `test_launcher_scope.py`'s Mac-path tests and
   `test_membership_edges.py`'s launcher regexes, apart from the bearer set.
-- **`make check`** ran against `orchestrator_test_hq_w_107`, with `PGTZ=UTC` and
-  `SECURITY_STANDARDS_DIR` set to the fixture. Results: ruff check and `ruff format --check` passed (1057 files), pyright reported 0 errors, shellcheck ran clean, and pytest collected and passed 14677 tests (1 skipped) in 6 minutes 18 seconds, exit 0.
+- **`make check`** ran on the working tree before the commit, against `orchestrator_test_hq_w_107`, with `PGTZ=UTC` and
+  `SECURITY_STANDARDS_DIR` set to the fixture. Results: ruff check and `ruff format --check` passed (1057 files), pyright reported 0 errors, shellcheck ran clean, and pytest collected 14678 tests, 14677 passed and 1 skipped, in 6 minutes 18 seconds, exit 0.
 
 ## Self-review
 
@@ -227,9 +229,19 @@ uses a stand-in broad identity, so the test never reaches the real macOS Keychai
    cloned fresh, anonymously, on every pass. This existing behavior is outside this handoff, and
    the code is unchanged. Any private repository in `REGISTRY_REPOSITORIES` would show there as a
    "credential registries couldn't be read" gap. The first container pass shows whether it does.
-3. **`allow_auto_merge` with `administration=read`.** This is unproven until the first container
+3. **Retired members fall outside the mint.** `_auto_merge` reads every member, retired ones
+   included (`consistency.py::_auto_merge`: "about what a repository CAN do"), but the mint names
+   only `observed()`, the non-retired members, as the handoff specifies. `_registry_files` already
+   skips retired members, and `_declarations` reads observed ones, so this is the one read outside
+   the mint. In the container, a retired member's `GET /repos/{r}` either fails or isn't served
+   `allow_auto_merge`. Either way it's an "auto-merge state unreadable" gap, and every pass exits 3
+   while such a member exists. The seed (`docs/operations/membership-seed.toml`) has no retired
+   member. I didn't read the live record, which would be an orchestrator API call. The first
+   container pass shows whether any exist. If one does, the fix is a decision for HQ: either widen
+   the mint to every member (`sds_scope` has no such population yet), or accept the gap.
+4. **`allow_auto_merge` with `administration=read`.** This is unproven until the first container
    pass, as the handoff says.
-4. **Open item 3, the Mac checkout's freshness.** This change doesn't address it: the Mac branch
+5. **Open item 3, the Mac checkout's freshness.** This change doesn't address it: the Mac branch
    doesn't clone.
 
 ## Cut-over steps that remain
@@ -249,7 +261,8 @@ These are in the order `docs/operations/deploy.md` gives:
    first container pass is cut-over step 2's ordinary pass. That pass settles amendment 5 open
    item 1. Its report must show all of the following:
    - The clone's commit, with no "packages checkout" gap.
-   - `allow_auto_merge` served, or a gap per member.
+   - `allow_auto_merge` served, or a gap per member, and no auto-merge gap for a retired member
+     (concern 3).
    - The mint accepted, which shows the read App covers every observed repository under one
      owner.
 8. Cut-over step 2's paired pass on both hosts. Record the Mac checkout's commit
