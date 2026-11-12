@@ -2695,10 +2695,10 @@ matches its Mac run and its Mac job is booted out."
    amendment states the executor's, and increments 8 and 9's plans state theirs. None runs a week
    with the Mac off.
 5. **Lanes that cut over before this amendment** are held to the same bar. A baseline captured for
-   the week bar is no longer needed for any bar. Each such lane's Mac job is disabled and checked as
-   cut-over step 4 checks under decision item 2, and until it is, decision item 1 doesn't count the
-   lane as moved. The execution watch and the landing ledger were disabled on 2026-11-12, in an
-   interactive session with Devon's approval.
+   the week bar is no longer needed for any bar. Each such lane's Mac job must be disabled and
+   checked as cut-over step 4 checks under decision item 2, and until it is, decision item 1 doesn't
+   count the lane as moved. The execution watch and the landing ledger were disabled on 2026-11-12,
+   in an interactive session with Devon's approval.
 6. **What stays:**
    - The Healthchecks dead-man and outcome alarms, pointed at the same checks (year plan Phase 1;
      decision 3).
@@ -2723,7 +2723,7 @@ None is rewritten. Once it's accepted, it governs these passages, cited by line 
 | Decision 6's heading, "Migration order, cut-over, rollback and the week bar" (line 828) | "and the week bar" no longer names a bar. The heading's other parts stand. |
 | Increment 6, "This increment starts only after the week bar has passed, because it ends the rollback path" (lines 1048-1049) | Superseded by decision item 3: it starts once increments 2 to 5 have cut over. It still ends the rollback path. |
 | Cut-over step 1, "Then capture the lane's week-bar baseline ... not HQ ("The week bar")" (lines 1119-1122) | Withdrawn. The rest of step 1 stands, the ADR-0055 amendment 23 paragraph (lines 1124-1126) included. |
-| Cut-over step 2, "A ping from step 2 lands after the baseline and before the week, so it counts in neither" (line 1148) | Withdrawn. The list of which reporting runs ping the real check (lines 1134-1146), the no-running-pass check, the boot-out and the state comparison stand. |
+| Cut-over step 2, "A ping from step 2 lands after the baseline and before the week, so it counts in neither" (line 1148) | Withdrawn. The list of which reporting runs ping the real check (lines 1134-1146), the no-running-pass check, the boot-out (with the disable the next row adds) and the state comparison stand. |
 | Cut-over step 2, "Then boot out the Mac agent with `launchctl bootout gui/<uid>/com.devon.<lane>`, and keep its plist" (lines 1151-1152) | Superseded by decision item 2: boot out the agent, then run `launchctl disable gui/<uid>/com.devon.<lane>`, and keep its plist. |
 | Cut-over step 3, "that down event falls before the week starts, so it counts in neither the baseline nor the week" (lines 1161-1162) | Withdrawn. "If the gap outlasts the check's grace, the check goes down" stands. |
 | Cut-over step 4, "and that the Mac agent isn't loaded" (line 1164) | Superseded by decision item 2: the check also confirms that `launchctl print-disabled gui/<uid>` lists `com.devon.<lane>` as disabled. |
