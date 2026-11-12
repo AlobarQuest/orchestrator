@@ -2697,7 +2697,7 @@ matches its Mac run and its Mac job is booted out."
 6. **No new authority.** The amendment grants no credential, scope or permission. The baseline
    needed the broad Healthchecks account to read each check's ping log; that read is no longer
    needed. No lane holds the Management API key, and no decision grants HQ the broad account
-   (decision 3, lines 677-687).
+   (decision 3, lines 677-687 and 700-702).
 
 ### Passages this amendment changes
 
@@ -2709,14 +2709,14 @@ None is rewritten. Once it's accepted, it governs these passages, cited by line 
 | Decision 6's heading, "Migration order, cut-over, rollback and the week bar" (line 828) | "and the week bar" no longer names a bar. The heading's other parts stand. |
 | Increment 6, "This increment starts only after the week bar has passed, because it ends the rollback path" (lines 1048-1049) | Superseded by decision item 2: it starts once increments 2 to 5 have cut over. It still ends the rollback path. |
 | Cut-over step 1, "Then capture the lane's week-bar baseline ... not HQ ("The week bar")" (lines 1119-1122) | Withdrawn. The rest of step 1 stands, the ADR-0055 amendment 23 paragraph (lines 1124-1126) included. |
-| Cut-over step 2, "A ping from step 2 lands after the baseline and before the week, so it counts in neither" (line 1148) | Withdrawn. The list of which reporting runs ping the real check (lines 1135-1146), the no-running-pass check, the boot-out and the state comparison stand. |
+| Cut-over step 2, "A ping from step 2 lands after the baseline and before the week, so it counts in neither" (line 1148) | Withdrawn. The list of which reporting runs ping the real check (lines 1134-1146), the no-running-pass check, the boot-out and the state comparison stand. |
 | Cut-over step 3, "that down event falls before the week starts, so it counts in neither the baseline nor the week" (lines 1161-1162) | Withdrawn. "If the gap outlasts the check's grace, the check goes down" stands. |
 | "Rollback for one lane", "Increment 6 requires a passed week bar, so no lane loses its rollback before the week has shown the move holds" (lines 1245-1246) | Superseded. Rollback stands for every moved lane until increment 6, which starts once increments 2 to 5 have cut over. |
 | "The week bar", the bar, its measure and the baseline (lines 1248-1279) | Superseded by decision item 1. The checks before increment 2 that the passage asks for (flip retention and the ping-log limit, lines 1262-1263 and 1269-1270) served only the baseline and are withdrawn. The last sentence's fact stands, as decision 3's outcome-alarm bullet keeps it (lines 741-743): a delivered finding pings success, so a `/fail` means a pass that couldn't do its job. |
-| "The week bar", what goes quiet that week (lines 1281-1284) | Moot: no week is run. Decision 4's three agents, the VM executor and the agents outside this repository stay on the Mac as decisions 4 and 5 say. |
+| "The week bar", what goes quiet that week (lines 1281-1284) | Moot: no week is run, so nothing is excluded from it. Where each agent runs is unchanged. |
 | "The week bar", the executor's second week and increments 8 and 9's weeks (lines 1286-1293) | Superseded by decision item 3. The heartbeat schedule stays as an alarm (decision item 5). Increment 7 still follows increment 6. |
 | "The week bar", the phase's done-when paragraph (lines 1295-1310) | Stands, except "and each week has passed" (line 1299): the phase is done when increments 8 and 9 have moved change-window and infra-drift, each at its cut-over checks. Everything else in the paragraph stands: SDS HQ outside the phase (D-9), no moved lane's input left on the Mac (decision 5), and the classification of the other agents. |
-| "The week bar", the evidence (lines 1312-1318) | Withdrawn, the read-only key's verify included (lines 1315-1316). "No lane holds it" and "no decision grants HQ the broad account" stand, as decision 2 (lines 487-490) and decision 3 (lines 677-687) state them. |
+| "The week bar", the evidence (lines 1312-1318) | Withdrawn, the read-only key's verify included (lines 1315-1316). "No lane holds it" and "no decision grants HQ the broad account" stand, as decision 2 (lines 487-490) and decision 3 (lines 677-687 and 700-702) state them. |
 | Amendment 3, "Relates to", "the week bar" (line 1900) | Moot. |
 | Amendment 3, decision item 1's row, "The week bar's seven daily lanes" and its six and nine (line 1983; its lines 1262-1264 are at `531d42c2`) | Moot: no lane needs a `/fail` baseline. |
 | Amendment 3, decision item 5's "The week bar" bullet (lines 2045-2049) | Moot: no week is run. The fork-sync watch and fork hardening still stay on the Mac. |
