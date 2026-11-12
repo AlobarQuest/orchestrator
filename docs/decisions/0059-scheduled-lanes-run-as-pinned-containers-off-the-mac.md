@@ -2424,8 +2424,10 @@ the code learns the accounts from the App's installations, never from an owner n
 ## Amendment 5 (2026-11-11): the membership check clones intent-packages anonymously each pass
 
 - **Status:** Proposed, 2026-11-11. The ADR's own status is unchanged.
-- **Decided by:** HQ, under decision 1's clone bullet (lines 306-320) applied to a public
-  repository. It grants no permission, App installation or credential, so no Devon decision is
+- **Decided by:** HQ. It adds a second exception to decision 2's rule that decision 1's per-pass
+  clones need a git credential (lines 541-543), whose one named exception is the rotation
+  proposer's clone of infraops-mcp-server: the membership check's clone of intent-packages, which
+  is public. It grants no permission, App installation or credential, so no Devon decision is
   needed (item 3 of the decision).
 - **Relates to:** decision 1 (the clone bullet), decision 2 (the git bullet, the helper bullets,
   the launcher bullet, the read-only App bullet and the identity bullet), decision 5's
@@ -2461,8 +2463,11 @@ proposer's, rotation proposer's and work carrier's acting runs do (ADR-0031 amen
 the lane's population is as fresh as their last acting run, with no signal of its own.
 
 intent-packages is public (`gh repo view AlobarQuest/intent-packages --json visibility`,
-`PUBLIC`, read 2026-11-11). Decision 1's clones carry no credential when the repository is public,
-as the rotation proposer's clone of infraops-mcp-server doesn't (lines 307-310 and 541-543). The
+`PUBLIC`, read 2026-11-11). Decision 2 says decision 1's per-pass clones need a git credential
+whether or not the repository is private, and names one exception, the rotation proposer's clone of
+infraops-mcp-server (lines 307-310 and 541-543). This amendment adds a second exception: the
+membership check's clone of intent-packages, for the membership check only. The bump driver's
+clone of intent-packages still needs a credential, as decision 2 says. The
 lane's existing anonymous mirror, `RepoMirror` (`src/rotation_worker/git_mirror.py`; this lane's
 use is `cli.py` lines 115-126), offers `sync`, `show` of one path and ancestry. It can't list a
 directory, so `discover()` can't run on it unchanged.
@@ -2532,8 +2537,8 @@ clone GitHub refuses fails without waiting on a prompt. The container proof is t
    | Decision 2, "Decision 1's per-pass clones need a git credential too, whether or not the repository is private, except the rotation proposer's clone of infraops-mcp-server" (lines 541-543) | Extended by a second exception: the membership check's clone of intent-packages, which is public, needs no credential. The first "Open before building" item verifies it works anonymously in the container. |
    | Decision 2, "The launcher calls the helper once, before its first clone" (lines 561-562), and "Lanes that don't clone don't call the helper" (line 587) | The membership check clones and doesn't call the helper. The helper's purpose is a credential, and this clone carries none. |
    | Decision 2, "Each launcher replaces its Keychain read ..., and, if it clones, adds decision 1's clone and the helper call" (lines 589-591) | Stands for the clone. The membership check's launcher adds no helper call (preceding row). |
-   | Decision 2, "Each pass's mint request names only that lane's repositories" (lines 603-605), and "The repositories these lanes read through Devon's login today are ... intent-packages ..." (lines 609-613) | Stands. intent-packages stays outside the membership check's mint, because the lane reads it only through the anonymous clone. On the Mac the lane reads it from a local checkout, not through Devon's login. |
-   | Decision 2, "lists the exact set from the member record, the lanes' clone lists and that registry, and Devon installs the read-only App on those alone" (lines 620-622) | Stands. The membership check's clone adds nothing to the install set: an anonymous clone needs no installation. Q9 (HQ D-17) decided the read-only App's installation on intent-packages for the other lanes, and this lane doesn't depend on it. |
+   | Decision 2, "Each pass's mint request names only that lane's repositories" (lines 603-605), and "The repositories these lanes read through Devon's login today are ... intent-packages ..." (lines 609-613) | Stands. intent-packages is a member (`docs/operations/membership-seed.toml`, lines 125-127), so the membership check reads it like every observed member, through the lane's minted token in the container and Devon's login on the Mac (`cli.py` lines 166, 177 and 192: `_declarations`, `_registry_files` and `_auto_merge`). Only the standing-package read goes through the anonymous clone, and only that read is outside the mint. On the Mac that read uses a local checkout, not Devon's login. |
+   | Decision 2, "lists the exact set from the member record, the lanes' clone lists and that registry, and Devon installs the read-only App on those alone" (lines 620-622) | Stands. The membership check's clone adds nothing to the install set: an anonymous clone needs no installation. The lane's member reads of intent-packages (preceding row) depend on the read-only App's installation there, which Q9 (HQ D-17) decided; only the standing-package read doesn't. |
    | Decision 5, `sds-membership-check`, "Compares the member record with declarations through APIs only" (line 788) | Reworded to: "Compares the member record with declarations through APIs, and with the standing dependency-update packages in an anonymous per-pass clone of intent-packages." |
    | Increment 3, the observe-only lanes, "pin watcher ... membership check ... one at a time", and "Each launcher then mints its lane's read token from the read-only App" (lines 1010-1017) | Stands. The membership check's increment 3 change also adds decision item 1's clone to its launcher. |
    | Increment 4, "This increment adds `scripts/sds-git.sh` (decision 2) with the first lane that clones" (lines 1025-1026) | Stands. The membership check clones earlier, in increment 3, and doesn't use the helper, so the first lane that clones through the helper is still increment 4's. |

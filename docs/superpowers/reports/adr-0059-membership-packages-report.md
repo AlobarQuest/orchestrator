@@ -31,7 +31,7 @@ can't list a directory), and the minted token (it widens the token's use for no 
 | Decision 2, the anonymous-clone exception (541-543) | Extended: a second exception, for intent-packages. |
 | Decision 2, the helper call (561-562, 587) | The lane clones without calling the helper. |
 | Decision 2, the launcher bullet (589-591) | Stands for the clone. There's no helper call. |
-| Decision 2, the mint and Devon-login repositories (603-605, 609-613) | Stands: intent-packages stays outside this lane's mint. |
+| Decision 2, the mint and Devon-login repositories (603-605, 609-613) | Stands: intent-packages is a member, so the lane's member reads go through its mint; only the standing-package read uses the anonymous clone, outside the mint. |
 | Decision 2, the install set (620-622) | Stands: the clone adds nothing to it. |
 | **Decision 5, line 788** | **Reworded:** "Compares the member record with declarations through APIs, and with the standing dependency-update packages in an anonymous per-pass clone of intent-packages." |
 | Increment 3, the observe-only lanes (1010-1017) | Stands: the lane's increment 3 change also adds the clone. |
