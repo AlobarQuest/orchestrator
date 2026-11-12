@@ -3,7 +3,7 @@ Outcome: done
 # Report: the membership check's lane files and launcher (ADR-0059 increment 3, step 3e-6)
 
 Worker W-107. Branch `hq/lanes-inc-3-membership-check`, based on `origin/main` at `a957cd49`. The
-PR is PR_PLACEHOLDER, opened ready for review and not merged.
+PR is #675, opened ready for review and not merged.
 
 ## What changed
 
