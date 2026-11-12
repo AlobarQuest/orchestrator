@@ -2420,3 +2420,208 @@ the code learns the accounts from the App's installations, never from an owner n
    Once members span two accounts, these two lanes, like every read lane that mints over the
    members, need a mint for each installation and a token for each account's reads. Resolved by
    the same increment as the first item, before the first member in a second account is added.
+
+## Amendment 5 (2026-11-11): the membership check clones intent-packages anonymously each pass
+
+- **Status:** Proposed, 2026-11-11. The ADR's own status is unchanged.
+- **Decided by:** HQ, under decision 1's clone bullet (lines 306-320) applied to a public
+  repository. It grants no permission, App installation or credential, so no Devon decision is
+  needed (item 3 of the decision).
+- **Relates to:** decision 1 (the clone bullet), decision 2 (the git bullet, the helper bullets,
+  the launcher bullet, the read-only App bullet and the identity bullet), decision 5's
+  `sds-membership-check` row, increment 4, cut-over step 2, Amendment 3's table rows that name the
+  membership check, and Amendment 4's `sds-membership-check` row
+
+Line numbers in this amendment are this file's at orchestrator `a6442254`, before the amendment was
+appended, and a source file's line numbers are that file's at the same commit. The amendment
+appends only: no passage before it is rewritten, so each line cited here still holds the text it
+names. Where this amendment and an earlier passage disagree, this amendment governs.
+
+### Context
+
+The membership check reads intent-packages. `_standing_update_repositories()`
+(`src/membership_check/cli.py`, lines 106-112, called at lines 173-174) calls `discover()`
+(`src/bump_proposer/standing.py`, lines 127-173) with no argument, so it reads
+`checkout_root()` (lines 118-119): `BUMP_PROPOSER_PACKAGES_CHECKOUT` when it's set, else
+`DEFAULT_CHECKOUT`, `~/Projects/intent-packages` (`src/standing_identity/__init__.py`, line 25).
+`discover()` reads files only: each `packages/*/package.yaml`, with no git command and no venv. A
+missing `packages/` directory raises `StandingError`, and `_standing_update_repositories()` turns
+`StandingError` or `OSError` into a gap, never an empty population. It keeps only each package's
+`target_repository`.
+
+Decision 1's clone bullet (lines 306-320) names the lanes that clone other repositories each pass,
+and the membership check isn't one of them. Decision 5 says the lane "Compares the member record
+with declarations through APIs only" (line 788), and Amendment 4 kept that row (line 2326). In the
+lane's container there's no intent-packages checkout, so every pass would record the gap "the
+packages checkout couldn't be read" and exit 3.
+
+On the Mac, `scripts/run-membership-check.sh` sets no `BUMP_PROPOSER_PACKAGES_CHECKOUT`, so it
+reads the default checkout. The membership check doesn't fast-forward that checkout. The bump
+proposer's, rotation proposer's and work carrier's acting runs do (ADR-0031 amendment 1, #668), so
+the lane's population is as fresh as their last acting run, with no signal of its own.
+
+intent-packages is public (`gh repo view AlobarQuest/intent-packages --json visibility`,
+`PUBLIC`, read 2026-11-11). Decision 1's clones carry no credential when the repository is public,
+as the rotation proposer's clone of infraops-mcp-server doesn't (lines 307-310 and 541-543). The
+lane's existing anonymous mirror, `RepoMirror` (`src/rotation_worker/git_mirror.py`; this lane's
+use is `cli.py` lines 115-126), offers `sync`, `show` of one path and ancestry. It can't list a
+directory, so `discover()` can't run on it unchanged.
+
+The mechanism was probed on the Mac on 2026-11-11, by the session that wrote this amendment. With `env -i`, an empty `HOME`, no global or
+system git configuration and `GIT_TERMINAL_PROMPT=0`, a shallow clone of
+`https://github.com/AlobarQuest/intent-packages.git` at `main` succeeded, and `discover()` on it
+returned 5 standing packages. `discover()` on an absent directory raised `StandingError` ("no
+packages directory in the checkout"), and an anonymous clone of a repository that isn't public
+failed at once with exit 128 ("terminal prompts disabled"). The container proof is the first
+"Open before building" item.
+
+### Decision
+
+1. **The clone.** The membership check is a decision 1 clone lane, for intent-packages, with an
+   anonymous clone.
+
+   - **What and how.** On the container path only, before it runs `membership-check`, the
+     launcher runs `git clone --quiet --depth 1 --branch main
+     https://github.com/AlobarQuest/intent-packages.git "$HOME/intent-packages"`. It runs git
+     itself, never `gh repo clone`, with `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_NOSYSTEM=1`
+     and `GIT_TERMINAL_PROMPT=0` in the clone's environment. So no credential helper, stored
+     login or extra header applies, and a clone that GitHub won't serve anonymously fails at once
+     instead of prompting. `GH_TOKEN`, which the launcher exports for `gh` (decision item 4),
+     doesn't reach the clone: git doesn't read it, and the only bridge from `gh` to git is a
+     `gh auth setup-git` credential helper, which no global configuration holds.
+   - **Where it goes, and who deletes it.** The clone goes in the pass's `HOME`. `lane-run` makes
+     that directory new for each pass and deletes it when the launcher exits
+     (`scripts/lane_run.py`, lines 86-90, `tempfile.TemporaryDirectory`). So the launcher deletes
+     nothing itself, and no clone outlives its pass. This is how decision 1 already treats the
+     `RepoMirror` roots of the rotation decomposer and proposer (lines 323-326).
+   - **The variable.** The launcher exports `BUMP_PROPOSER_PACKAGES_CHECKOUT="$HOME/intent-packages"`,
+     whether or not the clone succeeded (decision item 5). Like the other clone lanes' checkout
+     variables, it's the launcher's own setting and doesn't join `lane-run`'s list (lines
+     316-317; `COPIED` and `STATE_VARIABLES`, `scripts/lane_run.py`, lines 46-60).
+   - **What it isn't.** No token, and no `scripts/sds-git.sh`: increment 4 hasn't created it,
+     and a public clone needs no credential, as for infraops-mcp-server. No venv: `discover()`
+     reads files only. No Python change: `discover()` already reads the variable.
+   - **The URL.** The repository is the one `PACKAGES_REPOSITORY` already names
+     (`src/bump_proposer/standing.py`, line 57). Amendment 4's standing answer is about finding
+     member repositories through App installations. intent-packages is the SDS's own package
+     source, one fixed repository, not a population, so naming it doesn't conflict with that
+     answer. How the launcher spells it is the second "Open before building" item.
+   - **The Mac path.** It keeps its current checkout: the launcher's Mac branch doesn't clone or
+     set the variable, so the Python reads `DEFAULT_CHECKOUT` there, as it does now. There's one
+     code path in Python. Only the launcher's container branch differs. Setting the variable to a
+     fresh per-pass clone on the Mac too, which would end the Mac's dependence on other lanes'
+     fast-forwards, is optional follow-up and not part of the move.
+
+   The following options were rejected:
+
+   - **An API reader for `packages/`.** It would be a second `discover()`, reading the same files
+     through GitHub's contents API, that can drift from the bump proposer's.
+   - **`RepoMirror`.** It can't list a directory, so `discover()` can't run on it unchanged.
+   - **The lane's minted read token on the clone.** intent-packages is public, so a token would
+     widen the token's use for no gain.
+
+2. **What it changes in the ADR.** Each of the following passages names the lanes that clone, the
+   clones' credentials, the helper, or the membership check's reads.
+
+   | Passage | Disposition |
+   |---|---|
+   | Decision 1, "These lanes are the bump driver (intent-packages, project-standards, security-standards), both bridge proposers ..., the work carrier (package checkouts) and fork hardening (the forks)" (lines 306-310) | Extended: the membership check is a clone lane too, for intent-packages, anonymously, as the rotation proposer's clone of infraops-mcp-server is. Its clone is shallow, at `main`, into the pass's `HOME`, which the pass discards (decision item 1). |
+   | Decision 1, "Three Mac checkout variables point at these clones in the container, and each launcher sets its own from the pass's clone directory, so none joins `lane-run`'s list" (lines 315-317) | Stands. `BUMP_PROPOSER_PACKAGES_CHECKOUT` gains a third container setter, the membership check's launcher, and still joins no list. |
+   | Decision 1, the lane-state bullet: "The other six moving lanes (... landing ledger and membership check) keep no state beyond the rebuildable caches" (lines 351-353) | Stands. The clone lives in the pass's `HOME`, not in a volume, and isn't kept between passes. |
+   | Decision 2, "Decision 1's per-pass clones need a git credential too, whether or not the repository is private, except the rotation proposer's clone of infraops-mcp-server" (lines 541-543) | Extended by a second exception: the membership check's clone of intent-packages, which is public, needs no credential. The first "Open before building" item verifies it works anonymously in the container. |
+   | Decision 2, "The launcher calls the helper once, before its first clone" (lines 561-562), and "Lanes that don't clone don't call the helper" (line 587) | The membership check clones and doesn't call the helper. The helper's purpose is a credential, and this clone carries none. |
+   | Decision 2, "Each launcher replaces its Keychain read ..., and, if it clones, adds decision 1's clone and the helper call" (lines 589-591) | Stands for the clone. The membership check's launcher adds no helper call (preceding row). |
+   | Decision 2, "Each pass's mint request names only that lane's repositories" (lines 603-605), and "The repositories these lanes read through Devon's login today are ... intent-packages ..." (lines 609-613) | Stands. intent-packages stays outside the membership check's mint, because the lane reads it only through the anonymous clone. On the Mac the lane reads it from a local checkout, not through Devon's login. |
+   | Decision 2, "lists the exact set from the member record, the lanes' clone lists and that registry, and Devon installs the read-only App on those alone" (lines 620-622) | Stands. The membership check's clone adds nothing to the install set: an anonymous clone needs no installation. The read-only App is already installed on intent-packages (Q9, HQ D-17). |
+   | Decision 5, `sds-membership-check`, "Compares the member record with declarations through APIs only" (line 788) | Reworded to: "Compares the member record with declarations through APIs, and with the standing dependency-update packages in an anonymous per-pass clone of intent-packages." |
+   | Increment 4, "This increment adds `scripts/sds-git.sh` (decision 2) with the first lane that clones" (lines 1025-1026) | Stands. The membership check clones earlier, in increment 3, and doesn't use the helper, so the first lane that clones through the helper is still increment 4's. |
+   | Cut-over step 2, "There is no reporting mode for the fork-sync watch and the membership check ... Their comparison is the ordinary pass, run on both hosts" (lines 1143-1145) | Stands, with one addition. The Mac reads the default checkout and the container reads a fresh clone, so the two outputs differ in standing packages if the Mac checkout is behind `main`. The comparison records `git -C ~/Projects/intent-packages rev-parse HEAD` beside the clone's commit, which the launcher prints (decision item 6), and a difference explained by the two commits isn't a cut-over failure. |
+   | Amendment 3, decision item 2, the "`gh` commands" row: "increment 3's `GH_TOKEN` export in `run-membership-check.sh` still stands" (line 1992) | Stands. At `a6442254` the fork-list read is `forks(subprocess_runner)` at `cli.py` line 170 (line 167 in Amendment 3's citation, from an earlier commit). |
+   | Amendment 3, decision item 2, cut-over step 2 "still applies to the membership check" (line 1998) | Stands, with the preceding cut-over row's addition. |
+   | Amendment 4, decision item 4, "Decision 5, `sds-membership-check`, ... (line 788) — Stands. Its population is decision item 1's." (line 2326) | Superseded for the row's wording, which this amendment's line 788 row gives. Amendment 4's population still holds. |
+
+3. **Credentials.** The lane's container reads the following secrets. Each is listed in
+   `.bws-secrets.toml` at `a6442254` unless the row says otherwise. Only the BWS id prefix is
+   shown here, never a value. The clone carries no credential and adds no row.
+
+   | Secret | BWS id | Read today on the Mac | In the container | ADR-0059 approval |
+   |---|---|---|---|---|
+   | The orchestrator observer bearer, `orchestrator-observer` | `f793576f-…` | Narrow identity (`run-membership-check.sh`, lines 41 and 76) | The lane's own token | Decision 2's identity bullet: the lane's account gets a direct read grant on "the secrets its launcher fetches today" (lines 487-490). The manifest's `lanes` list doesn't name the lane yet. |
+   | The change-manager READ bearer, `change-manager/M2M_TOKEN_READ` | `314f276d-…` | Broad identity (lines 42 and 79) | The lane's own token | The same bullet (lines 487-490): the launcher fetches it today. The manifest entry has no `lanes` field yet. |
+   | The read-only App's private key, `lanes-read-app-private-key` | `314a966c-…` | Not read: the Mac uses `gh auth token` (line 82) | The lane's own token, piped to `sds-github-mint` | Decision 2: the identity bullet's "the private key of each App it mints from" (lines 490-491), and the key's readers, "the twelve of the read-only set" (lines 646-648), which Amendment 3 made eleven, the membership check included (line 1993). The manifest's `lanes` list doesn't name the lane yet. |
+   | The lane's ping-URL secret (`membership-check-ping-url`, by the other lanes' pattern) | Not created yet; no manifest entry | Not read: the Mac resolves the ping URL by check name | The lane's own token, as `SDS_DEADMAN_PING_URL_UUID` | Decision 3 (lines 688-698): the VM root creates it in `Rotation / Keepers` at the lane's cut-over, with the lane's read grant. |
+   | The Healthchecks Management API key, `healthchecks_selfhosted_api_key` | `51509d5e-…` | Broad identity, through `sds_deadman_resolve` | Never | Excluded: decision 2's identity bullet (lines 488-490) and decision 3 (lines 677-687) say no lane holds it. |
+
+   So the change-manager READ bearer needs no new decision. The lane's account gets its grant at
+   the lane's identity gate, because accepted text (lines 487-490) grants every secret the
+   launcher fetches today, and the launcher fetches this one at lines 42 and 79. This amendment
+   grants no new permission, App installation or credential. The GitHub token is minted per pass
+   from the read-only App's key and never stored, so it has no row.
+
+4. **The fork list.** `cli.py` line 170 calls `forks(subprocess_runner)`, which reads
+   factory-runner's `.cred-consumers.toml` through `gh api` (`src/fork_sync/watch.py`, lines
+   154-156). Amendment 3 kept increment 3's `GH_TOKEN` export in `run-membership-check.sh` for this
+   read (line 1992), and Amendment 4 kept it too (line 2332). The lane image has `gh`
+   (`lanes/Dockerfile`, the `GH_VERSION` download, installed to `/usr/local/bin`). The container
+   branch exports the pass's minted read token as `GH_TOKEN` beside `SDS_MEMBERS_GITHUB_TOKEN`.
+
+5. **Failure.** A failed clone isn't the launcher's failure. The launcher doesn't call
+   `sds_outcome_fail` (exit 1) when git exits non-zero: it writes git's error into the pass's
+   report and runs `membership-check` with the variable still set. `discover()` then finds no
+   `packages/` directory and raises `StandingError`, and `_standing_update_repositories()`
+   records the gap "the packages checkout couldn't be read" (`cli.py`, lines 106-112). The pass
+   exits 3 if nothing disagrees, or 2 if something does, because disagreements outrank gaps
+   (`run-membership-check.sh`, lines 18-23). Either way the pass pings `/fail` with the report. A
+   clone without `packages/` is the same gap. A clone whose `packages/` holds no standing package
+   is a true reading, as it is on the Mac. The standing-package direction only checks that every
+   repository a package names is granted (`_require`, `src/membership_check/consistency.py`,
+   lines 82-88, called at 159-164), so an empty population can't produce a false disagreement.
+   The clone is per pass, so the container never reads a stale checkout.
+
+6. **The code that follows, as later work.** None of these files is edited by this amendment. They
+   change in plan step 3e-6 (`lanes-inc-3-membership-check`), the lane's increment 3 move:
+
+   - `scripts/run-membership-check.sh`: the container branch (a set `BWS_ACCESS_TOKEN`, as
+     `run-pin-watcher.sh` lines 29-31 and 93-98 detect it) reads the observer bearer, the
+     change-manager READ bearer and the read-only App's key with the lane's own token, mints the
+     pass's read token, and exports it as `SDS_MEMBERS_GITHUB_TOKEN` and `GH_TOKEN`. It makes
+     decision item 1's clone, prints one line naming the clone's commit or its failure, and exports
+     `BUMP_PROPOSER_PACKAGES_CHECKOUT`. Its CREDENTIALS header (lines 25-32) describes both hosts.
+     The Mac branch keeps its current reads.
+   - The launcher's tests, beside `tests/scripts/` for the other increment 3 launchers: a
+     container pass clones with no credential and sets the variable; a failed clone still runs
+     the program and exits 3 with the gap, never 1; the Mac branch sets no variable.
+   - `lanes/membership-check/compose.yaml` and `lanes/membership-check/crontab`, as for the other
+     increment 3 lanes.
+   - `docs/operations/deploy.md`, the registered lanes and "A lane's GitHub token".
+   - `.bws-secrets.toml`: `membership-check` joins the `lanes` lists of `f793576f-…` and
+     `314a966c-…`, `314f276d-…` gains `lanes = ["membership-check"]`, and the ping-URL secret
+     gets its entry once it exists, as the other lanes' ping-URL secrets did.
+
+### Consequences
+
+- The membership check can move in increment 3 with the standing-package direction intact, and
+  with no credential, permission or installation beyond what decision 2 already grants.
+- In the container, the standing population is intent-packages' `main` at the start of each pass,
+  so it's fresher than the Mac's, which follows other lanes' acting runs.
+- Each pass makes one more anonymous request to GitHub: a shallow clone of one repository (54
+  package directories on 2026-11-11). It goes through git's smart HTTP endpoint, not the REST
+  API, so it doesn't use the REST API's anonymous rate limit that Amendment 4's second "Open
+  before building" item counts.
+- If intent-packages becomes private, every container pass records the gap and exits 3 until a
+  decision gives the clone a credential, through `scripts/sds-git.sh` and the lane's read mint
+  (the App is already installed there). The failure is loud: the gap names the missing checkout,
+  and the report carries git's error.
+
+### Open before building
+
+1. **The anonymous clone in the container.** The probe ran on the Mac. Resolved in the lane's
+   cut-over step 1: the container's `--read` proof is followed by an ordinary pass whose report
+   shows the clone's commit and no "packages checkout" gap.
+2. **How the launcher spells the repository.** It can write the URL as a literal or derive it from `PACKAGES_REPOSITORY`
+   through the venv, which adds a Python call before the pass. Resolved by plan step 3e-6, which
+   also adds a test that the two agree if it uses the literal.
+3. **The Mac checkout's freshness.** Whether the Mac branch also clones per pass (decision item 1,
+   "The Mac path") is optional follow-up after the move. Until then, cut-over step 2's paired pass
+   relies on the commit comparison in the decision item 2 table. Resolved by a later change, or
+   by increment 6, when the Mac path ends.
