@@ -6,7 +6,7 @@ zero-filled. Timing derives from event/claim/adjudication timestamps -- never fr
 """
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from statistics import median
 
 from sqlalchemy import Float, cast, func, select
@@ -147,7 +147,9 @@ def _queue_age(session, since, until, now) -> MetricValue:
             )
         )
         if entered is not None:
-            ages.append((now - entered).total_seconds())
+            # A session in a DST zone returns both values with one shared tzinfo, and Python
+            # subtracts those by wall clock: an age spanning a DST change is an hour off.
+            ages.append((now.astimezone(UTC) - entered.astimezone(UTC)).total_seconds())
     if not ages:
         return MetricValue(
             STATUS_NO_DATA,
