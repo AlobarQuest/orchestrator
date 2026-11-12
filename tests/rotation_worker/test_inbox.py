@@ -269,11 +269,38 @@ def test_an_unwritable_refusal_record_only_delays_the_report(tmp_path: Path) -> 
 # ---- the wait before the claim --------------------------------------------------------------
 
 
+class TypedStore(MemoryStore):
+    """A store holding text a person typed, which needn't be a credential value: BWS's `read`
+    refuses surrounding whitespace and its `read_key` strips it; the Keychain's strips nothing."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.typed: dict[str, str] = {}
+        self.strips = True
+
+    def type_in(self, project_id: str, key: str, text: str) -> str:
+        secret_id = self.put(project_id, key, Value(EMPTY))
+        self.typed[secret_id] = text
+        return secret_id
+
+    def read(self, secret_id: str) -> Value:
+        return Value(self.typed[secret_id]) if secret_id in self.typed else super().read(secret_id)
+
+    def read_key(self, secret_id: str) -> Value:
+        if secret_id in self.typed and self.strips:
+            return Value(self.typed[secret_id].strip())
+        return self.read(secret_id)
+
+    def write(self, secret_id: str, value: Value) -> None:
+        self.typed.pop(secret_id, None)
+        super().write(secret_id, value)
+
+
 class Pass:
     """One rotation whose `store` unit follows a person's mint, on a store-and-inbox setup."""
 
     def __init__(self, tmp_path: Path, inbox_text: str | None = EMPTY) -> None:
-        self.store = MemoryStore()
+        self.store = TypedStore()
         self.rotation = _rotation(self.store)
         adapter = ADAPTERS["github-pat"]
         entry = RegistryEntry(
@@ -313,6 +340,10 @@ class Pass:
     def staged(self) -> Value | None:
         found = self.store.find(WORK, self.rotation.staging_key)
         return self.store.read(found.id) if found else None
+
+    def stagings(self) -> list[str]:
+        key = self.rotation.staging_key
+        return [i for i, (_, name, _) in self.store.secrets.items() if name == key]
 
 
 def test_an_empty_inbox_waits_and_asks_the_person_for_the_value(
@@ -439,6 +470,99 @@ def test_an_unreadable_inbox_starts_no_clock_when_a_value_is_staged(
     run.store.put(WORK, run.rotation.staging_key, NEW)
     assert not run.waits(monkeypatch, [])
     assert run.found.waits == {}
+
+
+# Bitwarden saves a new secret before its value is pasted, so a staging secret made by hand can
+# hold the inbox's empty marker for a few minutes (sds-hq phase-1 speedup design, "The staging
+# race"). Each case runs without an inbox and with an empty one.
+INBOX_PATHS = pytest.mark.parametrize("inbox_text", [None, EMPTY], ids=["no-inbox", "inbox"])
+
+
+@INBOX_PATHS
+def test_staged_marker_waits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, inbox_text: str | None
+) -> None:
+    run = Pass(tmp_path, inbox_text)
+    marker = run.store.put(WORK, run.rotation.staging_key, Value(EMPTY))
+    assert run.waits(monkeypatch, [])
+    assert set(run.found.due) == {"rotation-mint:u1"}
+    assert run.stagings() == [marker]
+    assert run.store.read(marker).reveal() == EMPTY
+
+
+@INBOX_PATHS
+@pytest.mark.parametrize("strips", [True, False], ids=["bws", "keychain"])
+@pytest.mark.parametrize("text", ["empty\n", " empty ", "   "], ids=["newline", "spaces", "blank"])
+def test_staged_marker_with_whitespace_waits(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    inbox_text: str | None,
+    strips: bool,
+    text: str,
+) -> None:
+    run = Pass(tmp_path, inbox_text)
+    run.store.strips = strips
+    marker = run.store.type_in(WORK, run.rotation.staging_key, text)
+    assert run.waits(monkeypatch, [])
+    assert set(run.found.due) == {"rotation-mint:u1"}
+    assert run.stagings() == [marker]
+    assert run.store.typed[marker] == text
+
+
+@INBOX_PATHS
+def test_staged_token_proceeds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, inbox_text: str | None
+) -> None:
+    run = Pass(tmp_path, inbox_text)
+    run.store.put(WORK, run.rotation.staging_key, NEW)
+    assert not run.waits(monkeypatch, [])
+    assert run.found.due == {}
+    assert run.found.waits == {}
+
+
+def test_an_inbox_value_beside_a_staged_marker_is_bound_into_that_secret(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run = Pass(tmp_path, NEW.reveal())
+    marker = run.store.type_in(WORK, run.rotation.staging_key, "empty\n")
+    assert not run.waits(monkeypatch, [])
+    # Written into the person's secret, not created beside it: two would make `find` refuse.
+    assert run.stagings() == [marker]
+    assert run.store.read(marker).same_as(NEW)
+    assert run.store.read(run.inbox_id).reveal() == EMPTY
+    assert run.found.due == {}
+
+
+def test_a_staged_marker_beside_an_unreadable_inbox_waits_on_the_clock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run = Pass(tmp_path)
+
+    def unreadable() -> MemoryStore:
+        raise StoreError("BWS refused: 429")
+
+    run.inbox = Inbox(unreadable, run.inbox_id)
+    run.store.put(WORK, run.rotation.staging_key, Value(EMPTY))
+    assert run.waits(monkeypatch, [])
+    assert run.found.waits == {"u1": worker.Wait("the inbox can't be read: BWS refused: 429")}
+
+
+def test_a_value_staged_by_hand_while_the_inbox_s_was_checked_is_not_overwritten() -> None:
+    store = MemoryStore()
+    rotation = _rotation(store)
+    by_hand = Value("a-value-staged-by-hand")
+    staging = store.put(WORK, rotation.staging_key, by_hand)
+    reason = bind(
+        NEW,
+        rotation=rotation,
+        store=store,
+        provider=cast(Provider, Provides([NEW, OLD])),
+        others_waiting=(),
+        other_keepers=lambda: (),
+        staging_id=staging,
+    )
+    assert reason == "a value was staged for this rotation while the inbox's was checked"
+    assert store.read(staging).same_as(by_hand)
 
 
 def test_a_unit_not_after_a_person_s_mint_never_reads_the_inbox(

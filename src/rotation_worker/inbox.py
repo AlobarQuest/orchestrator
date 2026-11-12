@@ -23,6 +23,9 @@ then emptying the inbox, only when all of these hold:
 A value that doesn't bind stays where it is and fails nothing; the person is told only once it
 has failed on a later pass too (`Refusals`), so a pass that caught a paste half-done says nothing.
 A staging secret written by hand (`rotation-worker stage`) serves as well as one bound here.
+One that holds only the empty marker, or nothing, isn't staged (`pasted`): Bitwarden saves a new
+secret before its value is pasted, so a pass can find it in that state. A value bound from the
+inbox then goes into that secret, never beside it.
 """
 
 from __future__ import annotations
@@ -57,6 +60,17 @@ class ConfirmsIdentity(Protocol):
     def same_identity(self, new: Value, old: Value) -> bool: ...
 
 
+def pasted(store: SecretStore, secret_id: str) -> Value | None:
+    """The value a person pasted into a secret, or `None` while it holds the empty marker or no
+    value at all. A console paste can end in a newline."""
+    try:
+        value = store.read_key(secret_id)
+    except ValueError:
+        # Blank, or padded where the store doesn't strip: the person cleared it or is mid-paste.
+        return None
+    return None if value.reveal() == EMPTY else value
+
+
 @runtime_checkable
 class BindsByItself(Protocol):
     """A provider whose pasted value binds by what it is, not by matching the value it replaces,
@@ -77,14 +91,8 @@ class Inbox:
         self._secret_id = secret_id
 
     def read(self) -> Value | None:
-        """The pasted value, or `None` for an empty inbox. A console paste can end in a newline."""
-        store = self._opened()
-        try:
-            value = store.read_key(self._secret_id)
-        except ValueError:
-            # A blank value: the person cleared it.
-            return None
-        return None if value.reveal() == EMPTY else value
+        """The pasted value, or `None` for an empty inbox."""
+        return pasted(self._opened(), self._secret_id)
 
     def empty(self) -> None:
         self._opened().write(self._secret_id, Value(EMPTY))
@@ -135,9 +143,11 @@ def bind(
     provider: Provider,
     others_waiting: Sequence[str],
     other_keepers: Callable[[], Iterable[tuple[str, Value]]],
+    staging_id: str | None = None,
 ) -> str | None:
     """Stage `new` for `rotation`. Returns why it wasn't, or `None` once the staging secret holds
-    it; emptying the inbox is the caller's."""
+    it; emptying the inbox is the caller's. `staging_id` names a staging secret that held no value
+    when the caller looked: `new` is written into it."""
     if others_waiting:
         return (
             "another rotation waits on a person's mint too, so the inbox can't tell which "
@@ -162,7 +172,20 @@ def bind(
     for credential, value in other_keepers():
         if new.same_as(value):
             return f"it is {credential}'s value"
-    store.create(rotation.work_project_id, rotation.staging_key, new)
+    return _stage(new, rotation, store, staging_id)
+
+
+def _stage(
+    new: Value, rotation: Rotation, store: SecretStore, staging_id: str | None
+) -> str | None:
+    if staging_id is None:
+        store.create(rotation.work_project_id, rotation.staging_key, new)
+        return None
+    if pasted(store, staging_id) is not None:
+        # Asked again after the checks, which take seconds, to keep a value pasted meanwhile;
+        # one pasted between this read and the write is still overwritten.
+        return "a value was staged for this rotation while the inbox's was checked"
+    store.write(staging_id, new)
     return None
 
 
