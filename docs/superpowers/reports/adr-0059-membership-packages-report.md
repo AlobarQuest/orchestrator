@@ -34,9 +34,11 @@ can't list a directory), and the minted token (it widens the token's use for no 
 | Decision 2, the mint and Devon-login repositories (603-605, 609-613) | Stands: intent-packages stays outside this lane's mint. |
 | Decision 2, the install set (620-622) | Stands: the clone adds nothing to it. |
 | **Decision 5, line 788** | **Reworded:** "Compares the member record with declarations through APIs, and with the standing dependency-update packages in an anonymous per-pass clone of intent-packages." |
+| Increment 3, the observe-only lanes (1010-1017) | Stands: the lane's increment 3 change also adds the clone. |
 | Increment 4, `sds-git.sh` "with the first lane that clones" (1025-1026) | Stands: the first helper-using clone lane is still increment 4's. |
 | Cut-over step 2 (1143-1145) | Stands, with one addition: the paired pass records the Mac checkout's HEAD beside the clone's commit. |
 | Amendment 3 rows (1992, 1998) | Stand. The `forks()` call is cited again at `cli.py` line 170. |
+| Amendment 4 row (2327) | Stands: the Mac branch doesn't clone. |
 | Amendment 4 row (2326) | Superseded for its wording of line 788. |
 
 ### Secrets (item 3), from `.bws-secrets.toml` at `a6442254`
@@ -53,8 +55,8 @@ The amendment grants no new permission, App installation or credential.
 
 ### Open items, as the amendment records them
 
-1. Prove the anonymous clone in the container. This is resolved at the lane's cut-over step 1.
-   My probe ran on the Mac.
+1. Prove the anonymous clone in the container. My probe ran on the Mac. `membership-check` has no
+   `--dry-run`, so this is resolved at cut-over step 2's ordinary container pass, not step 1.
 2. Decide whether the launcher writes the URL as a literal or derives it from
    `PACKAGES_REPOSITORY`. This is resolved by plan step 3e-6, with an agreement test if it uses
    a literal.
@@ -68,7 +70,8 @@ The amendment grants no new permission, App installation or credential.
     prompts off succeeded. `discover()` on the clone returned 5 standing packages, targeting
     `AlobarQuest/infraops-mcp-server` and `AlobarQuest/orchestrator`.
   - `discover()` on an absent directory raised `StandingError`.
-  - An anonymous clone of a repository that isn't public failed at once, with exit 128.
+  - An anonymous clone of a repository name that doesn't exist failed at once, with exit 128.
+    I didn't probe a private repository.
   - The probe directory, `/tmp/w101-probe.SVeN`, still exists. It holds only the public clone.
     The permission rules denied my `rm -rf` of it, and I didn't work around the rule.
 - **`make check`** against `orchestrator_test_hq_w_101`, with `PGTZ=UTC`: exit 0, lint and
@@ -76,8 +79,10 @@ The amendment grants no new permission, App installation or credential.
 - **Security scan from the repo root:** 0 BLOCK. The 2 WARN findings
   (`bws.secret-files-gitignored`, `bws.manifest-matches-usage`) and the 1 INFO finding
   (`bws.least-privilege-scope`) are repository-wide findings, not caused by this diff.
-- **PR #670**, ready (not a draft). The amendment commit is `652fea4e`. The report commit follows
-  it on the same branch. I didn't merge the PR.
+- `make check` ran twice: once on the first draft, and once after the review fixes, on the tree
+  as pushed. Both runs gave the same counts.
+- **PR #670**, ready (not a draft). I didn't merge it. The head commit and CI result are in HQ's
+  view of the PR. I watched CI to its result before exiting (see "Concerns").
 
 ## Files changed
 
@@ -104,6 +109,17 @@ The amendment grants no new permission, App installation or credential.
 
 - The ping-URL secret's name, `membership-check-ping-url`, follows the other lanes' pattern. The
   name isn't fixed until the VM root creates the secret.
+- I added three details beyond HQ's mechanism, and HQ may drop any of them in review:
+  - The launcher prints one line naming the clone's commit, or the clone's failure.
+  - Cut-over step 2's paired pass records the Mac checkout's HEAD beside that commit, so a
+    difference in standing packages is attributed to the checkout.
+  - Item 6's file list adds `.cred-consumers.toml`, `docs/operations/membership.md` and
+    `tests/scripts/test_deploy_lanes.py`, matching what the pin watcher's change (`a6442254`)
+    touched.
+- I removed the claim that the read-only App is installed on intent-packages. Q9 decided that
+  installation, but no source I read confirms it, and the clone doesn't depend on it.
+- These leftovers remain for teardown: the test database `orchestrator_test_hq_w_101`, the
+  logs `/tmp/w101-check.log` and `/tmp/w101-scan.json`, and the probe directory.
 - `rtk` isn't on this session's `PATH`, so I ran `make` directly into a log.
 
 ## Standards followed

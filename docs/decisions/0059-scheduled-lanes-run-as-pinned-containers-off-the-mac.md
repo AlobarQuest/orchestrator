@@ -2429,7 +2429,7 @@ the code learns the accounts from the App's installations, never from an owner n
   needed (item 3 of the decision).
 - **Relates to:** decision 1 (the clone bullet), decision 2 (the git bullet, the helper bullets,
   the launcher bullet, the read-only App bullet and the identity bullet), decision 5's
-  `sds-membership-check` row, increment 4, cut-over step 2, Amendment 3's table rows that name the
+  `sds-membership-check` row, increments 3 and 4, cut-over step 2, Amendment 3's table rows that name the
   membership check, and Amendment 4's `sds-membership-check` row
 
 Line numbers in this amendment are this file's at orchestrator `a6442254`, before the amendment was
@@ -2471,8 +2471,9 @@ The mechanism was probed on the Mac on 2026-11-11, by the session that wrote thi
 system git configuration and `GIT_TERMINAL_PROMPT=0`, a shallow clone of
 `https://github.com/AlobarQuest/intent-packages.git` at `main` succeeded, and `discover()` on it
 returned 5 standing packages. `discover()` on an absent directory raised `StandingError` ("no
-packages directory in the checkout"), and an anonymous clone of a repository that isn't public
-failed at once with exit 128 ("terminal prompts disabled"). The container proof is the first
+packages directory in the checkout"). An anonymous clone of a repository name that doesn't exist (no
+private repository was probed) failed at once with exit 128 ("terminal prompts disabled"), so a
+clone GitHub refuses fails without waiting on a prompt. The container proof is the first
 "Open before building" item.
 
 ### Decision
@@ -2532,12 +2533,14 @@ failed at once with exit 128 ("terminal prompts disabled"). The container proof 
    | Decision 2, "The launcher calls the helper once, before its first clone" (lines 561-562), and "Lanes that don't clone don't call the helper" (line 587) | The membership check clones and doesn't call the helper. The helper's purpose is a credential, and this clone carries none. |
    | Decision 2, "Each launcher replaces its Keychain read ..., and, if it clones, adds decision 1's clone and the helper call" (lines 589-591) | Stands for the clone. The membership check's launcher adds no helper call (preceding row). |
    | Decision 2, "Each pass's mint request names only that lane's repositories" (lines 603-605), and "The repositories these lanes read through Devon's login today are ... intent-packages ..." (lines 609-613) | Stands. intent-packages stays outside the membership check's mint, because the lane reads it only through the anonymous clone. On the Mac the lane reads it from a local checkout, not through Devon's login. |
-   | Decision 2, "lists the exact set from the member record, the lanes' clone lists and that registry, and Devon installs the read-only App on those alone" (lines 620-622) | Stands. The membership check's clone adds nothing to the install set: an anonymous clone needs no installation. The read-only App is already installed on intent-packages (Q9, HQ D-17). |
+   | Decision 2, "lists the exact set from the member record, the lanes' clone lists and that registry, and Devon installs the read-only App on those alone" (lines 620-622) | Stands. The membership check's clone adds nothing to the install set: an anonymous clone needs no installation. Q9 (HQ D-17) decided the read-only App's installation on intent-packages for the other lanes, and this lane doesn't depend on it. |
    | Decision 5, `sds-membership-check`, "Compares the member record with declarations through APIs only" (line 788) | Reworded to: "Compares the member record with declarations through APIs, and with the standing dependency-update packages in an anonymous per-pass clone of intent-packages." |
+   | Increment 3, the observe-only lanes, "pin watcher ... membership check ... one at a time", and "Each launcher then mints its lane's read token from the read-only App" (lines 1010-1017) | Stands. The membership check's increment 3 change also adds decision item 1's clone to its launcher. |
    | Increment 4, "This increment adds `scripts/sds-git.sh` (decision 2) with the first lane that clones" (lines 1025-1026) | Stands. The membership check clones earlier, in increment 3, and doesn't use the helper, so the first lane that clones through the helper is still increment 4's. |
    | Cut-over step 2, "There is no reporting mode for the fork-sync watch and the membership check ... Their comparison is the ordinary pass, run on both hosts" (lines 1143-1145) | Stands, with one addition. The Mac reads the default checkout and the container reads a fresh clone, so the two outputs differ in standing packages if the Mac checkout is behind `main`. The comparison records `git -C ~/Projects/intent-packages rev-parse HEAD` beside the clone's commit, which the launcher prints (decision item 6), and a difference explained by the two commits isn't a cut-over failure. |
    | Amendment 3, decision item 2, the "`gh` commands" row: "increment 3's `GH_TOKEN` export in `run-membership-check.sh` still stands" (line 1992) | Stands. At `a6442254` the fork-list read is `forks(subprocess_runner)` at `cli.py` line 170 (line 167 in Amendment 3's citation, from an earlier commit). |
    | Amendment 3, decision item 2, cut-over step 2 "still applies to the membership check" (line 1998) | Stands, with the preceding cut-over row's addition. |
+   | Amendment 4, decision item 4, the increment 3 row: the listing change lands and runs on the Mac before the lane's cut-over (line 2327) | Stands. The clone adds no precondition: the Mac branch doesn't clone. |
    | Amendment 4, decision item 4, "Decision 5, `sds-membership-check`, ... (line 788) — Stands. Its population is decision item 1's." (line 2326) | Superseded for the row's wording, which this amendment's line 788 row gives. Amendment 4's population still holds. |
 
 3. **Credentials.** The lane's container reads the following secrets. Each is listed in
@@ -2593,7 +2596,14 @@ failed at once with exit 128 ("terminal prompts disabled"). The container proof 
      the program and exits 3 with the gap, never 1; the Mac branch sets no variable.
    - `lanes/membership-check/compose.yaml` and `lanes/membership-check/crontab`, as for the other
      increment 3 lanes.
-   - `docs/operations/deploy.md`, the registered lanes and "A lane's GitHub token".
+   - `docs/operations/deploy.md`, the registered lanes and "A lane's GitHub token", and
+     `docs/operations/membership.md` if the launcher derives its mint's repositories through
+     `sds_scope ledger`, as the pin watcher's change did.
+   - `.cred-consumers.toml`: the launcher's `runtime-fetch` consumer row on
+     `lanes-read-app-private-key`, as the pin watcher's change added, and the lane token's and
+     ping URL's rows at cut-over.
+   - `tests/scripts/test_deploy_lanes.py`, whose placeholder lanes gain `membership-check` while its
+     ping-URL id is empty.
    - `.bws-secrets.toml`: `membership-check` joins the `lanes` lists of `f793576f-…` and
      `314a966c-…`, `314f276d-…` gains `lanes = ["membership-check"]`, and the ping-URL secret
      gets its entry once it exists, as the other lanes' ping-URL secrets did.
@@ -2605,9 +2615,7 @@ failed at once with exit 128 ("terminal prompts disabled"). The container proof 
 - In the container, the standing population is intent-packages' `main` at the start of each pass,
   so it's fresher than the Mac's, which follows other lanes' acting runs.
 - Each pass makes one more anonymous request to GitHub: a shallow clone of one repository (54
-  package directories on 2026-11-11). It goes through git's smart HTTP endpoint, not the REST
-  API, so it doesn't use the REST API's anonymous rate limit that Amendment 4's second "Open
-  before building" item counts.
+  package directories on 2026-11-11).
 - If intent-packages becomes private, every container pass records the gap and exits 3 until a
   decision gives the clone a credential, through `scripts/sds-git.sh` and the lane's read mint
   (the App is already installed there). The failure is loud: the gap names the missing checkout,
@@ -2615,9 +2623,10 @@ failed at once with exit 128 ("terminal prompts disabled"). The container proof 
 
 ### Open before building
 
-1. **The anonymous clone in the container.** The probe ran on the Mac. Resolved in the lane's
-   cut-over step 1: the container's `--read` proof is followed by an ordinary pass whose report
-   shows the clone's commit and no "packages checkout" gap.
+1. **The anonymous clone in the container.** The probe ran on the Mac. The membership check has
+   no `--dry-run` (`cli.py` takes no options), so cut-over step 1's launcher `--dry-run` doesn't
+   apply to it, and its first container pass is cut-over step 2's ordinary pass. Resolved there:
+   the container pass's report shows the clone's commit and no "packages checkout" gap.
 2. **How the launcher spells the repository.** It can write the URL as a literal or derive it from `PACKAGES_REPOSITORY`
    through the venv, which adds a Python call before the pass. Resolved by plan step 3e-6, which
    also adds a test that the two agree if it uses the literal.
