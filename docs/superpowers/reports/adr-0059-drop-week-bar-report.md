@@ -120,28 +120,35 @@ No other ADR, script or operations page names the week bar.
 HQ's Opus whole-branch review at `8ab0dccc` found one blocking finding, B1: a `launchctl bootout`
 lasts only until the next login, so the cut-over's Mac step must be a bootout plus a disable.
 
-- **Content commit:** `afe47acf`, fast-forward on `8ab0dccc` (nothing later existed on the
-  branch). The head is the report commit that follows it.
-- **Amendment's line range:** lines 2646-2742 at `afe47acf`. No line before 2646 changed
+- **Content commits:** `afe47acf` (the fix) and `cf0a9540` (item 5's disable stated as a
+  requirement, and the 1148 row's pointer to the disable), fast-forward on `8ab0dccc` (nothing
+  later existed on the branch). The final content is `cf0a9540`; the head is the report commit
+  that follows it.
+- **Amendment's line range:** lines 2646-2742 at `cf0a9540`. No line before 2646 changed
   (`git diff 519bb23f` shows no removed line).
 - **Decision items:** a new item 2 states the bootout plus disable, with the 2026-11-12 restart as
   its reason, the step 2 and step 4 commands, and `launchctl enable` before the rollback's
   bootstrap. Items 2 to 6 became 3 to 7, and the table's cross-references moved with them (the
   increment 6 row now cites item 3, the executor row items 4 and 6). Items 1 and 6 say "booted out
   and disabled". Item 5 adds that an already-cut-over lane counts as moved only once its Mac job is
-  disabled and checked as step 4 checks, and states that the execution watch and the landing ledger
-  were disabled on 2026-11-12, in an interactive session with Devon's approval. The year plan quote
+  disabled and checked as step 4 checks, as a requirement (it states no other lane's state), and states that the execution
+  watch and the landing ledger were disabled on 2026-11-12, in an interactive session with Devon's approval. The year plan quote
   in the Context is unchanged.
 - **Rows added (lines at `519bb23f`):** 1151-1152 (step 2: bootout, then disable, plist kept), 1164
   (step 4: the check adds the disabled state in `launchctl print-disabled`), and 1190-1191
   (rollback: `launchctl enable` before the bootstrap). Amendment 1's lines 1664-1665 got no row, as
   the handoff directs.
+- **One edit beyond the handoff's five:** the existing 1148 row said "the boot-out ... stand",
+  which the new 1151-1152 row qualifies; it now reads "the boot-out (with the disable the next row
+  adds)".
 - **Decided by:** adds Devon's approval of the disable (interactive session, 2026-11-12).
 - **Non-blocking notes:** both applied. Item 5 says a captured baseline "is no longer needed for
   any bar"; the 1248-1279 row says "consistent with decision 3's outcome-alarm bullet (lines
   741-743)". None skipped.
-- **`make check`** at `afe47acf` with `orchestrator_test_hq_w_109` (same environment as before):
-  exit 0, **14677 passed, 1 skipped**, pyright 0 errors.
+- **`make check`** with `orchestrator_test_hq_w_109` (same environment as before), at `afe47acf`
+  and again at `cf0a9540`'s content before a one-line rewrap (amended in): exit 0 both times,
+  **14677 passed, 1 skipped**, pyright 0 errors. `test_layer_manifest.py` passes with both
+  report files committed.
 - **Security scan** from the repo root: 0 BLOCK; the same 2 WARN and 1 INFO as before.
 - The earlier sections of this report describe the round-0 numbering (items 1 to 6).
 

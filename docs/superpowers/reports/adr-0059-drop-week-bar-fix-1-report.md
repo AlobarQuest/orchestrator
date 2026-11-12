@@ -5,7 +5,8 @@ Outcome: done
 - **PR:** #676, https://github.com/AlobarQuest/orchestrator/pull/676 (not merged)
 - **Branch pushed:** `hq/adr-0059-drop-week-bar`, fast-forward on `8ab0dccc`
   (`git log 8ab0dccc..origin/hq/adr-0059-drop-week-bar` was empty before the push)
-- **Content commit:** `afe47acf`. The report commit follows it.
+- **Content commits:** `afe47acf` (the fix) and `cf0a9540` (item 5's disable as a requirement;
+  the 1148 row's pointer). Report commits follow each.
 
 ## What I built
 
@@ -18,23 +19,27 @@ disable.
   of `launchctl print-disabled gui/<uid>`, and rollback's `launchctl enable` before the bootstrap.
 - Items 2 to 6 renumbered to 3 to 7; the table's references moved with them.
 - Items 1 and 6 say "booted out and disabled". The Context's year plan quote is unchanged.
-- Item 5 (lanes already cut over): such a lane is moved only once its Mac job is disabled and
-  checked as step 4 checks; the execution watch and the landing ledger were disabled on 2026-11-12
+- Item 5 (lanes already cut over): such a lane's Mac job must be disabled and checked as step 4
+  checks, and until it is, the lane isn't moved; the execution watch and the landing ledger were disabled on 2026-11-12
   (interactive session, Devon's approval). Nothing about other lanes.
 - Three table rows: 1151-1152, 1164, and 1190-1191, each superseded by decision item 2.
 - "Decided by" adds Devon's approval of the disable.
 - Both non-blocking notes applied (item 5's baseline wording; the 1248-1279 row's "consistent
   with").
+- One edit beyond the handoff's five: the existing 1148 row said "the boot-out ... stand", which
+  the new 1151-1152 row qualifies, so it now reads "the boot-out (with the disable the next row
+  adds)".
 - `docs/superpowers/reports/adr-0059-drop-week-bar-report.md` gains a "Fix round 1" section.
 
 ## Tests and checks
 
-- `make check` at `afe47acf` with `orchestrator_test_hq_w_109` (`TEST_DATABASE_URL`,
+- `make check` at `afe47acf`, and again at `cf0a9540`'s content before a one-line rewrap, with `orchestrator_test_hq_w_109` (`TEST_DATABASE_URL`,
   `ORCHESTRATOR_DATABASE_URL`, `SECURITY_STANDARDS_DIR` at the fixture, `PGTZ=UTC`,
-  `alembic upgrade head` first): exit 0, 14677 passed, 1 skipped, pyright 0 errors.
+  `alembic upgrade head` first): exit 0 both times, 14677 passed, 1 skipped, pyright 0 errors.
+- `tests/architecture/test_layer_manifest.py` passes with both report files committed (3 passed).
 - Security scan from the repo root: 0 BLOCK, 2 WARN (`bws.secret-files-gitignored`,
   `bws.manifest-matches-usage`), and 1 INFO (`bws.least-privilege-scope`), the same as round 0.
-- `git diff 519bb23f -- <ADR>` has no removed line: the amendment still only appends.
+- At `cf0a9540`, the amendment spans lines 2646-2742, and `git diff 519bb23f -- <ADR>` has no removed line: the amendment still only appends.
 - I re-read lines 1151-1152, 1164, 1190-1191, and 741-743 at `519bb23f`; each holds the text the
   handoff and the rows quote.
 
@@ -48,8 +53,8 @@ disable.
 
 - I reflowed one wrap that put "1." at a line start inside item 5, which Markdown renders as a
   nested list, and kept new prose lines to 100 characters.
-- The existing 1148 row still says "the boot-out ... stand(s)". It's accurate: the boot-out stands,
-  and the new 1151-1152 row adds the disable. I left it, per "change nothing else".
+- An advisor review caught that item 5 read as a claim that every earlier lane is disabled, and
+  that the 1148 row contradicted the new 1151-1152 row; `cf0a9540` fixes both.
 - "launchd refuses to bootstrap a disabled service" is the handoff's statement; I didn't test it
   on the Mac, because that would mean changing a launchd service's state outside this task.
 - I didn't run `/code-review`: the change is ADR text with no code, and HQ's Opus review gates the
