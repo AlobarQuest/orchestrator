@@ -48,6 +48,12 @@ os.environ["ORCHESTRATOR_DATABASE_URL"] = TEST_DATABASE_URL
 # transaction. Fail it, naming the cause, rather than hang the run.
 RESET_LOCK_TIMEOUT = "5s"
 
+# The test database's default session zone, which observes DST. The orchestrator's engine factory
+# pins every session to UTC; beneath that pin, CI's Postgres defaults to UTC as well, so without
+# this default a test of the pin, or of arithmetic across a clock change, would pass with the pin
+# removed.
+DEFAULT_ZONE_BENEATH_THE_PIN = "America/New_York"
+
 
 def make_test_engine(url: str | URL = TEST_DATABASE_URL, **kwargs: Any) -> Engine:
     """An engine built by the orchestrator's own factory, so tests run in its UTC session."""
@@ -76,6 +82,19 @@ def create_worker_database() -> None:
         with admin.connect() as connection:
             connection.execute(text(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)'))
             connection.execute(text(f'CREATE DATABASE "{name}"'))
+    finally:
+        admin.dispose()
+
+
+def set_default_zone_beneath_the_pin() -> None:
+    """Give this process's database a DST-observing default zone for new sessions."""
+    name = make_url(TEST_DATABASE_URL).database
+    admin = _admin_engine()
+    try:
+        with admin.connect() as connection:
+            connection.execute(
+                text(f"ALTER DATABASE \"{name}\" SET timezone = '{DEFAULT_ZONE_BENEATH_THE_PIN}'")
+            )
     finally:
         admin.dispose()
 

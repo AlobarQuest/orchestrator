@@ -5,7 +5,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import make_url
 
 from orchestrator import db
-from tests._support.database import TEST_DATABASE_URL
+from tests._support.database import DEFAULT_ZONE_BENEATH_THE_PIN, TEST_DATABASE_URL
 
 SRC = Path(__file__).resolve().parents[1] / "src"
 ENGINE_BUILDERS = re.compile(r"\b(create_engine|engine_from_config)\(")
@@ -21,6 +21,14 @@ def test_the_production_engine_runs_every_session_in_utc(db_session) -> None:
     # `db_session` creates this worker's database; the production engine must be pointed at it.
     assert db.engine.url.database == make_url(TEST_DATABASE_URL).database
     with db.session_factory() as session:
+        # Without the pin a session takes the database's DST-observing default, on any server.
+        database_defaults = session.scalar(
+            text(
+                "SELECT setconfig FROM pg_db_role_setting WHERE setrole = 0 AND setdatabase = "
+                "(SELECT oid FROM pg_database WHERE datname = current_database())"
+            )
+        )
+        assert f"TimeZone={DEFAULT_ZONE_BENEATH_THE_PIN}" in (database_defaults or [])
         assert session.scalar(text("SHOW TimeZone")) == "UTC"
 
 

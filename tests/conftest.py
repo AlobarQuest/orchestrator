@@ -12,6 +12,7 @@ from tests._support.database import (
     make_test_engine,
     rebuild_schema,
     reset_data,
+    set_default_zone_beneath_the_pin,
 )
 from tests._support.posture import harness_posture
 from tests._support.seeding import grant_repository
@@ -47,6 +48,7 @@ GRANTED_TARGETS = (
 @pytest.fixture(scope="session")
 def _test_database() -> Iterator[None]:
     create_worker_database()
+    set_default_zone_beneath_the_pin()
     yield
     drop_worker_database()
 
