@@ -232,8 +232,9 @@ def require_publishable(root: Path) -> None:
     **THE UNPUBLISHED-COMMIT HALF IS THE SIBLING OF `require_clean`, AND IT EXISTS BECAUSE THE
     REPLAY PATH SKIPS THE PUSH.**
     A pass whose publish is refused has already written and committed an approved revision --
-    and a non-fast-forward refusal is the ORDINARY way that happens, since anything landing in
-    the authoring repository leaves this checkout behind until somebody reconciles it. The next
+    and a non-fast-forward refusal is how that happens: the launcher fast-forwards a behind
+    checkout before each writing pass (ADR-0031 amendment 1), but anything landing in the
+    authoring repository between that and the push still leaves the commit behind. The next
     pass then finds the package carrying the bump and approved, skips straight to proposing the
     record, and never reaches the publishing step again: the commit would sit local forever
     while the lane reported a clean run. ADR-0033 says a failed publish is a finding rather

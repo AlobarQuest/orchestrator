@@ -85,10 +85,15 @@ def test_control_from_a_main_tree_it_gets_past_the_refusal(trees, tmp_path) -> N
 
 def test_the_launcher_reads_the_bridge_token_only_on_submit() -> None:
     lines = LAUNCHER.read_text().splitlines()
-    block = lines.index('if [ "$NEEDS_CREDENTIAL" -eq 1 ]; then')
-    end = lines.index("fi", block)
     fetch = [i for i, line in enumerate(lines) if 'sds_bws_value "$SDS_BRIDGE_ALERT_UUID"' in line]
     assert len(fetch) == 1
+    # The nearest gate above the fetch: the packages activation is gated on the same flag earlier.
+    block = max(
+        i
+        for i, line in enumerate(lines[: fetch[0]])
+        if line == 'if [ "$NEEDS_CREDENTIAL" -eq 1 ]; then'
+    )
+    end = lines.index("fi", block)
     assert block < fetch[0] < end
     assert 'sds_bws_value "$SDS_BRIDGE_ALERT_UUID" "$SDS_IDENTITY"' in lines[fetch[0]]
     assert "export SDS_BRIDGE_ALERT_TOKEN" in lines[fetch[0] + 1]
