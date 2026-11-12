@@ -3,7 +3,7 @@ Outcome: done
 # Report: the pin watcher's registry rows (ADR-0059 increment 3, cut-over step 1)
 
 Worker W-105, branch `hq/lanes-inc-3-pin-watcher-rows`, base `origin/main` at `7ddc3bfb` (the
-handoff's base; every fact the handoff cites matched there). PR: PR_PLACEHOLDER.
+handoff's base; every fact the handoff cites matched there). PR: #673 (ready, not merged). The change is `7cbd0e78`; the branch head is the report commit that follows it.
 
 ## What I built
 
