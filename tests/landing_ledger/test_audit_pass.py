@@ -398,7 +398,9 @@ def test_github_being_unreadable_makes_the_answer_MISSING_not_clean() -> None:
         return httpx.Response(503)
 
     recorder = _Recorder()
-    reader = GitHubReader(token="fixture", transport=httpx.MockTransport(handler))
+    reader = GitHubReader(
+        token="fixture", transport=httpx.MockTransport(handler), sleep=lambda _: None
+    )
 
     audit, _ = audit_pass(
         reader,
@@ -568,6 +570,7 @@ def _drive(
             return GitHubReader(
                 token="fixture",
                 transport=httpx.MockTransport(lambda request: httpx.Response(503)),
+                sleep=lambda _: None,
             )
         return reader_for(routes if routes is not None else _routes())
 
@@ -771,7 +774,9 @@ def test_github_being_unreadable_says_WHICH_read_failed() -> None:
     """Route 1 of 4: the outer catch, which is the one that fired in production."""
     recorder = _Recorder()
     reader = GitHubReader(
-        token="fixture", transport=httpx.MockTransport(lambda request: httpx.Response(503))
+        token="fixture",
+        transport=httpx.MockTransport(lambda request: httpx.Response(503)),
+        sleep=lambda _: None,
     )
 
     audit, body = audit_pass(

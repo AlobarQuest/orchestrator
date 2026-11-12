@@ -887,7 +887,9 @@ def test_an_unreadable_earlier_attempt_5xx_fails_the_read() -> None:
             return httpx.Response(404, json=None)
         return httpx.Response(200, json=routes[request.url.path])
 
-    reader = GitHubReader(token="fixture", transport=httpx.MockTransport(handler))
+    reader = GitHubReader(
+        token="fixture", transport=httpx.MockTransport(handler), sleep=lambda _: None
+    )
 
     with pytest.raises(LedgerError):
         read_landing(reader, REPO, "main", "e931db8d")
