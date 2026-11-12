@@ -1187,7 +1187,7 @@ def test_every_lanes_ping_url_secret_is_listed_for_that_lane() -> None:
     empty value is a placeholder until the lane's ping-URL secret exists, allowed only for a lane
     named in `placeholders`; a later change writes the id and removes the lane from it."""
     manifest = (ROOT / ".bws-secrets.toml").read_text()
-    placeholders = {"deploy-watcher", "revision-watcher", "unit-verifier"}
+    placeholders = {"deploy-watcher", "pin-watcher", "revision-watcher", "unit-verifier"}
     named = {}
     blank = set()
     for path in sorted((ROOT / "lanes").glob("*/compose.yaml")):

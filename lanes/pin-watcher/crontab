@@ -1,0 +1,8 @@
+# sds-lane-pin-watcher's schedule: one pass daily at 07:25, in the image's America/New_York time,
+# the same zone the landing ledger's 07:30 runs in. The Mac job runs at 07:20 local
+# (`scripts/com.devon.pin-watcher.plist`); minute 20 is the deploy watcher's hourly start, so this
+# lane takes 25, which no other lane uses: execution-watch runs on the quarter-hours, the unit
+# verifier on 2-52/10, the revision watcher on 40 and the landing ledger on 07:30. The watcher takes
+# no scheduled-pass flag: every run but `--dry-run` files rows, tells alert-hub and arms the
+# dead-man switch. The entrypoint runs this file only when LANE_SCHEDULE_ENABLED is `true`.
+25 7 * * * lane-run pin-watcher
