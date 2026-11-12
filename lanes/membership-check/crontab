@@ -1,0 +1,8 @@
+# sds-lane-membership-check's schedule: one pass daily at 07:47, in the image's America/New_York
+# time, after the landing ledger's 07:30 in the same zone. The Mac job runs at 07:45 local
+# (`scripts/com.devon.sds-membership-check.plist`); minute 45 is one of execution-watch's
+# quarter-hours, so this lane takes 47, which no other lane uses: the unit verifier runs on 2-52/10,
+# the deploy watcher on 20, the pin watcher on 07:25, the revision watcher on 40 and the landing
+# ledger on 07:30. The check takes no flags: every run reads, reports and pings its outcome. The
+# entrypoint runs this file only when LANE_SCHEDULE_ENABLED is `true`.
+47 7 * * * lane-run membership-check

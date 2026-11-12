@@ -415,6 +415,44 @@ for one lane") still needs the following, in this order, each in its own change 
    (cut-over step 2, before the first acting pass in the container, or the alerts the Mac left
    firing never resolve), the paired reporting runs, the schedule, and the Mac job's retirement.
 
+`membership-check`'s tracked files (`lanes/membership-check/compose.yaml` and `crontab`) don't
+register it either. It keeps no state, so its compose mounts no volume. Its crontab runs
+`lane-run membership-check` daily at 07:47 New York time. The Mac job runs at 07:45, but minute 45
+is one of execution-watch's quarter-hours, and 47 keeps it clear of every other lane's start; the
+check has no flags. Its `.bws-secrets.toml` secrets are the observer bearer, the change-manager
+READ bearer and the read-only App's key, all read with the lane's one token, never the Healthchecks
+API key; on the Mac the narrow and broad Keychain identities still read the first two. Each
+container pass also makes an anonymous shallow clone of intent-packages into the pass's `HOME`
+and points `BUMP_PROPOSER_PACKAGES_CHECKOUT` at it (ADR-0059 amendment 5); the report's first line
+names the clone's commit, or git's exit code and error, and a failed clone is the program's
+"packages checkout couldn't be read" gap (exit 3, or 2 beside a disagreement), never the
+launcher's exit 1. The check is an outcome alarm: its compose leaves `SDS_DEADMAN_PING_URL_UUID`
+empty until the lane's ping-URL secret exists, so until then the container's pass still runs,
+pings nothing and says so. The read-App key row's `runtime-fetch` reader for
+`scripts/run-membership-check.sh` landed with the launcher. Its cut-over (ADR-0059, "Cut-over for
+one lane") still needs the following, in this order, each in its own change or act:
+
+1. The orchestrator serving this release; then HQ creates `sds-lane-membership-check` from the
+   compose without deploying it.
+2. The VM root's keeper commands for the lane token and `membership-check-ping-url`.
+3. The lane's registry rows in this repository, in two changes: the token's row and the ping URL's
+   row.
+4. The lane account's grants on its three secrets and its ping-URL secret.
+5. The token's mint and the executor's write; then the ping URL's row made due and the executor's
+   write (ADR-0055 amendment 23).
+6. A served release whose compose names the ping-URL secret's id, with `membership-check` removed
+   from `test_deploy_lanes.py`'s `placeholders`.
+7. The lane's `--add`, then the `lane-run --read` proof. The check has no `--dry-run`, so its first
+   container pass is cut-over step 2's ordinary pass, which settles ADR-0059 amendment 5 open
+   item 1: its report must show the clone's commit and no "packages checkout" gap. The same pass
+   shows whether an installation token with `administration=read` is served `allow_auto_merge`:
+   served, or a gap per member. It also proves the read App's installation covers every
+   repository the member record observes, and that they share one owner: otherwise the mint
+   refuses, and every pass exits 1.
+8. Cut-over steps 2 onward: the paired pass on both hosts, recording the Mac checkout's commit
+   (`git -C ~/Projects/intent-packages rev-parse HEAD`) beside the clone's, since a difference the
+   two commits explain isn't a cut-over failure; then the schedule and the Mac job's retirement.
+
 `unit-verifier`'s tracked files (`lanes/unit-verifier/compose.yaml` and `crontab`) don't register
 it either. Its state is the pass's `alerts.json`, so its compose mounts the named volume
 `sds-lanes-unit-verifier-state` at `VERIFIER_STATE_DIR` (`/var/lib/sds/unit-verifier`). Its crontab
@@ -523,6 +561,21 @@ before any mint. Its GET calls are the recommendation, each caller file, a compa
 (`contents`), and each repository and each owner's listing (`metadata`;
 `src/pin_watcher/github.py`), so it mints `metadata=read` and `contents=read` only. Members in
 more than one owner make the mint refuse, which exits 1 (amendment 4 open item 4).
+
+The membership check mints the same way in its container (`scripts/run-membership-check.sh`).
+Its repositories are the member record's observed ones, printed by `scripts.sds_scope ledger` with
+the observer bearer: the population its declaration, registry-file and auto-merge reads cover
+(`src/membership_check/cli.py`). intent-packages and factory-runner are members, so the fork list's
+read is covered too. An unreadable record or an empty population exits 3 before any mint, with the
+program not run; any other `sds_scope` code passes through. It mints `metadata=read` (the listings
+and each repository), `contents=read` (`factory-target.toml`, the registry files, the workflow
+files and the fork list's file) and `administration=read` (`allow_auto_merge`, which GitHub serves
+only to a credential with admin read: `src/membership_check/auto_merge.py`), and exports the token
+as both `SDS_MEMBERS_GITHUB_TOKEN` and `GH_TOKEN`, for the fork list's `gh api` read. A failed or
+empty mint exits 1. Its one other GitHub read, the standing packages, is an anonymous shallow
+clone of `https://github.com/AlobarQuest/intent-packages.git` at `main`, run as git with
+`GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_NOSYSTEM=1`, `GIT_TERMINAL_PROMPT=0` and no token in its
+environment (ADR-0059 amendment 5): the repository is public, so the clone carries no credential.
 
 The unit verifier mints the same way in its container (`scripts/run-unit-verifier.sh`), into
 `ROTATION_VERIFIER_GITHUB_TOKEN`. Its repositories are those the member record grants

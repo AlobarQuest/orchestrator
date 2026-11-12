@@ -776,6 +776,7 @@ paths = [
   "src/membership_check/**",
   "tests/membership_check/**",
   "tests/scripts/test_launcher_scope.py",
+  "tests/scripts/test_run_membership_check.py",
   "scripts/run-membership-check.sh",
   "scripts/install-membership-check-launchd.sh",
   "scripts/com.devon.sds-membership-check.plist",
