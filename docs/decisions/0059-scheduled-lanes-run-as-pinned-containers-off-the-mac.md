@@ -2642,3 +2642,84 @@ clone GitHub refuses fails without waiting on a prompt. The container proof is t
    "The Mac path") is optional follow-up after the move. Until then, cut-over step 2's paired pass
    relies on the commit comparison in the decision item 2 table. Resolved by a later change, or
    by increment 6, when the Mac path ends.
+
+## Amendment 6 (2026-11-12): the week bar is dropped
+
+- **Status:** Accepted on merge. HQ merges it only after a clean Opus whole-branch review (HQ
+  D-12, limit 3). The ADR's own status is unchanged. Devon decided it on 2026-11-12, in an
+  interactive HQ session at about 17:45 UTC: "We are unable to turn the mac off for a week, and we
+  are unwilling to leave SDS doing nothing for a week, once its on the VPS. I can see some value in
+  a shakeout, but I dont think the value is worth the cost." Offered three replacements (a soak with
+  the Mac on plus an audit, an audit plus a short outage, or cut-over checks only), he chose "Cut-over
+  checks only".
+- **Decided by:** Devon, on 2026-11-12 (sds-hq PR #69).
+- **Relates to:** the Context, decision 6 (its heading, increments 6 to 9, the cut-over, "Rollback
+  for one lane", "The week bar" and the phase's done-when), and Amendment 3's week-bar passages
+
+Line numbers in this amendment are this file's at orchestrator `519bb23f`, before the amendment
+was appended. The amendment appends only: no passage before it is rewritten, so each line cited
+here still holds the text it names. Where this amendment and an earlier passage disagree, this
+amendment governs.
+
+### Context
+
+The Context (lines 23-24) took Phase 1's bar from the year plan: no lane that acts on a member runs
+on the Mac, and a lane survives the Mac being off for a week. "The week bar" (lines 1248-1318)
+measured the second half as 7 consecutive days with the Mac off or asleep, against a baseline of
+each lane's Healthchecks flips and ping log captured at its cut-over. Devon decided the Mac can't be
+off for a week, and the SDS won't sit idle for a week once it runs on the VPS. The year plan's
+Phase 1 done-when now reads (sds-hq `plan/year-plan.md`, line 56 at `ec8e83f`, sds-hq PR #69): "no
+lane that acts on a member runs on the Mac. A lane counts as moved once its paired pass on the VPS
+matches its Mac run and its Mac job is booted out."
+
+### Decision
+
+1. **The bar for a moved lane is its cut-over checks.** A lane has moved once its paired pass on
+   the VPS matches its Mac run (cut-over step 4's comparison) and its Mac job is booted out (cut-over
+   steps 2 and 4). The bar needs no time with the Mac off or asleep, no baseline and no week of
+   evidence.
+2. **Increment 6 starts once increments 2 to 5 have cut over**, that is, once every lane they move
+   has passed its cut-over checks. It no longer waits for a week.
+3. **Increments 7, 8 and 9 are each done at their own cut-over checks.** Increment 7's ADR-0055
+   amendment states the executor's, and increments 8 and 9's plans state theirs. None runs a week
+   with the Mac off.
+4. **Lanes that cut over before this amendment** are held to the same bar. A baseline captured for
+   the week bar is evidence of nothing.
+5. **What stays:**
+   - The Healthchecks dead-man and outcome alarms, pointed at the same checks (year plan Phase 1;
+     decision 3).
+   - The paired pass and its comparison (cut-over steps 2 and 4).
+   - The Mac job's boot-out, and the check that the last ping came from the container (cut-over
+     steps 2 and 4).
+   - Rollback for every moved lane until increment 6 ("Rollback for one lane").
+   - The executor's `rotation-heartbeat:<store kind>` alert-hub schedule
+     (`docs/operations/rotation-executor.md`), as an alarm, not as a bar.
+6. **No new authority.** The amendment grants no credential, scope or permission. The baseline
+   needed the broad Healthchecks account to read each check's ping log; that read is no longer
+   needed. No lane holds the Management API key, and no decision grants HQ the broad account
+   (decision 3, lines 677-687).
+
+### Passages this amendment changes
+
+None is rewritten. Once it's accepted, it governs these passages, cited by line at `519bb23f`:
+
+| Passage | Disposition |
+|---|---|
+| Context, "and a lane survives the Mac being off for a week" (line 24) | Superseded. The bar is the year plan's done-when as quoted in this amendment's Context. The rest of the paragraph stands. |
+| Decision 6's heading, "Migration order, cut-over, rollback and the week bar" (line 828) | "and the week bar" no longer names a bar. The heading's other parts stand. |
+| Increment 6, "This increment starts only after the week bar has passed, because it ends the rollback path" (lines 1048-1049) | Superseded by decision item 2: it starts once increments 2 to 5 have cut over. It still ends the rollback path. |
+| Cut-over step 1, "Then capture the lane's week-bar baseline ... not HQ ("The week bar")" (lines 1119-1122) | Withdrawn. The rest of step 1 stands, the ADR-0055 amendment 23 paragraph (lines 1124-1126) included. |
+| Cut-over step 2, "A ping from step 2 lands after the baseline and before the week, so it counts in neither" (line 1148) | Withdrawn. The list of which reporting runs ping the real check (lines 1135-1146), the no-running-pass check, the boot-out and the state comparison stand. |
+| Cut-over step 3, "that down event falls before the week starts, so it counts in neither the baseline nor the week" (lines 1161-1162) | Withdrawn. "If the gap outlasts the check's grace, the check goes down" stands. |
+| "Rollback for one lane", "Increment 6 requires a passed week bar, so no lane loses its rollback before the week has shown the move holds" (lines 1245-1246) | Superseded. Rollback stands for every moved lane until increment 6, which starts once increments 2 to 5 have cut over. |
+| "The week bar", the bar, its measure and the baseline (lines 1248-1279) | Superseded by decision item 1. The checks before increment 2 that the passage asks for (flip retention and the ping-log limit, lines 1262-1263 and 1269-1270) served only the baseline and are withdrawn. The last sentence's fact stands, as decision 3's outcome-alarm bullet keeps it (lines 741-743): a delivered finding pings success, so a `/fail` means a pass that couldn't do its job. |
+| "The week bar", what goes quiet that week (lines 1281-1284) | Moot: no week is run. Decision 4's three agents, the VM executor and the agents outside this repository stay on the Mac as decisions 4 and 5 say. |
+| "The week bar", the executor's second week and increments 8 and 9's weeks (lines 1286-1293) | Superseded by decision item 3. The heartbeat schedule stays as an alarm (decision item 5). Increment 7 still follows increment 6. |
+| "The week bar", the phase's done-when paragraph (lines 1295-1310) | Stands, except "and each week has passed" (line 1299): the phase is done when increments 8 and 9 have moved change-window and infra-drift, each at its cut-over checks. Everything else in the paragraph stands: SDS HQ outside the phase (D-9), no moved lane's input left on the Mac (decision 5), and the classification of the other agents. |
+| "The week bar", the evidence (lines 1312-1318) | Withdrawn, the read-only key's verify included (lines 1315-1316). "No lane holds it" and "no decision grants HQ the broad account" stand, as decision 2 (lines 487-490) and decision 3 (lines 677-687) state them. |
+| Amendment 3, "Relates to", "the week bar" (line 1900) | Moot. |
+| Amendment 3, decision item 1's row, "The week bar's seven daily lanes" and its six and nine (line 1983; its lines 1262-1264 are at `531d42c2`) | Moot: no lane needs a `/fail` baseline. |
+| Amendment 3, decision item 5's "The week bar" bullet (lines 2045-2049) | Moot: no week is run. The fork-sync watch and fork hardening still stay on the Mac. |
+| Amendment 3, "Passages this amendment changes", "the week bar (1262-1264, 1271-1275)" (lines 2129-2130, cited at `531d42c2`) | Moot. Amendment 3's other citations stand. |
+
+Amendments 1, 2, 4 and 5 name no week-bar passage, so none of their text is changed.
