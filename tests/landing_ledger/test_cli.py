@@ -84,7 +84,9 @@ def test_github_being_unhealthy_costs_the_pass_and_nothing_else() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(503)
 
-    reader = GitHubReader(token="fixture", transport=httpx.MockTransport(handler))
+    reader = GitHubReader(
+        token="fixture", transport=httpx.MockTransport(handler), sleep=lambda _: None
+    )
     recorder = _Recorder()
 
     summary = _run(reader, recorder)

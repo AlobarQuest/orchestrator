@@ -27,6 +27,13 @@ What lives here and nowhere else:
 * **A failure carries the exception's TYPE and nothing else.** An `httpx` error holds the request,
   and a diagnostic that prints what it was given is how a bearer token reaches a transcript.
 
+* **A GET may opt in to a bounded retry on a gateway answer.** `get_through_gateway_errors`
+  repeats a GET answered 502, 503 or 504, three attempts in all, and returns the last
+  response. It interprets no status: the program still decides what every answer means, so a
+  gateway error that outlasts the attempts reaches the program's own refusal as before. Nothing
+  else is retried -- not a request that got no answer, not a 500, 429 or 403 -- and nothing
+  retries unless a program calls this.
+
 This package imports nothing from any program, and no program's wording appears in it.
 """
 
@@ -45,6 +52,12 @@ TRANSPORT_ERRORS = (httpx.HTTPError, httpx.InvalidURL, ValueError)
 _CONTROL_CHARACTER = re.compile(r"[\x00-\x1f\x7f]")
 
 MAX_DNS_LABEL = 63
+
+# A gateway between the program and the service failed: the service gave no answer, and the same
+# read usually succeeds moments later. Every other status is an answer and is never repeated.
+GATEWAY_ERRORS = frozenset({502, 503, 504})
+GATEWAY_ATTEMPTS = 3
+GATEWAY_RETRY_WAIT = 2.0
 
 # Tailscale's address range. WireGuard encrypts everything sent to it, so plain HTTP is allowed
 # there and nowhere else: production Coolify's API has no TLS (ADR-0055 amendment 9).
@@ -174,3 +187,22 @@ class ConfinedClient:
 
     def close(self) -> None:
         self._client.close()
+
+
+def get_through_gateway_errors(
+    client: ConfinedClient,
+    path: str,
+    *,
+    params: Mapping[str, Any] | None,
+    sleep: Callable[[float], None],
+) -> httpx.Response:
+    """GET `path`, repeating it while the answer is a gateway error. Returns the last response.
+
+    A refusal or a `TransportFailure` raises at once, from whichever attempt met it.
+    """
+    for _ in range(GATEWAY_ATTEMPTS - 1):
+        response = client.request("GET", path, params=params)
+        if response.status_code not in GATEWAY_ERRORS:
+            return response
+        sleep(GATEWAY_RETRY_WAIT)
+    return client.request("GET", path, params=params)
