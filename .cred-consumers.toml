@@ -1005,6 +1005,54 @@ healthchecks_check = "sds-pin-watcher"
   uuid = "872684c0-899e-43b7-9c2d-b50000e88b21"
   note = "the keeper, in Rotation / Keepers, and the one copy; the lane reads it with its own token"
 
+# ── The membership-check lane's token and ping URL (ADR-0059 increment 3) ────────
+# ADR-0055 amendment 19, item 8: the lane's two rows, both handed to the SDS. The token's row is due
+# for its first issue by `rotate_requested`; a later change dates the ping URL's row. Both keepers
+# were created in Rotation / Keepers at HQ gate G-39, where the lane's account got its four reads.
+# Neither row carries `created`, for the reason the landing ledger's block gives.
+[[credential]]
+id = "membership-check-bws-token"
+class = "bws-lane-token"
+provider = "bws-lane-token"
+bws_uuid = "eb70b29d-faa2-4ff2-ba2e-b5000129d84f"
+rotated_by_sds = true
+rotate_requested = "2026-11-12"
+# What the lane's account sees, exactly: .bws-secrets.toml's membership-check secrets
+# (orchestrator-observer, change-manager/M2M_TOKEN_READ, lanes-read-app-private-key) and the ping
+# URL's keeper.
+reach_secrets = ["f793576f-e9aa-4f9d-8089-b4a000b9e2d5", "314f276d-55ca-4ddc-a24d-b4a3013508cd", "314a966c-5654-4e3c-8358-b4fd01268775", "5fc44897-b4df-44ae-8491-b5000129d9be"]
+reach_projects = []
+
+  [[credential.consumer]]
+  kind = "bws-secret"
+  uuid = "eb70b29d-faa2-4ff2-ba2e-b5000129d84f"
+  note = "the keeper, in Rotation / Keepers; only the executor reads it"
+
+  [[credential.consumer]]
+  kind = "coolify-env"
+  instance = "prod"
+  resource_type = "service"
+  uuid = "qb6f52pfvhcoh2w2sgrhii2z"
+  key = "MEMBERSHIP_CHECK_BWS_ACCESS_TOKEN"
+  redeploy = false
+  note = "the sds-lane-membership-check service's variable; the lane phases redeploy it, never the executor"
+
+# No `created`, for the reason the landing ledger's block gives.
+[[credential]]
+id = "membership-check-ping-url"
+class = "healthchecks-ping-url"
+provider = "healthchecks-ping-url"
+bws_uuid = "5fc44897-b4df-44ae-8491-b5000129d9be"
+rotated_by_sds = true
+# The check whose ping URL the executor reads into the keeper (ADR-0055 amendment 23); the lane
+# keeps the check it pinged from the Mac (ADR-0059 decision 3).
+healthchecks_check = "sds-membership-check"
+
+  [[credential.consumer]]
+  kind = "bws-secret"
+  uuid = "5fc44897-b4df-44ae-8491-b5000129d9be"
+  note = "the keeper, in Rotation / Keepers, and the one copy; the lane reads it with its own token"
+
 # ── The two lane GitHub Apps' private keys (ADR-0059 increment 3) ────────────────
 # Devon created both Apps on 2026-11-09 (HQ gate G-17) and stored each key, base64 of the PEM, in
 # BWS project `SDS / Lane Apps`. `estate_clients/github_app_mint.py` (`sds-github-mint`) reads that
@@ -1016,10 +1064,10 @@ healthchecks_check = "sds-pin-watcher"
 # the 03:00 scan posts `cred.rotation-age` with the manual checklist, and the rotation proposer
 # reports the row `legacy` and proposes no package.
 # Each lane's runtime-fetch row lands in that lane's move PR. The landing-ledger, deploy-watcher,
-# revision-watcher, unit-verifier and pin-watcher lanes' accounts hold read grants on the read App's
-# keeper (HQ gates G-18, G-28, G-30, G-33 and G-37), so that row lists each lane's reader; the
-# membership-check's reader lands with its launcher, ahead of its account's grant at cut-over. No
-# machine account holds a grant on the push App's keeper yet, so its row lists the keeper alone.
+# revision-watcher, unit-verifier, pin-watcher and membership-check lanes' accounts hold read grants
+# on the read App's keeper (HQ gates G-18, G-28, G-30, G-33, G-37 and G-39), so that row lists each
+# lane's reader; no machine account holds a grant on the push App's keeper yet, so its row lists the
+# keeper alone.
 [[credential]]
 id = "lanes-read-app-private-key"
 class = "github-app-private-key"
