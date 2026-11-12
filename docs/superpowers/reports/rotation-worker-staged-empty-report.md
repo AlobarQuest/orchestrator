@@ -5,8 +5,9 @@ Outcome: done
 Handoff: `sds-hq/state/handoffs/rotation-worker-staged-empty.md` (plan
 `docs/superpowers/plans/2026-11-12-phase1-speedup.md` Task 4; design "The staging race").
 Branch `hq/rotation-worker-staged-empty` from `origin/main` `d4313d87`.
-PR: AlobarQuest/orchestrator#682 (draft). Fix commit `522b4bd2f6c8327e0f2103b7dd9bfed1011387ba`; this
-report is committed on top of it, so the PR head is the report commit.
+PR: AlobarQuest/orchestrator#682 (draft). Fix commit `522b4bd2f6c8327e0f2103b7dd9bfed1011387ba`.
+Commit `b649e9e2` adds the pass-level test and the nested-rule update, and this report is
+committed on top of both, so the PR head is the report commit.
 
 ## What I built
 
@@ -50,6 +51,13 @@ neither stop point applied.
    I added a `TypedStore` test double because `MemoryStore` holds only `Value`s and can't hold
    padded text, and its `create` never refuses a duplicate. That's why the bind test counts
    staging secrets.
+
+   The handoff asks that no `store` or `verify_new` step is filed. When `_mint_waits` returns
+   `True`, `_take` returns 0 before it reaches `_work` (`worker.py:466-475`). I pinned that at
+   pass level with
+   `test_the_unit_after_a_person_s_mint_stays_unclaimed_while_staging_holds_the_marker` in
+   `tests/rotation_worker/test_worker.py`, which asserts that no orchestrator call is made. With
+   the old `staged = staging` restored, that test fails: the unit is claimed and then fails.
 2. **Red run:** 17 failed and 45 passed. The 2 `test_staged_token_proceeds` cases passed, as
    expected, because they describe how the code already behaved.
 3. **Implementation:** described in the preceding section. After it, `test_inbox.py` passes
@@ -57,11 +65,12 @@ neither stop point applied.
    - Mutation check: I disabled the re-read guard in `_stage`, and the race test failed. I made
      `_stage` call `create` instead of `write`, and the bind-into test failed. I cleared
      `__pycache__` around each mutation and restored the file afterwards.
-4. **`make check`** in the worktree against `orchestrator_test_hq_w_117`, with
+4. **`make check`** on the final tree, in the worktree against `orchestrator_test_hq_w_117`, with
    `SECURITY_STANDARDS_DIR` pointing at the test fixture and `PGTZ=UTC`, after
    `alembic upgrade head`:
    - Exit 0, with ruff and pyright clean.
-   - **14735 items collected, 14734 passed, 1 skipped.**
+   - **14736 items collected, 14735 passed, 1 skipped.** The run before the pass-level test
+     had 14735 collected and 14734 passed.
 5. **Commit, push, and PR:** I committed `fix(rotation_worker): a staged empty marker isn't a
    staged value`, pushed, and opened draft PR #682, which cites plan Task 4 and the design
    section.
@@ -71,6 +80,9 @@ neither stop point applied.
 - `src/rotation_worker/inbox.py`
 - `src/rotation_worker/worker.py`
 - `tests/rotation_worker/test_inbox.py`
+- `tests/rotation_worker/test_worker.py`
+- `src/rotation_worker/CLAUDE.md`: the person's-mint rule now says that a marker, blank, or
+  padded staging secret isn't staged, and that a bound value is written into that secret.
 - `docs/superpowers/reports/rotation-worker-staged-empty-report.md`
 
 ## Self-review
