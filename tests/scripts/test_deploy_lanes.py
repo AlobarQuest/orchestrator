@@ -1190,7 +1190,6 @@ def test_every_lanes_ping_url_secret_is_listed_for_that_lane() -> None:
     named in `placeholders`; a later change writes the id and removes the lane from it."""
     manifest = (ROOT / ".bws-secrets.toml").read_text()
     placeholders = {
-        "deploy-watcher",
         "membership-check",
         "pin-watcher",
         "revision-watcher",
@@ -1206,6 +1205,6 @@ def test_every_lanes_ping_url_secret_is_listed_for_that_lane() -> None:
         elif "SDS_DEADMAN_PING_URL_UUID" in environment:
             named[lane] = environment["SDS_DEADMAN_PING_URL_UUID"]
     assert blank == placeholders
-    assert {"execution-watch", "landing-ledger"} <= set(named), named
+    assert {"deploy-watcher", "execution-watch", "landing-ledger"} <= set(named), named
     for lane, uuid in named.items():
         assert uuid in deploy.lane_secrets(manifest, lane), lane
