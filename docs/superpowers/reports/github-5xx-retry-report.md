@@ -67,6 +67,7 @@ Check results:
   - A `ConfinedClient` retry option contradicts the plan HQ approved (`request` unchanged).
   - The loop structure is correct for the fixed constant of 3.
   - The point that the helper is generic: it repeats only GETs, and only for a program that calls it.
+- **CI** on `373ecb08` (run `43299586535`): Quality, Runner consumer compatibility, and Rollout transcription currency all succeeded. The Quality job reported 14,693 passed and 23 skipped.
 - **Security scan** from the repo root: no BLOCK findings. Two WARN findings remain: `bws.secret-files-gitignored` (`*-migration/`) and `bws.manifest-matches-usage` (an undeclared UUID). This diff touches neither `.gitignore`, the manifest, nor any UUID.
 
 ## Files changed
