@@ -6,7 +6,7 @@ Outcome: done
 - **Branch:** `hq/adr-0059-drop-week-bar`, based on `origin/main` at `519bb23f`
 - **Content commit:** `e7d9ed1c` (the amendment). This report is the commit after it, which is the
   branch head when the report is pushed; it can't name its own SHA.
-- **Amendment's line range:** lines 2646-2726 of
+- **Amendment's line range:** lines 2646-2725 of
   `docs/decisions/0059-scheduled-lanes-run-as-pinned-containers-off-the-mac.md` at `e7d9ed1c`.
 
 ## What I built
