@@ -328,10 +328,11 @@ still needs the following, each in its own change or act:
 register it either. It keeps no state, so its compose mounts no volume. Its crontab runs
 `lane-run deploy-watcher` hourly at minute 20, as the Mac job's `StartInterval` of 3600 does; the
 watcher has no scheduled-pass flag. Its `.bws-secrets.toml` secrets are the observer bearer,
-change-manager's `M2M_TOKEN_OBSERVE` and the read-only App's key, all read with the lane's one
-token; on the Mac the broad and narrow Keychain identities still read the two bearers. Its compose
-leaves `SDS_DEADMAN_PING_URL_UUID` empty until the lane's ping-URL secret exists, so until then the
-container's dead-man helper pings nothing and says so. Its cut-over (ADR-0059, "Cut-over for one
+change-manager's `M2M_TOKEN_OBSERVE`, the read-only App's key and its ping-URL secret, all read with
+the lane's one token; on the Mac the broad and narrow Keychain identities still read the two
+bearers. Its compose names `SDS_DEADMAN_PING_URL_UUID`, the BWS secret id of
+`deploy-watcher-ping-url`, which the container's dead-man helper reads the URL from with the lane's
+own token (`scripts/sds-deadman.sh`). Its cut-over (ADR-0059, "Cut-over for one
 lane") still needs the following, in this order, each in its own change or act:
 
 1. The orchestrator serving this release; then HQ creates `sds-lane-deploy-watcher` from the
