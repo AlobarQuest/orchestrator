@@ -15,6 +15,7 @@ from orchestrator.persistence.models import (
     Event,
     Evidence,
     PackageAcceptanceCriterion,
+    WorkPackageRevision,
     WorkUnit,
 )
 from orchestrator.services.intake import decomposition as decomposition_module
@@ -376,6 +377,56 @@ def test_intake_to_first_work_median_latency_seconds(migrated_session):
     assert report.intake_to_first_work.status == STATUS_COMPUTED
     assert report.intake_to_first_work.value is not None
     assert report.intake_to_first_work.value == 120.0  # MIN(acquired_at) - registered_at
+
+
+def test_intake_to_first_work_is_true_elapsed_time_across_a_dst_change(migrated_session):
+    # Registered in EDT and first claimed in EST, two days apart, on a DST-observing server zone.
+    # No session zone is set here: the engine's own UTC session is what keeps this exact.
+    registered_at = datetime(2026, 10, 31, 12, tzinfo=UTC)
+    first_claim_at = registered_at + timedelta(days=2)
+    built, _ = _build_unit(migrated_session, "intake-dst")
+    revision = WorkPackageRevision(
+        work_package_id=built.work_package_id,
+        revision=2,
+        content_hash="sha256:intake-dst-2",
+        source_path=built.source_path,
+        source_commit=built.source_commit,
+        approved_by=built.approved_by,
+        approved_at=registered_at,
+        approval_event_id=str(uuid.uuid4()),
+        enforcement_snapshot=built.enforcement_snapshot,
+        authority_fingerprint=built.authority_fingerprint,
+        registry_version=built.registry_version,
+        registered_by=built.registered_by,
+        registered_at=registered_at,
+    )
+    migrated_session.add(revision)
+    migrated_session.flush()
+    unit = register_approved_unit(
+        migrated_session,
+        unit_id=None,
+        revision_id=revision.id,
+        unit_key="intake-dst-2",
+        title="intake-dst-2",
+        outcome="intake-dst-2 complete",
+        required_capability="repo.edit",
+        authority=AUTHORITY,
+        max_attempts=3,
+        approved_by="human-1",
+        approved_at=registered_at,
+        actor_id="human-1",
+        actor_role=ActorRole.HUMAN,
+    )
+    _add_claim(migrated_session, unit.id, attempt=1, acquired_at=first_claim_at)
+    migrated_session.commit()
+
+    report = slo_report(
+        migrated_session,
+        SloReportFilters(since=datetime(2026, 10, 1, tzinfo=UTC), until=first_claim_at),
+    )
+
+    assert report.intake_to_first_work.status == STATUS_COMPUTED
+    assert report.intake_to_first_work.value == timedelta(days=2).total_seconds()
 
 
 def test_queue_age_median_of_ready_units(migrated_session):

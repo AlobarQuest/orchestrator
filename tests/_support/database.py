@@ -14,10 +14,11 @@ sessions on different base databases never meet.
 from __future__ import annotations
 
 import os
+from typing import Any
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import Connection, Engine, create_engine, text
+from sqlalchemy import URL, Connection, Engine, text
 from sqlalchemy.engine import make_url
 
 BASE_TEST_DATABASE_URL = os.environ.get(
@@ -46,6 +47,16 @@ os.environ["ORCHESTRATOR_DATABASE_URL"] = TEST_DATABASE_URL
 # A reset blocked by a lock another connection still holds is a test that leaked an open
 # transaction. Fail it, naming the cause, rather than hang the run.
 RESET_LOCK_TIMEOUT = "5s"
+
+
+def make_test_engine(url: str | URL = TEST_DATABASE_URL, **kwargs: Any) -> Engine:
+    """An engine built by the orchestrator's own factory, so tests run in its UTC session."""
+    # Imported here, not at the top: `orchestrator.db` reads ORCHESTRATOR_DATABASE_URL when it is
+    # imported, and this module sets it above. Imported first, it would build its engine on
+    # whatever database the shell names, or fail when the shell names none.
+    from orchestrator.db import make_engine
+
+    return make_engine(url, **kwargs)
 
 
 def alembic_config() -> Config:
@@ -83,7 +94,7 @@ def drop_worker_database() -> None:
 
 def _admin_engine() -> Engine:
     url = make_url(TEST_DATABASE_URL).set(database="postgres")
-    return create_engine(url, isolation_level="AUTOCOMMIT")
+    return make_test_engine(url, isolation_level="AUTOCOMMIT")
 
 
 def rebuild_schema(engine: Engine) -> tuple[str, ...]:
