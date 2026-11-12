@@ -3,7 +3,7 @@ import re
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from orchestrator.clock import TransactionClock
 from orchestrator.kernel.authority import AuthorityBudgets, AuthorityEnvelope
@@ -37,6 +37,7 @@ from orchestrator.services.reporting.slo_report import (
     STATUS_NO_DATA,
     STATUS_PARTIAL,
     SloReportFilters,
+    _queue_age,
     slo_report,
 )
 from orchestrator.services.verifier.evidence import record_adjudication
@@ -403,6 +404,30 @@ def test_queue_age_median_of_ready_units(migrated_session):
     expected = (now - ready_at).total_seconds()
     assert report.queue_age.value is not None
     assert abs(report.queue_age.value - expected) < 5  # within a few seconds
+
+
+def test_queue_age_is_true_elapsed_time_across_a_dst_change(migrated_session):
+    # The session's zone observes DST, so psycopg returns both timestamps in one ZoneInfo, and
+    # the ready entry (EDT) and `now` (EST) sit on opposite sides of the 2026-11-01 change.
+    _, unit = _build_unit(migrated_session, "queue-dst")
+    migrated_session.get(WorkUnit, unit.id).state = WorkUnitState.READY.value
+    _add_event(
+        migrated_session,
+        unit.id,
+        action="work_unit.transitioned",
+        to_state="ready",
+        from_state="draft",
+        occurred_at=datetime(2026, 10, 20, 12, tzinfo=UTC),
+    )
+    migrated_session.flush()
+    migrated_session.execute(text("SET LOCAL TIME ZONE 'America/New_York'"))
+    now = migrated_session.scalar(text("SELECT timestamptz '2026-11-10 12:00:00+00'"))
+    assert now.utcoffset() == timedelta(hours=-5)  # the session zone took effect
+
+    metric = _queue_age(migrated_session, None, None, now)
+
+    assert metric.status == STATUS_COMPUTED
+    assert metric.value == timedelta(days=21).total_seconds()
 
 
 # ---- revert_rate / evidence_completeness (this task's deliverable) --------
