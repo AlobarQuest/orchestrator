@@ -3,7 +3,7 @@ Outcome: done
 # Report: adr-0059-membership-packages, fix round 1 (PR #670)
 
 - Fix commits on `hq/adr-0059-membership-packages`, fast-forward on `b230eda9`:
-  `c40cc5a3f0b0e6bd2ab0fd2b9c3f6ab4e2b1ff2c` and `1afb0bceac0164774d1bfefab0a84e09c577e36b`.
+  `c40cc5a3d44d01496dd99097da4bf1539407cdb0` and `1afb0bceac0164774d1bfefab0a84e09c577e36b`.
 - New head with the fixes: `1afb0bceac0164774d1bfefab0a84e09c577e36b`. This report follows in a
   separate commit that touches only `docs/superpowers/reports/`.
 - Before the first commit and again before the push, `origin/hq/adr-0059-membership-packages` was
