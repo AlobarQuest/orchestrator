@@ -5,7 +5,7 @@ Outcome: done
 Handoff: `lanes-inc-3-rw-uv-ping-url-due` (ADR-0055 amendment 19 item 8, step 5 of each lane's
 cut-over in `docs/operations/deploy.md`). Worker W-113.
 
-- PR: PR_NUMBER, ready for review, not merged.
+- PR: #679 (https://github.com/AlobarQuest/orchestrator/pull/679), ready for review, not merged.
 - Branch: `hq/lanes-inc-3-rw-uv-ping-url-due`, base `origin/main` at `3df369b2`. The change commit
   is `bb29c4df`; the PR head is the branch head, the commit that adds this report.
 
