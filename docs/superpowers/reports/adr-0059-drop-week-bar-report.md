@@ -4,10 +4,11 @@ Outcome: done
 
 - **PR:** #676, https://github.com/AlobarQuest/orchestrator/pull/676 (ready for review; not merged)
 - **Branch:** `hq/adr-0059-drop-week-bar`, based on `origin/main` at `519bb23f`
-- **Content commit:** `e7d9ed1c` (the amendment). This report is the commit after it, which is the
-  branch head when the report is pushed; it can't name its own SHA.
+- **Content commits:** `e7d9ed1c` (the amendment) and `4a991328` (two table rows corrected after
+  review). The final content is `4a991328`. The head is the report commit that follows it, which
+  can't name its own SHA; earlier report commits are `92acf28e` and `294ed54e`.
 - **Amendment's line range:** lines 2646-2725 of
-  `docs/decisions/0059-scheduled-lanes-run-as-pinned-containers-off-the-mac.md` at `e7d9ed1c`.
+  `docs/decisions/0059-scheduled-lanes-run-as-pinned-containers-off-the-mac.md` at `4a991328`.
 
 ## What I built
 
@@ -42,10 +43,10 @@ The decision items:
 | Cut-over step 3, lines 1161-1162 | Withdrawn; "the check goes down" stands. |
 | Rollback, lines 1245-1246 | Rollback until increment 6 stands. |
 | Week bar, bar and baseline, lines 1248-1279 | Superseded; the flip-retention and ping-log-limit verifies (1262-1263, 1269-1270) are withdrawn; the `/fail` meaning stands via decision 3 (741-743). |
-| Week bar, what goes quiet, lines 1281-1284 | Moot. |
+| Week bar, what goes quiet, lines 1281-1284 | Moot: nothing is excluded from a week; where each agent runs is unchanged. |
 | Week bar, executor's second week and increments 8 and 9's weeks, lines 1286-1293 | Superseded by decision item 3. |
 | Week bar, done-when paragraph, lines 1295-1310 | Stands except "and each week has passed" (1299). |
-| Week bar, evidence, lines 1312-1318 | Withdrawn, the read-only key's verify included; "no lane holds it" and "no decision grants HQ the broad account" stand (decision 2, 487-490; decision 3, 677-687). |
+| Week bar, evidence, lines 1312-1318 | Withdrawn, the read-only key's verify included; "no lane holds it" and "no decision grants HQ the broad account" stand (decision 2, 487-490; decision 3, 677-687 and 700-702). |
 | Amendment 3, Relates to, line 1900 | Moot. |
 | Amendment 3, daily-lanes row, line 1983 | Moot. |
 | Amendment 3, "The week bar" bullet, lines 2045-2049 | Moot; the two lanes still stay on the Mac. |
@@ -57,7 +58,7 @@ line-number references (about 2129)"; line 2129 is Amendment 3's, and Amendment 
 
 ## Tests and checks
 
-- `make check` on the committed content, with this worktree's venv and
+- `make check` at `4a991328` (and earlier at `e7d9ed1c`, same result), with this worktree's venv and
   `orchestrator_test_hq_w_108` (`TEST_DATABASE_URL`, `ORCHESTRATOR_DATABASE_URL`,
   `SECURITY_STANDARDS_DIR` at the fixture, `PGTZ=UTC`, `alembic upgrade head` first): exit 0,
   **14677 passed, 1 skipped**, pyright 0 errors.
@@ -90,9 +91,11 @@ No other ADR, script or operations page names the week bar.
 
 ## Self-review
 
-- Every line number in the table was re-read against `git show 519bb23f:<file>`. I corrected three
-  citations before committing (the ping list starts at 1135, decision 2's identity bullet at 487, and
-  the `/fail` meaning is decision 3's 741-743, not a claim about ADR-0021).
+- Every line number in the table was re-read against `git show 519bb23f:<file>`. I corrected four
+  citations (the reporting-run list starts at 1134, decision 2's identity bullet at 487, and
+  the `/fail` meaning is decision 3's 741-743, not a claim about ADR-0021). After an advisor review,
+  `4a991328` reworded the 1281-1284 row, which wrongly said the executor and the outside agents stay
+  on the Mac, and cited decision 3's line 702 for "no decision grants HQ the broad account".
 - The week-bar section isn't superseded as one block: its done-when paragraph and the evidence
   paragraph's authority statements carry content that isn't about the week, and the table keeps it
   (handoff item 5).
@@ -107,6 +110,9 @@ No other ADR, script or operations page names the week bar.
 - **Rollback window.** With no week, increment 6 can start as soon as increments 2 to 5 cut over, so
   the time a moved lane can still roll back may be short. That follows from Devon's decision and
   the handoff; I note it so HQ can schedule increment 6 deliberately.
+- **Items not in the handoff's list.** Decision item 4 (lanes already cut over, and captured
+  baselines) and the heartbeat line in item 5 are mine. They follow from the decision; HQ's reviewer
+  can drop either.
 - No standard in the handoff was missing for this docs-only change.
 
 ## Standards followed
