@@ -969,8 +969,9 @@ healthchecks_check = "sds-unit-verifier"
 # reports the row `legacy` and proposes no package.
 # Each lane's runtime-fetch row lands in that lane's move PR. The landing-ledger, deploy-watcher,
 # revision-watcher and unit-verifier lanes' accounts hold read grants on the read App's keeper (HQ
-# gates G-18, G-28, G-30 and G-33), so that row lists each lane's reader; no machine account holds
-# a grant on the push App's keeper yet, so its row lists the keeper alone.
+# gates G-18, G-28, G-30 and G-33); the pin-watcher's reader lands with its launcher, ahead of its
+# account's grant at cut-over. No machine account holds a grant on the push App's keeper yet, so
+# its row lists the keeper alone.
 [[credential]]
 id = "lanes-read-app-private-key"
 class = "github-app-private-key"
@@ -1013,6 +1014,13 @@ rotation_preconditions = ["rotate it with lanes-push-app-private-key in one sitt
   ref = "scripts/run-unit-verifier.sh"
   healthchecks_check = "sds-unit-verifier"
   note = "read in the sds-lane-unit-verifier container with the lane's own token, each pass, and piped straight into sds-github-mint; pings sds-unit-verifier"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
+  ref = "scripts/run-pin-watcher.sh"
+  healthchecks_check = "sds-pin-watcher"
+  note = "read in the sds-lane-pin-watcher container with the lane's own token, each pass, and piped straight into sds-github-mint; pings sds-pin-watcher"
 
 [[credential]]
 id = "lanes-push-app-private-key"

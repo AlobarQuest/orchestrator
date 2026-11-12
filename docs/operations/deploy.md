@@ -381,6 +381,40 @@ lane") still needs the following, in this order, each in its own change or act:
    left firing never resolve), the paired reporting runs, the schedule, and the Mac job's
    retirement.
 
+`pin-watcher`'s tracked files (`lanes/pin-watcher/compose.yaml` and `crontab`) don't register it
+either. Its state is the acting pass's `alerts.json`, so its compose mounts the named volume
+`sds-lanes-pin-watcher-state` at `PIN_WATCHER_STATE_DIR` (`/var/lib/sds/pin-watcher`). Its crontab
+runs `lane-run pin-watcher` daily at 07:25 New York time. The Mac job runs at 07:20, but minute 20
+is the deploy watcher's hourly start, and 25 keeps it clear of every other lane's start; the
+watcher has no scheduled-pass flag. Its `.bws-secrets.toml` secrets are the observer bearer, the
+`sds-bridge` alert sender (acting passes only) and the read-only App's key, all read with the
+lane's one token; on the Mac the narrow Keychain identity still reads the first two. Its compose
+leaves `SDS_DEADMAN_PING_URL_UUID` empty until the lane's ping-URL secret exists, so until then the
+container's dead-man helper pings nothing and says so. The read-App key row's `runtime-fetch`
+reader for `scripts/run-pin-watcher.sh` landed with the launcher. Its cut-over (ADR-0059, "Cut-over
+for one lane") still needs the following, in this order, each in its own change or act:
+
+1. The orchestrator serving this release; then HQ creates `sds-lane-pin-watcher` from the compose
+   without deploying it.
+2. The VM root's keeper commands for the lane token and `pin-watcher-ping-url`.
+3. The lane's registry rows in this repository, in two changes: the token's row and the ping URL's
+   row.
+4. The lane account's grants on its three secrets and its ping-URL secret.
+5. The token's mint and the executor's write; then the ping URL's row made due and the executor's
+   write (ADR-0055 amendment 23).
+6. A served release whose compose names the ping-URL secret's id, with `pin-watcher` removed from
+   `test_deploy_lanes.py`'s `placeholders`.
+7. The lane's `--add`, then the `lane-run --read` proof and a `--dry-run` in the container. The
+   dry run derives and mints as a scheduled pass does, and settles ADR-0059 amendment 4 open
+   item 2: with the minted token it must read a public non-member's caller file and list through
+   each account-type endpoint (`/users/{login}/repos` and `/orgs/{login}/repos`). It also proves
+   the read App's installation covers every repository the member record observes, onboarding
+   ones included, and that they share one owner: otherwise the mint refuses, and every pass
+   exits 1.
+8. Cut-over steps 2 onward: the copy of the Mac's `sds/pin-watcher/alerts.json` into the volume
+   (cut-over step 2, before the first acting pass in the container, or the alerts the Mac left
+   firing never resolve), the paired reporting runs, the schedule, and the Mac job's retirement.
+
 `unit-verifier`'s tracked files (`lanes/unit-verifier/compose.yaml` and `crontab`) don't register
 it either. Its state is the pass's `alerts.json`, so its compose mounts the named volume
 `sds-lanes-unit-verifier-state` at `VERIFIER_STATE_DIR` (`/var/lib/sds/unit-verifier`). Its crontab
@@ -479,6 +513,16 @@ member record with the observer bearer, each once: the same population its subje
 (`src/revision_watcher/subjects.py`). An unreadable record or an empty population exits 3 before
 any mint. Its GET calls are a branch, a commit and a compare (`src/revision_watcher/github.py`), so
 it mints `metadata=read` and `contents=read` only.
+
+The pin watcher mints the same way in its container (`scripts/run-pin-watcher.sh`), a dry run
+included. Its repositories are the member record's observed ones (onboarding and member), printed
+by `scripts.sds_scope ledger` with the observer bearer: the same population the watcher's members
+come from (`src/pin_watcher/cli.py`). The mint never names a public non-member; the watcher reads
+those through the same token as public reads. An unreadable record or an empty population exits 3
+before any mint. Its GET calls are the recommendation, each caller file, a compare and a commit
+(`contents`), and each repository and each owner's listing (`metadata`;
+`src/pin_watcher/github.py`), so it mints `metadata=read` and `contents=read` only. Members in
+more than one owner make the mint refuse, which exits 1 (amendment 4 open item 4).
 
 The unit verifier mints the same way in its container (`scripts/run-unit-verifier.sh`), into
 `ROTATION_VERIFIER_GITHUB_TOKEN`. Its repositories are those the member record grants
