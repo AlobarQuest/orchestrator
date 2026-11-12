@@ -2423,7 +2423,9 @@ the code learns the accounts from the App's installations, never from an owner n
 
 ## Amendment 5 (2026-11-11): the membership check clones intent-packages anonymously each pass
 
-- **Status:** Proposed, 2026-11-11. The ADR's own status is unchanged.
+- **Status:** Accepted, 2026-11-12. Devon accepted this text on gate G-38, in an interactive HQ
+  session on 2026-11-12. Acceptance followed a clean Opus whole-branch review of PR #670 at
+  `24c43faf` (HQ D-12, limit 3). The ADR's own status is unchanged.
 - **Decided by:** HQ. It adds a second exception to decision 2's rule that decision 1's per-pass
   clones need a git credential (lines 541-543), whose one named exception is the rotation
   proposer's clone of infraops-mcp-server: the membership check's clone of intent-packages, which
@@ -2588,7 +2590,7 @@ clone GitHub refuses fails without waiting on a prompt. The container proof is t
    The clone is per pass, so the container never reads a stale checkout.
 
 6. **The code that follows, as later work.** None of these files is edited by this amendment. They
-   change in plan step 3e-6 (`lanes-inc-3-membership-check`), the lane's increment 3 move:
+   change in the membership check's increment 3 move:
 
    - `scripts/run-membership-check.sh`: the container branch (a set `BWS_ACCESS_TOKEN`, as
      `run-pin-watcher.sh` lines 29-31 and 93-98 detect it) reads the observer bearer, the
@@ -2634,8 +2636,8 @@ clone GitHub refuses fails without waiting on a prompt. The container proof is t
    apply to it, and its first container pass is cut-over step 2's ordinary pass. Resolved there:
    the container pass's report shows the clone's commit and no "packages checkout" gap.
 2. **How the launcher spells the repository.** It can write the URL as a literal or derive it from `PACKAGES_REPOSITORY`
-   through the venv, which adds a Python call before the pass. Resolved by plan step 3e-6, which
-   also adds a test that the two agree if it uses the literal.
+   through the venv, which adds a Python call before the pass. Resolved by the membership check's
+   increment 3 move, which also adds a test that the two agree if it uses the literal.
 3. **The Mac checkout's freshness.** Whether the Mac branch also clones per pass (decision item 1,
    "The Mac path") is optional follow-up after the move. Until then, cut-over step 2's paired pass
    relies on the commit comparison in the decision item 2 table. Resolved by a later change, or
