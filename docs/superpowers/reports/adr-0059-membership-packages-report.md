@@ -82,7 +82,9 @@ The amendment grants no new permission, App installation or credential.
 - `make check` ran twice: once on the first draft, and once after the review fixes, on the tree
   as pushed. Both runs gave the same counts.
 - **PR #670**, ready (not a draft). I didn't merge it. The head commit and CI result are in HQ's
-  view of the PR. I watched CI to its result before exiting (see "Concerns").
+  view of the PR. CI at `d90f3a64` passed all three checks: `Quality` (13m54s), `Rollout
+  transcription currency` and `Runner consumer compatibility`. Only this report line changed after
+  that commit.
 
 ## Files changed
 
