@@ -17,12 +17,14 @@ than inferred from a message shape.
 from __future__ import annotations
 
 import re
+import time
+from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
 import httpx
 
-from estate_clients.confined import ConfinedClient, TransportFailure
+from estate_clients.confined import ConfinedClient, TransportFailure, get_through_gateway_errors
 from landing_ledger.model import (
     WORK_UNIT_ID,
     Check,
@@ -97,7 +99,9 @@ class GitHubReader:
         token: str,
         base_url: str = API,
         transport: httpx.BaseTransport | None = None,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
+        self._sleep = sleep
         try:
             self._client = ConfinedClient(
                 base_url=base_url,
@@ -130,7 +134,9 @@ class GitHubReader:
 
     def _request(self, path: str, **params: Any) -> Any:
         try:
-            response = self._client.request("GET", path, params=params or None)
+            response = get_through_gateway_errors(
+                self._client, path, params=params or None, sleep=self._sleep
+            )
         except TransportFailure as failure:
             raise LedgerError(
                 f"github is unreachable for GET {path}: {failure.error_type}"

@@ -12,6 +12,7 @@ from estate_clients.confined import (
     base_url_problem,
     error_code,
     error_detail,
+    get_through_gateway_errors,
 )
 
 
@@ -155,3 +156,35 @@ def test_an_unreadable_body_yields_the_status_and_no_code() -> None:
     response = httpx.Response(502, text="<html>proxy</html>")
     assert error_detail(response) == "HTTP 502"
     assert error_code(response) == ""
+
+
+def test_a_transport_failure_after_a_gateway_error_raises_without_another_attempt() -> None:
+    """Only a gateway ANSWER is repeated. A request that got no answer raises from that attempt."""
+    calls: list[int] = []
+    sleeps: list[float] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        if len(calls) == 1:
+            return httpx.Response(503)
+        raise httpx.ConnectError("down", request=request)
+
+    with pytest.raises(TransportFailure):
+        get_through_gateway_errors(
+            _client(httpx.MockTransport(handler)), "/x", params=None, sleep=sleeps.append
+        )
+    assert len(calls) == 2
+    assert len(sleeps) == 1
+
+
+def test_a_gateway_retry_still_asks_the_permit_first() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("a refused path reached the transport")
+
+    with pytest.raises(Refused):
+        get_through_gateway_errors(
+            _client(httpx.MockTransport(handler), permits=False),
+            "/x",
+            params=None,
+            sleep=lambda _: None,
+        )

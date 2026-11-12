@@ -9,13 +9,15 @@ and reads workflow RUNS, which is the same surface `services/verifier/github_che
 
 from __future__ import annotations
 
+import time
+from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
 import httpx
 
 from deploy_watcher.model import Merge, Run, is_sha
-from estate_clients.confined import ConfinedClient, TransportFailure
+from estate_clients.confined import ConfinedClient, TransportFailure, get_through_gateway_errors
 
 GITHUB_API_URL = "https://api.github.com"
 USER_AGENT = "deploy-watcher/1 (+AlobarQuest/orchestrator)"
@@ -55,7 +57,9 @@ class GitHubReader:
         *,
         base_url: str = GITHUB_API_URL,
         transport: httpx.BaseTransport | None = None,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
+        self._sleep = sleep
         try:
             self._client = ConfinedClient(
                 base_url=base_url,
@@ -85,7 +89,9 @@ class GitHubReader:
 
     def _get(self, path: str, **params: Any) -> Any:
         try:
-            response = self._client.request("GET", path, params=params or None)
+            response = get_through_gateway_errors(
+                self._client, path, params=params or None, sleep=self._sleep
+            )
         except TransportFailure as failure:
             raise ReadError(f"github is unreachable for GET {path}: {failure.error_type}") from None
         if response.status_code == 404:

@@ -103,3 +103,58 @@ def test_the_newest_is_chosen_by_START_TIME_and_not_by_the_order_github_served()
     newest = reader.newest_successful_push_run("owner/repo", ".github/workflows/ci.yml", "main")
     assert newest is not None
     assert newest.run_id == 1
+
+
+# ---------------------------------------------------------------------------
+# A gateway error is retried, at most three attempts in all; nothing else is.
+# ---------------------------------------------------------------------------
+
+PULL = {"number": 7, "merged": False, "state": "open"}
+
+
+def _scripted(statuses: list[int]) -> tuple[GitHubReader, list[int], list[float]]:
+    """A reader whose GitHub answers each status in turn, then 200 with a pull request."""
+    requests: list[int] = []
+    sleeps: list[float] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(1)
+        if len(requests) <= len(statuses):
+            return httpx.Response(statuses[len(requests) - 1], json={"message": "x"})
+        return httpx.Response(200, json=PULL)
+
+    reader = GitHubReader("t", transport=httpx.MockTransport(handler), sleep=sleeps.append)
+    return reader, requests, sleeps
+
+
+@pytest.mark.parametrize("status", [502, 503, 504])
+def test_a_gateway_error_then_an_answer_returns_the_answer(status: int) -> None:
+    reader, requests, sleeps = _scripted([status])
+    assert reader.pull_request_disposition("o/r", 7) == "open"
+    assert len(requests) == 2
+    assert len(sleeps) == 1
+
+
+def test_a_gateway_error_on_every_attempt_raises_the_last_status_after_three_requests() -> None:
+    # The fourth answer would be a 200: a limit above three would return instead of raising.
+    reader, requests, sleeps = _scripted([502, 503, 504])
+    with pytest.raises(ReadError, match=r"github rejected GET /repos/o/r/pulls/7: 504"):
+        reader.pull_request_disposition("o/r", 7)
+    assert len(requests) == 3
+    assert len(sleeps) == 2
+
+
+@pytest.mark.parametrize("status", [500, 301, 429, 403])
+def test_any_other_failure_raises_after_one_request(status: int) -> None:
+    reader, requests, sleeps = _scripted([status])
+    with pytest.raises(ReadError, match=rf": {status}$"):
+        reader.pull_request_disposition("o/r", 7)
+    assert len(requests) == 1
+    assert sleeps == []
+
+
+def test_a_404_still_returns_none_after_one_request() -> None:
+    reader, requests, sleeps = _scripted([404])
+    assert reader.pull_request_disposition("o/r", 7) is None
+    assert len(requests) == 1
+    assert sleeps == []

@@ -1402,3 +1402,69 @@ def test_the_two_policy_trailers_do_not_read_each_other() -> None:
 
     assert inert is not None and inert.policy_version == 6
     assert deploying is not None and (deploying.change_record, deploying.policy_version) == (53, 4)
+
+
+# ---------------------------------------------------------------------------
+# A gateway error is retried, at most three attempts in all; nothing else is.
+# ---------------------------------------------------------------------------
+
+ANSWER = {"sha": "a" * 40}
+
+
+def _scripted(statuses: list[int]) -> tuple[GitHubReader, list[int], list[float]]:
+    """A reader whose GitHub answers each status in turn, then 200 with `ANSWER`."""
+    requests: list[int] = []
+    sleeps: list[float] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(1)
+        if len(requests) <= len(statuses):
+            return httpx.Response(statuses[len(requests) - 1], json={"message": "x"})
+        return httpx.Response(200, json=ANSWER)
+
+    reader = GitHubReader(
+        token="fixture", transport=httpx.MockTransport(handler), sleep=sleeps.append
+    )
+    return reader, requests, sleeps
+
+
+@pytest.mark.parametrize("status", [502, 503, 504])
+def test_a_gateway_error_then_an_answer_returns_the_answer(status: int) -> None:
+    reader, requests, sleeps = _scripted([status])
+    assert reader.get("/repos/o/r/commits/x") == ANSWER
+    assert len(requests) == 2
+    assert len(sleeps) == 1
+
+
+def test_a_gateway_error_on_every_attempt_raises_the_last_status_after_three_requests() -> None:
+    # The fourth answer would be a 200: a limit above three would return instead of raising.
+    reader, requests, sleeps = _scripted([502, 503, 504])
+    with pytest.raises(LedgerError, match=r"github rejected GET /repos/o/r/commits/x: 504"):
+        reader.get("/repos/o/r/commits/x")
+    assert len(requests) == 3
+    assert len(sleeps) == 2
+
+
+@pytest.mark.parametrize("status", [500, 429, 403])
+def test_any_other_failure_raises_after_one_request(status: int) -> None:
+    reader, requests, sleeps = _scripted([status])
+    with pytest.raises(LedgerError, match=rf": {status}$"):
+        reader.get("/repos/o/r/commits/x")
+    assert len(requests) == 1
+    assert sleeps == []
+
+
+def test_a_301_is_read_as_today_after_one_request() -> None:
+    """Pinned as it stands, not endorsed: this reader raises only from 400 up, so a 301's body is
+    returned as the answer. The retry must not change that, nor repeat the request."""
+    reader, requests, sleeps = _scripted([301])
+    assert reader.get("/repos/o/r/commits/x") == {"message": "x"}
+    assert len(requests) == 1
+    assert sleeps == []
+
+
+def test_a_404_still_returns_none_after_one_request() -> None:
+    reader, requests, sleeps = _scripted([404])
+    assert reader.get("/repos/o/r/commits/x") is None
+    assert len(requests) == 1
+    assert sleeps == []

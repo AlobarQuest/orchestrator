@@ -197,6 +197,8 @@ TABLE: dict[str, Row] = {
         "json",
         "os",
         "re",
+        # `time.sleep`, the default pause between attempts on a GitHub gateway error.
+        "time",
         "typer",
         "typing",
     ),
@@ -417,6 +419,8 @@ TABLE: dict[str, Row] = {
     ),
     "landing_ledger": _row(
         "__future__",
+        # `collections.abc`, for the reader's injectable `sleep`.
+        "collections",
         "dataclasses",
         "datetime",
         "estate_clients",
@@ -425,6 +429,8 @@ TABLE: dict[str, Row] = {
         "json",
         "os",
         "re",
+        # `time.sleep`, the default pause between attempts on a GitHub gateway error.
+        "time",
         "typer",
         "typing",
     ),
