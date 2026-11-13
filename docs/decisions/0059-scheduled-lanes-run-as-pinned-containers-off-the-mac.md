@@ -2753,7 +2753,8 @@ Amendments 1, 2, 4 and 5 name no week-bar passage, so none of their text is chan
   its other events into the same VPS chain, so there is one chain of record, and the Mac database
   retires once it does"), D-43 B (only the approvers and the Mac nightly hold the append-only role)
   and D-44 A (the read-only role also serves Devon's hand paths on the Mac). ADR-0055 amendment 24
-  quotes each in full and states the mechanism.
+  quotes each in full and states the mechanism. Amendment 8 records D-47, which revises D-44 A to
+  D-44 B: only the work carrier reads the chain.
 - **Relates to:** decision 5 ("Agents outside this repository"), "The week bar"'s done-when
   paragraph, increment 4, Q7, and ADR-0055 amendment 24.
 
@@ -2805,8 +2806,8 @@ approval (D-43 B; ADR-0055 amendment 24 item 5). D-40 B and D-42 A widen D-9 to 
      uniqueness and its trigger, the append function, the database verify, the history import
      (which replays the Mac file in order through the append path and refuses unless the imported
      head equals the file's head; who runs it, under which role, is Devon's named decision before
-     act 5), the roles script for FE-4, and the anchor's new home (ADR-0055
-     amendment 24, "Open before building"). `emit`, `adapt` and `verify` use the database when the
+     act 5, now named by amendment 8), the roles script for FE-4, and the anchor's new home
+     (ADR-0055 amendment 24, "Open before building"). `emit`, `adapt` and `verify` use the database when the
      append or read DSN is set. Tests run against a disposable Postgres
      (`make check-integration`).
    - **FE-2, intent-packages.** The emitter passes the append DSN through to `factory_events emit`,
@@ -2841,7 +2842,8 @@ approval (D-43 B; ADR-0055 amendment 24 item 5). D-40 B and D-42 A widen D-9 to 
       `BWS_ACCESS_TOKEN_VPS_BACKUP` identity (security-standards `factory-events-nightly.sh`, lines
       104-105), unless his decision says so, because that would widen D-43 B's holders. Their
       UUIDs go in each consumer repository's `.bws-secrets.toml` and their rows in orchestrator
-      `.cred-consumers.toml` in the same act.
+      `.cred-consumers.toml` in the same act. **Amendment 8 names the project and the accounts**
+      (D-45 A as revised by D-47), so the act no longer stops for them.
    4. **Add the vps-backup target** for the database (FE-4), before any data arrives. A database with
       data needs one; the `backup-integration` skill names the recipe.
    5. **The cut-over** (FE-5): pause the writers (the cycle's approvals, the bump proposer lane, and
@@ -2851,7 +2853,9 @@ approval (D-43 B; ADR-0055 amendment 24 item 5). D-40 B and D-42 A widen D-9 to 
       Devon's shell, the cycle, the bump proposer and the nightly, and the read DSN for the work
       carrier and Devon's hand paths; merge the changes that remove the file path from the three
       repositories; run one `verify` on each machine; resume the writers. This is **the nightly's
-      target switch**.
+      target switch**. **Amendment 8 names the import's actor and role** (D-46 A) and the DSN
+      holders: the append DSN goes to `factory-events-session` in place of "Devon's shell", and the
+      read DSN to the work carrier only (D-44 B).
    6. **Retire the Mac database** (FE-6): stop and remove `factory-events-db` on the Mac's OrbStack
       host engine after a final dump kept in the Mac's backup, remove `FACTORY_DB_DSN` from
       `~/.factory/env`, and retire its secret's reference.
@@ -2862,7 +2866,8 @@ approval (D-43 B; ADR-0055 amendment 24 item 5). D-40 B and D-42 A widen D-9 to 
    ADR-0055 amendment 24 items 4 and 9 name, and nothing else. No lane gets the owner, and no
    identity outside those lists gets either secret. Each secret's BWS project, the machine
    accounts that read it, and the history import's actor and role are Devon's named decisions,
-   taken before acts 3 and 5; this amendment makes none of them.
+   taken before acts 3 and 5; this amendment makes none of them. Amendment 8 records Devon's
+   answers to all three.
 
 ### Open before building
 
@@ -2870,7 +2875,8 @@ ADR-0055 amendment 24's "Open before building" lists each verify item and the st
 it: the anchor's home, the adapters' dedupe, the walk's cost and `emit`'s stdout (FE-1), and the
 rotation class and the tailnet-only port (FE-4). It also lists two named decisions of
 Devon's: each DSN's BWS project and reading accounts, before act 3 (FE-4), and the history
-import's actor and role, before act 5's import (FE-5). FE-6 waits for the anchor.
+import's actor and role, before act 5's import (FE-5). FE-6 waits for the anchor. Both named
+decisions are answered (amendment 8).
 
 ### Passages this amendment changes
 
@@ -2886,3 +2892,69 @@ None is rewritten. Once it's accepted, it governs these passages, cited by line 
 | Q7, "`com.devon.factory-events` and SDS HQ itself stay outside this phase" (line 1526) | Narrowed as decision 5's row above: the factory-events parts of decision item 1 are in the phase. The rest of Q7 stands. |
 
 Amendments 1 to 6 name no factory-events passage, so none of their text is changed.
+
+## Amendment 8 (2026-11-13): the factory-events chain's readers, accounts and import actor are named
+
+- **Status:** Accepted on merge. HQ merges it only after a clean Opus whole-branch review (HQ
+  D-12, limit 3). The ADR's own status is unchanged.
+- **Decided by:** Devon, in interactive HQ sessions on 2026-11-13 (sds-hq `state/decisions.md` at
+  `74c3507`): D-47 ("Lets update D-44 as you recommend, and I agree with your take on D-45"),
+  recorded as "D-44 becomes B (only the work carrier reads the chain); D-45 append-DSN reader for
+  approvals is a new narrow account factory-events-session (own Keychain item, append DSN only, no
+  read-DSN grant)"; D-45 A as D-47 revises it (a new BWS project `Factory Events` holding only the
+  two DSNs, and the accounts that read each); and D-46 A ("an interactive session runs the import
+  once under the append-only role, reading the append DSN by UUID for that one command"). ADR-0055
+  amendment 25 quotes each in full and states what it supersedes in ADR-0055 amendment 24.
+- **Relates to:** Amendment 7 (its "Decided by", decision items 3, 4 and 6, and "Open before
+  building") and ADR-0055 amendments 24 and 25.
+
+Line numbers in this amendment are this file's at orchestrator `da044d6d`, before the amendment
+was appended. Apart from the one-line pointers to it in Amendment 7, the amendment appends only.
+Where this amendment and an earlier passage disagree, this amendment governs.
+
+### Decision
+
+1. **Only the work carrier reads the chain (D-44 B).** The read DSN goes to the work carrier
+   alone: `sds-operator` fetches it for the Mac carrier until step 3f-2, and the work-carrier lane
+   account in its container after. Devon's hand paths get no read DSN. After FE-5 a hand intake
+   can't verify an approval and fails closed (ADR-0055 amendment 25 item 1).
+2. **Act 3 is named and no longer stops for a decision.** Its BWS project is `Factory Events`,
+   holding only the two DSN secrets. Its grants are exactly ADR-0055 amendment 25 item 3's:
+   - the append DSN to the SDS HQ account, `factory-events-session` (a new narrow account with its
+     own Mac Keychain item, the append DSN only), the bump-proposer lane account (the Mac launcher
+     reads it from its own Keychain item until the lane moves), and `factory-events-nightly` (a new
+     narrow account with one more Mac Keychain item);
+   - the read DSN to the work-carrier lane account, and to `sds-operator` for the Mac carrier
+     until it moves.
+
+   The append DSN goes to none of `sds-operator`, `BWS_ACCESS_TOKEN_BROAD` or
+   `BWS_ACCESS_TOKEN_VPS_BACKUP`. Act 3 still stops on anything else Amendment 7 makes it stop
+   on, and still records each secret by UUID, never by name.
+3. **Act 5's import is named (D-46 A).** An interactive session runs the history import once
+   under the append-only role, reading the append DSN by UUID for that one command, while the
+   writers are paused. It isn't a standing holder of the append role. D-46 A names no account for
+   the session's fetch, and the session can read the append DSN only through an account item 2
+   grants, so the import adds no grant.
+4. **Act 5's DSN step.** "Set the append DSN for Devon's shell, the cycle, the bump proposer and
+   the nightly, and the read DSN for the work carrier and Devon's hand paths" becomes: set the
+   append DSN for interactive sessions' approvals (through `factory-events-session`), the cycle,
+   the bump proposer and the nightly, and the read DSN for the work carrier only.
+5. **FE-3's scope is unchanged.** The orchestrator's `package_sources` read path still serves the
+   carrier's `emit-intake-payload`, so FE-3 changes the same code; only the read DSN's holders
+   shrink (ADR-0055 amendment 25 item 5).
+6. **No new authority beyond the answers.** This amendment grants the project and the six account
+   reads in item 2 and the one-time import in item 3, and nothing else.
+
+### Passages this amendment changes
+
+None is rewritten. Each carries a one-line pointer to this amendment. Once it's accepted, it
+governs these passages, cited by line at `da044d6d`:
+
+| Passage | Disposition |
+|---|---|
+| Amendment 7, "Decided by", "D-44 A (the read-only role also serves Devon's hand paths on the Mac)" (line 2755) | Superseded by decision item 1: D-47 revised D-44 to B. |
+| Amendment 7, decision item 3, FE-1, "who runs it, under which role, is Devon's named decision before act 5" (line 2807) | Answered by decision item 3. |
+| Amendment 7, decision item 4, act 3, "in the BWS project Devon names ... the act stops until he has named them" (lines 2836-2844) | Superseded by decision item 2. |
+| Amendment 7, decision item 4, act 5, the import's actor and the DSN holders (lines 2847-2854) | Superseded by decision items 3 and 4. |
+| Amendment 7, decision item 6, "Devon's named decisions ... this amendment makes none of them" (lines 2863-2865) | Answered by decision items 2 and 3. |
+| Amendment 7, "Open before building", the two named decisions (lines 2871-2873) | Answered by decision items 2 and 3. |
