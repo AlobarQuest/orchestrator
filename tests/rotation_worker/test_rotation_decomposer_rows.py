@@ -1,9 +1,8 @@
 """The repository's rotation-decomposer registry rows, read by the code that acts on them.
 
-ADR-0055 amendment 19 item 8 and ADR-0059 increment 4: the token's row is due for its first issue
-and the ping URL's row is handed to the SDS, dated by a later change once the token's `store` unit
-completes. The rows are read here as the executor reads them, at `main` through `RepoMirror`, from
-this repository's own `.cred-consumers.toml`.
+ADR-0055 amendment 19 item 8 and ADR-0059 increment 4: both rows are handed to the SDS and due
+for their first issue. The rows are read here as the executor reads them, at `main` through
+`RepoMirror`, from this repository's own `.cred-consumers.toml`.
 """
 
 from __future__ import annotations
@@ -123,10 +122,11 @@ def test_the_ping_url_row_names_only_its_keeper(rows: dict[str, RegistryEntry]) 
     assert rows[PING_URL].credential["healthchecks_check"] == "sds-rotation-decomposer"
 
 
-def test_only_the_token_row_is_due(rows: dict[str, RegistryEntry]) -> None:
-    """A later change dates the ping URL's row, once the token's `store` unit completes."""
+def test_both_rows_are_due(rows: dict[str, RegistryEntry]) -> None:
+    """The ping URL's row is dated only after the token's `store` unit completed, so the two issue
+    units never waited on a mint at once."""
     assert rows[TOKEN].credential["rotate_requested"] == "2026-11-13"
-    assert "rotate_requested" not in rows[PING_URL].credential
+    assert rows[PING_URL].credential["rotate_requested"] == "2026-11-13"
 
 
 @pytest.mark.parametrize("credential_id", [TOKEN, PING_URL])
