@@ -27,7 +27,7 @@ not merged.
      `first_issue=_first_issue(last_rotated, due.credential_id)` (`:457`).
    - `_first_issue` (`:431-436`) returns `True` when infraops' `last_rotated` for the id is null.
      Both runs in item 5 serve `last_rotated` null for this row.
-   - `test_a_first_issue_derives_the_issue_plan` (`test_rotation_decomposer_rows.py:152`) is
+   - `test_a_first_issue_derives_the_issue_plan` (`test_rotation_decomposer_rows.py:153`) is
      parametrized over `TOKEN` and `PING_URL` and asserts `plan_for(row, first_issue=True)` yields
      an issue plan.
 5. Due-ness check:
