@@ -1,0 +1,25 @@
+# sds-lane-change-proposer (ADR-0059 increment 4): the change-proposer lane. HQ creates the resource
+# from this file. It serves nothing: no port, no domain, so no Traefik labels and no `networks:`
+# entry, as `lanes/landing-ledger/compose.yaml`. It clones nothing and keeps no state (ADR-0059
+# decision 1, the lane-state table's "Moves" row), so it mounts no volume. The lane's token is the
+# resource's own `CHANGE_PROPOSER_BWS_ACCESS_TOKEN` variable, which the VM rotation executor writes;
+# this file names it and never holds a value. With it the launcher reads the orchestrator's
+# observer bearer, the change-manager propose bearer (on `--submit` runs only) and the read-only
+# App's key, and mints the pass's GitHub token (`scripts/run-change-proposer.sh`).
+# `SDS_DEADMAN_PING_URL_UUID` is empty until the lane's ping-URL secret,
+# `change-proposer-ping-url` in `Rotation / Keepers`, exists: the VM root creates that keeper at
+# cut-over and a later change writes its id here. While it is empty the dead-man helper falls back
+# to the Mac's lookup by check name, which needs the broad Keychain identity the container doesn't
+# have, so a `--submit` pass pings nothing and logs `no SDS_DEADMAN_PING_URL_UUID and no broad BWS
+# identity — alerting disabled this run` (`scripts/sds-deadman.sh`); a dry run pings nothing
+# anyway. The pass itself still runs. The schedule stays off (`LANE_SCHEDULE_ENABLED`) until the
+# cut-over turns it on.
+services:
+  change-proposer:
+    image: ghcr.io/alobarquest/sds-lanes:${SDS_LANES_IMAGE_TAG}
+    command: ["change-proposer"]
+    environment:
+      BWS_ACCESS_TOKEN: ${CHANGE_PROPOSER_BWS_ACCESS_TOKEN}
+      LANE_SCHEDULE_ENABLED: ${LANE_SCHEDULE_ENABLED:-false}
+      SDS_DEADMAN_PING_URL_UUID: ""
+    restart: unless-stopped

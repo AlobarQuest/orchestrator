@@ -57,6 +57,9 @@ from work_watcher import change_manager as watcher_change_manager
 from work_watcher import github as watcher_github
 from work_watcher import orchestrator_client as watcher_orchestrator
 
+# The read-only lane App `alobar-sds-lanes-read`'s key, read in a lane's container alone.
+READ_APP_KEY = "314a966c-5654-4e3c-8358-b4fd01268775"
+
 EDGES: dict[str, Edge] = {
     "bump_proposer": Edge(
         change_manager=frozenset(
@@ -84,7 +87,8 @@ EDGES: dict[str, Edge] = {
         orchestrator=frozenset({("GET", "/api/v1/members"), ("GET", "/api/v1/opened-reverts")}),
         github=frozenset(),  # through deploy_watcher.github: GITHUB_THROUGH
         alert_hub=frozenset(),
-        bearers=DEADMAN | {PROPOSE_BEARER, OBSERVER_BEARER},
+        # The read-only lane App's key its container mints from (ADR-0059 increment 4).
+        bearers=DEADMAN | {PROPOSE_BEARER, OBSERVER_BEARER, READ_APP_KEY},
     ),
     "work_carrier": Edge(
         change_manager=frozenset({("GET", "/api/items")}),

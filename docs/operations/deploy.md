@@ -456,6 +456,39 @@ one lane") still needs the following, in this order, each in its own change or a
    (`git -C ~/Projects/intent-packages rev-parse HEAD`) beside the clone's, since a difference the
    two commits explain isn't a cut-over failure; then the schedule and the Mac job's retirement.
 
+`change-proposer`'s tracked files (`lanes/change-proposer/compose.yaml` and `crontab`) don't
+register it either. It clones nothing and keeps no state, so its compose mounts no volume. Its
+crontab runs `lane-run change-proposer --submit` hourly at minute 35, as the Mac job's
+`StartInterval` of 3600 runs it with `--submit` in its plist; 35 is a minute no other lane starts
+on. Its `.bws-secrets.toml` secrets are the observer bearer, the change-manager propose bearer and
+the read-only App's key, all read with the lane's one token; the propose bearer is read only on a
+`--submit` pass, as on the Mac, where the narrow and broad Keychain identities still read the first
+two. The bare run is the lane's dry run: it reads the observer bearer and mints its read token,
+writes nothing, and pings nothing. The check is an outcome alarm that pings only on `--submit`
+passes: its compose leaves `SDS_DEADMAN_PING_URL_UUID` empty until the lane's ping-URL secret
+exists, so until then a `--submit` pass in the container still runs, pings nothing and says so. The
+read-App key row's `runtime-fetch` reader for `scripts/run-change-proposer.sh` landed with the
+launcher. Its cut-over (ADR-0059, "Cut-over for one lane") still needs the following, in this
+order, each in its own change or act:
+
+1. The orchestrator serving this release; then HQ creates `sds-lane-change-proposer` from the
+   compose without deploying it.
+2. The VM root's keeper commands for the lane token and `change-proposer-ping-url`.
+3. The lane's registry rows in this repository, in two changes: the token's row and the ping URL's
+   row.
+4. The lane account's grants on its three secrets and its ping-URL secret, and a reader for the
+   container in change-manager's `.cred-consumers.toml` on the propose bearer's row (that registry
+   lives in change-manager, not here).
+5. The token's mint and the executor's write; then the ping URL's row made due and the executor's
+   write (ADR-0055 amendment 23).
+6. A served release whose compose names the ping-URL secret's id, with `change-proposer` removed
+   from `test_deploy_lanes.py`'s `placeholders`.
+7. The lane's `--add`, then the `lane-run --read` proof over all four secrets. The proof is the
+   only read of the propose bearer before the first `--submit` pass, because a dry run never
+   fetches it.
+8. Cut-over steps 2 onward: the paired dry runs (the bare invocation on both hosts, which ping
+   nothing), the schedule, and the Mac job's retirement.
+
 `unit-verifier`'s tracked files (`lanes/unit-verifier/compose.yaml` and `crontab`) don't register
 it either. Its state is the pass's `alerts.json`, so its compose mounts the named volume
 `sds-lanes-unit-verifier-state` at `VERIFIER_STATE_DIR` (`/var/lib/sds/unit-verifier`). Its crontab
@@ -591,6 +624,18 @@ only. Unlike the other lanes, a failed derivation or mint doesn't stop the pass:
 need no GitHub read, so the pass runs with no GitHub token and the launcher then exits 3, which
 pings `/fail`. In that pass every unit with checks to file is held unverified as `verify-refused`,
 with its alert, and the next pass tries again.
+
+The change proposer mints the same way in its container (`scripts/run-change-proposer.sh`), a dry
+run included. Its repositories are every repository its GitHub calls read, printed by
+`change-proposer repositories` with the observer bearer: the member record's `rollouts` scope,
+narrowed to repositories with a transcribed rollout workflow and rollback plan, joined with the
+scope sweep's population, every key of `ROLLOUT_WORKFLOWS` whatever its grant
+(`src/change_proposer/cli.py`, `_scope_sweep`). Since the scope is a subset of the table, that's
+the table's keys, but the derivation reads the record anyway, so an unreadable record or an empty
+list exits 2 before any mint, as it proposes nothing; any other code passes through. Its GET calls
+are a pull request listing and one pull request (`pull_requests`) and a rollout workflow's file
+(`contents`), through `src/deploy_watcher/github.py`, so it mints `metadata=read`,
+`contents=read` and `pull_requests=read`. A failed or empty mint exits 1.
 
 The narrowing bounds what the token is granted. It doesn't stop the token reading public
 resources, which need no token at all

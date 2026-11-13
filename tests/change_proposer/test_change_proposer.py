@@ -1262,3 +1262,62 @@ def test_the_sweep_asks_github_for_each_workflow_at_its_own_trigger_branch(monke
         (CM, ".github/workflows/deploy.yml", "main"),
     ]
     assert [row.problem for row in rows] == [None, None]
+
+
+# ---- the repositories the lane's GitHub token is minted for (ADR-0059 increment 4) ----------
+
+READ_PERMISSIONS = {name: "read" for name in ("metadata", "contents", "pull_requests")}
+
+
+def test_repositories_prints_the_scope_and_every_transcription_one_per_line(
+    monkeypatch, capsys
+) -> None:
+    """The sweep reads every `ROLLOUT_WORKFLOWS` key whatever its grant, so a withdrawn grant
+    leaves its repository in the list: the token must reach every file the pass reads."""
+    from change_proposer import cli as cli_module
+    from deploy_watcher.workflows import ROLLOUT_WORKFLOWS
+
+    _grant(monkeypatch, CM)
+    assert cli_module.run(["repositories"]) == cli_module.EXIT_OK
+    assert capsys.readouterr().out.splitlines() == sorted(ROLLOUT_WORKFLOWS) == [BRAIN, CM]
+
+
+def test_repositories_with_an_unreadable_record_prints_nothing_and_exits_2(
+    monkeypatch, capsys
+) -> None:
+    from change_proposer import cli as cli_module
+
+    def unreadable(**_: object) -> list[Member]:
+        raise MembersUnreadable("SDS_MEMBERS_OBSERVER_TOKEN is not set")
+
+    monkeypatch.setattr(cli_module, "read_members_from_environment", unreadable)
+    assert cli_module.run(["repositories"]) == cli_module.EXIT_UNUSABLE
+    assert capsys.readouterr().out == ""
+
+
+def test_repositories_with_an_empty_table_prints_nothing_and_exits_2(monkeypatch, capsys) -> None:
+    from change_proposer import cli as cli_module
+
+    monkeypatch.setattr(cli_module, "ROLLOUT_WORKFLOWS", {})
+    assert cli_module.run(["repositories"]) == cli_module.EXIT_UNUSABLE
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "no repository has a transcribed rollout workflow" in captured.err
+
+
+def test_repositories_needs_no_github_token(monkeypatch, capsys) -> None:
+    """The launcher derives the list before it mints, so the derivation can't ask for the token."""
+    from change_proposer import cli as cli_module
+
+    monkeypatch.delenv("CHANGE_PROPOSER_GITHUB_TOKEN", raising=False)
+    assert cli_module.run(["repositories"]) == cli_module.EXIT_OK
+
+
+def test_the_derived_repositories_pass_the_mints_request_checks(capsys) -> None:
+    """The table's keys are lowercase; the mint casefolds its request and GitHub's echo, so the
+    launcher passes them as printed."""
+    from estate_clients.github_app_mint import _check_request
+
+    assert run(["repositories"]) == 0
+    names = capsys.readouterr().out.splitlines()
+    assert sorted(_check_request("5684758", names, READ_PERMISSIONS)) == names
