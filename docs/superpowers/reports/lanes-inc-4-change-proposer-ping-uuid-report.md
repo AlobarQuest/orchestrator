@@ -15,7 +15,7 @@ change-proposer lane. This is the change #685 (`5ed15482`) made for the membersh
 
 The keeper id `7651ccc2-7e13-417b-86da-b50100c0d4b2` is a BWS secret id: not a secret, and not a
 ping URL or a check's ping UUID. It matches `.cred-consumers.toml`'s `change-proposer-ping-url` row
-(`bws_uuid`, line 1101) and the `GRANTED` set in `test_change_proposer_rows.py`.
+(`bws_uuid`, line 1102) and the `GRANTED` set in `test_change_proposer_rows.py`.
 
 1. `lanes/change-proposer/compose.yaml`
    - Line 23: `SDS_DEADMAN_PING_URL_UUID` holds the literal keeper id.
