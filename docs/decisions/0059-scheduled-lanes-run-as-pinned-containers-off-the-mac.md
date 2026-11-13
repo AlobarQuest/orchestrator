@@ -2740,3 +2740,129 @@ None is rewritten. Once it's accepted, it governs these passages, cited by line 
 | Amendment 3, "Passages this amendment changes", "the week bar (1262-1264, 1271-1275)" (lines 2129-2130, cited at `531d42c2`) | Moot. Amendment 3's other citations stand. |
 
 Amendments 1, 2, 4 and 5 name no week-bar passage, so none of their text is changed.
+
+## Amendment 7 (2026-11-13): the factory-events chain moves to a VPS database
+
+- **Status:** Accepted on merge. HQ merges it only after a clean Opus whole-branch review (HQ
+  D-12, limit 3). The ADR's own status is unchanged.
+- **Decided by:** Devon, in interactive HQ sessions on 2026-11-13 (sds-hq `state/decisions.md`):
+  D-40 B ("Approvals write their package.approved event straight into the shared factory-events
+  database chain, and the carrier verifies there; append-only credentials for the approvers,
+  read-only for the carrier"), D-42 A ("A new Postgres resource on the VPS (Coolify, Flavor B
+  pattern) becomes the factory-events chain of record ... The Mac nightly factory-events job ships
+  its other events into the same VPS chain, so there is one chain of record, and the Mac database
+  retires once it does"), D-43 B (only the approvers and the Mac nightly hold the append-only role)
+  and D-44 A (the read-only role also serves Devon's hand paths on the Mac). ADR-0055 amendment 24
+  quotes each in full and states the mechanism.
+- **Relates to:** decision 5 ("Agents outside this repository"), "The week bar"'s done-when
+  paragraph, increment 4, Q7, and ADR-0055 amendment 24.
+
+Line numbers in this amendment are this file's at orchestrator `2cf43757`, before the amendment
+was appended. The amendment appends only: no passage before it is rewritten. Where this amendment
+and an earlier passage disagree, this amendment governs.
+
+### Context
+
+D-9 kept `com.devon.factory-events` outside Phase 1 (lines 816-818 and 1522-1526). Increment 4
+moves the work carrier to the VPS, and the carrier refuses an intake whose `package.approved`
+event it can't find in its own machine's chain (ADR-0055 amendment 22, "The chain the carrier
+reads"). That chain is a file on the Mac, and the Mac's factory-events database is filled from it
+once a night, with one owner role and no single-event append (ADR-0055 amendment 24, Context).
+So a carrier on the VPS can't verify any approval, and neither can the bump and rotation proposers
+once they move (steps 3f-4 and 3f-5), because they reach the same approval lifecycle. D-40 B and
+D-42 A widen D-9 to fix that.
+
+### Decision
+
+1. **What comes into Phase 1, and only this.** These parts of factory-events:
+   - the VPS database resource that becomes the chain of record;
+   - its two roles, append-only and read-only, and their two BWS secrets;
+   - the append path (a new `factory_events` append function, used by the intent-packages emitter
+     and the nightly's adapters) and the verify path (the database walk that intent-packages and
+     the orchestrator verify approvals with);
+   - the Mac nightly appending its events into the VPS chain;
+   - the Mac database's retirement.
+
+   Nothing else of factory-events moves. SDS HQ stays outside this phase (D-9).
+2. **The nightly job stays on the Mac.** Its high-power adapter reads this Mac's audit log
+   (security-standards `adapters/high_power.py`, line 21, `~/.claude/audit/high-power-actions.jsonl`),
+   so it adapts this Mac's events and can't run elsewhere. Only its target changes: from step FE-5
+   its `adapt` appends through the append function into the VPS chain, it verifies that chain, and
+   it no longer runs `ship` to the Mac database. Its `chain:factory-events` observation stays. It
+   isn't a lane that acts on a member, so it stays outside the phase bar, as before.
+3. **The steps, in order.** Increment 4 runs these after the change proposer (3f-1) and before the
+   work carrier's lane code (3f-2). None of the code steps changes what runs until FE-5 sets the
+   DSNs.
+   - **FE-1, security-standards code.** The database store in `factory_events`: the schema with its
+     uniqueness and its trigger, the append function, the database verify, the history import
+     (which replays the Mac file in order through the append path and refuses unless the imported
+     head equals the file's head), the roles script for FE-4, and the anchor's new home (ADR-0055
+     amendment 24, "Open before building"). `emit`, `adapt` and `verify` use the database when the
+     append or read DSN is set. Tests run against a disposable Postgres
+     (`make check-integration`).
+   - **FE-2, intent-packages.** The emitter passes the append DSN through to `factory_events emit`,
+     and `default_chain_checker` reads the database under the read DSN, raising `ChainUnavailable`
+     on any error. No file fallback.
+   - **FE-3, orchestrator.** `package_sources` verifies against the database under the read DSN
+     (`_verify_factory_chain` and `_iter_package_approval_events`) and refuses on any error.
+     `tests/architecture/test_intent_edges.py` changes with it (`ENVIRONMENT`, line 38;
+     `EVENTS_FILE_PARTS`, line 43; `READERS`, line 42). The bump proposer's launcher passes the
+     append DSN to `approve --by-policy`. The operations docs that name `~/.factory/events.jsonl`
+     (`docs/operations/package-intake.md`, line 126) change in the same step.
+   - **FE-4, the database resource (production act).** HQ runs it as an announced act.
+   - **FE-5, the cut-over and the nightly's target switch (production act).** HQ runs it as an
+     announced act.
+   - **FE-6, the Mac database's retirement (production act).** HQ runs it as an announced act, only
+     after FE-1's anchor is live and a nightly has run against the VPS chain.
+   - **Then the work carrier's lane code (3f-2)**, with the read DSN in its container, and later the
+     bump proposer (3f-4, with the append DSN) and the rotation proposer (3f-5, with no chain
+     credential: ADR-0055 amendment 24 item 5).
+4. **The production acts, named so HQ may run them.** These are the only production acts this
+   amendment names:
+   1. **Create the Postgres resource** on `prod-vps`: a Coolify database resource, Flavor B
+      pattern, with no public FQDN and its port reachable only over the tailnet (FE-4).
+   2. **Create its roles**: run FE-1's roles script as the owner, once, creating the schema, the
+      trigger, the append-only role and the read-only role (FE-4). This never runs in an image build
+      step.
+   3. **Create the two BWS secrets**, the append DSN and the read DSN, and grant each named reader
+      a direct read on its one secret (FE-4). Their UUIDs go in each consumer repository's
+      `.bws-secrets.toml` and their rows in orchestrator `.cred-consumers.toml` in the same act.
+   4. **Add the vps-backup target** for the database (FE-4), before any data arrives. A database with
+      data needs one; the `backup-integration` skill names the recipe.
+   5. **The cut-over** (FE-5): pause the writers (the cycle's approvals, the bump proposer lane, and
+      the nightly, which runs at 03:30); verify the Mac file; import it; check the VPS head equals
+      the file's; seal the file (ADR-0055 amendment 24 item 10); set the append DSN for Devon's
+      shell, the cycle, the bump proposer and the nightly, and the read DSN for the work carrier and
+      Devon's hand paths; merge the changes that remove the file path from the three repositories;
+      run one `verify` on each machine; resume the writers. This is **the nightly's target
+      switch**.
+   6. **Retire the Mac database** (FE-6): stop and remove `factory-events-db` on the Mac's OrbStack
+      host engine after a final dump kept in the Mac's backup, remove `FACTORY_DB_DSN` from
+      `~/.factory/env`, and retire its secret's reference.
+5. **Network.** The database isn't exposed publicly, so Infra Brain rule 212 (HTTPS for public
+   FQDNs) has nothing to apply to. Containers on `prod-vps` reach it over Coolify's network (the
+   external `coolify` network); the Mac reaches it over the tailnet (`ovh-vps1`).
+6. **No new authority beyond the four answers.** The amendment grants the two roles to the holders
+   ADR-0055 amendment 24 items 4 and 9 name, and nothing else. No lane gets the owner, and no
+   identity outside those lists gets either secret.
+
+### Open before building
+
+ADR-0055 amendment 24's "Open before building" lists each verify item and the step that settles
+it: the anchor's home, the adapters' dedupe and the walk's cost (FE-1), and the rotation class, the
+tailnet-only port and the Mac's fetching identities (FE-4). FE-6 waits for the anchor.
+
+### Passages this amendment changes
+
+None is rewritten. Once it's accepted, it governs these passages, cited by line at `2cf43757`:
+
+| Passage | Disposition |
+|---|---|
+| Decision 5, "Agents outside this repository", "and factory-events and SDS HQ itself are outside this phase" (lines 816-818) | Narrowed: factory-events comes into the phase to the extent of decision item 1. SDS HQ stays outside. "None is a Mac exception" stands: the nightly stays on the Mac as an infra job, not as an exception. |
+| The `factory-events` row, "into the factory events chain (`FACTORY_DB_DSN`)" and "Outside this phase (D-9)" (line 824) | Superseded by decision item 2: from FE-5 the nightly appends into the VPS chain and no longer ships to `FACTORY_DB_DSN`. Its disposition is "stays on the Mac; its chain moves to the VPS (Amendment 7)". The row's other text stands. |
+| "The week bar", the done-when paragraph, "SDS HQ also acts on members ... (D-9)" (lines 1297-1298) | Stands. It names SDS HQ only. |
+| "The week bar", the done-when paragraph, "Every other `com.devon.*` launch agent ... stays where it is" (lines 1301-1302) | Stands for the nightly job, which stays on the Mac. Its chain's database moves under decision item 1. |
+| Increment 4, "change proposer, work carrier, the rotation decomposer, then bump and rotation proposers" (lines 1023-1024) | Extended by decision item 3: FE-1 to FE-6 run after the change proposer and before the work carrier. |
+| Q7, "`com.devon.factory-events` and SDS HQ itself stay outside this phase" (line 1526) | Narrowed as decision 5's row above: the factory-events parts of decision item 1 are in the phase. The rest of Q7 stands. |
+
+Amendments 1 to 6 name no factory-events passage, so none of their text is changed.
