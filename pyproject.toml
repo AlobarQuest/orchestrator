@@ -126,7 +126,10 @@ fork_sync = ["templates/*.yml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# The factory-events database tests need a disposable Postgres; scripts/check-integration.sh runs them.
+addopts = "-m 'not integration'"
 markers = [
+  "integration: needs a disposable Postgres cluster (FACTORY_TEST_DSN); run by scripts/check-integration.sh, never by make check.",
   "xdist_group(name): run every test with this name on one xdist worker, in order (registered here too, so a serial -p no:xdist run does not warn).",
   "schema_rebuild: drop and re-migrate the test schema before this test instead of sharing the session's migrated schema (for tests of the migrations themselves).",
 ]

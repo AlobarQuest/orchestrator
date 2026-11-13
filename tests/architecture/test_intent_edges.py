@@ -3,12 +3,17 @@
 `orchestrator.package_sources` verifies an approved intent package before it composes an intake
 payload. Its whole outbound surface is stated here, from its source:
 
-* three subprocess commands: `git rev-parse HEAD` (the package's git head), the sibling
-  `intent_packages verify-approval`, and security-standards' `factory_events verify`;
+* four subprocess commands: `git rev-parse HEAD` (the package's git head), the sibling
+  `intent_packages verify-approval`, security-standards' `factory_events verify` (the file
+  chain), and `orchestrator.factory_chain_read` (the database chain, under the read DSN);
 * no HTTP client, socket or other network import;
-* three environment variables;
+* five environment variables, two of them FE-1's chain DSNs;
 * files read: the package's `package.yaml` and `lineage.yaml`, the security-standards agent
   registry, and the factory events file.
+
+`orchestrator.factory_chain_read`, the database read it runs, is stated beside it: no subprocess,
+one environment variable (the read DSN), two lazy imports (psycopg and FE-1's `store`), one
+`SELECT`, and a read-only repeatable-read transaction.
 
 Each row is held to the module's text, and each control shows the comparison reporting a
 deliberate widening.
@@ -21,26 +26,40 @@ from pathlib import Path
 
 import pytest
 
+import orchestrator.factory_chain_read as factory_chain_read
 import orchestrator.package_sources as package_sources
 
 SOURCE = Path(package_sources.__file__).read_text(encoding="utf-8")
+CHAIN_READ_SOURCE = Path(factory_chain_read.__file__).read_text(encoding="utf-8")
 
 SUBPROCESS_COMMANDS = frozenset(
     {
         ("git", "-C", "<expr>", "rev-parse", "HEAD"),
         ("<expr>", "-m", "intent_packages", "verify-approval", "<expr>"),
         ("<expr>", "-m", "factory_events", "verify"),
+        ("<expr>", "-m", "orchestrator.factory_chain_read"),
     }
 )
 NETWORK_ROOTS = frozenset(
     {"httpx", "requests", "urllib", "urllib3", "http", "socket", "aiohttp", "ftplib", "smtplib"}
 )
-ENVIRONMENT = frozenset({"PYTHONPATH", "SECURITY_STANDARDS_DIR", "FACTORY_EVENTS_HOME"})
+ENVIRONMENT = frozenset(
+    {
+        "PYTHONPATH",
+        "SECURITY_STANDARDS_DIR",
+        "FACTORY_EVENTS_HOME",
+        "FACTORY_EVENTS_READ_DSN",
+        "FACTORY_EVENTS_APPEND_DSN",
+    }
+)
 YAML_READS = frozenset({"package.yaml", "lineage.yaml", "<registry agent>"})
 NEVER_IMPORTED = frozenset({"pty", "multiprocessing"})
 OS_SPAWNERS = frozenset({"os.system", "os.popen", "os.execv", "os.execvp", "os.spawnv"})
 READERS = frozenset({"_read_yaml", "_iter_package_approval_events"})
 EVENTS_FILE_PARTS = frozenset({".factory", "events.jsonl"})
+CHAIN_READ_ENVIRONMENT = frozenset({"FACTORY_EVENTS_READ_DSN"})
+CHAIN_READ_LAZY_IMPORTS = frozenset({"psycopg", "factory_events.store"})
+CHAIN_READ_WALK = "SELECT seq, prev_hash, hash, event_id, event FROM factory_events ORDER BY seq"
 
 
 def _render(node: ast.expr) -> str:
@@ -164,9 +183,9 @@ def path_parts(source: str, function: str) -> frozenset[str]:
 # ---- The rows -------------------------------------------------------------------------------
 
 
-def test_the_module_runs_exactly_three_subprocess_commands() -> None:
+def test_the_module_runs_exactly_four_subprocess_commands() -> None:
     commands = subprocess_commands(SOURCE)
-    assert len(commands) == 3
+    assert len(commands) == 4
     assert set(commands) == SUBPROCESS_COMMANDS
 
 
@@ -178,7 +197,7 @@ def test_the_module_imports_no_network_client() -> None:
     assert network_imports(SOURCE) == []
 
 
-def test_the_module_reads_three_environment_variables() -> None:
+def test_the_module_reads_five_environment_variables() -> None:
     assert environment_names(SOURCE) == ENVIRONMENT
 
 
@@ -206,7 +225,7 @@ def _widen(old: str, new: str) -> str:
 
 def test_control_a_fourth_subprocess_command_is_reported() -> None:
     widened = SOURCE + '\n\ndef _extra() -> None:\n    subprocess.run(["curl", "http://x"])\n'
-    assert len(subprocess_commands(widened)) == 4
+    assert len(subprocess_commands(widened)) == 5
 
 
 def test_control_a_changed_subcommand_is_reported() -> None:
@@ -283,7 +302,94 @@ def test_control_check_output_and_a_held_argv_are_reported() -> None:
         + '    argv = ["id"]\n    subprocess.run(argv)\n'
     )
     commands = subprocess_commands(widened)
-    assert len(commands) == 5
+    assert len(commands) == 6
     assert set(commands) != SUBPROCESS_COMMANDS
     assert ("subprocess.check_output",) in commands
     assert ("subprocess.run",) in commands
+
+
+# ---- The database read `package_sources` runs -----------------------------------------------
+
+
+def lazy_imports(source: str) -> frozenset[str]:
+    """What `import_module(...)` is handed, as written."""
+    return frozenset(
+        _render(call.args[0])
+        for call in _calls(ast.parse(source))
+        if _dotted(call.func) == "import_module"
+    )
+
+
+def module_imports(source: str) -> frozenset[str]:
+    """The roots of every `import` and `from ... import` statement."""
+    roots: set[str] = set()
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            roots |= {alias.name.split(".")[0] for alias in node.names}
+        elif isinstance(node, ast.ImportFrom):
+            roots.add((node.module or "").split(".")[0])
+    return frozenset(roots)
+
+
+def attribute_assignments(source: str) -> dict[str, str]:
+    """`<name>.<attr> = <value>` assignments, rendered."""
+    found: dict[str, str] = {}
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Attribute):
+            found[node.targets[0].attr] = (
+                _dotted(node.value)
+                if isinstance(node.value, ast.Attribute)
+                else ast.unparse(node.value)
+            )
+    return found
+
+
+def test_the_chain_read_runs_no_subprocess_and_reads_one_environment_variable() -> None:
+    assert subprocess_commands(CHAIN_READ_SOURCE) == []
+    assert spawn_imports(CHAIN_READ_SOURCE) == []
+    assert environment_names(CHAIN_READ_SOURCE) == CHAIN_READ_ENVIRONMENT
+    assert readers(CHAIN_READ_SOURCE) == frozenset()
+
+
+def test_the_chain_read_reaches_the_database_only_through_its_two_lazy_imports() -> None:
+    assert network_imports(CHAIN_READ_SOURCE) == []
+    assert lazy_imports(CHAIN_READ_SOURCE) == CHAIN_READ_LAZY_IMPORTS
+    assert module_imports(CHAIN_READ_SOURCE) == {
+        "__future__",
+        "json",
+        "os",
+        "sys",
+        "collections",
+        "importlib",
+        "typing",
+    }
+
+
+def test_the_chain_read_runs_one_select_in_a_read_only_repeatable_read_transaction() -> None:
+    assert factory_chain_read.WALK == CHAIN_READ_WALK
+    assert attribute_assignments(CHAIN_READ_SOURCE) == {
+        "read_only": "True",
+        "isolation_level": "psycopg.IsolationLevel.REPEATABLE_READ",
+    }
+    executes = [c for c in _calls(ast.parse(CHAIN_READ_SOURCE)) if _dotted(c.func) == "cur.execute"]
+    assert [ast.unparse(c.args[0]) for c in executes] == ["WALK"]
+
+
+def test_control_a_widened_chain_read_is_reported() -> None:
+    def widen(old: str, new: str) -> str:
+        assert old in CHAIN_READ_SOURCE
+        return CHAIN_READ_SOURCE.replace(old, new, 1)
+
+    assert lazy_imports(widen('"factory_events.store"', '"factory_events.db"')) != (
+        CHAIN_READ_LAZY_IMPORTS
+    )
+    assert (
+        environment_names(
+            widen('get("FACTORY_EVENTS_READ_DSN")', 'get("FACTORY_EVENTS_APPEND_DSN")')
+        )
+        != CHAIN_READ_ENVIRONMENT
+    )
+    assert "read_only" not in attribute_assignments(widen("conn.read_only = True", "pass"))
+    assert module_imports("import socket\n" + CHAIN_READ_SOURCE) != module_imports(
+        CHAIN_READ_SOURCE
+    )

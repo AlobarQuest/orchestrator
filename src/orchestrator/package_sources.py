@@ -13,6 +13,8 @@ from typing import Any, Final
 
 import yaml
 
+from orchestrator import factory_chain_read
+
 
 class PackageSourceError(Exception):
     pass
@@ -228,7 +230,7 @@ def _factory_events_file() -> Path:
     return home / "events.jsonl"
 
 
-def _verify_factory_chain() -> None:
+def _security_standards_env() -> dict[str, str]:
     sec_std_dir = _security_standards_dir()
     if sec_std_dir is None:
         raise _approval_refused("security-standards checkout is unavailable")
@@ -238,6 +240,11 @@ def _verify_factory_chain() -> None:
     env["PYTHONPATH"] = (
         f"{src_dir}{os.pathsep}{existing_pythonpath}" if existing_pythonpath else str(src_dir)
     )
+    return env
+
+
+def _verify_factory_chain() -> None:
+    env = _security_standards_env()
     try:
         result = subprocess.run(
             [sys.executable, "-m", "factory_events", "verify"],
@@ -296,6 +303,81 @@ def _iter_package_approval_events() -> list[dict[str, Any]] | None:
     return events
 
 
+def _database_package_approval_events() -> list[dict[str, Any]]:
+    """Verify the database chain and read its `package.approved` events in one snapshot.
+
+    The walk runs in `orchestrator.factory_chain_read`, under this interpreter with
+    security-standards' `src` on its path, so the verify and the events matched below come from
+    one read-only repeatable-read transaction (ADR-0055 amendment 24 item 8). The DSN reaches it
+    through the environment, never argv. Its one JSON record is captured, never relayed to this
+    process's stdout, which `emit-intake-payload` reserves for the payload the carrier parses.
+    Anything but a verified walk refuses, and the child's stderr isn't relayed either.
+    """
+    env = _security_standards_env()
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "orchestrator.factory_chain_read"],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=_CHAIN_VERIFY_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise _approval_refused(
+            f"factory event database chain could not be read ({type(exc).__name__})"
+        ) from exc
+    try:
+        record = json.loads(result.stdout.strip().splitlines()[-1])
+    except (IndexError, json.JSONDecodeError) as exc:
+        raise _approval_refused("factory event database chain read gave no answer") from exc
+    if not isinstance(record, dict):
+        raise _approval_refused("factory event database chain read gave no answer")
+    if (
+        result.returncode != factory_chain_read.VERIFIED
+        or record.get("outcome") != factory_chain_read.VERIFIED_OUTCOME
+    ):
+        raise _approval_refused(_database_refusal_cause(record))
+    events = record.get("package_approved")
+    if not isinstance(events, list):
+        raise _approval_refused("factory event database chain read gave no answer")
+    return [event for event in events if isinstance(event, dict)]
+
+
+def _database_refusal_cause(record: Mapping[str, Any]) -> str:
+    if record.get("outcome") == "broken":
+        return f"factory event database chain did not verify past seq {record.get('seq')}"
+    error_type = record.get("error_type")
+    if isinstance(error_type, str) and error_type.isidentifier():
+        return f"factory event database chain could not be read ({error_type})"
+    return "factory event database chain could not be read"
+
+
+def _verified_package_approval_events() -> list[dict[str, Any]]:
+    """The verified chain's `package.approved` events: the database's, else the file's.
+
+    With the read DSN set, only the database is read, and any error refuses: there is no file
+    fallback (ADR-0055 amendment 24 items 8 and 10). With only the append DSN set, FE-1's
+    `factory_events verify` would verify the database while the events came from the file, so
+    the read refuses rather than match one chain against another's verify. With neither set,
+    the file chain answers as it always has.
+    """
+    # FE-1's chain DSNs (security-standards `factory_events.chain`), spelled as literals so
+    # `test_intent_edges` reads them. Neither value is ever logged or put in a message.
+    if os.environ.get("FACTORY_EVENTS_READ_DSN"):
+        return _database_package_approval_events()
+    if os.environ.get("FACTORY_EVENTS_APPEND_DSN"):
+        raise _approval_refused(
+            "FACTORY_EVENTS_APPEND_DSN is set but FACTORY_EVENTS_READ_DSN isn't: "
+            "refusing to read the file chain"
+        )
+    _verify_factory_chain()
+    events = _iter_package_approval_events()
+    if events is None:
+        raise _approval_refused("factory event log is unreadable")
+    return events
+
+
 def _approval_event_to_verified(
     event: Mapping[str, Any],
     *,
@@ -335,6 +417,7 @@ def _approval_refused(cause: str) -> PackageSourceError:
 
 
 def _verified_approval_from_events(
+    events: list[dict[str, Any]],
     *,
     package_id: str,
     approved_hash: str,
@@ -343,9 +426,6 @@ def _verified_approval_from_events(
     commit: str,
     event_id: str,
 ) -> VerifiedApproval:
-    events = _iter_package_approval_events()
-    if events is None:
-        raise _approval_refused("factory event log is unreadable")
     for event in events:
         verified = _approval_event_to_verified(
             event,
@@ -384,8 +464,8 @@ def _verify_current_approval(
         raise _approval_refused("intent-packages checkout is unavailable")
     if not sibling_verification:
         raise _approval_refused("intent-packages verify-approval failed")
-    _verify_factory_chain()
     return _verified_approval_from_events(
+        _verified_package_approval_events(),
         package_id=package_id,
         approved_hash=approved_hash,
         revision=revision,

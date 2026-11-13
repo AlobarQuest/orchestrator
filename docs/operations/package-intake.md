@@ -123,8 +123,18 @@ neither the lane nor staging is available.
 
 1. Emit the verified body (offline — no API token, runs the hash / verify-approval
    / factory-chain checks; requires the local package sources at
-   `~/Projects/intent-packages`, `~/.factory/events.jsonl`,
-   `~/Projects/security-standards`):
+   `~/Projects/intent-packages` and `~/Projects/security-standards`, and the factory-events
+   chain):
+
+   - With `FACTORY_EVENTS_READ_DSN` set, the chain is the factory-events database. The emitter
+     verifies it and reads its approvals in one read-only snapshot
+     (`orchestrator.factory_chain_read`), and any error refuses. It never reads the file.
+   - With only `FACTORY_EVENTS_APPEND_DSN` set, the emitter refuses rather than read the file.
+   - With neither set, the chain is the file at `$FACTORY_EVENTS_HOME/events.jsonl`
+     (`~/.factory/events.jsonl` by default).
+
+   Only the work carrier holds the read DSN (ADR-0055 amendment 25 item 1), so once the chain is
+   the database, a hand run of this command refuses.
 
    ```bash
    orchestrator emit-intake-payload <package-dir> \
