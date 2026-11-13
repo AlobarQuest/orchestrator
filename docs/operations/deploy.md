@@ -463,15 +463,15 @@ one lane") still needs the following, in this order, each in its own change or a
 register it either. It clones nothing and keeps no state, so its compose mounts no volume. Its
 crontab runs `lane-run change-proposer --submit` hourly at minute 35, as the Mac job's
 `StartInterval` of 3600 runs it with `--submit` in its plist; 35 is a minute no other lane starts
-on. Its `.bws-secrets.toml` secrets are the observer bearer, the change-manager propose bearer and
-the read-only App's key, all read with the lane's one token; the propose bearer is read only on a
-`--submit` pass, as on the Mac, where the narrow and broad Keychain identities still read the first
-two. The bare run is the lane's dry run: it reads the observer bearer and mints its read token,
-writes nothing, and pings nothing. The check is an outcome alarm that pings only on `--submit`
-passes: its compose leaves `SDS_DEADMAN_PING_URL_UUID` empty until the lane's ping-URL secret
-exists, so until then a `--submit` pass in the container still runs, pings nothing and says so. The
-read-App key row's `runtime-fetch` reader for `scripts/run-change-proposer.sh` landed with the
-launcher. Its cut-over (ADR-0059, "Cut-over for one lane") still needs the following, in this
+on. Its `.bws-secrets.toml` secrets are the observer bearer, the change-manager propose bearer, the
+read-only App's key and its ping-URL secret, all read with the lane's one token; the propose bearer
+is read only on a `--submit` pass, as on the Mac, where the narrow and broad Keychain identities
+still read the first two. The bare run is the lane's dry run: it reads the observer bearer and mints
+its read token, writes nothing, and pings nothing. The check is an outcome alarm that pings only on
+`--submit` passes: its compose names `SDS_DEADMAN_PING_URL_UUID`, the BWS secret id of
+`change-proposer-ping-url`, which the container's dead-man helper reads the URL from with the lane's
+own token (`scripts/sds-deadman.sh`). The read-App key row's `runtime-fetch` reader for
+`scripts/run-change-proposer.sh` landed with the launcher. Its cut-over (ADR-0059, "Cut-over for one lane") still needs the following, in this
 order, each in its own change or act:
 
 1. The orchestrator serving this release; then HQ creates `sds-lane-change-proposer` from the
