@@ -394,7 +394,7 @@ def test_a_derivation_that_fails_otherwise_passes_its_code_through_with_no_mint(
 
 
 def test_without_a_ping_url_secret_the_pass_still_runs_and_pings_nothing(tmp_path: Path) -> None:
-    """The compose's empty `SDS_DEADMAN_PING_URL_UUID` falls through to the name lookup, which
+    """An empty `SDS_DEADMAN_PING_URL_UUID` falls through to the name lookup, which
     needs the broad identity `lane-run` doesn't pass. `/usr/bin/security` is asked there (macOS
     has it, the image doesn't), so the stand-in broad identity keeps the real Keychain out of the
     test; in the container nothing would read the Healthchecks key at all."""
@@ -454,9 +454,8 @@ def test_the_compose_meets_the_add_refusals_and_maps_nothing_else() -> None:
         "environment": {
             "BWS_ACCESS_TOKEN": "${MEMBERSHIP_CHECK_BWS_ACCESS_TOKEN}",
             "LANE_SCHEDULE_ENABLED": "${LANE_SCHEDULE_ENABLED:-false}",
-            # Empty until the lane's ping-URL secret exists (`test_deploy_lanes.py`'s
-            # `placeholders`).
-            "SDS_DEADMAN_PING_URL_UUID": "",
+            # The BWS secret id of `membership-check-ping-url`, not a secret and not the ping URL.
+            "SDS_DEADMAN_PING_URL_UUID": "5fc44897-b4df-44ae-8491-b5000129d9be",
         },
         "restart": "unless-stopped",
     }
@@ -492,11 +491,15 @@ def test_no_two_lanes_start_a_pass_in_the_same_minute() -> None:
 
 def test_the_repositorys_manifest_lists_the_checks_secrets() -> None:
     manifest = Path(".bws-secrets.toml").read_text()
+    ping_url_secret = "5fc44897-b4df-44ae-8491-b5000129d9be"
     assert deploy.lane_secrets(manifest, "membership-check") == [
         OBSERVER_UUID,
         CHANGE_MANAGER_UUID,
         READ_APP_KEY_UUID,
+        ping_url_secret,
     ]
+    # The launcher names each secret it reads, except the ping-URL secret, whose id reaches it
+    # from the compose through `lane-run`.
     launcher = LAUNCHER.read_text()
     for uuid in deploy.lane_secrets(manifest, "membership-check"):
-        assert uuid in launcher, uuid
+        assert uuid in launcher or uuid == ping_url_secret, uuid

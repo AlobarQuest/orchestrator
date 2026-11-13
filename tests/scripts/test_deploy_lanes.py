@@ -1187,9 +1187,11 @@ def test_every_lanes_ping_url_secret_is_listed_for_that_lane() -> None:
     """A lane's `--token` proof reads what `.bws-secrets.toml` lists for it, so a ping-URL secret
     its compose names but the manifest doesn't list would go unproved until its first ping. An
     empty value is a placeholder until the lane's ping-URL secret exists, allowed only for a lane
-    named in `placeholders`; a later change writes the id and removes the lane from it."""
+    named in `placeholders`, which is empty while every lane's compose names its secret's id; a
+    lane added before its ping-URL secret exists is named there until a later change writes the
+    id."""
     manifest = (ROOT / ".bws-secrets.toml").read_text()
-    placeholders = {"membership-check"}
+    placeholders: set[str] = set()
     named = {}
     blank = set()
     for path in sorted((ROOT / "lanes").glob("*/compose.yaml")):
@@ -1204,6 +1206,7 @@ def test_every_lanes_ping_url_secret_is_listed_for_that_lane() -> None:
         "deploy-watcher",
         "execution-watch",
         "landing-ledger",
+        "membership-check",
         "pin-watcher",
         "revision-watcher",
         "unit-verifier",
