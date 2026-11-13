@@ -113,11 +113,11 @@ DSN.
 - **`make check`** in the worktree, committed tree, with
   `TEST_DATABASE_URL=…/orchestrator_test_hq_w_141` and
   `SECURITY_STANDARDS_DIR=~/Projects/security-standards`: rc 0. Ruff check, ruff format and
-  pyright were clean, and pytest reported **14,883 passed, 1 skipped**. The 7 integration tests
+  pyright were clean, and pytest reported **14,886 passed, 1 skipped**. The 7 integration tests
   are deselected, as intended.
 - **CI** on PR #696: see "Concerns", item 7, for its state when this report was written.
 - **Database tests**: `SECURITY_STANDARDS_DIR=<FE-1 checkout> scripts/check-integration.sh`
-  reported **7 passed** (14,884 deselected) against a throwaway `postgres:16-alpine` container,
+  reported **7 passed** (14,887 deselected) against a throwaway `postgres:16-alpine` container,
   run twice, the second time on the committed tree. No container was left behind.
   - The FE-1 checkout was a `git archive` of security-standards `origin/main` (`e89f69b`) into
     `/tmp`, because the local checkout (`1baec77`) doesn't contain FE-1.
