@@ -20,10 +20,13 @@ def test_it_stays_an_outcome_alarm_and_never_arms_the_switch() -> None:
 
 
 def test_the_sender_token_is_read_only_by_an_acting_pass_with_the_narrow_identity() -> None:
+    """`_narrow_secret` is the narrow identity on the Mac and the lane's token in the container
+    (`tests/scripts/test_run_rotation_decomposer.py` runs both)."""
     lines = _lines()
     fetch = [i for i, line in enumerate(lines) if '"$SDS_BRIDGE_ALERT_UUID"' in line]
     assert len(fetch) == 1
-    assert lines[fetch[0]].endswith('"$NARROW_IDENTITY")"')
+    assert lines[fetch[0]].endswith('_narrow_secret "$SDS_BRIDGE_ALERT_UUID")"')
+    assert '  _narrow_secret() { sds_bws_value "$1" "$NARROW_IDENTITY"; }' in lines
     guard = max(i for i in range(fetch[0]) if lines[i] == 'if [ "$_acting" -eq 1 ]; then')
     assert lines.index("fi", guard) > fetch[0]
     assert fetch[0] < lines.index("unset NARROW_IDENTITY BROAD_IDENTITY")

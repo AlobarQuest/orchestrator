@@ -1,0 +1,9 @@
+# sds-lane-rotation-decomposer's schedule: one acting pass every hour, as the Mac job's
+# `StartInterval` of 3600 runs it (`scripts/com.devon.rotation-decomposer.plist`), in the image's
+# America/New_York time. The decomposer takes no acting flag: every run but `--dry-run` proposes,
+# tells alert-hub and pings its outcome alarm, and the plist passes no arguments. Minute 50 is one
+# no other lane uses: execution-watch runs on the quarter-hours, the unit verifier on 2-52/10, the
+# deploy watcher on 20, the pin watcher on 07:25, the landing ledger on 07:30, the change proposer
+# on 35, the revision watcher on 40 and the membership check on 07:47. The entrypoint runs this file
+# only when LANE_SCHEDULE_ENABLED is `true`.
+50 * * * * lane-run rotation-decomposer

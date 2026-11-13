@@ -1,0 +1,35 @@
+# sds-lane-rotation-decomposer (ADR-0059 increment 4): the rotation-decomposer lane. HQ creates the
+# resource from this file. It serves nothing: no port, no domain, so no Traefik labels and no
+# `networks:` entry, as `lanes/landing-ledger/compose.yaml`. Its state is the acting pass's
+# `alerts.json` and `approval-since.json`, on a named volume at `ROTATION_DECOMPOSER_STATE_DIR`,
+# as `lanes/pin-watcher/compose.yaml`; the Mac's `sds/rotation-decomposer` files are copied in at
+# cut-over, before the first acting pass, or the alerts the Mac left firing never resolve and every
+# approval-wait clock restarts. Its registry mirrors aren't state: they sit under `lane-run`'s new
+# `HOME` and each pass refetches them, anonymously (ADR-0059 decision 1, "Lane state").
+# The lane's token is the resource's own `ROTATION_DECOMPOSER_BWS_ACCESS_TOKEN` variable, which the
+# VM rotation executor writes; this file names it and never holds a value. With it the launcher
+# reads the orchestrator's SYSTEM bearer, the change-manager READ bearer and, on acting passes
+# only, the `sds-bridge` alert sender (`scripts/run-rotation-decomposer.sh`).
+# `SDS_DEADMAN_PING_URL_UUID` is empty until the lane's ping-URL secret,
+# `rotation-decomposer-ping-url` in `Rotation / Keepers`, exists: the VM root creates that keeper at
+# cut-over and a later change writes its id here. While it is empty the dead-man helper falls back
+# to the Mac's lookup by check name, which needs the broad Keychain identity the container doesn't
+# have, so an acting pass pings nothing and logs `no SDS_DEADMAN_PING_URL_UUID and no broad BWS
+# identity — alerting disabled this run` (`scripts/sds-deadman.sh`); a `--dry-run` pass pings
+# nothing anyway. The pass itself still runs. The schedule stays off (`LANE_SCHEDULE_ENABLED`)
+# until the cut-over turns it on.
+services:
+  rotation-decomposer:
+    image: ghcr.io/alobarquest/sds-lanes:${SDS_LANES_IMAGE_TAG}
+    command: ["rotation-decomposer"]
+    environment:
+      BWS_ACCESS_TOKEN: ${ROTATION_DECOMPOSER_BWS_ACCESS_TOKEN}
+      LANE_SCHEDULE_ENABLED: ${LANE_SCHEDULE_ENABLED:-false}
+      ROTATION_DECOMPOSER_STATE_DIR: /var/lib/sds/rotation-decomposer
+      SDS_DEADMAN_PING_URL_UUID: ""
+    volumes:
+      - sds-lanes-rotation-decomposer-state:/var/lib/sds/rotation-decomposer
+    restart: unless-stopped
+
+volumes:
+  sds-lanes-rotation-decomposer-state:
