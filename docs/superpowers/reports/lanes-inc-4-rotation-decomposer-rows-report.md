@@ -5,7 +5,8 @@ Outcome: done
 - **PR:** AlobarQuest/orchestrator#693, ready for review, not merged.
 - **Base:** `origin/main` at `261d99bf`.
 - **Branch:** `hq/lanes-inc-4-rotation-decomposer-rows`.
-- **Code commit:** `58d3b6c0`. This report is committed on top of it.
+- **Code commits:** `58d3b6c0` (rows and tests), then a follow-up that reflows the compose comment
+  to 100 columns and tightens this report. The PR's final head is in HQ's closing message.
 
 ## What I built
 
@@ -207,15 +208,16 @@ The 03:00 scan and the rotation proposer both read the main tree's `.cred-consum
 - The rotation proposer gets "due" from `security-drift-cli cred-findings`, "which loads the
   listed registries and the rotation state exactly as the 03:00 scan does"
   (`src/rotation_proposer/findings.py` lines 3-16).
-- The registry list (`~/.config/infra-drift/cred-consumers.list`) names the main tree's file.
-  I read only its line count.
+- The registry list (`~/.config/infra-drift/cred-consumers.list`) names the main tree's file:
+  `grep -c` for the exact line `/Users/devon/Projects/orchestrator/.cred-consumers.toml` returns 1.
+  I read nothing else from it.
 
 ADR-0031 §1 says, "Each scheduled launcher fast-forwards the working copy whose code it is about to
 run, as its first step." Every orchestrator lane launcher calls
 `activate_checkout "$REPO_ROOT" "$0" "$@"`. Examples are `scripts/run-change-proposer.sh:102`,
-`run-rotation-decomposer.sh:69`, and `run-unit-verifier.sh:64`. Those launchers run at least
-hourly, so the main tree reaches `origin/main` within the hour after the merge. The 03:00 scan and
-the next rotation-proposer pass read the rows from there.
+`run-rotation-decomposer.sh:69`, and `run-unit-verifier.sh:64`. Activation is best-effort
+(ADR-0031 §2), so the main tree reaches `origin/main` on the next launcher pass that can
+fast-forward. The 03:00 scan and the next rotation-proposer pass read the rows from there.
 
 ## Tests and checks
 
@@ -224,7 +226,7 @@ the next rotation-proposer pass read the rows from there.
 | `make check` (`orchestrator_test_hq_w_135`, `PGTZ=UTC`, fixture `SECURITY_STANDARDS_DIR`) | Exit 0. Lint: "All checks passed!" pyright: 0 errors. pytest: **14850 passed, 1 skipped**. My first run failed on one line over 100 characters in the new test; I wrapped it and reran. |
 | Targeted run (new test, `test_change_proposer_rows.py`, `test_deploy_lanes.py`) | 128 passed |
 | Security scan from the repo root | 0 BLOCK, 2 WARN, 1 INFO. See the following note. |
-| `/code-review` (low) on `origin/main...HEAD` | No findings |
+| `/code-review` (low) on `origin/main...HEAD` | The skill returned an empty result, `(none)`. I record that as no reported findings, not as a confirmed clean review. |
 
 The two scan WARNs aren't from this diff:
 

@@ -11,12 +11,12 @@
 # reads the orchestrator's SYSTEM bearer, the change-manager READ bearer and, on acting passes
 # only, the `sds-bridge` alert sender (`scripts/run-rotation-decomposer.sh`).
 # `SDS_DEADMAN_PING_URL_UUID` is empty until a later change writes the id of the lane's ping-URL
-# secret, `rotation-decomposer-ping-url` in `Rotation / Keepers`, created at HQ gate G-53. While it is empty the dead-man helper falls back
-# to the Mac's lookup by check name, which needs the broad Keychain identity the container doesn't
-# have, so an acting pass pings nothing and logs `no SDS_DEADMAN_PING_URL_UUID and no broad BWS
-# identity — alerting disabled this run` (`scripts/sds-deadman.sh`); a `--dry-run` pass pings
-# nothing anyway. The pass itself still runs. The schedule stays off (`LANE_SCHEDULE_ENABLED`)
-# until the cut-over turns it on.
+# secret, `rotation-decomposer-ping-url` in `Rotation / Keepers`, created at HQ gate G-53. While it
+# is empty the dead-man helper falls back to the Mac's lookup by check name, which needs the broad
+# Keychain identity the container doesn't have, so an acting pass pings nothing and logs
+# `no SDS_DEADMAN_PING_URL_UUID and no broad BWS identity — alerting disabled this run`
+# (`scripts/sds-deadman.sh`); a `--dry-run` pass pings nothing anyway. The pass itself still runs.
+# The schedule stays off (`LANE_SCHEDULE_ENABLED`) until the cut-over turns it on.
 services:
   rotation-decomposer:
     image: ghcr.io/alobarquest/sds-lanes:${SDS_LANES_IMAGE_TAG}
