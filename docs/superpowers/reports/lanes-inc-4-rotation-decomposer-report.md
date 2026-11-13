@@ -3,7 +3,7 @@ Outcome: done
 # Build report: the rotation decomposer's lane files and launcher (ADR-0059 increment 4, step 3f-3)
 
 Worker W-129. Branch `hq/lanes-inc-4-rotation-decomposer`, base `origin/main` at `2cf43757`. PR:
-PR_PLACEHOLDER (opened and marked ready, not merged).
+PR #689 (opened and marked ready, not merged).
 
 ## What changed
 
