@@ -500,15 +500,16 @@ state: they sit under `lane-run`'s new `HOME`, so each pass refetches the four p
 repositories anonymously with the image's `git`. Its crontab runs `lane-run rotation-decomposer`
 hourly at minute 50, as the Mac job's `StartInterval` of 3600 runs it with no arguments; 50 is a
 minute no other lane starts on. Its `.bws-secrets.toml` secrets are the orchestrator SYSTEM bearer,
-the change-manager READ bearer and the `sds-bridge` alert sender, all read with the lane's one
-token; the sender is read only on an acting pass (no `--dry-run`), as on the Mac, where the narrow
-Keychain identity still reads the SYSTEM bearer and the sender and the broad one the READ bearer. It
-needs no GitHub token: it calls no GitHub API. `--dry-run` is the lane's reporting mode: it reads
-the two bearers, proposes nothing, sends nothing and pings nothing. The check is an outcome alarm
-that pings only on acting passes: its compose leaves `SDS_DEADMAN_PING_URL_UUID` empty until the
-lane's ping-URL secret exists, so until then an acting pass in the container still runs, pings
-nothing and says so. Its cut-over (ADR-0059, "Cut-over for one lane") still needs the following, in
-this order, each in its own change or act:
+the change-manager READ bearer, the `sds-bridge` alert sender and its ping-URL secret, all read with
+the lane's one token; the sender is read only on an acting pass (no `--dry-run`), as on the Mac,
+where the narrow Keychain identity still reads the SYSTEM bearer and the sender and the broad one
+the READ bearer. It needs no GitHub token: it calls no GitHub API. `--dry-run` is the lane's
+reporting mode: it reads the two bearers, proposes nothing, sends nothing and pings nothing. The
+check is an outcome alarm that pings only on acting passes: its compose names
+`SDS_DEADMAN_PING_URL_UUID`, the BWS secret id of `rotation-decomposer-ping-url`, which the
+container's dead-man helper reads the URL from with the lane's own token
+(`scripts/sds-deadman.sh`). Its cut-over (ADR-0059, "Cut-over for one lane") still needs the
+following, in this order, each in its own change or act:
 
 1. The orchestrator serving this release; then HQ creates `sds-lane-rotation-decomposer` from the
    compose without deploying it.

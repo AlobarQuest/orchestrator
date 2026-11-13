@@ -194,7 +194,7 @@ def test_an_unreadable_secret_exits_1_before_the_pass(tmp_path: Path, refused: s
 def test_without_a_ping_url_secret_an_acting_pass_still_runs_and_pings_nothing(
     tmp_path: Path,
 ) -> None:
-    """The compose's empty `SDS_DEADMAN_PING_URL_UUID` falls through to the name lookup, which
+    """An empty `SDS_DEADMAN_PING_URL_UUID` falls through to the name lookup, which
     needs the broad identity `lane-run` doesn't pass. `/usr/bin/security` is asked there (macOS
     has it, the image doesn't), so the stand-in broad identity keeps the real Keychain out of the
     test; in the container nothing would read the Healthchecks key at all."""
@@ -309,8 +309,8 @@ def test_the_compose_meets_the_add_refusals_and_maps_nothing_else() -> None:
             "BWS_ACCESS_TOKEN": "${ROTATION_DECOMPOSER_BWS_ACCESS_TOKEN}",
             "LANE_SCHEDULE_ENABLED": "${LANE_SCHEDULE_ENABLED:-false}",
             "ROTATION_DECOMPOSER_STATE_DIR": "/var/lib/sds/rotation-decomposer",
-            # A placeholder until the lane's ping-URL keeper exists (test_deploy_lanes.py).
-            "SDS_DEADMAN_PING_URL_UUID": "",
+            # The BWS secret id of `rotation-decomposer-ping-url`: not a secret, not the ping URL.
+            "SDS_DEADMAN_PING_URL_UUID": "936bbbf2-dc3b-4343-979a-b501013afc87",
         },
         "volumes": ["sds-lanes-rotation-decomposer-state:/var/lib/sds/rotation-decomposer"],
         "restart": "unless-stopped",
@@ -347,10 +347,13 @@ def test_no_two_lanes_start_a_pass_in_the_same_minute() -> None:
 
 
 def test_the_repositorys_manifest_lists_the_lanes_secrets() -> None:
-    """The lane's `--token` proof reads what the manifest lists for it; the launcher names each."""
+    """The lane's `--token` proof reads what the manifest lists for it; the launcher names each
+    secret it reads, except the ping-URL secret, whose id reaches it from the compose through
+    `lane-run`."""
     manifest = Path(".bws-secrets.toml").read_text()
+    ping_url_secret = "936bbbf2-dc3b-4343-979a-b501013afc87"
     secrets = deploy.lane_secrets(manifest, "rotation-decomposer")
-    assert sorted(secrets) == sorted([SYSTEM_UUID, READ_UUID, ALERT_UUID])
+    assert sorted(secrets) == sorted([SYSTEM_UUID, READ_UUID, ALERT_UUID, ping_url_secret])
     launcher = LAUNCHER.read_text()
     for uuid in secrets:
-        assert uuid in launcher, uuid
+        assert uuid in launcher or uuid == ping_url_secret, uuid
