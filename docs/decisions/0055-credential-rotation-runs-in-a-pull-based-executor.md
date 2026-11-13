@@ -34,6 +34,8 @@
     credential's generated package).
   - 2026-11-10, amendment 23, accepted (the executor reads a lane check's ping URL from the
     Healthchecks API; no paste).
+  - 2026-11-13, amendment 24, proposed (the factory-events chain of record is a VPS database;
+    approvers append, the carrier verifies there).
 - **Supersedes:** the parts of ADR-0054 named in "What this changes in ADR-0054".
 - **Relates to:** ADR-0054 (the SDS owns credential rotation), ADR-0052 (superseding an unworked
   decomposition), ADR-0039 (out-of-process producers), ADR-0011 (known-good patterns)
@@ -3271,3 +3273,279 @@ package is open.
 - **Devon's acts per lane** fall to the token's mint and paste.
 - **Unchanged.** The Keychain instance, the lane token's type and binds, the issue-fact check, the
   verifier, amendment 21's lookup and its evidence, and every other type.
+
+## Amendment 24 — The factory-events chain of record is a VPS database (2026-11-13)
+
+**Status: Proposed (2026-11-13).** Accepted on merge. HQ merges it only after a clean Opus
+whole-branch review (HQ D-12, limit 3). It closes amendment 22's open item "The chain the carrier
+reads". It rests on four of Devon's answers, all given in interactive HQ sessions on 2026-11-13 and
+recorded in sds-hq `state/decisions.md`:
+
+- **D-40 B** (11:40 UTC): "Approvals write their package.approved event straight into the shared
+  factory-events database chain, and the carrier verifies there; append-only credentials for the
+  approvers, read-only for the carrier."
+- **D-42 A** (13:37 UTC): "A new Postgres resource on the VPS (Coolify, Flavor B pattern) becomes
+  the factory-events chain of record: approvers append each event through a new append function in
+  factory_events (append-only role), and the work carrier reads it from the VPS (read-only role).
+  The Mac nightly factory-events job ships its other events into the same VPS chain, so there is
+  one chain of record, and the Mac database retires once it does."
+- **D-43 B** (about 17:03 UTC): only the approvers (Devon's `approve`, the cycle's
+  `standing-approve`, the bump proposer's `approve --by-policy`) and the Mac nightly hold the
+  append-only role. The moved rotation proposer holds no chain credential: its `revise` and
+  `transition` write no chain event and record `event_id` None in the lineage, as a failed emit
+  does today.
+- **D-44 A** (about 17:03 UTC): the read-only role also serves Devon's hand paths on the Mac
+  (`orchestrator intake-package`, the `factory` journey's `emit-intake-payload`, and
+  intent-packages `verify-approval` run by hand), not only the work carrier. It can't append, so
+  no write path widens.
+
+ADR-0059 amendment 7 brings factory-events into Phase 1 to the same extent and orders the
+increments. Code reads cite orchestrator `2cf43757`, intent-packages `78bb302`, security-standards
+`1baec77` and sds-hq `e5c4547`.
+
+### Context
+
+**One emitter writes every lifecycle event, and only `approve` stops on a failed emit.** Each
+intent-packages lifecycle command passes `FactoryEventsEmitter` (`cli.py`, lines 129, 171, 189 and
+203), which runs `python -m factory_events emit` as a subprocess with the actor from
+`FACTORY_AGENT_ID` (`emitter.py`, lines 87-128). `do_approve` emits `package.approved` before it
+writes the lineage, and an `EmitError` aborts it with nothing written (`operations.py`, lines
+248-249 and 292-305). `do_transition` and `do_revise` catch `EmitError` and record `event_id`
+None (lines 158-165 and 351-358).
+
+**Three callers emit `package.approved`, all through `intent-packages approve`.** No other code in
+the three repositories emits the action:
+
+| Caller | Where | Approver |
+|---|---|---|
+| Devon's `approve` | intent-packages `cli.py`, `_run_approve` (lines 137-180), calling `do_approve` (line 169) | `devon` |
+| The cycle's standing approval | sds-hq `src/sds_hq/standing_approve.py`, `approve` (lines 540-547), with `FACTORY_AGENT_ID` `lane-credential-policy` (line 36) | `policy:non-software-operational@v<N>` |
+| The bump proposer | orchestrator `src/bump_proposer/standing.py`, line 397 (`approve --by-policy`) | `policy:dependency-update@v<N>` |
+
+**Four readers match it.** intent-packages' `_events_file_has_matching_approval` (`operations.py`,
+lines 476-508, the match at 503) under `default_chain_checker` (511-530) and `verify_approval`
+(533); the orchestrator's `_verify_factory_chain` (`package_sources.py`, lines 231-253),
+`_iter_package_approval_events` (276-296, the match at 294) and `_verified_approval_from_events`
+(337-361), reached through `_verify_current_approval` (364-395), which also runs intent-packages'
+`verify-approval` as a subprocess (line 168). Only `orchestrator` CLI commands import
+`package_sources` (`cli.py`, line 13): the carrier's `emit-intake-payload` (`work_carrier/prepare.py`,
+lines 117-126), a person's `intake-package` (`cli.py`, line 254) and the `factory` journey
+(intent-packages `factory/journey.py`, lines 141-148). `work_carrier/standing.py` (lines 16-22)
+trusts the payload the emitter verified and reads no chain itself.
+
+**The chain is a file on each machine.** `store.append_event` (security-standards
+`factory_events/store.py`, lines 60-80) appends one line under an `flock`, linking it by
+`seq` and `prev_hash`; a line's `hash` is SHA-256 over the canonical JSON of `seq`, `prev_hash`
+and the event (lines 32-35). `verify_chain` (122-155) walks every line. The path is
+`$FACTORY_EVENTS_HOME/events.jsonl` (lines 20-25), and both readers resolve it the same way
+(intent-packages `operations.py`, line 419; orchestrator `package_sources.py`, lines 226-228).
+In a VPS container that file is empty, so a moved carrier would refuse every intake.
+
+**The Mac's database is a projection with one owner.** `ship` (security-standards `ship.py`,
+lines 67-102) bulk-inserts the file into `factory_events` once a night, runs its DDL on every call
+(lines 60 and 72), may `TRUNCATE` (line 74), and anchors the file's head in `chain_heads` (lines
+3-5 and 100), which `verify --against-anchor` reads (`cli.py`, lines 47-60). It connects with
+`FACTORY_DB_DSN`, the database's one role (`deploy/factory-events-db/docker-compose.yml`, lines
+7-11, port 5545 on the Mac's OrbStack host engine). It has no single-event append and no verify of
+its own.
+
+### Decision
+
+1. **The chain of record is a Postgres database on the VPS.** A new Coolify database resource on
+   `prod-vps` (Flavor B pattern: a separate database resource) holds the factory-events chain.
+   Postgres is its primary store; no cache or queue holds an event that the database doesn't.
+   After the cut-over (ADR-0059 amendment 7, step FE-5), no writer and no verifier uses a local
+   file.
+2. **The table links events as the file does.** Each row carries `seq`, `prev_hash`, `hash` and
+   the event, and `hash` uses `store._line_hash`'s formula unchanged. `event_id` is the primary
+   key, and `seq` and `prev_hash` are each unique. A trigger refuses every `UPDATE`, `DELETE` and
+   `TRUNCATE` on it, whatever the role. Because the formula is unchanged, a record imported from
+   the Mac's file keeps its `seq`, `prev_hash` and `hash`, and one walker verifies both. Who
+   runs that import, and under which role, is Devon's named decision ("Open before building").
+3. **Three roles, two of them held.**
+   - **Append-only role.** `SELECT` and `INSERT` on the chain table, nothing else: no `UPDATE`,
+     `DELETE`, `TRUNCATE` or DDL. It reads the head it links to.
+   - **Read-only role.** `SELECT` on the chain table, nothing else.
+   - **The owner.** The resource's own superuser, kept in Coolify. Nothing holds it at run time.
+     It's used only in the announced acts that set up the schema and the two roles (ADR-0059
+     amendment 7, step FE-4).
+4. **Who appends, through what.** A new `factory_events` append function writes one event under
+   the append-only role. Its holders are exactly these (D-43 B):
+   - **Devon's `approve`**, on the Mac.
+   - **The cycle's `standing-approve`** (sds-hq), on the Mac.
+   - **The bump proposer's `approve --by-policy`**, on the Mac and, after ADR-0059 step 3f-4, in
+     its container.
+   - **The Mac nightly**, whose adapters append the high-power and change-manager events through
+     the same function (ADR-0059 amendment 7).
+
+   Each reaches the function through the intent-packages emitter, unchanged in shape, or the
+   nightly's `adapt`. Because the emitter serves every lifecycle command, a holder's `transition`,
+   `revise` and `supersede` events land in the chain too.
+5. **What a non-holder's lifecycle command does.** The rotation proposer runs `revise` and
+   `transition` (`rotation_proposer/standing.py`, lines 281 and 290) and never `approve`. It holds
+   no chain credential (D-43 B), on the Mac after the cut-over and in its container after ADR-0059
+   step 3f-5. Its emits fail, and `do_transition` and `do_revise` record `event_id` None in the
+   lineage, as a failed emit does today. The chain then holds none of that lane's
+   `package.transitioned` or `package.revised` events. No verifier reads either action. The same
+   holds for any other caller that runs a lifecycle command with no append credential.
+6. **How an append keeps the chain linear.** The append function runs one transaction: it takes a
+   transaction-level advisory lock that every append takes, reads the row with the highest `seq`,
+   inserts the next row (`seq` plus 1, `prev_hash` the head's `hash`), and commits, which releases
+   the lock. Two concurrent appends therefore run one after the other. A writer that skipped the
+   lock and linked to the same head would break the `seq` or `prev_hash` uniqueness, so its
+   insert fails rather than forking the chain. An event whose `event_id` is already present fails
+   on the primary key.
+7. **An append failure writes nothing.** Any failure is an append failure: the database
+   unreachable, a refused role, a lock or uniqueness conflict, or any exception. The function
+   rolls back, logs it, and raises, so `factory_events emit` exits non-zero, the emitter raises
+   `EmitError`, and `do_approve` aborts before the lineage is written, as it does today. There's
+   no retry into another store and no fallback to a file. The person or lane runs `approve` again.
+8. **How the carrier verifies.** Each verifier reads under the read-only role in one read-only
+   transaction at repeatable read, so the walk and the match see one snapshot. It walks every row
+   in `seq` order from 1, recomputing each `hash` and validating each event as `verify_chain` does
+   today, and refuses on the first break. Then it looks for the matching `package.approved` event:
+   - intent-packages' `default_chain_checker` matches hash and revision, as it does today.
+   - The orchestrator's verifier matches event id, package id, hash, revision, approver and
+     commit, as `_approval_event_to_verified` does today (`package_sources.py`, lines 299-330).
+
+   An unreachable database, a refused role or any error is not a "no": intent-packages raises
+   `ChainUnavailable`, so `verify_approval` returns False (lines 586-592), and the orchestrator
+   raises `PackageSourceError` ("approval verification failed: ..."). The carrier then refuses the
+   record with `package_not_intakeable`. A verified chain with no matching event refuses as today.
+   No verifier falls back to a file.
+9. **Who reads.** The read-only role's holders are the work carrier, on the Mac until ADR-0059
+   step 3f-2 and in its container after, and Devon's hand paths on the Mac (D-44 A): `orchestrator
+   intake-package`, the `factory` journey's `emit-intake-payload`, and intent-packages
+   `verify-approval` run by hand. Each carry makes three chain reads (the two orchestrator reads and
+   intent-packages' subprocess), and all three use the read-only role.
+10. **What the local file becomes.** At the cut-over, the Mac's `~/.factory/events.jsonl` is
+    imported into the VPS chain (item 2, by the actor and role Devon names) and then sealed: renamed
+    to an archive name, made read-only, and kept in the Mac's nightly backup as the record of the
+    chain before the cut-over. It's no longer written and no longer a cache; a cache a verifier
+    could fall back to would be a second chain, and a fallback on an unreachable database would fail
+    open. The cut-over's last step lands the changes that remove the file path from
+    `factory_events`' `emit`, `adapt` and `verify`, from intent-packages' chain checker, and from
+    the orchestrator's verifier (ADR-0059 amendment 7, step FE-5).
+11. **The credentials.** Two BWS secrets, each a DSN for one role. Both are **to be created** in
+    step FE-4 and recorded by UUID, never by name. Each secret's BWS project, and each BWS
+    machine account granted a read of it (on the Mac and in each lane container), is Devon's
+    named decision, taken before ADR-0059 amendment 7's act 3 runs. This amendment chooses none
+    of them, and act 3 stops until he has named them ("Open before building", "Each DSN's BWS
+    project and reading accounts"). The append DSN can't go to a shared or broad identity without
+    his decision, because every process that identity serves could then append, which widens D-43
+    B's holders. Two such identities are the nightly's `BWS_ACCESS_TOKEN_BROAD` and its Keychain
+    item `BWS_ACCESS_TOKEN_VPS_BACKUP` (security-standards `factory-events-nightly.sh`, lines
+    104-105). The table's "Read by" column names the processes D-43 B and D-44 A give each role,
+    not the accounts that fetch it.
+
+    | Secret (to be created) | Role | Read by | `.bws-secrets.toml` | Registry row |
+    |---|---|---|---|---|
+    | The append DSN | Append-only | Devon's `approve` on the Mac; the sds-hq cycle; the bump proposer lane; the Mac nightly | orchestrator (the bump proposer lane), security-standards (the nightly), sds-hq (the cycle) | One row in orchestrator `.cred-consumers.toml` listing every reader |
+    | The read DSN | Read-only | The work carrier lane; Devon's hand paths on the Mac (D-44 A) | orchestrator (the work carrier lane) | One row in orchestrator `.cred-consumers.toml` listing every reader |
+
+    No existing rotation class fits either secret, so neither row names a class yet ("Open before
+    building"). The resource's owner password stays in Coolify and isn't a lane's credential.
+12. **Network.** The database has no public FQDN and no public port. The work carrier's and the
+    bump proposer's containers reach it over Coolify's internal network, joining the external
+    `coolify` network. The Mac reaches it over the tailnet, at `prod-vps`'s tailnet address
+    (`ovh-vps1`), through a port reachable only on the tailnet ("Open before building").
+13. **Logging.** The append function and both verifiers log structured JSON to stdout, never to a
+    file. A record names the event id, the `seq`, a prefix of the head hash, the outcome, and an
+    error's type. No record holds the DSN, a password or a role's credential, and an error's text
+    from the driver isn't logged, because a connection error can repeat its DSN. Today `emit`
+    prints the bare event id on stdout (security-standards `cli.py`, line 33) and `seq` and the
+    head hash on stderr (line 34). The emitter's `_parse_event_id` (`emitter.py`, lines 40-67)
+    finds no JSON line with an `event_id` (lines 52-58) and takes the last whitespace-delimited
+    token of the last stdout line (lines 63-67). A JSON log record on stdout that carries an
+    `event_id` key is what the emitter reads first, so FE-1 must keep `emit`'s stdout within the
+    parser's contract ("Open before building", "`emit`'s stdout").
+14. **Schema setup.** The schema, the trigger and the two roles are created by a security-standards
+    script that the owner runs once, as an announced production act (step FE-4). They're never set
+    up in an image build step, and neither the append function nor a verifier runs DDL; `ship`'s
+    per-call DDL (lines 60 and 72) isn't carried over.
+15. **No exposure.** Nothing in this amendment declares a credential exposed (Infra Brain rule
+    1032). Both secrets are new, and none exists to rotate.
+16. **What it grants, and nothing more.** The two roles and their holders in items 3, 4 and 9, as
+    D-40 B, D-42 A, D-43 B and D-44 A give them. No other identity gets either credential, and the
+    owner is held by no one at run time. It names no BWS project, no machine account and no
+    import actor: each is Devon's named decision before the act that needs it.
+
+### Increments
+
+The order and the production acts are ADR-0059 amendment 7's: FE-1 (security-standards: the store,
+the import, the roles script), FE-2 (intent-packages: the emitter and the chain checker), FE-3
+(orchestrator: the verifier and the bump proposer's DSN), FE-4 (the database resource, its schema
+and roles, its two secrets and its backup), FE-5 (the cut-over: the import, the nightly's target
+switch, every holder's DSN, the seal and the file path's removal) and FE-6 (the Mac database's
+retirement). The work carrier's lane code (ADR-0059 step 3f-2) follows them. FE-4's act 3 waits
+for Devon's named decision on each DSN's BWS project and reading accounts, and FE-5's import for
+his named decision on its actor and role ("Open before building").
+
+### Open before building
+
+Each item names the step that settles it.
+
+- **Where the anchor lives (FE-1).** `chain_heads` in the Mac database evidences a rewrite of the
+  file (`ship.py`, lines 3-5). Once the chain of record is a database, an anchor in the same
+  database guards nothing against its owner. FE-1 decides where the head is anchored outside it
+  and how `verify --against-anchor` reads it. One candidate is the head the nightly already
+  reports in its `chain:factory-events` observation (`factory-events-nightly.sh`, line 67). FE-6
+  waits for it.
+- **The adapters' dedupe (FE-1).** The adapters derive event ids deterministically
+  (`high_power.py`, line 93; `change_manager.py`, line 130) behind file watermarks. FE-1 checks that
+  a re-run against the database skips an event it already holds rather than failing the night on
+  the primary key.
+- **The verify walk's cost (FE-1).** Each carry walks the whole chain three times. The Mac file held
+  3,751 events on 2026-11-13. FE-1 measures the walk against a copy that size and states the bound;
+  a walk that ends at an anchored head is the narrowing if it's needed.
+- **A rotation class for each secret (FE-4).** The nearest class, `postgres-role-password` (type
+  `postgres-role`, `rotation_worker/types.py`, lines 46-48 and 76), rotates a role whose consumers
+  are one Coolify service's containers, through the VPS helper and a restart
+  (`adapters/postgres_role.py`, lines 9-11 and 13-20). These readers include Mac processes that
+  read the DSN from BWS fresh each run. FE-4 decides whether that type fits or a new one is needed;
+  a new type is its own amendment, and until one is decided each row is hand-rotated.
+- **The tailnet-only port (FE-4).** Coolify's public port for a database binds every interface. FE-4
+  confirms the port is reachable only on the tailnet (a bind on the tailnet address or a host
+  firewall rule) before any secret is created; if neither holds, the act stops for a decision.
+- **Each DSN's BWS project and reading accounts (FE-4, Devon's named decision).** For each of the
+  two secrets: the BWS project it's created in, and every machine account granted a read of it, for
+  each reader in item 11's table: Devon's shell, the sds-hq cycle and the nightly on the Mac; the
+  bump proposer on the Mac until ADR-0059 step 3f-4 and in its container after (item 4); and the
+  work carrier on the Mac until step 3f-2 and in its container after (item 9). Devon names each
+  before ADR-0059 amendment 7's act 3 runs; until he has, act 3 stops. Neither this amendment nor HQ
+  chooses them. An account that serves processes beyond item 4's holders, such as the nightly's
+  `BWS_ACCESS_TOKEN_BROAD` or Keychain `BWS_ACCESS_TOKEN_VPS_BACKUP` identity (security-standards
+  `factory-events-nightly.sh`, lines 104-105), widens D-43 B's holders, so it reads the append DSN
+  only if his decision says so.
+- **The history import's actor and role (FE-5, Devon's named decision).** The import (item 2;
+  ADR-0059 amendment 7, FE-1 and act 5) writes the Mac file's events into the VPS chain. Item 4
+  names exactly four append holders and item 3 limits the owner to FE-4's setup acts, so
+  neither covers the import. Devon names who runs it and under which role, before act 5's
+  import step runs; until he has, act 5 stops before the import. His decision settles how it
+  stands with items 3 and 4; this amendment doesn't.
+- **`emit`'s stdout (FE-1).** Item 13's JSON logs and `emit`'s event id share stdout.
+  `_parse_event_id`'s contract: the first stdout line that parses as a JSON object with an
+  `event_id` key, if any, must carry the emitted id (lines 52-58); if no line does, the emitted id
+  must be the last token of the last stdout line (lines 63-67). FE-1 keeps `emit`'s stdout within
+  that contract, and FE-1's tests assert that the emitter parses the id `emit` printed.
+- **The approval cycle's emitting identity.** Amendment 22's open item "The cycle's emitting
+  identity" is settled: the cycle sets `FACTORY_AGENT_ID` to `lane-credential-policy` (sds-hq
+  `standing_approve.py`, lines 36 and 542), and `make_event` refuses an actor the registry doesn't
+  hold (security-standards `envelope.py`, lines 49-54 and 87). This amendment doesn't change it.
+
+### Consequences
+
+- **The carrier can move.** A carrier on the VPS verifies the approval its approver wrote from the
+  Mac, in one chain, so ADR-0059 step 3f-2 is unblocked once FE-5 is done.
+- **Every append depends on the VPS.** An approval made while the database is unreachable fails and
+  writes nothing, and is run again. That holds for Devon's `approve` and for both policy approvers.
+- **Threat model.** A holder of the append role can append any event, a `package.approved` naming
+  any approver included: the event's `actor` is self-declared (`emitter.py`, line 92). That's
+  today's position, where any process on the Mac can write the file. The role narrows it to four
+  named holders and adds the database's refusal to change a row. The read role can't append.
+- **The rotation proposer's lifecycle events leave the chain** after the cut-over (item 5). Its
+  lineage still records each transition and revision, with `event_id` None.
+- **Code Brain rule 4.** An append failure raises and writes nothing; a verify failure refuses; an
+  unreachable database is never read as "not approved" or as "approved".
+- **Unchanged.** The event envelope, the hash formula, `do_approve`'s order, the approval checks in
+  amendment 22 and in `package_sources`, and the work carrier's refusals.
