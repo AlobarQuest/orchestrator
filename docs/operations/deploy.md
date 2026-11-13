@@ -358,7 +358,7 @@ volume `sds-lanes-revision-watcher-state` at `REVISION_WATCHER_STATE_DIR`
 start, and the watcher has no scheduled-pass flag. Its `.bws-secrets.toml` secrets are the observer
 bearer, the hosting platform's API token, App Brain's read key, the `sds-bridge` alert sender
 (acting passes only), the read-only App's key and its ping-URL secret, all read with the lane's one
-token; on the Mac the narrow and broad Keychain identities still read the first five. Its compose
+token; on the Mac the narrow and broad Keychain identities still read the first four. Its compose
 names `SDS_DEADMAN_PING_URL_UUID`, the BWS secret id of `revision-watcher-ping-url`, which the
 container's dead-man helper reads the URL from with the lane's own token (`scripts/sds-deadman.sh`).
 Its cut-over (ADR-0059, "Cut-over for one

@@ -57,12 +57,18 @@ manifest.
 leaves the id empty and listed the `.bws-secrets.toml` secrets without the ping-URL secret. Each
 now names the ping-URL secret among them and names the id, in #680's words.
 
-- Revision watcher, lines 360-364. "on the Mac … still read them" became "the first five", so the
+- Revision watcher, lines 360-364. "on the Mac … still read them" became "the first four" (the read-only App's key is read only in the container, `scripts/run-revision-watcher.sh` lines 216-218), so the
   Mac's reach isn't read as including the ping-URL secret.
 - Pin watcher, lines 392-396.
 - Unit verifier, lines 465-470.
 
 I left the numbered cut-over lists unchanged: step 6 completes only when HQ releases this.
+
+To find stale lines, I grepped the whole repository (excluding `docs/superpowers/reports` and
+`docs/history`) for `empty`, `placeholder`, `pings nothing`, `alerting disabled`, and "later change
+writes" near the three lane names or the ping-URL variable. That search covered ADR-0059, the
+nested `CLAUDE.md` files, the launchers, and the rows tests' `GRANTED` comments. It found no other
+stale line for these lanes; ADR-0059 line 2614 and `deploy.md` line 433 concern `membership-check`.
 
 No ADR, `.cred-consumers.toml`, launcher, `lane-run`, or `sds-deadman.sh` change. The
 membership check's compose and tests are unchanged.
