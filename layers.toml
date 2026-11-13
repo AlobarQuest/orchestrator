@@ -655,6 +655,7 @@ paths = [
   "scripts/run-rotation-decomposer.sh",
   "scripts/install-rotation-decomposer-launchd.sh",
   "scripts/com.devon.rotation-decomposer.plist",
+  "tests/scripts/test_run_rotation_decomposer.py",
   "src/orchestrator/api/routes/rotation.py",
   "src/orchestrator/api/schemas/rotation.py",
   "tests/contract/test_change_manager_bearer_setting_contract.py",

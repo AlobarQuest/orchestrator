@@ -492,6 +492,47 @@ order, each in its own change or act:
 8. Cut-over steps 2 onward: the paired dry runs (the bare invocation on both hosts, which ping
    nothing), the schedule, and the Mac job's retirement.
 
+`rotation-decomposer`'s tracked files (`lanes/rotation-decomposer/compose.yaml` and `crontab`)
+don't register it either. Its state is the acting pass's `alerts.json` and `approval-since.json`,
+so its compose mounts the named volume `sds-lanes-rotation-decomposer-state` at
+`ROTATION_DECOMPOSER_STATE_DIR` (`/var/lib/sds/rotation-decomposer`). Its registry mirrors aren't
+state: they sit under `lane-run`'s new `HOME`, so each pass refetches the four public registry
+repositories anonymously with the image's `git`. Its crontab runs `lane-run rotation-decomposer`
+hourly at minute 50, as the Mac job's `StartInterval` of 3600 runs it with no arguments; 50 is a
+minute no other lane starts on. Its `.bws-secrets.toml` secrets are the orchestrator SYSTEM bearer,
+the change-manager READ bearer and the `sds-bridge` alert sender, all read with the lane's one
+token; the sender is read only on an acting pass (no `--dry-run`), as on the Mac, where the narrow
+Keychain identity still reads the SYSTEM bearer and the sender and the broad one the READ bearer. It
+needs no GitHub token: it calls no GitHub API. `--dry-run` is the lane's reporting mode: it reads
+the two bearers, proposes nothing, sends nothing and pings nothing. The check is an outcome alarm
+that pings only on acting passes: its compose leaves `SDS_DEADMAN_PING_URL_UUID` empty until the
+lane's ping-URL secret exists, so until then an acting pass in the container still runs, pings
+nothing and says so. Its cut-over (ADR-0059, "Cut-over for one lane") still needs the following, in
+this order, each in its own change or act:
+
+1. The orchestrator serving this release; then HQ creates `sds-lane-rotation-decomposer` from the
+   compose without deploying it.
+2. The VM root's keeper commands for the lane token and `rotation-decomposer-ping-url`.
+3. The lane's registry rows in this repository, in two changes: the token's row and the ping URL's
+   row.
+4. The lane account's grants on its three secrets and its ping-URL secret. The READ bearer, which
+   the broad identity reads on the Mac, becomes a direct grant to the lane account (Devon's act at
+   the lane's identity gate), and change-manager's `.cred-consumers.toml` gets a reader for the
+   container on its row (that registry lives in change-manager, not here).
+5. The token's mint and the executor's write; then the ping URL's row made due and the executor's
+   write (ADR-0055 amendment 23).
+6. A served release whose compose names the ping-URL secret's id, with `rotation-decomposer`
+   removed from `test_deploy_lanes.py`'s `placeholders`.
+7. The lane's `--add`, then the `lane-run --read` proof over all four secrets and a `--dry-run` in
+   the container. The proof is the only read of the sender before the first acting pass, because a
+   dry run never fetches it; the dry run also proves the anonymous mirror fetch from the VPS.
+8. Cut-over steps 2 onward: the copy of the Mac's `sds/rotation-decomposer` files into the volume
+   (before the first acting pass in the container, or the alerts the Mac left firing never resolve
+   and every approval-wait clock restarts), the paired `--dry-run` reporting runs on both hosts,
+   which ping nothing, the schedule, and the Mac job's retirement. No ADR-0046 switch covers this
+   lane, which proposes as SYSTEM, so a rollback that can't wait for the quiet slot is HQ's
+   redeploy of the lane's resource by hand.
+
 `unit-verifier`'s tracked files (`lanes/unit-verifier/compose.yaml` and `crontab`) don't register
 it either. Its state is the pass's `alerts.json`, so its compose mounts the named volume
 `sds-lanes-unit-verifier-state` at `VERIFIER_STATE_DIR` (`/var/lib/sds/unit-verifier`). Its crontab

@@ -1191,9 +1191,9 @@ def test_every_lanes_ping_url_secret_is_listed_for_that_lane() -> None:
     empty value is a placeholder until the lane's ping-URL secret exists, allowed only for a lane
     named in `placeholders`; a lane added before its ping-URL secret exists is named there until a
     later change writes the id. The change proposer's keeper was created at HQ gate G-49; a later
-    change writes its id."""
+    change writes its id. The rotation decomposer's keeper is created at its cut-over."""
     manifest = (ROOT / ".bws-secrets.toml").read_text()
-    placeholders = {"change-proposer"}
+    placeholders = {"change-proposer", "rotation-decomposer"}
     named = {}
     blank = set()
     for path in sorted((ROOT / "lanes").glob("*/compose.yaml")):
