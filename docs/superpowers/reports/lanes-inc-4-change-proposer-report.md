@@ -2,8 +2,8 @@ Outcome: done
 
 # The change proposer's lane files and launcher (ADR-0059 increment 4, step 3f-1)
 
-Worker W-124, branch `hq/lanes-inc-4-change-proposer`, base `5ed15482`. PR: see the end of this
-report. Not merged.
+Worker W-124, branch `hq/lanes-inc-4-change-proposer`, base `5ed15482`. PR #686, ready for
+review, not merged.
 
 ## What I built
 
@@ -267,4 +267,4 @@ These are also in `deploy.md`. Each is its own change or act.
 
 ## PR
 
-Pending.
+https://github.com/AlobarQuest/orchestrator/pull/686, marked ready. Not merged.
