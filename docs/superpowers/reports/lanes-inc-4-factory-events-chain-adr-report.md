@@ -2,7 +2,7 @@ Outcome: done
 
 # Report: lanes-inc-4-factory-events-chain-adr (W-128)
 
-- **PR:** #PR_NUMBER, branch `hq/lanes-inc-4-factory-events-chain-adr`, head in the PR (this
+- **PR:** #690, branch `hq/lanes-inc-4-factory-events-chain-adr`, head in the PR (this
   report is committed on it).
 - **Base:** orchestrator `origin/main` at `2cf43757` (main later moved to `c194950b`, #689, which
   touches neither ADR). Read-only repositories: intent-packages `78bb302`, security-standards
