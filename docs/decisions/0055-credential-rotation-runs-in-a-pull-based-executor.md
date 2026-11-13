@@ -3311,7 +3311,7 @@ intent-packages lifecycle command passes `FactoryEventsEmitter` (`cli.py`, lines
 `FACTORY_AGENT_ID` (`emitter.py`, lines 87-128). `do_approve` emits `package.approved` before it
 writes the lineage, and an `EmitError` aborts it with nothing written (`operations.py`, lines
 248-249 and 292-305). `do_transition` and `do_revise` catch `EmitError` and record `event_id`
-None (lines 158-164 and 351-357).
+None (lines 158-165 and 351-358).
 
 **Three callers emit `package.approved`, all through `intent-packages approve`.** No other code in
 the three repositories emits the action:
