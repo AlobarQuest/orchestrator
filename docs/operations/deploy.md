@@ -422,16 +422,16 @@ for one lane") still needs the following, in this order, each in its own change 
 register it either. It keeps no state, so its compose mounts no volume. Its crontab runs
 `lane-run membership-check` daily at 07:47 New York time. The Mac job runs at 07:45, but minute 45
 is one of execution-watch's quarter-hours, and 47 keeps it clear of every other lane's start; the
-check has no flags. Its `.bws-secrets.toml` secrets are the observer bearer, the change-manager
-READ bearer and the read-only App's key, all read with the lane's one token, never the Healthchecks
-API key; on the Mac the narrow and broad Keychain identities still read the first two. Each
-container pass also makes an anonymous shallow clone of intent-packages into the pass's `HOME`
-and points `BUMP_PROPOSER_PACKAGES_CHECKOUT` at it (ADR-0059 amendment 5); the report's first line
-names the clone's commit, or git's exit code and error, and a failed clone is the program's
-"packages checkout couldn't be read" gap (exit 3, or 2 beside a disagreement), never the
-launcher's exit 1. The check is an outcome alarm: its compose leaves `SDS_DEADMAN_PING_URL_UUID`
-empty until the lane's ping-URL secret exists, so until then the container's pass still runs,
-pings nothing and says so. The read-App key row's `runtime-fetch` reader for
+check has no flags. Its `.bws-secrets.toml` secrets are the observer bearer, the change-manager READ
+bearer, the read-only App's key and its ping-URL secret, all read with the lane's one token, never
+the Healthchecks API key; on the Mac the narrow and broad Keychain identities still read the first
+two. Each container pass also makes an anonymous shallow clone of intent-packages into the pass's
+`HOME` and points `BUMP_PROPOSER_PACKAGES_CHECKOUT` at it (ADR-0059 amendment 5); the report's first
+line names the clone's commit, or git's exit code and error, and a failed clone is the program's
+"packages checkout couldn't be read" gap (exit 3, or 2 beside a disagreement), never the launcher's
+exit 1. The check is an outcome alarm: its compose names `SDS_DEADMAN_PING_URL_UUID`, the BWS secret
+id of `membership-check-ping-url`, which the container's dead-man helper reads the URL from with the
+lane's own token (`scripts/sds-deadman.sh`). The read-App key row's `runtime-fetch` reader for
 `scripts/run-membership-check.sh` landed with the launcher. Its cut-over (ADR-0059, "Cut-over for
 one lane") still needs the following, in this order, each in its own change or act:
 
