@@ -844,7 +844,10 @@ _EVENT = {
 
 
 def _verify_event_log() -> VerifiedApproval:
+    events = package_sources._iter_package_approval_events()
+    assert events is not None
     return package_sources._verified_approval_from_events(
+        events,
         package_id="pkg-1",
         approved_hash="h1",
         revision=1,

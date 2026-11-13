@@ -149,7 +149,11 @@ name = "Intent"
 description = "Intent packages: how the orchestrator reads them, and the package fixtures and vocabulary pinned with the intent-packages repo."
 paths = [
   "src/orchestrator/package_sources.py",
+  "src/orchestrator/factory_chain_read.py",
+  "scripts/check-integration.sh",
   "tests/architecture/test_intent_edges.py",
+  "tests/cli/test_package_chain_database.py",
+  "tests/cli/test_package_chain_database_integration.py",
   "tests/contract/test_package_evidence_vocabulary_contract.py",
   "tests/fixtures/intent-packages-envelopes/**",
   "tests/fixtures/intent-packages/**",

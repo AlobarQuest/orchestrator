@@ -306,6 +306,60 @@ def test_the_interpreter_comes_from_the_checkout(tmp_path) -> None:
         standing.lifecycle(tmp_path, "hash", "packages/p")
 
 
+def _recording_interpreter(root: Path) -> None:
+    """A stand-in for the checkout's interpreter that prints its argv and the append DSN's state."""
+    python = root / ".venv" / "bin" / "python"
+    python.parent.mkdir(parents=True)
+    python.write_text(
+        '#!/bin/sh\necho "$*"\n'
+        'if [ -n "${FACTORY_EVENTS_APPEND_DSN+x}" ]; then echo "dsn=$FACTORY_EVENTS_APPEND_DSN"; '
+        "else echo dsn-unset; fi\n",
+        encoding="utf-8",
+    )
+    python.chmod(0o755)
+
+
+def test_approve_by_policy_receives_the_append_dsn_when_it_is_set(tmp_path, monkeypatch) -> None:
+    """ADR-0055 amendment 24 item 4: the bump proposer's approve appends under the append DSN.
+
+    It reaches the approve call, and `transition` and `revise` too, through the inherited
+    environment: the emitter serves every lifecycle command, so all three reach one chain.
+    """
+    _recording_interpreter(tmp_path)
+    monkeypatch.setenv("FACTORY_EVENTS_APPEND_DSN", "postgresql://append@chain/factory_events")
+
+    out = standing.lifecycle(tmp_path, "approve", "packages/p", "--by-policy").splitlines()
+
+    assert out == [
+        "-m intent_packages approve packages/p --by-policy",
+        "dsn=postgresql://append@chain/factory_events",
+    ]
+
+
+def test_approve_by_policy_gets_no_append_dsn_when_none_is_set(tmp_path, monkeypatch) -> None:
+    _recording_interpreter(tmp_path)
+    monkeypatch.delenv("FACTORY_EVENTS_APPEND_DSN", raising=False)
+
+    out = standing.lifecycle(tmp_path, "approve", "packages/p", "--by-policy").splitlines()
+
+    assert out[-1] == "dsn-unset"
+
+
+def test_a_refused_lifecycle_command_never_repeats_the_append_dsn(tmp_path, monkeypatch) -> None:
+    dsn = "postgresql://factory_events_append:pw-7f3a@chain/factory_events"
+    python = tmp_path / ".venv" / "bin" / "python"
+    python.parent.mkdir(parents=True)
+    python.write_text('#!/bin/sh\necho "cannot connect: $FACTORY_EVENTS_APPEND_DSN" >&2\nexit 1\n')
+    python.chmod(0o755)
+    monkeypatch.setenv("FACTORY_EVENTS_APPEND_DSN", dsn)
+
+    with pytest.raises(StandingError) as info:
+        standing.lifecycle(tmp_path, "approve", "packages/p", "--by-policy")
+
+    assert "pw-7f3a" not in str(info.value)
+    assert "<FACTORY_EVENTS_APPEND_DSN redacted>" in str(info.value)
+
+
 def test_a_standing_package_reports_what_it_carries() -> None:
     package = StandingPackage(
         package_id="p",
