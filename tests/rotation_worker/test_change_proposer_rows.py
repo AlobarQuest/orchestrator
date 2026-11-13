@@ -91,7 +91,8 @@ def test_the_token_row_declares_the_lane_s_manifest_secrets_and_its_ping_url_kee
     ping_keeper = rows[PING_URL].credential["bws_uuid"]
     projects, secrets = bws_lane_token.declared_reach(rows[TOKEN].credential)
     assert projects == frozenset()
-    assert secrets == _lane_secrets() | {ping_keeper}
+    assert ping_keeper in _lane_secrets()
+    assert secrets == _lane_secrets()
     assert secrets == GRANTED
 
 
