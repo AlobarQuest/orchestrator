@@ -8,13 +8,12 @@
 # it and never holds a value. With it the launcher reads the orchestrator's VERIFIER bearer, the
 # `sds-bridge` alert sender and the read-only App's key, derives the repositories from the member
 # record and mints the pass's GitHub token (`scripts/run-unit-verifier.sh`).
-# `SDS_DEADMAN_PING_URL_UUID` is empty until the lane's ping-URL secret,
-# `unit-verifier-ping-url` in `Rotation / Keepers`, exists: the VM root creates that keeper at
-# cut-over and a later change writes its id here. While it is empty the dead-man helper falls
-# back to the Mac's lookup by check name, which needs the broad Keychain identity the container
-# doesn't have, so a pass pings nothing and logs `no SDS_DEADMAN_PING_URL_UUID and no broad BWS
-# identity — alerting disabled this run` (`scripts/sds-deadman.sh`). The schedule stays off
-# (`LANE_SCHEDULE_ENABLED`) until the cut-over turns it on.
+# `SDS_DEADMAN_PING_URL_UUID` is the BWS secret id of the lane's ping-URL secret,
+# `unit-verifier-ping-url` in `Rotation / Keepers`: an id, not a secret and not the ping URL.
+# `lane-run` passes it to the launcher, whose dead-man helper reads the URL from that secret with
+# the lane's own token (`scripts/sds-deadman.sh`). The VM rotation executor writes the URL there
+# from its inbox; while the secret holds the inbox's empty marker, the helper refuses it and pings
+# nothing. The schedule stays off (`LANE_SCHEDULE_ENABLED`) until the cut-over turns it on.
 services:
   unit-verifier:
     image: ghcr.io/alobarquest/sds-lanes:${SDS_LANES_IMAGE_TAG}
@@ -23,7 +22,7 @@ services:
       BWS_ACCESS_TOKEN: ${UNIT_VERIFIER_BWS_ACCESS_TOKEN}
       LANE_SCHEDULE_ENABLED: ${LANE_SCHEDULE_ENABLED:-false}
       VERIFIER_STATE_DIR: /var/lib/sds/unit-verifier
-      SDS_DEADMAN_PING_URL_UUID: ""
+      SDS_DEADMAN_PING_URL_UUID: 1cfc8352-c960-4afc-bd49-b4ff00e8783e
     volumes:
       - sds-lanes-unit-verifier-state:/var/lib/sds/unit-verifier
     restart: unless-stopped
