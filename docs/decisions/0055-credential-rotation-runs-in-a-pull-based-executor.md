@@ -3360,7 +3360,8 @@ its own.
    the event, and `hash` uses `store._line_hash`'s formula unchanged. `event_id` is the primary
    key, and `seq` and `prev_hash` are each unique. A trigger refuses every `UPDATE`, `DELETE` and
    `TRUNCATE` on it, whatever the role. Because the formula is unchanged, a record imported from
-   the Mac's file keeps its `seq`, `prev_hash` and `hash`, and one walker verifies both.
+   the Mac's file keeps its `seq`, `prev_hash` and `hash`, and one walker verifies both. Who
+   runs that import, and under which role, is Devon's named decision ("Open before building").
 3. **Three roles, two of them held.**
    - **Append-only role.** `SELECT` and `INSERT` on the chain table, nothing else: no `UPDATE`,
      `DELETE`, `TRUNCATE` or DDL. It reads the head it links to.
@@ -3418,15 +3419,24 @@ its own.
    `verify-approval` run by hand. Each carry makes three chain reads (the two orchestrator reads and
    intent-packages' subprocess), and all three use the read-only role.
 10. **What the local file becomes.** At the cut-over, the Mac's `~/.factory/events.jsonl` is
-    imported into the VPS chain (item 2) and then sealed: renamed to an archive name, made
-    read-only, and kept in the Mac's nightly backup as the record of the chain before the
-    cut-over. It's no longer written and no longer a cache; a cache a verifier could fall back to
-    would be a second chain, and a fallback on an unreachable database would fail open. The
-    cut-over's last step lands the changes that remove the file path from `factory_events`' `emit`,
-    `adapt` and `verify`, from intent-packages' chain checker, and from the orchestrator's
-    verifier (ADR-0059 amendment 7, step FE-5).
+    imported into the VPS chain (item 2, by the actor and role Devon names) and then sealed: renamed
+    to an archive name, made read-only, and kept in the Mac's nightly backup as the record of the
+    chain before the cut-over. It's no longer written and no longer a cache; a cache a verifier
+    could fall back to would be a second chain, and a fallback on an unreachable database would fail
+    open. The cut-over's last step lands the changes that remove the file path from
+    `factory_events`' `emit`, `adapt` and `verify`, from intent-packages' chain checker, and from
+    the orchestrator's verifier (ADR-0059 amendment 7, step FE-5).
 11. **The credentials.** Two BWS secrets, each a DSN for one role. Both are **to be created** in
-    step FE-4; their UUIDs and BWS projects are chosen then and recorded by UUID, never by name.
+    step FE-4 and recorded by UUID, never by name. Each secret's BWS project, and each BWS
+    machine account granted a read of it (on the Mac and in each lane container), is Devon's
+    named decision, taken before ADR-0059 amendment 7's act 3 runs. This amendment chooses none
+    of them, and act 3 stops until he has named them ("Open before building", "Each DSN's BWS
+    project and reading accounts"). The append DSN can't go to a shared or broad identity without
+    his decision, because every process that identity serves could then append, which widens D-43
+    B's holders. Two such identities are the nightly's `BWS_ACCESS_TOKEN_BROAD` and its Keychain
+    item `BWS_ACCESS_TOKEN_VPS_BACKUP` (security-standards `factory-events-nightly.sh`, lines
+    104-105). The table's "Read by" column names the processes D-43 B and D-44 A give each role,
+    not the accounts that fetch it.
 
     | Secret (to be created) | Role | Read by | `.bws-secrets.toml` | Registry row |
     |---|---|---|---|---|
@@ -3442,9 +3452,13 @@ its own.
 13. **Logging.** The append function and both verifiers log structured JSON to stdout, never to a
     file. A record names the event id, the `seq`, a prefix of the head hash, the outcome, and an
     error's type. No record holds the DSN, a password or a role's credential, and an error's text
-    from the driver isn't logged, because a connection error can repeat its DSN. `emit` still
-    prints the event id on stdout as a JSON line, which the emitter's `_parse_event_id` already
-    reads (`emitter.py`, lines 40-58).
+    from the driver isn't logged, because a connection error can repeat its DSN. Today `emit`
+    prints the bare event id on stdout (security-standards `cli.py`, line 33) and `seq` and the
+    head hash on stderr (line 34). The emitter's `_parse_event_id` (`emitter.py`, lines 40-67)
+    finds no JSON line with an `event_id` (lines 52-58) and takes the last whitespace-delimited
+    token of the last stdout line (lines 63-67). A JSON log record on stdout would therefore
+    change what the emitter parses, so FE-1 must keep `emit`'s stdout parseable by the emitter as
+    it stands ("Open before building", "`emit`'s stdout").
 14. **Schema setup.** The schema, the trigger and the two roles are created by a security-standards
     script that the owner runs once, as an announced production act (step FE-4). They're never set
     up in an image build step, and neither the append function nor a verifier runs DDL; `ship`'s
@@ -3453,7 +3467,8 @@ its own.
     1032). Both secrets are new, and none exists to rotate.
 16. **What it grants, and nothing more.** The two roles and their holders in items 3, 4 and 9, as
     D-40 B, D-42 A, D-43 B and D-44 A give them. No other identity gets either credential, and the
-    owner is held by no one at run time.
+    owner is held by no one at run time. It names no BWS project, no machine account and no
+    import actor: each is Devon's named decision before the act that needs it.
 
 ### Increments
 
@@ -3462,7 +3477,9 @@ the import, the roles script), FE-2 (intent-packages: the emitter and the chain 
 (orchestrator: the verifier and the bump proposer's DSN), FE-4 (the database resource, its schema
 and roles, its two secrets and its backup), FE-5 (the cut-over: the import, the nightly's target
 switch, every holder's DSN, the seal and the file path's removal) and FE-6 (the Mac database's
-retirement). The work carrier's lane code (ADR-0059 step 3f-2) follows them.
+retirement). The work carrier's lane code (ADR-0059 step 3f-2) follows them. FE-4's act 3 waits
+for Devon's named decision on each DSN's BWS project and reading accounts, and FE-5's import for
+his named decision on its actor and role ("Open before building").
 
 ### Open before building
 
@@ -3490,9 +3507,25 @@ Each item names the step that settles it.
 - **The tailnet-only port (FE-4).** Coolify's public port for a database binds every interface. FE-4
   confirms the port is reachable only on the tailnet (a bind on the tailnet address or a host
   firewall rule) before any secret is created; if neither holds, the act stops for a decision.
-- **Which identity fetches each DSN on the Mac (FE-4).** The BWS machine account that reads the
-  append DSN for the cycle and for the nightly, and the one for Devon's shell. Each is a direct
-  grant on the one secret, named in the act.
+- **Each DSN's BWS project and reading accounts (FE-4, Devon's named decision).** For each of the
+  two secrets: the BWS project it's created in, and every machine account granted a read of it,
+  for each reader in item 11's table (Devon's shell, the sds-hq cycle and the nightly on the Mac;
+  the bump proposer's and the work carrier's lane containers). Devon names each before ADR-0059
+  amendment 7's act 3 runs; until he has, act 3 stops. Neither this amendment nor HQ chooses
+  them. An account that serves processes beyond item 4's holders, such as the nightly's
+  `BWS_ACCESS_TOKEN_BROAD` or Keychain `BWS_ACCESS_TOKEN_VPS_BACKUP` identity (security-standards
+  `factory-events-nightly.sh`, lines 104-105), widens D-43 B's holders, so it reads the append
+  DSN only if his decision says so.
+- **The history import's actor and role (FE-5, Devon's named decision).** The import (item 2;
+  ADR-0059 amendment 7, FE-1 and act 5) writes the Mac file's events into the VPS chain. Item 4
+  names exactly four append holders and item 3 limits the owner to FE-4's setup acts, so
+  neither covers the import. Devon names who runs it and under which role, before act 5's
+  import step runs; until he has, act 5 stops before the import. His decision settles how it
+  stands with items 3 and 4; this amendment doesn't.
+- **`emit`'s stdout (FE-1).** Item 13's JSON logs and `emit`'s event id share stdout. FE-1 either
+  keeps the bare id as stdout's last line, so `_parse_event_id`'s fallback still reads it, or
+  prints a JSON line carrying `event_id`, which its JSON branch reads first. FE-1's tests assert
+  that the emitter parses the id `emit` printed.
 - **The approval cycle's emitting identity.** Amendment 22's open item "The cycle's emitting
   identity" is settled: the cycle sets `FACTORY_AGENT_ID` to `lane-credential-policy` (sds-hq
   `standing_approve.py`, lines 36 and 542), and `make_event` refuses an actor the registry doesn't

@@ -43,6 +43,42 @@ These are docs only. There's no code change and no production act.
   - six named production acts;
   - a "Passages this amendment changes" table.
 
+## Fix round 1
+
+HQ's Opus whole-branch review at `c1bb688e` found three blocking findings. Each fix changes only
+ADR-0055 amendment 24 and ADR-0059 amendment 7.
+
+- **B1, the `emit` stdout claim.** a24 item 13 (line 3452) no longer says `emit` prints a JSON
+  line. It states the bare id on stdout (`cli.py` 33) and the head on stderr (34), and that
+  `_parse_event_id` reads the id through its bare-token fallback (63-67), not its JSON branch
+  (52-58). Because item 13's JSON logs would share stdout, a new FE-1 verify item ("`emit`'s
+  stdout", line 3525) requires FE-1 to keep the id parseable and to test the parse. I didn't make a
+  JSON line a requirement; FE-1 picks either form.
+- **B2, the proposers claim.** a7 Context (line 2771) no longer says the proposers can't verify.
+  It says neither names `verify-approval`, `factory_events`, `events.jsonl` or `FACTORY_EVENTS`;
+  that the bump proposer's `approve --by-policy` (`standing.py` 397) in a container appends to that
+  container's own file, starting a fresh chain the carrier never reads (`store.py` 20-25, 60-80),
+  or aborts with `EmitError` if security-standards isn't found (`emitter.py` 70-79); and that the
+  rotation proposer emits no approval (D-43 B, a24 item 5).
+- **B3, carried authority.** No passage chooses a BWS project, a reading account or the import's
+  actor:
+  - a24 item 11 (line 3429): each DSN's BWS project and reading machine accounts are Devon's named
+    decision before a7 act 3, which stops until he names them. The append DSN can't go to a shared
+    or broad identity without his decision, because that widens D-43 B's holders; it names the
+    nightly's `BWS_ACCESS_TOKEN_BROAD` and Keychain `BWS_ACCESS_TOKEN_VPS_BACKUP` (nightly
+    104-105).
+  - a24 "Open before building": the Mac-only identity item is replaced by "Each DSN's BWS project
+    and reading accounts (FE-4, Devon's named decision)" (line 3510), covering the lane containers
+    too, and a new "The history import's actor and role (FE-5, Devon's named decision)" (line
+    3519). The second says items 3 and 4 cover neither and leaves the conflict to his decision.
+  - a24 items 2, 10 and 16 and the Increments paragraph point at those decisions.
+  - a7 FE-1, act 3 (line 2836), act 5 (line 2847), item 6 (line 2861) and "Open before building"
+    say the same. Act 3 grants reads only to the accounts he names; act 5 stops before the import
+    until he has named its actor and role.
+
+Nothing else changed. Check 3, Check 4, the verify items and "Standards followed" are updated
+for these fixes. I ran no production act and changed no code.
+
 ## Checks
 
 ### Check 1: every line and file the handoff names
@@ -107,7 +143,12 @@ Readers:
 - **Owner:** held by no one at run time (a24 item 3). No lane gets it (a7 item 6).
 - **Rotation proposer:** gets nothing (a24 item 5).
 - **Rotation classes:** none assigned; carried as a verify item.
-- **BWS secrets:** both are "to be created", with no UUID or project chosen.
+- **BWS secrets:** both are "to be created". No UUID, BWS project or reading machine account is
+  chosen: each project and account is Devon's named decision before a7 act 3, and the act stops
+  until he names them (a24 item 11 and its open item; a7 act 3). The append DSN goes to no shared or
+  broad identity without his decision (fix round 1, B3).
+- **History import:** its actor and role are Devon's named decision before a7 act 5's import (a24
+  open item; a7 FE-1 and act 5). Neither amendment grants them (fix round 1, B3).
 - **Explicit statements:** a24 item 16 and a7 item 6 each say what the amendment grants and
   nothing more.
 
@@ -125,7 +166,25 @@ quotes:
 - **The `flock` append:** `fcntl.flock(lock, fcntl.LOCK_EX)` (`store.py` 66).
 - **The self-declared actor:** `actor = os.environ.get("FACTORY_AGENT_ID", _DEFAULT_ACTOR)`
   (`emitter.py` 92).
-- **The emitter parses `event_id` from a JSON line:** `emitter.py` 52-58.
+- **`emit` prints a bare event id, which the emitter reads through its fallback** (corrected in fix
+  round 1): `print(event["event_id"])` (security-standards `cli.py` 33) and
+  `print(f"seq={record['seq']} head={record['hash']}", file=sys.stderr)` (34). intent-packages
+  `_parse_event_id` (`emitter.py` 40-67) tries `json.loads(line)` for a dict with `event_id`
+  (52-58), which doesn't match a bare id, then `tokens = lines[-1].split()` ... `return token if
+  len(token) > 3 else None` (63-67). The original text's "as a JSON line, which ... already reads
+  (lines 40-58)" was false.
+- **Neither proposer reads the chain; the bump proposer's emit writes a local file** (a7 Context,
+  added in fix round 1): `git grep -n -i 'verify-approval\|factory_events\|events.jsonl\|FACTORY_EVENTS'
+  2cf43757 -- src/bump_proposer src/rotation_proposer` returns nothing.
+  `lifecycle(root, "approve", str(current.path), "--by-policy")` (`bump_proposer/standing.py` 397).
+  `return factory_home() / "events.jsonl"` (`store.py` 24-25, with `FACTORY_EVENTS_HOME` at 21),
+  `path.parent.mkdir(parents=True, exist_ok=True)` (63), and `seq = current[0] + 1 if current
+  else 1` / `prev_hash = current[1] if current else GENESIS` (68-69). The emitter's
+  `raise EmitError("cannot locate security-standards to emit")` (`emitter.py` 79) is the other
+  container outcome.
+- **The broad identities the append DSN can't go to without Devon's decision:** the nightly's
+  change-manager identity is the `BWS_ACCESS_TOKEN_BROAD` variable, falling back to the Keychain
+  item `BWS_ACCESS_TOKEN_VPS_BACKUP` (service `Claude`) (`factory-events-nightly.sh` 104-105).
 - **The registry refuses an unknown actor:** `envelope.py` 53-54, called at 87.
 - **The high-power adapter reads a Mac file:** `DEFAULT_SOURCE = Path.home() / ".claude" / "audit" /
   "high-power-actions.jsonl"` (`high_power.py` 21).
@@ -163,7 +222,15 @@ quotes:
 | The verify walk's cost. Each carry walks the chain three times; the Mac file held 3,751 events on 2026-11-13. | FE-1 |
 | A rotation class for each secret. `postgres-role` assumes one Coolify service, the VPS helper and a restart, but these readers include Mac processes. A new type would be its own amendment. | FE-4 |
 | That the database port is reachable only on the tailnet (a bind or a host firewall), or the act stops | FE-4 |
-| Which BWS identity fetches each DSN on the Mac, each a direct grant named in the act | FE-4 |
+| `emit`'s stdout stays parseable by the emitter once item 13's JSON logs share it; FE-1's tests assert the parse (fix round 1, B1) | FE-1 |
+
+Named decisions of Devon's, each stopping the act that needs it until he names it (fix round 1,
+B3; they replace the original "which BWS identity fetches each DSN" item):
+
+| Decision | Before |
+|---|---|
+| Each DSN secret's BWS project, and every machine account granted a read of it (Mac and lane containers). The append DSN goes to no shared or broad identity, such as `BWS_ACCESS_TOKEN_BROAD` or Keychain `BWS_ACCESS_TOKEN_VPS_BACKUP`, without his decision. | a7 act 3 (FE-4) |
+| The history import's actor and role | a7 act 5's import (FE-5) |
 
 Amendment 22's open item "The cycle's emitting identity" is settled by code
 (`standing_approve.py` 36 and 542), and a24 says so.
@@ -213,7 +280,8 @@ These are in ADR-0059 amendment 7, decision item 4:
 ## Standards followed
 
 - **Code Brain 3 (structured JSON logs to stdout):** a24 item 13 says the append function and both
-  verifiers log structured JSON to stdout, never to a file.
+  verifiers log structured JSON to stdout, never to a file. Fix round 1 adds a FE-1 verify item so
+  those logs don't break the emitter's parse of `emit`'s event id.
 - **Code Brain 4 (never swallow an exception):** a24 items 7 and 8 say an append failure raises and
   writes nothing, and that a verify failure, including an unreachable database, refuses. Neither has
   a fallback, and both are logged. The Consequences restate it.
@@ -222,7 +290,7 @@ These are in ADR-0059 amendment 7, decision item 4:
   no DSN or password.
 - **Infra Brain 591, 592 and 593 (BWS handling):** the text holds no BWS token. Both secrets are
   named by role and "to be created", to be recorded by UUID in `.bws-secrets.toml` (a24 item 11; a7
-  act 3).
+  act 3). Their BWS projects and reading accounts are Devon's named decision (fix round 1, B3).
 - **Infra Brain 1032 (cred.exposure-rotate):** a24 item 15 says nothing is declared exposed and no
   secret exists yet to rotate.
 - **Infra Brain 212 (HTTPS for public FQDNs):** the database gets no public FQDN and no public port.

@@ -2768,9 +2768,17 @@ moves the work carrier to the VPS, and the carrier refuses an intake whose `pack
 event it can't find in its own machine's chain (ADR-0055 amendment 22, "The chain the carrier
 reads"). That chain is a file on the Mac, and the Mac's factory-events database is filled from it
 once a night, with one owner role and no single-event append (ADR-0055 amendment 24, Context).
-So a carrier on the VPS can't verify any approval, and neither can the bump and rotation proposers
-once they move (steps 3f-4 and 3f-5), because they reach the same approval lifecycle. D-40 B and
-D-42 A widen D-9 to fix that.
+So a carrier on the VPS can't verify any approval. Neither proposer verifies against the chain:
+`src/bump_proposer` and `src/rotation_proposer` name no `verify-approval`, `factory_events`,
+`events.jsonl` or `FACTORY_EVENTS`. The bump proposer's problem is on the write side. Its
+`approve --by-policy` (`src/bump_proposer/standing.py`, line 397) emits through the
+intent-packages emitter, and `store.append_event` writes to `$FACTORY_EVENTS_HOME/events.jsonl`,
+creating the directory and starting at `seq` 1 from the genesis hash when the file is empty
+(security-standards `store.py`, lines 20-25 and 60-80). In a container (step 3f-4) whose emit
+reaches `factory_events`, the approval lands in that container's own file, which the carrier
+never reads. (If the emitter can't locate security-standards, it raises `EmitError` and the
+approval aborts: intent-packages `emitter.py`, lines 70-79.) The rotation proposer emits no
+approval (D-43 B; ADR-0055 amendment 24 item 5). D-40 B and D-42 A widen D-9 to fix that.
 
 ### Decision
 
@@ -2796,7 +2804,8 @@ D-42 A widen D-9 to fix that.
    - **FE-1, security-standards code.** The database store in `factory_events`: the schema with its
      uniqueness and its trigger, the append function, the database verify, the history import
      (which replays the Mac file in order through the append path and refuses unless the imported
-     head equals the file's head), the roles script for FE-4, and the anchor's new home (ADR-0055
+     head equals the file's head; who runs it, under which role, is Devon's named decision before
+     act 5), the roles script for FE-4, and the anchor's new home (ADR-0055
      amendment 24, "Open before building"). `emit`, `adapt` and `verify` use the database when the
      append or read DSN is set. Tests run against a disposable Postgres
      (`make check-integration`).
@@ -2824,18 +2833,25 @@ D-42 A widen D-9 to fix that.
    2. **Create its roles**: run FE-1's roles script as the owner, once, creating the schema, the
       trigger, the append-only role and the read-only role (FE-4). This never runs in an image build
       step.
-   3. **Create the two BWS secrets**, the append DSN and the read DSN, and grant each named reader
-      a direct read on its one secret (FE-4). Their UUIDs go in each consumer repository's
-      `.bws-secrets.toml` and their rows in orchestrator `.cred-consumers.toml` in the same act.
+   3. **Create the two BWS secrets**, the append DSN and the read DSN, in the BWS project Devon
+      names for each, and grant a read on each secret to exactly the machine accounts he names
+      (FE-4). This amendment chooses no project and no account, and the act stops until he has
+      named them (ADR-0055 amendment 24 item 11 and "Open before building"). The append DSN goes
+      to no shared or broad identity, such as the nightly's `BWS_ACCESS_TOKEN_BROAD` or Keychain
+      `BWS_ACCESS_TOKEN_VPS_BACKUP` identity (security-standards `factory-events-nightly.sh`, lines
+      104-105), unless his decision says so, because that would widen D-43 B's holders. Their
+      UUIDs go in each consumer repository's `.bws-secrets.toml` and their rows in orchestrator
+      `.cred-consumers.toml` in the same act.
    4. **Add the vps-backup target** for the database (FE-4), before any data arrives. A database with
       data needs one; the `backup-integration` skill names the recipe.
    5. **The cut-over** (FE-5): pause the writers (the cycle's approvals, the bump proposer lane, and
-      the nightly, which runs at 03:30); verify the Mac file; import it; check the VPS head equals
-      the file's; seal the file (ADR-0055 amendment 24 item 10); set the append DSN for Devon's
-      shell, the cycle, the bump proposer and the nightly, and the read DSN for the work carrier and
-      Devon's hand paths; merge the changes that remove the file path from the three repositories;
-      run one `verify` on each machine; resume the writers. This is **the nightly's target
-      switch**.
+      the nightly, which runs at 03:30); verify the Mac file; import it, run by the actor and under
+      the role Devon has named (the act stops before the import until he has); check the VPS head
+      equals the file's; seal the file (ADR-0055 amendment 24 item 10); set the append DSN for
+      Devon's shell, the cycle, the bump proposer and the nightly, and the read DSN for the work
+      carrier and Devon's hand paths; merge the changes that remove the file path from the three
+      repositories; run one `verify` on each machine; resume the writers. This is **the nightly's
+      target switch**.
    6. **Retire the Mac database** (FE-6): stop and remove `factory-events-db` on the Mac's OrbStack
       host engine after a final dump kept in the Mac's backup, remove `FACTORY_DB_DSN` from
       `~/.factory/env`, and retire its secret's reference.
@@ -2844,13 +2860,17 @@ D-42 A widen D-9 to fix that.
    external `coolify` network); the Mac reaches it over the tailnet (`ovh-vps1`).
 6. **No new authority beyond the four answers.** The amendment grants the two roles to the holders
    ADR-0055 amendment 24 items 4 and 9 name, and nothing else. No lane gets the owner, and no
-   identity outside those lists gets either secret.
+   identity outside those lists gets either secret. Each secret's BWS project, the machine
+   accounts that read it, and the history import's actor and role are Devon's named decisions,
+   taken before acts 3 and 5; this amendment makes none of them.
 
 ### Open before building
 
 ADR-0055 amendment 24's "Open before building" lists each verify item and the step that settles
-it: the anchor's home, the adapters' dedupe and the walk's cost (FE-1), and the rotation class, the
-tailnet-only port and the Mac's fetching identities (FE-4). FE-6 waits for the anchor.
+it: the anchor's home, the adapters' dedupe, the walk's cost and `emit`'s stdout (FE-1), and the
+rotation class and the tailnet-only port (FE-4). It also lists two named decisions of
+Devon's: each DSN's BWS project and reading accounts, before act 3 (FE-4), and the history
+import's actor and role, before act 5's import (FE-5). FE-6 waits for the anchor.
 
 ### Passages this amendment changes
 
