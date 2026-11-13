@@ -123,6 +123,9 @@ keeper's id.
 - **`make check`:** green, with ruff, ruff format, pyright, and pytest at 14,767 passed and
   1 skipped. Run against `orchestrator_test_hq_w_124`, with `SECURITY_STANDARDS_DIR` set to the
   fixture and `PGTZ=UTC`.
+- **CI on PR #686:** `Quality` passed, with 14,745 passed and 23 skipped. That's the same 14,768
+  tests collected locally. `Rollout transcription currency` and `Runner consumer compatibility`
+  passed too.
 - **`shellcheck scripts/run-change-proposer.sh`:** clean.
 - **New tests in `tests/change_proposer/test_change_proposer.py`:**
   - The subcommand prints the union, including a transcribed repository whose grant is withdrawn.
