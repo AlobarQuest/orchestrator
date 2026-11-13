@@ -202,6 +202,9 @@ quotes:
   - `bws.secret-files-gitignored`: `.gitignore` doesn't cover `*-migration/`.
   - `bws.manifest-matches-usage`: an undeclared UUID `aaff45ca-…` in code.
 - **`/code-review` low on `origin/main...HEAD`:** no findings.
+- **Fix round 1 (at `3ece871d`):** `make check` exit 0 (14,808 passed, 1 skipped, test database
+  `orchestrator_test_hq_w_131`, dropped after); security scan from the repo root exit 0, 0 BLOCK,
+  the same 2 pre-existing WARNs; `/code-review` low on `c1bb688e..HEAD`: no findings.
 
 ## Files changed
 
