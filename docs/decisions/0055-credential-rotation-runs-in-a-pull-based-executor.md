@@ -3297,7 +3297,8 @@ recorded in sds-hq `state/decisions.md`:
 - **D-44 A** (about 17:03 UTC): the read-only role also serves Devon's hand paths on the Mac
   (`orchestrator intake-package`, the `factory` journey's `emit-intake-payload`, and
   intent-packages `verify-approval` run by hand), not only the work carrier. It can't append, so
-  no write path widens.
+  no write path widens. **Superseded by amendment 25:** D-47 revised it to D-44 B, so only the
+  work carrier reads the chain.
 
 ADR-0059 amendment 7 brings factory-events into Phase 1 to the same extent and orders the
 increments. Code reads cite orchestrator `2cf43757`, intent-packages `78bb302`, security-standards
@@ -3321,6 +3322,11 @@ the three repositories emits the action:
 | Devon's `approve` | intent-packages `cli.py`, `_run_approve` (lines 137-180), calling `do_approve` (line 169) | `devon` |
 | The cycle's standing approval | sds-hq `src/sds_hq/standing_approve.py`, `approve` (lines 540-547), with `FACTORY_AGENT_ID` `lane-credential-policy` (line 36) | `policy:non-software-operational@v<N>` |
 | The bump proposer | orchestrator `src/bump_proposer/standing.py`, line 397 (`approve --by-policy`) | `policy:dependency-update@v<N>` |
+
+The event log shows who runs Devon's `approve`: interactive Claude Code sessions, on his word, as
+actor `claude-code-interactive`, with approver `devon` (amendment 25, "Consequences"). Under
+D-45 A as revised by D-47, they fetch the append DSN through `factory-events-session`
+(amendment 25 item 3).
 
 **Four readers match it.** intent-packages' `_events_file_has_matching_approval` (`operations.py`,
 lines 476-508, the match at 503) under `default_chain_checker` (511-530) and `verify_approval`
@@ -3362,6 +3368,7 @@ its own.
    `TRUNCATE` on it, whatever the role. Because the formula is unchanged, a record imported from
    the Mac's file keeps its `seq`, `prev_hash` and `hash`, and one walker verifies both. Who
    runs that import, and under which role, is Devon's named decision ("Open before building").
+   Amendment 25 item 4 names them (D-46 A).
 3. **Three roles, two of them held.**
    - **Append-only role.** `SELECT` and `INSERT` on the chain table, nothing else: no `UPDATE`,
      `DELETE`, `TRUNCATE` or DDL. It reads the head it links to.
@@ -3417,7 +3424,9 @@ its own.
    step 3f-2 and in its container after, and Devon's hand paths on the Mac (D-44 A): `orchestrator
    intake-package`, the `factory` journey's `emit-intake-payload`, and intent-packages
    `verify-approval` run by hand. Each carry makes three chain reads (the two orchestrator reads and
-   intent-packages' subprocess), and all three use the read-only role.
+   intent-packages' subprocess), and all three use the read-only role. **Superseded by amendment 25
+   item 1 (D-44 B):** the work carrier is the only holder, fetching through `sds-operator` on the
+   Mac until step 3f-2, and a hand intake fails closed after the cut-over.
 10. **What the local file becomes.** At the cut-over, the Mac's `~/.factory/events.jsonl` is
     imported into the VPS chain (item 2, by the actor and role Devon names) and then sealed: renamed
     to an archive name, made read-only, and kept in the Mac's nightly backup as the record of the
@@ -3425,7 +3434,8 @@ its own.
     could fall back to would be a second chain, and a fallback on an unreachable database would fail
     open. The cut-over's last step lands the changes that remove the file path from
     `factory_events`' `emit`, `adapt` and `verify`, from intent-packages' chain checker, and from
-    the orchestrator's verifier (ADR-0059 amendment 7, step FE-5).
+    the orchestrator's verifier (ADR-0059 amendment 7, step FE-5). Amendment 25 item 4 names the
+    import's actor and role (D-46 A).
 11. **The credentials.** Two BWS secrets, each a DSN for one role. Both are **to be created** in
     step FE-4 and recorded by UUID, never by name. Each secret's BWS project, and each BWS
     machine account granted a read of it (on the Mac and in each lane container), is Devon's
@@ -3436,7 +3446,9 @@ its own.
     B's holders. Two such identities are the nightly's `BWS_ACCESS_TOKEN_BROAD` and its Keychain
     item `BWS_ACCESS_TOKEN_VPS_BACKUP` (security-standards `factory-events-nightly.sh`, lines
     104-105). The table's "Read by" column names the processes D-43 B and D-44 A give each role,
-    not the accounts that fetch it.
+    not the accounts that fetch it. **Amendment 25 names them:** the project in its item 2 and the
+    accounts in its item 3 (D-45 A as revised by D-47). Its item 1 drops Devon's hand paths from
+    the read DSN, and the append DSN's "Devon's `approve`" reads through `factory-events-session`.
 
     | Secret (to be created) | Role | Read by | `.bws-secrets.toml` | Registry row |
     |---|---|---|---|---|
@@ -3468,7 +3480,9 @@ its own.
 16. **What it grants, and nothing more.** The two roles and their holders in items 3, 4 and 9, as
     D-40 B, D-42 A, D-43 B and D-44 A give them. No other identity gets either credential, and the
     owner is held by no one at run time. It names no BWS project, no machine account and no
-    import actor: each is Devon's named decision before the act that needs it.
+    import actor: each is Devon's named decision before the act that needs it. **Superseded by
+    amendment 25:** D-44 B replaces D-44 A, and amendment 25 names the project, the accounts and
+    the import actor.
 
 ### Increments
 
@@ -3479,7 +3493,8 @@ and roles, its two secrets and its backup), FE-5 (the cut-over: the import, the 
 switch, every holder's DSN, the seal and the file path's removal) and FE-6 (the Mac database's
 retirement). The work carrier's lane code (ADR-0059 step 3f-2) follows them. FE-4's act 3 waits
 for Devon's named decision on each DSN's BWS project and reading accounts, and FE-5's import for
-his named decision on its actor and role ("Open before building").
+his named decision on its actor and role ("Open before building"). Amendment 25 records both
+decisions, so neither act waits for them.
 
 ### Open before building
 
@@ -3507,8 +3522,9 @@ Each item names the step that settles it.
 - **The tailnet-only port (FE-4).** Coolify's public port for a database binds every interface. FE-4
   confirms the port is reachable only on the tailnet (a bind on the tailnet address or a host
   firewall rule) before any secret is created; if neither holds, the act stops for a decision.
-- **Each DSN's BWS project and reading accounts (FE-4, Devon's named decision).** For each of the
-  two secrets: the BWS project it's created in, and every machine account granted a read of it, for
+- **Each DSN's BWS project and reading accounts (FE-4, Devon's named decision).** **Answered:**
+  D-45 A as revised by D-47 (amendment 25 items 2 and 3). The original question
+  follows. For each of the two secrets: the BWS project it's created in, and every machine account granted a read of it, for
   each reader in item 11's table: Devon's shell, the sds-hq cycle and the nightly on the Mac; the
   bump proposer on the Mac until ADR-0059 step 3f-4 and in its container after (item 4); and the
   work carrier on the Mac until step 3f-2 and in its container after (item 9). Devon names each
@@ -3517,8 +3533,9 @@ Each item names the step that settles it.
   `BWS_ACCESS_TOKEN_BROAD` or Keychain `BWS_ACCESS_TOKEN_VPS_BACKUP` identity (security-standards
   `factory-events-nightly.sh`, lines 104-105), widens D-43 B's holders, so it reads the append DSN
   only if his decision says so.
-- **The history import's actor and role (FE-5, Devon's named decision).** The import (item 2;
-  ADR-0059 amendment 7, FE-1 and act 5) writes the Mac file's events into the VPS chain. Item 4
+- **The history import's actor and role (FE-5, Devon's named decision).** **Answered:** D-46 A
+  (amendment 25 item 4). The original question follows. The import (item 2; ADR-0059 amendment 7,
+  FE-1 and act 5) writes the Mac file's events into the VPS chain. Item 4
   names exactly four append holders and item 3 limits the owner to FE-4's setup acts, so
   neither covers the import. Devon names who runs it and under which role, before act 5's
   import step runs; until he has, act 5 stops before the import. His decision settles how it
@@ -3549,3 +3566,120 @@ Each item names the step that settles it.
   unreachable database is never read as "not approved" or as "approved".
 - **Unchanged.** The event envelope, the hash formula, `do_approve`'s order, the approval checks in
   amendment 22 and in `package_sources`, and the work carrier's refusals.
+
+## Amendment 25 — Only the work carrier reads the factory-events chain, and its project and accounts are named (2026-11-13)
+
+**Status: Proposed (2026-11-13).** Accepted on merge. HQ merges it only after a clean Opus
+whole-branch review (HQ D-12, limit 3). It records Devon's answers to the two named decisions
+amendment 24 left open, and his revision of D-44 A. Each answer was given in an interactive HQ
+session on 2026-11-13 and is quoted from sds-hq `state/decisions.md` at `74c3507`:
+
+- **D-47** (19:19 UTC) revises D-44 and D-45. The record's facts: "the Mac's
+  ~/.factory/events.jsonl has 92 package.approved by claude-code-interactive, 11 by
+  lane-credential-policy, and 0 by devon; Devon says he has never run intake-package or
+  verify-approval by hand." Devon: "Lets update D-44 as you recommend, and I agree with your take
+  on D-45." The recorded answer: "D-44 becomes B (only the work carrier reads the chain); D-45
+  append-DSN reader for approvals is a new narrow account factory-events-session (own Keychain
+  item, append DSN only, no read-DSN grant)."
+- **D-44 B**, as D-47 sets it: "Only the carrier reads the chain; after the cut-over each hand
+  intake can't verify an approval and fails closed."
+- **D-45 A** (19:10 UTC), as D-47 revises it. As first answered: "new BWS project Factory Events
+  with only the two DSNs; append DSN readers the SDS HQ account, Devon's shell identity, the
+  bump-proposer lane account, and a new narrow factory-events-nightly account (one more Mac
+  Keychain item); read DSN readers the work-carrier lane account, sds-operator for the Mac carrier
+  until it moves, and Devon's shell identity." D-47 replaces "Devon's shell identity" as an append
+  reader with `factory-events-session`, "used by interactive Claude Code sessions to run
+  intent-packages approve on Devon's word", and, with D-44 B, gives it "no read-DSN grant". So no
+  shell identity reads either DSN.
+- **D-46 A** (19:10 UTC): "an interactive session runs the import once under the append-only role,
+  reading the append DSN by UUID for that one command."
+
+Line numbers for amendment 24 are this file's at orchestrator `da044d6d`, before this amendment
+was appended. Code reads cite orchestrator `da044d6d` and intent-packages `97e817d`.
+
+### What it supersedes in amendment 24
+
+- **D-44 A** (amendment 24's fourth answer) and every rule resting on it: item 9's hand-path
+  holders, item 11's "Read by" entry for Devon's hand paths, and item 16's "D-44 A".
+- **The two open named decisions**: item 2's and item 10's import actor, item 11's project and
+  reading accounts, item 16's "It names no BWS project, no machine account and no import actor",
+  the "Increments" paragraph's waits, and the two "Open before building" entries "Each DSN's BWS
+  project and reading accounts" and "The history import's actor and role".
+
+The rest of amendment 24 stands. Each passage named here carries a one-line pointer to this
+amendment.
+
+### Decision
+
+1. **Only the work carrier reads the chain (D-44 B).** The read-only role's one holder is the work
+   carrier: on the Mac until ADR-0059 step 3f-2, where its launcher fetches the read DSN through
+   `sds-operator`, and in its container after, through the work-carrier lane account. Each carry
+   still makes amendment 24 item 9's three chain reads, all under the read-only role. No hand path
+   holds the read DSN: `orchestrator intake-package`, the `factory` journey's
+   `emit-intake-payload`, and intent-packages `verify-approval` run by hand. After the cut-over
+   (FE-5), each one fails closed. It has no read DSN, and amendment 24 item 8 makes an unreachable
+   database or a refused role a refusal (`ChainUnavailable`, `PackageSourceError`), and item 10
+   removes the file. The refusal comes from that, not from a check on who's calling.
+2. **The project (D-45 A).** A new BWS project, `Factory Events`, holds only the two DSN secrets.
+   Both are created in it in ADR-0059 amendment 7's act 3 and recorded by UUID. Neither has a UUID
+   yet.
+3. **The accounts (D-45 A as revised by D-47).** These are the only machine accounts granted a read
+   of either secret:
+
+   | Account | Reads | Serves (amendment 24 items 4 and 9) |
+   |---|---|---|
+   | The SDS HQ account | The append DSN | The cycle's `standing-approve`, on the Mac |
+   | `factory-events-session`, a new narrow account with its own Mac Keychain item | The append DSN only; no read-DSN grant | Interactive Claude Code sessions running `intent-packages approve` on Devon's word (item 4's "Devon's `approve`") |
+   | The bump-proposer lane account | The append DSN | The bump proposer's `approve --by-policy`. The Mac launcher reads the account's token from its own Keychain item until the lane moves (ADR-0059 step 3f-4). |
+   | `factory-events-nightly`, a new narrow account with one more Mac Keychain item | The append DSN | The Mac nightly's `adapt` |
+   | The work-carrier lane account | The read DSN | The work carrier, in its container after ADR-0059 step 3f-2 |
+   | `sds-operator` | The read DSN, until the Mac carrier moves | The work carrier on the Mac, until step 3f-2 |
+
+   The append DSN is never granted to `sds-operator`, `BWS_ACCESS_TOKEN_BROAD` or
+   `BWS_ACCESS_TOKEN_VPS_BACKUP`: each serves processes beyond item 4's holders, so a grant would
+   widen D-43 B. Item 4's four append holders are unchanged, and each now has its own account.
+4. **The history import (D-46 A).** An interactive session runs FE-1's import once, in ADR-0059
+   amendment 7's act 5, under the append-only role, reading the append DSN by UUID for that one
+   command. It isn't a standing holder: item 4's "exactly these" still names four holders, and
+   the import is one command run while act 5 has the writers paused. D-46 A names no account for
+   the session's fetch. The session can read the append DSN only through an account item 3
+   already grants, so the import adds no grant. The command doesn't log the DSN (amendment 24 item
+   13).
+5. **What D-44 B means for FE-3.** FE-3's code scope is unchanged. Only the read DSN's holders
+   shrink. The orchestrator's read path still serves the carrier:
+   - The carrier runs `orchestrator emit-intake-payload` as a subprocess (`work_carrier/prepare.py`,
+     `EMITTER` at line 47, the command at lines 117-126).
+   - `emit-intake-payload` (`cli.py`, line 290) builds its payload through `_build_intake_payload`
+     (line 322), which calls `package_sources.load_package_intake_payload` (`_load_intake_payload`,
+     lines 192-206). `intake-package` (line 254) takes the same path (line 283).
+   - In `package_sources.py`, the payload loader calls `_verify_current_approval` (line 558). That
+     runs intent-packages `verify-approval` (`_verify_with_intent_packages_cli`, line 382), then
+     `_verify_factory_chain` (line 387), then `_verified_approval_from_events` (line 388), which
+     reads `_iter_package_approval_events` (line 346).
+
+   So FE-3 changes `_verify_factory_chain` and `_iter_package_approval_events` to read the database
+   under the read DSN, as ADR-0059 amendment 7 says. The hand commands share the same code, and
+   they fail closed because their callers hold no DSN, not because the code differs.
+6. **What it grants, and nothing more.** The project in item 2 and the six grants in item 3, as
+   D-45 A and D-47 give them, and the one-time import in item 4, as D-46 A gives it. No other
+   account reads either secret, and no Keychain item or account is created beyond the two new
+   accounts and the bump-proposer launcher's Keychain item that D-45 A names.
+
+### Consequences
+
+- **A hand intake fails closed after FE-5.** Devon has never run `intake-package` or
+  `verify-approval` by hand (D-47), so no path he uses is lost. A person who registers through
+  `/review/intakes/new` pastes the output of `orchestrator emit-intake-payload` (`web.py`, lines
+  696-807), and after the cut-over no hand run of that command can produce it. The form itself
+  doesn't read the chain and is unchanged.
+- **Who appears as the actor.** The event log's actor isn't its approver. Of the 92
+  `package.approved` events by `claude-code-interactive`, 82 name approver `devon` and 10 name
+  `policy:dependency-update@v1` to `@v3`; the bump proposer sets no `FACTORY_AGENT_ID`
+  (`src/bump_proposer` names none), so its emits take the emitter's default actor
+  `claude-code-interactive` (intent-packages `emitter.py`, lines 21 and 92). This amendment
+  doesn't change any actor. Amendment 24's "Three callers" table stands as a code claim.
+- **`sds-operator` reads the chain until step 3f-2.** Every Mac process that fetches through
+  `sds-operator` can read the read DSN until then. The read role can't append, so no write path
+  widens. D-45 A gives `sds-operator` the read DSN only until the Mac carrier moves.
+- **Unchanged.** Amendment 24's mechanism (items 1 to 8 and 10 to 15), the four append holders,
+  the network, the logging rules and FE-1 to FE-6's order.
