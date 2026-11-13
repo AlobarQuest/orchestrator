@@ -840,12 +840,14 @@ def test_the_matcher_refuses_an_unknown_lane_or_two_entries() -> None:
         deploy.lanes_in_registry("version = 1\n" + WATCH_TOKEN_ENTRY * 2)
 
 
-def test_the_repositorys_registry_registers_the_seven_moved_lanes() -> None:
-    """Increment 2 adds the first lane token entry and increment 3 the landing ledger's, the
-    deploy watcher's, the revision watcher's, the unit verifier's, the pin watcher's and the
-    membership check's (ADR-0059). A registered lane holds no release until its `--add` passes."""
+def test_the_repositorys_registry_registers_the_eight_moved_lanes() -> None:
+    """Increment 2 adds the first lane token entry, increment 3 the landing ledger's, the deploy
+    watcher's, the revision watcher's, the unit verifier's, the pin watcher's and the membership
+    check's, and increment 4 the change proposer's (ADR-0059). A registered lane holds no release
+    until its `--add` passes."""
     text = (ROOT / ".cred-consumers.toml").read_text()
     assert deploy.lanes_in_registry(text) == {
+        "change-proposer",
         "deploy-watcher",
         "execution-watch",
         "landing-ledger",
@@ -1188,7 +1190,8 @@ def test_every_lanes_ping_url_secret_is_listed_for_that_lane() -> None:
     its compose names but the manifest doesn't list would go unproved until its first ping. An
     empty value is a placeholder until the lane's ping-URL secret exists, allowed only for a lane
     named in `placeholders`; a lane added before its ping-URL secret exists is named there until a
-    later change writes the id. The change proposer's keeper is created at its cut-over."""
+    later change writes the id. The change proposer's keeper was created at HQ gate G-49; a later
+    change writes its id."""
     manifest = (ROOT / ".bws-secrets.toml").read_text()
     placeholders = {"change-proposer"}
     named = {}
