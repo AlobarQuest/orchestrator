@@ -150,6 +150,10 @@ The schedule must stay off until then, and the `deploy.md` steps give that order
 
 - `make check` (ruff, pyright, and the full suite against `orchestrator_test_hq_w_129`, migrated
   to head): green (exit 0): `All checks passed!` from ruff and pyright, then **14831 passed, 1 skipped** in 297 s.
+- CI on PR #689 (head `33446291`): `Quality` passed, with **14809 passed, 23 skipped**,
+  the same 14,832 collected as the local run. The other skips are environment skips outside this
+  change; the new test file has no skip markers. `Rollout transcription currency` and `Runner
+  consumer compatibility` also passed.
 - The first `make check` stopped at ruff E501 (a 101-character line in the new test). I wrapped
   the line, and the second run is the green one above.
 - Targeted run before `make check`: 525 tests across the decomposer, lane, deploy-lane, layer,
