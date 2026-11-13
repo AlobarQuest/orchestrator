@@ -1074,7 +1074,8 @@ healthchecks_check = "sds-membership-check"
 # Each lane's runtime-fetch row lands in that lane's move PR. The landing-ledger, deploy-watcher,
 # revision-watcher, unit-verifier, pin-watcher and membership-check lanes' accounts hold read grants
 # on the read App's keeper (HQ gates G-18, G-28, G-30, G-33, G-37 and G-39), so that row lists each
-# lane's reader; no machine account holds a grant on the push App's keeper yet, so its row lists the
+# lane's reader; the change-proposer's reader lands with its launcher, ahead of its account's grant
+# at cut-over. No machine account holds a grant on the push App's keeper yet, so its row lists the
 # keeper alone.
 [[credential]]
 id = "lanes-read-app-private-key"
@@ -1132,6 +1133,13 @@ rotation_preconditions = ["rotate it with lanes-push-app-private-key in one sitt
   ref = "scripts/run-membership-check.sh"
   healthchecks_check = "sds-membership-check"
   note = "read in the sds-lane-membership-check container with the lane's own token, each pass, and piped straight into sds-github-mint; pings sds-membership-check"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
+  ref = "scripts/run-change-proposer.sh"
+  healthchecks_check = "sds-change-proposer"
+  note = "read in the sds-lane-change-proposer container with the lane's own token, each pass (dry run or not), and piped straight into sds-github-mint; pings sds-change-proposer on --submit passes only"
 
 [[credential]]
 id = "lanes-push-app-private-key"

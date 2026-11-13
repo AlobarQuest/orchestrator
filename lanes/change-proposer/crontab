@@ -1,0 +1,8 @@
+# sds-lane-change-proposer's schedule: one proposing pass every hour, as the Mac job's
+# `StartInterval` of 3600 runs it (`scripts/com.devon.change-proposer.plist`), in the image's
+# America/New_York time. `--submit` is passed here, where it is visible, as the plist passes it: a
+# bare run is a dry run that writes nothing and pings nothing. Minute 35 is one no other lane uses:
+# execution-watch runs on the quarter-hours, the unit verifier on 2-52/10, the deploy watcher on 20,
+# the pin watcher on 07:25, the landing ledger on 07:30, the revision watcher on 40 and the
+# membership check on 07:47. The entrypoint runs this file only when LANE_SCHEDULE_ENABLED is `true`.
+35 * * * * lane-run change-proposer --submit

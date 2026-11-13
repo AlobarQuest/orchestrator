@@ -686,7 +686,35 @@ def _read_reverts() -> tuple[frozenset[RecordedRevert] | None, list[Outcome]]:
         return None, [Outcome("-", 0, "unreadable", f"recorded reverts: {error}")]
 
 
+def _print_repositories() -> int:
+    """Print every repository this program's GitHub calls read, one per line.
+
+    In the lane's container the launcher mints the pass's GitHub token for exactly these (ADR-0059
+    decision 2: a mint names the repositories its lane's calls read). That's the union of the
+    passes' scope, read from the member record, and the scope sweep's population, every
+    `ROLLOUT_WORKFLOWS` key whatever its grant (`_scope_sweep`). The record is read even though
+    the scope is a subset of the sweep's population, so an unreadable record mints nothing, as it
+    proposes nothing. An unreadable record or an empty list prints nothing on stdout and exits 2.
+    """
+    members = _read_members()
+    if members is None:
+        return EXIT_UNUSABLE
+    names = sorted(set(_in_scope(members)) | set(ROLLOUT_WORKFLOWS))
+    if not names:
+        print("[UNUSABLE] no repository has a transcribed rollout workflow", file=sys.stderr)
+        return EXIT_UNUSABLE
+    print("\n".join(names))
+    return EXIT_OK
+
+
 def run(argv: list[str] | None = None) -> int:
+    arguments = sys.argv[1:] if argv is None else argv
+    if arguments == ["repositories"]:
+        return _print_repositories()
+    return _propose(arguments)
+
+
+def _propose(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--submit",
