@@ -657,9 +657,10 @@ OUTBOUND_ALLOWLIST = {
     # looks like a working refusal.
     Path("src/membership_check/declaration.py"),
     # `membership_check`'s auto-merge reader (ADR-0038: nothing in the SDS arms auto-merge). Three
-    # GET routes on GitHub -- the repository (`allow_auto_merge`), its `.github/workflows`
-    # listing, and each file in it -- each judged on the path the transport will send, so a name
-    # that composes anything else is refused before it leaves. It reports; it changes no setting.
+    # GET routes on GitHub -- the repository, its `.github/workflows` listing, and each file in
+    # it -- and one GraphQL query (`POST /graphql`, `autoMergeAllowed`), each judged on the request
+    # the transport will send, so a name or body that composes anything else is refused before it
+    # leaves (`is_allowed`, `is_allowed_query`). It reports; it changes no setting.
     Path("src/membership_check/auto_merge.py"),
     # ADR-0029. `work_watcher` is the work lane's watcher, a SEPARATE program that shares the
     # carry's invocation and runs before it. TWO files, one route each. The change-manager

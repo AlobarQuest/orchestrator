@@ -448,8 +448,11 @@ one lane") still needs the following, in this order, each in its own change or a
 7. The lane's `--add`, then the `lane-run --read` proof. The check has no `--dry-run`, so its first
    container pass is cut-over step 2's ordinary pass, which settles ADR-0059 amendment 5 open
    item 1: its report must show the clone's commit and no "packages checkout" gap. The same pass
-   shows whether an installation token with `administration=read` is served `allow_auto_merge`:
-   served, or a gap per member. It also proves the read App's installation covers every
+   shows whether the read App's installation token is served GraphQL's `autoMergeAllowed`
+   (`POST /graphql`, `src/membership_check/auto_merge.py`): served, or a gap per member whose
+   detail names the route, the status and each error's `type`. Both hosts read the setting there;
+   REST's `allow_auto_merge` isn't read, because GitHub serves merge-related settings only to a
+   token with `contents:write`. It also proves the read App's installation covers every
    repository the member record observes, and that they share one owner: otherwise the mint
    refuses, and every pass exits 1.
 8. Cut-over steps 2 onward: the paired pass on both hosts, recording the Mac checkout's commit
@@ -606,10 +609,11 @@ doesn't name, so in the container a retired member's auto-merge state is a gap. 
 factory-runner are members, so the fork list's read is covered too. An unreadable record or an empty population exits 3 before any mint, with the
 program not run; any other `sds_scope` code passes through. It mints `metadata=read` (the listings
 and each repository), `contents=read` (`factory-target.toml`, the registry files, the workflow
-files and the fork list's file) and `administration=read` (`allow_auto_merge`, which GitHub serves
-only to a credential with admin read: `src/membership_check/auto_merge.py`), and exports the token
-as both `SDS_MEMBERS_GITHUB_TOKEN` and `GH_TOKEN`, for the fork list's `gh api` read. A failed or
-empty mint exits 1. Its one other GitHub read, the standing packages, is an anonymous shallow
+files and the fork list's file) and `administration=read`, which no read is known to need: the
+auto-merge setting is GraphQL's `autoMergeAllowed` (`src/membership_check/auto_merge.py`), because
+GitHub serves REST's merge-related settings only to a token with `contents:write`. It
+exports the token as both `SDS_MEMBERS_GITHUB_TOKEN` and `GH_TOKEN`, for the fork list's `gh api`
+read. A failed or empty mint exits 1. Its one other GitHub read, the standing packages, is an anonymous shallow
 clone of `https://github.com/AlobarQuest/intent-packages.git` at `main`, run as git with
 `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_NOSYSTEM=1`, `GIT_TERMINAL_PROMPT=0` and no token in its
 environment (ADR-0059 amendment 5): the repository is public, so the clone carries no credential.
