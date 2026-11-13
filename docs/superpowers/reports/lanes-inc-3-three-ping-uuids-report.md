@@ -10,7 +10,7 @@ for lane.
 - Base: `origin/main` at `06cfea7c`, the commit the handoff read its facts at. Each keeper id in the
   handoff's table matches its `.cred-consumers.toml` row's `bws_uuid` (lines 902, 952 and 1002).
 - Branch: `hq/lanes-inc-3-three-ping-uuids`.
-- PR: #683, ready for review, not merged. The code commit is `da39bd12`; the PR head moves to the
+- PR: #683, ready for review, not merged. The code commits are `da39bd12` and `e0b81a5f` (a count fix in `deploy.md`); the PR head moves to the
   report commit that follows it.
 
 ## What I built
@@ -96,7 +96,7 @@ repeats that sentence with its own lane's token keeper.
 
 - Targeted run (`test_deploy_lanes.py`, the three `test_run_<lane>.py`, and the three
   `test_<lane>_rows.py`): 247 passed.
-- `make check` on the committed tree, database `orchestrator_test_hq_w_119`, `PGTZ=UTC`, fixture
+- `make check` on the committed tree (`e0b81a5f`, after the deploy.md count fix), database `orchestrator_test_hq_w_119`, `PGTZ=UTC`, fixture
   `SECURITY_STANDARDS_DIR`: exit 0. Pytest collected 14736 items: 14735 passed and 1 was skipped. Lint, format, and type checks reported no errors.
 - Security scan from the repo root: exit 0; 0 BLOCK, 2 WARN, 1 INFO. Both WARNs are pre-existing and
   are the same two #680 reported: the glob `*-migration/` isn't gitignored, and an undeclared UUID
