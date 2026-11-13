@@ -357,10 +357,11 @@ volume `sds-lanes-revision-watcher-state` at `REVISION_WATCHER_STATE_DIR`
 40, as the Mac job's `StartInterval` of 3600 does; the minute keeps it clear of every other lane's
 start, and the watcher has no scheduled-pass flag. Its `.bws-secrets.toml` secrets are the observer
 bearer, the hosting platform's API token, App Brain's read key, the `sds-bridge` alert sender
-(acting passes only) and the read-only App's key, all read with the lane's one token; on the Mac the
-narrow and broad Keychain identities still read them. Its compose leaves
-`SDS_DEADMAN_PING_URL_UUID` empty until the lane's ping-URL secret exists, so until then the
-container's dead-man helper pings nothing and says so. Its cut-over (ADR-0059, "Cut-over for one
+(acting passes only), the read-only App's key and its ping-URL secret, all read with the lane's one
+token; on the Mac the narrow and broad Keychain identities still read the first five. Its compose
+names `SDS_DEADMAN_PING_URL_UUID`, the BWS secret id of `revision-watcher-ping-url`, which the
+container's dead-man helper reads the URL from with the lane's own token (`scripts/sds-deadman.sh`).
+Its cut-over (ADR-0059, "Cut-over for one
 lane") still needs the following, in this order, each in its own change or act:
 
 1. The orchestrator serving this release; then HQ creates `sds-lane-revision-watcher` from the
@@ -388,10 +389,11 @@ either. Its state is the acting pass's `alerts.json`, so its compose mounts the 
 runs `lane-run pin-watcher` daily at 07:25 New York time. The Mac job runs at 07:20, but minute 20
 is the deploy watcher's hourly start, and 25 keeps it clear of every other lane's start; the
 watcher has no scheduled-pass flag. Its `.bws-secrets.toml` secrets are the observer bearer, the
-`sds-bridge` alert sender (acting passes only) and the read-only App's key, all read with the
-lane's one token; on the Mac the narrow Keychain identity still reads the first two. Its compose
-leaves `SDS_DEADMAN_PING_URL_UUID` empty until the lane's ping-URL secret exists, so until then the
-container's dead-man helper pings nothing and says so. The read-App key row's `runtime-fetch`
+`sds-bridge` alert sender (acting passes only), the read-only App's key and its ping-URL secret,
+all read with the lane's one token; on the Mac the narrow Keychain identity still reads the first
+two. Its compose names `SDS_DEADMAN_PING_URL_UUID`, the BWS secret id of `pin-watcher-ping-url`,
+which the container's dead-man helper reads the URL from with the lane's own token
+(`scripts/sds-deadman.sh`). The read-App key row's `runtime-fetch`
 reader for `scripts/run-pin-watcher.sh` landed with the launcher. Its cut-over (ADR-0059, "Cut-over
 for one lane") still needs the following, in this order, each in its own change or act:
 
@@ -460,12 +462,12 @@ it either. Its state is the pass's `alerts.json`, so its compose mounts the name
 runs `lane-run unit-verifier` every ten minutes at minutes 2, 12, 22, 32, 42 and 52
 (`2-52/10`), as the Mac job's `StartInterval` of 600 does; those minutes keep it clear of every
 other lane's start, and the verifier has no scheduled-pass flag. Its `.bws-secrets.toml` secrets
-are the VERIFIER bearer, the `sds-bridge` alert sender (every pass) and the read-only App's key,
-all read with the lane's one token; on the Mac the narrow Keychain identity still reads the first
-two through `sds-token.sh`. Its compose leaves `SDS_DEADMAN_PING_URL_UUID` empty until the lane's
-ping-URL secret exists, so until then the container's dead-man helper pings nothing and says so.
-Its cut-over (ADR-0059, "Cut-over for one lane") still needs the following, in this order, each in
-its own change or act:
+are the VERIFIER bearer, the `sds-bridge` alert sender (every pass), the read-only App's key and
+its ping-URL secret, all read with the lane's one token; on the Mac the narrow Keychain identity
+still reads the first two through `sds-token.sh`. Its compose names `SDS_DEADMAN_PING_URL_UUID`, the
+BWS secret id of `unit-verifier-ping-url`, which the container's dead-man helper reads the URL from
+with the lane's own token (`scripts/sds-deadman.sh`). Its cut-over (ADR-0059, "Cut-over for one
+lane") still needs the following, in this order, each in its own change or act:
 
 1. The orchestrator serving this release; then HQ creates `sds-lane-unit-verifier` from the
    compose without deploying it.

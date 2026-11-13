@@ -303,7 +303,7 @@ def test_a_tokenless_pass_reports_3_unless_the_tool_failed(
 
 
 def test_without_a_ping_url_secret_a_pass_pings_nothing(tmp_path: Path) -> None:
-    """The compose's empty `SDS_DEADMAN_PING_URL_UUID` falls through to the name lookup, which
+    """An empty `SDS_DEADMAN_PING_URL_UUID` falls through to the name lookup, which
     needs the broad identity `lane-run` doesn't pass. The pass runs, and its alerting is disabled.
     `/usr/bin/security` is asked here (macOS has it, the image doesn't), so the stand-in broad
     identity keeps the real Keychain out of the test."""
@@ -377,9 +377,8 @@ def test_the_compose_meets_the_add_refusals_and_maps_nothing_else() -> None:
             "BWS_ACCESS_TOKEN": "${UNIT_VERIFIER_BWS_ACCESS_TOKEN}",
             "LANE_SCHEDULE_ENABLED": "${LANE_SCHEDULE_ENABLED:-false}",
             "VERIFIER_STATE_DIR": "/var/lib/sds/unit-verifier",
-            # Empty until the lane's ping-URL secret exists (`test_deploy_lanes.py`'s
-            # `placeholders`).
-            "SDS_DEADMAN_PING_URL_UUID": "",
+            # The BWS secret id of `unit-verifier-ping-url`, not a secret and not the ping URL.
+            "SDS_DEADMAN_PING_URL_UUID": "1cfc8352-c960-4afc-bd49-b4ff00e8783e",
         },
         "volumes": ["sds-lanes-unit-verifier-state:/var/lib/sds/unit-verifier"],
         "restart": "unless-stopped",
@@ -422,11 +421,15 @@ def test_no_other_lane_starts_a_pass_in_the_verifiers_minutes() -> None:
 
 def test_the_repositorys_manifest_lists_the_verifiers_secrets() -> None:
     manifest = Path(".bws-secrets.toml").read_text()
+    ping_url_secret = "1cfc8352-c960-4afc-bd49-b4ff00e8783e"
     assert deploy.lane_secrets(manifest, "unit-verifier") == [
         VERIFIER_UUID,
         ALERT_UUID,
         READ_APP_KEY_UUID,
+        ping_url_secret,
     ]
+    # The launcher names each secret it reads, except the ping-URL secret, whose id reaches it
+    # from the compose through `lane-run`.
     launcher = LAUNCHER.read_text()
     for uuid in deploy.lane_secrets(manifest, "unit-verifier"):
-        assert uuid in launcher, uuid
+        assert uuid in launcher or uuid == ping_url_secret, uuid
