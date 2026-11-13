@@ -1111,6 +1111,55 @@ healthchecks_check = "sds-change-proposer"
   uuid = "7651ccc2-7e13-417b-86da-b50100c0d4b2"
   note = "the keeper, in Rotation / Keepers, and the one copy; the lane reads it with its own token"
 
+# ── The rotation-decomposer lane's token and ping URL (ADR-0059 increment 4) ─────
+# ADR-0055 amendment 19, item 8: the lane's two rows, both handed to the SDS. The token's row is due
+# for its first issue by `rotate_requested`; a later change dates the ping URL's row, once the
+# token's `store` unit completes. Both keepers were created in Rotation / Keepers at HQ gate G-53,
+# where the lane's account got its four reads.
+# Neither row carries `created`, for the reason the landing ledger's block gives.
+[[credential]]
+id = "rotation-decomposer-bws-token"
+class = "bws-lane-token"
+provider = "bws-lane-token"
+bws_uuid = "623e61a6-d613-4e89-9626-b501013afbeb"
+rotated_by_sds = true
+rotate_requested = "2026-11-13"
+# What the lane's account sees, exactly: .bws-secrets.toml's rotation-decomposer secrets
+# (ORCHESTRATOR_M2M_CREDENTIALS, change-manager/M2M_TOKEN_READ, ALERT_HUB_SENDER_TOKEN_SDS_BRIDGE)
+# and the ping URL's keeper.
+reach_secrets = ["221a48d5-3f29-4898-b300-b4820140c880", "314f276d-55ca-4ddc-a24d-b4a3013508cd", "b415d03b-f92d-46b1-8a9d-b4f10103df49", "936bbbf2-dc3b-4343-979a-b501013afc87"]
+reach_projects = []
+
+  [[credential.consumer]]
+  kind = "bws-secret"
+  uuid = "623e61a6-d613-4e89-9626-b501013afbeb"
+  note = "the keeper, in Rotation / Keepers; only the executor reads it"
+
+  [[credential.consumer]]
+  kind = "coolify-env"
+  instance = "prod"
+  resource_type = "service"
+  uuid = "hcghb8xli5qqo6kl8enuu080"
+  key = "ROTATION_DECOMPOSER_BWS_ACCESS_TOKEN"
+  redeploy = false
+  note = "the sds-lane-rotation-decomposer service's variable; the lane phases redeploy it, never the executor"
+
+# No `created`, for the reason the landing ledger's block gives.
+[[credential]]
+id = "rotation-decomposer-ping-url"
+class = "healthchecks-ping-url"
+provider = "healthchecks-ping-url"
+bws_uuid = "936bbbf2-dc3b-4343-979a-b501013afc87"
+rotated_by_sds = true
+# The check whose ping URL the executor reads into the keeper (ADR-0055 amendment 23); the lane
+# keeps the check it pinged from the Mac (ADR-0059 decision 3).
+healthchecks_check = "sds-rotation-decomposer"
+
+  [[credential.consumer]]
+  kind = "bws-secret"
+  uuid = "936bbbf2-dc3b-4343-979a-b501013afc87"
+  note = "the keeper, in Rotation / Keepers, and the one copy; the lane reads it with its own token"
+
 # ── The two lane GitHub Apps' private keys (ADR-0059 increment 3) ────────────────
 # Devon created both Apps on 2026-11-09 (HQ gate G-17) and stored each key, base64 of the PEM, in
 # BWS project `SDS / Lane Apps`. `estate_clients/github_app_mint.py` (`sds-github-mint`) reads that
