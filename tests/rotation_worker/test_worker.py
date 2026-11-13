@@ -13,7 +13,7 @@ import pytest
 import rotation_worker.worker as worker
 from rotation_worker.adapters import ADAPTERS, AdapterContext
 from rotation_worker.checks import Approved
-from rotation_worker.contract import Actor, ContractError, Plan, Rotation, Step, StepKind
+from rotation_worker.contract import EMPTY, Actor, ContractError, Plan, Rotation, Step, StepKind
 from rotation_worker.git_mirror import MirrorError, RepoMirror
 from rotation_worker.github_actions import ActionsSecrets, FingerprintReports, RotationApp
 from rotation_worker.held import HeldSettings
@@ -666,6 +666,19 @@ def test_the_unit_after_a_person_s_mint_waits_unclaimed_until_a_value_is_staged(
     from rotation_worker.adapters import bws_machine_token
 
     h.adapter = replace(h.adapter, plan=bws_machine_token.PLAN)
+    h.add("u1", "store")
+    assert run_pass(h.setup()) == 0
+    assert h.client.calls == []
+
+
+def test_the_unit_after_a_person_s_mint_stays_unclaimed_while_staging_holds_the_marker(
+    h: Harness,
+) -> None:
+    # Bitwarden saves a staging secret made by hand before its value is pasted.
+    from rotation_worker.adapters import bws_machine_token
+
+    h.adapter = replace(h.adapter, plan=bws_machine_token.PLAN)
+    h.store.put(WORK, h.rotation.staging_key, Value(EMPTY))
     h.add("u1", "store")
     assert run_pass(h.setup()) == 0
     assert h.client.calls == []

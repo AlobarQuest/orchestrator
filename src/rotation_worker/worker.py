@@ -73,6 +73,7 @@ from rotation_worker.inbox import (
     Refusals,
     bind,
     other_mints,
+    pasted,
 )
 from rotation_worker.live_runs import stranded_by_a_restart
 from rotation_worker.notify import (
@@ -644,7 +645,9 @@ def _mint_waits(
     if not person_acts_beside(approved.plan, approved.unit, -1, StepKind.MINT):
         return False
     rotation, unit_id = approved.rotation, str(unit["id"])
-    staged = setup.store.find(rotation.work_project_id, rotation.staging_key)
+    staging = setup.store.find(rotation.work_project_id, rotation.staging_key)
+    # Bitwarden saves a staging secret made by hand before its value is pasted.
+    staged = None if staging is None else pasted(setup.store, staging.id)
     if setup.inbox is None:
         if staged is None:
             found.due[_mint_key(unit_id)] = _mint_act(setup, approved, unit_id)
@@ -662,13 +665,14 @@ def _mint_waits(
         return staged is None
     if staged is not None:
         if new is not None:
-            _tidy(setup, setup.inbox, new, staged.id, rotation, unit_id, found)
+            _tidy(setup.inbox, new, staged, rotation, unit_id, found)
         return False
     if new is None:
         found.due[_mint_key(unit_id)] = _mint_act(setup, approved, unit_id)
         LOG.info("unit_waiting", extra={"unit": unit_id, "reason": "the inbox is empty"})
         return True
-    return _bind_inbox(setup, setup.inbox, approved, provider, unit, new, found)
+    staging_id = None if staging is None else staging.id
+    return _bind_inbox(setup, setup.inbox, approved, provider, unit, new, staging_id, found)
 
 
 @runtime_checkable
@@ -738,9 +742,11 @@ def _bind_inbox(
     provider: Provider,
     unit: Mapping[str, Any],
     new: Value,
+    staging_id: str | None,
     found: PassActs,
 ) -> bool:
-    """Bind the inbox's value to the rotation, or say why not. Returns whether the unit waits."""
+    """Bind the inbox's value to the rotation, or say why not. Returns whether the unit waits.
+    `staging_id` is a staging secret holding no value yet, which the value is written into."""
     rotation, unit_id = approved.rotation, str(unit["id"])
     try:
         reason = bind(
@@ -750,6 +756,7 @@ def _bind_inbox(
             provider=provider,
             others_waiting=other_mints(setup.client, str(unit["work_package_revision_id"])),
             other_keepers=lambda: _other_keepers(setup, approved),
+            staging_id=staging_id,
         )
     except (*REFUSALS, *TRANSIENT) as error:
         # Nothing was decided about the value; it stays, and the person is told why.
@@ -772,16 +779,15 @@ def _bind_inbox(
 
 
 def _tidy(
-    setup: Setup,
     inbox: Inbox,
     new: Value,
-    staged_id: str,
+    staged: Value,
     rotation: Rotation,
     unit_id: str,
     found: PassActs,
 ) -> None:
     """Empty an inbox still holding the value staged from it; report one holding any other."""
-    if new.same_as(setup.store.read(staged_id)):
+    if new.same_as(staged):
         inbox.empty()
         return
     found.due[_inbox_key(unit_id)] = Act(
