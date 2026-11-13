@@ -14,7 +14,8 @@ Two facts the table states and does not change:
 * `pin_watcher.github.GitHubReader` permits any `GET`; the lane's use of it (`repositories`, one
   route) bounds it, so that use is recorded rather than the predicate.
 * `membership_check.declaration` and `.auto_merge` hold plain `httpx` clients with a path pattern
-  of their own, so the comparison runs that pattern and a source scan holds them to `GET`.
+  of their own, so the comparison runs that pattern and a source scan holds them to `GET`, but for
+  `auto_merge`'s one `POST /graphql`, which its own guard holds to one fixed query.
 """
 
 from __future__ import annotations
@@ -67,6 +68,7 @@ CRED_CONSUMERS = "/repos/o/r/contents/.cred-consumers.toml"
 REPOSITORY = "/repos/o/r"
 WORKFLOWS = "/repos/o/r/contents/.github/workflows"
 WORKFLOW = "/repos/o/r/contents/.github/workflows/ci.yml"
+GRAPHQL = "/graphql"
 
 # ---- membership-check: the services it asks directly ----------------------------------------
 
@@ -74,7 +76,8 @@ CHECK_EDGE = Edge(
     change_manager=frozenset({("GET", LANDING_POLICY)}),
     orchestrator=frozenset({("GET", MEMBERS)}),
     # `declaration` (the two contents files, and the repository its absence probe reads) and
-    # `auto_merge` (the repository, the workflows directory and each workflow file). The listing
+    # `auto_merge` (the repository, the workflows directory and each workflow file, and the one
+    # GraphQL query for the auto-merge setting). The listing
     # (the members and their accounts' public repositories) goes by the pin reader, and the
     # registry files by `gh` and `git`: see below.
     github=frozenset(
@@ -84,6 +87,7 @@ CHECK_EDGE = Edge(
             ("GET", REPOSITORY),
             ("GET", WORKFLOWS),
             ("GET", WORKFLOW),
+            ("POST", GRAPHQL),
         }
     ),
     alert_hub=frozenset(),
@@ -127,7 +131,16 @@ GITHUB_PROBES = frozenset(
     }
 )
 CHECK_ROUTES = frozenset(
-    {LANDING_POLICY, MEMBERS, FACTORY_TARGET, CRED_CONSUMERS, REPOSITORY, WORKFLOWS, WORKFLOW}
+    {
+        LANDING_POLICY,
+        MEMBERS,
+        FACTORY_TARGET,
+        CRED_CONSUMERS,
+        REPOSITORY,
+        WORKFLOWS,
+        WORKFLOW,
+        GRAPHQL,
+    }
 )
 # A repository name and a workflow file name are segments, so "x" appended to either is another
 # member of the same route, not a near miss; those two are tried with the other three variants.
@@ -151,8 +164,14 @@ def _read_members() -> object:
     return members_client.read_members(token="t", credential_key_id="k")
 
 
+# The one body `auto_merge` sends; its guard refuses every other (tests/membership_check).
+_QUERY = {"query": auto_merge.AUTO_MERGE_QUERY, "variables": {"owner": "o", "name": "r"}}
+
+
 def _github_permits(method: str, path: str) -> bool:
-    """The two hand-built GitHub readers' own patterns, GET only (a source scan holds the verb)."""
+    """The two hand-built GitHub readers' own guards (a source scan holds the verbs)."""
+    if method == "POST":
+        return auto_merge.is_allowed_query(path, _QUERY)
     return method == "GET" and (
         any(pattern.fullmatch(path) for pattern in declaration._ROUTES.values())
         or auto_merge.is_allowed(path)
@@ -238,40 +257,71 @@ def test_control_a_widened_auto_merge_pattern_fails_the_table(
     assert ("github", "GET", "/repos/o/r/pulls", True) in check_disagreements()
 
 
-# ---- The two hand-built GitHub readers send GET and nothing else ----------------------------
+def test_control_a_widened_auto_merge_query_guard_fails_the_table(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = auto_merge.is_allowed_query
+    monkeypatch.setattr(
+        auto_merge,
+        "is_allowed_query",
+        lambda path, body: path == "/graphql/" or original(path, body),
+    )
+    assert ("github", "POST", "/graphql/", True) in check_disagreements()
+
+
+# ---- The two hand-built GitHub readers send GET, but for auto_merge's one GraphQL query -----
 
 _WRITING_CALLS = frozenset({"post", "put", "patch", "delete", "request", "stream"})
 
 
+# The non-GET requests each reader may build: auto_merge's `POST` to its `GRAPHQL` constant.
+NON_GET = {declaration: [], auto_merge: ["build_request POST GRAPHQL"]}
+
+
 def non_get_calls(source: str) -> list[str]:
-    """Each `build_request` whose verb is not the literal "GET", and each writing method call."""
+    """Each `build_request` whose verb is not the literal "GET", and each writing method call.
+
+    A `build_request` is named by its verb and its path argument, a literal or a name, so one
+    pinned `POST` to a constant is told apart from any other.
+    """
     found: list[str] = []
     for node in ast.walk(ast.parse(source)):
         if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
             continue
         if node.func.attr == "build_request":
-            verb = node.args[0] if node.args else None
+            verb, path = (list(node.args) + [None, None])[:2]
             if not (isinstance(verb, ast.Constant) and verb.value == "GET"):
-                found.append(f"build_request at line {node.lineno}")
+                found.append(f"build_request {_label(verb)} {_label(path)}")
         elif node.func.attr in _WRITING_CALLS:
             found.append(f"{node.func.attr} at line {node.lineno}")
     return found
 
 
+def _label(node: ast.expr | None) -> str:
+    if isinstance(node, ast.Constant):
+        return str(node.value)
+    if isinstance(node, ast.Name):
+        return node.id
+    return "an expression"
+
+
 @pytest.mark.parametrize("module", [declaration, auto_merge])
-def test_a_hand_built_github_reader_builds_only_get_requests(module: ModuleType) -> None:
+def test_a_hand_built_github_reader_builds_only_its_listed_requests(module: ModuleType) -> None:
     source = Path(str(module.__file__)).read_text(encoding="utf-8")
     assert "build_request" in source
-    assert non_get_calls(source) == []
+    assert non_get_calls(source) == NON_GET[module]
 
 
 def test_control_a_non_get_request_is_reported() -> None:
     source = Path(str(auto_merge.__file__)).read_text(encoding="utf-8")
+    baseline = non_get_calls(source)
     post = source.replace('build_request("GET"', 'build_request("POST"', 1)
     patched = source.replace("self._client.send(request)", "self._client.post(path)", 1)
+    elsewhere = source.replace('"POST", GRAPHQL', '"POST", "/repos/o/r/pulls"', 1)
 
-    assert len(non_get_calls(post)) == 1
-    assert len(non_get_calls(patched)) == 1
+    assert len(non_get_calls(post)) == len(baseline) + 1
+    assert len(non_get_calls(patched)) == len(baseline) + 1
+    assert non_get_calls(elsewhere) == ["build_request POST /repos/o/r/pulls"]
 
 
 # ---- What else the program runs: the program's own imports ----------------------------------

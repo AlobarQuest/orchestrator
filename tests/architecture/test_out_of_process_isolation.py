@@ -675,6 +675,8 @@ TABLE: dict[str, Row] = {
         # `declaration.py`, moved here from the carrier: it reads each repository's
         # `factory-target.toml` from GitHub, which this program compares with the record.
         "httpx",
+        # `auto_merge.py` re-reads the GraphQL body it built, so its guard judges what is sent.
+        "json",
         "os",
         "pin_watcher",
         "re",

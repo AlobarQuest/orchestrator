@@ -137,9 +137,10 @@ if [ -n "${BWS_ACCESS_TOKEN:-}" ]; then
   # form; it is never in a variable, an argument or a file, and the mint runs without the lane's
   # token. The three permissions are what the check's GitHub reads use: `contents` for
   # `factory-target.toml`, the registry files, the workflow files and the fork list's file;
-  # `metadata` for the listings and each repository; `administration` for `allow_auto_merge`,
-  # which GitHub serves only to a credential with admin read (`auto_merge.py`). Any preset value is
-  # replaced, so the pass runs only on the token it minted.
+  # `metadata` for the listings and each repository. `administration` is minted but no read is
+  # known to need it: the auto-merge setting is read over GraphQL (`auto_merge.py`), because
+  # GitHub serves REST's merge-related settings only to a token with `contents:write`. Any preset
+  # value is replaced, so the pass runs only on the token it minted.
   SDS_MEMBERS_GITHUB_TOKEN="$(sds_bws_value "$READ_APP_KEY_UUID" \
     | env -u BWS_ACCESS_TOKEN "$REPO_ROOT/.venv/bin/sds-github-mint" \
         --app-id "$READ_APP_ID" "${TARGETS[@]}" \
