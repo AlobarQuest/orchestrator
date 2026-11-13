@@ -115,7 +115,10 @@ DSN.
   `SECURITY_STANDARDS_DIR=~/Projects/security-standards`: rc 0. Ruff check, ruff format and
   pyright were clean, and pytest reported **14,886 passed, 1 skipped**. The 7 integration tests
   are deselected, as intended.
-- **CI** on PR #696: see "Concerns", item 7, for its state when this report was written.
+- **CI** on PR #696 (run 43518186368, at `10ca357`, before this line was added): all three checks
+  passed: Quality, Rollout transcription currency, and Runner consumer compatibility. Quality
+  ran 14,864 passed and 23 skipped. CI skips tests that need local checkouts, which is why its
+  count differs from the local count.
 - **Database tests**: `SECURITY_STANDARDS_DIR=<FE-1 checkout> scripts/check-integration.sh`
   reported **7 passed** (14,887 deselected) against a throwaway `postgres:16-alpine` container,
   run twice, the second time on the committed tree. No container was left behind.
