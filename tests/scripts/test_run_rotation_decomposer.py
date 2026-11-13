@@ -309,7 +309,7 @@ def test_the_compose_meets_the_add_refusals_and_maps_nothing_else() -> None:
             "BWS_ACCESS_TOKEN": "${ROTATION_DECOMPOSER_BWS_ACCESS_TOKEN}",
             "LANE_SCHEDULE_ENABLED": "${LANE_SCHEDULE_ENABLED:-false}",
             "ROTATION_DECOMPOSER_STATE_DIR": "/var/lib/sds/rotation-decomposer",
-            # The BWS secret id of `rotation-decomposer-ping-url`, not a secret and not the ping URL.
+            # The BWS secret id of `rotation-decomposer-ping-url`: not a secret, not the ping URL.
             "SDS_DEADMAN_PING_URL_UUID": "936bbbf2-dc3b-4343-979a-b501013afc87",
         },
         "volumes": ["sds-lanes-rotation-decomposer-state:/var/lib/sds/rotation-decomposer"],
