@@ -71,6 +71,8 @@ neither stop point applied.
    - Exit 0, with ruff and pyright clean.
    - **14736 items collected, 14735 passed, 1 skipped.** The run before the pass-level test
      had 14735 collected and 14734 passed.
+   - CI `Quality` on `1684437a` (run 43331489527) succeeded: 14736 items collected, 14713
+     passed, 23 skipped.
 5. **Commit, push, and PR:** I committed `fix(rotation_worker): a staged empty marker isn't a
    staged value`, pushed, and opened draft PR #682, which cites plan Task 4 and the design
    section.
