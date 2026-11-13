@@ -3456,9 +3456,9 @@ its own.
     prints the bare event id on stdout (security-standards `cli.py`, line 33) and `seq` and the
     head hash on stderr (line 34). The emitter's `_parse_event_id` (`emitter.py`, lines 40-67)
     finds no JSON line with an `event_id` (lines 52-58) and takes the last whitespace-delimited
-    token of the last stdout line (lines 63-67). A JSON log record on stdout would therefore
-    change what the emitter parses, so FE-1 must keep `emit`'s stdout parseable by the emitter as
-    it stands ("Open before building", "`emit`'s stdout").
+    token of the last stdout line (lines 63-67). A JSON log record on stdout that carries an
+    `event_id` key is what the emitter reads first, so FE-1 must keep `emit`'s stdout within the
+    parser's contract ("Open before building", "`emit`'s stdout").
 14. **Schema setup.** The schema, the trigger and the two roles are created by a security-standards
     script that the owner runs once, as an announced production act (step FE-4). They're never set
     up in an image build step, and neither the append function nor a verifier runs DDL; `ship`'s
@@ -3508,24 +3508,26 @@ Each item names the step that settles it.
   confirms the port is reachable only on the tailnet (a bind on the tailnet address or a host
   firewall rule) before any secret is created; if neither holds, the act stops for a decision.
 - **Each DSN's BWS project and reading accounts (FE-4, Devon's named decision).** For each of the
-  two secrets: the BWS project it's created in, and every machine account granted a read of it,
-  for each reader in item 11's table (Devon's shell, the sds-hq cycle and the nightly on the Mac;
-  the bump proposer's and the work carrier's lane containers). Devon names each before ADR-0059
-  amendment 7's act 3 runs; until he has, act 3 stops. Neither this amendment nor HQ chooses
-  them. An account that serves processes beyond item 4's holders, such as the nightly's
+  two secrets: the BWS project it's created in, and every machine account granted a read of it, for
+  each reader in item 11's table: Devon's shell, the sds-hq cycle and the nightly on the Mac; the
+  bump proposer on the Mac until ADR-0059 step 3f-4 and in its container after (item 4); and the
+  work carrier on the Mac until step 3f-2 and in its container after (item 9). Devon names each
+  before ADR-0059 amendment 7's act 3 runs; until he has, act 3 stops. Neither this amendment nor HQ
+  chooses them. An account that serves processes beyond item 4's holders, such as the nightly's
   `BWS_ACCESS_TOKEN_BROAD` or Keychain `BWS_ACCESS_TOKEN_VPS_BACKUP` identity (security-standards
-  `factory-events-nightly.sh`, lines 104-105), widens D-43 B's holders, so it reads the append
-  DSN only if his decision says so.
+  `factory-events-nightly.sh`, lines 104-105), widens D-43 B's holders, so it reads the append DSN
+  only if his decision says so.
 - **The history import's actor and role (FE-5, Devon's named decision).** The import (item 2;
   ADR-0059 amendment 7, FE-1 and act 5) writes the Mac file's events into the VPS chain. Item 4
   names exactly four append holders and item 3 limits the owner to FE-4's setup acts, so
   neither covers the import. Devon names who runs it and under which role, before act 5's
   import step runs; until he has, act 5 stops before the import. His decision settles how it
   stands with items 3 and 4; this amendment doesn't.
-- **`emit`'s stdout (FE-1).** Item 13's JSON logs and `emit`'s event id share stdout. FE-1 either
-  keeps the bare id as stdout's last line, so `_parse_event_id`'s fallback still reads it, or
-  prints a JSON line carrying `event_id`, which its JSON branch reads first. FE-1's tests assert
-  that the emitter parses the id `emit` printed.
+- **`emit`'s stdout (FE-1).** Item 13's JSON logs and `emit`'s event id share stdout.
+  `_parse_event_id`'s contract: the first stdout line that parses as a JSON object with an
+  `event_id` key, if any, must carry the emitted id (lines 52-58); if no line does, the emitted id
+  must be the last token of the last stdout line (lines 63-67). FE-1 keeps `emit`'s stdout within
+  that contract, and FE-1's tests assert that the emitter parses the id `emit` printed.
 - **The approval cycle's emitting identity.** Amendment 22's open item "The cycle's emitting
   identity" is settled: the cycle sets `FACTORY_AGENT_ID` to `lane-credential-policy` (sds-hq
   `standing_approve.py`, lines 36 and 542), and `make_event` refuses an actor the registry doesn't

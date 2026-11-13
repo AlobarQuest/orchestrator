@@ -52,8 +52,9 @@ ADR-0055 amendment 24 and ADR-0059 amendment 7.
   line. It states the bare id on stdout (`cli.py` 33) and the head on stderr (34), and that
   `_parse_event_id` reads the id through its bare-token fallback (63-67), not its JSON branch
   (52-58). Because item 13's JSON logs would share stdout, a new FE-1 verify item ("`emit`'s
-  stdout", line 3525) requires FE-1 to keep the id parseable and to test the parse. I didn't make a
-  JSON line a requirement; FE-1 picks either form.
+  stdout", line 3526) states `_parse_event_id`'s contract: the first stdout JSON line with
+  `event_id`, if any, must carry the emitted id; otherwise the id must be the last line's last
+  token. FE-1 keeps `emit` within it and tests the parse. I didn't make a JSON line a requirement.
 - **B2, the proposers claim.** a7 Context (line 2771) no longer says the proposers can't verify.
   It says neither names `verify-approval`, `factory_events`, `events.jsonl` or `FACTORY_EVENTS`;
   that the bump proposer's `approve --by-policy` (`standing.py` 397) in a container appends to that
@@ -68,9 +69,10 @@ ADR-0055 amendment 24 and ADR-0059 amendment 7.
     nightly's `BWS_ACCESS_TOKEN_BROAD` and Keychain `BWS_ACCESS_TOKEN_VPS_BACKUP` (nightly
     104-105).
   - a24 "Open before building": the Mac-only identity item is replaced by "Each DSN's BWS project
-    and reading accounts (FE-4, Devon's named decision)" (line 3510), covering the lane containers
-    too, and a new "The history import's actor and role (FE-5, Devon's named decision)" (line
-    3519). The second says items 3 and 4 cover neither and leaves the conflict to his decision.
+    and reading accounts (FE-4, Devon's named decision)" (line 3510), covering the bump proposer and
+    the work carrier on the Mac until 3f-4 and 3f-2 and in their containers after, and a new "The
+    history import's actor and role (FE-5, Devon's named decision)" (line 3520). The second says
+    items 3 and 4 cover neither and leaves the conflict to his decision.
   - a24 items 2, 10 and 16 and the Increments paragraph point at those decisions.
   - a7 FE-1, act 3 (line 2836), act 5 (line 2847), item 6 (line 2861) and "Open before building"
     say the same. Act 3 grants reads only to the accounts he names; act 5 stops before the import
@@ -204,7 +206,9 @@ quotes:
 - **`/code-review` low on `origin/main...HEAD`:** no findings.
 - **Fix round 1 (at `3ece871d`):** `make check` exit 0 (14,808 passed, 1 skipped, test database
   `orchestrator_test_hq_w_131`, dropped after); security scan from the repo root exit 0, 0 BLOCK,
-  the same 2 pre-existing WARNs; `/code-review` low on `c1bb688e..HEAD`: no findings.
+  the same 2 pre-existing WARNs; `/code-review` low on `c1bb688e..HEAD`: no findings. A later
+  docs-only commit adds the two lanes' Mac-side readers to the named decision and states
+  `_parse_event_id`'s contract in a24 item 13 and its FE-1 item.
 
 ## Files changed
 
@@ -232,7 +236,7 @@ B3; they replace the original "which BWS identity fetches each DSN" item):
 
 | Decision | Before |
 |---|---|
-| Each DSN secret's BWS project, and every machine account granted a read of it (Mac and lane containers). The append DSN goes to no shared or broad identity, such as `BWS_ACCESS_TOKEN_BROAD` or Keychain `BWS_ACCESS_TOKEN_VPS_BACKUP`, without his decision. | a7 act 3 (FE-4) |
+| Each DSN secret's BWS project, and every machine account granted a read of it: Devon's shell, the cycle and the nightly on the Mac; the bump proposer and the work carrier on the Mac until 3f-4 and 3f-2, and in their containers after. The append DSN goes to no shared or broad identity, such as `BWS_ACCESS_TOKEN_BROAD` or Keychain `BWS_ACCESS_TOKEN_VPS_BACKUP`, without his decision. | a7 act 3 (FE-4) |
 | The history import's actor and role | a7 act 5's import (FE-5) |
 
 Amendment 22's open item "The cycle's emitting identity" is settled by code

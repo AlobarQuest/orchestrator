@@ -15,7 +15,8 @@ Every ADR hunk starts after line 3277 in ADR-0055 and line 2744 in ADR-0059.
 
 - **B1:** a24 item 13 states the bare-id stdout (security-standards `cli.py` 33, stderr 34) and
   the emitter's bare-token fallback (`emitter.py` 63-67; JSON branch 52-58 doesn't match). A new
-  FE-1 verify item, "`emit`'s stdout", keeps the id parseable once JSON logs share stdout and
+  FE-1 verify item, "`emit`'s stdout", states the parser's contract (the first JSON line with
+  `event_id`, if any, must carry the id; otherwise the id is the last line's last token) and
   requires a test of the parse. No JSON line is claimed or required.
 - **B2:** a7 Context says neither proposer names `verify-approval`, `factory_events`,
   `events.jsonl` or `FACTORY_EVENTS`; the bump proposer's `approve --by-policy` (`standing.py`
@@ -23,7 +24,8 @@ Every ADR hunk starts after line 3277 in ADR-0055 and line 2744 in ADR-0059.
   60-80), which the carrier never reads, or aborts with `EmitError` (`emitter.py` 70-79); the
   rotation proposer emits no approval (D-43 B).
 - **B3:** each DSN's BWS project and every machine account granted a read (Mac and lane
-  containers) are Devon's named decision before a7 act 3, which stops until he names them. The
+  containers; the bump proposer and the work carrier read on the Mac until 3f-4 and 3f-2) are
+  Devon's named decision before a7 act 3, which stops until he names them. The
   history import's actor and role are his named decision before act 5's import, which stops until
   then; the conflict with items 3 and 4 is left to his decision. The append DSN goes to no shared
   or broad identity (for example `BWS_ACCESS_TOKEN_BROAD`, Keychain `BWS_ACCESS_TOKEN_VPS_BACKUP`,
@@ -34,13 +36,18 @@ Every ADR hunk starts after line 3277 in ADR-0055 and line 2744 in ADR-0059.
 ## Tests and checks
 
 - `make check` at `3ece871d`: exit 0; 14,808 passed, 1 skipped (database
-  `orchestrator_test_hq_w_131`, migrated, then dropped).
+  `orchestrator_test_hq_w_131`, migrated, then dropped). A later docs-only commit adds the bump
+  proposer's and the work carrier's Mac-side readers (until 3f-4 and 3f-2) to the BWS named
+  decision, and restates the FE-1 stdout item as `_parse_event_id`'s contract.
 - Security scan from the repo root: exit 0, 0 BLOCK, 2 pre-existing WARNs (untouched files).
 - `/code-review` low on `c1bb688e..HEAD`: no findings.
 - Each new citation re-read at its source: security-standards `origin/main` `1baec77`
   (`cli.py` 33-34, `store.py` 17-25 and 60-80, `factory-events-nightly.sh` 104-105),
   intent-packages `78bb302` (`emitter.py` 40-79), orchestrator `2cf43757`
-  (`bump_proposer/standing.py` 397; the `git grep` over both proposers returned nothing).
+  (`bump_proposer/standing.py` 397). The `git grep` for `verify-approval`, `factory_events`,
+  `events.jsonl` and `FACTORY_EVENTS` over both proposers returned nothing; adding `by-policy` as a
+  control matched `bump_proposer/standing.py` 397 and `rotation_proposer/standing.py` 13 (a
+  docstring), so the pattern runs.
 
 ## Files changed
 
