@@ -190,11 +190,23 @@ def _run(root: Path, command: Sequence[str]) -> str:
     except subprocess.TimeoutExpired as error:
         raise StandingError(f"{' '.join(command[:3])} did not finish in time") from error
     if completed.returncode != 0:
-        detail = (completed.stderr or completed.stdout or "").strip().splitlines()
+        detail = _redact_append_dsn(completed.stderr or completed.stdout or "")
+        lines = detail.strip().splitlines()
         raise StandingError(
-            f"{' '.join(command[1:4])} refused: {detail[-1] if detail else 'no output'}"
+            f"{' '.join(command[1:4])} refused: {lines[-1] if lines else 'no output'}"
         )
     return completed.stdout
+
+
+def _redact_append_dsn(text: str) -> str:
+    """`text` without the factory-events append DSN, which the lifecycle commands inherit.
+
+    The message reaches the pass's report and its `/fail` body, and a DSN carries a password
+    (ADR-0055 amendment 24 item 13). intent-packages redacts it from its own errors; this holds
+    the line for anything else a child prints.
+    """
+    dsn = os.environ.get("FACTORY_EVENTS_APPEND_DSN")
+    return text.replace(dsn, "<FACTORY_EVENTS_APPEND_DSN redacted>") if dsn else text
 
 
 def lifecycle(root: Path, *args: str) -> str:

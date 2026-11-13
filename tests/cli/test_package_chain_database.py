@@ -391,3 +391,77 @@ def test_the_child_without_a_read_dsn_is_unavailable(
     assert code == factory_chain_read.UNAVAILABLE
     assert record["error_type"] == "LookupError"
     assert "dsn" not in seen
+
+
+# ---- Through the entry point the carrier runs: its stdout is the payload, only ---------------
+
+_FIXTURE = "tests/fixtures/intent-packages/ws32-approved-software"
+_FIXTURE_EVENT = {
+    "action": "package.approved",
+    "event_id": "22222222-2222-2222-2222-222222222222",
+    "timestamp": "2026-07-05T00:02:00Z",
+    "source": {"ref": "ws32-approved-software"},
+    "evidence": [
+        {
+            "approved_hash": "bfcf35c540a540efcac4eb4095b9dbf33529e39361a03a21d43b64c96dd054b2",
+            "revision": 1,
+            "approver": "devon",
+            "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        }
+    ],
+}
+
+
+def _emit_intake_payload() -> Any:
+    from typer.testing import CliRunner
+
+    from orchestrator.cli import app
+
+    args = [
+        "emit-intake-payload",
+        _FIXTURE,
+        "--source-repository",
+        "AlobarQuest/intent-packages",
+        "--idempotency-key",
+        "k-1",
+        "--json",
+    ]
+    return CliRunner().invoke(app, args)
+
+
+def test_emit_intake_payload_under_the_read_dsn_prints_only_the_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("FACTORY_EVENTS_READ_DSN", READ_DSN)
+    monkeypatch.setattr(package_sources, "_git_head", lambda path: "deadbeef")
+    _forbid_the_file_chain(monkeypatch)
+    record = _record("verified", seq=9, head="abc", package_approved=[_FIXTURE_EVENT])
+    _child(monkeypatch, returncode=0, stdout=record)
+
+    result = _emit_intake_payload()
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)  # the whole of stdout, as the carrier parses it
+    assert payload["package_id"] == "ws32-approved-software"
+    assert SECRET not in result.stdout + result.stderr
+
+
+def test_emit_intake_payload_under_the_read_dsn_refuses_without_the_dsn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("FACTORY_EVENTS_READ_DSN", READ_DSN)
+    monkeypatch.setattr(package_sources, "_git_head", lambda path: "deadbeef")
+    _forbid_the_file_chain(monkeypatch)
+    _child(
+        monkeypatch,
+        returncode=2,
+        stdout=_record("failure", error_type="OperationalError"),
+        stderr=f"driver said {READ_DSN}",
+    )
+
+    result = _emit_intake_payload()
+
+    assert result.exit_code != 0
+    assert "could not be read (OperationalError)" in result.stdout + result.stderr
+    assert SECRET not in result.stdout + result.stderr
+    assert '"outcome"' not in result.stdout  # the child's record is never relayed

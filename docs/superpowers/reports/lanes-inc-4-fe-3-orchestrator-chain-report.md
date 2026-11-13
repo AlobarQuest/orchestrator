@@ -61,6 +61,10 @@ unchanged. No DSN is set anywhere until FE-5, so nothing that runs today changes
    - Two tests in `tests/bump_proposer/test_standing.py` pin the behavior. They run a stand-in
      interpreter through the real `lifecycle` subprocess: the DSN arrives when set, and it's
      absent when unset.
+   - `standing._run` copies a refused child's last output line into `StandingError`, and that
+     message reaches the pass report and its `/fail` body. `_run` now replaces the append DSN's
+     value in that text. intent-packages already redacts it from `EmitError`; this covers
+     anything else a child prints. A test asserts the password never appears in the message.
    - `scripts/run-bump-proposer.sh` gains a comment saying it passes the variable through and
      fetches no DSN.
    - The launcher doesn't fetch a DSN, because the lane account's Keychain item and the secret's
@@ -76,6 +80,8 @@ unchanged. No DSN is set anywhere until FE-5, so nothing that runs today changes
      Unlike FE-2's, it runs FE-1's `factory_events` under this repo's interpreter, because
      that's how `package_sources` runs it.
    - The new files are added to `layers.toml` (`[intent]`).
+   - `tests/conftest.py` gains an autouse fixture that clears both chain DSNs for every test,
+     as FE-2's conftest does, so a shell that holds a real DSN can't reach it from a test.
 
 ## Where the one-snapshot read lives, and why
 
@@ -109,6 +115,7 @@ DSN.
   `SECURITY_STANDARDS_DIR=~/Projects/security-standards`: rc 0. Ruff check, ruff format and
   pyright were clean, and pytest reported **14,883 passed, 1 skipped**. The 7 integration tests
   are deselected, as intended.
+- **CI** on PR #696: see "Concerns", item 7, for its state when this report was written.
 - **Database tests**: `SECURITY_STANDARDS_DIR=<FE-1 checkout> scripts/check-integration.sh`
   reported **7 passed** (14,884 deselected) against a throwaway `postgres:16-alpine` container,
   run twice, the second time on the committed tree. No container was left behind.
@@ -127,6 +134,11 @@ DSN.
   - the security-standards checkout is missing;
   - the append DSN alone refuses;
   - an empty read DSN counts as unset.
+
+  Two entry-point tests run `orchestrator emit-intake-payload --json` under the read DSN with a
+  stubbed child. On success, the whole of stdout parses as the payload. On refusal, the exit is
+  non-zero, the error names `OperationalError`, the child's record isn't on stdout, and the
+  password appears in neither stream.
 
   It also covers the child's own behavior:
   - it walks in one read-only repeatable-read snapshot;
@@ -167,8 +179,9 @@ DSN.
 ## Self-review
 
 - **Stdout contract.** The carrier runs `json.loads(completed.stdout)` on `emit-intake-payload`,
-  so the child's record is captured and never relayed. A test asserts the parent's stdout stays
-  empty. That's why this module doesn't log to the CLI's stdout as FE-2's child does.
+  so the child's record is captured and never relayed. Tests assert it at the CLI entry point:
+  stdout is exactly the payload, and on refusal it carries neither the child's record nor the
+  DSN. That's why this module doesn't log to the CLI's stdout as FE-2's child does.
 - **No file fallback.** No code path under the read DSN calls `_verify_factory_chain` or
   `_iter_package_approval_events`. Tests forbid both, and one mutant proves it.
 - **The DSN** travels only through the child's environment. It isn't in argv, a message, a log
@@ -197,7 +210,18 @@ DSN.
    process holds either DSN today.
 5. **The bump-proposer launcher** fetches no DSN. That waits for FE-4's Keychain item and the
    secret's UUID.
-6. **Out of scope:** the Infra Brain and Code Brain rules were taken from the handoff, and no
+6. **Nothing runs the seven database tests automatically.** CI's `Quality` job runs `make check`,
+   which deselects them. They run only through `scripts/check-integration.sh`, as FE-1's and
+   FE-2's do.
+7. **Leftovers and pins.**
+   - PR: AlobarQuest/orchestrator#696.
+   - The FE-1 checkout `/tmp/w141-secstd.9OeP` and the test database `orchestrator_test_hq_w_141`
+     are kept for a fix round. Remove both when the PR merges.
+   - `security-standards.pin.toml` pins `31aa7d70`, which predates FE-1 (`e89f69b`). This
+     change doesn't need the pin moved: the read runs under whatever checkout
+     `SECURITY_STANDARDS_DIR` names, and it needs FE-1's walker only once a read DSN is set. A
+     carrier that reads the chain from an image (step 3f-2) needs the pin raised past FE-1 first.
+8. **Out of scope:** the Infra Brain and Code Brain rules were taken from the handoff, and no
    concern fell outside them.
 
 ## Standards followed

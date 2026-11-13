@@ -130,3 +130,13 @@ def db_session(_test_database: None) -> Iterator[Session]:
         yield session
         session.rollback()
     engine.dispose()
+
+
+@pytest.fixture(autouse=True)
+def _no_ambient_factory_events_dsn(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A shell holding a real factory-events chain DSN must never reach it from a test.
+
+    Tests that need the database chain set a disposable one themselves (FE-3).
+    """
+    for name in ("FACTORY_EVENTS_READ_DSN", "FACTORY_EVENTS_APPEND_DSN"):
+        monkeypatch.delenv(name, raising=False)

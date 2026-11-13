@@ -345,6 +345,21 @@ def test_approve_by_policy_gets_no_append_dsn_when_none_is_set(tmp_path, monkeyp
     assert out[-1] == "dsn-unset"
 
 
+def test_a_refused_lifecycle_command_never_repeats_the_append_dsn(tmp_path, monkeypatch) -> None:
+    dsn = "postgresql://factory_events_append:pw-7f3a@chain/factory_events"
+    python = tmp_path / ".venv" / "bin" / "python"
+    python.parent.mkdir(parents=True)
+    python.write_text('#!/bin/sh\necho "cannot connect: $FACTORY_EVENTS_APPEND_DSN" >&2\nexit 1\n')
+    python.chmod(0o755)
+    monkeypatch.setenv("FACTORY_EVENTS_APPEND_DSN", dsn)
+
+    with pytest.raises(StandingError) as info:
+        standing.lifecycle(tmp_path, "approve", "packages/p", "--by-policy")
+
+    assert "pw-7f3a" not in str(info.value)
+    assert "<FACTORY_EVENTS_APPEND_DSN redacted>" in str(info.value)
+
+
 def test_a_standing_package_reports_what_it_carries() -> None:
     package = StandingPackage(
         package_id="p",
