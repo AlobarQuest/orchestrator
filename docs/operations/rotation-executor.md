@@ -224,7 +224,10 @@ unit is a rotation unit the rotation pattern recognises (amendment 16), so the p
 a rotation's one click; a proposal it doesn't approve waits for a person on `/review`. The lane runs hourly (`com.devon.rotation-decomposer`, installed by
 `scripts/install-rotation-decomposer-launchd.sh` from the main tree) and logs to
 `~/Library/Logs/rotation-decomposer.log`. Its Healthchecks check, `sds-rotation-decomposer`, is an
-outcome alarm: every non-zero exit pings `/fail` with the report.
+outcome alarm: every non-zero exit pings `/fail` with the report. Its container lane
+(`lanes/rotation-decomposer/`, ADR-0059 increment 4) runs the same launcher with the lane's own BWS
+token; until its cut-over the Mac job is the lane (`docs/operations/deploy.md`, "Registered
+lanes").
 
 Each pass reads change-manager's `work` records with the READ bearer. For each approved record
 naming a standing rotation package, it asks the orchestrator what work the record caused

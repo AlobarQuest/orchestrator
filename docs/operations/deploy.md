@@ -517,8 +517,7 @@ this order, each in its own change or act:
    row.
 4. The lane account's grants on its three secrets and its ping-URL secret. The READ bearer, which
    the broad identity reads on the Mac, becomes a direct grant to the lane account (Devon's act at
-   the lane's identity gate), and change-manager's `.cred-consumers.toml` gets a reader for the
-   container on its row (that registry lives in change-manager, not here).
+   the lane's identity gate).
 5. The token's mint and the executor's write; then the ping URL's row made due and the executor's
    write (ADR-0055 amendment 23).
 6. A served release whose compose names the ping-URL secret's id, with `rotation-decomposer`

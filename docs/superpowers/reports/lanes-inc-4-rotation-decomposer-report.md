@@ -32,6 +32,7 @@ PR #689 (opened and marked ready, not merged).
   `_narrow_secret` helper and pins that the helper is the narrow identity on the Mac.
 - `tests/scripts/test_deploy_lanes.py`: `rotation-decomposer` is added to `placeholders`.
 - `layers.toml`: the new test is placed in the `rotation` layer, beside the launcher.
+- `docs/operations/rotation-executor.md`: one sentence naming the container lane.
 - `docs/operations/deploy.md`, "Registered lanes": a section for the rotation decomposer and its
   remaining cut-over steps, after the change proposer's section.
 
@@ -69,6 +70,8 @@ The decomposer makes no GitHub API call and needs no GitHub token. I checked thi
 - The modules it imports from `rotation_worker` (`contract`, `destinations`, `envelope`, `plans`,
   `registry`, `types`, `grants`, and `git_mirror`, which also imports `config`) make no HTTP call.
   The `github` strings in `types.py` and `config.py` are credential-type names and config fields.
+  `estate_clients/confined.py` names no GitHub host, and `alert_hub_client`'s one `github` match
+  is Dependabot's `github_actions` branch segment in a docstring.
 - `tests/architecture/test_rotation_edges.py` already pins the decomposer's edge as
   `github=frozenset()`.
 - The only GitHub contact is `RepoMirror`, which fetches `https://github.com/<repo>.git` for the
@@ -111,7 +114,7 @@ them. `_clone` creates the parent directories. ADR-0059 states this refetch expl
 
 The ADR answers this, so no lane-run or deploy-script support is missing:
 
-- Cut-over step 2: "run the lane's reporting mode (the invocation that changes no record) on the
+- Cut-over step 2 (ADR-0059 lines 1133-1141): "run the lane's reporting mode (the invocation that changes no record) on the
   Mac and in the container within the same minute". It then lists "an outcome-alarm launcher run
   without its acting flag, which resolves no ping URL (bump driver, bump proposer, change proposer,
   rotation decomposer and work carrier)" under "It pings nothing".
@@ -119,11 +122,15 @@ The ADR answers this, so no lane-run or deploy-script support is missing:
   `scripts/run-rotation-decomposer.sh --dry-run` on the Mac beside
   `lane-run rotation-decomposer --dry-run`, a one-off `docker exec` in the container. The
   container's schedule is still `false` at that point. A `--dry-run` pass proposes nothing
-  (`run_pass(..., dry_run=True)`), sends no alert, reads no sender token, and pings nothing
-  (`sds_outcome_begin ... "$_acting"` with 0). Tests pin both properties.
+  (`_revision` in `src/rotation_decomposer/cli.py` returns `would-propose` before
+  `orchestrator.propose`; `tests/rotation_decomposer/test_pass.py::test_a_dry_run_proposes_nothing`
+  pins it), sends no alert (`main` calls `_tell_a_person` only when not a dry run), reads no sender
+  token and pings nothing (`sds_outcome_begin ... "$_acting"` with 0;
+  `tests/scripts/test_run_rotation_decomposer.py::test_a_dry_run_reads_no_sender_token_and_pings_nothing`
+  pins the launcher half).
 - Neither host proposes during the comparison, and the ADR's rule that "the Mac agent and the
   container never run the same lane at once" holds. The Mac agent is booted out before
-  `LANE_SCHEDULE_ENABLED` turns on (cut-over steps 2-3).
+  `LANE_SCHEDULE_ENABLED` turns on (cut-over steps 2-3; the rule is ADR-0059 line 1177).
 - Rollback ("Rollback for one lane", ~1195-1205): no ADR-0046 switch covers the decomposer, which
   proposes as SYSTEM. A rollback that can't wait for the quiet slot is HQ's hand redeploy. The
   `deploy.md` section says so.
@@ -143,6 +150,8 @@ The schedule must stay off until then, and the `deploy.md` steps give that order
 
 - `make check` (ruff, pyright, and the full suite against `orchestrator_test_hq_w_129`, migrated
   to head): green (exit 0): `All checks passed!` from ruff and pyright, then **14831 passed, 1 skipped** in 297 s.
+- The first `make check` stopped at ruff E501 (a 101-character line in the new test). I wrapped
+  the line, and the second run is the green one above.
 - Targeted run before `make check`: 525 tests across the decomposer, lane, deploy-lane, layer,
   image, edge, and dead-man tests, plus the change-proposer, unit-verifier and pin-watcher launcher
   tests. All passed after the new files were staged.
@@ -199,6 +208,12 @@ The schedule must stay off until then, and the `deploy.md` steps give that order
   this job. If HQ's chain runs it with a `BWS_ACCESS_TOKEN` in its environment, the run skips
   activation and reads all three secrets with that token. HQ should confirm that the chain's
   environment doesn't carry one before the Mac job goes out.
+- Change-manager's `.cred-consumers.toml` (a registry in change-manager, not here): I didn't name
+  a container reader on the READ bearer's row as a cut-over step, because the membership check's
+  steps, for the same bearer, name none. HQ can confirm whether change-manager's registry wants one
+  for either lane.
+- `docs/operations/rotation-executor.md` now says the container lane exists and that the Mac job
+  is the lane until cut-over.
 - Standards gap: the handoff's Standards section has no rule on a lane's crontab minute or on
   ordering lanes that depend on each other (carrier before decomposer). I followed the earlier
   lanes' "no shared start minute" convention.
@@ -215,8 +230,7 @@ These are in order, each in its own change or act (ADR-0059, "Cut-over for one l
    ping URL's row (not part of this change, as the handoff requires).
 4. The lane account gets grants on its three secrets and its ping-URL secret. **The change-manager
    READ bearer (`314f276d-…`), which only the broad identity reads today, becomes a direct grant to
-   the lane account: Devon's act at the identity gate.** Change-manager's `.cred-consumers.toml`
-   gets a reader for the container on that bearer's row.
+   the lane account: Devon's act at the identity gate.**
 5. Devon mints the token and the executor writes it. Then the ping URL's row is made due and the
    executor writes the URL (ADR-0055 amendment 23).
 6. A served release whose compose names the ping-URL secret's id, with `rotation-decomposer`
