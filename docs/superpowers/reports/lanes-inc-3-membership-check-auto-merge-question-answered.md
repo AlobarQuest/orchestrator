@@ -73,3 +73,11 @@ worth doing regardless).
 
 If you choose A or C, say whether `administration=read` is used by anything else the check reads;
 I found no other reader in `src/membership_check/` and would drop it.
+
+## HQ's answer
+
+HQ answered A, built as a probe: one GraphQL read on both hosts with no REST fallback, fail
+closed on anything but a literal boolean, a diagnostic `detail`, an exact allowlist with refusal
+probes and a mutation test, and `administration=read` kept in the mint for this change. B and C
+are Devon's, decided only if the paired retry shows the token isn't served the field. The build is
+in `lanes-inc-3-membership-check-auto-merge-report.md`.
