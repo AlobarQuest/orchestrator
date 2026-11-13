@@ -10,12 +10,12 @@
 # VM rotation executor writes; this file names it and never holds a value. With it the launcher
 # reads the orchestrator's SYSTEM bearer, the change-manager READ bearer and, on acting passes
 # only, the `sds-bridge` alert sender (`scripts/run-rotation-decomposer.sh`).
-# `SDS_DEADMAN_PING_URL_UUID` is empty until a later change writes the id of the lane's ping-URL
-# secret, `rotation-decomposer-ping-url` in `Rotation / Keepers`, created at HQ gate G-53. While it
-# is empty the dead-man helper falls back to the Mac's lookup by check name, which needs the broad
-# Keychain identity the container doesn't have, so an acting pass pings nothing and logs
-# `no SDS_DEADMAN_PING_URL_UUID and no broad BWS identity — alerting disabled this run`
-# (`scripts/sds-deadman.sh`); a `--dry-run` pass pings nothing anyway. The pass itself still runs.
+# `SDS_DEADMAN_PING_URL_UUID` is the BWS secret id of the lane's ping-URL secret,
+# `rotation-decomposer-ping-url` in `Rotation / Keepers`: an id, not a secret and not the ping URL.
+# `lane-run` passes it to the launcher, whose dead-man helper reads the URL from that secret with
+# the lane's own token on an acting pass (`scripts/sds-deadman.sh`); a `--dry-run` pass pings
+# nothing. The VM rotation executor writes the URL there from its inbox; while the secret holds the
+# inbox's empty marker, the helper refuses it and pings nothing, and the pass itself still runs.
 # The schedule stays off (`LANE_SCHEDULE_ENABLED`) until the cut-over turns it on.
 services:
   rotation-decomposer:
@@ -25,7 +25,7 @@ services:
       BWS_ACCESS_TOKEN: ${ROTATION_DECOMPOSER_BWS_ACCESS_TOKEN}
       LANE_SCHEDULE_ENABLED: ${LANE_SCHEDULE_ENABLED:-false}
       ROTATION_DECOMPOSER_STATE_DIR: /var/lib/sds/rotation-decomposer
-      SDS_DEADMAN_PING_URL_UUID: ""
+      SDS_DEADMAN_PING_URL_UUID: 936bbbf2-dc3b-4343-979a-b501013afc87
     volumes:
       - sds-lanes-rotation-decomposer-state:/var/lib/sds/rotation-decomposer
     restart: unless-stopped
