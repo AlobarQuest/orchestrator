@@ -284,3 +284,17 @@ The two scan WARNs aren't from this diff:
 - **Infra Brain 212 (HTTPS for public FQDNs):** not applicable. The diff makes no domain change.
 - **Infra Brain lesson 450 (rotation landmines):** no secret value enters the registry, the test, a
   plan, or a log. The rows name ids only, and the test reads ids and field names.
+
+## Merge with main
+
+W-136 merged `origin/main` (`b4a48f7c`, PR #692) into this branch as merge commit `32048c7c`
+(parents `eaee401c` and `b4a48f7c`), pushed fast-forward.
+
+- **Conflict:** only the docstring of `test_every_lanes_ping_url_secret_is_listed_for_that_lane`
+  in `tests/scripts/test_deploy_lanes.py`. The resolution drops the change proposer's G-49
+  sentence, which #692 made false, and keeps this branch's G-53 sentence about the rotation
+  decomposer's keeper. The `placeholders` line merged without a conflict to
+  `{"rotation-decomposer"}`. The G-53 sentence is reflowed by one word so the line stays within
+  100 characters (ruff E501). Nothing else changed.
+- **`make check`:** green on `32048c7c` against `orchestrator_test_hq_w_136` with `PGTZ=UTC`:
+  14851 items collected, 14850 passed, 1 skipped, pyright 0 errors.
