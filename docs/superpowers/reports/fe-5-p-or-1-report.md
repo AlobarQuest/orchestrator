@@ -4,9 +4,9 @@ Outcome: done
 
 - **PR:** https://github.com/AlobarQuest/orchestrator/pull/703, against `main`, not merged.
 - **Base:** `origin/main` `8f81b9ef`.
-- **Code head:** `2d3ce6bcf99653ebc3d242a8a489af3cfd0c9a57`. That is two commits, `8f9daa22` and
-  `2d3ce6bc`. This report is committed on top of them as a third, docs-only commit. Read the PR's
-  head for the final sha.
+- **Code head:** `375a3164`, three code commits: `8f9daa22` (the change), `2d3ce6bc` (review fixes)
+  and `375a3164` (a stronger refusal assertion). This report is committed on top as docs only, so
+  read the PR's head for the final sha.
 - **Worker:** W-157. Fix round 0.
 
 ## What I built
@@ -91,12 +91,13 @@ The plan's P-OR-1 "Changes" (plan lines 189-213 at `8f81b9ef`), in full.
 | Run | Result |
 | --- | --- |
 | `tests/scripts/test_sds_bws.py` | 76 passed |
-| `tests/scripts/test_bridge_chain_switch.py` (new) | 36 passed |
+| `tests/scripts/test_bridge_chain_switch.py` (new) | 36 passed (at `375a3164`) |
 | `tests/scripts/test_sds_deadman.py` | 95 passed |
 | `tests/scripts/test_launchd_installers.py` | 61 passed |
 | `tests/scripts/test_bridge_launchers.py`, `test_packages_checkout_activation.py`, `tests/work_watcher/test_launcher_orchestration.py` (existing launcher harnesses) | 69, 25 and 15 passed |
 | `make check` (ruff, ruff format, pyright, shellcheck, full pytest) at `2d3ce6bc`, clean tree, database `orchestrator_test_hq_w_157` | 14,962 passed, 1 skipped, exit 0 |
 | infraops `dist/security-drift` parser (`c3359bf`; its `src/security-drift` equals `origin/main`) over all four listed registries | 51 credentials loaded, no duplicate id, no `credFindings` on the four new rows |
+| CI on PR #703 at `375a3164` (Linux): Quality, Runner consumer compatibility, Rollout transcription currency | All three passed. Quality collected 14,963: 14,940 passed and 23 skipped. The local run also collected 14,963. The new files have no skip markers, so the extra CI skips are tests that need sibling checkouts or Mac-only files (for example, `test_admission_edges.py`, `test_destination_rule.py`, `test_packages_checkout_activation.py`). |
 | BWS security scanner from the worktree root | 0 BLOCK. 2 WARN, both on `origin/main` already (the `*-migration/` glob; UUID `aaff45ca-…` in `install-rotation-worker-launchd.sh`) |
 
 The launcher harness has these properties:
@@ -142,10 +143,12 @@ scripts (`8f81b9ef`) and this branch's tests.
   stub `env` records the token as one of `env`'s arguments, which is the helper defect. Their
   no-fetch and no-variable assertions pass there.
 
-**Mutations,** on a scratch copy of the branch. Both were caught:
+**Mutations,** on a scratch copy of the branch. All three were caught:
 
 - Removing the bump proposer's `unset` line: 2 tests fail.
 - Handing the read password to `work-watcher`: 3 tests fail.
+- Making `factory_events_settings_refusal` print nothing: all 8 malformed-switch launcher cases
+  fail. They assert the reason in the lane log and the `/fail` body.
 
 ## The interpreter and `factory_events` finding
 
@@ -164,7 +167,8 @@ Read only. Nothing was pulled, checked out, or changed.
 - **The live checkout's HEAD is `cb832f3`, which doesn't include `60ec80f`.** As of this session it
   has no password-plus-settings form. `origin/main` is `4e83d7a`, which has it. Act step 2's
   `activate_checkout` of `~/Projects/security-standards` is what brings it in before the switch flips.
-  I fetched security-standards' remote refs only.
+  I ran `git fetch` in `~/Projects/security-standards` and `~/Projects/infraops-mcp-server`, which
+  updated their remote-tracking refs only. Neither working tree changed.
 - **Measured.** `git archive origin/main src/factory_events` (at `4e83d7a`) went into a scratch
   directory. `.venv/bin/python -I` then imported `factory_events.cli`, `factory_events.db`,
   `factory_events.chain` and `psycopg`. Every import succeeded, and the chain variable names match
@@ -208,6 +212,17 @@ Read only. Nothing was pulled, checked out, or changed.
   select rows by `rotated_by_sds`, so a `false` row of class `postgres-role-password` reaches none
   of them. The decomposer is at `decompose.py:51`, the worker at `worker.py:1028`, and the checks
   at `checks.py:119`.
+- **The `provider` values** (`postgres-role`, `bitwarden-sm`) are mine; the plan names none.
+  `registry.provider_entries()` selects by provider alone, so I checked every caller at `8f81b9ef`:
+  - `worker.py:827-830` (`_other_keepers`) skips any row that isn't `rotated_by_sds`.
+  - `adapters/__init__.py:156` asks for `bws-lane-token`, and `adapters/change_manager.py:226`
+    for change-manager. Neither is a provider these rows use.
+  - `cli.py:410` (`pg-restore`) runs only on a credential id a person names.
+  - `_entries` (`registry.py:141-155`) only parses TOML and checks the array shape.
+  - Run on the worktree's file in-process, the orchestrator's reader loads all four rows. Each
+    keeper resolves, its destinations render, each is `rotated_by_sds` false, and no id appears
+    in the other three registry repositories' local files. No existing rotation reaches these
+    rows.
 - **ADR-0055 at `8f81b9ef`:**
   - amendment 24 item 11 and its table (about 3439-3459)
   - the open item "A rotation class for each secret (FE-4)" (about 3516-3521)
