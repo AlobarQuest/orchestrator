@@ -3112,9 +3112,11 @@ its own (ADR-0007, "Scheduled trigger"). D-49 decides the placement.
 1. **Follow-up minting runs in a new single-purpose VPS lane, `follow-up-mint`.** It follows the
    pattern every moved lane uses: the pinned lane image (decision 1), its own Coolify compose
    resource, `sds-lane-follow-up-mint` (Amendment 1), and its lane BWS token and ping URL issued
-   as ADR-0055 amendment 19 issues them (Amendment 2). It runs one minting pass once a day. Its
+   as ADR-0055 amendment 19 issues them (Amendment 2). No person pastes the ping URL: it's read
+   from the Healthchecks Management key's check listing, as decision 3 is narrowed by ADR-0055
+   amendment 23 (line 714). It runs one minting pass once a day. Its
    hour is increment 9's to set. It has its own Healthchecks check, a new one: unlike the moved
-   lanes, it has no Mac check to keep (decision 3, "Every lane keeps its check", line 674). Its
+   lanes, it has no Mac check to keep (decision 3, "Every lane keeps its check", lines 675-676). Its
    check is created at install time by `sds_upsert_check`, as decision 3 creates or updates every
    lane's check (lines 699-701).
 2. **The command it runs.** The lane runs the orchestrator's own Python CLI, `orchestrator
@@ -3137,8 +3139,9 @@ its own (ADR-0007, "Scheduled trigger"). D-49 decides the placement.
    the lane token are created in increment 9's identity and cut-over steps (the cut-over, line
    1089), in the order Amendment 2 sets. `docs/operations/credentials.md` records the
    `sds-operator` machine account as the SYSTEM bearer's reader in the `SDS Operator` project
-   (lines 63-68) and the infra-drift step's read through it (lines 88-92). The new account is one
-   more reader.
+   (lines 63-68) and the infra-drift step's read through it (lines 88-92), and `.bws-secrets.toml`
+   names the rotation-decomposer lane among its readers (lines 20-21). The new account is one more
+   reader.
 4. **Increment 9's done check (proposed for increment 9's plan to confirm).** Increment 9 is done
    when both hold:
    - the `follow-up-mint` lane's first scheduled pass mints the due follow-up units, or finds none
@@ -3169,12 +3172,16 @@ its own (ADR-0007, "Scheduled trigger"). D-49 decides the placement.
   `orchestrator-drift-reporter`. The Python CLI also requires `--idempotency-key`, which the route
   accepts and never reads; the plan says what the launcher passes.
 - **Whether a failed pass fails the lane's check.** infra-drift's step is non-fatal and logs a
-  WARN. The lane's failure handling isn't decided here; the plan states it.
+  WARN. The lane's failure handling isn't decided here; the plan states it. An alert-hub send
+  from the lane would need a sender token, a secret item 3 doesn't grant, so it would need a new
+  Devon decision.
 - **ADR-0007's "Scheduled trigger" and `docs/operations/follow-up-scheduling.md` ("Running a
   pass")** still say infra-drift runs the daily pass, and `docs/operations/credentials.md` (lines
   88-92) still names `drift-audit.sh` as a SYSTEM bearer consumer. Increment 9 changes them when
   minting moves.
-- **The order.** Increment 9 runs after increment 4, as the ADR orders the increments (decision 6).
+- **The order.** Increment 9 runs after increment 4. Decision 6, "Migration order, cut-over,
+  rollback and the week bar" (line 828), lists the increments in that order under "Increments"
+  (line 903): increment 4 at line 1023 and increment 9 at line 1079.
 
 ### Passages this amendment changes
 
@@ -3190,5 +3197,5 @@ None is rewritten. Once it's accepted, it governs these passages, cited by line 
 | Amendment 9's row on increment 9, "The SYSTEM bearer question moves to increment 9's plan" (line 3057) | Answered by decision item 3. |
 | Amendment 9's row on Amendment 6 decision item 4, "increment 9's plan states its done check" (line 3063) | Proposed by decision item 4. No Mac job is booted out. |
 | Amendment 9's closing paragraph, ADR-0007 and `follow-up-scheduling.md` "still say infra-drift runs the daily pass" (lines 3068-3069) | Stands, and carried as a "Verify in increment 9" item with `credentials.md` lines 88-92. |
-| Decision 3, "Every lane keeps its check. A moved lane pings the same check" (lines 674-675) | Stands for moved lanes. `follow-up-mint` has no Mac predecessor, so it gets a new check (decision item 1). |
-| Decision 5, "Classification of the 20 launch agents" (line 767) | Stands. `follow-up-mint` isn't a Mac launch agent, so the count of twenty doesn't change. |
+| Decision 3, "Every lane keeps its check. A moved lane pings the same check" (lines 675-676) | Stands for moved lanes. `follow-up-mint` has no Mac predecessor, so it gets a new check (decision item 1). |
+| Decision 5, "Classification of the 20 launch agents" (line 768) | Stands. `follow-up-mint` isn't a Mac launch agent, so the count of twenty doesn't change. |
