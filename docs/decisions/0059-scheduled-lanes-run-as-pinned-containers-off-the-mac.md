@@ -2970,8 +2970,8 @@ governs these passages, cited by line at `da044d6d`:
 - **Decided by:** Devon, on 2026-11-13 (HQ D-41, sds-hq `state/decisions.md` at `700944d`). D-41
   revisits D-9 for infra-drift only.
 - **Relates to:** decision 5 (the rotation proposer's Mac inputs, "Agents outside this
-  repository" and the `infra-drift` row), decision 6 (increment 9, "The week bar" and the phase's
-  done-when), Q7, Amendment 6 (decision item 4 and two rows of its table), ADR-0007 ("Scheduled
+  repository" and the `infra-drift` row), decision 6 (increments 4 and 9, "The week bar" and the
+  phase's done-when), Q7, Amendment 6 (decision item 4 and two rows of its table), ADR-0007 ("Scheduled
   trigger") and `docs/operations/follow-up-scheduling.md`
 
 Line numbers in this amendment are this file's at orchestrator `5a781dbb`, before the amendment
@@ -2998,7 +2998,8 @@ already scheduled; the orchestrator itself runs no scheduler.
    Devon's infraops tooling. Its audits, remediations, App Brain sync, change-manager escalations,
    drift-reporter observations and security scan stay as they are, with the identity they use
    today. Devon placed it outside this phase (D-41), as D-9 placed SDS HQ, so Phase 1's done-when
-   doesn't count it. It isn't a Mac exception under decision 4.
+   doesn't count it. It isn't a Mac exception under decision 4. Its credential scan's read of
+   the rotation state is carried by "Verify in increment 4".
 2. **Increment 9 moves follow-up minting out of infra-drift into SDS.** The step at
    `scripts/drift-audit.sh` lines 152-180 (`c3359bf`) leaves infra-drift, and the SYSTEM bearer
    leaves infra-drift with it. Increment 9's own plan decides where minting runs in SDS, by
@@ -3018,6 +3019,23 @@ already scheduled; the orchestrator itself runs no scheduler.
 5. **No new authority.** The amendment grants no credential, scope or permission. It creates no
    identity and grants no BWS read. Increment 9's plan decides the SYSTEM bearer's new holder.
 
+### Verify in increment 4
+
+- **How infra-drift's credential scan reads the rotation state (increment 4, the rotation
+  proposer's move).** Decision 5 gives the rotation proposer's increment the choice of where
+  `cred-rotation-state.json` lives (line 802). infra-drift stays on the Mac, and its 03:00
+  credential scan keeps reading `~/.config/infra-drift/cred-consumers.list` and
+  `cred-rotation-state.json` there (infraops-mcp-server `src/cli/security-drift-cli.ts`, lines
+  275-279 at `c3359bf`). The state file has two writers, both infraops subcommands:
+  `record-rotation` (line 122), which the rotation proposer runs when the work watcher retires an
+  approved revision's record (`docs/operations/rotation-proposer.md`, line 123), and
+  `resolve-exposure` (line 106), which a person runs. If increment 4 moves the state file off the
+  Mac, the Mac copy stops receiving those writes, and infra-drift's scan reports from a stale file.
+  So when increment 4 decides the state file's home, it also decides how infra-drift's Mac
+  credential scan reads it, or what that scan stops reporting. Increment 4 can't finish until it
+  records that decision (HQ's merge-bar standing answer of 2026-11-06, limit 1). This amendment
+  decides neither.
+
 ### Verify in increment 9
 
 - **Where minting runs and under which identity (increment 9).** This gap is carried into
@@ -3031,12 +3049,13 @@ None is rewritten. Once it's accepted, it governs these passages, cited by line 
 
 | Passage | Disposition |
 |---|---|
-| Decision 5, the rotation proposer's `cred-findings` inputs, `cred-consumers.list` and `cred-rotation-state.json` in `~/.config/infra-drift/` (lines 796-803) | Stands. The rotation proposer moves, so its increment must still carry the list as data in a clone and decide where the state file lives; a file only on the Mac would still tie the lane to it. infra-drift staying on the Mac keeps its own credential scan reading the Mac copies. Decision 5 gives the rotation proposer's increment the list's carriage and the state file's home; it says nothing about a second reader, and this amendment doesn't either. |
+| Decision 5, the rotation proposer's `cred-findings` inputs, `cred-consumers.list` and `cred-rotation-state.json` in `~/.config/infra-drift/` (lines 796-803) | Stands. The rotation proposer moves, so its increment must still carry the list as data in a clone and decide where the state file lives; a file only on the Mac would still tie the lane to it. infra-drift staying on the Mac keeps its own credential scan reading the Mac copies. How infra-drift's Mac credential scan reads the state once that increment decides its home is carried by "Verify in increment 4". |
 | "Agents outside this repository", "change-window and infra-drift move off the Mac as increments 8 and 9" (lines 815-816) | Superseded for infra-drift by decision item 1: infra-drift stays on the Mac, outside this phase. change-window still moves as increment 8. factory-events and SDS HQ are as Amendments 7 and 8 leave them. "None is a Mac exception" stands, infra-drift included. |
 | The `change-window` row (line 822) | Stands. Its shared Keychain identity with infra-drift (`BWS_ACCESS_TOKEN_INFRA_DRIFT`) is increment 8's to replace for change-window. |
 | The `infra-drift` row, "Moves, increment 9 (D-9)" (line 823) | Superseded by decision item 1: it stays on the Mac, outside this phase (D-41). The row's description stands as a description of today. Once increment 9 lands, "mints due follow-up units as SYSTEM (read through `sds-operator`)" and "minted units" no longer describe it. |
 | Increment 8, "it shares the Keychain BWS identity `BWS_ACCESS_TOKEN_INFRA_DRIFT` with infra-drift, so it needs its own" (lines 1076-1077) | Stands. infra-drift keeps the shared identity; change-window gets its own. |
 | Increment 9, "`com.devon.infra-drift` moves off the Mac" (lines 1079-1085) | Superseded by decision item 2. Its identity questions are withdrawn: infra-drift keeps its BWS identity, and the security scan stays whole. The SYSTEM bearer question moves to increment 9's plan. "It reads the same `~/.config/infra-drift/` list and rotation state as the rotation proposer (decision 5)" stands as a fact; the first row covers it. |
+| Increment 9, "It is the drift audit that feeds the rotation proposer" (line 1081) | Withdrawn as a description. At orchestrator `5a781dbb`, the rotation proposer runs infraops's `cred-findings` itself, from its own infraops checkout, and reads the due credentials from its JSON; it opens neither file directly (`docs/operations/rotation-proposer.md`, lines 12-17). infra-drift hands it no data. The two share inputs: both read the same `cred-consumers.list` and `cred-rotation-state.json`, and the drift audit writes neither. The shared state file is the subject of "Verify in increment 4". |
 | "The week bar", "Increments 8 and 9 each run a week of the same kind for the agent they move" (lines 1292-1293) | Already superseded by Amendment 6 decision item 4. For increment 9 it is moot as well: it moves no agent. |
 | "The week bar", the phase's done-when paragraph, "After increment 7, change-window and infra-drift still act on members from the Mac until increments 8 and 9 move them" and "The phase is done when increments 8 and 9 have moved those two" (lines 1296-1299) | Superseded by decision item 3. The rest of the paragraph stands: SDS HQ outside the phase (D-9), the rotation proposer's list and state and every other moved lane's input off the Mac (lines 1299-1301, decision 5), and the classification of the other agents. |
 | Q7, "`com.devon.change-window` and `com.devon.infra-drift` ... move off the Mac as increments 8 and 9" (lines 1522-1526) | Superseded for infra-drift by D-41 (decision items 1 and 2). change-window's move as increment 8 stands. |
