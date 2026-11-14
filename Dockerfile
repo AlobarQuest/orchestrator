@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-FROM python:3.14-slim AS builder
+FROM python:3.15-slim AS builder
 
 ARG SECURITY_STANDARDS_REVISION
 ARG REGISTRY_ARTIFACT_SHA256
@@ -19,7 +19,7 @@ RUN uv sync --frozen --no-dev \
       --artifact-sha256 ${REGISTRY_ARTIFACT_SHA256} \
       --output /app/registry-bundle.json
 
-FROM python:3.14-slim AS runtime
+FROM python:3.15-slim AS runtime
 
 # The commit this image was built from, served on /health/live so the estate can ask from outside.
 # Declared in the RUNTIME stage: an ARG is scoped to the stage that declares it, so one on the
