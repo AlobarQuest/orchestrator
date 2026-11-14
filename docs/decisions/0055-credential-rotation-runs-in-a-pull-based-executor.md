@@ -3903,9 +3903,11 @@ rule 1032).
 
 ## Amendment 27 — One owner act resets the factory-events chain before an FE-5 import retry (2026-11-14)
 
-**Status: Proposed (2026-11-14).** Accepted on merge. It records Devon's answers to the FE-5
-plan's open questions 1 to 3 (`docs/superpowers/plans/2026-11-14-fe-5-cutover.md`), each given as
-option A in an interactive HQ session on 2026-11-14 and quoted from sds-hq `state/decisions.md`:
+**Status: Proposed (2026-11-14).** Accepted on merge. HQ merges it only after a clean Opus
+whole-branch review (HQ D-12, limit 3). It records Devon's answers to the FE-5 plan's open
+questions 1 to 3 (`docs/superpowers/plans/2026-11-14-fe-5-cutover.md`), each given as option A in
+an interactive HQ session on 2026-11-14 and quoted from sds-hq `state/decisions.md` (lines 16-18 at
+`b87452e`):
 
 - **D-50 A:** "The guard reads the database under the append role."
 - **D-51 A:** "Allow one named owner act for this case only: an announced act that drops the chain
