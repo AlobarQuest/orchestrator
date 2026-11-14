@@ -23,6 +23,9 @@ change-manager, runs the emitter against the package each names, and registers t
 only way to register an intake that names no change record, since no standing HUMAN credential
 exists (ADR-0006).
 
+An interactive session approves a package on the database chain through
+`scripts/factory-events-session.sh`; see [Factory-events chain from a session](factory-events-chain.md).
+
 > **Routing.** The `orchestrator-intake-human` Traefik router matches
 > `Path(/api/v1/package-intakes) && Method(POST)` and applies Alobar ID forward-auth, so a
 > machine bearer arriving there draws a **302** and never reaches the app. It must be **removed**
