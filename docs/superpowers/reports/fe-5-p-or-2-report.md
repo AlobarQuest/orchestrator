@@ -4,9 +4,10 @@ Outcome: done
 
 - **PR:** https://github.com/AlobarQuest/orchestrator/pull/704, against `main`, not merged.
 - **Base:** `origin/main` `03075209` (P-OR-1, #703).
-- **Code head:** `48c830fa`, three commits: `595435ad` (the change), `73f11cb3` (a test that kills
-  a mutation survivor) and `48c830fa` (review fixes). This report is committed on top as docs only,
-  so read the PR's head for the final sha.
+- **Code head:** `d4e1ff25`. There are four code commits: `595435ad` (the change), `73f11cb3` (a
+  test that kills a mutation survivor), `48c830fa` (review fixes) and `d4e1ff25` (the rest of the
+  unset list and the `security` argv). The report commits are docs only, so read the PR's head
+  for the final sha.
 - **Worker:** W-158. Fix round 0.
 
 ## What I built
@@ -14,7 +15,7 @@ Outcome: done
 The plan's P-OR-2 "Files" and "Changes" (plan lines 227-260 at `03075209`), in full.
 
 1. **`scripts/factory-events-session.sh`** (mode 0755).
-   - It unsets its own names and the five chain variables first (lines 45-49). It leaves a retired
+   - It unsets every name it assigns and the five chain variables first (lines 45-49). It leaves a retired
      `FACTORY_EVENTS_*_DSN` set, so the child refuses it by name, as P-OR-1's launchers do.
    - It sources `scripts/sds-bws.sh` for `sds_bws_value` and the switch reader (line 59).
    - `approve <checkout> <package-dir>`:
@@ -64,6 +65,11 @@ write a question file, because nothing a session records changes without one:
 - **`--by-policy`** belongs to the cycle and the bump proposer, under their own accounts. A session
   approves on Devon's word (D-47).
 
+- **The path string isn't recorded.** `do_approve` emits `package_id` as the event's ref, and only
+  the revision, hash, approver and commit as evidence. `lineage.yaml` gets the same values
+  (intent-packages `ae84d53`, `operations.py` lines 301-315). So resolving a relative package
+  directory to an absolute path changes nothing on the chain.
+
 A session that needed some other approver couldn't get one through the wrapper. That's a
 deliberate narrowing, and the page says so.
 
@@ -85,7 +91,8 @@ as given.
 | `tests/scripts/test_sds_bws.py` | 76 passed |
 | `tests/scripts/test_bridge_chain_switch.py` | 36 passed |
 | `tests/architecture` + `tests/scripts` | 3,169 passed before the layer entries were committed. One failure: `test_every_pattern_names_a_file` reads tracked files only, and it passed once they were committed. |
-| `make check` on the final code head `48c830fa` | rc 0: ruff, format, pyright and shellcheck clean; 15,005 passed, 1 skipped |
+| `make check` on the final code head `d4e1ff25` | rc 0: ruff, format, pyright and shellcheck clean; 15,005 passed, 1 skipped |
+| PR #704 CI at `d4e1ff25` (run 43643751741) | Quality passed: 14,983 passed, 23 skipped (#703 had 14,940 passed). Rollout transcription currency and Runner consumer compatibility passed. |
 | Security scanner (repo root) | 0 BLOCK. Two WARNs, both already on `main`: an undeclared UUID in `scripts/install-rotation-worker-launchd.sh` and an uncovered `*-migration/` glob. |
 
 The tests use stub `security`, `bws`, `env` and child interpreters, a temporary `HOME`, and a PATH
@@ -93,6 +100,7 @@ of the stubs plus `/usr/bin:/bin`. Every `/usr/bin/security` in the copied scrip
 the stub, as `test_bridge_chain_switch.py` does, so the real Keychain is never read. They assert
 the following:
 
+- The `security` stub's argv (`find-generic-password -s Claude -a <item> -w`).
 - Each child's argv, its working directory, and that its `FACTORY_EVENTS_*` environment is exactly
   the four values (no read password).
 - That the caller's `BWS_ACCESS_TOKEN`, all five chain names and the wrapper's own names, each
@@ -106,8 +114,8 @@ the following:
   checkout or interpreter, a missing Keychain item, and an empty password.
 - That the exit code is the child's, and that `--color no` is on the fetch.
 
-**Discrimination.** I applied 24 single mutations to the wrapper in a scratch copy (`git archive`
-of HEAD, `__pycache__` cleared each time) and ran the new tests against each. The tests caught 23
+**Discrimination.** I applied 26 single mutations to the wrapper in a scratch copy (`git archive`
+of HEAD, `__pycache__` cleared each time) and ran the new tests against each. The tests caught 25
 of them, failing between 1 and 28 tests each. The original passed 41 of 41 after restore. The one
 survivor exports `FACTORY_EVENTS_APPEND_PASSWORD` just before the child. That's equivalent: no
 other process starts after that line. One earlier survivor, exporting the token, was a real gap,
@@ -166,10 +174,10 @@ state.
   60) and 95-167 (the switch reader).
 - `scripts/run-bump-proposer.sh` at `03075209`: lines 264-299 (the fetch pattern) and 303-312 (the
   assignment prefix).
-- intent-packages `ae84d53`: `cli.py` lines 25-35, 116-120 and 135-180; `emitter.py` lines 21, 114-123
+- intent-packages `ae84d53`: `cli.py` lines 25-35, 116-120 and 135-180; `operations.py` lines 301-315; `emitter.py` lines 21, 114-123
   and 132.
 - security-standards `4e83d7a`: `src/factory_events/cli.py` lines 230-236 (`import-file --path`).
-- sds-hq `standing_approve.py` lines 562-572 (`cwd=clones.ip` at line 571), and
+- sds-hq `9972c7e` (HEAD and `origin/main`): `src/sds_hq/standing_approve.py` lines 562-572 (`cwd=clones.ip` at line 571), and
   `state/gates/landing-ledger-token-issue.md` line 21 (`--approver devon`).
 - ADR-0055 amendment 25 items 1, 3 and 4, and amendment 26 items 4 to 7.
 
@@ -205,6 +213,11 @@ state.
 - **Act step 0.** Devon mints `BWS_ACCESS_TOKEN_FACTORY_EVENTS_SESSION`. The wrapper refuses until
   then.
 - **Act step 2.** Confirm the orchestrator main tree holds this PR's merge commit before step 6.
+  Both child interpreters exist on the Mac today (`ls -l`, 2026-11-14):
+  `~/Projects/intent-packages/.venv/bin/python` and
+  `~/Projects/security-standards/.venv-events/bin/python`. Today's session gates run
+  `PYTHONPATH=src python3 -m intent_packages approve`, so a gate written after the act needs to
+  name the wrapper in place of that command.
 - **Teardown.** HQ decides when to remove worktree `hq-W-158`, branch `hq/fe-5-p-or-2`, and database
   `orchestrator_test_hq_w_158` after merge. Scratch files `/tmp/w158-mut`, `/tmp/w158-mutate.py`,
   `/tmp/w158-wrapper.orig` and `/tmp/w158-*.log` remain.
