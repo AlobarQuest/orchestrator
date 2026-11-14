@@ -29,9 +29,14 @@ is docs only, and it edits no earlier text. It states the following:
   - No whole-DSN variable is accepted, not even in tests. `FACTORY_TEST_DSN` stays as a fixture.
   - The import runs under the append settings (D-46 A).
   - Redaction targets the password values.
-- **Increments.** The order is security-standards, then intent-packages, then orchestrator, and
-  then the act that rewrites the secret values (Devon's, or a session's with his OK, done
-  in-process, printing only a hash). All of it lands before FE-5.
+- **What it amends.** It lists the passages it amends in amendments 24 and 25, with line numbers
+  at `c8be2f89`, and how to read ADR-0059 amendments 7 and 8.
+- **Increments.** The order is security-standards, then intent-packages, then orchestrator, then
+  sds-hq, and then the act that rewrites the secret values. That act is Devon's, in the
+  Bitwarden web app, or a session's with his OK through a write identity he names, done in-process
+  and printing only a hash. All of it lands before FE-5. The amendment also says the downstream
+  integration suites fail against an updated security-standards checkout until their own
+  increments land.
 - **What it grants.** Nothing: no credential, role, scope, project, account or grant changes.
 
 Code reads cite security-standards `e89f69b`, intent-packages `3705e0c`, orchestrator `c8be2f89`
@@ -55,31 +60,49 @@ and sds-hq `f4b3a18`, each at `origin/main` after a fetch. I read every cited li
 - **Stop-point check.** Amendments 24 and 25 don't contradict Devon's change. They fix holders,
   roles and grants, and this change touches only what a secret's value holds and where the
   address lives.
-- **Code claims.** I checked every one against the named commit. The intent-packages repository
-  doesn't pin security-standards: it finds a checkout at run time (`emitter.py`, lines 105-114).
-  The orchestrator's `security-standards.pin.toml` pins the registry bundle for its image. So the
-  amendment grounds "security-standards first" in the checkout import, not in a pin.
+- **Code claims.** I checked every one against the named commit. An advisor review found two
+  claims I'd made from grep hits alone, and I fixed both. First, orchestrator
+  `factory_chain_read` runs under the orchestrator's interpreter, not security-standards'
+  (`package_sources.py`, line 319). Second, sds-hq's approve child gets a minimal environment
+  (`standing_approve.py`, lines 161-164 and 540-547), so it inherits no chain variable. Then I
+  read the remaining cited lines in full.
 - **Prose.** No line is over 100 characters, and the amendment uses the ADR's voice ("This
   amendment recommends").
 
 ## Concerns
 
-1. **The UUIDs and settings come from sds-hq, not from code.** The host, port, database name and
+1. **sds-hq needs its own increment.** The handoff names three repositories, but the cycle's
+   approve child receives only the variables sds-hq passes it, so sds-hq must pass the append
+   password and the three settings (amendment 26, increment 4). The same change would have been
+   needed for a whole DSN, so this gap predates the password change.
+2. **"The others pin it" doesn't hold as the handoff states it.** intent-packages doesn't pin
+   security-standards: it finds a checkout at run time (`emitter.py`, lines 105-114). The
+   orchestrator's `security-standards.pin.toml` pins the registry bundle for its image. The
+   amendment grounds "security-standards first" in the checkout import, not in a pin.
+3. **Two departures from the approved wording.** In each case, HQ can check that the departure
+   fits Devon's intent:
+   - The role names are constants beside the schema (`chain_schema.sql`, lines 79-92), not
+     variables, although the handoff's example shape has role variables and Devon's answer calls
+     the role names "non-secret config".
+   - The code passes psycopg keyword parameters, where Devon approved "builds the DSN at run
+     time". Keyword parameters avoid escaping a password inside a URL, and no string holds the
+     password and the address together.
+4. **The UUIDs and settings come from sds-hq, not from code.** The host, port, database name and
    both secret UUIDs come from sds-hq `state/goal.md` line 59 and the handoff. No manifest in the
    four repositories names either UUID. ADR-0059 amendment 7 act 3 says the UUIDs go into each
    consumer's `.bws-secrets.toml` and orchestrator `.cred-consumers.toml` "in the same act", but
    at `c8be2f89` they aren't there. HQ needs to make sure FE-4 or FE-5 records them. I didn't
    fetch either secret.
-2. **ADR-0059 amendments 7 and 8 still say "DSN"** in acts 3 and 5. The handoff limits me to
+5. **ADR-0059 amendments 7 and 8 still say "DSN"** in acts 3 and 5. The handoff limits me to
    ADR-0055, so amendment 26's Consequences tells readers how to read them. I didn't edit them.
-3. **The non-secret settings have no default.** I chose required variables over Mac defaults in
+6. **The non-secret settings have no default.** I chose required variables over Mac defaults in
    code, because a container needs different values and a default would only suit the Mac. The
    cost is that each Mac holder sets the same three values: the cycle, the session's command, the
    bump-proposer launcher, the nightly and the Mac carrier. If HQ prefers one copy, a tracked
    settings file in security-standards is the alternative. It isn't in the amendment.
-4. **Retiring `FACTORY_EVENTS_IMPORT_DSN` (item 7)** changes FE-1's deliberate separation
+7. **Retiring `FACTORY_EVENTS_IMPORT_DSN` (item 7)** changes FE-1's deliberate separation
    (`chain.py`, lines 17-19). I based it on D-46 A, which settled the import's role.
-5. **The test database** `orchestrator_test_hq_w_145` is still in place for any fix round. Tear
+8. **The test database** `orchestrator_test_hq_w_145` is still in place for any fix round. Tear
    it down with the worktree.
 
 ## Standards followed

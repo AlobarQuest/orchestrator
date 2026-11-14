@@ -3687,10 +3687,10 @@ amendment.
 ## Amendment 26 — Each factory-events secret holds only its role's password (2026-11-14)
 
 **Status: Proposed (2026-11-14).** Accepted on merge. HQ merges it only after a clean Opus
-whole-branch review (HQ D-12, limit 3). It amends amendment 24 item 11 and the word "DSN"
-wherever amendments 24 and 25 use it for a secret's value. It rests on Devon's plan amendment at
-gate G-57, given in an interactive HQ session on 2026-11-14 and recorded in sds-hq `state/goal.md`
-(line 59 at `f4b3a18`):
+whole-branch review (HQ D-12, limit 3). It amends amendment 24 item 11 and the word "DSN" wherever
+amendments 24 and 25 use it for a secret's value. It rests on Devon's plan amendment at gate G-57,
+given in an interactive HQ session on 2026-11-14 and recorded in sds-hq `state/goal.md` (line 59 at
+`f4b3a18`):
 
 - Devon: "I am not liking that we are storing code, effectively, in BWS as a secret."
 - Then "Yes to the change" to HQ's proposal: "each secret holds only its role's password; host
@@ -3700,14 +3700,29 @@ gate G-57, given in an interactive HQ session on 2026-11-14 and recorded in sds-
 It also applies the estate secrets rule Devon set, as HQ's handoff for this amendment states it:
 secrets hold values (passwords, tokens), not configuration (no DSNs or configuration blobs).
 
-The same line of `state/goal.md` records FE-4's secrets as created: BWS project `Factory Events`
-(`5e30c8b7-2b93-4a63-be26-b50200c8f070`), the append secret
-`2ce0dbc7-eeac-4bf0-8204-b50200c97516` and the read secret
-`2f708d08-ea5d-4d11-bde0-b50200c9a60b`. Amendment 25 item 2 ("Neither has a UUID yet") predates
-them. No manifest in the four repositories names either UUID at the commits read here.
+The same line of `state/goal.md` records FE-4's secrets as created, and G-57's steps created them
+with no grant (sds-hq `state/gates/factory-events-db.md`, lines 40-45): BWS project `Factory Events`
+(`5e30c8b7-2b93-4a63-be26-b50200c8f070`), the append secret `2ce0dbc7-eeac-4bf0-8204-b50200c97516`
+and the read secret `2f708d08-ea5d-4d11-bde0-b50200c9a60b`. Amendment 25 item 2 ("Neither has a UUID
+yet") predates them. No manifest in the four repositories names either UUID at the commits read
+here.
 
 Code reads cite security-standards `e89f69b` (FE-1, #90), intent-packages `3705e0c`, orchestrator
 `c8be2f89` and sds-hq `f4b3a18`.
+
+### What it amends
+
+Line numbers are this file's at orchestrator `c8be2f89`, before this amendment was appended. Earlier
+text isn't edited, so these passages carry no pointer.
+
+- Amendment 24 item 11, "Two BWS secrets, each a DSN for one role", and its table (lines 3439-3459).
+- Amendment 24's "Increments" paragraph, "the bump proposer's DSN" and "every holder's DSN" (lines
+  3489-3497).
+- Amendment 25 items 1 to 4, wherever they say "the append DSN" or "the read DSN" (lines 3614-3647).
+- ADR-0059 amendment 7 acts 3 and 5, and amendment 8, where they say "DSN" for a secret. That ADR is
+  read the same way, and this amendment doesn't edit it.
+
+The rest of amendments 24 and 25 stands.
 
 ### Context
 
@@ -3723,37 +3738,39 @@ chain.**
 | orchestrator | `factory_chain_read.py`, `main` (lines 86-88) and `_walk` (73-75); `package_sources.py`, the mode check in `_verified_package_approval_events` (lines 365-373); `_security_standards_env` copies the whole environment (233-243) | both |
 | orchestrator | `bump_proposer/standing.py`, `_redact_append_dsn` (lines 201-209); `scripts/run-bump-proposer.sh`, which passes the append DSN through and fetches none (lines 264-269) | `FACTORY_EVENTS_APPEND_DSN` |
 
-sds-hq's code reads no chain variable: its approve child inherits its environment and sets only
-`FACTORY_EVENTS_HOME` (`standing_approve.py`, line 544).
+sds-hq's code reads no chain variable, and its approve child inherits none. `approve` builds the
+child's environment from `PATH`, `HOME`, `FACTORY_AGENT_ID`, `SECURITY_STANDARDS_DIR` and, in tests,
+`FACTORY_EVENTS_HOME` (`standing_approve.py`, lines 540-547), on top of `_child_env`'s minimal base
+(lines 161-164). So no chain setting in the cycle's environment reaches the approve child unless
+sds-hq passes it.
 
 **The role names are fixed by the schema.** FE-1's roles script creates exactly
 `factory_events_append` and `factory_events_read` (security-standards `chain_schema.sql`, lines
 79-92), and the orchestrator's integration tests create the same two through it
 (`tests/cli/test_package_chain_database_integration.py`, line 99).
 
-**Host and port differ by place.** The Mac reaches the database over the tailnet, and a container
-on `prod-vps` over Coolify's internal network (amendment 24 item 12). The tailnet address and
-port in Devon's answer are the Mac's values only.
+**Host and port differ by place.** The Mac reaches the database over the tailnet, and a container on
+`prod-vps` over Coolify's internal network (amendment 24 item 12). The tailnet address and port in
+Devon's answer are the Mac's values only.
 
 ### Decision
 
 1. **What each secret holds.** Each of the two secrets holds only its role's password: the append
-   secret (`2ce0dbc7-eeac-4bf0-8204-b50200c97516`) the `factory_events_append` role's, and the
-   read secret (`2f708d08-ea5d-4d11-bde0-b50200c9a60b`) the `factory_events_read` role's. Same
-   project, same UUIDs, same grants (amendment 25 items 2 and 3). Wherever amendments 24 and 25
-   say "the append DSN" or "the read DSN" for what a holder fetches, read "the append password"
-   or "the read password". Who holds each is unchanged.
+   secret (`2ce0dbc7-eeac-4bf0-8204-b50200c97516`) the `factory_events_append` role's, and the read
+   secret (`2f708d08-ea5d-4d11-bde0-b50200c9a60b`) the `factory_events_read` role's. Same project
+   and UUIDs, and the same grants amendment 25 item 3 names, none of which is made yet. Wherever
+   amendments 24 and 25 say "the append DSN" or "the read DSN" for what a holder fetches, read "the
+   append password" or "the read password". Who holds each is unchanged.
 2. **The secrets' names.** BWS names them `factory-events-append-dsn` and `factory-events-read-dsn`
    (sds-hq `state/gates/factory-events-db.md`, lines 42-44). No code reads a secret by name: every
-   reference is by UUID. This amendment recommends renaming them
-   `factory-events-append-password` and `factory-events-read-password`, so a name doesn't
-   describe a value the secret no longer holds; the rename changes no reader. Whether to rename
-   is Devon's decision, asked separately, and this amendment doesn't make it.
-3. **The settings, and the one place that builds the connection.** `factory_events.chain` owns
-   every chain setting and builds each connection from parts. It passes them to `psycopg.connect`
-   as keyword parameters (`host`, `port`, `dbname`, `user`, `password`), never as a formatted
-   URL, so no password character needs escaping and no string holds password and address
-   together.
+   reference is by UUID. This amendment recommends renaming them `factory-events-append-password`
+   and `factory-events-read-password`, so a name doesn't describe a value the secret no longer
+   holds; the rename changes no reader. Whether to rename is Devon's decision, asked separately, and
+   this amendment doesn't make it.
+3. **The settings, and the one place that builds the connection.** `factory_events.chain` owns every
+   chain setting and builds each connection from parts. It passes them to `psycopg.connect` as
+   keyword parameters (`host`, `port`, `dbname`, `user`, `password`), never as a formatted URL, so
+   no password character needs escaping and no string holds password and address together.
 
    | Variable | Secret | Value |
    |---|---|---|
@@ -3763,80 +3780,92 @@ port in Devon's answer are the Mac's values only.
    | `FACTORY_EVENTS_DB_PORT` | No | On the Mac, `15432`; in a container, the resource's internal port |
    | `FACTORY_EVENTS_DB_NAME` | No | `postgres` |
 
-   The role names aren't variables. They're constants in `factory_events.chain`, beside the
-   schema that creates them: a variable could only name a role the schema didn't create. The
-   append password always connects as `factory_events_append`, and the read password as
+   The role names aren't variables. They're constants in `factory_events.chain`, beside the schema
+   that creates them: a variable could only name a role the schema didn't create. The append
+   password always connects as `factory_events_append`, and the read password as
    `factory_events_read`.
 
-   The three non-secret settings have no default in code. Each holder's environment sets them
-   where it already sets its others: each Mac launcher, and an interactive session's command,
-   beside the fetch of its password; each lane container in its Coolify environment, as plain
-   variables.
+   The three non-secret settings have no default in code. Each holder's environment sets them where
+   it already sets its others: each Mac launcher, and an interactive session's command, beside the
+   fetch of its password; each lane container in its Coolify environment, as plain variables.
 
-   The readers in other repositories use `factory_events.chain` rather than read a variable:
-   intent-packages `chain_db` and orchestrator `factory_chain_read` already run under the
-   security-standards events interpreter and import `factory_events.store` lazily
-   (`chain_db.py`, line 94; `factory_chain_read.py`, line 71), so each imports the connection
-   parameters from there the same way. Their parents (`default_chain_checker`,
+   The readers in other repositories use `factory_events.chain` rather than read a variable.
+   intent-packages `chain_db` runs under the security-standards events interpreter (`operations.py`,
+   lines 510-517), and orchestrator `factory_chain_read` under the orchestrator's own
+   (`package_sources.py`, line 319), each with security-standards' `src` on its path. Each already
+   imports `factory_events.store` lazily (`chain_db.py`, line 94; `factory_chain_read.py`, line 71).
+   `factory_events.chain` loads only `db` and `store` at its top (`chain.py`, line 13), and `db`
+   only `store`, `envelope` and `jsonlog`, with psycopg lazy (`db.py`, lines 17-19 and 46), so it
+   loads wherever `store` does. Their parents (`default_chain_checker`,
    `_verified_package_approval_events`) only test which password is set, and keep the names as
    literals.
 4. **What selects the database chain.** A set `FACTORY_EVENTS_APPEND_PASSWORD` or
-   `FACTORY_EVENTS_READ_PASSWORD` selects it, as a set DSN does today. Each existing rule keeps
-   its shape under the new names: an append with only the read password refuses (`chain.py`,
-   lines 30-34); a verify reads under the read password, else the append password (37-40); and a
-   reader with only the append password refuses rather than match the file
-   (`operations.py`, 558-560; `package_sources.py`, 369-373).
+   `FACTORY_EVENTS_READ_PASSWORD` selects it, as a set DSN does today. Each existing rule keeps its
+   shape under the new names: an append with only the read password refuses (`chain.py`, lines
+   30-34); a verify reads under the read password, else the append password (37-40); and a reader
+   with only the append password refuses rather than match the file (`operations.py`, 558-560;
+   `package_sources.py`, 369-373).
 5. **A missing or retired setting fails closed, by name.** With a password set, each missing
-   non-secret setting is a refusal that names its variable (for example
-   "`FACTORY_EVENTS_DB_HOST` is not set"), raised as `ChainError` in `factory_events` and
-   reported as `UNAVAILABLE` by both external readers, so it's a refusal, never "not approved".
-   A set retired variable (`FACTORY_EVENTS_APPEND_DSN`, `FACTORY_EVENTS_READ_DSN` or
-   `FACTORY_EVENTS_IMPORT_DSN`) is a refusal that names it, in `factory_events` and in both
-   parents' mode checks. Ignoring it would drop that process to the file chain without a word,
-   which amendment 24 items 8 and 10 forbid. Neither message carries a value.
-6. **No whole-DSN variable is accepted, tests included.** A production variable that takes a
-   whole DSN would let a DSN back into a secret. The integration tests set the parts instead:
-   they already build each role's connection from `FACTORY_TEST_DSN`, a disposable superuser
-   (orchestrator `test_package_chain_database_integration.py`, lines 90-99), and their
+   non-secret setting is a refusal that names its variable (for example "`FACTORY_EVENTS_DB_HOST` is
+   not set"), raised as `ChainError` in `factory_events` and reported as `UNAVAILABLE` by both
+   external readers, so it's a refusal, never "not approved". A set retired variable
+   (`FACTORY_EVENTS_APPEND_DSN`, `FACTORY_EVENTS_READ_DSN` or `FACTORY_EVENTS_IMPORT_DSN`) is a
+   refusal that names it, in `factory_events` and in both parents' mode checks. Ignoring it would
+   drop that process to the file chain without a word, which amendment 24 items 8 and 10 forbid.
+   Neither message carries a value.
+6. **No whole-DSN variable is accepted for the append or read role, tests included.** A variable
+   that takes a whole DSN would let a DSN back into a secret. The integration tests set the parts
+   instead: they already build each role's connection from `FACTORY_TEST_DSN`, a disposable
+   superuser (orchestrator `test_package_chain_database_integration.py`, lines 90-111), and their
    wrong-port and wrong-password cases (lines 197 and 210) become one changed part each.
    `FACTORY_TEST_DSN` stays: it's a test fixture's address for a throwaway database, never a
    production setting, and no BWS secret holds it.
 7. **The import runs under the append role's settings.** Amendment 25 item 4 (D-46 A) puts the
    one-time import under the append-only role, so `import-file` connects with
-   `FACTORY_EVENTS_APPEND_PASSWORD` and the three settings, and `FACTORY_EVENTS_IMPORT_DSN`
-   retires (`chain.py`, lines 17-19, kept it separate only while the role was undecided).
-8. **Redaction follows the value.** `redact_chain_dsns` (intent-packages `emitter.py`, lines
-   90-102) and `_redact_append_dsn` (orchestrator `standing.py`, lines 201-209) redact each set
-   password variable's value instead of a DSN and its parsed password. Logging is unchanged
-   (amendment 24 item 13): no record holds a password, and a driver's text isn't logged.
+   `FACTORY_EVENTS_APPEND_PASSWORD` and the three settings, and `FACTORY_EVENTS_IMPORT_DSN` retires
+   (`chain.py`, lines 17-19, kept it separate only while the role was undecided).
+8. **Redaction follows the value.** `redact_chain_dsns` (intent-packages `emitter.py`, lines 90-102)
+   and `_redact_append_dsn` (orchestrator `standing.py`, lines 201-209) redact each set password
+   variable's value instead of a DSN and its parsed password. Logging is unchanged (amendment 24
+   item 13): no record holds a password, and a driver's text isn't logged.
 9. **Out of scope.** `FACTORY_EVENTS_OWNER_DSN` (`db_setup.py`, line 17) is typed for FE-4's
    one-time owner act and isn't a BWS secret; the owner's password stays in Coolify (amendment 24
    item 3). `FACTORY_DB_DSN`, the Mac database's, retires in FE-6 (ADR-0059 amendment 7, act 6).
 
 ### Increments
 
-All of these land before FE-5 (ADR-0059 amendment 7, act 5). None changes what runs, because no
-holder sets a chain variable yet: `run-bump-proposer.sh` fetches none (lines 264-269), and no
-manifest names either secret's UUID.
+All of these land before FE-5 (ADR-0059 amendment 7, act 5). No tracked launcher or manifest sets a
+chain variable or names either secret's UUID (`run-bump-proposer.sh` fetches none, lines 264-269),
+so none changes what a scheduled pass runs.
+
+Between increment 1 and the increments after it, the intent-packages and orchestrator integration
+suites fail against an updated security-standards checkout, because they still set the retired
+variables. Each runs against whatever checkout `SECURITY_STANDARDS_DIR` names
+(`scripts/check-integration.sh`, line 16 in intent-packages, line 19 in the orchestrator), by hand
+and not in `make check`. Each increment's own suite runs against the checkout it targets.
 
 1. **security-standards.** `factory_events.chain` gains the settings, the role constants, the
-   connection-parameter builder and the retired-variable refusal; `db.py` and `cli.py` connect
-   from parameters; `import-file` uses the append settings; the README's table (lines 37-42)
-   changes with it. It lands first, because intent-packages' and the orchestrator's chain readers
-   import `factory_events` from the security-standards checkout (intent-packages `emitter.py`,
-   lines 105-131; orchestrator `package_sources.py`, lines 233-243).
+   connection-parameter builder and the retired-variable refusal; `db.py` and `cli.py` connect from
+   parameters; `import-file` uses the append settings; the README's table (lines 37-42) changes with
+   it. It lands first, because intent-packages' and the orchestrator's chain readers import
+   `factory_events` from the security-standards checkout (intent-packages `emitter.py`, lines
+   105-131; orchestrator `package_sources.py`, lines 233-243).
 2. **intent-packages.** `chain_db` connects through `factory_events.chain`; `operations` and the
    emitter's redaction read the password names.
 3. **orchestrator.** `factory_chain_read` connects through `factory_events.chain`;
    `package_sources`, `bump_proposer/standing.py`, the launcher's comment,
-   `tests/architecture/test_intent_edges.py` (`ENVIRONMENT`, lines 46-54;
-   `CHAIN_READ_ENVIRONMENT`, line 60; `CHAIN_READ_LAZY_IMPORTS`, line 61) and the integration
-   tests change with it.
-4. **The secrets' values (an act on BWS).** Each secret's value becomes its role's bare password,
-   under the same UUID, with the same grants. It's Devon's act, or a session's with his OK. A
-   session does it in-process: it reads the value, writes back only the password, and prints
-   neither, only a hash. The role passwords in the database don't change. It can run any time
-   before FE-5, since no process fetches either secret yet.
+   `tests/architecture/test_intent_edges.py` (`ENVIRONMENT`, lines 46-54; `CHAIN_READ_ENVIRONMENT`,
+   line 60; `CHAIN_READ_LAZY_IMPORTS`, line 61) and the integration tests change with it.
+4. **sds-hq.** `approve` passes `FACTORY_EVENTS_APPEND_PASSWORD` and the three settings into the
+   approve child's environment (`standing_approve.py`, line 542), because `_child_env` passes
+   nothing else. A whole DSN would have needed the same change.
+5. **The secrets' values (an act on BWS).** Each secret's value becomes its role's bare password,
+   decoded (a URL-form DSN can hold it percent-encoded), under the same UUID. It's Devon's act in
+   the Bitwarden web app, where G-57 created them. A session does it only with his OK, and only
+   through an identity he names that can write the secret: amendment 25 item 3's grants are reads. A
+   session works in-process: it reads the value, writes back only the password, and prints neither,
+   only a hash. The role passwords in the database don't change. It can run any time before FE-5,
+   since no process fetches either secret yet.
 
 Then FE-5 sets the password variables and the three settings for each holder, where it set DSNs
 before (ADR-0059 amendment 7, act 5, as amendment 8 names the holders).
@@ -3844,14 +3873,14 @@ before (ADR-0059 amendment 7, act 5, as amendment 8 names the holders).
 ### What it grants, and nothing more
 
 Nothing. No credential, role, scope, project, account or grant changes: the same two secrets, the
-same two roles and the same six grants (amendment 25 item 3). It moves non-secret configuration
-out of two secrets' values and into each holder's environment. Nothing here declares a credential
+same two roles and the same six grants (amendment 25 item 3). It moves non-secret configuration out
+of two secrets' values and into each holder's environment. Nothing here declares a credential
 exposed (Infra Brain rule 1032).
 
 ### Consequences
 
-- **A host move is a configuration change.** Moving the database changes the host and port
-  settings, not a secret's value.
+- **A host move is a configuration change.** Moving the database changes the host and port settings,
+  not a secret's value.
 - **A holder needs four variables, not one.** A holder's environment that sets the password but
   misses a setting refuses by name rather than connect somewhere else.
 - **ADR-0059 amendments 7 and 8 say "DSN"** for the secrets in acts 3 and 5. Read them as this
