@@ -9,8 +9,8 @@ Outcome: done
   narrowed, the step's range corrected, and amendments named in two rows). The final content is
   `d47c402f`. The question file is first committed in `0b1f6486`, and the report commits that
   follow it update both. The head is the last report commit, which can't name its own SHA.
-- **Amendment's line range:** lines 2962-3050 of
-  `docs/decisions/0059-scheduled-lanes-run-as-pinned-containers-off-the-mac.md` at `d47c402f`.
+- **Amendment's line range:** lines 2962-3069 of
+  `docs/decisions/0059-scheduled-lanes-run-as-pinned-containers-off-the-mac.md` at `7e4b3f7c`.
 
 ## What I built
 
@@ -72,7 +72,8 @@ answer of 2026-11-06, limit 1, read in sds-hq `standing-answers.md`).
 ## Files changed
 
 - `docs/decisions/0059-scheduled-lanes-run-as-pinned-containers-off-the-mac.md` (appended)
-- `docs/superpowers/reports/adr-0059-inc-9-follow-up-minting-question.md` (new)
+- `docs/superpowers/reports/adr-0059-inc-9-follow-up-minting-question-answered.md` (new; HQ renamed
+  it from `-question.md` when it answered, and its content is unchanged)
 - `docs/superpowers/reports/adr-0059-inc-9-follow-up-minting-report.md` (new)
 
 ## infra-drift mentions outside the ADR
@@ -121,6 +122,33 @@ and the PR body lists them:
 - That the phase still needs increment 9, now as the minting move, is my reading of D-41 ("Increment
   9 becomes pulling follow-up minting out of infra-drift into SDS"). D-41 doesn't say in so many
   words that the done-when counts it.
+
+## Review round 1
+
+HQ's Opus whole-branch review found one blocking item: Amendment 9 left `cred-rotation-state.json`
+with two readers on two hosts, and no increment owned the second. Commit `7e4b3f7c` changes only
+Amendment 9's text:
+
+- **New "Verify in increment 4" item.** When the rotation proposer's increment decides the state
+  file's home (line 802), it also decides how infra-drift's Mac credential scan reads it, or what
+  that scan stops reporting. Increment 4 can't finish until it records that decision (limit 1).
+  The amendment decides neither. I checked the facts it cites at infraops `c3359bf`. The writers
+  are `resolve-exposure` (`security-drift-cli.ts`, line 106) and `record-rotation` (line 122), and
+  `saveRotationState` has no other caller. The drift audit's scan reads both files through
+  `credScan` (lines 275-279). The rotation proposer runs `record-rotation` on retirement
+  (`rotation-proposer.md`, line 123).
+- **Decision 5 row.** The row's last sentence now points to that verify item.
+- **Decision item 1.** It gains a sentence pointing to the same item, so "stay as they are" doesn't
+  overclaim for the scan's state input.
+- **New row for line 1081.** "It is the drift audit that feeds the rotation proposer" is withdrawn
+  as a description. At `5a781dbb`, the rotation proposer runs `cred-findings` itself from its own
+  infraops checkout (`rotation-proposer.md`, lines 12-17), and infra-drift hands it no data. The
+  two share the list and the state as inputs, and the drift audit writes neither.
+- **Relates to.** It now names increment 4.
+
+`make check` after the fix: rc 0, 14886 passed and 1 skipped. The question file is unchanged, as
+HQ asked. HQ carries decision item 3's done-when reading and the year-plan text, so I left both as
+they are.
 
 ## Standards followed
 
