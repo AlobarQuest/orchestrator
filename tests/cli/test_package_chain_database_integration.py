@@ -14,6 +14,7 @@ Each role connects from its password and the three settings (ADR-0055 amendment 
 from __future__ import annotations
 
 import json
+import logging
 import os
 import secrets
 import subprocess
@@ -186,6 +187,14 @@ def _approve(chain_db: ChainDb | None, evidence: dict[str, Any] = EVIDENCE) -> s
 def _verify(event_id: str) -> VerifiedApproval:
     approval = {"approver": "devon", "commit": "c1", "event_id": event_id}
     return package_sources._verify_current_approval(Path("."), "pkg-1", "h1", 1, approval)
+
+
+@pytest.fixture(autouse=True)
+def _no_password_in_any_log_record(caplog: pytest.LogCaptureFixture) -> Iterator[None]:
+    caplog.set_level(logging.DEBUG)
+    yield
+    # caplog.text is per phase, so at teardown read the call phase's records.
+    assert not any(ROLE_PASSWORD in r.getMessage() for r in caplog.get_records("call"))
 
 
 def _refusal_text(info: pytest.ExceptionInfo[PackageSourceError], capfd: Any) -> str:

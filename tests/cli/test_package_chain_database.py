@@ -11,6 +11,7 @@ in `test_package_chain_database_integration.py`, run by `scripts/check-integrati
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -57,6 +58,20 @@ def _no_chain_variable(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(package_sources, "_is_recognised_approver", lambda approver: True)
     monkeypatch.setattr(package_sources, "_verify_with_intent_packages_cli", lambda path: True)
     monkeypatch.setattr(package_sources, "_security_standards_dir", lambda: tmp_path / "sec")
+
+
+@pytest.fixture(autouse=True)
+def _no_password_in_any_log_record(caplog: pytest.LogCaptureFixture) -> Iterator[None]:
+    """Every test here: no log record, at any level, carries the placeholder password."""
+    caplog.set_level(logging.DEBUG)
+    yield
+    # caplog.text is per phase, so at teardown read the call phase's records.
+    assert not any(SECRET in r.getMessage() for r in caplog.get_records("call"))
+
+
+def _streams(capfd: pytest.CaptureFixture[str]) -> str:
+    captured = capfd.readouterr()
+    return captured.out + captured.err
 
 
 def _read_chain(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -151,7 +166,12 @@ def test_a_verified_walk_without_the_approval_refuses_even_when_the_file_holds_i
     ],
 )
 def test_anything_but_a_verified_walk_refuses(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, returncode: int, stdout: str, cause: str
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capfd: pytest.CaptureFixture[str],
+    returncode: int,
+    stdout: str,
+    cause: str,
 ) -> None:
     _file_holds_the_match(tmp_path)
     _read_chain(monkeypatch)
@@ -160,6 +180,7 @@ def test_anything_but_a_verified_walk_refuses(
     with pytest.raises(PackageSourceError, match=cause) as info:
         _verify()
     assert SECRET not in str(info.value)  # the child's stderr is never relayed
+    assert SECRET not in _streams(capfd)
 
 
 @pytest.mark.parametrize("stdout", ["", "not json\n"], ids=["empty", "not-json"])
@@ -245,18 +266,21 @@ def test_an_unreachable_database_refuses_through_the_real_child_without_the_pass
     _read_chain(monkeypatch)
     _forbid_the_file_chain(monkeypatch)
 
-    with pytest.raises(PackageSourceError, match=r"could not be read \(OperationalError\)$"):
+    with pytest.raises(
+        PackageSourceError, match=r"could not be read \(OperationalError\)$"
+    ) as info:
         _verify()
     captured = capfd.readouterr()
     assert captured.out == ""  # nothing reaches the stdout emit-intake-payload reserves
     assert SECRET not in captured.err
+    assert SECRET not in str(info.value)
 
 
 # ---- Append password only: refuse rather than verify one chain and match another ---------------
 
 
 def test_the_append_password_alone_refuses_without_reading_the_file(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capfd: pytest.CaptureFixture[str]
 ) -> None:
     _file_holds_the_match(tmp_path)
     monkeypatch.setenv("FACTORY_EVENTS_APPEND_PASSWORD", SECRET)
@@ -268,6 +292,7 @@ def test_the_append_password_alone_refuses_without_reading_the_file(
     with pytest.raises(PackageSourceError, match="refusing to read the file chain$") as info:
         _verify()
     assert SECRET not in str(info.value)
+    assert SECRET not in _streams(capfd)
     assert calls == []
 
 
@@ -277,7 +302,11 @@ def test_the_append_password_alone_refuses_without_reading_the_file(
 @pytest.mark.parametrize("retired", RETIRED)
 @pytest.mark.parametrize("password", [None, "FACTORY_EVENTS_READ_PASSWORD"], ids=["file", "read"])
 def test_a_set_retired_variable_refuses_by_name_without_reading_either_chain(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, retired: str, password: str | None
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capfd: pytest.CaptureFixture[str],
+    retired: str,
+    password: str | None,
 ) -> None:
     _file_holds_the_match(tmp_path)
     if password:
@@ -289,6 +318,7 @@ def test_a_set_retired_variable_refuses_by_name_without_reading_either_chain(
     with pytest.raises(PackageSourceError, match=f"{retired} is retired") as info:
         _verify()
     assert SECRET not in str(info.value)
+    assert SECRET not in _streams(capfd)
     assert calls == []
 
 
@@ -422,7 +452,9 @@ def _row(seq: int, event: dict[str, Any]) -> tuple[Any, ...]:
 
 def _main(capsys: pytest.CaptureFixture[str]) -> tuple[int, dict[str, Any], str]:
     code = factory_chain_read.main()
-    out = capsys.readouterr().out
+    captured = capsys.readouterr()
+    out = captured.out
+    assert SECRET not in out + captured.err
     lines = out.strip().splitlines()
     assert len(lines) == 1  # one record, the whole of stdout
     return code, json.loads(lines[0]), out

@@ -9,6 +9,8 @@ including from every point a crashed pass could have stopped at.
 from __future__ import annotations
 
 import json
+import logging
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -360,6 +362,22 @@ def test_approve_by_policy_gets_no_append_password_when_none_is_set(tmp_path, mo
     assert out[1] == "password-unset"
 
 
+_PLACEHOLDER_PASSWORD = "pw-must-not-leak-7f3a"
+
+
+@pytest.fixture
+def no_password_anywhere(
+    caplog: pytest.LogCaptureFixture, capfd: pytest.CaptureFixture[str]
+) -> Iterator[None]:
+    """After the test: the placeholder password in no log record and on neither stream."""
+    caplog.set_level(logging.DEBUG)
+    yield
+    captured = capfd.readouterr()
+    # caplog.text is per phase, so at teardown read the call phase's records.
+    logged = "".join(r.getMessage() for r in caplog.get_records("call"))
+    assert _PLACEHOLDER_PASSWORD not in logged + captured.out + captured.err
+
+
 _CHAIN_PASSWORD_VARS = ("FACTORY_EVENTS_APPEND_PASSWORD", "FACTORY_EVENTS_READ_PASSWORD")
 _RETIRED_CHAIN_VARS = (
     "FACTORY_EVENTS_APPEND_DSN",
@@ -375,30 +393,32 @@ def _refusing_interpreter(root: Path, name: str) -> None:
     python.chmod(0o755)
 
 
+@pytest.mark.usefixtures("no_password_anywhere")
 @pytest.mark.parametrize("name", _CHAIN_PASSWORD_VARS)
 def test_a_refused_lifecycle_command_never_repeats_a_chain_password(
     tmp_path, monkeypatch, name
 ) -> None:
     _refusing_interpreter(tmp_path, name)
-    monkeypatch.setenv(name, "pw-must-not-leak-7f3a")
+    monkeypatch.setenv(name, _PLACEHOLDER_PASSWORD)
 
     with pytest.raises(StandingError) as info:
         standing.lifecycle(tmp_path, "approve", "packages/p", "--by-policy")
 
-    assert "pw-must-not-leak-7f3a" not in str(info.value)
+    assert _PLACEHOLDER_PASSWORD not in str(info.value)
     assert f"<{name} redacted>" in str(info.value)
 
 
+@pytest.mark.usefixtures("no_password_anywhere")
 @pytest.mark.parametrize("name", _RETIRED_CHAIN_VARS)
 def test_a_set_retired_variable_is_redacted_whole(tmp_path, monkeypatch, name) -> None:
     """A retired whole-DSN variable is never parsed: its whole value is replaced (item 8)."""
     _refusing_interpreter(tmp_path, name)
-    monkeypatch.setenv(name, "postgresql://factory_events_append:pw-must-not-leak-7f3a@chain/x")
+    monkeypatch.setenv(name, f"postgresql://factory_events_append:{_PLACEHOLDER_PASSWORD}@chain/x")
 
     with pytest.raises(StandingError) as info:
         standing.lifecycle(tmp_path, "approve", "packages/p", "--by-policy")
 
-    assert "pw-must-not-leak-7f3a" not in str(info.value)
+    assert _PLACEHOLDER_PASSWORD not in str(info.value)
     assert "chain/x" not in str(info.value)
     assert f"<{name} redacted>" in str(info.value)
 
