@@ -36,6 +36,8 @@ from sds_members import client as members_client
 from tests.architecture.edge_table import (
     ALERT_HUB_PERMITS,
     DEADMAN,
+    FACTORY_EVENTS_APPEND_PASSWORD,
+    FACTORY_EVENTS_READ_PASSWORD,
     OBSERVER_BEARER,
     PROPOSE_BEARER,
     READ_BEARER,
@@ -73,7 +75,14 @@ EDGES: dict[str, Edge] = {
         github=frozenset(),  # through landing_ledger.github: GITHUB_THROUGH
         # through alert_hub_client: ALERT_HUB_THROUGH
         alert_hub=frozenset({("POST", "/v1/alerts")}),
-        bearers=DEADMAN | {PROPOSE_BEARER, READ_BEARER, OBSERVER_BEARER, SDS_BRIDGE_ALERT_BEARER},
+        bearers=DEADMAN
+        | {
+            PROPOSE_BEARER,
+            READ_BEARER,
+            OBSERVER_BEARER,
+            SDS_BRIDGE_ALERT_BEARER,
+            FACTORY_EVENTS_APPEND_PASSWORD,
+        },
     ),
     "change_proposer": Edge(
         change_manager=frozenset(
@@ -105,7 +114,13 @@ EDGES: dict[str, Edge] = {
         github=frozenset(),
         alert_hub=frozenset(),
         bearers=DEADMAN
-        | {READ_BEARER, SYSTEM_BEARER, OBSERVER_BEARER, WORK_CARRIER_OBSERVATION_BEARER},
+        | {
+            READ_BEARER,
+            SYSTEM_BEARER,
+            OBSERVER_BEARER,
+            WORK_CARRIER_OBSERVATION_BEARER,
+            FACTORY_EVENTS_READ_PASSWORD,
+        },
     ),
     "work_watcher": Edge(
         # The listing is work_carrier's reader, which work_watcher/pipeline.py imports.

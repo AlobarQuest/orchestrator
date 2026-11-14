@@ -1254,3 +1254,108 @@ rotation_preconditions = ["rotate it with lanes-read-app-private-key in one sitt
   kind = "bws-secret"
   uuid = "b8f547b9-67d7-4417-adc0-b4fd0126b0f0"
   note = "the keeper, in SDS / Lane Apps; base64 of the PEM; no reader holds a grant yet"
+
+# ── The factory-events chain's role passwords (ADR-0055 amendments 24 item 11, 25 and 26) ──────
+# One row per secret, listing every reader across the estate. Each BWS secret holds only its role's
+# password; the address is the three non-secret settings in ~/.factory/chain-db.env (FE-5 cut-over
+# plan, "The switch"), so a reader fetches only from the act's step 9 on, when that file appears.
+# HAND-ROTATED. Amendment 24's open item "A rotation class for each secret (FE-4)" leaves the
+# rotation type undecided: `postgres-role-password` (HQ's choice, FE-5 plan open question 6) is the
+# nearest class, but its type rotates one Coolify service's role through a restart, and these
+# readers are Mac processes that fetch fresh each run. So neither row is rotated_by_sds until a type
+# is decided, and each falls to the manual checklist. No `created` or fingerprint: neither was read
+# here (no `bws` run by the session that wrote these rows), and the class never ages.
+[[credential]]
+id = "factory-events-append-password"
+class = "postgres-role-password"
+provider = "postgres-role"
+provider_identity = "Postgres role factory_events_append, the factory-events chain database on prod-vps"
+bws_uuid = "2ce0dbc7-eeac-4bf0-8204-b50200c97516"
+disposition = "reissue"
+rotated_by_sds = false
+
+  [[credential.consumer]]
+  kind = "bws-secret"
+  uuid = "2ce0dbc7-eeac-4bf0-8204-b50200c97516"
+  note = "the keeper, in Factory Events (5e30c8b7-2b93-4a63-be26-b50200c8f070); a bare password"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
+  ref = "scripts/run-bump-proposer.sh"
+  healthchecks_check = "sds-bump-proposer"
+  note = "launchd com.devon.bump-proposer 06:50, --submit passes only, with the switch file present; Keychain Claude/BWS_ACCESS_TOKEN_BUMP_PROPOSER (bump-proposer); passed to approve --by-policy"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
+  ref = "scripts/factory-events-session.sh"
+  note = "interactive sessions' approve and the one history import (FE-5 P-OR-2); Keychain Claude/BWS_ACCESS_TOKEN_FACTORY_EVENTS_SESSION (factory-events-session); no schedule"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "sds-hq"
+  ref = "src/sds_hq/standing_approve.py"
+  note = "the HQ cycle's standing-approve (com.devon.sds-hq, every 900 s), with the switch file present; Keychain Claude/BWS_ACCESS_TOKEN_SDS_HQ (sds-hq) (FE-5 P-HQ)"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "security-standards"
+  ref = "scripts/factory-events-nightly.sh"
+  note = "the Mac nightly's adapt and verify (com.devon.factory-events 03:30, the deployed copy in ~/.claude/bin), with the switch file present; Keychain Claude/BWS_ACCESS_TOKEN_FACTORY_EVENTS_NIGHTLY (factory-events-nightly)"
+
+[[credential]]
+id = "factory-events-read-password"
+class = "postgres-role-password"
+provider = "postgres-role"
+provider_identity = "Postgres role factory_events_read, the factory-events chain database on prod-vps"
+bws_uuid = "2f708d08-ea5d-4d11-bde0-b50200c9a60b"
+disposition = "reissue"
+rotated_by_sds = false
+
+  [[credential.consumer]]
+  kind = "bws-secret"
+  uuid = "2f708d08-ea5d-4d11-bde0-b50200c9a60b"
+  note = "the keeper, in Factory Events (5e30c8b7-2b93-4a63-be26-b50200c8f070); a bare password"
+
+  [[credential.consumer]]
+  kind = "runtime-fetch"
+  repo = "orchestrator"
+  ref = "scripts/run-work-carrier.sh"
+  healthchecks_check = "sds-work-carrier"
+  note = "launchd com.devon.work-carrier 07:05 (--register), with the switch file present; Keychain Claude/BWS_ACCESS_TOKEN_SDS (sds-operator) until ADR-0059 step 3f-2; passed to work-carrier alone, never work-watcher"
+
+# ── The Mac Keychain tokens this repository's launchers read for the chain (FE-5 plan follow-up 1) ──
+# Minted by Devon at FE-5 act step 0, after these rows land; no `created` or fingerprint until then,
+# so neither ages before it exists. Console-minted, hand-rotated.
+[[credential]]
+id = "bws-bump-proposer-token"
+class = "bws-machine-token"
+provider = "bitwarden-sm"
+provider_identity = "Bitwarden SM machine account bump-proposer (reads factory-events-append-password)"
+disposition = "reissue"
+keeper_service = "Claude"
+keeper_account = "BWS_ACCESS_TOKEN_BUMP_PROPOSER"
+rotated_by_sds = false
+
+  [[credential.consumer]]
+  kind = "keychain"
+  service = "Claude"
+  account = "BWS_ACCESS_TOKEN_BUMP_PROPOSER"
+  note = "the keeper; scripts/run-bump-proposer.sh reads it fresh on each --submit pass with the switch file present (healthchecks sds-bump-proposer)"
+
+[[credential]]
+id = "bws-factory-events-session-token"
+class = "bws-machine-token"
+provider = "bitwarden-sm"
+provider_identity = "Bitwarden SM machine account factory-events-session (reads factory-events-append-password only)"
+disposition = "reissue"
+keeper_service = "Claude"
+keeper_account = "BWS_ACCESS_TOKEN_FACTORY_EVENTS_SESSION"
+rotated_by_sds = false
+
+  [[credential.consumer]]
+  kind = "keychain"
+  service = "Claude"
+  account = "BWS_ACCESS_TOKEN_FACTORY_EVENTS_SESSION"
+  note = "the keeper; scripts/factory-events-session.sh (FE-5 P-OR-2) reads it on each run; no schedule"

@@ -267,3 +267,257 @@ def test_the_helper_names_no_interpreter_from_path() -> None:
     text = HELPER.read_text()
     code = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
     assert not re.search(r"(^|[\s|])python3?\b", code)
+
+
+# ---- the token is never an argument -------------------------------------------------------------
+
+# Records its own argv, then runs the real `env` with it.
+_ENV_STUB = """#!/bin/sh
+printf '%s\\n' "$*" >> "$ENV_ARGV_LOG"
+exec /usr/bin/env "$@"
+"""
+IDENTITY = "stub-identity-for-one-fetch"
+
+
+def test_the_two_argument_token_reaches_bws_in_its_environment_and_no_argv(
+    stubs: Path, tmp_path: Path
+) -> None:
+    """Spelled `env ... BWS_ACCESS_TOKEN=<token> bws`, the token was one of `env`'s arguments and
+    showed in the process list. As an assignment prefix it is in `env`'s environment only."""
+    _executable(stubs / "env", _ENV_STUB)
+    env_log = tmp_path / "env-argv.log"
+    result = _helper(stubs, tmp_path, "uuid-11", IDENTITY, extra_env={"ENV_ARGV_LOG": str(env_log)})
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == f"{VALUE}\n"
+    env_argv = env_log.read_text()
+    assert "bws secret get uuid-11" in env_argv, "the stub env must be the one that ran"
+    assert IDENTITY not in env_argv
+    [line] = _log(tmp_path)
+    seen_token, bws_argv = line.split(" args=", 1)
+    assert seen_token == f"token={IDENTITY}"
+    assert IDENTITY not in bws_argv
+    assert bws_argv == "secret get uuid-11 --output json --color no"
+
+
+# ---- the factory-events chain switch ------------------------------------------------------------
+
+VALID_SWITCH = (
+    "FACTORY_EVENTS_DB_HOST=100.64.0.1\n"
+    "FACTORY_EVENTS_DB_PORT=15432\n"
+    "FACTORY_EVENTS_DB_NAME=postgres\n"
+)
+# Prints the result as `rc=`, each setting (or `<unset>`), the refusal, and every exported name
+# beginning `CHAIN_`, so a test sees what the reader left exported.
+_READ = (
+    'source "$PWD/scripts/sds-bws.sh"; factory_events_read_settings "$1"; rc=$?; '
+    'echo "rc=$rc"; echo "host=${CHAIN_DB_HOST-<unset>}"; echo "port=${CHAIN_DB_PORT-<unset>}"; '
+    'echo "name=${CHAIN_DB_NAME-<unset>}"; echo "refusal=$(factory_events_settings_refusal)"; '
+    "/usr/bin/env | sed -n 's/^\\(CHAIN_[A-Z_]*\\)=.*/exported=\\1/p'"
+)
+
+
+def _read_switch(
+    stubs: Path, tmp_path: Path, path: Path, **extra_env: str
+) -> dict[str, str | list[str]]:
+    result = _run(_READ, stubs, tmp_path, str(path), extra_env=extra_env)
+    assert result.stderr == ""
+    fields: dict[str, str | list[str]] = {"exported": []}
+    for line in result.stdout.splitlines():
+        key, value = line.split("=", 1)
+        if key == "exported":
+            exported = fields["exported"]
+            assert isinstance(exported, list)
+            exported.append(value)
+        else:
+            fields[key] = value
+    return fields
+
+
+def _switch(tmp_path: Path, text: str) -> Path:
+    path = tmp_path / "chain-db.env"
+    path.write_text(text)
+    return path
+
+
+def test_a_valid_switch_sets_the_three_settings_unexported(stubs: Path, tmp_path: Path) -> None:
+    fields = _read_switch(stubs, tmp_path, _switch(tmp_path, VALID_SWITCH))
+    assert fields == {
+        "rc": "0",
+        "host": "100.64.0.1",
+        "port": "15432",
+        "name": "postgres",
+        "refusal": "",
+        "exported": [],
+    }
+
+
+def test_a_switch_without_a_final_newline_is_read(stubs: Path, tmp_path: Path) -> None:
+    fields = _read_switch(stubs, tmp_path, _switch(tmp_path, VALID_SWITCH.rstrip("\n")))
+    assert fields["rc"] == "0"
+    assert fields["name"] == "postgres"
+
+
+def test_a_name_the_caller_exported_is_not_left_exported(stubs: Path, tmp_path: Path) -> None:
+    """`~/.factory/env` is sourced under `set -a` elsewhere: a plain assignment keeps an exported
+    name exported, so the reader unsets each first."""
+    fields = _read_switch(
+        stubs,
+        tmp_path,
+        _switch(tmp_path, VALID_SWITCH),
+        CHAIN_DB_HOST="exported-before",
+        CHAIN_DB_PORT="1",
+        CHAIN_DB_NAME="exported-before",
+    )
+    assert fields["host"] == "100.64.0.1"
+    assert fields["exported"] == []
+
+
+def test_control_a_plain_assignment_keeps_an_exported_name_exported(
+    stubs: Path, tmp_path: Path
+) -> None:
+    """Without this, the case above would pass on a shell where assignment unexports."""
+    result = _run(
+        "CHAIN_DB_HOST=x; /usr/bin/env | grep -c '^CHAIN_DB_HOST='",
+        stubs,
+        tmp_path,
+        extra_env={"CHAIN_DB_HOST": "exported-before"},
+    )
+    assert result.stdout.strip() == "1"
+
+
+SECRET_LOOKING = "hunter2-pasted-by-mistake"
+
+# Each refusal security-standards' `factory-events-nightly.sh` makes (4e83d7a), and the words
+# the reader's message must carry. None of the files is valid.
+REFUSALS = {
+    "an unknown key": (
+        VALID_SWITCH + f"FACTORY_EVENTS_APPEND_PASSWORD={SECRET_LOOKING}\n",
+        "line 4 has an unknown key",
+    ),
+    "a missing host": (
+        "FACTORY_EVENTS_DB_PORT=15432\nFACTORY_EVENTS_DB_NAME=postgres\n",
+        "has no FACTORY_EVENTS_DB_HOST",
+    ),
+    "a missing port": (
+        "FACTORY_EVENTS_DB_HOST=h\nFACTORY_EVENTS_DB_NAME=postgres\n",
+        "has no FACTORY_EVENTS_DB_PORT",
+    ),
+    "a missing name": (
+        "FACTORY_EVENTS_DB_HOST=h\nFACTORY_EVENTS_DB_PORT=15432\n",
+        "has no FACTORY_EVENTS_DB_NAME",
+    ),
+    "a duplicate key": (
+        VALID_SWITCH + "FACTORY_EVENTS_DB_PORT=15433\n",
+        "sets FACTORY_EVENTS_DB_PORT twice",
+    ),
+    "an empty value": (
+        VALID_SWITCH.replace("=postgres", "="),
+        "line 3: FACTORY_EVENTS_DB_NAME is empty",
+    ),
+    "a blank line": (
+        VALID_SWITCH.replace("\nFACTORY_EVENTS_DB_PORT", "\n\nFACTORY_EVENTS_DB_PORT"),
+        "line 2 is not KEY=value",
+    ),
+    "a line with no equals sign": (SECRET_LOOKING + "\n", "line 1 is not KEY=value"),
+    "a quoted value": (
+        VALID_SWITCH.replace("=postgres", '="postgres"'),
+        "FACTORY_EVENTS_DB_NAME is empty or has a character outside",
+    ),
+    "a space in a value": (
+        VALID_SWITCH.replace("=postgres", f"=post {SECRET_LOOKING}"),
+        "FACTORY_EVENTS_DB_NAME is empty or has a character outside",
+    ),
+    "a command substitution": (
+        VALID_SWITCH.replace("=postgres", "=$(touch pwned)"),
+        "FACTORY_EVENTS_DB_NAME is empty or has a character outside",
+    ),
+    "a carriage return": (
+        VALID_SWITCH.replace("\n", "\r\n"),
+        "FACTORY_EVENTS_DB_HOST is empty or has a character outside",
+    ),
+}
+
+
+@pytest.mark.parametrize("case", sorted(REFUSALS))
+def test_each_malformed_switch_is_refused_by_name_and_never_echoes_a_value(
+    stubs: Path, tmp_path: Path, case: str
+) -> None:
+    text, message = REFUSALS[case]
+    path = _switch(tmp_path, text)
+    fields = _read_switch(stubs, tmp_path, path)
+    assert fields["rc"] == "1"
+    refusal = fields["refusal"]
+    assert isinstance(refusal, str)
+    assert refusal.startswith(str(path))
+    assert message in refusal
+    assert SECRET_LOOKING not in refusal
+    assert "postgres" not in refusal and "100.64.0.1" not in refusal
+    assert (fields["host"], fields["port"], fields["name"]) == ("<unset>",) * 3
+    assert not (tmp_path / "pwned").exists()
+
+
+def test_a_directory_is_not_a_regular_file(stubs: Path, tmp_path: Path) -> None:
+    path = tmp_path / "chain-db.env"
+    path.mkdir()
+    fields = _read_switch(stubs, tmp_path, path)
+    assert fields["rc"] == "1"
+    assert fields["refusal"] == f"{path} is not a regular file"
+
+
+def test_a_symlink_to_a_valid_switch_is_refused(stubs: Path, tmp_path: Path) -> None:
+    target = tmp_path / "elsewhere.env"
+    target.write_text(VALID_SWITCH)
+    path = tmp_path / "chain-db.env"
+    path.symlink_to(target)
+    fields = _read_switch(stubs, tmp_path, path)
+    assert fields["rc"] == "1"
+    assert fields["refusal"] == f"{path} is not a regular file"
+
+
+def test_an_unreadable_switch_is_refused(stubs: Path, tmp_path: Path) -> None:
+    path = _switch(tmp_path, VALID_SWITCH)
+    path.chmod(0o000)
+    try:
+        fields = _read_switch(stubs, tmp_path, path)
+    finally:
+        path.chmod(0o600)
+    assert fields["rc"] == "1"
+    assert fields["refusal"] == f"{path} is not readable"
+
+
+@pytest.mark.parametrize(
+    ("shape", "present"),
+    [("absent", False), ("a file", True), ("a dangling symlink", True), ("a directory", True)],
+)
+def test_the_switch_is_present_for_anything_at_its_path(
+    stubs: Path, tmp_path: Path, shape: str, present: bool
+) -> None:
+    """Present means "read it, and refuse what isn't a regular file", never "treat it as absent"."""
+    path = tmp_path / "chain-db.env"
+    if shape == "a file":
+        path.write_text(VALID_SWITCH)
+    elif shape == "a dangling symlink":
+        path.symlink_to(tmp_path / "missing")
+    elif shape == "a directory":
+        path.mkdir()
+    result = _run(
+        'source "$PWD/scripts/sds-bws.sh"; factory_events_switch_present "$1"',
+        stubs,
+        tmp_path,
+        str(path),
+    )
+    assert (result.returncode == 0) is present
+
+
+def test_with_no_path_both_functions_read_the_switch_the_plan_names(
+    stubs: Path, tmp_path: Path
+) -> None:
+    (tmp_path / ".factory").mkdir()
+    (tmp_path / ".factory" / "chain-db.env").write_text(VALID_SWITCH)
+    result = _run(
+        'source "$PWD/scripts/sds-bws.sh"; factory_events_switch_present'
+        ' && factory_events_read_settings && printf %s "$CHAIN_DB_NAME"',
+        stubs,
+        tmp_path,
+    )
+    assert result.stdout == "postgres"

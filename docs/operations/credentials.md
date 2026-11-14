@@ -367,3 +367,41 @@ The entries below moved verbatim from the CLAUDE.md invariants section on 2026-1
 - **A GitHub App's private keys are on its Credentials page, Key pairs tab** (`/settings/apps/<app>/
   key_pairs`, **New key**), not on the General page, as of 2026-10-09. The install screen defaults to
   **All repositories**; choose **Only select repositories** before clicking Install.
+
+## The factory-events chain switch and its Keychain items
+
+The factory-events chain moves from the Mac file to the VPS database in FE-5 (ADR-0059 amendment 7
+act 5; the cut-over plan is `docs/superpowers/plans/2026-11-14-fe-5-cutover.md`). Each BWS secret
+holds only its role's password, and the address is plain configuration (ADR-0055 amendment 26).
+
+**The switch is `~/.factory/chain-db.env`, a non-secret file.** It holds exactly three lines, in
+`KEY=value` form with no quoting: `FACTORY_EVENTS_DB_HOST`, `FACTORY_EVENTS_DB_PORT` and
+`FACTORY_EVENTS_DB_NAME`. The act writes it at step 9.
+
+- **File absent:** a holder fetches no chain password and sets or clears no chain variable.
+- **File present:** the holder reads it with `factory_events_read_settings` in
+  `scripts/sds-bws.sh`, which never sources it. The reader refuses an unknown, missing or
+  duplicate key, an empty value, a blank line, a value outside `[A-Za-z0-9._:-]`, and a path that
+  isn't a readable regular file or is a symlink. The holder then fetches its role's password
+  through its own account and passes the password and the three settings to the one child that
+  needs them, as an assignment prefix. A refusal or an empty value fails the pass; nothing falls
+  back to the file. security-standards' `factory-events-nightly.sh` reads the file with the same
+  refusals.
+
+Never read `~/.factory/env` for these settings: the nightly sources it under `set -a`, and it
+carries `FACTORY_DB_DSN`.
+
+The holders in this repository:
+
+| Holder | Secret | Account and Keychain item | When it fetches |
+| --- | --- | --- | --- |
+| `scripts/run-bump-proposer.sh` | `factory-events-append-password` (`2ce0dbc7-…`) | `bump-proposer`, `Claude` / `BWS_ACCESS_TOKEN_BUMP_PROPOSER` | A `--submit` run, with the switch present. A dry run fetches nothing. |
+| `scripts/run-work-carrier.sh` | `factory-events-read-password` (`2f708d08-…`) | `sds-operator`, `Claude` / `BWS_ACCESS_TOKEN_SDS`, until ADR-0059 step 3f-2 | Every pass with the switch present and an `sds-operator` identity. The password reaches `work-carrier` only, never `work-watcher`. |
+| `scripts/factory-events-session.sh` (FE-5 P-OR-2) | `factory-events-append-password` | `factory-events-session`, `Claude` / `BWS_ACCESS_TOKEN_FACTORY_EVENTS_SESSION` | Each run, for an interactive session's `approve` or the one history import. |
+
+Devon mints both new Keychain items at act step 0. Neither item has an environment override: a
+launcher reads it from the Keychain directly, so a caller's environment can't put the token in
+the children's environment. `sds_bws_value` passes a token to `bws` as an assignment prefix, so it
+never reaches an argument list. The four rows in `.cred-consumers.toml` are hand-rotated
+(`rotated_by_sds = false`) until FE-4 decides the passwords' rotation type (ADR-0055 amendment 24,
+"A rotation class for each secret").
