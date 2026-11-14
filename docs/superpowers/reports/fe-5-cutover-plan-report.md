@@ -212,6 +212,36 @@ in the plan only; nothing else changed. Line numbers are the plan's after this r
 - `make check` doesn't apply: the change is docs only, under `docs/superpowers/**` (`layers.toml`
   line 755).
 
+## Fix round 2
+
+### Blocking: the anchor file's path
+
+- **Plan lines 129-131 (P-SS, change 3).** `--record-anchor` now checks
+  `~/.factory/state/chain-anchor.json`. At security-standards `60ec80f`, `chain.py` lines 95-96
+  return `store.state_dir() / "chain-anchor.json"`, and `store.py` lines 30-31 define `state_dir()`
+  as `factory_home() / "state"` (`factory_home()` is `FACTORY_EVENTS_HOME` or `~/.factory`, lines
+  22-23). I read both at that commit. The plan cites `store.py` there.
+- **Plan line 462 (step 12's check).** It now names `~/.factory/state/chain-anchor.json`.
+- `grep -n chain-anchor` finds no other mention in the plan or this report. No P-SS test text
+  checks the anchor.
+
+### Non-blocking items
+
+1. **Plan lines 42-43 and 115-116.** Each now says a prep pull request changes no running process's
+   result on merge, except for what its "What changes when it merges" line lists.
+2. **Plan lines 215-216.** `grep -rn sds_bws_value scripts/` lists 22 files at `7739b22a`, of which
+   18 make a two-argument call. I confirmed the 22 with `git grep -l` at that commit.
+3. **Plan line 456 (rollback point).** "No holder has appended to the database (it holds only step
+   6's imported copy)".
+4. **Plan lines 369-371.** Each removal's handoff (R-SS, R-IP and R-OR) marks it "hold: merge inside
+   FE-5 step 10", so no cycle merges it on a clean review.
+
+### Checks run
+
+- `git merge --ff-only 31f48563` brought the branch to the PR head.
+- I changed only the plan and this report. I read no secret, ran no `bws` or `security` command,
+  and opened no database connection. `make check` doesn't apply (docs only).
+
 ## Standards followed
 
 | Standard | How the plan meets it |
@@ -231,3 +261,7 @@ in the plan only; nothing else changed. Line numbers are the plan's after this r
   `FACTORY_DB_DSN`. The former follow-up 6 is now part of P-OR-1.
 - Open questions 1 (`check_chain`'s role), 2 (re-import after rollback) and 3 (the VPS verify) go
   to Devon, and must be answered before dispatching P-HQ and the act. HQ settled 4 to 8.
+- Step 12 runs the nightly's `adapt`, which appends, before the Mac `verify`. ADR-0059 amendment
+  7's order is verify, then resume. Recorded by fix round 2, not changed.
+- Open question 6's `CLASS_POLICY` note ("Rotate through the SDS") reads oddly for rows with
+  `rotated_by_sds = false`. Recorded by fix round 2, not changed.
