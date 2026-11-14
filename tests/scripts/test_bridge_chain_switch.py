@@ -122,6 +122,7 @@ class Run:
     argv: str
     names: dict[str, set[str]]
     chain: dict[str, dict[str, str]]
+    home: Path
 
     def fetched(self, uuid: str) -> list[str]:
         """The identities a secret was fetched with."""
@@ -220,6 +221,7 @@ def _run(
         argv=(logs / "argv").read_text(),
         names=names,
         chain=chain,
+        home=home,
     )
 
 
@@ -386,9 +388,13 @@ SWITCHING_RUNS = [
     pytest.param(CARRIER, ("--register",), id="carrier-register"),
     pytest.param(CARRIER, (), id="carrier-bare"),
 ]
+# Each malformed file, and the reason its refusal must carry to the lane log and the `/fail` body.
 MALFORMED = {
-    "a missing key": "FACTORY_EVENTS_DB_HOST=h\nFACTORY_EVENTS_DB_PORT=1\n",
-    "an unknown key": SWITCH + "FACTORY_EVENTS_EXTRA=x\n",
+    "a missing key": (
+        "FACTORY_EVENTS_DB_HOST=h\nFACTORY_EVENTS_DB_PORT=1\n",
+        "has no FACTORY_EVENTS_DB_NAME",
+    ),
+    "an unknown key": (SWITCH + "FACTORY_EVENTS_EXTRA=hunter2\n", "line 4 has an unknown key"),
 }
 
 
@@ -397,13 +403,19 @@ MALFORMED = {
 def test_a_malformed_switch_fails_the_pass_before_any_program_runs(
     tmp_path: Path, lane: Lane, args: tuple[str, ...], case: str
 ) -> None:
-    run = _run(tmp_path, lane, *args, switch=MALFORMED[case])
+    text, reason = MALFORMED[case]
+    run = _run(tmp_path, lane, *args, switch=text)
     assert run.rc == 1
     assert run.names == {}
-    assert "the factory-events switch" in run.output
+    assert f"the factory-events switch: {run.home}/.factory/chain-db.env" in run.output
+    assert reason in run.output
+    assert "hunter2" not in run.output
     assert not run.fetched(APPEND_UUID) and not run.fetched(READ_UUID)
     if args:
         assert run.pings[-1][0] == f"{PING_URL}/fail"
+        assert reason in run.pings[-1][1]
+    else:
+        assert run.pings == []
 
 
 @pytest.mark.parametrize(("lane", "args"), SWITCHING_RUNS)
