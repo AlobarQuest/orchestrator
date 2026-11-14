@@ -340,6 +340,21 @@ def test_the_chain_reaches_no_process_but_the_child(tree: Tree) -> None:
     assert (tree.logs / "bws-chain").read_text() == ""
 
 
+def test_bws_gets_the_session_token_as_its_bws_access_token_alone(tree: Tree) -> None:
+    """No other name carries the token into `bws` (or the `env` before it)."""
+    tree.switch.write_text(SETTINGS_TEXT)
+    probe = tree.stubs / "bws"
+    probe.write_text(
+        _BWS.replace("#!/bin/sh\n", '#!/bin/sh\n/usr/bin/env > "$CHILD_LOG/bws-env"\n')
+    )
+    run = tree.run(*_approve(tree))
+    assert run.rc == 0, run.stderr
+    lines = (tree.logs / "bws-env").read_text().splitlines()
+    holders = {line.split("=", 1)[0] for line in lines if SESSION_TOKEN in line}
+    # `KEYCHAIN_*` is the harness's fake Keychain, part of the caller's environment.
+    assert holders == {"BWS_ACCESS_TOKEN", f"KEYCHAIN_{SESSION_ITEM}"}
+
+
 def test_a_retired_dsn_is_left_set_so_the_child_refuses_it(tree: Tree) -> None:
     tree.switch.write_text(SETTINGS_TEXT)
     run = tree.run(*_approve(tree), extra_env={"FACTORY_EVENTS_APPEND_DSN": "stub-retired-dsn"})
