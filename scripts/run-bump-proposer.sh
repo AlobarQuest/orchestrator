@@ -272,7 +272,8 @@ fi
 #     switch fails a dry run too. Only a `--submit` run fetches the append password, through the
 #     `bump-proposer` account's own Keychain item (never the broad or narrow identity above), and
 #     passes the password and the settings to `bump-proposer` alone, as an assignment prefix. A dry
-#     run fetches nothing and passes nothing. Any failure is `sds_outcome_fail`, never the file.
+#     run fetches nothing and passes nothing, and with the switch on an ambient chain variable is
+#     cleared first. Any failure is `sds_outcome_fail`, never the file.
 # Every name below is this script's own, unset before use, so none is left exported by a caller's
 # environment, and none is exported: the token reaches only `bws`, the password only the child.
 FACTORY_EVENTS_APPEND_UUID="2ce0dbc7-eeac-4bf0-8204-b50200c97516"  # factory-events-append-password
@@ -281,6 +282,11 @@ CHAIN_MODE="file"
 if factory_events_switch_present; then
   factory_events_read_settings \
     || sds_outcome_fail "FATAL: the factory-events switch: $(factory_events_settings_refusal)"
+  # With the switch on, this script is the only source of the chain variables: an ambient one
+  # (a shell, or `~/.factory/env` under `set -a`) is cleared, so no other child gets one. A
+  # retired `FACTORY_EVENTS_*_DSN` is left set, so the child refuses it by name.
+  unset FACTORY_EVENTS_APPEND_PASSWORD FACTORY_EVENTS_READ_PASSWORD \
+    FACTORY_EVENTS_DB_HOST FACTORY_EVENTS_DB_PORT FACTORY_EVENTS_DB_NAME
   if [ "$SUBMITTING" -eq 1 ]; then
     BUMP_PROPOSER_EVENTS_IDENTITY="$(/usr/bin/security find-generic-password \
       -s 'Claude' -a 'BWS_ACCESS_TOKEN_BUMP_PROPOSER' -w 2>/dev/null || true)"
@@ -304,4 +310,5 @@ else
   "$REPO_ROOT/.venv/bin/bump-proposer" "$@" > "$SDS_OUTCOME_REPORT" 2>&1
 fi
 rc=$?
+unset CHAIN_PASSWORD
 sds_outcome_end "$rc"

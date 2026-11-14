@@ -308,6 +308,11 @@ CHAIN_MODE="file"
 if factory_events_switch_present; then
   factory_events_read_settings \
     || sds_outcome_fail "FATAL: the factory-events switch: $(factory_events_settings_refusal)"
+  # With the switch on, this script is the only source of the chain variables: an ambient one
+  # (a shell, or `~/.factory/env` under `set -a`) is cleared, so no other child gets one. A
+  # retired `FACTORY_EVENTS_*_DSN` is left set, so the child refuses it by name.
+  unset FACTORY_EVENTS_APPEND_PASSWORD FACTORY_EVENTS_READ_PASSWORD \
+    FACTORY_EVENTS_DB_HOST FACTORY_EVENTS_DB_PORT FACTORY_EVENTS_DB_NAME
   if [ -n "$SDS_IDENTITY" ]; then
     CHAIN_PASSWORD="$(sds_bws_value "$FACTORY_EVENTS_READ_UUID" "$SDS_IDENTITY")"
     [ -n "$CHAIN_PASSWORD" ] || sds_outcome_fail \
@@ -388,5 +393,6 @@ else
   "$REPO_ROOT/.venv/bin/work-carrier" "$@" >> "$SDS_OUTCOME_REPORT" 2>&1
 fi
 _record_outcome "$?"
+unset CHAIN_PASSWORD
 
 sds_outcome_end "$WORST_CODE"

@@ -419,6 +419,35 @@ def test_a_name_the_caller_exported_does_not_reach_a_program(
         assert not run.names[program] & set(preset)
 
 
+# What each program receives with the switch on and every chain variable already ambient: only
+# what the launcher fetched and read, and nothing at all for the others.
+EXPECTED_WITH_AMBIENT = {
+    (BUMP, ("--submit",)): {
+        "bump-proposer": {"FACTORY_EVENTS_APPEND_PASSWORD": stub_value(APPEND_UUID), **SETTINGS}
+    },
+    (BUMP, ()): {"bump-proposer": {}},
+    (CARRIER, ("--register",)): {
+        "work-watcher": {},
+        "work-carrier": {"FACTORY_EVENTS_READ_PASSWORD": stub_value(READ_UUID), **SETTINGS},
+    },
+    (CARRIER, ()): {
+        "work-watcher": {},
+        "work-carrier": {"FACTORY_EVENTS_READ_PASSWORD": stub_value(READ_UUID), **SETTINGS},
+    },
+}
+
+
+@pytest.mark.parametrize(("lane", "args"), SWITCHING_RUNS)
+def test_with_the_switch_an_ambient_chain_variable_reaches_no_program(
+    tmp_path: Path, lane: Lane, args: tuple[str, ...]
+) -> None:
+    """With the switch on, the launcher is the chain variables' only source."""
+    ambient = {name: f"ambient-{name}" for name in CHAIN_NAMES}
+    run = _run(tmp_path, lane, *args, switch=SWITCH, extra_env=ambient)
+    assert run.rc == 0, run.output
+    assert run.chain == EXPECTED_WITH_AMBIENT[(lane, args)]
+
+
 def test_control_a_name_the_caller_exported_survives_a_plain_assignment() -> None:
     """Without this, the case above would pass on a shell where assignment unexports."""
     result = subprocess.run(
