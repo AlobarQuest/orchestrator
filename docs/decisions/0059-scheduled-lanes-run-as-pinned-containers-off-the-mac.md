@@ -2855,7 +2855,9 @@ approval (D-43 B; ADR-0055 amendment 24 item 5). D-40 B and D-42 A widen D-9 to 
       repositories; run one `verify` on each machine; resume the writers. This is **the nightly's
       target switch**. **Amendment 8 names the import's actor and role** (D-46 A) and the DSN
       holders: the append DSN goes to `factory-events-session` in place of "Devon's shell", and the
-      read DSN to the work carrier only (D-44 B).
+      read DSN to the work carrier only (D-44 B). **Devon's D-52 A limits FE-5's verify to the
+      Mac** (ADR-0055 amendment 27 item 3): the work carrier's first VPS pass, in step 3f-2's
+      cut-over, carries the VPS verify.
    6. **Retire the Mac database** (FE-6): stop and remove `factory-events-db` on the Mac's OrbStack
       host engine after a final dump kept in the Mac's backup, remove `FACTORY_DB_DSN` from
       `~/.factory/env`, and retire its secret's reference.

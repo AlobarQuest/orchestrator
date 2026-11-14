@@ -3375,7 +3375,7 @@ its own.
    - **Read-only role.** `SELECT` on the chain table, nothing else.
    - **The owner.** The resource's own superuser, kept in Coolify. Nothing holds it at run time.
      It's used only in the announced acts that set up the schema and the two roles (ADR-0059
-     amendment 7, step FE-4).
+     amendment 7, step FE-4). Amendment 27 names one more, for an FE-5 import retry only (D-51 A).
 4. **Who appends, through what.** A new `factory_events` append function writes one event under
    the append-only role. Its holders are exactly these (D-43 B):
    - **Devon's `approve`**, on the Mac.
@@ -3539,7 +3539,8 @@ Each item names the step that settles it.
   names exactly four append holders and item 3 limits the owner to FE-4's setup acts, so
   neither covers the import. Devon names who runs it and under which role, before act 5's
   import step runs; until he has, act 5 stops before the import. His decision settles how it
-  stands with items 3 and 4; this amendment doesn't.
+  stands with items 3 and 4; this amendment doesn't. Amendment 27 names the owner act a retry of
+  the import needs (D-51 A).
 - **`emit`'s stdout (FE-1).** Item 13's JSON logs and `emit`'s event id share stdout.
   `_parse_event_id`'s contract: the first stdout line that parses as a JSON object with an
   `event_id` key, if any, must carry the emitted id (lines 52-58); if no line does, the emitted id
@@ -3899,3 +3900,39 @@ rule 1032).
   does. This amendment doesn't edit them.
 - **Unchanged.** Amendment 24's mechanism, the four append holders, the one reader, the import's
   actor (amendment 25 item 4), the network, the logging rules and FE-1 to FE-6's order.
+
+## Amendment 27 — One owner act resets the factory-events chain before an FE-5 import retry (2026-11-14)
+
+**Status: Proposed (2026-11-14).** Accepted on merge. It records Devon's answers to the FE-5
+plan's open questions 1 to 3 (`docs/superpowers/plans/2026-11-14-fe-5-cutover.md`), each given as
+option A in an interactive HQ session on 2026-11-14 and quoted from sds-hq `state/decisions.md`:
+
+- **D-50 A:** "The guard reads the database under the append role."
+- **D-51 A:** "Allow one named owner act for this case only: an announced act that drops the chain
+  schema and re-runs the database setup, then the session re-imports; HQ first proves the setup
+  re-runs cleanly on a populated schema in a test database."
+- **D-52 A:** "Make the VPS verify part of the carrier's cut-over: FE-5 verifies on the Mac only,
+  and the carrier's first VPS pass carries the VPS verify."
+
+### Decision
+
+1. **One more owner act (D-51 A).** Amendment 24 item 3 limits the owner to FE-4's setup acts. It
+   gains one act, `fe-5-chain-reset`, for one case: a rollback of ADR-0059 amendment 7's act 5
+   after a successful import and before any append. The chain's table lives in `public`, so
+   "drops the chain schema" is the owner's `DROP TABLE public.factory_events`. The owner then runs
+   `python -m factory_events.db_setup`, and the session runs the import again (amendment 25 item
+   4). HQ announces the act. security-standards PR #94 (`237e422`) proves the setup re-runs
+   cleanly on a populated schema in a test database. The FE-5 plan's "Reset the chain before a
+   retry" section holds its steps.
+2. **The cycle's guard reads under the append role (D-50 A).** The cycle's `check_chain` reads the
+   chain under the append role it already holds (amendment 25 item 3). Amendment 25 item 1 names
+   the read-only role's one holder, and that's unchanged.
+3. **FE-5 verifies on the Mac only (D-52 A).** ADR-0059 amendment 7 act 5's "one `verify` on each
+   machine" is the Mac nightly's `verify` in FE-5. The VPS verify moves to step 3f-2's cut-over, as
+   the work carrier's first VPS pass.
+
+### What it grants, and nothing more
+
+The one owner act in item 1, for that case only. No credential, role, account, grant or reader is
+added: the owner's password stays in Coolify, the cycle reads under a role it already holds, and
+no session gains a `verify`.
