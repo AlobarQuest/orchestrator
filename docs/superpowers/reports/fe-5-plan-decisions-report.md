@@ -13,16 +13,18 @@ Handoff: `sds-hq/state/handoffs/fe-5-plan-decisions.md`. Worker W-162. Branch
   cites sds-hq PR #89 at head `5d5ac1e` and security-standards `237e422` (PR #94).
 - **Holders:** the cycle's row says `check_chain` reads under the append role (D-50 A), and its PR
   column is "P-HQ (sds-hq #89)".
-- **P-HQ:** a new "Pull request" line says sds-hq #89 is `OPEN` at head
-  `5d5ac1eeeff05d6f823a9dfdddbd660765488486`, read from `gh pr view 89 --repo AlobarQuest/sds-hq
-  --json state,headRefOid`. The `check_chain` change names the append role. "Blocked on" says
+- **P-HQ:** a new "Pull request" line says sds-hq #89, head
+  `5d5ac1eeeff05d6f823a9dfdddbd660765488486`, is `MERGED` as `0d139c8f`, read from `gh pr view 89
+  --repo AlobarQuest/sds-hq --json state,headRefOid,mergeCommit`. It was `OPEN` at my first read
+  and merged during this session. The `check_chain` change names the append role. "Blocked on" says
   nothing in the plan blocks it now.
 - **Merge-order checks:** adds that security-standards #94 is `MERGED` at `237e422`. I read that
   from `gh pr view 94`.
 - **RP row:** the "copy that the trigger won't let anyone delete" text is replaced with the D-51 A
-  path. It also says to record step 4's head and step 6's `<n>` in the act's progress entry,
-  because the reset's precondition compares the database against those first-attempt values.
-- **Step 12:** the VPS verify belongs to 3f-2's cut-over (D-52 A), not FE-5.
+  path. It also says to record step 4's head and step 6's `<n>` each time step 6 succeeds,
+  because the reset's precondition compares the database against the import it holds.
+- **Step 12:** FE-5's one `verify` runs on the Mac. The VPS verify belongs to 3f-2's cut-over
+  (D-52 A).
 - **What rolls back after the rollback point:** a new bullet says a retry after a rollback from
   RP or steps 7 to 9 needs `fe-5-chain-reset` before its step 6.
 - **New section "Reset the chain before a retry: `fe-5-chain-reset`":** the act's steps, listed
@@ -31,6 +33,8 @@ Handoff: `sds-hq/state/handoffs/fe-5-plan-decisions.md`. Worker W-162. Branch
   added a new open question 9, covered under "How I resolved the head check".
 - **Follow-up 3:** sds-hq's file-path code retires after the act. PR #89 keeps it only as the
   switch-off mode.
+- **New follow-up 5:** 3f-2's cut-over carries the VPS verify (D-52 A), so the deferral isn't
+  dropped. FE-6 becomes follow-up 6.
 
 ### ADR-0055 (`docs/decisions/0055-*.md`)
 
@@ -43,6 +47,8 @@ Handoff: `sds-hq/state/handoffs/fe-5-plan-decisions.md`. Worker W-162. Branch
   - Item 3 adds one line for D-52 A.
 
   Its "What it grants, and nothing more" section lists only the one owner act.
+- **Status line:** it carries the same HQ D-12 review clause as amendments 25 and 26, and cites
+  `decisions.md` at sds-hq `b87452e`.
 - **Pointers:** I added one-line pointers to amendment 27 at amendment 24 item 3, after "step
   FE-4", and at the end of "Open before building", in the history-import entry.
 
@@ -61,12 +67,13 @@ that is, from RP or from steps 7 to 9. It never runs from step 10 on. HQ announc
 The act runs inside the retry. The retry repeats steps 1 to 5, with every writer paused and
 `chain-db.env` absent. Then it runs these steps:
 
-1. **Precondition.** The database head must equal the first attempt's step 4 file head, and the
-   event count must equal its step 6 `<n>`, before the drop. The mechanism is open question 9, and
+1. **Precondition.** The database head must equal the step 4 file head of the import the database
+   holds (the most recent successful step 6), and the event count must equal that step 6's `<n>`,
+   before the drop. The mechanism is open question 9, and
    the act doesn't run until that's settled. From RP to step 9, the act's structure already keeps
    holders from appending.
 2. **Drop and rebuild, as the owner.** The owner is the resource's superuser, kept in Coolify
-   (amendment 24 item 3; amendment 26 item 9). Its password comes from Coolify resource
+   (amendment 24 items 3 and 11; amendment 26 item 9). Its password comes from Coolify resource
    `b82fa1vg5whecgnjreuqb5tk`, and the session reads it into one process's environment only, as
    `FACTORY_EVENTS_OWNER_DSN`. It's never printed, written to a file, or put in argv. The owner
    runs `DROP TABLE public.factory_events` from a process that reads the DSN from its environment,
@@ -95,12 +102,13 @@ hidden prompt (sds-hq `state/gates/factory-events-db.md` step 3).
 
 | Check | Result |
 | --- | --- |
-| PR #706 `Quality` (full quality gate) | pass in 11m17s. From the job log saved to a file: `14983 passed, 23 skipped, 5 warnings`. |
+| PR #706 `Quality` (full quality gate) at `33721ea2` | pass in 11m17s. From the job log saved to a file: `14983 passed, 23 skipped, 5 warnings`. |
 | PR #706 `Rollout transcription currency` | pass |
 | PR #706 `Runner consumer compatibility` | pass |
 | `layers.toml` coverage for the report | `docs/superpowers/**` (line 759) covers it. No manifest edit. |
 
-I didn't run `make check` locally. The change is docs only, and CI's `Quality` job runs it.
+The later commits (this report and one docs fix-up) change only `docs/`. Each push reruns the same
+checks, and I waited for the final head's run before exiting. I didn't run `make check` locally. The change is docs only, and CI's `Quality` job runs it.
 
 ## Files changed
 
@@ -115,8 +123,11 @@ I didn't run `make check` locally. The change is docs only, and CI's `Quality` j
   I quoted `decisions.md` instead.
 - Amendment 27 adds no credential, reader, role or session `verify`. D-50 A reuses the append role
   the cycle already holds.
-- The precondition compares the database against first-attempt values. A retry's fresh step 4
-  file differs after the writers resume on the file. So the RP row says to keep those values.
+- The precondition compares the database against the import it holds. A retry's fresh step 4
+  file differs after the writers resume on the file, and a second rollback replaces the import,
+  so the RP row says to record the values each time step 6 succeeds.
+- Outside the worktree I ran only reads, plus one `git fetch` in `~/Projects/security-standards`.
+  It moved only remote-tracking refs and changed no checkout.
 - No password, DSN value or token appears anywhere in the diff.
 
 ## Concerns
