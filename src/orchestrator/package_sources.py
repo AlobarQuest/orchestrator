@@ -308,9 +308,10 @@ def _database_package_approval_events() -> list[dict[str, Any]]:
 
     The walk runs in `orchestrator.factory_chain_read`, under this interpreter with
     security-standards' `src` on its path, so the verify and the events matched below come from
-    one read-only repeatable-read transaction (ADR-0055 amendment 24 item 8). The DSN reaches it
-    through the environment, never argv. Its one JSON record is captured, never relayed to this
-    process's stdout, which `emit-intake-payload` reserves for the payload the carrier parses.
+    one read-only repeatable-read transaction (ADR-0055 amendment 24 item 8). The read password
+    and the three settings reach it through the environment, never argv. Its one JSON record is
+    captured, never relayed to this process's stdout, which `emit-intake-payload` reserves for
+    the payload the carrier parses.
     Anything but a verified walk refuses, and the child's stderr isn't relayed either.
     """
     env = _security_standards_env()
@@ -356,19 +357,30 @@ def _database_refusal_cause(record: Mapping[str, Any]) -> str:
 def _verified_package_approval_events() -> list[dict[str, Any]]:
     """The verified chain's `package.approved` events: the database's, else the file's.
 
-    With the read DSN set, only the database is read, and any error refuses: there is no file
-    fallback (ADR-0055 amendment 24 items 8 and 10). With only the append DSN set, FE-1's
-    `factory_events verify` would verify the database while the events came from the file, so
-    the read refuses rather than match one chain against another's verify. With neither set,
-    the file chain answers as it always has.
+    With the read password set, only the database is read, and any error refuses: there is no
+    file fallback (ADR-0055 amendment 24 items 8 and 10). With only the append password set,
+    FE-1's `factory_events verify` would verify the database while the events came from the file,
+    so the read refuses rather than match one chain against another's verify. A set retired
+    whole-DSN variable refuses by name rather than fall to the file without a word (amendment 26
+    item 5). With none of these set, the file chain answers as it always has.
     """
-    # FE-1's chain DSNs (security-standards `factory_events.chain`), spelled as literals so
-    # `test_intent_edges` reads them. Neither value is ever logged or put in a message.
-    if os.environ.get("FACTORY_EVENTS_READ_DSN"):
+    # FE-1's chain variables (security-standards `factory_events.chain`), spelled as literals so
+    # `test_intent_edges` reads them. No value is ever logged or put in a message.
+    retired = {
+        "FACTORY_EVENTS_APPEND_DSN": os.environ.get("FACTORY_EVENTS_APPEND_DSN"),
+        "FACTORY_EVENTS_READ_DSN": os.environ.get("FACTORY_EVENTS_READ_DSN"),
+        "FACTORY_EVENTS_IMPORT_DSN": os.environ.get("FACTORY_EVENTS_IMPORT_DSN"),
+    }
+    for name, value in retired.items():
+        if value:
+            raise _approval_refused(
+                f"{name} is retired: set the role's password and the DB settings"
+            )
+    if os.environ.get("FACTORY_EVENTS_READ_PASSWORD"):
         return _database_package_approval_events()
-    if os.environ.get("FACTORY_EVENTS_APPEND_DSN"):
+    if os.environ.get("FACTORY_EVENTS_APPEND_PASSWORD"):
         raise _approval_refused(
-            "FACTORY_EVENTS_APPEND_DSN is set but FACTORY_EVENTS_READ_DSN isn't: "
+            "FACTORY_EVENTS_APPEND_PASSWORD is set but FACTORY_EVENTS_READ_PASSWORD isn't: "
             "refusing to read the file chain"
         )
     _verify_factory_chain()

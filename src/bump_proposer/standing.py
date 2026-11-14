@@ -58,6 +58,17 @@ PACKAGES_REPOSITORY: Final = "AlobarQuest/intent-packages"
 HASH_FIXTURE: Final = Path("tests") / "fixtures" / "package_hashes.json"
 COMMAND_TIMEOUT_SECONDS: Final = 120.0
 
+# security-standards `factory_events.chain`'s password variables and its retired whole-DSN
+# variables (ADR-0055 amendment 26), as literals: this interpreter can't import `factory_events`.
+# The lifecycle commands inherit them, so their values are redacted from a child's refusal text.
+_REDACTED_CHAIN_VARS: Final = (
+    "FACTORY_EVENTS_APPEND_PASSWORD",
+    "FACTORY_EVENTS_READ_PASSWORD",
+    "FACTORY_EVENTS_APPEND_DSN",
+    "FACTORY_EVENTS_READ_DSN",
+    "FACTORY_EVENTS_IMPORT_DSN",
+)
+
 # THE ACT, SPELLED THE WAY THE GUARD SCANS FOR IT, and a STRING rather than a list of four
 # words on purpose. `MERGE_EXEMPT_PATHS` in `tests/architecture/test_wsp21_invariant_scan.py`
 # names this file, and the rot check beside it removes an entry whose file no longer contains
@@ -190,7 +201,7 @@ def _run(root: Path, command: Sequence[str]) -> str:
     except subprocess.TimeoutExpired as error:
         raise StandingError(f"{' '.join(command[:3])} did not finish in time") from error
     if completed.returncode != 0:
-        detail = _redact_append_dsn(completed.stderr or completed.stdout or "")
+        detail = _redact_chain_passwords(completed.stderr or completed.stdout or "")
         lines = detail.strip().splitlines()
         raise StandingError(
             f"{' '.join(command[1:4])} refused: {lines[-1] if lines else 'no output'}"
@@ -198,15 +209,21 @@ def _run(root: Path, command: Sequence[str]) -> str:
     return completed.stdout
 
 
-def _redact_append_dsn(text: str) -> str:
-    """`text` without the factory-events append DSN, which the lifecycle commands inherit.
+def _redact_chain_passwords(text: str) -> str:
+    """`text` with every set factory-events chain password, and any set retired variable's whole
+    value, replaced by a marker naming its variable. No value is parsed (ADR-0055 amendment 26
+    item 8).
 
-    The message reaches the pass's report and its `/fail` body, and a DSN carries a password
-    (ADR-0055 amendment 24 item 13). intent-packages redacts it from its own errors; this holds
-    the line for anything else a child prints.
+    The lifecycle commands inherit these variables. The message reaches the pass's report and its
+    `/fail` body, and a password must never reach either (amendment 24 item 13). intent-packages
+    redacts them from its own errors; this holds the line for anything else a child prints.
     """
-    dsn = os.environ.get("FACTORY_EVENTS_APPEND_DSN")
-    return text.replace(dsn, "<FACTORY_EVENTS_APPEND_DSN redacted>") if dsn else text
+    values = {name: os.environ.get(name) for name in _REDACTED_CHAIN_VARS}
+    # Longest first, so a value that contains another is replaced whole.
+    for name, value in sorted(values.items(), key=lambda item: len(item[1] or ""), reverse=True):
+        if value:
+            text = text.replace(value, f"<{name} redacted>")
+    return text
 
 
 def lifecycle(root: Path, *args: str) -> str:

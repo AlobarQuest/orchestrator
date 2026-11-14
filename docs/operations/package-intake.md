@@ -126,15 +126,21 @@ neither the lane nor staging is available.
    `~/Projects/intent-packages` and `~/Projects/security-standards`, and the factory-events
    chain):
 
-   - With `FACTORY_EVENTS_READ_DSN` set, the chain is the factory-events database. The emitter
-     verifies it and reads its approvals in one read-only snapshot
-     (`orchestrator.factory_chain_read`), and any error refuses. It never reads the file.
-   - With only `FACTORY_EVENTS_APPEND_DSN` set, the emitter refuses rather than read the file.
-   - With neither set, the chain is the file at `$FACTORY_EVENTS_HOME/events.jsonl`
+   - With `FACTORY_EVENTS_READ_PASSWORD` set, the chain is the factory-events database. The
+     emitter connects as the read role from that password and the three non-secret settings
+     `FACTORY_EVENTS_DB_HOST`, `FACTORY_EVENTS_DB_PORT` and `FACTORY_EVENTS_DB_NAME`, verifies
+     the chain and reads its approvals in one read-only snapshot
+     (`orchestrator.factory_chain_read`). A missing setting, or any other error, refuses. It
+     never reads the file.
+   - With only `FACTORY_EVENTS_APPEND_PASSWORD` set, the emitter refuses rather than read the
+     file.
+   - A set retired whole-DSN variable (`FACTORY_EVENTS_APPEND_DSN`, `FACTORY_EVENTS_READ_DSN` or
+     `FACTORY_EVENTS_IMPORT_DSN`) refuses by name (ADR-0055 amendment 26).
+   - With none of these set, the chain is the file at `$FACTORY_EVENTS_HOME/events.jsonl`
      (`~/.factory/events.jsonl` by default).
 
-   Only the work carrier holds the read DSN (ADR-0055 amendment 25 item 1), so once the chain is
-   the database, a hand run of this command refuses.
+   Only the work carrier holds the read password (ADR-0055 amendment 25 item 1), so once the
+   chain is the database, a hand run of this command refuses.
 
    ```bash
    orchestrator emit-intake-payload <package-dir> \

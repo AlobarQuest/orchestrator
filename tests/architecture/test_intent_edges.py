@@ -5,15 +5,17 @@ payload. Its whole outbound surface is stated here, from its source:
 
 * four subprocess commands: `git rev-parse HEAD` (the package's git head), the sibling
   `intent_packages verify-approval`, security-standards' `factory_events verify` (the file
-  chain), and `orchestrator.factory_chain_read` (the database chain, under the read DSN);
+  chain), and `orchestrator.factory_chain_read` (the database chain, under the read password);
 * no HTTP client, socket or other network import;
-* five environment variables, two of them FE-1's chain DSNs;
+* eight environment variables: two of them FE-1's chain passwords, which select the chain, and
+  three its retired whole-DSN variables, which refuse by name (ADR-0055 amendment 26);
 * files read: the package's `package.yaml` and `lineage.yaml`, the security-standards agent
   registry, and the factory events file.
 
 `orchestrator.factory_chain_read`, the database read it runs, is stated beside it: no subprocess,
-one environment variable (the read DSN), two lazy imports (psycopg and FE-1's `store`), one
-`SELECT`, and a read-only repeatable-read transaction.
+no environment variable of its own (FE-1's `chain` reads the password and settings), three lazy
+imports (psycopg, FE-1's `store` and `chain`), a connection as the read role only, one `SELECT`,
+and a read-only repeatable-read transaction.
 
 Each row is held to the module's text, and each control shows the comparison reporting a
 deliberate widening.
@@ -48,8 +50,11 @@ ENVIRONMENT = frozenset(
         "PYTHONPATH",
         "SECURITY_STANDARDS_DIR",
         "FACTORY_EVENTS_HOME",
-        "FACTORY_EVENTS_READ_DSN",
+        "FACTORY_EVENTS_READ_PASSWORD",
+        "FACTORY_EVENTS_APPEND_PASSWORD",
         "FACTORY_EVENTS_APPEND_DSN",
+        "FACTORY_EVENTS_READ_DSN",
+        "FACTORY_EVENTS_IMPORT_DSN",
     }
 )
 YAML_READS = frozenset({"package.yaml", "lineage.yaml", "<registry agent>"})
@@ -57,8 +62,9 @@ NEVER_IMPORTED = frozenset({"pty", "multiprocessing"})
 OS_SPAWNERS = frozenset({"os.system", "os.popen", "os.execv", "os.execvp", "os.spawnv"})
 READERS = frozenset({"_read_yaml", "_iter_package_approval_events"})
 EVENTS_FILE_PARTS = frozenset({".factory", "events.jsonl"})
-CHAIN_READ_ENVIRONMENT = frozenset({"FACTORY_EVENTS_READ_DSN"})
-CHAIN_READ_LAZY_IMPORTS = frozenset({"psycopg", "factory_events.store"})
+CHAIN_READ_ENVIRONMENT: frozenset[str] = frozenset()
+CHAIN_READ_LAZY_IMPORTS = frozenset({"psycopg", "factory_events.store", "factory_events.chain"})
+CHAIN_READ_CONNECTIONS = ["chain.READ_ROLE"]
 CHAIN_READ_WALK = "SELECT seq, prev_hash, hash, event_id, event FROM factory_events ORDER BY seq"
 
 
@@ -197,7 +203,7 @@ def test_the_module_imports_no_network_client() -> None:
     assert network_imports(SOURCE) == []
 
 
-def test_the_module_reads_five_environment_variables() -> None:
+def test_the_module_reads_eight_environment_variables() -> None:
     assert environment_names(SOURCE) == ENVIRONMENT
 
 
@@ -344,25 +350,37 @@ def attribute_assignments(source: str) -> dict[str, str]:
     return found
 
 
-def test_the_chain_read_runs_no_subprocess_and_reads_one_environment_variable() -> None:
+def connections(source: str) -> list[str]:
+    """The role each `chain.connection_params(...)` call is handed, as written."""
+    return [
+        ast.unparse(call.args[0]) if call.args else "<none>"
+        for call in _calls(ast.parse(source))
+        if _dotted(call.func) == "chain.connection_params"
+    ]
+
+
+def test_the_chain_read_runs_no_subprocess_and_reads_no_environment_variable() -> None:
     assert subprocess_commands(CHAIN_READ_SOURCE) == []
     assert spawn_imports(CHAIN_READ_SOURCE) == []
     assert environment_names(CHAIN_READ_SOURCE) == CHAIN_READ_ENVIRONMENT
     assert readers(CHAIN_READ_SOURCE) == frozenset()
 
 
-def test_the_chain_read_reaches_the_database_only_through_its_two_lazy_imports() -> None:
+def test_the_chain_read_reaches_the_database_only_through_its_three_lazy_imports() -> None:
     assert network_imports(CHAIN_READ_SOURCE) == []
     assert lazy_imports(CHAIN_READ_SOURCE) == CHAIN_READ_LAZY_IMPORTS
     assert module_imports(CHAIN_READ_SOURCE) == {
         "__future__",
         "json",
-        "os",
         "sys",
         "collections",
         "importlib",
         "typing",
     }
+
+
+def test_the_chain_read_connects_once_and_only_as_the_read_role() -> None:
+    assert connections(CHAIN_READ_SOURCE) == CHAIN_READ_CONNECTIONS
 
 
 def test_the_chain_read_runs_one_select_in_a_read_only_repeatable_read_transaction() -> None:
@@ -385,9 +403,19 @@ def test_control_a_widened_chain_read_is_reported() -> None:
     )
     assert (
         environment_names(
-            widen('get("FACTORY_EVENTS_READ_DSN")', 'get("FACTORY_EVENTS_APPEND_DSN")')
+            widen(
+                "params = chain.connection_params",
+                'os.environ.get("FACTORY_EVENTS_APPEND_PASSWORD")\n'
+                "        params = chain.connection_params",
+            )
         )
         != CHAIN_READ_ENVIRONMENT
+    )
+    assert (
+        connections(
+            widen("connection_params(chain.READ_ROLE)", "connection_params(chain.APPEND_ROLE)")
+        )
+        != CHAIN_READ_CONNECTIONS
     )
     assert "read_only" not in attribute_assignments(widen("conn.read_only = True", "pass"))
     assert module_imports("import socket\n" + CHAIN_READ_SOURCE) != module_imports(

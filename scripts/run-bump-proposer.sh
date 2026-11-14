@@ -261,12 +261,13 @@ if [ -z "${BUMP_PROPOSER_GITHUB_TOKEN:-}" ]; then
   sds_outcome_fail "FATAL: no GitHub token (set BUMP_PROPOSER_GITHUB_TOKEN or run gh auth login)"
 fi
 
-# THE FACTORY-EVENTS APPEND DSN PASSES THROUGH. When this environment carries
-# `FACTORY_EVENTS_APPEND_DSN`, `approve --by-policy` (and every other lifecycle command the pass
-# runs) inherits it and appends to the database chain (ADR-0055 amendment 24 item 4); without
-# it, they use the file chain as before. This script neither sets nor clears it, and fetches no
-# DSN: the lane account's own Keychain item and the secret's UUID come with ADR-0059 amendment 7's
-# FE-4 and FE-5 (ADR-0055 amendment 25 item 3).
+# THE FACTORY-EVENTS APPEND PASSWORD AND SETTINGS PASS THROUGH. When this environment carries
+# `FACTORY_EVENTS_APPEND_PASSWORD` with `FACTORY_EVENTS_DB_HOST`, `FACTORY_EVENTS_DB_PORT` and
+# `FACTORY_EVENTS_DB_NAME`, `approve --by-policy` (and every other lifecycle command the pass
+# runs) inherits them and appends to the database chain (ADR-0055 amendments 24 item 4 and 26);
+# without the password, they use the file chain as before. This script neither sets nor clears
+# any of them, and fetches no password: the lane account's own Keychain item and the secret's
+# UUID come with ADR-0059 amendment 7's FE-4 and FE-5 (ADR-0055 amendment 25 item 3).
 "$REPO_ROOT/.venv/bin/bump-proposer" "$@" > "$SDS_OUTCOME_REPORT" 2>&1
 rc=$?
 sds_outcome_end "$rc"
