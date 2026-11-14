@@ -32,6 +32,11 @@ SYSTEM_BEARER = "221a48d5-3f29-4898-b300-b4820140c880"
 WORK_CARRIER_OBSERVATION_BEARER = "a9843d17-e599-4e80-ab1b-b4ff0164d8e2"
 # The `sds-bridge` alert sender token (bridge Part 3).
 SDS_BRIDGE_ALERT_BEARER = "b415d03b-f92d-46b1-8a9d-b4f10103df49"
+# The factory-events chain's role passwords (ADR-0055 amendment 26), fetched only with the switch
+# file `~/.factory/chain-db.env` present (FE-5 cut-over plan): the append role's by the bump
+# proposer on a `--submit` run, the read role's by the work carrier.
+FACTORY_EVENTS_APPEND_PASSWORD = "2ce0dbc7-eeac-4bf0-8204-b50200c97516"
+FACTORY_EVENTS_READ_PASSWORD = "2f708d08-ea5d-4d11-bde0-b50200c9a60b"
 # The landers' and the rotation verifier's GitHub token is not a BWS secret: each launcher takes
 # it from the gh CLI.
 GH_AUTH_TOKEN = "gh auth token"

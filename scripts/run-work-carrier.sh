@@ -287,6 +287,43 @@ if [ "$_wants_register" -eq 1 ] && [ -z "$SDS_MEMBERS_OBSERVER_TOKEN" ]; then
   sds_outcome_fail "FATAL: could not read the orchestrator observer credential from BWS"
 fi
 
+# THE FACTORY-EVENTS CHAIN, behind the switch file (FE-5 cut-over plan, "The switch"; ADR-0055
+# amendments 24 and 26). The carry verifies each record's approval against the chain:
+# `emit-intake-payload`, `python -m factory_events verify` and intent-packages' `verify-approval`
+# all inherit `work-carrier`'s environment (`orchestrator/package_sources.py`), and a set
+# `FACTORY_EVENTS_READ_PASSWORD` with the three `FACTORY_EVENTS_DB_*` settings makes them read the
+# database chain.
+#   - No `~/.factory/chain-db.env`: nothing here runs, and no chain variable is set or cleared.
+#   - The file present: it is read with the refusals in `sds-bws.sh`, on every pass. With an
+#     `sds-operator` identity, the read password is fetched through it, and an empty value fails
+#     the pass, a bare one included: a carry that verified against the file instead would report
+#     the wrong chain. A bare pass with no identity fetches nothing, and each record refuses.
+#   - The password and the settings reach `work-carrier` alone, as an assignment prefix on its
+#     command below, and never `work-watcher`, which reads no chain.
+# Every name here is this script's own, unset before use so a caller's environment can't leave one
+# exported, and none is exported.
+FACTORY_EVENTS_READ_UUID="2f708d08-ea5d-4d11-bde0-b50200c9a60b"  # factory-events-read-password
+unset CHAIN_DB_HOST CHAIN_DB_PORT CHAIN_DB_NAME CHAIN_PASSWORD
+CHAIN_MODE="file"
+if factory_events_switch_present; then
+  factory_events_read_settings \
+    || sds_outcome_fail "FATAL: the factory-events switch: $(factory_events_settings_refusal)"
+  # With the switch on, this script is the only source of the chain variables: an ambient one
+  # (a shell, or `~/.factory/env` under `set -a`) is cleared, so no other child gets one. A
+  # retired `FACTORY_EVENTS_*_DSN` is left set, so the child refuses it by name.
+  unset FACTORY_EVENTS_APPEND_PASSWORD FACTORY_EVENTS_READ_PASSWORD \
+    FACTORY_EVENTS_DB_HOST FACTORY_EVENTS_DB_PORT FACTORY_EVENTS_DB_NAME
+  if [ -n "$SDS_IDENTITY" ]; then
+    CHAIN_PASSWORD="$(sds_bws_value "$FACTORY_EVENTS_READ_UUID" "$SDS_IDENTITY")"
+    [ -n "$CHAIN_PASSWORD" ] || sds_outcome_fail \
+      "FATAL: could not read the factory-events read password from BWS (narrow)"
+    CHAIN_MODE="database"
+  else
+    echo "[chain] no sds-operator identity: the factory-events read password is not fetched" \
+      >> "$SDS_OUTCOME_REPORT"
+  fi
+fi
+
 # THE GITHUB CREDENTIAL, and it is NOT from BWS -- it is `gh auth token`, the same source the
 # ledger, the deploy watcher and the change proposer use for their GitHub reads. ONLY THE WATCHER
 # READS IT (ruling B1): one GET of the pull request a live work record names, to report a record
@@ -346,7 +383,16 @@ else
   _record_outcome "$?"
 fi
 
-"$REPO_ROOT/.venv/bin/work-carrier" "$@" >> "$SDS_OUTCOME_REPORT" 2>&1
+if [ "$CHAIN_MODE" = "database" ]; then
+  FACTORY_EVENTS_READ_PASSWORD="$CHAIN_PASSWORD" \
+    FACTORY_EVENTS_DB_HOST="$CHAIN_DB_HOST" \
+    FACTORY_EVENTS_DB_PORT="$CHAIN_DB_PORT" \
+    FACTORY_EVENTS_DB_NAME="$CHAIN_DB_NAME" \
+    "$REPO_ROOT/.venv/bin/work-carrier" "$@" >> "$SDS_OUTCOME_REPORT" 2>&1
+else
+  "$REPO_ROOT/.venv/bin/work-carrier" "$@" >> "$SDS_OUTCOME_REPORT" 2>&1
+fi
 _record_outcome "$?"
+unset CHAIN_PASSWORD
 
 sds_outcome_end "$WORST_CODE"

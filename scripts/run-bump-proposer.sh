@@ -261,13 +261,54 @@ if [ -z "${BUMP_PROPOSER_GITHUB_TOKEN:-}" ]; then
   sds_outcome_fail "FATAL: no GitHub token (set BUMP_PROPOSER_GITHUB_TOKEN or run gh auth login)"
 fi
 
-# THE FACTORY-EVENTS APPEND PASSWORD AND SETTINGS PASS THROUGH. When this environment carries
-# `FACTORY_EVENTS_APPEND_PASSWORD` with `FACTORY_EVENTS_DB_HOST`, `FACTORY_EVENTS_DB_PORT` and
-# `FACTORY_EVENTS_DB_NAME`, `approve --by-policy` (and every other lifecycle command the pass
-# runs) inherits them and appends to the database chain (ADR-0055 amendments 24 item 4 and 26);
-# without the password, they use the file chain as before. This script neither sets nor clears
-# any of them, and fetches no password: the lane account's own Keychain item and the secret's
-# UUID come with ADR-0059 amendment 7's FE-4 and FE-5 (ADR-0055 amendment 25 item 3).
-"$REPO_ROOT/.venv/bin/bump-proposer" "$@" > "$SDS_OUTCOME_REPORT" 2>&1
+# THE FACTORY-EVENTS CHAIN, behind the switch file (FE-5 cut-over plan, "The switch"; ADR-0055
+# amendments 24 item 4 and 26; ADR-0059 amendment 7 act 5). `approve --by-policy`, and every other
+# lifecycle command the pass runs, inherits `bump-proposer`'s environment, and a set
+# `FACTORY_EVENTS_APPEND_PASSWORD` with the three `FACTORY_EVENTS_DB_*` settings makes them append to
+# the database chain (`bump_proposer/standing.py` redacts those values from a child's refusal).
+#   - No `~/.factory/chain-db.env`: nothing here runs. No password is fetched and no chain variable
+#     is set or cleared, so whatever this environment carries passes through, as before the switch.
+#   - The file present: it is read with the refusals in `sds-bws.sh`, on every run, so a malformed
+#     switch fails a dry run too. Only a `--submit` run fetches the append password, through the
+#     `bump-proposer` account's own Keychain item (never the broad or narrow identity above), and
+#     passes the password and the settings to `bump-proposer` alone, as an assignment prefix. A dry
+#     run fetches nothing and passes nothing, and with the switch on an ambient chain variable is
+#     cleared first. Any failure is `sds_outcome_fail`, never the file.
+# Every name below is this script's own, unset before use, so none is left exported by a caller's
+# environment, and none is exported: the token reaches only `bws`, the password only the child.
+FACTORY_EVENTS_APPEND_UUID="2ce0dbc7-eeac-4bf0-8204-b50200c97516"  # factory-events-append-password
+unset CHAIN_DB_HOST CHAIN_DB_PORT CHAIN_DB_NAME CHAIN_PASSWORD BUMP_PROPOSER_EVENTS_IDENTITY
+CHAIN_MODE="file"
+if factory_events_switch_present; then
+  factory_events_read_settings \
+    || sds_outcome_fail "FATAL: the factory-events switch: $(factory_events_settings_refusal)"
+  # With the switch on, this script is the only source of the chain variables: an ambient one
+  # (a shell, or `~/.factory/env` under `set -a`) is cleared, so no other child gets one. A
+  # retired `FACTORY_EVENTS_*_DSN` is left set, so the child refuses it by name.
+  unset FACTORY_EVENTS_APPEND_PASSWORD FACTORY_EVENTS_READ_PASSWORD \
+    FACTORY_EVENTS_DB_HOST FACTORY_EVENTS_DB_PORT FACTORY_EVENTS_DB_NAME
+  if [ "$SUBMITTING" -eq 1 ]; then
+    BUMP_PROPOSER_EVENTS_IDENTITY="$(/usr/bin/security find-generic-password \
+      -s 'Claude' -a 'BWS_ACCESS_TOKEN_BUMP_PROPOSER' -w 2>/dev/null || true)"
+    [ -n "$BUMP_PROPOSER_EVENTS_IDENTITY" ] || sds_outcome_fail \
+      "FATAL: no BWS identity for the factory-events append password (Keychain Claude / BWS_ACCESS_TOKEN_BUMP_PROPOSER)"
+    CHAIN_PASSWORD="$(sds_bws_value "$FACTORY_EVENTS_APPEND_UUID" "$BUMP_PROPOSER_EVENTS_IDENTITY")"
+    unset BUMP_PROPOSER_EVENTS_IDENTITY
+    [ -n "$CHAIN_PASSWORD" ] || sds_outcome_fail \
+      "FATAL: could not read the factory-events append password from BWS (bump-proposer)"
+    CHAIN_MODE="database"
+  fi
+fi
+
+if [ "$CHAIN_MODE" = "database" ]; then
+  FACTORY_EVENTS_APPEND_PASSWORD="$CHAIN_PASSWORD" \
+    FACTORY_EVENTS_DB_HOST="$CHAIN_DB_HOST" \
+    FACTORY_EVENTS_DB_PORT="$CHAIN_DB_PORT" \
+    FACTORY_EVENTS_DB_NAME="$CHAIN_DB_NAME" \
+    "$REPO_ROOT/.venv/bin/bump-proposer" "$@" > "$SDS_OUTCOME_REPORT" 2>&1
+else
+  "$REPO_ROOT/.venv/bin/bump-proposer" "$@" > "$SDS_OUTCOME_REPORT" 2>&1
+fi
 rc=$?
+unset CHAIN_PASSWORD
 sds_outcome_end "$rc"
