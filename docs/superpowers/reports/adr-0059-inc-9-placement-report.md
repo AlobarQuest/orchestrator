@@ -3,7 +3,7 @@ Outcome: done
 # Report: adr-0059-inc-9-placement (W-150)
 
 - **PR:** #701 (ready for review, not merged)
-- **Content commit:** `5b1b871f`, fixed by `67fcbd30` in fix round 1. The head is the commit that
+- **Content commit:** `5b1b871f`, fixed by `67fcbd30` and `52a11d5c` in fix round 1. The head is the commit that
   updates this report, on top of it.
 - **Base:** orchestrator `cc6d9afd`
 - **Amendment's line range:** lines 3071-3201 of
@@ -64,8 +64,8 @@ The lane runs `orchestrator mint-follow-ups`. Its sources:
 
 ## Fix round 1
 
-HQ's Opus review at `d2fd4e38` raised two blocking and four non-blocking items. Fix commit:
-`67fcbd30`; the head is the commit that updates this report, on top of it. Each item's fix, with
+HQ's Opus review at `d2fd4e38` raised two blocking and four non-blocking items. Fix commits:
+`67fcbd30` and `52a11d5c`; the head is the commit that updates this report, on top of it. Each item's fix, with
 the line confirmed by `git show cc6d9afd:<path> | cat -n`:
 
 1. **Decision 3's citation (blocking).** "Every lane keeps its check" is lines 675-676. Decision
@@ -73,9 +73,11 @@ the line confirmed by `git show cc6d9afd:<path> | cat -n`:
    675-676 for 674-675.
 2. **Decision 5's heading (blocking).** The heading is line 768. The ADR's table row and this
    report's row now cite 768.
-3. **ADR-0055 amendment 23.** Decision item 1 now says no person pastes the ping URL: it's read
-   from the Healthchecks Management key's check listing, as ADR-0055 amendment 23 narrows decision
-   3 (line 714).
+3. **ADR-0055 amendment 23.** Decision item 1 now says no person pastes the ping URL: the VM
+   rotation executor reads it from the Healthchecks Management key's check listing, as ADR-0055
+   amendment 23 narrows decision 3 (lines 714-716), and the lane never holds that key (line 677).
+   `52a11d5c` names the executor as the actor, so the sentence can't read as the lane holding the
+   Management key.
 4. **The rotation-decomposer reader.** Decision item 3 now names the rotation-decomposer lane as a
    SYSTEM bearer reader, citing `.bws-secrets.toml`. The handoff cited lines 14-20; the reader is
    named on lines 20-21 (line 20 starts the sentence, line 21 names the lane's container), so the
@@ -94,12 +96,12 @@ No other text changed. The amendment grows from 124 to 131 lines (3071-3201).
 
 ## Tests and checks
 
-Fix round 1 (W-152, at `67fcbd30`):
+Fix round 1 (W-152, at `52a11d5c`):
 
 - `make check` with `TEST_DATABASE_URL` and `ORCHESTRATOR_DATABASE_URL` set to
   `orchestrator_test_hq_w_152`, migrated to head (`alembic current` equals `heads`,
-  `0048_standing_approval_obs`): exit 0. It collected 14887 items: 14886 passed and 1 was
-  skipped. Pyright reported 0 errors.
+  `0048_standing_approval_obs`): exit 0. pytest reported `10 workers [14887 items]`: 14886
+  passed and 1 was skipped. Pyright reported 0 errors.
 - Security scan from the repo root: 0 BLOCK, 2 WARN and 1 INFO, the same findings as the
   original round.
 
