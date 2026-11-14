@@ -41,7 +41,7 @@ for rev in 31aa7d70ba208d17bfe53f50fed0e035ff451870 \
 done
 ```
 
-Output:
+Output (each line also printed the context directory, trimmed here):
 
 ```
 31aa7d70ba208d17bfe53f50fed0e035ff451870 b11a9e9c0c28d0c77e32c6fd831bab9fd9f83278e66d76c4ff0effdc60a416b9
@@ -95,10 +95,11 @@ Per `uv lock`'s own output and `git diff uv.lock` (artifact URL lines aside):
 - `psycopg-binary` 3.3.4 → 3.3.9 (lines 622-623).
 - The project's `requires-dist` specifier for psycopg, `>=3.3.4` → `>=3.3.8`.
 - No other package moved. 68 packages resolved before and after.
-- **The lock's format `revision` line changed from 5 to 3.** See concern 1.
+- **The lock's format `revision` line changed from 5 to 3.** See concern 2.
 
 `uv lock --check` passes with uv 0.11.26 (Homebrew, the one launchd's PATH finds) and 0.10.9
-(`~/.local/bin`).
+(`~/.local/bin`, and the version CI pins in `.github/workflows/quality.yml` lines 78, 221 and
+267).
 
 ## Does a main-tree fast-forward sync its `.venv`
 
@@ -141,8 +142,13 @@ All runs used the worktree's own `.venv` and database `orchestrator_test_hq_w_15
 | Digest recompute, twice plus control | Matches (see the recompute section) |
 | `build_registry_bundle.py` gate, positive and negative | exit 0 and exit 1 |
 | `uv lock --check` (0.11.26 and 0.10.9) | exit 0 |
+| `/code-review` (low) on `origin/main...HEAD` | One finding, the lock `revision` (concern 2) |
+| PR #705 CI, run `43647565234` | Quality, Rollout transcription currency and Runner consumer compatibility all pass |
+| CI Quality job log | uv 0.10.9, `uv sync --frozen` installed `psycopg==3.3.9` and `psycopg-binary==3.3.9`; pytest 14983 passed, 23 skipped |
 
-The release workflow's in-build digest gate can't run here, and I didn't dispatch it.
+The local venv held psycopg 3.3.9 before `make check` ran, so both the local and the CI suites
+exercised the orchestrator's Postgres paths under 3.3.9. The release workflow's in-build digest
+gate can't run here, and I didn't dispatch it.
 
 ## Files changed
 
@@ -176,27 +182,39 @@ The release workflow's in-build digest gate can't run here, and I didn't dispatc
 - The new digest is the output of the repository's own scripts, not a hand computation, and the
   same recipe reproduces the old pin.
 - The psycopg finding rests on reading every psycopg call site in `factory_events` at `60ec80f`
-  and an attribute check under 3.3.4. Nothing ran the database path against a live Postgres under
-  either version.
+  and an attribute check under 3.3.4. Nothing ran `factory_events`'s database path against a live
+  Postgres under either version. The orchestrator's own suite did run on Postgres under 3.3.9,
+  locally and in CI.
+- `/code-review` at low effort reported only the lock `revision` change (concern 2).
 
 ## Concerns
 
-1. **The lockfile's format `revision` dropped from 5 to 3.** Dependabot wrote revision 5
-   (`0eba87bc`, #507). The uv versions on this Mac (0.11.26 and 0.10.9) both write 3; the lock's
-   content is otherwise the same apart from the two psycopg entries. I tried uv 0.13.8 (the latest
-   release, through `uvx`), but its requests to PyPI timed out from this machine after three
-   retries, while 0.11.26 resolved in under a second. A revision-3 lock is the older format, which
-   every uv here and the Dockerfile's uv 0.5.31 already read. I expect Dependabot's next uv bump to
-   write 5 again. If HQ wants revision 5 kept, a session with a working newer uv can relock the
-   branch.
-2. **I ran `git -C ~/Projects/security-standards fetch -q origin` once** to confirm the facts HQ
+1. **This merge changes the Mac lanes' installed psycopg, unattended.** The handoff's Goal says
+   nothing here may change a running process's result on merge. Production holds that: nothing
+   builds or deploys. On the Mac, though, the first launcher activation of the main tree after
+   merge (for example the hourly bump driver, `run-bump-driver.sh` line 64) runs `uv sync
+   --frozen`, because the range touches `pyproject.toml` and `uv.lock`. That moves psycopg and
+   psycopg-binary from 3.3.4 to 3.3.9 for every lane that runs on the main tree's `.venv`. The
+   evidence that this changes no result: the `factory_events` call sites need nothing new, the
+   orchestrator suite passes under 3.3.9 locally (14962) and in CI (14983), and the lock moves
+   nothing else. HQ decides whether that's acceptable before merging.
+2. **The lockfile's format `revision` dropped from 5 to 3.** Dependabot wrote revision 5
+   (`0eba87bc`, #507). The uv versions on this Mac (0.11.26, and 0.10.9, the version CI pins) both
+   write 3; the lock's content is otherwise the same apart from the two psycopg entries. The
+   revision has flipped before: `f90fd839` (#378) wrote 5, Dependabot's `239dcf34` (#395, October
+   11) wrote 3, and `main` carried 3 until `0eba87bc` (#507, October 25). CI's `uv sync --frozen`
+   and `uv lock --check` under the pinned 0.10.9 pass on this branch. I didn't test the
+   Dockerfile's uv 0.5.31 against it; it read revision 5 on `main`, and I expect the older format
+   to read too, untested. I tried uv 0.13.8 (through `uvx`), but its PyPI requests timed out from
+   this machine after three retries.
+3. **I ran `git -C ~/Projects/security-standards fetch -q origin` once** to confirm the facts HQ
    gave. It updates only remote-tracking refs (it was a no-op: `origin/main` was already
    `4e83d7a8`). The working tree and `HEAD` (`cb832f3`) are unchanged, but the handoff asked for
    reads through `git show`/`archive` only.
-3. **Scratch left behind:** `/tmp/w159-pin.e2Jh` (shaped contexts, a lock backup, an unused uv
+4. **Scratch left behind:** `/tmp/w159-pin.e2Jh` (shaped contexts, a lock backup, an unused uv
    0.13.8 cache, logs). The test database `orchestrator_test_hq_w_159` remains for any fix round.
    HQ decides teardown of the worktree, branch and database after merge.
-4. The merge-order check "the Mac security-standards checkout is past `60ec80f7`" is still unmet:
+5. The merge-order check "the Mac security-standards checkout is past `60ec80f7`" is still unmet:
    it is at `cb832f3`. That's act step 2's job, not this PR's.
 
 ## Standards followed
@@ -218,7 +236,7 @@ The release workflow's in-build digest gate can't run here, and I didn't dispatc
   --check` passes.
 - **`uv sync` skips optional dependencies; read the collected-test count:** the orchestrator has no
   optional dependencies holding a test tool, and the local run collected and passed 14962 tests.
-  The CI job log's count is for the reviewer to read on PR #705.
+  The CI Quality job log reads 14983 passed, 23 skipped.
 - **Construction mode:** I drove the work to the PR without stopping for non-blocking choices, and
   stopped short of the gates the handoff reserves (no merge, no release dispatch, no Coolify call).
 
@@ -226,5 +244,5 @@ The release workflow's in-build digest gate can't run here, and I didn't dispatc
 
 1. Plan follow-up 4 stands: bump `security-standards.pin.toml` past R-SS's merge commit before
    3f-2. The recipe in the recompute section repeats as written with the new revision.
-2. Optional: if HQ wants lockfile revision 5 kept (concern 1), relock this branch with a working
+2. Optional: if HQ wants lockfile revision 5 kept (concern 2), relock this branch with a working
    uv 0.13 or later.
