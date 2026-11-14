@@ -99,7 +99,8 @@ def main() -> int:
     try:
         chain = import_module("factory_events.chain")
         # Strictly the read role: no append fallback. A missing setting or a set retired
-        # variable raises ChainError here, before any connection.
+        # variable raises ChainError here, before any connection. An AttributeError here means a
+        # security-standards checkout older than amendment 26's increment 1 (`60ec80f7`).
         params = chain.connection_params(chain.READ_ROLE)
         errors, last, count, approvals = _walk(params)
     except Exception as exc:
