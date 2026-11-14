@@ -67,7 +67,12 @@ SESSION_COMMAND="${1:-}"
 case "$SESSION_COMMAND" in
   approve)
     [ "$#" -eq 3 ] || refuse "usage: approve <intent-packages checkout> <package-dir>"
-    SESSION_CHECKOUT="$2"
+    case "$2" in
+      "" | -*) refuse "approve: the checkout must be a path, not an option or empty" ;;
+    esac
+    # Absolute, so the interpreter checked here is the one run after entering the checkout.
+    SESSION_CHECKOUT="$(cd "$2" 2>/dev/null && pwd -P)" \
+      || refuse "approve: $2 is not a directory"
     SESSION_PACKAGE="$3"
     case "$SESSION_PACKAGE" in
       "" | -*) refuse "approve: the package directory must be a path, not an option or empty" ;;

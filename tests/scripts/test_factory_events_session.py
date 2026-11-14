@@ -451,8 +451,29 @@ def test_a_malformed_settings_file_is_refused(tree: Tree, text: str, reason: str
 
 def test_approve_refuses_a_checkout_without_its_interpreter(tree: Tree) -> None:
     tree.switch.write_text(SETTINGS_TEXT)
+    (tree.tmp / "elsewhere").mkdir()
     run = tree.run("approve", str(tree.tmp / "elsewhere"), "/x/pkg")
     _assert_refused_before_any_credential(run, "is missing or not executable")
+
+
+@pytest.mark.parametrize(
+    ("checkout", "reason"),
+    [("-", "must be a path"), ("", "must be a path"), ("no-such-dir", "is not a directory")],
+)
+def test_approve_refuses_a_checkout_that_is_not_a_directory(
+    tree: Tree, checkout: str, reason: str
+) -> None:
+    tree.switch.write_text(SETTINGS_TEXT)
+    run = tree.run("approve", checkout, "/x/pkg")
+    _assert_refused_before_any_credential(run, reason)
+
+
+def test_a_relative_checkout_runs_its_own_interpreter_in_it(tree: Tree) -> None:
+    tree.switch.write_text(SETTINGS_TEXT)
+    run = tree.run("approve", tree.checkout.name, "/x/pkg", cwd=tree.tmp)
+    assert run.rc == 0, run.stderr
+    assert run.child_argv == ["child -m intent_packages approve /x/pkg"]
+    assert run.child_pwd == tree.checkout.resolve()
 
 
 def test_import_file_refuses_without_the_events_interpreter(tree: Tree) -> None:

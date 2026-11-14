@@ -90,7 +90,8 @@ Every refusal prints `factory-events-session: <reason>` on stderr and exits 2. T
 falls back to the file chain. It refuses in the following cases:
 
 - The first argument isn't `approve` or `import-file`, or the argument count is wrong.
-- The package directory or events file is empty or starts with `-`.
+- The checkout, package directory or events file is empty or starts with `-`, or the checkout
+  isn't a directory.
 - `approve` runs without the switch, or `import-file` runs while the switch exists or without the
   staging copy.
 - The settings file isn't a regular file, or has an unknown, missing, repeated or malformed key.
@@ -98,7 +99,7 @@ falls back to the file chain. It refuses in the following cases:
 - The child interpreter is missing.
 - The Keychain item is missing, or BWS returns no password.
 
-Every refusal in that list except the last item comes before the wrapper reads any credential. When
+Every refusal in that list except the last item's two comes before the wrapper reads the Keychain. When
 the child runs, the wrapper exits with the child's code.
 
 The wrapper unsets its own variable names and the five chain variables before it runs, so a value
