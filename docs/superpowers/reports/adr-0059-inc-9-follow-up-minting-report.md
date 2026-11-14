@@ -61,8 +61,8 @@ answer of 2026-11-06, limit 1, read in sds-hq `standing-answers.md`).
 
 - `make check` against `orchestrator_test_hq_w_144` (migrated with `alembic upgrade head`,
   `PGTZ=UTC`, fixture `SECURITY_STANDARDS_DIR`), run on a committed tree: rc 0, 14886 passed and 1
-  skipped (14887 collected), with ruff and pyright clean. I ran it again on the final tree (see
-  the following item).
+  skipped (14887 collected), with ruff and pyright clean. I ran it again on the tree that holds
+  the final amendment and question file: rc 0, 14886 passed and 1 skipped.
 - Security scan from the repo root (`security_scan.cli . --category security`): 0 BLOCK, 2 WARN and
   1 INFO findings. The WARN and INFO findings are judgment items about manifest and account
   scoping. I didn't run a control scan at `5a781dbb`, but this diff touches no manifest, secret or
