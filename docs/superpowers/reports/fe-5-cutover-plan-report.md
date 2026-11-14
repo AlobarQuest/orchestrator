@@ -4,15 +4,18 @@ Outcome: done
 
 ## What I built
 
-PR [#702](https://github.com/AlobarQuest/orchestrator/pull/702), branch `hq/fe-5-cutover-plan`,
-head `74384e1f` (this report is a later commit on the same branch). The PR adds one file,
+PR [#702](https://github.com/AlobarQuest/orchestrator/pull/702), branch `hq/fe-5-cutover-plan`.
+The plan's last revision and this report are the branch head; run `git log -1` on the branch for
+the exact commit. The PR adds one file,
 `docs/superpowers/plans/2026-11-14-fe-5-cutover.md`, which contains the following:
 
 - **The switch.** One non-secret settings file, `~/.factory/chain-db.env`, holds the three
   settings. Every holder's new fetch runs only while the file exists. A Keychain item can't serve
   as the switch, because `sds-hq` and `sds-operator` already hold both their item and their grant.
   The file isn't `~/.factory/env` either, because the nightly sources that file with `set -a`, and
-  HQ's `env -i` passes only `HQ_*` variables.
+  HQ's `env -i` passes only `HQ_*` variables. The import reads a staging copy,
+  `chain-db.env.pending`. The act moves it into place after the seal, which keeps the ADR's order:
+  import, head check, seal, then set each holder's switch.
 - **The holders table.** It has five Mac holders plus the container carrier, which belongs to 3f-2.
 - **Six prep PRs, in landing order.**
   - P-SS, security-standards: the nightly's database mode. It's `make install`-deployed, so a merge
@@ -20,15 +23,20 @@ head `74384e1f` (this report is a later commit on the same branch). The PR adds 
   - P-OR-1, orchestrator: the bump proposer and Mac carrier fetches, and the manifests.
   - P-OR-2, orchestrator: the session wrapper `scripts/factory-events-session.sh` and an
     operations page.
-  - P-HQ, sds-hq: the cycle's in-process fetch, the `check_chain` guard, and
-    `SECURITY_STANDARDS_MIN`.
+  - P-HQ, sds-hq: the cycle's in-process fetch, the `check_chain` guard,
+    `SECURITY_STANDARDS_MIN`, and `psycopg` in HQ's security-standards clone. That clone's
+    `.venv-events` holds only `jsonschema` and `pyyaml` (`standing_approve.py` lines 87-117), so
+    every cycle approval in database mode would fail on an `ImportError`.
   - P-PIN, orchestrator: `security-standards.pin.toml` past `60ec80f7`.
   - P-VB, vps-backup: `verify-backup.sh` line 255. It's opened before the act and merged inside it.
 - **Three removal PRs, merged inside the act.** They are R-SS, R-IP and R-OR. R-OR carries FE-3's
   deferred unset-read-password refusal.
 - **The act.** It's steps 0 to 14, each with who runs it, a command or check, and a source check.
   The rollback point sits before the seal, and the plan says what rolls back at each later step.
-- **Seven open questions.**
+  The plan also says which holders get no live proof before the removals merge.
+- **Eight open questions.**
+- **The removal PRs' test scope.** Unit tests in all three repositories plant approvals in an
+  events file, and each R-entry says where those tests go.
 
 The plan goes beyond the handoff's three repositories and three writers in four places:
 
@@ -75,14 +83,16 @@ following:
 | security-standards `60ec80f` | `src/factory_events/chain.py`: lines 17-118. |
 | security-standards `60ec80f` | `src/factory_events/cli.py`: lines 22-181. |
 | security-standards `60ec80f` | `src/factory_events/db.py`: lines 35, 111 and 178-221. |
+| security-standards `60ec80f` | `src/factory_events/ship.py` lines 52-64; `pyproject.toml` line 15; the tests named in R-SS. |
 | security-standards `60ec80f` | `governance-map.toml` lines 74-81; `scripts/com.devon.factory-events.plist.template`; `.bws-secrets.toml`; `Makefile` lines 102-105. |
 | intent-packages `93d75e1` | `src/intent_packages/operations.py`: lines 429-573. |
-| intent-packages `93d75e1` | `docs/decisions/0001-approval-chain-is-the-audit-trail.md` lines 56-57. |
-| sds-hq `585e916` | `src/sds_hq/standing_approve.py`: lines 36-51, 120-139, 227-251, 359-403 and 562-572. |
+| intent-packages `93d75e1` | `docs/decisions/0001-approval-chain-is-the-audit-trail.md` lines 56-57; `src/intent_packages/emitter.py` lines 109-121; `tests/test_op_verify_approval.py`. |
+| orchestrator `7739b22a` | `tests/cli/test_package_intake_cli.py` lines 339-369 and 561; `tests/cli/test_package_chain_database.py`. |
+| sds-hq `585e916` | `src/sds_hq/standing_approve.py`: lines 36-51, 87-117, 120-139, 227-251, 359-403 and 562-572. |
 | sds-hq `585e916` | `src/sds_hq/secrets.py` lines 1-55; `src/sds_hq/lock.py` lines 153-162; `bin/hq-env.sh` lines 37-51; `CLAUDE.md` lines 16-23; `.bws-secrets.toml` lines 1-9. |
 | sds-hq `585e916` | `docs/operations/operator-identity.md` lines 30-110; `state/goal.md` lines 33 and 59; `state/gates/factory-events-accounts.md` (G-59). |
-| vps-backup `origin/main` (2026-11-14) | `verify-backup.sh` line 255; `backup-mini.sh` lines 132-138; `BACKUP-STRATEGY.md` lines 344 and 560. |
-| infraops-mcp-server `origin/main` | `.cred-consumers.toml`: every row names a `class`. |
+| vps-backup `bd2b440` | `verify-backup.sh` line 255; `backup-mini.sh` lines 132-138; `BACKUP-STRATEGY.md` lines 344 and 560. |
+| infraops-mcp-server `c3359bf` (local `origin/main`, not fetched this session) | `.cred-consumers.toml`: every row names a `class`. |
 
 The following facts come from the live Mac on 2026-11-14. They're dated observations, and the act
 rechecks each one:
@@ -98,23 +108,24 @@ rechecks each one:
   effect, so it's merged inside the act.
 - The plan never puts a password in argv: each one goes as an assignment prefix or into a child's
   `env`. Its commands print only key names, hashes and heads.
-- The plan honours the ADR order: import, head check, seal, holder settings, removal merges,
-  verify, resume. It inserts a non-appending check (step 9) before the removals. It writes the
-  switch file before the import, which is safe because every scheduled holder is paused at that
-  point and the wrapper needs it. This is a deviation from "set each holder's switch" after the
-  seal, and HQ needs to accept it. The alternative is a separate settings path for the import.
+- The plan keeps the ADR order: import (step 6, whose commit is the head check), seal (7), each
+  holder's switch (9), removal merges (10), verify (12), resume (12 and 13). The nightly's verify
+  at step 12 is also its resume, because its run appends.
 - I made no grant, account or holder decision. The plan proposes names only: the file, the archive,
-  the three Keychain items and the wrapper's home (open question 4).
+  the three Keychain items, the wrapper's home, and the import's fetch account (open question 4).
+  The session wrapper has no `verify`, because a session reading the chain is a reader the ADRs
+  don't name (open question 8). The Mac verify is the nightly's own run under its own token.
+- The advisor's review led to these revisions: the staging file; the file-mode
+  `--against-anchor`'s need for `FACTORY_DB_DSN` in step 4; the second `make install` after R-SS;
+  the HQ clone's missing `psycopg`; and the removal PRs' test scope.
 
 ## Concerns
 
-1. **The switch file goes in before the seal.** Act step 5 writes it before the import, so the
-   holders are technically switched from step 5. They're paused, so nothing reads it until step 13.
-   HQ needs to confirm this reading of "set each holder's switch".
-2. **`sds_bws_value` puts the token in `env`'s argv** (`scripts/sds-bws.sh` line 55,
-   `env ... BWS_ACCESS_TOKEN="$2" bws`), so it's briefly visible in the process list. This is the
-   estate's existing pattern for tokens. No password goes on argv. The new fetches reuse the helper,
-   so they inherit it.
+1. **No live proof per holder before the point of no return.** Step 10 merges the removals before
+   any scheduled holder has run under its own token. The plan states this ("What the act doesn't
+   prove before step 10"), and relies on each prep PR's stub tests plus first-run checks.
+2. **`sds_bws_value` puts the token in `env`'s argv.** This is pre-existing. It's the plan's
+   follow-up 6.
 3. **I ran `git fetch`** in the main checkouts of `~/Projects/orchestrator`, `security-standards`,
    `intent-packages` and `sds-hq`. It updated remote-tracking refs only: no checkout, pull or edit.
    The handoff's "never edit, branch, check out, or pull" holds, but the fetch did touch the main
@@ -140,5 +151,7 @@ rechecks each one:
 - The plan's follow-ups 1 to 5: Keychain-token registry rows, an absent-switch refusal in the
   launchers, retiring sds-hq's file path, a second pin bump before 3f-2, and FE-6's `ship` and
   `FACTORY_DB_DSN`.
+- The plan's follow-up 6: `sds_bws_value`'s token argv.
 - Settle open questions 1 (`check_chain`'s role), 2 (re-import after rollback), 3 (the VPS verify),
-  5 (the bump-proposer token) and 6 (registry `class`) before dispatching P-HQ, P-OR-1 and the act.
+  5 (the bump-proposer token), 6 (registry `class`) and 8 (a session `verify`) before dispatching
+  P-HQ, P-OR-1 and the act.
