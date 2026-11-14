@@ -3700,12 +3700,19 @@ given in an interactive HQ session on 2026-11-14 and recorded in sds-hq `state/g
 It also applies the estate secrets rule Devon set, as HQ's handoff for this amendment states it:
 secrets hold values (passwords, tokens), not configuration (no DSNs or configuration blobs).
 
-The same line of `state/goal.md` records FE-4's secrets as created, and G-57's steps created them
-with no grant (sds-hq `state/gates/factory-events-db.md`, lines 40-45): BWS project `Factory Events`
+The same line of `state/goal.md` records FE-4's secrets as created: BWS project `Factory Events`
 (`5e30c8b7-2b93-4a63-be26-b50200c8f070`), the append secret `2ce0dbc7-eeac-4bf0-8204-b50200c97516`
 and the read secret `2f708d08-ea5d-4d11-bde0-b50200c9a60b`. Amendment 25 item 2 ("Neither has a UUID
 yet") predates them. No manifest in the four repositories names either UUID at the commits read
 here.
+
+**One grant exists, and it's temporary.** G-57's step 7 checked both secrets' values by reading them
+as `sds-operator`, and `sds-operator` was granted a read on both secrets for that check (sds-hq
+`state/progress.md`, line 519 at `2b35ab4`, G-57's interactive entry of 2026-11-14 about 12:30 UTC).
+Its read on the append secret is outside amendment 25 item 3, which says the append secret is never
+granted to `sds-operator`, and the FE-4 accounts gate removes it. Whether its read on the read
+secret stays is the grant amendment 25 item 3 already names for the Mac carrier (D-45 A as revised
+by D-47). This amendment neither adds, keeps nor uses any grant.
 
 Code reads cite security-standards `e89f69b` (FE-1, #90), intent-packages `3705e0c`, orchestrator
 `c8be2f89` and sds-hq `f4b3a18`.
@@ -3719,8 +3726,9 @@ text isn't edited, so these passages carry no pointer.
 - Amendment 24's "Increments" paragraph, "the bump proposer's DSN" and "every holder's DSN" (lines
   3489-3497).
 - Amendment 25 items 1 to 4, wherever they say "the append DSN" or "the read DSN" (lines 3614-3647).
-- ADR-0059 amendment 7 acts 3 and 5, and amendment 8, where they say "DSN" for a secret. That ADR is
-  read the same way, and this amendment doesn't edit it.
+- ADR-0059 amendment 7's FE-1 to FE-3 and 3f-2 bullets (lines 2804-2828) and acts 3 and 5, and
+  amendment 8, where they say "DSN" for a secret. That ADR is read the same way, and this amendment
+  doesn't edit it.
 
 The rest of amendments 24 and 25 stands.
 
@@ -3758,15 +3766,15 @@ Devon's answer are the Mac's values only.
 1. **What each secret holds.** Each of the two secrets holds only its role's password: the append
    secret (`2ce0dbc7-eeac-4bf0-8204-b50200c97516`) the `factory_events_append` role's, and the read
    secret (`2f708d08-ea5d-4d11-bde0-b50200c9a60b`) the `factory_events_read` role's. Same project
-   and UUIDs, and the same grants amendment 25 item 3 names, none of which is made yet. Wherever
-   amendments 24 and 25 say "the append DSN" or "the read DSN" for what a holder fetches, read "the
-   append password" or "the read password". Who holds each is unchanged.
+   and UUIDs, and the same grants amendment 25 item 3 names (see "One grant exists" for the one made
+   so far). Wherever amendments 24 and 25 say "the append DSN" or "the read DSN" for what a holder
+   fetches, read "the append password" or "the read password". Who holds each is unchanged.
 2. **The secrets' names.** BWS names them `factory-events-append-dsn` and `factory-events-read-dsn`
    (sds-hq `state/gates/factory-events-db.md`, lines 42-44). No code reads a secret by name: every
-   reference is by UUID. This amendment recommends renaming them `factory-events-append-password`
-   and `factory-events-read-password`, so a name doesn't describe a value the secret no longer
-   holds; the rename changes no reader. Whether to rename is Devon's decision, asked separately, and
-   this amendment doesn't make it.
+   reference is by UUID. **Decided (HQ's cycle, 2026-11-14):** they're renamed
+   `factory-events-append-password` and `factory-events-read-password`, in the same act that
+   rewrites their values (increment 5), so a name doesn't describe a value the secret no longer
+   holds. The rename changes no reader, and the UUIDs, project and grants stay the same.
 3. **The settings, and the one place that builds the connection.** `factory_events.chain` owns every
    chain setting and builds each connection from parts. It passes them to `psycopg.connect` as
    keyword parameters (`host`, `port`, `dbname`, `user`, `password`), never as a formatted URL, so
@@ -3860,12 +3868,13 @@ and not in `make check`. Each increment's own suite runs against the checkout it
    approve child's environment (`standing_approve.py`, line 542), because `_child_env` passes
    nothing else. A whole DSN would have needed the same change.
 5. **The secrets' values (an act on BWS).** Each secret's value becomes its role's bare password,
-   decoded (a URL-form DSN can hold it percent-encoded), under the same UUID. It's Devon's act in
-   the Bitwarden web app, where G-57 created them. A session does it only with his OK, and only
-   through an identity he names that can write the secret: amendment 25 item 3's grants are reads. A
-   session works in-process: it reads the value, writes back only the password, and prints neither,
-   only a hash. The role passwords in the database don't change. It can run any time before FE-5,
-   since no process fetches either secret yet.
+   decoded (a URL-form DSN can hold it percent-encoded), under the same UUID, and each secret takes
+   its new name (item 2). It's Devon's act in the Bitwarden web app, where G-57 created them. A
+   session does it only with his OK, and only through an identity he names that can write the
+   secret: amendment 25 item 3's grants are reads. A session works in-process: it reads the value,
+   writes back only the password, and prints neither, only a hash. The role passwords in the
+   database don't change. It can run any time before FE-5, since no process fetches either secret
+   yet.
 
 Then FE-5 sets the password variables and the three settings for each holder, where it set DSNs
 before (ADR-0059 amendment 7, act 5, as amendment 8 names the holders).
@@ -3873,9 +3882,11 @@ before (ADR-0059 amendment 7, act 5, as amendment 8 names the holders).
 ### What it grants, and nothing more
 
 Nothing. No credential, role, scope, project, account or grant changes: the same two secrets, the
-same two roles and the same six grants (amendment 25 item 3). It moves non-secret configuration out
-of two secrets' values and into each holder's environment. Nothing here declares a credential
-exposed (Infra Brain rule 1032).
+same two roles and the same six grants (amendment 25 item 3). The temporary `sds-operator` reads
+from G-57's step 7 are neither added, kept nor used here; the FE-4 accounts gate settles them under
+amendment 25 item 3 ("One grant exists"). It moves non-secret configuration out of two secrets'
+values and into each holder's environment. Nothing here declares a credential exposed (Infra Brain
+rule 1032).
 
 ### Consequences
 
@@ -3883,7 +3894,8 @@ exposed (Infra Brain rule 1032).
   not a secret's value.
 - **A holder needs four variables, not one.** A holder's environment that sets the password but
   misses a setting refuses by name rather than connect somewhere else.
-- **ADR-0059 amendments 7 and 8 say "DSN"** for the secrets in acts 3 and 5. Read them as this
-  amendment's item 1 does. This amendment doesn't edit them.
+- **ADR-0059 amendments 7 and 8 say "DSN"** for the secrets: amendment 7's FE-1 to FE-3 and 3f-2
+  bullets (lines 2804-2828) and acts 3 and 5, and amendment 8. Read them as this amendment's item 1
+  does. This amendment doesn't edit them.
 - **Unchanged.** Amendment 24's mechanism, the four append holders, the one reader, the import's
   actor (amendment 25 item 4), the network, the logging rules and FE-1 to FE-6's order.

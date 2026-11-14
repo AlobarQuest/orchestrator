@@ -13,8 +13,14 @@ is docs only, and it edits no earlier text. It states the following:
 - **What each secret holds (item 1).** Each secret holds its role's bare password, with the same
   UUIDs, project and grants. Amendments 24 and 25's "append DSN" and "read DSN" read as "append
   password" and "read password".
-- **The names (item 2).** The amendment recommends renaming the secrets to `*-password` and
-  leaves the choice to Devon. The question is in `fe-password-only-adr-question.md`.
+- **The names (item 2).** Decided by HQ's cycle on 2026-11-14 (option A): the secrets are renamed
+  `factory-events-append-password` and `factory-events-read-password` in increment 5, the act that
+  rewrites their values.
+- **The one existing grant.** `sds-operator` holds a temporary read on both secrets from G-57's
+  step 7 (sds-hq `state/progress.md`, line 519 at `2b35ab4`). The amendment states that its read
+  on the append secret is outside amendment 25 item 3 and that the FE-4 accounts gate removes it.
+  Its read on the read secret is the Mac carrier's grant that amendment 25 item 3 already names.
+  The amendment neither adds, keeps nor uses any grant.
 - **One shared shape (items 3 to 8).** It has the following parts:
   - Two secret variables: `FACTORY_EVENTS_APPEND_PASSWORD` and `FACTORY_EVENTS_READ_PASSWORD`.
   - Three non-secret settings with no code default: `FACTORY_EVENTS_DB_HOST`,
@@ -42,6 +48,15 @@ is docs only, and it edits no earlier text. It states the following:
 Code reads cite security-standards `e89f69b`, intent-packages `3705e0c`, orchestrator `c8be2f89`
 and sds-hq `f4b3a18`, each at `origin/main` after a fetch. I read every cited line.
 
+## Fix round 1
+
+HQ's Opus whole-branch review blocked on two false statements: that G-57 created the secrets
+"with no grant", and that none of amendment 25 item 3's grants was made yet. I replaced both
+with the "One grant exists, and it's temporary" paragraph and made "What it grants" consistent
+with it. As HQ answered, I wrote item 2 as decided and added the rename to increment 5. I also
+named ADR-0059 amendment 7's FE-1 to FE-3 and 3f-2 bullets (lines 2804-2828) in "What it
+amends" and in Consequences. I edited amendment 26 only.
+
 ## Tests and checks
 
 - `make check` in the worktree, against database `orchestrator_test_hq_w_145`, passed at the
@@ -54,7 +69,8 @@ and sds-hq `f4b3a18`, each at `origin/main` after a fetch. I read every cited li
 
 - `docs/decisions/0055-credential-rotation-runs-in-a-pull-based-executor.md` (appended amendment
   26).
-- `docs/superpowers/reports/fe-password-only-adr-question.md` (the rename question).
+- `docs/superpowers/reports/fe-password-only-adr-question-answered.md` (the rename question; answered
+  by HQ in fix round 1).
 - `docs/superpowers/reports/fe-password-only-adr-report.md` (this report).
 
 ## Self-review
@@ -68,14 +84,14 @@ and sds-hq `f4b3a18`, each at `origin/main` after a fetch. I read every cited li
   (`package_sources.py`, line 319). Second, sds-hq's approve child gets a minimal environment
   (`standing_approve.py`, lines 161-164 and 540-547), so it inherits no chain variable. Then I
   read the remaining cited lines in full.
-- **Prose.** No line is over 100 characters, and the amendment uses the ADR's voice ("This
-  amendment recommends").
+- **Prose.** No line is over 100 characters, and the amendment uses the ADR's voice.
 
 ## Concerns
 
 1. **sds-hq needs its own increment.** The handoff names three repositories, but the cycle's
    approve child receives only the variables sds-hq passes it, so sds-hq must pass the append
-   password and the three settings (amendment 26, increment 4). The same change would have been
+   password and the three settings (amendment 26, increment 4). (My question file named
+   increment 4 for the rename by mistake; the rename is in increment 5.) The same change would have been
    needed for a whole DSN, so this gap predates the password change.
 2. **"The others pin it" doesn't hold as the handoff states it.** intent-packages doesn't pin
    security-standards: it finds a checkout at run time (`emitter.py`, lines 105-114). The
@@ -95,7 +111,8 @@ and sds-hq `f4b3a18`, each at `origin/main` after a fetch. I read every cited li
    consumer's `.bws-secrets.toml` and orchestrator `.cred-consumers.toml` "in the same act", but
    at `c8be2f89` they aren't there. HQ needs to make sure FE-4 or FE-5 records them. I didn't
    fetch either secret.
-5. **ADR-0059 amendments 7 and 8 still say "DSN"** in acts 3 and 5. The handoff limits me to
+5. **ADR-0059 amendments 7 and 8 still say "DSN"** in amendment 7's FE-1 to FE-3 and 3f-2
+   bullets and acts 3 and 5, and in amendment 8. The handoff limits me to
    ADR-0055, so amendment 26's Consequences tells readers how to read them. I didn't edit them.
 6. **The non-secret settings have no default.** I chose required variables over Mac defaults in
    code, because a container needs different values and a default would only suit the Mac. The
