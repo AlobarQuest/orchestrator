@@ -133,10 +133,20 @@ def db_session(_test_database: None) -> Iterator[Session]:
 
 
 @pytest.fixture(autouse=True)
-def _no_ambient_factory_events_dsn(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A shell holding a real factory-events chain DSN must never reach it from a test.
+def _no_ambient_factory_events_chain(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A shell holding a real factory-events chain password or setting must never reach it from
+    a test, nor a retired whole-DSN variable refuse one (ADR-0055 amendment 26).
 
     Tests that need the database chain set a disposable one themselves (FE-3).
     """
-    for name in ("FACTORY_EVENTS_READ_DSN", "FACTORY_EVENTS_APPEND_DSN"):
+    for name in (
+        "FACTORY_EVENTS_READ_PASSWORD",
+        "FACTORY_EVENTS_APPEND_PASSWORD",
+        "FACTORY_EVENTS_DB_HOST",
+        "FACTORY_EVENTS_DB_PORT",
+        "FACTORY_EVENTS_DB_NAME",
+        "FACTORY_EVENTS_APPEND_DSN",
+        "FACTORY_EVENTS_READ_DSN",
+        "FACTORY_EVENTS_IMPORT_DSN",
+    ):
         monkeypatch.delenv(name, raising=False)

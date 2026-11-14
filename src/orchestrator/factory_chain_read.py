@@ -1,7 +1,10 @@
 """The factory-events database chain, walked and read in one snapshot (ADR-0055 am. 24 item 8).
 
 `package_sources` runs this module as a subprocess (`python -m orchestrator.factory_chain_read`),
-with security-standards' `src` on `PYTHONPATH`, when `FACTORY_EVENTS_READ_DSN` is set. In one
+with security-standards' `src` on `PYTHONPATH`, when `FACTORY_EVENTS_READ_PASSWORD` is set. It
+connects as the read role, from that password and the three settings
+(`FACTORY_EVENTS_DB_HOST`, `_PORT`, `_NAME`), through `factory_events.chain.connection_params`,
+which reads them and refuses a missing or retired one by name (ADR-0055 amendment 26). In one
 read-only transaction at repeatable read it walks every row from `seq` 1 through FE-1's walker
 (`factory_events.store.walk_records`, the one both chains verify with) and collects the
 `package.approved` events as they pass, so the verify and the events the caller matches against
@@ -10,7 +13,9 @@ see one snapshot. The `SELECT` is the one FE-1's README gives readers in other r
 The answer is one JSON record on stdout, which the caller captures: `outcome` `verified` with the
 `package_approved` events (exit `VERIFIED`), or `broken` or `failure` (exit `UNAVAILABLE`). It is
 this module's structured log record too, and it carries the `seq`, a prefix of the head hash and
-an error's type, never the DSN or a driver's text, which can repeat it (amendment 24 item 13).
+an error's type, never the password or a driver's text, which can repeat connection details
+(amendment 24 item 13). A refusal from `factory_events.chain` is reported the same way, as
+`ChainError`: the caller never relays the child's stderr, and the record carries types only.
 
 The module imports psycopg and `factory_events` lazily: `factory_events` lives in another
 repository, and the caller's interpreter loads neither for the file chain.
@@ -19,11 +24,10 @@ repository, and the caller's interpreter loads neither for the file chain.
 from __future__ import annotations
 
 import json
-import os
 import sys
 from collections.abc import Iterable, Iterator
 from importlib import import_module
-from typing import Any
+from typing import Any, Protocol
 
 VERIFIED = 0
 VERIFIED_OUTCOME = "verified"
@@ -66,12 +70,22 @@ def _records(rows: Iterable[tuple[Any, ...]], approvals: list[dict[str, Any]]) -
         }
 
 
-def _walk(dsn: str) -> tuple[list[str], dict | None, int, list[dict[str, Any]]]:
+class _ConnectParams(Protocol):
+    """`factory_events.db.ConnectParams`, which this module can't import at its top level."""
+
+    def as_kwargs(self) -> dict[str, str]: ...
+
+
+def _walk(params: _ConnectParams) -> tuple[list[str], dict | None, int, list[dict[str, Any]]]:
+    """`params.as_kwargs()` holds the password, so it goes straight to `psycopg.connect` and is
+    never logged."""
     psycopg = import_module("psycopg")
     store = import_module("factory_events.store")
     approvals: list[dict[str, Any]] = []
     with psycopg.connect(
-        dsn, connect_timeout=CONNECT_TIMEOUT_SECONDS, application_name="orchestrator"
+        **params.as_kwargs(),
+        connect_timeout=CONNECT_TIMEOUT_SECONDS,
+        application_name="orchestrator",
     ) as conn:
         conn.read_only = True
         conn.isolation_level = psycopg.IsolationLevel.REPEATABLE_READ
@@ -83,13 +97,14 @@ def _walk(dsn: str) -> tuple[list[str], dict | None, int, list[dict[str, Any]]]:
 
 def main() -> int:
     try:
-        dsn = os.environ.get("FACTORY_EVENTS_READ_DSN")
-        if not dsn:
-            raise LookupError("FACTORY_EVENTS_READ_DSN is not set")
-        errors, last, count, approvals = _walk(dsn)
+        chain = import_module("factory_events.chain")
+        # Strictly the read role: no append fallback. A missing setting or a set retired
+        # variable raises ChainError here, before any connection.
+        params = chain.connection_params(chain.READ_ROLE)
+        errors, last, count, approvals = _walk(params)
     except Exception as exc:
         # Not swallowed: reported by type as UNAVAILABLE, which the caller raises as a refusal.
-        # The text stays out because a driver's can repeat the DSN.
+        # The text stays out because a driver's can repeat connection details.
         _emit("failure", error_type=type(exc).__name__)
         return UNAVAILABLE
     seq = last["seq"] if last else 0
