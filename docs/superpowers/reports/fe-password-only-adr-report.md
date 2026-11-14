@@ -1,0 +1,143 @@
+Outcome: done
+
+# Report: ADR-0055 amendment 26, factory-events secrets hold passwords only
+
+Worker W-145, handoff `fe-password-only-adr`, branch `hq/fe-password-only-adr`.
+
+## What I built
+
+I appended **Amendment 26 — Each factory-events secret holds only its role's password
+(2026-11-14)** to `docs/decisions/0055-credential-rotation-runs-in-a-pull-based-executor.md`. It
+is docs only, and it edits no earlier text. It states the following:
+
+- **What each secret holds (item 1).** Each secret holds its role's bare password, with the same
+  UUIDs, project and grants. Amendments 24 and 25's "append DSN" and "read DSN" read as "append
+  password" and "read password".
+- **The names (item 2).** Decided by HQ's cycle on 2026-11-14 (option A): the secrets are renamed
+  `factory-events-append-password` and `factory-events-read-password` in increment 5, the act that
+  rewrites their values.
+- **The one existing grant.** `sds-operator` holds a temporary read on both secrets from G-57's
+  step 7 (sds-hq `state/progress.md`, line 519 at `2b35ab4`). The amendment states that its read
+  on the append secret is outside amendment 25 item 3 and that the FE-4 accounts gate removes it.
+  Its read on the read secret is the Mac carrier's grant that amendment 25 item 3 already names.
+  The amendment neither adds, keeps nor uses any grant.
+- **One shared shape (items 3 to 8).** It has the following parts:
+  - Two secret variables: `FACTORY_EVENTS_APPEND_PASSWORD` and `FACTORY_EVENTS_READ_PASSWORD`.
+  - Three non-secret settings with no code default: `FACTORY_EVENTS_DB_HOST`,
+    `FACTORY_EVENTS_DB_PORT` and `FACTORY_EVENTS_DB_NAME`. Host and port differ between the Mac
+    (tailnet) and the containers (`coolify` network).
+  - Role names as constants beside the schema that creates them.
+  - Connections built in one place, `factory_events.chain`, as psycopg keyword parameters rather
+    than a URL.
+  - The same mode-selection rules as today, under the new names.
+  - A missing setting, or a set retired `*_DSN` variable, fails closed and names the variable.
+    It's never ignored, because ignoring it would drop the process silently to the file chain.
+  - No whole-DSN variable is accepted, not even in tests. `FACTORY_TEST_DSN` stays as a fixture.
+  - The import runs under the append settings (D-46 A).
+  - Redaction targets the password values.
+- **What it amends.** It lists the passages it amends in amendments 24 and 25, with line numbers
+  at `c8be2f89`, and how to read ADR-0059 amendments 7 and 8.
+- **Increments.** The order is security-standards, then intent-packages, then orchestrator, then
+  sds-hq, and then the act that rewrites the secret values. That act is Devon's, in the
+  Bitwarden web app, or a session's with his OK through a write identity he names, done in-process
+  and printing only a hash. All of it lands before FE-5. The amendment also says the downstream
+  integration suites fail against an updated security-standards checkout until their own
+  increments land.
+- **What it grants.** Nothing: no credential, role, scope, project, account or grant changes.
+
+Code reads cite security-standards `e89f69b`, intent-packages `3705e0c`, orchestrator `c8be2f89`
+and sds-hq `f4b3a18`, each at `origin/main` after a fetch. I read every cited line.
+
+## Fix round 1
+
+HQ's Opus whole-branch review blocked on two false statements: that G-57 created the secrets
+"with no grant", and that none of amendment 25 item 3's grants was made yet. I replaced both
+with the "One grant exists, and it's temporary" paragraph and made "What it grants" consistent
+with it. As HQ answered, I wrote item 2 as decided and added the rename to increment 5. I also
+named ADR-0059 amendment 7's FE-1 to FE-3 and 3f-2 bullets (lines 2804-2828) in "What it
+amends" and in Consequences. I edited amendment 26 only.
+
+## Tests and checks
+
+- `make check` in the worktree, against database `orchestrator_test_hq_w_145`, passed at fix
+  round 1's commit `ca59011a` with a clean tree (14,886 passed, 1 skipped, rc 0). Before the fix
+  round it passed at `6726d663` with a clean tree: ruff, ruff format, pyright, then pytest with
+  14,886 passed and 1 skipped (rc 0). An earlier run at `efbbf31b` passed with the same counts.
+- `origin/main` was still `c8be2f89` after a fresh fetch, so amendment 26 is the next number.
+- No code changed, so no new tests apply.
+
+## Files changed
+
+- `docs/decisions/0055-credential-rotation-runs-in-a-pull-based-executor.md` (appended amendment
+  26).
+- `docs/superpowers/reports/fe-password-only-adr-question-answered.md` (the rename question; answered
+  by HQ in fix round 1).
+- `docs/superpowers/reports/fe-password-only-adr-report.md` (this report).
+
+## Self-review
+
+- **Stop-point check.** Amendments 24 and 25 don't contradict Devon's change. They fix holders,
+  roles and grants, and this change touches only what a secret's value holds and where the
+  address lives.
+- **Code claims.** I checked every one against the named commit. An advisor review found two
+  claims I'd made from grep hits alone, and I fixed both. First, orchestrator
+  `factory_chain_read` runs under the orchestrator's interpreter, not security-standards'
+  (`package_sources.py`, line 319). Second, sds-hq's approve child gets a minimal environment
+  (`standing_approve.py`, lines 161-164 and 540-547), so it inherits no chain variable. Then I
+  read the remaining cited lines in full.
+- **Prose.** No line is over 100 characters, and the amendment uses the ADR's voice.
+
+## Concerns
+
+1. **sds-hq needs its own increment.** The handoff names three repositories, but the cycle's
+   approve child receives only the variables sds-hq passes it, so sds-hq must pass the append
+   password and the three settings (amendment 26, increment 4). (My question file named
+   increment 4 for the rename by mistake; the rename is in increment 5.) The same change would have been
+   needed for a whole DSN, so this gap predates the password change.
+2. **"The others pin it" doesn't hold as the handoff states it.** intent-packages doesn't pin
+   security-standards: it finds a checkout at run time (`emitter.py`, lines 105-114). The
+   orchestrator's `security-standards.pin.toml` pins the registry bundle for its image. The
+   amendment grounds "security-standards first" in the checkout import, not in a pin.
+3. **Two departures from the approved wording.** In each case, HQ can check that the departure
+   fits Devon's intent:
+   - The role names are constants beside the schema (`chain_schema.sql`, lines 79-92), not
+     variables, although the handoff's example shape has role variables and Devon's answer calls
+     the role names "non-secret config".
+   - The code passes psycopg keyword parameters, where Devon approved "builds the DSN at run
+     time". Keyword parameters avoid escaping a password inside a URL, and no string holds the
+     password and the address together.
+4. **The UUIDs and settings come from sds-hq, not from code.** The host, port, database name and
+   both secret UUIDs come from sds-hq `state/goal.md` line 59 and the handoff. No manifest in the
+   four repositories names either UUID. ADR-0059 amendment 7 act 3 says the UUIDs go into each
+   consumer's `.bws-secrets.toml` and orchestrator `.cred-consumers.toml` "in the same act", but
+   at `c8be2f89` they aren't there. HQ needs to make sure FE-4 or FE-5 records them. I didn't
+   fetch either secret.
+5. **ADR-0059 amendments 7 and 8 still say "DSN"** in amendment 7's FE-1 to FE-3 and 3f-2
+   bullets and acts 3 and 5, and in amendment 8. The handoff limits me to
+   ADR-0055, so amendment 26's Consequences tells readers how to read them. I didn't edit them.
+6. **The non-secret settings have no default.** I chose required variables over Mac defaults in
+   code, because a container needs different values and a default would only suit the Mac. The
+   cost is that each Mac holder sets the same three values: the cycle, the session's command, the
+   bump-proposer launcher, the nightly and the Mac carrier. If HQ prefers one copy, a tracked
+   settings file in security-standards is the alternative. It isn't in the amendment.
+7. **Retiring `FACTORY_EVENTS_IMPORT_DSN` (item 7)** changes FE-1's deliberate separation
+   (`chain.py`, lines 17-19). I based it on D-46 A, which settled the import's role.
+8. **The test database** `orchestrator_test_hq_w_145` is still in place for any fix round. Tear
+   it down with the worktree.
+
+## Standards followed
+
+- **Code Brain rule 5 (BLOCK, never log secrets).** The amendment names secrets by UUID only and
+  contains no value. Item 8 keeps redaction on the password values, and amendment 24 item 13's
+  logging rules stand.
+- **Code Brain rules 3 and 4 (BLOCK, logging and error handling).** Item 5 makes a missing setting
+  or a retired variable a refusal that names the variable, raised as `ChainError` and reported as
+  `UNAVAILABLE`. It's never silent and never read as "not approved".
+- **Infra Brain 591, 592 and 593 (BLOCK, no BWS token in tracked files).** No token or token-shaped
+  string is in any file or commit, and the BWS write-guard didn't trigger.
+- **Infra Brain 1032 (`cred.exposure-rotate`).** I saw no credential value. The amendment says
+  nothing is exposed.
+- **Infra Brain 212 (HTTPS for public FQDNs).** It doesn't apply: the database is tailnet-only,
+  as amendment 24 item 12 states.
+- **Code Brain has no `secrets` road.** I followed Devon's estate rule as the handoff states it
+  (secrets hold values, not configuration), and the amendment cites it.
