@@ -134,7 +134,7 @@ rechecks each one:
    prove before step 10"), and relies on each prep PR's stub tests plus first-run checks.
 2. **`sds_bws_value` puts the token in `env`'s argv.** This is pre-existing. Fix round 1 folds the
    fix into P-OR-1, so the helper changes for every two-argument caller, not only the new fetches.
-   The plan lists the callers and says each `bws` gets the same environment and argv.
+   The plan counts the callers (18 files) and says each `bws` gets the same environment and argv.
 3. **I ran `git fetch`** in the main checkouts of `~/Projects/orchestrator`, `security-standards`,
    `intent-packages` and `sds-hq`. It updated remote-tracking refs only: no checkout, pull or edit.
    The handoff's "never edit, branch, check out, or pull" holds, but the fetch did touch the main
@@ -156,9 +156,10 @@ in the plan only; nothing else changed. Line numbers are the plan's after this r
   110-112), with a `tests/scripts/test_sds_bws.py` test whose stub `env` records its argv. The
   former follow-up 6 is deleted, because P-OR-1 now does it.
 - **The callers (plan lines 191, 210-215, 232-234).** The carrier's fetch and P-OR-2's wrapper go
-  through the fixed helper. P-OR-1's "What changes when it merges" lists the helper's five
-  two-argument callers, each of which gets the same `bws` environment and argv.
-- **Every other `bws` call (plan lines 106-108, 141, 207, 256, 444).** P-SS already uses the
+  through the fixed helper. P-OR-1's "What changes when it merges" says the helper change reaches
+  every two-argument caller (18 files in `scripts/` at `7739b22a`), each of which gets the same
+  `bws` environment and argv.
+- **Every other `bws` call (plan lines 106-108, 141, 207, 256, 446).** P-SS already uses the
   assignment-prefix form; its test now asserts no stub token in argv, as P-OR-1's and P-OR-2's do.
   P-HQ's `fetch_secret` passes the token through `subprocess.run`'s `env` (sds-hq `secrets.py`
   lines 40-48). Step 0's check reads the token into a variable and runs `bws` with it as an
@@ -171,32 +172,32 @@ in the plan only; nothing else changed. Line numbers are the plan's after this r
 1. **P-HQ's merge effect (plan lines 300-306).** After the interactive pull, `build_venv` installs
    `psycopg[binary]` on every `prepare` (sds-hq `standing_approve.py` lines 105-110), and a failed
    install refuses as `setup_failed`, even in file mode.
-2. **The registry class (plan lines 166-173, 216-220, 524-528).** Each secret's row names class
+2. **The registry class (plan lines 166-173, 216-220, 526-530).** Each secret's row names class
    `postgres-role-password` with `rotated_by_sds = false`. It's in infraops `CLASS_POLICY`
    (`cred-rotation.ts` line 68 at `c3359bf`; `git ls-remote` showed remote `main` at `c3359bf`).
    "The manifests change no process" became a statement of what the 03:00 scan and the rotation
    proposer's `cred-findings` read: a row with no class throws (`cred-consumers.ts` line 207), and
    an unknown class posts `cred.unknown-class` (`cred-rotation.ts` lines 251-257).
-3. **Step 4 (plan line 448).** `--against-anchor` and the `~/.factory/env` sourcing are dropped.
+3. **Step 4 (plan line 450).** `--against-anchor` and the `~/.factory/env` sourcing are dropped.
    Plain file-mode `verify` reads only the file (`cli.py` lines 61-84), and the expected output is
    the `chain ok:` line alone.
-4. **Step 6 (plan line 450).** The printed head is the file's own (`db.py` lines 222-223). The
+4. **Step 6 (plan line 452).** The printed head is the file's own (`db.py` lines 222-223). The
    check column now presents `_replay`'s head comparison (`db.py` lines 186-189) and exit 0 as the
    real check.
-5. **`bws` calls in steps 0 and 3 (plan line 444).** Step 0's check names `--color no` and an empty
+5. **`bws` calls in steps 0 and 3 (plan line 446).** Step 0's check names `--color no` and an empty
    `HOME` on every `bws` call. Step 3 makes no `bws` call: it scans plists, `~/.factory/env`,
    `hq-env.sh` and the shell for variable names. So step 3 needed no change.
-6. **P-VB's first post-seal verify (plan lines 340-346).** `verify-backup.sh` activates itself
-   (line 24) and runs Sunday 03:00. It restores the `latest` `mini-host` snapshot (lines 206-243),
-   which the daily 02:00 backup takes, so it reads the first 02:00 snapshot after the seal. A seal
-   between 02:00 and 03:00 on a Sunday makes that run warn.
-7. **Step 11 (plan line 456).** `com.devon.bump-driver` runs at minute 50 of every hour
+6. **P-VB's first post-seal verify (plan lines 340-348).** `verify-backup.sh` activates itself
+   (line 24) and runs Sunday 03:00. It restores the latest `mini-host` snapshot completed by then
+   (lines 206-243). `backup-mini.sh` takes it, third in the daily 02:00 job, so the verify passes
+   only if a `backup-mini.sh` run finished after the seal; otherwise it warns.
+7. **Step 11 (plan line 458).** `com.devon.bump-driver` runs at minute 50 of every hour
    (`scripts/com.devon.bump-driver.plist` lines 20-30, and the live plist), isn't among the four
    jobs step 1 pauses, and `run-bump-driver.sh` activates the orchestrator tree (line 64).
-8. **`check_chain`'s citation (plan lines 98, 269, 488; report "What I built" and the citation
+8. **`check_chain`'s citation (plan lines 98, 269, 490; report "What I built" and the citation
    table).** It's lines 392-404. The plan's "returns silently" range, lines 395-397, was already
    right.
-9. **Open questions (plan lines 482-540, 246).** Questions 1 to 3 are marked "To Devon". Questions
+9. **Open questions (plan lines 484-542, 246).** Questions 1 to 3 are marked "To Devon". Questions
    4 to 8 are marked "Settled by HQ", each with HQ's choice: 4, the import fetches under
    `factory-events-session`; 5, the token is minted in step 0; 6, as item 2; 7, the pause stays;
    8, no session `verify`. P-OR-2 now says the wrapper has no `verify`.
