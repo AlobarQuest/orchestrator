@@ -44,8 +44,10 @@ and sds-hq `f4b3a18`, each at `origin/main` after a fetch. I read every cited li
 
 ## Tests and checks
 
-- `make check` in the worktree, against database `orchestrator_test_hq_w_145`, passed: ruff, ruff
-  format, pyright, then pytest with 14,886 passed and 1 skipped (rc 0).
+- `make check` in the worktree, against database `orchestrator_test_hq_w_145`, passed at the
+  final content commit `6726d663` with a clean tree: ruff, ruff format, pyright, then pytest with
+  14,886 passed and 1 skipped (rc 0). An earlier run at `efbbf31b` passed with the same counts.
+- `origin/main` was still `c8be2f89` after a fresh fetch, so amendment 26 is the next number.
 - No code changed, so no new tests apply.
 
 ## Files changed
