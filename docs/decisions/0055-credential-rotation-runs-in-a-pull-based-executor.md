@@ -3747,8 +3747,8 @@ port in Devon's answer are the Mac's values only.
    (sds-hq `state/gates/factory-events-db.md`, lines 42-44). No code reads a secret by name: every
    reference is by UUID. This amendment recommends renaming them
    `factory-events-append-password` and `factory-events-read-password`, so a name doesn't
-   describe a value the secret no longer holds; the rename changes no reader. Whether to rename is Devon's decision, asked separately, and this
-   amendment doesn't make it.
+   describe a value the secret no longer holds; the rename changes no reader. Whether to rename
+   is Devon's decision, asked separately, and this amendment doesn't make it.
 3. **The settings, and the one place that builds the connection.** `factory_events.chain` owns
    every chain setting and builds each connection from parts. It passes them to `psycopg.connect`
    as keyword parameters (`host`, `port`, `dbname`, `user`, `password`), never as a formatted
