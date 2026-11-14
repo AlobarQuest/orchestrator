@@ -3112,9 +3112,9 @@ its own (ADR-0007, "Scheduled trigger"). D-49 decides the placement.
 1. **Follow-up minting runs in a new single-purpose VPS lane, `follow-up-mint`.** It follows the
    pattern every moved lane uses: the pinned lane image (decision 1), its own Coolify compose
    resource, `sds-lane-follow-up-mint` (Amendment 1), and its lane BWS token and ping URL issued
-   as ADR-0055 amendment 19 issues them (Amendment 2). No person pastes the ping URL: it's read
-   from the Healthchecks Management key's check listing, as decision 3 is narrowed by ADR-0055
-   amendment 23 (line 714). It runs one minting pass once a day. Its
+   as ADR-0055 amendment 19 issues them (Amendment 2). No person pastes the ping URL: the VM
+   rotation executor reads it from the Healthchecks Management key's check listing, as ADR-0055
+   amendment 23 narrows decision 3 (lines 714-716); the lane never holds that key. It runs one minting pass once a day. Its
    hour is increment 9's to set. It has its own Healthchecks check, a new one: unlike the moved
    lanes, it has no Mac check to keep (decision 3, "Every lane keeps its check", lines 675-676). Its
    check is created at install time by `sds_upsert_check`, as decision 3 creates or updates every
