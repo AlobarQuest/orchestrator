@@ -96,7 +96,7 @@ No other text changed. The amendment grows from 124 to 131 lines (3071-3201).
 
 ## Tests and checks
 
-Fix round 1 (W-152, at `52a11d5c`):
+Fix round 1 (W-152, on the tree at `67fcbd30`; the later fix commits change only Markdown):
 
 - `make check` with `TEST_DATABASE_URL` and `ORCHESTRATOR_DATABASE_URL` set to
   `orchestrator_test_hq_w_152`, migrated to head (`alembic current` equals `heads`,
