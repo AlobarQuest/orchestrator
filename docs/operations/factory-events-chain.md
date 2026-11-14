@@ -48,7 +48,7 @@ a symlink.
 
 ## Approve a package
 
-To approve a package as Devon, on his word, run the following command:
+To approve a package as Devon, on his word, run the following command from the checkout:
 
 ```bash
 ~/Projects/orchestrator/scripts/factory-events-session.sh approve \

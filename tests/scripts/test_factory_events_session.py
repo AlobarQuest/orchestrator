@@ -47,6 +47,11 @@ OWN_NAMES = (
     "CHAIN_DB_HOST",
     "CHAIN_DB_PORT",
     "CHAIN_DB_NAME",
+    "REPO_ROOT",
+    "SWITCH",
+    "STAGING",
+    "FACTORY_EVENTS_APPEND_UUID",
+    "rc",
 )
 
 # Prints the token of the item `-a` names, from KEYCHAIN_<account>, and logs only the account.
@@ -58,6 +63,7 @@ for argument in "$@"; do
     previous="$argument"
 done
 printf '%s\\n' "$account" >> "$SECURITY_LOG"
+printf 'security %s\\n' "$*" >> "$ARGV_LOG"
 eval "value=\\${KEYCHAIN_$account:-}"
 [ -n "$value" ] || exit 44
 printf '%s\\n' "$value"
@@ -258,6 +264,7 @@ def test_approve_runs_the_checkouts_approve_in_the_checkout_with_the_chain(tree:
     assert run.child_pwd == tree.checkout.resolve()
     assert run.chain() == CHILD_CHAIN
     assert run.keychain == [SESSION_ITEM]
+    assert f"security find-generic-password -s Claude -a {SESSION_ITEM} -w" in run.argv.splitlines()
     assert run.fetches == [(SESSION_TOKEN, APPEND_UUID)]
     assert "child ran: -m intent_packages approve" in run.stdout
     _assert_nothing_secret_is_readable(run)
