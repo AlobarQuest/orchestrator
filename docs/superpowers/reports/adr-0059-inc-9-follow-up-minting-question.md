@@ -14,7 +14,7 @@ sections to Devon when it plans increment 9.
   "sds:follow-up:<revision_id>")`, backed by a unique constraint. A second pass on the same day,
   or a paired pass at cut-over, reports `already_minted` and mints nothing twice
   (`docs/operations/follow-up-scheduling.md`).
-- The only scheduled caller is infra-drift: `scripts/drift-audit.sh` lines 152-179 at
+- The only scheduled caller is infra-drift: `scripts/drift-audit.sh` lines 152-180 at
   infraops-mcp-server `c3359bf`. It reads the SYSTEM bearer (`221a48d5-…`) with the `sds-operator`
   Keychain item and runs `node dist/cli/orchestrator-cli.js mint-follow-ups` as a non-fatal step.
 - The orchestrator's own CLI has the same command: `orchestrator mint-follow-ups
@@ -36,7 +36,7 @@ lane BWS identity that reads only the SYSTEM bearer.
   two changes, as for every lane.
 - **What changes:** the orchestrator gets a launcher, a compose file, `.bws-secrets.toml` and
   `.cred-consumers.toml` rows, and a layer manifest entry. infraops-mcp-server deletes lines
-  152-179. The docs that change are ADR-0007 "Scheduled trigger", `follow-up-scheduling.md` "Running
+  152-180. The docs that change are ADR-0007 "Scheduled trigger", `follow-up-scheduling.md` "Running
   a pass", `credentials.md` (line 90), and `.cred-consumers.toml` (line 221).
 - **Cut-over:** one paired pass is safe because minting is idempotent. Then infraops deletes the
   step. There's no Mac job to boot out.
@@ -44,15 +44,17 @@ lane BWS identity that reads only the SYSTEM bearer.
 
 ### B. A step inside a lane that already holds SYSTEM
 
-A lane that already reads `221a48d5-…` adds one non-fatal minting step to its pass. The lanes that
-hold SYSTEM are `rotation-decomposer` (it has a compose file under `lanes/`), `bump-driver`,
-`work-carrier` and `inert-landing` (their launchers read the bearer and they move in later
-increments), and `activation-sweep`, which stays on the Mac and so isn't a candidate.
+A lane that already reads `221a48d5-…` adds one non-fatal minting step to its pass. Seven
+launchers read the SYSTEM bearer (`grep -l 221a48d5 scripts/run-*.sh`): `bump-driver`,
+`estate-landing`, `inert-landing`, `rotation-decomposer`, `work-carrier`, `activation-sweep` and
+`tool-installer`. The last two stay on the Mac (decision 4), so they aren't candidates. Of the
+other five, only `rotation-decomposer` has a compose file under `lanes/`. I didn't confirm whether
+its cut-over has finished; increment 4's reports record that.
 
 - **Identity:** none new. The SYSTEM bearer gains no reader, because the host lane already reads
   it. Minted units are attributed to `orchestrator-system`, as they are today.
 - **What changes:** one lane's launcher or program gets a step, and infraops deletes lines
-  152-179. The doc changes are as in option A. No resource, check, token or ping URL is added.
+  152-180. The doc changes are as in option A. No resource, check, token or ping URL is added.
 - **Cost:** it couples minting to an unrelated lane's schedule, alarms and kill switch, which is
   how minting ended up inside infra-drift in the first place. A failed mint must stay non-fatal,
   or it would hold the host lane's outcome check down. The host lane's purpose also widens, against
@@ -79,7 +81,7 @@ undoing: minting would again ride on a pass whose purpose is something else. A c
 account that reads one secret already in `SDS Operator`, plus the usual token and ping-URL
 issue. Every step of that issue already follows an established pattern. If Devon prefers less
 machinery, B with `rotation-decomposer` as the host is the fallback, because it is the only
-SYSTEM-holding lane with a compose file today. I recommend against C because it reverses
+moving SYSTEM-holding lane with a compose file under `lanes/` today. I recommend against C because it reverses
 ADR-0007.
 
 ## A point for HQ, not a contradiction
